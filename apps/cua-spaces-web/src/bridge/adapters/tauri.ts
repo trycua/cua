@@ -62,6 +62,7 @@ import { NUDGES_OPERATIONS } from "../ops/nudges";
 import { AGENT_THREADS_OPERATIONS } from "../ops/agent-threads";
 import { RESOURCES_OPERATIONS } from "../ops/resources";
 import { MACHINES_OPERATIONS } from "../ops/machines";
+import { SPACES_SETTINGS_OPERATIONS } from "../ops/spaces-settings";
 import { CHECKLIST_OPERATIONS } from "../ops/checklist";
 import { LINKS_OPERATIONS } from "../ops/links";
 import { CLI_OPERATIONS } from "../ops/cli";
@@ -130,6 +131,7 @@ export const TAURI_UNSUPPORTED: readonly OpName[] = [
   ...AGENT_THREADS_OPERATIONS,
   ...RESOURCES_OPERATIONS,
   ...MACHINES_OPERATIONS,
+  ...SPACES_SETTINGS_OPERATIONS,
   ...CHECKLIST_OPERATIONS,
   ...LINKS_OPERATIONS,
   ...CLI_OPERATIONS,

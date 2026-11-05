@@ -323,7 +323,7 @@ pub enum HostCmd {
     },
 }
 
-/// `cua machines`: your computers on the relay.
+/// `cua machines`: now `cua spaces` (kept one release).
 #[derive(Subcommand, Debug)]
 pub enum MachinesCmd {
     /// Remove a computer that is gone: its row leaves your relay directory,
@@ -331,8 +331,8 @@ pub enum MachinesCmd {
     /// device; nothing when several match). A computer that is connected now
     /// is refused: run `cua host remove` on it.
     #[command(after_help = "Examples:
-  cua machines rm old-laptop
-  cua machines rm relay:0123abcd4567ef89 --yes --json")]
+  cua spaces rm old-laptop
+  cua spaces rm relay:0123abcd4567ef89 --yes --json")]
     Rm {
         /// The computer's name, machine id or `relay:<id>` (`cua spaces ls`).
         #[arg(value_name = "NAME")]
@@ -781,6 +781,52 @@ Examples:
     Rm {
         /// Space id, address or display name (as `cua spaces ls` shows).
         space: String,
+        /// For one of your computers: also delete the Spaces it provides
+        /// and their files (through the computer while it is reachable).
+        /// Without it they stay on your account, detached, and come back
+        /// if the computer is added again.
+        #[arg(long)]
+        delete_spaces: bool,
+        /// Remove a computer without asking.
+        #[arg(long, short = 'y')]
+        yes: bool,
+    },
+    /// Your default Space: where "my Space" goes when you do not say. With
+    /// no argument it prints the Space it resolves to now and the order it
+    /// tries (online or not); with a Space it sets the default.
+    #[command(after_help = "Examples:
+  cua spaces default
+  cua spaces default studio
+  cua spaces default studio --fallback office-pc,relay:0123abcd4567ef89
+  # Only the default, then this computer
+  cua spaces default --no-fallback
+  # Back to trying every online computer, oldest first
+  cua spaces default --fallback-on
+  cua spaces default --clear")]
+    Default {
+        /// The Space to make your default: a name or id (as `cua spaces ls`
+        /// shows).
+        space: Option<String>,
+        /// Have no default.
+        #[arg(long, conflicts_with_all = ["space", "fallback", "no_fallback", "fallback_on"])]
+        clear: bool,
+        /// Spaces to try, in this order, when the default is offline
+        /// (names or ids, comma separated).
+        #[arg(
+            long,
+            value_delimiter = ',',
+            value_name = "SPACES",
+            conflicts_with = "no_fallback"
+        )]
+        fallback: Option<Vec<String>>,
+        /// When the default is offline, use this computer instead of trying
+        /// the others.
+        #[arg(long)]
+        no_fallback: bool,
+        /// Try the others again when the default is offline (every online
+        /// computer, oldest first, unless `--fallback` names an order).
+        #[arg(long)]
+        fallback_on: bool,
     },
     /// Give a Space a new name; its id stays the same. Lowercase letters,
     /// digits and dashes, as at create. A Space you shared, or one of your
@@ -1199,7 +1245,7 @@ pub async fn run_spaces_sdk(
                 );
             }
         }
-        SpacesCmd::Rm { space } => {
+        SpacesCmd::Rm { space, .. } => {
             let info = spaces.resolve(space.clone()).await?;
             // A Space cua created owns a sandbox (billed, for a cloud one):
             // forgetting it would leave that sandbox running with nothing
@@ -1921,6 +1967,11 @@ pub async fn run_spaces_sdk(
                 "`cua spaces ls` runs over the registry directly".into(),
             ));
         }
+        SpacesCmd::Default { .. } => {
+            return Err(CuaError::Internal(
+                "`cua spaces default` runs against the relay directly".into(),
+            ));
+        }
     }
     Ok(0)
 }
@@ -2026,14 +2077,17 @@ impl AccountTokens for SessionTokens {
     }
 }
 
-/// `cua machines rm`: removes a computer that is gone (its relay row, then
-/// the one signed-in device named like it). The caller folds `--yes` into
-/// `confirm`.
+/// `cua spaces rm <computer>`: removes a computer that is gone (its relay
+/// row, then the one signed-in device named like it). Its Spaces stay on the
+/// account, detached, or with `delete_spaces` are deleted too. The caller
+/// folds `--yes` into `confirm`.
+#[allow(clippy::too_many_arguments)]
 pub async fn remove_machine(
     cua: &cua_sdk::Cua,
     auth: &DeviceAuth,
     tokens: &dyn AccountTokens,
     name: &str,
+    delete_spaces: bool,
     confirm: &dyn Fn(&str) -> bool,
     json: bool,
     out: &mut dyn Write,
@@ -2082,15 +2136,7 @@ pub async fn remove_machine(
             "{rid} is shared with you; only its owner can remove it"
         )));
     }
-    let hosted = m.host.as_deref().is_some_and(|h| !h.is_empty());
-    let cloud = m
-        .meta
-        .get(cua_sandbox_core::byoc::meta::PROVIDER)
-        .is_some_and(|p| !p.is_empty());
-    let registered = !hosted
-        && !m.meta.contains_key(cua_host::META_PROVIDES_SPACES)
-        && m.id.starts_with("space-");
-    if hosted || cloud || registered {
+    if !is_computer_row(m) {
         return Err(CuaError::InvalidArgument(format!(
             "{rid} is a Space, not a computer; manage it with `cua spaces`"
         )));
@@ -2101,8 +2147,28 @@ pub async fn remove_machine(
             m.name
         )));
     }
+    let children: Vec<String> = machines
+        .iter()
+        .filter(|c| c.host.as_deref() == Some(m.id.as_str()))
+        .map(|c| format!("relay:{}", c.id))
+        .collect();
+    let kept = if children.is_empty() {
+        String::new()
+    } else if delete_spaces {
+        format!(
+            " Its {} Space{} and their files will be deleted (the files only if the computer answers).",
+            children.len(),
+            if children.len() == 1 { "" } else { "s" }
+        )
+    } else {
+        format!(
+            " Its {} Space{} stay on your account, detached, and come back if the computer is added again.",
+            children.len(),
+            if children.len() == 1 { "" } else { "s" }
+        )
+    };
     if !confirm(&format!(
-        "Remove {} ({rid}) from your relay directory and revoke the signed-in device named {}?",
+        "Remove {} ({rid}) from your relay directory and revoke the signed-in device named {}?{kept}",
         m.name, m.name
     )) {
         return Err(CuaError::PermissionDenied(
@@ -2110,12 +2176,16 @@ pub async fn remove_machine(
         ));
     }
     // Refuses again if the computer connected meanwhile.
-    let removed = cua.spaces().relay_unregister(rid.clone()).await?;
+    let removed = cua
+        .spaces()
+        .relay_unregister_computer(rid.clone(), delete_spaces)
+        .await?;
     let report = |out: &mut dyn Write, status: &str, ids: &[String], text: String| {
         if json {
             let v = serde_json::json!({
                 "machine": { "id": rid, "name": m.name },
                 "removed": removed,
+                "spaces": { "action": if delete_spaces { "deleted" } else { "detached" }, "ids": children },
                 "device": { "status": status, "ids": ids, "message": text },
             });
             line(out, v.to_string());
@@ -2125,6 +2195,21 @@ pub async fn remove_machine(
                     out,
                     format!("Removed {} ({rid}) from your relay directory.", m.name),
                 );
+                if !children.is_empty() {
+                    line(
+                        out,
+                        format!(
+                            "{} Space{} {}.",
+                            children.len(),
+                            if children.len() == 1 { "" } else { "s" },
+                            if delete_spaces {
+                                "deleted"
+                            } else {
+                                "detached: they come back if the computer is added again"
+                            }
+                        ),
+                    );
+                }
             } else {
                 line(
                     out,
@@ -2204,6 +2289,221 @@ pub async fn remove_machine(
                 many.join(", ")
             ),
         ),
+    }
+    Ok(0)
+}
+
+/// Whether `m` is one of the account's computers (not a Space a computer
+/// provides, one in a cloud, or one that registered itself).
+fn is_computer_row(m: &cua_host::Machine) -> bool {
+    let hosted = m.host.as_deref().is_some_and(|h| !h.is_empty());
+    let cloud = m
+        .meta
+        .get(cua_sandbox_core::byoc::meta::PROVIDER)
+        .is_some_and(|p| !p.is_empty());
+    let registered = !hosted
+        && !m.meta.contains_key(cua_host::META_PROVIDES_SPACES)
+        && m.id.starts_with("space-");
+    !(hosted || cloud || registered)
+}
+
+/// Whether `name` (a name, machine id or `relay:<id>`) is exactly one of
+/// YOUR computers on the relay, so `cua spaces rm` takes it off the relay
+/// (detaching its Spaces) instead of forgetting a registered Space. Signed
+/// out, a relay that does not answer, no match or several: no.
+pub async fn owned_computer(auth: &DeviceAuth, tokens: &dyn AccountTokens, name: &str) -> bool {
+    let Ok(relay) = RelayClient::new(auth.relay_url()) else {
+        return false;
+    };
+    let Ok(token) = tokens.access_token().await else {
+        return false;
+    };
+    let Ok(machines) = auth.machines_for(&relay, &token).await else {
+        return false;
+    };
+    let mut hits = machines
+        .iter()
+        .filter(|m| m.id == name || format!("relay:{}", m.id) == name || m.name == name);
+    matches!((hits.next(), hits.next()), (Some(m), None) if m.role == "owner" && is_computer_row(m))
+}
+
+fn parse_fallback_id(raw: &str, machines: &[cua_host::Machine]) -> Result<String, CuaError> {
+    let raw = raw.trim();
+    let id = raw.strip_prefix("relay:").unwrap_or(raw);
+    // `relay:<computer>/<name>`: a Space inside a computer.
+    let (machine, rest) = match id.split_once('/') {
+        Some((m, n)) => (m, Some(n)),
+        None => (id, None),
+    };
+    let hits: Vec<&cua_host::Machine> = machines
+        .iter()
+        .filter(|m| m.id == machine || m.name.eq_ignore_ascii_case(machine))
+        .collect();
+    match hits.as_slice() {
+        [m] => Ok(match rest {
+            Some(n) => format!("relay:{}/{n}", m.id),
+            None => format!("relay:{}", m.id),
+        }),
+        [] => Err(CuaError::NotFound(format!(
+            "no Space named {raw:?} on your account (`cua spaces ls` lists them)"
+        ))),
+        many => Err(CuaError::InvalidArgument(format!(
+            "several Spaces are named {raw:?}: pass one of {}",
+            many.iter()
+                .map(|m| format!("relay:{}", m.id))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ))),
+    }
+}
+
+/// `cua spaces default`: show, or change, the account's default Space.
+pub async fn run_spaces_default(
+    cmd: SpacesCmd,
+    home: &Path,
+    tokens: Option<Arc<dyn AccountTokens>>,
+    device: Option<Arc<DeviceAuth>>,
+    json: bool,
+    out: &mut dyn Write,
+) -> Result<i32, CuaError> {
+    let SpacesCmd::Default {
+        space,
+        clear,
+        fallback,
+        no_fallback,
+        fallback_on,
+    } = cmd
+    else {
+        return Err(CuaError::Internal("not `cua spaces default`".into()));
+    };
+    let (Some(tokens), Some(auth)) = (tokens, device) else {
+        return Err(CuaError::Unauthenticated(
+            "sign in to cua.ai first (`cua auth login`): the default Space is kept on your account"
+                .into(),
+        ));
+    };
+    let token = tokens.access_token().await.map_err(host_err)?;
+    let session = auth.session().await.map_err(host_err)?;
+    let relay = RelayClient::new(auth.relay_url())
+        .map_err(host_err)?
+        .with_device_session(Some(session));
+    let changes = space.is_some() || clear || fallback.is_some() || no_fallback || fallback_on;
+    let mut saved = None;
+    if changes {
+        let machines = auth.machines_for(&relay, &token).await.map_err(host_err)?;
+        let mut s = relay.spaces_settings(&token).await.map_err(host_err)?;
+        if clear {
+            s.default_space = None;
+        }
+        if let Some(sp) = &space {
+            s.default_space = Some(parse_fallback_id(sp, &machines)?);
+        }
+        if let Some(list) = &fallback {
+            s.fallback = list
+                .iter()
+                .filter(|v| !v.trim().is_empty())
+                .map(|v| parse_fallback_id(v, &machines))
+                .collect::<Result<_, _>>()?;
+            s.fallback_on = true;
+        }
+        if no_fallback {
+            s.fallback_on = false;
+        }
+        if fallback_on {
+            s.fallback_on = true;
+        }
+        // The default is not also one of its own fallbacks.
+        if let Some(d) = s.default_space.clone() {
+            s.fallback.retain(|f| *f != d);
+        }
+        saved = Some(
+            relay
+                .set_spaces_settings(&token, &s)
+                .await
+                .map_err(host_err)?,
+        );
+    }
+    let here = cua_host::Host::new(home)
+        .config()
+        .ok()
+        .flatten()
+        .and_then(|c| c.machine_id)
+        .filter(|id| !id.is_empty());
+    let resolved = relay
+        .resolve_default_space(&token, here.as_deref())
+        .await
+        .map_err(host_err)?;
+    let settings = match saved {
+        Some(s) => s,
+        None => relay.spaces_settings(&token).await.map_err(host_err)?,
+    };
+    if json {
+        line(
+            out,
+            serde_json::json!({
+                "space": resolved.space,
+                "reason": resolved.reason,
+                "default_space": resolved.default_space,
+                "default_online": resolved.default_online,
+                "order": resolved.order,
+                "settings": settings,
+            })
+            .to_string(),
+        );
+        return Ok(0);
+    }
+    let state = |online: bool| if online { "online" } else { "offline" };
+    let name_of = |id: &str| {
+        resolved
+            .order
+            .iter()
+            .find(|s| s.space == id)
+            .map(|s| s.name.clone())
+            .filter(|n| !n.is_empty())
+            .unwrap_or_else(|| id.to_string())
+    };
+    match &resolved.default_space {
+        None => line(out, "No default Space is set."),
+        Some(d) => line(
+            out,
+            format!(
+                "Default: {} ({d}), {}",
+                name_of(d),
+                state(resolved.default_online.unwrap_or(false))
+            ),
+        ),
+    }
+    match (&resolved.space, resolved.reason.as_str()) {
+        (Some(s), "default") => line(out, format!("Using: {} (the default)", name_of(s))),
+        (Some(s), _) => line(
+            out,
+            format!(
+                "Using: {} ({}, because the default is not available)",
+                name_of(s),
+                resolved.reason
+            ),
+        ),
+        (None, _) => line(out, "Using: this computer."),
+    }
+    line(
+        out,
+        if settings.fallback_on {
+            "If the default is offline: try the others"
+        } else {
+            "If the default is offline: use this computer"
+        },
+    );
+    for (i, st) in resolved.order.iter().enumerate() {
+        line(
+            out,
+            format!(
+                "  {}. {:<28} {:<9} {}",
+                i + 1,
+                st.name,
+                st.role,
+                state(st.online)
+            ),
+        );
     }
     Ok(0)
 }
@@ -3614,6 +3914,8 @@ fn ls_json(list: &[cua_spaces::SpaceInfo]) -> Vec<serde_json::Value> {
             let mut v = serde_json::to_value(s).unwrap_or_default();
             if let Some(o) = v.as_object_mut() {
                 o.insert("display_name".into(), display_name(s).into());
+                o.insert("parent".into(), s.parent_space_id().into());
+                o.insert("default".into(), false.into());
             }
             v
         })
@@ -3976,8 +4278,17 @@ pub async fn run_spaces(
     let on_account = spaces.relay_states(&list);
     if json {
         let mut rows = ls_json(&list);
+        // Never holds the list up: signed out or a relay that does not
+        // answer is "no default".
+        let default = spaces.default_space_id().await;
         for (row, info) in rows.iter_mut().zip(&list) {
             columns.annotate(info, row);
+            if let Some(o) = row.as_object_mut() {
+                o.insert(
+                    "default".into(),
+                    (default.as_deref() == Some(info.id.as_str())).into(),
+                );
+            }
             if let (Some(o), Some(state)) = (row.as_object_mut(), on_account.get(&info.id)) {
                 o.insert("relay".into(), (*state).into());
             }
@@ -5854,6 +6165,16 @@ mod tests {
             json: bool,
             answer: impl Fn() -> bool,
         ) -> (Result<i32, CuaError>, String, u32) {
+            rm_with(f, arg, false, json, answer).await
+        }
+
+        async fn rm_with(
+            f: &Fx,
+            arg: &str,
+            delete_spaces: bool,
+            json: bool,
+            answer: impl Fn() -> bool,
+        ) -> (Result<i32, CuaError>, String, u32) {
             let asked = Cell::new(0);
             let mut out = Vec::new();
             let r = remove_machine(
@@ -5861,6 +6182,7 @@ mod tests {
                 &f.auth,
                 &StaticToken("acct".into()),
                 arg,
+                delete_spaces,
                 &|_| {
                     asked.set(asked.get() + 1);
                     answer()
@@ -5900,6 +6222,151 @@ mod tests {
             assert_eq!(v["machine"]["id"], "relay:0123abcd4567ef89");
             assert_eq!(v["device"]["status"], "revoked", "{text}");
             assert_eq!(v["device"]["ids"], serde_json::json!([f.remote[0]]));
+        }
+
+        const CHILD: &str = "bbbb111122223333";
+
+        #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+        async fn spaces_rm_of_a_computer_detaches_its_spaces_unless_told_to_delete_them() {
+            for delete_spaces in [false, true] {
+                let f = fx(&["old-laptop"]).await;
+                register(&f.relay, CHILD, "research", Some(ID), Default::default()).await;
+                let (r, text, asked) =
+                    rm_with(&f, "old-laptop", delete_spaces, true, || true).await;
+                assert_eq!(r.unwrap(), 0, "{text}");
+                assert_eq!(asked, 1);
+                let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+                assert_eq!(
+                    v["spaces"]["action"],
+                    if delete_spaces { "deleted" } else { "detached" }
+                );
+                assert_eq!(
+                    v["spaces"]["ids"],
+                    serde_json::json!([format!("relay:{CHILD}")])
+                );
+                assert!(f.relay.machine(ID).is_none());
+                assert_eq!(f.relay.machine(CHILD).is_some(), !delete_spaces, "{text}");
+            }
+            // The prompt and the one-line summary say what happens to them.
+            let f = fx(&["old-laptop"]).await;
+            register(&f.relay, CHILD, "research", Some(ID), Default::default()).await;
+            let prompt = Cell::new(String::new());
+            let mut out = Vec::new();
+            remove_machine(
+                &f.cua,
+                &f.auth,
+                &StaticToken("acct".into()),
+                "old-laptop",
+                false,
+                &|q| {
+                    prompt.set(q.to_string());
+                    true
+                },
+                false,
+                &mut out,
+            )
+            .await
+            .unwrap();
+            let text = String::from_utf8(out).unwrap();
+            assert!(
+                prompt
+                    .take()
+                    .contains("Its 1 Space stay on your account, detached"),
+                "prompt"
+            );
+            assert!(
+                text.contains("1 Space detached: they come back if the computer is added again."),
+                "{text}"
+            );
+        }
+
+        #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+        async fn owned_computer_is_only_one_of_your_computers() {
+            let f = fx(&["old-laptop"]).await;
+            register(&f.relay, CHILD, "research", Some(ID), Default::default()).await;
+            let tokens = StaticToken("acct".into());
+            assert!(owned_computer(&f.auth, &tokens, "old-laptop").await);
+            assert!(owned_computer(&f.auth, &tokens, &format!("relay:{ID}")).await);
+            // A Space a computer provides, and a name that matches nothing,
+            // keep `cua spaces rm`'s old meaning.
+            assert!(!owned_computer(&f.auth, &tokens, "research").await);
+            assert!(!owned_computer(&f.auth, &tokens, "nothing-here").await);
+        }
+
+        #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+        async fn spaces_default_shows_sets_and_clears_the_default() {
+            let f = fx(&["old-laptop"]).await;
+            f.relay.set_online(ID, true, "1.0");
+            let run = |cmd: SpacesCmd, json: bool| {
+                let auth = f.auth.clone();
+                let home = f._dir.path().join("cua");
+                async move {
+                    let mut out = Vec::new();
+                    let r = run_spaces_default(
+                        cmd,
+                        &home,
+                        Some(Arc::new(StaticToken("acct".into()))),
+                        Some(auth),
+                        json,
+                        &mut out,
+                    )
+                    .await;
+                    (r, String::from_utf8(out).unwrap())
+                }
+            };
+            let cmd = |space: Option<&str>, clear: bool| SpacesCmd::Default {
+                space: space.map(Into::into),
+                clear,
+                fallback: None,
+                no_fallback: false,
+                fallback_on: false,
+            };
+            // Unset.
+            let (r, text) = run(cmd(None, false), true).await;
+            assert_eq!(r.unwrap(), 0, "{text}");
+            let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+            assert!(v["default_space"].is_null(), "{text}");
+            // Set by name, and read back with the order.
+            let (r, text) = run(cmd(Some("old-laptop"), false), true).await;
+            assert_eq!(r.unwrap(), 0, "{text}");
+            let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+            assert_eq!(v["default_space"], format!("relay:{ID}"), "{text}");
+            assert_eq!(v["reason"], "default");
+            assert_eq!(v["default_online"], true);
+            assert_eq!(v["order"][0]["role"], "default");
+            assert_eq!(v["settings"]["fallback_on"], true);
+            let (r, text) = run(cmd(None, false), false).await;
+            assert_eq!(r.unwrap(), 0);
+            assert!(
+                text.contains("Default: old-laptop (relay:0123abcd4567ef89), online"),
+                "{text}"
+            );
+            assert!(text.contains("Using: old-laptop (the default)"), "{text}");
+            // No fallback, then clear.
+            let no_fallback = SpacesCmd::Default {
+                space: None,
+                clear: false,
+                fallback: None,
+                no_fallback: true,
+                fallback_on: false,
+            };
+            let (_, text) = run(no_fallback, true).await;
+            let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+            assert_eq!(v["settings"]["fallback_on"], false, "{text}");
+            let (_, text) = run(cmd(None, true), true).await;
+            let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+            assert!(v["default_space"].is_null(), "{text}");
+            // An unknown name is refused with its name; signed out says so.
+            let (r, _) = run(cmd(Some("no-such-box"), false), true).await;
+            let Err(CuaError::NotFound(m)) = r else {
+                panic!("{r:?}")
+            };
+            assert!(m.contains("no-such-box"), "{m}");
+            let mut out = Vec::new();
+            let r =
+                run_spaces_default(cmd(None, false), f._dir.path(), None, None, false, &mut out)
+                    .await;
+            assert!(matches!(r, Err(CuaError::Unauthenticated(_))), "{r:?}");
         }
 
         #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -6049,6 +6516,7 @@ mod tests {
                     &g.auth,
                     &StaticToken("acct".into()),
                     "old-laptop",
+                    false,
                     &|_| {
                         g.relay.require_devices(false);
                         std::thread::scope(|s| {

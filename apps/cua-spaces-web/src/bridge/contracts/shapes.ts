@@ -69,6 +69,7 @@ import type { TelemetryLinkNotice } from "../ops/telemetry";
 import type { SentFileInfo, SpaceThumbnail, SpaceUsage, SpaceWindows } from "../ops/space-detail";
 import type { RelayUsage } from "../ops/relay-usage";
 import type { DriverActivity, DriverApp, DriverLiveTest, DriverMachine, DriverPermission, DriverStatus, DriverUpdate } from "../ops/driver";
+import type { DefaultSpace, DefaultSpaceStep, SpacesSettings } from "../ops/spaces-settings";
 import type { RiskyRequest } from "../ops/nudges";
 import type { PastMessage, PastThread, RecentThread } from "../ops/agent-threads";
 import type { ComputerResources, DiskOnHost, DiskWarning, GuestUsage, ResourcesSnapshot, SharedBase, SpaceResources } from "../ops/resources";
@@ -90,6 +91,17 @@ const ref = (name: string, s: Schema) => defs.ref(name, s);
 const strings = list(str);
 const limits = list(object({ resource: str, used: num, limit: num, reason: str }));
 const os = oneOf("macos", "windows", "linux", "unknown");
+const SpacesSettingsShape = ref("SpacesSettings", obj<SpacesSettings>()({ defaultSpace: nullable(str), fallback: strings, fallbackOn: bool, updatedAt: num }));
+const DefaultSpaceShape = ref(
+  "DefaultSpace",
+  obj<DefaultSpace>()({
+    space: nullable(str),
+    reason: str,
+    defaultSpace: nullable(str),
+    defaultOnline: nullable(bool),
+    order: list(obj<DefaultSpaceStep>()({ space: str, name: str, online: bool, role: str })),
+  }),
+);
 const RecentThreadShape = ref(
   "RecentThread",
   obj<RecentThread>()({ agent: oneOf("claude-code", "openai-codex", "hermes"), id: str, title: str, cwd: nullable(str), lastActiveMs: num, resume: strings }),
@@ -1592,6 +1604,9 @@ export const OP_SHAPES: Record<OpName, Schema> = {
   "machines.rename": nul,
   "machines.remove": nul,
   "machines.checkHealth": nul,
+  "spaces.settings": nullable(SpacesSettingsShape),
+  "spaces.setSettings": nullable(SpacesSettingsShape),
+  "spaces.resolveDefault": nullable(DefaultSpaceShape),
   "spaces.openStream": obj<StreamTicket>()({ wsUrl: str, expiresAt: nullable(str) }),
   "nudges.pending": list(obj<RiskyRequest>()({ id: str, agent: str, action: str, atMs: num, expiresMs: num })),
   "agents.recentThreads": list(RecentThreadShape),
@@ -2213,6 +2228,9 @@ export const WEBKIT_SHAPES: Partial<Record<WebkitMethod, Schema>> = {
   "machines.rename": nul,
   "machines.remove": nul,
   "machines.checkHealth": nul,
+  "spaces.settings": OP_SHAPES["spaces.settings"],
+  "spaces.setSettings": OP_SHAPES["spaces.setSettings"],
+  "spaces.resolveDefault": OP_SHAPES["spaces.resolveDefault"],
   "checklist.get": OP_SHAPES["checklist.get"],
   "checklist.send": OP_SHAPES["checklist.send"],
   "links.list": OP_SHAPES["links.list"],

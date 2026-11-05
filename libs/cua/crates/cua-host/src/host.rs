@@ -835,6 +835,11 @@ pub struct HostStatus {
     pub permissions: Vec<PermissionHint>,
     /// Last error talking to the relay, if any.
     pub error: Option<String>,
+    /// The relay refused this computer's token: it was removed from the
+    /// account (from another device, which detaches or deletes its Spaces).
+    /// `host setup` then registers it again instead of calling it set up.
+    #[serde(default)]
+    pub revoked: bool,
     /// Who reached this machine recently, newest first (the driver's
     /// hash-chained access log).
     #[serde(default)]
@@ -2229,7 +2234,10 @@ impl Host {
                         status.allow = m.allow;
                     }
                 }
-                Err(e) => status.error = Some(e.to_string()),
+                Err(e) => {
+                    status.revoked = matches!(e, Error::Unauthenticated(_));
+                    status.error = Some(e.to_string());
+                }
             }
         }
         self.add_access(&mut status, now_ms());

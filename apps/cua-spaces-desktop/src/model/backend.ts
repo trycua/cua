@@ -247,8 +247,9 @@ export interface SpacesBackend {
   /** `services.list` / `services.control`: the commands a Space keeps running. */
   services?(id: string): Promise<ServiceJson[]>;
   controlService?(id: string, name: string, action: string): Promise<void>;
-  /** Takes one of your machines off the relay directory (`relay:<machine>`), refused while it is online. */
-  relayUnregister(machineId: string): Promise<void>;
+  /** Takes one of your machines off the relay directory (`relay:<machine>`), refused while it is online. The Spaces made on
+   * it are detached, or with `deleteSpaces` deleted too (the SDK's `relay_unregister_computer`). */
+  relayUnregister(machineId: string, deleteSpaces?: boolean): Promise<void>;
   /** A machine's health as its own cua daemon checks it (the SDK's `Spaces.machine_health`): null for this one, else another of yours by id. */
   machineHealth(machine: string | null): Promise<MachineHealthReport>;
   setPower(id: string, on: boolean): Promise<void>;
@@ -765,8 +766,9 @@ export class LiveSpacesBackend implements SpacesBackend {
     }
   }
 
-  async relayUnregister(machineId: string): Promise<void> {
-    await this.cua.spaces().relayUnregister(`relay:${machineId}`);
+  async relayUnregister(machineId: string, deleteSpaces = false): Promise<void> {
+    if (deleteSpaces) await this.cua.spaces().relayUnregisterComputer(`relay:${machineId}`, true);
+    else await this.cua.spaces().relayUnregister(`relay:${machineId}`);
   }
 
   async machineHealth(machine: string | null): Promise<MachineHealthReport> {

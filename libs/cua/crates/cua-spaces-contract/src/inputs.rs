@@ -269,6 +269,19 @@ pub struct SpaceOnly {
     pub space: SpaceArg,
 }
 
+/// `relay_unregister_space`: take a Space or a computer off the relay.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct RelayUnregisterSpace {
+    /// Space id or name.
+    pub space: SpaceArg,
+    /// For one of your computers: also delete the Spaces it provides, their
+    /// files first (through the computer while it answers), then their
+    /// records. Default false: they stay on your account, detached, and come
+    /// back when the computer registers again.
+    #[serde(default)]
+    pub delete_spaces: Option<bool>,
+}
+
 /// `stop_space`: turn a Space off.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct StopSpace {

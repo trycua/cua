@@ -132,7 +132,9 @@ export function useStartTask(): {
             rememberHome(agent, space.id);
           } else {
             const offer = offers.find((o) => o.os === os);
-            space = await createSpace(offer ? { ...offer.args, os } : { os }, pendingId);
+            // "New Space on <computer>": made on that computer (`host:<machine>`), never silently.
+            const on = target.kind === "create" && target.on ? { on: target.on } : {};
+            space = await createSpace(offer ? { ...offer.args, os, ...on } : { os, ...on }, pendingId);
           }
           spaceId = space.id;
           updateAskTask(id, { spaceId, pendingId: null });

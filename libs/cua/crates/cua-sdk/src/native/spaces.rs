@@ -5159,6 +5159,33 @@ impl Spaces {
         .await
     }
 
+    /// [`Spaces::relay_unregister`] for one of your computers
+    /// (`relay:<machine>`), choosing what happens to the Spaces it
+    /// provides: with `delete_spaces` false they stay on the account,
+    /// detached (they come back when the computer registers again); with
+    /// true they are deleted too, files first (through the computer while
+    /// it answers), then their records. Returns false when it was not on
+    /// the relay.
+    pub async fn relay_unregister_computer(
+        &self,
+        space: String,
+        delete_spaces: bool,
+    ) -> Result<bool> {
+        let host = self.host.clone();
+        run(async move {
+            let v = host
+                .tool_value(
+                    "relay_unregister_space",
+                    json!({"space": space, "delete_spaces": delete_spaces}),
+                )
+                .await?;
+            Ok(v.get("unregistered")
+                .and_then(Value::as_bool)
+                .unwrap_or(false))
+        })
+        .await
+    }
+
     /// A connected handle to a registered Space.
     pub async fn space(&self, space: String) -> Result<Arc<Space>> {
         let host = self.host.clone();

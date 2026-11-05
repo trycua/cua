@@ -36,6 +36,7 @@ import { ciMethods } from "./ci";
 import { threadMethods } from "./thread";
 import { agentThreadsMethods } from "./agent-threads";
 import { relayUsageMethods } from "./relay-usage";
+import { spacesSettingsMethods } from "./spaces-settings";
 import { resourcesMethods } from "./resources";
 import { sessionMethods, sessionState } from "./session";
 import { settingsMethods } from "./settings";
@@ -79,6 +80,7 @@ export const AREAS = [
   streamMethods,
   onboardingMethods,
   relayUsageMethods,
+  spacesSettingsMethods,
   nudgesMethods,
   resourcesMethods,
   checklistMethods,

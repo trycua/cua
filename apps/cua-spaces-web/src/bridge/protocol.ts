@@ -51,6 +51,7 @@ import { RELAY_USAGE_OPERATIONS, type RelayUsageOps } from "./ops/relay-usage";
 import { NUDGES_OPERATIONS, type NudgesOps } from "./ops/nudges";
 import { RESOURCES_OPERATIONS, type ResourcesOps } from "./ops/resources";
 import { MACHINES_OPERATIONS, type MachinesOps } from "./ops/machines";
+import { SPACES_SETTINGS_OPERATIONS, type SpacesSettingsOps } from "./ops/spaces-settings";
 import { CHECKLIST_OPERATIONS, type ChecklistOps } from "./ops/checklist";
 import { LINKS_OPERATIONS, type LinksOps } from "./ops/links";
 import { CLI_OPERATIONS, type CliOps } from "./ops/cli";
@@ -247,6 +248,7 @@ export interface HostOperations
     NudgesOps,
     ResourcesOps,
     MachinesOps,
+    SpacesSettingsOps,
     ChecklistOps,
     LinksOps,
     CliOps,
@@ -552,6 +554,7 @@ export const OPERATIONS = [
   ...NUDGES_OPERATIONS,
   ...RESOURCES_OPERATIONS,
   ...MACHINES_OPERATIONS,
+  ...SPACES_SETTINGS_OPERATIONS,
   ...CHECKLIST_OPERATIONS,
   ...LINKS_OPERATIONS,
   ...CLI_OPERATIONS,

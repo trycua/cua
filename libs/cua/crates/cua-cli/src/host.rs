@@ -4024,9 +4024,12 @@ pub async fn run_spaces(
     if let Some(e) = relay_error {
         line(out, format!("(relay computers unavailable: {e})"));
     }
+    for line_text in hidden_notes(&list) {
+        line(out, line_text);
+    }
     let stay_off: Vec<&str> = list
         .iter()
-        .filter(|i| on_account.get(&i.id) == Some(&"off"))
+        .filter(|i| !i.hidden && on_account.get(&i.id) == Some(&"off"))
         .map(|i| i.shown_name())
         .collect();
     if !stay_off.is_empty() {
@@ -4042,6 +4045,27 @@ pub async fn run_spaces(
         line(out, w);
     }
     Ok(0)
+}
+
+/// A line per kind of hidden Space: the apps do not list it and it is not on
+/// your account (its thread gets a message from a person and it is listed);
+/// `ls` and the tools still return it.
+fn hidden_notes(list: &[cua_spaces::SpaceInfo]) -> Vec<String> {
+    let mut by_note: std::collections::BTreeMap<String, Vec<&str>> = Default::default();
+    for i in list.iter().filter(|i| i.hidden) {
+        let value = i
+            .labels
+            .get(cua_spaces::registry::HIDDEN_LABEL)
+            .map_or("", String::as_str);
+        by_note
+            .entry(cua_spaces::registry::hidden_note(value))
+            .or_default()
+            .push(i.shown_name());
+    }
+    by_note
+        .into_iter()
+        .map(|(note, names)| format!("({note}: {})", names.join(", ")))
+        .collect()
 }
 
 /// The durable Spaces the coordinator of your machines keeps, when a cua
@@ -4376,6 +4400,7 @@ mod tests {
             );
         }
         let space = |id: &str, labels: &[(&str, &str)]| cua_spaces::SpaceInfo {
+            hidden: false,
             id: id.into(),
             name: id.into(),
             display_name: String::new(),
@@ -4441,11 +4466,31 @@ mod tests {
         assert!(rows[0].contains("[run=7, team=research]"), "{rows:?}");
         let json = ls_json(&list);
         assert_eq!(json[0]["labels"]["run"], "7");
+
+        // The home warming for Home's prompt box is listed, marked hidden
+        // (`--json` and a short note); one the app did not prepare is not.
+        let mut home = space("local:home-claude-code", &[("cua.hidden", "home")]);
+        home.hidden = true;
+        let both = vec![home, space("local:home-other", &[])];
+        let json = ls_json(&both);
+        assert_eq!(json.len(), 2);
+        assert_eq!(json[0]["hidden"], true);
+        assert!(json[1].get("hidden").is_none());
+        assert_eq!(
+            hidden_notes(&both),
+            ["(hidden: warming for Home: local:home-claude-code)"]
+        );
+        assert!(
+            grouped_lines(&both, &Default::default())
+                .iter()
+                .any(|r| r.contains("home-claude-code"))
+        );
     }
 
     #[test]
     fn ls_takes_power_from_the_daemon_where_the_registry_has_none() {
         let space = |id: &str, power: &str| cua_spaces::SpaceInfo {
+            hidden: false,
             id: id.into(),
             name: id.into(),
             display_name: String::new(),
@@ -4515,6 +4560,7 @@ mod tests {
     /// Space on that machine.
     fn space(id: &str, host: &str) -> cua_spaces::SpaceInfo {
         cua_spaces::SpaceInfo {
+            hidden: false,
             id: id.into(),
             name: id.into(),
             display_name: String::new(),
@@ -4752,6 +4798,7 @@ mod tests {
     #[test]
     fn spaces_list_by_the_name_the_user_typed() {
         let mut s = cua_spaces::SpaceInfo {
+            hidden: false,
             id: "local:e2e-1005-cli".into(),
             name: "327b8dc70418".into(),
             display_name: String::new(),

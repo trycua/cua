@@ -52,6 +52,7 @@ export function sampleRows(n: Native): AppSpaceRow[] {
     imageDigest: undefined,
     kind: undefined,
     arch: undefined,
+    hidden: false,
     reachable: true,
     error: undefined,
     host: undefined,

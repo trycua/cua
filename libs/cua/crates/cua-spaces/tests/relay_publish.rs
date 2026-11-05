@@ -438,6 +438,78 @@ async fn spaces_added_by_address_and_opted_out_ones_stay_off() {
     assert_eq!(w.rows().await.len(), 1);
 }
 
+/// The home that warms in the background for Home's prompt box is made
+/// hidden (`cua.hidden=home` with `cua.relay=off`, as the app makes it): it
+/// stays off the relay (the phone) and `ls` / the tools still return it,
+/// marked hidden. A person writing into it (`reveal`) lists it from the
+/// next pass; a home of the same name the app did not prepare is never
+/// hidden.
+#[tokio::test]
+async fn a_hidden_home_stays_off_the_relay_until_a_person_writes_into_it() {
+    let w = World::new().await;
+    for n in ["home-claude-code", "plain-home"] {
+        w.driver(n).await;
+    }
+    let make = |name: &str, labels: &[(&str, &str)]| {
+        let spaces = w.spaces.clone();
+        let opts = SpaceCreate {
+            on: Some(On::Local),
+            image: Some("linux".into()),
+            name: Some(name.into()),
+            timeout: Some(Duration::from_secs(30)),
+            labels: labels
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
+            ..Default::default()
+        };
+        async move {
+            let id = spaces.create(opts).await.unwrap().ready().unwrap().id;
+            spaces
+                .registry()
+                .update_meta(&id, |m| m.created_at_unix = 1)
+                .unwrap();
+            id
+        }
+    };
+    make(
+        "home-claude-code",
+        &[("cua.relay", "off"), ("cua.hidden", "home")],
+    )
+    .await;
+    make("plain-home", &[]).await;
+
+    let r = w.spaces.publish_to_relay().await.unwrap();
+    assert_eq!(r.published, ["local:plain-home"], "{r:?}");
+    assert!(!w.attached("home-claude-code"));
+    assert_eq!(w.rows().await.len(), 1);
+
+    // `ls` and the tools keep returning it, marked hidden; the home the app
+    // did not prepare is not.
+    let list = w.spaces.list().unwrap();
+    let flag = |id: &str| list.iter().find(|i| i.id == id).unwrap().hidden;
+    assert!(flag("local:home-claude-code"));
+    assert!(!flag("local:plain-home"));
+    let json = serde_json::to_value(&list).unwrap();
+    let hidden_rows: Vec<_> = json
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|r| r["hidden"] == true)
+        .collect();
+    assert_eq!(hidden_rows.len(), 1);
+    assert_eq!(hidden_rows[0]["id"], "local:home-claude-code");
+
+    // The first message from a person lists it.
+    assert!(w.spaces.reveal("local:home-claude-code").await.unwrap());
+    assert!(!w.spaces.reveal("local:home-claude-code").await.unwrap());
+    assert!(!w.spaces.reveal("local:plain-home").await.unwrap());
+    assert!(!w.spaces.list().unwrap().iter().any(|i| i.hidden));
+    w.spaces.publish_to_relay().await.unwrap();
+    assert_eq!(w.rows().await.len(), 2);
+    assert!(w.attached("home-claude-code"));
+}
+
 /// A Space that was already here before this release is listed once it
 /// runs, whichever way it came to be.
 #[tokio::test]

@@ -38473,6 +38473,10 @@ public struct AppSpace: Equatable, Hashable {
      * ([`crate::spaces::access`]). Absent reads as yours with nobody else.
      */
     public var access: AppSpaceAccess?
+    /**
+     * The home warming for Home's prompt box until a person writes into it: no list shows it.
+     */
+    public var hidden: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -38563,7 +38567,10 @@ public struct AppSpace: Equatable, Hashable {
         /**
          * Who it belongs to, who else has it and what you may do with it
          * ([`crate::spaces::access`]). Absent reads as yours with nobody else.
-         */access: AppSpaceAccess?) {
+         */access: AppSpaceAccess?,
+        /**
+         * The home warming for Home's prompt box until a person writes into it: no list shows it.
+         */hidden: Bool) {
         self.id = id
         self.name = name
         self.os = os
@@ -38590,6 +38597,7 @@ public struct AppSpace: Equatable, Hashable {
         self.cloudPlace = cloudPlace
         self.cloudDelete = cloudDelete
         self.access = access
+        self.hidden = hidden
     }
 
 
@@ -38633,7 +38641,8 @@ public struct FfiConverterTypeAppSpace: FfiConverterRustBuffer {
                 cloud: FfiConverterOptionString.read(from: &buf),
                 cloudPlace: FfiConverterOptionString.read(from: &buf),
                 cloudDelete: FfiConverterOptionString.read(from: &buf),
-                access: FfiConverterOptionTypeAppSpaceAccess.read(from: &buf)
+                access: FfiConverterOptionTypeAppSpaceAccess.read(from: &buf),
+                hidden: FfiConverterBool.read(from: &buf)
         )
     }
 
@@ -38664,6 +38673,7 @@ public struct FfiConverterTypeAppSpace: FfiConverterRustBuffer {
         FfiConverterOptionString.write(value.cloudPlace, into: &buf)
         FfiConverterOptionString.write(value.cloudDelete, into: &buf)
         FfiConverterOptionTypeAppSpaceAccess.write(value.access, into: &buf)
+        FfiConverterBool.write(value.hidden, into: &buf)
     }
 }
 
@@ -40241,7 +40251,9 @@ public struct AppSpaceRow: Equatable, Hashable {
     public var arch: String?
     /**
      * Answered the last connect.
+     * The home warming for Home's prompt box (label `cua.hidden`): no list shows it.
      */
+    public var hidden: Bool
     public var reachable: Bool
     /**
      * Why not.
@@ -40339,7 +40351,8 @@ public struct AppSpaceRow: Equatable, Hashable {
          */arch: String?,
         /**
          * Answered the last connect.
-         */reachable: Bool,
+         * The home warming for Home's prompt box (label `cua.hidden`): no list shows it.
+         */hidden: Bool, reachable: Bool,
         /**
          * Why not.
          */error: String?,
@@ -40389,6 +40402,7 @@ public struct AppSpaceRow: Equatable, Hashable {
         self.imageDigest = imageDigest
         self.kind = kind
         self.arch = arch
+        self.hidden = hidden
         self.reachable = reachable
         self.error = error
         self.host = host
@@ -40432,6 +40446,7 @@ public struct FfiConverterTypeAppSpaceRow: FfiConverterRustBuffer {
                 imageDigest: FfiConverterOptionString.read(from: &buf),
                 kind: FfiConverterOptionTypeAppSpaceKind.read(from: &buf),
                 arch: FfiConverterOptionString.read(from: &buf),
+                hidden: FfiConverterBool.read(from: &buf),
                 reachable: FfiConverterBool.read(from: &buf),
                 error: FfiConverterOptionString.read(from: &buf),
                 host: FfiConverterOptionString.read(from: &buf),
@@ -40461,6 +40476,7 @@ public struct FfiConverterTypeAppSpaceRow: FfiConverterRustBuffer {
         FfiConverterOptionString.write(value.imageDigest, into: &buf)
         FfiConverterOptionTypeAppSpaceKind.write(value.kind, into: &buf)
         FfiConverterOptionString.write(value.arch, into: &buf)
+        FfiConverterBool.write(value.hidden, into: &buf)
         FfiConverterBool.write(value.reachable, into: &buf)
         FfiConverterOptionString.write(value.error, into: &buf)
         FfiConverterOptionString.write(value.host, into: &buf)

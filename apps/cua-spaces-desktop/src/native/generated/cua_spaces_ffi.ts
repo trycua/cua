@@ -13263,7 +13263,11 @@ export type AppSpace = {
      * Who it belongs to, who else has it and what you may do with it
      * ([`crate::spaces::access`]). Absent reads as yours with nobody else.
      */
-    access?: AppSpaceAccess
+    access?: AppSpaceAccess,
+    /**
+     * The home warming for Home's prompt box until a person writes into it: no list shows it.
+     */
+    hidden: boolean
 }
 
 /**
@@ -13312,7 +13316,8 @@ const FfiConverterTypeAppSpace = (() => {
                 cloud: FfiConverterOptionalString.read(from),
                 cloudPlace: FfiConverterOptionalString.read(from),
                 cloudDelete: FfiConverterOptionalString.read(from),
-                access: FfiConverterOptionalTypeAppSpaceAccess.read(from)
+                access: FfiConverterOptionalTypeAppSpaceAccess.read(from),
+                hidden: FfiConverterBool.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -13342,6 +13347,7 @@ const FfiConverterTypeAppSpace = (() => {
             FfiConverterOptionalString.write(value.cloudPlace, into);
             FfiConverterOptionalString.write(value.cloudDelete, into);
             FfiConverterOptionalTypeAppSpaceAccess.write(value.access, into);
+            FfiConverterBool.write(value.hidden, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterString.allocationSize(value.id) +
@@ -13369,7 +13375,8 @@ const FfiConverterTypeAppSpace = (() => {
              FfiConverterOptionalString.allocationSize(value.cloud) +
              FfiConverterOptionalString.allocationSize(value.cloudPlace) +
              FfiConverterOptionalString.allocationSize(value.cloudDelete) +
-             FfiConverterOptionalTypeAppSpaceAccess.allocationSize(value.access);
+             FfiConverterOptionalTypeAppSpaceAccess.allocationSize(value.access) +
+             FfiConverterBool.allocationSize(value.hidden);
 
         }
     };
@@ -44360,7 +44367,9 @@ export type AppSpaceRow = {
     arch?: string,
     /**
      * Answered the last connect.
+     * The home warming for Home's prompt box (label `cua.hidden`): no list shows it.
      */
+    hidden: boolean,
     reachable: boolean,
     /**
      * Why not.
@@ -44444,6 +44453,7 @@ const FfiConverterTypeAppSpaceRow = (() => {
                 imageDigest: FfiConverterOptionalString.read(from),
                 kind: FfiConverterOptionalTypeAppSpaceKind.read(from),
                 arch: FfiConverterOptionalString.read(from),
+                hidden: FfiConverterBool.read(from),
                 reachable: FfiConverterBool.read(from),
                 error: FfiConverterOptionalString.read(from),
                 host: FfiConverterOptionalString.read(from),
@@ -44472,6 +44482,7 @@ const FfiConverterTypeAppSpaceRow = (() => {
             FfiConverterOptionalString.write(value.imageDigest, into);
             FfiConverterOptionalTypeAppSpaceKind.write(value.kind, into);
             FfiConverterOptionalString.write(value.arch, into);
+            FfiConverterBool.write(value.hidden, into);
             FfiConverterBool.write(value.reachable, into);
             FfiConverterOptionalString.write(value.error, into);
             FfiConverterOptionalString.write(value.host, into);
@@ -44499,6 +44510,7 @@ const FfiConverterTypeAppSpaceRow = (() => {
              FfiConverterOptionalString.allocationSize(value.imageDigest) +
              FfiConverterOptionalTypeAppSpaceKind.allocationSize(value.kind) +
              FfiConverterOptionalString.allocationSize(value.arch) +
+             FfiConverterBool.allocationSize(value.hidden) +
              FfiConverterBool.allocationSize(value.reachable) +
              FfiConverterOptionalString.allocationSize(value.error) +
              FfiConverterOptionalString.allocationSize(value.host) +

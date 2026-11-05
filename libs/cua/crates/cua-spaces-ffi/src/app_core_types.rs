@@ -353,6 +353,8 @@ pub struct AppSpace {
     /// Who it belongs to, who else has it and what you may do with it
     /// ([`crate::spaces::access`]). Absent reads as yours with nobody else.
     pub access: Option<AppSpaceAccess>,
+    /// The home warming for Home's prompt box until a person writes into it: no list shows it.
+    pub hidden: bool,
 }
 
 /// One row of the SDK's `list_spaces`.
@@ -391,6 +393,8 @@ pub struct AppSpaceRow {
     /// `aarch64`, `amd64`, `x86_64`).
     pub arch: Option<String>,
     /// Answered the last connect.
+    /// The home warming for Home's prompt box (label `cua.hidden`): no list shows it.
+    pub hidden: bool,
     pub reachable: bool,
     /// Why not.
     pub error: Option<String>,

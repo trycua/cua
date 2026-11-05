@@ -690,6 +690,13 @@ pub struct SpaceInfo {
     /// that created the Space.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub labels: std::collections::BTreeMap<String, String>,
+    /// The Space no list shows: the home that warms in the background for
+    /// Home's prompt box until a person writes into it. `ls` and the tools
+    /// still return it, marked here, so it can be found, used, stopped or
+    /// deleted; it is not on the owner's account until then
+    /// ([`crate::registry::HIDDEN_LABEL`]).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub hidden: bool,
     /// When the Space ends (Unix seconds), as set by
     /// [`crate::Spaces::set_lifetime`]; 0 when it has no lifetime.
     #[serde(default, skip_serializing_if = "is_zero")]
@@ -825,6 +832,7 @@ impl SpaceInfo {
                 .iter()
                 .map(|(k, v)| (k.clone(), v.clone()))
                 .collect(),
+            hidden: record.labels.contains_key(crate::registry::HIDDEN_LABEL),
             sharing: record.sharing.clone().map(Into::into),
         })
     }

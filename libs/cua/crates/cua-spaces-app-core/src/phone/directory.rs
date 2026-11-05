@@ -229,6 +229,7 @@ pub fn space_row(row: &RelayRow, host_name: Option<&str>) -> SpaceRow {
     let host = row.host.clone().filter(|h| !h.is_empty());
     let os = os_of(row);
     SpaceRow {
+        hidden: false,
         id: format!("relay:{}", row.id),
         name: if row.name.is_empty() {
             row.id.clone()

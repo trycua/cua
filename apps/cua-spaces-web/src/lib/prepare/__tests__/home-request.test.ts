@@ -27,6 +27,11 @@ describe("the new setup's first Space create", () => {
     expect(NO_LINUX_OFFER).not.toMatch(/config|image:|string/);
   });
 
+  it("is labelled hidden and off the relay: out of the top bar and off the phone's list until a person writes into it", () => {
+    const offer = { id: "linux", os: "linux", image: "ghcr.io/trycua/linux:24.04-slim", name: "Ubuntu", size: null, time: "", blocked: null, args: { image: "ghcr.io/trycua/linux:24.04-slim", on: "local", kind: "container", runtime: "auto", spacesd: true } } as FirstSpaceOffer;
+    expect(homeCreateRequest([offer], "home-claude-code")).toMatchObject({ name: "home-claude-code", labels: { "cua.hidden": "home", "cua.relay": "off" } });
+  });
+
   it.skipIf(!wasmBuilt)("is the wizard's Linux offer for this machine, under the home's name", async () => {
     const core = await testCore();
     const offers = firstSpaceOffers(core, MAC, "macos");

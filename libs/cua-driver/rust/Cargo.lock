@@ -3502,6 +3502,7 @@ dependencies = [
  "cua-cursor-motion",
  "cua-driver-contract",
  "cua-driver-core",
+ "cua-driver-sdk",
  "cursor-overlay",
  "foreign-types 0.5.0",
  "futures-util",

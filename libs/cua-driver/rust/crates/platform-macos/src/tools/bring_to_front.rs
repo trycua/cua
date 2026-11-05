@@ -20,7 +20,6 @@ use cua_driver_core::{
 use objc2_app_kit::{NSApplicationActivationOptions, NSRunningApplication};
 use serde_json::{json, Value};
 
-use crate::ax::bindings::raise_exact_window_of_pid;
 use crate::windows::{WindowBounds, WindowInfo};
 
 pub struct BringToFrontTool;
@@ -234,6 +233,14 @@ fn wait_for_exact_window(pid: i32, window_id: u32) -> ExactWindowObservation {
     }
 }
 
+/// Best-effort completion of the one exact-window request. This addresses only
+/// the requested AX window; it never orders every window owned by the process.
+fn raise_exact_ax_window(pid: i32, window_id: u32) -> bool {
+    super::ax_window::Window::new(pid, window_id)
+        .focus()
+        .unwrap_or(false)
+}
+
 /// Activate `pid` and make `window_id` its key window exactly as
 /// `bring_to_front` does (SkyLight process front, exact make-key, Cocoa
 /// activation, AX raise), then wait for the exact postcondition. Blocking.
@@ -251,7 +258,7 @@ pub(crate) fn activate_exact_window_blocking(pid: i32, window_id: u32) -> bool {
     unsafe {
         app.activateWithOptions(NSApplicationActivationOptions::NSApplicationActivateAllWindows)
     };
-    raise_exact_window_of_pid(pid, window_id);
+    raise_exact_ax_window(pid, window_id);
     wait_for_exact_window(pid, window_id).exact_postcondition(pid, window_id)
 }
 
@@ -370,6 +377,10 @@ impl Tool for BringToFrontTool {
             None => None,
         };
 
+        if !cua_driver_core::native_operation::NativeOperation::current().begin() {
+            return ToolResult::error("bring_to_front: cancelled before native activation");
+        }
+
         let Some(app) =
             (unsafe { NSRunningApplication::runningApplicationWithProcessIdentifier(pid) })
         else {
@@ -441,7 +452,7 @@ impl Tool for BringToFrontTool {
                     NSApplicationActivationOptions::NSApplicationActivateAllWindows,
                 )
             };
-            let ax_window_requested = raise_exact_window_of_pid(pid, window_id);
+            let ax_window_requested = raise_exact_ax_window(pid, window_id);
             let path = match (
                 skylight_process_accepted,
                 skylight_exact_accepted,

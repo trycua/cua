@@ -5,7 +5,7 @@ import { Link } from "@tanstack/react-router";
 import { CheckIcon, ChevronRightIcon, MousePointer2Icon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
-import { pointerChange, pointerSettings, POINTER_STYLES, useDriver, useDriverMachines, type DriverApp, type DriverHook, type DriverStatus, type PointerSettings } from "@/bridge";
+import { pointerChange, pointerSettings, POINTER_STYLES, useBridge, useDriver, useDriverMachines, type DriverApp, type DriverHook, type DriverStatus, type PointerSettings } from "@/bridge";
 import { useAppPermissions } from "@/bridge/app-permissions";
 import { AppMarkImage } from "@/components/agents/harness-mark";
 import { AppPermissionList } from "@/components/app-permissions";
@@ -18,7 +18,7 @@ import { Segmented } from "@/components/ui/segmented";
 import { Select } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { toast, toastError } from "@/components/ui/toast";
-import { driverUsesAppPermissions } from "@/lib/app-permissions";
+import { driverUsesAppPermissions, repairOutcome } from "@/lib/app-permissions";
 import { cn } from "@/lib/utils";
 import { DRIVER_LINE, markFor, stateText, testText, versionText } from "./copy";
 import { PointerPreview } from "./pointer-preview";
@@ -74,6 +74,7 @@ function DriverBody({ driver, status }: { driver: DriverHook; status: DriverStat
 /* ---- The top: keycap, the line, state, version, actions, preview ---------------- */
 
 function Hero({ driver, status, settings }: { driver: DriverHook; status: DriverStatus; settings: PointerSettings }) {
+  const bridge = useBridge();
   const [busy, setBusy] = useState<"test" | "setup" | null>(null);
   const run = async (what: "test" | "setup", work: () => Promise<void>) => {
     setBusy(what);
@@ -99,9 +100,12 @@ function Hero({ driver, status, settings }: { driver: DriverHook; status: Driver
         return undefined;
       });
       if (after === undefined) return;
-      const t = after?.lastTest;
-      if (t && !t.passed) toast("Set up, but the test didn't pass", { description: t.failure ?? undefined, type: "error" });
-      else toast("Cua Driver is ready", { description: "Start a new Claude Code or Codex session to use it." });
+      if (!after) return;
+      const outcome = repairOutcome(after);
+      if (outcome.kind === "ok") toast(outcome.title, { description: outcome.description });
+      else toast(outcome.title, { description: outcome.description, type: "error" });
+      // A switch that's off: open its guide now, so Repair leaves one thing to do.
+      if (outcome.kind === "permission" && outcome.settingsUrl) await bridge.data?.call("host.openSettings", { url: outcome.settingsUrl }).catch(toastError("Couldn't open System Settings"));
     });
   const ok = status.state === "ready";
   const tested = testText(status);

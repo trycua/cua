@@ -1,6 +1,3 @@
-// SPDX-License-Identifier: FSL-1.1-MIT
-// Copyright (c) 2026 Cua AI, Inc.
-
 //! Friendly default names for Spaces: `brave-otter`, `quiet-heron`.
 //!
 //! One generator for every surface (the SDK, the CLI, MCP `create_space`,

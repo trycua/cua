@@ -13,6 +13,8 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 THIS = Path(__file__).resolve()
+# The guard reads Latest only to put it back on Cua Spaces; it is not a consumer.
+GUARD = ".github/scripts/pin_latest_release.py"
 
 # A lookup of the repo-wide Latest on trycua/cua, however it is spelled.
 CONSUMERS = [
@@ -33,6 +35,7 @@ def _files():
         path = REPO_ROOT / rel
         if (
             path == THIS
+            or rel == GUARD
             or rel.startswith((".github/release-backfill/", "blog/", "libs/spaces-sdk-swift/"))
             or rel.endswith(("CHANGELOG.md", ".lock", ".lockb"))
             or "/tests/" in rel

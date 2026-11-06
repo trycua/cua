@@ -2398,7 +2398,10 @@ jobs:
           if [ "$PRERELEASE" = true ]; then
             flags+=(--prerelease --latest=false)
           else
+            # Cua Spaces is the one package allowed to be the repo-wide "Latest".
+            # Every other release workflow passes --latest=false (release-latest-policy test).
             flags+=(--prerelease=false)
+            [ "$GITHUB_REPOSITORY" = trycua/cua ] && flags+=(--latest)
           fi
           if [ "$GITHUB_REPOSITORY" != trycua/cua ] || grep -q UNSIGNED signing/*.txt; then
             label="staging"; [ "$GITHUB_REPOSITORY" = trycua/cua ] && label="test"

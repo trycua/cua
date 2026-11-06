@@ -81,7 +81,8 @@
 # nothing is asked to unlock it and a locked login Keychain does not matter).
 # It writes nothing to your login Keychain; it reuses a certificate already
 # there, or the Keychain Cua Driver's local install made, as before.
-# CUA_LOCAL_SIGNING_OWN_KEYCHAIN=0 turns that off. When nothing works the app is
+# CUA_LOCAL_SIGN=adhoc skips every certificate and signs ad hoc (no Keychain
+# prompt at all). CUA_LOCAL_SIGNING_OWN_KEYCHAIN=0 turns the own Keychain off. When nothing works the app is
 # signed ad hoc and the script says why in one line.
 #
 # Uninstall: scripts/uninstall-local.sh.
@@ -812,13 +813,20 @@ make_signing_identity_usable() {
 # has the certificate (never swap a working signature for an ad hoc one).
 sign_staged_app() {
     local app_stage="$1" app_dest="$2" sign_id requirement
-    choose_signing_keychain
-    sign_id="$(ensure_local_signing_identity)"
+    # CUA_LOCAL_SIGN=adhoc: sign ad hoc and never look for, create or use a
+    # certificate, so codesign never asks for a Keychain key ("codesign wants to
+    # access key id"). The grants then reset on each rebuild.
+    if [ "${CUA_LOCAL_SIGN:-}" = adhoc ]; then
+        sign_id="-"
+    else
+        choose_signing_keychain
+        sign_id="$(ensure_local_signing_identity)"
+    fi
     if [ "$sign_id" != "-" ]; then
         # Our own Keychain has an empty password: codesign may use the key now.
         if [ "$OWNED_SIGNING" = 1 ]; then open_key_to_codesign "$OWNED_SIGNING_KEYCHAIN" "" || true; fi
         make_signing_identity_usable "$sign_id" "$app_stage" || true
-    elif signing_certificate_missing; then
+    elif [ "${CUA_LOCAL_SIGN:-}" != adhoc ] && signing_certificate_missing; then
         SIGNING_PROBLEM=no-certificate
         warn "could not create the stable local certificate in $(local_signing_keychain): the Keychain is probably locked."
     fi

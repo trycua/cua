@@ -636,6 +636,8 @@ mod tests {
                 }
                 trees.push(TreeWalkResult {
                     nodes: vec![button],
+                    regions: Vec::new(),
+                    surfaces: Vec::new(),
                     tree_markdown: String::new(),
                     truncated: false,
                     depth_truncated: false,

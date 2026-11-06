@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.40.5](https://github.com/trycua/cua/compare/cua-driver-rs-v0.40.4...cua-driver-rs-v0.40.5) (2026-11-06)
+
+
+### Bug Fixes
+
+* **cua-driver:** keep polling macOS grants after the permissions gate times out ([#6739](https://github.com/trycua/cua/issues/6739)) ([f54add4](https://github.com/trycua/cua/commit/f54add4681c070e81d73982cfae8cd4a10ec61ac))
+* **cua-driver:** refuse MCP requests before initialize on HTTP and envelope transports ([#6743](https://github.com/trycua/cua/issues/6743)) ([989941f](https://github.com/trycua/cua/commit/989941fde8a993f286dfbbd72f2a3030b2562983))
+
 ## [0.40.4](https://github.com/trycua/cua/compare/cua-driver-rs-v0.40.3...cua-driver-rs-v0.40.4) (2026-11-06)
 
 

@@ -2,7 +2,7 @@
 
 _Published on November 6, 2026 by Francesco Bonacci_
 
-*Published alongside the Cua Driver Bench report with Scale AI. Scale's per-trial data: [CuaDriverBench-AgentEnv](https://huggingface.co/datasets/earakely-scale/CuaDriverBench-AgentEnv) on Hugging Face. Code: [trycua/cua/libs/cua-driver-bench](https://github.com/trycua/cua/tree/main/libs/cua-driver-bench).*
+*Published alongside the Cua Driver Bench report with Scale AI. Scale's results: the [CuaDriverBench-AgentEnv Space](https://huggingface.co/spaces/earakely-scale/CuaDriverBench-AgentEnv) on Hugging Face, with per-trial data in the [CuaDriverBench-AgentEnv dataset](https://huggingface.co/datasets/earakely-scale/CuaDriverBench-AgentEnv). Code: [trycua/cua/libs/cua-driver-bench](https://github.com/trycua/cua/tree/main/libs/cua-driver-bench).*
 
 Computer-use agents can now finish a fair number of desktop tasks. Most of them do it by taking over the screen: they bring the app to the front, move the pointer and type into whatever has focus. That's fine on a spare machine. It isn't fine on the computer you're using, where the agent's click lands in your email and your typing ends up in its spreadsheet.
 
@@ -50,7 +50,7 @@ Cua Driver Bench has ten public tasks. Three are multi-app workflows (CDB-G02 to
 
 We compare four drivers: cua-driver 0.38.0 (Cua), Vercel Labs' agent-desktop 1.2.0, browser-use (macos-harness 0.2.1, windows-harness 0.2.2) and Codex Computer Use, OpenAI's computer-use plugin from the ChatGPT app. In our setup Claude chooses the actions for every driver, so the Codex row is OpenAI's tool layer driven by Claude, not OpenAI's own agent. Codex Computer Use isn't available on Linux yet ([OpenAI's Linux app docs](https://learn.chatgpt.com/docs/linux/linux-app#compatibility-and-limitations)), and on Windows it runs in the foreground only ([OpenAI's computer use docs](https://learn.chatgpt.com/docs/computer-use)).
 
-**Where the numbers come from.** Scale ran cua-driver, agent-desktop and browser-use on macOS, and cua-driver on Linux (Ubuntu 24.04 with XFCE), on AgentEnv, and published every trial. Those are the numbers we report for them. Where Scale has no result, the number is Cua's, labelled "run by Cua": Codex Computer Use on macOS (plain macOS VMs), all four drivers on Windows (one Windows 11 VM), and agent-desktop on Linux (the same Ubuntu 24.04 and XFCE desktop). Next week, AgentEnv will add the Windows runs, possibly Codex Computer Use as well, and 30+ more tasks. Until then, those numbers here stay run by Cua. Every rate below is k out of n trials, and charts show a Wilson 95% interval. With 30 to 50 trials per driver, some gaps are within noise, and we say so where they are.
+**Where the numbers come from.** Scale ran cua-driver, agent-desktop and browser-use on macOS, and cua-driver on Linux (Ubuntu 24.04 with XFCE), on AgentEnv, and published every trial. Those are the numbers we report for them. Where Scale has no result, the number is Cua's, labelled "run by Cua": Codex Computer Use on macOS (plain macOS VMs), all four drivers on Windows (one Windows 11 VM), and agent-desktop on Linux (the same Ubuntu 24.04 and XFCE desktop). Next week, AgentEnv will add all 42+ tasks, including Windows, and possibly Codex Computer Use as well. Until then, those numbers here stay run by Cua. Every rate below is k out of n trials, and charts show a Wilson 95% interval. With 30 to 50 trials per driver, some gaps are within noise, and we say so where they are.
 
 ## 2. Results
 
@@ -162,7 +162,7 @@ For the runs we did ourselves, our invocation differs from the public runner in 
 
 - cua-driver fixes for the two macOS gaps: choosing from a pop-up menu without showing it over the user's window, and drag and drop in the background. Then the Windows activation cases on IR-01, IR-03 and IR-04, and on Linux the two limits behind cua-driver's refusals in Scale's run: background input to Chromium and Electron windows on X11, and background keystrokes without a virtual keyboard device.
 - OpenAI's models through OpenAI's own harness are already in Scale's dataset: GPT-6 Luna, GPT-6.1 Terra and GPT-6.1 Sol through Codex CLI at medium effort, on Linux with cua-driver, 90 trials each. One caveat if you build on Codex: it hands the model only a tool result's structuredContent, so the model never sees cua-driver's screenshots, only its accessibility tree. Scale ran Codex as shipped.
-- Next week, AgentEnv will add the Windows runs, possibly Codex Computer Use as well, and 30+ more tasks.
+- Next week, AgentEnv will add all 42+ tasks, including Windows, and possibly Codex Computer Use as well.
 - The sealed held-out task set, run under the same rules.
 
 If you build a driver, an agent or a desktop and want your setup in the next run, open an issue on the repository. We're especially interested in hearing from anyone working on background hover at the OS or compositor level.
@@ -173,4 +173,4 @@ Scale's numbers: every trial, with its screen recording, full transcript and gra
 
 ## Acknowledgements
 
-Thanks to Edgar Arakelyan at Scale AI for the background framing, for the AgentEnv runs on Linux and macOS, for publishing the per-trial dataset, and for the recordings we reuse in this post.
+Thanks to [Edgar Arakelyan](https://x.com/earakely) at Scale AI for the background framing, for the AgentEnv runs on Linux and macOS, for publishing the per-trial dataset, and for the recordings we reuse in this post.

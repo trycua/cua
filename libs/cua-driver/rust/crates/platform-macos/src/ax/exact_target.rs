@@ -38,21 +38,48 @@ const MAX_SHEET_NESTING: usize = 8;
 /// A sheet is its own WindowServer window (and a remote Open/Save panel's
 /// content lives in yet another, service-owned one), but it is modal to the
 /// window it is attached to and is observed inside that window's snapshot.
-/// An element under an `AXSheet` therefore resolves to the sheet's parent
-/// window when AX proves that parent (issue #4392).
+/// An element under an `AXSheet` therefore answers to the sheet and to the
+/// sheet's parent window when AX proves that parent (issue #4392). AppKit
+/// reports such an element's `AXWindow` as the parent window, so while that
+/// window has a sheet the `AXParent` chain decides.
 ///
 /// # Safety
 ///
 /// `element` must be a valid `AXUIElementRef` for the duration of the call.
 pub unsafe fn element_window_id(element: AXUIElementRef) -> Option<AxWindowId> {
     if let Some(window) = copy_element_attr(element, "AXWindow") {
-        let window_id = owning_window_id(window);
+        let mut window_id = owning_window_id(window);
+        if has_sheet(window) {
+            window_id = nearest_window_ancestor(element).or(window_id);
+        }
         CFRelease(window as CFTypeRef);
         if window_id.is_some() {
             return window_id;
         }
     }
-    // Fallback: ascend AXParent until a window role, then map it.
+    nearest_window_ancestor(element)
+}
+
+/// Whether one of `window`'s children is an `AXSheet`.
+///
+/// # Safety
+///
+/// `window` must be a valid `AXUIElementRef`.
+unsafe fn has_sheet(window: AXUIElementRef) -> bool {
+    let mut found = false;
+    for child in copy_children(window) {
+        found = found || copy_string_attr(child, "AXRole").as_deref() == Some("AXSheet");
+        CFRelease(child as CFTypeRef);
+    }
+    found
+}
+
+/// Ascend `AXParent` from `element` to the nearest window or sheet and map it.
+///
+/// # Safety
+///
+/// `element` must be a valid `AXUIElementRef`.
+unsafe fn nearest_window_ancestor(element: AXUIElementRef) -> Option<AxWindowId> {
     let mut current: AXUIElementRef = element;
     let mut owned = false;
     let mut resolved = None;

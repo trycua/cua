@@ -30,7 +30,6 @@ use cua_driver_testkit::{harness_app, Driver, McpDriver};
 
 const MAIN_TITLE: &str = "CuaTestHarness AppKit";
 const SECONDARY_TITLE: &str = "CuaTestHarness AppKit Secondary";
-const SHEET_TITLE: &str = "CuaTestHarness AppKit Sheet";
 const OCCLUDER_TITLE: &str = "CuaTestHarness SwiftUI";
 #[link(name = "CoreGraphics", kind = "framework")]
 extern "C" {
@@ -390,8 +389,9 @@ fn modal_sheet_never_yields_false_parent_success() {
     assert_ne!(focused_window_title(target.pid), MAIN_TITLE);
 }
 
-/// The sheet's text field value, read through System Events.
-fn sheet_field_value(pid: u32) -> String {
+/// The sheet's text field value, read through System Events. `Err` carries
+/// the oracle's error while the sheet is not readable yet.
+fn sheet_field_value(pid: u32) -> Result<String, String> {
     let script = format!(
         "tell application \"System Events\" to tell (first process whose unix id is {pid}) to get value of text field 1 of sheet 1 of window \"{MAIN_TITLE}\""
     );
@@ -399,12 +399,26 @@ fn sheet_field_value(pid: u32) -> String {
         .args(["-e", &script])
         .output()
         .expect("query sheet field");
-    assert!(
-        output.status.success(),
-        "sheet-field oracle failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    String::from_utf8_lossy(&output.stdout).trim().to_owned()
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
+    } else {
+        Err(String::from_utf8_lossy(&output.stderr).trim().to_owned())
+    }
+}
+
+fn wait_for_sheet_field(pid: u32, expected: &str, context: &str) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let value = sheet_field_value(pid);
+        if value.as_deref() == Ok(expected) {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "{context}: sheet field is {value:?}, expected {expected:?}"
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
 }
 
 /// Keys addressed to a sheet's own id and to its parent's id both reach the
@@ -418,21 +432,15 @@ fn sheet_and_parent_ids_both_reach_the_sheet_and_the_sheet_snapshot_is_isolated(
     let target = launch(&mut driver, Some("sheet-input"));
     let windows = wait_for_window_ids(&target, &["main", "sheet"]);
     let (parent, sheet) = (windows["main"], windows["sheet"]);
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while !sheet_field_value(target.pid).is_empty()
-        || focused_window_title(target.pid) != SHEET_TITLE
-    {
-        assert!(Instant::now() < deadline, "sheet field never took focus");
-        std::thread::sleep(Duration::from_millis(100));
-    }
+    wait_for_sheet_field(target.pid, "", "sheet before input");
 
     let mut typed = String::new();
     for (window_id, text) in [(sheet, "sheet"), (parent, "parent")] {
         let result = driver.call(
-            "type_text_chars",
+            "type_text",
             serde_json::json!({
                 "pid": target.pid, "window_id": window_id, "text": text,
-                "type_chars_only": true, "delay_ms": 20,
+                "delivery_mode": "background",
             }),
         );
         assert!(
@@ -441,15 +449,24 @@ fn sheet_and_parent_ids_both_reach_the_sheet_and_the_sheet_snapshot_is_isolated(
             result.raw
         );
         typed.push_str(text);
-        let deadline = Instant::now() + Duration::from_secs(3);
-        while sheet_field_value(target.pid) != typed {
-            assert!(
-                Instant::now() < deadline,
-                "keys to window {window_id} did not reach the sheet field: {:?}",
-                sheet_field_value(target.pid)
-            );
-            std::thread::sleep(Duration::from_millis(100));
-        }
+        wait_for_sheet_field(target.pid, &typed, &format!("keys to window {window_id}"));
+    }
+    for window_id in [sheet, parent] {
+        let result = driver.call(
+            "press_key",
+            serde_json::json!({"pid": target.pid, "window_id": window_id, "key": "delete"}),
+        );
+        assert!(
+            !result.is_error(),
+            "press_key to window {window_id}: {}",
+            result.raw
+        );
+        typed.pop();
+        wait_for_sheet_field(
+            target.pid,
+            &typed,
+            &format!("press_key to window {window_id}"),
+        );
     }
 
     let state = |window_id: u32, driver: &mut McpDriver| {
@@ -497,7 +514,7 @@ fn sheet_and_parent_ids_both_reach_the_sheet_and_the_sheet_snapshot_is_isolated(
         serde_json::json!({"element_token": token, "value": "token"}),
     );
     assert!(!result.is_error(), "set_value in the sheet: {}", result.raw);
-    assert_eq!(sheet_field_value(target.pid), "token");
+    wait_for_sheet_field(target.pid, "token", "set_value in the sheet");
 }
 
 #[test]

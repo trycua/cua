@@ -592,6 +592,22 @@ impl FocusSnapshot {
         target_pid: Option<u32>,
         settle_watch: bool,
     ) -> FocusGuardReport {
+        self.restore_guarded(target_pid, settle_watch, true)
+    }
+
+    /// The foreground transaction's restore: `target_pid` attributes a new
+    /// popup's grab, but the same-app rule is off, since a foreground action
+    /// gives the focus back even to a prior window of the target's process.
+    pub(crate) fn restore_after_foreground(&self, target_pid: Option<u32>) -> FocusGuardReport {
+        self.restore_guarded(target_pid, false, false)
+    }
+
+    fn restore_guarded(
+        &self,
+        target_pid: Option<u32>,
+        settle_watch: bool,
+        same_app: bool,
+    ) -> FocusGuardReport {
         let started = Instant::now();
         let Ok(x) = X::open() else {
             return FocusGuardReport::default();
@@ -631,10 +647,12 @@ impl FocusSnapshot {
         }
 
         // Popups opened by the action: an open GTK/VCL menu grabs the keyboard.
+        // The driver's own agent-cursor overlay grabs nothing.
         let new_popups: Vec<Window> = x
             .mapped_popups()
             .difference(&self.popups)
             .copied()
+            .filter(|w| !x.window_title(*w).starts_with("Cua.AgentCursorOverlay."))
             .collect();
         if !new_popups.is_empty() {
             report.grab_held_by = new_popups
@@ -674,7 +692,7 @@ impl FocusSnapshot {
             && x.active_window() != self.active;
         match guard_restore(
             closed.is_some(),
-            target_pid,
+            target_pid.filter(|_| same_app),
             self.previous_owner,
             new_owner.filter(|_| !wm_only),
             report.grab_held_by.is_some(),

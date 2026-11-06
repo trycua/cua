@@ -168,15 +168,17 @@ pub fn with_x11_foreground<T>(
         }
         RestoreMode::LeaveFocused => (None, None),
     };
+    // Read before the body, which may close the target.
+    let target_pid = prior
+        .as_ref()
+        .and_then(|_| crate::x11::window_pid(xid).or(opts.target_pid));
     let ran = crate::input::foreground::activate(xid, opts).and_then(|activated| {
         admit_lock(policy::Scope::WindowInput, facts::Fact::Known(true))?;
         let value = body()?;
         Ok((value, activated.report()))
     });
-    // No target pid: a prior window of the target's own process is given
-    // back too, unlike the background guard's same-app rule.
     let unrestored = prior
-        .map(|prior| prior.restore_if_changed_opts(None, false))
+        .map(|prior| prior.restore_after_foreground(target_pid))
         .filter(|r| matches!(r.outcome(), Some("not_restored" | "grab_held")))
         .map(|r| {
             format!(

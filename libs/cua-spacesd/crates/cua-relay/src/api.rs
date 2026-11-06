@@ -155,6 +155,26 @@ pub(crate) fn error(status: StatusCode, message: impl Into<String>) -> Response 
     (status, Json(serde_json::json!({"error": message.into()}))).into_response()
 }
 
+/// [`error`] with a stable `code` next to the reason, for a refusal the
+/// apps answer with a screen of their own (the reason stays for people and
+/// older apps; the code is what an app matches on).
+pub(crate) fn coded_error(
+    status: StatusCode,
+    code: &'static str,
+    message: impl Into<String>,
+) -> Response {
+    (
+        status,
+        Json(serde_json::json!({"error": message.into(), "code": code})),
+    )
+        .into_response()
+}
+
+/// The `code` of the refusal of a new computer that arrived with neither an
+/// enrolled device's signature, a sign-in that proved a second factor, nor
+/// a pairing code (S5): the apps ask the person to confirm it is them.
+pub const NEW_COMPUTER_NEEDS_PROOF: &str = "new_computer_needs_proof";
+
 fn directory_error(e: DirectoryError) -> Response {
     let status = match &e {
         DirectoryError::Invalid(_) => StatusCode::BAD_REQUEST,
@@ -558,8 +578,9 @@ async fn register(
             }
         }
         if is_new && !proven {
-            return error(
+            return coded_error(
                 StatusCode::FORBIDDEN,
+                NEW_COMPUTER_NEEDS_PROOF,
                 "add computers from a computer you already added, or with a pairing code",
             );
         }

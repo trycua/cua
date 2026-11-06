@@ -110,9 +110,17 @@ function MachinesPage() {
   const { add, join, relay } = Route.useSearch();
   const navigate = Route.useNavigate();
   const [adding, setAddingState] = useState(add === true || join !== undefined);
+  // "Use a code from another computer" (This Mac's setup refused for want of
+  // proof): the sheet opens on "Enter a code".
+  const [enterCode, setEnterCode] = useState(false);
   const setAdding = (open: boolean) => {
     setAddingState(open);
+    if (!open) setEnterCode(false);
     if (!open && (add || join)) void navigate({ search: {}, replace: true });
+  };
+  const openEnterCode = () => {
+    setEnterCode(true);
+    setAddingState(true);
   };
   useEffect(() => {
     if (add || join) setAddingState(true);
@@ -182,14 +190,14 @@ function MachinesPage() {
             ) : pendingPage ? (
               <PendingDetail key={pendingPage.id} machine={pendingPage} now={now} busy={actions.busy === pendingPage.id} onAdd={() => actions.add(pendingPage)} onNotMe={() => actions.notMe(pendingPage)} />
             ) : selected ? (
-              <MachineDetail key={selected.id} machine={selected} row={row(selected.id)} onRemoved={() => setSelectedId(null)} />
+              <MachineDetail key={selected.id} machine={selected} row={row(selected.id)} onRemoved={() => setSelectedId(null)} onUseCode={openEnterCode} />
             ) : null}
           </div>
         </div>
       )}
       <EnrollSheet />
       {actions.notMeDialog((machine) => remove(machine, null))}
-      <AddComputerSheet open={adding} onOpenChange={setAdding} initialView={join !== undefined ? "enter" : "pick"} initialCode={join ?? ""} initialRelay={relay ?? null} />
+      <AddComputerSheet open={adding} onOpenChange={setAdding} initialView={join !== undefined || enterCode ? "enter" : "pick"} initialCode={join ?? ""} initialRelay={relay ?? null} />
     </Page>
   );
 }
@@ -481,7 +489,7 @@ function MachineRow({
 
 /* ---- A machine's page --------------------------------------------------------------- */
 
-function MachineDetail({ machine: m, row, onRemoved }: { machine: MachinesViewMachine; row: Machine | undefined; onRemoved: () => void }) {
+function MachineDetail({ machine: m, row, onRemoved, onUseCode }: { machine: MachinesViewMachine; row: Machine | undefined; onRemoved: () => void; onUseCode?: () => void }) {
   const { data: session } = useSession();
   const { account, now, devices } = useMachinesAccount();
   const host = useThisMachine(session?.identity ?? null);
@@ -526,7 +534,7 @@ function MachineDetail({ machine: m, row, onRemoved }: { machine: MachinesViewMa
   if (m.current && host.formView) {
   return (
       <section aria-label={`${m.name} details`} className="min-w-0">
-        <ThisMachineExtras panel={row?.panel ?? null} progress={row?.hostProgress} />
+        <ThisMachineExtras panel={row?.panel ?? null} progress={row?.hostProgress} onUseCode={onUseCode} />
       </section>
     );
   }
@@ -596,7 +604,7 @@ function MachineDetail({ machine: m, row, onRemoved }: { machine: MachinesViewMa
         ) : null}
       </div>
 
-      {m.current ? <ThisMachineExtras panel={row?.panel ?? null} progress={row?.hostProgress} part="alerts" /> : null}
+      {m.current ? <ThisMachineExtras panel={row?.panel ?? null} progress={row?.hostProgress} part="alerts" onUseCode={onUseCode} /> : null}
 
       {m.spacesTitle ? (
         <>

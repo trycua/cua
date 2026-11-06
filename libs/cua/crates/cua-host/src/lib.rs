@@ -81,8 +81,8 @@ pub use provided::{
 pub use relay::{
     AccountTokens, AuditEvent, ConnectedClient, DEFAULT_RELAY_URL, DefaultSpace, DefaultSpaceStep,
     DeviceListing, DeviceState, DeviceView, Enrollment, Identity, LinkProbe, Machine, MachinePatch,
-    NoAccount, RelayClient, RelayUsage, RelayUsageTeam, SpacesSettings, StaticToken,
-    TcpShareRequest, TcpShareView, relay_url_from_env,
+    NEW_COMPUTER_NEEDS_PROOF, NoAccount, RelayClient, RelayUsage, RelayUsageTeam, SpacesSettings,
+    StaticToken, TcpShareRequest, TcpShareView, refusal_code, relay_url_from_env,
 };
 pub use service::{RunnerKind, ServiceManager, ServiceSpec, ServiceState};
 

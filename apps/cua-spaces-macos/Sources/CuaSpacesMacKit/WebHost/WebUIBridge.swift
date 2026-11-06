@@ -221,8 +221,9 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         let code: String
         let message: String
         /// A failed host setup or This machine button in plain words: the
-        /// error then also carries its `title`, `details` (the raw error)
-        /// and `actionLabel` (Retry, or Sign In).
+        /// error then also carries its `title`, `details` (the raw error),
+        /// `actionLabel` (Retry, Sign In, or Use a code from another
+        /// computer), its `kind` and the relay's `refusalCode`, if any.
         var presented: HostSetupFailure?
         static func unimplemented(_ method: String) -> Failure {
             Failure(code: "unimplemented", message: "\(method) is not available in this host")
@@ -285,6 +286,8 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
             e["title"] = p.title
             e["details"] = p.details
             e["actionLabel"] = p.actionLabel
+            e["kind"] = p.kind.wireName
+            if let code = p.refusalCode { e["refusalCode"] = code }
         }
         return ["id": id, "ok": false, "error": e]
     }

@@ -94,8 +94,14 @@ mod tests {
         if cua_vmm::qemu::software_emulation_allowed() {
             return;
         }
-        let e = ensure_local_base(reference, arch).await.unwrap_err().to_string();
-        assert!(e.contains("software emulation") && e.contains("hours"), "{e}");
+        let e = ensure_local_base(reference, arch)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(
+            e.contains("software emulation") && e.contains("hours"),
+            "{e}"
+        );
     }
 
     #[tokio::test]

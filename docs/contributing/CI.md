@@ -36,6 +36,15 @@ bin/ci --list          # show the plan and the exact commands
 bin/ci --only rust-fmt,lockfiles
 ```
 
+### Windows
+
+`bin/ci` runs on Windows from PowerShell, cmd or Git Bash: `python bin\ci --quick` (Python 3.10 or later;
+`python3` is not needed). The checks are bash, so it runs them with **Git for Windows' bash**, found next
+to `git` (set `CUA_CI_BASH` to another `bash.exe`). It never uses `bash` from `PATH`: there that is usually
+`C:\Windows\System32\bash.exe`, which is WSL, and would run the checks inside a Linux distribution.
+It runs in UTF-8 mode and gives the checks a `python3`. Cargo checks need the MSVC toolchain; on a shared PC
+use `--quick`. The sign-off is the same (`python bin\ci --signoff`; its description ends with `(win32)`).
+
 ### Disk safety
 
 Heavy checks (cargo test, clippy, build, cross-target) run one at a time, one crate per cargo call, with

@@ -34,7 +34,6 @@ jobs:
             let failedWorkflowName = '';
 
             const workflowFileMap = {
-              "CI: Lint Python": "ci-lint-python.yml",
               "CI: Lint TypeScript": "ci-lint-typescript.yml",
               "CI: Test Python": "ci-test-python.yml",
               "CI: Test Scripts": "ci-test-scripts.yml",

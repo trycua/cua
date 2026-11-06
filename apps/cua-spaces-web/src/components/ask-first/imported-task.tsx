@@ -17,6 +17,7 @@ import { cn } from "@/lib/utils";
 import { agentName, AppMark } from "./ask-box";
 import { agoLabel } from "./pick-up";
 import { StartFailed } from "./task-view";
+import { thisComputerLabel, thisComputerText } from "@/lib/host-labels";
 
 /** The earlier messages as the run's timeline rows, before the run's own. */
 export function earlierItems(history: PastThread | null): TranscriptItem[] {
@@ -38,6 +39,11 @@ export function earlierItems(history: PastThread | null): TranscriptItem[] {
  * own session on this Mac, in the chat's folder, and the run's turns follow
  * the earlier ones. The chat stays private: nothing goes to a Space thread.
  */
+/** The newest messages a chat opens with: a long chat is never read or drawn whole. */
+export const FIRST_VIEW_MESSAGES = 30;
+/** Each "Show earlier messages" adds this many. */
+export const MORE_MESSAGES = 100;
+
 export function ImportedTaskView({ task }: { task: AskTask & { imported: NonNullable<AskTask["imported"]> } }) {
   const { data } = useBridge();
   const { startRun, sendMessage } = useAgents();
@@ -45,16 +51,21 @@ export function ImportedTaskView({ task }: { task: AskTask & { imported: NonNull
   const name = agentName(task.agent);
   const [history, setHistory] = useState<PastThread | null>(null);
   const [historyError, setHistoryError] = useState<string | null>(null);
+  // Only the newest messages are read at first (the host reads the end of the chat's file, never all
+  // of it); Show earlier messages asks for more. The page never waits on more than it shows.
+  const [limit, setLimit] = useState(FIRST_VIEW_MESSAGES);
+  const [loadingMore, setLoadingMore] = useState(false);
   useEffect(() => {
     let live = true;
     data
-      ?.call("agents.threadHistory", { agent: task.agent as ThreadAgent, id: chat.sessionId })
+      ?.call("agents.threadHistory", { agent: task.agent as ThreadAgent, id: chat.sessionId, limit })
       .then((h) => live && setHistory(h))
-      .catch((e: unknown) => live && setHistoryError(e instanceof Error ? e.message : String(e)));
+      .catch((e: unknown) => live && setHistoryError(e instanceof Error ? e.message : String(e)))
+      .finally(() => live && setLoadingMore(false));
     return () => {
       live = false;
     };
-  }, [data, task.agent, chat.sessionId]);
+  }, [data, task.agent, chat.sessionId, limit]);
 
   const ref = task.runId && task.spaceId ? { spaceId: task.spaceId, runId: task.runId } : null;
   const live = useAgentTimeline(ref);
@@ -114,8 +125,22 @@ export function ImportedTaskView({ task }: { task: AskTask & { imported: NonNull
       </header>
       <div className="flex min-h-0 flex-1 flex-col">
         <p className="mx-auto w-full max-w-[720px] shrink-0 px-8 pt-6 text-[12px] font-medium text-muted-foreground" data-earlier-heading="">
-          Earlier on this Mac
-          {history?.earlierOmitted ? ` (${history.earlierOmitted} older messages aren't shown)` : ""}
+          Earlier on {thisComputerText()}
+          {history?.earlierOmitted ? " (older messages aren't shown)" : ""}
+          {history?.earlierOmitted ? (
+            <button
+              type="button"
+              disabled={loadingMore}
+              onClick={() => {
+                setLoadingMore(true);
+                setLimit((n) => n + MORE_MESSAGES);
+              }}
+              className="ml-2 underline underline-offset-2 hover:text-foreground disabled:opacity-60"
+              data-earlier-more=""
+            >
+              {loadingMore ? "Loading…" : "Show earlier messages"}
+            </button>
+          ) : null}
         </p>
         {loading ? (
           <div className="flex flex-1 items-center justify-center text-muted-foreground">
@@ -171,7 +196,7 @@ export function ImportedTaskView({ task }: { task: AskTask & { imported: NonNull
             </div>
             {waiting ? (
               <p className="px-1 text-[12px] text-muted-foreground" data-imported-note="">
-                Nothing runs until you send. {name} then carries on this chat on this Mac, in its own folder.
+                Nothing runs until you send. {name} then carries on this chat on {thisComputerText()}, in its own folder.
               </p>
             ) : null}
           </div>
@@ -196,7 +221,7 @@ export function ContinueOn() {
       <MenuPrimitive.Trigger
         render={
           <button type="button" className="flex h-11 shrink-0 items-center gap-1.5 rounded-lg px-3 text-[13px] outline-none hover:bg-foreground/5 data-popup-open:bg-foreground/[0.07]" data-continue-on="">
-            <span className="text-muted-foreground">Continue on:</span> This Mac <ChevronDownIcon className="size-3.5 text-muted-foreground" />
+            <span className="text-muted-foreground">Continue on:</span> {thisComputerLabel()} <ChevronDownIcon className="size-3.5 text-muted-foreground" />
           </button>
         }
       />
@@ -211,7 +236,7 @@ export function ContinueOn() {
             <MenuPrimitive.Item className="flex min-h-12 cursor-default items-center gap-3 rounded-lg bg-foreground/[0.06] px-3 py-2 outline-none">
               <LaptopIcon className="size-4" />
               <div className="min-w-0 flex-1">
-                <div className="text-[14px] font-medium">This Mac</div>
+                <div className="text-[14px] font-medium">{thisComputerLabel()}</div>
                 <div className="text-[12px] text-muted-foreground">Where this chat's session is</div>
               </div>
               <CheckIcon className="size-4" />
@@ -221,7 +246,7 @@ export function ContinueOn() {
                 <MonitorIcon className="size-4" />
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-[14px] font-medium">{m.name}</div>
-                  <div className="text-[12px] text-muted-foreground">Not yet: the chat's session is on this Mac</div>
+                  <div className="text-[12px] text-muted-foreground">Not yet: the chat's session is on {thisComputerText()}</div>
                 </div>
               </MenuPrimitive.Item>
             ))}

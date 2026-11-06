@@ -19583,6 +19583,8 @@ class NetworkSettings:
     - `localhost`: `internet`, plus this computer's localhost on
     `localhost_ports` (every port only with `all_localhost_ports`);
     - `lan`: `internet`, plus your local network (not this computer);
+    - `localhost+lan`: `internet`, plus both of the above (`localhost` and
+    `lan` are independent extras; this is the one preset with both);
     - `custom`: `custom_base` (`internet` or `none`) plus `allow` and `deny`;
     - `unprotected`: everything but cloud metadata, other trees and the
     daemon.

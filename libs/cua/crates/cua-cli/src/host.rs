@@ -3385,6 +3385,19 @@ async fn setup_unchanged(
     json: bool,
     out: &mut dyn Write,
 ) -> Result<i32, CuaError> {
+    // A service a build before CUA-3512 left under another home's names
+    // moves to this home's own, even when nothing else changes.
+    match host.migrate_service_names() {
+        Ok(moved) if !moved.is_empty() && !json => line(
+            out,
+            format!(
+                "Moved this computer's host service off an old name ({}); it now has its own.",
+                moved.join(", ")
+            ),
+        ),
+        Ok(_) => {}
+        Err(e) => eprintln!("warning: could not move the host service to its own name: {e}"),
+    }
     let started = !state.is_up(want);
     let state = if started {
         let status = host.start_sharing().await.map_err(host_err)?;

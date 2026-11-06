@@ -712,14 +712,17 @@ time, default `trycua/cua`, baked into `app-update.yml`). GitHub's own
 provider does not fit this monorepo: it needs semver tags and reads the
 repository-wide latest release.
 
-Electron builds ship as Cua Spaces prereleases only (`X.Y.Z-suffix`, built
-and published by `cd-cua-spaces.yml`, see "Releases" below), so the only
-feed is the beta channel (`beta.yml`, `beta-mac.yml`, `beta-linux*.yml`).
-The updater is **off by default**: set `CUA_SPACES_AUTO_UPDATE=1` or put
-`"autoUpdate": true` in `settings.json` to opt in. A build follows the
-channel it was cut for; `"updateChannel": "beta"` or `"stable"` in
-`settings.json` overrides it. The stable channel is served only after the
-Sparkle cutover (`STABLE_FEED` in `src/updater.ts`,
+Two channels (Settings, Advanced, Updates): Stable reads `latest.yml` and
+`latest-linux*.yml` on the rolling `cua-spaces-latest` release; Nightly reads
+`nightly.yml` and `nightly-linux*.yml` on the rolling `cua-spaces-nightly`
+release (`nightly-cua-spaces.yml` builds main every night). The updater sets
+the chosen channel's feed before each check, whatever URL the build baked into
+app-update.yml. A build follows the channel it was cut for (`X.Y.Z-suffix`:
+Nightly); `"updateChannel": "nightly"` or `"stable"` in `settings.json`
+overrides it, and a saved `"beta"` (there are no betas any more) is Nightly.
+Both channels are served on Windows and Linux; on macOS the Mac app is the
+Swift app, and this app's Stable feed waits for the Sparkle cutover
+(`STABLE_FEED` in `src/updater.ts`,
 [docs/sparkle-cutover.md](docs/sparkle-cutover.md)). Nothing downgrades.
 
 ## Releases

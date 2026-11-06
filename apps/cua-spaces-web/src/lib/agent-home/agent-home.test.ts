@@ -14,7 +14,8 @@ import { allowListAll, allowMachine, grantsFor, homeMentionsArg, resetGrants } f
 import { parseMentions, saidWhere } from "./mentions";
 import { abilityOfAction, approvalAction, homePrompt } from "./prompt";
 import { askText, covered, openAbilityRequests } from "./requests";
-import { forgetHome, homeSpaceId, isHomeSpaceId, rememberHome, resetHomes, reusableHome } from "./home-space";
+import { retryTarget } from "@/lib/ask-first";
+import { forgetHome, homeSpaceId, isHomeSpaceId, homeForRequest, rememberHome, resetHomes, reusableHome } from "./home-space";
 
 beforeEach(() => {
   localStorage.clear();
@@ -217,5 +218,28 @@ describe("the home Space is made once and reused", () => {
     // What this device remembers still wins over the labels.
     rememberHome("claude-code", "local:other");
     expect(reusableHome("claude-code", spaces, false, ["local:home-a"])).toBe("local:other");
+  });
+
+  it("a message from Home makes a new home every time; only picking the existing home continues it", () => {
+    rememberHome("claude-code", "local:home-a");
+    // First and second Home messages: neither reuses, so each makes its own home.
+    expect(homeForRequest({ kind: "agent" }, "claude-code", spaces, ["local:home-a"])).toBeNull();
+    expect(homeForRequest({ kind: "machine" }, "claude-code", spaces, ["local:home-a"])).toBeNull();
+    // The second home is remembered as the newest; the first stays in the list.
+    rememberHome("claude-code", "local:home-b");
+    expect(homeSpaceId("claude-code")).toBe("local:home-b");
+    expect(isHomeSpaceId("local:home-a")).toBe(false);
+    // Explicitly continuing the existing home reuses it (the newest, found again by label on a new device).
+    const both = [{ id: "local:home-a", status: "running" as const }, { id: "local:home-b", status: "running" as const }];
+    expect(homeForRequest({ kind: "agent", reuse: true }, "claude-code", both, ["local:home-a"])).toBe("local:home-b");
+    // A home that is gone is not reused even when asked.
+    expect(homeForRequest({ kind: "agent", reuse: true }, "claude-code", [], [])).toBeNull();
+    // A picked Space is not a home request at all.
+    expect(homeForRequest({ kind: "space" }, "claude-code", both)).toBeNull();
+  });
+
+  it("retry keeps the Space the task was made in (a new home only when none was made yet)", () => {
+    expect(retryTarget({ spaceId: "local:home-a", os: "linux", onHost: false })).toEqual({ kind: "space", spaceId: "local:home-a" });
+    expect(retryTarget({ spaceId: null, os: "linux", onHost: false })).toEqual({ kind: "create", os: "linux" });
   });
 });

@@ -2847,6 +2847,27 @@ where
     }
 }
 
+/// How long finding and dialing a Space may take in all. Longer than
+/// [`RELAY_START_WAIT`], so a Space that is still starting says so first.
+const SPACE_LOOKUP_DEADLINE: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// `lookup` within `budget`, or a timeout that names the Space: a relay
+/// stream that goes silent fails instead of hanging the command.
+async fn within_lookup_deadline<T>(
+    name: &str,
+    budget: std::time::Duration,
+    lookup: impl std::future::Future<Output = Result<T, CuaError>>,
+) -> Result<T, CuaError> {
+    tokio::time::timeout(budget, lookup)
+        .await
+        .unwrap_or_else(|_| {
+            Err(CuaError::Timeout(format!(
+                "{name} did not answer within {}s; check that it is online: cua spaces ls",
+                budget.as_secs()
+            )))
+        })
+}
+
 /// A spacesd client for a named sandbox or a relay Space. Direct sandboxes
 /// use the remembered token (or `CUA_ENV_TOKEN`). A relay Space opens
 /// through the Spaces API; the sandboxes API does not attach those machines.
@@ -2878,19 +2899,23 @@ pub async fn env_of(cua: &Cua, name: &str) -> Result<Arc<cua_sdk::SpacesdClient>
             crate::host::daemon_relay_account(&crate::util::cua_home())
         });
         let spaces = cua.spaces();
-        // NotFound before dial, and the snapshot has the name space() dials with.
-        spaces.resolve(id.clone()).await?;
-        // Right after `cua spaces start` the machine is listed but its
-        // spacesd is not connected yet: wait for it (bounded), then say so.
-        return wait_while_starting(
-            &id,
-            RELAY_START_WAIT,
-            std::time::Duration::from_millis(500),
-            || async { spaces.space(id.clone()).await?.spacesd() },
-        )
+        return within_lookup_deadline(&id, SPACE_LOOKUP_DEADLINE, async {
+            // NotFound before dial, and the snapshot has the name space() dials with.
+            spaces.resolve(id.clone()).await?;
+            // Right after `cua spaces start` the machine is listed but its
+            // spacesd is not connected yet: wait for it (bounded), then say so.
+            wait_while_starting(
+                &id,
+                RELAY_START_WAIT,
+                std::time::Duration::from_millis(500),
+                || async { spaces.space(id.clone()).await?.spacesd() },
+            )
+            .await
+        })
         .await;
     }
-    if let Some(space) = space_for(cua, name).await? {
+    let space = within_lookup_deadline(name, SPACE_LOOKUP_DEADLINE, space_for(cua, name)).await?;
+    if let Some(space) = space {
         return space.spacesd();
     }
     let sbx = cua.sandboxes();
@@ -4375,6 +4400,28 @@ mod tests {
         .await
         .unwrap_err();
         assert!(matches!(e, CuaError::NotFound(_)));
+    }
+
+    #[tokio::test]
+    async fn a_space_lookup_that_never_answers_times_out_with_its_name() {
+        let err = within_lookup_deadline::<()>(
+            "relay:a",
+            std::time::Duration::from_millis(20),
+            std::future::pending(),
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(err, CuaError::Timeout(_)), "{err:?}");
+        assert!(err.to_string().contains("relay:a did not answer"), "{err}");
+        // An answer within the deadline, error or not, passes through.
+        let e =
+            within_lookup_deadline::<()>("relay:a", std::time::Duration::from_secs(30), async {
+                Err(CuaError::NotFound("gone".into()))
+            })
+            .await
+            .unwrap_err();
+        assert!(matches!(e, CuaError::NotFound(_)));
+        assert!(SPACE_LOOKUP_DEADLINE > RELAY_START_WAIT);
     }
 
     #[test]

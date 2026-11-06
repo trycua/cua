@@ -192,6 +192,16 @@ describe.skipIf(!built)("the Machines page on the app core", () => {
     await expect(call("machines.remove", { machine: "m2" })).rejects.toMatchObject({ code: "unsupported" });
   });
 
+  it("clears the saved default when the removed computer was it, and keeps one that was not", async () => {
+    await model.refresh();
+    await call("spaces.setSettings", { defaultSpace: "relay:m2", fallback: ["relay:m2/box", "relay:m3"], fallbackOn: true });
+    await call("machines.remove", { machine: "m2", device: "dev_old" });
+    await expect(call("spaces.settings")).resolves.toMatchObject({ defaultSpace: null, fallback: ["relay:m3"], fallbackOn: true });
+    await call("spaces.setSettings", { defaultSpace: "relay:m3", fallback: [], fallbackOn: true });
+    await call("machines.remove", { machine: "m2" });
+    await expect(call("spaces.settings")).resolves.toMatchObject({ defaultSpace: "relay:m3" });
+  });
+
   it("removes a computer with the Spaces made on it when the page asks (CUA-3413)", async () => {
     await model.refresh();
     await expect(call("machines.remove", { machine: "m2", deleteSpaces: true })).resolves.toBeNull();

@@ -7,7 +7,7 @@
 // and lists that machine's half-created Space as a record of its own.
 
 import { createMemoryHistory, createRouter, RouterProvider } from "@tanstack/react-router";
-import { render } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeAll, beforeEach } from "vitest";
 import type { DataAdapter } from "@/bridge/adapter";
 import type { MachinesView } from "@/bridge/contracts/host";
@@ -149,4 +149,23 @@ export async function mountApp(path: string, host: TestHost = { failsCreates: tr
   );
   const emit = (event: HostEvent) => listeners.forEach((l) => l(event));
   return { router, hooks, host, demo, emit };
+}
+
+/**
+ * Home's box starts on This Mac once it's in the account (5 Nov 2026). A test about a job that makes
+ * a new Space picks that first, as a person would.
+ */
+export async function pickNewLinux(): Promise<void> {
+  const trigger = await waitFor(() => {
+    const el = document.querySelector<HTMLElement>('[data-picker="where"]');
+    if (!el) throw new Error("no where picker yet");
+    return el;
+  });
+  await act(async () => {
+    fireEvent.click(trigger);
+  });
+  const item = await screen.findByRole("menuitem", { name: /A new Linux computer on/ });
+  await act(async () => {
+    fireEvent.click(item);
+  });
 }

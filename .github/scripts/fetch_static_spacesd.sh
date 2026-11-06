@@ -11,6 +11,8 @@
 #          own architecture
 # Needs `gh` (GH_TOKEN).
 set -euo pipefail
+# shellcheck source=retry.sh
+. "$(dirname "${BASH_SOURCE[0]}")/retry.sh"
 
 REPO="$1" WHAT="$2" DEST="$3"
 ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
@@ -32,18 +34,18 @@ trap 'rm -rf "$tmp"' EXIT
 download() {
   local name="$1" f
   if command -v gh >/dev/null 2>&1; then
-    gh release download "$TAG" --repo "$REPO" --dir "$tmp" --pattern "$name" --pattern "$name.sha256"
+    retry gh release download "$TAG" --repo "$REPO" --dir "$tmp" --pattern "$name" --pattern "$name.sha256"
     return
   fi
   local auth=()
   [ -n "${GH_TOKEN:-}" ] && auth=(-H "Authorization: Bearer $GH_TOKEN")
   local rel
-  rel="$(curl -fsSL "${auth[@]}" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/$REPO/releases/tags/$TAG")" || return 1
+  rel="$(curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors --connect-timeout 20 "${auth[@]}" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/$REPO/releases/tags/$TAG")" || return 1
   for f in "$name" "$name.sha256"; do
     local id
     id="$(python3 -c 'import json,sys; n=sys.argv[1]; print(next((a["id"] for a in json.load(sys.stdin)["assets"] if a["name"]==n), ""))' "$f" <<<"$rel")"
     [ -n "$id" ] || return 1
-    curl -fsSL "${auth[@]}" -H "Accept: application/octet-stream" -o "$tmp/$f" "https://api.github.com/repos/$REPO/releases/assets/$id" || return 1
+    curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors --connect-timeout 20 "${auth[@]}" -H "Accept: application/octet-stream" -o "$tmp/$f" "https://api.github.com/repos/$REPO/releases/assets/$id" || return 1
   done
 }
 

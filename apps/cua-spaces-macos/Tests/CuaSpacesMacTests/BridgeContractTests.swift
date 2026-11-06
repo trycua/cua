@@ -309,7 +309,7 @@ struct BridgeContractTests {
             ("sharing.removals", [:]), ("sharing.ackRemovals", [:]),
             ("volume.overview", [:]), ("volume.storage", [:]), ("volume.mount", [:]), ("volume.unmount", [:]),
             ("volume.storageSet", ["update": ["backend": "fs", "dry_run": true]]),
-            ("about.get", [:]), ("about.set", ["channel": "beta"]), ("about.checkNow", [:]),
+            ("about.get", [:]), ("about.set", ["channel": "nightly"]), ("about.checkNow", [:]),
             ("update.get", [:]), ("update.install", [:]),
             ("loginItem.get", [:]), ("loginItem.set", ["on": true]),
             ("devices.get", [:]), ("devices.enroll", [:]), ("devices.checkEnrolled", [:]),
@@ -341,6 +341,7 @@ struct BridgeContractTests {
             ("startup.get", [:]),
             // A test runner carries no Cua Driver: null and an empty list.
             ("driver.status", [:]),
+            ("driver.permissions", [:]),
             ("driver.list", [:]),
         ]
     }

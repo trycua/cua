@@ -17,7 +17,7 @@ sha256sums=()
 _source_root="$(realpath -e -- "$CUA_SOURCE_ROOT")"
 _plugin_source="${_source_root}/libs/cua-driver/hyprland-plugin"
 _hyprland_package_version="$CUA_HYPRLAND_PACKAGE_VERSION"
-_hyprland_header_version="${CUA_HYPRLAND_HEADER_VERSION:-0.56.2}"
+_hyprland_header_version="${CUA_HYPRLAND_HEADER_VERSION:-0.57.0}"
 depends=("hyprland=${_hyprland_package_version}")
 
 prepare() {

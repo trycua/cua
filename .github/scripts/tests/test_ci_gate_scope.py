@@ -263,7 +263,10 @@ def test_urgent_label_with_reference_uses_the_same_path_scope(tmp_path):
 def test_gate_runs_the_scope_step_first_and_passes_its_output_to_the_wait_step():
     gate = yaml.safe_load((scope.WORKFLOWS / 'ci-gate.yml').read_text())
     steps = gate['jobs']['ci-gate']['steps']
-    assert steps[2]['id'] == 'scope'
+    # The scope step runs right after the two selector checkouts; the hold-label step may sit before them.
+    names = [st.get('name') for st in steps]
+    assert names.index('Scope the gate to the changed areas') == names.index("Check out the pull request's manifests") + 1
+    assert next(st for st in steps if st.get('name') == 'Scope the gate to the changed areas')['id'] == 'scope'
     wait = next(st for st in steps if st.get('name', '').startswith('Wait for every other'))
     assert wait['env']['IGNORE_RE'] == '${{ steps.scope.outputs.ignore_re }}'
     assert 'labeled' in gate[True]['pull_request']['types']
@@ -272,7 +275,8 @@ def test_gate_runs_the_scope_step_first_and_passes_its_output_to_the_wait_step()
 
 
 def test_gate_run_filter_drops_only_ignored_workflows():
-    script = yaml.safe_load((scope.WORKFLOWS / 'ci-gate.yml').read_text())['jobs']['ci-gate']['steps'][4]['run']
+    script = yaml.safe_load((scope.WORKFLOWS / 'ci-gate.yml').read_text())['jobs']['ci-gate']['steps']
+    script = next(st for st in script if st.get('name', '').startswith('Wait for every other'))['run']
     jq_filter = next(line.split("='", 1)[1].rsplit("'", 1)[0]
                      for line in script.splitlines() if line.strip().startswith('scope_jq='))
     runs = [{'path': '.github/workflows/cd-image-linux.yml@refs/pull/1/merge'},
@@ -289,7 +293,11 @@ def test_gate_run_filter_drops_only_ignored_workflows():
 def test_gate_runs_the_selector_from_the_base_commit_not_the_pull_request():
     """A PR that edits the map, the scripts or its manifests cannot narrow its own gate."""
     steps = yaml.safe_load((scope.WORKFLOWS / 'ci-gate.yml').read_text())['jobs']['ci-gate']['steps']
-    base, head, run = steps[0]['with'], steps[1]['with'], steps[2]['run']
+    by_name = {st.get('name'): st for st in steps}
+    scope_step = by_name['Scope the gate to the changed areas']
+    base = by_name['Check out the selector from the base commit']['with']
+    head = by_name["Check out the pull request's manifests"]['with']
+    run = scope_step['run']
     assert base['ref'] == '${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}'
     assert base['path'] == 'base'
     for f in ('/.github/ci-areas.json', '/.github/scripts/ci_gate_scope.py', '/.github/scripts/ci_graph.py'):
@@ -297,4 +305,4 @@ def test_gate_runs_the_selector_from_the_base_commit_not_the_pull_request():
         assert f not in head['sparse-checkout'].split()
     assert 'ref' not in head and head['path'] == 'head'
     assert 'python3 base/.github/scripts/ci_gate_scope.py' in run
-    assert steps[2]['env']['CI_GATE_HEAD_ROOT'].endswith('/head')
+    assert scope_step['env']['CI_GATE_HEAD_ROOT'].endswith('/head')

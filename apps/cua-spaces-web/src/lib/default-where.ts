@@ -16,6 +16,7 @@ import { resolveDefaultSpace, type DefaultSpace, type DefaultSpaceStep, type Spa
 
 import type { NewKind, TaskWhere } from "./ask-first";
 import { defaultCandidates, findNode, type SpacesTree, type TreeNode } from "./spaces-tree";
+import { thisComputerLabel } from "./host-labels";
 
 /** How a computer in "Where a task goes" stands: it runs the task, it could, it's online but has no desktop to run in, or it's offline. */
 export type WhereStepState = "used" | "ready" | "no-desktop" | "offline";
@@ -72,9 +73,9 @@ const PROBLEM: Record<DefaultProblem, string> = { offline: "is offline", "no-des
 /** The line under Home's box, built from its parts so a name or a phrase is never said twice. */
 export function fallbackSentence({ defaultName, problem, usedName, othersOnline }: FallbackParts): string {
   const why = `${defaultName}, your default, ${PROBLEM[problem]}`;
-  if (usedName) return `${why}. This runs on ${usedName}, the next computer that can take it. If none can, it runs on This Mac.`;
+  if (usedName) return `${why}. This runs on ${usedName}, the next computer that can take it. If none can, it runs on ${thisComputerLabel()}.`;
   const others = othersOnline ? "no other computer can take it now" : "no other computer is online";
-  return `${why}, and ${others}. This runs on This Mac.`;
+  return `${why}, and ${others}. This runs on ${thisComputerLabel()}.`;
 }
 
 const stepNote = (role: string, state: WhereStepState): string => {
@@ -123,7 +124,7 @@ export function treeDefault(tree: SpacesTree, settings: SpacesSettings | null, r
   const steps: WhereStep[] = order.map(({ o, n }, i) => {
     const used = o.role === "here" ? usedHere : i === usedAt && !usedHere;
     const state: WhereStepState = used ? "used" : states[i]!;
-    const name = o.role === "here" ? "This Mac" : (n?.name ?? o.name);
+    const name = o.role === "here" ? thisComputerLabel() : (n?.name ?? o.name);
     return { name, note: stepNote(o.role, state), online: state !== "offline", used, state, node: n };
   });
   const line = fallbackSentence({

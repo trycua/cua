@@ -14132,6 +14132,8 @@ const FfiConverterTypeNetworkEvent = (() => {
  * - `localhost`: `internet`, plus this computer's localhost on
  * `localhost_ports` (every port only with `all_localhost_ports`);
  * - `lan`: `internet`, plus your local network (not this computer);
+ * - `localhost+lan`: `internet`, plus both of the above (`localhost` and
+ * `lan` are independent extras; this is the one preset with both);
  * - `custom`: `custom_base` (`internet` or `none`) plus `allow` and `deny`;
  * - `unprotected`: everything but cloud metadata, other trees and the
  * daemon.
@@ -14142,17 +14144,18 @@ const FfiConverterTypeNetworkEvent = (() => {
  */
 export type NetworkSettings = {
     /**
-     * `internet`, `none`, `localhost`, `lan`, `custom` or `unprotected`;
-     * empty is `internet`.
+     * `internet`, `none`, `localhost`, `lan`, `localhost+lan`, `custom` or
+     * `unprotected`; empty is `internet`.
      */
     preset: string,
     /**
-     * `localhost`: the ports of this computer's localhost the Space may
-     * reach.
+     * `localhost` and `localhost+lan`: the ports of this computer's
+     * localhost the Space may reach.
      */
     localhostPorts: Array<number>,
     /**
-     * `localhost`: every port (the daemon's stay blocked).
+     * `localhost` and `localhost+lan`: every port (the daemon's stay
+     * blocked).
      */
     allLocalhostPorts: boolean,
     /**

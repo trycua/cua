@@ -19,7 +19,6 @@ import { sharesDesktop } from "./derive";
 import type { MachineAccessNotice } from "./contracts/devices";
 import type { SpaceAgentRun } from "./contracts/agents";
 import type { Space } from "./contracts/spaces";
-import type { Experiments } from "./contracts/volume";
 import type {
   DesktopCover,
   DesktopCoverInput,
@@ -57,13 +56,11 @@ export function spaceDetail(
   space: Space,
   usage?: SpaceUsage | null,
   hostArch?: string | null,
-  /** With these, the core leaves out what Settings, Experiments hides (Share). */
-  experiments?: Experiments,
   /** This device is signed in but not enrolled: a machine on the relay
    * shows why, with its connection actions off. */
   access?: MachineAccessNotice | null,
 ): SpaceDetailView {
-  return core.tryCall<SpaceDetailView>("sidebar.detail", { space, usage, hostArch, experiments, access: access ?? undefined }) ?? fallbackDetail(space);
+  return core.tryCall<SpaceDetailView>("sidebar.detail", { space, usage, hostArch, access: access ?? undefined }) ?? fallbackDetail(space);
 }
 
 /** What the preview shows over (or instead of) the live desktop
@@ -382,9 +379,6 @@ export function agentRunLines(core: CoreClient, runs: SpaceAgentRun[]): AgentRun
 
 /** What the detail is drawn for, beyond the Space: this device's view of it. */
 export interface DetailFor {
-  /** Settings, Experiments (Share shows only with Sharing on); undefined
-   * where the host has none (every action shows). */
-  experiments?: Experiments;
   /** This machine's `accessNotice` (`useMachines`). */
   access?: MachineAccessNotice | null;
 }
@@ -430,7 +424,7 @@ export function useSpaceDetail(space: Space | undefined, hostArch: string | null
       agents: { runs: null, failed: null, unsupported: false },
     };
   return {
-    detail: spaceDetail(core, space, readings.usage, readings.hostArch !== undefined ? readings.hostArch : hostArch, seen.experiments, seen.access),
+    detail: spaceDetail(core, space, readings.usage, readings.hostArch !== undefined ? readings.hostArch : hostArch, seen.access),
     stream: streamSection(core, {
       windows: readings.windows,
       failed: readings.failed,

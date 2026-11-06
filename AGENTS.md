@@ -69,10 +69,33 @@ that are easy to miss:
 
 Run `bin/ci` before every push, and `bin/ci --fix` when it reports a failure
 it can repair (formatting, lockfiles, generated bindings and reference docs).
-It runs the CI checks your diff against `origin/main` affects, in a few
-minutes, and prints the exact fix command for each failure. A green `bin/ci`
-does not replace CI: the end-to-end, image and native Windows lanes still run
-there. See [`CI.md`](docs/contributing/CI.md#run-the-checks-locally-first-binci).
+It runs the CI checks your diff against `origin/main` affects and prints the
+exact fix command for each failure. `bin/ci --install-hook` runs it for you
+before every `git push`.
+
+- **Quick stage.** CI starts with a `quick` job that runs `bin/ci --quick`
+  (formatting, lockfiles, headers, lint). The heavy jobs wait for it, so a
+  failure there stops the run in about a minute.
+- **Agent pull requests need a sign-off.** After a green `bin/ci` on a clean
+  tree, push and run `bin/ci --signoff`. That sets the `local-ci` status on the
+  head commit. `ci-gate` reports an agent PR without it (and blocks it once
+  `REQUIRE_LOCAL_CI` is on): "Run bin/ci and bin/ci --signoff on this head
+  commit." Sign off again after every new commit.
+
+Reviewers of an agent PR check, before approving, that the `local-ci` status is
+`success` on the current head commit (`gh api repos/trycua/cua/commits/<sha>/statuses`)
+and that the PR's `bin/ci` checklist item is ticked. No status, no approval.
+
+**Agents on shared hosts (the dev host that runs live VMs) use `bin/ci --quick`.**
+It runs only the cheap checks (formatting, lockfiles, headers, lint) and builds
+nothing. Heavy checks (cargo test, clippy, build, cross-target) go to CI or a
+VM. A full `bin/ci` is disk-guarded: it skips heavy steps below
+`CUA_CI_MIN_FREE_GB` (40) free, and stops cargo and exits 3 if the target dir
+passes `CUA_CI_MAX_TARGET_GB` (15) or free disk falls under 25 GB. The target
+dir is per run and deleted on exit unless you pass `--keep-target`.
+
+A green `bin/ci` does not replace CI: the end-to-end, image and native Windows
+lanes still run there. See [`CI.md`](docs/contributing/CI.md#run-the-checks-locally-first-binci).
 
 ## Cross-platform Cua Driver behavior
 
@@ -151,6 +174,15 @@ When you add notes to a Release Please PR body, put them below its version
 heading (`## [x.y.z](...)`), never above it. Release Please reads the version
 from that heading; with text above it, it tags every component with the PR's
 version (#6350). `CI: Release metadata` and the release workflow both check this.
+
+## Cua Spaces: no betas
+
+Never tag a Cua Spaces beta (`cua-spaces-vX.Y.Z-beta.N`): the release workflow
+refuses it unless the repository variable `ALLOW_SPACES_BETA` is `true`. For
+pre-release testing, use the Nightly channel (Settings, Advanced, Nightly), or
+run the **Nightly: Cua Spaces** workflow (`nightly-cua-spaces.yml`) to build
+main now. Stable stays Release Please plus the canary gate. Details:
+[docs/contributing/releasing-cua-spaces.md](docs/contributing/releasing-cua-spaces.md).
 
 ## Monorepo component release resolution
 

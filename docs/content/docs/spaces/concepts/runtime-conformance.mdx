@@ -33,6 +33,15 @@ does with them, and shows how Cua checks them.
 - **A coding agent session starts.** The app installs and the agent answers.
 - **Ready means answering.** Time to ready is measured from the create call
   to a Space that answers.
+- **A warm claim is an ordinary Space.** A Space made from a member Cua kept
+  ready answers with its own token and nothing else opens it, not even the
+  member's own secret, and it behaves as one that started cold. A runtime
+  that cannot claim a member refuses a pool in plain words and starts cold.
+- **A running Space is on your account.** While the computer is signed in
+  and sharing, the Space is listed on your cua.ai account, so your phone and
+  your other computers see and open it, and it leaves the account when it
+  stops or is deleted. This is the same for a macOS VM, a QEMU VM, a
+  container and a microVM, and it needs no step of yours.
 - **Delete leaves nothing.** No Space, process, container or network remains.
 
 A runtime that cannot keep a promise refuses it at once, in plain words that
@@ -41,20 +50,24 @@ without the promise, is a bug.
 
 ## What each runtime says
 
-| Runtime | Guest | Default network | Pause | Checkpoint and fork | KVM |
-|---|---|---|---|---|---|
-| `builtin-gvisor` | linux | enforced on macos, enforced on windows | yes | yes | no |
-| `builtin-runc` | linux | enforced on macos, enforced on windows | yes | yes | no |
-| `engine-gvisor` | linux | enforced on linux | yes | yes | no |
-| `engine-runc` | linux | enforced on linux | yes | yes | no |
-| `firecracker-microvm` | linux | enforced on linux | yes | yes | yes |
-| `vz-microvm` | linux | enforced on macos | yes | yes | no |
-| `containerization-microvm` | linux | refused on macos | no | no | no |
-| `qemu-vm` | linux | enforced on linux, enforced on macos, enforced on windows | yes | yes | no |
-| `lume-macos-vm` | macos | enforced on macos | no | no | no |
+| Runtime | Guest | Default network | Pause | Checkpoint and fork | KVM | Warm start |
+|---|---|---|---|---|---|---|
+| `builtin-gvisor` | linux | enforced on macos, enforced on windows | yes | yes | no | claim, apps ready ahead |
+| `builtin-runc` | linux | enforced on macos, enforced on windows | yes | yes | no | claim, apps ready ahead |
+| `engine-gvisor` | linux | enforced on linux | yes | yes | no | claim, apps ready ahead |
+| `engine-runc` | linux | enforced on linux | yes | yes | no | claim, apps ready ahead |
+| `firecracker-microvm` | linux | enforced on linux | yes | yes | yes | claim |
+| `vz-microvm` | linux | enforced on macos | yes | yes | no | claim |
+| `containerization-microvm` | linux | refused on macos | no | no | no | claim |
+| `qemu-vm` | linux | enforced on linux, enforced on macos, enforced on windows | yes | yes | no | claim |
+| `lume-macos-vm` | macos | enforced on macos | no | no | no | claim |
 
 Pause, checkpoint and fork are what the runtime can do with a running Space.
-Where a runtime cannot, asking for one is refused with a reason. The built-in
+Where a runtime cannot, asking for one is refused with a reason. Warm start is
+whether a member kept ready can be claimed for a new Space; on a container the
+member also answers before it is claimed, so the [warm start](/spaces/guides/warm-start)
+experiment can install the coding apps in it ahead. The other runtimes install
+them after the claim, as they do without a pool. The built-in
 runtimes run on this computer's built-in Linux runtime; `engine-` runtimes run
 on a container engine you run on a Linux host.
 
@@ -110,8 +123,8 @@ CUA=/path/to/cua libs/cua/scripts/conformance/run.py --entry vz-microvm --out re
 ```
 
 The children case needs the `cua` CLI in the guest. When the Space under
-test does not ship it, the run makes a home Space from the `agent-home` image
-(the slim Linux image plus the CLI) on the same runtime and runs the case
+test does not ship it, the run makes a home Space from the slim Linux image
+(`ghcr.io/trycua/linux:24.04-slim`, which carries the CLI) on the same runtime and runs the case
 there; `--home-image` and `--entry-home-image ID=IMAGE` name another build.
 
 The roster and what each entry must do is `libs/cua/scripts/conformance/entries.json`,

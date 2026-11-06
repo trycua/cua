@@ -125,6 +125,11 @@ pub struct SpaceMeta {
         skip_serializing_if = "crate::clipboard::ClipboardSetting::is_default"
     )]
     pub clipboard: crate::clipboard::ClipboardSetting,
+    /// Whether the Space is listed on the owner's account while the
+    /// computer is signed in and sharing ([`RelaySetting`]). A child
+    /// follows its parent's `off`.
+    #[serde(default, skip_serializing_if = "RelaySetting::is_on")]
+    pub relay: RelaySetting,
 }
 
 impl SpaceMeta {
@@ -177,6 +182,62 @@ impl VolumeSetting {
             other => Err(Error::invalid(format!(
                 "volume {other:?}: use own (its own folder) or off"
             ))),
+        }
+    }
+}
+
+/// The label that keeps a Space off the owner's account at create
+/// (`cua.relay=off`; `--no-relay`).
+pub const RELAY_LABEL: &str = "cua.relay";
+
+/// The label on a Space no list shows (value [`HIDDEN_HOME`]): the home that
+/// warms in the background for Home's prompt box. The app makes it with this
+/// label and `cua.relay=off`; it stays out of the apps' lists and off the
+/// owner's account until a person writes into its thread
+/// ([`crate::Spaces::reveal`]). `cua spaces ls` and the tools still list it.
+pub const HIDDEN_LABEL: &str = "cua.hidden";
+/// [`HIDDEN_LABEL`]'s value for the home warming for Home's prompt box.
+pub const HIDDEN_HOME: &str = "home";
+
+/// What `ls` says of a hidden Space with [`HIDDEN_LABEL`] value `value`.
+pub fn hidden_note(value: &str) -> String {
+    match value {
+        HIDDEN_HOME => "hidden: warming for Home".into(),
+        _ => "hidden".into(),
+    }
+}
+
+/// Whether a Space is listed on the owner's cua.ai account (the phone and
+/// the owner's other computers see and open it).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RelaySetting {
+    /// Listed while the computer is signed in and sharing. The default.
+    #[default]
+    On,
+    /// Never listed: it stays on this computer.
+    Off,
+}
+
+impl RelaySetting {
+    pub fn is_on(&self) -> bool {
+        *self == RelaySetting::On
+    }
+
+    /// `on` or `off`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            RelaySetting::On => "on",
+            RelaySetting::Off => "off",
+        }
+    }
+
+    /// Parses `on` / `off`.
+    pub fn parse(s: &str) -> Result<Self> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "on" | "true" | "yes" => Ok(RelaySetting::On),
+            "off" | "false" | "no" => Ok(RelaySetting::Off),
+            other => Err(Error::invalid(format!("relay {other:?}: use on or off"))),
         }
     }
 }

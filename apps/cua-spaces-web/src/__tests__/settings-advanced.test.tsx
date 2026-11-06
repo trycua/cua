@@ -69,6 +69,7 @@ describe.skipIf(!wasmBuilt)("account usage and self-hosting in Settings (real ro
     ["experiment:ci_runners", /CI runners/],
     ["experiment:tcp_shares", /Public TCP shares/],
     ["experiment:mobile", /Phone app/],
+    ["experiment:warm_pools", /Warm start/],
   ] as const;
 
   it("shows a switch in Labs for every experiment, off, with its line, before any is on", async () => {

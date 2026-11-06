@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Win32 agent-cursor overlay — transparent, click-through layered window.
 //!
 //! Design:

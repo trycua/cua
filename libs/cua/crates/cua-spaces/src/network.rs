@@ -382,7 +382,8 @@ pub(crate) struct CreateNetwork {
 
 /// Settings from one word as the CLI, SDK and MCP take it: `internet`
 /// (`default` and empty too), `none`, `lan`, `unprotected`, `custom` (from
-/// `internet`), `custom:none`, `localhost:5432,3000` or `localhost:all`,
+/// `internet`), `custom:none`, `localhost:5432,3000` or `localhost:all`
+/// (`localhost+lan:5432,3000` adds the local network too),
 /// with `allow` and `deny` lists on top.
 pub fn parse_network(word: &str, allow: &[String], deny: &[String]) -> Result<NetworkSettings> {
     let w = word.trim();
@@ -398,10 +399,10 @@ pub fn parse_network(word: &str, allow: &[String], deny: &[String]) -> Result<Ne
     let mut s = NetworkSettings::preset(preset);
     match (preset, rest) {
         (_, None) => {}
-        (NetworkPreset::Localhost, Some(r)) if r.trim().eq_ignore_ascii_case("all") => {
+        (p, Some(r)) if p.opens_localhost() && r.trim().eq_ignore_ascii_case("all") => {
             s.all_localhost_ports = true
         }
-        (NetworkPreset::Localhost, Some(r)) => {
+        (p, Some(r)) if p.opens_localhost() => {
             for p in r.split(',').map(str::trim).filter(|p| !p.is_empty()) {
                 let port =
                     p.parse::<u16>().ok().filter(|p| *p > 0).ok_or_else(|| {
@@ -877,6 +878,15 @@ mod tests {
         assert!(p("localhost:all").unwrap().all_localhost_ports);
         assert!(p("localhost").is_err(), "ports are needed");
         assert!(p("localhost:0").is_err());
+        let b = p("localhost+lan:5432, 3000").unwrap();
+        assert_eq!(b.preset, NetworkPreset::LocalhostLan);
+        assert_eq!(b.localhost_ports, [5432, 3000]);
+        assert!(p("localhost+lan:all").unwrap().all_localhost_ports);
+        assert!(p("localhost+lan").is_err(), "ports are needed");
+        assert_eq!(
+            p("lan+localhost:80").unwrap().preset,
+            NetworkPreset::LocalhostLan
+        );
         assert_eq!(p("custom:none").unwrap().custom_base, NetworkPreset::None);
         assert!(p("lan:5432").is_err());
         assert!(p("open").is_err());
@@ -905,6 +915,12 @@ mod tests {
         let lan = NetworkSettings::preset(NetworkPreset::Lan);
         let e = refuse_widening_by_agent(&lan, None).unwrap_err();
         assert!(e.to_string().contains("cua network set"), "{e}");
+        // Both extras together are the user's to choose too, and from `lan`
+        // alone they are more than the Space has.
+        let both = parse_network("localhost+lan:5432", &[], &[]).unwrap();
+        assert!(refuse_widening_by_agent(&both, None).is_err());
+        assert!(refuse_widening_by_agent(&both, Some(&lan)).is_err());
+        assert!(refuse_widening_by_agent(&lan, Some(&both)).is_err());
         assert!(
             refuse_widening_by_agent(&NetworkSettings::preset(NetworkPreset::Unprotected), None)
                 .is_err()

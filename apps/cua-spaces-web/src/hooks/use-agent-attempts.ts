@@ -36,7 +36,8 @@ export function useAgentAttempts(): ChatAttempt[] {
     }
     for (const [spaceId, list] of Object.entries(notes)) {
       for (const n of list ?? []) {
-        if (n.state === "retried") continue;
+        // An @ of nobody here is a note under its message only: it is no agent's run.
+        if (n.state === "retried" || n.cant.reason === "no-such-member") continue;
         out.push({
           id: `note:${spaceId}:${n.id}`,
           spaceId,

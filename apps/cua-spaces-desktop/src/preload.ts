@@ -11,7 +11,7 @@ import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from "ele
 import { ELECTRON_BRIDGE_CHANNEL, ELECTRON_EVENT_CHANNEL, PRELOAD_INIT_CHANNEL, type PreloadInit } from "./channels";
 import { withDroppedPaths } from "./drop";
 import { KEYBOARD_CHANNEL, viewerHasKeyboard } from "./keyboard";
-import { DIM_ATTRIBUTE, DIM_CHANNEL } from "./overlay";
+import { DIM_ATTRIBUTE, DIM_CHANNEL, SURFACE_ATTRIBUTE, SURFACE_CHANNEL } from "./overlay";
 
 const init = ipcRenderer.sendSync(PRELOAD_INIT_CHANNEL) as PreloadInit;
 
@@ -66,14 +66,23 @@ contextBridge.exposeInMainWorld("cuaDesktop", init.videoStats ? { invoke, on, pl
 // dims the overlay to match.
 if (init.platform !== "darwin") {
   let dimmed = false;
+  // A full-page dark screen (the first run) marks itself with its colour:
+  // the overlay takes it too, instead of staying the app theme's.
+  let surface: string | null = null;
   const sync = () => {
     const now = document.querySelector(`[${DIM_ATTRIBUTE}]`) !== null;
-    if (now === dimmed) return;
-    dimmed = now;
-    ipcRenderer.send(DIM_CHANNEL, now);
+    if (now !== dimmed) {
+      dimmed = now;
+      ipcRenderer.send(DIM_CHANNEL, now);
+    }
+    const color = document.querySelector(`[${SURFACE_ATTRIBUTE}]`)?.getAttribute(SURFACE_ATTRIBUTE) ?? null;
+    if (color !== surface) {
+      surface = color;
+      ipcRenderer.send(SURFACE_CHANNEL, color);
+    }
   };
   const watch = () => {
-    new MutationObserver(sync).observe(document.documentElement, { childList: true, subtree: true });
+    new MutationObserver(sync).observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: [SURFACE_ATTRIBUTE] });
     sync();
   };
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", watch, { once: true });

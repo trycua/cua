@@ -102,12 +102,17 @@ export function resetConnectState(): void {
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
+/** Why an app's last Connect failed, in the words it was told ("" when it did not). */
+export const connectFailureLine = (agent: string): string => useConnectState.getState().failures.find((f) => f.id === `app:${agent}`)?.line ?? "";
+
 /** How a connect ended: `connected`, waiting on the provider sheet (`sheet`), or `failed`. */
 export type ConnectOutcome = "connected" | "sheet" | "failed";
 
 export interface Connectors {
   apps: ConnectedApps;
   input: ConnectorsInput;
+  /** The saved sign-ins and keys were read (a sync of the agent menu waits for it). */
+  keysReady: boolean;
   view: ConnectorsView | null;
   detail(agent: string): AppDetailView | null;
   /** The provider sheet open now. */
@@ -174,13 +179,17 @@ export function useConnectors(): Connectors {
         set({ device: { app, provider, url: started.url, code: started.code } });
         const r = await data.call("agents.signInWait", { id: started.id });
         if (!r.imported) {
-          fail(id, r.line ?? "The sign-in didn't finish. Try again.");
+          const line = r.line ?? "The sign-in didn't finish. Try again.";
+          fail(id, line);
+          fail(`app:${app}`, line);
           return false;
         }
         await reload();
         return true;
       } catch (e) {
+        // The app's row shows its own failure line; the provider sheet shows the provider's.
         fail(id, message(e));
+        fail(`app:${app}`, message(e));
         return false;
       } finally {
         set({ device: null });
@@ -193,10 +202,16 @@ export function useConnectors(): Connectors {
 
   const connectApp = useCallback(
     async (agent: string): Promise<ConnectOutcome> => {
-      if (!data) return "failed";
       const id = `app:${agent}`;
+      if (!data) {
+        fail(id, "Cua Spaces isn't ready yet. Try again in a moment.");
+        return "failed";
+      }
       const plan = connectPlan(core, input, agent);
-      if (!plan) return "failed";
+      if (!plan) {
+        fail(id, "Cua couldn't tell how to sign in to this app. Open Settings, then Connections, to sign in there.");
+        return "failed";
+      }
       // Importing an app's own sign-in reads its files: ask first, in plain words.
       if (plan.appToken) {
         settleImport("sheet");
@@ -401,6 +416,7 @@ export function useConnectors(): Connectors {
   return {
     apps,
     input,
+    keysReady: !keys.isLoading && !keys.input.error && !keys.input.unavailable && apps.rows !== null,
     view,
     detail: (agent) => appDetail(core, input, agent),
     sheet,

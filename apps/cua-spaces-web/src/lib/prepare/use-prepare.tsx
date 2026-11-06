@@ -3,7 +3,7 @@
 
 import { useEffect, useRef } from "react";
 
-import { firstMessage, newPendingId, useBridge, useFirstSpaceOffers, useSpaces } from "@/bridge";
+import { firstMessage, newPendingId, useBridge, useFirstSpaceOffers, useSavedOnboarding, useSession, useSpaces } from "@/bridge";
 import { useNewOnboarding } from "@/bridge/flags";
 import { useSummonIn } from "@/components/ask-first/use-summon-in";
 import { setPrepareSink } from "@/components/space-thread/queued";
@@ -44,6 +44,11 @@ export function PrepareRoot(): null {
   const latestOffers = useRef(offers);
   latestOffers.current = offers;
   const on = useNewOnboarding();
+  // The new first run (CUA-3318) makes nothing the person didn't ask for: the home starts warming only once
+  // the first run is done or skipped, not while it shows. A separate computer is the first run's own choice.
+  const session = useSession();
+  const savedOnboarding = useSavedOnboarding();
+  const firstRunOver = Boolean(session.data?.onboarding.completed || savedOnboarding.skipped);
   // Only an agent found on this computer is prepared: one Cua only wrote files for has no sign-in to bring.
   const installed = useInstalledAgents();
   const harness = installed === null ? null : installed.has(DEFAULT_HARNESS) ? DEFAULT_HARNESS : (installed.values().next().value ?? null);
@@ -142,11 +147,11 @@ export function PrepareRoot(): null {
         markResumed();
         d.resume();
       }
-    } else if (harness) {
+    } else if (harness && firstRunOver) {
       markResumed();
       d.start(harness);
     }
-  }, [ready, driverNow, harness]);
+  }, [ready, driverNow, harness, firstRunOver]);
 
   // The home's composer sends here while it is being made: kept, then delivered once.
   useEffect(() => {

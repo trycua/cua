@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Trusted host authorization seam.
 //!
 //! Ordinary MCP elicitation, tool arguments, inherited stdio, files, and
@@ -614,6 +617,7 @@ fn digest_request(request: &ConsentRequest) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "yaml")]
     use std::io::Write;
 
     struct FakeProvider {
@@ -679,6 +683,7 @@ mod tests {
             .unwrap()
     }
 
+    #[cfg(feature = "yaml")]
     fn authorization_context_with_manifest(
         mode: PermissionMode,
     ) -> Arc<crate::session_authorization::EffectiveAuthorizationContext> {
@@ -819,6 +824,7 @@ mod tests {
         assert_eq!(provider.requests.load(Ordering::SeqCst), 0);
     }
 
+    #[cfg(feature = "yaml")]
     #[tokio::test]
     async fn capability_manifest_resources_narrow_standard_and_unrestricted_without_prompting() {
         for mode in [PermissionMode::Standard, PermissionMode::Unrestricted] {

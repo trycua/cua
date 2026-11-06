@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Tool trait and registry.
 
 use std::collections::{HashMap, HashSet};
@@ -3824,6 +3827,7 @@ mod runtime_isolation_tests {
         protocol::{Content, ToolResult},
         session_authorization::{SessionAuthorizationRegistry, SessionModeCeiling},
     };
+    #[cfg(feature = "yaml")]
     use std::io::Write;
     use std::sync::{
         atomic::{AtomicUsize, Ordering},
@@ -3857,12 +3861,14 @@ mod runtime_isolation_tests {
             .unwrap()
     }
 
+    #[cfg(feature = "yaml")]
     fn bounded_context(
         manifest_source: &str,
     ) -> Arc<crate::session_authorization::EffectiveAuthorizationContext> {
         manifest_context(PermissionMode::Bounded, manifest_source)
     }
 
+    #[cfg(feature = "yaml")]
     fn manifest_context(
         mode: PermissionMode,
         manifest_source: &str,
@@ -4419,6 +4425,7 @@ mod runtime_isolation_tests {
         assert_eq!(provider.requests.load(Ordering::SeqCst), 1);
     }
 
+    #[cfg(feature = "yaml")]
     #[tokio::test]
     async fn bounded_history_requires_the_matching_operation_resource() {
         for (operations, expected_allowed) in
@@ -4446,6 +4453,7 @@ mod runtime_isolation_tests {
         }
     }
 
+    #[cfg(feature = "yaml")]
     #[tokio::test]
     async fn manifest_launch_reaches_the_platform_only_for_launchable_apps() {
         const MANIFEST: &str = "version: 3\nexpires_after: 1h\nidle_timeout: 30m\nresources:\n  apps:\n    - bundle_id: com.apple.TextEdit\n      launch: true\n    - bundle_id: com.apple.Preview\n      launch: false\nallow:\n  tools: [launch_app]\n";
@@ -4491,6 +4499,7 @@ mod runtime_isolation_tests {
         }
     }
 
+    #[cfg(feature = "yaml")]
     #[tokio::test]
     async fn bounded_observation_uses_only_the_manifest_without_a_protected_host() {
         let hits = Arc::new(AtomicUsize::new(0));
@@ -4524,6 +4533,7 @@ resources:
         assert_ne!(result.is_error, Some(true));
     }
 
+    #[cfg(feature = "yaml")]
     #[tokio::test]
     async fn capability_manifest_typed_resources_narrow_standard_and_unrestricted() {
         for mode in [PermissionMode::Standard, PermissionMode::Unrestricted] {
@@ -4587,6 +4597,7 @@ resources:
         }
     }
 
+    #[cfg(feature = "yaml")]
     #[tokio::test]
     async fn capability_manifest_tools_narrow_standard_and_unrestricted() {
         for mode in [PermissionMode::Standard, PermissionMode::Unrestricted] {
@@ -4612,6 +4623,7 @@ allow:
         }
     }
 
+    #[cfg(feature = "yaml")]
     #[tokio::test]
     async fn rejected_typed_resource_does_not_refresh_manifest_idle_lease() {
         let denied_hits = Arc::new(AtomicUsize::new(0));
@@ -4978,6 +4990,7 @@ resources:
         assert_eq!(provider.requests.load(Ordering::SeqCst), 0);
     }
 
+    #[cfg(feature = "yaml")]
     #[tokio::test]
     async fn background_input_rechecks_manifest_before_every_adapter_dispatch() {
         // The adapter may retain a native connection after a successful call.
@@ -5701,6 +5714,7 @@ resources:
         );
     }
 
+    #[cfg(feature = "yaml")]
     #[tokio::test]
     async fn manifest_cannot_widen_standard_foreign_process_termination() {
         let hits = Arc::new(AtomicUsize::new(0));
@@ -5738,6 +5752,7 @@ resources:
         );
     }
 
+    #[cfg(feature = "yaml")]
     #[tokio::test]
     async fn manifest_preserves_standard_owned_process_termination_inside_scope() {
         let hits = Arc::new(AtomicUsize::new(0));

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Trajectory recording session.
 //!
 //! When enabled, every non-read-only, non-recording tool call writes a
@@ -23,7 +26,7 @@ use crate::video::{self, VideoBackend, VideoMetadata};
 
 // ── Platform screenshot callback ─────────────────────────────────────────────
 //
-// Registered once at startup by each platform crate. Takes (window_id, pid)
+// Installed during tool registration by each platform crate. Takes (window_id, pid)
 // and returns raw PNG bytes, or None if capture fails. The callback is called
 // synchronously from write_turn (a blocking context).
 
@@ -451,6 +454,107 @@ pub struct PendingTurn {
     predicted_refusal: Option<&'static str>,
     before: TurnCapture,
     dispatch_click: Option<Arc<DispatchClickScope>>,
+    /// Caller-supplied secret values scrubbed from this turn's text files.
+    redactions: Redactions,
+}
+
+/// Secret values given to `start_recording` that must never reach the
+/// recording's files. They live only in memory for the recording's lifetime
+/// and are replaced with [`REDACTED`] in every text artifact of a turn
+/// (`action.json`, `before_state.json`, `after_state.json`, `app_state.json`).
+/// Screenshots and video are not altered.
+#[derive(Clone, Default)]
+pub struct Redactions(Arc<Vec<String>>);
+
+/// Placeholder written in place of a redacted value.
+pub const REDACTED: &str = "[redacted]";
+
+impl Redactions {
+    pub fn new(values: impl IntoIterator<Item = String>) -> Self {
+        let mut values: Vec<String> = values.into_iter().filter(|v| !v.is_empty()).collect();
+        // Longest first, so a value that contains another is replaced whole.
+        values.sort_by(|a, b| b.len().cmp(&a.len()).then_with(|| a.cmp(b)));
+        values.dedup();
+        Self(Arc::new(values))
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    fn scrub_str(&self, text: &str) -> Option<String> {
+        let mut out: Option<String> = None;
+        for value in self.0.iter() {
+            let current = out.as_deref().unwrap_or(text);
+            if current.contains(value.as_str()) {
+                out = Some(current.replace(value.as_str(), REDACTED));
+            }
+        }
+        out
+    }
+
+    /// Replace every occurrence in the string values and object keys of
+    /// `value`. Returns whether anything was replaced.
+    pub fn scrub_json(&self, value: &mut Value) -> bool {
+        if self.is_empty() {
+            return false;
+        }
+        match value {
+            Value::String(text) => match self.scrub_str(text) {
+                Some(scrubbed) => {
+                    *text = scrubbed;
+                    true
+                }
+                None => false,
+            },
+            Value::Array(items) => items
+                .iter_mut()
+                .fold(false, |hit, item| self.scrub_json(item) | hit),
+            Value::Object(map) => {
+                let mut hit = false;
+                let keys: Vec<String> = map.keys().cloned().collect();
+                for key in keys {
+                    let mut child = map.remove(&key).unwrap_or(Value::Null);
+                    hit |= self.scrub_json(&mut child);
+                    let key = match self.scrub_str(&key) {
+                        Some(scrubbed) => {
+                            hit = true;
+                            scrubbed
+                        }
+                        None => key,
+                    };
+                    map.insert(key, child);
+                }
+                hit
+            }
+            _ => false,
+        }
+    }
+
+    /// Scrub a captured state file. JSON is scrubbed structurally so escaped
+    /// characters in a value cannot hide it; anything else is scrubbed as text.
+    fn scrub_bytes(&self, bytes: &mut Vec<u8>) -> bool {
+        if self.is_empty() {
+            return false;
+        }
+        if let Ok(mut json) = serde_json::from_slice::<Value>(bytes) {
+            if self.scrub_json(&mut json) {
+                if let Ok(out) = serde_json::to_vec_pretty(&json) {
+                    *bytes = out;
+                    return true;
+                }
+            }
+            return false;
+        }
+        let text = String::from_utf8_lossy(bytes);
+        match self.scrub_str(&text) {
+            Some(scrubbed) => {
+                *bytes = scrubbed.into_bytes();
+                true
+            }
+            None => false,
+        }
+    }
 }
 
 /// Trusted identity of the call that may reserve a turn.
@@ -519,6 +623,8 @@ struct RecordingInner {
     /// `session.json` after stop so the renderer can confirm the
     /// sampler ran.
     last_cursor_samples: usize,
+    /// Secret values scrubbed from every turn of the live recording.
+    redactions: Redactions,
 }
 
 /// Snapshot of the current recording state (cheap to clone).
@@ -560,6 +666,7 @@ impl RecordingSession {
                 last_video: None,
                 cursor: None,
                 last_cursor_samples: 0,
+                redactions: Redactions::default(),
             }),
         }
     }
@@ -614,6 +721,26 @@ impl RecordingSession {
         record_video: bool,
         owner: Option<&str>,
         state_budget: Option<StateCaptureBudget>,
+    ) -> anyhow::Result<()> {
+        self.start_with_redactions(
+            output_dir,
+            record_video,
+            owner,
+            state_budget,
+            Redactions::default(),
+        )
+    }
+
+    /// [`Self::start_with_state_budget`] plus secret values that are scrubbed
+    /// from every turn's text files. The values are held in memory only and
+    /// cleared when the recording stops or restarts.
+    pub fn start_with_redactions(
+        &self,
+        output_dir: &str,
+        record_video: bool,
+        owner: Option<&str>,
+        state_budget: Option<StateCaptureBudget>,
+        redactions: Redactions,
     ) -> anyhow::Result<()> {
         let mut inner = self.inner.lock().unwrap();
         // Write-boundary resurrection guard — checked INSIDE the lock so the
@@ -706,6 +833,7 @@ impl RecordingSession {
         inner.enabled = true;
         inner.output_dir = Some(dir);
         inner.state_budget = state_budget;
+        inner.redactions = redactions;
         inner.next_turn = 1;
         inner.session_start_ms = started_at_ms;
         inner.session_monotonic_start = Some(monotonic_start);
@@ -761,6 +889,7 @@ impl RecordingSession {
 
         inner.enabled = false;
         inner.output_dir = None;
+        inner.redactions = Redactions::default();
         inner.next_turn = 1;
         inner.session_start_ms = 0;
         inner.session_monotonic_start = None;
@@ -875,7 +1004,7 @@ impl RecordingSession {
         capture_visual_state: bool,
         predicted_refusal: Option<&'static str>,
     ) -> Option<PendingTurn> {
-        let (turn_dir, session_start_ms, generation, state_budget) = {
+        let (turn_dir, session_start_ms, generation, state_budget, redactions) = {
             let mut inner = self.inner.lock().unwrap();
             if !inner.enabled {
                 return None;
@@ -893,6 +1022,7 @@ impl RecordingSession {
                 inner.session_start_ms,
                 inner.generation,
                 inner.state_budget,
+                inner.redactions.clone(),
             )
         };
 
@@ -922,7 +1052,7 @@ impl RecordingSession {
             pid,
             self.pixel_point_fn.get(),
         );
-        let before = if capture_visual_state {
+        let mut before = if capture_visual_state {
             capture_turn(
                 window_id,
                 pid,
@@ -939,6 +1069,9 @@ impl RecordingSession {
         let mut inner = self.inner.lock().unwrap();
         if !inner.enabled || inner.generation != generation {
             return None;
+        }
+        if let Some(state) = before.state.bytes.as_mut() {
+            redactions.scrub_bytes(state);
         }
         if let Err(error) = write_phase_artifacts(&turn_dir, "before", &before) {
             inner.last_error = Some(error.to_string());
@@ -972,6 +1105,7 @@ impl RecordingSession {
             } else {
                 None
             },
+            redactions,
         })
     }
 
@@ -1321,7 +1455,7 @@ fn write_turn(
 
 fn write_turn_with_after(
     pending: PendingTurn,
-    after: TurnCapture,
+    mut after: TurnCapture,
     result_text: &str,
     action_record: Option<&crate::action_record::ActionExecutionRecord>,
     result_is_error: bool,
@@ -1341,7 +1475,11 @@ fn write_turn_with_after(
         predicted_refusal,
         mut before,
         dispatch_click,
+        redactions,
     } = pending;
+    if let Some(state) = after.state.bytes.as_mut() {
+        redactions.scrub_bytes(state);
+    }
     let supplemental = dispatch_click
         .map(|scope| std::mem::take(&mut *scope.capture.lock().unwrap()))
         .unwrap_or_default();
@@ -1414,6 +1552,14 @@ fn write_turn_with_after(
     }
     if let Some(action_record) = action_record {
         payload["action_truth"] = action_record.debug_json();
+    }
+    // The result summary and action truth can echo typed text back, so the
+    // whole file is scrubbed. `redacted` marks a turn whose arguments lost a
+    // value, which replay cannot re-invoke as recorded.
+    let arguments_redacted = redactions.scrub_json(&mut payload["arguments"]);
+    redactions.scrub_json(&mut payload);
+    if arguments_redacted {
+        payload["redacted"] = Value::Bool(true);
     }
     let semantic_without_point =
         supplemental.failure.is_none() && semantic_action_without_point(&payload);
@@ -1666,6 +1812,7 @@ mod tests {
                 pid: 901,
                 capture: Mutex::new(DispatchClickCapture::default()),
             })),
+            redactions: Redactions::default(),
         }
     }
 
@@ -2044,6 +2191,7 @@ mod tests {
                 predicted_refusal: None,
                 before: TurnCapture::default(),
                 dispatch_click: None,
+                redactions: Redactions::default(),
             };
             write_turn(pending, "AT-SPI outcome", Some(&record), is_error).unwrap();
             let action: Value =
@@ -2114,6 +2262,7 @@ mod tests {
                             ..Default::default()
                         },
                         dispatch_click: None,
+                        redactions: Redactions::default(),
                     },
                     "AT-SPI outcome",
                     Some(&record),
@@ -2576,6 +2725,7 @@ mod tests {
                 ..Default::default()
             },
             dispatch_click: None,
+            redactions: Redactions::default(),
         };
         let manifest = |root: &Path| -> Value {
             serde_json::from_slice(&std::fs::read(root.join("evidence.json")).unwrap()).unwrap()
@@ -2608,6 +2758,134 @@ mod tests {
                 "classification": STATE_SKIPPED_PREDICTION_MISSED,
             })
         );
+    }
+
+    fn turn_files_contain_no_secret(root: &Path, secrets: &[&str]) {
+        let mut stack = vec![root.to_path_buf()];
+        let mut files = 0;
+        while let Some(dir) = stack.pop() {
+            for entry in std::fs::read_dir(&dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    stack.push(path);
+                    continue;
+                }
+                files += 1;
+                let bytes = std::fs::read(&path).unwrap();
+                for secret in secrets {
+                    let escaped = serde_json::to_string(secret).unwrap();
+                    let escaped = &escaped[1..escaped.len() - 1];
+                    for needle in [*secret, escaped] {
+                        assert!(
+                            !bytes.windows(needle.len()).any(|w| w == needle.as_bytes()),
+                            "{} holds a redacted value",
+                            path.display()
+                        );
+                    }
+                }
+            }
+        }
+        assert!(files > 0, "no turn files were written");
+    }
+
+    #[test]
+    fn redact_values_never_reach_turn_files() {
+        let secrets = ["hunter2-Secret", "pa\"ss\\word"];
+        let root = tempfile::tempdir().unwrap();
+        let redactions = Redactions::new(secrets.iter().map(|s| (*s).to_owned()));
+
+        // Arguments and result summary through the session API.
+        let session = RecordingSession::new();
+        {
+            let mut inner = session.inner.lock().unwrap();
+            inner.enabled = true;
+            inner.output_dir = Some(root.path().join("session"));
+            inner.session_start_ms = now_ms();
+            inner.redactions = redactions.clone();
+        }
+        let pending = session
+            .begin_private_turn(
+                "type_text",
+                &serde_json::json!({"pid": 1, "text": "login hunter2-Secret now"}),
+                now_ms(),
+                RecordingCaller::default(),
+            )
+            .expect("reserve turn");
+        session.finish_turn(pending, "typed 'login hunter2-Secret now'");
+        let action: Value = serde_json::from_slice(
+            &std::fs::read(root.path().join("session/turn-00001/action.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(action["arguments"]["text"], "login [redacted] now");
+        assert_eq!(action["result_summary"], "typed 'login [redacted] now'");
+        assert_eq!(action["redacted"], true);
+
+        // A turn without a secret in its arguments is not marked.
+        let pending = session
+            .begin_private_turn(
+                "press_key",
+                &serde_json::json!({"pid": 1, "key": "return"}),
+                now_ms(),
+                RecordingCaller::default(),
+            )
+            .unwrap();
+        session.finish_turn(pending, "pressed");
+        let action: Value = serde_json::from_slice(
+            &std::fs::read(root.path().join("session/turn-00002/action.json")).unwrap(),
+        )
+        .unwrap();
+        assert!(action.get("redacted").is_none());
+
+        // Stopping forgets the values.
+        session.stop_owner(None).unwrap();
+        assert!(session.inner.lock().unwrap().redactions.is_empty());
+
+        // Before/after accessibility state, including JSON-escaped values.
+        let state = serde_json::to_vec(&serde_json::json!({
+            "role": "AXTextField",
+            "value": "pa\"ss\\word",
+            "children": [{"title": "hunter2-Secret"}],
+        }))
+        .unwrap();
+        let turn_dir = root.path().join("state");
+        let pending = PendingTurn {
+            generation: 0,
+            turn_dir: turn_dir.clone(),
+            tool_name: "set_value".into(),
+            args: serde_json::json!({"pid": 1, "value": "pa\"ss\\word"}),
+            start_ms: 0,
+            session_start_ms: 0,
+            window_id: None,
+            pid: Some(1),
+            click_point: None,
+            capture_visual_state: true,
+            state_budget: Some(StateCaptureBudget::default()),
+            predicted_refusal: None,
+            before: TurnCapture::default(),
+            dispatch_click: None,
+            redactions: redactions.clone(),
+        };
+        let after = TurnCapture {
+            state: StateCapture::captured(state.clone()),
+            ..Default::default()
+        };
+        write_turn_with_after(pending, after, "set", None, false).unwrap();
+        let app_state: Value =
+            serde_json::from_slice(&std::fs::read(turn_dir.join("app_state.json")).unwrap())
+                .unwrap();
+        assert_eq!(app_state["value"], "[redacted]");
+        assert_eq!(app_state["children"][0]["title"], "[redacted]");
+
+        turn_files_contain_no_secret(root.path(), &secrets);
+    }
+
+    #[test]
+    fn redactions_replace_longest_value_first_and_ignore_empty() {
+        let redactions = Redactions::new(["abc".to_owned(), "abcdef".to_owned(), String::new()]);
+        let mut value = serde_json::json!({"text": "xabcdefx abc"});
+        assert!(redactions.scrub_json(&mut value));
+        assert_eq!(value["text"], "x[redacted]x [redacted]");
+        assert!(!Redactions::new([String::new()]).scrub_json(&mut value));
     }
 
     #[test]

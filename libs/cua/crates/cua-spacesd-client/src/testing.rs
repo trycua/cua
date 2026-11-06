@@ -15,6 +15,14 @@
 //! - `sleep <ms>`: exits 0 after `ms`.
 //! - `cp <src> <dst>`, `rm [-f] <path...>`, `test -f|-e <path>`: act on the
 //!   mock's in-memory files (the ones `Filesystem` reads and writes).
+//! - `whoami`, `id -un`, `id -u`, `printf %s "$HOME"`: answer for the user
+//!   the process runs as ([`MockState::process_user`]).
+//! - `sudo [-u USER] [--] [env K=V...] PROGRAM...`: runs PROGRAM as USER
+//!   (root without `-u`), unless the agent reports `run_as_mode` `none`.
+//!
+//! The agent is not root unless `run_as_mode` is `root`: a process or file
+//! call that names no user runs as [`MOCK_AGENT_USER`], as on the Linux
+//! images, so a client that leaves root unnamed is caught.
 //!
 //! Anything else exits 127 with an error. [`CutProxy`] is a TCP proxy that
 //! severs every connection after a byte budget, for resume tests.
@@ -99,6 +107,35 @@ pub struct Observed {
     pub accessibility: Mutex<Vec<String>>,
     /// Screenshot requests.
     pub screenshots: Mutex<Vec<pb::ScreenshotRequest>>,
+    /// `(call, path, run_as)` of every `Stat`, `ListDir`, `MakeDir`, `Move`
+    /// (the source), `Remove` and `ReadFile`, in order.
+    pub fs_run_as: Mutex<Vec<(String, String, String)>>,
+}
+
+impl Observed {
+    /// The `run_as` of each recorded `call` on `path`.
+    pub fn run_as_of(&self, call: &str, path: &str) -> Vec<String> {
+        self.fs_run_as
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(c, p, _)| c == call && p == path)
+            .map(|(_, _, u)| u.clone())
+            .collect()
+    }
+}
+
+impl Svc {
+    /// Records a file call's `run_as`, then checks it.
+    fn run_as(&self, call: &str, path: &str, user: &str) -> Result<(), Status> {
+        self.0
+            .observed
+            .fs_run_as
+            .lock()
+            .unwrap()
+            .push((call.into(), path.into(), user.into()));
+        check_run_as(user)
+    }
 }
 
 /// What the mock records about a file besides its bytes: the user it was
@@ -112,12 +149,69 @@ struct FileAttrs {
 
 /// Users the mock's guest has. `run_as` of any other user is
 /// `INVALID_ARGUMENT`, like a real guest without that account; `locked` is a
-/// user the agent may not act as (`PERMISSION_DENIED`).
-pub const MOCK_USERS: &[&str] = &["root", "mock", "cua", "alice", "bob"];
+/// user the agent may not act as (`PERMISSION_DENIED`). `daytona` is the
+/// sandbox user the Daytona gateway creates on a real guest.
+pub const MOCK_USERS: &[&str] = &["root", "mock", "cua", "alice", "bob", "daytona"];
 /// The user whose identity the mock's agent refuses to take.
 pub const MOCK_LOCKED_USER: &str = "locked";
-/// The owner the mock reports for files nobody wrote as another user.
-pub const MOCK_DEFAULT_OWNER: &str = "mock";
+/// The user the mock agent runs as unless `run_as_mode` is `root`, like the
+/// Linux images' unprivileged `cua` agent. A process or file call that names
+/// no user runs as this one, never as root.
+pub const MOCK_AGENT_USER: &str = "cua";
+
+fn home_of(user: &str) -> String {
+    if user == "root" {
+        "/root".into()
+    } else {
+        format!("/home/{user}")
+    }
+}
+
+/// `root` 0, the agent's `cua` 1000, other users from 1001.
+fn uid_of(user: &str) -> u32 {
+    match user {
+        "root" => 0,
+        MOCK_AGENT_USER => 1000,
+        u => {
+            1001 + MOCK_USERS
+                .iter()
+                .position(|m| *m == u)
+                .unwrap_or(MOCK_USERS.len()) as u32
+        }
+    }
+}
+
+/// The `-u` user of a `sudo` command line (root without one) and the index
+/// of the program it runs, past `--` and an `env K=V...` wrapper.
+fn sudo_target(args: &[String]) -> (String, usize) {
+    let mut user = "root".to_string();
+    let mut i = 0;
+    while let Some(a) = args.get(i) {
+        match a.as_str() {
+            "-u" | "--user" => {
+                user = args.get(i + 1).cloned().unwrap_or_default();
+                i += 1;
+            }
+            "-g" | "-C" | "-D" | "-h" | "-p" | "-r" | "-t" | "-U" => i += 1,
+            "--" => {
+                i += 1;
+                break;
+            }
+            a if a.starts_with("--user=") => user = a["--user=".len()..].into(),
+            a if a.starts_with("-u") => user = a[2..].into(),
+            a if a.starts_with('-') => {}
+            _ => break,
+        }
+        i += 1;
+    }
+    if args.get(i).is_some_and(|a| a == "env") {
+        i += 1;
+        while args.get(i).is_some_and(|a| a.contains('=')) {
+            i += 1;
+        }
+    }
+    (user, i)
+}
 
 fn check_run_as(user: &str) -> Result<(), Status> {
     if user.is_empty() || MOCK_USERS.contains(&user) {
@@ -158,6 +252,8 @@ struct Upload {
 struct Proc {
     pid: u32,
     tag: String,
+    /// The user it runs as.
+    user: String,
     /// (offset, kind 0=stdout 1=stderr 2=pty, bytes)
     output: Vec<(u64, u8, Vec<u8>)>,
     end_offset: u64,
@@ -310,6 +406,70 @@ impl MockState {
         self.started.lock().unwrap().clone()
     }
 
+    /// The user process `pid` ran as: the `user` it was started with, the
+    /// `-u` user of a `sudo` command line (root without one), or else the
+    /// agent's own user ([`MockState::agent_user`]).
+    pub fn process_user(&self, pid: u32) -> Option<String> {
+        self.procs.lock().unwrap().get(&pid).map(|p| p.user.clone())
+    }
+
+    /// The user the mock agent runs as: `root` when `run_as_mode` is
+    /// `root`, else [`MOCK_AGENT_USER`]. Unnamed processes and file writes
+    /// run as it.
+    pub fn agent_user(&self) -> String {
+        match self.run_as_mode.lock().unwrap().as_deref() {
+            Some("root") => "root".into(),
+            _ => MOCK_AGENT_USER.into(),
+        }
+    }
+
+    /// Who `cfg` runs as, and what runs: a `sudo` command line is unwrapped
+    /// to its program. An agent that reports `none` has no `sudo` to use.
+    fn effective_user(
+        &self,
+        cfg: &pb::ProcessConfig,
+    ) -> Result<(String, pb::ProcessConfig), Status> {
+        if cfg.command.rsplit('/').next() == Some("sudo") {
+            if self.run_as_mode.lock().unwrap().as_deref() == Some("none") {
+                return Err(Status::permission_denied(
+                    "the driver runs as \"cua\" and cannot switch users: no sudo",
+                ));
+            }
+            let (user, at) = sudo_target(&cfg.args);
+            check_run_as(&user)?;
+            let run = pb::ProcessConfig {
+                command: cfg.args.get(at).cloned().unwrap_or_default(),
+                args: cfg.args.get(at + 1..).unwrap_or_default().to_vec(),
+                ..cfg.clone()
+            };
+            return Ok((user, run));
+        }
+        let user = if cfg.user.is_empty() {
+            self.agent_user()
+        } else {
+            cfg.user.clone()
+        };
+        Ok((user, cfg.clone()))
+    }
+
+    /// `cp src dst` as `user`: a new file belongs to who copied it, an
+    /// existing one keeps its owner. False when `src` does not exist.
+    fn copy_as(&self, src: &str, dst: String, user: String) -> bool {
+        let Some(data) = self.files.lock().unwrap().get(src).cloned() else {
+            return false;
+        };
+        self.files.lock().unwrap().insert(dst.clone(), data);
+        self.file_attrs
+            .lock()
+            .unwrap()
+            .entry(dst)
+            .or_insert_with(|| FileAttrs {
+                owner: user,
+                ..Default::default()
+            });
+        true
+    }
+
     /// The pid of the newest process started.
     pub fn last_pid(&self) -> Option<u32> {
         self.procs.lock().unwrap().keys().max().copied()
@@ -448,8 +608,8 @@ impl MockState {
         self.file_attrs.lock().unwrap().remove(path);
     }
 
-    /// Owner the mock recorded for a file (`None` when it never saw a
-    /// `run_as` write).
+    /// Owner the mock recorded for a file (`None` for one put with
+    /// [`MockState::put_file`]).
     pub fn file_owner(&self, path: &str) -> Option<String> {
         self.file_attrs
             .lock()
@@ -471,7 +631,7 @@ impl MockState {
         self.put_file(&header.path, data);
         let mut attrs = FileAttrs {
             owner: if header.run_as.is_empty() {
-                MOCK_DEFAULT_OWNER.into()
+                self.agent_user()
             } else {
                 header.run_as.clone()
             },
@@ -496,7 +656,7 @@ impl MockState {
             e.owner = attrs.owner.clone();
             e.metadata = attrs.metadata.get(namespace).cloned().unwrap_or_default();
         } else {
-            e.owner = MOCK_DEFAULT_OWNER.into();
+            e.owner = self.agent_user();
         }
         e
     }
@@ -1169,7 +1329,7 @@ impl Svc {
 enum Script {
     Echo(String),
     /// `printf %s WORD`: the word without its quotes and no newline;
-    /// `$HOME` is the mock guest user's home (`/home/cua`).
+    /// `$HOME` is the home of the user it runs as (`/home/cua`, `/root`).
     Printf(String),
     Fail(i32),
     Ticker(u32, u64),
@@ -1181,7 +1341,8 @@ enum Script {
     Unknown(String),
 }
 
-fn parse_script(cfg: &pb::ProcessConfig) -> Script {
+/// `whoami`, `id -un` and `id -u` answer for `user`.
+fn parse_script(cfg: &pb::ProcessConfig, user: &str) -> Script {
     let shell = cfg.command.ends_with("sh") || cfg.command.ends_with("bash");
     // `sh -c 'umask 000; exec "$@"' sh PROGRAM ARGS...`: the program after
     // the shell's own name is what runs.
@@ -1198,7 +1359,7 @@ fn parse_script(cfg: &pb::ProcessConfig) -> Script {
             args: cfg.args[4..].to_vec(),
             ..cfg.clone()
         };
-        return parse_script(&inner);
+        return parse_script(&inner, user);
     }
     let mut words: Vec<String> = if shell
         && cfg
@@ -1228,8 +1389,11 @@ fn parse_script(cfg: &pb::ProcessConfig) -> Script {
         "printf" if words.len() == 2 && words[0] == "%s" => Script::Printf(
             words[1]
                 .trim_matches(|c| c == '"' || c == '\'')
-                .replace("$HOME", "/home/cua"),
+                .replace("$HOME", &home_of(user)),
         ),
+        "whoami" if words.is_empty() => Script::Echo(user.into()),
+        "id" if words == ["-un"] => Script::Echo(user.into()),
+        "id" if words == ["-u"] => Script::Echo(uid_of(user).to_string()),
         "fail" | "exit" => Script::Fail(num(0, if prog == "exit" { 0 } else { 1 }) as i32),
         "ticker" => Script::Ticker(num(0, 3) as u32, num(1, 10)),
         "cat" => Script::Cat,
@@ -1438,7 +1602,8 @@ impl ProcessService for Svc {
                 cfg.user
             )));
         }
-        let script = parse_script(&cfg);
+        let (user, run) = self.0.effective_user(&cfg)?;
+        let script = parse_script(&run, &user);
         let pid = self.0.next_pid.fetch_add(1, Ordering::Relaxed);
         let (stdin_tx, mut stdin_rx) = mpsc::unbounded_channel::<Option<Vec<u8>>>();
         {
@@ -1452,6 +1617,7 @@ impl ProcessService for Svc {
                 Proc {
                     pid,
                     tag: req.tag.clone(),
+                    user: user.clone(),
                     output: vec![],
                     end_offset: 0,
                     scrollback: if req.scrollback_bytes == 0 {
@@ -1506,18 +1672,13 @@ impl ProcessService for Svc {
                         (Some(0), String::new())
                     }
                     Script::Cp(src, dst) => {
-                        let data = svc.0.files.lock().unwrap().get(&src).cloned();
-                        match data {
-                            Some(d) => {
-                                svc.0.files.lock().unwrap().insert(dst, d);
-                                (Some(0), String::new())
-                            }
-                            None => {
-                                let msg =
-                                    format!("cp: cannot stat '{src}': No such file or directory\n");
-                                svc.emit(pid, if pty { 2 } else { 1 }, msg.into_bytes());
-                                (Some(1), String::new())
-                            }
+                        if svc.0.copy_as(&src, dst, user) {
+                            (Some(0), String::new())
+                        } else {
+                            let msg =
+                                format!("cp: cannot stat '{src}': No such file or directory\n");
+                            svc.emit(pid, if pty { 2 } else { 1 }, msg.into_bytes());
+                            (Some(1), String::new())
                         }
                     }
                     Script::Rm(paths, force) => {
@@ -1797,7 +1958,7 @@ impl FilesystemService for Svc {
         req: tonic::Request<pb::StatRequest>,
     ) -> Result<tonic::Response<pb::StatResponse>, Status> {
         let req = req.into_inner();
-        check_run_as(&req.run_as)?;
+        self.run_as("Stat", &req.path, &req.run_as)?;
         let namespace = mock_namespace(&req.xattr_namespace)?;
         let path = req.path;
         if self.0.is_dir(&path) {
@@ -1826,7 +1987,7 @@ impl FilesystemService for Svc {
         req: tonic::Request<pb::ListDirRequest>,
     ) -> Result<tonic::Response<pb::ListDirResponse>, Status> {
         let req = req.into_inner();
-        check_run_as(&req.run_as)?;
+        self.run_as("ListDir", &req.path, &req.run_as)?;
         let namespace = mock_namespace(&req.xattr_namespace)?;
         let dir = req.path.trim_end_matches('/').to_string() + "/";
         // Entries at most `depth` levels below `dir` (0: no limit, the
@@ -1872,7 +2033,7 @@ impl FilesystemService for Svc {
         req: tonic::Request<pb::MakeDirRequest>,
     ) -> Result<tonic::Response<pb::MakeDirResponse>, Status> {
         let req = req.into_inner();
-        check_run_as(&req.run_as)?;
+        self.run_as("MakeDir", &req.path, &req.run_as)?;
         let path = req.path.trim_end_matches('/').to_string();
         let created = !self.0.is_dir(&path);
         {
@@ -1893,7 +2054,11 @@ impl FilesystemService for Svc {
         Ok(tonic::Response::new(pb::MakeDirResponse {
             // A directory made as a user belongs to that user.
             entry: Some(pb::EntryInfo {
-                owner: req.run_as.clone(),
+                owner: if req.run_as.is_empty() {
+                    self.0.agent_user()
+                } else {
+                    req.run_as.clone()
+                },
                 ..dir_entry(&path)
             }),
             created,
@@ -1905,7 +2070,7 @@ impl FilesystemService for Svc {
         req: tonic::Request<pb::MoveRequest>,
     ) -> Result<tonic::Response<pb::MoveResponse>, Status> {
         let req = req.into_inner();
-        check_run_as(&req.run_as)?;
+        self.run_as("Move", &req.source, &req.run_as)?;
         let mut files = self.0.files.lock().unwrap();
         let data = files.remove(&req.source).ok_or_else(|| {
             fs_err(
@@ -1933,7 +2098,7 @@ impl FilesystemService for Svc {
         req: tonic::Request<pb::RemoveRequest>,
     ) -> Result<tonic::Response<pb::RemoveResponse>, Status> {
         let req = req.into_inner();
-        check_run_as(&req.run_as)?;
+        self.run_as("Remove", &req.path, &req.run_as)?;
         let path = req.path.trim_end_matches('/').to_string();
         self.0.file_attrs.lock().unwrap().remove(&path);
         let removed = self.0.files.lock().unwrap().remove(&path);
@@ -2001,7 +2166,7 @@ impl FilesystemService for Svc {
         req: tonic::Request<pb::ReadFileRequest>,
     ) -> Result<tonic::Response<Self::ReadFileStream>, Status> {
         let req = req.into_inner();
-        check_run_as(&req.run_as)?;
+        self.run_as("ReadFile", &req.path, &req.run_as)?;
         let namespace = mock_namespace(&req.xattr_namespace)?;
         let data = self.0.file(&req.path).ok_or_else(|| {
             fs_err(

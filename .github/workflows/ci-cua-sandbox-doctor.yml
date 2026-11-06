@@ -67,8 +67,14 @@ env:
 jobs:
   # The three builds are independent and the slowest ones dominate, so they
   # run in parallel jobs and the doctor jobs below pick up the binaries.
+  quick:
+    name: quick
+    if: github.event_name == 'pull_request'
+    uses: ./.github/workflows/ci-quick.yml
+
   build:
-    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
+    needs: quick
+    if: ${{ !failure() && !cancelled() && (!startsWith(github.head_ref, 'release-please--branches--')) }}
     name: build ${{ matrix.component }}
     runs-on: ubuntu-latest
     timeout-minutes: 60

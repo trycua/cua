@@ -382,7 +382,7 @@ def test_cua_sdk_subset_names_are_real_jobs_with_the_pull_request_legs():
     assert len(names) == len(set(names))
     assert '--stamp-job "reuse PR results"' in command
     assert wf["jobs"]["reuse"]["name"] == "reuse PR results"
-    assert set(names) <= job_names(wf, expand_os=("ubuntu-latest", "windows-latest"))
+    assert set(names) <= job_names(wf, expand_os=("ubuntu-latest", "macos-26", "windows-latest"))
 
 
 def literals(expr):
@@ -391,7 +391,7 @@ def literals(expr):
 
 MATRIX_JOBS = {
     # job id: legs a pull request runs and which of them are in the reused subset
-    "rust-lint": ["ubuntu-latest", "windows-latest"],
+    "rust-lint": ["ubuntu-latest", "macos-26", "windows-latest"],
     "spaces-e2e": ["ubuntu-latest"],
     "bindings": ["ubuntu-latest"],
     "python": ["ubuntu-latest"],
@@ -406,7 +406,12 @@ def test_cua_sdk_matrix_on_main_is_the_full_matrix_minus_the_pull_request_legs(j
     assert "reuse" in (job["needs"] if isinstance(job["needs"], list) else [job["needs"]])
     main_only, full, pr = literals(job["strategy"]["matrix"]["os"])
     assert pr == MATRIX_JOBS[job_id]
-    assert main_only == [leg for leg in full if leg not in pr]
+    expected_main_only = [leg for leg in full if leg not in pr]
+    if job_id == "rust-lint":
+        # Pull requests now run every lint leg, so nothing is left for main; a matrix
+        # cannot be empty, so main keeps the macOS leg as its backstop.
+        expected_main_only = ["macos-26"]
+    assert main_only == expected_main_only
     # Every dropped leg is one the subset covers, and none is dropped when it is not.
     subset = re.search(r'--subset "pr_subset=([^"]+)"', reuse_run_command(wf)).group(1).split("|")
     prefix = job["name"].split("(")[0].replace("${{ matrix.os }}", "").strip()

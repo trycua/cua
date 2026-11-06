@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Render the agent cursor along a fixed script of moves, clicks, a drag and
 //! a scroll with the real overlay renderer, over a light and a dark app
 //! window, as raw RGBA frames on stdout. Pipe them into ffmpeg:

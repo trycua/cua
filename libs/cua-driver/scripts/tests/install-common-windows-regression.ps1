@@ -209,6 +209,15 @@ try {
     Assert-True ($steps -contains "verified the Sigstore signature of $zipName") `
         'a successful cosign check did not log the Sigstore success step'
 
+    # A cosign.exe that is not a valid program throws when started instead of setting $LASTEXITCODE.
+    Remove-Item -LiteralPath (Join-Path $cosignRoot 'cosign.cmd')
+    [System.IO.File]::WriteAllBytes((Join-Path $cosignRoot 'cosign.exe'), [byte[]](0, 1, 2, 3))
+    $steps.Clear()
+    $failure = $null
+    try { Assert-ReleaseZipIntegrity (Join-Path $cosignRoot $zipName) '0.30.0' }
+    catch { $failure = $_.Exception.Message }
+    Assert-True ("$failure" -like '*did not verify*could not start*') "a cosign that could not start was not refused: $failure"
+
     Write-Host 'Windows installer cosign check accepted a verified zip and refused an unverified one.'
 }
 finally {

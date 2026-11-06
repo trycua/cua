@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use cua_driver_core::action_record::{
     ActionEffect, ActionExecutionRecord, ActionTransport, ActualDelivery, RequestedDelivery,
 };

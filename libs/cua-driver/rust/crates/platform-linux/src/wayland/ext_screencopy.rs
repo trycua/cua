@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Output capture via `ext-image-copy-capture-v1` (staging protocol).
 //!
 //! The wlroots `zwlr_screencopy_manager_v1` capture path in `mod.rs` works

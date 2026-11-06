@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 // Golden cases shared by the Rust and TypeScript implementations.
 //
 // `examples/export_golden.rs` writes them to `fixtures/golden.json`;

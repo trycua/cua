@@ -233,6 +233,9 @@ final class RelayAnswering: DevicesRunning, @unchecked Sendable {
     func pairingCodes() async throws -> [PairingCode] { try await fixture.pairingCodes() }
     func revokePairingCode(id: String) async throws { try await fixture.revokePairingCode(id: id) }
     func relayUsage() async throws -> AppRelayUsage? { try await fixture.relayUsage() }
+    func spacesSettings() async throws -> SpacesSettings { try await fixture.spacesSettings() }
+    func setSpacesSettings(_ settings: SpacesSettings) async throws -> SpacesSettings { try await fixture.setSpacesSettings(settings) }
+    func resolveDefaultSpace() async throws -> DefaultSpace { try await fixture.resolveDefaultSpace() }
 }
 
 /// Settings' Relay usage row and the notice above the main window: the

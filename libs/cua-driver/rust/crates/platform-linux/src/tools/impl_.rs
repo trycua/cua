@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Real Linux tool implementations (compiled only on Linux).
 
 use cua_driver_core::{
@@ -4430,6 +4433,7 @@ pub fn build_registry_with_provider(
 ) -> ToolRegistry {
     let mut r = ToolRegistry::new_with_protected_consent_provider(provider);
     let state = ToolState::new_with_capture_service(r.capture_service());
+    crate::recording_hooks::install();
     if crate::wayland::is_wayland() && crate::wayland::hyprland::is_session() {
         let recording_state = Arc::downgrade(&state);
         r.recording
@@ -4655,10 +4659,9 @@ pub fn build_registry_with_provider(
         &mut r,
         Arc::new(crate::clipboard::LinuxClipboard::new()),
     );
-    // `screenshot` removed - see the matching comment in
-    // platform-windows/src/tools/impl_.rs::build_registry. Canonical
-    // screenshot path is `get_window_state` (it always returns a screenshot now).
-    let _ = compat;
+    // Standalone screenshot capture is intentionally absent. Use
+    // `get_window_state` for a window or `get_desktop_state` for the display.
+    let _ = compat; // legacy flag; no current tool-surface effect
     r.register(Box::new(GetScreenSizeTool));
     r.register(Box::new(GetDesktopStateTool {
         state: state.clone(),

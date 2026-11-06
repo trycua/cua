@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Thin macOS adapter over the runtime-owned immutable capture service.
 //!
 //! The common runtime owns registry and session generations plus atomic action

@@ -106,7 +106,7 @@ export class PendingSpacesBackend implements SpacesBackend {
   deleteMany = async (ids: string[]) => (await this.b()).deleteMany(ids);
   leave = async (ids: string[]) => (await this.b()).leave(ids);
   rename = async (id: string, name: string) => (await this.b()).rename(id, name);
-  relayUnregister = async (machineId: string) => (await this.b()).relayUnregister(machineId);
+  relayUnregister = async (machineId: string, deleteSpaces?: boolean) => (await this.b()).relayUnregister(machineId, deleteSpaces);
   network = async (id: string) => {
     const b = await this.b();
     if (!b.network) throw new Error("network settings are not available in this build");

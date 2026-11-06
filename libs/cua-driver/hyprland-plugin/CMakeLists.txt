@@ -246,10 +246,19 @@ if(CUA_HYPRLAND_BUILD_PLUGIN)
 
     add_library(cua_hyprland_plugin MODULE src/plugin.cpp)
     if(CUA_HYPRLAND_TEST_INPUT OR CUA_HYPRLAND_INPUT)
-        if(NOT HYPRLAND_VERSION STREQUAL "0.56.2")
-            message(FATAL_ERROR "Input is pinned to Hyprland 0.56.2")
+        cua_detect_hyprland_window_api(cua_hyprland_window_backend_api
+            "${HYPRLAND_INCLUDE_DIRS}" "${HYPRLAND_CFLAGS_OTHER}")
+        if(cua_hyprland_window_backend_api STREQUAL "1")
+            message(STATUS "Using Hyprland window-backend input API")
+        elseif(cua_hyprland_window_backend_api STREQUAL "0")
+            message(STATUS "Using Hyprland legacy window input API")
+        else()
+            message(FATAL_ERROR
+                "Hyprland ${HYPRLAND_VERSION} headers expose no supported window input API")
         endif()
         target_sources(cua_hyprland_plugin PRIVATE src/input_experiment.cpp)
+        target_compile_definitions(cua_hyprland_plugin PRIVATE
+            CUA_HYPRLAND_WINDOW_BACKEND_API=${cua_hyprland_window_backend_api})
     endif()
     if(CUA_HYPRLAND_INPUT)
         target_compile_definitions(cua_hyprland_plugin PRIVATE CUA_HYPRLAND_INPUT=1)

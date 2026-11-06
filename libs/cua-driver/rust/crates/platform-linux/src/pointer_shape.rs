@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Linux [`PointerShapeBackend`]: what cursor the guest would show at a
 //! point, for multiplayer presence. Tables and per-session support live in
 //! [`crate::pointer_shape_map`].

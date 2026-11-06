@@ -44,6 +44,8 @@ describe("network.*", () => {
   it("reads the words of a preset", () => {
     expect(networkSettingsOf("internet", [], [])).toMatchObject({ preset: "internet", localhostPorts: [], allLocalhostPorts: false });
     expect(networkSettingsOf("localhost:all", [], [])).toMatchObject({ preset: "localhost", allLocalhostPorts: true });
+    expect(networkSettingsOf("localhost+lan:5432,3000", [], [])).toMatchObject({ preset: "localhost+lan", localhostPorts: [5432, 3000], allLocalhostPorts: false });
+    expect(networkSettingsOf("localhost+lan:all", [], [])).toMatchObject({ preset: "localhost+lan", localhostPorts: [], allLocalhostPorts: true });
     expect(networkSettingsOf("custom:none", ["github.com"], ["10.0.0.0/8"])).toMatchObject({ customBase: "none", allow: ["github.com"], deny: ["10.0.0.0/8"] });
     expect(networkSettingsOf("localhost:99999,abc,22", [], []).localhostPorts).toEqual([22]);
   });

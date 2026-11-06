@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Multi-client / multi-cursor / overlay session tests.
 //!
 //! Concurrent driver processes, per-cursor instance state, cross-process

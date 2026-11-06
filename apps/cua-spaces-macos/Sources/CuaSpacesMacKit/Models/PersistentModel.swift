@@ -152,13 +152,19 @@ public final class PersistentModel {
     /// Starts a coding agent in a Space (`agent_start`): its answer as is
     /// (`run_id`, `agent`, `space`, ...). Saved provider keys the harness
     /// reads are forwarded by the daemon without being named here.
+    /// With `resumeSession`, the run continues that session of the agent's
+    /// own (a chat from `agent_threads`) in `cwd`, its folder.
     func startRun(space: String, agent: String, prompt: String, repo: String?, branch: String?, model: String?,
-                  envFromHost: [String]) async throws -> [String: Any] {
+                  envFromHost: [String], cwd: String? = nil, resumeSession: String? = nil,
+                  resumeContext: String? = nil) async throws -> [String: Any] {
         var args: [String: Any] = ["space": space, "agent": agent, "prompt": prompt]
         if let repo { args["repo"] = repo }
         if let branch { args["branch"] = branch }
         if let model { args["model"] = model }
         if !envFromHost.isEmpty { args["env_from_host"] = envFromHost }
+        if let cwd { args["cwd"] = cwd }
+        if let resumeSession { args["resume_session"] = resumeSession }
+        if let resumeContext { args["resume_context"] = resumeContext }
         return try await call("agent_start", args)
     }
 

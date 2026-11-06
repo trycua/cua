@@ -1724,6 +1724,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "cua-agent-threads"
+version = "0.10.1"
+dependencies = [
+ "chrono",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "cua-agents"
 version = "0.10.1"
 dependencies = [
@@ -1835,6 +1846,7 @@ dependencies = [
  "axum",
  "base64 0.22.1",
  "bytes",
+ "cua-agents",
  "cua-cluster",
  "cua-create-failure",
  "cua-disk",
@@ -2264,7 +2276,7 @@ dependencies = [
 
 [[package]]
 name = "cua-spaces-app"
-version = "0.20.0"
+version = "0.21.0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -2340,6 +2352,7 @@ dependencies = [
  "async-trait",
  "base64 0.22.1",
  "chrono",
+ "cua-agent-threads",
  "cua-agents",
  "cua-auth",
  "cua-chromium-storage",

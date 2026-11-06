@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use crate::element_token::{
     current_snapshots_json, current_snapshots_phrase, format_snapshot_id, parse_token, refusal,
     token_for, CurrentSnapshot, ResolvedElement, TokenOwner, LRU_CAP_PER_PID, STALE_TOKEN_ERROR,

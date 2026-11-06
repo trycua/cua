@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Bounded, borrowed observation queries. No tasks outlive their snapshot.
 
 use std::future::Future;

@@ -1,0 +1,2 @@
+{"type":"session-owner","sessionId":"99999999-0000-4000-8000-000000000000"}
+{"type":"user","isMeta":true,"uuid":"x","timestamp":"2026-11-04T07:00:00.000Z","cwd":"/tmp","message":{"role":"user","content":"meta only"}}

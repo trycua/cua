@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! AX tree walker: produces the treeMarkdown string and element cache.
 //!
 //! Format (matching libs/cua-driver exactly):
@@ -24,7 +27,7 @@ use std::time::Instant;
 ///
 /// Callers can override per-call via `walk_tree`'s `max_depth` parameter to
 /// trade fidelity for context-window budget on AX-heavy apps (Electron,
-/// Obsidian, large web apps — issue #22865).
+/// Obsidian and other large web apps).
 pub const DEFAULT_MAX_DEPTH: usize = 25;
 
 /// Default maximum total nodes visited during a single AX walk. Chromium-family
@@ -34,7 +37,7 @@ pub const DEFAULT_MAX_DEPTH: usize = 25;
 /// with a warning line appended (mirrors Swift reference implementation).
 ///
 /// Callers can override per-call via `walk_tree`'s `max_elements` parameter
-/// (issue #22865).
+/// for large accessibility trees.
 pub const DEFAULT_MAX_ELEMENTS: usize = 2_000;
 
 /// Bound each native AX request. Tokio cannot cancel a blocked
@@ -131,8 +134,8 @@ fn role_supports_value_addressing(role: &str) -> bool {
     )
 }
 
-fn is_addressable(actions_present: bool, value_settable: bool, enabled: Option<bool>) -> bool {
-    (actions_present || value_settable) && enabled != Some(false)
+fn is_addressable(actions_present: bool, value_settable: bool) -> bool {
+    actions_present || value_settable
 }
 
 pub struct TreeWalkResult {
@@ -185,7 +188,7 @@ pub fn walk_tree(pid: i32, window_id: Option<u32>, query: Option<&str>) -> TreeW
 /// the cap) and depth-wise (nodes whose markdown indent would exceed the cap
 /// are omitted). Markdown and the `nodes` vec are truncated identically.
 ///
-/// Issue #22865: caps protect against Electron / Obsidian / large web apps
+/// These caps protect against Electron / Obsidian / large web apps
 /// that produce 10k+ element trees and blow context windows.
 pub fn walk_tree_bounded(
     pid: i32,
@@ -530,16 +533,18 @@ unsafe fn walk_element(
     let value_settable = actions.is_empty()
         && role_supports_value_addressing(&role)
         && is_attribute_settable(element, "AXValue");
-    // A closed submenu can keep its descendants in AXChildren while reporting
-    // those controls disabled. Never assign such a row a live element index:
-    // the same native state also causes dispatch to refuse it, and exposing an
-    // index for it invites agents to retain an unusable menu target.
+    // A disabled control is still indexed and published with `enabled: false`:
+    // enablement is state the caller needs to read (a form's Save button, a
+    // toolbar item in a window that is not key), not a reason to hide the row.
+    // `click` re-reads AXEnabled and refuses a disabled target
+    // (`input::ax_actions::ensure_ax_action_enabled`). Other token writers
+    // (set_value, right_click, double_click, type_text) do not check it.
     let enabled = if !actions.is_empty() || value_settable {
         copy_bool_attr(element, "AXEnabled")
     } else {
         None
     };
-    let is_actionable = is_addressable(!actions.is_empty(), value_settable, enabled);
+    let is_actionable = is_addressable(!actions.is_empty(), value_settable);
 
     if !is_actionable && !has_content && role != "AXWindow" && role != "AXSheet" {
         let children = copy_children(element);
@@ -764,6 +769,9 @@ fn format_node_line(node: &AXNode) -> String {
         if let Some(h) = &node.help {
             attrs.push(format!("help=\"{}\"", h));
         }
+        if node.enabled == Some(false) {
+            attrs.push("enabled=false".to_owned());
+        }
         let shown: Vec<String> = node
             .actions
             .iter()
@@ -930,11 +938,39 @@ mod tests {
     use std::cell::Cell;
 
     #[test]
+    fn a_disabled_control_row_says_so() {
+        let node = AXNode {
+            element_index: Some(7),
+            role: "AXCheckBox".into(),
+            title: Some("Reset".into()),
+            value: None,
+            description: None,
+            identifier: None,
+            help: None,
+            actions: vec!["AXPress".into()],
+            element_ptr: 0,
+            depth: 2,
+            parent_element_index: None,
+            frame: None,
+            value_state: None,
+            value_description: None,
+            min_value: None,
+            max_value: None,
+            enabled: Some(false),
+            selected: None,
+            in_web_content: false,
+        };
+        assert_eq!(
+            format_node_line(&node),
+            "- [7] AXCheckBox \"Reset\" [enabled=false actions=[press]]"
+        );
+    }
+
+    #[test]
     fn writable_value_controls_are_addressable_without_actions() {
-        assert!(is_addressable(false, true, Some(true)));
-        assert!(is_addressable(true, false, None));
-        assert!(!is_addressable(false, false, Some(true)));
-        assert!(!is_addressable(true, false, Some(false)));
+        assert!(is_addressable(false, true));
+        assert!(is_addressable(true, false));
+        assert!(!is_addressable(false, false));
 
         for role in [
             "AXTextField",

@@ -14,8 +14,9 @@ import { resetFirstRunCache } from "@/bridge/first-run";
 import { resetSavedOnboardingCache } from "@/bridge/onboarding";
 import { resetConnectedAppsState } from "@/hooks/use-connected-apps";
 import { resetAskTasks } from "@/lib/ask-first";
+import { rememberAgent, resetPickedAgent } from "@/lib/ask-first-model";
 import { getDriver, resetPrepare } from "@/lib/prepare/store";
-import { mountApp, stubBrowserApis } from "./app-harness";
+import { mountApp, pickNewLinux, stubBrowserApis } from "./app-harness";
 
 stubBrowserApis();
 beforeEach(() => {
@@ -25,6 +26,9 @@ beforeEach(() => {
   resetConnectedAppsState();
   resetPrepare();
   resetAskTasks();
+  // The agent the first run prepares a home for is the one the person last used.
+  resetPickedAgent();
+  rememberAgent({ harness: "claude-code" });
   setFlagOverride("spaces_ask_first_home", true);
   setFlagOverride("spaces_new_onboarding", true);
 });
@@ -71,10 +75,11 @@ describe.skipIf(!wasmBuilt)("the warming home is not on any list until a person 
     let release!: () => void;
     const hold = new Promise<void>((r) => (release = r));
     const { router } = await mountApp("/home", { failsCreates: false, listsGhost: false, hold, demo });
-    await screen.findByLabelText("What do you want to do?");
+    await screen.findByLabelText("What should it do?");
     await waitFor(() => expect(getDriver()?.state?.pendingId).toBeTruthy());
     expect(getDriver()?.state?.askedMs).toBeNull();
-    fireEvent.change(screen.getByLabelText("What do you want to do?"), { target: { value: "fix the build" } });
+    await pickNewLinux();
+    fireEvent.change(screen.getByLabelText("What should it do?"), { target: { value: "fix the build" } });
     fireEvent.click(screen.getByRole("button", { name: "Start" }));
     await waitFor(() => expect(getDriver()?.state?.askedMs).not.toBeNull());
     await waitFor(() => expect(router.state.location.pathname).toMatch(/^\/spaces\//));
@@ -87,7 +92,7 @@ describe.skipIf(!wasmBuilt)("the warming home is not on any list until a person 
 
   it("a home that cannot be made yet is not on a list and Home stays silent", { timeout: 60_000 }, async () => {
     await mountApp("/home", { failsCreates: true, listsGhost: false, demo });
-    await screen.findByLabelText("What do you want to do?");
+    await screen.findByLabelText("What should it do?");
     // A dropped connection is retried by itself: Home stays silent and the home stays off every list.
     await waitFor(() => expect(getDriver()?.view()?.phase).toBe("waiting"), { timeout: 30_000 });
     expect(document.querySelector("[data-prepare-line]")).toBeNull();

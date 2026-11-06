@@ -238,10 +238,13 @@ impl HostState {
         HostState { status, dedicated }
     }
 
-    /// Whether this machine already is the host `w` asks for.
+    /// Whether this machine already is the host `w` asks for. A computer
+    /// the relay no longer knows (removed from the account on another
+    /// device) is not: setup registers it again, so "add it again" works.
     pub fn is_up(&self, w: &Want) -> bool {
         let s = &self.status;
         s["configured"].as_bool() == Some(true)
+            && s["revoked"].as_bool() != Some(true)
             && s["mode"].as_str() == Some("relay")
             && s["service"]["running"].as_bool() == Some(true)
             && w.provide_spaces
@@ -574,6 +577,30 @@ mod tests {
             provide_spaces: Some(true),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn a_computer_removed_from_the_account_is_set_up_again() {
+        let status = json!({
+            "configured": true, "mode": "relay", "relayUrl": "https://relay.example/",
+            "machineId": "abc", "name": "studio",
+            "service": {"running": true, "kind": "systemd"}, "provideSpaces": true,
+            "shareDesktop": false, "revoked": true, "error": "relay: invalid computer token",
+        });
+        let up = HostState {
+            status: status.clone(),
+            dedicated: false,
+        };
+        assert!(!up.is_up(&want()));
+        let mut down = status;
+        down["service"]["running"] = json!(false);
+        assert!(
+            !HostState {
+                status: down,
+                dedicated: false
+            }
+            .is_down(&want())
+        );
     }
 
     #[test]

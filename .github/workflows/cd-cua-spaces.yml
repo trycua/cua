@@ -25,7 +25,10 @@ name: "CD: Cua Spaces"
 # item is the notarized DMG of a release, EdDSA-signed by Sparkle's
 # generate_appcast (apps/cua-spaces-macos/scripts/make-appcast.sh, checked
 # by verify-appcast.sh). X.Y.Z-suffix versions go to the `beta` channel
-# (apps set to "Update to: Beta"). A beta is a production build with a
+# (apps set to "Update to: Beta"). Betas are retired (CUA-3503): the first
+# job refuses a -beta version unless the repository variable
+# ALLOW_SPACES_BETA is `true`; pre-release builds come from
+# nightly-cua-spaces.yml (the Nightly channel, its own release and feeds). A beta is a production build with a
 # prerelease version, not a staging build: it is built exactly like a stable
 # release, so it talks to production (CUA_ENV=staging at launch selects
 # staging for any build). Only with the CUA_SPACES_SPARKLE_ED_PRIVATE_KEY
@@ -241,11 +244,46 @@ env:
   REQUIRE_SIGNING: ${{ github.repository == 'trycua/cua' && startsWith(github.ref, 'refs/tags/') }}
 
 jobs:
+  # No betas (CUA-3503): pre-release testing is the Nightly channel
+  # (nightly-cua-spaces.yml). A -beta version stops here, before anything is
+  # built, a staging smoke is asked for or a draft release exists, unless the
+  # repository variable ALLOW_SPACES_BETA is `true`
+  # (docs/contributing/releasing-cua-spaces.md). Every other job needs it.
+  refuse-beta:
+    name: Refuse beta versions
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    # This job has no checkout, so the workflow-wide apps/cua-spaces default
+    # does not exist on the runner and the step cannot start.
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - name: Refuse beta versions
+        env:
+          REF_NAME: ${{ github.ref_name }}
+          INPUT_VERSION: ${{ inputs.version }}
+          ALLOW_SPACES_BETA: ${{ vars.ALLOW_SPACES_BETA }}
+        run: |
+          version="$INPUT_VERSION"
+          [ "$GITHUB_EVENT_NAME" = push ] && version="${REF_NAME#cua-spaces-v}"
+          case "$version" in
+            *-beta*)
+              if [ "$ALLOW_SPACES_BETA" = true ]; then
+                echo "::warning::$version is a beta; ALLOW_SPACES_BETA=true lets it through"
+              else
+                echo "::error::Cua Spaces has no betas any more: $version is refused. For pre-release testing use the Nightly channel (Settings, Advanced) or run the 'Nightly: Cua Spaces' workflow. Delete this tag: git push origin :refs/tags/cua-spaces-v$version"
+                exit 1
+              fi ;;
+          esac
+
   # The bundled `cua` CLI bakes libs/cua-spacesd/VERSION and "Set up for
   # access" downloads that release: refuse to build an app whose pinned
   # cua-spacesd is not published (Cua Spaces 0.3.0 pinned a draft).
   spacesd-published:
     name: cua-spacesd pin is published
+    needs: refuse-beta
     runs-on: ubuntu-latest
     timeout-minutes: 10
     defaults:
@@ -493,6 +531,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: .github/scripts/fetch_static_spacesd.sh "$GITHUB_REPOSITORY" aarch64,x86_64 "$RUNNER_TEMP/static-spacesd"
 
+      # GitHub's release CDN answers 504 for minutes (Sparkle, Sentry binary
+      # targets): resolve with retries before the build that follows the
+      # long Rust compile, so one blip does not cost a whole run.
+      - uses: ./.github/actions/swiftpm-resolve
       - name: Build and sign Cua Spaces.app (universal)
         env:
           CUA_SPACESD_STATIC_DIR: ${{ runner.temp }}/static-spacesd
@@ -1088,6 +1130,7 @@ jobs:
   # for every job that bundles it: the SwiftUI app, the Electron apps.
   electron-web:
     name: Web UI
+    needs: refuse-beta
     runs-on: ubuntu-22.04
     timeout-minutes: 60
     defaults:
@@ -1920,6 +1963,7 @@ jobs:
   # the gate times out and the smoke is started by hand as before.
   request-staging-smoke:
     name: Request the staging smoke
+    needs: refuse-beta
     if: startsWith(github.ref, 'refs/tags/cua-spaces-v')
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -1954,6 +1998,7 @@ jobs:
   # CUA_SPACES_PROMOTE_CHECK is "true". Never fails the run.
   promote-check:
     name: Promote check (report only)
+    needs: refuse-beta
     if: startsWith(github.ref, 'refs/tags/cua-spaces-v') && vars.CUA_SPACES_PROMOTE_CHECK == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -2005,6 +2050,7 @@ jobs:
   # tag publishes, so only a tag run is gated. Break-glass: skip_staging_gate.
   staging-gate:
     name: Staging smoke is green
+    needs: refuse-beta
     if: startsWith(github.ref, 'refs/tags/cua-spaces-v')
     runs-on: ubuntu-latest
     # Waits up to 2 hours for the smoke that request-staging-smoke starts:
@@ -2034,7 +2080,7 @@ jobs:
     # Each platform that is in this release must have built (build-macos is
     # skipped, not failed, when a patch release has no macOS).
     if: >-
-      !cancelled()
+      !cancelled() && needs.electron-plan.result == 'success'
       && (needs.electron-plan.outputs.macos != 'true' || needs.build-macos.result == 'success')
       && (needs.electron-plan.outputs.windows != 'true' || needs.electron-windows.result == 'success')
       && (needs.electron-plan.outputs.build != 'true' || needs.electron-mac.result == 'success')
@@ -2187,7 +2233,8 @@ jobs:
           # Every asset: the SwiftUI app's, and the Electron installers
           # (Windows and Linux always, macOS for a prerelease) with their
           # installer-named copies (electron-publish).
-          gh release download "$TAG" --dir assets --repo "$GITHUB_REPOSITORY"
+          . "$GITHUB_WORKSPACE/.github/scripts/retry.sh"
+          retry gh release download "$TAG" --dir assets --repo "$GITHUB_REPOSITORY"
           rm -f assets/checksums.txt assets/release-artifacts.json assets/latest.json assets/*.sigstore.json
           # Keyless Sigstore bundles next to each installer (install.sh and
           # install.ps1 verify them with cosign when it is installed).

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! A long-lived macOS daemon without the cursor overlay must report the app
 //! that is in front now, not the one that was in front at its first read
 //! (#5045). The testkit daemon is `serve --no-overlay` started as a child

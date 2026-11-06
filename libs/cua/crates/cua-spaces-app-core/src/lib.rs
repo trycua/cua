@@ -66,6 +66,7 @@ pub mod about;
 pub mod account;
 pub mod agent_keys;
 pub mod agent_list;
+pub mod agent_menu;
 pub mod agent_prompts;
 pub mod agents;
 pub mod bulk_confirm;

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Compositor peer attestation shared by the IPC adapters.
 //!
 //! An IPC socket and `WAYLAND_DISPLAY` must name the same compositor process

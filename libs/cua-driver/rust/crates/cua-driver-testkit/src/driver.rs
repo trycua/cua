@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! The transport abstraction every test targets.
 
 use crate::response::ToolResponse;

@@ -235,7 +235,7 @@ mod pid_window_target_tests {
 /// sends process-scoped key events anyway. `None` leaves the call refused.
 fn pid_focused_window(pid: i64) -> Option<u64> {
     let pid = i32::try_from(pid).ok()?;
-    crate::ax::bindings::focused_window_id_of_pid(pid).map(u64::from)
+    crate::ax::bindings::focused_window_id_of_pid(pid).map(|window| u64::from(window.root))
 }
 
 fn pid_window_guarded<T: Tool + 'static>(
@@ -442,7 +442,8 @@ pub(crate) fn default_window_for_pid(args: &mut serde_json::Value) {
     else {
         return;
     };
-    let window_id = crate::ax::bindings::focused_window_id_of_pid(pid).or_else(|| {
+    let focused = crate::ax::bindings::focused_window_id_of_pid(pid).map(|window| window.root);
+    let window_id = focused.or_else(|| {
         crate::windows::all_windows()
             .into_iter()
             .filter(|window| window.pid == pid && window.is_on_screen && window.layer == 0)
@@ -760,16 +761,14 @@ async fn focused_element_holds_point(
                 return false;
             };
             let rect = crate::ax::bindings::element_screen_rect(focused);
-            let focused_window = if require_window {
-                crate::ax::exact_target::element_window_id(focused)
-            } else {
-                Some(wid)
-            };
+            let in_window = !require_window
+                || crate::ax::exact_target::element_window_id(focused)
+                    .is_some_and(|window| window.is(wid));
             core_foundation::base::CFRelease(focused as core_foundation::base::CFTypeRef);
             let Some(rect) = rect else {
                 return false;
             };
-            focused_window == Some(wid) && point_within_rect(rect, screen_x, screen_y)
+            in_window && point_within_rect(rect, screen_x, screen_y)
         }
     })
     .await

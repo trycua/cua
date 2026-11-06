@@ -205,7 +205,8 @@ fn observe_exact_window(pid: i32, window_id: u32) -> ExactWindowObservation {
     ExactWindowObservation {
         workspace_frontmost_pid: crate::apps::frontmost_pid(),
         front_process_matches_target: crate::input::skylight::front_process_matches(pid, window_id),
-        focused_window_id: crate::ax::bindings::focused_window_id_of_pid(pid),
+        focused_window_id: crate::ax::bindings::focused_window_id_of_pid(pid)
+            .map(|window| window.own),
         frontmost_ordinary_window_id,
         process_front_window_on_display,
         target_visible_ordinary,

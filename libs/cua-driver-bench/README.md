@@ -541,6 +541,9 @@ python launch\windows_session.py --task PA-01 --instances 10 --run-index 0 --con
 python3 launch/hyprland_session.py --task UM-01 --run-index 0 --condition background --out ~/bench/UM-01-r0 -- <agent command>
 # an existing X11 desktop (XFCE, openbox, ...), same contract as the Hyprland launcher
 python3 launch/x11_session.py --task PA-01 --instances 4 --run-index 0 --condition foreground --out ~/bench/PA-01-r0 -- <agent command>
+# a macOS desktop whose agents run elsewhere (for example a macOS VM driven from its host); started over ssh,
+# --sentinel-launcher runs BenchSentinel as its own responsible process so its own TCC grants apply
+python3 launch/macos_session.py --build ~/bench-build --task PA-01 --instances 10 --run-index 0 --condition background --out ~/bench/PA-01-r0 -- <agent command>
 ```
 
 `tools/validate_shared.py` validates both tasks on a free macOS desktop without a model (oracles through

@@ -22,14 +22,14 @@ export type { DriveCheckInput, DriveS3Input, DriveStorageInput, DriveStorageUpda
 
 /* ---- Experiments ----------------------------------------------------------- */
 
-/** `experiments::Experiments`: Settings, Experiments' switches (all off by default). */
+/** `experiments::Experiments`: Settings, Experiments' switches (Secure Spaces, Child Spaces, Ask first and Warm start on by default, the rest off). */
 export interface Experiments {
   cuaVolume?: boolean;
-  /** Secure Spaces: a Space reaches the internet and nothing else on the network unless opened. Off unless turned on; the daemon enforces it. */
+  /** Secure Spaces: a Space reaches the internet and nothing else on the network unless opened. On unless turned off; the daemon enforces it. */
   secureSpaces?: boolean;
-  /** Child Spaces: a Space may make Spaces of its own. Off unless turned on; the daemon enforces it. */
+  /** Child Spaces: a Space may make Spaces of its own. On unless turned off; the daemon enforces it. */
   childSpaces?: boolean;
-  /** Ask first: an agent asks on a card before something leaves its Space (a push to GitHub). Off unless turned on; the daemon enforces it. */
+  /** Ask first: an agent asks on a card before something leaves its Space (a push to GitHub). On unless turned off; the daemon enforces it. */
   askFirst?: boolean;
   /** CI runners: GitHub Actions jobs run in a fresh Space each (`cua ci`, the CI Runners page). Off unless turned on; the `cua` command enforces it. */
   ciRunners?: boolean;

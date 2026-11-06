@@ -17108,18 +17108,18 @@ public struct AppExperiments: Equatable, Hashable {
     public var cuaVolume: Bool
     /**
      * Secure Spaces: a Space reaches the internet and nothing else on the
-     * network unless it is opened. Off unless turned on; the daemon enforces
+     * network unless it is opened. On unless turned off; the daemon enforces
      * it (the switch is kept in the cua home).
      */
     public var secureSpaces: Bool
     /**
-     * Child Spaces: a Space may make Spaces of its own. Off unless turned
-     * on; the daemon enforces it (the switch is kept in the cua home).
+     * Child Spaces: a Space may make Spaces of its own. On unless turned
+     * off; the daemon enforces it (the switch is kept in the cua home).
      */
     public var childSpaces: Bool
     /**
      * Ask first: an agent asks on a card before something leaves its Space
-     * (a push to GitHub). Off unless turned on; the daemon enforces it (the
+     * (a push to GitHub). On unless turned off; the daemon enforces it (the
      * switch is kept in the cua home).
      */
     public var askFirst: Bool
@@ -17143,8 +17143,8 @@ public struct AppExperiments: Equatable, Hashable {
     public var mobile: Bool
     /**
      * Warm pools: one Linux Space kept ready, with its coding apps
-     * installed, so the next Create from Home starts at once. Off unless
-     * turned on; the daemon enforces it (the switch is kept in the cua home).
+     * installed, so the next Create from Home starts at once. On unless
+     * turned off; the daemon enforces it (the switch is kept in the cua home).
      */
     public var warmPools: Bool
 
@@ -17156,16 +17156,16 @@ public struct AppExperiments: Equatable, Hashable {
          */cuaVolume: Bool,
         /**
          * Secure Spaces: a Space reaches the internet and nothing else on the
-         * network unless it is opened. Off unless turned on; the daemon enforces
+         * network unless it is opened. On unless turned off; the daemon enforces
          * it (the switch is kept in the cua home).
          */secureSpaces: Bool,
         /**
-         * Child Spaces: a Space may make Spaces of its own. Off unless turned
-         * on; the daemon enforces it (the switch is kept in the cua home).
+         * Child Spaces: a Space may make Spaces of its own. On unless turned
+         * off; the daemon enforces it (the switch is kept in the cua home).
          */childSpaces: Bool,
         /**
          * Ask first: an agent asks on a card before something leaves its Space
-         * (a push to GitHub). Off unless turned on; the daemon enforces it (the
+         * (a push to GitHub). On unless turned off; the daemon enforces it (the
          * switch is kept in the cua home).
          */askFirst: Bool,
         /**
@@ -17185,8 +17185,8 @@ public struct AppExperiments: Equatable, Hashable {
          */mobile: Bool,
         /**
          * Warm pools: one Linux Space kept ready, with its coding apps
-         * installed, so the next Create from Home starts at once. Off unless
-         * turned on; the daemon enforces it (the switch is kept in the cua home).
+         * installed, so the next Create from Home starts at once. On unless
+         * turned off; the daemon enforces it (the switch is kept in the cua home).
          */warmPools: Bool) {
         self.cuaVolume = cuaVolume
         self.secureSpaces = secureSpaces

@@ -6986,14 +6986,14 @@ pub struct AppExperiments {
     /// Cua Volume in the first run and Settings, Storage.
     pub cua_volume: bool,
     /// Secure Spaces: a Space reaches the internet and nothing else on the
-    /// network unless it is opened. Off unless turned on; the daemon enforces
+    /// network unless it is opened. On unless turned off; the daemon enforces
     /// it (the switch is kept in the cua home).
     pub secure_spaces: bool,
-    /// Child Spaces: a Space may make Spaces of its own. Off unless turned
-    /// on; the daemon enforces it (the switch is kept in the cua home).
+    /// Child Spaces: a Space may make Spaces of its own. On unless turned
+    /// off; the daemon enforces it (the switch is kept in the cua home).
     pub child_spaces: bool,
     /// Ask first: an agent asks on a card before something leaves its Space
-    /// (a push to GitHub). Off unless turned on; the daemon enforces it (the
+    /// (a push to GitHub). On unless turned off; the daemon enforces it (the
     /// switch is kept in the cua home).
     pub ask_first: bool,
     /// CI runners: GitHub Actions jobs run in a fresh Space each (`cua ci`
@@ -7009,8 +7009,8 @@ pub struct AppExperiments {
     /// is kept in the cua home).
     pub mobile: bool,
     /// Warm pools: one Linux Space kept ready, with its coding apps
-    /// installed, so the next Create from Home starts at once. Off unless
-    /// turned on; the daemon enforces it (the switch is kept in the cua home).
+    /// installed, so the next Create from Home starts at once. On unless
+    /// turned off; the daemon enforces it (the switch is kept in the cua home).
     pub warm_pools: bool,
 }
 

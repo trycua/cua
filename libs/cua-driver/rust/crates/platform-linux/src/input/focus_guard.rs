@@ -521,16 +521,19 @@ impl FocusSnapshot {
         })
     }
 
-    fn diff(&self, x: &X) -> Vec<String> {
+    /// What moved since capture. PointerRoot (1) / None (0) focus and a
+    /// cleared active window are transient while the WM moves focus, so they
+    /// are skipped unless `strict`: the foreground restore owes back exactly
+    /// the saved focus.
+    fn diff(&self, x: &X, strict: bool) -> Vec<String> {
         let mut changes = Vec::new();
         let (focus, _) = x.core_focus();
-        // PointerRoot (1) / None (0) are transient states while the WM moves
-        // focus; the settle loop sees the final value.
-        if focus > 1 && focus != self.core_focus {
+        let known = |now: bool, saved: bool| now || (strict && saved);
+        if known(focus > 1, self.core_focus > 1) && focus != self.core_focus {
             changes.push(format!("focus 0x{:x}->0x{:x}", self.core_focus, focus));
         }
         let active = x.active_window();
-        if active != self.active && active.is_some() {
+        if active != self.active && known(active.is_some(), self.active.is_some()) {
             changes.push(format!(
                 "active 0x{:x}->0x{:x}",
                 self.active.unwrap_or(0),
@@ -629,7 +632,7 @@ impl FocusSnapshot {
             started
         };
         let mut extended = false;
-        let mut changes = self.diff(&x);
+        let mut changes = self.diff(&x, !same_app);
         let mut new_clients = self.new_clients(&x);
         let mut own_window = self.own_new_window(&x, target_pid, &new_clients);
         if !settle_watch && !new_clients.is_empty() && own_window.is_none() {
@@ -640,7 +643,7 @@ impl FocusSnapshot {
             std::thread::sleep(
                 SETTLE_POLL.min(watch_until.saturating_duration_since(Instant::now())),
             );
-            changes = self.diff(&x);
+            changes = self.diff(&x, !same_app);
             new_clients = self.new_clients(&x);
             own_window = self.own_new_window(&x, target_pid, &new_clients);
             if !extended && !new_clients.is_empty() && own_window.is_none() {
@@ -664,12 +667,6 @@ impl FocusSnapshot {
                 .or(target_pid);
         }
 
-        // diff() skips a None/PointerRoot core focus; the foreground restore
-        // still owes the saved focus back.
-        let (focus_now, _) = x.core_focus();
-        if !same_app && changes.is_empty() && self.core_focus > 1 && focus_now != self.core_focus {
-            changes.push(format!("focus 0x{:x}->0x{focus_now:x}", self.core_focus));
-        }
         if changes.is_empty() {
             report.same_app_window = own_window;
             report.elapsed_ms = started.elapsed().as_millis() as u64;
@@ -744,13 +741,12 @@ impl FocusSnapshot {
             std::thread::sleep(
                 RESTORE_POLL.min(deadline.saturating_duration_since(Instant::now())),
             );
-            let now = self.diff(&x);
+            let now = self.diff(&x, !same_app);
             if now.is_empty() {
                 stable += 1;
                 if stable >= STABLE_POLLS {
-                    // diff() skips a None core focus, which a bounce can leave;
-                    // the foreground restore (no same-app rule) always reads it.
-                    report.restored = (!wm_only && same_app) || x.core_focus().0 == self.core_focus;
+                    // diff() skips a None core focus, which a bounce can leave.
+                    report.restored = !wm_only || x.core_focus().0 == self.core_focus;
                     break;
                 }
                 continue;

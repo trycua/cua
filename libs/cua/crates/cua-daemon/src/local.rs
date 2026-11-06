@@ -836,6 +836,7 @@ impl VmmLocal {
             return Err("the image has no cua-spacesd".to_string());
         }
         let spacesd = p.image.as_ref().and_then(|i| i.spacesd) == Some(true);
+        let (harnesses, first) = warm_pools_ordered();
         let key = pool
             .set_explicit_prepared(
                 crate::pool::WARM_SOURCE,
@@ -847,9 +848,10 @@ impl VmmLocal {
                 Some(1),
                 None,
                 Some(WARM_POOLS_IDLE),
-                Some(warm_pools_harnesses()),
+                Some(harnesses),
             )
             .ok_or_else(|| "this shape does not pool".to_string())?;
+        pool.set_prepare_first(&key, first);
         pool.note_request(&p.spec, p.backend, spacesd, requested_words(&spec));
         tracing::debug!(shape = %key, "warm-pools: keeping one Linux Space ready");
         Ok(())
@@ -1307,6 +1309,68 @@ pub fn warm_pools_harnesses() -> Vec<String> {
         .collect()
 }
 
+/// Most harnesses a warm member is prepared for before it can be claimed;
+/// the rest go into the saved filesystem in the background.
+const WARM_FIRST_MAX: usize = 3;
+
+/// The harness ids in `phases` (`persistent/phases.jsonl` lines, oldest
+/// first) and `agents` (`persistent/agents.json`), most recently used first.
+fn recent_harnesses(phases: &str, agents: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut push = |h: &str| {
+        if !h.is_empty() && !out.iter().any(|o| o == h) {
+            out.push(h.to_string());
+        }
+    };
+    for line in phases.lines().rev().take(400) {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(line)
+            && let Some(h) = v.get("harness").and_then(|h| h.as_str())
+        {
+            push(h);
+        }
+    }
+    if let Ok(serde_json::Value::Array(a)) = serde_json::from_str::<serde_json::Value>(agents) {
+        for e in a.iter().rev() {
+            if let Some(h) = e.get("harness").and_then(|h| h.as_str()) {
+                push(h);
+            }
+        }
+    }
+    out
+}
+
+/// [`warm_pools_harnesses`] with the apps this person most likely uses
+/// first, and how many of them (at most [`WARM_FIRST_MAX`]) a member is
+/// prepared for before it can be claimed: Claude Code (the Home picker's
+/// default), then the apps of their agents and recent runs. `0`: no
+/// preference (`CUA_WARM_POOLS_HARNESSES` names the list), prepare all.
+pub fn warm_pools_ordered() -> (Vec<String>, usize) {
+    let all = warm_pools_harnesses();
+    if std::env::var_os("CUA_WARM_POOLS_HARNESSES").is_some() {
+        return (all, 0);
+    }
+    let dir = cua_home::cua_home().join("persistent");
+    let read = |f: &str| std::fs::read_to_string(dir.join(f)).unwrap_or_default();
+    order_for_warm(
+        all,
+        &recent_harnesses(&read("phases.jsonl"), &read("agents.json")),
+    )
+}
+
+fn order_for_warm(all: Vec<String>, recent: &[String]) -> (Vec<String>, usize) {
+    let mut first: Vec<String> = Vec::new();
+    for h in std::iter::once(&"claude-code".to_string()).chain(recent.iter()) {
+        if first.len() < WARM_FIRST_MAX && all.contains(h) && !first.contains(h) {
+            first.push(h.clone());
+        }
+    }
+    let n = first.len();
+    let mut ordered = first;
+    let rest: Vec<String> = all.into_iter().filter(|h| !ordered.contains(h)).collect();
+    ordered.extend(rest);
+    (ordered, n)
+}
+
 /// How long the warm Space sits unused before it is given back.
 pub const WARM_POOLS_IDLE: std::time::Duration = std::time::Duration::from_secs(2 * 60 * 60);
 
@@ -1499,6 +1563,27 @@ impl crate::pool::PoolHost for PoolHost {
             Ok(r) => r,
             Err(_) => Err(format!("preparing took longer than {timeout:?}")),
         }
+    }
+
+    fn pin(&self, harness: &str) -> String {
+        // The apps a build installs for the harness, at their pinned versions.
+        let Some(h) = cua_agents::harness::harness(harness) else {
+            return harness.to_string();
+        };
+        let ids: Vec<&str> = h.installs.to_vec();
+        let Ok(order) = cua_agents::installables::resolve(&ids) else {
+            return harness.to_string();
+        };
+        order
+            .iter()
+            .filter_map(|id| {
+                Some(format!(
+                    "{id}@{}",
+                    cua_agents::installables::get(id)?.version
+                ))
+            })
+            .collect::<Vec<_>>()
+            .join(",")
     }
 
     async fn warm_files(&self, endpoints: &Endpoints, secret: &str, harnesses: &[String]) {
@@ -3618,6 +3703,33 @@ mod tests {
                 "{id}"
             );
         }
+    }
+
+    #[test]
+    fn the_warm_member_is_prepared_for_the_agents_in_use_first() {
+        let all: Vec<String> = [
+            "openai-codex",
+            "hermes",
+            "claude-code",
+            "opencode",
+            "goose",
+            "pi",
+        ]
+        .map(String::from)
+        .to_vec();
+        // Nothing used yet: Claude Code alone.
+        let (o, n) = super::order_for_warm(all.clone(), &[]);
+        assert_eq!((o[0].as_str(), n), ("claude-code", 1));
+        assert_eq!(o.len(), all.len());
+        // Recent runs and agents follow, newest first, three in all.
+        let phases = "{\"harness\":\"goose\",\"phase\":\"posted\"}\n{\"harness\":\"hermes\",\"phase\":\"posted\"}\nnot json\n{\"harness\":\"hermes\"}\n";
+        let agents = r#"[{"harness":"pi"},{"harness":"claude-code"},{"harness":"gone-harness"}]"#;
+        let recent = super::recent_harnesses(phases, agents);
+        assert_eq!(recent[0], "hermes");
+        let (o, n) = super::order_for_warm(all.clone(), &recent);
+        assert_eq!(n, 3);
+        assert_eq!(&o[..3], ["claude-code", "hermes", "goose"]);
+        assert_eq!(o.len(), all.len(), "the others follow, once");
     }
 
     #[test]

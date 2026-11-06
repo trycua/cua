@@ -165,6 +165,14 @@ where
     // menu navigation with no replacement path. Keeping other non-window
     // children is also what `browser/consent_ui.rs` relies on to reach a
     // top-level `AXSheet` consent prompt.
+    // A sheet's own id walks the sheet alone: it hangs off its parent window,
+    // and nothing else at the top level belongs to it.
+    if matched.iter().any(|&i| candidates[i].role == "AXSheet") {
+        return ScopeDecision {
+            scope: WindowScope::Matched,
+            walk: matched,
+        };
+    }
     let dialog_scope = matched.iter().any(|&i| candidates[i].is_dialog_like());
     let walk = candidates
         .iter()
@@ -313,17 +321,22 @@ mod tests {
     fn a_sheet_id_walks_only_the_sheet() {
         let candidates = [
             TopLevelCandidate::new("AXMenuBar", None),
+            TopLevelCandidate::new("AXSheet", None),
             TopLevelCandidate::new("AXWindow", Some(11)),
             TopLevelCandidate::new("AXWindow", Some(167)),
             TopLevelCandidate::new("AXSheet", Some(15304)),
         ];
         let d = decide_window_scope(&candidates, 15304, never_called);
         assert_eq!(d.scope, WindowScope::Matched);
-        assert_eq!(d.walk, vec![3]);
+        assert_eq!(
+            d.walk,
+            vec![4],
+            "not the menu bar or another top-level sheet"
+        );
         // The parent's own request still walks the parent (its sheet is in
         // its subtree) and the menu bar.
-        let d = decide_window_scope(&candidates[..3], 167, never_called);
-        assert_eq!(d.walk, vec![0, 2]);
+        let d = decide_window_scope(&candidates[..4], 167, never_called);
+        assert_eq!(d.walk, vec![0, 1, 3]);
     }
 
     #[test]

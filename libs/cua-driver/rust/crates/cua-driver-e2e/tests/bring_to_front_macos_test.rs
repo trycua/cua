@@ -452,32 +452,52 @@ fn sheet_and_parent_ids_both_reach_the_sheet_and_the_sheet_snapshot_is_isolated(
         }
     }
 
-    let tree = |window_id: u32, driver: &mut McpDriver| {
+    let state = |window_id: u32, driver: &mut McpDriver| {
         let state = driver.call(
             "get_window_state",
-            serde_json::json!({"pid": target.pid, "window_id": window_id}),
+            serde_json::json!({"pid": target.pid, "window_id": window_id, "tree_format": "both"}),
         );
         assert!(
             !state.is_error(),
             "get_window_state {window_id}: {}",
             state.raw
         );
-        state.structured()["tree_markdown"]
-            .as_str()
-            .expect("tree_markdown")
-            .to_owned()
+        state.structured().clone()
     };
-    let sheet_tree = tree(sheet, &mut driver);
+    let sheet_state = state(sheet, &mut driver);
+    let sheet_tree = sheet_state["tree_markdown"]
+        .as_str()
+        .expect("tree_markdown");
     assert!(sheet_tree.contains("txt-sheet"), "{sheet_tree}");
     assert!(
         !sheet_tree.contains("btn-increment") && !sheet_tree.contains("AXMenuBar"),
         "sheet snapshot carries parent controls: {sheet_tree}"
     );
-    let parent_tree = tree(parent, &mut driver);
+    let parent_state = state(parent, &mut driver);
+    let parent_tree = parent_state["tree_markdown"]
+        .as_str()
+        .expect("tree_markdown");
     assert!(
         parent_tree.contains("btn-increment") && parent_tree.contains("txt-sheet"),
         "{parent_tree}"
     );
+
+    // An element of the sheet's own snapshot passes the sheet-addressed
+    // ancestry gate on real AX.
+    let token = sheet_state["elements"]
+        .as_array()
+        .expect("elements")
+        .iter()
+        .find(|element| element["role"] == "AXTextField")
+        .and_then(|element| element["element_token"].as_str())
+        .unwrap_or_else(|| panic!("sheet field token: {sheet_state}"))
+        .to_owned();
+    let result = driver.call(
+        "set_value",
+        serde_json::json!({"element_token": token, "value": "token"}),
+    );
+    assert!(!result.is_error(), "set_value in the sheet: {}", result.raw);
+    assert_eq!(sheet_field_value(target.pid), "token");
 }
 
 #[test]

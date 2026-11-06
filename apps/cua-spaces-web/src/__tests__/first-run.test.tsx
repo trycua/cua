@@ -40,7 +40,7 @@ afterEach(() => {
 
 type Calls = { op: string; args: unknown }[];
 
-async function mount(opts: { signedIn?: boolean; host?: (h: HostStatus) => HostStatus; local?: (l: NonNullable<NewSpaceOptions["local"]>) => NewSpaceOptions["local"]; agents?: (rows: AgentSetupRow[]) => AgentSetupRow[]; cli?: "missing" | "local"; demo?: object; intercept?: (op: string, args: unknown) => unknown } = {}) {
+async function mount(opts: { signedIn?: boolean; host?: (h: HostStatus) => HostStatus; local?: (l: NonNullable<NewSpaceOptions["local"]>) => NewSpaceOptions["local"]; agents?: (rows: AgentSetupRow[]) => AgentSetupRow[]; cli?: "missing" | "local"; demo?: object; permissionsOff?: boolean; intercept?: (op: string, args: unknown) => unknown } = {}) {
   await testCore();
   const calls: Calls = [];
   let lastRows: AgentSetupRow[] | null = null;
@@ -55,6 +55,12 @@ async function mount(opts: { signedIn?: boolean; host?: (h: HostStatus) => HostS
     },
     answer: (op, out) => {
       if (op === "host.status" && opts.host) return opts.host(out as HostStatus);
+      // Cua Spaces already has both permissions, so Cua Driver runs (permissionsOff: a Mac that hasn't allowed them yet).
+      if (!opts.permissionsOff && op === "driver.permissions" && out) {
+        const p = out as { appName: string; permissions: { granted: boolean }[] };
+        return { ...p, permissions: p.permissions.map((x) => ({ ...x, granted: true })) };
+      }
+      if (!opts.permissionsOff && op === "driver.status" && out && (out as { state: string }).state === "needs-permission") return { ...(out as object), state: "ready" };
       // The agents found here as the test sets them up (Connect still adds Cua to them).
       if ((op === "agents.setup" || op === "agents.signIn" || op === "agents.configure") && opts.agents) {
         lastRows = opts.agents(out as AgentSetupRow[]);
@@ -133,7 +139,7 @@ const noAgents = (rows: AgentSetupRow[]) => rows.map((r) => ({ ...r, installed: 
 
 describe.skipIf(!wasmBuilt)("the first run (real route, wasm core)", () => {
   it("asks once, naming the apps found, and connects nothing until Set up", async () => {
-    const calls = await mount();
+    const calls = await mount({ permissionsOff: true });
     await waitFor(() => expect(heading()).toBe("Your computers, shared by your team and its agents."));
     click("[data-onboarding-primary]");
     await waitFor(() => expect(heading()).toBe("Let your 6 coding apps use Cua?"));
@@ -149,7 +155,18 @@ describe.skipIf(!wasmBuilt)("the first run (real route, wasm core)", () => {
     click("[data-first-run-set-up]");
     // The same Connect as Settings, the CLI and MCP: Cua's tools and the app's sign-in, one app at a time.
     await waitFor(() => expect(calls.filter((c) => c.op === "agents.connect").map((c) => (c.args as { agents: string[] }).agents)).toHaveLength(5));
-    await waitFor(() => expect(heading()).toBe("Your 6 coding apps can use Cua."));
+    // Connected, but not "Ready" while Cua Spaces is missing the two permissions Cua Driver runs with.
+    await waitFor(() => expect(heading()).toBe("Almost ready."));
+    expect(document.querySelector("[data-first-run-prompt]")).toBeNull();
+    for (const id of ["screen", "accessibility"]) {
+      const row = await waitFor(() => {
+        const r = document.querySelector<HTMLElement>(`[data-app-permission="${id}"]:not([data-granted])`);
+        expect(r).not.toBeNull();
+        return r!;
+      });
+      fireEvent.click([...row.querySelectorAll("button")].find((b) => b.textContent === "Allow")!);
+    }
+    await waitFor(() => expect(heading()).toBe("Your 6 coding apps can use Cua."), { timeout: 8000 });
     expect(document.querySelector("[data-first-run-prompt]")!.textContent).toBe("Reproduce the crash from issue #4821 on a fresh Windows 11 Space and show me a recording.");
     expect(document.body.textContent).toMatch(/restart it first/);
     expect(connectedAppsState().auto).toBe(true);

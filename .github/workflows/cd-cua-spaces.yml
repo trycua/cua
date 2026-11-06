@@ -102,8 +102,9 @@ name: "CD: Cua Spaces"
 # it builds the tagged commit with main's workflow files, refuses a release
 # that is already published, and runs every gate (signing, notarization,
 # staging smoke, verify-release, staged rollout) exactly as the tag push does.
-# Its Sigstore identity is this workflow at refs/heads/main, which the
-# installers accept for the app next to the tag identity. The macOS app takes the tag's version:
+# Its Sigstore identity is this workflow at refs/heads/main, which names no
+# tag, so it also signs rebuild-claim.txt (the tag and every asset's sha256);
+# the installers accept that identity only with the claim. The macOS app takes the tag's version:
 # CFBundleShortVersionString X.Y.Z, CFBundleVersion X.Y.Z.<run number>, and
 # the full version (with any -suffix) as CuaVersion.
 #
@@ -2313,6 +2314,7 @@ jobs:
           TAG: ${{ steps.version.outputs.tag }}
           TAURI: ${{ needs.build-linux-windows.result }}
           PARTIAL: ${{ needs.electron-plan.outputs.partial }}
+          REBUILD_SHA: ${{ inputs.rebuild_sha }}
         run: |
           set -euo pipefail
           BASE="https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG"
@@ -2322,13 +2324,31 @@ jobs:
           # installer-named copies (electron-publish).
           . "$GITHUB_WORKSPACE/.github/scripts/retry.sh"
           retry gh release download "$TAG" --dir assets --repo "$GITHUB_REPOSITORY"
-          rm -f assets/checksums.txt assets/release-artifacts.json assets/latest.json assets/*.sigstore.json
+          rm -f assets/checksums.txt assets/release-artifacts.json assets/latest.json assets/*.sigstore.json assets/rebuild-claim.txt
           # Keyless Sigstore bundles next to each installer (install.sh and
           # install.ps1 verify them with cosign when it is installed).
           for f in assets/*; do
             case "$f" in *.sig|*.blockmap) continue ;; esac
             cosign sign-blob --yes --bundle "$f.sigstore.json" "$f" >/dev/null
           done
+          # A rebuild is signed by this workflow at refs/heads/main, which does
+          # not name the tag. The claim does, under the same signature: the tag
+          # and the sha256 of every signed asset. The installers require it.
+          # It stays out of assets/ so the manifest never lists it.
+          claim=()
+          if [ -n "${REBUILD_TAG:-}" ]; then
+            {
+              echo "tag $TAG"
+              echo "sha $REBUILD_SHA"
+              for f in assets/*; do
+                case "$f" in *.sig|*.blockmap|*.sigstore.json) continue ;; esac
+                (cd assets && sha256sum -- "${f#assets/}")
+              done
+            } > "$RUNNER_TEMP/rebuild-claim.txt"
+            cosign sign-blob --yes --bundle "$RUNNER_TEMP/rebuild-claim.txt.sigstore.json" \
+              "$RUNNER_TEMP/rebuild-claim.txt" >/dev/null
+            claim=("$RUNNER_TEMP/rebuild-claim.txt" "$RUNNER_TEMP/rebuild-claim.txt.sigstore.json")
+          fi
           # Every asset of the release, signatures included.
           (cd assets && find . -maxdepth 1 -type f -printf '%f\n' | LC_ALL=C sort \
             | xargs -d '\n' sha256sum > "$RUNNER_TEMP/checksums.txt")
@@ -2362,7 +2382,7 @@ jobs:
           else
             echo "::notice::no Tauri build in this release, so no latest.json"
           fi
-          gh release upload "$TAG" "${upload[@]}" --clobber --repo "$GITHUB_REPOSITORY"
+          gh release upload "$TAG" "${upload[@]}" ${claim[@]+"${claim[@]}"} --clobber --repo "$GITHUB_REPOSITORY"
       - name: Publish the release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

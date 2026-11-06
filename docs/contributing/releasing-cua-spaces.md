@@ -76,5 +76,11 @@ non-stable tag, and a dispatch from any other branch. Every gate runs exactly
 as on a tag push: signing, notarization, the staging smoke for that commit,
 `verify-release`, the cua.ai check and the staged rollout. `electron_dry_run`,
 `sparkle_electron`, `skip_staging_gate` and `platforms` are refused. Its
-Sigstore identity is the workflow at `refs/heads/main`, which the installers
-accept for the app next to the usual tag identity.
+Sigstore identity is the workflow at `refs/heads/main`, which says nothing
+about the tag, so the installers accept it only with a signed claim: the run
+signs `rebuild-claim.txt` (a `tag cua-spaces-vX.Y.Z` line and the sha256 of
+every asset) and uploads it with its bundle next to the assets. The installers
+check the claim and the artifact under that identity, the `workflow_dispatch`
+trigger and the `main` ref, then require the claim to name the tag being
+installed and list the artifact's sha256. A release rebuilt by a workflow
+without the claim step (before this check) does not verify.

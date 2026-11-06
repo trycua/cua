@@ -4,7 +4,7 @@ build-backend = "pdm.backend"
 
 [project]
 name = "cua-som"
-version = "0.1.4"
+version = "0.2.0"
 description = "Computer Vision and OCR library for detecting and analyzing UI elements"
 authors = [
     { name = "TryCua", email = "gh@trycua.com" }

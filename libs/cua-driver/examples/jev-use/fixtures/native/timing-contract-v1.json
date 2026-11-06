@@ -1,0 +1,30 @@
+{
+  "_fixture": {
+    "description": "Cross-language contract for the native runners' step timing fields (kvnloo/cua#75). Consumed by python/tests/test_native_timing.py and typescript/native_timing.test.ts, which run run_native.py / run_native.ts against fake_native_driver.py.",
+    "kind": "controlled fixture: the driver is scripted, so only lower bounds and phase relationships are asserted, never absolute speed"
+  },
+  "schema": "cua.jev_native_timing_contract_v1",
+  "delays_ms": {"observe": 25, "parse": 15, "act": 20},
+  "tolerance_ms": 0.05,
+  "common_fields": [
+    "semantic_observe_ms", "visual_observe_ms", "candidate_build_ms", "provider_decision_ms",
+    "decision_ms", "action_ms", "total_step_ms"
+  ],
+  "aliases": {"provider_decision_ms": "decide_ms", "action_ms": "act_ms"},
+  "visual_observe_scope": "parse_only",
+  "scenarios": {
+    "counter": {
+      "task": "appkit-counter", "platform": "macos", "pid": 4242, "steps": 3, "visual_status": "skipped",
+      "driver_calls": [
+        "list_windows",
+        "get_window_state", "click",
+        "get_window_state", "click",
+        "get_window_state", "click"
+      ]
+    },
+    "canvas": {
+      "task": "canvas-cancel", "platform": "linux", "pid": 4242, "steps": 1, "visual_status": "ok",
+      "driver_calls": ["list_windows", "get_window_state", "get_window_state", "parse_visual_regions", "click"]
+    }
+  }
+}

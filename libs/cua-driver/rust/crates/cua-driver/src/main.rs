@@ -502,6 +502,16 @@ fn main() {
     if let Some(code) = platform_macos::permissions::gate::run_permission_probe_if_requested() {
         std::process::exit(code);
     }
+    // macOS's "Quit & Reopen" after the Screen Recording switch restarts the
+    // app with no arguments. Mid-guide, come back as the same service so the
+    // guide can show that it finished.
+    if let Some(args) = platform_macos::permissions::guide::resume_serve_args() {
+        use std::os::unix::process::CommandExt as _;
+        if let Ok(exe) = std::env::current_exe() {
+            let error = std::process::Command::new(exe).args(&args).exec();
+            eprintln!("cua-driver: could not reopen after the permission guide: {error}");
+        }
+    }
     // The packaged uninstaller needs a truly offline, pre-telemetry purge
     // path while this exact signed executable still exists on disk.
     if let Some(code) = history_runtime::run_offline_purge_if_requested() {

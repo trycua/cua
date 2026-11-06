@@ -661,14 +661,14 @@ fn app_roots() -> Vec<std::path::PathBuf> {
 ///
 /// 0. an absolute path to an existing `.app` bundle (the `launch_path`
 ///    `list_apps` reports) is used as given;
-/// 1. every name the bundles in the roots, one folder down and Finder ship
+/// 1. a bundle identifier LaunchServices knows resolves as
+///    `AppLocator::BundleId`, so the launch path uses the live NSURL
+///    (Cryptex-safe, see CodeRabbit #3);
+/// 2. every name the bundles in the roots, one folder down and Finder ship
 ///    (file name, `CFBundleDisplayName` / `CFBundleName` and their
 ///    localizations) is ranked, in any case, accents and spaces as shipped.
 ///    A name that fits several apps equally well is refused with
-///    suggestions, not guessed;
-/// 2. a name no app ships may be a bundle identifier. It resolves through
-///    LaunchServices as `AppLocator::BundleId`, so the launch path uses the
-///    live NSURL (Cryptex-safe, see CodeRabbit #3).
+///    suggestions, not guessed.
 pub(crate) fn locate_by_name(name: &str) -> Result<AppLocator, NameMiss> {
     let as_path = std::path::Path::new(name.trim_end_matches('/'));
     if as_path.is_absolute() {
@@ -687,11 +687,11 @@ fn locate_in(
     roots: &[std::path::PathBuf],
     bundle_id: impl FnOnce(&str) -> Option<AppLocator>,
 ) -> Result<AppLocator, NameMiss> {
-    match names::find(name, roots, &names::preferred_languages()) {
-        Ok(path) => Ok(AppLocator::Path(path.to_string_lossy().into_owned())),
-        Err(miss) if miss.ambiguous => Err(miss),
-        Err(miss) => bundle_id(name).ok_or(miss),
+    if let Some(locator) = bundle_id(name) {
+        return Ok(locator);
     }
+    names::find(name, roots, &names::preferred_languages())
+        .map(|path| AppLocator::Path(path.to_string_lossy().into_owned()))
 }
 
 /// The refusal text for a name [`locate_by_name`] could not resolve.
@@ -1366,18 +1366,21 @@ mod tests {
             .unwrap();
         }
         let roots = [root.path().to_path_buf()];
-        let no_bundle_id = |_: &str| -> Option<super::AppLocator> {
-            panic!("an ambiguous name is not retried as a bundle id")
-        };
-        let miss = super::locate_in("Notes", &roots, no_bundle_id)
-            .err()
-            .unwrap();
+        let miss = super::locate_in("Notes", &roots, |_| None).err().unwrap();
         assert!(miss.ambiguous);
-        assert!(super::locate_in("Notes.app", &roots, no_bundle_id).is_err());
+        assert!(super::locate_in("Notes.app", &roots, |_| None).is_err());
+    }
+
+    #[test]
+    fn a_known_bundle_id_wins_over_a_name_it_starts() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join("com.example.notes Helper.app")).unwrap();
+        let roots = [root.path().to_path_buf()];
+        let known = |id: &str| {
+            (id == "com.example.notes").then(|| super::AppLocator::BundleId(id.to_owned()))
+        };
         assert!(matches!(
-            super::locate_in("com.example.notes", &roots, |id| Some(
-                super::AppLocator::BundleId(id.to_owned())
-            )),
+            super::locate_in("com.example.notes", &roots, known),
             Ok(super::AppLocator::BundleId(id)) if id == "com.example.notes"
         ));
     }

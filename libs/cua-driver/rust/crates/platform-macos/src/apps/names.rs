@@ -75,15 +75,14 @@ pub(crate) fn preferred_languages() -> Vec<String> {
 }
 
 /// The `.app` bundles inside each root and one folder down (Adobe's
-/// `Adobe InDesign 2026/Adobe InDesign 2026.app`), in root order. A root that
-/// is itself a bundle is that one bundle.
+/// `Adobe InDesign 2026/Adobe InDesign 2026.app`), in root order, each once
+/// (`/Applications/Utilities` is a root and one folder down). A root that is
+/// itself a bundle is that one bundle.
 fn scan(roots: &[PathBuf]) -> Vec<Bundle> {
-    let mut bundles = Vec::new();
+    let mut paths: Vec<PathBuf> = Vec::new();
     for root in roots {
         if is_app(root) {
-            if root.is_dir() {
-                bundles.push(load_bundle(root.clone()));
-            }
+            paths.extend(root.is_dir().then(|| root.clone()));
             continue;
         }
         let (apps, folders): (Vec<PathBuf>, Vec<PathBuf>) =
@@ -91,9 +90,11 @@ fn scan(roots: &[PathBuf]) -> Vec<Bundle> {
         let nested = folders
             .iter()
             .flat_map(|folder| sorted_dirs(folder).into_iter().filter(|path| is_app(path)));
-        bundles.extend(apps.into_iter().chain(nested).map(load_bundle));
+        paths.extend(apps.into_iter().chain(nested));
     }
-    bundles
+    let mut seen = std::collections::HashSet::new();
+    paths.retain(|path| seen.insert(path.clone()));
+    paths.into_iter().map(load_bundle).collect()
 }
 
 fn is_app(path: &Path) -> bool {
@@ -335,6 +336,15 @@ mod tests {
         let roots = [system.path().to_path_buf(), user.path().to_path_buf()];
         assert_eq!(find("notes", &roots, &[]), Ok(first));
         assert_eq!(find("notes copy", &roots, &[]), Ok(copy));
+    }
+
+    #[test]
+    fn a_bundle_under_two_overlapping_roots_is_one_app() {
+        let root = tempfile::tempdir().unwrap();
+        let tool = root.path().join("Utilities/Tool.app");
+        std::fs::create_dir_all(&tool).unwrap();
+        let roots = [root.path().to_path_buf(), root.path().join("Utilities")];
+        assert_eq!(find("tool", &roots, &[]), Ok(tool));
     }
 
     #[test]

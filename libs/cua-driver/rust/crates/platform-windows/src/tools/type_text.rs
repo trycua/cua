@@ -43,7 +43,8 @@ impl Tool for TypeTextTool {
                 **Routing on Windows.** `element_token` selects a specific UIA element \
                 and writes its ValuePattern value. For no-element foreground typing, a \
                 separate capability-gated path can use the exact focused UIA Document \
-                only when it is writable and empty. \
+                when it is writable, has one selection, and is at most 1M characters; the \
+                text replaces that selection. \
                 Eligibility depends on control capabilities and live focus, not app names. \
                 Chromium/Electron windows keep their existing boundary because a UIA \
                 value echo does not prove that the renderer accepted the text. The \
@@ -709,7 +710,7 @@ fn focused_document_tool_result(
         FocusedDocumentTypeOutcome::NotApplicable => None,
         FocusedDocumentTypeOutcome::Confirmed => Some(
             ToolResult::text(format!(
-                "Wrote and verified {text_len} character(s) in the focused Document; caret is at the document end."
+                "Wrote and verified {text_len} character(s) in the focused Document; caret is after the typed text."
             ))
             .with_structured(json!({
                 "path": "ax",

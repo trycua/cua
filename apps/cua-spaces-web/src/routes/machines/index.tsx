@@ -38,9 +38,11 @@ import { Dialog, DialogPopup, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { toast } from "@/components/ui/toast";
+import { useMachinesLive } from "@/hooks/use-machines-live";
 import { useNewSpace } from "@/hooks/use-new-space";
 import { showDesktop } from "@/lib/hidden-desktops";
 import { machineOs, selectedMachine } from "@/lib/machines";
+import { withRelayStatus } from "@/lib/machines-relay-status";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/machines/")({
@@ -91,8 +93,10 @@ function MachinesPage() {
   const { data: machines = [], isLoading, error, view: fullView, checkHealth, remove } = useMachines();
   const { account, pending, now } = useMachinesAccount();
   const actions = usePendingActions();
+  // The list re-reads every 30 s, and a computer the relay calls offline shows offline (and can be removed) at once, as in the tree.
+  const { relayOnline } = useMachinesLive(true);
   // A machine waiting to be added is in the top group, not in the list below.
-  const view = useMemo(() => (fullView ? withoutPending(fullView, pending) : fullView), [fullView, pending]);
+  const view = useMemo(() => (fullView ? withRelayStatus(withoutPending(fullView, pending), machines, relayOnline) : fullView), [fullView, pending, machines, relayOnline]);
   // Each machine's issues come from its own daemon: asked on opening the
   // page and every minute while it stays open.
   useEffect(() => {
@@ -445,7 +449,7 @@ function MachineRow({
       hidden={hidden}
       aria-selected={selected}
       data-machine-id={m.id}
-      data-online={(row?.online ?? m.online) ? "true" : "false"}
+      data-online={m.online ? "true" : "false"}
       data-not-sharing={row?.notSharing ? "true" : undefined}
       onClick={onSelect}
       onKeyDown={(e) => {
@@ -460,6 +464,7 @@ function MachineRow({
       )}
     >
       <StatusDot online={m.online} health={m.health} />
+      <span className="sr-only">{m.online ? "Online" : "Offline"}</span>
       <span className="min-w-0 flex-1">
         <span className="flex items-center gap-1.5">
           <span className="truncate text-[13px] font-medium">{m.name}</span>

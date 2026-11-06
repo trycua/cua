@@ -750,7 +750,7 @@
    "options": [],
    "subcommands": [
     {
-     "abstract": "Report Accessibility and Screen Recording status through a running daemon (read-only, no prompt). The default subcommand.",
+     "abstract": "Show whether Cua Driver can use your mouse and keyboard (Accessibility) and see your screen (Screen Recording), read-only and without prompts. The default subcommand.",
      "arguments": [],
      "discussion": "",
      "examples": [
@@ -772,7 +772,7 @@
      "subcommands": []
     },
     {
-     "abstract": "Launch CuaDriver through LaunchServices so the permission prompts are attributed to the app.",
+     "abstract": "Walk through the Accessibility and Screen Recording switches one at a time, then confirm with a test screenshot.",
      "arguments": [],
      "discussion": "",
      "examples": [

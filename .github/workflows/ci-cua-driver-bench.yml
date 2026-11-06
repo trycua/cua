@@ -63,17 +63,33 @@ jobs:
     if: ${{ !failure() && !cancelled() }}
     name: Linux headless desktop contracts (no model)
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # The tests take ~2.5 min. The budget is for apt: the Azure Ubuntu mirror
+    # is sometimes throttled to a few KB/s, and a stalled install used to eat the
+    # whole 10 min job budget and get the job cancelled. Each step has its own cap
+    # so a real hang still fails fast with a clear step.
+    timeout-minutes: 25
     steps:
       - name: Check out Cua
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
       - name: Install desktop dependencies
+        timeout-minutes: 15
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            xvfb dbus-x11 at-spi2-core openbox picom python3-gi gir1.2-gtk-3.0 gir1.2-atspi-2.0 \
-            xdotool x11-utils libxss1 ffmpeg lsof libglib2.0-bin python3-pytest
+          # Abort a stalled attempt and retry (a retry usually lands on a healthy
+          # mirror connection) instead of waiting out the slow download.
+          apt_opts="-o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20"
+          packages="xvfb dbus-x11 at-spi2-core openbox picom python3-gi gir1.2-gtk-3.0 gir1.2-atspi-2.0 \
+            xdotool x11-utils libxss1 ffmpeg lsof libglib2.0-bin python3-pytest"
+          for attempt in 1 2 3; do
+            if timeout 300s sudo apt-get $apt_opts update &&
+               timeout 300s sudo apt-get $apt_opts install -y --no-install-recommends $packages; then
+              exit 0
+            fi
+            echo "::warning::apt attempt $attempt failed or stalled; retrying"
+            sleep 5
+          done
+          exit 1
       - name: Exercise GTK, doctor, sentinel and evidence contracts
+        timeout-minutes: 8
         working-directory: libs/cua-driver-bench/automated-eval/macos_bench
         env:
           CDB_BENCH_WORK: ${{ runner.temp }}/cdb-bench-work

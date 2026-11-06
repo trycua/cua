@@ -73,6 +73,10 @@ on:
       publish:
         type: boolean
         default: false
+      gate_only:
+        description: "Build and gate, never publish, whatever the caller's event is (omarchy-edge-watch.yml)"
+        type: boolean
+        default: false
       series:
         type: string
         default: edge
@@ -112,6 +116,7 @@ jobs:
           RUN_ATTEMPT: ${{ github.run_attempt }}
           INPUT_PUBLISH: ${{ inputs.publish }}
           INPUT_SERIES: ${{ inputs.series }}
+          INPUT_GATE_ONLY: ${{ inputs.gate_only }}
         run: |
           set -euo pipefail
           publish=false
@@ -122,6 +127,7 @@ jobs:
             # Publishes only when the content changed (the build job decides).
             schedule) publish=true ;;
           esac
+          [ "${INPUT_GATE_ONLY:-false}" = true ] && publish=false
           # Registry names belong to trycua/cua: any other repository
           # (trycua/cua-staging) builds and gates but never pushes.
           if [ "$publish" = true ] && [ "$GITHUB_REPOSITORY" != trycua/cua ]; then
@@ -245,7 +251,7 @@ jobs:
   # A failed scheduled run opens (or comments on) one tracking issue.
   report-schedule-failure:
     needs: [meta, spacesd, cli, release]
-    if: failure() && github.event_name == 'schedule'
+    if: failure() && github.event_name == 'schedule' && !inputs.gate_only
     runs-on: ubuntu-latest
     permissions:
       contents: read

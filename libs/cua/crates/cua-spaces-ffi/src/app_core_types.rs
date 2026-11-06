@@ -3348,6 +3348,10 @@ pub struct AppSandboxImage {
     pub tier: Option<AppImageTier>,
     /// Offered in pickers.
     pub published: bool,
+    /// `windows-iso`: nothing is pulled; the image is built on this computer
+    /// on first use (an unattended Windows install). Offered in pickers
+    /// though not published.
+    pub local_build: Option<String>,
     /// The guest's distribution.
     pub distro: Option<AppImageDistro>,
     /// Platforms it is built for (`amd64`, `arm64`); empty when unknown.

@@ -362,9 +362,13 @@ async fn resolve_placement_inner(
     // entry to read: it is a VM disk that carries cua-spacesd, so readiness
     // waits for it like for a published Windows image.
     if let ImageSource::Oci { reference } = &placement.image
-        && matches!(placement.backend, BackendKind::Qemu)
+        && matches!(prefix, None | Some("vm"))
         && let Some(version) = cua_image::windows::build::local_build_target(reference)
     {
+        // Always a VM, whatever the kind said by default: a Windows image is
+        // never a container.
+        let mut placement = placement.clone();
+        placement.backend = BackendKind::Qemu;
         // The host's own architecture when the version has a build for it
         // (ARM64 Windows 11 on Apple silicon: hardware accelerated), else the
         // one it has (x64 Windows Server on an ARM Mac: the build says why
@@ -384,7 +388,7 @@ async fn resolve_placement_inner(
             variant: Variant::Containerdisk,
             arch: Some(host.oci().to_string()),
             architectures: vec![host.oci().to_string()],
-            emulated: false,
+            emulated: guest != own,
             os: "windows".into(),
             spacesd: Some(true),
             layers: vec![],
@@ -4095,6 +4099,17 @@ mod tests {
     #[tokio::test]
     async fn a_windows_image_built_here_resolves_without_a_registry() {
         use cua_sandbox_core::placement::{Kind, Runtime};
+        // With no kind given (`cua sb create windows:11`) it is still a VM.
+        let by_default = resolve_placement_for(
+            "ghcr.io/trycua/windows:11",
+            "windows",
+            Kind::Auto,
+            &Runtime::Auto,
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(by_default.placement.backend, BackendKind::Qemu);
         let r = resolve_placement_for(
             "ghcr.io/trycua/windows:11",
             "windows",

@@ -198,6 +198,28 @@ pub fn qemu_command(plan: &InstallPlan, stage: &str) -> String {
     args.join(" ")
 }
 
+async fn qmp(cmd: &str) -> bool {
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+    let go = async {
+        let mut s = tokio::net::TcpStream::connect(("127.0.0.1", QMP_PORT))
+            .await
+            .ok()?;
+        let mut buf = vec![0u8; 4096];
+        let _n = s.read(&mut buf).await.ok()?;
+        s.write_all(b"{\"execute\":\"qmp_capabilities\"}\n")
+            .await
+            .ok()?;
+        let _n = s.read(&mut buf).await.ok()?;
+        s.write_all(format!("{cmd}\n").as_bytes()).await.ok()?;
+        let _n = s.read(&mut buf).await.ok()?;
+        Some(())
+    };
+    matches!(
+        tokio::time::timeout(Duration::from_secs(5), go).await,
+        Ok(Some(()))
+    )
+}
+
 /// Installs through QEMU with KVM in WSL2.
 pub struct WslInstaller<W: Wsl + 'static> {
     pub wsl: std::sync::Arc<W>,

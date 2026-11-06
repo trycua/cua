@@ -35385,6 +35385,12 @@ public struct AppSandboxImage: Equatable, Hashable {
      */
     public var published: Bool
     /**
+     * `windows-iso`: nothing is pulled; the image is built on this computer
+     * on first use (an unattended Windows install). Offered in pickers
+     * though not published.
+     */
+    public var localBuild: String?
+    /**
      * The guest's distribution.
      */
     public var distro: AppImageDistro?
@@ -35435,6 +35441,11 @@ public struct AppSandboxImage: Equatable, Hashable {
          * Offered in pickers.
          */published: Bool,
         /**
+         * `windows-iso`: nothing is pulled; the image is built on this computer
+         * on first use (an unattended Windows install). Offered in pickers
+         * though not published.
+         */localBuild: String?,
+        /**
          * The guest's distribution.
          */distro: AppImageDistro?,
         /**
@@ -35456,6 +35467,7 @@ public struct AppSandboxImage: Equatable, Hashable {
         self.local = local
         self.tier = tier
         self.published = published
+        self.localBuild = localBuild
         self.distro = distro
         self.arch = arch
         self.sizes = sizes
@@ -35488,6 +35500,7 @@ public struct FfiConverterTypeAppSandboxImage: FfiConverterRustBuffer {
                 local: FfiConverterOptionTypeAppLocalEngine.read(from: &buf),
                 tier: FfiConverterOptionTypeAppImageTier.read(from: &buf),
                 published: FfiConverterBool.read(from: &buf),
+                localBuild: FfiConverterOptionString.read(from: &buf),
                 distro: FfiConverterOptionTypeAppImageDistro.read(from: &buf),
                 arch: FfiConverterSequenceString.read(from: &buf),
                 sizes: FfiConverterOptionTypeAppImageSizes.read(from: &buf),
@@ -35506,6 +35519,7 @@ public struct FfiConverterTypeAppSandboxImage: FfiConverterRustBuffer {
         FfiConverterOptionTypeAppLocalEngine.write(value.local, into: &buf)
         FfiConverterOptionTypeAppImageTier.write(value.tier, into: &buf)
         FfiConverterBool.write(value.published, into: &buf)
+        FfiConverterOptionString.write(value.localBuild, into: &buf)
         FfiConverterOptionTypeAppImageDistro.write(value.distro, into: &buf)
         FfiConverterSequenceString.write(value.arch, into: &buf)
         FfiConverterOptionTypeAppImageSizes.write(value.sizes, into: &buf)

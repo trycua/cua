@@ -53,6 +53,11 @@ pub async fn ensure_local_base(
     let layout = build::Layout::default_root();
     let env = |k: &str| std::env::var(k).ok();
     let req = build::BuildRequest::from_env(version, arch, &layout, &env)?;
+    // A build that could only run in software emulation is refused now, before
+    // a multi-gigabyte ISO is downloaded for nothing (a cached base is fine).
+    if build::cached_base(&layout, version, arch).is_none() {
+        native::refuse_software_emulation(arch, WindowsArch::host())?;
+    }
     let fetcher = iso::HttpFetcher;
     let disk = match installer_kind(cua_vmm::host::HostOs::current()) {
         InstallerKind::Wsl2 => {
@@ -75,6 +80,22 @@ mod tests {
         assert_eq!(installer_kind(HostOs::Windows), InstallerKind::Wsl2);
         assert_eq!(installer_kind(HostOs::Macos), InstallerKind::Qemu);
         assert_eq!(installer_kind(HostOs::Linux), InstallerKind::Qemu);
+    }
+
+    #[tokio::test]
+    async fn a_build_that_would_be_emulated_is_refused_before_any_download() {
+        // The other architecture than this host's: Server 2025 is x64 only, so
+        // on an ARM host it is the foreign one; elsewhere ARM64 Windows 11 is.
+        let (reference, arch) = if WindowsArch::host() == WindowsArch::Arm64 {
+            ("ghcr.io/trycua/windows:2025", WindowsArch::Amd64)
+        } else {
+            ("ghcr.io/trycua/windows:11", WindowsArch::Arm64)
+        };
+        if cua_vmm::qemu::software_emulation_allowed() {
+            return;
+        }
+        let e = ensure_local_base(reference, arch).await.unwrap_err().to_string();
+        assert!(e.contains("software emulation") && e.contains("hours"), "{e}");
     }
 
     #[tokio::test]

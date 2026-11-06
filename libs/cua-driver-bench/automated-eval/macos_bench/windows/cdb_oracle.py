@@ -77,6 +77,7 @@ def main() -> None:
         time.sleep(3)
     else:
         solve(args.task, args.workspace)
+        time.sleep(2.0)  # the sentinel needs 2 s of samples to measure the user window
     time.sleep(1.0)
 
 

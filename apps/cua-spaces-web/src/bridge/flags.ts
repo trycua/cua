@@ -2,11 +2,12 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 /**
- * Feature flags for the web UI. A flag takes its default (off) unless
- * something sets it, in this order:
+ * Feature flags for the web UI. A flag takes its default (`DEFAULTS`: the new Home and the new
+ * setup are on, the rest off) unless something sets it, in this order:
  *
  * 1. this device's override (`localStorage` `cua.flag.<name>` = `1` or `0`),
- *    which is how a dev build or a tester forces one;
+ *    which is how a dev build, a tester or Settings → Advanced → Labs forces one (an explicit
+ *    `0` stays off);
  * 2. the build's default (`VITE_CUA_FLAG_<NAME>` = `1`);
  * 3. the flag's default.
  *
@@ -19,15 +20,15 @@ import { useSyncExternalStore } from "react";
 /**
  * - `spaces_ask_first_home`: the "Ask first" Home experiment (CUA-2346): a
  *   Home page that asks what you want done, starts it on a fresh computer and
- *   follows it as a conversation. Settings → Advanced → Labs turns it on for
- *   this device.
+ *   follows it as a conversation. On by default; Settings → Advanced → Labs turns it
+ *   off for this device.
  * - `spaces_new_onboarding`: the new setup (CUA-2851, CUA-3318): the new
  *   first run (`components/first-run-new`): add this computer to the account,
  *   pick where agents work, use the coding agent already here, then Ready. It
  *   ends on the "Ask first" Home, whose first Linux Space starts getting ready
  *   once the first run is over. It needs that Home, so it counts only while
- *   `spaces_ask_first_home` is on too (Labs turns both on). Off by default:
- *   the first run stays as it is.
+ *   `spaces_ask_first_home` is on too. On by default; a device that turned either off keeps the
+ *   old first run.
  * - `spaces_tree`: Spaces as a tree and a default Space (CUA-3413): your
  *   computers and the Spaces made on them in one list (the sidebar and the
  *   Spaces page; Machines leaves the sidebar, its page still opens), and Home's
@@ -36,7 +37,8 @@ import { useSyncExternalStore } from "react";
  */
 export type FlagName = "spaces_ask_first_home" | "spaces_new_onboarding" | "spaces_tree";
 
-const DEFAULTS: Record<FlagName, boolean> = { spaces_ask_first_home: false, spaces_new_onboarding: false, spaces_tree: false };
+/** What a device that never touched a switch has. `cua-spaces-ffi` has a test that reads this line and compares it with the daemon's and the app's defaults. */
+const DEFAULTS: Record<FlagName, boolean> = { spaces_ask_first_home: true, spaces_new_onboarding: true, spaces_tree: false };
 
 const key = (name: string) => `cua.flag.${name}`;
 

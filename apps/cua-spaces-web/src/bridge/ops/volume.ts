@@ -123,19 +123,19 @@ const list = <T>(v: unknown, key: string): T[] => {
   return Array.isArray(a) ? (a as T[]) : [];
 };
 
-/** Settings, Experiments as stored in the Tauri app's UI storage; missing keys read as off. */
+/** Settings, Experiments as stored in the Tauri app's UI storage; a missing key reads as the experiment's default (Secure Spaces, Child Spaces, Ask first and Warm start on, the rest off); a stored `false` stays off. */
 export function readExperiments(raw: string | undefined): Experiments {
   try {
     const stored = raw ? (JSON.parse(raw) as Partial<Record<keyof Experiments, unknown>>) : {};
     return {
       cuaVolume: stored.cuaVolume === true,
-      secureSpaces: stored.secureSpaces === true,
-      childSpaces: stored.childSpaces === true,
-      askFirst: stored.askFirst === true,
+      secureSpaces: stored.secureSpaces !== false,
+      childSpaces: stored.childSpaces !== false,
+      askFirst: stored.askFirst !== false,
       ciRunners: stored.ciRunners === true,
       tcpShares: stored.tcpShares === true,
       mobile: stored.mobile === true,
-      warmPools: stored.warmPools === true,
+      warmPools: stored.warmPools !== false,
     };
   } catch {
     return NO_EXPERIMENTS;

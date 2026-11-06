@@ -26,6 +26,9 @@ import { mountApp, stubBrowserApis } from "./app-harness";
 stubBrowserApis();
 beforeEach(() => {
   localStorage.clear();
+  // These cover the first run as it was; the new Home and the new setup (on by default) have their own tests.
+  setFlagOverride("spaces_ask_first_home", false);
+  setFlagOverride("spaces_new_onboarding", false);
   resetSavedOnboardingCache();
   resetFirstRunCache();
   updateNewSpaceSession(() => CLOSED_NEW_SPACE);
@@ -460,6 +463,8 @@ describe.skipIf(!wasmBuilt)("the first run (real route, wasm core)", () => {
     expect(calls.some((c) => c.op === "cli.install")).toBe(false);
     cleanup();
     localStorage.clear();
+    setFlagOverride("spaces_ask_first_home", false);
+    setFlagOverride("spaces_new_onboarding", false);
     resetSavedOnboardingCache();
     resetFirstRunCache();
     await mount();

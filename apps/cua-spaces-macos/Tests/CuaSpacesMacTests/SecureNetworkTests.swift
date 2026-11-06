@@ -16,9 +16,8 @@ struct SecureNetworkTests {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("cua-mac-tests-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let settings = dir.appendingPathComponent("settings.json")
-        if secureSpaces {
-            try Data(#"{"experiments":{"secureSpaces":true}}"#.utf8).write(to: settings)
-        }
+        // Secure Spaces is on by default: the off case says so explicitly, as a person's off is stored.
+        try Data(#"{"experiments":{"secureSpaces":\#(secureSpaces)}}"#.utf8).write(to: settings)
         return AppModel(backend: backend,
                         keyvault: KeyvaultModel(client: nil, clock: { Date() }),
                         onboarding: OnboardingModel(statePath: dir.appendingPathComponent("onboarding.json").path),

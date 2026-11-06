@@ -2235,6 +2235,62 @@ pub fn app_settings_save(path: String, settings: AppSettings) -> Result<()> {
 mod experiment_sync_tests {
     use super::*;
 
+    /// The defaults are one fact in four places: the daemon's gates, the app's `Experiments`
+    /// (which the macOS and desktop shells read), and the web Labs flags. A change to one that
+    /// leaves the others behind fails here.
+    #[test]
+    fn the_defaults_agree_across_the_daemon_the_app_and_the_web_flags() {
+        use cua_spaces::experiments::Gate;
+        let app = AppExperiments::default();
+        let mut checked = 0;
+        for g in Gate::ALL {
+            if let Some(e) = core::experiments::Experiment::parse(g.id()) {
+                assert_eq!(
+                    app.is_on(e),
+                    g.default_on(),
+                    "{}: the app's default and the daemon's differ",
+                    g.name()
+                );
+                checked += 1;
+            }
+        }
+        assert!(
+            checked >= 7,
+            "every daemon gate with an app switch was compared"
+        );
+        // The four that ship on.
+        for g in [
+            Gate::SecureSpaces,
+            Gate::ChildSpaces,
+            Gate::AskFirst,
+            Gate::WarmPools,
+        ] {
+            assert!(g.default_on(), "{}", g.name());
+        }
+        // The web flags: "Try the new Home" and "Try the new setup" are on, the tree stays off.
+        let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../..");
+        let flags = std::fs::read_to_string(repo.join("apps/cua-spaces-web/src/bridge/flags.ts"))
+            .expect("the web flags");
+        assert!(
+            flags.contains(
+                "spaces_ask_first_home: true, spaces_new_onboarding: true, spaces_tree: false"
+            ),
+            "the web flag defaults changed: update the daemon's and the app's too"
+        );
+        assert!(app.ask_first, "the new Home needs Ask first on");
+        // The shells keep no defaults of their own: they read the core's.
+        for file in [
+            "apps/cua-spaces-macos/Sources/CuaSpacesMacKit/Models/AppModel.swift",
+            "apps/cua-spaces-desktop/src/bridge/settings.ts",
+        ] {
+            let text = std::fs::read_to_string(repo.join(file)).expect(file);
+            assert!(
+                !text.contains("secureSpaces: false") && !text.contains("askFirst: false"),
+                "{file} hard-codes an experiment default"
+            );
+        }
+    }
+
     #[test]
     fn the_daemon_switches_follow_the_cua_home_both_ways() {
         let home = tempfile::tempdir().unwrap();
@@ -2242,27 +2298,30 @@ mod experiment_sync_tests {
         let mine = AppExperiments {
             child_spaces: true,
             ci_runners: true,
-            ..Default::default()
+            ..AppExperiments::all_off()
         };
         assert_eq!(sync_experiments_from_home(mine, home.path()), mine);
         // What `cua experiments enable` set wins.
         cua_spaces::experiments::set_switch(
             home.path(),
-            cua_spaces::experiments::Gate::SecureSpaces,
+            cua_spaces::experiments::Gate::Mobile,
             true,
         )
         .unwrap();
         let seen = sync_experiments_from_home(mine, home.path());
-        assert!(seen.secure_spaces && seen.child_spaces && seen.ci_runners);
+        assert!(seen.mobile && seen.child_spaces && seen.ci_runners && !seen.secure_spaces);
         // The app's switches land in the home for the daemon.
         sync_experiments_to_home(&seen, home.path()).unwrap();
-        assert_eq!(
-            cua_spaces::experiments::switch(
-                home.path(),
-                cua_spaces::experiments::Gate::ChildSpaces
-            ),
-            Some(true)
-        );
+        use cua_spaces::experiments::{Gate, switch};
+        // A switch that differs from its default is kept: CI runners (off by default) on, and
+        // Warm start (on by default) off, so a person's off survives a restart. A switch at
+        // its default writes nothing.
+        assert_eq!(switch(home.path(), Gate::CiRunners), Some(true));
+        assert_eq!(switch(home.path(), Gate::WarmPools), Some(false));
+        assert_eq!(switch(home.path(), Gate::ChildSpaces), None);
+        // And a fresh read gives the same answer: the off is still off.
+        let back = sync_experiments_from_home(AppExperiments::default(), home.path());
+        assert!(!back.warm_pools && back.ci_runners && back.child_spaces);
         // Only the daemon's experiments are kept there.
         let kept: Vec<_> = std::fs::read_dir(home.path().join("experiments"))
             .unwrap()

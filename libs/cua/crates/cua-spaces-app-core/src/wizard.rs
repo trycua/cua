@@ -4431,7 +4431,7 @@ mod tests {
             storage: None,
             clouds: vec![],
             hosts: vec![],
-            experiments: Default::default(),
+            experiments: crate::experiments::Experiments::all_off(),
             gpus: None,
             name_seed: Some(0x2a),
         }

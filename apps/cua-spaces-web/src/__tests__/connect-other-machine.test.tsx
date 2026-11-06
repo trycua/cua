@@ -8,15 +8,20 @@
 
 import { createMemoryHistory, createRootRoute, createRouter, RouterProvider } from "@tanstack/react-router";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { BridgeProvider } from "@/bridge";
+import { BridgeProvider, setFlagOverride } from "@/bridge";
 import { createDemoAdapter } from "@/bridge/adapters/demo";
 import { testCore, wasmBuilt } from "@/bridge/__tests__/testCore";
 import { ConnectAgentDialog } from "@/components/agents/connect-dialog";
 import { mountApp, stubBrowserApis } from "./app-harness";
 
 afterEach(cleanup);
+beforeEach(() => {
+  // The first run as it was; the new setup (on by default) has its own tests.
+  setFlagOverride("spaces_ask_first_home", false);
+  setFlagOverride("spaces_new_onboarding", false);
+});
 stubBrowserApis();
 
 const q = (sel: string) => document.querySelector<HTMLElement>(sel);

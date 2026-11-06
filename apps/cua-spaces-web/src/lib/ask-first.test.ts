@@ -39,12 +39,12 @@ beforeEach(() => {
 });
 
 describe("the spaces_ask_first_home flag", () => {
-  it("is off unless this device turns it on", () => {
-    expect(flagOn("spaces_ask_first_home")).toBe(false);
-    setFlagOverride("spaces_ask_first_home", true);
+  it("is on unless this device turns it off, and an explicit off stays off", () => {
     expect(flagOn("spaces_ask_first_home")).toBe(true);
-    setFlagOverride("spaces_ask_first_home", null);
+    setFlagOverride("spaces_ask_first_home", false);
     expect(flagOn("spaces_ask_first_home")).toBe(false);
+    setFlagOverride("spaces_ask_first_home", null);
+    expect(flagOn("spaces_ask_first_home")).toBe(true);
   });
 });
 

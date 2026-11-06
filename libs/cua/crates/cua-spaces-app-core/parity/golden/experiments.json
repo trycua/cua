@@ -92,11 +92,11 @@
         "# Experiments (experiments)",
         "- experiment:cua_volume toggle: Cua Volume {On|*Off}",
         "- experiment:cua_volume-note note: Memory and files your agents share across every Space.",
-        "- experiment:secure_spaces toggle: Secure Spaces {On|*Off}",
+        "- experiment:secure_spaces toggle: Secure Spaces {*On|Off}",
         "- experiment:secure_spaces-note note: A Space reaches the internet and nothing else on your network unless you open it.",
-        "- experiment:child_spaces toggle: Child Spaces {On|*Off}",
+        "- experiment:child_spaces toggle: Child Spaces {*On|Off}",
         "- experiment:child_spaces-note note: A Space can make Spaces of its own, inside a budget you set.",
-        "- experiment:ask_first toggle: Ask first {On|*Off}",
+        "- experiment:ask_first toggle: Ask first {*On|Off}",
         "- experiment:ask_first-note note: An agent asks you on a card before anything leaves its Space, such as a push to GitHub.",
         "- experiment:ci_runners toggle: CI runners {On|*Off}",
         "- experiment:ci_runners-note note: Run GitHub Actions jobs in a fresh Space each, on this computer.",
@@ -104,7 +104,7 @@
         "- experiment:tcp_shares-note note: Share a game server or another TCP service in a Space at a public address.",
         "- experiment:mobile toggle: Phone app {On|*Off}",
         "- experiment:mobile-note note: Your computers answer the Cua Spaces phone app: start a task, follow the thread, review changes and get alerts.",
-        "- experiment:warm_pools toggle: Warm start {On|*Off}",
+        "- experiment:warm_pools toggle: Warm start {*On|Off}",
         "- experiment:warm_pools-note note: Keep one Linux Space ready on this computer, with its coding apps installed, so the next Create from Home starts at once."
       ],
       "volumePage": null,
@@ -227,7 +227,11 @@
         },
         {
           "experiments": [
-            "cua_volume"
+            "cua_volume",
+            "secure_spaces",
+            "child_spaces",
+            "ask_first",
+            "warm_pools"
           ],
           "type": "experiments-on"
         }
@@ -238,11 +242,11 @@
         "# Experiments (experiments)",
         "- experiment:cua_volume toggle: Cua Volume {*On|Off}",
         "- experiment:cua_volume-note note: Memory and files your agents share across every Space.",
-        "- experiment:secure_spaces toggle: Secure Spaces {On|*Off}",
+        "- experiment:secure_spaces toggle: Secure Spaces {*On|Off}",
         "- experiment:secure_spaces-note note: A Space reaches the internet and nothing else on your network unless you open it.",
-        "- experiment:child_spaces toggle: Child Spaces {On|*Off}",
+        "- experiment:child_spaces toggle: Child Spaces {*On|Off}",
         "- experiment:child_spaces-note note: A Space can make Spaces of its own, inside a budget you set.",
-        "- experiment:ask_first toggle: Ask first {On|*Off}",
+        "- experiment:ask_first toggle: Ask first {*On|Off}",
         "- experiment:ask_first-note note: An agent asks you on a card before anything leaves its Space, such as a push to GitHub.",
         "- experiment:ci_runners toggle: CI runners {On|*Off}",
         "- experiment:ci_runners-note note: Run GitHub Actions jobs in a fresh Space each, on this computer.",
@@ -250,7 +254,7 @@
         "- experiment:tcp_shares-note note: Share a game server or another TCP service in a Space at a public address.",
         "- experiment:mobile toggle: Phone app {On|*Off}",
         "- experiment:mobile-note note: Your computers answer the Cua Spaces phone app: start a task, follow the thread, review changes and get alerts.",
-        "- experiment:warm_pools toggle: Warm start {On|*Off}",
+        "- experiment:warm_pools toggle: Warm start {*On|Off}",
         "- experiment:warm_pools-note note: Keep one Linux Space ready on this computer, with its coding apps installed, so the next Create from Home starts at once."
       ],
       "volumePage": "Volume",
@@ -374,7 +378,11 @@
         {
           "experiments": [
             "cua_volume",
-            "mobile"
+            "secure_spaces",
+            "child_spaces",
+            "ask_first",
+            "mobile",
+            "warm_pools"
           ],
           "type": "experiments-on"
         }
@@ -385,11 +393,11 @@
         "# Experiments (experiments)",
         "- experiment:cua_volume toggle: Cua Volume {*On|Off}",
         "- experiment:cua_volume-note note: Memory and files your agents share across every Space.",
-        "- experiment:secure_spaces toggle: Secure Spaces {On|*Off}",
+        "- experiment:secure_spaces toggle: Secure Spaces {*On|Off}",
         "- experiment:secure_spaces-note note: A Space reaches the internet and nothing else on your network unless you open it.",
-        "- experiment:child_spaces toggle: Child Spaces {On|*Off}",
+        "- experiment:child_spaces toggle: Child Spaces {*On|Off}",
         "- experiment:child_spaces-note note: A Space can make Spaces of its own, inside a budget you set.",
-        "- experiment:ask_first toggle: Ask first {On|*Off}",
+        "- experiment:ask_first toggle: Ask first {*On|Off}",
         "- experiment:ask_first-note note: An agent asks you on a card before anything leaves its Space, such as a push to GitHub.",
         "- experiment:ci_runners toggle: CI runners {On|*Off}",
         "- experiment:ci_runners-note note: Run GitHub Actions jobs in a fresh Space each, on this computer.",
@@ -397,7 +405,7 @@
         "- experiment:tcp_shares-note note: Share a game server or another TCP service in a Space at a public address.",
         "- experiment:mobile toggle: Phone app {*On|Off}",
         "- experiment:mobile-note note: Your computers answer the Cua Spaces phone app: start a task, follow the thread, review changes and get alerts.",
-        "- experiment:warm_pools toggle: Warm start {On|*Off}",
+        "- experiment:warm_pools toggle: Warm start {*On|Off}",
         "- experiment:warm_pools-note note: Keep one Linux Space ready on this computer, with its coding apps installed, so the next Create from Home starts at once."
       ],
       "volumePage": "Volume",
@@ -519,11 +527,11 @@
         "# Experiments (experiments)",
         "- experiment:cua_volume toggle: Cua Volume {*On|Off}",
         "- experiment:cua_volume-note note: Memory and files your agents share across every Space.",
-        "- experiment:secure_spaces toggle: Secure Spaces {On|*Off}",
+        "- experiment:secure_spaces toggle: Secure Spaces {*On|Off}",
         "- experiment:secure_spaces-note note: A Space reaches the internet and nothing else on your network unless you open it.",
-        "- experiment:child_spaces toggle: Child Spaces {On|*Off}",
+        "- experiment:child_spaces toggle: Child Spaces {*On|Off}",
         "- experiment:child_spaces-note note: A Space can make Spaces of its own, inside a budget you set.",
-        "- experiment:ask_first toggle: Ask first {On|*Off}",
+        "- experiment:ask_first toggle: Ask first {*On|Off}",
         "- experiment:ask_first-note note: An agent asks you on a card before anything leaves its Space, such as a push to GitHub.",
         "- experiment:ci_runners toggle: CI runners {On|*Off}",
         "- experiment:ci_runners-note note: Run GitHub Actions jobs in a fresh Space each, on this computer.",
@@ -531,7 +539,7 @@
         "- experiment:tcp_shares-note note: Share a game server or another TCP service in a Space at a public address.",
         "- experiment:mobile toggle: Phone app {*On|Off}",
         "- experiment:mobile-note note: Your computers answer the Cua Spaces phone app: start a task, follow the thread, review changes and get alerts.",
-        "- experiment:warm_pools toggle: Warm start {On|*Off}",
+        "- experiment:warm_pools toggle: Warm start {*On|Off}",
         "- experiment:warm_pools-note note: Keep one Linux Space ready on this computer, with its coding apps installed, so the next Create from Home starts at once."
       ],
       "volumePage": "Volume",
@@ -653,11 +661,11 @@
         "# Experiments (experiments)",
         "- experiment:cua_volume toggle: Cua Volume {*On|Off}",
         "- experiment:cua_volume-note note: Memory and files your agents share across every Space.",
-        "- experiment:secure_spaces toggle: Secure Spaces {On|*Off}",
+        "- experiment:secure_spaces toggle: Secure Spaces {*On|Off}",
         "- experiment:secure_spaces-note note: A Space reaches the internet and nothing else on your network unless you open it.",
-        "- experiment:child_spaces toggle: Child Spaces {On|*Off}",
+        "- experiment:child_spaces toggle: Child Spaces {*On|Off}",
         "- experiment:child_spaces-note note: A Space can make Spaces of its own, inside a budget you set.",
-        "- experiment:ask_first toggle: Ask first {On|*Off}",
+        "- experiment:ask_first toggle: Ask first {*On|Off}",
         "- experiment:ask_first-note note: An agent asks you on a card before anything leaves its Space, such as a push to GitHub.",
         "- experiment:ci_runners toggle: CI runners {On|*Off}",
         "- experiment:ci_runners-note note: Run GitHub Actions jobs in a fresh Space each, on this computer.",
@@ -665,7 +673,7 @@
         "- experiment:tcp_shares-note note: Share a game server or another TCP service in a Space at a public address.",
         "- experiment:mobile toggle: Phone app {*On|Off}",
         "- experiment:mobile-note note: Your computers answer the Cua Spaces phone app: start a task, follow the thread, review changes and get alerts.",
-        "- experiment:warm_pools toggle: Warm start {On|*Off}",
+        "- experiment:warm_pools toggle: Warm start {*On|Off}",
         "- experiment:warm_pools-note note: Keep one Linux Space ready on this computer, with its coding apps installed, so the next Create from Home starts at once."
       ],
       "volumePage": "Volume",
@@ -781,7 +789,11 @@
         },
         {
           "experiments": [
-            "mobile"
+            "secure_spaces",
+            "child_spaces",
+            "ask_first",
+            "mobile",
+            "warm_pools"
           ],
           "type": "experiments-on"
         }
@@ -792,11 +804,11 @@
         "# Experiments (experiments)",
         "- experiment:cua_volume toggle: Cua Volume {On|*Off}",
         "- experiment:cua_volume-note note: Memory and files your agents share across every Space.",
-        "- experiment:secure_spaces toggle: Secure Spaces {On|*Off}",
+        "- experiment:secure_spaces toggle: Secure Spaces {*On|Off}",
         "- experiment:secure_spaces-note note: A Space reaches the internet and nothing else on your network unless you open it.",
-        "- experiment:child_spaces toggle: Child Spaces {On|*Off}",
+        "- experiment:child_spaces toggle: Child Spaces {*On|Off}",
         "- experiment:child_spaces-note note: A Space can make Spaces of its own, inside a budget you set.",
-        "- experiment:ask_first toggle: Ask first {On|*Off}",
+        "- experiment:ask_first toggle: Ask first {*On|Off}",
         "- experiment:ask_first-note note: An agent asks you on a card before anything leaves its Space, such as a push to GitHub.",
         "- experiment:ci_runners toggle: CI runners {On|*Off}",
         "- experiment:ci_runners-note note: Run GitHub Actions jobs in a fresh Space each, on this computer.",
@@ -804,7 +816,7 @@
         "- experiment:tcp_shares-note note: Share a game server or another TCP service in a Space at a public address.",
         "- experiment:mobile toggle: Phone app {*On|Off}",
         "- experiment:mobile-note note: Your computers answer the Cua Spaces phone app: start a task, follow the thread, review changes and get alerts.",
-        "- experiment:warm_pools toggle: Warm start {On|*Off}",
+        "- experiment:warm_pools toggle: Warm start {*On|Off}",
         "- experiment:warm_pools-note note: Keep one Linux Space ready on this computer, with its coding apps installed, so the next Create from Home starts at once."
       ],
       "volumePage": null,
@@ -919,7 +931,12 @@
           "type": "experiment"
         },
         {
-          "experiments": [],
+          "experiments": [
+            "secure_spaces",
+            "child_spaces",
+            "ask_first",
+            "warm_pools"
+          ],
           "type": "experiments-on"
         }
       ],
@@ -929,11 +946,11 @@
         "# Experiments (experiments)",
         "- experiment:cua_volume toggle: Cua Volume {On|*Off}",
         "- experiment:cua_volume-note note: Memory and files your agents share across every Space.",
-        "- experiment:secure_spaces toggle: Secure Spaces {On|*Off}",
+        "- experiment:secure_spaces toggle: Secure Spaces {*On|Off}",
         "- experiment:secure_spaces-note note: A Space reaches the internet and nothing else on your network unless you open it.",
-        "- experiment:child_spaces toggle: Child Spaces {On|*Off}",
+        "- experiment:child_spaces toggle: Child Spaces {*On|Off}",
         "- experiment:child_spaces-note note: A Space can make Spaces of its own, inside a budget you set.",
-        "- experiment:ask_first toggle: Ask first {On|*Off}",
+        "- experiment:ask_first toggle: Ask first {*On|Off}",
         "- experiment:ask_first-note note: An agent asks you on a card before anything leaves its Space, such as a push to GitHub.",
         "- experiment:ci_runners toggle: CI runners {On|*Off}",
         "- experiment:ci_runners-note note: Run GitHub Actions jobs in a fresh Space each, on this computer.",
@@ -941,7 +958,7 @@
         "- experiment:tcp_shares-note note: Share a game server or another TCP service in a Space at a public address.",
         "- experiment:mobile toggle: Phone app {On|*Off}",
         "- experiment:mobile-note note: Your computers answer the Cua Spaces phone app: start a task, follow the thread, review changes and get alerts.",
-        "- experiment:warm_pools toggle: Warm start {On|*Off}",
+        "- experiment:warm_pools toggle: Warm start {*On|Off}",
         "- experiment:warm_pools-note note: Keep one Linux Space ready on this computer, with its coding apps installed, so the next Create from Home starts at once."
       ],
       "volumePage": null,

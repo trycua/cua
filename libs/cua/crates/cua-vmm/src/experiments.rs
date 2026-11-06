@@ -1,4 +1,5 @@
-//! Experiments: new behavior that is off until it is turned on.
+//! Experiments: switches for behavior, each with a default (most are off until turned on; the
+//! ones that have shipped for everyone are on until turned off).
 //!
 //! One switch per experiment, one source of truth in the cua home
 //! (`<home>/experiments/<name>`, `on` or `off`). The CLI (`cua experiments`),
@@ -15,7 +16,8 @@ pub const EXPERIMENTS_ENV: &str = "CUA_EXPERIMENTS";
 /// The folder, in the cua home, that holds the switches.
 pub const EXPERIMENTS_DIR: &str = "experiments";
 
-/// An experiment: a feature that is still being built and is off by default.
+/// An experiment: a switch for a feature. Each has a default ([`Gate::default_on`]); a stored
+/// `on` or `off` always wins over it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Gate {
     /// Secure Spaces: a Space reaches the internet only by default, with a
@@ -57,6 +59,17 @@ impl Gate {
         Gate::WindowsKvm,
         Gate::WarmPools,
     ];
+
+    /// Whether the gate is on when nobody set it: Secure Spaces, Child Spaces, Ask first and
+    /// Warm start are on for everyone (turning one off writes an explicit `off`); the rest are
+    /// off until turned on. The app's own defaults (`Experiments::default` in cua-spaces-app-core
+    /// and the web Labs flags) must say the same: a test in cua-spaces-app-core reads this.
+    pub fn default_on(self) -> bool {
+        matches!(
+            self,
+            Gate::SecureSpaces | Gate::ChildSpaces | Gate::AskFirst | Gate::WarmPools
+        )
+    }
 
     /// The stable name (`secure-spaces`): the file name, the CLI word.
     pub fn name(self) -> &'static str {
@@ -236,7 +249,8 @@ pub fn env_says(value: Option<&str>, gate: Gate) -> Option<bool> {
 }
 
 /// Whether `gate` is on in this process: the override, else
-/// [`EXPERIMENTS_ENV`], else the switch in `home`, else off.
+/// [`EXPERIMENTS_ENV`], else the switch in `home`, else the gate's default
+/// ([`Gate::default_on`]).
 pub fn enabled_in(home: &std::path::Path, gate: Gate) -> bool {
     match GATE_OVERRIDES[gate.slot()].load(Ordering::Relaxed) {
         1 => return false,
@@ -246,7 +260,7 @@ pub fn enabled_in(home: &std::path::Path, gate: Gate) -> bool {
     if let Some(v) = env_says(std::env::var(EXPERIMENTS_ENV).ok().as_deref(), gate) {
         return v;
     }
-    switch(home, gate).unwrap_or(false)
+    switch(home, gate).unwrap_or(gate.default_on())
 }
 
 /// [`enabled_in`] with the switches in [`crate::cua_home`].
@@ -264,11 +278,12 @@ pub fn switch(home: &std::path::Path, gate: Gate) -> Option<bool> {
     Some(text.trim() == "on")
 }
 
-/// Keeps the switch for `gate` in `home`. Writes only a change: a switch
-/// that was never set and stays off writes nothing.
+/// Keeps the switch for `gate` in `home`. Writes only a change: a switch that was never set and
+/// is asked for its default writes nothing, so turning an on-by-default gate off writes an
+/// explicit `off` that stays.
 pub fn set_switch(home: &std::path::Path, gate: Gate, on: bool) -> std::io::Result<()> {
     let now = switch(home, gate);
-    if now == Some(on) || (now.is_none() && !on) {
+    if now == Some(on) || (now.is_none() && on == gate.default_on()) {
         return Ok(());
     }
     let path = switch_path(home, gate);
@@ -287,18 +302,58 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_gate_is_off_until_set_and_follows_the_file() {
+    fn a_gate_that_is_off_by_default_is_off_until_set_and_follows_the_file() {
         let home = tempfile::tempdir().unwrap();
-        let g = Gate::SecureSpaces;
+        let g = Gate::CiRunners;
+        assert!(!g.default_on());
         assert_eq!(super::switch(home.path(), g), None);
+        assert!(!super::enabled_in(home.path(), g));
         // Off and never set: nothing is written.
         super::set_switch(home.path(), g, false).unwrap();
-        assert!(!home.path().join("experiments/secure-spaces").exists());
+        assert!(!home.path().join("experiments/ci-runners").exists());
         assert_eq!(super::switch(home.path(), g), None);
         super::set_switch(home.path(), g, true).unwrap();
         assert_eq!(super::switch(home.path(), g), Some(true));
         super::set_switch(home.path(), g, false).unwrap();
         assert_eq!(super::switch(home.path(), g), Some(false));
+    }
+
+    #[test]
+    fn the_shipped_gates_are_on_by_default_and_an_explicit_off_stays() {
+        for g in [
+            Gate::SecureSpaces,
+            Gate::ChildSpaces,
+            Gate::AskFirst,
+            Gate::WarmPools,
+        ] {
+            let home = tempfile::tempdir().unwrap();
+            assert!(g.default_on(), "{g:?}");
+            assert!(
+                super::enabled_in(home.path(), g),
+                "{g:?} is on in a fresh home"
+            );
+            // On and never set: nothing is written.
+            super::set_switch(home.path(), g, true).unwrap();
+            assert!(!home.path().join("experiments").join(g.name()).exists());
+            // Turned off: an explicit off is written, and it survives a restart (a new read).
+            super::set_switch(home.path(), g, false).unwrap();
+            assert_eq!(super::switch(home.path(), g), Some(false));
+            assert!(!super::enabled_in(home.path(), g), "{g:?} stays off");
+            // Turned on again: the switch says on.
+            super::set_switch(home.path(), g, true).unwrap();
+            assert_eq!(super::switch(home.path(), g), Some(true));
+            assert!(super::enabled_in(home.path(), g));
+        }
+        // The others are still off in a fresh home.
+        let home = tempfile::tempdir().unwrap();
+        for g in [
+            Gate::CiRunners,
+            Gate::TcpShares,
+            Gate::Mobile,
+            Gate::WindowsKvm,
+        ] {
+            assert!(!super::enabled_in(home.path(), g), "{g:?}");
+        }
     }
 
     #[test]

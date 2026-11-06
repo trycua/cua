@@ -12,6 +12,7 @@ import { wasmBuilt } from "@/bridge/__tests__/testCore";
 import { readFirstRun, resetFirstRunCache, TEAMMATES_KEY, writeFirstRun } from "@/bridge/first-run";
 import { resetSavedOnboardingCache } from "@/bridge/onboarding";
 import { resetConnectedAppsState, setConnectedAppsState } from "@/hooks/use-connected-apps";
+import { setFlagOverride } from "@/bridge";
 import { mountApp, stubBrowserApis, type TestHost } from "./app-harness";
 
 stubBrowserApis();
@@ -21,6 +22,9 @@ afterEach(() => {
 });
 beforeEach(() => {
   localStorage.clear();
+  // The first run as it was; the new setup (on by default) has its own tests.
+  setFlagOverride("spaces_ask_first_home", false);
+  setFlagOverride("spaces_new_onboarding", false);
   resetSavedOnboardingCache();
   resetFirstRunCache();
   resetConnectedAppsState();

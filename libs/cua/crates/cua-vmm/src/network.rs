@@ -44,8 +44,8 @@
 //! answer into what a start does; nothing but `unprotected` ever starts
 //! less strict than asked.
 //!
-//! **Experiment.** All of this is the Secure Spaces experiment, off until
-//! it is turned on (`cua experiments enable secure-spaces`). Off, Spaces
+//! **Experiment.** All of this is the Secure Spaces experiment, on by
+//! default (`cua experiments disable secure-spaces` turns it off). Off, Spaces
 //! keep the old open default ([`Mode::Legacy`]). `CUA_SECURE_DEFAULT=1` or
 //! `=0` forces one or the other for a process.
 
@@ -946,8 +946,8 @@ pub const SECURE_DEFAULT_ENV: &str = "CUA_SECURE_DEFAULT";
 
 impl Mode {
     /// The mode of this process: [`SECURE_DEFAULT_ENV`] when it is set,
-    /// else [`crate::experiments::Gate::SecureSpaces`] (off unless
-    /// turned on).
+    /// else [`crate::experiments::Gate::SecureSpaces`] (on unless
+    /// turned off). It decides the network of Spaces made from now on only.
     pub fn from_env() -> Mode {
         Mode::from_value(
             std::env::var(SECURE_DEFAULT_ENV).ok().as_deref(),

@@ -1,9 +1,9 @@
 ---
 title: Experiments
-description: Features that are still being built are off until you turn them on, one switch each, with the cua experiments command or in the app's Settings.
+description: Features that are still being built have one switch each, with the cua experiments command or in the app's Settings. Warm start, Ask first, Child Spaces and Secure Spaces are on by default.
 ---
 
-An experiment is a feature that works but is still being built. It is off until you turn it on, and turning it off puts everything back the way it was before: nothing the experiment made is deleted, and the commands and settings it added disappear from help and from the app.
+An experiment is a feature that works but is still being built. Most are off until you turn them on; `warm-pools`, `ask-first`, `child-spaces` and `secure-spaces` are on by default and you can turn them off. Turning one off puts everything back the way it was before: nothing the experiment made is deleted, and the commands and settings it added disappear from help and from the app.
 
 ## Turn one on or off
 
@@ -13,7 +13,7 @@ cua experiments enable secure-spaces
 cua experiments disable secure-spaces
 ```
 
-The switches live in the Cua home (`experiments/<name>`), so the command, the daemon and the Spaces apps agree. In the app, every experiment has a switch under Settings, Advanced, Labs, off until you turn it on, and it does what the command does; a change made with the command shows there the next time the app starts. To turn one on for a single process, set `CUA_EXPERIMENTS=secure-spaces` (or `-secure-spaces` to force it off).
+The switches live in the Cua home (`experiments/<name>`), so the command, the daemon and the Spaces apps agree. In the app, every experiment has a switch under Settings, Advanced, Labs, and it does what the command does; a change made with the command shows there the next time the app starts. A switch you turned off stays off: the Cua home keeps an explicit `off` for it. To turn one on for a single process, set `CUA_EXPERIMENTS=secure-spaces` (or `-secure-spaces` to force it off).
 
 A command that belongs to an experiment that is off is left out of `--help`. If you run it anyway it says which experiment to turn on.
 

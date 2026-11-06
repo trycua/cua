@@ -113,7 +113,7 @@ from you starts a new chain.
 
 ## When an agent asks to push
 
-This is the [`ask-first`](/spaces/guides/experiments) experiment, off until you turn it on (`cua experiments enable ask-first`). Inside its Space an agent approves its own tool calls: the Space is the boundary. Ask first adds a question for the few things that leave it, starting with a push to GitHub; the agent holds no GitHub access of its own, and Cua does the push on your computer only after you answer.
+This is the [`ask-first`](/spaces/guides/experiments) experiment, on by default (turn it off with `cua experiments disable ask-first`). Inside its Space an agent approves its own tool calls: the Space is the boundary. Ask first adds a question for the few things that leave it, starting with a push to GitHub; the agent holds no GitHub access of its own, and Cua does the push on your computer only after you answer.
 
 When an agent asks to push work to GitHub, the request is a small card from Cua, which is marked APP next to its name and shows the app's icon. It says who asks to do what on which repository, shows the branch and the branch it goes into, how many files changed with the lines added in green and removed in red, and the account the push will use. Open Show changes to see the first three files with a small five-square bar each, the first three commits and, when a pull request will be opened, its title and the start of its description. The main button says what happens: Push and open PR, or Push when only a branch is pushed. Cua measured all of that in the Space, not the agent. Say Not now to decline. Once you answer, the card becomes one muted line saying what you chose.
 

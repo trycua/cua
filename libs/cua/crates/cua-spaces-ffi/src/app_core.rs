@@ -3689,7 +3689,7 @@ mod resources_tests {
         assert_eq!(v.this_mac.extra_spaces, rt::words::extra_spaces_use(m));
         assert_eq!(
             v.this_mac.warning.as_ref().map(|w| w.text.as_str()),
-            rt::words::warning(&runtime.warning)
+            rt::words::warning_on(&runtime.warning, rt::words::Host::Mac)
         );
         // A running Space.
         let s = &runtime.spaces[0];

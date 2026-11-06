@@ -449,7 +449,7 @@ fn focus_exact_window(pid: i32, window_id: u32) -> Result<(), String> {
         if exact_window_is_ready(
             live_frontmost_pid(pid, window_id),
             pid,
-            crate::ax::bindings::focused_window_id_of_pid(pid),
+            crate::ax::bindings::focused_window_id_of_pid(pid).map(|window| window.own),
             window_id,
         ) {
             let since = stable_since.get_or_insert(now);
@@ -926,8 +926,9 @@ impl Tool for InvokeMenuTool {
 
         let outcome = tokio::task::spawn_blocking(move || {
             let prior_frontmost = live_frontmost_app().or_else(crate::apps::frontmost_pid);
-            let prior_frontmost_window =
-                prior_frontmost.and_then(crate::ax::bindings::focused_window_id_of_pid);
+            let prior_frontmost_window = prior_frontmost.and_then(|prior| {
+                crate::ax::bindings::focused_window_id_of_pid(prior).map(|window| window.own)
+            });
             let needs_activation = prior_frontmost != Some(pid);
 
             let result = focus_exact_window(pid, window_id)

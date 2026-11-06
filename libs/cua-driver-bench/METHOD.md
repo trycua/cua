@@ -261,6 +261,17 @@ differences are directional only.
   compare setups within a platform, not across platforms. The Windows release
   run covers the seven BenchLab tasks (MB-09, MB-10, MB-11, IR-01 to IR-04); it
   does not include CDB-G02 to CDB-G04.
+* **Vendor setups are driven through Cua's adapters.** agent-desktop, the Browser Use
+  harnesses and OpenAI's computer-use plugin are not built for Claude Code as their
+  client, so each is run through a small adapter in `automated-eval/macos_bench/tools/`
+  (`agent_desktop`, `browser_use_harness`, `codex_cu`). The adapters map each tool or
+  command one to one and add no behaviour; the vendor's own skill or help text is the
+  server instructions. The Codex setup is OpenAI's plugin with Claude choosing the
+  actions, not OpenAI's own agent, and it needs the reader's own ChatGPT sign-in (Work or
+  Codex access) and the ChatGPT desktop app with Computer Use enabled. It is not
+  available on Linux yet and runs foreground only on Windows. A setup's result says how
+  well that tool layer works under this client and prompt, not how well the vendor's own
+  agent works.
 * **Driver versions are named per platform.** The release tables name the
   version of each tool layer, and a table never mixes versions silently. macOS,
   foreground and background alike: Cua Driver 0.38.0, agent-desktop 1.2.0 and

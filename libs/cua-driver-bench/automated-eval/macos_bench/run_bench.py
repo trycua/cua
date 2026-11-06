@@ -647,6 +647,18 @@ def real_capture_check(ctx: "Ctx", arm: str) -> tuple[str, str, str]:
             if window is None:
                 raise RuntimeError("no layer-0 Calculator window")
             result = call("app_screenshot", {"app": "Calculator", "window_id": window["window_id"]})
+        elif source in ca.ADAPTER_ARMS:
+            # No capture tool: the adapters have no screenshot of the whole desktop. A read-only list proves the
+            # vendor tool answers through the adapter.
+            if source == "cc-agent-desktop":
+                if "list_apps" not in tools:
+                    raise RuntimeError("unexpected agent-desktop tools/list")
+                call("list_apps", {})
+            else:
+                if "macos_harness" not in tools:
+                    raise RuntimeError("unexpected macos-harness tools/list")
+                call("macos_harness", {"command": "macos-harness list_apps"})
+            return f"{arm} adapter answers", "pass", "tools/list and a read-only call"
         else:
             if not {"js", "js_reset"} <= tools.keys():
                 raise RuntimeError("missing Codex tools")

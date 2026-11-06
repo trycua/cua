@@ -1592,11 +1592,15 @@ if [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
         */bash) SHELL_RC="$HOME/.bashrc" ;;
     esac
     if [[ "$NO_MODIFY_PATH" != "1" ]] && [[ -n "$SHELL_RC" ]]; then
-        {
-            printf '\n# Added by cua-driver-rs installer — see https://github.com/trycua/cua\n'
-            printf 'export PATH="%s:$PATH"\n' "$BIN_DIR"
-        } >> "$SHELL_RC"
-        log "appended PATH update to $SHELL_RC — open a new shell or run \`source $SHELL_RC\`"
+        # Check if the shell rc file already contains an export for BIN_DIR
+        # to prevent duplicate entries when run repeatedly or via timers.
+        if [[ ! -f "$SHELL_RC" ]] || ! grep -Fq "$BIN_DIR" "$SHELL_RC" 2>/dev/null; then
+            {
+                printf '\n# Added by cua-driver-rs installer — see https://github.com/trycua/cua\n'
+                printf 'export PATH="%s:$PATH"\n' "$BIN_DIR"
+            } >> "$SHELL_RC"
+            log "appended PATH update to $SHELL_RC — open a new shell or run \`source $SHELL_RC\`"
+        fi
     fi
     print_path_hint
 fi

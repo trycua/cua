@@ -344,6 +344,38 @@ def test_installer_swap_step_never_touches_other_apps_and_skips_pkill_on_macos(m
     )
 
 
+def test_installer_swap_step_skips_blanket_pkill_on_linux(machine: Machine) -> None:
+    machine._write(machine.bin / "uname", "echo Linux")
+    machine._write(machine.bin / "systemctl", "exit 0")
+    machine._write(machine.bin / "pkill", 'echo pkill "$@" >> "' + str(machine.root / "pkill.log") + '"')
+
+    result = machine.common_shell("stop_cua_driver_daemons")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert not (machine.root / "pkill.log").exists(), (
+        "Linux must not run blanket pkill -x cua-driver"
+    )
+
+
+def test_cua_driver_is_serve_process_ignores_mcp_with_serve_in_arguments(machine: Machine) -> None:
+    test_sh = """
+tmp="$(mktemp -d)"
+mkdir -p "$tmp/proc/100" "$tmp/proc/101" "$tmp/proc/102"
+printf "cua-driver\\0serve\\0--socket\\0/tmp/d.sock\\0" > "$tmp/proc/100/cmdline"
+printf "cua-driver\\0mcp\\0--socket\\0/tmp/cua-driver-serve.sock\\0" > "$tmp/proc/101/cmdline"
+printf "cua-driver\\0update\\0--apply\\0" > "$tmp/proc/102/cmdline"
+
+eval "$(declare -f cua_driver_is_serve_process | sed "s|/proc/|$tmp/proc/|g")"
+
+cua_driver_is_serve_process 100 || exit 1
+if cua_driver_is_serve_process 101; then exit 2; fi
+if cua_driver_is_serve_process 102; then exit 3; fi
+rm -rf "$tmp"
+"""
+    result = machine.common_shell(test_sh)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 def test_installer_survivor_note_names_the_pid(machine: Machine) -> None:
     old = machine.bundle("tmp/CuaDriver.app")
     stray = machine.spawn(old)

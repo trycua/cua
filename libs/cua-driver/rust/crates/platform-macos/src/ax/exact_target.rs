@@ -21,7 +21,6 @@ use super::bindings::{
     AXUIElementRef,
 };
 use super::snapshot::RetainedElement;
-use super::window_scope::window_owning_sheet;
 use crate::windows::{all_windows_without_spaces, resolve_window_owner, WindowOwner};
 
 /// Bounded `AXParent` ascent used when an element does not expose `AXWindow`.
@@ -45,7 +44,7 @@ const MAX_SHEET_NESTING: usize = 8;
 /// # Safety
 ///
 /// `element` must be a valid `AXUIElementRef` for the duration of the call.
-pub unsafe fn element_window_id(element: AXUIElementRef) -> Option<u32> {
+pub unsafe fn element_window_id(element: AXUIElementRef) -> Option<AxWindowId> {
     if let Some(window) = copy_element_attr(element, "AXWindow") {
         let window_id = owning_window_id(window);
         CFRelease(window as CFTypeRef);
@@ -83,9 +82,13 @@ pub unsafe fn element_window_id(element: AXUIElementRef) -> Option<u32> {
 }
 
 /// Decide an addressed element's ancestry from what was read about it.
-fn element_ancestry(window: Option<u32>, in_app_menu_bar: bool, requested: u32) -> ElementAncestry {
+fn element_ancestry(
+    window: Option<AxWindowId>,
+    in_app_menu_bar: bool,
+    requested: u32,
+) -> ElementAncestry {
     match window {
-        Some(id) if id == requested => ElementAncestry::ProvenDescendant,
+        Some(id) if id.is(requested) => ElementAncestry::ProvenDescendant,
         Some(_) => ElementAncestry::OutsideTargetWindow,
         None if in_app_menu_bar => ElementAncestry::ProvenDescendant,
         None => ElementAncestry::Unproven,
@@ -139,14 +142,36 @@ unsafe fn element_in_app_menu_bar(app: AXUIElementRef, element: AXUIElementRef) 
     found
 }
 
-/// Map a window-role AX element to the CGWindowID of the top-level window it
-/// belongs to: an `AXWindow` maps to itself, an `AXSheet` to the window it is
-/// attached to (see [`element_window_id`]).
+/// The window ids an AX window or sheet answers to: its own CGWindowID and
+/// the top-level window it is attached to. A window is both. A sheet is its
+/// own WindowServer window but is modal to its parent, so input addressed to
+/// the parent reaches it, while input addressed to the sheet must not reach
+/// the parent (issue #4392).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AxWindowId {
+    pub own: u32,
+    pub root: u32,
+}
+
+impl AxWindowId {
+    pub fn window(id: u32) -> Self {
+        Self { own: id, root: id }
+    }
+
+    /// Whether a request addressed to `window_id` covers this window.
+    pub fn is(self, window_id: u32) -> bool {
+        self.own == window_id || self.root == window_id
+    }
+}
+
+/// Map a window-role AX element to the ids it answers to: an `AXWindow` to
+/// itself, an `AXSheet` to itself and the window it is attached to (see
+/// [`element_window_id`]).
 ///
 /// # Safety
 ///
 /// `window` must be a valid `AXUIElementRef` for the duration of the call.
-pub(crate) unsafe fn owning_window_id(window: AXUIElementRef) -> Option<u32> {
+pub(crate) unsafe fn owning_window_id(window: AXUIElementRef) -> Option<AxWindowId> {
     resolve_owning_window(
         RetainedElement::retain(window as usize),
         MAX_SHEET_NESTING,
@@ -163,36 +188,52 @@ pub(crate) unsafe fn owning_window_id(window: AXUIElementRef) -> Option<u32> {
     )
 }
 
-/// The CGWindowIDs of the sheets attached to `window`: its `AXSheet`
-/// children, and theirs, up to [`MAX_SHEET_NESTING`] levels.
+/// The sheets attached to `window`: its `AXSheet` children, and theirs, up
+/// to [`MAX_SHEET_NESTING`] levels. Each is retained; the caller releases.
 ///
 /// # Safety
 ///
 /// `window` must be a valid `AXUIElementRef` for the duration of the call.
-pub(crate) unsafe fn attached_sheet_ids(window: AXUIElementRef) -> Vec<u32> {
-    let mut ids = Vec::new();
-    let mut level = vec![window];
+pub(crate) unsafe fn attached_sheets(window: AXUIElementRef) -> Vec<AXUIElementRef> {
+    let mut sheets = Vec::new();
+    let mut level = 0;
     for depth in 0..MAX_SHEET_NESTING {
-        let mut sheets = Vec::new();
-        for element in level {
-            for child in copy_children(element) {
+        let parents = if depth == 0 {
+            vec![window]
+        } else {
+            sheets[level..].to_vec()
+        };
+        level = sheets.len();
+        for parent in parents {
+            for child in copy_children(parent) {
                 if copy_string_attr(child, "AXRole").as_deref() == Some("AXSheet") {
-                    ids.extend(ax_get_window_id(child));
                     sheets.push(child);
                 } else {
                     CFRelease(child as CFTypeRef);
                 }
             }
-            if depth > 0 {
-                CFRelease(element as CFTypeRef);
-            }
         }
-        level = sheets;
+        if sheets.len() == level {
+            break;
+        }
     }
-    for sheet in level {
-        CFRelease(sheet as CFTypeRef);
-    }
-    ids
+    sheets
+}
+
+/// The CGWindowIDs of the sheets attached to `window` (see [`attached_sheets`]).
+///
+/// # Safety
+///
+/// `window` must be a valid `AXUIElementRef` for the duration of the call.
+unsafe fn attached_sheet_ids(window: AXUIElementRef) -> Vec<u32> {
+    attached_sheets(window)
+        .into_iter()
+        .filter_map(|sheet| {
+            let id = ax_get_window_id(sheet);
+            CFRelease(sheet as CFTypeRef);
+            id
+        })
+        .collect()
 }
 
 /// Each of the application's `AXWindows` with the sheets attached to it.
@@ -200,7 +241,7 @@ pub(crate) unsafe fn attached_sheet_ids(window: AXUIElementRef) -> Vec<u32> {
 /// # Safety
 ///
 /// `app` must be a valid application `AXUIElementRef`.
-pub(crate) unsafe fn windows_with_sheets(app: AXUIElementRef) -> Vec<(u32, Vec<u32>)> {
+unsafe fn windows_with_sheets(app: AXUIElementRef) -> Vec<(u32, Vec<u32>)> {
     copy_ax_windows(app)
         .into_iter()
         .filter_map(|window| {
@@ -211,46 +252,41 @@ pub(crate) unsafe fn windows_with_sheets(app: AXUIElementRef) -> Vec<(u32, Vec<u
         .collect()
 }
 
-/// `pid`'s windows with the sheets attached to them, read fresh.
-pub fn windows_with_sheets_of_pid(pid: i32) -> Vec<(u32, Vec<u32>)> {
-    unsafe {
-        let app = AXUIElementCreateApplication(pid);
-        if app.is_null() {
-            return Vec::new();
-        }
-        let windows = windows_with_sheets(app);
-        CFRelease(app as CFTypeRef);
-        windows
-    }
-}
-
 /// Pure sheet-to-parent resolution behind [`owning_window_id`].
 ///
 /// A sheet whose parent is not a window (or a sheet attached to another
 /// sheet) is followed up to `max_nesting` levels. When no parent window is
-/// proven, the sheet keeps its own window id: that never names a different
-/// window than before, so it can only stay refused, never widen.
+/// proven, the sheet is its own root: that never names a different window
+/// than before, so it can only stay refused, never widen.
 fn resolve_owning_window<E>(
     start: E,
     max_nesting: usize,
     role: impl Fn(&E) -> Option<String>,
     parent: impl Fn(&E) -> Option<E>,
     window_id: impl Fn(&E) -> Option<u32>,
-) -> Option<u32> {
-    let own_id = window_id(&start);
+) -> Option<AxWindowId> {
+    let own = window_id(&start);
     let mut current = start;
+    let mut root = None;
     for _ in 0..=max_nesting {
         match role(&current).as_deref() {
             Some("AXSheet") => {}
-            Some("AXWindow") => return window_id(&current),
-            _ => return own_id,
+            Some("AXWindow") => {
+                root = window_id(&current);
+                break;
+            }
+            _ => break,
         }
-        current = match parent(&current) {
-            Some(next) => next,
-            None => return own_id,
-        };
+        match parent(&current) {
+            Some(next) => current = next,
+            None => break,
+        }
     }
-    own_id
+    match (own, root) {
+        (Some(own), Some(root)) => Some(AxWindowId { own, root }),
+        (Some(id), None) | (None, Some(id)) => Some(AxWindowId::window(id)),
+        (None, None) => None,
+    }
 }
 
 /// The process's focused AX element, but only when it provably belongs to the
@@ -265,7 +301,7 @@ fn resolve_owning_window<E>(
 /// Caller must `CFRelease` the returned element.
 pub unsafe fn focused_element_in_window(pid: i32, window_id: u32) -> Option<AXUIElementRef> {
     let element = focused_element_of_pid(pid)?;
-    if element_window_id(element) == Some(window_id) {
+    if element_window_id(element).is_some_and(|window| window.is(window_id)) {
         Some(element)
     } else {
         CFRelease(element as CFTypeRef);
@@ -311,7 +347,16 @@ fn ax_target_window(
     if records.iter().any(|record| record.window_id == requested) {
         return requested;
     }
-    window_owning_sheet(requested, &windows_with_sheets()).unwrap_or(requested)
+    let windows = windows_with_sheets();
+    let mut owners = windows
+        .iter()
+        .filter(|(_, sheets)| sheets.contains(&requested))
+        .map(|(window, _)| *window);
+    // Two windows claiming one sheet prove nothing.
+    match (owners.next(), owners.next()) {
+        (Some(owner), None) => owner,
+        _ => requested,
+    }
 }
 
 /// One same-session WindowServer row as the keyboard-ambiguity count sees it.
@@ -407,7 +452,7 @@ pub fn gather_background_facts(
                 // A menu-bar item has no window ancestor: the menu bar hangs
                 // off the application. It still belongs to this app.
                 let in_menu_bar = window.is_none() && element_in_app_menu_bar(app, element);
-                element_ancestry(window, in_menu_bar, ax_target)
+                element_ancestry(window, in_menu_bar, window_id)
             });
             let focused_window_id = copy_element_attr(app, "AXFocusedWindow").and_then(|window| {
                 let window_id = owning_window_id(window);
@@ -433,7 +478,7 @@ pub fn gather_background_facts(
                     && window.bounds.height >= 2.0,
             }),
         &records,
-        target.is_some() && focused_window_id == Some(ax_target),
+        target.is_some() && focused_window_id.is_some_and(|focused| focused.is(window_id)),
     );
 
     BackgroundTargetFacts {
@@ -450,14 +495,14 @@ pub fn gather_background_facts(
 #[cfg(test)]
 mod tests {
     use super::{
-        count_competing_keyboard_destinations, resolve_owning_window, AxWindowRecord,
+        count_competing_keyboard_destinations, resolve_owning_window, AxWindowId, AxWindowRecord,
         WindowServerRow,
     };
 
     /// A fake AX node: (role, AXParent index, CGWindowID).
     type FakeNode = (&'static str, Option<usize>, Option<u32>);
 
-    fn resolve(tree: &[FakeNode], start: usize) -> Option<u32> {
+    fn ids(tree: &[FakeNode], start: usize) -> Option<AxWindowId> {
         resolve_owning_window(
             start,
             8,
@@ -467,70 +512,71 @@ mod tests {
         )
     }
 
+    fn resolve(tree: &[FakeNode], start: usize) -> Option<u32> {
+        ids(tree, start).map(|window| window.root)
+    }
+
     #[test]
     fn menu_bar_item_is_proven_only_through_the_app_menu_bar() {
         use super::element_ancestry;
         use cua_driver_core::background_input::ElementAncestry::*;
         assert_eq!(element_ancestry(None, true, 7), ProvenDescendant);
         assert_eq!(element_ancestry(None, false, 7), Unproven);
-        assert_eq!(element_ancestry(Some(7), false, 7), ProvenDescendant);
-        assert_eq!(element_ancestry(Some(8), true, 7), OutsideTargetWindow);
+        let window = |id| Some(AxWindowId::window(id));
+        assert_eq!(element_ancestry(window(7), false, 7), ProvenDescendant);
+        assert_eq!(element_ancestry(window(8), true, 7), OutsideTargetWindow);
     }
 
     #[test]
     fn a_sheets_own_id_is_judged_as_the_window_it_is_attached_to() {
-        use super::{ax_target_window, element_ancestry};
-        use cua_driver_core::background_input::ElementAncestry::*;
-        let records = [
-            AxWindowRecord {
-                window_id: 167,
-                minimized: Some(false),
-            },
-            AxWindowRecord {
-                window_id: 200,
-                minimized: Some(false),
-            },
-        ];
+        use super::ax_target_window;
+        let records = [ax_window(167, Some(false)), ax_window(200, Some(false))];
         let sheets = || vec![(167, vec![15304]), (200, vec![])];
         // Finder's Go to Folder sheet 15304 on window 167.
-        let target = ax_target_window(15304, &records, sheets);
-        assert_eq!(target, 167);
-        assert_eq!(element_ancestry(Some(167), false, target), ProvenDescendant);
-        // An element of the other window stays outside the target.
-        assert_eq!(
-            element_ancestry(Some(200), false, target),
-            OutsideTargetWindow
-        );
+        assert_eq!(ax_target_window(15304, &records, sheets), 167);
         // A listed window never reads sheets; an unknown id stays itself.
         assert_eq!(
             ax_target_window(200, &records, || panic!("no sheet read")),
             200
         );
         assert_eq!(ax_target_window(999, &records, sheets), 999);
+        // Two windows claiming one sheet prove nothing.
+        let shared = || vec![(167, vec![15304]), (200, vec![15304])];
+        assert_eq!(ax_target_window(15304, &records, shared), 15304);
     }
 
     #[test]
-    fn a_focused_sheet_lets_keys_go_to_the_window_it_is_attached_to() {
-        use crate::input::skylight::{prime_exact_window_key, KeyFocus, KeyPrime};
-        // Window 167 with its Go to Folder sheet 15304 focused.
+    fn a_sheet_request_proves_only_sheet_elements() {
+        use super::element_ancestry;
+        use cua_driver_core::background_input::ElementAncestry::*;
+        // Window 167, its sheet 15304, and a button in each.
         let tree = [
             ("AXWindow", None, Some(167)),
             ("AXSheet", Some(0), Some(15304)),
         ];
-        let focus = || KeyFocus {
-            window: resolve(&tree, 1),
-            element_window: resolve(&tree, 1),
-        };
+        let in_sheet = ids(&tree, 1);
+        let in_parent = ids(&tree, 0);
         assert_eq!(
-            prime_exact_window_key(167, focus, || false, || false),
-            Ok(KeyPrime::AlreadyKey)
+            in_sheet,
+            Some(AxWindowId {
+                own: 15304,
+                root: 167
+            })
         );
-        // A different focused window is still refused.
-        let other = || KeyFocus {
-            window: Some(200),
-            element_window: Some(200),
-        };
-        assert!(prime_exact_window_key(167, other, || false, || false).is_err());
+        // Addressed to the sheet: its own controls only, never the parent's.
+        assert_eq!(element_ancestry(in_sheet, false, 15304), ProvenDescendant);
+        assert_eq!(
+            element_ancestry(in_parent, false, 15304),
+            OutsideTargetWindow
+        );
+        // Addressed to the parent: the sheet is modal to it and counts.
+        assert_eq!(element_ancestry(in_sheet, false, 167), ProvenDescendant);
+        assert_eq!(element_ancestry(in_parent, false, 167), ProvenDescendant);
+        // Another window is outside both.
+        assert_eq!(
+            element_ancestry(Some(AxWindowId::window(200)), false, 15304),
+            OutsideTargetWindow
+        );
     }
 
     #[test]
@@ -556,6 +602,7 @@ mod tests {
             ("AXSheet", Some(1), Some(180)),
         ];
         assert_eq!(resolve(&tree, 2), Some(167));
+        assert_eq!(ids(&tree, 2).map(|window| window.own), Some(180));
     }
 
     #[test]

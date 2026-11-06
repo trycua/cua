@@ -186,46 +186,27 @@ fn front_window_of_process_on_target_display(
         .map(|window| window.window_id)
 }
 
-/// A sheet attached to the target (Finder's Go to Folder) sits in front of it
-/// as its own window; in front, it shows the target in front.
-fn sheet_as_window(front: Option<u32>, window_id: u32, sheets: &[u32]) -> Option<u32> {
-    front.map(|front| {
-        if sheets.contains(&front) {
-            window_id
-        } else {
-            front
-        }
-    })
-}
-
-fn observe_exact_window(pid: i32, window_id: u32, sheets: &[u32]) -> ExactWindowObservation {
+fn observe_exact_window(pid: i32, window_id: u32) -> ExactWindowObservation {
     let mut windows = crate::windows::visible_windows();
     windows.retain(|window| !crate::cursor::overlay::is_overlay_window(window.window_id));
     let target_visible_ordinary = windows
         .iter()
         .any(|window| window.pid == pid && window.window_id == window_id && window.layer == 0);
-    let frontmost_ordinary_window_id = sheet_as_window(
-        windows
-            .iter()
-            .max_by_key(|window| window.z_index)
-            .map(|window| window.window_id),
+    let frontmost_ordinary_window_id = windows
+        .iter()
+        .max_by_key(|window| window.z_index)
+        .map(|window| window.window_id);
+    let process_front_window_on_display = front_window_of_process_on_target_display(
+        &windows,
+        &active_display_bounds(),
+        pid,
         window_id,
-        sheets,
-    );
-    let process_front_window_on_display = sheet_as_window(
-        front_window_of_process_on_target_display(
-            &windows,
-            &active_display_bounds(),
-            pid,
-            window_id,
-        ),
-        window_id,
-        sheets,
     );
     ExactWindowObservation {
         workspace_frontmost_pid: crate::apps::frontmost_pid(),
         front_process_matches_target: crate::input::skylight::front_process_matches(pid, window_id),
-        focused_window_id: crate::ax::bindings::focused_window_id_of_pid(pid),
+        focused_window_id: crate::ax::bindings::focused_window_id_of_pid(pid)
+            .map(|window| window.own),
         frontmost_ordinary_window_id,
         process_front_window_on_display,
         target_visible_ordinary,
@@ -233,17 +214,12 @@ fn observe_exact_window(pid: i32, window_id: u32, sheets: &[u32]) -> ExactWindow
 }
 
 fn wait_for_exact_window(pid: i32, window_id: u32) -> ExactWindowObservation {
-    let sheets = crate::ax::exact_target::windows_with_sheets_of_pid(pid)
-        .into_iter()
-        .find(|(window, _)| *window == window_id)
-        .map(|(_, sheets)| sheets)
-        .unwrap_or_default();
     let deadline = Instant::now() + VERIFY_TIMEOUT;
     let mut stable_since = None;
     let mut observation;
     loop {
         let now = Instant::now();
-        observation = observe_exact_window(pid, window_id, &sheets);
+        observation = observe_exact_window(pid, window_id);
         if observation.exact_postcondition(pid, window_id) {
             let since = stable_since.get_or_insert(now);
             if now.duration_since(*since) >= VERIFY_STABLE {
@@ -410,13 +386,6 @@ impl Tool for BringToFrontTool {
         };
 
         if let Some(window_id) = window_id {
-            // A sheet's own id (Finder's Go to Folder) brings the window it
-            // is attached to, which is what AX can make key.
-            let window_id = crate::ax::window_scope::window_owning_sheet(
-                window_id,
-                &crate::ax::exact_target::windows_with_sheets_of_pid(pid),
-            )
-            .unwrap_or(window_id);
             let Some(window) = crate::windows::window_info_by_id(window_id) else {
                 return ToolResult::error(format!(
                     "bring_to_front: window_id {window_id} is stale or unknown."
@@ -634,22 +603,6 @@ mod tests {
         );
         assert_eq!(structured["observed"]["process_front_window_on_display"], 7);
         assert_eq!(structured["observed"]["frontmost_ordinary_window_id"], 900);
-    }
-
-    #[test]
-    fn a_sheet_in_front_of_its_window_leaves_the_window_verified() {
-        let windows = vec![window(7, 42, 10, 100.0), window(15304, 42, 30, 300.0)];
-        let front =
-            front_window_of_process_on_target_display(&windows, &side_by_side_displays(), 42, 7);
-        assert_eq!(front, Some(15304));
-        let front = sheet_as_window(front, 7, &[15304]);
-        assert_eq!(front, Some(7));
-        assert_eq!(
-            classify_exact_outcome(true, 42, 7, contested_observation(Some(7), front, front)),
-            ExactOutcome::Activated
-        );
-        // A sibling that is not one of the target's sheets keeps its own id.
-        assert_eq!(sheet_as_window(Some(8), 7, &[15304]), Some(8));
     }
 
     #[test]

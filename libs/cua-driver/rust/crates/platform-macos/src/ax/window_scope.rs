@@ -57,7 +57,7 @@ pub struct TopLevelCandidate {
     /// themselves as `open-panel` / `save-panel`.
     pub identifier: Option<String>,
     /// `_AXUIElementGetWindow` result, when the SPI resolved one. Only read
-    /// for `AXWindow` roles.
+    /// for `AXWindow` and `AXSheet` roles.
     pub ax_window_id: Option<u32>,
 }
 
@@ -136,7 +136,9 @@ where
     let matched: Vec<usize> = candidates
         .iter()
         .enumerate()
-        .filter(|(_, c)| c.role == "AXWindow" && c.ax_window_id == Some(requested))
+        .filter(|(_, c)| {
+            matches!(c.role.as_str(), "AXWindow" | "AXSheet") && c.ax_window_id == Some(requested)
+        })
         .map(|(i, _)| i)
         .collect();
 
@@ -176,49 +178,6 @@ where
     ScopeDecision {
         scope: WindowScope::Matched,
         walk,
-    }
-}
-
-/// The window a sheet's own CGWindowID belongs to, from each AX window's id
-/// and the ids of the sheets attached to it (nested ones included).
-///
-/// A sheet is its own WindowServer window, but AX lists only its parent in
-/// `AXWindows`; the sheet is a child of that window. `None` when `requested`
-/// is a window itself, no window carries it, or more than one claims it.
-pub fn window_owning_sheet(requested: u32, windows: &[(u32, Vec<u32>)]) -> Option<u32> {
-    if windows.iter().any(|(window, _)| *window == requested) {
-        return None;
-    }
-    let mut owners = windows
-        .iter()
-        .filter(|(_, sheets)| sheets.contains(&requested))
-        .map(|(window, _)| *window);
-    match (owners.next(), owners.next()) {
-        (Some(owner), None) => Some(owner),
-        _ => None,
-    }
-}
-
-/// [`decide_window_scope`], and when no window claims `requested` but one of
-/// them carries it as an attached sheet, the scope of that window: a sheet is
-/// observed inside the window it is modal to. `sheets` is read only then.
-pub fn decide_window_or_sheet_scope<F, S>(
-    candidates: &[TopLevelCandidate],
-    requested: u32,
-    sheets: S,
-    resolve_owner: F,
-) -> ScopeDecision
-where
-    F: FnOnce() -> WindowOwner,
-    S: FnOnce() -> Vec<(u32, Vec<u32>)>,
-{
-    let decision = decide_window_scope(candidates, requested, resolve_owner);
-    if !matches!(decision.scope, WindowScope::AxUnresolved { .. }) {
-        return decision;
-    }
-    match window_owning_sheet(requested, &sheets()) {
-        Some(parent) => decide_window_scope(candidates, parent, || WindowOwner::SamePid),
-        None => decision,
     }
 }
 
@@ -347,6 +306,26 @@ mod tests {
         assert_eq!(d.walk, vec![0, 1]);
     }
 
+    /// A request for a sheet's own id walks the sheet, never the parent
+    /// window's controls or the application menu bar (Finder's Go to Folder
+    /// sheet 15304 on window 167; the sheet is appended by the tree walker).
+    #[test]
+    fn a_sheet_id_walks_only_the_sheet() {
+        let candidates = [
+            TopLevelCandidate::new("AXMenuBar", None),
+            TopLevelCandidate::new("AXWindow", Some(11)),
+            TopLevelCandidate::new("AXWindow", Some(167)),
+            TopLevelCandidate::new("AXSheet", Some(15304)),
+        ];
+        let d = decide_window_scope(&candidates, 15304, never_called);
+        assert_eq!(d.scope, WindowScope::Matched);
+        assert_eq!(d.walk, vec![3]);
+        // The parent's own request still walks the parent (its sheet is in
+        // its subtree) and the menu bar.
+        let d = decide_window_scope(&candidates[..3], 167, never_called);
+        assert_eq!(d.walk, vec![0, 2]);
+    }
+
     #[test]
     fn menu_bar_only_app_has_no_ax_windows() {
         let candidates = [TopLevelCandidate::new("AXMenuBar", None)];
@@ -410,57 +389,6 @@ mod tests {
         assert!(matches!(
             scope_from_owner(&panel_service_owner()),
             Some(WindowScope::OwnerPidMismatch { owner_pid: 900, .. })
-        ));
-    }
-
-    #[test]
-    fn a_sheet_id_belongs_to_the_window_it_is_attached_to() {
-        let windows = [(167, vec![172, 180]), (200, vec![])];
-        assert_eq!(window_owning_sheet(172, &windows), Some(167));
-        assert_eq!(window_owning_sheet(180, &windows), Some(167));
-        // A window is its own target, and an unknown id has no owner.
-        assert_eq!(window_owning_sheet(167, &windows), None);
-        assert_eq!(window_owning_sheet(999, &windows), None);
-        // Two windows claiming one sheet prove nothing.
-        assert_eq!(
-            window_owning_sheet(172, &[(167, vec![172]), (200, vec![172])]),
-            None
-        );
-    }
-
-    #[test]
-    fn a_sheet_id_scopes_the_walk_to_its_window() {
-        let candidates = [
-            TopLevelCandidate::new("AXMenuBar", None),
-            TopLevelCandidate::new("AXWindow", Some(11)),
-            TopLevelCandidate::new("AXWindow", Some(167)),
-        ];
-        let sheets = || vec![(11, vec![]), (167, vec![15304])];
-        let d = decide_window_or_sheet_scope(&candidates, 15304, sheets, || WindowOwner::SamePid);
-        assert_eq!(d.scope, WindowScope::Matched);
-        assert_eq!(d.walk, vec![0, 2]);
-
-        // Not a sheet of any window: still unresolved, nothing walked.
-        let d = decide_window_or_sheet_scope(&candidates, 999, sheets, || WindowOwner::SamePid);
-        assert!(matches!(
-            d.scope,
-            WindowScope::AxUnresolved {
-                ax_window_count: 2,
-                ..
-            }
-        ));
-        assert!(d.walk.is_empty());
-
-        // Another process's window is refused before any sheet is read.
-        let d = decide_window_or_sheet_scope(
-            &candidates,
-            15304,
-            || panic!("sheets must not be read for a foreign window"),
-            panel_service_owner,
-        );
-        assert!(matches!(
-            d.scope,
-            WindowScope::OwnerPidMismatch { owner_pid: 900, .. }
         ));
     }
 }

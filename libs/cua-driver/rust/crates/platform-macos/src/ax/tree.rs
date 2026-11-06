@@ -16,9 +16,7 @@
 
 use super::bindings::*;
 use super::launch::{is_still_launching, LaunchStep, LaunchWait};
-use super::window_scope::{
-    decide_window_or_sheet_scope, ScopeDecision, TopLevelCandidate, WindowScope,
-};
+use super::window_scope::{decide_window_scope, ScopeDecision, TopLevelCandidate, WindowScope};
 use core_foundation::base::{CFEqual, CFRelease, CFRetain, CFTypeRef};
 use cua_driver_core::walk_budget::{WalkBudget, WalkOutcome};
 use std::time::Instant;
@@ -285,7 +283,7 @@ fn walk_tree_with_web_content(
             let attempt_started = Instant::now();
             super::enablement::ensure_chromium_ax_enabled(pid, app_elem);
 
-            let top_level = copy_top_level(app_elem, pid, window_id);
+            let mut top_level = copy_top_level(app_elem, pid, window_id);
 
             // Scope: keep non-window children (menu bar) + the target window —
             // but ONLY once the target window has actually been identified. When
@@ -296,7 +294,7 @@ fn walk_tree_with_web_content(
                 let walk = top_level.clone();
                 break (top_level, walk);
             };
-            let decision = scope_top_level(&top_level, pid, wid);
+            let decision = scope_top_level(&mut top_level, pid, wid);
             if matches!(decision.scope, WindowScope::AxUnresolved { .. }) {
                 match launch_wait.step(attempt_started, Instant::now(), || is_still_launching(pid))
                 {
@@ -404,47 +402,68 @@ unsafe fn copy_top_level(
 }
 
 /// Decide which of `top_level` a walk scoped to `wid` covers.
-unsafe fn scope_top_level(top_level: &[AXUIElementRef], pid: i32, wid: u32) -> ScopeDecision {
-    let candidates: Vec<TopLevelCandidate> = top_level
+///
+/// A sheet's own id is never a top-level window: the sheet hangs off the
+/// window it is attached to. When no window claims `wid`, the matching
+/// attached sheet is appended to `top_level`, so the walk covers that sheet
+/// and not the parent window's own controls.
+unsafe fn scope_top_level(
+    top_level: &mut Vec<AXUIElementRef>,
+    pid: i32,
+    wid: u32,
+) -> ScopeDecision {
+    let mut candidates: Vec<TopLevelCandidate> = top_level
         .iter()
-        .map(|&child| {
-            set_messaging_timeout(child);
-            let role = copy_string_attr(child, "AXRole").unwrap_or_default();
-            let subrole = copy_string_attr(child, "AXSubrole");
-            let identifier = copy_string_attr(child, "AXIdentifier");
-            // Match AX window element → CGWindowID via private SPI.
-            // Only windows carry one, so skip the round-trip elsewhere.
-            let ax_window_id = if role == "AXWindow" {
-                ax_get_window_id(child)
-            } else {
-                None
-            };
-            TopLevelCandidate {
-                role,
-                subrole,
-                identifier,
-                ax_window_id,
-            }
-        })
+        .map(|&child| top_level_candidate(child))
         .collect();
-    decide_window_or_sheet_scope(
-        &candidates,
-        wid,
-        || {
-            top_level
-                .iter()
-                .zip(&candidates)
-                .filter(|(_, candidate)| candidate.role == "AXWindow")
-                .filter_map(|(&window, candidate)| {
-                    Some((
-                        candidate.ax_window_id?,
-                        super::exact_target::attached_sheet_ids(window),
-                    ))
-                })
-                .collect()
-        },
-        || crate::windows::resolve_window_owner(pid, wid),
-    )
+    if !candidates
+        .iter()
+        .any(|candidate| candidate.ax_window_id == Some(wid))
+    {
+        let windows: Vec<AXUIElementRef> = top_level
+            .iter()
+            .zip(&candidates)
+            .filter(|(_, candidate)| candidate.role == "AXWindow")
+            .map(|(&window, _)| window)
+            .collect();
+        for sheet in windows
+            .into_iter()
+            .flat_map(|window| super::exact_target::attached_sheets(window))
+        {
+            let candidate = top_level_candidate(sheet);
+            if candidate.ax_window_id == Some(wid)
+                && !candidates.iter().any(|c| c.ax_window_id == Some(wid))
+            {
+                top_level.push(sheet);
+                candidates.push(candidate);
+            } else {
+                CFRelease(sheet as CFTypeRef);
+            }
+        }
+    }
+    decide_window_scope(&candidates, wid, || {
+        crate::windows::resolve_window_owner(pid, wid)
+    })
+}
+
+unsafe fn top_level_candidate(child: AXUIElementRef) -> TopLevelCandidate {
+    set_messaging_timeout(child);
+    let role = copy_string_attr(child, "AXRole").unwrap_or_default();
+    let subrole = copy_string_attr(child, "AXSubrole");
+    let identifier = copy_string_attr(child, "AXIdentifier");
+    // Match AX window element → CGWindowID via private SPI. Only windows and
+    // sheets carry one, so skip the round-trip elsewhere.
+    let ax_window_id = if matches!(role.as_str(), "AXWindow" | "AXSheet") {
+        ax_get_window_id(child)
+    } else {
+        None
+    };
+    TopLevelCandidate {
+        role,
+        subrole,
+        identifier,
+        ax_window_id,
+    }
 }
 
 /// Release elements retained by [`copy_top_level`].

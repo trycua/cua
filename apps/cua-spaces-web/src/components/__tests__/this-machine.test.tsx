@@ -177,7 +177,7 @@ describe("a failed This machine button", () => {
 describe("a new computer the account wants proof for", () => {
   /** The relay refused this Mac (no enrolled device, no sign-in with a second factor, no code). */
   const refused = () =>
-    new HostError("To add this Mac to your account, enter a code from a computer you already added. On that computer, open Cua Spaces, go to Machines and click Add machine.", "failed", {
+    new HostError("To add this Mac to your account, enter a code from a computer you already added. On that computer, open Cua Spaces, go to Computers and click Add a computer.", "failed", {
       title: "Confirm it’s you",
       details: "permission denied: relay: add computers from a computer you already added, or with a pairing code [code: new_computer_needs_proof]",
       actionLabel: "Use a code from another computer",

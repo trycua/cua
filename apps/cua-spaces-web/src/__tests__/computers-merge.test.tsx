@@ -11,7 +11,7 @@
 import { act, cleanup, fireEvent, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { UnsupportedOperationError } from "@/bridge/adapter";
+import { HostError, UnsupportedOperationError } from "@/bridge/adapter";
 import { wasmBuilt } from "@/bridge/__tests__/testCore";
 import { driverLinkTarget, machinesLinkTarget } from "@/lib/old-links";
 import { mountApp, stubBrowserApis, type TestHost } from "./app-harness";
@@ -97,6 +97,31 @@ describe.skipIf(!wasmBuilt)("one list of your computers (real routes, wasm core)
     });
     act(() => back.click());
     await waitFor(() => expect(path(router)).toBe("/spaces/computer/this-mac"));
+  });
+
+  it("when the account wants proof for This Mac, its page offers a code from another computer and opens Enter a code", { timeout: 30000 }, async () => {
+    const refused = new HostError("To add this Mac to your account, enter a code from a computer you already added.", "failed", {
+      title: "Confirm it’s you",
+      details: "permission denied [code: new_computer_needs_proof]",
+      actionLabel: "Use a code from another computer",
+      kind: "needsProof",
+      refusalCode: "new_computer_needs_proof",
+    });
+    await mountApp("/spaces/computer/this-mac", { ...demo, intercept: (op) => (op === "host.action" ? Promise.reject(refused) : undefined) });
+    const toggle = await waitFor(() => {
+      const el = document.querySelector<HTMLElement>('[data-machine-detail="this-mac"] [role="switch"]:not([disabled]):not([data-disabled])');
+      if (!el) throw new Error("no switch on This Mac's page");
+      return el;
+    });
+    act(() => toggle.click());
+    const button = await waitFor(() => {
+      const el = q('[data-host-failure="needs-proof"] [data-host-use-code]');
+      if (!el) throw new Error("no Use a code button");
+      return el;
+    });
+    expect(button.textContent).toBe("Use a code from another computer");
+    act(() => button.click());
+    await waitFor(() => expect(q("[data-add-computer]")?.getAttribute("data-add-computer")).toBe("enter"));
   });
 
   it("another computer's page has no Cua Driver row", { timeout: 30000 }, async () => {

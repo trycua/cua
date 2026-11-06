@@ -3,7 +3,7 @@
 
 import { Link, useNavigate } from "@tanstack/react-router";
 import { ChevronRightIcon, CircleAlertIcon, InfoIcon, LockIcon, MousePointer2Icon, PencilIcon, PlusIcon, ServerIcon, TriangleAlertIcon, UsersIcon } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import {
   useDevices,
@@ -20,6 +20,7 @@ import {
   type MachinesViewRemove,
   type MachinesViewToggle,
 } from "@/bridge";
+import { AddComputerSheet } from "@/components/add-computer-sheet";
 import { BackLink } from "@/components/back-link";
 import { DRIVER_LINE } from "@/components/driver/copy";
 import { EnrollSheet, RecentAccess, TrustSection, useMachinesAccount } from "@/components/machines/account-parts";
@@ -34,9 +35,11 @@ import { GroupedSection } from "@/components/ui/grouped";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { toast } from "@/components/ui/toast";
+import { useMachinesLive } from "@/hooks/use-machines-live";
 import { useNewSpace } from "@/hooks/use-new-space";
 import { showDesktop } from "@/lib/hidden-desktops";
 import { accessFor } from "@/lib/machines-account";
+import { withRelayStatus } from "@/lib/machines-relay-status";
 import { THIS_COMPUTER, computerFor } from "@/lib/machines";
 import { size } from "@/lib/resources";
 import { cn } from "@/lib/utils";
@@ -54,7 +57,12 @@ const HEALTH_EVERY_MS = 60_000;
  * Spaces has it.
  */
 export function ComputerPage({ id }: { id: string }) {
-  const { data: machines = [], isLoading, view, checkHealth } = useMachines();
+  const { data: machines = [], isLoading, view: hostView, checkHealth } = useMachines();
+  // Re-read every 30 s; a computer the relay calls offline shows offline (and can be removed) at once, as in the list.
+  const { relayOnline } = useMachinesLive(true);
+  const view = useMemo(() => (hostView ? withRelayStatus(hostView, machines, relayOnline) : hostView), [hostView, machines, relayOnline]);
+  // "Use a code from another computer" (This Mac's setup refused for want of proof) opens Add a computer on "Enter a code".
+  const [enterCode, setEnterCode] = useState(false);
   // Its issues come from its own daemon: asked on opening the page and every minute while it stays open.
   useEffect(() => {
     void checkHealth();
@@ -68,7 +76,7 @@ export function ComputerPage({ id }: { id: string }) {
     <Page className="max-w-3xl">
       <BackLink />
       {m ? (
-        <ComputerDetail key={m.id} machine={m} row={row} />
+        <ComputerDetail key={m.id} machine={m} row={row} onUseCode={() => setEnterCode(true)} />
       ) : isLoading || !view ? (
         <div aria-busy="true" aria-label="Loading the computer" className="space-y-3">
           <div className="h-7 w-56 animate-pulse rounded-lg bg-muted" />
@@ -80,6 +88,7 @@ export function ComputerPage({ id }: { id: string }) {
         </EmptyState>
       )}
       <EnrollSheet />
+      <AddComputerSheet open={enterCode} onOpenChange={setEnterCode} initialView="enter" />
     </Page>
   );
 }
@@ -108,7 +117,7 @@ function StatusDot({ online, health, className }: { online: boolean; health?: st
   return <span aria-hidden data-machine-health={health || undefined} className={cn("size-2 shrink-0 rounded-full", tint, className)} />;
 }
 
-function ComputerDetail({ machine: m, row }: { machine: MachinesViewMachine; row: Machine | undefined }) {
+function ComputerDetail({ machine: m, row, onUseCode }: { machine: MachinesViewMachine; row: Machine | undefined; onUseCode?: () => void }) {
   const { data: session } = useSession();
   const { account, now, devices } = useMachinesAccount();
   const host = useThisMachine(session?.identity ?? null);
@@ -160,7 +169,7 @@ function ComputerDetail({ machine: m, row }: { machine: MachinesViewMachine; row
   if (m.current && host.formView) {
     return (
       <section aria-label={`${m.name} details`} className="min-w-0">
-        <ThisMachineExtras panel={row?.panel ?? null} progress={row?.hostProgress} />
+        <ThisMachineExtras panel={row?.panel ?? null} progress={row?.hostProgress} onUseCode={onUseCode} />
       </section>
     );
   }
@@ -230,7 +239,7 @@ function ComputerDetail({ machine: m, row }: { machine: MachinesViewMachine; row
         ) : null}
       </GroupedSection>
 
-      {m.current ? <ThisMachineExtras panel={row?.panel ?? null} progress={row?.hostProgress} part="alerts" /> : null}
+      {m.current ? <ThisMachineExtras panel={row?.panel ?? null} progress={row?.hostProgress} part="alerts" onUseCode={onUseCode} /> : null}
 
       {m.current ? <DriverRow computerId={THIS_COMPUTER} /> : null}
 

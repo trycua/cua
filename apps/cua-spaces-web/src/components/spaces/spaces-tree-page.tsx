@@ -241,7 +241,7 @@ export function SpacesTreePage({ search = {}, onSearchDone }: { search?: Compute
         // The core's rows, for the parity flows: a computer's machine, and the Space a row opens.
         data-machine-id={n.kind === "computer" && n.machine ? n.machine.id : undefined}
         data-machine-name={n.kind === "computer" && n.machine ? n.machine.name : undefined}
-        data-online={n.kind === "computer" && n.machine ? String(n.machine.online) : undefined}
+        data-online={n.kind === "computer" && n.machine ? String(n.online) : undefined}
         data-space-id={n.space?.id}
         data-state={state ?? undefined}
         className={cn(COLS, "min-h-12 px-4 py-1.5 text-[14px]", n.dim && "text-muted-foreground")}

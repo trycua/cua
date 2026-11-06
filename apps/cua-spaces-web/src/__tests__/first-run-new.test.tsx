@@ -90,7 +90,7 @@ describe("screen 2, signed in", () => {
 
   it("when the account wants proof, asks to confirm it's you with a code from another computer", () => {
     const onAddThis = vi.fn();
-    const message = "To add this Mac to your account, enter a code from a computer you already added. On that computer, open Cua Spaces, go to Machines and click Add machine.";
+    const message = "To add this Mac to your account, enter a code from a computer you already added. On that computer, open Cua Spaces, go to Computers and click Add a computer.";
     drawWhere({ ...base, thisState: "failed", addError: message, addNeedsProof: true }, { onAddThis });
     expect(document.querySelector("[data-new-run-this-status]")!.textContent).toBe(`Confirm it's you. ${message}`);
     expect(document.querySelector("[data-new-run-add-this=retry-add]")).toBeNull();

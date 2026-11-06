@@ -540,10 +540,10 @@ describe.skipIf(!wasmBuilt)("your computers and each one's page (real routes, wa
 
 /**
  * A computer powered off. The host's list and view still count its relay connection (online, Remove disabled) while the
- * relay's own answer already says offline; the page trusts the relay and re-reads every 30 s, as the Spaces tree does.
+ * relay's own answer already says offline; the list and the computer's page trust the relay and re-read every 30 s.
  * A hand-made view, so these do not need the wasm core.
  */
-describe("the Machines page when a computer powers off", () => {
+describe("your computers when one powers off", () => {
   afterEach(() => vi.useRealTimers());
 
   const machine = (): MachinesView["machines"][number] =>
@@ -577,10 +577,11 @@ describe("the Machines page when a computer powers off", () => {
   const step = (space: string, name: string, online: boolean, role: string) => ({ space, name, online, role });
 
   async function mountPoweredOff(relayOnline: { value: boolean }) {
-    return mountApp("/machines", {
+    return mountAt("/spaces", {
       failsCreates: false,
       listsGhost: false,
-      answer: (op, out) => (op === "machines.list" ? [...(out as MachineRow[]), { id: "studio-pc", name: "Studio PC", via: "relay", online: true, os: "windows", limits: [] }] : out),
+      // The demo's own Studio PC is replaced by this one, which the host still counts as online.
+      answer: (op, out) => (op === "machines.list" ? [...(out as MachineRow[]).filter((m) => m.id !== "studio-pc"), { id: "studio-pc", name: "Studio PC", via: "relay", online: true, os: "windows", limits: [] }] : out),
       intercept: (op) =>
         op === "spaces.resolveDefault"
           ? { space: "relay:studio-pc", reason: "setting", defaultSpace: "relay:studio-pc", defaultOnline: relayOnline.value, order: [step("relay:studio-pc", "Studio PC", relayOnline.value, "default"), step("relay:this-mac", "This Mac", true, "here")] }
@@ -589,7 +590,7 @@ describe("the Machines page when a computer powers off", () => {
     });
   }
 
-  const row = () => document.querySelector<HTMLElement>('[data-machine-id="studio-pc"]')!;
+  const row = () => document.querySelector<HTMLElement>('[data-tree-kind="computer"][data-machine-id="studio-pc"]')!;
 
   it("flips the row to Offline within one refresh, with text a screen reader reads", async () => {
     vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
@@ -598,15 +599,15 @@ describe("the Machines page when a computer powers off", () => {
     await router.load();
     await waitFor(() => expect(row()).toBeTruthy());
     expect(row().getAttribute("data-online")).toBe("true");
-    expect(within(row()).getByText("Online")).toBeTruthy();
+    expect(within(row()).getByText(/^Online/)).toBeTruthy();
 
     relay.value = false;
     await act(async () => {
       await vi.advanceTimersByTimeAsync(30_000);
     });
     await waitFor(() => expect(row().getAttribute("data-online")).toBe("false"));
-    expect(within(row()).getByText("Offline")).toBeTruthy();
-    expect(within(row()).queryByText("Online")).toBeNull();
+    expect(within(row()).getByText(/^Offline/)).toBeTruthy();
+    expect(within(row()).queryByText(/^Online/)).toBeNull();
   });
 
   it("enables Remove from account once the relay calls the computer offline", async () => {
@@ -614,7 +615,7 @@ describe("the Machines page when a computer powers off", () => {
     const { router } = await mountPoweredOff(relay);
     await router.load();
     await waitFor(() => expect(row().getAttribute("data-online")).toBe("false"));
-    act(() => row().click());
+    await select("studio-pc");
     const detail = await detailOf("Studio PC");
     const remove = detail.querySelector<HTMLButtonElement>('[data-machine-remove="studio-pc"]')!;
     expect(remove.disabled).toBe(false);
@@ -625,7 +626,7 @@ describe("the Machines page when a computer powers off", () => {
     const { router } = await mountPoweredOff(relay);
     await router.load();
     await waitFor(() => expect(row()).toBeTruthy());
-    act(() => row().click());
+    await select("studio-pc");
     const detail = await detailOf("Studio PC");
     expect(detail.querySelector<HTMLButtonElement>('[data-machine-remove="studio-pc"]')!.disabled).toBe(true);
   });

@@ -449,7 +449,9 @@ fn base_catalog() -> &'static Catalog {
             .collect();
         let images: Vec<SandboxImage> = all
             .iter()
-            .filter(|i| (i.published || i.local_build.is_some()) && offered.contains(&i.group.as_str()))
+            .filter(|i| {
+                (i.published || i.local_build.is_some()) && offered.contains(&i.group.as_str())
+            })
             .cloned()
             .collect();
         let groups = file
@@ -5373,7 +5375,11 @@ mod tests {
     #[test]
     fn catalog_is_the_shared_image_list() {
         let images = picker_images();
-        assert!(images.iter().all(|i| i.published || i.local_build.is_some()));
+        assert!(
+            images
+                .iter()
+                .all(|i| i.published || i.local_build.is_some())
+        );
         assert_eq!(images[0].image_ref, "ghcr.io/trycua/linux:24.04");
         assert!(picker_groups().iter().all(|g| !g.images.is_empty()));
     }
@@ -6736,9 +6742,7 @@ mod tests {
             .as_array()
             .unwrap()
             .iter()
-            .filter(|i| {
-                i["published"].as_bool() == Some(true) || i["local_build"].is_string()
-            })
+            .filter(|i| i["published"].as_bool() == Some(true) || i["local_build"].is_string())
             .filter_map(|i| i["ref"].as_str().map(str::to_string))
             .collect();
         for r in refs("slim").iter().chain(refs("").iter()) {

@@ -304,3 +304,10 @@ differences are directional only.
   the foreground run). Windows: the Cua Driver 0.38.0 Windows build,
   agent-desktop 1.2.0, the Browser Use Windows harness 0.2.2 and Codex computer
   use from the ChatGPT app 26.1029.9216.0 (Claude Code 2.1.316, Claude Sonnet 5.5).
+
+## Amendment 24 (6 November 2026): pointer park before each trial
+
+Before every trial the harness moves the real pointer to a fixed point (1000, 12) outside every registered
+window, reads the position back and records it in the trial row, and a failed park fails the trial setup,
+because a pointer left over the test app by an earlier task made macOS activate the app when it showed a
+background sheet, and that changed the interruption results under every tool.

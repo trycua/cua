@@ -501,6 +501,51 @@ CONDITIONS = ("foreground", "background")
 # The user's window in the background condition, top-left screen coordinates (x, y, w, h). It partly covers
 # BenchLab's lower right and the middle of the CDB task windows, and stays clear of BenchLab's top strip.
 USER_WINDOW_FRAME = (420, 340, 900, 520)
+# Amendment 24: before every trial the harness parks the real pointer at PARK_POINT (top-left screen
+# coordinates), reads it back and records it in the trial row. A pointer left over a task window by an earlier
+# task changes how the OS treats a background sheet, so the starting state is fixed and reported.
+PARK_POINT = (
+    1000,
+    12,
+)  # an empty stretch of the top edge: above every window of the registered layout
+PARK_TOLERANCE_PX = 3.0
+# Registered window frames (x, y, w, h): the user window, BenchLab on macOS, BenchLab on Linux and Windows,
+# and the foreground witness window.
+REGISTERED_FRAMES = {
+    "user": USER_WINDOW_FRAME,
+    "benchlab_macos": (60, 80, 900, 560),
+    "benchlab_linux_windows": (40, 40, 760, 540),
+    "witness": (1000, 640, 600, 320),
+}
+
+
+def park_point_clear(
+    point: tuple[float, float], frames: dict[str, tuple[int, int, int, int]] | None = None
+) -> list[str]:
+    """Names of the registered frames that contain `point`; empty when the point is clear of all of them."""
+    px, py = point
+    return [
+        name
+        for name, (x, y, w, h) in (frames or REGISTERED_FRAMES).items()
+        if x <= px < x + w and y <= py < y + h
+    ]
+
+
+def park_record(read_back: tuple[float, float] | None, method: str) -> dict[str, Any]:
+    """The trial-row entry for a park: target, position read back, whether it landed, and the method."""
+    ok = (
+        read_back is not None
+        and abs(read_back[0] - PARK_POINT[0]) <= PARK_TOLERANCE_PX
+        and abs(read_back[1] - PARK_POINT[1]) <= PARK_TOLERANCE_PX
+    )
+    return {
+        "target": list(PARK_POINT),
+        "read_back": list(read_back) if read_back is not None else None,
+        "ok": ok,
+        "method": method,
+    }
+
+
 BACKGROUND_BRIEF = (
     'The user is working in another window, titled "User activity", and is typing in it. Leave that window '
     "in front and in focus the whole time: do not activate, raise or bring any other app or window to the "

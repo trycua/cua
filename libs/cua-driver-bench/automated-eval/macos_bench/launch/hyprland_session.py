@@ -123,6 +123,22 @@ def sentinel_lines(log: Path) -> list[dict]:
     return out
 
 
+def park_pointer(H) -> dict:
+    """Amendment 24: move the real pointer to the fixed park point and read it back. Hyprland 0.55+ takes the
+    Lua dispatcher; the legacy `movecursor` is the fallback. The record says ok=False when it did not land."""
+    x, y = v2.PARK_POINT
+    record = v2.park_record(None, "hyprland dispatch")
+    for expression in (f"hl.dsp.cursor.move({{ x = {x}, y = {y} }})", f"movecursor {x} {y}"):
+        try:
+            H.dispatch(expression)
+            record = v2.park_record(tuple(H.cursor()), "hyprland dispatch")
+        except OSError:
+            continue
+        if record["ok"]:
+            break
+    return record
+
+
 def run(args: argparse.Namespace, command: list[str]) -> dict:
     G = hyprland_module("guard")
     H = hyprland_module("hypr")
@@ -154,6 +170,11 @@ def run(args: argparse.Namespace, command: list[str]) -> dict:
         or max(m["height"] for m in monitors) < 860
     ):
         row["harness_error"] = "screen smaller than 1320x860 (load hyprland/bench.lua)"
+        (out / "row.json").write_text(json.dumps(row, indent=1), encoding="utf-8")
+        return row
+    row["pointer_parked"] = park_pointer(H)
+    if not row["pointer_parked"]["ok"]:
+        row["harness_error"] = f"pointer park failed: {row['pointer_parked']}"
         (out / "row.json").write_text(json.dumps(row, indent=1), encoding="utf-8")
         return row
     env = {**os.environ, "GDK_BACKEND": "wayland", "NO_AT_BRIDGE": "0"}

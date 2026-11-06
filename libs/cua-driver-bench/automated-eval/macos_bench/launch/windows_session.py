@@ -97,6 +97,13 @@ def sentinel_lines(log: Path) -> list[dict]:
     return out
 
 
+def park_pointer(W) -> dict:
+    """Amendment 24: move the real pointer to the fixed park point and read it back (SetCursorPos/GetCursorPos)."""
+    x, y = v2.PARK_POINT
+    W.user32.SetCursorPos(int(x), int(y))
+    return v2.park_record(tuple(float(v) for v in W.cursor()), "SetCursorPos")
+
+
 def run(args: argparse.Namespace, command: list[str]) -> dict:
     import guard as G
     import winenv as W
@@ -129,6 +136,10 @@ def run(args: argparse.Namespace, command: list[str]) -> dict:
     control.write_text("", encoding="utf-8")
     procs = []
     try:
+        row["pointer_parked"] = park_pointer(W)
+        if not row["pointer_parked"]["ok"]:
+            row["harness_error"] = f"pointer park failed: {row['pointer_parked']}"
+            return row
         if cdb is not None:
             row["workspace"] = str(cdb.workspace)
             try:

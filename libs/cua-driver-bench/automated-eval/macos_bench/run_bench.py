@@ -994,6 +994,9 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
         ):  # A23: Cua Driver under Codex uses that build's daemon
             ensure_agent_daemon(ctx, SOURCE_ARM[arm])
         if getattr(args, "park_pointer", False):
+            row["pointer_parked"] = (
+                None  # set even when park_pointer raises, so the row shows the attempt
+            )
             row["pointer_parked"] = park_pointer(ctx)
         lab_app = Path(args.build_dir or HERE / "linux") / "BenchLab.app"
         if cdb is not None:
@@ -1601,37 +1604,78 @@ def ensure_lab_unoccluded(ctx: "Ctx") -> dict[str, Any]:
         return {"error": f"{type(error).__name__}: {error}", "unoccluded": None}
 
 
-PARK_POINT = (
-    1000,
-    12,
-)  # Amendment 3, A3.9: an empty stretch of the menu bar, away from every task window
+PARK_POINT = v2.PARK_POINT  # Amendment 24: fixed, outside every registered window frame
 
 
-def park_pointer(ctx: "Ctx") -> Any:
-    """Move the real pointer to PARK_POINT through the recorder daemon before each trial, so no trial starts
-    with the pointer left over a hover target by the previous one. Returns the pointer position read back."""
-    rec_home = ca.RECORDER_STATE / "home"
-    args = {"x": PARK_POINT[0], "y": PARK_POINT[1], "scope": "desktop"}
+class ParkFailed(RuntimeError):
+    """The pointer could not be parked and verified; the trial setup fails (a harness error, never scored)."""
+
+
+def _xy_of(node: Any) -> tuple[float, float] | None:
+    for item in _walk_dicts(node):
+        x, y = item.get("x"), item.get("y")
+        if isinstance(x, (int, float)) and isinstance(y, (int, float)):
+            return float(x), float(y)
+    return None
+
+
+def park_pointer(ctx: "Ctx") -> dict[str, Any]:
+    """Move the real pointer to PARK_POINT before each trial, read the position back and return the record for
+    the trial row. macOS: through the recorder daemon. Linux X11: xdotool. Raises ParkFailed when the pointer
+    does not land within tolerance, or when the platform has no supported way to do it (no faking)."""
+    clash = v2.park_point_clear(PARK_POINT)
+    if clash:
+        raise ParkFailed(f"park point {PARK_POINT} lies inside registered frame(s) {clash}")
+    platform_name = desktop.detect_platform()
     try:
-        ca.cua_cli(
-            "call",
-            "move_cursor",
-            json.dumps(args),
-            socket=ca.RECORDER_SOCKET,
-            home=rec_home,
-            timeout=20,
-        )
-        done = ca.cua_cli(
-            "call",
-            "get_cursor_position",
-            "{}",
-            socket=ca.RECORDER_SOCKET,
-            home=rec_home,
-            timeout=20,
-        )
-        return json.loads(done.stdout[done.stdout.index("{") :])
-    except (OSError, ValueError, subprocess.TimeoutExpired) as error:
-        return {"error": f"{type(error).__name__}: {error}"}
+        if platform_name == "macos":
+            rec_home = ca.RECORDER_STATE / "home"
+            args = {"x": PARK_POINT[0], "y": PARK_POINT[1], "scope": "desktop"}
+            ca.cua_cli(
+                "call",
+                "move_cursor",
+                json.dumps(args),
+                socket=ca.RECORDER_SOCKET,
+                home=rec_home,
+                timeout=20,
+            )
+            done = ca.cua_cli(
+                "call",
+                "get_cursor_position",
+                "{}",
+                socket=ca.RECORDER_SOCKET,
+                home=rec_home,
+                timeout=20,
+            )
+            read_back = _xy_of(json.loads(done.stdout[done.stdout.index("{") :]))
+            record = v2.park_record(read_back, "recorder-daemon move_cursor")
+        elif platform_name == "linux" and shutil.which("xdotool") and os.environ.get("DISPLAY"):
+            subprocess.run(
+                ["xdotool", "mousemove", str(PARK_POINT[0]), str(PARK_POINT[1])],
+                check=True,
+                timeout=20,
+            )
+            out = subprocess.run(
+                ["xdotool", "getmouselocation", "--shell"],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=20,
+            ).stdout
+            found = dict(line.split("=", 1) for line in out.split() if "=" in line)
+            read_back = (float(found["X"]), float(found["Y"]))
+            record = v2.park_record(read_back, "xdotool mousemove")
+        else:
+            raise ParkFailed(
+                f"no supported way to park the pointer on {platform_name} without X11 xdotool"
+            )
+    except ParkFailed:
+        raise
+    except (OSError, ValueError, KeyError, subprocess.SubprocessError) as error:
+        raise ParkFailed(f"{type(error).__name__}: {error}") from error
+    if not record["ok"]:
+        raise ParkFailed(f"pointer read back at {record['read_back']}, expected {list(PARK_POINT)}")
+    return record
 
 
 def _walk_dicts(node: Any):
@@ -2610,8 +2654,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument(
         "--park-pointer",
-        action="store_true",
-        help="move the real pointer to an empty menu-bar point before each trial (Amendment 3, A3.9)",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="park the real pointer at a fixed point outside every registered window, verify it and record "
+        "it in the trial row, before each trial; a failed park fails the trial setup (Amendment 24)",
     )
     p.add_argument("--no-recorder", action="store_true")
     p.add_argument(

@@ -141,6 +141,63 @@ struct DriverSupervisorTests {
         #expect(DriverSupervisorReport.read(driver.statusFile)?.state == "stopped")
     }
 
+    /// A driver killed outright leaves its socket file behind, and the
+    /// real one refuses to start over it ("embedded daemon endpoint already
+    /// exists"): the supervisor clears a socket nobody answers on, as the
+    /// SDK's host does, and reports one that does answer or a path that
+    /// isn't a socket (seen on the VM check for 0.21.1).
+    @Test func aStaleSocketIsClearedBeforeAStart() throws {
+        let home = try Home()
+        let path = home.dir.appendingPathComponent("s.sock").path
+        #expect(DriverSupervisor.prepareEndpoint(path) == nil, "nothing there")
+        // A socket left by a dead process: bound, never listened on.
+        let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+        var addr = sockaddr_un()
+        addr.sun_family = sa_family_t(AF_UNIX)
+        withUnsafeMutableBytes(of: &addr.sun_path) { raw in
+            let b = Array(path.utf8)
+            raw.copyBytes(from: b)
+            raw[b.count] = 0
+        }
+        let bound = withUnsafePointer(to: &addr) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size)) }
+        }
+        #expect(bound == 0)
+        close(fd)
+        #expect(FileManager.default.fileExists(atPath: path))
+        #expect(DriverSupervisor.prepareEndpoint(path) == nil)
+        #expect(!FileManager.default.fileExists(atPath: path), "the stale socket is gone")
+        // A file in the way is reported, never removed.
+        FileManager.default.createFile(atPath: path, contents: Data())
+        #expect(DriverSupervisor.prepareEndpoint(path)?.contains("not a socket") == true)
+        #expect(FileManager.default.fileExists(atPath: path))
+    }
+
+    /// Killed with SIGKILL (its socket stays), the real driver's refusal
+    /// to start over a stale socket never sticks: it comes back.
+    @Test func comesBackAfterSIGKILLLeavesItsSocket() throws {
+        guard FileManager.default.isExecutableFile(atPath: "/usr/bin/python3") else { return }
+        let home = try Home()
+        // Like the real one: refuses an existing socket path.
+        let script = Self.answeringDriver.replacingOccurrences(
+            of: "try: os.unlink(path)\nexcept FileNotFoundError: pass",
+            with: "if os.path.exists(path):\n    sys.stderr.write('embedded daemon endpoint already exists\\n'); sys.exit(1)")
+        #expect(script != Self.answeringDriver)
+        let driver = try home.driver(script: script)
+        var firstPid: Int32?
+        let r = try #require(Self.run(DriverSupervisor(driver: driver, options: Self.options())) { report in
+            guard report.state == "ready", let pid = report.pid else { return false }
+            if firstPid == nil {
+                firstPid = pid
+                kill(pid, SIGKILL)
+                return false
+            }
+            return pid != firstPid
+        })
+        #expect(r.state == "ready", "\(r)")
+        #expect(r.pid != firstPid)
+    }
+
     /// Paused by the person: no driver runs, and it starts once the pause
     /// marker goes.
     @Test func thePauseKeepsItOff() throws {

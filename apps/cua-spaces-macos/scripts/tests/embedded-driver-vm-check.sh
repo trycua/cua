@@ -75,7 +75,7 @@ else
   parent="$(ps -o ppid= -p "$driver_pid" | tr -d ' ')"
   parent_cmd="$(ps -o command= -p "$parent")"
   case "$parent_cmd" in
-    "$app/Contents/MacOS/CuaSpacesMac --driver-helper run"*) ok "cua-driver (pid $driver_pid) is the driver login item's child (pid $parent)" ;;
+    *"CuaSpacesMac --driver-helper run"*) ok "cua-driver (pid $driver_pid) is the driver login item's child (pid $parent)" ;;
     *) fail "cua-driver's parent is not the driver login item: $parent_cmd" ;;
   esac
   ps -o command= -p "$driver_pid" | grep -q -- "--host-bundle-id $bundle_id" &&

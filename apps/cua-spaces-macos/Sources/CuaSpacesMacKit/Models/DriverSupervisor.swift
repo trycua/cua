@@ -166,6 +166,7 @@ public final class DriverSupervisor: @unchecked Sendable {
         guard FileManager.default.isExecutableFile(atPath: driver.binary) else {
             return .failed("there is no Cua Driver at \(driver.binary); reinstall Cua Spaces")
         }
+        if let conflict = Self.prepareEndpoint(driver.socket) { return .failed(conflict) }
         let log = openLog()
         let p = Process()
         p.executableURL = URL(fileURLWithPath: driver.binary)
@@ -230,6 +231,50 @@ public final class DriverSupervisor: @unchecked Sendable {
     }
 
     // MARK: - Files
+
+    /// Clears the socket path before a start, as the SDK's embedded host
+    /// does (`prepare_endpoint`): a driver that died (a crash, SIGKILL)
+    /// leaves its socket file, and an embedded driver refuses to start over
+    /// one. A socket nobody accepts on is removed; one that answers, or a
+    /// path that isn't a socket, is reported. Nil, or why not.
+    public static func prepareEndpoint(_ path: String) -> String? {
+        var before = stat()
+        guard lstat(path, &before) == 0 else {
+            return errno == ENOENT ? nil : "can't read \(path): \(String(cString: strerror(errno)))"
+        }
+        guard before.st_mode & S_IFMT == S_IFSOCK else {
+            return "\(path) is in the way (not a socket); remove it"
+        }
+        if acceptsConnections(path) {
+            return "another Cua Driver is already running on \(path)"
+        }
+        var now = stat()
+        guard lstat(path, &now) == 0, now.st_mode & S_IFMT == S_IFSOCK,
+              now.st_dev == before.st_dev, now.st_ino == before.st_ino else {
+            return "\(path) changed while it was checked"
+        }
+        guard unlink(path) == 0 else {
+            return "can't remove the old socket \(path): \(String(cString: strerror(errno)))"
+        }
+        return nil
+    }
+
+    static func acceptsConnections(_ path: String) -> Bool {
+        let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+        guard fd >= 0 else { return false }
+        defer { close(fd) }
+        var addr = sockaddr_un()
+        addr.sun_family = sa_family_t(AF_UNIX)
+        let bytes = Array(path.utf8)
+        guard bytes.count < MemoryLayout.size(ofValue: addr.sun_path) else { return false }
+        withUnsafeMutableBytes(of: &addr.sun_path) { raw in
+            raw.copyBytes(from: bytes)
+            raw[bytes.count] = 0
+        }
+        return withUnsafePointer(to: &addr) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { connect(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size)) }
+        } == 0
+    }
 
     var paused: Bool { FileManager.default.fileExists(atPath: driver.pausedMarker) }
 

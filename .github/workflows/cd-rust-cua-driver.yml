@@ -1822,20 +1822,21 @@ jobs:
               }
             echo "Opened ${PR_URL}"
 
-            # Wait for the required checks, then merge. Repository auto-merge
-            # is off, so merge explicitly once they pass.
-            # Checks register a few seconds after the PR opens; `gh pr checks`
-            # fails at once with "no checks reported" before then.
+            # Queue the merge and stop. Repository auto-merge is on, so the PR
+            # merges itself once the required checks (including the local-ci
+            # sign-off, which can take 20-40 minutes) pass. Do not watch the
+            # checks and do not close the PR on a timeout: the required checks
+            # register a few seconds after the PR opens, and `gh pr checks
+            # --required` fails at once with "no checks reported" until then,
+            # which used to close every PR within seconds (#6679 to #6685).
             for _ in $(seq 1 30); do
-              [ "$(gh pr view "$PR_URL" --json statusCheckRollup -q '.statusCheckRollup|length')" -gt 0 ] && break
+              gh pr merge "$PR_URL" --auto --squash --delete-branch && {
+                echo "Auto-merge queued for ${PR_URL}; installers advance to ${VERSION} when checks pass."
+                exit 0
+              }
               sleep 10
             done
-            if timeout 40m gh pr checks "$PR_URL" --required --watch --fail-fast \
-              && gh pr merge "$PR_URL" --squash --delete-branch; then
-              echo "Public installers now advertise ${VERSION}."
-              exit 0
-            fi
-            echo "Bookkeeping PR ${PR_URL} did not merge; closing it and retrying from the new main head." >&2
+            echo "Could not queue auto-merge for ${PR_URL}; retrying from the new main head." >&2
             gh pr close "$PR_URL" --delete-branch || true
           done
 

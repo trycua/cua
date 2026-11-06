@@ -27,23 +27,55 @@ import Testing
     /// exported by the linked SDK (`spacesToolMethods()`), not a copy.
     static var advertisedTools: Set<String> { Set(SpacesConnection.contractTools) }
 
-    /// STOPGAP: tools the contract gained (agents, threads, resize_space) before
-    /// the Swift SDK models them. They are reachable through `callTool` only.
-    /// Remove a name here when its typed call lands; the test then drives it.
-    static let callToolOnly: Set<String> = [
-        "agent_add", "agent_members", "agent_remove", "agent_schedule_add",
-        "agent_schedule_list", "agent_schedule_remove", "agent_schedule_set_enabled",
-        "agent_send", "agent_set_rights", "resize_space", "thread_claim",
-        "thread_device_revoke", "thread_import", "thread_inbox", "thread_join",
-        "thread_join_code_cancel", "thread_join_code_create", "thread_join_code_list",
-        "thread_join_redeem", "thread_post", "thread_read", "thread_reply",
-        "thread_settings",
-        // Person-only, and the contract's SDK symbol for both is `callTool`.
-        "agent_threads", "agent_thread_read",
-    ]
+    /// The contract's source of truth: the generated manifest, read from disk.
+    /// Independent of the linked SDK, so a drift between the two is caught.
+    static var manifestTools: Set<String> {
+        let url = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("cua/spaces-contract/manifest.json")
+        guard let data = try? Data(contentsOf: url),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let tools = json["tools"] as? [[String: Any]] else { return [] }
+        return Set(tools.compactMap { $0["name"] as? String })
+    }
+
+    /// Person-only tools: the contract's SDK symbol for both is `callTool`, so
+    /// they never get a typed call.
+    static let personOnly: Set<String> = ["agent_threads", "agent_thread_read"]
+
+    /// Tools with no typed Swift call yet, reachable through `callTool` only.
+    /// Every entry names the issue that tracks its binding. Remove the entry
+    /// when the typed call lands; the test then requires it to be driven.
+    static let pendingSwiftBinding: [String: String] = {
+        let agents = "https://linear.app/trycua/issue/CUA-3162"
+        var m: [String: String] = [:]
+        for t in ["agent_add", "agent_members", "agent_remove", "agent_schedule_add",
+                  "agent_schedule_list", "agent_schedule_remove",
+                  "agent_schedule_set_enabled", "agent_send", "agent_set_rights",
+                  "resize_space", "thread_claim", "thread_device_revoke", "thread_import",
+                  "thread_inbox", "thread_join", "thread_join_code_cancel",
+                  "thread_join_code_create", "thread_join_code_list", "thread_join_redeem",
+                  "thread_post", "thread_read", "thread_reply", "thread_settings"] {
+            m[t] = agents
+        }
+        return m
+    }()
 
     @Test func testTheContractIsCompleteTools() {
-        XCTAssertEqual(Self.advertisedTools.count, 121)
+        let manifest = Self.manifestTools
+        XCTAssertFalse(manifest.isEmpty, "could not read libs/cua/spaces-contract/manifest.json")
+        XCTAssertEqual(Self.advertisedTools, manifest,
+                       "linked SDK vs manifest.json differ. Only in SDK: "
+                       + Self.advertisedTools.subtracting(manifest).sorted().joined(separator: ", ")
+                       + ". Only in manifest: "
+                       + manifest.subtracting(Self.advertisedTools).sorted().joined(separator: ", "))
+        for (tool, issue) in Self.pendingSwiftBinding {
+            XCTAssertTrue(manifest.contains(tool),
+                          "pendingSwiftBinding lists \(tool), which is not in the manifest; remove it")
+            XCTAssertTrue(issue.hasPrefix("https://linear.app/trycua/issue/CUA-"),
+                          "pendingSwiftBinding[\(tool)] needs a tracking issue link")
+        }
         // The Python server's `local_rcdp` is gone; `stream_endpoint` mints a
         // media ticket for any provider, and `send_file` is new.
         XCTAssertFalse(Self.advertisedTools.contains("local_rcdp"))
@@ -277,10 +309,17 @@ import Testing
         _ = try await connection.drive.clearCache()                      // volume_cache_clear
 
         let reached = Set(await backend.calls)
-        let missing = Self.advertisedTools.subtracting(reached).subtracting(Self.callToolOnly)
+        let pending = Set(Self.pendingSwiftBinding.keys)
+        let missing = Self.manifestTools.subtracting(reached).subtracting(pending)
+            .subtracting(Self.personOnly)
         XCTAssertTrue(missing.isEmpty,
-                      "tools with no typed path, reachable only via callTool: "
+                      "tools in the contract with no typed Swift call and not in pendingSwiftBinding "
+                      + "(add a typed call, or add the tool there with a Linear issue link): "
                       + missing.sorted().joined(separator: ", "))
+        let stale = pending.intersection(reached)
+        XCTAssertTrue(stale.isEmpty,
+                      "tools now driven by a typed call; remove from pendingSwiftBinding: "
+                      + stale.sorted().joined(separator: ", "))
     }
 
     // MARK: - In-space MCP services

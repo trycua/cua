@@ -664,6 +664,15 @@ describe.skipIf(!wasmBuilt)("the new first run on its route", () => {
     expect(screen.getByRole("button", { name: "Continue" }).hasAttribute("disabled")).toBe(false);
   });
 
+  it("Skip for now after screen 2 leaves setup for Home, as finishing does", { timeout: 60_000 }, async () => {
+    writeFirstRunForTest({ newRun: { screen: "agent", reached: 2 } });
+    const { router } = await mountApp("/onboarding", { failsCreates: false, listsGhost: false, demo: { signedIn: true, onboarded: false, noSpaces: true } });
+    await waitFor(() => expect(document.querySelector("[data-new-run=agent]")).not.toBeNull(), { timeout: 15_000 });
+    click("[data-onboarding-later]");
+    await waitFor(() => expect(router.state.location.pathname).toBe("/home"));
+    expect(readFirstRun().finishedLater).toBe(true);
+  });
+
   it("the step dots go back to screen 1 and forward again to screen 2, but never past the sign-in", { timeout: 60_000 }, async () => {
     await mountApp("/onboarding", { failsCreates: false, listsGhost: false, demo: { signedIn: false, onboarded: false, noSpaces: true } });
     await waitFor(() => expect(heading()).toBe("Bring all your computers under one account"));

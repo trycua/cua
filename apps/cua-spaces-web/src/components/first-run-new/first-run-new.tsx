@@ -969,7 +969,8 @@ export function NewFirstRun() {
     session.cancelSignIn();
     writeSavedOnboarding({ ...readSavedOnboarding(), skipped: true });
     writeFirstRun({ finishedLater: true });
-    void navigate({ to: "/spaces" });
+    // Home is where the app opens (CUA-3551), so leaving setup early lands there too.
+    void navigate({ to: "/home" });
   };
   const skip = () => {
     if (s.screen === "welcome" || s.screen === "signin") {

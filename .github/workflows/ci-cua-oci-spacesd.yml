@@ -96,7 +96,7 @@ jobs:
   containers:
     name: containers (docker, runc)
     needs: static
-    if: ${{ !failure() && !cancelled() && !contains(needs.*.result, 'skipped') }}
+    if: ${{ !failure() && !cancelled() && needs.static.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:

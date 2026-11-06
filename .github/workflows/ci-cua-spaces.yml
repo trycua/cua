@@ -246,7 +246,7 @@ jobs:
     # release-please PRs (fast checks only). Main pushes, manual runs and
     # `ci:full` PRs build them.
     needs: changes
-    if: ${{ !failure() && !cancelled() && !contains(needs.*.result, 'skipped') && ((github.event_name != 'pull_request' || !github.event.pull_request.draft) && (needs.changes.outputs.bundle == 'true' && !startsWith(github.head_ref, 'release-please--branches--') && (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:full')))) }}
+    if: ${{ !failure() && !cancelled() && needs.changes.result == 'success' && ((github.event_name != 'pull_request' || !github.event.pull_request.draft) && (needs.changes.outputs.bundle == 'true' && !startsWith(github.head_ref, 'release-please--branches--') && (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:full')))) }}
     strategy:
       fail-fast: false
       matrix:

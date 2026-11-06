@@ -217,7 +217,7 @@ jobs:
           retention-days: 1
 
   swift-tests:
-    if: ${{ !failure() && !cancelled() && !contains(needs.*.result, 'skipped') && ((github.event_name != 'pull_request' || !github.event.pull_request.draft)) }}
+    if: ${{ !failure() && !cancelled() && needs.ffi.result == 'success' && ((github.event_name != 'pull_request' || !github.event.pull_request.draft)) }}
     name: SwiftUI app (swift tests, bridge contract)
     needs: ffi
     runs-on: macos-26
@@ -291,7 +291,7 @@ jobs:
   # shell's TypeScript) still match the library. These run the bindgen tools
   # with cargo, so this job has the Rust toolchain; the other Swift jobs do not.
   bindings:
-    if: ${{ !failure() && !cancelled() && !contains(needs.*.result, 'skipped') && ((github.event_name != 'pull_request' || !github.event.pull_request.draft)) }}
+    if: ${{ !failure() && !cancelled() && needs.ffi.result == 'success' && ((github.event_name != 'pull_request' || !github.event.pull_request.draft)) }}
     name: SwiftUI and Electron bindings are up to date
     needs: ffi
     runs-on: macos-26
@@ -337,7 +337,7 @@ jobs:
   app-bundle:
     # On a pull request only when it changes a packaging path (see `changes`);
     # always on main and on a manual run.
-    if: ${{ !failure() && !cancelled() && !contains(needs.*.result, 'skipped') && ((github.event_name != 'pull_request' || !github.event.pull_request.draft) && (github.event_name != 'pull_request' || needs.changes.outputs.packaging == 'true')) }}
+    if: ${{ !failure() && !cancelled() && needs.ffi.result == 'success' && needs.changes.result == 'success' && ((github.event_name != 'pull_request' || !github.event.pull_request.draft) && (github.event_name != 'pull_request' || needs.changes.outputs.packaging == 'true')) }}
     name: SwiftUI app (bundle, launch check, XCUITest)
     needs: [ffi, changes]
     runs-on: macos-26

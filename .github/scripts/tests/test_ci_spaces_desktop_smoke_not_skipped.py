@@ -55,3 +55,13 @@ def test_smoke_fails_when_its_test_jobs_are_skipped() -> None:
     assert "exit 1" in script
     assert "needs.windows.result" in str(verify["steps"])
     assert "needs.linux.result" in str(verify["steps"])
+
+
+@pytest.mark.parametrize("path", WORKFLOWS, ids=lambda p: p.name)
+def test_no_blanket_skipped_needs_check(path: Path) -> None:
+    """Depend on the result of the specific job needed; a blanket check also
+    skipped jobs whose upstream job legitimately ran (observed on the smoke)."""
+    text = path.read_text()
+    assert not re.search(r"contains\(\s*needs\.\*\.result\s*,\s*'skipped'\s*\)", text), (
+        f"{path.name}: use needs.<job>.result == 'success' instead of contains(needs.*.result, 'skipped')"
+    )

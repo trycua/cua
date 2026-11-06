@@ -124,7 +124,7 @@ jobs:
   parity:
     name: parity flows (${{ matrix.host }})
     needs: test
-    if: ${{ !failure() && !cancelled() && !contains(needs.*.result, 'skipped') }}
+    if: ${{ !failure() && !cancelled() && needs.test.result == 'success' }}
     strategy:
       fail-fast: false
       matrix:

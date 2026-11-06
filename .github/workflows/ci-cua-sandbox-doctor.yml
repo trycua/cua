@@ -102,7 +102,7 @@ jobs:
           retention-days: 1
 
   doctor:
-    if: ${{ !failure() && !cancelled() && !contains(needs.*.result, 'skipped') && (!startsWith(github.head_ref, 'release-please--branches--')) }}
+    if: ${{ !failure() && !cancelled() && needs.build.result == 'success' && (!startsWith(github.head_ref, 'release-please--branches--')) }}
     name: Image doctor (overlaid cua-spacesd and cua-driver)
     needs: build
     runs-on: ubuntu-latest
@@ -148,7 +148,7 @@ jobs:
             PY
 
   stale:
-    if: ${{ !failure() && !cancelled() && !contains(needs.*.result, 'skipped') && (!startsWith(github.head_ref, 'release-please--branches--')) }}
+    if: ${{ !failure() && !cancelled() && needs.build.result == 'success' && (!startsWith(github.head_ref, 'release-please--branches--')) }}
     name: The bundled builds are reported stale
     needs: build
     runs-on: ubuntu-latest

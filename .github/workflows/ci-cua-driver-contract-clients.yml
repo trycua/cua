@@ -156,7 +156,7 @@ jobs:
   mcp-client-discovery:
     name: MCP discovery in pinned clients (${{ matrix.os }})
     needs: changes
-    if: ${{ !failure() && !cancelled() && !contains(needs.*.result, 'skipped') && (needs.changes.outputs.run == 'true' && needs.changes.outputs.legs_discovery != '[]') }}
+    if: ${{ !failure() && !cancelled() && needs.changes.result == 'success' && (needs.changes.outputs.run == 'true' && needs.changes.outputs.legs_discovery != '[]') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     strategy:
@@ -217,7 +217,7 @@ jobs:
   runtime-parity:
     name: Portable contract parity (${{ matrix.os }})
     needs: changes
-    if: ${{ !failure() && !cancelled() && !contains(needs.*.result, 'skipped') && (needs.changes.outputs.run == 'true' && needs.changes.outputs.legs_parity != '[]') }}
+    if: ${{ !failure() && !cancelled() && needs.changes.result == 'success' && (needs.changes.outputs.run == 'true' && needs.changes.outputs.legs_parity != '[]') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     strategy:
@@ -299,7 +299,7 @@ jobs:
   verify:
     name: Generated contract and SDK bindings
     needs: changes
-    if: ${{ !failure() && !cancelled() && !contains(needs.*.result, 'skipped') && (needs.changes.outputs.run == 'true' && contains(needs.changes.outputs.matrix, 'ubuntu') && !contains(fromJSON(needs.changes.outputs.reused), 'Generated contract and SDK bindings')) }}
+    if: ${{ !failure() && !cancelled() && needs.changes.result == 'success' && (needs.changes.outputs.run == 'true' && contains(needs.changes.outputs.matrix, 'ubuntu') && !contains(fromJSON(needs.changes.outputs.reused), 'Generated contract and SDK bindings')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:

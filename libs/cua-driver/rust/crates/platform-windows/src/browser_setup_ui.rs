@@ -488,6 +488,13 @@ impl SetupUiHandle {
         }
         if let Err(error) = crate::input::keyboard::send_key_synthesized(self.hwnd, "w", &["ctrl"])
         {
+            // The chord may still be read; a second Ctrl+W could close another tab.
+            if error
+                .downcast_ref::<crate::typing_turn::ForegroundNotRestored>()
+                .is_some()
+            {
+                self.opened_setup_page = false;
+            }
             let error = BrowserRefusal::new(
                 BrowserRefusalCode::BrowserWrongTargetRefused,
                 format!("could not close the exact temporary setup tab: {error}"),

@@ -363,7 +363,11 @@ mod tests {
 
     #[test]
     fn an_unnamed_volume_is_called_by_the_hosts_own_words() {
-        let name = fallback_volume_name(Path::new(if cfg!(windows) { r"C:\Users\a" } else { "/home/a" }));
+        let name = fallback_volume_name(Path::new(if cfg!(windows) {
+            r"C:\Users\a"
+        } else {
+            "/home/a"
+        }));
         if cfg!(windows) {
             assert_eq!(name, "C:");
         } else if cfg!(target_os = "macos") {

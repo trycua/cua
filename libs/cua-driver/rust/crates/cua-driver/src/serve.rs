@@ -637,18 +637,47 @@ fn secure_local_socket(socket_path: &str) -> anyhow::Result<()> {
         .map_err(|e| anyhow::anyhow!("secure local daemon socket {socket_path}: {e}"))
 }
 
+/// Take the standalone daemon's exclusive lock on `<socket>.lock`, then clear
+/// any stale socket. Without the lock, two launches that both pass the
+/// liveness probe unlink each other's socket and orphan a daemon. The kernel
+/// drops the lock when the returned file closes or the process dies.
 #[cfg(unix)]
-fn prepare_embedded_socket_path(socket_path: &str, embedded: bool) -> anyhow::Result<()> {
+fn claim_standalone_socket(socket_path: &str) -> anyhow::Result<std::fs::File> {
+    use std::os::unix::fs::OpenOptionsExt as _;
+    let lock_path = format!("{socket_path}.lock");
+    let lock = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .mode(0o600)
+        .open(&lock_path)
+        .map_err(|e| anyhow::anyhow!("open daemon lock {lock_path}: {e}"))?;
+    match lock.try_lock() {
+        Ok(()) => {}
+        Err(std::fs::TryLockError::WouldBlock) => anyhow::bail!(
+            "Cua Driver daemon is already running on {socket_path}. Run `cua-driver stop` first."
+        ),
+        Err(std::fs::TryLockError::Error(e)) => {
+            anyhow::bail!("lock daemon socket {lock_path}: {e}")
+        }
+    }
+    let _ = std::fs::remove_file(socket_path);
+    Ok(lock)
+}
+
+#[cfg(unix)]
+fn prepare_embedded_socket_path(
+    socket_path: &str,
+    embedded: bool,
+) -> anyhow::Result<Option<std::fs::File>> {
     if !embedded {
-        // Preserve the legacy standalone stale-socket recovery behavior.
-        let _ = std::fs::remove_file(socket_path);
-        return Ok(());
+        return claim_standalone_socket(socket_path).map(Some);
     }
     match std::fs::symlink_metadata(socket_path) {
         Ok(_) => anyhow::bail!(
             "embedded daemon endpoint already exists at {socket_path}; the owning host must prove and remove its stale socket before spawn"
         ),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(error) => Err(error.into()),
     }
 }
@@ -991,7 +1020,8 @@ pub async fn run_serve(
     let embedded = cua_driver_core::embedded_mode();
     // Embedded endpoints are host-owned. The daemon must never unlink an
     // arbitrary pre-existing path between the host's safety check and bind.
-    prepare_embedded_socket_path(socket_path, embedded)?;
+    // Held until return so a racing launch cannot unlink this daemon's socket.
+    let _socket_lock = prepare_embedded_socket_path(socket_path, embedded)?;
 
     let listener =
         UnixListener::bind(socket_path).map_err(|e| anyhow::anyhow!("bind {socket_path}: {e}"))?;
@@ -2689,6 +2719,22 @@ mod socket_tests {
             std::fs::metadata(&socket).unwrap().permissions().mode() & 0o777,
             0o600
         );
+    }
+
+    #[test]
+    fn a_second_standalone_launch_cannot_take_a_held_socket() {
+        let directory = tempfile::tempdir().unwrap();
+        let socket = directory.path().join("driver.sock");
+        let socket = socket.to_str().unwrap();
+        let first = super::claim_standalone_socket(socket).unwrap();
+        let _listener = std::os::unix::net::UnixListener::bind(socket).unwrap();
+
+        let second = super::claim_standalone_socket(socket);
+
+        assert!(second.unwrap_err().to_string().contains("already running"));
+        assert!(std::path::Path::new(socket).exists());
+        drop(first);
+        assert!(super::claim_standalone_socket(socket).is_ok());
     }
 
     #[test]

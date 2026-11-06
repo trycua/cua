@@ -528,3 +528,54 @@ async fn a_subagent_is_recorded_when_it_starts_and_when_it_ends() {
             .any(|e| e["event"]["kind"] == "subagent" && e["task_seq"] == seq)
     );
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_subagent_of_a_new_run_is_recorded_though_its_events_number_from_one_again() {
+    let mut fx = setup().await;
+    let p = member(&mut fx, 1).await;
+    post(&fx, json!({"text": "@ada first job"})).await.unwrap();
+    Box::pin(p.tick()).await;
+    run_state(&fx, 1, json!({"status": "running", "turn": 2}));
+    let mut many = vec![task_call(2, None, false)];
+    many.extend((0..30).map(|i| child_tool(2, &format!("c{i}"))));
+    events(&fx, 1, &many);
+    events(
+        &fx,
+        1,
+        &[
+            task_call(2, Some("completed"), false),
+            chunk(2, "Done."),
+            ended(2),
+        ],
+    );
+    run_state(&fx, 1, json!({"status": "idle", "turn": 2}));
+    Box::pin(p.tick()).await;
+    Box::pin(p.tick()).await;
+    // The agent's run is replaced: the new one starts numbering its events at 1.
+    let s = fx.spaces.space(&fx.space).await.unwrap();
+    let proc = s
+        .spacesd()
+        .unwrap()
+        .spawn(
+            Command::new("sleep")
+                .arg("600000")
+                .tag(format!("cua-agent/{}", run(2))),
+        )
+        .await
+        .unwrap();
+    fx._procs.push(proc);
+    edit_record(&fx, "ada", |r| {
+        r["run_id"] = json!(run(2));
+        r["cursor"] = json!(0);
+        r["saved_turn"] = json!(0);
+    });
+    post(&fx, json!({"text": "@ada second job"})).await.unwrap();
+    run_state(&fx, 2, json!({"status": "running", "turn": 1}));
+    let mut second = vec![task_call(1, None, false)];
+    second[0]["update"]["toolCallId"] = json!("toolu_second");
+    second[0]["update"]["rawInput"]["description"] = json!("Second helper");
+    events(&fx, 2, &second);
+    Box::pin(p.tick()).await;
+    let notes = subagent_notes(&thread(&fx).await);
+    assert!(notes.iter().any(|(_, t)| t == "Second helper"), "{notes:?}");
+}

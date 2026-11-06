@@ -551,6 +551,8 @@ pub(crate) struct Partial {
     subs: Vec<cua_agents::subagents::Subagent>,
     sub_last: u64,
     backfilled: bool,
+    /// The run those belong to (a new run numbers its events from 1 again).
+    sub_run: String,
 }
 
 /// How long a stretch of the agent's words must stay unchanged, with nothing after it, before it
@@ -2388,12 +2390,17 @@ impl Persistent {
         page: &[ag::AgentEvent],
     ) -> Result<()> {
         let key = format!("{}/{}#{}!subs", rec.space, rec.name, rec.k());
-        let backfill = self
-            .partials
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .get(&key)
-            .is_none_or(|p| !p.backfilled);
+        let backfill = {
+            let mut map = self.partials.lock().unwrap_or_else(|p| p.into_inner());
+            let p = map.entry(key.clone()).or_default();
+            if p.sub_run != run {
+                *p = Partial {
+                    sub_run: run.to_string(),
+                    ..Partial::default()
+                };
+            }
+            !p.backfilled
+        };
         let mut earlier = vec![];
         if backfill && rec.cursor > 0 {
             // A daemon that restarted mid-run: read what concerns subagents from the start.

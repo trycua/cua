@@ -30,6 +30,7 @@ use cua_driver_testkit::{harness_app, Driver, McpDriver};
 
 const MAIN_TITLE: &str = "CuaTestHarness AppKit";
 const SECONDARY_TITLE: &str = "CuaTestHarness AppKit Secondary";
+const SHEET_TITLE: &str = "CuaTestHarness AppKit Sheet";
 const OCCLUDER_TITLE: &str = "CuaTestHarness SwiftUI";
 #[link(name = "CoreGraphics", kind = "framework")]
 extern "C" {
@@ -387,6 +388,96 @@ fn modal_sheet_never_yields_false_parent_success() {
     );
     assert_eq!(result.structured()["activated"], false);
     assert_ne!(focused_window_title(target.pid), MAIN_TITLE);
+}
+
+/// The sheet's text field value, read through System Events.
+fn sheet_field_value(pid: u32) -> String {
+    let script = format!(
+        "tell application \"System Events\" to tell (first process whose unix id is {pid}) to get value of text field 1 of sheet 1 of window \"{MAIN_TITLE}\""
+    );
+    let output = Command::new("osascript")
+        .args(["-e", &script])
+        .output()
+        .expect("query sheet field");
+    assert!(
+        output.status.success(),
+        "sheet-field oracle failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8_lossy(&output.stdout).trim().to_owned()
+}
+
+/// Keys addressed to a sheet's own id and to its parent's id both reach the
+/// sheet's focused field, and a snapshot of the sheet's id holds only the
+/// sheet, while the parent's snapshot holds both (Finder's Go to Folder).
+#[test]
+#[ignore]
+fn sheet_and_parent_ids_both_reach_the_sheet_and_the_sheet_snapshot_is_isolated() {
+    let mut driver = McpDriver::spawn_macos_daemon_proxy_named("macos-sheet-input")
+        .expect("start installed macOS daemon proxy");
+    let target = launch(&mut driver, Some("sheet-input"));
+    let windows = wait_for_window_ids(&target, &["main", "sheet"]);
+    let (parent, sheet) = (windows["main"], windows["sheet"]);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !sheet_field_value(target.pid).is_empty()
+        || focused_window_title(target.pid) != SHEET_TITLE
+    {
+        assert!(Instant::now() < deadline, "sheet field never took focus");
+        std::thread::sleep(Duration::from_millis(100));
+    }
+
+    let mut typed = String::new();
+    for (window_id, text) in [(sheet, "sheet"), (parent, "parent")] {
+        let result = driver.call(
+            "type_text_chars",
+            serde_json::json!({
+                "pid": target.pid, "window_id": window_id, "text": text,
+                "type_chars_only": true, "delay_ms": 20,
+            }),
+        );
+        assert!(
+            !result.is_error(),
+            "keys to window {window_id}: {}",
+            result.raw
+        );
+        typed.push_str(text);
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while sheet_field_value(target.pid) != typed {
+            assert!(
+                Instant::now() < deadline,
+                "keys to window {window_id} did not reach the sheet field: {:?}",
+                sheet_field_value(target.pid)
+            );
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    }
+
+    let tree = |window_id: u32, driver: &mut McpDriver| {
+        let state = driver.call(
+            "get_window_state",
+            serde_json::json!({"pid": target.pid, "window_id": window_id}),
+        );
+        assert!(
+            !state.is_error(),
+            "get_window_state {window_id}: {}",
+            state.raw
+        );
+        state.structured()["tree_markdown"]
+            .as_str()
+            .expect("tree_markdown")
+            .to_owned()
+    };
+    let sheet_tree = tree(sheet, &mut driver);
+    assert!(sheet_tree.contains("txt-sheet"), "{sheet_tree}");
+    assert!(
+        !sheet_tree.contains("btn-increment") && !sheet_tree.contains("AXMenuBar"),
+        "sheet snapshot carries parent controls: {sheet_tree}"
+    );
+    let parent_tree = tree(parent, &mut driver);
+    assert!(
+        parent_tree.contains("btn-increment") && parent_tree.contains("txt-sheet"),
+        "{parent_tree}"
+    );
 }
 
 #[test]

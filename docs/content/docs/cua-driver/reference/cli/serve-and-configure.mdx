@@ -35,6 +35,7 @@ description: "Serve MCP and call tools from the shell; run the daemon; grant per
 | [`cua-driver permissions grant`](#cua-driver-permissions-grant) | Launch CuaDriver through LaunchServices so the permission prompts are attributed to the app. |
 | [`cua-driver doctor`](#cua-driver-doctor) | Run platform-aware diagnostic probes. |
 | [`cua-driver diagnose`](#cua-driver-diagnose) | Print a pasteable install-layout and permission-attribution report. |
+| [`cua-driver test`](#cua-driver-test) | Check that Cua Driver works on this computer. |
 | [`cua-driver config`](#cua-driver-config) | Read or mutate persistent driver configuration. |
 | [`cua-driver config show`](#cua-driver-config-show) | Print the full config. |
 | [`cua-driver config get`](#cua-driver-config-get) | Print one config key. |
@@ -573,6 +574,30 @@ cua-driver diagnose
 ```bash test="cli-shape" id="ref-cua-driver-diagnose"
 # Print an install and permission report to paste into an issue
 cua-driver diagnose
+```
+
+## `cua-driver test`
+
+Check that Cua Driver works on this computer.
+
+Checks permissions, a screen read, Cua Driver's own pointer, and (macOS) typing in a background TextEdit window that is closed without saving. Exit code is 0 when everything works and 1 when something needs fixing.
+
+```text output
+cua-driver test [OPTIONS]
+```
+
+| Flag | Type | Default | Description |
+| --- | --- | --- | --- |
+| <span id="cua-driver-test--json"></span>`--json` | boolean | `false` | Emit the result as JSON. |
+
+**Examples**
+
+```bash test="cli-shape" id="ref-cua-driver-test"
+# Check that Cua Driver works on this computer
+cua-driver test
+
+# Emit the result as JSON
+cua-driver test --json
 ```
 
 ## `cua-driver config`

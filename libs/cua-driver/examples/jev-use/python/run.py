@@ -81,32 +81,38 @@ class Driver:
 
     async def call(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         result = await self.session.call_tool(name, {**arguments, "session": self.label})
-        if result.isError:
-            structured = getattr(result, "structuredContent", None)
-            structured = structured if isinstance(structured, dict) else {}
-            code = structured.get("code")
-            refusal = structured.get("refusal")
-            if not code and isinstance(refusal, dict):
+        structured = getattr(result, "structuredContent", None)
+        data = structured if isinstance(structured, dict) else {}
+        # All refusal envelopes must preserve the same recovery metadata.
+        failed = bool(result.isError) or data.get("effect") == "refused"
+        if failed or data.get("status") == "refused" or data.get("refusal"):
+            error = data.get("error")
+            code = error.get("code") if isinstance(error, dict) else None
+            if not isinstance(code, str) or not code:
+                code = data.get("code")
+            refusal = data.get("refusal")
+            if (not isinstance(code, str) or not code) and isinstance(refusal, dict):
                 code = refusal.get("code")
-            escalation = structured.get("escalation")
-            recommended = escalation.get("recommended") if isinstance(escalation, dict) else None
+            escalation = data.get("escalation")
+            # A present canonical target wins, including malformed values: do
+            # not turn an invalid/session target into a legacy foreground hint.
+            recommended = (
+                escalation.get("target", escalation.get("recommended"))
+                if isinstance(escalation, dict) else None
+            )
+            message = (
+                f"{name} failed: {getattr(result, 'content', None)}"
+                if failed
+                else f"{name} refused: {data.get('refusal', data)}"
+            )
             raise DriverToolError(
-                f"{name} failed: {getattr(result, 'content', None)}",
+                message,
                 code if isinstance(code, str) and code else None,
                 recommended if isinstance(recommended, str) and recommended else None,
             )
-        data = result.structuredContent
-        if not isinstance(data, dict):
+        if not isinstance(structured, dict):
             raise RuntimeError(f"{name} returned no structured result")
-        if data.get("status") == "refused" or data.get("refusal"):
-            refusal = data.get("refusal")
-            code = refusal.get("code") if isinstance(refusal, dict) else None
-            # DriverToolError is a RuntimeError, so existing handlers still match.
-            raise DriverToolError(
-                f"{name} refused: {data.get('refusal', data)}",
-                code if isinstance(code, str) and code else None,
-            )
-        return data
+        return structured
 
 
 def supports_capture_bound_click(tools: list[Any]) -> bool:
@@ -125,7 +131,8 @@ def background_refusal_code(candidate: Candidate, error: BaseException) -> str |
     """Return Driver's code when it refused a background visual click.
 
     Only a structured refusal counts: a ``background_*`` error code or an explicit
-    ``escalation.recommended == "foreground"``. Anything else stays a failure.
+    foreground target (``escalation.target`` or legacy ``recommended``).
+    Anything else stays a failure.
     """
     if candidate.tool != "click" or candidate.arguments.get("delivery_mode") != "background":
         return None

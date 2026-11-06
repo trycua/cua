@@ -527,6 +527,26 @@ Where the multi-app tasks differ on Windows:
   sentinel sees it). `tests/test_windows_cdb.py` checks the descriptors, the named executables and the
   oracle without a desktop.
 
+### Shared-desktop tasks (PA-01, UM-01)
+
+Selected by id; see [`SHARED-DESKTOP.md`](automated-eval/macos_bench/SHARED-DESKTOP.md). UM-01 runs in the
+background condition only; PA-01 takes `--instances N` (1 to 10, default 10) and needs a 1920 x 1080 screen.
+
+```bash
+# macOS and Linux/X11 (run_bench.py): N agents per trial, one per copy of BenchLab
+python3 run_bench.py run --bench-v2 --condition foreground --tasks PA-01 --instances 10 --arms cc-cua-driver-script ...
+python3 run_bench.py run --bench-v2 --condition background --tasks PA-01 UM-01 --instances 4 --arms cc-cua-driver-script ...
+# Windows and Hyprland launchers: {brief}, {out}, {instance} and {title} are filled in per agent
+python launch\windows_session.py --task PA-01 --instances 10 --run-index 0 --condition background --out C:\bench\PA-01-r0 -- <agent command>
+python3 launch/hyprland_session.py --task UM-01 --run-index 0 --condition background --out ~/bench/UM-01-r0 -- <agent command>
+```
+
+`tools/validate_shared.py` validates both tasks on a free macOS desktop without a model (oracles through
+accessibility only, a deliberate cross-talk, a pointer displacement and a covered canvas); the Linux and
+Windows desktop tests do the same in CI. `tools/analyze_v2.py` adds the PA-01 table per N (copies passed,
+cross-talk, makespan, throughput, speed-up over N = 1) and the UM-01 table; `--session-rows DIR` reads the
+Windows and Hyprland `row.json` files.
+
 ### Tests
 
 ```bash

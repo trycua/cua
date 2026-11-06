@@ -158,15 +158,34 @@ impl Tool for DoubleClickTool {
                 "double_click.ax",
                 || async move {
                     tokio::task::spawn_blocking(move || {
-                        ax_double_click(
-                            pid,
+                        let act = || {
+                            ax_double_click(
+                                pid,
+                                wid,
+                                element_guard.as_ptr(),
+                                idx,
+                                &ck,
+                                has_ax_open,
+                                foreground,
+                            )
+                        };
+                        if !foreground {
+                            return act();
+                        }
+                        // Front, act, restore, as click's foreground AX path
+                        // does; activation can enable the control.
+                        let mut outcome = None;
+                        crate::input::skylight::with_foreground_assist(
+                            pid as libc::pid_t,
                             wid,
-                            element_guard.as_ptr(),
-                            idx,
-                            &ck,
-                            has_ax_open,
-                            foreground,
-                        )
+                            || {
+                                outcome = Some(act()?);
+                                Ok(())
+                            },
+                        )?;
+                        outcome.ok_or_else(|| {
+                            anyhow::anyhow!("foreground double_click did not execute")
+                        })
                     })
                     .await
                 },
@@ -176,7 +195,8 @@ impl Tool for DoubleClickTool {
 
             return match result {
                 Ok(Ok(msg)) => ToolResult::text(format!("{msg}{}", changes.result_suffix())),
-                Ok(Err(e)) => ToolResult::error(format!("double_click failed: {e}")),
+                Ok(Err(e)) => super::element_disabled_error(pid, wid, &e, foreground)
+                    .unwrap_or_else(|| ToolResult::error(format!("double_click failed: {e}"))),
                 Err(e) => ToolResult::error(format!("Task error: {e}")),
             };
         }
@@ -217,6 +237,9 @@ fn ax_double_click(
     foreground: bool,
 ) -> anyhow::Result<String> {
     let element = element_ptr as AXUIElementRef;
+    // The caller's early read skips a foreground call into a background app,
+    // so this read, right before input, is the one that always runs.
+    crate::input::ax_actions::ensure_ax_action_enabled(element_ptr, "double_click")?;
 
     // Try AXOpen first (Finder items, openable list rows, document cells).
     if has_ax_open {

@@ -1289,7 +1289,12 @@ impl BrowserEngine {
         cdp_session: &str,
         cdp_target_id: &str,
     ) {
-        if conn.dialog_state(cdp_target_id).is_some() || conn.has_dialog_session(cdp_target_id) {
+        // A dialog whose session detached still blocks the page; a new
+        // subscriber is the only way its close can clear the record.
+        let dialog = conn.dialog_state(cdp_target_id);
+        if dialog.as_ref().is_some_and(|dialog| !dialog.detached)
+            || conn.has_dialog_session(cdp_target_id)
+        {
             return;
         }
         conn.register_dialog_session(cdp_session, cdp_target_id);
@@ -1303,6 +1308,11 @@ impl BrowserEngine {
             .await;
         if enabled.is_err() && conn.dialog_state(cdp_target_id).is_none() {
             conn.unregister_dialog_session(cdp_session, cdp_target_id);
+        }
+        // A blocked renderer cannot answer Page.enable, so a reply means the
+        // detached dialog closed while no session was listening.
+        if let (Ok(_), Some(stale)) = (&enabled, dialog) {
+            conn.clear_dialog_state(cdp_target_id, stale.generation);
         }
     }
 

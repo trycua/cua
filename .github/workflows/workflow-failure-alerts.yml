@@ -27,6 +27,8 @@ on:
       - "E2E: Cua Driver release gate"
       - "CI: Cua Driver installer compatibility"
       - "Monitor branded installer endpoints"
+      - "CI: Cua Spaces"
+      - "CI: Cua Spaces for macOS (SwiftUI)"
       - "Release: Pipeline guard"
       - "Security: push watch"
       - "CD: Cua Driver (cross-platform)"
@@ -67,6 +69,8 @@ jobs:
         E2E: Cua Driver release gate=release
         CI: Cua Driver installer compatibility=release
         Monitor branded installer endpoints=release
+        CI: Cua Spaces=ci
+        CI: Cua Spaces for macOS (SwiftUI)=ci
         Release: Pipeline guard=release
         Security: push watch=ci
         CD: Cua Driver (cross-platform)=release

@@ -342,9 +342,10 @@ struct LifecycleRecord {
     transport: SessionTransport,
     client_kind: SessionClientKind,
     started_at: Instant,
-    /// Last use. Admission, declaration and dispatch completion refresh it
-    /// under the same lock that holds `in_flight`, so the idle sweep reads
-    /// both in one critical section.
+    /// Last use. Admission, declaration and dispatch completion stamp it
+    /// with `Instant::now()` while holding the records lock, so stamps only
+    /// move forward and the idle sweep reads it with `in_flight` in one
+    /// critical section.
     last_activity: Instant,
     /// Trusted host override. Ordinary sessions use the runtime sweep's
     /// default TTL so tests and process-level configuration can still supply
@@ -510,7 +511,7 @@ fn begin_session_dispatch_inner(
             record.idle_ttl = idle_ttl;
         }
         record.in_flight += 1;
-        record.last_activity = now;
+        record.last_activity = Instant::now();
         if recreated {
             ended.remove(session_id);
             idle_ended.remove(session_id);
@@ -591,7 +592,7 @@ fn activate_session_inner(
             if idle_ttl.is_some() {
                 record.idle_ttl = idle_ttl;
             }
-            record.last_activity = now;
+            record.last_activity = Instant::now();
         } else {
             records.insert(
                 session_id.to_owned(),
@@ -676,7 +677,7 @@ pub fn activate_or_revive_session_for_owner(
             if idle_ttl.is_some() {
                 record.idle_ttl = idle_ttl;
             }
-            record.last_activity = now;
+            record.last_activity = Instant::now();
         } else {
             records.insert(
                 session_id.to_owned(),

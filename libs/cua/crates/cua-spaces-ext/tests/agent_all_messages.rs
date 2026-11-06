@@ -11,7 +11,6 @@
 #![allow(dead_code)]
 
 use cua_spaces::Spaces;
-use cua_spaces::extension::Caller;
 use cua_spaces::mcp::McpServer;
 use cua_spaces_ext::SpacesPersistent as _;
 use cua_spaces_ext::persistent::{Persistent, bridge};

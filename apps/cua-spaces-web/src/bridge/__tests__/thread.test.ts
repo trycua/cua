@@ -435,6 +435,15 @@ describe("every agent message and the child agents in the thread", () => {
     expect(said).toEqual(["On it.", "Found the files.", "All done."]);
   });
 
+  it("quotes the task once when an agent says several things under it", () => {
+    seq = 0;
+    const task = entry({ text: "@claude do the thing", task: { to: "claude", session: null } });
+    const other = entry({ author: GRACE, text: "unrelated" });
+    const items = foldThread([task, other, say("One.", task.seq), say("Two.", task.seq), say("Three.", task.seq)], { readSeq: null });
+    const quotes = items.filter((i) => i.type === "message" && i.entry.author.kind === "agent").map((i) => (i as { quote: unknown }).quote !== null);
+    expect(quotes).toEqual([true, false, false]);
+  });
+
   it("shows a message that arrives after the task closed", () => {
     seq = 0;
     const task = entry({ text: "@claude start the job", task: { to: "claude", session: null } });

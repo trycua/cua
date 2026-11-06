@@ -2449,6 +2449,10 @@ impl Persistent {
         });
         let mut drafts = vec![];
         for s in &subs {
+            // The call names its task a moment after it starts: the note waits for the name.
+            if s.state == "running" && s.title == "Subagent" {
+                continue;
+            }
             let mut states = vec!["running"];
             if s.state != "running" {
                 states.push(s.state);

@@ -92,6 +92,7 @@ export function foldThread(entries: readonly ThreadEntry[], opts: { readSeq?: nu
   const tasks = new Map<number, Extract<ThreadItem, { type: "task" }>>();
   const approvals = new Map<number, Extract<ThreadItem, { type: "approval" | "join_request" }>>();
   const subs = new Map<string, Extract<ThreadItem, { type: "subagent" }>>();
+  const answered = new Set<string>();
   for (const e of sorted) {
     // The copy of a message that tasks one more agent: the original is the row.
     if (e.fanoutOf != null) continue;
@@ -152,11 +153,15 @@ export function foldThread(entries: readonly ThreadEntry[], opts: { readSeq?: nu
       continue;
     }
     const parent = e.replyTo !== null ? bySeq.get(e.replyTo) : undefined;
+    // An agent that says several things under one message names it once: the later ones follow the first.
+    const said = parent ? `${parent.seq}:${e.author.id}` : null;
+    const again = said !== null && answered.has(said);
+    if (said !== null) answered.add(said);
     items.push({
       type: "message",
       key: `m${e.seq}`,
       entry: e,
-      quote: parent ? { seq: parent.seq, author: parent.author, text: parent.text } : null,
+      quote: parent && !again ? { seq: parent.seq, author: parent.author, text: parent.text } : null,
       taskText: parent?.task ? parent.text : null,
     });
   }

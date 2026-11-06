@@ -421,6 +421,16 @@ impl AgentEvent {
 
     /// One human-readable line (CLI logs, the MCP `output_tail`).
     pub fn render(&self) -> Option<String> {
+        let line = self.render_line()?;
+        // What a subagent did is indented under the call that started it.
+        Some(if self.parent_tool_id.is_some() {
+            format!("  | {line}")
+        } else {
+            line
+        })
+    }
+
+    fn render_line(&self) -> Option<String> {
         let t = |s: &Option<String>| s.clone().unwrap_or_default();
         Some(match self.kind {
             "message" => t(&self.text),
@@ -508,6 +518,17 @@ pub fn page(bytes: &[u8], from: u64, max: usize) -> EventPage {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_subagents_steps_are_indented_in_the_log_and_name_their_parent() {
+        let child = r#"{"seq":5,"ts":1,"turn":1,"type":"update","update":{"_meta":{"claudeCode":{"parentToolUseId":"toolu_1"}},"sessionUpdate":"tool_call","toolCallId":"c1","title":"ls","kind":"execute","status":"pending"}}"#;
+        let e = AgentEvent::parse(child).unwrap();
+        assert_eq!(e.parent_tool_id.as_deref(), Some("toolu_1"));
+        assert_eq!(e.render().unwrap(), "  | [tool execute] ls");
+        let own = AgentEvent::parse(&child.replace("\"parentToolUseId\":\"toolu_1\"", "\"x\":1")).unwrap();
+        assert!(own.parent_tool_id.is_none());
+        assert_eq!(own.render().unwrap(), "[tool execute] ls");
+    }
 
     /// Lines recorded from real runs (claude-agent-acp 0.81.1 and codex-acp
     /// 1.13.1 against cua-mock-llm, the mock provider).

@@ -81,8 +81,9 @@
 # nothing is asked to unlock it and a locked login Keychain does not matter).
 # It writes nothing to your login Keychain; it reuses a certificate already
 # there, or the Keychain Cua Driver's local install made, as before.
-# CUA_LOCAL_SIGN=adhoc skips every certificate and signs ad hoc (no Keychain
-# prompt at all). CUA_LOCAL_SIGNING_OWN_KEYCHAIN=0 turns the own Keychain off. When nothing works the app is
+# By default it signs ad hoc (no certificate, no Keychain prompt at all);
+# CUA_LOCAL_SIGN=stable, --setup-signing or --require-stable-signing use the
+# stable certificate. CUA_LOCAL_SIGN=adhoc forces ad hoc. CUA_LOCAL_SIGNING_OWN_KEYCHAIN=0 turns the own Keychain off. When nothing works the app is
 # signed ad hoc and the script says why in one line.
 #
 # Uninstall: scripts/uninstall-local.sh.
@@ -131,6 +132,17 @@ while [ "$#" -gt 0 ]; do
     esac
     shift
 done
+
+# Ad hoc signing is the default: no certificate, no Keychain, no prompt. The
+# stable certificate (permissions that survive rebuilds) is opt-in with
+# --setup-signing, --require-stable-signing or CUA_LOCAL_SIGN=stable.
+if [ -z "${CUA_LOCAL_SIGN:-}" ]; then
+    if [ "$SETUP_SIGNING" = 1 ] || [ "$REQUIRE_STABLE_SIGNING" = 1 ]; then
+        CUA_LOCAL_SIGN=stable
+    else
+        CUA_LOCAL_SIGN=adhoc
+    fi
+fi
 
 if [ "$(id -u)" -eq 0 ] || [ -n "${SUDO_USER:-}" ]; then
     die "do not run this script with sudo or as root."

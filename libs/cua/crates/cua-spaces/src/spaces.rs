@@ -3478,6 +3478,11 @@ impl Spaces {
             self.detach_attached_space(&id.to_string()).await;
         }
         let message = self.delete_space(&id).await?;
+        // What lived in the Space (its persistent agents) ends with it.
+        #[cfg(feature = "mcp")]
+        for e in &self.inner.extensions {
+            e.space_deleted(self, &id.to_string()).await;
+        }
         // A Space this device attached to the relay as a machine of its own
         // takes that machine with it.
         #[cfg(feature = "spaces-agents")]

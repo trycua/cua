@@ -89,6 +89,13 @@ const PREPARE_TIMEOUT: Duration = Duration::from_secs(900);
 /// until it is used again.
 const MAX_FAILURES: u32 = 3;
 
+/// How long a shape that failed [`MAX_FAILURES`] starts in a row waits
+/// before it tries one more (a registry or engine that was down recovers).
+const FAILURE_COOLDOWN: Duration = Duration::from_secs(300);
+
+/// How often a refill that stays deferred for the same reason says so again.
+const DEFER_LOG_EVERY: Duration = Duration::from_secs(120);
+
 /// The estimate of a member's memory until one was measured: a container
 /// Space at idle (a gVisor desktop is well under this). VMs count their
 /// whole memory.
@@ -342,6 +349,9 @@ struct Shape {
     members: Vec<Member>,
     starting: u32,
     failures: u32,
+    /// When the last member start failed (the cool-down after
+    /// [`MAX_FAILURES`] runs from it).
+    failed_at: Option<Instant>,
     /// Measured idle footprint of a member (MiB).
     footprint_mb: Option<u64>,
     /// Its creates.
@@ -379,6 +389,7 @@ impl Shape {
             members: vec![],
             starting: 0,
             failures: 0,
+            failed_at: None,
             footprint_mb: None,
             arrivals: Default::default(),
             boot_s: None,
@@ -584,6 +595,9 @@ struct Inner {
     arrived: tokio::sync::Notify,
     /// Shapes with a refill scheduled that has not started yet.
     due: Mutex<HashSet<String>>,
+    /// Why each shape's refill is deferred now, and when that was last
+    /// logged ([`WarmPool::defer`]).
+    deferred: Mutex<HashMap<String, (String, Instant)>>,
 }
 
 /// How long the policy starts no member after other work took capacity back.
@@ -800,6 +814,7 @@ impl WarmPool {
                 held_off_until: Mutex::new(None),
                 arrived: tokio::sync::Notify::new(),
                 due: Mutex::new(HashSet::new()),
+                deferred: Mutex::new(HashMap::new()),
             }),
         }
     }
@@ -1416,8 +1431,25 @@ impl WarmPool {
                 let shapes = self.inner.shapes.lock().unwrap();
                 let Some(s) = shapes.get(key) else { return };
                 let have = s.members.len() as u32 + s.starting;
-                if have >= s.target(auto) || s.failures >= MAX_FAILURES {
+                if have >= s.target(auto) {
+                    self.undefer(key);
                     return;
+                }
+                if s.failures >= MAX_FAILURES {
+                    let wait = s
+                        .failed_at
+                        .map(|t| FAILURE_COOLDOWN.saturating_sub(t.elapsed()))
+                        .unwrap_or_default();
+                    if !wait.is_zero() {
+                        let why = format!(
+                            "the last {} member starts failed; trying again in {}s",
+                            s.failures,
+                            wait.as_secs()
+                        );
+                        drop(shapes);
+                        self.defer(key, "failing", why);
+                        return;
+                    }
                 }
                 (s.template.clone(), s.backend, s.rt.clone(), s.estimate_mb())
             };
@@ -1429,21 +1461,28 @@ impl WarmPool {
                 let shapes = self.inner.shapes.lock().unwrap();
                 shapes.get(key).map(|s| s.keep()).unwrap_or(0)
             };
-            if self.held_off() || (keep == 0 && self.inner.host.busy()) {
-                tracing::debug!(
-                    shape = key,
-                    "warm pool: the machine's capacity is wanted elsewhere"
+            if self.held_off() {
+                self.defer(
+                    key,
+                    "held off",
+                    "other work took capacity back a moment ago; no member starts for a while"
+                        .into(),
+                );
+                return;
+            }
+            if keep == 0 && self.inner.host.busy() {
+                self.defer(
+                    key,
+                    "busy",
+                    "the machine's CPUs are busy with other work".into(),
                 );
                 return;
             }
             if keep > 0 && self.inner.host.memory(backend).await.is_none() {
                 self.inner.host.wake(backend).await;
             }
-            if !self.memory_allows(backend, estimate, key).await {
-                tracing::debug!(
-                    shape = key,
-                    "warm pool: not enough memory for another member"
-                );
+            if let Err(why) = self.memory_allows(backend, estimate, key).await {
+                self.defer(key, "memory", why);
                 return;
             }
             {
@@ -1469,13 +1508,16 @@ impl WarmPool {
             match started {
                 Ok(m) => {
                     s.failures = 0;
+                    s.failed_at = None;
                     if s.footprint_mb.is_none() || m.footprint_mb > 0 {
                         s.footprint_mb = Some(m.footprint_mb);
                     }
                     s.members.push(m);
+                    self.undefer(key);
                 }
                 Err(e) => {
                     s.failures += 1;
+                    s.failed_at = Some(Instant::now());
                     tracing::warn!(shape = key, error = %e, "a warm-pool member did not start");
                 }
             }
@@ -1493,9 +1535,14 @@ impl WarmPool {
     /// built-in runtime of 4 GiB, 15 percent is less than one warm Space):
     /// it still needs the free floor, so it never takes memory a Space in use
     /// needs.
-    async fn memory_allows(&self, backend: BackendKind, estimate_mb: u64, key: &str) -> bool {
+    async fn memory_allows(
+        &self,
+        backend: BackendKind,
+        estimate_mb: u64,
+        key: &str,
+    ) -> Result<(), String> {
         let Some(mem) = self.inner.host.memory(backend).await else {
-            return false;
+            return Err("the engine's memory cannot be read now".into());
         };
         let one_warm_home = self
             .inner
@@ -1516,10 +1563,43 @@ impl WarmPool {
                 })
                 .sum()
         };
-        if one_warm_home && held == 0 {
-            return fits(mem, 100, 0, estimate_mb);
+        let (pct, held) = if one_warm_home && held == 0 {
+            (100, 0)
+        } else {
+            (pct, held)
+        };
+        if fits(mem, pct, held, estimate_mb) {
+            return Ok(());
         }
-        fits(mem, pct, held, estimate_mb)
+        let floor = memory_floor_mb(mem.total_mb);
+        let used = mem.total_mb.saturating_sub(mem.available_mb);
+        Err(format!(
+            "not enough free memory: {} MiB of {} MiB in use by running Spaces, a member needs about {} MiB and {} MiB stay free (pool holds {} of its {} MiB share)",
+            used,
+            mem.total_mb,
+            estimate_mb,
+            floor,
+            held,
+            mem.total_mb * pct / 100
+        ))
+    }
+
+    /// Says why the refill of `key` waits, once, and again when the reason
+    /// changes or every [`DEFER_LOG_EVERY`] while it stays.
+    fn defer(&self, key: &str, kind: &str, why: String) {
+        let mut d = self.inner.deferred.lock().unwrap();
+        let fresh = d
+            .get(key)
+            .is_none_or(|(k, at)| k != kind || at.elapsed() >= DEFER_LOG_EVERY);
+        if fresh {
+            tracing::info!(shape = key, reason = %why, "warm pool: refill deferred");
+            d.insert(key.to_string(), (kind.to_string(), Instant::now()));
+        }
+    }
+
+    /// The refill of `key` is no longer deferred.
+    fn undefer(&self, key: &str) {
+        self.inner.deferred.lock().unwrap().remove(key);
     }
 
     async fn start_member(
@@ -2973,6 +3053,56 @@ mod tests {
         warm(&f, &spec("one", "t")).await;
         assert_eq!(f.rt.starts.load(SeqCst), 0);
         assert_eq!(f.pool.status().members, 0);
+    }
+
+    #[tokio::test]
+    async fn a_refill_short_of_memory_says_why_and_goes_ahead_when_memory_frees() {
+        let f = fixture(PoolSettings::default(), FakeRuntime::default());
+        *f.host.memory.lock().unwrap() = Memory {
+            total_mb: 6144,
+            available_mb: 1500,
+        };
+        let key = warm(&f, &spec("one", "t")).await;
+        assert_eq!(f.rt.starts.load(SeqCst), 0);
+        let said = f.pool.inner.deferred.lock().unwrap().get(&key).cloned();
+        assert_eq!(said.map(|(kind, _)| kind), Some("memory".to_string()));
+        // A Space deleted: the next tick's refill starts the member.
+        *f.host.memory.lock().unwrap() = Memory {
+            total_mb: 6144,
+            available_mb: 5000,
+        };
+        f.pool.refill(&key).await;
+        assert_eq!(f.rt.starts.load(SeqCst), 1);
+        assert_eq!(f.pool.status().members, 1);
+        assert!(f.pool.inner.deferred.lock().unwrap().get(&key).is_none());
+        // Never more than the pool's size.
+        f.pool.refill(&key).await;
+        assert_eq!(f.rt.starts.load(SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn failed_starts_wait_out_a_cooldown_and_then_try_again() {
+        let f = fixture(PoolSettings::default(), FakeRuntime::default());
+        f.rt.fail_starts.store(true, SeqCst);
+        let key = warm(&f, &spec("one", "t")).await;
+        assert_eq!(f.rt.starts.load(SeqCst), MAX_FAILURES);
+        // Still cooling down: no start, and the reason is recorded.
+        f.pool.refill(&key).await;
+        assert_eq!(f.rt.starts.load(SeqCst), MAX_FAILURES);
+        let said = f.pool.inner.deferred.lock().unwrap().get(&key).cloned();
+        assert_eq!(said.map(|(kind, _)| kind), Some("failing".to_string()));
+        // After the cooldown one more start is tried, and a good one resets.
+        f.rt.fail_starts.store(false, SeqCst);
+        f.pool
+            .inner
+            .shapes
+            .lock()
+            .unwrap()
+            .get_mut(&key)
+            .unwrap()
+            .failed_at = Some(Instant::now() - FAILURE_COOLDOWN - Duration::from_secs(1));
+        f.pool.refill(&key).await;
+        assert_eq!(f.pool.status().members, 1);
     }
 
     #[tokio::test]

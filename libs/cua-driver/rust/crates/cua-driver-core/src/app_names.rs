@@ -41,6 +41,9 @@ pub struct NamedApp {
     /// The name shown when no localized name fits the user's languages.
     pub title: String,
     pub names: Vec<AppName>,
+    /// The bundle id; copies of one app tie to the first copy, not to a
+    /// refusal.
+    pub id: Option<String>,
 }
 
 /// Why a name did not resolve to exactly one app.
@@ -180,11 +183,13 @@ pub fn lookup(query: &str, apps: &[NamedApp], languages: &[String]) -> Result<us
     suggestions.truncate(SUGGESTION_LIMIT);
 
     let top = ranked.first().map_or(Rank::NoMatch, |(rank, _)| *rank);
-    let best: Vec<usize> = ranked
-        .iter()
-        .take_while(|(rank, _)| *rank == top)
-        .map(|(_, index)| *index)
-        .collect();
+    let mut best: Vec<usize> = Vec::new();
+    for (_, index) in ranked.iter().take_while(|(rank, _)| *rank == top) {
+        let id = &apps[*index].id;
+        if id.is_none() || !best.iter().any(|known| apps[*known].id == *id) {
+            best.push(*index);
+        }
+    }
     match best.as_slice() {
         [one] if top >= Rank::Prefix => Ok(*one),
         _ => Err(NameMiss {
@@ -205,6 +210,7 @@ mod tests {
                 .iter()
                 .map(|(text, language)| AppName::new(*text, *language))
                 .collect(),
+            id: None,
         }
     }
 
@@ -283,6 +289,21 @@ mod tests {
             })
         );
         assert_eq!(lookup("Adobe InDesign 2026", &apps, &[]), Ok(1));
+    }
+
+    #[test]
+    fn copies_of_one_app_tie_to_the_first_copy() {
+        let copy = |names: &[(&str, &str)]| NamedApp {
+            id: Some("com.example.notes".to_owned()),
+            ..app("Notes", names)
+        };
+        let apps = [
+            copy(&[("Notes", "")]),
+            copy(&[("Notes", ""), ("Notes Beta", "")]),
+        ];
+        assert_eq!(lookup("notes", &apps, &[]), Ok(0));
+        // A name only the second copy ships launches that copy.
+        assert_eq!(lookup("notes beta", &apps, &[]), Ok(1));
     }
 
     #[test]

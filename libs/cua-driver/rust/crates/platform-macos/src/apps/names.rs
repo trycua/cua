@@ -41,7 +41,6 @@ const LEGACY_LANGUAGES: [(&str, &str); 19] = [
 
 struct Bundle {
     path: PathBuf,
-    bundle_id: Option<String>,
     app: NamedApp,
 }
 
@@ -52,7 +51,7 @@ pub(crate) fn find(
     roots: &[PathBuf],
     languages: &[String],
 ) -> Result<PathBuf, NameMiss> {
-    let bundles = merge(scan(roots));
+    let bundles = scan(roots);
     let apps: Vec<NamedApp> = bundles.iter().map(|bundle| bundle.app.clone()).collect();
     let query = query.trim().trim_end_matches(".app");
     app_names::lookup(query, &apps, languages).map(|index| bundles[index].path.clone())
@@ -76,10 +75,17 @@ pub(crate) fn preferred_languages() -> Vec<String> {
 }
 
 /// The `.app` bundles inside each root and one folder down (Adobe's
-/// `Adobe InDesign 2026/Adobe InDesign 2026.app`), in root order.
+/// `Adobe InDesign 2026/Adobe InDesign 2026.app`), in root order. A root that
+/// is itself a bundle is that one bundle.
 fn scan(roots: &[PathBuf]) -> Vec<Bundle> {
     let mut bundles = Vec::new();
     for root in roots {
+        if is_app(root) {
+            if root.is_dir() {
+                bundles.push(load_bundle(root.clone()));
+            }
+            continue;
+        }
         let (apps, folders): (Vec<PathBuf>, Vec<PathBuf>) =
             sorted_dirs(root).into_iter().partition(|path| is_app(path));
         let nested = folders
@@ -107,30 +113,6 @@ fn sorted_dirs(folder: &Path) -> Vec<PathBuf> {
     dirs
 }
 
-/// One bundle per bundle id, at its first-seen path and holding every name
-/// of its copies.
-fn merge(bundles: Vec<Bundle>) -> Vec<Bundle> {
-    let mut merged: Vec<Bundle> = Vec::new();
-    for bundle in bundles {
-        let first = bundle.bundle_id.as_ref().and_then(|id| {
-            merged
-                .iter_mut()
-                .find(|known| known.bundle_id.as_ref() == Some(id))
-        });
-        match first {
-            Some(first) => {
-                for name in bundle.app.names {
-                    if !first.app.names.contains(&name) {
-                        first.app.names.push(name);
-                    }
-                }
-            }
-            None => merged.push(bundle),
-        }
-    }
-    merged
-}
-
 fn load_bundle(path: PathBuf) -> Bundle {
     let stem = path
         .file_stem()
@@ -148,15 +130,19 @@ fn load_bundle(path: PathBuf) -> Bundle {
     names.extend(own);
     names.extend(localized_names(&path.join("Contents/Resources")));
     Bundle {
-        bundle_id: info
-            .as_ref()
-            .and_then(|info| plist_string(info, "CFBundleIdentifier")),
         path,
-        app: NamedApp { title, names },
+        app: NamedApp {
+            title,
+            names,
+            id: info
+                .as_ref()
+                .and_then(|info| plist_string(info, "CFBundleIdentifier")),
+        },
     }
 }
 
 /// Every language's shown names, from the loctable and the `.lproj` folders.
+/// `Base` holds names for no one language, like the unlocalized metadata.
 fn localized_names(resources: &Path) -> Vec<AppName> {
     let mut names = Vec::new();
     if let Some(table) = read_bundle_plist(&resources.join("InfoPlist.loctable")) {
@@ -169,10 +155,7 @@ fn localized_names(resources: &Path) -> Vec<AppName> {
             else {
                 continue;
             };
-            let language = language.to_string();
-            if language != "Base" {
-                names.extend(named(&strings, &language));
-            }
+            names.extend(named(&strings, &language_code(&language.to_string())));
         }
     }
     for folder in sorted_dirs(resources) {
@@ -180,18 +163,24 @@ fn localized_names(resources: &Path) -> Vec<AppName> {
             continue;
         }
         let stem = folder.file_stem().unwrap_or_default().to_string_lossy();
-        let language = LEGACY_LANGUAGES
-            .iter()
-            .find(|(legacy, _)| *legacy == stem)
-            .map_or(stem.as_ref(), |(_, code)| *code);
-        if language == "Base" {
-            continue;
-        }
         if let Some(strings) = read_bundle_plist(&folder.join("InfoPlist.strings")) {
-            names.extend(named(&strings, language));
+            names.extend(named(&strings, &language_code(&stem)));
         }
     }
     names
+}
+
+/// The language a loctable key or `.lproj` folder stands for: legacy names
+/// mapped to their code, `Base` to none.
+fn language_code(folder: &str) -> String {
+    if folder == "Base" {
+        return String::new();
+    }
+    LEGACY_LANGUAGES
+        .iter()
+        .find(|(legacy, _)| *legacy == folder)
+        .map_or(folder, |(_, code)| *code)
+        .to_owned()
 }
 
 fn named(strings: &CFDictionary, language: &str) -> Vec<AppName> {
@@ -338,12 +327,56 @@ mod tests {
     }
 
     #[test]
-    fn copies_of_one_bundle_id_are_one_app_at_the_first_root() {
+    fn copies_of_one_bundle_id_launch_the_copy_the_name_belongs_to() {
         let system = tempfile::tempdir().unwrap();
         let user = tempfile::tempdir().unwrap();
         let first = bundle(&system.path().join("Notes.app"), "com.apple.Notes", "");
-        bundle(&user.path().join("Notes copy.app"), "com.apple.Notes", "");
+        let copy = bundle(&user.path().join("Notes copy.app"), "com.apple.Notes", "");
         let roots = [system.path().to_path_buf(), user.path().to_path_buf()];
         assert_eq!(find("notes", &roots, &[]), Ok(first));
+        assert_eq!(find("notes copy", &roots, &[]), Ok(copy));
+    }
+
+    #[test]
+    fn a_base_localization_name_finds_the_app() {
+        let root = tempfile::tempdir().unwrap();
+        let app = bundle(&root.path().join("PV.app"), "com.example.viewer", "");
+        std::fs::write(
+            app.join("Contents/Resources/InfoPlist.loctable"),
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0"><dict>
+<key>Base</key><dict><key>CFBundleDisplayName</key><string>Photo Viewer</string></dict>
+</dict></plist>"#,
+        )
+        .unwrap();
+        let other = bundle(&root.path().join("Other.app"), "com.example.other", "");
+        let base = other.join("Contents/Resources/Base.lproj");
+        std::fs::create_dir_all(&base).unwrap();
+        std::fs::write(
+            base.join("InfoPlist.strings"),
+            "\"CFBundleDisplayName\" = \"Other Viewer\";\n",
+        )
+        .unwrap();
+        let roots = [root.path().to_path_buf()];
+        assert_eq!(find("photo viewer", &roots, &langs(&["en-US"])), Ok(app));
+        assert_eq!(find("other viewer", &roots, &langs(&["en-US"])), Ok(other));
+    }
+
+    #[test]
+    fn a_root_that_is_a_bundle_is_scanned_as_that_bundle() {
+        let root = tempfile::tempdir().unwrap();
+        let finder = bundle(
+            &root.path().join("CoreServices/Finder.app"),
+            "com.apple.finder",
+            "",
+        );
+        bundle(
+            &root.path().join("CoreServices/Siri.app"),
+            "com.apple.Siri",
+            "",
+        );
+        let roots = [finder.clone()];
+        assert_eq!(find("finder", &roots, &[]), Ok(finder));
+        assert!(find("siri", &roots, &[]).is_err());
     }
 }

@@ -4014,8 +4014,6 @@ mod tests {
         let images = f.rt.images.lock().unwrap().clone();
         assert!(images.last().unwrap().starts_with("local/prepared:warm-"));
         assert_eq!(f.host.prepared.lock().unwrap().len(), before);
-        // A member whose first app is in a saved filesystem with only some of
-        // the rest is claimable at once, and the rest is built beside it.
         let full = idx.iter().max_by_key(|e| e.harnesses.len()).unwrap().tag.clone();
         assert!(images.last().unwrap().ends_with(&full), "{images:?}");
     }

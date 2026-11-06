@@ -2546,6 +2546,26 @@ impl Thread {
         let t = self.task(seq)?;
         let name = self.agent_of(None, &t)?;
         self.may_steer(&t)?;
+        // The same words already said under this task by the same author (a retry, or a tool
+        // call a restarted bridge ran again): that entry is the answer, nothing is added twice.
+        if attachments.is_empty() {
+            let last = self.store.last_seq()?;
+            let me = self.author().id;
+            if let Some(same) = self
+                .store
+                .read(last.saturating_sub(300), 301)?
+                .into_iter()
+                .rev()
+                .find(|e| {
+                    e.kind == EntryKind::Message
+                        && e.reply_to == Some(seq)
+                        && e.author.id == me
+                        && e.text.trim() == text.trim()
+                })
+            {
+                return Ok((same.clone(), same));
+            }
+        }
         // An agent may say more under a task it already closed (a background job finished, a
         // second thought): its words are appended like any other and the task keeps its state.
         // Nothing the agent posts is refused for coming late.

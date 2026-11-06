@@ -399,6 +399,16 @@ async fn an_agent_can_say_more_under_a_task_it_closed() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_same_reply_run_again_by_a_restarted_bridge_is_not_added_twice() {
+    let (fx, p, seq, _t) = play("@ada hello there", &[chunk(2, "Hello!"), ended(2)]).await;
+    for _ in 0..2 {
+        let r = bridge_call(&fx, &p, 1, "thread_reply", json!({"task": seq, "text": "All set."})).await;
+        assert!(r["result"]["isError"] != json!(true), "{r}");
+    }
+    assert_eq!(says(&thread(&fx).await), ["Hello!", "All set."]);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn what_the_agent_posted_itself_is_not_posted_twice() {
     let mut fx = setup().await;
     let p = member(&mut fx, 1).await;

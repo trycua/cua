@@ -10,11 +10,20 @@ An agent reaches Cua Driver in one of two ways: an MCP client launches
 `cua-driver call <tool>`. The harness owns the model and the loop; Cua Driver
 never calls a model API.
 
-## Register the MCP server
+## Claude Code, Codex and Cursor
 
-To add the skill and MCP server to every agent on the machine in one step, use
-the cua installer: `curl -fsSL https://cua.ai/install.sh | sh -s -- --select cua-driver`.
-Add `--no-skills` to leave the skill out.
+The Cua Driver installer connects these three for you. If you installed one
+of them later, run:
+
+```bash skip="host-install"
+cua-driver connect
+```
+
+It registers an MCP server named `cua-driver` and installs the
+[agent skill](#install-the-agent-skill) for each of them. Start a new session
+afterwards.
+
+## Other agents
 
 `mcp-config` prints the exact command or JSON for your client, with your
 installed binary's absolute path. Run what it prints, then restart the client.
@@ -27,9 +36,7 @@ cua-driver mcp-config --client <client>
 
 | Harness | Setup | Notes |
 | --- | --- | --- |
-| Claude Code | `claude mcp add --transport stdio cua-driver -- cua-driver mcp`, or `--client claude` for the computer-use compatibility profile | `claude mcp add` adds no skill: run `cua-driver skills install` too. `--client claude` installs it. |
-| Codex (CLI, IDE, app) | `--client codex`, which prints `codex mcp add cua-driver -- <path> mcp` | Codex's own approval policy also applies. |
-| Cursor | `--client cursor`; paste into `~/.cursor/mcp.json` or `.cursor/mcp.json` | |
+| Claude Code, Codex, Cursor | `cua-driver connect` | Adds the `cua-driver` server and the skill. Codex's own approval policy also applies. |
 | Antigravity CLI (Gemini) | `--client antigravity`; merge into `~/.gemini/config/mcp_config.json` | `--client gemini` is a legacy alias. Building on the Gemini API directly? See [Gemini](/cua-driver/guides/gemini). |
 | OpenClaw | `--client openclaw`, which prints `openclaw mcp set cua-driver '{…}'` | On macOS, a gateway-spawned server does not inherit OpenClaw.app's grants. |
 | Hermes | Built in: `hermes tools enable computer_use --platform cli`, then `hermes -t computer_use chat` | Repair with `hermes computer-use install` and `doctor`. Do not add a second raw MCP server. |
@@ -76,8 +83,8 @@ loop instead, see [Gemini](/cua-driver/guides/gemini). MiniMax documents setups 
 ## Install the agent skill
 
 The skill teaches an agent to pick tools, address elements, keep focus, and
-verify each action. `mcp-config --client <client>` and the cua installer install
-it for the agents they set up. To install it for every agent on the machine, or
+verify each action. `cua-driver connect` and `mcp-config --client <client>`
+install it for the agents they set up. To install it for every agent on the machine, or
 for one you set up another way, run `skills install`. It links into Claude Code,
 Codex, Cursor, Prime Agent, OpenClaw, OpenCode, Antigravity, Hermes, and Pi:
 

@@ -3213,17 +3213,32 @@ public struct AppAboutUpdates: Equatable, Hashable {
      */
     public var autoInstallEnabled: Bool
     /**
-     * "Update to:".
+     * "Updates".
      */
     public var channelLabel: String
     /**
-     * Stable, Beta.
+     * Stable, Nightly.
      */
     public var channels: [AppSettingsOption]
     /**
-     * The channel picker's tooltip.
+     * What the chosen channel gets, in a line.
      */
     public var channelHelp: String
+    /**
+     * A word about the version running on this channel: a nightly build
+     * back on Stable stays until the next stable release passes it;
+     * `None`: nothing to say.
+     */
+    public var channelNote: String?
+    /**
+     * "Download Stable": the way back to Stable right now
+     * ([`DOWNLOAD_URL`]); `None` when no way back is needed.
+     */
+    public var downloadLabel: String?
+    /**
+     * Where [`AboutUpdates::download_label`] goes.
+     */
+    public var downloadUrl: String?
     /**
      * "Check Now" (or "Checking…").
      */
@@ -3256,14 +3271,26 @@ public struct AppAboutUpdates: Equatable, Hashable {
          * It can be used (only with automatic checks).
          */autoInstallEnabled: Bool,
         /**
-         * "Update to:".
+         * "Updates".
          */channelLabel: String,
         /**
-         * Stable, Beta.
+         * Stable, Nightly.
          */channels: [AppSettingsOption],
         /**
-         * The channel picker's tooltip.
+         * What the chosen channel gets, in a line.
          */channelHelp: String,
+        /**
+         * A word about the version running on this channel: a nightly build
+         * back on Stable stays until the next stable release passes it;
+         * `None`: nothing to say.
+         */channelNote: String?,
+        /**
+         * "Download Stable": the way back to Stable right now
+         * ([`DOWNLOAD_URL`]); `None` when no way back is needed.
+         */downloadLabel: String?,
+        /**
+         * Where [`AboutUpdates::download_label`] goes.
+         */downloadUrl: String?,
         /**
          * "Check Now" (or "Checking…").
          */checkLabel: String,
@@ -3281,6 +3308,9 @@ public struct AppAboutUpdates: Equatable, Hashable {
         self.channelLabel = channelLabel
         self.channels = channels
         self.channelHelp = channelHelp
+        self.channelNote = channelNote
+        self.downloadLabel = downloadLabel
+        self.downloadUrl = downloadUrl
         self.checkLabel = checkLabel
         self.checkEnabled = checkEnabled
         self.lastCheck = lastCheck
@@ -3310,6 +3340,9 @@ public struct FfiConverterTypeAppAboutUpdates: FfiConverterRustBuffer {
                 channelLabel: FfiConverterString.read(from: &buf),
                 channels: FfiConverterSequenceTypeAppSettingsOption.read(from: &buf),
                 channelHelp: FfiConverterString.read(from: &buf),
+                channelNote: FfiConverterOptionString.read(from: &buf),
+                downloadLabel: FfiConverterOptionString.read(from: &buf),
+                downloadUrl: FfiConverterOptionString.read(from: &buf),
                 checkLabel: FfiConverterString.read(from: &buf),
                 checkEnabled: FfiConverterBool.read(from: &buf),
                 lastCheck: FfiConverterString.read(from: &buf)
@@ -3325,6 +3358,9 @@ public struct FfiConverterTypeAppAboutUpdates: FfiConverterRustBuffer {
         FfiConverterString.write(value.channelLabel, into: &buf)
         FfiConverterSequenceTypeAppSettingsOption.write(value.channels, into: &buf)
         FfiConverterString.write(value.channelHelp, into: &buf)
+        FfiConverterOptionString.write(value.channelNote, into: &buf)
+        FfiConverterOptionString.write(value.downloadLabel, into: &buf)
+        FfiConverterOptionString.write(value.downloadUrl, into: &buf)
         FfiConverterString.write(value.checkLabel, into: &buf)
         FfiConverterBool.write(value.checkEnabled, into: &buf)
         FfiConverterString.write(value.lastCheck, into: &buf)
@@ -17057,20 +17093,6 @@ public struct AppExperiments: Equatable, Hashable {
      */
     public var cuaVolume: Bool
     /**
-     * Your own clouds in the New Space wizard.
-     */
-    public var yourCloud: Bool
-    /**
-     * Sharing a Space with other accounts. On unless turned off: a missing
-     * key reads as on (the plans on cua.ai/pricing list sharing).
-     */
-    public var sharing: Bool
-    /**
-     * The shared web UI is the main window. Always on in the macOS shell
-     * ([`crate::settings::resolve_new_ui`]); kept for older files and builds.
-     */
-    public var webUi: Bool
-    /**
      * Secure Spaces: a Space reaches the internet and nothing else on the
      * network unless it is opened. Off unless turned on; the daemon enforces
      * it (the switch is kept in the cua home).
@@ -17119,17 +17141,6 @@ public struct AppExperiments: Equatable, Hashable {
          * Cua Volume in the first run and Settings, Storage.
          */cuaVolume: Bool,
         /**
-         * Your own clouds in the New Space wizard.
-         */yourCloud: Bool,
-        /**
-         * Sharing a Space with other accounts. On unless turned off: a missing
-         * key reads as on (the plans on cua.ai/pricing list sharing).
-         */sharing: Bool,
-        /**
-         * The shared web UI is the main window. Always on in the macOS shell
-         * ([`crate::settings::resolve_new_ui`]); kept for older files and builds.
-         */webUi: Bool,
-        /**
          * Secure Spaces: a Space reaches the internet and nothing else on the
          * network unless it is opened. Off unless turned on; the daemon enforces
          * it (the switch is kept in the cua home).
@@ -17164,9 +17175,6 @@ public struct AppExperiments: Equatable, Hashable {
          * turned on; the daemon enforces it (the switch is kept in the cua home).
          */warmPools: Bool) {
         self.cuaVolume = cuaVolume
-        self.yourCloud = yourCloud
-        self.sharing = sharing
-        self.webUi = webUi
         self.secureSpaces = secureSpaces
         self.childSpaces = childSpaces
         self.askFirst = askFirst
@@ -17193,9 +17201,6 @@ public struct FfiConverterTypeAppExperiments: FfiConverterRustBuffer {
         return
             try AppExperiments(
                 cuaVolume: FfiConverterBool.read(from: &buf),
-                yourCloud: FfiConverterBool.read(from: &buf),
-                sharing: FfiConverterBool.read(from: &buf),
-                webUi: FfiConverterBool.read(from: &buf),
                 secureSpaces: FfiConverterBool.read(from: &buf),
                 childSpaces: FfiConverterBool.read(from: &buf),
                 askFirst: FfiConverterBool.read(from: &buf),
@@ -17208,9 +17213,6 @@ public struct FfiConverterTypeAppExperiments: FfiConverterRustBuffer {
 
     public static func write(_ value: AppExperiments, into buf: inout [UInt8]) {
         FfiConverterBool.write(value.cuaVolume, into: &buf)
-        FfiConverterBool.write(value.yourCloud, into: &buf)
-        FfiConverterBool.write(value.sharing, into: &buf)
-        FfiConverterBool.write(value.webUi, into: &buf)
         FfiConverterBool.write(value.secureSpaces, into: &buf)
         FfiConverterBool.write(value.childSpaces, into: &buf)
         FfiConverterBool.write(value.askFirst, into: &buf)
@@ -35829,18 +35831,9 @@ public struct AppSettings: Equatable, Hashable {
     public var launchAtLogin: Bool?
     /**
      * Settings, Experiments: every switch off unless turned on
-     * ([`crate::experiments`]). Its `webUi` is always on in the macOS
-     * shell ([`resolve_new_ui`]); the file keeps only [`Self::new_ui`]'s
-     * "on" there, the value older builds read.
+     * ([`crate::experiments`]).
      */
     public var experiments: AppExperiments
-    /**
-     * The New UI as an older build's "Use classic UI" saved it. Read and
-     * kept for those builds, never acted on: the web UI is the only UI
-     * ([`resolve_new_ui`]). An older build's saved `webUi: true` reads as
-     * `Some(true)`; its `false` was only the saved default ([`load`]).
-     */
-    public var newUi: Bool?
     /**
      * Keyvault copies (import ids) the user dismissed from the notch: it no
      * longer shows them, nothing is revoked or wiped
@@ -35938,16 +35931,8 @@ public struct AppSettings: Equatable, Hashable {
          */launchAtLogin: Bool?,
         /**
          * Settings, Experiments: every switch off unless turned on
-         * ([`crate::experiments`]). Its `webUi` is always on in the macOS
-         * shell ([`resolve_new_ui`]); the file keeps only [`Self::new_ui`]'s
-         * "on" there, the value older builds read.
+         * ([`crate::experiments`]).
          */experiments: AppExperiments,
-        /**
-         * The New UI as an older build's "Use classic UI" saved it. Read and
-         * kept for those builds, never acted on: the web UI is the only UI
-         * ([`resolve_new_ui`]). An older build's saved `webUi: true` reads as
-         * `Some(true)`; its `false` was only the saved default ([`load`]).
-         */newUi: Bool?,
         /**
          * Keyvault copies (import ids) the user dismissed from the notch: it no
          * longer shows them, nothing is revoked or wiped
@@ -36007,7 +35992,6 @@ public struct AppSettings: Equatable, Hashable {
         self.updateChannel = updateChannel
         self.launchAtLogin = launchAtLogin
         self.experiments = experiments
-        self.newUi = newUi
         self.dismissedAccess = dismissedAccess
         self.notchPinned = notchPinned
         self.keyvaultSiteIcons = keyvaultSiteIcons
@@ -36046,7 +36030,6 @@ public struct FfiConverterTypeAppSettings: FfiConverterRustBuffer {
                 updateChannel: FfiConverterTypeAppUpdateChannel.read(from: &buf),
                 launchAtLogin: FfiConverterOptionBool.read(from: &buf),
                 experiments: FfiConverterTypeAppExperiments.read(from: &buf),
-                newUi: FfiConverterOptionBool.read(from: &buf),
                 dismissedAccess: FfiConverterSequenceString.read(from: &buf),
                 notchPinned: FfiConverterSequenceString.read(from: &buf),
                 keyvaultSiteIcons: FfiConverterBool.read(from: &buf),
@@ -36071,7 +36054,6 @@ public struct FfiConverterTypeAppSettings: FfiConverterRustBuffer {
         FfiConverterTypeAppUpdateChannel.write(value.updateChannel, into: &buf)
         FfiConverterOptionBool.write(value.launchAtLogin, into: &buf)
         FfiConverterTypeAppExperiments.write(value.experiments, into: &buf)
-        FfiConverterOptionBool.write(value.newUi, into: &buf)
         FfiConverterSequenceString.write(value.dismissedAccess, into: &buf)
         FfiConverterSequenceString.write(value.notchPinned, into: &buf)
         FfiConverterBool.write(value.keyvaultSiteIcons, into: &buf)
@@ -44585,7 +44567,7 @@ public struct AppWizardEnv: Equatable, Hashable {
     public var storage: AppLocalStorage?
     /**
      * The user's connected clouds (`cloud_status`), for "Your cloud"
-     * (offered only while its experiment is on: [`offered_clouds`]).
+     * ([`offered_clouds`]).
      */
     public var clouds: [AppConnectedCloud]
     /**
@@ -44593,7 +44575,7 @@ public struct AppWizardEnv: Equatable, Hashable {
      */
     public var hosts: [AppSpaceHost]
     /**
-     * Settings, Experiments ("Your cloud" decides whether clouds show).
+     * Settings, Experiments (the daemon-enforced switches the wizard reads).
      */
     public var experiments: AppExperiments
     /**
@@ -44649,13 +44631,13 @@ public struct AppWizardEnv: Equatable, Hashable {
          */storage: AppLocalStorage?,
         /**
          * The user's connected clouds (`cloud_status`), for "Your cloud"
-         * (offered only while its experiment is on: [`offered_clouds`]).
+         * ([`offered_clouds`]).
          */clouds: [AppConnectedCloud],
         /**
          * The user's machines that provide Spaces (`Spaces.hosts()`).
          */hosts: [AppSpaceHost],
         /**
-         * Settings, Experiments ("Your cloud" decides whether clouds show).
+         * Settings, Experiments (the daemon-enforced switches the wizard reads).
          */experiments: AppExperiments,
         /**
          * The GPU option of each runtime that has one (the SDK's
@@ -65544,7 +65526,7 @@ public enum AppTelemetrySignal: Equatable, Hashable {
          * `experiment_on` or `experiment_off`.
          */action: String,
         /**
-         * `cua_volume`, `your_cloud` or `sharing`.
+         * `cua_volume`, `mobile`, ...
          */experiment: String
     )
     /**
@@ -66772,9 +66754,12 @@ public enum AppUpdateChannel: Equatable, Hashable {
      */
     case stable
     /**
-     * Releases and prereleases (`X.Y.Z-suffix`).
+     * A build of main every night (`X.Y.Z-nightly.YYYYMMDD[+sha]`), from
+     * its own feed. It replaced the Beta channel, so `beta` (an older
+     * build's word, and what the settings file still stores, see
+     * [`crate::settings::save`]) reads as Nightly.
      */
-    case beta
+    case nightly
 
 
 
@@ -66798,7 +66783,7 @@ public struct FfiConverterTypeAppUpdateChannel: FfiConverterRustBuffer {
 
         case 1: return .stable
 
-        case 2: return .beta
+        case 2: return .nightly
 
         default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -66812,7 +66797,7 @@ public struct FfiConverterTypeAppUpdateChannel: FfiConverterRustBuffer {
             writeInt(&buf, Int32(1))
 
 
-        case .beta:
+        case .nightly:
             writeInt(&buf, Int32(2))
 
         }
@@ -78548,6 +78533,19 @@ public func appAboutAllowedChannels(channel: AppUpdateChannel) -> [String]  {
 })
 }
 /**
+ * The appcast a Sparkle updater on `channel` reads, from the app's own
+ * `SUFeedURL` (`stable_feed`): the nightly appcast for Nightly; `None`
+ * keeps `SUFeedURL` (for Nightly: this feed has no nightly next to it).
+ */
+public func appAboutFeedUrl(channel: AppUpdateChannel, stableFeed: String) -> String?  {
+    return try!  FfiConverterOptionString.lift(try! rustCall() {
+    uniffi_cua_spaces_ffi_fn_func_app_about_feed_url(
+        FfiConverterTypeAppUpdateChannel_lower(channel),
+        FfiConverterString.lower(stableFeed),$0
+    )
+})
+}
+/**
  * The About input from JSON (parity flows).
  */
 public func appAboutInputFromJson(json: String)throws  -> AppAboutInput  {
@@ -80831,7 +80829,7 @@ public func appSettingsDefaults() -> AppSettings  {
 }
 /**
  * The update channel of an install's first launch, from the file's
- * `channel`: Beta for a prerelease, else unchanged.
+ * `channel`: Nightly for a prerelease, else unchanged.
  */
 public func appSettingsFirstLaunchChannel(channel: AppUpdateChannel, version: String) -> AppUpdateChannel  {
     return try!  FfiConverterTypeAppUpdateChannel_lift(try! rustCall() {
@@ -80870,19 +80868,6 @@ public func appSettingsPage(input: AppSettingsInput) -> AppSettingsPage  {
     return try!  FfiConverterTypeAppSettingsPage_lift(try! rustCall() {
     uniffi_cua_spaces_ffi_fn_func_app_settings_page(
         FfiConverterTypeAppSettingsInput_lower(input),$0
-    )
-})
-}
-/**
- * The settings with the New UI as a launch of `version` shows it: the
- * user's choice, else the default for the update channel and version
- * (again after the channel changes).
- */
-public func appSettingsResolveNewUi(settings: AppSettings, version: String) -> AppSettings  {
-    return try!  FfiConverterTypeAppSettings_lift(try! rustCall() {
-    uniffi_cua_spaces_ffi_fn_func_app_settings_resolve_new_ui(
-        FfiConverterTypeAppSettings_lower(settings),
-        FfiConverterString.lower(version),$0
     )
 })
 }
@@ -81101,19 +81086,18 @@ public func appSpaceDetailCopy() -> AppDetailCopy  {
 })
 }
 /**
- * [`app_space_detail_with`] as this device sees it: `access` (from
+ * [`app_space_detail_live`] as this device sees it: `access` (from
  * [`app_machine_access_notice`]) greys out Connect on every Space reached
  * through the relay while this device is not enrolled; one of your
  * machines that does not share its desktop shows its note in place of the
  * desktop, Stream, Agents and Teleport.
  */
-public func appSpaceDetailFor(space: AppSpace, usage: AppSpaceUsage?, hostArch: String?, experiments: AppExperiments, access: AppMachineAccessNotice?) -> AppSpaceDetail  {
+public func appSpaceDetailFor(space: AppSpace, usage: AppSpaceUsage?, hostArch: String?, access: AppMachineAccessNotice?) -> AppSpaceDetail  {
     return try!  FfiConverterTypeAppSpaceDetail_lift(try! rustCall() {
     uniffi_cua_spaces_ffi_fn_func_app_space_detail_for(
         FfiConverterTypeAppSpace_lower(space),
         FfiConverterOptionTypeAppSpaceUsage.lower(usage),
         FfiConverterOptionString.lower(hostArch),
-        FfiConverterTypeAppExperiments_lower(experiments),
         FfiConverterOptionTypeAppMachineAccessNotice.lower(access),$0
     )
 })
@@ -81130,20 +81114,6 @@ public func appSpaceDetailLive(space: AppSpace, usage: AppSpaceUsage?, hostArch:
         FfiConverterTypeAppSpace_lower(space),
         FfiConverterOptionTypeAppSpaceUsage.lower(usage),
         FfiConverterOptionString.lower(hostArch),$0
-    )
-})
-}
-/**
- * [`app_space_detail_live`] without what Settings, Experiments hides (the
- * Share button while Sharing is off).
- */
-public func appSpaceDetailWith(space: AppSpace, usage: AppSpaceUsage?, hostArch: String?, experiments: AppExperiments) -> AppSpaceDetail  {
-    return try!  FfiConverterTypeAppSpaceDetail_lift(try! rustCall() {
-    uniffi_cua_spaces_ffi_fn_func_app_space_detail_with(
-        FfiConverterTypeAppSpace_lower(space),
-        FfiConverterOptionTypeAppSpaceUsage.lower(usage),
-        FfiConverterOptionString.lower(hostArch),
-        FfiConverterTypeAppExperiments_lower(experiments),$0
     )
 })
 }
@@ -82334,6 +82304,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_spaces_ffi_checksum_func_app_about_allowed_channels() != 59781) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cua_spaces_ffi_checksum_func_app_about_feed_url() != 25239) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cua_spaces_ffi_checksum_func_app_about_input_from_json() != 570) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -82967,7 +82940,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_spaces_ffi_checksum_func_app_settings_defaults() != 47096) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_spaces_ffi_checksum_func_app_settings_first_launch_channel() != 11279) {
+    if (uniffi_cua_spaces_ffi_checksum_func_app_settings_first_launch_channel() != 29109) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_func_app_settings_input_from_json() != 15437) {
@@ -82977,9 +82950,6 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_func_app_settings_page() != 454) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_cua_spaces_ffi_checksum_func_app_settings_resolve_new_ui() != 48081) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_func_app_settings_save() != 62204) {
@@ -83039,13 +83009,10 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_spaces_ffi_checksum_func_app_space_detail_copy() != 55740) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_spaces_ffi_checksum_func_app_space_detail_for() != 46982) {
+    if (uniffi_cua_spaces_ffi_checksum_func_app_space_detail_for() != 50402) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_func_app_space_detail_live() != 55583) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_cua_spaces_ffi_checksum_func_app_space_detail_with() != 51134) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_func_app_space_host() != 37974) {

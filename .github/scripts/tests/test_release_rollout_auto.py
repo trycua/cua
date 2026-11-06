@@ -29,7 +29,7 @@ def feeds(staging, interval, pub=PUB, title="0.16.0"):
 
 
 def args(**kw):
-    a = argparse.Namespace(min_age_hours=24, min_installs=15, min_create_events=30, max_create_error_delta=10.0,
+    a = argparse.Namespace(soak_hours_10=2, soak_hours_50=4, soak_hours_full=24, min_installs=15, min_create_events=30, max_create_error_delta=10.0,
                            min_update_events=20, max_update_failure_delta=15.0,
                            min_sessions=100, max_crash_free_drop=0.5, min_crash_free=99.0)
     a.__dict__.update(kw)
@@ -141,9 +141,48 @@ class SentryHostAndFailures(unittest.TestCase):
 
 
 class Decide(unittest.TestCase):
-    def go(self, hours=25, hold="", q=None, stage="10", crash=None):
-        s = ra.read_state(feeds("10", ra.rr.HOLD_SECONDS)) if stage == "10" else ra.read_state(feeds(stage, None))
+    def go(self, hours=25, hold="", q=None, stage="10", crash=None, title="0.16.0"):
+        s = ra.read_state(feeds("10", ra.rr.HOLD_SECONDS, title=title)) if stage == "10" else ra.read_state(feeds(stage, None, title=title))
         return ra.decide(s, PUB + timedelta(hours=hours), args(), q=q or fake(), incident=OK(), hold=hold, crash=crash or CR())
+
+    def test_patch_advances_after_the_short_soak_at_10(self):
+        self.assertEqual(self.go(hours=1.5, title="0.16.1")["action"], "wait")
+        d = self.go(hours=2.5, title="0.16.1")
+        self.assertEqual((d["action"], d["next"], d["soak_hours"]), ("advance", "50", 2))
+
+    def test_patch_advances_after_the_short_soak_at_50(self):
+        s = ra.read_state(feeds("50", ra.rr.WEEK, title="0.16.1"))
+        three_weeks = timedelta(weeks=3)
+        self.assertEqual(ra.decide(s, PUB + three_weeks + timedelta(hours=3), args(), q=fake(), incident=OK(), crash=CR())["action"], "wait")
+        d = ra.decide(s, PUB + three_weeks + timedelta(hours=4.5), args(), q=fake(), incident=OK(), crash=CR())
+        self.assertEqual((d["action"], d["next"], d["soak_hours"]), ("advance", "100", 4))
+
+    def test_minor_and_major_keep_24h_at_every_step(self):
+        for title in ("0.16.0", "1.0.0"):
+            self.assertEqual(self.go(hours=5, title=title)["action"], "wait")
+            self.assertEqual(self.go(hours=25, title=title)["soak_hours"], 24)
+            self.assertEqual(self.go(hours=25, title=title)["action"], "advance")
+
+    def test_short_soak_needs_enough_crash_sessions(self):
+        few = {"gate": "crash", "status": "wait", "detail": "30 sessions (need 100)"}
+        d = self.go(hours=5, title="0.16.1", crash=few)
+        self.assertEqual(d["action"], "wait")
+        skipped = {"gate": "crash", "status": "skip", "detail": "no token"}
+        d = self.go(hours=5, title="0.16.1", crash=skipped)
+        self.assertEqual((d["action"], d["soak_hours"]), ("wait", 24))
+        self.assertEqual(self.go(hours=25, title="0.16.1", crash=skipped)["action"], "advance")
+
+    def test_patch_still_waits_for_data_after_the_short_soak(self):
+        self.assertEqual(self.go(hours=5, title="0.16.1", q=fake(installs=3))["action"], "wait")
+
+    def test_is_minor_or_major(self):
+        for v, want in (("0.16.0", True), ("1.0.0", True), ("0.16.1", False), ("2.3.10", False), ("0.16.0-beta.1", True), (None, False), ("junk", False)):
+            self.assertEqual(ra.is_minor_or_major(v), want, v)
+
+    def test_config_names_every_threshold(self):
+        cfg = ra.load_soak()
+        self.assertEqual((cfg["soak_hours_10"], cfg["soak_hours_50"], cfg["soak_hours_full"]), (2, 4, 24))
+        self.assertTrue(set(args().__dict__) <= set(cfg))
 
     def test_advance(self):
         d = self.go()

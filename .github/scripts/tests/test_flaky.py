@@ -203,3 +203,25 @@ def test_detect_reports_jobs_that_failed_then_passed_on_a_rerun(env, monkeypatch
     assert report["kind"] == "job" and report["pr"] == 5
     assert [r["id"] for r in report["flaky"]] == ["CI: jev-use / macOS mock E2E"]
     assert not (env / "out" / "run-8.json").exists()
+
+
+def test_digest_counts_retries_per_test_and_sorts(env, monkeypatch):
+    monkeypatch.setenv("GITHUB_REPOSITORY", "o/r")
+    reports = [
+        {"run_id": "1", "run_attempt": "1", "flaky": [{"id": "a::b"}, {"id": "c::d"}]},
+        {"run_id": "2", "run_attempt": "1", "flaky": [{"id": "c::d"}]},
+        {"run_id": "2", "run_attempt": "1", "flaky": [{"id": "c::d"}]},  # same run twice counts once
+    ]
+    body = flaky.build_digest(reports, "2026-11-01")
+    assert body.index("c::d") < body.index("a::b")
+    assert "| 2 | `c::d` |" in body and "| 1 | `a::b` |" in body
+    args = flaky.argparse.Namespace(days=7, dry_run=True)
+    assert flaky.cmd_digest(args, list_artifacts=lambda r, s: [{"id": 1}], fetch=lambda r, a: reports) == 0
+
+
+def test_record_writes_summary_only(env, capsys):
+    d = env / "res"
+    d.mkdir()
+    (d / "x.json").write_text(json.dumps({"suite": "s", "run_id": "9", "run_attempt": "2", "flaky": [{"id": "t::x"}]}))
+    assert flaky.main(["record", "--dir", str(d)]) == 0
+    assert "t::x" in (env / "summary.md").read_text()

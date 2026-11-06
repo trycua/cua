@@ -483,7 +483,12 @@ fn main() {
 
 /// Runs a daemon command on a fresh multi-threaded runtime.
 fn run(command: Command) -> Result<Exit, BoxError> {
+    // At least two workers: a Space with one vCPU would otherwise run the
+    // whole server on one thread, and any blocking call that waits on this
+    // process itself (the Cua Volume is served from here) would stop it.
+    let workers = std::thread::available_parallelism().map_or(2, |n| n.get().max(2));
     let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(workers)
         .enable_all()
         .build()
         .expect("tokio runtime");

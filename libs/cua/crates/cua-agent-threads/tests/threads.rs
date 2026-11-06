@@ -362,3 +362,59 @@ fn long_messages_are_cut() {
     assert!(t.messages[0].cut);
     assert!(t.messages[0].text.len() <= cua_agent_threads::MESSAGE_MAX_BYTES);
 }
+
+/// A realistic history (hundreds of chats, a few of them huge) lists its newest
+/// chats from their ends only (CUA-3548).
+#[test]
+fn listing_hundreds_of_chats_with_huge_files_stays_fast() {
+    use std::io::Write;
+    let home = tempfile::tempdir().unwrap();
+    for i in 0..300 {
+        let id = format!("00000000-0000-4000-8000-{i:012}");
+        let path = home.path().join(format!(
+            ".claude/projects/-Users-sam-p{}/{id}.jsonl",
+            i % 20
+        ));
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let mut f = std::fs::File::create(&path).unwrap();
+        let rec = |n: usize, text: &str| {
+            format!(
+                "{{\"type\":\"user\",\"uuid\":\"u{n}\",\"cwd\":\"/k\",\"timestamp\":\"2026-11-04T10:00:{:02}Z\",\"message\":{{\"role\":\"user\",\"content\":\"{text}\"}}}}\n",
+                n % 60
+            )
+        };
+        f.write_all(rec(0, &format!("chat {i}")).as_bytes())
+            .unwrap();
+        if i % 50 == 0 {
+            // 300 MB of the middle that must never be read.
+            f.set_len(300 * 1024 * 1024).unwrap();
+            f.seek_end_and_write(rec(1, "last words").as_bytes());
+        }
+    }
+    let t = std::time::Instant::now();
+    let roots = Roots::under_home(home.path());
+    let got = recent(
+        &roots,
+        &ListOptions {
+            agents: Agent::ALL.to_vec(),
+            limit: 50,
+        },
+    );
+    assert_eq!(got.len(), 50);
+    assert!(
+        t.elapsed() < std::time::Duration::from_secs(5),
+        "{:?}",
+        t.elapsed()
+    );
+}
+
+trait SeekEnd {
+    fn seek_end_and_write(&mut self, bytes: &[u8]);
+}
+impl SeekEnd for std::fs::File {
+    fn seek_end_and_write(&mut self, bytes: &[u8]) {
+        use std::io::{Seek, SeekFrom, Write};
+        self.seek(SeekFrom::End(0)).unwrap();
+        self.write_all(bytes).unwrap();
+    }
+}

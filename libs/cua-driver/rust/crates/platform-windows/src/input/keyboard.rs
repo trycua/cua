@@ -301,38 +301,73 @@ pub fn post_type_text_with_delay(hwnd: u64, text: &str, inter_char_ms: u64) -> R
     // race with text-insertion side effects on the focus.
     let h = focused_descendant(h_parent).unwrap_or(h_parent);
 
-    let mut prev_was_cr = false;
-    for ch in text.chars() {
-        match ch {
-            // `\r\n` (Windows-style line ending) → single Enter. The `\r`
-            // does the Enter; the following `\n` is consumed silently.
-            '\n' if prev_was_cr => {
-                prev_was_cr = false;
-            }
-            '\n' | '\r' => {
+    let units = text_units(text);
+    let mut since_barrier = 0usize;
+    for unit in &units {
+        match unit {
+            // The Enter keystroke makes the target's TranslateMessage append a
+            // WM_CHAR(0x0D) to ITS queue when it dispatches the WM_KEYDOWN.
+            // Anything we post before that lands ahead of the Return and the
+            // text is reordered. Wait for the target to pump (twice, because a
+            // sent message can overtake the posted keydown) before moving on.
+            TextUnit::Return => {
                 unsafe {
                     post_enter_keystroke(h)?;
                 }
-                prev_was_cr = ch == '\r';
-                // Extra settle after Enter — paragraph creation in rich
+                wait_for_target_pump(h);
+                // Extra settle after Enter: paragraph creation in rich
                 // editors (VCL Writer, Scintilla, RichEdit) is heavier than
-                // a single-character insert, so the baseline KEY_DELAY_MS +
-                // inter_char_ms is not enough on slower hosts. The extra
-                // 20 ms covers the queue drain without noticeably slowing
-                // multi-line typing.
+                // a single-character insert.
                 sleep(Duration::from_millis(KEY_DELAY_MS + inter_char_ms + 20));
+                since_barrier = 0;
             }
-            _ => {
-                prev_was_cr = false;
-                let code = ch as u32 as usize;
+            // One UTF-16 unit per WM_CHAR. A supplementary scalar (emoji) is a
+            // high then a low surrogate; posting the scalar value in a single
+            // WM_CHAR is truncated by the target and shows up as garbage.
+            TextUnit::Packet(code) => {
                 unsafe {
-                    PostMessageW(h, WM_CHAR, WPARAM(code), LPARAM(1))?;
+                    PostMessageW(h, WM_CHAR, WPARAM(*code as usize), LPARAM(1))?;
                 }
+                since_barrier += 1;
                 sleep(Duration::from_millis(KEY_DELAY_MS + inter_char_ms));
+                // Bound the target's backlog so the read-back after the call
+                // sees a settled field, and so a hung target aborts the call.
+                if since_barrier >= POST_CHUNK_UNITS {
+                    wait_for_target_pump(h);
+                    since_barrier = 0;
+                }
             }
         }
     }
+    wait_for_target_pump(h);
     Ok(())
+}
+
+/// Posted characters between two pump barriers.
+const POST_CHUNK_UNITS: usize = 32;
+
+/// Round-trip `WM_NULL` to `h`'s thread twice. Sent messages are serviced
+/// whenever the target's message loop next retrieves a message, so this
+/// returns once the target has gone around its loop after everything posted
+/// so far. Bounded and best effort: a hung target just times out.
+fn wait_for_target_pump(h: HWND) {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        SendMessageTimeoutW, SMTO_ABORTIFHUNG, SMTO_BLOCK, WM_NULL,
+    };
+    for _ in 0..2 {
+        let mut out = 0usize;
+        let _ = unsafe {
+            SendMessageTimeoutW(
+                h,
+                WM_NULL,
+                WPARAM(0),
+                LPARAM(0),
+                SMTO_ABORTIFHUNG | SMTO_BLOCK,
+                250,
+                Some(&mut out),
+            )
+        };
+    }
 }
 
 /// Press a named key (and optional modifiers) via WM_KEYDOWN/WM_KEYUP.
@@ -1151,5 +1186,33 @@ mod text_unit_tests {
             let flags = unsafe { input.Anonymous.ki.dwFlags };
             assert_eq!(flags.0 & KEYEVENTF_UNICODE.0, 0);
         }
+    }
+}
+
+#[cfg(test)]
+mod post_text_unit_tests {
+    use super::*;
+
+    fn packets(text: &str) -> Vec<Option<u16>> {
+        text_units(text)
+            .into_iter()
+            .map(|u| match u {
+                TextUnit::Packet(c) => Some(c),
+                TextUnit::Return => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn supplementary_scalar_is_two_surrogate_units() {
+        assert_eq!(packets("\u{1F600}"), vec![Some(0xD83D), Some(0xDE00)]);
+    }
+
+    #[test]
+    fn crlf_is_one_return_and_symbols_survive() {
+        assert_eq!(
+            packets("a\r\nb\n~é"),
+            vec![Some(97), None, Some(98), None, Some(126), Some(0xE9)]
+        );
     }
 }

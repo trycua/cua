@@ -112,7 +112,7 @@ export interface AgentMenuPrefs {
   seen: string[];
 }
 
-export type UpdateChannel = "stable" | "beta";
+export type UpdateChannel = "stable" | "nightly";
 
 /** A login item status as the switch shows it (`LoginItemStatus::is_on`);
  * null when unknown or when the system can't find the app. */
@@ -285,7 +285,8 @@ export interface HostOperations
   "network.get": { args: { spaceId: string }; result: SpaceNetworkWire };
   /** Replaces a Space's network (`cua network set`): `network` is the
    * preset word (`internet`, `none`, `localhost:5432,3000`, `localhost:all`,
-   * `lan`, `custom`, `custom:none`, `unprotected`); `widen` lets a child
+   * `lan`, `localhost+lan:5432,3000` (both extras), `custom`, `custom:none`,
+   * `unprotected`); `widen` lets a child
    * reach more than its parent (the user's own choice, recorded). */
   "network.set": {
     args: {

@@ -103,6 +103,7 @@ both_transports!(
     capabilities_and_transport,
     run_collects_output_and_exit_codes,
     run_timeout,
+    a_silent_start_times_out,
     spawn_reattach_by_tag_with_scrollback,
     stdin_roundtrip,
     small_upload_download_and_typed_errors,
@@ -162,6 +163,32 @@ async fn run_timeout(t: Transport) {
         .await
         .unwrap();
     assert!(out.status.timed_out);
+}
+
+/// A start whose stream never answers (a relay that went quiet) fails with
+/// a timeout instead of hanging, with or without a command timeout.
+async fn a_silent_start_times_out(t: Transport) {
+    let srv = server().await;
+    let opts = ConnectOptions::parse(&srv.url())
+        .unwrap()
+        .token(TOKEN)
+        .transport(pref(t))
+        .start_timeout(Duration::from_millis(300));
+    let env = SpacesdClient::connect(opts).await.expect("connect");
+    srv.state.silent_start.store(true, Ordering::Relaxed);
+    let started = Instant::now();
+    let err = env.run(Command::shell("echo hi")).await.unwrap_err();
+    assert!(
+        matches!(err, Error::Timeout(d) if d == Duration::from_millis(300)),
+        "{err:?}"
+    );
+    let err = env.spawn(Command::shell("echo hi")).await.unwrap_err();
+    assert!(matches!(err, Error::Timeout(_)), "{err:?}");
+    assert!(started.elapsed() < Duration::from_secs(10));
+    // The deadline covers the start only: a reply that comes ends normally.
+    srv.state.silent_start.store(false, Ordering::Relaxed);
+    let out = env.run(Command::shell("echo hi")).await.unwrap();
+    assert_eq!(out.stdout_str(), "hi\n");
 }
 
 async fn spawn_reattach_by_tag_with_scrollback(t: Transport) {

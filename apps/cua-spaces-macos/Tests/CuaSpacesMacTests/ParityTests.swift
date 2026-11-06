@@ -2318,6 +2318,8 @@ struct ParityTests {
                     "channel": "\(u.channelLabel) " + u.channels.map { "\($0.label)\($0.active ? "*" : "")" }
                         .joined(separator: " | "),
                     "help": u.channelHelp,
+                    "note": opt(u.channelNote),
+                    "download": u.downloadUrl.map { "\(u.downloadLabel ?? "") -> \($0)" } ?? NSNull(),
                     "check": "\(u.checkLabel) \(u.checkEnabled ? "on" : "off")",
                     "lastCheck": u.lastCheck,
                     "sparkleChannels": appAboutAllowedChannels(channel: about.channel),
@@ -2426,7 +2428,7 @@ struct ParityTests {
         var env = try appWizardEnvFromJson(json: text(f["env"]))
         env.experiments = x
         let wizard = appWizardView(state: appWizardInitial(env: env), env: env)
-        let detail = windowDetail(appSpaceDetailWith(space: space, usage: nil, hostArch: nil, experiments: x))
+        let detail = windowDetail(appSpaceDetailFor(space: space, usage: nil, hostArch: nil, access: nil))
         var menuInput = try appMenuInputFromJson(json: text(f["menu"]))
         menuInput.experiments = x
         let chrome = appMainChrome(input: AppChromeInput(identity: nil, cloudConfigured: false, canSignIn: false,

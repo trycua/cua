@@ -150,7 +150,7 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         "thread.joinCodeCreate", "thread.joinCodeList", "thread.joinCodeCancel", "thread.settings",
         // Cua Driver inside Cua Spaces: the embedded driver's page (WebUIBridge+Driver.swift).
         "driver.status", "driver.list", "driver.config", "driver.setConfig", "driver.test", "driver.pause",
-        "driver.setup", "driver.setApp",
+        "driver.setup", "driver.setApp", "driver.permissions",
     ]
 
     let model: AppModel
@@ -681,7 +681,7 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
             "page": BridgeValue.encode(model.settingsPageWithStorage),
             "experiments": BridgeValue.encode(model.experimentsPage),
             // Settings → About's channel; null while this build has no updater.
-            "updateChannel": model.updates.updater == nil ? NSNull() : (model.updates.channel == .beta ? "beta" : "stable"),
+            "updateChannel": model.updates.updater == nil ? NSNull() : UpdatesModel.id(model.updates.channel),
             // ⌘⇧Space, and whether the system gave it (tried again on each read).
             "globalShortcut": GlobalShortcut.installed?.bridgeValue ?? NSNull(),
             // The account app (CUA_ENV, CUA_ACCOUNT_APP_URL): the page's core

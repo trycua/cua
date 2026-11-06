@@ -68,6 +68,29 @@ export function appAboutAllowedChannels(channel: AppUpdateChannel): Array<string
     }
 
 /**
+ * The appcast a Sparkle updater on `channel` reads, from the app's own
+ * `SUFeedURL` (`stable_feed`): the nightly appcast for Nightly; `None`
+ * keeps `SUFeedURL` (for Nightly: this feed has no nightly next to it).
+ */
+export function appAboutFeedUrl(channel: AppUpdateChannel, stableFeed: string): string | undefined {
+    return ((__rb: Uint8Array) => {
+        try {
+            return FfiConverterOptionalString.lift(__rb);
+        } finally {
+            nativeModule().rustbuffer_free(__rb);
+        }
+    })(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().uniffi_cua_spaces_ffi_fn_func_app_about_feed_url(
+        FfiConverterTypeAppUpdateChannel.lower(channel, nativeModule().rustbuffer_alloc),
+        FfiConverterString.lower(stableFeed, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+/**
  * The About input from JSON (parity flows).
  */
 export function appAboutInputFromJson(json: string): AppAboutInput /*throws*/ {
@@ -4480,7 +4503,7 @@ export function appSettingsDefaults(): AppSettings {
 
 /**
  * The update channel of an install's first launch, from the file's
- * `channel`: Beta for a prerelease, else unchanged.
+ * `channel`: Nightly for a prerelease, else unchanged.
  */
 export function appSettingsFirstLaunchChannel(channel: AppUpdateChannel, version: string): AppUpdateChannel {
     return ((__rb: Uint8Array) => {
@@ -4557,29 +4580,6 @@ export function appSettingsPage(input: AppSettingsInput): AppSettingsPage {
             /*caller:*/ (callStatus) => {
                 return nativeModule().uniffi_cua_spaces_ffi_fn_func_app_settings_page(
         FfiConverterTypeAppSettingsInput.lower(input, nativeModule().rustbuffer_alloc),
-                callStatus);
-            },
-            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-    ));
-    }
-
-/**
- * The settings with the New UI as a launch of `version` shows it: the
- * user's choice, else the default for the update channel and version
- * (again after the channel changes).
- */
-export function appSettingsResolveNewUi(settings: AppSettings, version: string): AppSettings {
-    return ((__rb: Uint8Array) => {
-        try {
-            return FfiConverterTypeAppSettings.lift(__rb);
-        } finally {
-            nativeModule().rustbuffer_free(__rb);
-        }
-    })(uniffiCaller.rustCall(
-            /*caller:*/ (callStatus) => {
-                return nativeModule().uniffi_cua_spaces_ffi_fn_func_app_settings_resolve_new_ui(
-        FfiConverterTypeAppSettings.lower(settings, nativeModule().rustbuffer_alloc),
-        FfiConverterString.lower(version, nativeModule().rustbuffer_alloc),
                 callStatus);
             },
             /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
@@ -4989,13 +4989,13 @@ export function appSpaceDetailCopy(): AppDetailCopy {
     }
 
 /**
- * [`app_space_detail_with`] as this device sees it: `access` (from
+ * [`app_space_detail_live`] as this device sees it: `access` (from
  * [`app_machine_access_notice`]) greys out Connect on every Space reached
  * through the relay while this device is not enrolled; one of your
  * machines that does not share its desktop shows its note in place of the
  * desktop, Stream, Agents and Teleport.
  */
-export function appSpaceDetailFor(space: AppSpace, usage: AppSpaceUsage | undefined, hostArch: string | undefined, experiments: AppExperiments, access: AppMachineAccessNotice | undefined): AppSpaceDetail {
+export function appSpaceDetailFor(space: AppSpace, usage: AppSpaceUsage | undefined, hostArch: string | undefined, access: AppMachineAccessNotice | undefined): AppSpaceDetail {
     return ((__rb: Uint8Array) => {
         try {
             return FfiConverterTypeAppSpaceDetail.lift(__rb);
@@ -5008,7 +5008,6 @@ export function appSpaceDetailFor(space: AppSpace, usage: AppSpaceUsage | undefi
         FfiConverterTypeAppSpace.lower(space, nativeModule().rustbuffer_alloc),
         FfiConverterOptionalTypeAppSpaceUsage.lower(usage, nativeModule().rustbuffer_alloc),
         FfiConverterOptionalString.lower(hostArch, nativeModule().rustbuffer_alloc),
-        FfiConverterTypeAppExperiments.lower(experiments, nativeModule().rustbuffer_alloc),
         FfiConverterOptionalTypeAppMachineAccessNotice.lower(access, nativeModule().rustbuffer_alloc),
                 callStatus);
             },
@@ -5035,30 +5034,6 @@ export function appSpaceDetailLive(space: AppSpace, usage: AppSpaceUsage | undef
         FfiConverterTypeAppSpace.lower(space, nativeModule().rustbuffer_alloc),
         FfiConverterOptionalTypeAppSpaceUsage.lower(usage, nativeModule().rustbuffer_alloc),
         FfiConverterOptionalString.lower(hostArch, nativeModule().rustbuffer_alloc),
-                callStatus);
-            },
-            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-    ));
-    }
-
-/**
- * [`app_space_detail_live`] without what Settings, Experiments hides (the
- * Share button while Sharing is off).
- */
-export function appSpaceDetailWith(space: AppSpace, usage: AppSpaceUsage | undefined, hostArch: string | undefined, experiments: AppExperiments): AppSpaceDetail {
-    return ((__rb: Uint8Array) => {
-        try {
-            return FfiConverterTypeAppSpaceDetail.lift(__rb);
-        } finally {
-            nativeModule().rustbuffer_free(__rb);
-        }
-    })(uniffiCaller.rustCall(
-            /*caller:*/ (callStatus) => {
-                return nativeModule().uniffi_cua_spaces_ffi_fn_func_app_space_detail_with(
-        FfiConverterTypeAppSpace.lower(space, nativeModule().rustbuffer_alloc),
-        FfiConverterOptionalTypeAppSpaceUsage.lower(usage, nativeModule().rustbuffer_alloc),
-        FfiConverterOptionalString.lower(hostArch, nativeModule().rustbuffer_alloc),
-        FfiConverterTypeAppExperiments.lower(experiments, nativeModule().rustbuffer_alloc),
                 callStatus);
             },
             /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
@@ -7253,9 +7228,12 @@ export enum AppUpdateChannel {
      */
     Stable = "stable",
     /**
-     * Releases and prereleases (`X.Y.Z-suffix`).
+     * A build of main every night (`X.Y.Z-nightly.YYYYMMDD[+sha]`), from
+     * its own feed. It replaced the Beta channel, so `beta` (an older
+     * build's word, and what the settings file still stores, see
+     * [`crate::settings::save`]) reads as Nightly.
      */
-    Beta = "beta"
+    Nightly = "nightly"
 }
 
 const FfiConverterTypeAppUpdateChannel = (() => {
@@ -7265,14 +7243,14 @@ const FfiConverterTypeAppUpdateChannel = (() => {
         read(from: RustBuffer): TypeName {
             switch (ordinalConverter.read(from)) {
                 case 1: return AppUpdateChannel.Stable;
-                case 2: return AppUpdateChannel.Beta;
+                case 2: return AppUpdateChannel.Nightly;
                 default: throw new UniffiInternalError.UnexpectedEnumCase();
             }
         }
         write(value: TypeName, into: RustBuffer): void {
             switch (value) {
                 case AppUpdateChannel.Stable: return ordinalConverter.write(1, into);
-                case AppUpdateChannel.Beta: return ordinalConverter.write(2, into);
+                case AppUpdateChannel.Nightly: return ordinalConverter.write(2, into);
             }
         }
         allocationSize(value: TypeName): number {
@@ -7575,17 +7553,32 @@ export type AppAboutUpdates = {
      */
     autoInstallEnabled: boolean,
     /**
-     * "Update to:".
+     * "Updates".
      */
     channelLabel: string,
     /**
-     * Stable, Beta.
+     * Stable, Nightly.
      */
     channels: Array<AppSettingsOption>,
     /**
-     * The channel picker's tooltip.
+     * What the chosen channel gets, in a line.
      */
     channelHelp: string,
+    /**
+     * A word about the version running on this channel: a nightly build
+     * back on Stable stays until the next stable release passes it;
+     * `None`: nothing to say.
+     */
+    channelNote?: string,
+    /**
+     * "Download Stable": the way back to Stable right now
+     * ([`DOWNLOAD_URL`]); `None` when no way back is needed.
+     */
+    downloadLabel?: string,
+    /**
+     * Where [`AboutUpdates::download_label`] goes.
+     */
+    downloadUrl?: string,
     /**
      * "Check Now" (or "Checking…").
      */
@@ -7629,6 +7622,9 @@ const FfiConverterTypeAppAboutUpdates = (() => {
                 channelLabel: FfiConverterString.read(from),
                 channels: FfiConverterSequenceTypeAppSettingsOption.read(from),
                 channelHelp: FfiConverterString.read(from),
+                channelNote: FfiConverterOptionalString.read(from),
+                downloadLabel: FfiConverterOptionalString.read(from),
+                downloadUrl: FfiConverterOptionalString.read(from),
                 checkLabel: FfiConverterString.read(from),
                 checkEnabled: FfiConverterBool.read(from),
                 lastCheck: FfiConverterString.read(from)
@@ -7643,6 +7639,9 @@ const FfiConverterTypeAppAboutUpdates = (() => {
             FfiConverterString.write(value.channelLabel, into);
             FfiConverterSequenceTypeAppSettingsOption.write(value.channels, into);
             FfiConverterString.write(value.channelHelp, into);
+            FfiConverterOptionalString.write(value.channelNote, into);
+            FfiConverterOptionalString.write(value.downloadLabel, into);
+            FfiConverterOptionalString.write(value.downloadUrl, into);
             FfiConverterString.write(value.checkLabel, into);
             FfiConverterBool.write(value.checkEnabled, into);
             FfiConverterString.write(value.lastCheck, into);
@@ -7656,6 +7655,9 @@ const FfiConverterTypeAppAboutUpdates = (() => {
              FfiConverterString.allocationSize(value.channelLabel) +
              FfiConverterSequenceTypeAppSettingsOption.allocationSize(value.channels) +
              FfiConverterString.allocationSize(value.channelHelp) +
+             FfiConverterOptionalString.allocationSize(value.channelNote) +
+             FfiConverterOptionalString.allocationSize(value.downloadLabel) +
+             FfiConverterOptionalString.allocationSize(value.downloadUrl) +
              FfiConverterString.allocationSize(value.checkLabel) +
              FfiConverterBool.allocationSize(value.checkEnabled) +
              FfiConverterString.allocationSize(value.lastCheck);
@@ -14567,20 +14569,6 @@ export type AppExperiments = {
      */
     cuaVolume: boolean,
     /**
-     * Your own clouds in the New Space wizard.
-     */
-    yourCloud: boolean,
-    /**
-     * Sharing a Space with other accounts. On unless turned off: a missing
-     * key reads as on (the plans on cua.ai/pricing list sharing).
-     */
-    sharing: boolean,
-    /**
-     * The shared web UI is the main window. Always on in the macOS shell
-     * ([`crate::settings::resolve_new_ui`]); kept for older files and builds.
-     */
-    webUi: boolean,
-    /**
      * Secure Spaces: a Space reaches the internet and nothing else on the
      * network unless it is opened. Off unless turned on; the daemon enforces
      * it (the switch is kept in the cua home).
@@ -14645,9 +14633,6 @@ const FfiConverterTypeAppExperiments = (() => {
         read(from: RustBuffer): TypeName {
             return {
                 cuaVolume: FfiConverterBool.read(from),
-                yourCloud: FfiConverterBool.read(from),
-                sharing: FfiConverterBool.read(from),
-                webUi: FfiConverterBool.read(from),
                 secureSpaces: FfiConverterBool.read(from),
                 childSpaces: FfiConverterBool.read(from),
                 askFirst: FfiConverterBool.read(from),
@@ -14659,9 +14644,6 @@ const FfiConverterTypeAppExperiments = (() => {
         }
         write(value: TypeName, into: RustBuffer): void {
             FfiConverterBool.write(value.cuaVolume, into);
-            FfiConverterBool.write(value.yourCloud, into);
-            FfiConverterBool.write(value.sharing, into);
-            FfiConverterBool.write(value.webUi, into);
             FfiConverterBool.write(value.secureSpaces, into);
             FfiConverterBool.write(value.childSpaces, into);
             FfiConverterBool.write(value.askFirst, into);
@@ -14672,9 +14654,6 @@ const FfiConverterTypeAppExperiments = (() => {
         }
         allocationSize(value: TypeName): number {
             return FfiConverterBool.allocationSize(value.cuaVolume) +
-             FfiConverterBool.allocationSize(value.yourCloud) +
-             FfiConverterBool.allocationSize(value.sharing) +
-             FfiConverterBool.allocationSize(value.webUi) +
              FfiConverterBool.allocationSize(value.secureSpaces) +
              FfiConverterBool.allocationSize(value.childSpaces) +
              FfiConverterBool.allocationSize(value.askFirst) +
@@ -40846,18 +40825,9 @@ export type AppSettings = {
     launchAtLogin?: boolean,
     /**
      * Settings, Experiments: every switch off unless turned on
-     * ([`crate::experiments`]). Its `webUi` is always on in the macOS
-     * shell ([`resolve_new_ui`]); the file keeps only [`Self::new_ui`]'s
-     * "on" there, the value older builds read.
+     * ([`crate::experiments`]).
      */
     experiments: AppExperiments,
-    /**
-     * The New UI as an older build's "Use classic UI" saved it. Read and
-     * kept for those builds, never acted on: the web UI is the only UI
-     * ([`resolve_new_ui`]). An older build's saved `webUi: true` reads as
-     * `Some(true)`; its `false` was only the saved default ([`load`]).
-     */
-    newUi?: boolean,
     /**
      * Keyvault copies (import ids) the user dismissed from the notch: it no
      * longer shows them, nothing is revoked or wiped
@@ -40950,7 +40920,6 @@ const FfiConverterTypeAppSettings = (() => {
                 updateChannel: FfiConverterTypeAppUpdateChannel.read(from),
                 launchAtLogin: FfiConverterOptionalBoolean.read(from),
                 experiments: FfiConverterTypeAppExperiments.read(from),
-                newUi: FfiConverterOptionalBoolean.read(from),
                 dismissedAccess: FfiConverterSequenceString.read(from),
                 notchPinned: FfiConverterSequenceString.read(from),
                 keyvaultSiteIcons: FfiConverterBool.read(from),
@@ -40974,7 +40943,6 @@ const FfiConverterTypeAppSettings = (() => {
             FfiConverterTypeAppUpdateChannel.write(value.updateChannel, into);
             FfiConverterOptionalBoolean.write(value.launchAtLogin, into);
             FfiConverterTypeAppExperiments.write(value.experiments, into);
-            FfiConverterOptionalBoolean.write(value.newUi, into);
             FfiConverterSequenceString.write(value.dismissedAccess, into);
             FfiConverterSequenceString.write(value.notchPinned, into);
             FfiConverterBool.write(value.keyvaultSiteIcons, into);
@@ -40997,7 +40965,6 @@ const FfiConverterTypeAppSettings = (() => {
              FfiConverterTypeAppUpdateChannel.allocationSize(value.updateChannel) +
              FfiConverterOptionalBoolean.allocationSize(value.launchAtLogin) +
              FfiConverterTypeAppExperiments.allocationSize(value.experiments) +
-             FfiConverterOptionalBoolean.allocationSize(value.newUi) +
              FfiConverterSequenceString.allocationSize(value.dismissedAccess) +
              FfiConverterSequenceString.allocationSize(value.notchPinned) +
              FfiConverterBool.allocationSize(value.keyvaultSiteIcons) +
@@ -46252,7 +46219,7 @@ export type AppWizardEnv = {
     storage?: AppLocalStorage,
     /**
      * The user's connected clouds (`cloud_status`), for "Your cloud"
-     * (offered only while its experiment is on: [`offered_clouds`]).
+     * ([`offered_clouds`]).
      */
     clouds: Array<AppConnectedCloud>,
     /**
@@ -46260,7 +46227,7 @@ export type AppWizardEnv = {
      */
     hosts: Array<AppSpaceHost>,
     /**
-     * Settings, Experiments ("Your cloud" decides whether clouds show).
+     * Settings, Experiments (the daemon-enforced switches the wizard reads).
      */
     experiments: AppExperiments,
     /**
@@ -71222,6 +71189,9 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_about_allowed_channels() !== 59781) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_about_allowed_channels");
     }
+    if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_about_feed_url() !== 25239) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_about_feed_url");
+    }
     if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_about_input_from_json() !== 570) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_about_input_from_json");
     }
@@ -71858,7 +71828,7 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_settings_defaults() !== 47096) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_settings_defaults");
     }
-    if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_settings_first_launch_channel() !== 11279) {
+    if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_settings_first_launch_channel() !== 29109) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_settings_first_launch_channel");
     }
     if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_settings_input_from_json() !== 15437) {
@@ -71869,9 +71839,6 @@ function uniffiEnsureInitialized() {
     }
     if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_settings_page() !== 454) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_settings_page");
-    }
-    if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_settings_resolve_new_ui() !== 48081) {
-        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_settings_resolve_new_ui");
     }
     if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_settings_save() !== 62204) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_settings_save");
@@ -71930,14 +71897,11 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_space_detail_copy() !== 55740) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_space_detail_copy");
     }
-    if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_space_detail_for() !== 46982) {
+    if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_space_detail_for() !== 50402) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_space_detail_for");
     }
     if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_space_detail_live() !== 55583) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_space_detail_live");
-    }
-    if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_space_detail_with() !== 51134) {
-        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_space_detail_with");
     }
     if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_space_host() !== 37974) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_space_host");

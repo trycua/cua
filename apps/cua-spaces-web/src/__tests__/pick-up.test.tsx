@@ -133,7 +133,7 @@ describe.skipIf(!wasmBuilt)("a continued chat in Home", () => {
     await waitFor(() => expect(q("[data-imported-chat]")).not.toBeNull());
     // The earlier messages are read from the agent's own store when the task opens (the timeline is
     // virtualized, so jsdom draws none of its rows; the resume context below carries them).
-    await waitFor(() => expect(calls.find((c) => c.op === "agents.threadHistory")?.args).toEqual({ agent: "claude-code", id: KETTLE.id }));
+    await waitFor(() => expect(calls.find((c) => c.op === "agents.threadHistory")?.args).toEqual({ agent: "claude-code", id: KETTLE.id, limit: 30 }));
     expect(q("[data-earlier-heading]")?.textContent).toContain("Earlier on this Mac");
     expect(q("[data-continue-on]")?.textContent).toContain("This Mac");
     expect(q("[data-imported-note]")?.textContent).toContain("Nothing runs until you send");
@@ -148,5 +148,26 @@ describe.skipIf(!wasmBuilt)("a continued chat in Home", () => {
     expect(String(start.resumeContext)).toContain("Agent: It depends on the machine's time zone");
     expect(calls.some((c) => c.op === "thread.post")).toBe(false);
     await waitFor(() => expect(askTask(task.id)?.runId).toBeTruthy());
+  });
+});
+
+describe.skipIf(!wasmBuilt)("a long chat in Home", () => {
+  it("opens on its newest messages and reads more only when asked", { timeout: 30000 }, async () => {
+    const task = addImportedTask(KETTLE);
+    const calls: { op: string; args: Record<string, unknown> }[] = [];
+    await mountApp(`/home/${task.id}`, {
+      failsCreates: false,
+      listsGhost: false,
+      demo: { onboarded: true },
+      intercept: (op, args) => {
+        calls.push({ op, args: args as Record<string, unknown> });
+        return undefined;
+      },
+      answer: (op, out) => (op === "agents.threadHistory" ? { ...(out as object), earlierOmitted: 1 } : out),
+    });
+    await waitFor(() => expect(q("[data-earlier-more]")).not.toBeNull());
+    expect(calls.filter((c) => c.op === "agents.threadHistory").map((c) => c.args.limit)).toEqual([30]);
+    fireEvent.click(q("[data-earlier-more]")!);
+    await waitFor(() => expect(calls.filter((c) => c.op === "agents.threadHistory").map((c) => c.args.limit)).toEqual([30, 130]));
   });
 });

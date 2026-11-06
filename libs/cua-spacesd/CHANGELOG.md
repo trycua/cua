@@ -1,5 +1,35 @@
 # Changelog
 
+## [0.12.2](https://github.com/trycua/cua/compare/cua-spacesd-v0.12.1...cua-spacesd-v0.12.2) (2026-11-06)
+
+
+### Bug Fixes
+
+* **cua-driver:** find a macOS app by any name it ships, without guessing ([#6657](https://github.com/trycua/cua/issues/6657)) ([22d8c1b](https://github.com/trycua/cua/commit/22d8c1b9867fa2cf1dff32e28d577f953144266f))
+* **cua-spacesd:** wait for each VideoToolbox frame on macOS so encoder surfaces do not pile up ([#6621](https://github.com/trycua/cua/issues/6621)) ([d81ab3e](https://github.com/trycua/cua/commit/d81ab3e3b291029100f83b9273f49ca03c6dad25))
+
+## [0.12.1](https://github.com/trycua/cua/compare/cua-spacesd-v0.12.0...cua-spacesd-v0.12.1) (2026-11-05)
+
+
+### Bug Fixes
+
+* **spacesd:** volume attach no longer deadlocks a 1 vCPU Space ([#6565](https://github.com/trycua/cua/issues/6565)) ([8a708ab](https://github.com/trycua/cua/commit/8a708abf6a60b76894df8d95ff94450436a3032f))
+* **windows:** no firewall prompt for cua and cua-spacesd, and a real publisher name ([#6558](https://github.com/trycua/cua/issues/6558)) ([0d196ad](https://github.com/trycua/cua/commit/0d196ad7669848951b7f5fa336af01e3f571d1f8))
+
+## [0.12.0](https://github.com/trycua/cua/compare/cua-spacesd-v0.11.0...cua-spacesd-v0.12.0) (2026-11-05)
+
+
+### Features
+
+* **relay,spacesd:** a removed computer deletes its Spaces when it next comes online (CUA-3479) ([#6532](https://github.com/trycua/cua/issues/6532)) ([e7e78c8](https://github.com/trycua/cua/commit/e7e78c8217b126e4bd02ff67ef7d733d11ec243f))
+
+
+### Bug Fixes
+
+* **cua-driver:** initialize recording hooks for embedded platform registries ([#5785](https://github.com/trycua/cua/issues/5785)) ([0a05cd4](https://github.com/trycua/cua/commit/0a05cd40069594f02738bc2f4ac6f6bc0dc6390d))
+* **cua-mesh:** a failed dial no longer answers for a peer that came online since ([#6479](https://github.com/trycua/cua/issues/6479)) ([ebf96e5](https://github.com/trycua/cua/commit/ebf96e5ff17a12d92f67f7d32a740662a1bc435c))
+* **spaces:** Cua Driver runs after the new first run, whatever the Mac shares (CUA-3485) ([#6534](https://github.com/trycua/cua/issues/6534)) ([97eabde](https://github.com/trycua/cua/commit/97eabde88dd1fdf4548dbe2d12af8396211ff4ff))
+
 ## [0.11.0](https://github.com/trycua/cua/compare/cua-spacesd-v0.10.1...cua-spacesd-v0.11.0) (2026-11-05)
 
 

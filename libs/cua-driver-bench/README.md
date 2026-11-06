@@ -43,8 +43,8 @@ Ten tasks in three categories. Each task has a `PROVENANCE.md` next to it.
 The CDB-G tasks are the GUI-only variants of pack tasks `cdb-s02` to `cdb-s04`:
 the same files, with no coding tools offered. The MB and IR tasks run in
 BenchLab, a small AppKit test app built from source in this directory (with a
-Linux port in `automated-eval/macos_bench/linux` and a Windows port in
-`automated-eval/macos_bench/windows`). A fourth category, Web apps &
+Linux port in `automated-eval/macos_bench/linux`, which `automated-eval/macos_bench/hyprland`
+runs on Hyprland (Wayland), and a Windows port in `automated-eval/macos_bench/windows`). A fourth category, Web apps &
 forms, has no Bench v2 task yet.
 
 ### Platforms and conditions
@@ -356,6 +356,49 @@ Codex computer use is not available on Linux yet
 ([compatibility and limitations](https://learn.chatgpt.com/docs/linux/linux-app#compatibility-and-limitations)).
 `tests/test_linux_session.py` and `tests/test_linux_tools.py` check the session and the tools without a model.
 
+### Linux on Hyprland (Wayland; the BenchLab tasks)
+
+The Hyprland port runs the same GTK3 BenchLab (`linux/benchlab.py`) as a native Wayland client, with a
+Wayland sentinel and GUI-only guard in [`automated-eval/macos_bench/hyprland`](automated-eval/macos_bench/hyprland).
+It is built for Omarchy (Arch Linux with Hyprland 0.55 or later and a Lua config), for example Cua's
+`ghcr.io/trycua/omarchy:edge` image. Seeds, the state file, the event log, the checkers and the sentinel
+summary are the same as on macOS, Linux/X11 and Windows.
+
+You need Python 3.11 or later with PyGObject, GTK 3 and AT-SPI, and `wl-clipboard`. Load
+`hyprland/bench.lua` last from `~/.config/hypr/hyprland.lua` (it sets 1920x1080 so the shared window frames
+fit), then run each trial as the desktop user with the session's environment (`WAYLAND_DISPLAY`,
+`HYPRLAND_INSTANCE_SIGNATURE`, `XDG_RUNTIME_DIR`, `DBUS_SESSION_BUS_ADDRESS`). One trial:
+
+```sh
+python3 launch/hyprland_session.py --task IR-02 --run-index 0 --condition background --out ~/bench/IR-02-r0 -- <agent command>
+```
+
+Where Hyprland differs:
+
+* **Placement.** A Wayland client cannot place its own windows, so the launcher floats BenchLab and the
+  sentinel and gives them their frames through Hyprland's IPC socket. Window rules (applied on every trial)
+  keep BenchLab's windows from taking focus when they open and open its dialogs over BenchLab's top-left
+  corner, clear of the "User activity" window, as a sheet hangs from BenchLab on macOS.
+* **Sentinel.** The compositor state comes from Hyprland's IPC: the active window, the stacking order of
+  `clients` (a window counts as raised when it comes after the user window, draws over it and overlaps it;
+  top and overlay layer-shell surfaces that overlap it count too, named after their owning process), the
+  real pointer (`cursorpos`), the active and special workspaces and full-screen windows (Space), and a
+  second window of the sentinel's own process (dialog). The clipboard is watched with `wl-paste --watch`
+  (data-control), so a change counts whether or not the user window has focus. Key focus, typed keys,
+  clicks and scrolls are GTK events on the user window, as on X11.
+* **GUI-only guard.** A terminal emulator (Alacritty, Ghostty, kitty, foot, ...) started outside the
+  runner's own processes, or a terminal or Omarchy TUI window active for three samples, fails and stops the
+  trial. Shells alone are not counted (tool servers reached over SSH run under one). Tool inputs are also
+  scanned for `hyprctl`, compositor `exec` dispatches, uwsm and Omarchy launchers, and terminal names.
+* **Brief.** "on your Mac" reads "on this Linux computer".
+
+`hyprland/oracle.py` solves each task through the GUI with real input (a uinput pointer and keyboard; the
+desktop user needs access to `/dev/uinput` while it runs). It validates the port: the oracle passes every
+checker, doing nothing fails every task and leaves the user undisturbed, and a deliberate focus change,
+raise, pointer move, clipboard change, keystroke or workspace switch is each seen.
+`tests/test_hyprland_tools.py` checks the guard, the brief, the descriptors and the window rules without a
+desktop or a model.
+
 ### Windows
 
 The Windows port of BenchLab and the sentinel is in
@@ -476,6 +519,7 @@ Where the multi-app tasks differ on Windows:
 cd automated-eval/macos_bench
 python3 -m pytest tests probes/tests swift/tests          # harness, checkers, sentinel (no GUI, no model)
 python -m pytest tests/test_windows_desktop.py           # on a Windows desktop: BenchLab, sentinel, guard, oracle
+python3 -m pytest tests/test_hyprland_tools.py            # Hyprland port contracts (no desktop needed)
 cd ../../taskpack/tasks/shared/cdb-s02 && python3 -m unittest discover -s tests
 cd ../../../../fairness && python3 -m unittest discover -s tests   # fairness and health checks
 python3 ../automated-eval/macos_bench/tools/taskset.py check        # manifest, selectors, pins and docs agree

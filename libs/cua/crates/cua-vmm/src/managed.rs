@@ -1685,6 +1685,10 @@ mod engine_impl {
             self.engine().await?.claim(member, new_name, identity).await
         }
 
+        fn keeps_prepared(&self) -> bool {
+            true
+        }
+
         async fn save_prepared(&self, name: &str, tag: &str) -> Result<Option<ImageSource>> {
             let _busy = self.busy();
             self.engine().await?.save_prepared(name, tag).await

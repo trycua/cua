@@ -2235,20 +2235,19 @@ pub async fn run_serve(
 }
 
 /// Per-user lock file for one pipe name. It lives under `%LOCALAPPDATA%`,
-/// which stays the same across a user's sessions where `%TEMP%` may not, and
-/// hex-encodes the whole name so distinct pipes never share a lock.
+/// which stays the same across a user's sessions where `%TEMP%` may not. The
+/// file name is a fixed-length digest of the uppercased name, because Windows
+/// compares pipe names case-insensitively and a name can outgrow a path
+/// component.
 #[cfg(target_os = "windows")]
 fn named_pipe_lock_path(socket_path: &str) -> std::path::PathBuf {
-    use std::fmt::Write as _;
+    use sha2::Digest as _;
     let base = std::env::var_os("LOCALAPPDATA")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(std::env::temp_dir);
-    let mut name = String::with_capacity(socket_path.len() * 2);
-    for byte in socket_path.to_ascii_lowercase().bytes() {
-        let _ = write!(name, "{byte:02x}");
-    }
+    let digest = sha2::Sha256::digest(socket_path.to_uppercase().as_bytes());
     base.join("cua-driver-pipe-locks")
-        .join(format!("{name}.lock"))
+        .join(format!("{digest:x}.lock"))
 }
 
 /// How long a launch waits for a stopping daemon to release its pipe lock.

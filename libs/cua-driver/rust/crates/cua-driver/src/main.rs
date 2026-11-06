@@ -711,6 +711,7 @@ fn main() {
             // already active.  Honors --no-permissions-gate and
             // CUA_DRIVER_RS_PERMISSIONS_GATE=0 for CI / headless.
             //
+            let slow_opts = gate_opts.after_timeout();
             let gate_result = platform_macos::permissions::run_if_needed_with_observer(
                 gate_opts,
                 |progress, context| match progress {
@@ -749,9 +750,18 @@ fn main() {
             if let Err(e) = gate_result {
                 eprintln!("[cua-driver] permissions gate: {e}");
                 eprintln!(
-                    "[cua-driver] desktop tool calls remain gated; grant Accessibility and \
-                     Screen Recording permissions, then restart the daemon."
+                    "[cua-driver] desktop tool calls remain gated until Accessibility and \
+                     Screen Recording are granted; still checking in the background."
                 );
+                // Off the main thread, which the AppKit loop below needs.
+                std::thread::Builder::new()
+                    .name("cua-permissions-poll".into())
+                    .spawn(move || {
+                        if platform_macos::permissions::gate::wait_for_grants(&slow_opts).is_ok() {
+                            serve::set_permission_gate_pending(false);
+                        }
+                    })
+                    .expect("spawn permissions poll thread");
             }
 
             // Keep the main thread alive for the daemon.

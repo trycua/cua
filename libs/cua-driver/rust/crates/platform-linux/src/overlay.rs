@@ -185,6 +185,15 @@ fn should_start_x11_overlay(wayland_display_present: bool) -> bool {
 /// desktop capture ask it to hide a visible overlay.
 static X11_OVERLAY_LIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+/// The XID of the X11 agent-cursor overlay window, 0 before it exists. The
+/// focus guard skips it: it is override-redirect but grabs nothing.
+static X11_OVERLAY_WINDOW: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// Whether `window` is this process's X11 agent-cursor overlay.
+pub(crate) fn is_x11_overlay_window(window: u32) -> bool {
+    window != 0 && X11_OVERLAY_WINDOW.load(std::sync::atomic::Ordering::Acquire) == window
+}
+
 /// Whether an X11 overlay window exists that a desktop capture must hide.
 pub(crate) fn x11_overlay_live() -> bool {
     X11_OVERLAY_LIVE.load(std::sync::atomic::Ordering::Acquire)
@@ -299,6 +308,8 @@ impl X11OverlayThreadCleanup {
 #[cfg(target_os = "linux")]
 impl Drop for X11OverlayThreadCleanup {
     fn drop(&mut self) {
+        // The XID is free for another client once this connection closes.
+        X11_OVERLAY_WINDOW.store(0, std::sync::atomic::Ordering::Release);
         // Disconnect first so an animator racing teardown cannot enqueue after
         // the waiter sweep. Registrations before release are swept below;
         // registrations after release observe a disconnected channel and cancel
@@ -1507,6 +1518,7 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
 
     // Create the overlay window.
     let win = conn.generate_id().unwrap();
+    X11_OVERLAY_WINDOW.store(win, std::sync::atomic::Ordering::Release);
     let win_aux = CreateWindowAux::new()
         .background_pixel(0)
         .border_pixel(0)

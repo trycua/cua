@@ -466,31 +466,75 @@ static SHELL_HELPER_SURFACE: Mutex<Option<cua_driver_core::agent_cursor::SharedC
 #[cfg(target_os = "linux")]
 static SHELL_HELPER_IDLE: std::sync::Condvar = std::sync::Condvar::new();
 
-/// Apply one overlay message to the shell-helper surface. Returns whether it
-/// reaches the helper: `true` draws a command, or hides for `Remove`.
+/// What one overlay message does to the shell-helper surface.
 #[cfg(target_os = "linux")]
-fn shell_helper_surface_event(msg: &OverlayMsg, now: Instant) -> bool {
-    use cua_driver_core::agent_cursor::{SharedCursorSurface, SharedSurfaceAction};
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct ShellHelperReach {
+    /// It reaches the helper: a command draws, or `Remove` hides.
+    draws: bool,
+    /// A command that took the helper's one cursor from another session (or
+    /// claimed it while empty), so the helper still shows the old owner's
+    /// label and cue.
+    switched: bool,
+}
+
+/// Whether a command puts the cursor somewhere. Only these can hand the
+/// helper's single cursor to a session: see [`SharedCursorSurface`].
+///
+/// [`SharedCursorSurface`]: cua_driver_core::agent_cursor::SharedCursorSurface
+#[cfg(target_os = "linux")]
+fn places_cursor(cmd: &OverlayCommand) -> bool {
+    matches!(
+        cmd,
+        OverlayCommand::MoveTo { .. }
+            | OverlayCommand::SnapTo { .. }
+            | OverlayCommand::ClickPulse { .. }
+    )
+}
+
+/// Apply one overlay message to the shell-helper surface.
+#[cfg(target_os = "linux")]
+fn shell_helper_surface_event(msg: &OverlayMsg, now: Instant) -> ShellHelperReach {
     let mut guard = SHELL_HELPER_SURFACE.lock().unwrap();
-    let surface = guard.get_or_insert_with(SharedCursorSurface::new);
-    let reach = match msg {
-        OverlayMsg::Cmd(command) => matches!(
-            surface.on_command(&command.key, now),
-            SharedSurfaceAction::Draw { .. }
-        ),
-        OverlayMsg::Remove(key) => surface.on_session_end(key) == SharedSurfaceAction::Hide,
-        OverlayMsg::Revive(key) => {
-            surface.on_session_revive(key);
-            false
-        }
-        OverlayMsg::Wake => false,
-    };
+    let surface = guard.get_or_insert_with(cua_driver_core::agent_cursor::SharedCursorSurface::new);
+    let reach = shell_helper_surface_apply(surface, msg, now);
     drop(guard);
-    if reach && matches!(msg, OverlayMsg::Cmd(_)) {
+    if reach.draws && matches!(msg, OverlayMsg::Cmd(_)) {
         start_shell_helper_idle_watch();
         SHELL_HELPER_IDLE.notify_all();
     }
     reach
+}
+
+#[cfg(target_os = "linux")]
+fn shell_helper_surface_apply(
+    surface: &mut cua_driver_core::agent_cursor::SharedCursorSurface,
+    msg: &OverlayMsg,
+    now: Instant,
+) -> ShellHelperReach {
+    use cua_driver_core::agent_cursor::SharedSurfaceAction;
+    match msg {
+        OverlayMsg::Cmd(command) => {
+            match surface.on_command(&command.key, now, places_cursor(&command.cmd)) {
+                SharedSurfaceAction::Draw { switched } => ShellHelperReach {
+                    draws: true,
+                    switched,
+                },
+                SharedSurfaceAction::Hide | SharedSurfaceAction::Keep => {
+                    ShellHelperReach::default()
+                }
+            }
+        }
+        OverlayMsg::Remove(key) => ShellHelperReach {
+            draws: surface.on_session_end(key) == SharedSurfaceAction::Hide,
+            switched: false,
+        },
+        OverlayMsg::Revive(key) => {
+            surface.on_session_revive(key);
+            ShellHelperReach::default()
+        }
+        OverlayMsg::Wake => ShellHelperReach::default(),
+    }
 }
 
 /// Hide the shell-helper cursor once its owner has been idle for the shared
@@ -564,17 +608,34 @@ struct ShellHelperPoseUpdate {
     track: Option<String>,
     /// For a move: when its hotspot arrives, and which move it is.
     arrival: Option<(Duration, u64)>,
+    /// The new owner's label and cue, when this command took the cursor from
+    /// another session: what it sent before it owned the cursor never
+    /// reached the helper.
+    owner_state: Option<ShellHelperOwnerState>,
 }
 
-/// Feed one message to the helper's pose model. `draws` says whether it
-/// reaches the helper (from [`shell_helper_surface_event`]).
+/// A session's badge label and action cue, to restyle the helper's cursor
+/// for it when it takes the cursor over.
+#[cfg(target_os = "linux")]
+#[derive(Debug, Clone, PartialEq)]
+struct ShellHelperOwnerState {
+    label: Option<String>,
+    action: cursor_overlay::CursorAction,
+    delivery: Option<cursor_overlay::DeliveryModifier>,
+    target: Option<cursor_overlay::TargetModifier>,
+}
+
+/// Feed one message to the helper's pose model. `reach` says whether it
+/// reaches the helper, and whether it took the cursor over (from
+/// [`shell_helper_surface_event`]).
 #[cfg(target_os = "linux")]
 fn shell_helper_pose_update(
     poses: &mut ShellHelperPoses,
     msg: &OverlayMsg,
-    draws: bool,
+    reach: ShellHelperReach,
     now: Instant,
 ) -> ShellHelperPoseUpdate {
+    let draws = reach.draws;
     let track = poses.model.apply(msg, draws, now);
     let mut update = ShellHelperPoseUpdate::default();
     let OverlayMsg::Cmd(command) = msg else {
@@ -586,6 +647,18 @@ fn shell_helper_pose_update(
     };
     if !draws {
         return update;
+    }
+    if reach.switched {
+        update.owner_state =
+            poses
+                .model
+                .cursor_mut(&command.key)
+                .map(|core| ShellHelperOwnerState {
+                    label: core.session_label.clone(),
+                    action: core.visual.resolved_action,
+                    delivery: core.visual.delivery,
+                    target: core.visual.target,
+                });
     }
     if let Some(look) = poses.model.look(&command.key).map(|look| look.to_json()) {
         if poses.look_sent.as_deref() != Some(look.as_str()) {
@@ -649,7 +722,7 @@ fn dispatch_wayland_overlay_message(msg: &OverlayMsg) -> bool {
                 });
                 shell_helper_pose_update(poses, msg, reach, now)
             });
-            if !reach {
+            if !reach.draws {
                 return false;
             }
             let OverlayMsg::Cmd(command) = msg else {
@@ -681,6 +754,11 @@ fn dispatch_shell_helper_command(
     if let Some(look) = poses.and_then(|update| update.look.as_deref()) {
         crate::wayland::shell_helper::set_cursor_look(look);
     }
+    if let Some(owner) = poses.and_then(|update| update.owner_state.as_ref()) {
+        // The helper still shows the previous owner's badge and cue.
+        send_shell_helper_label(owner.label.as_deref().unwrap_or(""));
+        send_shell_helper_action(owner.action, owner.delivery, owner.target);
+    }
     match cmd {
         OverlayCommand::ClickPulse { x, y } if semantic => {
             crate::wayland::shell_helper::click_pulse(*x as i32, *y as i32);
@@ -702,43 +780,55 @@ fn dispatch_shell_helper_command(
             action,
             delivery,
             target,
-        } if semantic => {
-            // The GNOME helper paints its own single-cursor badge. Only the
-            // verbose badge shows delivery and target chips there.
-            let (delivery, target) = match cursor_overlay::badge_mode::active() {
-                cursor_overlay::BadgeMode::Verbose => (*delivery, *target),
-                cursor_overlay::BadgeMode::Minimal | cursor_overlay::BadgeMode::Off => (None, None),
-            };
-            // Its action marks are opt-in too (`cursor.marks`).
-            let action = if cursor_overlay::cursor_options::active().marks {
-                *action
-            } else {
-                cursor_overlay::CursorAction::Idle
-            };
-            crate::wayland::shell_helper::set_cursor_state(
-                action.as_str(),
-                delivery.as_ref().map_or("", |value| value.as_str()),
-                target.as_ref().map_or("", |value| value.as_str()),
-                true,
-            );
-        }
+        } if semantic => send_shell_helper_action(*action, *delivery, *target),
         OverlayCommand::EndAction(action) if semantic => {
             crate::wayland::shell_helper::set_cursor_state(action.as_str(), "", "", false);
         }
-        OverlayCommand::SetSessionLabel(label) if semantic => {
-            // The helper has no hover reveal and draws one cursor, so the
-            // minimal badge never shows the name there.
-            let shown = cursor_overlay::badge_mode::active() == cursor_overlay::BadgeMode::Verbose;
-            crate::wayland::shell_helper::set_session_label(
-                cursor_overlay::sanitize_session_label(label)
-                    .filter(|_| shown)
-                    .as_deref()
-                    .unwrap_or(""),
-            );
-        }
+        OverlayCommand::SetSessionLabel(label) if semantic => send_shell_helper_label(label),
         OverlayCommand::SetEnabled(false) => crate::wayland::shell_helper::hide_cursor(),
         _ => {}
     }
+}
+
+/// Start `action`'s cue on the semantic helper's cursor.
+#[cfg(target_os = "linux")]
+fn send_shell_helper_action(
+    action: cursor_overlay::CursorAction,
+    delivery: Option<cursor_overlay::DeliveryModifier>,
+    target: Option<cursor_overlay::TargetModifier>,
+) {
+    // The GNOME helper paints its own single-cursor badge. Only the verbose
+    // badge shows delivery and target chips there.
+    let (delivery, target) = match cursor_overlay::badge_mode::active() {
+        cursor_overlay::BadgeMode::Verbose => (delivery, target),
+        cursor_overlay::BadgeMode::Minimal | cursor_overlay::BadgeMode::Off => (None, None),
+    };
+    // Its action marks are opt-in too (`cursor.marks`).
+    let action = if cursor_overlay::cursor_options::active().marks {
+        action
+    } else {
+        cursor_overlay::CursorAction::Idle
+    };
+    crate::wayland::shell_helper::set_cursor_state(
+        action.as_str(),
+        delivery.as_ref().map_or("", |value| value.as_str()),
+        target.as_ref().map_or("", |value| value.as_str()),
+        true,
+    );
+}
+
+/// Set the semantic helper's badge label.
+#[cfg(target_os = "linux")]
+fn send_shell_helper_label(label: &str) {
+    // The helper has no hover reveal and draws one cursor, so the minimal
+    // badge never shows the name there.
+    let shown = cursor_overlay::badge_mode::active() == cursor_overlay::BadgeMode::Verbose;
+    crate::wayland::shell_helper::set_session_label(
+        cursor_overlay::sanitize_session_label(label)
+            .filter(|_| shown)
+            .as_deref()
+            .unwrap_or(""),
+    );
 }
 
 /// Read the render map, treating a poisoned or uninitialised map as absent.
@@ -6493,23 +6583,14 @@ mod shell_helper_surface_tests {
         let now = Instant::now();
         let a = "shell-surface-test-a";
         let b = "shell-surface-test-b";
-        assert!(shell_helper_surface_event(&cmd(a), now));
-        assert!(!shell_helper_surface_event(
-            &OverlayMsg::Remove(b.to_owned()),
-            now
-        ));
-        assert!(!shell_helper_surface_event(&cmd(b), now));
-        assert!(shell_helper_surface_event(&cmd(a), now));
-        assert!(shell_helper_surface_event(
-            &OverlayMsg::Remove(a.to_owned()),
-            now
-        ));
-        assert!(!shell_helper_surface_event(&cmd(a), now));
-        assert!(!shell_helper_surface_event(
-            &OverlayMsg::Revive(b.to_owned()),
-            now
-        ));
-        assert!(shell_helper_surface_event(&cmd(b), now));
+        assert!(shell_helper_surface_event(&cmd(a), now).draws);
+        assert!(!shell_helper_surface_event(&OverlayMsg::Remove(b.to_owned()), now).draws);
+        assert!(!shell_helper_surface_event(&cmd(b), now).draws);
+        assert!(shell_helper_surface_event(&cmd(a), now).draws);
+        assert!(shell_helper_surface_event(&OverlayMsg::Remove(a.to_owned()), now).draws);
+        assert!(!shell_helper_surface_event(&cmd(a), now).draws);
+        assert!(!shell_helper_surface_event(&OverlayMsg::Revive(b.to_owned()), now).draws);
+        assert!(shell_helper_surface_event(&cmd(b), now).draws);
     }
 
     fn keyed(key: &str, cmd: OverlayCommand) -> OverlayMsg {
@@ -6518,6 +6599,11 @@ mod shell_helper_surface_tests {
             cmd,
         })
     }
+
+    const DRAWS: ShellHelperReach = ShellHelperReach {
+        draws: true,
+        switched: false,
+    };
 
     fn poses() -> ShellHelperPoses {
         ShellHelperPoses {
@@ -6542,7 +6628,7 @@ mod shell_helper_surface_tests {
     fn moves_and_snaps_reach_the_helper_as_pose_tracks() {
         let now = Instant::now();
         let mut poses = poses();
-        let snap = shell_helper_pose_update(&mut poses, &cmd("a"), true, now);
+        let snap = shell_helper_pose_update(&mut poses, &cmd("a"), DRAWS, now);
         let track: serde_json::Value =
             serde_json::from_str(snap.track.as_deref().unwrap()).unwrap();
         assert_eq!(track["samples"].as_array().unwrap().len(), 1);
@@ -6551,7 +6637,7 @@ mod shell_helper_surface_tests {
         assert_eq!(snap.arrival, None, "a snap has no glide to wait for");
 
         let glide =
-            shell_helper_pose_update(&mut poses, &keyed("a", move_to(600.0, 400.0)), true, now);
+            shell_helper_pose_update(&mut poses, &keyed("a", move_to(600.0, 400.0)), DRAWS, now);
         let track: serde_json::Value =
             serde_json::from_str(glide.track.as_deref().unwrap()).unwrap();
         let samples = track["samples"].as_array().unwrap();
@@ -6563,8 +6649,12 @@ mod shell_helper_surface_tests {
         assert!(wait > Duration::ZERO);
         assert_eq!(poses.model.move_seq(&"a".to_owned()), Some(seq));
 
-        let elsewhere =
-            shell_helper_pose_update(&mut poses, &keyed("b", move_to(9.0, 9.0)), false, now);
+        let elsewhere = shell_helper_pose_update(
+            &mut poses,
+            &keyed("b", move_to(9.0, 9.0)),
+            ShellHelperReach::default(),
+            now,
+        );
         assert_eq!(elsewhere, ShellHelperPoseUpdate::default());
     }
 
@@ -6574,17 +6664,133 @@ mod shell_helper_surface_tests {
     fn the_helper_look_is_sent_only_when_it_changes() {
         let now = Instant::now();
         let mut poses = poses();
-        let first = shell_helper_pose_update(&mut poses, &cmd("a"), true, now);
+        let first = shell_helper_pose_update(&mut poses, &cmd("a"), DRAWS, now);
         assert!(first.look.is_some());
         assert_eq!(
-            shell_helper_pose_update(&mut poses, &cmd("a"), true, now).look,
+            shell_helper_pose_update(&mut poses, &cmd("a"), DRAWS, now).look,
             None
         );
-        let other = shell_helper_pose_update(&mut poses, &cmd("b"), true, now);
+        let other = shell_helper_pose_update(&mut poses, &cmd("b"), DRAWS, now);
         assert!(other.look.is_some() && other.look != first.look);
-        shell_helper_pose_update(&mut poses, &OverlayMsg::Remove("b".to_owned()), true, now);
-        assert!(shell_helper_pose_update(&mut poses, &cmd("a"), true, now)
+        shell_helper_pose_update(&mut poses, &OverlayMsg::Remove("b".to_owned()), DRAWS, now);
+        assert!(shell_helper_pose_update(&mut poses, &cmd("a"), DRAWS, now)
             .look
             .is_some());
+    }
+
+    /// Every CLI call briefly runs under its own per-call session (a label
+    /// and an action cue, never a position) before the named session moves.
+    /// On a backend with one cursor per session that per-call cursor is never
+    /// drawn; on the helper's single cursor it used to take over and restyle
+    /// it, so the arrow and halo flashed another colour on every call. The
+    /// helper's colour and halo must stay the named session's from rest,
+    /// through the move, to the click on arrival.
+    #[test]
+    fn the_helper_cursor_keeps_its_colour_from_rest_through_travel_to_arrival() {
+        let now = Instant::now();
+        let mut surface = cua_driver_core::agent_cursor::SharedCursorSurface::new();
+        let mut poses = poses();
+        let named = "__cua_runtime_test:demo";
+        let per_call = |n: u32| format!("__cua_runtime_test:cli-call-{n}");
+        let begin = |action| OverlayCommand::BeginAction {
+            action,
+            delivery: None,
+            target: None,
+        };
+        let mut script = vec![
+            // Rest: the named session is already on screen.
+            keyed(
+                named,
+                OverlayCommand::SnapTo {
+                    x: 300.0,
+                    y: 300.0,
+                    heading_radians: None,
+                },
+            ),
+        ];
+        for (n, (x, y)) in [(900.0, 600.0), (1200.0, 400.0)].into_iter().enumerate() {
+            let call = per_call(n as u32);
+            script.extend([
+                keyed(&call, OverlayCommand::SetSessionLabel(String::new())),
+                keyed(&call, begin(cursor_overlay::CursorAction::Idle)),
+                keyed(&call, begin(cursor_overlay::CursorAction::System)),
+                keyed(named, OverlayCommand::SetSessionLabel("demo".into())),
+                keyed(named, begin(cursor_overlay::CursorAction::Navigate)),
+                // Travel.
+                keyed(named, move_to(x, y)),
+                // Arrival.
+                keyed(named, OverlayCommand::ClickPulse { x, y }),
+                keyed(named, begin(cursor_overlay::CursorAction::Click)),
+            ]);
+        }
+
+        let mut colours = std::collections::BTreeSet::new();
+        let mut halos = std::collections::BTreeSet::new();
+        let mut switches = 0;
+        for msg in &script {
+            let reach = shell_helper_surface_apply(&mut surface, msg, now);
+            let update = shell_helper_pose_update(&mut poses, msg, reach, now);
+            let OverlayMsg::Cmd(command) = msg else {
+                continue;
+            };
+            if reach.draws {
+                // What `dispatch_shell_helper_command` paints the arrow with.
+                colours.insert(cursor_overlay::session_fill_hex(&command.key));
+            }
+            switches += usize::from(reach.switched);
+            if let Some(look) = update.look {
+                let look: serde_json::Value = serde_json::from_str(&look).unwrap();
+                halos.insert(look["halo"]["rgb"].to_string());
+            }
+        }
+        assert_eq!(
+            colours.into_iter().collect::<Vec<_>>(),
+            vec![cursor_overlay::session_fill_hex(named)],
+            "only the named session styles the arrow"
+        );
+        assert!(halos.len() <= 1, "one halo colour, got {halos:?}");
+        assert_eq!(switches, 1, "the named session takes the cursor once");
+        assert_eq!(surface.owner(), Some(named));
+    }
+
+    /// The label the named session sent before it ever placed its cursor
+    /// reaches the helper when its first move takes the cursor over.
+    #[test]
+    fn taking_the_helper_cursor_over_replays_the_owners_label() {
+        let now = Instant::now();
+        let mut surface = cua_driver_core::agent_cursor::SharedCursorSurface::new();
+        let mut poses = poses();
+        let label = keyed("run-a", OverlayCommand::SetSessionLabel("Research".into()));
+        let reach = shell_helper_surface_apply(&mut surface, &label, now);
+        assert_eq!(
+            reach,
+            ShellHelperReach::default(),
+            "a label alone draws nothing"
+        );
+        assert_eq!(
+            shell_helper_pose_update(&mut poses, &label, reach, now),
+            ShellHelperPoseUpdate::default()
+        );
+        let glide = keyed("run-a", move_to(400.0, 300.0));
+        let reach = shell_helper_surface_apply(&mut surface, &glide, now);
+        assert_eq!(
+            reach,
+            ShellHelperReach {
+                draws: true,
+                switched: true
+            }
+        );
+        let owner = shell_helper_pose_update(&mut poses, &glide, reach, now)
+            .owner_state
+            .expect("the takeover restyles the helper for its owner");
+        assert_eq!(owner.label.as_deref(), Some("Research"));
+        // Its next commands are already the owner's: nothing to replay.
+        let again = keyed("run-a", move_to(500.0, 300.0));
+        let reach = shell_helper_surface_apply(&mut surface, &again, now);
+        assert!(reach.draws && !reach.switched);
+        assert_eq!(
+            shell_helper_pose_update(&mut poses, &again, reach, now).owner_state,
+            None
+        );
     }
 }

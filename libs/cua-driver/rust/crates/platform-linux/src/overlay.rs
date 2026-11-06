@@ -308,6 +308,8 @@ impl X11OverlayThreadCleanup {
 #[cfg(target_os = "linux")]
 impl Drop for X11OverlayThreadCleanup {
     fn drop(&mut self) {
+        // The XID is free for another client once this connection closes.
+        X11_OVERLAY_WINDOW.store(0, std::sync::atomic::Ordering::Release);
         // Disconnect first so an animator racing teardown cannot enqueue after
         // the waiter sweep. Registrations before release are swept below;
         // registrations after release observe a disconnected channel and cancel

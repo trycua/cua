@@ -742,8 +742,9 @@ impl FocusSnapshot {
             if now.is_empty() {
                 stable += 1;
                 if stable >= STABLE_POLLS {
-                    // diff() skips a None core focus, which a bounce can leave.
-                    report.restored = !wm_only || x.core_focus().0 == self.core_focus;
+                    // diff() skips a None core focus, which a bounce can leave;
+                    // the foreground restore (no same-app rule) always reads it.
+                    report.restored = (!wm_only && same_app) || x.core_focus().0 == self.core_focus;
                     break;
                 }
                 continue;

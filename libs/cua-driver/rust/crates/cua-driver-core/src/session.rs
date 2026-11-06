@@ -1983,8 +1983,11 @@ mod tests {
         end_session(sid);
     }
 
+    /// Revoke walks the lifecycle records, the same map admission writes.
+    /// The old gap (a record not yet in the activity map) cannot be reached
+    /// from outside one call, so this pins the walk, not the race.
     #[test]
-    fn revoke_ends_a_declared_session_with_no_dispatch_yet() {
+    fn revoke_ends_a_session_declared_without_a_call() {
         let prefix = "__cua_runtime_5e2d0000000000000000000000000000:";
         let sid = format!("{prefix}declared");
         activate_session(

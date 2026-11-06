@@ -263,7 +263,7 @@ fn schema_ref() -> Value {
     })
 }
 
-pub(crate) fn browser_resource_ownership(
+pub(crate) async fn browser_resource_ownership(
     engine: &BrowserEngine,
     args: &Value,
 ) -> ProtectedResourceOwnership {
@@ -283,10 +283,14 @@ pub(crate) fn browser_resource_ownership(
             .and_then(|target_id| engine.store.get_target(&runtime_session, target_id).ok())
             .map(|target| target.pid)
     });
-    if pid.is_some_and(|pid| {
-        engine.is_driver_owned_pid_for_session(&runtime_session, pid)
-            || engine.is_driver_owned_pid_for_session(session, pid)
-    }) {
+    let Some(pid) = pid else {
+        return ProtectedResourceOwnership::UserOwned;
+    };
+    if engine
+        .is_driver_owned_pid_for_session(&runtime_session, pid)
+        .await
+        || engine.is_driver_owned_pid_for_session(session, pid).await
+    {
         ProtectedResourceOwnership::DriverOwned
     } else {
         ProtectedResourceOwnership::UserOwned
@@ -488,7 +492,7 @@ impl Tool for GetBrowserStateTool {
         args: &Value,
     ) -> ProtectedResourceOwnership {
         if adapter_id == "private_observation" {
-            browser_resource_ownership(&self.engine, args)
+            browser_resource_ownership(&self.engine, args).await
         } else {
             ProtectedResourceOwnership::UserOwned
         }
@@ -1047,7 +1051,7 @@ impl Tool for BrowserNavigateTool {
         args: &Value,
     ) -> ProtectedResourceOwnership {
         if adapter_id == "browser_bound_input" {
-            browser_resource_ownership(&self.engine, args)
+            browser_resource_ownership(&self.engine, args).await
         } else {
             ProtectedResourceOwnership::UserOwned
         }
@@ -1207,7 +1211,7 @@ impl Tool for BrowserClickTool {
         args: &Value,
     ) -> ProtectedResourceOwnership {
         if adapter_id == "browser_bound_input" {
-            browser_resource_ownership(&self.engine, args)
+            browser_resource_ownership(&self.engine, args).await
         } else {
             ProtectedResourceOwnership::UserOwned
         }
@@ -1988,7 +1992,7 @@ impl Tool for BrowserTypeTool {
         args: &Value,
     ) -> ProtectedResourceOwnership {
         if adapter_id == "browser_bound_input" {
-            browser_resource_ownership(&self.engine, args)
+            browser_resource_ownership(&self.engine, args).await
         } else {
             ProtectedResourceOwnership::UserOwned
         }
@@ -2582,7 +2586,7 @@ impl Tool for BrowserSelectTool {
         args: &Value,
     ) -> ProtectedResourceOwnership {
         if adapter_id == "browser_bound_input" {
-            browser_resource_ownership(&self.engine, args)
+            browser_resource_ownership(&self.engine, args).await
         } else {
             ProtectedResourceOwnership::UserOwned
         }
@@ -2781,7 +2785,7 @@ impl Tool for BrowserDialogTool {
             adapter_id,
             "private_observation" | "browser_consequential_action"
         ) {
-            browser_resource_ownership(&self.engine, args)
+            browser_resource_ownership(&self.engine, args).await
         } else {
             ProtectedResourceOwnership::UserOwned
         }
@@ -3358,44 +3362,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn an_idle_end_keeps_the_launches_the_browser_hook_shares() {
-        // The engine's session-end hook drops the session's launch records
-        // from the store the registry's kill_app checks; an idle sweep only
-        // pauses a session, so they stay, while any other end drops them.
-        let ownership = Arc::new(crate::consent::ProtectedResourceOwnershipStore::default());
-        let _engine = BrowserEngine::new_with_runtime_services(
-            Arc::new(MockPlatform::default()),
-            Arc::new(crate::consent::ApprovalBroker::unavailable()),
-            ownership.clone(),
-        );
-        let prefix = "__cua_runtime_browser_launch_records:";
-        let (idle, ended) = (format!("{prefix}idle"), format!("{prefix}ended"));
-        for session in [&idle, &ended] {
-            crate::session::activate_session(
-                session,
-                None,
-                session,
-                false,
-                crate::session::SessionTransport::Daemon,
-                crate::session::SessionClientKind::Cli,
-            )
-            .unwrap();
-            ownership.mark_driver_owned_pid(session, 424243);
-        }
-
-        assert_eq!(
-            crate::session::evict_idle_with_prefix(std::time::Duration::ZERO, &idle),
-            vec![idle.clone()]
-        );
-        assert!(crate::session::fire_session_end(&ended));
-
-        assert!(ownership.is_driver_owned_pid(&idle, 424243));
-        assert!(!ownership.is_driver_owned_pid(&ended, 424243));
-        crate::session::revoke_sessions_with_prefix(prefix);
-        crate::session::forget_ended_sessions_with_prefix(prefix);
-    }
-
     fn engine() -> Arc<BrowserEngine> {
         BrowserEngine::new(Arc::new(MockPlatform::default()))
     }
@@ -3934,6 +3900,74 @@ mod tests {
         let owned =
             prepare_isolated(&engine, &session, &owner, json!({ "mode": "isolated_new" })).await;
         assert_eq!(owned["lifecycle"]["owner"], "session");
+        crate::session::end_session(&session);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn an_idle_end_reaps_the_browser_and_forgets_its_pid() {
+        // The killed browser's pid can be reused by a user's browser, so no
+        // launch record for it may outlive the idle sweep.
+        let engine = launching_engine();
+        let (session, owner) = start_lifecycle_session(None);
+        let prepared =
+            prepare_isolated(&engine, &session, &owner, json!({ "mode": "isolated_new" })).await;
+        let pid = prepared["prepared_pid"].as_i64().expect("prepared pid");
+        let launched_app = pid + 1;
+        let ownership = engine.protected_resource_ownership.clone();
+        ownership.mark_driver_owned_pid(&session, launched_app);
+        let args = json!({ "session": session, "pid": pid });
+        assert_eq!(
+            browser_resource_ownership(&engine, &args).await,
+            ProtectedResourceOwnership::DriverOwned
+        );
+
+        assert_eq!(
+            crate::session::evict_idle_with_prefix(Duration::ZERO, &session),
+            vec![session.clone()]
+        );
+
+        assert!(!ownership.is_driver_owned_pid(&session, pid));
+        assert!(!ownership.is_driver_owned_pid(&owner, pid));
+        assert_eq!(
+            browser_resource_ownership(&engine, &args).await,
+            ProtectedResourceOwnership::UserOwned
+        );
+        // Records the browser engine did not create stay for the registry.
+        assert!(ownership.is_driver_owned_pid(&session, launched_app));
+        crate::session::end_session(&session);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_reused_browser_pid_is_not_driver_owned() {
+        let engine = launching_engine();
+        let (session, owner) = start_lifecycle_session(None);
+        let prepared =
+            prepare_isolated(&engine, &session, &owner, json!({ "mode": "isolated_new" })).await;
+        let pid = prepared["prepared_pid"].as_i64().expect("prepared pid");
+        let args = json!({ "session": session, "pid": pid });
+        assert_eq!(
+            browser_resource_ownership(&engine, &args).await,
+            ProtectedResourceOwnership::DriverOwned
+        );
+
+        // The mock reports start time 1 for every pid; a record made at a
+        // different start time stands for a pid the OS has since reused.
+        let launched_earlier = ProcessFingerprint {
+            pid,
+            start_time: Some(0),
+            executable: None,
+        };
+        for key in [&session, &owner] {
+            engine
+                .protected_resource_ownership
+                .mark_driver_owned_process(key, launched_earlier.clone());
+        }
+        assert_eq!(
+            browser_resource_ownership(&engine, &args).await,
+            ProtectedResourceOwnership::UserOwned
+        );
         crate::session::end_session(&session);
     }
 

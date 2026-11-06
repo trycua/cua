@@ -789,24 +789,43 @@ fn spawned_runtime_pid(ownership: &EndpointOwnershipProof) -> i64 {
 }
 
 impl BrowserEngine {
-    pub(crate) fn is_driver_owned_pid_for_session(&self, session: &str, pid: i64) -> bool {
-        self.managed_browsers.lock().unwrap().iter().any(|browser| {
+    /// Whether `pid` is a browser this engine launched for `session` and is
+    /// still the same process instance. A pid alone is not proof: it can be
+    /// reused once the launched browser exits.
+    pub(crate) async fn is_driver_owned_pid_for_session(&self, session: &str, pid: i64) -> bool {
+        let managed = self.managed_browsers.lock().unwrap().iter().any(|browser| {
             browser.owned_pid == pid && browser.owner_sessions.iter().any(|owner| owner == session)
-        })
+        });
+        if !managed {
+            return false;
+        }
+        let Ok(current) = self.platform.process_fingerprint(pid).await else {
+            return false;
+        };
+        self.protected_resource_ownership
+            .reprove_driver_owned_process(session, &current)
     }
 
     pub(crate) fn cleanup_prepared_session(&self, session: &str) {
-        // The store is the registry's: an idle sweep keeps the session's
-        // launch records there, as the registry's own end hook does.
-        if crate::session::session_end_reason(session)
-            != Some(crate::session::SessionEndReason::IdleTimeout)
-        {
-            self.protected_resource_ownership.remove_session(session);
+        // The store is shared with the registry, which owns the session's
+        // other launch records. Drop only the browsers reaped here, so none
+        // of their pids outlives its process.
+        let reaped = {
+            let mut browsers = self.managed_browsers.lock().unwrap();
+            let (reaped, kept) = std::mem::take(&mut *browsers)
+                .into_iter()
+                .partition::<Vec<_>, _>(|browser| {
+                    browser.owner_sessions.iter().any(|owner| owner == session)
+                });
+            *browsers = kept;
+            reaped
+        };
+        for browser in &reaped {
+            for owner in &browser.owner_sessions {
+                self.protected_resource_ownership
+                    .remove_process(owner, browser.owned_pid);
+            }
         }
-        self.managed_browsers
-            .lock()
-            .unwrap()
-            .retain(|browser| !browser.owner_sessions.iter().any(|owner| owner == session));
     }
 
     pub(crate) async fn prepare_browser(

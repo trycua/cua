@@ -343,6 +343,16 @@ impl ProtectedResourceOwnershipStore {
         matches
     }
 
+    pub fn remove_process(&self, session: &str, pid: i64) {
+        let mut sessions = self.processes_by_session.lock().unwrap();
+        if let Some(processes) = sessions.get_mut(session) {
+            processes.remove(&pid);
+            if processes.is_empty() {
+                sessions.remove(session);
+            }
+        }
+    }
+
     pub fn remove_session(&self, session: &str) {
         self.processes_by_session.lock().unwrap().remove(session);
     }

@@ -1357,8 +1357,8 @@ impl ToolRegistry {
             crate::session::register_scoped_session_end_hook(move |session_id| {
                 crate::agent_cursor::forget_input_origin(session_id);
                 // An idle sweep only pauses a session: the same label can be
-                // started again and still owns what it launched. Every other
-                // end, and an explicit end_session (dispatch below), drops it.
+                // started again and still owns what it launched. A later
+                // terminal end reruns this hook and drops it.
                 if let Some(ownership) = weak_ownership.upgrade().filter(|_| {
                     crate::session::session_end_reason(session_id)
                         != Some(crate::session::SessionEndReason::IdleTimeout)
@@ -2560,17 +2560,6 @@ impl ToolRegistry {
             "end_session" => {
                 if let Some(session) = args.get("_session_id").and_then(Value::as_str) {
                     crate::desktop_capture_scale::forget_session(session);
-                    // Ending a session that already idled out runs no end
-                    // hooks, so its kept launch records go here.
-                    let owner = args
-                        .get("_transport_session_id")
-                        .and_then(Value::as_str)
-                        .unwrap_or(session);
-                    if result.is_error != Some(true)
-                        && crate::session::session_owner_matches(session, owner)
-                    {
-                        self.protected_resource_ownership.remove_session(session);
-                    }
                 }
             }
             _ => {}
@@ -5912,21 +5901,137 @@ resources:
         assert_ne!(killed.is_error, Some(true), "{killed:?}");
         assert_eq!(hits.load(Ordering::SeqCst), 1);
 
-        // An explicit end drops the launch records, whether the session was
-        // live or had already idled out.
-        for idle_first in [false, true] {
-            launched();
-            if idle_first {
-                crate::session::evict_idle_with_prefix(Duration::ZERO, &prefix);
+        // Every terminal end drops the launch records, whether the session
+        // was live or had already idled out: end_session, transport
+        // teardown, and revocation.
+        let run = context.runtime_session_key("run");
+        for terminal in ["end_session", "transport", "revoke"] {
+            for idle_first in [false, true] {
+                launched();
+                if idle_first {
+                    crate::session::evict_idle_with_prefix(Duration::ZERO, &prefix);
+                }
+                match terminal {
+                    "end_session" => {
+                        assert_ne!(call("end_session", "run").await.is_error, Some(true));
+                    }
+                    "transport" => {
+                        assert_eq!(
+                            crate::session::end_sessions_for_owner(
+                                &run,
+                                crate::session::SessionEndReason::ProcessExit
+                            ),
+                            1
+                        );
+                    }
+                    _ => {
+                        assert!(crate::session::revoke_sessions_with_prefix(&prefix) >= 1);
+                    }
+                }
+                assert!(
+                    !registry
+                        .protected_resource_ownership()
+                        .is_driver_owned_pid(&run, 424242),
+                    "{terminal} idle_first={idle_first}"
+                );
+                assert_ne!(call("start_session", "run").await.is_error, Some(true));
+                assert_eq!(
+                    refusal_code(&call("kill_app", "run").await).as_deref(),
+                    Some("foreign_process_termination_denied"),
+                    "{terminal} idle_first={idle_first}"
+                );
             }
-            assert_ne!(call("end_session", "run").await.is_error, Some(true));
-            assert_ne!(call("start_session", "run").await.is_error, Some(true));
-            assert_eq!(
-                refusal_code(&call("kill_app", "run").await).as_deref(),
-                Some("foreign_process_termination_denied"),
-                "idle_first={idle_first}"
-            );
         }
+        assert_eq!(hits.load(Ordering::SeqCst), 1);
+
+        crate::session::revoke_sessions_with_prefix(&prefix);
+        crate::session::forget_ended_sessions_with_prefix(&prefix);
+    }
+
+    #[tokio::test]
+    async fn ending_an_idled_session_keeps_the_launches_of_its_next_episode() {
+        let hits = Arc::new(AtomicUsize::new(0));
+        let mut registry = attested_registry("kill_app", None, hits.clone(), false);
+        let tools = Arc::get_mut(&mut registry).unwrap();
+        tools.register(Box::new(crate::session_tools::StartSessionTool));
+        tools.register(Box::new(crate::session_tools::EndSessionTool));
+        let context = standard_context();
+        let prefix = format!("__cua_runtime_{}:", context.runtime_scope_key());
+        let run = context.runtime_session_key("revived");
+        let call = |name: &'static str| {
+            let registry = registry.clone();
+            let context = context.clone();
+            async move {
+                registry
+                    .invoke_with_context(
+                        name,
+                        serde_json::json!({"pid": 424242, "session": "revived"}),
+                        context,
+                    )
+                    .await
+            }
+        };
+        let fingerprint = crate::browser::ProcessFingerprint {
+            pid: 424242,
+            start_time: Some(7),
+            executable: Some(fixture_executable()),
+        };
+        assert_ne!(call("start_session").await.is_error, Some(true));
+        registry
+            .protected_resource_ownership()
+            .mark_driver_owned_process(&run, fingerprint.clone());
+        crate::session::evict_idle_with_prefix(Duration::ZERO, &prefix);
+
+        // A revival racing the explicit end lands while its cleanup runs and
+        // records a launch for the next episode if it is admitted.
+        let ownership = Arc::downgrade(&registry.protected_resource_ownership());
+        let observed = run.clone();
+        let raced = Arc::new(std::sync::Mutex::new(None));
+        let raced_in_hook = raced.clone();
+        let _race = crate::session::register_scoped_session_end_hook(move |ended| {
+            if ended != observed
+                || crate::session::session_end_reason(ended)
+                    == Some(crate::session::SessionEndReason::IdleTimeout)
+            {
+                return;
+            }
+            let revived = crate::session::activate_or_revive_session_for_owner(
+                ended,
+                Some("revived"),
+                ended,
+                false,
+                crate::session::SessionTransport::Daemon,
+                crate::session::SessionClientKind::Cli,
+                None,
+            );
+            if revived.is_ok() {
+                if let Some(ownership) = ownership.upgrade() {
+                    ownership.mark_driver_owned_process(ended, fingerprint.clone());
+                }
+            }
+            raced_in_hook.lock().unwrap().replace(revived.is_ok());
+        });
+        assert_ne!(call("end_session").await.is_error, Some(true));
+        assert_eq!(
+            *raced.lock().unwrap(),
+            Some(false),
+            "the end ran its cleanup and refused the revival meanwhile"
+        );
+
+        // The next episode starts after cleanup, and its launch stays.
+        assert_ne!(call("start_session").await.is_error, Some(true));
+        registry
+            .protected_resource_ownership()
+            .mark_driver_owned_process(
+                &run,
+                crate::browser::ProcessFingerprint {
+                    pid: 424242,
+                    start_time: Some(7),
+                    executable: Some(fixture_executable()),
+                },
+            );
+        let killed = call("kill_app").await;
+        assert_ne!(killed.is_error, Some(true), "{killed:?}");
         assert_eq!(hits.load(Ordering::SeqCst), 1);
 
         crate::session::revoke_sessions_with_prefix(&prefix);

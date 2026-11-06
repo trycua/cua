@@ -25,7 +25,11 @@ permissions:
 concurrency:
   # Called from another workflow, github.workflow is the caller's name; the prefix keeps this group
   # apart from the caller's own concurrency group, so neither cancels the other.
-  group: ci-quick-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  # A label event (opened + labeled fire together when a PR is created with a label) gets its own
+  # group, so it cannot cancel the run for the new head; only a newer push (synchronize) cancels.
+  group: >-
+    ci-quick-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}-${{
+    (github.event.action == 'labeled' || github.event.action == 'unlabeled') && github.run_id || 'main' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:

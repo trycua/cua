@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.40.3](https://github.com/trycua/cua/compare/cua-driver-rs-v0.40.2...cua-driver-rs-v0.40.3) (2026-11-06)
+
+
+### Bug Fixes
+
+* **cua-driver:** clear platform-linux test-target clippy lints ([#6695](https://github.com/trycua/cua/issues/6695)) ([8232555](https://github.com/trycua/cua/commit/823255524bfa90da7b5222e222d591bc86beb3cf))
+* **cua-driver:** re-read AXEnabled after foreground activation on macOS ([#6702](https://github.com/trycua/cua/issues/6702)) ([044f7a7](https://github.com/trycua/cua/commit/044f7a70cc886ea15bdbdc4f8195a2c09e06224e))
+
+## [0.40.2](https://github.com/trycua/cua/compare/cua-driver-rs-v0.40.1...cua-driver-rs-v0.40.2) (2026-11-06)
+
+
+### Bug Fixes
+
+* **cua-driver:** start the composited X11 overlay test's reads once its desktop is on screen ([#6512](https://github.com/trycua/cua/issues/6512)) ([566a4ce](https://github.com/trycua/cua/commit/566a4ce655905c0d28065f4f534e221e92916e24))
+
 ## [0.40.1](https://github.com/trycua/cua/compare/cua-driver-rs-v0.40.0...cua-driver-rs-v0.40.1) (2026-11-06)
 
 

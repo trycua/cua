@@ -578,6 +578,36 @@ inst CUA_INSTALL_MANIFEST_URL="$base/sig2/release-artifacts.json" -- --yes --no-
 check "unverifiable signatures, default output: plain checksum line only" sh -c "[ $status = 0 ] && grep -q '(downloads checked)' '$work/out' && ! grep -qi 'cosign\|minisign\|signatures were not\|checksum' '$work/out'"
 inst CUA_INSTALL_MANIFEST_URL="$base/sig2/release-artifacts.json" -- --yes --no-onboarding --select spaces --require-signature --prefix "$work/sg2"
 check "--require-signature still fails without minisign or cosign" sh -c "[ $status != 0 ] && grep -q 'no verifiable signature' '$work/out'"
+
+# cosign, app: a release rebuilt by a dispatch from main is signed by
+# cd-cua-spaces.yml at refs/heads/main; the installer accepts that identity
+# next to the tag one, and still refuses any other.
+sig3="$release/sig3"
+mkdir -p "$sig3" "$work/fakebin-cosign3"
+cp "$tag_dir"/cua-cli-* "$tag_dir"/cua-spaces-"$version"-linux-x64.AppImage "$sig3/"
+for f in "$sig3"/cua-cli-*.tar.gz "$sig3"/*.AppImage; do printf '{}\n' >"$f.sigstore.json"; done
+python3 "$manifest_tool" --component cli --version "$version" --dir "$sig3" --out "$sig3/cli.json"
+python3 "$manifest_tool" --component app --version "$version" --dir "$sig3" --merge "$sig3/cli.json" --out "$sig3/release-artifacts.json"
+cli_identity="https://github.com/trycua/cua/.github/workflows/cd-cua-sdk.yml@refs/tags/cua-sdk-v$version"
+main_identity="https://github.com/trycua/cua/.github/workflows/cd-cua-spaces.yml@refs/heads/main"
+cat >"$work/fakebin-cosign3/cosign" <<COSIGN
+#!/bin/sh
+prev=""
+for a in "\$@"; do
+    if [ "\$prev" = --certificate-identity ]; then
+        [ "\$a" = "$cli_identity" ] && exit 0
+        [ "\$a" = "$main_identity" ] && exit 0
+    fi
+    prev="\$a"
+done
+exit 1
+COSIGN
+chmod +x "$work/fakebin-cosign3/cosign"
+inst PATH="$work/fakebin-cosign3:$PATH" CUA_INSTALL_MANIFEST_URL="$base/sig3/release-artifacts.json" -- --yes --no-onboarding --select spaces --require-signature --prefix "$work/sg4"
+check "cosign accepts the app signed by cd-cua-spaces.yml at refs/heads/main (rebuilt release)" sh -c "[ $status = 0 ] && [ -x '$work/sg4/bin/cua-spaces' ]"
+printf '#!/bin/sh\nexit 1\n' >"$work/fakebin-cosign3/cosign"
+inst PATH="$work/fakebin-cosign3:$PATH" CUA_INSTALL_MANIFEST_URL="$base/sig3/release-artifacts.json" -- --yes --no-onboarding --select spaces --prefix "$work/sg5"
+check "cosign: an app bundle from any other identity aborts" sh -c "[ $status != 0 ] && grep -q 'cosign signature check failed' '$work/out'"
 # Upgrade over a running older daemon: the new cua stops it (never a broad
 # kill) and starts the new one. A fake old cua reports a running 0.0.9 daemon.
 mkdir -p "$work/up/bin"

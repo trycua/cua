@@ -79,6 +79,62 @@ pub fn start_spec(plan: &InstallPlan) -> StartSpec {
     spec
 }
 
+/// What the VM's screen shows, as far as the boot prompt is concerned.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Screen {
+    /// Nothing drawn yet.
+    Black,
+    /// "Press any key to boot from CD or DVD...": text in the top rows of an
+    /// otherwise black screen.
+    BootPrompt,
+    /// Anything else (firmware logo, shell, Windows).
+    Other,
+}
+
+/// Classifies a binary PPM (P6) frame.
+pub(crate) fn classify_screen(ppm: &[u8]) -> Screen {
+    // "P6", width, height, maxval, one whitespace byte, then RGB bytes.
+    let mut pos = 0;
+    let mut token = || -> Option<&[u8]> {
+        while ppm.get(pos).is_some_and(|b| b.is_ascii_whitespace()) {
+            pos += 1;
+        }
+        let start = pos;
+        while ppm.get(pos).is_some_and(|b| !b.is_ascii_whitespace()) {
+            pos += 1;
+        }
+        (pos > start).then(|| &ppm[start..pos])
+    };
+    let num = |t: Option<&[u8]>| -> Option<usize> { std::str::from_utf8(t?).ok()?.parse().ok() };
+    if token() != Some(b"P6") {
+        return Screen::Other;
+    }
+    let (Some(w), Some(h), Some(_max)) = (num(token()), num(token()), num(token())) else {
+        return Screen::Other;
+    };
+    let data = &ppm[(pos + 1).min(ppm.len())..];
+    if w == 0 || h == 0 || data.len() < w * h * 3 {
+        return Screen::Other;
+    }
+    let (mut lit, mut lit_below) = (0usize, 0usize);
+    for y in 0..h {
+        let row = &data[y * w * 3..(y + 1) * w * 3];
+        let n = row
+            .chunks_exact(3)
+            .filter(|p| p[0] > 64 || p[1] > 64 || p[2] > 64)
+            .count();
+        lit += n;
+        if y >= 32 {
+            lit_below += n;
+        }
+    }
+    match (lit, lit_below) {
+        (0..=8, _) => Screen::Black,
+        (_, 0) => Screen::BootPrompt,
+        _ => Screen::Other,
+    }
+}
+
 /// Stops a background task when dropped.
 struct AbortOnDrop(tokio::task::JoinHandle<()>);
 
@@ -150,42 +206,43 @@ impl Installer for QemuInstaller {
         let name = plan.name.clone();
         // Start from nothing: a half-built VM of an earlier attempt is not reused.
         let _ = rt.delete(&name).await;
-        // "Press any key to boot from CD" shows from about 7 s after power-on
-        // and times out a few seconds later; missing it leaves the firmware in
-        // the EFI shell. Press Enter every 0.3 s for the first 25 s after the
-        // VM answers on QMP, and stop: Setup's own window opens after about
-        // 35 s, and an Enter that reached its Cancel button would end the
-        // install.
+        // "Press any key to boot from CD" shows a few seconds after power-on
+        // and times out; missing it leaves the firmware in the EFI shell. An
+        // Enter after that reaches Setup's own window, whose focused button is
+        // Cancel. So Enter is pressed only while the screen shows the prompt
+        // (black with text in the top rows), and never once it has gone.
         let keys = {
             let rt = rt.clone();
             let name = name.clone();
+            let frame = plan.work_dir.join("screen.ppm");
             AbortOnDrop(tokio::spawn(async move {
-                let (mut sent, mut failed) = (0u32, 0u32);
-                let mut up_at: Option<std::time::Instant> = None;
-                // Up to a minute for the VM to exist, then 25 s of presses.
-                for _ in 0..200 {
-                    if up_at.is_some_and(|t| t.elapsed() > Duration::from_secs(25)) {
-                        break;
+                let started = std::time::Instant::now();
+                let (mut pressed, mut seen) = (0u32, false);
+                while started.elapsed() < Duration::from_secs(150) {
+                    tokio::time::sleep(Duration::from_millis(250)).await;
+                    let Ok(mut q) = rt.qmp(&name).await else {
+                        continue;
+                    };
+                    if q.screendump_ppm(&frame).await.is_err() {
+                        continue;
                     }
-                    match rt.qmp(&name).await {
-                        Ok(mut q) => {
-                            up_at.get_or_insert_with(std::time::Instant::now);
-                            match q.send_keys(&["ret"]).await {
-                                Ok(()) => sent += 1,
-                                Err(e) => {
-                                    failed += 1;
-                                    tracing::debug!("boot key press failed: {e}");
-                                }
+                    let Ok(bytes) = tokio::fs::read(&frame).await else {
+                        continue;
+                    };
+                    match classify_screen(&bytes) {
+                        Screen::BootPrompt => {
+                            seen = true;
+                            if q.send_keys(&["ret"]).await.is_ok() {
+                                pressed += 1;
                             }
                         }
-                        Err(e) => {
-                            failed += 1;
-                            tracing::debug!("boot key press: no QMP yet: {e}");
-                        }
+                        // The prompt was there and is gone: the CD is booting.
+                        Screen::Other if seen => break,
+                        Screen::Other | Screen::Black => {}
                     }
-                    tokio::time::sleep(Duration::from_millis(300)).await;
                 }
-                tracing::info!(sent, failed, "boot key presses done");
+                let _ = tokio::fs::remove_file(&frame).await;
+                tracing::info!(pressed, seen, "boot prompt handled");
             }))
         };
         let mut vm = VmGuard {
@@ -264,6 +321,43 @@ mod tests {
             work_dir: "/w".into(),
             timeout: Duration::from_secs(60),
         }
+    }
+
+    /// A P6 frame of `w` x `h` black pixels with `lit(x, y)` pixels white.
+    fn frame(w: usize, h: usize, lit: impl Fn(usize, usize) -> bool) -> Vec<u8> {
+        let mut out = format!("P6\n{w} {h}\n255\n").into_bytes();
+        for y in 0..h {
+            for x in 0..w {
+                let v = if lit(x, y) { 255 } else { 0 };
+                out.extend_from_slice(&[v, v, v]);
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn the_boot_prompt_is_told_from_black_the_shell_and_setup() {
+        // Nothing drawn.
+        assert_eq!(classify_screen(&frame(80, 60, |_, _| false)), Screen::Black);
+        // Text in the top rows only: the prompt.
+        assert_eq!(
+            classify_screen(&frame(80, 60, |x, y| y < 12 && x % 3 == 0 && x < 50)),
+            Screen::BootPrompt
+        );
+        // Text all down the screen (the EFI shell, Setup): not the prompt.
+        assert_eq!(
+            classify_screen(&frame(80, 60, |x, y| y % 7 == 0 && x < 50)),
+            Screen::Other
+        );
+        // A logo in the middle (the firmware splash): not the prompt either.
+        assert_eq!(
+            classify_screen(&frame(80, 60, |x, y| (30..50).contains(&x)
+                && (25..35).contains(&y))),
+            Screen::Other
+        );
+        // Garbage is never the prompt.
+        assert_eq!(classify_screen(b"not a ppm"), Screen::Other);
+        assert_eq!(classify_screen(b"P6\n80 60\n255\nshort"), Screen::Other);
     }
 
     #[test]

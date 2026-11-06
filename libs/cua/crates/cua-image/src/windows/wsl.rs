@@ -335,10 +335,12 @@ impl<W: Wsl + 'static> Installer for WslInstaller<W> {
 /// off: it installs cua-spacesd, seals the image and shuts down
 /// (`setup-spacesd.ps1`), so QEMU exiting is the end of the install.
 async fn drive(plan: &InstallPlan) -> Result<()> {
-    // Enter every 0.3 s for the first 25 s: the "Press any key to boot from
-    // CD" prompt is up for a few seconds, and Setup's own window (whose Cancel
-    // button an Enter would press) opens later.
-    for _ in 0..83 {
+    // Enter every 0.3 s for the first 14 s: the "Press any key to boot from
+    // CD" prompt is up from about 7 s for a few seconds, and Setup's own
+    // window (whose Cancel button an Enter would press) opens soon after the
+    // CD boots. (The native installer reads the screen instead; the QMP port
+    // here is all this driver has.)
+    for _ in 0..47 {
         qmp(r#"{"execute":"send-key","arguments":{"keys":[{"type":"qcode","data":"ret"}]}}"#).await;
         tokio::time::sleep(Duration::from_millis(300)).await;
     }

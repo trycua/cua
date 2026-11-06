@@ -5644,7 +5644,11 @@ mod tests {
         let win = v.os_tiles.iter().find(|t| t.id == "windows").unwrap();
         assert!(!win.enabled);
         assert_eq!(win.title, "Windows");
-        assert!(win.detail.starts_with("Windows on AWS is not offered yet."), "{}", win.detail);
+        assert!(
+            win.detail.starts_with("Windows on AWS is not offered yet."),
+            "{}",
+            win.detail
+        );
         // Off a Mac, the cloud's own reason shows.
         let v_linux = view_on(&s, &e, SpaceOs::Linux);
         let win = v_linux.os_tiles.iter().find(|t| t.id == "windows").unwrap();

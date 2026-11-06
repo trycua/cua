@@ -1815,6 +1815,8 @@ jobs:
               --base main \
               --head "$ATTEMPT_BRANCH" \
               --title "chore(cua-driver): advance published installer version to ${VERSION}" \
+              --label no-release \
+              --label agent \
               --body "Post-release bookkeeping for Cua Driver ${VERSION}, opened by the release workflow after the signed release and installers verified. Merges through the normal required checks.") || {
                 echo "Could not open the bookkeeping PR; retrying." >&2
                 git push origin --delete "$ATTEMPT_BRANCH" || true

@@ -574,6 +574,9 @@ fn claim_daemon_lock(
     socket_path: &str,
     wait: std::time::Duration,
 ) -> anyhow::Result<std::fs::File> {
+    if let Some(dir) = lock_path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
     let lock = std::fs::OpenOptions::new()
         .create(true)
         .truncate(false)
@@ -2231,21 +2234,21 @@ pub async fn run_serve(
     }
 }
 
-/// Per-user lock file for one pipe name. Pipe names are not filesystem paths,
-/// so every character outside `[A-Za-z0-9._-]` maps to `_`.
+/// Per-user lock file for one pipe name. It lives under `%LOCALAPPDATA%`,
+/// which stays the same across a user's sessions where `%TEMP%` may not, and
+/// hex-encodes the whole name so distinct pipes never share a lock.
 #[cfg(target_os = "windows")]
 fn named_pipe_lock_path(socket_path: &str) -> std::path::PathBuf {
-    let name: String = socket_path
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect();
-    std::env::temp_dir().join(format!("{name}.lock"))
+    use std::fmt::Write as _;
+    let base = std::env::var_os("LOCALAPPDATA")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir);
+    let mut name = String::with_capacity(socket_path.len() * 2);
+    for byte in socket_path.to_ascii_lowercase().bytes() {
+        let _ = write!(name, "{byte:02x}");
+    }
+    base.join("cua-driver-pipe-locks")
+        .join(format!("{name}.lock"))
 }
 
 /// How long a launch waits for a stopping daemon to release its pipe lock.

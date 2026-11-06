@@ -25,6 +25,7 @@ mod broken_pipe;
 mod bundle;
 mod check_update_tool;
 mod cli;
+mod connect;
 mod doctor;
 mod driver_service_http;
 #[cfg(any(target_os = "macos", all(test, unix)))]
@@ -566,6 +567,13 @@ fn main() {
         cli::Command::McpConfig { client, no_skills } => {
             cli::run_mcp_config(client.as_deref(), no_skills);
         }
+        cli::Command::Connect {
+            clients,
+            dry_run,
+            json,
+        } => {
+            connect::run_connect(&clients, dry_run, json);
+        }
         cli::Command::Manifest { pretty } => {
             // Surface 8: machine-readable CLI manifest. Read-only — no
             // registry build needed, no daemon contact.
@@ -993,6 +1001,14 @@ fn main() -> anyhow::Result<()> {
         }
         cli::Command::McpConfig { client, no_skills } => {
             cli::run_mcp_config(client.as_deref(), no_skills);
+            Ok(())
+        }
+        cli::Command::Connect {
+            clients,
+            dry_run,
+            json,
+        } => {
+            connect::run_connect(&clients, dry_run, json);
             Ok(())
         }
         cli::Command::Manifest { pretty } => {

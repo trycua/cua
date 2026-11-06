@@ -325,7 +325,7 @@ def test_newest_matching_runs_all_contribute():
 
 
 def test_remaining_legs():
-    reused = ["fmt, clippy, test (ubuntu-latest)", "relay e2e (docker)"]
+    reused = ["fmt, clippy, test (ubuntu-latest)", "relay e2e (core)"]
     legs = ["ubuntu-latest", "macos-26", "windows-latest"]
     assert reuse.remaining_legs(legs, "fmt, clippy, test ({os})", reused) == ["macos-26", "windows-latest"]
     assert reuse.remaining_legs(legs, "other ({os})", reused) == legs
@@ -499,8 +499,11 @@ LANES = {
     # workflow: (stamp job, matrix job id -> (name template, legs step id), job id -> name reused as is)
     "ci-cua-spacesd.yml": (
         "cua-spacesd / changes",
-        {"test": ("fmt, clippy, test ({os})", "legs_test")},
-        {"relay-e2e": "relay e2e (docker)"},
+        {
+            "test": ("fmt, clippy, test ({os})", "legs_test"),
+            "test-hosted": ("cua-relay hosted features ({os})", "legs_hosted"),
+        },
+        {},
     ),
     "ci-cua-driver-contract-clients.yml": (
         "contract clients / changes",
@@ -541,6 +544,26 @@ def test_scoped_lanes_wiring(filename):
         assert f"!contains(fromJSON(needs.changes.outputs.reused), '{name}')" in job["if"]
     assert changes["outputs"]["reused"] == "${{ steps.reuse.outputs.reused || '[]' }}"
     assert {"actions": "read", "checks": "read"}.items() <= changes["permissions"].items()
+
+
+def test_spacesd_docker_parts_are_reused_per_part():
+    # relay-e2e is a matrix over the Docker lane's parts, not over OSes: its
+    # legs step lists the parts, and a failed step falls back to all of them.
+    wf = load("ci-cua-spacesd.yml")
+    changes = wf["jobs"]["changes"]
+    steps = {s.get("id"): s for s in changes["steps"]}
+    parts = '["core","hosted","daemon"]'
+    job = wf["jobs"]["relay-e2e"]
+    assert job["name"] == "relay e2e (${{ matrix.part }})"
+    assert job["strategy"]["matrix"]["part"] == "${{ fromJSON(needs.changes.outputs.legs_relay) }}"
+    assert "needs.changes.outputs.legs_relay != '[]'" in job["if"]
+    step = steps["legs_relay"]
+    assert '--template "relay e2e ({os})"' in step["run"]
+    assert step["continue-on-error"] is True and step["timeout-minutes"] == 1
+    assert step["env"] == {"REUSED": "${{ steps.reuse.outputs.reused }}", "LEGS": parts}
+    assert changes["outputs"]["legs_relay"] == f"${{{{ steps.legs_relay.outputs.legs || '{parts}' }}}}"
+    # The aggregator waits for every lane.
+    assert set(wf["jobs"]["result"]["needs"]) == {"changes", "test", "test-hosted", "relay-e2e"}
 
 
 @pytest.mark.parametrize("filename", ["ci-cua-sdk.yml", *LANES])

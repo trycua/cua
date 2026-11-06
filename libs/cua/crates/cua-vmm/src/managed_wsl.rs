@@ -1,6 +1,3 @@
-// SPDX-License-Identifier: FSL-1.1-MIT
-// Copyright (c) 2026 Cua AI, Inc.
-
 //! The built-in Linux runtime on Windows: a WSL2 distribution cua owns,
 //! running Docker, so Linux Spaces run on a PC with nothing installed first
 //! (no Docker Desktop), like the built-in runtime on a Mac ([`super`]).

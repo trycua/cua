@@ -350,11 +350,69 @@ launch/linux_session.sh --evidence "$CDB_BENCH_WORK/evidence" -- <runner command
 Seeds, the state file, the event log, the checkers and the sentinel summary are the same as on macOS.
 
 Of the comparison setups, agent-desktop runs on Linux (`npm install agent-desktop@1.2.0`, then
-`run_bench.py --arms cc-agent-desktop` inside the session; the adapter is platform-neutral, but the release
-tables do not include a Linux agent-desktop run). The Browser Use harnesses exist for macOS and Windows only, and
+`run_bench.py --arms cc-agent-desktop` inside the session; or all ten tasks through the XFCE launcher below). The Browser Use harnesses exist for macOS and Windows only, and
 Codex computer use is not available on Linux yet
 ([compatibility and limitations](https://learn.chatgpt.com/docs/linux/linux-app#compatibility-and-limitations)).
 `tests/test_linux_session.py` and `tests/test_linux_tools.py` check the session and the tools without a model.
+
+### Linux XFCE (all ten tasks)
+
+[`launch/xfce_session.py`](automated-eval/macos_bench/launch/xfce_session.py) runs one trial of any of the ten Bench
+v2 tasks on an X11 desktop with an EWMH window manager (XFCE 4.18 with xfwm4 here), as the desktop user. The BenchLab
+tasks use `linux/benchlab.py` and `linux/sentinel.py`; the three multi-app tasks (CDB-G02 to CDB-G04) reset their
+workspace and start their apps from the task's own `platform/launch.linux.json`. It parks the pointer, arms the
+sentinel, runs your agent command under the GUI-only guard, stops it at the limit, runs the checker and writes
+`row.json` next to the transcript, the sentinel log, the app logs and the final workspace. The Linux XFCE rows of
+the Bench v2 report (agent-desktop 1.2.0 and a cua-driver 0.38.0 cross-check, 5 trials per task, 6 Nov 2026) were run
+with exactly this.
+
+**1. The desktop.** Ubuntu 24.04 with XFCE 4.18 on Xvfb at 1920 x 1080, as an image or a VM:
+
+```sh
+# Cua's Linux image (XFCE on Xvfb); CUA_RESOLUTION sets the 1920x1080 the shared window frames need
+docker run -d --name bench-xfce -e CUA_RESOLUTION=1920x1080 ghcr.io/trycua/linux:24.04
+# or plain Ubuntu 24.04: apt-get install xfce4 xvfb dbus-x11 at-spi2-core python3-gi gir1.2-gtk-3.0 gir1.2-atspi-2.0,
+# then start Xvfb :0 -screen 0 1920x1080x24 and an XFCE session with a private D-Bus and AT-SPI
+```
+
+You need Node 24 (we used 24.21) and Python 3.11 or later with PyGObject on the desktop, and the checkout of this
+repository (or just `libs/cua-driver-bench`) as the desktop user. Then, inside the desktop, as root and then as the
+desktop user:
+
+```sh
+sudo launch/xfce/provision-root.sh   # xdotool, wmctrl, LibreOffice 26.2.7, Google Chrome, GnuCash 5.17 (Flathub)
+launch/xfce/provision-user.sh        # cua-driver 0.38.0, agent-desktop 1.2.0, npm ci of the four Electron apps
+```
+
+In a container neither Chrome, the Electron apps nor flatpak can create user namespaces, so the scripts run Chrome and
+Electron with `--no-sandbox` through shims (Chrome then shows its unsupported-flag infobar) and run GnuCash outside
+bubblewrap on its own GNOME runtime. On a full VM set `BENCH_NO_SANDBOX_SHIMS=0` for both scripts and skip
+`shim-gnucash.sh`. LibreOffice shows its Welcome dialog and GnuCash its Tip of the Day on start, as on Windows.
+
+**2. One trial.** Run it as the desktop user with the desktop's environment (`DISPLAY`, `DBUS_SESSION_BUS_ADDRESS`):
+
+```sh
+cd libs/cua-driver-bench/automated-eval/macos_bench
+python3 launch/xfce_session.py --task IR-02 --run-index 0 --condition background \
+    --out /tmp/trial --label cua-driver --timeout 360 -- launch/xfce/agent.sh cua-driver
+```
+
+`--condition` is `foreground` or `background`; `--run-index` 0 to 4 picks the fairness seed (the same seeds as the other
+platforms). `agent.sh ARM` (`cua-driver` or `agent-desktop`) starts the agent: Claude Code 2.1.316 `claude -p` with
+`--model claude-sonnet-5-5 --effort medium`, `MAX_THINKING_TOKENS=16000`, `--tools ""` (no tools beside the driver's MCP
+server(s)), `--strict-mcp-config`, `--permission-mode bypassPermissions`, `--max-turns 45`, stream-json output, and the
+task brief as the prompt with no system prompt. agent-desktop gets two servers, strict headless and `--headed`, and the
+agent picks per call. The limit is 360 s and 45 turns per trial. `row.json` holds the checker result, the GUI-only
+verdict and the sentinel's criteria; a trial counts as a background full pass only when the checker passed, there was
+no GUI-only violation and all eight undisturbed criteria held (an unmeasured one counts as disturbed).
+
+**3. The run.** The report's plan is, per arm, 8 background tasks (CDB-G02 to CDB-G04, MB-09, IR-01 to IR-04) and 10
+foreground tasks, each with run indexes 0 to 4, one trial at a time per desktop (kill the task apps between trials; the
+session resets the workspace itself). We ran six desktops in parallel, one per 8 vCPU / 32 GB cloud VM with the Linux
+image as a 6 vCPU / 24 GB container, and ran the agent on a separate host with its MCP server over ssh; with the
+agent on the desktop itself, as `agent.sh` does, the tool calls skip that network round trip. Pins: cua-driver
+`cua-driver-rs-v0.38.0` linux-x86_64 release, agent-desktop 1.2.0 linux-x64 from npm. Not run on Linux: Browser Use (no
+Linux desktop harness) and Codex computer use (not available on Linux).
 
 ### Linux on Hyprland (Wayland; the BenchLab tasks)
 

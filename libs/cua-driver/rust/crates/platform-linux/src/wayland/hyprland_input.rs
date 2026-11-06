@@ -249,6 +249,19 @@ pub fn enabled() -> bool {
             }))
 }
 
+/// Whether background (isolated seat) input can reach window `address` of
+/// `pid`, the check a background session makes when it opens. `Err` carries
+/// the refusal reason (`client_xwayland`, ...). Per-action checks, such as a
+/// toolkit that drops background keys, still apply to each action. Only
+/// meaningful while [`enabled`].
+pub fn background_admission(pid: u32, address: u64) -> std::result::Result<(), &'static str> {
+    if protocol() == InputProtocol::Production {
+        super::hyprland_compatibility::admit(pid, address, false)
+    } else {
+        Ok(())
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum InputProtocol {
     Production,

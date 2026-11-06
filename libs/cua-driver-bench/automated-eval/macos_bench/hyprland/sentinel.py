@@ -180,7 +180,8 @@ class Sentinel:
                         "size": (layer.get("w", 0), layer.get("h", 0)),
                     }
                     if own and hypr.overlaps(box, own):
-                        owner = comm(int(layer.get("pid", -1)))
+                        pid = int(layer.get("pid", -1))
+                        owner = comm(pid) or f"pid{pid}"
                         above.append(f"{owner}:layer:{layer.get('namespace', '')}")
         monitors = hypr.query("monitors") or []
         monitor = next(

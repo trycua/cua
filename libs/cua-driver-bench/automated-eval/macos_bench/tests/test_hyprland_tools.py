@@ -73,6 +73,16 @@ class PortTest(unittest.TestCase):
         self.assertTrue(lx <= x < lx + lw and ly <= y < uy, (x, y))
 
 
+class OverlayTest(unittest.TestCase):
+    def test_agent_cursor_layer_is_the_tools_own(self) -> None:
+        sys.path.insert(0, str(BENCH / "swift"))
+        import summarize_sentinel
+
+        for name in ("cua-driver:layer:cua-agent-cursor", "pid123:layer:cua-agent-cursor"):
+            self.assertTrue(summarize_sentinel.OVERLAY_OWNER_RE.search(name), name)
+        self.assertFalse(summarize_sentinel.OVERLAY_OWNER_RE.search("quickshell:layer:omarchy-bar"))
+
+
 class BriefTest(unittest.TestCase):
     def test_platform_words_and_background_paragraph(self) -> None:
         for tid in BENCHLAB_TASKS:

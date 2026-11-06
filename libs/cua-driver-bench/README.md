@@ -539,11 +539,15 @@ python3 run_bench.py run --bench-v2 --condition background --tasks PA-01 UM-01 -
 # Windows and Hyprland launchers: {brief}, {out}, {instance} and {title} are filled in per agent
 python launch\windows_session.py --task PA-01 --instances 10 --run-index 0 --condition background --out C:\bench\PA-01-r0 -- <agent command>
 python3 launch/hyprland_session.py --task UM-01 --run-index 0 --condition background --out ~/bench/UM-01-r0 -- <agent command>
+# an existing X11 desktop (XFCE, openbox, ...), same contract as the Hyprland launcher
+python3 launch/x11_session.py --task PA-01 --instances 4 --run-index 0 --condition foreground --out ~/bench/PA-01-r0 -- <agent command>
 ```
 
 `tools/validate_shared.py` validates both tasks on a free macOS desktop without a model (oracles through
-accessibility only, a deliberate cross-talk, a pointer displacement and a covered canvas); the Linux and
-Windows desktop tests do the same in CI. `tools/analyze_v2.py` adds the PA-01 table per N (copies passed,
+accessibility only, a deliberate cross-talk, a pointer displacement and a covered canvas);
+`tools/validate_shared_linux.py --desktop x11|hyprland` runs the same cases through the X11 or Hyprland
+launcher on a free Linux desktop (the oracle acts through AT-SPI actions only). The Linux and Windows desktop
+tests do the same in CI. `tools/analyze_v2.py` adds the PA-01 table per N (copies passed,
 cross-talk, makespan, throughput, speed-up over N = 1) and the UM-01 table; `--session-rows DIR` reads the
 Windows and Hyprland `row.json` files.
 

@@ -337,7 +337,9 @@ jobs:
   # posts it to Alertmanager.
   nightly-report:
     name: "E2E gate / nightly report"
-    if: always() && (needs.decide.outputs.mode == 'nightly' || needs.decide.outputs.mode == 'post-merge')
+    # A post-merge push without gated paths runs no lanes (decide.run == false): every lane
+    # is then `skipped`, which is not a failure, so there is nothing to report.
+    if: always() && needs.decide.outputs.run == 'true' && (needs.decide.outputs.mode == 'nightly' || needs.decide.outputs.mode == 'post-merge')
     needs: [decide, linux, windows, macos, macos-pr, browsers]
     runs-on: ubuntu-latest
     timeout-minutes: 10

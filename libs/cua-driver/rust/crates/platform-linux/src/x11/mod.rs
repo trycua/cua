@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! X11 window enumeration via x11rb.
 //!
 //! Uses _NET_CLIENT_LIST_STACKING to get the list of top-level windows,

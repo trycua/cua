@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 #![cfg(not(target_os = "linux"))]
 
 fn assert_menu_definition(compat: bool) {

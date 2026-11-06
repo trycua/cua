@@ -190,6 +190,23 @@ impl VolumeSetting {
 /// (`cua.relay=off`; `--no-relay`).
 pub const RELAY_LABEL: &str = "cua.relay";
 
+/// The label on a Space no list shows (value [`HIDDEN_HOME`]): the home that
+/// warms in the background for Home's prompt box. The app makes it with this
+/// label and `cua.relay=off`; it stays out of the apps' lists and off the
+/// owner's account until a person writes into its thread
+/// ([`crate::Spaces::reveal`]). `cua spaces ls` and the tools still list it.
+pub const HIDDEN_LABEL: &str = "cua.hidden";
+/// [`HIDDEN_LABEL`]'s value for the home warming for Home's prompt box.
+pub const HIDDEN_HOME: &str = "home";
+
+/// What `ls` says of a hidden Space with [`HIDDEN_LABEL`] value `value`.
+pub fn hidden_note(value: &str) -> String {
+    match value {
+        HIDDEN_HOME => "hidden: warming for Home".into(),
+        _ => "hidden".into(),
+    }
+}
+
 /// Whether a Space is listed on the owner's cua.ai account (the phone and
 /// the owner's other computers see and open it).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

@@ -14,10 +14,12 @@ import { wasmBuilt } from "@/bridge/__tests__/testCore";
 import type { AgentSetupRow } from "@/bridge/contracts/agents";
 import { readFirstRun, resetFirstRunCache } from "@/bridge/first-run";
 import { resetSavedOnboardingCache } from "@/bridge/onboarding";
-import { AgentScreen, NextScreen, ReadyScreen, SignInScreen, WhereScreen } from "@/components/first-run-new/first-run-new";
+import { AgentScreen, NextScreen, PermissionsScreen, ReadyScreen, SignInScreen, StepDots, WhereScreen } from "@/components/first-run-new/first-run-new";
 import { placeKeys } from "@/components/first-run-new/float-keys";
 import { resetConnectedAppsState } from "@/hooks/use-connected-apps";
-import { agentView, chosenAgent, nextView, readyView, signInView, togglePick, whereView, type WhereInput } from "@/lib/first-run-new";
+import type { AppPermissions } from "@/bridge/app-permissions";
+import { permissionsStepView } from "@/lib/app-permissions";
+import { afterWhere, agentView, chosenAgent, dotFor, dotStep, nextView, reachedAfter, readyView, signInView, stepDots, togglePick, whereView, type WhereInput } from "@/lib/first-run-new";
 import { getDriver, resetPrepare } from "@/lib/prepare/store";
 import { mountApp, stubBrowserApis } from "./app-harness";
 
@@ -109,6 +111,45 @@ describe("screen 2, an offline computer", () => {
     expect(togglePick(["this"], "pc", rows)).toEqual(["this"]);
     expect(togglePick(["this"], "mini", rows)).toEqual(["this", "mini"]);
     expect(togglePick(["this", "mini"], "mini", rows)).toEqual(["this"]);
+  });
+});
+
+describe("screen 2, a long list", () => {
+  const many = (n: number) => Array.from({ length: n }, (_, i) => ({ id: `off-${i}`, name: `Old box ${i + 1}`, os: "linux", online: false, lastSeen: NOW / 1000 - 86400, current: false }));
+  const long = { ...base, machines: [...base.machines!, ...many(13)] };
+
+  it("folds offline computers into one row with their count, so the online ones and Continue stay in view", () => {
+    drawWhere(long);
+    const fold = document.querySelector<HTMLElement>("[data-new-run-offline-fold]")!;
+    // Gaming PC and the 13 old boxes.
+    expect(fold.textContent).toContain("14 offline");
+    expect(fold.getAttribute("aria-expanded")).toBe("false");
+    const ids = () => [...document.querySelectorAll<HTMLElement>("[data-new-run-computer]")].map((e) => e.dataset.newRunComputer);
+    expect(ids()).toEqual(["this", "mini", "build"]);
+    fireEvent.click(fold);
+    expect(fold.getAttribute("aria-expanded")).toBe("true");
+    expect(ids()).toHaveLength(3 + 14);
+    expect(document.querySelector("[data-new-run-computer=pc]")!.getAttribute("aria-disabled")).toBe("true");
+    fireEvent.click(fold);
+    expect(ids()).toEqual(["this", "mini", "build"]);
+  });
+
+  it("counts whatever is offline", () => {
+    expect(whereView({ ...base, machines: [...base.machines!, ...many(2)] }).offlineFold?.label).toBe("3 offline");
+    // One offline computer shows as itself.
+    expect(whereView(base).offlineFold).toBeNull();
+    expect(whereView({ ...base, machines: base.machines!.map((m) => ({ ...m, online: true })) }).offlineFold).toBeNull();
+  });
+
+  it("keeps Continue in a footer that sticks to the bottom of the window", () => {
+    drawWhere(long);
+    const footer = document.querySelector<HTMLElement>("[data-new-run-footer]")!;
+    expect(footer.className).toContain("sticky");
+    expect(footer.className).toContain("bottom-0");
+    expect(footer.contains(screen.getByRole("button", { name: "Continue" }))).toBe(true);
+    // No background of its own (5 Nov: it drew a black box over the stars and cut the keys); the list fades instead.
+    expect(footer.className).not.toMatch(/\bbg-|from-\[/);
+    expect(footer.contains(document.querySelector("[data-new-run-content]"))).toBe(false);
   });
 });
 
@@ -258,6 +299,68 @@ describe("screen 4, Ready", () => {
   });
 });
 
+describe("2b, Cua Spaces' permissions (a Mac only)", () => {
+  const SCREEN = "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture";
+  const AX = "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility";
+  const data = (screen: boolean, accessibility: boolean, appName = "Cua Spaces"): AppPermissions => ({
+    appName,
+    permissions: [
+      { id: "screen", granted: screen, settingsUrl: SCREEN },
+      { id: "accessibility", granted: accessibility, settingsUrl: AX },
+    ],
+  });
+  const draw = (d: AppPermissions, allow = vi.fn(async () => {}), onContinue = vi.fn()) => {
+    const allGranted = d.permissions.every((p) => p.granted);
+    render(<PermissionsScreen view={permissionsStepView({ appName: d.appName, allGranted })} perms={{ data: d, allow }} onContinue={onContinue} />);
+    return { allow, onContinue };
+  };
+
+  it("comes after picking where agents work, on a Mac only, under the same dot", () => {
+    expect(afterWhere("macos")).toBe("permissions");
+    expect(afterWhere("windows")).toBe("agent");
+    expect(afterWhere("linux")).toBe("agent");
+    expect(dotFor("permissions")).toBe(dotFor("where"));
+  });
+
+  it("asks for both for Cua Spaces itself, says Cua Driver uses the same ones, and offers Later", () => {
+    const { allow, onContinue } = draw(data(false, false));
+    expect(screen.getByRole("heading").textContent).toBe("Let Cua Spaces see and use apps");
+    expect(text()).toContain("This lets your agents work in the apps on this Mac, in the background.");
+    expect(text()).toContain("Cua Driver uses these same permissions, so there's no second app to allow.");
+    const rows = [...document.querySelectorAll<HTMLElement>("[data-app-permission]")];
+    expect(rows.map((r) => r.dataset.appPermission)).toEqual(["screen", "accessibility"]);
+    expect(rows[0]!.textContent).toContain("See the screen");
+    expect(rows[0]!.textContent).toContain("Screen Recording, given to Cua Spaces");
+    expect(rows[1]!.textContent).toContain("Use the mouse and keyboard");
+    expect(rows[1]!.textContent).toContain("Accessibility, given to Cua Spaces");
+    fireEvent.click(rows[1]!.querySelector("button")!);
+    expect(allow).toHaveBeenCalledWith("accessibility");
+    // Never blocks: Later goes on.
+    const later = screen.getByRole("button", { name: "Later" });
+    fireEvent.click(later);
+    expect(onContinue).toHaveBeenCalled();
+  });
+
+  it("shows a grant as Allowed, and Continue once both are on", () => {
+    draw(data(true, false));
+    expect(document.querySelector("[data-app-permission=screen]")!.textContent).toContain("Allowed");
+    expect(document.querySelector("[data-app-permission=screen] button")).toBeNull();
+    expect(screen.getByRole("button", { name: "Later" })).toBeTruthy();
+    cleanup();
+    draw(data(true, true));
+    expect(screen.queryByRole("button", { name: "Allow" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Continue" })).toBeTruthy();
+    expect(text()).toContain("Both are on.");
+  });
+
+  it("names Cua Spaces Local in the Local build, which has its own grants", () => {
+    draw(data(false, false, "Cua Spaces Local"));
+    expect(screen.getByRole("heading").textContent).toBe("Let Cua Spaces Local see and use apps");
+    expect(document.querySelector("[data-app-permission=screen]")!.textContent).toContain("Screen Recording, given to Cua Spaces Local");
+    expect(text()).toContain("Turn on Cua Spaces Local there, then come back.");
+  });
+});
+
 describe("screen 6, next steps", () => {
   it("offers to invite a teammate, add another computer and let agents use apps on this Mac", () => {
     const onRow = vi.fn();
@@ -273,6 +376,53 @@ describe("screen 6, next steps", () => {
 
   it("has no apps row away from a Mac", () => {
     expect(nextView({ os: "windows" }).rows.map((r) => r.id)).toEqual(["invite", "add-computer"]);
+  });
+});
+
+describe("the step dots", () => {
+  it("name each step and go back to any earlier one, but forward only to a step already reached", () => {
+    const where = stepDots("where", 1)!;
+    expect(where.map((d) => d.label)).toEqual(["Step 1 of 3: Bring all your computers under one account", "Step 2 of 3: Pick where your agents work", "Step 3 of 3: Pick your coding agent"]);
+    expect(where.map((d) => d.to)).toEqual(["welcome", null, null]);
+    expect(where.map((d) => d.current)).toEqual([false, true, false]);
+    // Back on screen 1 after reaching screen 3: both later steps open again.
+    expect(stepDots("welcome", 2)!.map((d) => d.to)).toEqual([null, "where", "agent"]);
+    // On the sign-in, the first dot goes back to its start; nothing past it opens (a dot never skips the sign-in).
+    expect(stepDots("signin", 0)!.map((d) => d.to)).toEqual(["welcome", null, null]);
+    expect(stepDots("ready", 2)).toBeNull();
+  });
+
+  it("count Ready and Next steps as past the last dot, and never go back on how far a run got", () => {
+    expect(reachedAfter(0, "signin")).toBe(0);
+    expect(reachedAfter(0, "where")).toBe(1);
+    expect(reachedAfter(1, "ready")).toBe(2);
+    expect(reachedAfter(2, "welcome")).toBe(2);
+  });
+
+  it("move with the arrow keys to the nearest step that opens", () => {
+    const dots = stepDots("agent", 2)!;
+    expect(dotStep(dots, 2, -1)).toBe(1);
+    expect(dotStep(dots, 2, 1)).toBeNull();
+    expect(dotStep(stepDots("welcome", 0)!, 0, 1)).toBeNull();
+  });
+
+  it("are buttons with their step's name: a click or an arrow key opens a step, a step not reached yet can't be pressed", () => {
+    const onGo = vi.fn();
+    render(<StepDots dots={stepDots("where", 1)!} onGo={onGo} />);
+    const first = screen.getByRole("button", { name: "Step 1 of 3: Bring all your computers under one account" });
+    const second = screen.getByRole("button", { name: "Step 2 of 3: Pick where your agents work" });
+    const third = screen.getByRole("button", { name: "Step 3 of 3: Pick your coding agent" });
+    expect(second.getAttribute("aria-current")).toBe("step");
+    expect(third.hasAttribute("disabled")).toBe(true);
+    fireEvent.click(third);
+    expect(onGo).not.toHaveBeenCalled();
+    fireEvent.click(first);
+    expect(onGo).toHaveBeenLastCalledWith(0, false);
+    fireEvent.keyDown(second, { key: "ArrowLeft" });
+    expect(onGo).toHaveBeenLastCalledWith(0, true);
+    onGo.mockClear();
+    fireEvent.keyDown(second, { key: "ArrowRight" });
+    expect(onGo).not.toHaveBeenCalled();
   });
 });
 
@@ -327,6 +477,11 @@ describe.skipIf(!wasmBuilt)("the new first run on its route", () => {
     await waitFor(() => expect(heading()).toBe("Pick where your agents work"));
     expect(document.querySelector("[data-new-run-this-status]")!.textContent).toBe("not added yet");
     click("[data-onboarding-primary]");
+    // On a Mac, Cua Spaces' permissions next: both missing here, so Later goes on without them.
+    await waitFor(() => expect(heading()).toBe("Let Cua Spaces see and use apps"), { timeout: 15_000 });
+    await waitFor(() => expect(document.querySelectorAll("[data-app-permission]").length).toBe(2));
+    expect(calls.some((c) => c.op === "driver.permissions")).toBe(true);
+    click("[data-new-run-permissions-next=Later]");
     await waitFor(() => expect(heading()).toBe("Your agents will use Codex"), { timeout: 15_000 });
     click("[data-onboarding-primary]");
     await waitFor(() => expect(heading()).toBe("Codex can now use this Mac"), { timeout: 15_000 });
@@ -379,5 +534,19 @@ describe.skipIf(!wasmBuilt)("the new first run on its route", () => {
     expect((document.querySelector("[data-new-run-separate]") as HTMLElement).dataset.disabled).toBe("");
     expect(document.body.textContent).not.toMatch(/local runtime:|exit status/i);
     expect(screen.getByRole("button", { name: "Continue" }).hasAttribute("disabled")).toBe(false);
+  });
+
+  it("the step dots go back to screen 1 and forward again to screen 2, but never past the sign-in", { timeout: 60_000 }, async () => {
+    await mountApp("/onboarding", { failsCreates: false, listsGhost: false, demo: { signedIn: false, onboarded: false, noSpaces: true } });
+    await waitFor(() => expect(heading()).toBe("Bring all your computers under one account"));
+    // Screen 2 isn't reached yet: its dot can't be pressed, so it can't skip the sign-in.
+    expect(screen.getByRole("button", { name: "Step 2 of 3: Pick where your agents work" }).hasAttribute("disabled")).toBe(true);
+    click("[data-onboarding-later]");
+    await waitFor(() => expect(heading()).toBe("Pick where your agents work"));
+    fireEvent.click(screen.getByRole("button", { name: "Step 1 of 3: Bring all your computers under one account" }));
+    await waitFor(() => expect(heading()).toBe("Bring all your computers under one account"));
+    fireEvent.click(screen.getByRole("button", { name: "Step 2 of 3: Pick where your agents work" }));
+    await waitFor(() => expect(heading()).toBe("Pick where your agents work"));
+    expect(screen.getByRole("button", { name: "Step 3 of 3: Pick your coding agent" }).hasAttribute("disabled")).toBe(true);
   });
 });

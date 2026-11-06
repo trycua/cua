@@ -49,20 +49,19 @@ async function startJob(text: string) {
 }
 
 describe.skipIf(!wasmBuilt)("This Mac as a task's computer (real routes, wasm core)", () => {
-  it("defaults to a new Linux computer, and This Mac asks once, then starts on this Mac's Space id", async () => {
+  it("defaults to This Mac once it's in the account, asks once on the first Start, then starts on this Mac's Space id", async () => {
     await mountApp("/home", HOST);
     await screen.findByText("What do you want to do?");
-    expect(document.querySelector('[data-picker="where"]')!.textContent).toContain("New Space");
-    await pickThisMac();
+    await waitFor(() => expect(document.querySelector('[data-picker="where"]')!.textContent).toContain("This Mac"));
+    await startJob("Tidy my Downloads folder");
     await screen.findByText("Work on this Mac?");
+    expect(askTasks()).toHaveLength(0);
     expect(screen.getByText(/Codex will work directly on this Mac, with your files and apps\. It can't be undone by throwing the computer away\./)).toBeTruthy();
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Use this Mac" }));
     });
     expect(thisMacConfirmed()).toBe(true);
-    await waitFor(() => expect(document.querySelector('[data-picker="where"]')!.textContent).toContain("This Mac"));
-    await startJob("Tidy my Downloads folder");
-    const id = askTasks()[0]!.id;
+    const id = await waitFor(() => askTasks()[0]!.id);
     // The job goes to this Mac's own Space, as the first message of its thread.
     await waitFor(() => expect(askTask(id)).toMatchObject({ spaceId: HOST_SPACE, onHost: true, error: null }), { timeout: 5000 });
   });
@@ -79,16 +78,17 @@ describe.skipIf(!wasmBuilt)("This Mac as a task's computer (real routes, wasm co
     expect(screen.getAllByText("This Mac").length).toBeGreaterThan(0);
   });
 
-  it("Pick another keeps the default and reopens the picker", async () => {
+  it("Pick another starts nothing and reopens the picker", async () => {
     await mountApp("/home", HOST);
     await screen.findByText("What do you want to do?");
-    await pickThisMac();
+    await waitFor(() => expect(document.querySelector('[data-picker="where"]')!.textContent).toContain("This Mac"));
+    await startJob("Tidy my Downloads folder");
     await act(async () => {
       fireEvent.click(await screen.findByRole("button", { name: "Pick another" }));
     });
     await screen.findByRole("menuitem", { name: /A new Linux computer on this Mac/ });
     expect(thisMacConfirmed()).toBe(false);
-    expect(document.querySelector('[data-picker="where"]')!.textContent).toContain("New Space");
+    expect(askTasks()).toHaveLength(0);
   });
 
   it("doesn't ask again once answered on this device", async () => {

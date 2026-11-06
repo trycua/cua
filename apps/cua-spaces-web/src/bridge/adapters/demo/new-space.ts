@@ -49,7 +49,7 @@ export const DEMO_NEW_SPACE_OPTIONS: NewSpaceOptions = {
       learnMore: "https://cua.ai/docs/lume/guides/gpu-passthrough",
     },
   ],
-  experiments: { ...NO_EXPERIMENTS, yourCloud: true },
+  experiments: { ...NO_EXPERIMENTS },
   maxCpus: 10,
 };
 

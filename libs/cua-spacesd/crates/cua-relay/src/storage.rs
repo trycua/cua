@@ -4,7 +4,7 @@
 //! The health of the relay's state volume (CUA-1297).
 //!
 //! Every state store (devices, audit log, device sessions, machine
-//! directory, mesh registry, pool, usage, teams, pairing codes, grants, Space settings)
+//! directory, mesh registry, pool, usage, teams, pairing codes, grants, Space settings, pending deletions)
 //! reports each write here. A failed write
 //! is counted, logged with a stable line (`state persist failed`, field
 //! `alert = "state_persist_failed"`) and remembered as the store's last
@@ -71,9 +71,23 @@ pub mod store {
     pub const GRANTS: &str = "grants";
     /// `<state>.spaces.json`: each account's default Space settings.
     pub const SPACES: &str = "spaces";
+    /// `<state>.pending-deletions.json`: removed computers' Spaces still to
+    /// delete on them.
+    pub const PENDING_DELETIONS: &str = "pending_deletions";
     /// Every store, in report order.
-    pub const ALL: [&str; 11] = [
-        DEVICES, AUDIT, SESSIONS, DIRECTORY, MESH, POOL, USAGE, TEAMS, PAIRING, GRANTS, SPACES,
+    pub const ALL: [&str; 12] = [
+        DEVICES,
+        AUDIT,
+        SESSIONS,
+        DIRECTORY,
+        MESH,
+        POOL,
+        USAGE,
+        TEAMS,
+        PAIRING,
+        GRANTS,
+        SPACES,
+        PENDING_DELETIONS,
     ];
 }
 

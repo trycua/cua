@@ -573,20 +573,28 @@ WEB_PACKAGES = [
 SYNC_REFS: List[Tuple[str, str, str]] = [
     # (check id prefix, workflow, text)
     ("rust-fmt", "ci-cua-sdk.yml", "-- --check"),
-    ("rust-fmt", "ci-rust-format.yml", "cargo fmt --all -- --check"),
     ("rust-clippy", "ci-cua-sdk.yml", "--all-targets --features cua-daemon/test-fixtures,cua-media-client/media-decode,cua-spaces-cli/contrib-modal -- -D warnings"),
     ("rust-test", "ci-cua-sdk.yml", "CUA_ENV_TEST_SANDBOX: \"1\""),
-    ("python", "ci-lint-python.yml", "uv run isort --check-only libs/python tests"),
-    ("python", "ci-lint-python.yml", "uv run black --check libs/python tests"),
-    ("python", "ci-lint-python.yml", "uv run ruff check libs/python tests"),
     ("web:apps/cua-spaces-web", "ci-cua-spaces-web.yml", "pnpm install --ignore-workspace --frozen-lockfile"),
     ("web:apps/cua-spaces-web", "ci-cua-spaces-web.yml", "run: pnpm typecheck"),
     ("web:apps/cua-spaces", "ci-cua-spaces.yml", "- run: pnpm typecheck"),
     ("web:libs/typescript", "ci-lint-typescript.yml", "pnpm -C libs/typescript typecheck"),
     ("web:libs/typescript", "ci-lint-typescript.yml", "pnpm -C libs/typescript format:check"),
+    # The standalone workflows for spdx, lockfiles, actionlint, larger runners, image refs, Python lint and
+    # rustfmt are gone: `CI: Quick` runs them through this script, with missing tools made fatal.
+    ("quick", "ci-quick.yml", "python3 bin/ci --quick"),
+    ("quick", "ci-quick.yml", 'CUA_CI_REQUIRE_TOOLS: "1"'),
     ("docs-ref", "ci-check-docs.yml", "runner.ts --changed-files-file"),
     ("docs-ref", "ci-check-docs.yml", "runner.ts --library ${{ matrix.library }} --check"),
 ]
+
+
+# Checks whose standalone GitHub workflow was deleted because `CI: Quick` runs them (CUA-3558). On a
+# runner (CUA_CI_REQUIRE_TOOLS=1, set by ci-quick.yml) a missing tool fails them instead of skipping
+# them, so a runner image change can never turn one of these checks into a silent pass.
+QUICK_COVERED_IDS = "spdx,spdx-driver,lockfiles,actionlint,larger-runners,image-refs,image-tests,python,rust-fmt,docs-image-refs"
+REQUIRED_TOOL_CHECKS = set(QUICK_COVERED_IDS.split(",")) if os.environ.get("CUA_CI_REQUIRE_TOOLS") == "1" else set()
+
 
 
 def static_checks(changes: Changes, ctx: "Context") -> List[Check]:
@@ -595,12 +603,10 @@ def static_checks(changes: Changes, ctx: "Context") -> List[Check]:
 
     if changes.touches(r"\.(rs|py|ts|tsx|js|mjs|swift|sh)$|^scripts/spdx-headers\.py$"):
         add(Check("spdx", "SPDX headers (FSL)", "python3 scripts/spdx-headers.py --fsl --check",
-                  fix="python3 scripts/spdx-headers.py --fsl --apply", safe_fix=True,
-                  ci=(("ci-spdx-headers.yml", "python3 scripts/spdx-headers.py --fsl --check"),)))
+                  fix="python3 scripts/spdx-headers.py --fsl --apply", safe_fix=True))
     if changes.touches(r"^libs/cua-driver/.*\.(rs|swift)$"):
         add(Check("spdx-driver", "SPDX headers (Cua Driver, MIT)", "python3 scripts/spdx-headers.py --check libs/cua-driver",
-                  fix="python3 scripts/spdx-headers.py --apply libs/cua-driver", safe_fix=True,
-                  ci=(("ci-spdx-headers.yml", "python3 scripts/spdx-headers.py --check libs/cua-driver"),)))
+                  fix="python3 scripts/spdx-headers.py --apply libs/cua-driver", safe_fix=True))
 
     lock_hits = changes.touches(LOCKFILE_RX)
     if lock_hits:
@@ -616,35 +622,30 @@ def static_checks(changes: Changes, ctx: "Context") -> List[Check]:
                 kinds.add("uv")
             if re.search(r"^scripts/ci/", f):
                 kinds.update({"cargo", "pnpm", "npm", "uv"})
-        tools = {"cargo": "cargo", "pnpm": "pnpm", "npm": "npm", "uv": "uv"}
+        # check-lockfiles.sh falls back to `npx pnpm@<version>`, so a runner without pnpm still checks.
+        tools = {"cargo": "cargo", "pnpm": "npx", "npm": "npm", "uv": "uv"}
         add(Check("lockfiles", f"lockfiles match manifests ({', '.join(sorted(kinds))})",
                   "scripts/ci/check-lockfiles.sh " + " ".join(f"--kind {k}" for k in sorted(kinds)),
                   fix_from_output=r"^FAIL .*?; fix: (.+)$", safe_fix=True,
-                  tools=tuple(sorted(tools[k] for k in kinds)), group="lockfiles",
-                  ci=(("ci-lockfiles.yml", "scripts/ci/check-lockfiles.sh"),)))
+                  tools=tuple(sorted(tools[k] for k in kinds)), group="lockfiles"))
 
     if changes.touches(r"^\.github/(workflows|actions)/|^\.github/actionlint\.yaml$"):
         add(Check("actionlint", "actionlint (workflows)", "actionlint -shellcheck= -pyflakes=",
-                  tools=("actionlint",), hint="install: brew install actionlint (CI pins v1.7.12)",
-                  ci=(("ci-lint-workflows.yml", "./actionlint -shellcheck= -pyflakes="),)))
+                  tools=("actionlint",), hint="install: brew install actionlint (CI pins v1.7.12)"))
 
     if changes.touches(r"^\.github/(workflows/|larger-runners-allowed\.txt|scripts/check_no_larger_runners\.py)"):
         add(Check("larger-runners", "no paid larger runners in workflows",
                   "python3 .github/scripts/check_no_larger_runners.py",
-                  hint="use ubuntu-latest, macos-26 or windows-latest; opt-outs: .github/larger-runners-allowed.txt",
-                  ci=(("ci-block-larger-runners.yml", "check_no_larger_runners.py"),)))
+                  hint="use ubuntu-latest, macos-26 or windows-latest; opt-outs: .github/larger-runners-allowed.txt"))
 
     # Repo-wide gate (no path filter in CI): every image ref comes from the catalog.
     if changes.files or changes.full:
         add(Check("image-refs", "image refs come from the catalog",
                   "python3 scripts/images/check-image-refs.py && python3 scripts/images/gen-image-constants.py --check "
                   "&& python3 scripts/images/record-image-sizes.py --check",
-                  hint="reference images through the catalog (scripts/images/README.md) or allowlist them in scripts/images/image-refs-allowlist.json; stale constants: python3 scripts/images/gen-image-constants.py",
-                  ci=(("ci-check-image-refs.yml", "python3 scripts/images/check-image-refs.py"),
-                      ("ci-check-image-refs.yml", "python3 scripts/images/gen-image-constants.py --check"))))
+                  hint="reference images through the catalog (scripts/images/README.md) or allowlist them in scripts/images/image-refs-allowlist.json; stale constants: python3 scripts/images/gen-image-constants.py"))
     if changes.touches(r"^(scripts/images/|libs/images/)"):
-        add(Check("image-tests", "image tooling unit tests", "python3 -m unittest discover -s scripts/images/tests",
-                  ci=(("ci-check-image-refs.yml", "python3 -m unittest discover -s scripts/images/tests"),)))
+        add(Check("image-tests", "image tooling unit tests", "python3 -m unittest discover -s scripts/images/tests"))
 
     if changes.touches(r"^docs/content/|^docs/code-block-(baseline|policy)\.json$|^tests/e2e/cua-sdk/docs/"):
         add(Check("docs-code-blocks", "docs code blocks have a disposition",
@@ -660,8 +661,7 @@ def static_checks(changes: Changes, ctx: "Context") -> List[Check]:
                   f'git fetch -q origin image-doctor-ledger 2>/dev/null && git archive FETCH_HEAD | tar -x -C "$l" || true; '
                   f'b="$l/.base.json"; args=(--ledger "$l"); git show {changes.base}:scripts/images/docs-image-refs-baseline.json > "$b" 2>/dev/null && args+=(--baseline-base "$b"); '
                   f'python3 scripts/images/check-docs-image-refs.py "${{args[@]}}"',
-                  tools=("crane",), hint="install crane: brew install crane",
-                  ci=(("ci-check-docs-image-refs.yml", "python3 scripts/images/check-docs-image-refs.py"),))
+                  tools=("crane",), hint="install crane: brew install crane")
         add(c)
 
     # Generated reference docs: the docs runner itself says which generators a change affects.
@@ -744,10 +744,7 @@ def python_checks(changes: Changes) -> List[Check]:
     return [Check("python", "Python isort, black, ruff (libs/python, tests)",
                   f"uv run -q isort --check-only {paths} && uv run -q black --check {paths} && uv run -q ruff check {paths}",
                   fix=f"uv run -q isort {paths} && uv run -q black {paths} && uv run -q ruff check --fix {paths}",
-                  safe_fix=True, tools=("uv",), group="uv",
-                  ci=(("ci-lint-python.yml", "uv run isort --check-only libs/python tests"),
-                      ("ci-lint-python.yml", "uv run black --check libs/python tests"),
-                      ("ci-lint-python.yml", "uv run ruff check libs/python tests")))]
+                  safe_fix=True, tools=("uv",), group="uv")]
 
 
 def web_checks(changes: Changes) -> List[Check]:
@@ -825,8 +822,7 @@ def rust_checks(changes: Changes, ctx: "Context") -> List[Check]:
         label = f"{root}: {', '.join(names) if len(names) <= 4 else f'{len(names)} crates'}"
         group = f"cargo:{root}"
         out.append(Check(f"rust-fmt:{root}", f"rustfmt ({label})", f"cargo fmt {plist} -- --check", cwd=root,
-                         fix=f"(cd {root} && cargo fmt {plist})", safe_fix=True, tools=("cargo",),
-                         ci=(("ci-rust-format.yml", "cargo fmt --all -- --check"),)))
+                         fix=f"(cd {root} && cargo fmt {plist})", safe_fix=True, tools=("cargo",)))
         lint = names + ([] if changes.full else dependents(ws, names))
         if not changes.full and len(lint) > len(names) + 12:  # a core crate: lint its direct dependents only
             direct = sorted({p for p, deps in ws.path_deps.items() if set(deps) & set(names)} - set(names))
@@ -957,6 +953,8 @@ def build_plan(changes: Changes, ctx: Context) -> List[Check]:
             c.skip_reason = "--quick"
             continue
         missing = [t for t in c.tools if not have(t)]
+        if missing and c.id.split(":")[0] in REQUIRED_TOOL_CHECKS:
+            continue  # CI: a missing tool must fail the check, never skip it (the standalone workflow is gone)
         if missing:
             c.skip_reason = f"{', '.join(missing)} not installed" + (f"; {c.hint}" if c.hint and "install" in c.hint else "")
     return plan
@@ -1343,9 +1341,28 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     return p.parse_args(argv)
 
 
+def raise_open_file_limit(want: int = 65536) -> None:
+    """macOS shells default to 256 open files; a parallel cargo build under sccache
+    hits "Too many open files" and fails the test checks for no code reason."""
+    try:
+        import resource
+
+        soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+        target = want if hard == resource.RLIM_INFINITY else min(want, hard)
+        if soft == resource.RLIM_INFINITY or soft >= target:
+            return
+        try:
+            resource.setrlimit(resource.RLIMIT_NOFILE, (target, hard))
+        except (ValueError, OSError):  # macOS caps at kern.maxfilesperproc
+            resource.setrlimit(resource.RLIMIT_NOFILE, (10240, hard))
+    except (ImportError, ValueError, OSError):
+        pass
+
+
 def main(argv: Sequence[str]) -> int:
     args = parse_args(argv)
     os.chdir(ROOT)
+    raise_open_file_limit()
     if args.verify_sync:
         return verify_sync()
     if args.install_hook:

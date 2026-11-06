@@ -16,6 +16,7 @@ import { KEYVAULT_MANAGE_ARGS } from "../ops/keyvault-manage";
 import { KEYVAULT_SETUP_ARGS } from "../ops/keyvault-setup";
 import { STREAM_ARGS } from "../ops/stream";
 import { RELAY_USAGE_ARGS } from "../ops/relay-usage";
+import { SPACES_SETTINGS_ARGS } from "../ops/spaces-settings";
 import { NUDGES_ARGS } from "../ops/nudges";
 import { RESOURCES_ARGS } from "../ops/resources";
 import { MACHINES_ARGS } from "../ops/machines";
@@ -28,6 +29,7 @@ import { PRESENCE_ARGS } from "../ops/presence";
 import { CLOUD_APPROVE_ARGS } from "../ops/cloud-approve";
 import { AGENT_THREADS_ARGS } from "../ops/agent-threads";
 import { RUNTIME_FIX_ARGS } from "../ops/runtime-fix";
+import { DRIVER_ARGS } from "../ops/driver";
 import type { HostWindow } from "../detect";
 import { ELECTRON_BRIDGE_CHANNEL } from "../electron-channels";
 import { OPERATIONS, type OpArgs, type OpName } from "../protocol";
@@ -123,7 +125,7 @@ const ARGS: { [K in OpName]: OpArgs<K> } = {
   "volume.reveal": { path: "/Users/ada/Cua Volume/public" },
   "agents.setupDriver": { agents: ["codex"] },
   "about.get": {},
-  "about.set": { channel: "beta" },
+  "about.set": { channel: "nightly" },
   "about.checkNow": {},
   "update.get": {},
   "update.install": {},
@@ -173,6 +175,7 @@ const ARGS: { [K in OpName]: OpArgs<K> } = {
   "startup.act": { action: "allowAccess" },
   ...STREAM_ARGS,
   ...RELAY_USAGE_ARGS,
+  ...SPACES_SETTINGS_ARGS,
   ...NUDGES_ARGS,
   ...RESOURCES_ARGS,
   ...MACHINES_ARGS,
@@ -185,6 +188,7 @@ const ARGS: { [K in OpName]: OpArgs<K> } = {
   ...CLOUD_APPROVE_ARGS,
   ...AGENT_THREADS_ARGS,
   ...RUNTIME_FIX_ARGS,
+  ...DRIVER_ARGS,
 };
 
 const unsupportedOn = (op: OpName, host: "webkit" | "tauri") =>

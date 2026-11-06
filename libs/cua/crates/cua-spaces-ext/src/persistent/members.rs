@@ -365,6 +365,20 @@ impl Persistent {
         }
     }
 
+    /// The member of `space` that `token` names: the `@handle` the Space
+    /// knows it by, else its key on this machine (`claude-8`). The key
+    /// is only an alias: a member's handle always wins, and a Space never
+    /// answers to another Space's key. The one rule every @mention, add
+    /// and wake goes through, so a name copied from `cua agent ls` reaches
+    /// the same member as the handle the thread shows.
+    pub fn member_named(&self, space: &str, token: &str) -> Result<Option<AgentRecord>> {
+        let token = token.trim().trim_start_matches('@').to_ascii_lowercase();
+        let members = self.members_of(space)?;
+        let by = |f: &dyn Fn(&AgentRecord) -> bool| members.iter().find(|r| f(r)).cloned();
+        Ok(by(&|r| r.handle().eq_ignore_ascii_case(&token))
+            .or_else(|| by(&|r| r.name.eq_ignore_ascii_case(&token))))
+    }
+
     /// The agent members of `space` (a Space id).
     pub fn members_of(&self, space: &str) -> Result<Vec<AgentRecord>> {
         Ok(self
@@ -425,10 +439,7 @@ impl Persistent {
         let space = self.spaces.resolve(&spec.space)?.to_string();
         let wanted = spec.name.clone();
         // This Space's own member of that name (an older Cua's included).
-        let here = self
-            .members_of(&space)?
-            .into_iter()
-            .find(|r| r.handle() == wanted);
+        let here = self.member_named(&space, &wanted)?;
         let rec = match here {
             Some(r) => {
                 if r.harness != spec.harness {
@@ -732,6 +743,9 @@ impl Persistent {
         if self.detach_dispatch {
             for rec in members {
                 let Some(guard) = super::phases::ServingGuard::take(&self.dir, &rec.name) else {
+                    if store_has_queued(&self.thread_store(&rec.space), &rec.name) {
+                        tracing::info!(agent = %rec.name, "a queued task waits: the member is still being served");
+                    }
                     continue; // still being served by an earlier pass
                 };
                 let me = self.clone();
@@ -1597,13 +1611,12 @@ impl Thread {
             .collect())
     }
 
-    /// The key of this Space's member that answers to `@handle`.
+    /// The key of this Space's member that answers to `@handle` (or, as an
+    /// alias, to its key on this machine).
     fn member_key(&self, handle: &str) -> Option<String> {
         self.p
-            .members_of(self.store.space())
+            .member_named(self.store.space(), handle)
             .ok()?
-            .into_iter()
-            .find(|r| r.handle() == handle)
             .map(|r| r.name)
     }
 
@@ -1653,18 +1666,22 @@ impl Thread {
         }
         let author = self.author();
         let members = self.member_names()?;
-        // `@claude` of this Space is the member's key (`claude-2` in a second Space).
-        let mentions: Vec<String> = parse_mentions(&args.text)
+        // `@claude` of this Space is the member's key (`claude-2` in a second
+        // Space); the key itself (`@claude-2`) reaches the same member.
+        let mut mentions: Vec<String> = vec![];
+        for key in parse_mentions(&args.text)
             .into_iter()
-            .filter(|m| members.contains(m))
             .filter_map(|m| self.member_key(&m))
-            .collect();
+        {
+            if !mentions.contains(&key) {
+                mentions.push(key);
+            }
+        }
         let fold = self.store.fold()?;
         let by_agent = author.agent_name().map(str::to_string);
         // Mentions a person did not type: `@everyone`, or a reply to an agent's message.
         let mut implied: Vec<String> = vec![];
         let mut everyone = false;
-        let mut mentions = mentions;
         if by_agent.is_none() {
             let typed = parse_mentions(&args.text);
             if typed.iter().any(|m| m == "everyone") && !members.iter().any(|h| h == "everyone") {
@@ -2805,4 +2822,16 @@ fn clip_words(s: &str, n: usize) -> String {
     let mut out: String = one.chars().take(n.saturating_sub(1)).collect();
     out.push('\u{2026}');
     out
+}
+
+/// Whether `name` has a task queued in `store` (for the log of a wait).
+fn store_has_queued(store: &ThreadStore, name: &str) -> bool {
+    store
+        .fold()
+        .map(|f| {
+            f.open_tasks(Some(name))
+                .iter()
+                .any(|t| t.state == TaskState::Queued)
+        })
+        .unwrap_or(false)
 }

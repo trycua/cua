@@ -66,7 +66,7 @@ pub(crate) type HostPortsTable = tokio::sync::Mutex<BTreeMap<String, HostPortsRu
 /// The ports a Space's settings publish at `localhost` (the `localhost`
 /// preset's listed ports; `all` publishes none).
 pub fn published_ports(settings: &crate::network::NetworkSettings) -> Vec<u16> {
-    if settings.preset != crate::network::NetworkPreset::Localhost || settings.all_localhost_ports {
+    if !settings.preset.opens_localhost() || settings.all_localhost_ports {
         return Vec::new();
     }
     let mut v = settings.localhost_ports.clone();

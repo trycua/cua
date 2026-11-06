@@ -21,10 +21,19 @@ Usage: check_no_larger_runners.py [--list] [repo_root]
 from __future__ import annotations
 
 import re
+import shutil
 import sys
 from pathlib import Path
 
-import yaml
+try:
+    import yaml
+except ImportError:  # e.g. a host whose system Python has no PyYAML (g17-4)
+    import os
+
+    if os.environ.get("CUA_LARGER_RUNNERS_REEXEC") or not shutil.which("uv"):
+        sys.exit("check_no_larger_runners.py needs PyYAML: pip install pyyaml (or install uv)")
+    os.environ["CUA_LARGER_RUNNERS_REEXEC"] = "1"
+    os.execvp("uv", ["uv", "run", "--quiet", "--with", "pyyaml", "python", *sys.argv])
 
 LARGER = re.compile(r"(?:^|-)(?:x{0,2}large)$|\d+-?cores?(?:$|-)", re.IGNORECASE)
 LITERAL = re.compile(r"'([^']*)'|\"([^\"]*)\"")

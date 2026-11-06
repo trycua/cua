@@ -230,6 +230,7 @@ mod tests {
 
     fn info(id: &str) -> SpaceInfo {
         SpaceInfo {
+            hidden: false,
             id: id.into(),
             name: id.into(),
             display_name: String::new(),

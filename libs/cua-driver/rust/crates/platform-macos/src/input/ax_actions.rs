@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! AX action dispatch — the preferred click/interaction path for indexed elements.
 
 use crate::ax::bindings::*;
@@ -188,12 +191,27 @@ pub fn capture_nearest_container_selection(element_ptr: usize) -> Option<Selecti
     None
 }
 
+/// The live `AXEnabled` read said the target is disabled, so nothing was sent.
+/// Tools turn this into a structured `element_disabled` refusal.
+#[derive(Debug, thiserror::Error)]
+#[error(
+    "refusing {action}: the target reports AXEnabled=false, so the app would ignore it. \
+     Nothing was sent. Snapshot again and act once the element reports enabled"
+)]
+pub struct ElementDisabled {
+    pub action: String,
+}
+
+impl ElementDisabled {
+    pub const CODE: &'static str = "element_disabled";
+}
+
 fn ensure_ax_enabled(enabled: Option<bool>, action: &str) -> anyhow::Result<()> {
     if enabled == Some(false) {
-        anyhow::bail!(
-            "refusing {action}: the target reports AXEnabled=false. \
-             Retry this action with delivery_mode:\"foreground\" or call bring_to_front first"
-        );
+        return Err(ElementDisabled {
+            action: action.to_owned(),
+        }
+        .into());
     }
     Ok(())
 }
@@ -318,10 +336,15 @@ mod tests {
     #[test]
     fn disabled_elements_are_refused_before_dispatch() {
         let error = ensure_ax_enabled(Some(false), "AXPick").unwrap_err();
+        let disabled = error
+            .downcast_ref::<ElementDisabled>()
+            .expect("a disabled target is a typed refusal");
+        assert_eq!(disabled.action, "AXPick");
         let message = error.to_string();
         assert!(message.contains("AXEnabled=false"));
-        assert!(message.contains("delivery_mode:\"foreground\""));
-        assert!(message.contains("bring_to_front"));
+        // A foreground retry does not enable a disabled control.
+        assert!(!message.contains("foreground"));
+        assert!(!message.contains("bring_to_front"));
     }
 
     #[test]

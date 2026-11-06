@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Xwayland `XAUTHORITY` auto-discovery for SSH-driven Wayland sessions.
 //!
 //! When cua-driver is driven over SSH against a Wayland+Xwayland desktop,

@@ -308,6 +308,15 @@ class WindowsRaisedTests(unittest.TestCase):
             result["overlay_owners"], ["ChatGPT Computer Use", "Cua Driver Bench Script"]
         )
 
+    def test_windows_driver_process_name_is_overlay(self) -> None:
+        # On Windows the owner is the executable stem, `cua-driver`, with a hyphen.
+        seq = [["cua-driver"]] * 4 + [["BenchLab"]] * 2
+        lines = [self.line("armed", 0, [])] + [self.line("s", i + 1, a) for i, a in enumerate(seq)]
+        result = self.summarize(lines)
+        self.assertEqual(result["windows_raised"], 1)
+        self.assertEqual(result["raised_by"], ["BenchLab"])
+        self.assertEqual(result["overlay_owners"], ["cua-driver"])
+
     def test_user_activity_counts(self) -> None:
         lines = [self.line("armed", 0, [])] + [self.line("s", i, []) for i in range(1, 12)]
         lines += [

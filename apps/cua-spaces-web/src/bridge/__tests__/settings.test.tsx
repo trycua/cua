@@ -75,8 +75,10 @@ describe.skipIf(!wasmBuilt)("Settings and Notifications through the core", () =>
     expect(hooks.about.data?.view?.links.map((l) => l.id)).toEqual(["acknowledgements", "privacy", "terms", "status", "issue"]);
     await hooks.about.setAbout({ autoCheck: false });
     await waitFor(() => expect(hooks.about.data?.view?.updates?.autoInstallEnabled).toBe(false));
-    await hooks.about.setAbout({ channel: "beta" });
-    await waitFor(() => expect(hooks.about.data?.view?.updates?.channels.find((c) => c.active)?.id).toBe("beta"));
+    await hooks.about.setAbout({ channel: "nightly" });
+    await waitFor(() => expect(hooks.about.data?.view?.updates?.channels.find((c) => c.active)?.id).toBe("nightly"));
+    expect(hooks.about.data?.view?.updates?.channels.map((c) => c.id)).toEqual(["stable", "nightly"]);
+    expect(hooks.about.data?.view?.updates?.channelHelp).toBe("Nightly builds: get the newest changes from main every day. They may break.");
   });
 
   it("turns an experiment on, and Cua Volume changes the launch-at-login line", async () => {

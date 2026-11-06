@@ -1398,11 +1398,23 @@ function Assert-ReleaseZipIntegrity([string]$zipPath, [string]$version) {
         $cosign = Get-Command cosign -ErrorAction SilentlyContinue
         if ($cosign) {
             $identity = "https://github.com/$Repo/.github/workflows/cd-rust-cua-driver.yml@refs/tags/$tag"
-            & $cosign verify-blob --bundle $bundlePath `
-                --certificate-identity $identity `
-                --certificate-oidc-issuer $CosignOidcIssuer $zipPath *> $null
-            if ($LASTEXITCODE -ne 0) {
-                Write-ErrorStep "the Sigstore signature of $zipName did not verify for $tag; refusing to install it."
+            $prevEAP = $ErrorActionPreference
+            $ErrorActionPreference = 'Continue'
+            $verified = $false
+            $why = ''
+            try {
+                & $cosign verify-blob --bundle $bundlePath `
+                    --certificate-identity $identity `
+                    --certificate-oidc-issuer $CosignOidcIssuer $zipPath 2>&1 | Out-Null
+                $verified = $LASTEXITCODE -eq 0
+            } catch {
+                # A cosign that cannot start throws instead of setting $LASTEXITCODE.
+                $why = ' (cosign could not start)'
+            } finally {
+                $ErrorActionPreference = $prevEAP
+            }
+            if (-not $verified) {
+                Write-ErrorStep "the Sigstore signature of $zipName did not verify for $tag$why; refusing to install it."
                 exit 1
             }
             Write-Step "verified the Sigstore signature of $zipName"

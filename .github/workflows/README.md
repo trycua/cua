@@ -35,7 +35,7 @@ build on main pushes, manual runs and `ci:full` pull requests.
 
 ## Required checks
 
-Staging has no required status checks. trycua/cua requires `fleet-mirror-guard`,
+Staging has no required status checks. trycua/cua requires `ci-gate`,
 `contributor-attribution` and `validate`; none of those are renamed or removed
 here. `contributor-attribution` is informational: it always passes and reports
 unresolved attribution as a warning. A workflow skipped by `paths:` never reports, so do not add a path-gated
@@ -88,6 +88,16 @@ workflow.
 * When sccache cannot start, cargo compiles normally.
 * sccache hashes the rustc version into every object key, so a toolchain bump
   simply misses until main re-seeds, and the cap ages the old objects out.
+
+## Rust tests: build once, run in shards
+
+`CI: cua SDK` compiles the Linux test binaries once (`rust linux build`, a
+`cargo nextest archive` uploaded as the `rust-linux-tests` artifact) and the three
+`rust linux shard N/3` jobs run `cargo nextest run --archive-file ... --partition
+hash:N/3`. The three `pool_model` model checks (about 254, 112 and 62 s) are left out
+of pull request runs and run on every push to main, in the nightly schedule and on a
+pull request with the `ci:full` label. Linux links with rust-lld (rustc's default
+since 1.90); CI test builds already have debug info off, so the archive stays small.
 
 ## Known flaky tests and quarantine
 

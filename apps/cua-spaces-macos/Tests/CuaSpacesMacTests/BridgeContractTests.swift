@@ -258,7 +258,10 @@ struct BridgeContractTests {
             // The relay allowance before the sign-out below (signed out, it is null).
             // No request is waiting on the fixtures: an answer to none is left alone.
             ("nudges.pending", [:]), ("nudges.answer", ["id": "risky-1-1", "choice": "here"]),
-            ("app.info", [:]), ("session.get", [:]), ("relay.usage", [:]), ("resources.get", ["visible": true]), ("session.signOut", [:]),
+            ("app.info", [:]), ("session.get", [:]), ("relay.usage", [:]), ("resources.get", ["visible": true]),
+            // The default Space reads from the fixture account (before the sign-out: signed out, each is null).
+            ("spaces.settings", [:]), ("spaces.setSettings", ["defaultSpace": NSNull(), "fallback": [String](), "fallbackOn": true]),
+            ("spaces.resolveDefault", [:]), ("session.signOut", [:]),
             ("links.list", [:]), ("links.create", ["target": "space:dev:3000"]), ("links.stop", ["id": "all"]),
             ("links.approve", ["id": "share-pending"]), ("links.deny", ["id": "share-pending"]),
             ("shares.settings.get", [:]), ("shares.edge.remove", [:]),
@@ -306,7 +309,7 @@ struct BridgeContractTests {
             ("sharing.removals", [:]), ("sharing.ackRemovals", [:]),
             ("volume.overview", [:]), ("volume.storage", [:]), ("volume.mount", [:]), ("volume.unmount", [:]),
             ("volume.storageSet", ["update": ["backend": "fs", "dry_run": true]]),
-            ("about.get", [:]), ("about.set", ["channel": "beta"]), ("about.checkNow", [:]),
+            ("about.get", [:]), ("about.set", ["channel": "nightly"]), ("about.checkNow", [:]),
             ("update.get", [:]), ("update.install", [:]),
             ("loginItem.get", [:]), ("loginItem.set", ["on": true]),
             ("devices.get", [:]), ("devices.enroll", [:]), ("devices.checkEnrolled", [:]),
@@ -336,6 +339,10 @@ struct BridgeContractTests {
             ("window.setDragRegions", ["rects": [["x": 78, "y": 0, "width": 400, "height": 48]]]),
             ("window.setDropTargets", ["targets": [["spaceId": space, "x": 20, "y": 60, "width": 232, "height": 180]]]),
             ("startup.get", [:]),
+            // A test runner carries no Cua Driver: null and an empty list.
+            ("driver.status", [:]),
+            ("driver.permissions", [:]),
+            ("driver.list", [:]),
         ]
     }
 
@@ -399,6 +406,12 @@ struct BridgeContractTests {
         "thread.joinCodeList": "answers the daemon's thread_join_code_list as-is (the page maps it); ThreadBridgeTests covers the arguments",
         "thread.joinCodeCancel": "answers the daemon's thread_join_code_cancel as-is (the page ignores it); ThreadBridgeTests covers the arguments",
         "thread.settings": "answers the daemon's thread_settings as-is (the page maps it); ThreadBridgeTests covers the arguments",
+        "driver.config": "needs the bundled Cua Driver running (embedded-driver-vm-check.sh); EmbeddedDriverTests covers the socket",
+        "driver.setConfig": "as driver.config",
+        "driver.test": "as driver.config (it moves the agent pointer)",
+        "driver.pause": "as driver.config (it stops the driver); EmbeddedDriverTests covers the marker path",
+        "driver.setup": "writes the coding agents' configs and restarts the driver",
+        "driver.setApp": "as driver.setup, for one agent",
     ]
 
     static func shapes() throws -> [String: Any] {

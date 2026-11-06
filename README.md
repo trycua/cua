@@ -220,11 +220,10 @@ uv tool run --from 'cua-bench[browser]' playwright install chromium
 | [Cua Spaces core](apps/cua-spaces/README.md)            | The shared Spaces app core, and the Tauri app for Linux and Windows                  |
 | [cua-bench](libs/cua-bench/README.md)                   | Benchmarks and RL environments for computer-use                                      |
 | [lume](https://cua.ai/docs/lume/reference/cli) | macOS/Linux VM management on Apple Silicon                                          |
-| [lumier](libs/lumier/README.md)                         | Docker-compatible interface for Lume VMs                                             |
 
 ### Deprecated packages
 
-Cua no longer maintains these. They will not receive updates or fixes, and existing releases stay on npm and PyPI. See [Migrate from deprecated packages](https://cua.ai/docs/cua-sdk/guides/cua-cloud-ended#deprecated-packages).
+Cua no longer maintains these. They will not receive updates or fixes, their CI/CD is switched off, and existing releases and image tags stay on npm, PyPI and Docker Hub. See [Migrate from deprecated packages](https://cua.ai/docs/cua-sdk/guides/cua-cloud-ended#deprecated-packages).
 
 | Package                                                  | Registry | Use instead                                                                                                                                      |
 | -------------------------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -233,6 +232,12 @@ Cua no longer maintains these. They will not receive updates or fixes, and exist
 | `cua-computer-server`                                    | PyPI     | Images that ship [cua-spacesd](libs/cua-spacesd/README.md), or [Cua Driver](#cua-driver)                                                         |
 | [cua-agent](libs/python/agent/README.md)                 | PyPI     | A coding agent with the [Cua Driver MCP](https://cua.ai/docs/cua-driver/guides/connect-your-agent), or `sandbox.agents()` in the `cua` SDK       |
 | [cua-som](libs/python/som/README.md)                     | PyPI     | [Cua Driver](#cua-driver)                                                                                                                        |
+| [cua-core](libs/python/core/README.md) | PyPI | [Cua Driver](#cua-driver) or the [`cua` SDK](#cua-sdk-and-cli); [cua-bench](libs/cua-bench/README.md) still uses the last release |
+| [cua-bench-ui](libs/python/bench-ui/README.md) | PyPI | Nothing: only [cua-bench](libs/cua-bench/README.md) uses it, at its last release |
+| [cua-sandbox-apps](libs/python/cua-sandbox-apps/README.md) | PyPI | The [`cua` SDK](#cua-sdk-and-cli) |
+| [@trycua/core](libs/typescript/core/README.md), `@trycua/playground` | npm | [`@trycua/cua`](libs/cua/typescript/README.md) |
+| [lumier](libs/lumier/README.md) | Docker Hub | [Lume](https://cua.ai/docs/lume/reference/cli), or a sandbox from the [`cua` SDK](#cua-sdk-and-cli) |
+| [xfce](libs/xfce/README.md), [xfce-cua](libs/xfce-cua/README.md), [kasm](libs/kasm/README.md), [qemu-docker](libs/qemu-docker/README.md) images | Docker Hub | The images in [libs/images](libs/images/README.md) (`ghcr.io/trycua/linux`, `windows`, `macos`) through the [`cua` SDK](#cua-sdk-and-cli) |
 
 ---
 

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Client for the bundled **cua WinRects** GNOME Shell extension
 //! (`org.cua.WinRects`, see `wayland-helper/winrects@cua/`).
 //!

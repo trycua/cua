@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! TextEdit delivery integration checks for macOS.
 //!
 //! Covers the accessibility route and confirmed value read-back on a real

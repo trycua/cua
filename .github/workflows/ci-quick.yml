@@ -60,18 +60,23 @@ jobs:
           enable-cache: true
       - name: Install actionlint
         if: steps.marker.outputs.cache-hit != 'true'
+        uses: ./.github/actions/install-actionlint
+      - name: Install crane (only when the docs image refs are checked)
+        if: steps.marker.outputs.cache-hit != 'true'
         run: |
-          set -euo pipefail
-          VERSION=1.7.12
-          curl -fsSL -o "$RUNNER_TEMP/actionlint.tgz" \
-            "https://github.com/rhysd/actionlint/releases/download/v${VERSION}/actionlint_${VERSION}_linux_amd64.tar.gz"
-          mkdir -p "$RUNNER_TEMP/bin"
-          tar xzf "$RUNNER_TEMP/actionlint.tgz" -C "$RUNNER_TEMP/bin" actionlint
-          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+          if python3 bin/ci --list --quick --no-install 2>&1 | grep -q '^  docs-image-refs '; then
+            go install github.com/google/go-containerregistry/cmd/crane@v0.20.6
+            echo "$(go env GOPATH)/bin" >>"$GITHUB_PATH"
+          fi
       - name: bin/ci --quick
         if: steps.marker.outputs.cache-hit != 'true'
         # --no-install: a check that needs a package's node_modules is skipped here (its own workflow
         # still runs it) instead of installing it, which would make this stage slow and network-bound.
+        # CUA_CI_REQUIRE_TOOLS: the checks whose standalone workflows were deleted (spdx, lockfiles,
+        # actionlint, larger runners, image refs, Python lint, rustfmt, docs image refs) fail, never
+        # skip, when a tool is missing on the runner.
+        env:
+          CUA_CI_REQUIRE_TOOLS: "1"
         run: python3 bin/ci --quick --no-install
       - name: Write the pass marker
         if: steps.marker.outputs.cache-hit != 'true'

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Desktop E2E suites for `cua-driver`.
 //!
 //! This crate has no library code. Its integration tests in `tests/` drive a

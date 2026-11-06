@@ -25,6 +25,7 @@ import { joinMethods } from "./join-with-code";
 import { keyvaultMethods } from "./keyvault";
 import { hostStatus, machinesMethods } from "./machines";
 import { ELECTRON_METHODS, METHODS } from "./methods";
+import { driverMethods } from "./driver";
 import { notificationsMethods } from "./notifications";
 import { nudgesMethods } from "./nudges";
 import { onboardingMethods } from "./onboarding";
@@ -35,6 +36,7 @@ import { ciMethods } from "./ci";
 import { threadMethods } from "./thread";
 import { agentThreadsMethods } from "./agent-threads";
 import { relayUsageMethods } from "./relay-usage";
+import { spacesSettingsMethods } from "./spaces-settings";
 import { resourcesMethods } from "./resources";
 import { sessionMethods, sessionState } from "./session";
 import { settingsMethods } from "./settings";
@@ -78,6 +80,7 @@ export const AREAS = [
   streamMethods,
   onboardingMethods,
   relayUsageMethods,
+  spacesSettingsMethods,
   nudgesMethods,
   resourcesMethods,
   checklistMethods,
@@ -86,6 +89,7 @@ export const AREAS = [
   ciMethods,
   threadMethods,
   agentThreadsMethods,
+  driverMethods,
   presenceMethods,
 ];
 

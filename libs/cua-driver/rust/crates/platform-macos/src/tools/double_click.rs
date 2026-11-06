@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use async_trait::async_trait;
 use cua_driver_core::{
     protocol::ToolResult,
@@ -122,6 +125,17 @@ impl Tool for DoubleClickTool {
             } else {
                 None
             };
+            if let Some(refusal) = super::refuse_if_disabled(
+                pid,
+                wid,
+                &element_guard,
+                "double_click",
+                delivery_mode.is_foreground(),
+            )
+            .await
+            {
+                return refusal;
+            }
 
             // Thread the resolved session cursor key into the blocking AX path
             // so its ClickPulse lands on THIS session's cursor, not "default".

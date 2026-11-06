@@ -162,7 +162,45 @@ struct Attached {
 }
 
 mod publish;
-pub use publish::{CHANGED as PUBLISH_CHANGED, Off, PublishReport, breaker_wait, jitter};
+
+/// Spaces with a background re-attach running (one each).
+static REATTACHING: std::sync::LazyLock<std::sync::Mutex<std::collections::BTreeSet<String>>> =
+    std::sync::LazyLock::new(Default::default);
+
+static REATTACH_STEP_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(2000);
+
+fn reattach_step() -> std::time::Duration {
+    std::time::Duration::from_millis(REATTACH_STEP_MS.load(std::sync::atomic::Ordering::Relaxed))
+}
+
+/// Shortens the pauses between background re-attach and publish retries
+/// for a Space whose cua-spacesd is still waking (tests only).
+#[doc(hidden)]
+pub fn set_waking_retry_ms(ms: u64) {
+    REATTACH_STEP_MS.store(ms, std::sync::atomic::Ordering::Relaxed);
+    publish::set_waking_retry(std::time::Duration::from_millis(ms.saturating_mul(5)));
+}
+
+/// Whether the relay row names `host` as its host (always true without a
+/// host to name).
+pub(crate) fn host_matches(m: &cua_host::Machine, host: Option<&str>) -> bool {
+    host.is_none_or(|h| m.host.as_deref() == Some(h))
+}
+
+/// A Space whose image runs cua-spacesd, which is not answering yet.
+pub(crate) fn waking_error(space: &str) -> Error {
+    Error::SpacesdNotAvailable {
+        space: space.into(),
+        reason: "its cua-spacesd is not answering yet (the Space is still starting)".into(),
+    }
+}
+
+pub(crate) fn is_waking(e: &Error) -> bool {
+    matches!(e, Error::SpacesdNotAvailable { .. })
+}
+pub use publish::{
+    CHANGED as PUBLISH_CHANGED, Off, PublishReport, PublishStatus, breaker_wait, jitter,
+};
 
 /// Normalizes an invitee: an email (lowercased) or an account id. Teams and
 /// organizations are not relay principals, so `team:` / `org:` entries are
@@ -377,6 +415,16 @@ impl Spaces {
             .collect()
     }
 
+    /// This computer's own relay machine id when it is set up as a host
+    /// that is sharing (the id its Spaces name as their host).
+    pub(crate) fn own_host_id(&self) -> Option<String> {
+        let c = cua_host::Host::new(self.home_dir()).config().ok()??;
+        (c.sharing && !c.paused_signed_out)
+            .then_some(c.machine_id)
+            .flatten()
+            .filter(|m| !m.is_empty())
+    }
+
     /// The relay machines Cua listed itself for Spaces on this computer
     /// ([`publish`]): the Space is listed once, as the local one.
     pub(crate) fn auto_published_machines(&self) -> std::collections::HashSet<String> {
@@ -546,17 +594,29 @@ impl Spaces {
             }
             return Ok(machine_id.clone());
         }
-        let s = self.space(&canonical).await?;
+        let mut s = self.space(&canonical).await?;
+        if !s.has_spacesd() && self.record_expects_spacesd(&id) {
+            // Its image runs cua-spacesd (it answered before): the Space is
+            // still waking, not unsupported. Dial once more now; if it still
+            // does not answer, say so (a later pass tries again).
+            self.drop_connection(&id).await;
+            s = self.space(&canonical).await?;
+            if !s.has_spacesd() {
+                return Err(waking_error(&canonical));
+            }
+        }
         s.require(RELAY_ATTACH_FEATURE)?;
         let all = self.attached();
         let machine = match all.get(&canonical) {
             Some(a) => a.machine.clone(),
             None => format!("space-{:016x}", rand::random::<u64>()),
         };
+        let host_id = self.own_host_id();
         if wait
             && let Ok(m) = client.machine(&token, &machine).await
             && m.online
             && m.role == "owner"
+            && host_matches(&m, host_id.as_deref())
         {
             return Ok(machine);
         }
@@ -581,7 +641,10 @@ impl Spaces {
                     id: machine.clone(),
                     name,
                     allow: vec![],
-                    host: None,
+                    // This computer provides the Space, so the phone and
+                    // the owner's other devices read its thread through
+                    // this computer's daemon.
+                    host: host_id.clone(),
                     meta,
                 },
             )
@@ -993,9 +1056,46 @@ impl Spaces {
         if !self.attached().contains_key(&canonical) {
             return;
         }
-        if let Err(e) = self.relay_register(&canonical).await {
+        let first = self.relay_register(&canonical).await;
+        let Err(e) = first else { return };
+        if !is_waking(&e) {
             tracing::warn!(space = %canonical, error = %e, "re-attaching to the relay after a boot failed");
+            return;
         }
+        // Its cua-spacesd is not answering yet (a boot takes a while): keep
+        // trying in the background, one task per Space, with growing
+        // pauses, for a bounded time. The publish pass picks it up after.
+        if !REATTACHING
+            .lock()
+            .expect("reattaching")
+            .insert(canonical.clone())
+        {
+            return;
+        }
+        tracing::info!(space = %canonical, "cua-spacesd is not answering yet; re-attaching to the relay when it does");
+        let this = self.clone();
+        tokio::spawn(async move {
+            let step = reattach_step();
+            let mut pause = step;
+            let deadline = std::time::Instant::now() + step * 90;
+            loop {
+                tokio::time::sleep(pause).await;
+                if !this.attached().contains_key(&canonical) {
+                    break;
+                }
+                match this.relay_register(&canonical).await {
+                    Ok(_) => break,
+                    Err(e) if is_waking(&e) && std::time::Instant::now() < deadline => {
+                        pause = (pause * 2).min(step * 15);
+                    }
+                    Err(e) => {
+                        tracing::warn!(space = %canonical, error = %e, "re-attaching to the relay after a boot failed");
+                        break;
+                    }
+                }
+            }
+            REATTACHING.lock().expect("reattaching").remove(&canonical);
+        });
     }
 
     pub async fn relay_register(&self, space: &str) -> Result<RelayRegistration> {
@@ -1019,6 +1119,18 @@ impl Spaces {
     /// A host that is connected now is taken off with `cua host remove` on
     /// it instead.
     pub async fn relay_unregister(&self, space: &str) -> Result<bool> {
+        self.relay_unregister_computer(space, false).await
+    }
+
+    /// [`Spaces::relay_unregister`]. A computer's own Spaces stay on the
+    /// account, detached (they come back when it registers again);
+    /// `delete_spaces` deletes them instead, first through the computer
+    /// while it answers (their files go), then their records on the relay.
+    pub async fn relay_unregister_computer(
+        &self,
+        space: &str,
+        delete_spaces: bool,
+    ) -> Result<bool> {
         // A Space that is already gone here but was left on the relay (its
         // delete could not reach the relay, CUA-2841): its machine is still
         // remembered, so `relay-unregister local:<name>` removes it.
@@ -1039,7 +1151,7 @@ impl Spaces {
         };
         let canonical = id.to_string();
         if let SpaceId::Relay { machine_id } = &id {
-            let removed = self.forget_relay_machine(machine_id).await?;
+            let removed = self.forget_relay_machine(machine_id, delete_spaces).await?;
             if removed.is_some() {
                 self.audit_share("forget", &canonical, &format!("machine={machine_id}"));
             }

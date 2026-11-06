@@ -1110,3 +1110,31 @@ class MiscTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ParkPointerFlowTests(unittest.TestCase):
+    def test_failed_park_raises_and_success_returns_record(self):
+        point = rb.PARK_POINT
+        ok = mock.Mock(stdout=json.dumps({"x": point[0], "y": point[1]}))
+        with (
+            mock.patch.object(rb.desktop, "detect_platform", return_value="macos"),
+            mock.patch.object(rb.ca, "cua_cli", return_value=ok),
+        ):
+            record = rb.park_pointer(mock.Mock())
+        self.assertTrue(record["ok"])
+        self.assertEqual(record["read_back"], [float(point[0]), float(point[1])])
+        off = mock.Mock(stdout=json.dumps({"x": 162, "y": 158}))
+        with (
+            mock.patch.object(rb.desktop, "detect_platform", return_value="macos"),
+            mock.patch.object(rb.ca, "cua_cli", return_value=off),
+        ):
+            with self.assertRaises(rb.ParkFailed):
+                rb.park_pointer(mock.Mock())
+
+    def test_unsupported_platform_fails_instead_of_faking(self):
+        with (
+            mock.patch.object(rb.desktop, "detect_platform", return_value="linux"),
+            mock.patch.object(rb.shutil, "which", return_value=None),
+        ):
+            with self.assertRaises(rb.ParkFailed):
+                rb.park_pointer(mock.Mock())

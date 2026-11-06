@@ -407,6 +407,7 @@ impl SpacesBuilder {
                 relay: std::sync::RwLock::new(self.relay),
                 resources: crate::resources::Hub::new(),
                 relay_cache: std::sync::Mutex::new(Vec::new()),
+                default_cache: std::sync::Mutex::new(None),
                 team_facts: std::sync::Mutex::new(Default::default()),
                 relay_reported: std::sync::Mutex::new(relay_reported),
                 reported_saves: Default::default(),
@@ -488,6 +489,7 @@ pub(crate) fn relay_info(m: &crate::relay::RelayMachine) -> SpaceInfo {
         stop_reason: String::new(),
         volumes: Vec::new(),
         labels: BTreeMap::new(),
+        hidden: false,
         expires_at_unix: 0,
         on_expire: String::new(),
         created_at_unix: 0,
@@ -651,6 +653,9 @@ pub(crate) struct Inner {
     pub(crate) resources: Arc<crate::resources::Hub>,
     /// The last directory listing (so `list` and `resolve` stay sync).
     pub(crate) relay_cache: std::sync::Mutex<Vec<crate::relay::RelayMachine>>,
+    /// The account's default Space as the relay last said (or none), and
+    /// when it was read: lists mark it without asking every time.
+    pub(crate) default_cache: std::sync::Mutex<Option<(std::time::Instant, Option<String>)>>,
     /// Team names and roles from the Spaces API ([`crate::sharing`]).
     pub(crate) team_facts: std::sync::Mutex<crate::sharing::TeamFacts>,
     /// What each relay machine's cua-spacesd said about itself when this
@@ -1318,7 +1323,7 @@ impl Spaces {
             && !m.online
             && crate::relay::is_registered_space(&m)
         {
-            self.forget_relay_machine(machine_id).await?;
+            self.forget_relay_machine(machine_id, false).await?;
         }
         // A Space this device attached to the relay as a machine of its own
         // takes that machine with it (as `delete` does): `rm` must not leave
@@ -1374,6 +1379,7 @@ impl Spaces {
             stop_reason: String::new(),
             volumes: Vec::new(),
             labels: BTreeMap::new(),
+            hidden: false,
             expires_at_unix: 0,
             on_expire: String::new(),
             created_at_unix: 0,
@@ -1423,6 +1429,7 @@ impl Spaces {
                     info.display_name = m.display_name.clone();
                 }
                 info.labels = m.labels.clone();
+                info.hidden = m.labels.contains_key(crate::registry::HIDDEN_LABEL);
                 if m.created_at_unix > 0 {
                     info.created_at_unix = m.created_at_unix;
                 }
@@ -1750,6 +1757,17 @@ impl Spaces {
         attempt
             .await
             .map_err(|e| Error::Cancelled(format!("the connect to this Space ended: {e}")))?
+    }
+
+    /// Whether the registry remembers cua-spacesd answering for `id`: its
+    /// image runs one, so a connection without it is a Space still waking.
+    pub(crate) fn record_expects_spacesd(&self, id: &SpaceId) -> bool {
+        self.inner
+            .registry
+            .get(&id.to_string())
+            .ok()
+            .flatten()
+            .is_some_and(|r| !r.spacesd_version.is_empty() || !r.features.is_empty())
     }
 
     /// The open connection to `key`, unless its route went stale or it can
@@ -2157,7 +2175,20 @@ impl Spaces {
         };
         let mut unavailable: Option<(String, String)> = None;
         let env = match options {
-            None => None,
+            None => {
+                // No spacesd port is published. For a Space this computer
+                // knows runs cua-spacesd (it answered before), that is a
+                // runtime still bringing the Space back (a restart
+                // publishes the ports a moment later), not an image
+                // without it: mark it so the next use dials again.
+                if matches!(id, SpaceId::Local { .. }) && self.record_expects_spacesd(id) {
+                    unavailable = Some((
+                        String::new(),
+                        "the Space's cua-spacesd port is not published yet".into(),
+                    ));
+                }
+                None
+            }
             Some(options) => match SpacesdClient::connect(options.probe_timeout(probe)).await {
                 Ok(env) => Some(env),
                 Err(cua_spacesd_client::Error::SpacesdNotAvailable { endpoint, reason }) => {
@@ -2770,6 +2801,7 @@ impl Spaces {
                 result = Err(e);
             } else if let Ok(SpaceCreated::Ready { info, .. }) = &mut result {
                 info.labels = labels.clone();
+                info.hidden = labels.contains_key(crate::registry::HIDDEN_LABEL);
                 info.created_at_unix = now;
                 info.egress = egress.clone();
                 info.egress_enforced =
@@ -3268,7 +3300,9 @@ impl Spaces {
 
     /// Recovers local creates left by a dead process when their cua-spacesd
     /// authenticates within `budget`. Failed, cancelled or borrowed local
-    /// attempts retain their resources and journals for explicit cleanup.
+    /// attempts retain their resources and journals for explicit cleanup;
+    /// a journal whose sandbox the local runtime says is gone (and that no
+    /// state file records) has nothing left to inspect and is removed.
     /// Live processes are left alone; nonlocal creates retain cancellation
     /// cleanup. The daemon runs this at startup.
     pub async fn recover_interrupted_creates(&self, budget: Duration) -> Vec<RecoveredCreate> {
@@ -3300,7 +3334,20 @@ impl Spaces {
             let id = SpaceId::Local {
                 name: j.name.clone(),
             };
-            let outcome = if crate::creating::cancel_marked(&home, &stem)
+            let unregistered = || {
+                self.inner
+                    .registry
+                    .get(&id.to_string())
+                    .ok()
+                    .flatten()
+                    .is_none()
+            };
+            let outcome = if !j.name.is_empty()
+                && unregistered()
+                && self.inner.sandboxes.local_name_gone(&j.name).await
+            {
+                RecoveryOutcome::NothingLeft
+            } else if crate::creating::cancel_marked(&home, &stem)
                 || local_made == Some(false)
                 || j.token.trim().is_empty()
                 || !j.spacesd
@@ -3446,6 +3493,11 @@ impl Spaces {
             self.detach_attached_space(&id.to_string()).await;
         }
         let message = self.delete_space(&id).await?;
+        // What lived in the Space (its persistent agents) ends with it.
+        #[cfg(feature = "mcp")]
+        for e in &self.inner.extensions {
+            e.space_deleted(self, &id.to_string()).await;
+        }
         // A Space this device attached to the relay as a machine of its own
         // takes that machine with it.
         #[cfg(feature = "spaces-agents")]
@@ -3527,7 +3579,7 @@ impl Spaces {
                     // its record leaves the relay directory.
                     None => match row {
                         Some(m) if m.role == "owner" && crate::relay::is_registered_space(&m) => {
-                            self.forget_relay_machine(machine_id).await?;
+                            self.forget_relay_machine(machine_id, false).await?;
                             format!("Removed {id} from your relay directory.")
                         }
                         Some(m) if m.role != "owner" => format!(

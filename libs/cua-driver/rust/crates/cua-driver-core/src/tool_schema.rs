@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Shared tool-parameter schema fragments + a cross-platform consistency gate.
 //!
 //! Every platform crate hand-writes its tool `input_schema` as an inline

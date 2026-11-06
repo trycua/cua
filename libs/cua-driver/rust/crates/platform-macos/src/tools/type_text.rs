@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! type_text tool — matches the Swift reference TypeTextTool.swift.
 //!
 //! Inserts text via `AXSelectedText` attribute write — an atomic single-call
@@ -228,6 +231,19 @@ impl Tool for TypeTextTool {
             }
             _ => (None, BackgroundKeyboardPolicy::Allowed),
         };
+        if let (Some((element, _)), Some(wid)) = (element_guard.as_ref(), window_id) {
+            if let Some(refusal) = super::refuse_if_disabled(
+                pid,
+                wid,
+                element,
+                "type_text",
+                delivery_mode.is_foreground(),
+            )
+            .await
+            {
+                return refusal;
+            }
+        }
 
         // ── px form: focus by pixel-click, then type into the focused element ──
         // Pass x,y (no element_token) for an *element px action*: pixel-click the

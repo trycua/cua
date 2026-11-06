@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Windows picture-in-picture preview stub.
 //!
 //! The Win32 implementation is a follow-up to the experimental macOS

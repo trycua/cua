@@ -67,8 +67,18 @@ public final class LiveAgentSetup: AgentSetupRunning, @unchecked Sendable {
         return out.map { appAgentSetupOutcome(outcome: $0) }
     }
 
+    /// With the Cua Driver this app carries ([`EmbeddedDriver`]), the
+    /// agents' `cua-driver` entry runs its embedded proxy, so the driver
+    /// uses Cua Spaces' permissions and no separate Cua Driver app is
+    /// installed. A bare build sets up the installed Cua Driver instead.
     public func setUpCuaDriver(agents: [String]) async throws -> [AppAgentSetupOutcomeInput] {
-        try await inner.setupCuaDriver(agents: agents, command: nil, skills: true, mcp: true)
+        if let driver = EmbeddedDriver.current() {
+            var out = try await inner.installSkills(agents: agents, skills: ["cua-driver"], force: false)
+            let server = AgentMcpServer(name: driver.serverName, command: driver.binary, args: driver.mcpArguments, env: [:])
+            out += try await inner.configureMcp(agents: agents, server: server)
+            return out.map { appAgentSetupOutcome(outcome: $0) }
+        }
+        return try await inner.setupCuaDriver(agents: agents, command: nil, skills: true, mcp: true)
             .map { appAgentSetupOutcome(outcome: $0) }
     }
 

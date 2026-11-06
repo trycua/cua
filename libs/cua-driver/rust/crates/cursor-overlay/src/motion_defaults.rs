@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Saved default cursor motion.
 //!
 //! `cursor.motion.style`, `cursor.motion.timing` and

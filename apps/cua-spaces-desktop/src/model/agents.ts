@@ -407,7 +407,8 @@ export function agentKeysInput(report: Json | null, error: string | null): AppAg
     }))
     .filter((k) => k.env !== "");
   const unavailable = report?.available === false ? (typeof report.unavailable === "string" ? report.unavailable : "this machine can't keep keys") : undefined;
-  return { keys, unavailable, error: error ?? undefined };
+  const warning = report?.available !== false && typeof report?.insecure === "string" && report.insecure ? report.insecure : undefined;
+  return { keys, unavailable, warning, error: error ?? undefined };
 }
 
 // MARK: Coding agents on this machine

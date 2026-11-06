@@ -570,7 +570,7 @@ impl FocusSnapshot {
     }
 
     /// The window that held the focus at capture time (active, else core).
-    fn previous_focus_window(&self) -> Option<Window> {
+    pub(crate) fn previous_focus_window(&self) -> Option<Window> {
         self.active
             .or_else(|| (self.core_focus > 1).then_some(self.core_focus))
     }

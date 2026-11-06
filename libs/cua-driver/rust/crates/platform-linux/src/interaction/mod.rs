@@ -163,7 +163,8 @@ pub fn with_x11_foreground<T>(
                     crate::input::foreground::CODE_UNAVAILABLE
                 );
             };
-            (Some(held), Some(prior))
+            // No window held the focus before: there is nothing to give back.
+            (Some(held), prior.previous_focus_window().map(|_| prior))
         }
         RestoreMode::LeaveFocused => (None, None),
     };

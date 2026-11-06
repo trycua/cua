@@ -510,9 +510,12 @@ impl Backend for DaemonBackend {
     }
 
     fn app_installed(&self) -> bool {
-        if cfg!(target_os = "macos") {
+        #[cfg(target_os = "macos")]
+        {
             std::path::Path::new(&crate::bundle::app_bundle_path()).exists()
-        } else {
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
             true
         }
     }

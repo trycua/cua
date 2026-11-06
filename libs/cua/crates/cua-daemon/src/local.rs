@@ -1351,7 +1351,10 @@ pub fn warm_pools_ordered() -> (Vec<String>, usize) {
     }
     let dir = cua_home::cua_home().join("persistent");
     let read = |f: &str| std::fs::read_to_string(dir.join(f)).unwrap_or_default();
-    order_for_warm(all, &recent_harnesses(&read("phases.jsonl"), &read("agents.json")))
+    order_for_warm(
+        all,
+        &recent_harnesses(&read("phases.jsonl"), &read("agents.json")),
+    )
 }
 
 fn order_for_warm(all: Vec<String>, recent: &[String]) -> (Vec<String>, usize) {
@@ -1573,7 +1576,12 @@ impl crate::pool::PoolHost for PoolHost {
         };
         order
             .iter()
-            .filter_map(|id| Some(format!("{id}@{}", cua_agents::installables::get(id)?.version)))
+            .filter_map(|id| {
+                Some(format!(
+                    "{id}@{}",
+                    cua_agents::installables::get(id)?.version
+                ))
+            })
             .collect::<Vec<_>>()
             .join(",")
     }
@@ -3699,9 +3707,16 @@ mod tests {
 
     #[test]
     fn the_warm_member_is_prepared_for_the_agents_in_use_first() {
-        let all: Vec<String> = ["openai-codex", "hermes", "claude-code", "opencode", "goose", "pi"]
-            .map(String::from)
-            .to_vec();
+        let all: Vec<String> = [
+            "openai-codex",
+            "hermes",
+            "claude-code",
+            "opencode",
+            "goose",
+            "pi",
+        ]
+        .map(String::from)
+        .to_vec();
         // Nothing used yet: Claude Code alone.
         let (o, n) = super::order_for_warm(all.clone(), &[]);
         assert_eq!((o[0].as_str(), n), ("claude-code", 1));

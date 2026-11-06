@@ -2030,9 +2030,7 @@ impl WarmPool {
         if let Some(s) = self.inner.shapes.lock().unwrap().get_mut(key) {
             s.prepared_image = chosen.as_ref().map(|c| (c.tag.clone(), c.image.clone()));
         }
-        let saved = chosen
-            .as_ref()
-            .map(|c| (c.tag.clone(), c.image.clone()));
+        let saved = chosen.as_ref().map(|c| (c.tag.clone(), c.image.clone()));
         if let Some((_, image)) = &saved {
             spec.image = image.clone();
         }
@@ -2142,7 +2140,15 @@ impl WarmPool {
         // The saved filesystem is built beside the members, never from one
         // that can be claimed (a claim changes what is in it).
         if !all.is_empty() && !chosen.as_ref().is_some_and(|c| c.covers_all) {
-            self.build_prepared(key, template, backend, rt.clone(), all.clone(), first.clone(), chosen.clone());
+            self.build_prepared(
+                key,
+                template,
+                backend,
+                rt.clone(),
+                all.clone(),
+                first.clone(),
+                chosen.clone(),
+            );
         }
         // A member that booted from the saved filesystem has nothing in its
         // file cache: its apps are read now, while it waits to be claimed.
@@ -4014,7 +4020,12 @@ mod tests {
         let images = f.rt.images.lock().unwrap().clone();
         assert!(images.last().unwrap().starts_with("local/prepared:warm-"));
         assert_eq!(f.host.prepared.lock().unwrap().len(), before);
-        let full = idx.iter().max_by_key(|e| e.harnesses.len()).unwrap().tag.clone();
+        let full = idx
+            .iter()
+            .max_by_key(|e| e.harnesses.len())
+            .unwrap()
+            .tag
+            .clone();
         assert!(images.last().unwrap().ends_with(&full), "{images:?}");
     }
 
@@ -4047,7 +4058,10 @@ mod tests {
         );
         let key = keep_warm_space(&f, &s1).await;
         until_ready(&f, &key, 1).await;
-        assert!(f.host.prepared.lock().unwrap().is_empty(), "nothing prepared");
+        assert!(
+            f.host.prepared.lock().unwrap().is_empty(),
+            "nothing prepared"
+        );
         assert!(
             f.rt.images.lock().unwrap()[0].starts_with("local/prepared:warm-"),
             "booted from the kept filesystem"
@@ -4113,9 +4127,10 @@ mod tests {
         // than are wanted, and under another network preset: still reused).
         let s0 = spec("one", "t");
         let key = shape_key(&s0, BackendKind::Container, true).unwrap();
-        let have: std::collections::BTreeMap<String, String> = ["claude-code", "openai-codex", "pi"]
-            .map(|h| (h.to_string(), h.to_string()))
-            .into();
+        let have: std::collections::BTreeMap<String, String> =
+            ["claude-code", "openai-codex", "pi"]
+                .map(|h| (h.to_string(), h.to_string()))
+                .into();
         let tag = prepared_tag(&prepared_base(&s0, BackendKind::Container), &have);
         f.rt.saved.lock().unwrap().push(tag.clone());
         f.pool.index_update(|v| {

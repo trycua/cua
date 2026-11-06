@@ -141,6 +141,9 @@ that adds this amendment. The scoring rules below are the design note's, word fo
 * **GUI-only guard.** Every agent's stream is scanned; any agent's violation ends all N agents and fails the
   trial.
 * N = 10 is the headline; N = 4 is also reported; N = 1 is the speed-up baseline.
+* **Windows harness rules.** A shell that a setup's own tool binary starts for itself is a tool helper, not a side door
+  (the same for PA-01 and the single-agent tasks); a shell started by agent-supplied code still counts. Before each
+  trial the harness dismisses a Search or Start flyout that holds the foreground, so the user's window can be raised.
 
 **UM-01 scoring.**
 

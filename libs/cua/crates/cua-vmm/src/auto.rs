@@ -1059,6 +1059,10 @@ fn lume_builtin_allowed() -> bool {
 mod tests {
     use super::*;
 
+    /// The disk-space source is process-wide: tests that read or fake it take turns.
+    #[cfg(windows)]
+    static DISK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     /// A drive without room for the runtime's disk says so before setup
     /// starts (a fake free-space source; no disk is filled).
     #[cfg(windows)]
@@ -1066,6 +1070,7 @@ mod tests {
     fn windows_without_disk_room_says_how_much_is_needed() {
         use crate::disk::{Space, SpaceProbe, set_probe};
         use crate::managed::{LinuxSource, wsl::Probe};
+        let _disk = DISK.lock().unwrap_or_else(|e| e.into_inner());
         struct Low;
         impl SpaceProbe for Low {
             fn space(&self, _: &std::path::Path) -> std::io::Result<Space> {
@@ -1092,6 +1097,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn windows_without_wsl_says_what_to_turn_on() {
+        let _disk = DISK.lock().unwrap_or_else(|e| e.into_inner());
         use crate::managed::{LinuxSource, wsl::Probe};
         let why = "virtualization is turned off";
         let s = managed_status(

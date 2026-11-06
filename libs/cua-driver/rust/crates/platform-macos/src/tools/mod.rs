@@ -323,6 +323,20 @@ pub(crate) fn element_disabled_result(
     disabled_refusal(pid, window_id, disabled, suggest_foreground)
 }
 
+/// The `element_disabled` refusal for a dispatch error that is an
+/// [`crate::input::ax_actions::ElementDisabled`], or `None` for any other error.
+pub(crate) fn element_disabled_error(
+    pid: i32,
+    window_id: u32,
+    error: &anyhow::Error,
+    foreground: bool,
+) -> Option<cua_driver_core::protocol::ToolResult> {
+    let disabled = error.downcast_ref::<crate::input::ax_actions::ElementDisabled>()?;
+    Some(element_disabled_result(
+        pid, window_id, disabled, foreground,
+    ))
+}
+
 fn disabled_refusal(
     pid: i32,
     window_id: u32,
@@ -352,6 +366,7 @@ fn disabled_refusal(
 /// cursor or input work. The snapshot's `enabled` can be stale. A foreground
 /// call into an app that is not frontmost skips the read: activation can
 /// enable the control, so a read before activation would refuse a live target.
+/// Such a caller must read it again after activation, immediately before input.
 pub(crate) async fn refuse_if_disabled(
     pid: i32,
     window_id: u32,

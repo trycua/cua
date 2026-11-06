@@ -176,7 +176,8 @@ impl Tool for DoubleClickTool {
 
             return match result {
                 Ok(Ok(msg)) => ToolResult::text(format!("{msg}{}", changes.result_suffix())),
-                Ok(Err(e)) => ToolResult::error(format!("double_click failed: {e}")),
+                Ok(Err(e)) => super::element_disabled_error(pid, wid, &e, foreground)
+                    .unwrap_or_else(|| ToolResult::error(format!("double_click failed: {e}"))),
                 Err(e) => ToolResult::error(format!("Task error: {e}")),
             };
         }
@@ -217,6 +218,9 @@ fn ax_double_click(
     foreground: bool,
 ) -> anyhow::Result<String> {
     let element = element_ptr as AXUIElementRef;
+    // The caller's early read skips a foreground call into a background app,
+    // so this read, right before input, is the one that always runs.
+    crate::input::ax_actions::ensure_ax_action_enabled(element_ptr, "double_click")?;
 
     // Try AXOpen first (Finder items, openable list rows, document cells).
     if has_ax_open {

@@ -573,7 +573,11 @@ impl Tool for TypeTextTool {
                     s
                 })
             }
-            Ok(Err(e)) => ToolResult::error(format!("type_text failed: {e}")),
+            Ok(Err(e)) => window_id
+                .and_then(|wid| {
+                    super::element_disabled_error(pid, wid, &e, delivery_mode.is_foreground())
+                })
+                .unwrap_or_else(|| ToolResult::error(format!("type_text failed: {e}"))),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }
     }
@@ -1454,7 +1458,14 @@ fn type_text_in_key_window(
         // dropped. 200ms covers that re-grab without penalizing an already
         // armed interactive stream on every text chunk.
         let foreground_settle_ms = foreground_settle_ms(pid, apps::frontmost_pid());
+        // The caller's early AXEnabled read skips a foreground call into a
+        // background app; read it here, after activation, before any key.
+        let ensure_enabled = || match element_ptr_and_idx {
+            Some((ptr, _)) => crate::input::ax_actions::ensure_ax_action_enabled(ptr, "type_text"),
+            None => Ok(()),
+        };
         let do_type = |element: Option<(usize, Option<usize>)>| {
+            ensure_enabled()?;
             cgevent_type_verified(
                 pid,
                 text,
@@ -1477,6 +1488,7 @@ fn type_text_in_key_window(
                     pid as libc::pid_t,
                     wid,
                     || {
+                        ensure_enabled()?;
                         if foreground_settle_ms > 0 {
                             std::thread::sleep(std::time::Duration::from_millis(
                                 foreground_settle_ms,

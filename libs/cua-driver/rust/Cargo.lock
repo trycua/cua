@@ -1274,6 +1274,7 @@ dependencies = [
  "getrandom 0.4.2",
  "hkdf",
  "hmac",
+ "icu_normalizer",
  "image",
  "indexmap",
  "jsonschema",

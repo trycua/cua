@@ -647,6 +647,7 @@ impl VmmLocal {
         let qemu = QemuRuntime::new(QemuConfig {
             resolver: Some(cua_image::ContainerDiskResolver::shared()),
             identity: Some(Arc::new(crate::guest_identity::SpacesdIdentity)),
+            install_swtpm: true,
             ..QemuConfig::default()
         });
         Self {
@@ -4085,6 +4086,41 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(r.placement.backend, BackendKind::Lume, "{image}: {r:?}");
+    }
+
+    /// A Windows image built on this computer (`windows:11`) has no registry
+    /// entry, yet it is a VM disk that carries cua-spacesd: readiness waits
+    /// for it, on the architecture this host runs natively when the version
+    /// has a build for it, and on the one it has otherwise.
+    #[tokio::test]
+    async fn a_windows_image_built_here_resolves_without_a_registry() {
+        use cua_sandbox_core::placement::{Kind, Runtime};
+        let r = resolve_placement_for(
+            "ghcr.io/trycua/windows:11",
+            "windows",
+            Kind::Vm,
+            &Runtime::Auto,
+            None,
+        )
+        .await
+        .unwrap();
+        let image = r.image.expect("a local build resolves to an image");
+        assert_eq!(image.spacesd, Some(true));
+        assert_eq!(image.os, "windows");
+        assert_eq!(r.placement.backend, BackendKind::Qemu);
+        // Windows 11 has a build for either architecture: this host's own.
+        assert_eq!(r.arch, Some(cua_vmm::Arch::host()));
+        // Server 2025 is x64 only: that is its architecture, here or not.
+        let s = resolve_placement_for(
+            "ghcr.io/trycua/windows:2025",
+            "windows",
+            Kind::Vm,
+            &Runtime::Auto,
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(s.arch, Some(cua_vmm::Arch::X86_64));
     }
 
     /// A rootfs published only for the other architecture keeps that arch,

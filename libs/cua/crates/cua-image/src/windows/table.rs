@@ -302,9 +302,15 @@ mod tests {
         let v = lookup("11").unwrap();
         assert!(v.supports(WindowsArch::Arm64));
         assert!(!v.has_eval_media(WindowsArch::Arm64));
-        assert_eq!(v.media(WindowsArch::Arm64), Media::Consumer("windows11arm64"));
+        assert_eq!(
+            v.media(WindowsArch::Arm64),
+            Media::Consumer("windows11arm64")
+        );
         assert_eq!(v.media(WindowsArch::Amd64), Media::Evaluation);
-        assert_eq!(lookup("2025").unwrap().media(WindowsArch::Arm64), Media::None);
+        assert_eq!(
+            lookup("2025").unwrap().media(WindowsArch::Arm64),
+            Media::None
+        );
         assert!(v.has_eval_media(WindowsArch::Amd64));
         let s = lookup("2025").unwrap();
         let e = s.check_arch(WindowsArch::Arm64).unwrap_err().to_string();

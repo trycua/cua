@@ -25,6 +25,7 @@ import hashlib
 import json
 import logging
 import os
+import platform as _plat
 import shutil
 import subprocess
 import tempfile
@@ -236,7 +237,7 @@ def _build_image_wsl2(
         parts = a.split(",")
         for j, part in enumerate(parts):
             if part.startswith("file=/mnt/"):
-                src = part[len("file="):]
+                src = part[len("file=") :]
                 dst = f"{stage}/{src.rsplit('/', 1)[-1]}"
                 subprocess.run(
                     ["wsl", "-e", "bash", "-c", f"mkdir -p {stage} && cp -u '{src}' {dst}"],
@@ -339,7 +340,11 @@ def wsl2_kvm_available() -> bool:
     if _plat.system() != "Windows" or not shutil.which("wsl"):
         return False
     try:
-        r = subprocess.run(["wsl", "-e", "sh", "-c", "test -r /dev/kvm -a -w /dev/kvm"], capture_output=True, timeout=60)
+        r = subprocess.run(
+            ["wsl", "-e", "sh", "-c", "test -r /dev/kvm -a -w /dev/kvm"],
+            capture_output=True,
+            timeout=60,
+        )
     except (OSError, subprocess.TimeoutExpired):
         return False
     return r.returncode == 0
@@ -404,8 +409,6 @@ def build_image(
     # Step 3: Run QEMU install
     logger.info("Starting unattended Windows install via QEMU...")
     logger.info("This will take 30-60 minutes. Monitor via VNC on port 5900.")
-
-    import platform as _plat
 
     if config.qemu_bin:
         qemu = config.qemu_bin
@@ -533,7 +536,12 @@ def build_image(
         )
 
     # Hardware acceleration: on a Windows host prefer WSL2 with KVM (15 to 30 minutes) over anything else
-    if not use_wsl2 and _plat.system() == "Windows" and "CUA_QEMU_ACCEL" not in os.environ and wsl2_kvm_available():
+    if (
+        not use_wsl2
+        and _plat.system() == "Windows"
+        and "CUA_QEMU_ACCEL" not in os.environ
+        and wsl2_kvm_available()
+    ):
         logger.info("Using WSL2 with KVM for the install")
         use_wsl2 = True
     if use_wsl2:

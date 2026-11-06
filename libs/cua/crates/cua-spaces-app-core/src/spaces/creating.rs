@@ -2329,7 +2329,10 @@ mod tests {
         );
         let row = |s: &CreatesState| pending_space(&s.pending[0]).progress.unwrap();
         s = reduce(&s, &bytes_at("pending:w", 2 << 30, 8 << 30, 1e7, 2_000));
-        assert_eq!(row(&s).label, "Downloading Windows (first time only)\u{2026}");
+        assert_eq!(
+            row(&s).label,
+            "Downloading Windows (first time only)\u{2026}"
+        );
         assert!(row(&s).transfer.is_some());
         // The install: a fraction past the downloads, no bytes.
         s = reduce(&s, &at("pending:w", "pulling", Some(0.5), 3_000));
@@ -2344,11 +2347,18 @@ mod tests {
         // A pulled Windows image (Server 2022) is just a download.
         let mut pulled = reduce(
             &CreatesState::default(),
-            &start_image("pending:p", "ghcr.io/trycua/windows:2022", Some(SpaceKind::Vm)),
+            &start_image(
+                "pending:p",
+                "ghcr.io/trycua/windows:2022",
+                Some(SpaceKind::Vm),
+            ),
         );
         pulled.pending[0].os = SpaceOs::Windows;
         pulled = reduce(&pulled, &at("pending:p", "pulling", Some(0.9), 2_000));
-        assert_eq!(pending_space(&pulled.pending[0]).progress.unwrap().label, "Downloading image\u{2026}");
+        assert_eq!(
+            pending_space(&pulled.pending[0]).progress.unwrap().label,
+            "Downloading image\u{2026}"
+        );
     }
 
     /// The fraction the app tells "downloading" from "installing" by is the
@@ -2357,7 +2367,9 @@ mod tests {
     fn the_install_fraction_is_the_one_the_build_reports() {
         let build = include_str!("../../../cua-image/src/windows/build.rs");
         assert!(
-            build.contains(&format!("pub const DOWNLOADS_END: f64 = {WINDOWS_INSTALL_FROM};")),
+            build.contains(&format!(
+                "pub const DOWNLOADS_END: f64 = {WINDOWS_INSTALL_FROM};"
+            )),
             "cua-image's DOWNLOADS_END must equal WINDOWS_INSTALL_FROM ({WINDOWS_INSTALL_FROM})"
         );
     }

@@ -316,9 +316,10 @@ pub async fn ensure_base_with(
     let evaluation_media = media == Media::Evaluation;
     // Consumer media holds many editions: install Pro (the answer file gives
     // it the generic Pro key, which activates nothing).
-    let edition = req.edition.clone().or_else(|| {
-        matches!(media, Media::Consumer(_)).then(|| "Windows 11 Pro".to_string())
-    });
+    let edition = req
+        .edition
+        .clone()
+        .or_else(|| matches!(media, Media::Consumer(_)).then(|| "Windows 11 Pro".to_string()));
     progress("Preparing the unattended install", 0.46);
     let work = dir.join("work");
     std::fs::create_dir_all(&work)?;
@@ -622,7 +623,7 @@ mod tests {
             ("ghcr.io/trycua/windows:2025@sha256:abc", Some("2025")),
             ("ghcr.io/trycua/windows:2022", None),
             ("ghcr.io/trycua/windows:2022-disk", None),
-            ("ghcr.io/trycua/linux:11", None),
+            ("ghcr.io/trycua/linux:24.04", None),
         ] {
             assert_eq!(local_build_target(r).map(|v| v.id), id, "{r}");
         }

@@ -236,7 +236,11 @@ pub(crate) async fn download_reporting(
     use cua_vmm::progress::{Meter, Phase, Progress, report};
     let total = fetcher.size_of(url).await.unwrap_or(0);
     let (mut done, mut meter) = (0u64, Meter::new());
-    report(Progress::phase(Phase::Pulling).detail(label).fraction(span.0));
+    report(
+        Progress::phase(Phase::Pulling)
+            .detail(label)
+            .fraction(span.0),
+    );
     fetcher
         .download(url, to, &mut |n| {
             done += n;
@@ -323,7 +327,10 @@ pub async fn resolve_iso(
     {
         let _ = std::fs::remove_file(&cached);
         return Err(ImageError::Digest {
-            what: format!("{} ISO (against the checksum on Microsoft's download page)", req.version.name),
+            what: format!(
+                "{} ISO (against the checksum on Microsoft's download page)",
+                req.version.name
+            ),
             expected: want.to_string(),
             actual: digest,
         });
@@ -591,7 +598,9 @@ mod tests {
     #[async_trait]
     impl IsoFetcher for Microsoft {
         async fn eval_page(&self, _: &str) -> Result<String> {
-            Err(ImageError::Registry("no evaluation page in this test".into()))
+            Err(ImageError::Registry(
+                "no evaluation page in this test".into(),
+            ))
         }
         async fn final_url(&self, l: &str) -> Result<String> {
             Ok(l.into())
@@ -646,17 +655,25 @@ mod tests {
             sha256: sha,
             calls: Mutex::new(vec![]),
         };
-        let r = resolve_iso(&arm_req(d.path()), &ms, &mut |_| {}).await.unwrap();
+        let r = resolve_iso(&arm_req(d.path()), &ms, &mut |_| {})
+            .await
+            .unwrap();
         assert_eq!(r.origin, IsoOrigin::Downloaded);
         assert!(r.path.ends_with("windows-11-arm64.iso"));
         let calls = ms.calls.lock().unwrap().clone();
-        assert!(calls.iter().any(|c| c.contains("software.download.prss.microsoft.com")));
+        assert!(
+            calls
+                .iter()
+                .any(|c| c.contains("software.download.prss.microsoft.com"))
+        );
         // The second use is the cache: no network at all.
         let again = Microsoft {
             sha256: String::new(),
             calls: Mutex::new(vec![]),
         };
-        let r = resolve_iso(&arm_req(d.path()), &again, &mut |_| {}).await.unwrap();
+        let r = resolve_iso(&arm_req(d.path()), &again, &mut |_| {})
+            .await
+            .unwrap();
         assert_eq!(r.origin, IsoOrigin::Cached);
         assert!(again.calls.lock().unwrap().is_empty());
     }
@@ -692,7 +709,11 @@ mod tests {
         let mut r = req("2025", None, d.path());
         r.arch = WindowsArch::Arm64;
         // Server has no ARM64 build at all: refused before any network.
-        assert!(resolve_iso(&r, &Fake::default(), &mut |_| {}).await.is_err());
+        assert!(
+            resolve_iso(&r, &Fake::default(), &mut |_| {})
+                .await
+                .is_err()
+        );
     }
 
     #[test]

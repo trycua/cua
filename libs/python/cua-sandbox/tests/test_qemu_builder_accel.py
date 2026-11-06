@@ -1,9 +1,7 @@
+import pytest
 from cua_sandbox.registry.qemu_builder import apply_windows_accel
 
 BASE = ["qemu", "-machine", "q35", "-cpu", "qemu64,+ssse3,+sse4.1,+sse4.2,+popcnt", "-m", "8192"]
-
-
-import pytest
 
 
 def test_there_is_no_default_accelerator_and_the_error_says_how_to_get_one():

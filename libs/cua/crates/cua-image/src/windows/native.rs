@@ -124,6 +124,7 @@ impl QemuInstaller {
         let cfg = QemuConfig {
             root: cua_vmm::host::cua_home().join("build").join("windows-qemu"),
             allow_install: true,
+            install_swtpm: true,
             // Windows shuts down slowly; a forced quit loses the last writes.
             graceful_stop: Duration::from_secs(300),
             warm: false,

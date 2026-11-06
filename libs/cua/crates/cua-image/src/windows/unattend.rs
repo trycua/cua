@@ -323,11 +323,9 @@ pub fn latest_spacesd(releases_json: &str) -> Option<String> {
     v.as_array()?.iter().find_map(|r| {
         let tag = r.get("tag_name")?.as_str()?.strip_prefix("cua-spacesd-v")?;
         let live = !r.get("draft")?.as_bool()? && !r.get("prerelease")?.as_bool()?;
-        let windows = r
-            .get("assets")?
-            .as_array()?
-            .iter()
-            .any(|a| a.get("name").and_then(|n| n.as_str()) == Some("cua-spacesd-x86_64-pc-windows-msvc.exe"));
+        let windows = r.get("assets")?.as_array()?.iter().any(|a| {
+            a.get("name").and_then(|n| n.as_str()) == Some("cua-spacesd-x86_64-pc-windows-msvc.exe")
+        });
         (live && windows).then(|| tag.to_string())
     })
 }

@@ -1103,14 +1103,28 @@ mod tests {
         // ARM64 Windows on an Apple silicon Mac: QEMU with HVF.
         let s = select(&req(ImageKind::Vm, GuestOs::Windows, None), &r).unwrap();
         assert_eq!(s.backend, BackendKind::Qemu);
-        assert!(s.reason.contains("hvf") && !s.reason.contains("slow"), "{}", s.reason);
-        let s = select(&req(ImageKind::Vm, GuestOs::Windows, Some(Arch::Aarch64)), &r).unwrap();
+        assert!(
+            s.reason.contains("hvf") && !s.reason.contains("slow"),
+            "{}",
+            s.reason
+        );
+        let s = select(
+            &req(ImageKind::Vm, GuestOs::Windows, Some(Arch::Aarch64)),
+            &r,
+        )
+        .unwrap();
         assert!(s.reason.contains("hvf"));
         // x64 Windows there would be software emulation: refused with the way out.
-        let e = select(&req(ImageKind::Vm, GuestOs::Windows, Some(Arch::X86_64)), &r)
-            .unwrap_err()
-            .to_string();
-        assert!(e.contains("windows:11") && e.contains("software emulation"), "{e}");
+        let e = select(
+            &req(ImageKind::Vm, GuestOs::Windows, Some(Arch::X86_64)),
+            &r,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            e.contains("windows:11") && e.contains("software emulation"),
+            "{e}"
+        );
         // Linux x64 there stays allowed (slow, flagged).
         assert!(select(&req(ImageKind::Vm, GuestOs::Linux, Some(Arch::X86_64)), &r).is_ok());
     }

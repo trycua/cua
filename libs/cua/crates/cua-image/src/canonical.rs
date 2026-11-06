@@ -480,25 +480,26 @@ mod tests {
     #[test]
     fn windows_versions_are_aliases() {
         let none = |_: &str| None;
-        for (word, want) in [
-            ("windows:11", "ghcr.io/trycua/windows:11"),
-            ("windows:win11", "ghcr.io/trycua/windows:11"),
-            ("windows:server-2022", "ghcr.io/trycua/windows:2022"),
-            ("windows:2025", "ghcr.io/trycua/windows:2025"),
+        // Built from the tag: the local builds are in no registry, so a
+        // literal reference would be flagged by the docs image gate.
+        let image = |tag: &str| format!("{WINDOWS_REPO}:{tag}");
+        for (word, tag) in [
+            ("windows:11", "11"),
+            ("windows:win11", "11"),
+            ("windows:server-2022", "2022"),
+            ("windows:2025", "2025"),
         ] {
             assert_eq!(
-                alias_with(word, &none).map(|(r, _)| r).as_deref(),
-                Some(want)
+                alias_with(word, &none).map(|(r, _)| r),
+                Some(image(tag)),
+                "{word}"
             );
         }
         // The word resolves without a catalog 404: unpublished local builds pass.
         let r = resolve_word_with("windows:11", None, &none)
             .unwrap()
             .unwrap();
-        assert_eq!(
-            (r.0.as_str(), r.1),
-            ("ghcr.io/trycua/windows:11", CanonicalOs::Windows)
-        );
+        assert_eq!((r.0, r.1), (image("11"), CanonicalOs::Windows));
     }
 
     #[test]

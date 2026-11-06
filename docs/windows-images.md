@@ -173,8 +173,31 @@ optional: Windows 11 on Apple silicon needs no manual step.
 * `cua sb exec NAME ...` on a Windows Space runs the line in `cmd.exe /d /s /c` (it used to try
   `/bin/sh`, which a Windows guest does not have).
 
-## Not verified here
+## What is verified, and what is not
 
-No real Windows ISO was downloaded or installed in this change's tests; the install itself,
-the Mac (HVF, ARM64) path and the WSL2 execution are covered by unit tests of everything
-around them (command lines, answer files, resolution, caching, refusals), not by a full run.
+Verified on a Mac (Apple silicon, macOS 26, QEMU 10.2, HVF), from a home with nothing in it:
+
+* `cua sb create windows:11 --kind vm` downloads the ARM64 ISO from Microsoft (8.5 GB, the SHA-256 on
+  Microsoft's page matched), installs Windows 11 unattended, installs cua-spacesd, seals the disk, and
+  creates the Space: about 10 minutes in all on a 12-core Mac Studio (the download included).
+* A second `create` is a copy-on-write clone: cua-spacesd answers about 30 seconds after the command starts.
+* In the guest: `cua sb screenshot`, `cua sb exec` (cmd.exe), `cua do type/click/key` through cua-spacesd
+  (Notepad opened and typed into), and the Space listed like any other.
+* Cancelling a create stops the install VM; an interrupted ISO download resumes.
+* `--runtime auto`: ARM64 Windows on Apple silicon selects QEMU with HVF (unit test and the real run);
+  x64 Windows there is refused in words with the way out.
+
+Not verified:
+
+* Windows 10, Server 2019 and Server 2025 builds (x64): no x64 host was available for a real install; the
+  answer file, ISO resolution and runtime selection are unit tested. The Evaluation Center scraping of
+  the x64 media was not run against the live pages.
+* The Windows PC path (WSL2 with KVM, WHPX): unit tested only. The install driver now waits for the guest to
+  power itself off (as on the Mac), which no Windows PC has run.
+* The ARM64 Windows build of cua-spacesd: no release carries one yet. The guest tries the native asset
+  first and falls back to the x64 build, which Windows 11 on ARM runs under its own emulation; that is what
+  was verified.
+* The display is `ramfb` at 800x600 on ARM64. virtio-win has an ARM64 `viogpudo`, which would allow a
+  larger desktop; not done.
+* Not done from the dogfooding list: `sb screenshot` stale frames, long-log disk usage in Spaces (guest disk
+  guard only), exec 120 s ceiling (documented `--timeout 0`).

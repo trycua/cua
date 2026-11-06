@@ -198,44 +198,6 @@ pub fn qemu_command(plan: &InstallPlan, stage: &str) -> String {
     args.join(" ")
 }
 
-/// Whether something in the guest holds a connection open on `addr`: the
-/// user-mode forwarder accepts and drops when nothing listens in the guest.
-async fn guest_listening(addr: &str) -> bool {
-    use tokio::io::AsyncReadExt as _;
-    let Ok(Ok(mut s)) =
-        tokio::time::timeout(Duration::from_secs(3), tokio::net::TcpStream::connect(addr)).await
-    else {
-        return false;
-    };
-    let mut b = [0u8; 1];
-    matches!(
-        tokio::time::timeout(Duration::from_millis(1500), s.read(&mut b)).await,
-        Err(_) | Ok(Ok(1..))
-    )
-}
-
-async fn qmp(cmd: &str) -> bool {
-    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
-    let go = async {
-        let mut s = tokio::net::TcpStream::connect(("127.0.0.1", QMP_PORT))
-            .await
-            .ok()?;
-        let mut buf = vec![0u8; 4096];
-        let _n = s.read(&mut buf).await.ok()?;
-        s.write_all(b"{\"execute\":\"qmp_capabilities\"}\n")
-            .await
-            .ok()?;
-        let _n = s.read(&mut buf).await.ok()?;
-        s.write_all(format!("{cmd}\n").as_bytes()).await.ok()?;
-        let _n = s.read(&mut buf).await.ok()?;
-        Some(())
-    };
-    matches!(
-        tokio::time::timeout(Duration::from_secs(5), go).await,
-        Ok(Some(()))
-    )
-}
-
 /// Installs through QEMU with KVM in WSL2.
 pub struct WslInstaller<W: Wsl + 'static> {
     pub wsl: std::sync::Arc<W>,
@@ -347,39 +309,35 @@ impl<W: Wsl + 'static> Installer for WslInstaller<W> {
     }
 }
 
-/// Presses through the boot prompt, waits for cua-spacesd, powers off.
+/// Presses through the boot prompt, then waits for the guest to power itself
+/// off: it installs cua-spacesd, seals the image and shuts down
+/// (`setup-spacesd.ps1`), so QEMU exiting is the end of the install.
 async fn drive(plan: &InstallPlan) -> Result<()> {
-    for _ in 0..120 {
+    // Enter every 0.3 s for the first 25 s: the "Press any key to boot from
+    // CD" prompt is up for a few seconds, and Setup's own window (whose Cancel
+    // button an Enter would press) opens later.
+    for _ in 0..83 {
         qmp(r#"{"execute":"send-key","arguments":{"keys":[{"type":"qcode","data":"ret"}]}}"#).await;
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        tokio::time::sleep(Duration::from_millis(300)).await;
     }
-    let addr = format!("127.0.0.1:{SPACESD_FORWARD_PORT}");
     let deadline = std::time::Instant::now() + plan.timeout;
     loop {
-        if guest_listening(&addr).await {
-            break;
+        // QMP answers while the VM runs; once Windows has powered off QEMU
+        // exits and nothing answers.
+        if !qmp(r#"{"execute":"query-status"}"#).await {
+            return Ok(());
         }
         if std::time::Instant::now() > deadline {
             return Err(ImageError::Build {
                 step: "windows install".into(),
                 detail: format!(
-                    "cua-spacesd did not answer within {:?}; the install did not finish",
+                    "Windows did not finish installing within {:?}",
                     plan.timeout
                 ),
             });
         }
         tokio::time::sleep(Duration::from_secs(10)).await;
     }
-    // Let first-logon work settle, then ask Windows to shut down.
-    tokio::time::sleep(Duration::from_secs(20)).await;
-    for _ in 0..30 {
-        qmp(r#"{"execute":"system_powerdown"}"#).await;
-        tokio::time::sleep(Duration::from_secs(10)).await;
-        if !qmp(r#"{"execute":"query-status"}"#).await {
-            return Ok(());
-        }
-    }
-    Ok(())
 }
 
 #[cfg(test)]

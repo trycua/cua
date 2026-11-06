@@ -62,7 +62,8 @@ pub fn edition_id(html: &str) -> Option<u32> {
 pub fn sku_id(json: &str) -> Option<String> {
     let v: serde_json::Value = serde_json::from_str(json).ok()?;
     v.get("Skus")?.as_array()?.iter().find_map(|s| {
-        (s.get("Language")?.as_str()? == LANGUAGE).then(|| s.get("Id")?.as_str().map(String::from))?
+        (s.get("Language")?.as_str()? == LANGUAGE)
+            .then(|| s.get("Id")?.as_str().map(String::from))?
     })
 }
 
@@ -103,7 +104,9 @@ pub fn page_sha256(html: &str) -> Option<String> {
         let (label, hash) = row.split_once("</td><td>")?;
         let label = label.split_whitespace().collect::<Vec<_>>().join(" ");
         let hash = hash.trim_end_matches("</td>").trim();
-        if label == "English 64-bit" && hash.len() == 64 && hash.chars().all(|c| c.is_ascii_hexdigit())
+        if label == "English 64-bit"
+            && hash.len() == 64
+            && hash.chars().all(|c| c.is_ascii_hexdigit())
         {
             return Some(hash.to_ascii_lowercase());
         }
@@ -236,12 +239,16 @@ mod tests {
             Some("8992f2d2cfd2fa647e579e9eb31fc21f34da8333c29b6170fde17d2ed6623e9c")
         );
         assert_eq!(edition_id("<p>no select</p>"), None);
-        assert_eq!(page_sha256("<tr><td>German 64-bit</td><td>AA</td></tr>"), None);
+        assert_eq!(
+            page_sha256("<tr><td>German 64-bit</td><td>AA</td></tr>"),
+            None
+        );
     }
 
     #[test]
     fn the_english_sku_and_the_link_are_read_from_the_answers() {
-        let skus = r#"{"Skus":[{"Id":"27163","Language":"Arabic"},{"Id":"27200","Language":"English"}]}"#;
+        let skus =
+            r#"{"Skus":[{"Id":"27163","Language":"Arabic"},{"Id":"27200","Language":"English"}]}"#;
         assert_eq!(sku_id(skus).as_deref(), Some("27200"));
         let ok = r#"{"ProductDownloadOptions":[{"Uri":"https://software.download.prss.microsoft.com/x.iso?t=1","ProductDisplayName":"Windows 11 ARM 64 26H2"}],"Errors":[]}"#;
         let (u, n) = download_link(ok).unwrap();

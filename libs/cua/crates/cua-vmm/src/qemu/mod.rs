@@ -50,6 +50,10 @@ pub struct QemuConfig {
     pub resolver: Option<Arc<dyn DiskResolver>>,
     /// Allow installing QEMU through the host package manager when missing.
     pub allow_install: bool,
+    /// Install swtpm with Homebrew on a Mac when a Windows on ARM guest needs
+    /// its TPM and it is missing (a small package, so Windows 11 needs no
+    /// setup step beyond QEMU). Off by default; the daemon turns it on.
+    pub install_swtpm: bool,
     /// How long `stop` waits for an ACPI shutdown before forcing `quit`.
     pub graceful_stop: Duration,
     /// Allocate a VNC display per instance.
@@ -91,6 +95,7 @@ impl Default for QemuConfig {
             root: host::cua_home().join("vmm").join("qemu"),
             resolver: None,
             allow_install: false,
+            install_swtpm: false,
             graceful_stop: Duration::from_secs(30),
             vnc: true,
             accel: None,
@@ -308,7 +313,12 @@ pub const ALLOW_EMULATION_ENV: &str = "CUA_ALLOW_SOFTWARE_EMULATION";
 /// ([`ALLOW_EMULATION_ENV`] set to 1, true, yes or on).
 pub fn software_emulation_allowed() -> bool {
     std::env::var(ALLOW_EMULATION_ENV)
-        .map(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"))
+        .map(|v| {
+            matches!(
+                v.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
         .unwrap_or(false)
 }
 
@@ -1218,8 +1228,11 @@ impl QemuRuntime {
                     // Windows on ARM needs a TPM: where cua provisions QEMU it
                     // provisions swtpm too, so the first Windows Space needs no
                     // extra step.
-                    None if self.cfg.allow_install && host::HostOs::current() == host::HostOs::Macos => {
-                        install_swtpm_with(host::which("brew"), async |p, a| host::run(p, a).await).await?;
+                    None if self.cfg.allow_install
+                        && host::HostOs::current() == host::HostOs::Macos =>
+                    {
+                        install_swtpm_with(host::which("brew"), async |p, a| host::run(p, a).await)
+                            .await?;
                         host::which("swtpm").ok_or_else(missing)?
                     }
                     None => return Err(missing()),
@@ -3951,7 +3964,9 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(
-            e.contains("software emulation") && e.contains("hours") && e.contains(super::ALLOW_EMULATION_ENV),
+            e.contains("software emulation")
+                && e.contains("hours")
+                && e.contains(super::ALLOW_EMULATION_ENV),
             "{e}"
         );
         // Hardware acceleration, an explicit request, and other guests pass.
@@ -3967,7 +3982,10 @@ mod tests {
         use super::windows_emulation_message as msg;
         use crate::types::Arch;
         let on_mac = msg(Arch::X86_64, Arch::Aarch64);
-        assert!(on_mac.contains("windows:11") && on_mac.contains("runs x64 apps"), "{on_mac}");
+        assert!(
+            on_mac.contains("windows:11") && on_mac.contains("runs x64 apps"),
+            "{on_mac}"
+        );
         let on_pc = msg(Arch::Aarch64, Arch::X86_64);
         assert!(on_pc.contains("x64 Windows image"), "{on_pc}");
     }
@@ -4930,18 +4948,24 @@ mod tests {
     #[tokio::test]
     async fn swtpm_is_installed_with_homebrew_or_the_error_says_how() {
         let calls = std::sync::Mutex::new(Vec::new());
-        install_swtpm_with(Some(PathBuf::from("/opt/homebrew/bin/brew")), async |p, a| {
-            calls
-                .lock()
-                .unwrap()
-                .push((p.to_string(), a.iter().map(|x| x.to_string()).collect::<Vec<_>>()));
-            Ok(String::new())
-        })
+        install_swtpm_with(
+            Some(PathBuf::from("/opt/homebrew/bin/brew")),
+            async |p, a| {
+                calls.lock().unwrap().push((
+                    p.to_string(),
+                    a.iter().map(|x| x.to_string()).collect::<Vec<_>>(),
+                ));
+                Ok(String::new())
+            },
+        )
         .await
         .unwrap();
         assert_eq!(
             calls.lock().unwrap()[0],
-            ("/opt/homebrew/bin/brew".to_string(), vec!["install".to_string(), "swtpm".to_string()])
+            (
+                "/opt/homebrew/bin/brew".to_string(),
+                vec!["install".to_string(), "swtpm".to_string()]
+            )
         );
         let e = install_swtpm_with(None, async |_, _| Ok(String::new()))
             .await

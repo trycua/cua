@@ -1765,9 +1765,12 @@ struct IdleCheck {
 
 impl IdleCheck {
     fn expired(self, record: &LifecycleRecord) -> bool {
+        // A use after the sweep's `now` is fresh even under a zero TTL.
         record.in_flight == 0
-            && self.now.saturating_duration_since(record.last_activity)
-                >= record.idle_ttl.unwrap_or(self.default_ttl)
+            && self
+                .now
+                .checked_duration_since(record.last_activity)
+                .is_some_and(|idle| idle >= record.idle_ttl.unwrap_or(self.default_ttl))
     }
 }
 
@@ -1980,6 +1983,25 @@ mod tests {
             EndTransition::StillLive
         );
         assert!(!is_session_ended(sid), "a just-used session stays live");
+        end_session(sid);
+    }
+
+    #[test]
+    fn zero_ttl_sweep_keeps_a_session_used_after_it_was_picked() {
+        let sid = "test-ttl-zero-used-after-pick-5E2";
+        use_session(sid).unwrap();
+        let idle = IdleCheck {
+            now: Instant::now(),
+            default_ttl: Duration::ZERO,
+        };
+        assert!(idle.expired(&lifecycle_records().lock().unwrap()[sid]));
+        std::thread::sleep(Duration::from_millis(2));
+        use_session(sid).unwrap();
+        assert_eq!(
+            finish_session_end(sid, SessionEndReason::IdleTimeout, Some(idle)),
+            EndTransition::StillLive
+        );
+        assert!(!is_session_ended(sid));
         end_session(sid);
     }
 

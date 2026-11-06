@@ -45,6 +45,12 @@ pub struct AgentEvent {
     /// One short line for an `activity` event (see [`AgentEvent::summary`]).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub summary: Option<String>,
+    /// The subagent call this event happened inside (the `tool_id` of the
+    /// parent's Task/Agent call), when the harness says so: its tool calls
+    /// and words belong to the child, not to the agent's own turn (see
+    /// [`crate::subagents`]).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent_tool_id: Option<String>,
     /// The line as written.
     pub raw: Value,
 }
@@ -156,6 +162,7 @@ impl AgentEvent {
             stop_reason: None,
             category: "hidden",
             summary: None,
+            parent_tool_id: None,
             raw: Value::Null,
         };
         let ty = raw.get("type").and_then(Value::as_str).unwrap_or("");
@@ -243,6 +250,10 @@ impl AgentEvent {
             }
             _ => "other",
         };
+        e.parent_tool_id = raw["update"]["_meta"]["claudeCode"]["parentToolUseId"]
+            .as_str()
+            .filter(|p| !p.is_empty())
+            .map(str::to_string);
         e.raw = raw;
         e.classify();
         Some(e)
@@ -278,6 +289,7 @@ impl AgentEvent {
             stop_reason: s(v, "stop_reason"),
             category: "hidden",
             summary: None,
+            parent_tool_id: s(v, "parent_tool_id"),
             raw: v.get("raw").cloned().unwrap_or(Value::Null),
         };
         e.classify();

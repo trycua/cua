@@ -155,10 +155,16 @@ pub fn with_x11_foreground<T>(
     body: impl FnOnce() -> Result<T>,
 ) -> Result<(T, ForegroundReport)> {
     let (_transaction, prior) = match mode {
-        RestoreMode::RestorePrevious => (
-            Some(hold_transaction()?),
-            crate::input::focus_guard::FocusSnapshot::capture(),
-        ),
+        RestoreMode::RestorePrevious => {
+            let held = hold_transaction()?;
+            let Some(prior) = crate::input::focus_guard::FocusSnapshot::capture() else {
+                anyhow::bail!(
+                    "{}: the prior X11 focus could not be read, so nothing was focused",
+                    crate::input::foreground::CODE_UNAVAILABLE
+                );
+            };
+            (Some(held), Some(prior))
+        }
         RestoreMode::LeaveFocused => (None, None),
     };
     let ran = crate::input::foreground::activate(xid, opts).and_then(|activated| {
@@ -168,14 +174,25 @@ pub fn with_x11_foreground<T>(
     });
     // No target pid: a prior window of the target's own process is given
     // back too, unlike the background guard's same-app rule.
-    let restore = prior.map(|prior| prior.restore_if_changed_opts(None, false));
-    let value = ran?;
-    match restore.as_ref().and_then(|r| r.outcome()) {
-        Some("not_restored") => anyhow::bail!(
-            "the input was sent, but the prior focus could not be restored ({})",
-            restore.map(|r| r.changes.join(", ")).unwrap_or_default()
-        ),
-        _ => Ok(value),
+    let unrestored = prior
+        .map(|prior| prior.restore_if_changed_opts(None, false))
+        .filter(|r| matches!(r.outcome(), Some("not_restored" | "grab_held")))
+        .map(|r| {
+            format!(
+                "{} ({})",
+                r.outcome().unwrap_or_default(),
+                r.changes.join(", ")
+            )
+        });
+    match (ran, unrestored) {
+        (ran, None) => ran,
+        (Ok(_), Some(why)) => {
+            anyhow::bail!("the input was sent, but the prior focus could not be restored: {why}")
+        }
+        (Err(error), Some(why)) => {
+            let note = format!("{error}; the prior focus also could not be restored: {why}");
+            Err(error.context(note))
+        }
     }
 }
 

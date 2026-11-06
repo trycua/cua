@@ -183,7 +183,8 @@ pub fn press_key_no_auth(pid: i32, key: &str, modifiers: &[&str]) -> anyhow::Res
 pub fn press_key_global(key: &str, modifiers: &[&str]) -> anyhow::Result<()> {
     use core_graphics::event::CGEventTapLocation;
 
-    let key_code = layout_key_code(key, modifiers)?;
+    // The HID queue reaches the frontmost app, which may be Screen Sharing.
+    let key_code = target_key_code(crate::apps::frontmost_pid(), key, modifiers)?;
     let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
         .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
     let mut active_flags = CGEventFlags::CGEventFlagNull;
@@ -907,18 +908,18 @@ fn chord_key_code(
     }
 }
 
-/// The virtual key a chord presses for `key` on the current keyboard layout.
-pub(super) fn layout_key_code(key: &str, modifiers: &[&str]) -> anyhow::Result<u16> {
-    chord_key_code(key, modifiers, current_layout().as_ref())
-}
-
-/// The virtual key a chord aimed at `pid` presses. Screen Sharing forwards key
+/// The virtual key a chord aimed at `pid` presses, on the current keyboard
+/// layout. Every chord path resolves its key here. Screen Sharing forwards key
 /// positions to a guest whose layout this host cannot read, so it keeps the US
 /// positions its text path (`physical_key_for_char`) assumes too: the host
 /// layout would press AZERTY's A key (US Q) for `cmd+a` on a US guest.
-fn target_key_code(pid: i32, key: &str, modifiers: &[&str]) -> anyhow::Result<u16> {
-    let layout = target_layout(is_screen_sharing_pid(pid));
-    chord_key_code(key, modifiers, layout.as_ref())
+fn target_key_code(
+    pid: impl Into<Option<i32>>,
+    key: &str,
+    modifiers: &[&str],
+) -> anyhow::Result<u16> {
+    let screen_sharing = pid.into().is_some_and(is_screen_sharing_pid);
+    chord_key_code(key, modifiers, target_layout(screen_sharing).as_ref())
 }
 
 fn target_layout(screen_sharing: bool) -> Option<KeyLayout> {

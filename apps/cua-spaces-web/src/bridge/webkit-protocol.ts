@@ -16,8 +16,9 @@
  *
  * `code`: `unimplemented`, `bad_args`, `not_found`, `cancelled`,
  * `native_only`, `forbidden` or `failed`. A failed host setup or This
- * machine button also says `title`, `details` (the raw error) and
- * `actionLabel` (`HostSetupFailure`), and `message` is then the plain words.
+ * machine button also says `title`, `details` (the raw error),
+ * `actionLabel`, `kind` (`HostSetupFailure.Kind`, e.g. `needsProof`) and the
+ * relay's `refusalCode` when it gave one, and `message` is then the plain words.
  *
  * Host -> page events: `window.dispatchEvent(new CustomEvent("cua:event",
  * { detail: { event, payload } }))`, where `event` is one of `WEBKIT_EVENTS`.
@@ -277,7 +278,7 @@ export interface WebkitRequest {
 
 export type WebkitResponse =
   | { id: string; ok: true; result: unknown }
-  | { id: string; ok: false; error: { code: string; message: string; title?: string; details?: string; actionLabel?: string } };
+  | { id: string; ok: false; error: { code: string; message: string; title?: string; details?: string; actionLabel?: string; kind?: string; refusalCode?: string } };
 
 /** `CustomEvent("cua:event").detail`. */
 export interface WebkitEventDetail {

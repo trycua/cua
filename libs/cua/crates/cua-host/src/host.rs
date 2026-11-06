@@ -2564,6 +2564,26 @@ impl Host {
         self.resume_signed_in(account).await
     }
 
+    /// `cua host setup --pair` on a computer whose relay sharing is paused
+    /// because it was set up for another account: the pairing code stands
+    /// in for the account it was made in, and this computer is registered
+    /// again for that account the way a sign-in as it would
+    /// ([`Host::resume_or_switch_account`]), with no remove and set up.
+    /// The relay registers the computer to the account that made the code
+    /// (and refuses a code that is used, expired or revoked). `None` when
+    /// this computer is not paused like that: a plain setup applies.
+    pub async fn rejoin_with_code(
+        &self,
+        code: &crate::pairing::PairingCodeToken,
+    ) -> Result<Option<HostStatus>> {
+        match self.config()? {
+            Some(c) if c.mode == "relay" && c.paused_signed_out && self.policy()?.is_some() => {
+                self.switch_account(code).await.map(Some)
+            }
+            _ => Ok(None),
+        }
+    }
+
     /// Registers this computer again for the account behind `tokens`, which
     /// is not the one it was set up for. The old registration belongs to
     /// the previous account (the relay refuses its id, and the machine's

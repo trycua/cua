@@ -5,11 +5,15 @@
 // agent works in other apps. It logs focus changes, leaked keys/clicks/scrolls and
 // pointer position as JSONL so a run can be scored for foreground disturbance.
 //
-// Usage: BenchSentinel --log PATH [--no-activate] [--user-activity] [--frame X,Y,W,H]
+// Usage: BenchSentinel --log PATH [--no-activate] [--user-activity] [--mouse-user PATH] [--frame X,Y,W,H]
 // --user-activity (Amendment 15): the window plays the user's own app. It is titled "User activity" and, while
 // armed, "types" one character a second into its own field when it is active and key. A tick when it is not is
 // logged as user_blocked; text that differs from what the user typed is logged as user_text_disrupted.
 // --frame: outer frame in top-left screen coordinates (default 360x140 at the bottom right).
+// --mouse-user PATH (shared-desktop tasks): the window is titled "User activity" and shows a canvas with numbered
+// dots; while armed it plays a mouse user from the JSON script (see SHARED-DESKTOP.md): it moves the real pointer
+// along straight legs, clicks each dot, checks the pointer against its own script, and logs untagged pointer events
+// system-wide as mu_foreign. No typing user in this mode.
 // Signals: SIGUSR1 re-activate, SIGUSR2 toggle armed.
 
 import AppKit
@@ -39,6 +43,10 @@ final class JSONLWriter {
     }
 }
 
+final class FlippedContentView: NSView {
+    override var isFlipped: Bool { true }
+}
+
 func installMainMenu() {
     let main = NSMenu()
     let appItem = NSMenuItem()
@@ -65,6 +73,8 @@ final class SentinelDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelega
     let noActivate: Bool
     var userActivity = false
     var frameTopLeft: NSRect?
+    var mouseScript: MouseScript?
+    var mouseUser: MouseUser?
     let userScript = Array("the user keeps writing notes while the agent works in the background. ")
     var userIndex = 0
     var userExpected = ""
@@ -170,7 +180,7 @@ final class SentinelDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelega
         activity = ProcessInfo.processInfo.beginActivity(
             options: [.userInitiated, .latencyCritical], reason: "bench sentinel sampling")
         startSampler()
-        if userActivity { startUserActivity() }
+        if userActivity && mouseScript == nil { startUserActivity() }
         emit("start", ["pid": Int(getpid()), "bid": selfBid, "front": frontInfo()])
         if !noActivate { activate() }
     }
@@ -202,6 +212,17 @@ final class SentinelDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelega
         field.placeholderString = userActivity ? "notes" : "sentinel"
         field.delegate = self
         field.setAccessibilityLabel("Sentinel input")
+        if let script = mouseScript {
+            // Flipped content: the canvas sits near the top-left at (20, 20), the field below it.
+            let content = FlippedContentView(frame: NSRect(x: 0, y: 0, width: w, height: h))
+            window.contentView = content
+            field.frame = NSRect(x: 20, y: 20 + script.canvas.h + 16, width: w - 40, height: 28)
+            let canvas = MouseCanvasView(script: script, origin: NSPoint(x: 20, y: 20))
+            content.addSubview(canvas)
+            mouseUser = MouseUser(script: script, canvas: canvas) { [weak self] ev, extra in
+                self?.emit(ev, extra)
+            }
+        }
         window.contentView?.addSubview(field)
         window.makeKeyAndOrderFront(nil)
         window.makeFirstResponder(field)
@@ -251,8 +272,11 @@ final class SentinelDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelega
         case .keyDown:
             emit("keyDown", ["chars": e.characters ?? "", "keyCode": Int(e.keyCode)])
         case .leftMouseDown, .rightMouseDown, .otherMouseDown:
+            // The mouse user's own tagged clicks are not leaks.
+            if e.cgEvent?.getIntegerValueField(.eventSourceUserData) == muMagic { break }
             emit("mouseDown", ["button": e.buttonNumber, "loc": loc])
         case .leftMouseUp, .rightMouseUp, .otherMouseUp:
+            if e.cgEvent?.getIntegerValueField(.eventSourceUserData) == muMagic { break }
             emit("mouseUp", ["button": e.buttonNumber, "loc": loc])
         case .scrollWheel:
             emit(
@@ -303,15 +327,17 @@ final class SentinelDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelega
     }
 
     func toggleArmed() {
+        if armed { mouseUser?.stop() }
         armed.toggle()
-        if userActivity && !armed {
+        if userActivity && mouseUser == nil && !armed {
             emit(
                 "user_text",
                 ["expected_len": userExpected.count, "actual_len": field.stringValue.count,
                  "intact": field.stringValue == userExpected])
         }
-        if userActivity && armed { userExpected = field.stringValue }
+        if userActivity && mouseUser == nil && armed { userExpected = field.stringValue }
         emit(armed ? "armed" : "disarmed", sampleFields())
+        if armed { mouseUser?.start() }
     }
 
     // MARK: simulated user activity (Amendment 15)
@@ -359,6 +385,373 @@ final class SentinelDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelega
     }
 }
 
+// MARK: - Mouse user (shared-desktop tasks)
+
+/// Tag on every event the mouse user posts (kCGEventSourceUserData); anything else is someone else's.
+let muMagic: Int64 = 0x4344_4253_4D55_0001
+
+struct MouseScript {
+    var canvas: (w: Double, h: Double)
+    var home: (x: Double, y: Double)
+    var dots: [(x: Double, y: Double)]
+    var radius: Double
+    var sequence: [Int]
+    var stepMs: Double, stepPx: Double, dwellBeforeMs: Double, pressMs: Double, dwellAfterMs: Double
+    var tolerancePx: Double, clickTimeoutMs: Double
+
+    init?(path: String) {
+        guard let data = FileManager.default.contents(atPath: path),
+              let j = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let canvas = (j["canvas"] as? [NSNumber])?.map({ $0.doubleValue }), canvas.count == 2,
+              let home = (j["home"] as? [NSNumber])?.map({ $0.doubleValue }), home.count == 2,
+              let rawDots = j["dots"] as? [[String: Any]],
+              let seq = (j["sequence"] as? [NSNumber])?.map({ $0.intValue }), !seq.isEmpty,
+              let radius = (j["radius"] as? NSNumber)?.doubleValue
+        else { return nil }
+        func num(_ k: String) -> Double? { (j[k] as? NSNumber)?.doubleValue }
+        guard let stepMs = num("step_ms"), let stepPx = num("step_px"), stepPx > 0,
+              let before = num("dwell_before_ms"), let press = num("press_ms"),
+              let after = num("dwell_after_ms"), let tol = num("tolerance_px"),
+              let timeout = num("click_timeout_ms")
+        else { return nil }
+        var dots = [(x: Double, y: Double)](repeating: (0, 0), count: rawDots.count)
+        for d in rawDots {
+            guard let i = (d["index"] as? NSNumber)?.intValue, i >= 0, i < dots.count,
+                  let x = (d["x"] as? NSNumber)?.doubleValue, let y = (d["y"] as? NSNumber)?.doubleValue
+            else { return nil }
+            dots[i] = (x, y)
+        }
+        guard seq.allSatisfy({ $0 >= 0 && $0 < dots.count }) else { return nil }
+        self.canvas = (canvas[0], canvas[1])
+        self.home = (home[0], home[1])
+        self.dots = dots
+        self.radius = radius
+        self.sequence = seq
+        self.stepMs = stepMs
+        self.stepPx = stepPx
+        self.dwellBeforeMs = before
+        self.pressMs = press
+        self.dwellAfterMs = after
+        self.tolerancePx = tol
+        self.clickTimeoutMs = timeout
+    }
+
+    /// Index of the dot whose disc contains canvas point (x, y).
+    func dotAt(_ x: Double, _ y: Double) -> Int? {
+        for (i, d) in dots.enumerated() where (x - d.x) * (x - d.x) + (y - d.y) * (y - d.y) <= radius * radius {
+            return i
+        }
+        return nil
+    }
+
+    /// Points of one leg from p to q, excluding p and ending exactly at q.
+    func leg(from p: (x: Double, y: Double), to q: (x: Double, y: Double)) -> [(x: Double, y: Double)] {
+        let dist = hypot(q.x - p.x, q.y - p.y)
+        let n = max(1, Int((dist / stepPx).rounded(.up)))
+        return (1...n).map { k in
+            (floor(p.x + (q.x - p.x) * Double(k) / Double(n) + 0.5),
+             floor(p.y + (q.y - p.y) * Double(k) / Double(n) + 0.5))
+        }
+    }
+}
+
+/// Drawing area of the user window: the numbered dots, a short flash on every button-down it receives.
+final class MouseCanvasView: NSView {
+    let script: MouseScript
+    var onMouseDown: ((NSEvent) -> Void)?
+    private var flashDot: Int?
+    private var flashUntil = Date.distantPast
+
+    init(script: MouseScript, origin: NSPoint) {
+        self.script = script
+        super.init(frame: NSRect(x: origin.x, y: origin.y, width: script.canvas.w, height: script.canvas.h))
+        setAccessibilityLabel("User canvas")
+    }
+
+    required init?(coder: NSCoder) { fatalError("not used") }
+
+    override var isFlipped: Bool { true }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func mouseDown(with event: NSEvent) { onMouseDown?(event) }
+
+    func flash(_ dot: Int?) {
+        flashDot = dot
+        flashUntil = Date().addingTimeInterval(0.15)
+        needsDisplay = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in self?.needsDisplay = true }
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        NSColor(srgbRed: 0.96, green: 0.96, blue: 0.97, alpha: 1).setFill()
+        bounds.fill()
+        let flashing = Date() < flashUntil
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.boldSystemFont(ofSize: 14), .foregroundColor: NSColor.white,
+        ]
+        for (i, d) in script.dots.enumerated() {
+            let r = NSRect(x: d.x - script.radius, y: d.y - script.radius, width: script.radius * 2, height: script.radius * 2)
+            let hit = flashing && flashDot == i
+            (hit ? NSColor.systemOrange : NSColor.systemBlue).setFill()
+            NSBezierPath(ovalIn: r).fill()
+            let label = NSString(string: String(i + 1))
+            let size = label.size(withAttributes: attrs)
+            label.draw(at: NSPoint(x: d.x - size.width / 2, y: d.y - size.height / 2), withAttributes: attrs)
+        }
+        if flashing && flashDot == nil {
+            NSColor.systemRed.setStroke()
+            let p = NSBezierPath(rect: bounds.insetBy(dx: 1, dy: 1))
+            p.lineWidth = 2
+            p.stroke()
+        }
+    }
+}
+
+private func muMonoMs() -> Double { Double(DispatchTime.now().uptimeNanoseconds) / 1e6 }
+
+private let muTapCallback: CGEventTapCallBack = { _, type, event, refcon in
+    if let refcon = refcon {
+        Unmanaged<MouseUser>.fromOpaque(refcon).takeUnretainedValue().foreign(type, event)
+    }
+    return Unmanaged.passUnretained(event)
+}
+
+/// The simulated mouse user: a state machine on a main-queue timer, so the clicks the canvas receives are matched
+/// on the same queue that posts them.
+final class MouseUser {
+    private enum Phase { case idle, homing, moving, press, release, dwellAfter }
+
+    let script: MouseScript
+    let canvas: MouseCanvasView
+    let emit: (String, [String: Any]) -> Void
+    private var phase = Phase.idle
+    private var started = false
+    private var nextAt = 0.0
+    private var homeDeadline = 0.0
+    private var timer: DispatchSourceTimer?
+    private var tap: CFMachPort?
+    private var tapAdded = false
+    private(set) var tagging = false
+    private var last = (x: 0.0, y: 0.0)
+    private var prev = (x: 0.0, y: 0.0)
+    private var points: [(x: Double, y: Double)] = []
+    private var pointIdx = 0
+    private var leg = 0
+    private var target = 0
+    private var checks = 0
+    private var clicks = 0
+    private var buttonDown = false
+    private var pending: (n: Int, dot: Int, deadline: Double)?
+    private let source = CGEventSource(stateID: .hidSystemState)
+
+    init(script: MouseScript, canvas: MouseCanvasView, emit: @escaping (String, [String: Any]) -> Void) {
+        self.script = script
+        self.canvas = canvas
+        self.emit = emit
+        canvas.onMouseDown = { [weak self] e in self?.canvasMouseDown(e) }
+        let t = DispatchSource.makeTimerSource(queue: .main)
+        t.schedule(deadline: .now() + 0.005, repeating: .milliseconds(5), leeway: .milliseconds(1))
+        t.setEventHandler { [weak self] in self?.tick() }
+        t.resume()
+        timer = t
+    }
+
+    // MARK: arm / disarm
+
+    func start() {
+        installTap()
+        emit("mu_start", ["tagging": tagging, "tolerance_px": script.tolerancePx, "platform": "macos"])
+        started = true
+        leg = 0
+        clicks = 0
+        checks = 0
+        pending = nil
+        last = script.home
+        prev = script.home
+        guard let g = globalPoint(script.home) else { fail(); return }
+        post(.mouseMoved, g)
+        phase = .homing
+        homeDeadline = muMonoMs() + 200
+        nextAt = 0
+    }
+
+    func stop() {
+        guard started else { return }
+        if buttonDown, let g = globalPoint(last) {
+            post(.leftMouseUp, g)
+            buttonDown = false
+        }
+        phase = .idle
+        pending = nil
+        started = false
+        emit("mu_stop", [:])
+    }
+
+    private func fail() {
+        emit("mu_error", ["why": "cannot move the pointer"])
+        phase = .idle
+    }
+
+    // MARK: geometry and posting
+
+    /// Top-left screen origin of the canvas, from its current on-screen rect.
+    private func canvasOrigin() -> CGPoint? {
+        guard let win = canvas.window else { return nil }
+        let r = win.convertToScreen(canvas.convert(canvas.bounds, to: nil))
+        let screenH = (NSScreen.screens.first ?? NSScreen.main)?.frame.height ?? 900
+        return CGPoint(x: r.minX, y: screenH - r.maxY)
+    }
+
+    private func globalPoint(_ p: (x: Double, y: Double)) -> CGPoint? {
+        guard let o = canvasOrigin() else { return nil }
+        return CGPoint(x: o.x + p.x, y: o.y + p.y)
+    }
+
+    private func post(_ type: CGEventType, _ at: CGPoint) {
+        guard let e = CGEvent(mouseEventSource: source, mouseType: type, mouseCursorPosition: at, mouseButton: .left)
+        else { return }
+        if type != .mouseMoved { e.setIntegerValueField(.mouseEventClickState, value: 1) }
+        e.setIntegerValueField(.eventSourceUserData, value: muMagic)
+        e.post(tap: .cghidEventTap)
+    }
+
+    private func realPointer() -> CGPoint? { CGEvent(source: nil)?.location }
+
+    /// Read the real pointer, log it against the last two commanded points.
+    private func check() {
+        guard let loc = realPointer(), let o = canvasOrigin() else { return }
+        let got = (x: Double(loc.x - o.x), y: Double(loc.y - o.y))
+        let d = min(hypot(got.x - last.x, got.y - last.y), hypot(got.x - prev.x, got.y - prev.y))
+        emit("mu", ["i": checks, "want": [last.x, last.y], "got": [got.x, got.y], "d": d])
+        checks += 1
+    }
+
+    // MARK: state machine
+
+    private func tick() {
+        guard started else { return }
+        let now = muMonoMs()
+        if let p = pending, now >= p.deadline {
+            pending = nil
+            emit("mu_click_result", ["n": p.n, "ok": false, "why": "lost"])
+        }
+        guard now >= nextAt else { return }
+        switch phase {
+        case .idle:
+            break
+        case .homing:
+            if let g = globalPoint(script.home), let loc = realPointer(),
+               hypot(Double(loc.x - g.x), Double(loc.y - g.y)) <= script.tolerancePx
+            {
+                startLeg(now)
+            } else if now >= homeDeadline {
+                fail()
+            }
+        case .moving:
+            check()
+            let pt = points[pointIdx]
+            if let g = globalPoint(pt) { post(.mouseMoved, g) }
+            prev = last
+            last = pt
+            pointIdx += 1
+            if pointIdx >= points.count {
+                phase = .press
+                nextAt = now + script.stepMs + script.dwellBeforeMs
+            } else {
+                nextAt = now + script.stepMs
+            }
+        case .press:
+            check()
+            if let g = globalPoint(last) { post(.leftMouseDown, g) }
+            buttonDown = true
+            clicks += 1
+            pending = (clicks, target, now + script.clickTimeoutMs)
+            phase = .release
+            nextAt = now + script.pressMs
+        case .release:
+            if let g = globalPoint(last) { post(.leftMouseUp, g) }
+            buttonDown = false
+            emit("mu_click", ["n": clicks, "dot": target, "at": [Int(last.x), Int(last.y)]])
+            phase = .dwellAfter
+            nextAt = now + script.dwellAfterMs
+        case .dwellAfter:
+            startLeg(now)
+        }
+    }
+
+    private func startLeg(_ now: Double) {
+        target = script.sequence[leg % script.sequence.count]
+        leg += 1
+        points = script.leg(from: last, to: script.dots[target])
+        pointIdx = 0
+        phase = .moving
+        nextAt = now
+    }
+
+    // MARK: clicks received by the canvas
+
+    private func canvasMouseDown(_ e: NSEvent) {
+        let p = canvas.convert(e.locationInWindow, from: nil)
+        let own = e.cgEvent?.getIntegerValueField(.eventSourceUserData) == muMagic
+        let dot = script.dotAt(Double(p.x), Double(p.y))
+        emit("mu_rx", ["dot": dot.map { $0 as Any } ?? NSNull(), "at": [Double(p.x), Double(p.y)], "own": own])
+        canvas.flash(dot)
+        guard own, let pend = pending else { return }
+        pending = nil
+        let c = script.dots[pend.dot]
+        let near = hypot(Double(p.x) - c.x, Double(p.y) - c.y) <= script.tolerancePx
+        let why: String
+        if dot == pend.dot && near {
+            why = "landed"
+        } else if let dot = dot, dot != pend.dot {
+            why = "wrong_dot"
+        } else {
+            why = "off_target"
+        }
+        emit("mu_click_result", ["n": pend.n, "ok": why == "landed", "why": why])
+    }
+
+    // MARK: foreign pointer events
+
+    private func installTap() {
+        guard tap == nil else { return }
+        let types: [CGEventType] = [
+            .mouseMoved, .leftMouseDown, .leftMouseUp, .rightMouseDown, .rightMouseUp,
+            .otherMouseDown, .otherMouseUp, .leftMouseDragged, .rightMouseDragged, .otherMouseDragged,
+            .scrollWheel,
+        ]
+        let mask = types.reduce(CGEventMask(0)) { $0 | (CGEventMask(1) << CGEventMask($1.rawValue)) }
+        tap = CGEvent.tapCreate(
+            tap: .cgSessionEventTap, place: .headInsertEventTap, options: .listenOnly,
+            eventsOfInterest: mask, callback: muTapCallback,
+            userInfo: Unmanaged.passUnretained(self).toOpaque())
+        tagging = tap != nil
+        if let tap = tap, !tapAdded {
+            let src = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
+            CFRunLoopAddSource(CFRunLoopGetMain(), src, .commonModes)
+            tapAdded = true
+        }
+    }
+
+    func foreign(_ type: CGEventType, _ event: CGEvent) {
+        if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+            if let tap = tap { CGEvent.tapEnable(tap: tap, enable: true) }
+            return
+        }
+        guard started, event.getIntegerValueField(.eventSourceUserData) != muMagic else { return }
+        let kind: String
+        switch type {
+        case .mouseMoved: kind = "move"
+        case .leftMouseDown, .rightMouseDown, .otherMouseDown: kind = "down"
+        case .leftMouseUp, .rightMouseUp, .otherMouseUp: kind = "up"
+        case .leftMouseDragged, .rightMouseDragged, .otherMouseDragged: kind = "drag"
+        case .scrollWheel: kind = "scroll"
+        default: return
+        }
+        emit("mu_foreign", ["kind": kind])
+    }
+}
+
 @main
 enum BenchSentinelMain {
     @MainActor
@@ -368,6 +761,7 @@ enum BenchSentinelMain {
         var noActivate = false
         var userActivity = false
         var frame: NSRect?
+        var mousePath: String?
         var i = 1
         while i < args.count {
             switch args[i] {
@@ -377,6 +771,8 @@ enum BenchSentinelMain {
                 noActivate = true
             case "--user-activity":
                 userActivity = true
+            case "--mouse-user":
+                if i + 1 < args.count { mousePath = args[i + 1]; i += 1 }
             case "--frame":
                 if i + 1 < args.count {
                     let v = args[i + 1].split(separator: ",").compactMap { Double($0) }
@@ -392,10 +788,20 @@ enum BenchSentinelMain {
             FileHandle.standardError.write(
                 Data("BenchSentinel: no --log PATH given, nothing will be logged\n".utf8))
         }
+        var script: MouseScript?
+        if let path = mousePath {
+            guard let parsed = MouseScript(path: path) else {
+                FileHandle.standardError.write(Data("BenchSentinel: cannot read the --mouse-user script\n".utf8))
+                exit(2)
+            }
+            script = parsed
+            userActivity = true  // the mouse user is the "User activity" window, without the typing user
+        }
         let app = NSApplication.shared
         app.setActivationPolicy(.regular)
         let delegate = SentinelDelegate(log: JSONLWriter(path: logPath), noActivate: noActivate)
         delegate.userActivity = userActivity
+        delegate.mouseScript = script
         delegate.frameTopLeft = frame
         app.delegate = delegate
         app.run()

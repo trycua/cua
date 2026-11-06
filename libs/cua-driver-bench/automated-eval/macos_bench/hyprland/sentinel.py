@@ -18,6 +18,10 @@ state comes from Hyprland's IPC socket (hypr.py):
 * clip: clipboard changes, from `wl-paste --watch` (data-control; GTK's owner-change without wl-clipboard).
 * key focus, typed keys, clicks and scrolls: GTK events on the sentinel's own window.
 
+With --mouse-user (UM-01) the window is the canvas of a simulated user who moves the real pointer through the
+compositor (`hypr.move_cursor`) and clicks with wlrctl or ydotool, from a script (SHARED-DESKTOP.md). Nothing can
+tag that input, so the trajectory check is the measure.
+
 Control: one command per line appended to --control (activate, arm, disarm, quit); SIGUSR1 activates and SIGUSR2
 toggles the armed state, as on X11.
 """
@@ -43,6 +47,8 @@ gi.require_version("Gdk", "3.0")
 from gi.repository import Gdk, GLib, Gtk  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "probes" / "_common"))
+import benchlab_common as C  # noqa: E402
 import hypr  # noqa: E402
 
 OWN_BID = "ai.cua.benchsentinel"
@@ -54,6 +60,222 @@ def comm(pid: int) -> str:
         return Path(f"/proc/{pid}/comm").read_text().strip()
     except OSError:
         return ""
+
+
+class MouseUser:
+    """UM-01's simulated user (SHARED-DESKTOP.md, "Mouse user script"), a 25 ms GLib timeout state machine on the
+    GTK main loop, so scripted input, checks and the canvas's button-down handler never run concurrently. The
+    pointer moves through Hyprland IPC, the click is one `wlrctl`/`ydotool` command (press and release together,
+    started without waiting for it), and canvas coordinates map to the layout through the window's position."""
+
+    TICK_MS = 25
+    ORIGIN_MAX_AGE = 0.25
+
+    def __init__(self, sentinel: "Sentinel", script: dict) -> None:
+        self.s = sentinel
+        self.script = script
+        self.running = False
+        self.stopping = False
+        self.offset: tuple[int, int] | None = None
+        self.origin_at: tuple[float, float] | None = None
+        self.origin_read = 0.0
+        GLib.timeout_add(self.TICK_MS, self.tick)
+
+    # --- canvas geometry
+    def origin(self) -> tuple[float, float] | None:
+        """Layout position of the canvas's top-left: the window's position plus the canvas's offset in it."""
+        now = time.monotonic()
+        if self.origin_at is not None and now - self.origin_read < self.ORIGIN_MAX_AGE:
+            return self.origin_at
+        if not self.s.address or not self.s.canvas.get_mapped():
+            return None
+        moved = self.s.canvas.translate_coordinates(self.s.window, 0, 0)
+        client = next((c for c in hypr.clients() if c.get("address") == self.s.address), None)
+        if moved is None or client is None:
+            return None
+        self.origin_at = (client["at"][0] + moved[0], client["at"][1] + moved[1])
+        self.origin_read = now
+        return self.origin_at
+
+    def to_layout(self, p: tuple[float, float]) -> tuple[int, int] | None:
+        o = self.origin()
+        return None if o is None else (round(p[0] + o[0]), round(p[1] + o[1]))
+
+    # --- lifecycle
+    def start(self) -> None:
+        self.s.emit(
+            "mu_start",
+            tagging=False,
+            tolerance_px=self.script.get("tolerance_px", 3),
+            platform="linux-hyprland",
+        )
+        self.click_argv = hypr.click_command()
+        if self.click_argv is None:
+            self.s.emit("mu_error", why="no click tool (wlrctl or ydotool)")
+            return
+        self.origin_at = None
+        self.cmd: list[tuple[float, float]] = []  # commanded canvas points, newest last
+        self.cur = tuple(self.script["home"])
+        self.leg = 0
+        self.points: list[tuple[int, int]] = []
+        self.k = 0
+        self.checks = 0
+        self.clicks = 0
+        self.pending: dict | None = None
+        self.state = "home"
+        self.next_at = 0.0
+        self.running = True
+
+    def stop(self) -> None:
+        if not self.running:
+            return
+        self.stopping = True
+        if self.state == "release":  # stopped between the click and its release time: dropped
+            self.pending = None
+        if self.pending and self.pending["logged"]:
+            end = time.monotonic() + 0.06
+            while time.monotonic() < end and not self.pending.get("rx"):
+                Gtk.main_iteration_do(False)
+            self.resolve(force=True)
+        self.running = False
+        self.stopping = False
+        self.pending = None
+        self.s.emit("mu_stop", clicks=self.clicks, checks=self.checks)
+
+    def fail(self, why: str) -> None:
+        self.s.emit("mu_error", why=why)
+        self.running = False
+
+    # --- one check: the real pointer against the script
+    def check(self) -> None:
+        o = self.origin()
+        if o is None or not self.cmd:
+            return
+        px, py = hypr.cursor()
+        got = (px - o[0], py - o[1])
+        dists = [((got[0] - c[0]) ** 2 + (got[1] - c[1]) ** 2) ** 0.5 for c in self.cmd[-2:]]
+        self.s.emit(
+            "mu", i=self.checks, want=list(self.cmd[-1]),
+            got=[round(got[0], 1), round(got[1], 1)], d=round(min(dists), 2),
+        )  # fmt: skip
+        self.checks += 1
+
+    def post_move(self, p: tuple[float, float]) -> None:
+        layout = self.to_layout(p)
+        if layout is not None:
+            hypr.move_cursor(*layout)
+        self.cmd.append(p)
+
+    def wait(self, ms: float, now: float) -> None:
+        self.next_at = max(self.next_at + ms / 1000.0, now) if self.next_at else now + ms / 1000.0
+
+    # --- the button-down handler of the canvas
+    def rx(self, event: Gdk.EventButton) -> None:
+        at = (event.x, event.y)
+        dot = C.dot_at(self.script, *at)
+        own = False
+        p = self.pending
+        if (
+            p
+            and not p.get("rx")
+            and time.monotonic() - p["t"] <= self.script["click_timeout_ms"] / 1000
+        ):
+            tol = self.script.get("tolerance_px", 3)
+            own = ((at[0] - p["at"][0]) ** 2 + (at[1] - p["at"][1]) ** 2) ** 0.5 <= tol
+            p["rx"] = {"dot": dot, "at": at, "own": own}
+        self.s.emit("mu_rx", dot=dot, at=[round(at[0], 1), round(at[1], 1)], own=own)
+        if not own:  # a button-down that is not ours is a leak, as on any other window
+            self.s.emit("mouseDown")
+
+    def resolve(self, force: bool = False) -> None:
+        p = self.pending
+        if not p or not p.get("logged"):
+            return
+        rx = p.get("rx")
+        late = time.monotonic() - p["t"] > self.script["click_timeout_ms"] / 1000
+        if rx is None and not (late or force):
+            return
+        if rx is None:
+            ok, why = False, "lost"
+        elif rx["own"] and rx["dot"] == p["dot"]:
+            ok, why = True, "landed"
+        elif rx["dot"] is None:
+            ok, why = False, "off_target"
+        else:
+            ok, why = False, "wrong_dot"
+        self.s.emit("mu_click_result", n=p["n"], ok=ok, why=why)
+        self.pending = None
+
+    # --- the state machine
+    def tick(self) -> bool:
+        if not self.running or self.stopping:
+            return True
+        now = time.monotonic()
+        if self.pending:
+            self.resolve()
+        if now < self.next_at - 0.002:
+            return True
+        script = self.script
+        try:
+            return self.step(now, script)
+        except (OSError, ValueError, RuntimeError) as error:  # the compositor did not answer
+            self.fail(f"compositor request failed: {error}")
+            return True
+
+    def step(self, now: float, script: dict) -> bool:
+        if self.state == "home":
+            home = tuple(script["home"])
+            layout = self.to_layout(home)
+            if layout is None or not hypr.move_cursor(*layout):
+                self.fail("the pointer did not reach home (no cursor-move dispatcher worked)")
+                return True
+            self.cmd.append(home)
+            self.state = "plan"
+            self.next_at = now
+        elif self.state == "plan":
+            dot = script["dots"][script["sequence"][self.leg % len(script["sequence"])]]
+            self.target = (dot["x"], dot["y"])
+            self.points = C.mouse_leg(self.cur, self.target, script["step_px"])
+            self.k = 0
+            self.state = "move"
+        elif self.state == "move":
+            self.check()
+            self.post_move(self.points[self.k])
+            self.k += 1
+            if self.k >= len(self.points):
+                self.state = "arrive"
+            self.wait(script["step_ms"], now)
+        elif self.state == "arrive":
+            self.state = "press"
+            self.wait(script["dwell_before_ms"], now)
+        elif self.state == "press":
+            self.check()
+            layout = self.to_layout(self.target)
+            if layout is not None:
+                hypr.move_cursor(*layout)  # the click is at the dot's centre
+            self.clicks += 1
+            self.pending = {
+                "n": self.clicks, "dot": script["sequence"][self.leg % len(script["sequence"])],
+                "at": self.target, "t": now, "rx": None, "logged": False,
+            }  # fmt: skip
+            subprocess.Popen(
+                self.click_argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )  # fmt: skip
+            self.state = "release"
+            self.wait(script["press_ms"], now)
+        elif self.state == "release":
+            self.pending["logged"] = True
+            self.s.emit(
+                "mu_click", n=self.pending["n"], dot=self.pending["dot"],
+                at=[self.target[0], self.target[1]],
+            )  # fmt: skip
+            self.cur = self.target
+            self.leg += 1
+            self.state = "plan"
+            self.wait(script["dwell_after_ms"], now)
+            self.resolve()
+        return True
 
 
 class Sentinel:
@@ -72,7 +294,8 @@ class Sentinel:
         self.control_at = 0
         self.lock = threading.Lock()
         self.latest_front: dict = {}
-        self.title = "User activity" if args.user_activity else "Bench Sentinel"
+        self.mouse = None
+        self.title = "User activity" if args.user_activity or args.mouse_user else "Bench Sentinel"
         self.window = Gtk.Window(title=self.title)
         self.window.set_wmclass("BenchSentinel", "BenchSentinel")
         self.window.set_default_size(600, 320)
@@ -82,13 +305,38 @@ class Sentinel:
         self.entry = Gtk.Entry()
         self.entry.get_accessible().set_name("User activity text")
         self.entry.connect("changed", self.changed)
-        self.window.add(self.entry)
         self.window.connect("destroy", Gtk.main_quit)
         self.window.connect("focus-out-event", lambda *_: self.emit("didResignKey"))
         self.window.connect("focus-in-event", lambda *_: self.emit("didBecomeActive"))
-        self.entry.connect("key-press-event", lambda *_: self.emit("keyDown"))
-        self.entry.connect("button-press-event", lambda *_: self.emit("mouseDown"))
-        self.entry.connect("scroll-event", lambda *_: self.emit("scrollWheel"))
+        if args.mouse_user:
+            # UM-01: the window's content is the canvas the simulated user clicks on (no typing user). It has
+            # no title bar, so the canvas sits at the window's top-left.
+            self.script = json.loads(args.mouse_user.read_text(encoding="utf-8"))
+            self.window.set_decorated(False)
+            self.canvas = Gtk.DrawingArea()
+            self.canvas.set_size_request(*self.script["canvas"])
+            self.canvas.set_halign(Gtk.Align.START)
+            self.canvas.set_valign(Gtk.Align.START)
+            self.canvas.set_can_focus(True)
+            self.canvas.add_events(
+                Gdk.EventMask.BUTTON_PRESS_MASK
+                | Gdk.EventMask.KEY_PRESS_MASK
+                | Gdk.EventMask.SCROLL_MASK
+            )
+            self.canvas.connect("draw", self.draw_canvas)
+            self.canvas.get_accessible().set_name("User activity canvas")
+            self.canvas.connect("button-press-event", self.canvas_press)
+            self.canvas.connect("key-press-event", lambda *_: self.emit("keyDown"))
+            self.canvas.connect("scroll-event", lambda *_: self.emit("scrollWheel"))
+            self.window.add(self.canvas)
+            self.focus_widget = self.canvas
+            self.mouse = MouseUser(self, self.script)
+        else:
+            self.window.add(self.entry)
+            self.focus_widget = self.entry
+            self.entry.connect("key-press-event", lambda *_: self.emit("keyDown"))
+            self.entry.connect("button-press-event", lambda *_: self.emit("mouseDown"))
+            self.entry.connect("scroll-event", lambda *_: self.emit("scrollWheel"))
         self.watcher = None
         if not shutil.which("wl-paste"):
             # GTK only hears of selection changes while the window has keyboard focus.
@@ -106,6 +354,31 @@ class Sentinel:
         GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGUSR1, self.activate)
         GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGUSR2, self.toggle)
         GLib.timeout_add(100, self.find_window)
+
+    def draw_canvas(self, widget: Gtk.DrawingArea, cr: object) -> bool:
+        try:  # needs the cairo foreign binding (python3-gi-cairo); the canvas still takes input without it
+            width, height = self.script["canvas"]
+            cr.set_source_rgb(0.96, 0.96, 0.94)
+            cr.rectangle(0, 0, width, height)
+            cr.fill()
+            for dot in self.script["dots"]:
+                cr.set_source_rgb(0.2, 0.45, 0.8)
+                cr.arc(dot["x"], dot["y"], self.script["radius"], 0, 6.2832)
+                cr.fill()
+                cr.set_source_rgb(1, 1, 1)
+                cr.set_font_size(16)
+                label = str(dot["index"] + 1)
+                x_bearing, y_bearing, w, h = cr.text_extents(label)[:4]
+                cr.move_to(dot["x"] - w / 2 - x_bearing, dot["y"] - h / 2 - y_bearing)
+                cr.show_text(label)
+        except Exception:  # noqa: BLE001
+            pass
+        return False
+
+    def canvas_press(self, widget: Gtk.DrawingArea, event: Gdk.EventButton) -> bool:
+        if event.type == Gdk.EventType.BUTTON_PRESS and self.armed:
+            self.mouse.rx(event)
+        return True
 
     def find_window(self) -> bool:
         mine = [c for c in hypr.by_pid(os.getpid()) if c.get("title") == self.title]
@@ -227,18 +500,22 @@ class Sentinel:
             hypr.focus(self.address)
             hypr.raise_to_top(self.address)
         self.window.present()
-        self.entry.grab_focus()
+        self.focus_widget.grab_focus()
         return True
 
     def toggle(self, *_: object) -> bool:
         if self.armed:
             if self.args.user_activity:
                 self.emit("user_text", intact=self.entry.get_text() == self.expected)
+            if self.mouse is not None:
+                self.mouse.stop()
             self.emit("disarmed", **self.snapshot())
             self.armed = False
         else:
             self.armed = True
             self.emit("armed", **self.snapshot())
+            if self.mouse is not None:
+                self.mouse.start()
         return True
 
     def poll_control(self) -> bool:
@@ -304,6 +581,7 @@ def main() -> None:
     parser.add_argument("--no-activate", action="store_true")
     parser.add_argument("--user-activity", action="store_true")
     parser.add_argument("--frame")
+    parser.add_argument("--mouse-user", type=Path, help="UM-01: the mouse-user script (JSON)")
     witness = Sentinel(parser.parse_args())
     try:
         Gtk.main()

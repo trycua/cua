@@ -1,7 +1,7 @@
 {
   "schema": "cdb-taskset/1",
   "name": "v2",
-  "description": "Bench v2: the ten core tasks, all public. `os` lists where the task has a launch descriptor or runs today: all ten run on macOS, Linux and Windows. The three multi-app tasks (CDB-G02 to CDB-G04) are pack tasks with Electron apps, LibreOffice and, for CDB-G03, GnuCash; the seven BenchLab tasks (MB-09 to MB-11, IR-01 to IR-04) run in BenchLab and its Linux and Windows ports. `split` is public (in this repository) or heldout (kept out of this repository; such a task would be listed by id and category only).",
+  "description": "Bench v2: the ten core tasks, all public. `os` lists where the task has a launch descriptor or runs today: all ten run on macOS, Linux and Windows. The three multi-app tasks (CDB-G02 to CDB-G04) are pack tasks with Electron apps, LibreOffice and, for CDB-G03, GnuCash; the seven BenchLab tasks (MB-09 to MB-11, IR-01 to IR-04) run in BenchLab and its Linux and Windows ports. `split` is public (in this repository) or heldout (kept out of this repository; such a task would be listed by id and category only). PA-01 and UM-01 (set `shared-desktop`, see automated-eval/macos_bench/SHARED-DESKTOP.md) are selected by id or with `--task-set shared-desktop`; they are not in the registered `v2` list.",
   "limits": {
     "timeout_s": 360,
     "max_turns": 45
@@ -281,6 +281,61 @@
       "cross_os_candidate": null,
       "conditions": [
         "foreground",
+        "background"
+      ],
+      "health": {
+        "automation_apps": [],
+        "ready_urls": [],
+        "evaluator_tools": [
+          "python3"
+        ]
+      }
+    },
+    {
+      "id": "PA-01",
+      "category": "shared_desktop",
+      "split": "public",
+      "set": "shared-desktop",
+      "pack_task": null,
+      "title": "Parallel agents: N agents at once, one per copy of BenchLab, each doing the same short task without cross-talk (N = 10, also 4 and 1)",
+      "apps": [
+        "BenchLab (N copies)"
+      ],
+      "os": [
+        "macos",
+        "linux",
+        "windows"
+      ],
+      "cross_os_candidate": null,
+      "conditions": [
+        "foreground",
+        "background"
+      ],
+      "health": {
+        "automation_apps": [],
+        "ready_urls": [],
+        "evaluator_tools": [
+          "python3"
+        ]
+      }
+    },
+    {
+      "id": "UM-01",
+      "category": "shared_desktop",
+      "split": "public",
+      "set": "shared-desktop",
+      "pack_task": null,
+      "title": "The user's mouse keeps working: a short task in the background while the user moves and clicks the real pointer",
+      "apps": [
+        "BenchLab"
+      ],
+      "os": [
+        "macos",
+        "linux",
+        "windows"
+      ],
+      "cross_os_candidate": null,
+      "conditions": [
         "background"
       ],
       "health": {

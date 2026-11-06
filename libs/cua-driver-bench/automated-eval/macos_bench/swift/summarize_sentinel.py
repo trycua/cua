@@ -167,6 +167,7 @@ def summarize(log_path: str) -> dict[str, Any]:
     _windows_raised(window, result)
     _user_activity(window, result)
     _multiplayer(window, body, result)
+    _mouse_user(body, result)
     result["pointer_max_deviation_px"] = round(result["pointer_max_deviation_px"], 2)
     result["front_changed_to"] = sorted(changed_to)
     result["available"] = result["samples"] >= 10
@@ -264,6 +265,80 @@ def _user_activity(window: list[dict[str, Any]], result: dict[str, Any]) -> None
         "text_intact_at_end": intact,
         "disrupted": bool(blocked or disrupted or intact is False),
     }
+
+
+MU_TOLERANCE_PX = 3.0
+
+
+def _mouse_user(body: list[dict[str, Any]], result: dict[str, Any]) -> None:
+    """UM-01 (SHARED-DESKTOP.md): the simulated mouse user. None when the sentinel ran without --mouse-user.
+
+    The user moves the pointer, so the pointer measure becomes its displacement from the user's own script: the
+    largest `d` of the `mu` checks replaces `pointer_max_deviation_px` (the raw travel from the armed position is
+    kept as `pointer_travel_px`). Scripted button-downs are not leaks; the sentinel logs foreign ones as
+    `mouseDown`, which `clicks_leaked` already counts."""
+    start = next((ln for ln in body if ln.get("ev") == "mu_start"), None)
+    checks = [ln for ln in body if ln.get("ev") == "mu"]
+    if start is None and not checks:
+        result["mouse_user"] = None
+        return
+    tolerance = float((start or {}).get("tolerance_px") or MU_TOLERANCE_PX)
+    tagging = bool((start or {}).get("tagging"))
+    ds = [float(ln["d"]) for ln in checks if isinstance(ln.get("d"), (int, float))]
+    episodes, inside = 0, False
+    for d in ds:
+        if d > tolerance:
+            episodes += 0 if inside else 1
+            inside = True
+        else:
+            inside = False
+    clicks = [ln for ln in body if ln.get("ev") == "mu_click"]
+    results = {ln.get("n"): ln for ln in body if ln.get("ev") == "mu_click_result" and "n" in ln}
+    # A click posted within the click timeout of the end has no verdict yet when the user is disarmed: not counted.
+    timeout_ms = float((start or {}).get("click_timeout_ms") or 400)
+    end_t = float(body[-1]["t"]) if body else 0.0
+    clicks = [
+        c for c in clicks if c.get("n") in results or float(c.get("t") or 0.0) < end_t - timeout_ms
+    ]
+    why = {"landed": 0, "lost": 0, "off_target": 0, "wrong_dot": 0}
+    for click in clicks:
+        res = results.get(click.get("n"))
+        reason = (
+            "lost"
+            if res is None
+            else str(res.get("why") or ("landed" if res.get("ok") else "lost"))
+        )
+        if res is not None and res.get("ok"):
+            reason = "landed"
+        why[reason if reason in why else "lost"] += 1
+    foreign = [ln for ln in body if ln.get("ev") == "mu_foreign"]
+    kinds: dict[str, int] = {}
+    for ln in foreign:
+        kinds[str(ln.get("kind"))] = kinds.get(str(ln.get("kind")), 0) + 1
+    max_d = round(max(ds), 2) if ds else 0.0
+    mu = {
+        "tolerance_px": tolerance,
+        "tagging": tagging,
+        "platform": (start or {}).get("platform"),
+        "checks": len(ds),
+        "max_displacement_px": max_d,
+        "displaced_checks": sum(1 for d in ds if d > tolerance),
+        "displacement_episodes": episodes,
+        "clicks": len(clicks),
+        "clicks_landed": why["landed"],
+        "clicks_lost": why["lost"],
+        "clicks_off_target": why["off_target"],
+        "clicks_wrong_dot": why["wrong_dot"],
+        "foreign_pointer_events": len(foreign) if tagging else None,
+        "foreign_pointer_kinds": kinds if tagging else None,
+    }
+    mu["disturbed"] = bool(
+        max_d > tolerance or why["landed"] < len(clicks) or (tagging and foreign)
+    )
+    result["mouse_user"] = mu
+    result["pointer_travel_px"] = result["pointer_max_deviation_px"]
+    result["pointer_max_deviation_px"] = max_d
+    result["pointer_deviation_episodes"] = episodes
 
 
 def main(argv: list[str] | None = None) -> int:

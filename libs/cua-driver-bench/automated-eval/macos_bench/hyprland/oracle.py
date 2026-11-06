@@ -8,7 +8,9 @@ through AT-SPI (window-relative extents plus the window's frame from Hyprland) a
 uinput device: an absolute pointer with buttons and a keyboard, the same kernel path as a USB mouse and keyboard.
 The desktop user needs read-write access to /dev/uinput while it runs.
 
-Usage: oracle.py --mode MODE --seed N [--disturb KIND]
+Usage: oracle.py --mode MODE --seed N [--instance L] [--disturb KIND]
+`--mode desk` solves one desk of PA-01 (`--instance L`, a label A..J) or UM-01 (no `--instance`): types the code,
+selects the shelf, presses Submit.
 `--disturb KIND` instead performs one deliberate disturbance of the user window (validates the sentinel):
 focus, raise, pointer, clipboard, typing, space or all.
 """
@@ -122,6 +124,7 @@ class Input:
 
 
 IN: Input | None = None
+DESK_LABEL: str | None = None  # the desk this run works in (--mode desk)
 
 
 def type_text(text: str) -> None:
@@ -130,13 +133,18 @@ def type_text(text: str) -> None:
     time.sleep(0.2)
 
 
-def app() -> Atspi.Accessible:
+def apps() -> list[Atspi.Accessible]:
+    """Every BenchLab process on the accessibility bus (the desks of PA-01 are one process each)."""
     desktop = Atspi.get_desktop(0)
     for _ in range(50):
-        for i in range(desktop.get_child_count()):
-            child = desktop.get_child_at_index(i)
-            if child is not None and child.get_name() in ("BenchLab", "benchlab.py"):
-                return child
+        found = [
+            child
+            for i in range(desktop.get_child_count())
+            if (child := desktop.get_child_at_index(i)) is not None
+            and child.get_name() in ("BenchLab", "benchlab.py")
+        ]
+        if found:
+            return found
         time.sleep(0.2)
     raise RuntimeError("BenchLab is not on the accessibility bus")
 
@@ -151,18 +159,24 @@ def walk(node: Atspi.Accessible):
 
 def toplevel(title_prefix: str) -> tuple[Atspi.Accessible, dict]:
     for _ in range(80):
-        root = app()
-        for i in range(root.get_child_count()):
-            win = root.get_child_at_index(i)
-            if win is not None and win.get_name().startswith(title_prefix):
-                frames = [c for c in hypr.clients() if c.get("title", "").startswith(title_prefix)]
-                if frames:
-                    return win, frames[-1]
+        for root in apps():
+            for i in range(root.get_child_count()):
+                win = root.get_child_at_index(i)
+                if win is not None and win.get_name().startswith(title_prefix):
+                    frames = [
+                        c for c in hypr.clients() if c.get("title", "").startswith(title_prefix)
+                    ]
+                    if frames:
+                        return win, frames[-1]
         time.sleep(0.25)
     raise RuntimeError(f"no window {title_prefix!r}")
 
 
-ROLE_ALIASES = {"push button": ("push button", "button"), "check box": ("check box", "checkbox")}
+ROLE_ALIASES = {
+    "push button": ("push button", "button"),
+    "check box": ("check box", "checkbox"),
+    "radio button": ("radio button", "radiobutton"),
+}
 
 
 def find(win: Atspi.Accessible, role: str, name: str, nth: int = 0) -> Atspi.Accessible:
@@ -183,7 +197,8 @@ def center(node: Atspi.Accessible, frame: dict) -> tuple[float, float]:
 
 
 def lab(mode: str) -> tuple[Atspi.Accessible, dict]:
-    win, frame = toplevel(f"BenchLab — {mode}")
+    title = C.desk_title(DESK_LABEL) if mode == "desk" else f"BenchLab — {mode}"
+    win, frame = toplevel(title)
     hypr.focus(frame["address"])
     hypr.raise_to_top(frame["address"])
     time.sleep(0.4)
@@ -327,6 +342,19 @@ def irconsent(seed: int) -> None:
     button("irconsent", "Sign up")
 
 
+def desk(seed: int) -> None:
+    global DESK_LABEL
+    if DESK_LABEL is None:
+        cell = C.derive_um_desk(seed)
+        DESK_LABEL = cell["label"]
+    else:
+        cell = next(c for c in C.derive_parallel(seed)["cells"] if c["label"] == DESK_LABEL)
+    type_into("desk", "Code", cell["code"])
+    win, frame = lab("desk")
+    click(find(win, "radio button", cell["shelf"]), frame)
+    button("desk", "Submit")
+
+
 def disturb(kind: str) -> None:
     """One deliberate disturbance of the user window, of the given kind."""
     time.sleep(2)
@@ -350,12 +378,14 @@ def disturb(kind: str) -> None:
 
 
 def main() -> None:
-    global IN
+    global IN, DESK_LABEL
     parser = argparse.ArgumentParser()
     parser.add_argument("--mode", required=True)
     parser.add_argument("--seed", type=int, required=True)
+    parser.add_argument("--instance", help="desk mode: the copy's label (PA-01); omit for UM-01")
     parser.add_argument("--disturb")
     args = parser.parse_args()
+    DESK_LABEL = args.instance
     ctypes.CDLL(None).prctl(15, b"cdb-oracle", 0, 0, 0)
     Atspi.init()
     IN = Input()

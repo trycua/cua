@@ -20,7 +20,17 @@ from gi.repository import Gdk, GLib, Gtk
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "probes" / "_common"))
 import benchlab_common as C
 
-MODES = ("listdrag", "hover", "tooltip", "irmodal", "irbanner", "irunsaved", "irconsent")
+MODES = (
+    "listdrag",
+    "hover",
+    "tooltip",
+    "irmodal",
+    "irbanner",
+    "irunsaved",
+    "irconsent",
+    "desk",
+)
+DESK_DEFAULT_FRAME = "200,200,360,400"
 
 
 class Lab:
@@ -30,14 +40,24 @@ class Lab:
         GLib.set_application_name("BenchLab")
         self.args = args
         self.state = {"mode": args.mode, "seed": args.seed, "seq": 0}
-        self.params = getattr(C, "derive_" + args.mode)(args.seed)
+        # The desk mode derives nothing from the seed: its expected values live only in the brief and checker.
+        self.params = None if args.mode == "desk" else getattr(C, "derive_" + args.mode)(args.seed)
         self.fields = {}
         self.loading = False
         args.events.parent.mkdir(parents=True, exist_ok=True)
         self.events = args.events.open("w", buffering=1)
-        self.window = Gtk.Window(title=f"BenchLab — {args.mode}")
+        desk = args.mode == "desk"
+        self.window = Gtk.Window(
+            title=C.desk_title(args.instance) if desk else f"BenchLab — {args.mode}"
+        )
         self.window.set_wmclass("BenchLab", "BenchLab")
-        self.window.set_default_size(760, 540)
+        self.window.set_default_size(*(self.frame()[2:] if desk else (760, 540)))
+        if desk:
+            x, y, w, h = self.frame()
+            self.window.move(x, y)
+            self.window.resize(w, h)
+            if args.no_activate:
+                self.window.set_focus_on_map(False)
         self.window.connect("destroy", Gtk.main_quit)
         self.box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12, margin=24)
         self.window.add(self.box)
@@ -45,7 +65,14 @@ class Lab:
         self.window.show_all()
         for widget in getattr(self, "hidden", []):
             widget.hide()
-        self.emit("app_start", mode=args.mode, seed=args.seed)
+        if desk:
+            self.emit("app_start", mode=args.mode, seed=args.seed, instance=args.instance)
+        else:
+            self.emit("app_start", mode=args.mode, seed=args.seed)
+
+    def frame(self) -> tuple[int, int, int, int]:
+        x, y, w, h = map(int, (self.args.frame or DESK_DEFAULT_FRAME).split(","))
+        return x, y, w, h
 
     def emit(self, event: str, **details: object) -> None:
         self.state["seq"] += 1
@@ -414,6 +441,52 @@ class Lab:
         if index is not None:
             self.emit("note_selected", index=index)
 
+    def desk(self) -> None:
+        self.state.update(
+            instance=self.args.instance, code="", shelf=None, submit_count=0, submitted=None
+        )
+        self.box.set_margin_top(12)
+        self.box.set_margin_bottom(12)
+        self.box.set_margin_start(12)
+        self.box.set_margin_end(12)
+        self.box.set_spacing(6)
+        heading = self.label(f"Desk {self.args.instance}")
+        heading.set_xalign(0)
+        self.label("Code").set_xalign(0)
+        self.code_entry = Gtk.Entry()
+        self.code_entry.get_accessible().set_name("Code")
+        self.code_entry.connect("changed", self.desk_edit)
+        self.box.pack_start(self.code_entry, False, False, 0)
+        self.label("Shelf").set_xalign(0)
+        # A group leader that is never shown starts active, so no visible shelf is selected at the start.
+        self.none_radio = Gtk.RadioButton()
+        grid = Gtk.Grid(column_homogeneous=True, row_spacing=2, column_spacing=6)
+        for index, shelf in enumerate(C.DESK_SHELVES):
+            radio = Gtk.RadioButton.new_with_label_from_widget(self.none_radio, shelf)
+            radio.get_accessible().set_name(shelf)
+            radio.connect("toggled", self.desk_shelf, shelf)
+            grid.attach(radio, index % 3, index // 3, 1, 1)
+        self.box.pack_start(grid, False, False, 0)
+        self.button("Submit", self.desk_submit)
+        self.status = self.label("Not submitted")
+        self.status.set_xalign(0)
+
+    def desk_edit(self, *_: object) -> None:
+        self.state["code"] = self.code_entry.get_text()
+        self.emit("field_edit", field="code", value=self.state["code"])
+
+    def desk_shelf(self, radio: Gtk.RadioButton, shelf: str) -> None:
+        if not radio.get_active():
+            return
+        self.state["shelf"] = shelf
+        self.emit("shelf_select", shelf=shelf)
+
+    def desk_submit(self) -> None:
+        submitted = {"code": self.state["code"], "shelf": self.state["shelf"]}
+        self.state.update(submit_count=self.state["submit_count"] + 1, submitted=submitted)
+        self.status.set_text(f"Submitted: {submitted['code']} / {submitted['shelf']}")
+        self.emit("submit", **submitted)
+
     def irconsent(self) -> None:
         self.state.update(
             consent_shown=False, consent_answers=[], submit_count=0, submits_blocked=0
@@ -455,7 +528,15 @@ def main() -> None:
     parser.add_argument("--seed", type=int, required=True)
     parser.add_argument("--state", type=Path, required=True)
     parser.add_argument("--events", type=Path, required=True)
-    lab = Lab(parser.parse_args())
+    parser.add_argument("--instance", help="desk mode: the copy's label")
+    parser.add_argument(
+        "--frame", help="desk mode: outer frame X,Y,W,H (top-left screen coordinates)"
+    )
+    parser.add_argument("--no-activate", action="store_true", help="desk mode: show without focus")
+    args = parser.parse_args()
+    if args.mode == "desk" and not args.instance:
+        parser.error("--mode desk needs --instance")
+    lab = Lab(args)
     try:
         Gtk.main()
     finally:

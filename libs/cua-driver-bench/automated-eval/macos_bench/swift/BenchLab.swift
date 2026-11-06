@@ -7,7 +7,7 @@
 // parameters are derived from --seed with splitmix64 (see README.md) and recomputed
 // by the evaluators.
 //
-// Usage: BenchLab --mode forms|table|canvas|canvasclick|hover|clipboard --seed N --state PATH --events PATH
+// Usage: BenchLab --mode forms|table|canvas|canvasclick|hover|clipboard|desk --seed N --state PATH --events PATH
 
 import AppKit
 import Foundation
@@ -1439,6 +1439,12 @@ final class ClipboardController: NSObject, ModeController, NSTextFieldDelegate {
                 (c.overlay.subviews.compactMap { $0 as? NSButton }.first { $0.title == target })?
                     .performClick(nil)
                 c.hotEvent("mouseExited", NSPoint(x: 60, y: 60))
+            case "desk":
+                let c = controller as! DeskController
+                c.codeField.stringValue = "AB-1234"
+                c.syncCode()
+                c.radios.first { $0.title == "Coral" }?.performClick(nil)
+                c.submit(nil)
             default:
                 let c = controller as! ClipboardController
                 let p = ClipboardParams(seed: opts.seed)
@@ -1460,6 +1466,9 @@ struct Options {
     var dump = false
     /// Table mode: expose every row to accessibility clients (stock AppKit) instead of the viewport.
     var axAllRows = false
+    /// Desk mode: the copy's label, and the outer frame in top-left screen coordinates.
+    var instance = ""
+    var frame: [Double]?
 
     static func parse(_ args: [String]) -> Options? {
         var o = Options()
@@ -1476,6 +1485,14 @@ struct Options {
             case "--state": if let n = next { o.statePath = n; i += 1 }
             case "--events": if let n = next { o.eventsPath = n; i += 1 }
             case "--dump-params": o.dump = true
+            case "--instance": if let n = next { o.instance = n; i += 1 }
+            case "--frame":
+                if let n = next {
+                    let v = n.split(separator: ",").compactMap { Double($0) }
+                    if v.count == 4 { o.frame = v }
+                    i += 1
+                }
+            case "--no-activate": break  // BenchLab never activates itself
             case "--ax-rows": if let n = next { o.axAllRows = n == "all"; i += 1 }
             default: break
             }
@@ -1514,6 +1531,7 @@ final class LabDelegate: NSObject, NSApplicationDelegate {
         case "irbanner": controller = IRBannerController(rec: rec, seed: opts.seed)
         case "irunsaved": controller = IRUnsavedController(rec: rec, seed: opts.seed)
         case "irconsent": controller = IRConsentController(rec: rec, seed: opts.seed)
+        case "desk": controller = DeskController(rec: rec, instance: opts.instance)
         default: controller = ClipboardController(rec: rec)
         }
 
@@ -1521,16 +1539,19 @@ final class LabDelegate: NSObject, NSApplicationDelegate {
         window = NSWindow(
             contentRect: content.frame, styleMask: [.titled, .closable, .miniaturizable],
             backing: .buffered, defer: false)
-        window.title = "BenchLab"
+        window.title = opts.mode == "desk" ? "BenchLab Desk \(opts.instance)" : "BenchLab"
         window.isReleasedWhenClosed = false
         window.contentView = content
-        // Outer frame 760x560 with its top-left at (60, 80) on the primary screen.
+        // Outer frame 760x560 with its top-left at (60, 80) on the primary screen (desk: --frame).
         let screenH = (NSScreen.screens.first ?? NSScreen.main)?.frame.height ?? 900
-        window.setFrame(NSRect(x: 60, y: screenH - 80 - 560, width: 760, height: 560), display: false)
+        let f = opts.mode == "desk" ? (opts.frame ?? [200, 200, 360, 400]) : [60, 80, 760, 560]
+        window.setFrame(NSRect(x: f[0], y: screenH - f[1] - f[3], width: f[2], height: f[3]), display: false)
         controller.build(in: content, window: window)
         rec.stateProvider = { [weak self] in self?.controller.state() ?? [:] }
         window.makeKeyAndOrderFront(nil)
-        rec.emit("app_start", ["mode": opts.mode, "seed": opts.seed])
+        var start: [String: Any] = ["mode": opts.mode, "seed": opts.seed]
+        if opts.mode == "desk" { start["instance"] = opts.instance }
+        rec.emit("app_start", start)
         #if BENCHLAB_SELFTEST
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
                 self?.runSelfTest()
@@ -1550,7 +1571,7 @@ enum BenchLabMain {
         let valid = [
             "forms", "table", "canvas", "canvasclick", "hover", "clipboard",
             "canvasmenu", "tablesel", "richtext", "settings", "listdrag", "tooltip",
-            "irmodal", "irbanner", "irunsaved", "irconsent",
+            "irmodal", "irbanner", "irunsaved", "irconsent", "desk",
         ]
         guard let opts = Options.parse(CommandLine.arguments) else {
             FileHandle.standardError.write(Data("BenchLab: bad --seed\n".utf8))
@@ -1562,10 +1583,12 @@ enum BenchLabMain {
                 exit(0)
             }
         #endif
-        guard valid.contains(opts.mode), opts.statePath != nil, opts.eventsPath != nil else {
+        guard valid.contains(opts.mode), opts.statePath != nil, opts.eventsPath != nil,
+              opts.mode != "desk" || !opts.instance.isEmpty
+        else {
             FileHandle.standardError.write(
                 Data(
-                    "usage: BenchLab --mode forms|table|canvas|canvasclick|hover|clipboard|canvasmenu|tablesel|richtext|settings|listdrag|tooltip|irmodal|irbanner|irunsaved|irconsent --seed N --state PATH --events PATH\n"
+                    "usage: BenchLab --mode forms|table|canvas|canvasclick|hover|clipboard|canvasmenu|tablesel|richtext|settings|listdrag|tooltip|irmodal|irbanner|irunsaved|irconsent|desk --seed N --state PATH --events PATH [--instance L --frame X,Y,W,H --no-activate (desk)]\n"
                         .utf8))
             exit(2)
         }

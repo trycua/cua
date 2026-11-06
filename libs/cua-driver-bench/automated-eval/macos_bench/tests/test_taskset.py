@@ -29,7 +29,9 @@ TOOLS = HERE / "tools"
 class TaskSetTest(unittest.TestCase):
     def test_manifest_is_the_ten_public_core_tasks(self) -> None:
         manifest = v2.load_taskset()
-        self.assertEqual(tuple(e["id"] for e in manifest["tasks"]), v2.V2_TASKS)
+        self.assertEqual(
+            tuple(e["id"] for e in manifest["tasks"]), v2.V2_TASKS + v2.SHARED_DESKTOP_TASKS
+        )
         self.assertTrue(all(e["split"] == "public" for e in manifest["tasks"]))
         self.assertTrue(set(e["category"] for e in manifest["tasks"]) <= set(v2.CATEGORIES))
 

@@ -1,0 +1,25 @@
+{
+  "id": "UM-01",
+  "title": "Do a short form task in the background while the user keeps moving and clicking the mouse",
+  "group": "SD",
+  "category": "shared_desktop",
+  "ability": "mouse_user_coexistence",
+  "dimension_tags": [
+    "background",
+    "mouse_user",
+    "form_fill"
+  ],
+  "timeout_s": 360,
+  "max_turns": 45,
+  "app_args": [
+    "--mode",
+    "desk"
+  ],
+  "desk": "um",
+  "mouse_user": true,
+  "conditions": [
+    "background"
+  ],
+  "separate_run": true,
+  "coverage_caveat": "The user's pointer motion is synthetic (a seeded script). On Linux X11 and Hyprland the sentinel cannot tag its own input, so displacement is measured from the trajectory only. See SHARED-DESKTOP.md."
+}

@@ -168,6 +168,272 @@ class LinuxPreflightCaptureTest(unittest.TestCase):
         self.assertFalse(_benchlab_running())
 
 
+def _has_gtk_and_atspi() -> bool:
+    try:
+        import gi
+
+        gi.require_version("Gtk", "3.0")
+        gi.require_version("Atspi", "2.0")
+        from gi.repository import Atspi, Gtk  # noqa: F401
+    except (ImportError, ValueError):
+        return False
+    return True
+
+
+@unittest.skipUnless(
+    _x11_ready() and _has_gtk_and_atspi(), "headless X11 session with GTK required"
+)
+class LinuxSharedDesktopTest(unittest.TestCase):
+    """BenchLab's `desk` mode and the sentinel's mouse user (PA-01, UM-01) on a real X11 desktop."""
+
+    SEED = 7
+
+    def setUp(self) -> None:
+        self.tmp = Path(tempfile.mkdtemp(prefix="cdb-desk-"))
+        self.procs: list[subprocess.Popen] = []
+        for path in (BENCH / "probes" / "_common", BENCH / "swift"):
+            if str(path) not in sys.path:
+                sys.path.insert(0, str(path))
+
+    def tearDown(self) -> None:
+        for proc in self.procs:
+            if proc.poll() is None:
+                proc.terminate()
+        for proc in self.procs:
+            with contextlib.suppress(subprocess.TimeoutExpired):
+                proc.wait(timeout=10)
+            if proc.poll() is None:
+                proc.kill()
+        import shutil
+
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    # --- helpers
+    def spawn(self, script: str, *argv: str, name: str) -> subprocess.Popen:
+        proc = subprocess.Popen(
+            [sys.executable, str(BENCH / "linux" / script), *argv],
+            stdout=(self.tmp / f"{name}.log").open("w"),
+            stderr=subprocess.STDOUT,
+        )
+        self.procs.append(proc)
+        return proc
+
+    def wait_for(self, predicate, limit: float = 20.0, what: str = "condition") -> None:
+        end = time.monotonic() + limit
+        while time.monotonic() < end:
+            if predicate():
+                return
+            time.sleep(0.1)
+        self.fail(f"timed out waiting for {what}")
+
+    def window_ids(self, title: str) -> list[str]:
+        found = subprocess.run(
+            ["xdotool", "search", "--name", f"^{title}$"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        return found.stdout.split()
+
+    def geometry(self, title: str) -> dict[str, int]:
+        window = self.window_ids(title)[0]
+        out = subprocess.run(
+            ["xdotool", "getwindowgeometry", "--shell", window],
+            capture_output=True, text=True, timeout=10, check=True,
+        ).stdout  # fmt: skip
+        return {k: int(v) for k, v in (line.split("=") for line in out.split())}
+
+    def start_desk(
+        self, label: str, frame: str | None = None, name: str = "desk"
+    ) -> tuple[Path, Path]:
+        state, events = self.tmp / f"{name}-state.json", self.tmp / f"{name}-events.jsonl"
+        argv = ["--mode", "desk", "--seed", str(self.SEED), "--state", str(state),
+                "--events", str(events), "--instance", label]  # fmt: skip
+        if frame:
+            argv += ["--frame", frame]
+        self.spawn("benchlab.py", *argv, name=name)
+        self.wait_for(lambda: state.exists(), what="BenchLab desk state")
+        self.wait_for(lambda: self.window_ids(f"BenchLab Desk {label}"), what="the desk window")
+        time.sleep(0.5)
+        return state, events
+
+    def evaluate_desk(self, cell: dict, others: list[dict], state: Path, events: Path) -> dict:
+        import benchlab_common as C
+
+        loaded = C.load_state(state)
+        evs, bad = C.load_events(events)
+
+        def check(seed, st, ev, checks):
+            C.check_desk(cell, others, st, ev, checks)
+
+        return C.evaluate_inputs("desk", self.SEED, loaded, evs, bad, check)
+
+    def control(self, name: str, role: str, window: str):
+        """Screen centre of the accessible control `name` of `role` inside the window titled `window`."""
+        import gi
+
+        gi.require_version("Atspi", "2.0")
+        from gi.repository import Atspi
+
+        roles = {"button", "push button"} if role == "button" else {role}
+
+        def walk(node, inside):
+            inside = inside or node.get_name() == window
+            if inside and node.get_name() == name and node.get_role_name() in roles:
+                return node
+            for i in range(node.get_child_count()):
+                child = node.get_child_at_index(i)
+                found = walk(child, inside) if child is not None else None
+                if found is not None:
+                    return found
+            return None
+
+        end = time.monotonic() + 10
+        while time.monotonic() < end:
+            node = walk(Atspi.get_desktop(0), False)
+            if node is not None:
+                box = node.get_component_iface().get_extents(Atspi.CoordType.SCREEN)
+                if box.width > 0 and box.height > 0:
+                    return box.x + box.width // 2, box.y + box.height // 2
+            time.sleep(0.1)
+        self.fail(f"accessible control not found: {name} / {role} in {window}")
+
+    def xdo(self, *argv: object) -> None:
+        subprocess.run(["xdotool", *map(str, argv)], check=True, timeout=10)
+        time.sleep(0.15)
+
+    def drive(self, label: str, code: str, shelf: str | None) -> None:
+        title = f"BenchLab Desk {label}"
+        x, y = self.control("Code", "text", title)
+        self.xdo("mousemove", x, y, "click", 1)
+        self.xdo("key", "ctrl+a")
+        self.xdo("type", "--clearmodifiers", code)
+        if shelf:
+            x, y = self.control(shelf, "radio button", title)
+            self.xdo("mousemove", x, y, "click", 1)
+        x, y = self.control("Submit", "button", title)
+        self.xdo("mousemove", x, y, "click", 1)
+
+    # --- BenchLab desk
+    def test_desk_title_frame_and_a_scripted_solve(self) -> None:
+        import benchlab_common as C
+
+        cell = C.derive_um_desk(self.SEED)
+        state, events = self.start_desk(cell["label"], ",".join(map(str, cell["frame"])))
+        geometry = self.geometry(f"BenchLab Desk {cell['label']}")
+        x, y, w, h = cell["frame"]
+        self.assertEqual((geometry["WIDTH"], geometry["HEIGHT"]), (w, h))
+        self.assertLessEqual(abs(geometry["X"] - x), 40)
+        self.assertLessEqual(abs(geometry["Y"] - y), 60)
+        start = json.loads(state.read_text())
+        self.assertEqual(
+            (
+                start["mode"],
+                start["instance"],
+                start["code"],
+                start["shelf"],
+                start["submit_count"],
+            ),
+            ("desk", cell["label"], "", None, 0),
+        )
+        self.assertIsNone(start["submitted"])
+        noop = self.evaluate_desk(cell, [], state, events)
+        self.assertFalse(noop["passed"])
+        self.assertFalse(noop["checks"]["code_correct"]["passed"])
+        self.assertFalse(noop["checks"]["submitted_once"]["passed"])
+
+        self.drive(cell["label"], cell["code"], cell["shelf"])
+        result = self.evaluate_desk(cell, [], state, events)
+        self.assertTrue(result["passed"], result["checks"])
+        done = json.loads(state.read_text())
+        self.assertEqual(done["submitted"], {"code": cell["code"], "shelf": cell["shelf"]})
+        self.assertEqual(done["submit_count"], 1)
+
+    def test_enter_does_not_submit_and_a_foreign_code_is_caught(self) -> None:
+        import benchlab_common as C
+
+        cells = C.derive_parallel(self.SEED, 2)["cells"]
+        mine, other = cells
+        state, events = self.start_desk(mine["label"], ",".join(map(str, mine["frame"])))
+        title = f"BenchLab Desk {mine['label']}"
+        x, y = self.control("Code", "text", title)
+        self.xdo("mousemove", x, y, "click", 1)
+        self.xdo(
+            "type", "--clearmodifiers", other["code"]
+        )  # another agent's code lands in this desk
+        self.xdo("key", "Return")
+        self.assertEqual(json.loads(state.read_text())["submit_count"], 0)
+        x, y = self.control("Submit", "button", title)
+        self.xdo("mousemove", x, y, "click", 1)
+        result = self.evaluate_desk(mine, [other], state, events)
+        self.assertFalse(result["passed"])
+        self.assertFalse(result["checks"]["no_foreign_input"]["passed"])
+
+    # --- the mouse user
+    def run_mouse_user(self, seconds: float, during=None, cover: bool = False) -> dict:
+        import benchlab_common as C
+        import summarize_sentinel
+
+        script = self.tmp / f"mouse-user-{len(self.procs)}.json"
+        C.write_mouse_script(self.SEED, script)
+        log = script.with_suffix(".jsonl")
+        sentinel = self.spawn(
+            "sentinel.py", "--log", str(log), "--mouse-user", str(script), "--frame", "420,340,900,520",
+            name=log.stem,
+        )  # fmt: skip
+        self.wait_for(lambda: log.exists() and '"ready"' in log.read_text(), what="the sentinel")
+        self.wait_for(lambda: self.window_ids("User activity"), what="the user window")
+        time.sleep(1.0)
+        if cover:
+            code = (
+                "import gi; gi.require_version('Gtk','3.0'); from gi.repository import Gtk\n"
+                "w = Gtk.Window(title='Cover'); w.set_default_size(1100, 700); w.move(380, 300)\n"
+                "w.set_keep_above(True); w.connect('destroy', Gtk.main_quit); w.show_all(); Gtk.main()\n"
+            )
+            self.procs.append(subprocess.Popen([sys.executable, "-c", code]))
+            self.wait_for(lambda: self.window_ids("Cover"), what="the covering window")
+            time.sleep(0.5)
+        os.kill(sentinel.pid, signal.SIGUSR2)  # arm
+        started = time.monotonic()
+        if during:
+            during(started)
+        time.sleep(max(0.0, seconds - (time.monotonic() - started)))
+        os.kill(sentinel.pid, signal.SIGUSR2)  # disarm
+        time.sleep(0.5)
+        lines = [json.loads(ln) for ln in log.read_text().splitlines() if ln.strip()]
+        self.assertFalse([ln for ln in lines if ln.get("ev") == "mu_error"], lines[-5:])
+        start = next(ln for ln in lines if ln.get("ev") == "mu_start")
+        self.assertEqual((start["platform"], start["tagging"]), ("linux-x11", False))
+        self.assertTrue(any(ln.get("ev") == "mu_stop" for ln in lines))
+        summary = summarize_sentinel.summarize(str(log))
+        self.assertIsNotNone(summary["mouse_user"])
+        return summary
+
+    def test_mouse_user_clicks_land_and_the_pointer_follows_the_script(self) -> None:
+        mu = self.run_mouse_user(7.0)["mouse_user"]
+        self.assertGreaterEqual(mu["clicks"], 2, mu)
+        self.assertEqual(mu["clicks_landed"], mu["clicks"], mu)
+        self.assertLessEqual(mu["max_displacement_px"], 3, mu)
+        self.assertGreater(mu["checks"], 30, mu)
+        self.assertIsNone(mu["foreign_pointer_events"])  # nothing is tagged on X11
+
+    def test_a_pointer_warp_shows_as_displacement(self) -> None:
+        def warp(started: float) -> None:
+            for _ in range(3):
+                time.sleep(0.9)
+                subprocess.run(["xdotool", "mousemove", "5", "5"], check=True, timeout=10)
+
+        mu = self.run_mouse_user(7.0, during=warp)["mouse_user"]
+        self.assertGreater(mu["max_displacement_px"], 3, mu)
+        self.assertGreaterEqual(mu["displaced_checks"], 1, mu)
+
+    def test_clicks_into_a_covered_canvas_are_lost(self) -> None:
+        mu = self.run_mouse_user(7.0, cover=True)["mouse_user"]
+        self.assertGreaterEqual(mu["clicks"], 2, mu)
+        self.assertEqual(mu["clicks_landed"], 0, mu)
+        self.assertGreaterEqual(mu["clicks_lost"], 1, mu)
+
+
 class LinuxCaptureSubjectOffLinuxTest(unittest.TestCase):
     def test_not_used_on_macos(self) -> None:
         with (

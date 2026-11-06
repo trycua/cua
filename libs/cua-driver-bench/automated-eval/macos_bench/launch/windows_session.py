@@ -37,11 +37,13 @@ sys.path.insert(0, str(BENCH / "swift"))
 sys.path.insert(0, str(BENCH.parents[1] / "fairness"))
 import bench_v2 as v2  # noqa: E402
 import cdb_fairness  # noqa: E402
+import shared_desktop  # noqa: E402
 import summarize_sentinel  # noqa: E402
 
 LAB_TASKS = ("MB-09", "MB-10", "MB-11", "IR-01", "IR-02", "IR-03", "IR-04")
 CDB_TASKS = ("CDB-G02", "CDB-G03", "CDB-G04")
-TASKS = CDB_TASKS + LAB_TASKS
+SHARED_DESKTOP_TASKS = ("PA-01", "UM-01")
+TASKS = CDB_TASKS + LAB_TASKS + SHARED_DESKTOP_TASKS
 LAB_FRAME = (40, 40, 760, 540)
 WITNESS_FRAME = (1000, 640, 600, 320)
 PLATFORM_WORDS = ("on your Mac", "on this Windows PC")
@@ -97,7 +99,384 @@ def sentinel_lines(log: Path) -> list[dict]:
     return out
 
 
+def fill(command: list[str], subs: dict[str, str]) -> list[str]:
+    """The agent command with {brief}, {out}, {seed}, {mode} (and, for PA-01, {instance}, {title}) filled in."""
+    argv = []
+    for a in command:
+        for key, value in subs.items():
+            a = a.replace(key, value)
+        argv.append(a)
+    return argv
+
+
+def benchlab_argv(
+    seed: int, mode: str, state: Path, events: Path, frame: tuple, *, background: bool
+) -> list[str]:
+    """BenchLab's command line for one of the original modes."""
+    return [str(named_python("BenchLab")), str(BENCH / "windows" / "benchlab.py"), "--mode", mode,
+            "--seed", str(seed), "--state", str(state), "--events", str(events),
+            "--frame", ",".join(map(str, frame)), *(["--no-activate"] if background else [])]  # fmt: skip
+
+
+def desk_argv(app_args: list[str], *, background: bool) -> list[str]:
+    """BenchLab's command line for a desk (PA-01 copy, UM-01 desk): app_args are `--seed .. --state ..
+    --events .. --instance L --frame x,y,w,h` (shared_desktop.pa_agents, um_app_args)."""
+    return [str(named_python("BenchLab")), str(BENCH / "windows" / "benchlab.py"), "--mode", "desk",
+            *app_args, *(["--no-activate"] if background else [])]  # fmt: skip
+
+
+def um_desk_args(seed: int, state: Path, events: Path) -> list[str]:
+    return ["--seed", str(seed), "--state", str(state), "--events", str(events),
+            *shared_desktop.um_app_args(seed)]  # fmt: skip
+
+
+def sentinel_argv(
+    log: Path, control: Path, frame: tuple, *, user_activity: bool, mouse_script: Path | None = None
+) -> list[str]:
+    argv = [str(named_python("BenchSentinel")), str(BENCH / "windows" / "sentinel.py"),
+            "--log", str(log), "--control", str(control), "--frame", ",".join(map(str, frame))]  # fmt: skip
+    if mouse_script is not None:
+        argv += ["--mouse-user", str(mouse_script)]
+    elif user_activity:
+        argv.append("--user-activity")
+    return argv
+
+
+def pa_plan(seed: int, instances: int, out: Path) -> list[dict]:
+    """The copies of a PA-01 trial (cell order): label, title, frame, brief, directory, state, events, app_args."""
+    return shared_desktop.pa_agents(seed, instances, out, PLATFORM_WORDS)
+
+
+def agent_env(brief: Path, **extra: str) -> dict[str, str]:
+    return {**os.environ, "CDB_BRIEF_FILE": str(brief), **extra}
+
+
+def scan_transcript(path: Path) -> tuple[list[str], list[str]]:
+    import guard as G
+
+    stream = []
+    if path.exists():
+        for raw in path.read_text(encoding="utf-8", errors="replace").splitlines():
+            try:
+                stream.append(json.loads(raw))
+            except json.JSONDecodeError:
+                pass
+    return G.scan_events(stream)
+
+
+def watch_agents(
+    agents: list[subprocess.Popen], args: argparse.Namespace, enforce: bool
+) -> tuple[list[dict], bool, list[float], object]:
+    """The GUI-only guard over every agent of a trial: any violation kills all of them (when enforcing), the
+    time limit kills all. Returns (violations, timed_out, per-agent wall seconds, the front-window watch)."""
+    import guard as G
+    import winenv as W
+
+    baseline = {pid for pid, _, _ in W.processes()}
+    t0 = time.monotonic()
+    own_tree: set[int] = set()
+    session = W.session_of(os.getpid())
+    front = G.FrontWatch()
+    violations: list[dict] = []
+    timed_out = False
+    ended: dict[int, float] = {}
+    while any(a.poll() is None for a in agents):
+        for i, a in enumerate(agents):
+            if a.poll() is not None:
+                ended.setdefault(i, time.monotonic() - t0)
+        rows = W.processes()
+        for a in agents:
+            own_tree |= G.descendants(rows, a.pid)
+        own_tree |= G.descendants(rows, os.getpid())
+        here = [r for r in rows if W.session_of(r[0]) == session]
+        for pid, label in G.new_side_doors(here, baseline, os.getpid(), own_tree):
+            violations.append(
+                {
+                    "t_s": round(time.monotonic() - t0, 1),
+                    "kind": "process",
+                    "detail": label,
+                    "pid": pid,
+                }
+            )
+            kill_tree(pid)
+        hwnd = W.user32.GetForegroundWindow()
+        hit = front.sample(W.process_path(W.window_pid(hwnd)) if hwnd else "")
+        if hit:
+            violations.append(
+                {"t_s": round(time.monotonic() - t0, 1), "kind": "front", "detail": hit}
+            )
+        if violations and enforce:
+            for a in agents:
+                kill_tree(a.pid)
+            break
+        if time.monotonic() - t0 > args.timeout:
+            timed_out = True
+            for a in agents:
+                kill_tree(a.pid)
+            break
+        time.sleep(0.5)
+    for a in agents:
+        a.wait(timeout=30)
+    end = time.monotonic() - t0
+    walls = [round(ended.get(i, end), 1) for i in range(len(agents))]
+    return violations, timed_out, walls, front
+
+
+def arm(control: Path, log: Path) -> None:
+    with control.open("a", encoding="utf-8") as c:
+        c.write("arm\n")
+    wait_for(lambda: any(ln.get("ev") == "armed" for ln in sentinel_lines(log)), 5)
+
+
+def disarm(control: Path, log: Path) -> None:
+    with control.open("a", encoding="utf-8") as c:
+        c.write("disarm\n")
+    wait_for(lambda: any(ln.get("ev") == "disarmed" for ln in sentinel_lines(log)), 5)
+    time.sleep(0.3)
+
+
+def run_parallel(args: argparse.Namespace, command: list[str]) -> dict:
+    """PA-01: N copies of BenchLab (desk), one agent each, started at the same moment."""
+    import winenv as W
+
+    out: Path = args.out.resolve()
+    out.mkdir(parents=True, exist_ok=True)
+    spec = task_spec(args.task)
+    n = shared_desktop.instances_for(spec, args.instances)
+    seed = cdb_fairness.trial_seed(args.task, args.run_index)
+    background = args.condition == "background"
+    plan = pa_plan(seed, n, out)
+    row: dict = {
+        "task": args.task, "run_index": args.run_index, "seed": seed, "condition": args.condition,
+        "mode": "desk", "platform": "windows", "label": args.label, "started": time.time(),
+        "instances": n,
+    }  # fmt: skip
+    log, control = out / "sentinel.jsonl", out / "sentinel.control"
+    for stale in (log, control, out / shared_desktop.PARALLEL_META):
+        stale.unlink(missing_ok=True)
+    control.write_text("", encoding="utf-8")
+    procs: list[subprocess.Popen] = []
+    try:
+        for entry in plan:
+            entry["dir"].mkdir(parents=True, exist_ok=True)
+            for stale in (entry["state"], entry["events"]):
+                stale.unlink(missing_ok=True)
+            entry["brief_path"] = entry["dir"] / "brief.md"
+            entry["brief_path"].write_text(
+                v2.brief_for(entry["brief"], args.condition), encoding="utf-8"
+            )
+            procs.append(subprocess.Popen(desk_argv(entry["app_args"], background=background)))
+        if not all(wait_for(entry["state"].exists, 30) for entry in plan):
+            row["harness_error"] = "BenchLab did not start"
+            return row
+        if background:
+            procs.append(
+                subprocess.Popen(
+                    sentinel_argv(log, control, v2.USER_WINDOW_FRAME, user_activity=True)
+                )
+            )
+        else:
+            procs.append(
+                subprocess.Popen(
+                    sentinel_argv(
+                        log, control, shared_desktop.PA_WITNESS_FRAME, user_activity=False
+                    )
+                )
+            )
+        if not wait_for(lambda: any(ln.get("ev") == "ready" for ln in sentinel_lines(log)), 30):
+            row["harness_error"] = "sentinel did not start"
+            return row
+        own = next(ln["hwnd"] for ln in sentinel_lines(log) if ln.get("ev") == "ready")
+        with control.open("a", encoding="utf-8") as c:
+            c.write("activate\n")
+        front_ok = wait_for(lambda: W.user32.GetForegroundWindow() == own, 10)
+        row["sentinel_front_at_start"] = front_ok
+        time.sleep(1.0)
+        arm(control, log)
+
+        t0_ms = time.time() * 1000
+        shared_desktop.write_meta(out, n, t0_ms, args.timeout)
+        agents = []
+        for entry in plan:
+            subs = {
+                "{brief}": str(entry["brief_path"]), "{out}": str(entry["dir"]), "{seed}": str(seed),
+                "{mode}": "desk", "{instance}": entry["label"], "{title}": entry["title"],
+            }  # fmt: skip
+            agents.append(
+                subprocess.Popen(
+                    fill(command, subs), cwd=str(entry["dir"]),
+                    env=agent_env(entry["brief_path"], CDB_INSTANCE=entry["label"]),
+                )
+            )  # fmt: skip
+        procs.extend(agents)
+        violations, timed_out, walls, front = watch_agents(agents, args, args.enforce)
+        row["timed_out"] = timed_out
+        row["agent_wall_s"] = max(walls, default=0.0)
+        disarm(control, log)
+
+        result = out / "result.json"
+        subprocess.run(shared_desktop.evaluate_argv(sys.executable, seed, out, result),
+                       capture_output=True, timeout=120)  # fmt: skip
+        evaluation = json.loads(result.read_text(encoding="utf-8")) if result.exists() else {}
+        soft: list[str] = []
+        for entry in plan:
+            hard, mentions = scan_transcript(entry["dir"] / "agent-transcript.jsonl")
+            violations += [
+                {"t_s": None, "kind": "tool_input", "detail": h, "agent": entry["label"]}
+                for h in hard
+            ]
+            soft += mentions
+        disturbance = summarize_sentinel.summarize(str(log))
+        armed = next((ln for ln in sentinel_lines(log) if ln.get("ev") == "armed"), {})
+        frontmost = (armed.get("front") or {}).get("bid") == "ai.cua.benchsentinel"
+        passed = bool(evaluation.get("passed")) and not violations
+        bg = v2.background_score(disturbance, frontmost)
+        row.update(
+            evaluation={k: evaluation.get(k) for k in ("passed", "score", "checks", "diagnostics")},
+            checker_passed=bool(evaluation.get("passed")),
+            gui_only={"violation": bool(violations), "violations": violations[:20],
+                      "mentions": soft, "frontmost_seen": sorted(front.seen)},
+            passed=passed,
+            disturbance=disturbance,
+            background=bg,
+            a15=v2.background_condition_score(bg, disturbance, passed, args.condition),
+            a22=v2.multiplayer_score(disturbance, bg["measured"], passed, args.condition),
+            parallel=shared_desktop.parallel_of(evaluation),
+            agents=shared_desktop.aggregate_agents(
+                [
+                    {"label": entry["label"], "wall_s": walls[i], "timed_out": timed_out,
+                     "returncode": agents[i].returncode}
+                    for i, entry in enumerate(plan)
+                ]
+            ),
+        )  # fmt: skip
+        if evaluation.get("harness_error"):
+            row["harness_error"] = evaluation["harness_error"]
+        return row
+    finally:
+        finish(row, procs, control, out)
+
+
+def run_mouse_user(args: argparse.Namespace, command: list[str]) -> dict:
+    """UM-01: one desk, and a sentinel whose user moves and clicks the real pointer (background only)."""
+    import winenv as W
+
+    out: Path = args.out.resolve()
+    out.mkdir(parents=True, exist_ok=True)
+    seed = cdb_fairness.trial_seed(args.task, args.run_index)
+    desk = shared_desktop.um_desk(seed)
+    script = out / "mouse-user.json"
+    shared_desktop.write_mouse_script(seed, script)
+    brief = v2.brief_for(
+        render_raw(args.task, seed).replace(*PLATFORM_WORDS), "background", mouse_user=True
+    )
+    (out / "brief.md").write_text(brief, encoding="utf-8")
+    row: dict = {
+        "task": args.task, "run_index": args.run_index, "seed": seed, "condition": "background",
+        "mode": "desk", "platform": "windows", "label": args.label, "started": time.time(),
+    }  # fmt: skip
+    state, events, log, control = (
+        out / "state.json", out / "events.jsonl", out / "sentinel.jsonl", out / "sentinel.control",
+    )  # fmt: skip
+    for stale in (state, events, log, control):
+        stale.unlink(missing_ok=True)
+    control.write_text("", encoding="utf-8")
+    procs: list[subprocess.Popen] = []
+    try:
+        procs.append(
+            subprocess.Popen(desk_argv(um_desk_args(seed, state, events), background=True))
+        )
+        if not wait_for(state.exists, 30):
+            row["harness_error"] = "BenchLab did not start"
+            return row
+        procs.append(subprocess.Popen(
+            sentinel_argv(log, control, v2.USER_WINDOW_FRAME, user_activity=False, mouse_script=script)
+        ))  # fmt: skip
+        if not wait_for(lambda: any(ln.get("ev") == "ready" for ln in sentinel_lines(log)), 30):
+            row["harness_error"] = "sentinel did not start"
+            return row
+        own = next(ln["hwnd"] for ln in sentinel_lines(log) if ln.get("ev") == "ready")
+        with control.open("a", encoding="utf-8") as c:
+            c.write("activate\n")
+        row["sentinel_front_at_start"] = wait_for(lambda: W.user32.GetForegroundWindow() == own, 10)
+        time.sleep(1.0)
+        arm(control, log)
+        subs = {"{brief}": str(out / "brief.md"), "{out}": str(out), "{seed}": str(seed),
+                "{mode}": "desk", "{instance}": desk["label"], "{title}": desk["title"]}  # fmt: skip
+        agent = subprocess.Popen(
+            fill(command, subs),
+            cwd=str(out),
+            env=agent_env(out / "brief.md", CDB_INSTANCE=desk["label"]),
+        )
+        procs.append(agent)
+        violations, timed_out, walls, front = watch_agents([agent], args, args.enforce)
+        row.update(agent_exit=agent.returncode, agent_wall_s=walls[0], timed_out=timed_out)
+        disarm(control, log)
+
+        result = out / "result.json"
+        disturbance = summarize_sentinel.summarize(str(log))
+        subprocess.run(
+            [sys.executable, str(BENCH / "probes" / args.task / "evaluate.py"), "--seed", str(seed),
+             "--state", str(state), "--events", str(events), "--sentinel", str(log),
+             "--result", str(result)],
+            capture_output=True, timeout=60,
+        )  # fmt: skip
+        evaluation = json.loads(result.read_text(encoding="utf-8")) if result.exists() else {}
+        hard, soft = scan_transcript(out / "agent-transcript.jsonl")
+        violations += [{"t_s": None, "kind": "tool_input", "detail": h} for h in hard]
+        armed = next((ln for ln in sentinel_lines(log) if ln.get("ev") == "armed"), {})
+        frontmost = (armed.get("front") or {}).get("bid") == "ai.cua.benchsentinel"
+        passed = bool(evaluation.get("passed")) and not violations
+        bg = v2.background_score(disturbance, frontmost)
+        row.update(
+            evaluation={k: evaluation.get(k) for k in ("passed", "score", "checks", "diagnostics")},
+            checker_passed=bool(evaluation.get("passed")),
+            gui_only={"violation": bool(violations), "violations": violations[:20],
+                      "mentions": soft, "frontmost_seen": sorted(front.seen)},
+            passed=passed,
+            disturbance=disturbance,
+            background=bg,
+            a15=v2.background_condition_score(bg, disturbance, passed, "background"),
+            a22=v2.multiplayer_score(disturbance, bg["measured"], passed, "background"),
+        )  # fmt: skip
+        problem = v2.mouse_user_problem(disturbance)
+        if problem is not None:
+            row["harness_error"] = problem
+        return row
+    finally:
+        finish(row, procs, control, out)
+
+
+def render_raw(task: str, seed: int) -> str:
+    spec = importlib.util.spec_from_file_location(
+        f"render_{task}", BENCH / "probes" / task / "render_brief.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.render(seed)
+
+
+def finish(row: dict, procs: list[subprocess.Popen], control: Path, out: Path) -> None:
+    """Quit the sentinel, stop whatever still runs, and write row.json."""
+    with control.open("a", encoding="utf-8") as c:
+        c.write("quit\n")
+    time.sleep(0.5)
+    for proc in procs:
+        if proc.poll() is None:
+            kill_tree(proc.pid)
+    row["finished"] = time.time()
+    (out / "row.json").write_text(json.dumps(row, indent=1), encoding="utf-8")
+
+
 def run(args: argparse.Namespace, command: list[str]) -> dict:
+    if args.task == "PA-01":
+        return run_parallel(args, command)
+    if args.task == "UM-01":
+        return run_mouse_user(args, command)
+    return run_single(args, command)
+
+
+def run_single(args: argparse.Namespace, command: list[str]) -> dict:
     import guard as G
     import winenv as W
 
@@ -306,9 +685,18 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--label", default="")
     parser.add_argument("--timeout", type=float, default=360.0)
+    parser.add_argument(
+        "--instances",
+        type=int,
+        help="PA-01: copies of BenchLab, one agent each (default: task.json)",
+    )
     parser.add_argument("--no-enforce", dest="enforce", action="store_false")
     args = parser.parse_args(argv[:split])
     command = argv[split + 1 :]
+    if args.task == "UM-01" and args.condition != "background":
+        parser.error("UM-01 runs in the background condition only")
+    if args.instances is not None and args.task != "PA-01":
+        parser.error("--instances applies to PA-01 only")
     if sys.platform != "win32":
         print("windows_session.py requires Windows", file=sys.stderr)
         return 2

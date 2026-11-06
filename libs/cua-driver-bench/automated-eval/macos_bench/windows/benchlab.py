@@ -16,6 +16,8 @@ Windows-specific behaviour, kept close to the Linux port:
   sends no notification, and the state file must still follow the control.
 * MB-09: rows reorder by a native list drag (LVN_BEGINDRAG, then the button release over a row).
 * MB-11: a tooltip counts as shown when BenchLab's own tooltip window is visible (polled every 100 ms).
+* desk (PA-01, UM-01): a Code field, twelve Shelf radio buttons (none selected at start) and a Submit button
+  in a 360 x 400 window titled "BenchLab Desk L" (SHARED-DESKTOP.md). It derives nothing from the seed.
 """
 
 from __future__ import annotations
@@ -34,7 +36,7 @@ import wx
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "probes" / "_common"))
 import benchlab_common as C  # noqa: E402
 
-MODES = ("listdrag", "hover", "tooltip", "irmodal", "irbanner", "irunsaved", "irconsent")
+MODES = ("listdrag", "hover", "tooltip", "irmodal", "irbanner", "irunsaved", "irconsent", "desk")
 ROW_HEIGHT = 40
 
 user32 = ctypes.WinDLL("user32", use_last_error=True)
@@ -80,14 +82,17 @@ class Lab:
     def __init__(self, args: argparse.Namespace) -> None:
         self.args = args
         self.state = {"mode": args.mode, "seed": args.seed, "seq": 0}
-        self.params = getattr(C, "derive_" + args.mode)(args.seed)
+        self.params = {} if args.mode == "desk" else getattr(C, "derive_" + args.mode)(args.seed)
         self.fields: dict[str, wx.Window] = {}
         self.last_values: dict = {}
         self.loading = False
         self.dialog_open: wx.Dialog | None = None
         args.events.parent.mkdir(parents=True, exist_ok=True)
         self.events = args.events.open("w", buffering=1, encoding="utf-8")
-        self.frame = wx.Frame(None, title=f"BenchLab — {args.mode}", size=(760, 540))
+        title = C.desk_title(args.instance) if args.mode == "desk" else f"BenchLab — {args.mode}"
+        self.frame = wx.Frame(
+            None, title=title, size=C.DESK_SIZE if args.mode == "desk" else (760, 540)
+        )
         self.frame.SetName("BenchLab")
         if args.frame:
             x, y, w, h = map(int, args.frame.split(","))
@@ -96,7 +101,7 @@ class Lab:
         self.panel = wx.Panel(self.frame)
         self.box = wx.BoxSizer(wx.VERTICAL)
         outer = wx.BoxSizer(wx.VERTICAL)
-        outer.Add(self.box, 1, wx.EXPAND | wx.ALL, 24)
+        outer.Add(self.box, 1, wx.EXPAND | wx.ALL, 16 if args.mode == "desk" else 24)
         self.panel.SetSizer(outer)
         self.hidden: list[wx.Window] = []
         getattr(self, args.mode)()
@@ -112,7 +117,12 @@ class Lab:
         self.poll = wx.Timer(self.frame)
         self.frame.Bind(wx.EVT_TIMER, lambda _: self.poll_values(), self.poll)
         self.poll.Start(250)
-        self.emit("app_start", mode=args.mode, seed=args.seed)
+        if args.mode == "desk":
+            self.code.SetFocus()  # a focused radio button would select itself (Windows auto-check)
+            self.clear_shelves()
+            self.emit("app_start", mode=args.mode, seed=args.seed, instance=args.instance)
+        else:
+            self.emit("app_start", mode=args.mode, seed=args.seed)
 
     # ------------------------------------------------------------------ plumbing
 
@@ -168,6 +178,8 @@ class Lab:
         return out
 
     def poll_values(self) -> None:
+        if self.args.mode == "desk":
+            self.poll_shelf()  # UI Automation can select a radio button without a notification
         if self.loading or not self.fields:
             return
         now = self.values()
@@ -182,7 +194,10 @@ class Lab:
         if values.get(name) == self.last_values.get(name):
             return  # the poll and the control's own notification report one change once
         self.last_values = values
-        self.state["fields"] = values
+        if self.args.mode == "desk":
+            self.state["code"] = values["code"]
+        else:
+            self.state["fields"] = values
         if self.args.mode == "irunsaved":
             self.state["dirty"] = True
         self.emit("field_edit", field=name, value=values[name])
@@ -609,6 +624,60 @@ class Lab:
         self.state["submit_count"] += 1
         self.emit("submit", **self.values())
 
+    # ------------------------------------------------------------------ PA-01 / UM-01 desk
+
+    def desk(self) -> None:
+        self.state.update(
+            instance=self.args.instance, code="", shelf=None, submit_count=0, submitted=None
+        )
+        heading = wx.StaticText(self.panel, label=f"Desk {self.args.instance}", name="Desk")
+        heading.SetFont(heading.GetFont().Bold().Scaled(1.4))
+        self.box.Add(heading, 0, wx.BOTTOM, 8)
+        self.code = self.field("code")
+        self.label("Shelf")
+        grid = wx.GridSizer(len(C.DESK_SHELVES) // 3, 3, 2, 4)
+        self.shelves: list[wx.RadioButton] = []
+        for index, shelf in enumerate(C.DESK_SHELVES):
+            radio = wx.RadioButton(
+                self.panel, label=shelf, name=shelf, style=wx.RB_GROUP if index == 0 else 0
+            )
+            radio.Bind(wx.EVT_RADIOBUTTON, lambda e, s=shelf: self.shelf_select(s))
+            self.shelves.append(radio)
+            grid.Add(radio, 0, wx.ALIGN_CENTER_VERTICAL)
+        self.box.Add(grid, 0, wx.EXPAND | wx.BOTTOM, 8)
+        self.button("Submit", self.desk_submit)  # not the default button: Return does nothing
+        self.status = wx.StaticText(self.panel, label="Not submitted", name="Status")
+        self.box.Add(self.status, 0, wx.TOP, 4)
+
+    def clear_shelves(self) -> None:
+        """No shelf is selected at start: a radio group starts with its first button checked on Windows."""
+        for _ in range(3):
+            for radio in self.shelves:
+                radio.SetValue(False)
+            if not any(radio.GetValue() for radio in self.shelves):
+                return
+        raise RuntimeError("a shelf radio button stays selected at start")
+
+    def poll_shelf(self) -> None:
+        picked = next((r.GetLabel() for r in self.shelves if r.GetValue()), None)
+        if picked is not None and picked != self.state["shelf"]:
+            self.shelf_select(picked)
+
+    def shelf_select(self, shelf: str) -> None:
+        if self.state["shelf"] == shelf:
+            return  # the poll and the control's own notification report one change once
+        self.state["shelf"] = shelf
+        self.emit("shelf_select", shelf=shelf)
+
+    def desk_submit(self) -> None:
+        code, shelf = self.code.GetValue(), self.state["shelf"]
+        self.state.update(
+            code=code, submit_count=self.state["submit_count"] + 1,
+            submitted={"code": code, "shelf": shelf},
+        )  # fmt: skip
+        self.status.SetLabel(f"Submitted: {code} / {shelf or 'none'}")
+        self.emit("submit", code=code, shelf=shelf)
+
 
 def main() -> None:
     parser = argparse.ArgumentParser()
@@ -616,11 +685,16 @@ def main() -> None:
     parser.add_argument("--seed", type=int, required=True)
     parser.add_argument("--state", type=Path, required=True)
     parser.add_argument("--events", type=Path, required=True)
+    parser.add_argument(
+        "--instance", help="desk mode: the copy's label (the window is BenchLab Desk L)"
+    )
     parser.add_argument("--frame", help="x,y,width,height of the window")
     parser.add_argument(
         "--no-activate", action="store_true", help="show the window without activating it"
     )
     args = parser.parse_args()
+    if args.mode == "desk" and not args.instance:
+        parser.error("--instance is required in desk mode")
     ctypes.windll.shcore.SetProcessDpiAwareness(2)
     app = wx.App(False)
     app.SetAppName("BenchLab")

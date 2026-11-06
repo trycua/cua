@@ -15,7 +15,12 @@ dropped). For every arm, overall and per category:
   of steals, trials where the real pointer moved, windows raised, input that leaked into the
   witness; and the headline form "34/50 passed, 0 focus steals";
 * GUI-only (A14.2): violations, with each trial's evidence listed;
-* interruptions (A14.5, IR-* only): shown, exercised, handled and completed rates.
+* interruptions (A14.5, IR-* only): shown, exercised, handled and completed rates;
+* shared desktop (SHARED-DESKTOP.md): PA-01 per number of copies (all copies passed, copies passed, cross-talk,
+  makespan, throughput, speed-up against N = 1 paired by run index), UM-01 (checker pass, full pass, the mouse
+  user's displacement and clicks).
+
+Rows written by the Windows and Hyprland session launchers (`row.json`) are read with `--session-rows DIR`.
 """
 
 from __future__ import annotations
@@ -68,6 +73,35 @@ def load_rows(runs: list[Path], include_smoke: bool = False) -> list[dict[str, A
             if row.get("smoke") and not include_smoke:
                 continue
             rows.append(row)
+    return rows
+
+
+def load_session_rows(dirs: list[Path]) -> list[dict[str, Any]]:
+    """Rows of launch/windows_session.py and launch/hyprland_session.py (`row.json` under each DIR), mapped to
+    the run_bench row fields this report reads. Rows with a harness error are dropped (re-run, never scored)."""
+    rows: list[dict[str, Any]] = []
+    for d in dirs:
+        for path in sorted(d.rglob("row.json")):
+            row = json.loads(path.read_text("utf-8"))
+            if row.get("harness_error") or "passed" not in row:
+                continue
+            spec_path = HERE / "probes" / str(row.get("task")) / "task.json"
+            spec = json.loads(spec_path.read_text("utf-8")) if spec_path.is_file() else {}
+            evaluation = row.get("evaluation") or {}
+            rows.append(
+                {
+                    **row,
+                    "arm": row.get("label") or row.get("platform") or "session",
+                    "trial_id": str(path.parent.relative_to(d)),
+                    "category": spec.get("category"),
+                    "final": True,
+                    "bench_version": v2.BENCH_VERSION,
+                    "score": evaluation.get("score"),
+                    "multiplayer": row.get("a22"),
+                    "background_condition": row.get("a15"),
+                    "agent_wall_s": row.get("agent_wall_s"),
+                }
+            )
     return rows
 
 
@@ -191,6 +225,78 @@ def interruptions(rows: list[dict[str, Any]]) -> dict[str, Any]:
     return out
 
 
+def _n_of(row: dict[str, Any]) -> int:
+    return int(row.get("instances") or (row.get("parallel") or {}).get("instances") or 0)
+
+
+def shared_desktop(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """PA-01 per number of copies and UM-01 (SHARED-DESKTOP.md). Speed-up is throughput at N over throughput at
+    N = 1 for the same run index (same seed), averaged over the pairs that have both."""
+    pa = [r for r in rows if r.get("task") == "PA-01" and r.get("parallel")]
+    um = [r for r in rows if r.get("task") == "UM-01"]
+    if not pa and not um:
+        return None
+    out: dict[str, Any] = {"PA-01": {}, "UM-01": None}
+    base = {
+        r.get("run_index"): r["parallel"].get("throughput_per_min") for r in pa if _n_of(r) == 1
+    }
+    for n in sorted({_n_of(r) for r in pa}):
+        sub = [r for r in pa if _n_of(r) == n]
+        par = [r["parallel"] for r in sub]
+        ratios = [
+            p.get("throughput_per_min") / base[r.get("run_index")]
+            for r, p in zip(sub, par)
+            if base.get(r.get("run_index"))
+            and isinstance(p.get("throughput_per_min"), (int, float))
+        ]
+        out["PA-01"][str(n)] = {
+            "trials": len(sub),
+            "all_copies_passed": _rate(sum(1 for r in sub if r.get("passed")), len(sub)),
+            "copies_passed_mean": _mean([p.get("passed") for p in par]),
+            "trials_with_cross_talk": sum(1 for p in par if p.get("cross_talk")),
+            "cross_talk_copies": sum(int(p.get("cross_talk") or 0) for p in par),
+            "makespan_s_mean": _mean([p.get("makespan_s") for p in par]),
+            "throughput_per_min_mean": _mean([p.get("throughput_per_min") for p in par]),
+            "speedup_vs_1_mean": _mean(ratios) if n != 1 else 1.0,
+            "speedup_pairs": len(ratios) if n != 1 else None,
+            "full_pass_background": _rate(
+                sum(1 for r in sub if (_mp_of(r) or {}).get("background_completion")), len(sub)
+            )
+            if all(r.get("condition") == "background" for r in sub)
+            else None,
+        }
+    if um:
+        mus = [((r.get("disturbance") or {}).get("mouse_user") or {}) for r in um]
+        out["UM-01"] = {
+            "trials": len(um),
+            "checker_passed": _rate(sum(1 for r in um if r.get("passed")), len(um)),
+            "full_pass": _rate(
+                sum(1 for r in um if (_mp_of(r) or {}).get("background_completion")), len(um)
+            ),
+            "trials_pointer_displaced": sum(
+                1
+                for m in mus
+                if float(m.get("max_displacement_px") or 0) > float(m.get("tolerance_px") or 3)
+            ),
+            "max_displacement_px": max(
+                (float(m.get("max_displacement_px") or 0) for m in mus), default=None
+            ),
+            "trials_with_lost_clicks": sum(
+                1 for m in mus if int(m.get("clicks_landed") or 0) < int(m.get("clicks") or 0)
+            ),
+            "user_clicks": sum(int(m.get("clicks") or 0) for m in mus),
+            "user_clicks_not_landed": sum(
+                int(m.get("clicks") or 0) - int(m.get("clicks_landed") or 0) for m in mus
+            ),
+            "foreign_pointer_events": sum(int(m.get("foreign_pointer_events") or 0) for m in mus),
+            "tagging": sorted({str(m.get("tagging")) for m in mus}),
+            "agent_clicks_in_user_window": sum(
+                int((r.get("disturbance") or {}).get("clicks_leaked") or 0) for r in um
+            ),
+        }
+    return out
+
+
 def analyze(rows: list[dict[str, Any]]) -> dict[str, Any]:
     by_arm: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for r in rows:  # Amendment 15: one block per arm and condition
@@ -219,6 +325,7 @@ def analyze(rows: list[dict[str, Any]]) -> dict[str, Any]:
             "overall": summarize(arm_rows),
             "by_category": cats,
             "interruptions": interruptions(arm_rows),
+            "shared_desktop": shared_desktop(arm_rows),
             "violations": [
                 {"trial_id": r["trial_id"], "evidence": (r.get("gui_only") or {}).get("violations")}
                 for r in arm_rows
@@ -237,6 +344,10 @@ def headline(s: dict[str, Any]) -> str:
     if bc:  # A15.3: the background condition leads with background completion
         return f"{bc['k']}/{bc['n']} completed in the background, {s['success']['k']}/{s['trials']} passed, {b['focus_steals']} focus steals"
     return f"{s['success']['k']}/{s['trials']} passed, {b['focus_steals']} focus steals"
+
+
+def _frac(rate: dict[str, Any] | None) -> str:
+    return f"{rate['k']}/{rate['n']}" if rate else "n/a"
 
 
 def _fmt(x: Any) -> str:
@@ -341,6 +452,51 @@ def markdown(report: dict[str, Any]) -> str:
             + " | ".join(cells)
             + " |"
         )
+    if any(a.get("shared_desktop") for a in report["arms"].values()):
+        lines += [
+            "",
+            "## Shared desktop: parallel agents (PA-01)",
+            "",
+            "All copies passed = every copy's checks held (code, shelf, one Submit, no other copy's code letters, in "
+            "the budget). Speed-up = throughput at N over throughput at N = 1, same run index.",
+            "",
+            "| Setup | N | All copies passed | Copies passed (mean) | Trials with cross-talk | Makespan s | "
+            "Copies per minute | Speed-up vs N = 1 | Full pass (background) |",
+            "|---|---|---|---|---|---|---|---|---|",
+        ]
+        for a in report["arms"].values():
+            sdk = (a.get("shared_desktop") or {}).get("PA-01") or {}
+            for n, p in sdk.items():
+                c = p["all_copies_passed"]
+                fp = p.get("full_pass_background")
+                lines.append(
+                    f"| {a['label']} | {n} | {c['k']}/{c['n']} | {_fmt(p['copies_passed_mean'])} | "
+                    f"{p['trials_with_cross_talk']} | {_fmt(p['makespan_s_mean'])} | "
+                    f"{_fmt(p['throughput_per_min_mean'])} | {_fmt(p['speedup_vs_1_mean'])} | "
+                    f"{_frac(fp)} |"
+                )
+        lines += [
+            "",
+            "## Shared desktop: the user's mouse keeps working (UM-01)",
+            "",
+            "Full pass = checker passed, no GUI-only violation and the eight undisturbed criteria, with the pointer "
+            "compared against the user's own script and every user click on its dot.",
+            "",
+            "| Setup | Checker passed | Full pass | Trials pointer displaced | Max displacement px | "
+            "Trials with lost clicks | User clicks not landed | Foreign pointer events | Agent clicks in user window |",
+            "|---|---|---|---|---|---|---|---|---|",
+        ]
+        for a in report["arms"].values():
+            u = (a.get("shared_desktop") or {}).get("UM-01")
+            if not u:
+                continue
+            lines.append(
+                f"| {a['label']} | {u['checker_passed']['k']}/{u['checker_passed']['n']} | "
+                f"{u['full_pass']['k']}/{u['full_pass']['n']} | {u['trials_pointer_displaced']} | "
+                f"{_fmt(u['max_displacement_px'])} | {u['trials_with_lost_clicks']} | "
+                f"{u['user_clicks_not_landed']}/{u['user_clicks']} | {u['foreign_pointer_events']} | "
+                f"{u['agent_clicks_in_user_window']} |"
+            )
     viol = [(a["label"], v) for a in report["arms"].values() for v in a["violations"]]
     lines += ["", "## GUI-only violations", ""]
     lines += [f"- {label}: {v['trial_id']}: {v['evidence']}" for label, v in viol] or ["None."]
@@ -351,12 +507,21 @@ def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    p.add_argument("runs", nargs="+", type=Path)
+    p.add_argument("runs", nargs="*", type=Path)
+    p.add_argument(
+        "--session-rows",
+        nargs="+",
+        type=Path,
+        default=[],
+        help="directories of Windows or Hyprland session trials (each with a row.json)",
+    )
     p.add_argument("--include-smoke", action="store_true")
     p.add_argument("--json", type=Path, default=None)
     p.add_argument("--md", type=Path, default=None)
     args = p.parse_args(argv)
-    report = analyze(load_rows(args.runs, args.include_smoke))
+    report = analyze(
+        load_rows(args.runs, args.include_smoke) + load_session_rows(args.session_rows)
+    )
     text = markdown(report)
     if args.json:
         args.json.write_text(json.dumps(report, indent=2) + "\n", "utf-8")

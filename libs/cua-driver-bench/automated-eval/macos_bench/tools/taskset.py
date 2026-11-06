@@ -85,7 +85,7 @@ def render(manifest: dict) -> str:
         "| --- | --- | --- | --- | --- | --- |",
     ]
     for e in public:
-        conditions = "both" if len(e["conditions"]) == 2 else "foreground only"
+        conditions = "both" if len(e["conditions"]) == 2 else f"{e['conditions'][0]} only"
         lines.append(
             f"| {e['id']} | {e['category']} | {', '.join(e['apps'])} | "
             f"{os_label(e)} | {conditions} | {e['title']} |"

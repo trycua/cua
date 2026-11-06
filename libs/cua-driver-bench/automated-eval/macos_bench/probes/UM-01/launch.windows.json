@@ -1,0 +1,54 @@
+{
+  "platform": "windows",
+  "descriptor_version": "1",
+  "task_id": "UM-01",
+  "app": "windows/benchlab.py",
+  "app_args": [
+    "--mode",
+    "desk"
+  ],
+  "app_executable": "BenchLab.exe (a copy of pythonw.exe; see launch/windows_session.py)",
+  "sentinel": "windows/sentinel.py",
+  "launcher": [
+    "${python}",
+    "launch/windows_session.py",
+    "--task",
+    "UM-01",
+    "--run-index",
+    "${run_index}",
+    "--condition",
+    "${condition}",
+    "--out",
+    "${artifacts}",
+    "--",
+    "${agent_command}"
+  ],
+  "conditions": [
+    "background"
+  ],
+  "evaluate": [
+    "${python}",
+    "probes/UM-01/evaluate.py",
+    "--seed",
+    "${seed}",
+    "--state",
+    "${artifacts}/state.json",
+    "--events",
+    "${artifacts}/events.jsonl",
+    "--sentinel",
+    "${artifacts}/sentinel.jsonl",
+    "--result",
+    "${result}"
+  ],
+  "requires": [
+    "Python 3.12",
+    "wxPython 4.2 or later",
+    "an interactive desktop session (not session 0)",
+    "a screen of at least 1320 x 860 (the user window and its canvas)"
+  ],
+  "mouse_user": true,
+  "sentinel_args": [
+    "--mouse-user",
+    "${artifacts}/mouse-user.json"
+  ]
+}

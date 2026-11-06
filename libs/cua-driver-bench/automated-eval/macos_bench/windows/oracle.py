@@ -6,8 +6,11 @@
 Used only to validate the port (each task solvable, its checker passes); never a bench setup. It finds
 controls through UI Automation (pywinauto) and acts with real pointer and keyboard input in the foreground.
 
-Usage: oracle.py --mode MODE --seed N [--disturb]
+Usage: oracle.py --mode MODE --seed N [--disturb] [--instance L [--code TEXT] [--shelf NAME]]
 `--disturb` instead performs one deliberate disturbance of the user window (validates the sentinel).
+`--mode desk` does the PA-01 / UM-01 sub-task in the window "BenchLab Desk L" (`--instance`): types the cell's
+code, selects its shelf and presses Submit. `--code` and `--shelf` override what to type and select (to
+rehearse a wrong or crossed-over agent).
 """
 
 from __future__ import annotations
@@ -23,8 +26,8 @@ import benchlab_common as C  # noqa: E402
 from pywinauto import Desktop, keyboard, mouse  # noqa: E402
 
 
-def lab(mode: str):
-    win = Desktop(backend="uia").window(title=f"BenchLab — {mode}")
+def lab(mode: str, title: str | None = None):
+    win = Desktop(backend="uia").window(title=title or f"BenchLab — {mode}")
     win.wait("exists visible", timeout=20)
     win.set_focus()
     time.sleep(0.4)
@@ -174,6 +177,29 @@ def irconsent(seed: int) -> None:
     click(button(win, "Sign up"))
 
 
+def desk_cell(seed: int, instance: str) -> dict:
+    """The seed's code and shelf for the desk labelled `instance` (a PA-01 copy, or the UM-01 desk)."""
+    for cell in C.derive_parallel(seed, C.PA_MAX_INSTANCES)["cells"]:
+        if cell["label"] == instance:
+            return cell
+    um = C.derive_um_desk(seed)
+    if um["label"] == instance:
+        return um
+    raise SystemExit(f"no desk {instance!r} for seed {seed}")
+
+
+def desk(seed: int, instance: str, code: str | None = None, shelf: str | None = None) -> None:
+    cell = desk_cell(seed, instance)
+    win = lab("desk", C.desk_title(instance))
+    type_into(win, "Code", cell["code"] if code is None else code)
+    click(
+        win.child_window(
+            title=cell["shelf"] if shelf is None else shelf, control_type="RadioButton"
+        )
+    )
+    click(button(win, "Submit"))
+
+
 def disturb() -> None:
     """One deliberate disturbance of each kind the sentinel must see."""
     import ctypes
@@ -194,9 +220,16 @@ def main() -> None:
     parser.add_argument("--mode", required=True)
     parser.add_argument("--seed", type=int, required=True)
     parser.add_argument("--disturb", action="store_true")
+    parser.add_argument("--instance")
+    parser.add_argument("--code")
+    parser.add_argument("--shelf")
     args = parser.parse_args()
     if args.disturb:
         disturb()
+    elif args.mode == "desk":
+        if not args.instance:
+            parser.error("--instance is required for --mode desk")
+        desk(args.seed, args.instance, args.code, args.shelf)
     else:
         globals()[args.mode](args.seed)
     time.sleep(1.0)

@@ -18,7 +18,19 @@ USR=~/Library/Application\ Support/com.apple.TCC/TCC.db
 sqlite3 "$USR" "INSERT OR REPLACE INTO access (service, client, client_type, auth_value, auth_reason, auth_version, csreq, policy_id, indirect_object_identifier_type, indirect_object_identifier, indirect_object_code_identity, flags, last_modified, pid, pid_version, boot_uuid, last_reminded) SELECT service, '$ID', client_type, auth_value, auth_reason, auth_version, X'$HEX', policy_id, indirect_object_identifier_type, indirect_object_identifier, indirect_object_code_identity, flags, CAST(strftime('%s','now') AS INTEGER), NULL, NULL, 'UNUSED', CAST(strftime('%s','now') AS INTEGER) FROM access WHERE client='com.trycua.driver' AND service='kTCCServiceAppleEvents';"
 sudo sqlite3 "$SYS" "select service, client, auth_value, length(csreq) from access where client='$ID';"
 sqlite3 "$USR" "select service, client, auth_value, indirect_object_identifier from access where client='$ID';"
+# BenchSentinel's mouse user (UM-01) posts real pointer events (Accessibility) and reads the session's pointer
+# events with a listen-only tap (Input Monitoring). Same csreq approach, for the ad-hoc signed app.
+S=${3:-$HOME/bench-work/BenchSentinel.app}
+if [ -d "$S" ]; then
+  SID=ai.cua.benchsentinel
+  SREQ=$(codesign -d -r- $S 2>&1 | sed -n 's/^# *designated => //p')
+  echo "$SREQ" | csreq -r- -b /tmp/benchsentinel.csreq
+  SHEX=$(xxd -p /tmp/benchsentinel.csreq | tr -d '\n')
+  for SV in kTCCServiceAccessibility kTCCServiceListenEvent; do
+    sudo sqlite3 "$SYS" "INSERT OR REPLACE INTO access (service, client, client_type, auth_value, auth_reason, auth_version, csreq, policy_id, indirect_object_identifier_type, indirect_object_identifier, indirect_object_code_identity, flags, last_modified, pid, pid_version, boot_uuid, last_reminded) VALUES ('$SV', '$SID', 0, 2, 4, 1, X'$SHEX', NULL, 0, 'UNUSED', NULL, 0, CAST(strftime('%s','now') AS INTEGER), NULL, NULL, 'UNUSED', CAST(strftime('%s','now') AS INTEGER));"
+  done
+  sudo sqlite3 "$SYS" "select service, client, auth_value, length(csreq) from access where client='$SID';"
+fi
 # restart tccd (exact PIDs) so the new rows are read
 for P in $(pgrep -x tccd); do sudo kill $P 2>/dev/null || kill $P 2>/dev/null; done
 sleep 2; pgrep -x tccd | wc -l
-

@@ -1,0 +1,57 @@
+{
+  "platform": "windows",
+  "descriptor_version": "1",
+  "task_id": "PA-01",
+  "app": "windows/benchlab.py",
+  "app_args": [
+    "--mode",
+    "desk"
+  ],
+  "app_executable": "BenchLab.exe, one copy per instance (a copy of pythonw.exe; see launch/windows_session.py)",
+  "sentinel": "windows/sentinel.py",
+  "launcher": [
+    "${python}",
+    "launch/windows_session.py",
+    "--task",
+    "PA-01",
+    "--run-index",
+    "${run_index}",
+    "--condition",
+    "${condition}",
+    "--instances",
+    "${instances}",
+    "--out",
+    "${artifacts}",
+    "--",
+    "${agent_command}"
+  ],
+  "conditions": [
+    "foreground",
+    "background"
+  ],
+  "evaluate": [
+    "${python}",
+    "probes/PA-01/evaluate.py",
+    "--seed",
+    "${seed}",
+    "--dir",
+    "${artifacts}",
+    "--result",
+    "${result}"
+  ],
+  "requires": [
+    "Python 3.12",
+    "wxPython 4.2 or later",
+    "an interactive desktop session (not session 0)",
+    "a screen of at least 1920 x 1080 for the 5 x 2 grid"
+  ],
+  "agent_command_placeholders": {
+    "{brief}": "that agent's brief file",
+    "{out}": "that agent's directory",
+    "{seed}": "trial seed",
+    "{mode}": "desk",
+    "{instance}": "the copy's label (A..J)",
+    "{title}": "the copy's window title, BenchLab Desk L"
+  },
+  "parallel": true
+}

@@ -1,0 +1,32 @@
+{
+  "id": "PA-01",
+  "title": "Parallel agents, one per copy of an app, each doing the same short task without cross-talk",
+  "group": "SD",
+  "category": "shared_desktop",
+  "ability": "parallel_agents",
+  "dimension_tags": [
+    "multi_agent",
+    "parallel",
+    "multi_instance",
+    "form_fill"
+  ],
+  "timeout_s": 360,
+  "max_turns": 45,
+  "app_args": [
+    "--mode",
+    "desk"
+  ],
+  "parallel": true,
+  "instances": 10,
+  "instance_variants": [
+    1,
+    4,
+    10
+  ],
+  "conditions": [
+    "foreground",
+    "background"
+  ],
+  "separate_run": true,
+  "coverage_caveat": "N agent processes share one desktop and one wall-clock budget; drivers without multi-session support may serialise them. See SHARED-DESKTOP.md."
+}

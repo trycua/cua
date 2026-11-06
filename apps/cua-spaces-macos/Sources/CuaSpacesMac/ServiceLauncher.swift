@@ -189,7 +189,15 @@ enum ServiceLauncher {
         if !spec.args.contains("--no-desktop") && !appAsks {
             PermissionRequester.requestScreenRecordingAndAccessibility()
         }
-        guard let pid = spawn(spec.args, env: spec.env, logPath: spec.logPath, workingDir: spec.workingDir) else {
+        // Cua Driver for this Mac's coding agents runs from its own login
+        // item (DriverLauncher.swift), whatever this Mac shares: the host
+        // service must not start a second one on the same socket.
+        var env = spec.env
+        if DriverService.isBundled() {
+            env.removeAll { $0.0 == "CUA_SPACESD_EMBEDDED_DRIVER" }
+            env.append(("CUA_SPACESD_EMBEDDED_DRIVER", "0"))
+        }
+        guard let pid = spawn(spec.args, env: env, logPath: spec.logPath, workingDir: spec.workingDir) else {
             exit(1)
         }
         serviceChild = pid

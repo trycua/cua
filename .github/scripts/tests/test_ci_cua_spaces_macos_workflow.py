@@ -128,7 +128,9 @@ def test_the_slice_action_builds_by_default_and_restores_only_on_request():
         ):
             assert step["if"].startswith("inputs.build == 'true' &&"), step
     # The producer and the release keep their behaviour: they pass no `build`.
-    for workflow in ("ci-cua-spaces-rust-slice.yml", "cd-cua-spaces.yml", "cd-cua-spaces-build.yml"):
+    # (The main build's consumer stage restores only; its producer is the
+    # ci-cua-spaces-rust-slice.yml stage it calls.)
+    for workflow in ("ci-cua-spaces-rust-slice.yml", "cd-cua-spaces.yml"):
         text = (ROOT / ".github/workflows" / workflow).read_text()
         assert "spaces-rust-slice" in text
         assert 'build: "false"' not in text

@@ -1,7 +1,8 @@
 name: "CD: Cua Spaces natives on main"
 
-# Keeps the release's compiled native layers warm, so a cua-spaces-v* tag
-# run (cd-cua-spaces.yml) restores them instead of compiling for an hour.
+# Keeps the release's compiled macOS native layers (Electron, beta releases)
+# warm, so a cua-spaces-v* tag run (cd-cua-spaces.yml) restores them instead
+# of compiling for an hour and a half.
 #
 # A tag run can restore only its own tag's caches and main's (a cache saved
 # by a dry run on a branch or a PR is invisible to it). This workflow builds,
@@ -27,25 +28,17 @@ name: "CD: Cua Spaces natives on main"
 # branch to try a change; the first push to main runs it for real.
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - "libs/cua/**"
-      - "libs/cua-spacesd/VERSION"
-      - "apps/cua-spaces-desktop/scripts/build-native.mjs"
-      - ".github/actions/spaces-native/**"
-      - ".github/workflows/cd-cua-spaces-natives-main.yml"
+  # A stage of cd-cua-spaces-build.yml (the one main pipeline), which calls it
+  # once per libs/cua tree. No push trigger of its own: it used to run beside
+  # the build and compile the same libraries at the same time (CUA-3562).
+  workflow_call:
   workflow_dispatch:
 
 permissions:
   contents: read
 
-# One run at a time, never cancelled: a newer push waits (and replaces any
-# older waiting run), so the macOS runners are not all taken by warm-ups and
-# every run that starts finishes and saves.
-concurrency:
-  group: cd-cua-spaces-natives-${{ github.ref }}
-  cancel-in-progress: false
+# No concurrency group: the caller runs one build at a time and never
+# cancels it.
 
 # Same as cd-cua-spaces.yml: CUA_RELEASE_REPOSITORY is part of the native
 # cache key, and rust-cache hashes the CARGO_* variables into its own key.
@@ -66,10 +59,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { label: win32-x64, runner: windows-latest, target: x86_64-pc-windows-msvc }
-          - { label: win32-arm64, runner: windows-11-arm, target: aarch64-pc-windows-msvc }
-          - { label: linux-x64, runner: ubuntu-22.04, target: x86_64-unknown-linux-gnu }
-          - { label: linux-arm64, runner: ubuntu-22.04-arm, target: aarch64-unknown-linux-gnu }
+          # Windows and Linux are built (and cached under the same keys) by
+          # electron-native in cd-cua-spaces-build.yml, which also needs them.
           - { label: darwin-arm64, runner: macos-26, target: aarch64-apple-darwin }
           - { label: darwin-x64, runner: macos-26, target: x86_64-apple-darwin }
     defaults:

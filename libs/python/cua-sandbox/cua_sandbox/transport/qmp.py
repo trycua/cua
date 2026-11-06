@@ -295,18 +295,18 @@ class QMPTransport(Transport):
                 },
             )
 
-    async def _drag(
-        self, start_x: int, start_y: int, end_x: int, end_y: int, button: str = "left", **_: Any
-    ) -> None:
+    async def _drag(self, path: list, button: str = "left", **_: Any) -> None:
+        """Press at the first point of ``path``, move through the rest, release at the last."""
+        start_x, start_y = path[0]
+        end_x, end_y = path[-1]
         await self._mouse_down(start_x, start_y, button)
         await asyncio.sleep(0.05)
-        # Interpolate a few intermediate points for smoother drag
+        # Interpolate a few intermediate points per segment for smoother drag
         steps = 10
-        for i in range(1, steps + 1):
-            ix = start_x + (end_x - start_x) * i // steps
-            iy = start_y + (end_y - start_y) * i // steps
-            await self._mouse_move(ix, iy)
-            await asyncio.sleep(0.01)
+        for (x0, y0), (x1, y1) in zip(path, path[1:]):
+            for i in range(1, steps + 1):
+                await self._mouse_move(x0 + (x1 - x0) * i // steps, y0 + (y1 - y0) * i // steps)
+                await asyncio.sleep(0.01)
         await self._mouse_up(end_x, end_y, button)
 
     # ── Keyboard actions ──────────────────────────────────────────────────

@@ -18855,6 +18855,12 @@ export type AppSandboxImage = {
      */
     published: boolean,
     /**
+     * `windows-iso`: nothing is pulled; the image is built on this computer
+     * on first use (an unattended Windows install). Offered in pickers
+     * though not published.
+     */
+    localBuild?: string,
+    /**
      * The guest's distribution.
      */
     distro?: AppImageDistro,
@@ -18903,6 +18909,7 @@ const FfiConverterTypeAppSandboxImage = (() => {
                 local: FfiConverterOptionalTypeAppLocalEngine.read(from),
                 tier: FfiConverterOptionalTypeAppImageTier.read(from),
                 published: FfiConverterBool.read(from),
+                localBuild: FfiConverterOptionalString.read(from),
                 distro: FfiConverterOptionalTypeAppImageDistro.read(from),
                 arch: FfiConverterSequenceString.read(from),
                 sizes: FfiConverterOptionalTypeAppImageSizes.read(from),
@@ -18920,6 +18927,7 @@ const FfiConverterTypeAppSandboxImage = (() => {
             FfiConverterOptionalTypeAppLocalEngine.write(value.local, into);
             FfiConverterOptionalTypeAppImageTier.write(value.tier, into);
             FfiConverterBool.write(value.published, into);
+            FfiConverterOptionalString.write(value.localBuild, into);
             FfiConverterOptionalTypeAppImageDistro.write(value.distro, into);
             FfiConverterSequenceString.write(value.arch, into);
             FfiConverterOptionalTypeAppImageSizes.write(value.sizes, into);
@@ -18936,6 +18944,7 @@ const FfiConverterTypeAppSandboxImage = (() => {
              FfiConverterOptionalTypeAppLocalEngine.allocationSize(value.local) +
              FfiConverterOptionalTypeAppImageTier.allocationSize(value.tier) +
              FfiConverterBool.allocationSize(value.published) +
+             FfiConverterOptionalString.allocationSize(value.localBuild) +
              FfiConverterOptionalTypeAppImageDistro.allocationSize(value.distro) +
              FfiConverterSequenceString.allocationSize(value.arch) +
              FfiConverterOptionalTypeAppImageSizes.allocationSize(value.sizes) +

@@ -628,11 +628,18 @@ impl Tool for TypeTextTool {
                 match (&before, &after) {
                     (Some(_), Some(_)) if observed => ToolResult::text(format!(
                         "📨 Sent {text_len} char(s) to pid {raw_pid} via PostMessage \
-                         ({_delay_ms}ms delay; the field changed and now contains the \
+                         ({_delay_ms}ms delay; the field now contains the \
                          requested text, but the insertion point is not known). Take a \
                          fresh snapshot to verify the intended final value before retrying."
                     ))
                     .with_structured(changed_contains_post_message_result(text_len)),
+                    (Some(b), Some(a)) if b == a => ToolResult::text(format!(
+                        "📨 Sent {text_len} char(s) to pid {raw_pid} via PostMessage, but \
+                         the focused field's value is unchanged: the text was dropped, or it \
+                         replaced an identical selection. Take a fresh snapshot before \
+                         retrying; if it did not land, retry with delivery_mode:\"foreground\"."
+                    ))
+                    .with_structured(unchanged_post_message_result(text_len)),
                     (Some(_), Some(_)) => ToolResult::text(format!(
                         "📨 Sent {text_len} char(s) to pid {raw_pid} via PostMessage, but \
                          the focused field's value did not contain the requested text \
@@ -642,7 +649,7 @@ impl Tool for TypeTextTool {
                     ))
                     .with_structured(serde_json::json!({
                         "path": "key_events", "characters": text_len,
-                        "verified": false, "verify": "unchanged",
+                        "verified": false, "verify": "missing",
                         "effect": "unverifiable",
                         "escalation": {
                             "recommended": "foreground",
@@ -797,12 +804,17 @@ fn normalize_newlines(s: &str) -> String {
     s.chars().filter(|c| *c != '\r').collect()
 }
 
-/// The text `after` has that `before` did not: strip the common prefix and
-/// suffix of the two values. Newlines are normalized (Edit controls store
-/// Enter as CRLF).
-fn inserted_segment(before: &str, after: &str) -> String {
+/// Decide whether a typing diff can be repaired by retyping a tail. Only a
+/// non-empty strict prefix of the requested text counts: an empty insert means
+/// the target ignores WM_CHAR (retrying cannot help), and a non-prefix insert
+/// is reordered or garbled (retyping would make it worse).
+fn plan_tail_retry(before: &str, after: &str, requested: &str) -> TailPlan {
+    let w: Vec<char> = normalize_newlines(requested).chars().collect();
     let b: Vec<char> = normalize_newlines(before).chars().collect();
     let a: Vec<char> = normalize_newlines(after).chars().collect();
+    if typed_over(&b, &a, &w) {
+        return TailPlan::Done;
+    }
     let p = b.iter().zip(a.iter()).take_while(|(x, y)| x == y).count();
     let s = b[p..]
         .iter()
@@ -810,20 +822,32 @@ fn inserted_segment(before: &str, after: &str) -> String {
         .zip(a[p..].iter().rev())
         .take_while(|(x, y)| x == y)
         .count();
-    a[p..a.len() - s].iter().collect()
-}
-
-/// Decide whether a typing diff can be repaired by retyping a tail. Only a
-/// non-empty strict prefix of the requested text counts: an empty insert means
-/// the target ignores WM_CHAR (retrying cannot help), and a non-prefix insert
-/// is reordered or garbled (retyping would make it worse).
-fn plan_tail_retry(before: &str, after: &str, requested: &str) -> TailPlan {
-    let want = normalize_newlines(requested);
-    let got = inserted_segment(before, after);
-    if got.is_empty() || got.len() >= want.len() || !want.starts_with(&got) {
+    let got = &a[p..a.len() - s];
+    if got.is_empty() || got.len() >= w.len() || !w.starts_with(got) {
         return TailPlan::Done;
     }
-    TailPlan::Retype(want[got.len()..].to_string())
+    TailPlan::Retype(w[got.len()..].iter().collect())
+}
+
+fn typed_over(before: &[char], after: &[char], typed: &[char]) -> bool {
+    let p = before
+        .iter()
+        .zip(after.iter())
+        .take_while(|(x, y)| x == y)
+        .count();
+    let tail = before
+        .iter()
+        .rev()
+        .zip(after.iter().rev())
+        .take_while(|(x, y)| x == y)
+        .count();
+    after
+        .len()
+        .checked_sub(typed.len())
+        .filter(|room| *room <= before.len())
+        .is_some_and(|room| {
+            (room.saturating_sub(tail)..=p.min(room)).any(|q| after[q..q + typed.len()] == *typed)
+        })
 }
 
 /// Poll `read` until two consecutive reads agree (or ~600 ms pass), so the
@@ -847,6 +871,16 @@ mod tail_retry_tests {
     #[test]
     fn complete_insert_needs_no_retry() {
         assert_eq!(plan_tail_retry("ab", "abXY\r\nZ", "XY\nZ"), TailPlan::Done);
+    }
+
+    #[test]
+    fn text_that_replaced_a_selection_ending_like_it_is_not_retyped() {
+        assert_eq!(plan_tail_retry("c", "abc", "abc"), TailPlan::Done);
+        assert_eq!(plan_tail_retry("xyz", "abz", "abz"), TailPlan::Done);
+        assert_eq!(plan_tail_retry("c", "abc", "ab"), TailPlan::Done);
+        assert_eq!(plan_tail_retry("10", "110", "110"), TailPlan::Done);
+        assert_eq!(plan_tail_retry("c", "cc", "cc"), TailPlan::Done);
+        assert_eq!(plan_tail_retry("ab", "abab", "abab"), TailPlan::Done);
     }
 
     #[test]
@@ -877,10 +911,13 @@ fn post_message_readback_observed(
     after: Option<&str>,
     requested_text: &str,
 ) -> bool {
+    let chars = |s: &str| normalize_newlines(s).chars().collect::<Vec<char>>();
     matches!(
         (before, after),
         (Some(before), Some(after))
-            if before != after && after.contains(requested_text)
+            if before != after
+                && (after.contains(requested_text)
+                    || typed_over(&chars(before), &chars(after), &chars(requested_text)))
     )
 }
 
@@ -898,6 +935,21 @@ fn value_write_structured_result(
     })
 }
 
+fn unchanged_post_message_result(text_len: usize) -> serde_json::Value {
+    serde_json::json!({
+        "path": "key_events",
+        "characters": text_len,
+        "verified": false,
+        "verify": "unchanged",
+        "effect": "unverifiable",
+        "escalation": {
+            "recommended": "foreground",
+            "reason": "the field kept its value: re-call with delivery_mode:\"foreground\" if a \
+                       fresh snapshot shows the text did not land."
+        },
+    })
+}
+
 fn changed_contains_post_message_result(text_len: usize) -> serde_json::Value {
     serde_json::json!({
         "path": "key_events",
@@ -910,7 +962,10 @@ fn changed_contains_post_message_result(text_len: usize) -> serde_json::Value {
 
 #[cfg(test)]
 mod post_message_readback_tests {
-    use super::{changed_contains_post_message_result, post_message_readback_observed};
+    use super::{
+        changed_contains_post_message_result, post_message_readback_observed,
+        unchanged_post_message_result,
+    };
 
     #[test]
     fn observes_only_a_changed_value_containing_the_requested_text() {
@@ -935,6 +990,38 @@ mod post_message_readback_tests {
             Some("different"),
             "hello"
         ));
+    }
+
+    #[test]
+    fn text_typed_over_a_selection_is_observed_and_an_unchanged_value_is_not() {
+        assert!(post_message_readback_observed(
+            Some(""),
+            Some("a\r\nb"),
+            "a\nb"
+        ));
+        assert!(post_message_readback_observed(
+            Some("10"),
+            Some("110"),
+            "110"
+        ));
+        assert!(post_message_readback_observed(
+            Some("xyz"),
+            Some("abz"),
+            "abz"
+        ));
+        assert!(!post_message_readback_observed(
+            Some("abc"),
+            Some("abc"),
+            "abc"
+        ));
+        assert!(!post_message_readback_observed(
+            Some("hello world"),
+            Some("hello world"),
+            "lo"
+        ));
+        let unchanged = unchanged_post_message_result(2);
+        assert_eq!(unchanged["verify"], "unchanged");
+        assert_eq!(unchanged["effect"], "unverifiable");
     }
 
     #[test]

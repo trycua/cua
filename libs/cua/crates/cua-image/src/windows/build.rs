@@ -133,7 +133,11 @@ impl BuildRequest {
             account,
             edition: env("CUA_WINDOWS_EDITION").filter(|s| !s.trim().is_empty()),
             cpus: 4,
-            memory_mb: if arch == WindowsArch::Arm64 { 8192 } else { 6144 },
+            memory_mb: if arch == WindowsArch::Arm64 {
+                8192
+            } else {
+                6144
+            },
         })
     }
 }
@@ -395,7 +399,9 @@ impl Layout {
 /// (`ghcr.io/trycua/windows:11`, with or without a digest), else `None`.
 pub fn local_build_target(reference: &str) -> Option<&'static WindowsVersion> {
     let r = reference.split('@').next().unwrap_or(reference);
-    let tag = r.strip_prefix(crate::canonical::WINDOWS_REPO)?.strip_prefix(':')?;
+    let tag = r
+        .strip_prefix(crate::canonical::WINDOWS_REPO)?
+        .strip_prefix(':')?;
     super::table::lookup(tag).filter(|v| v.builds_locally())
 }
 
@@ -413,7 +419,12 @@ mod tests {
         async fn final_url(&self, l: &str) -> Result<String> {
             Ok(l.into())
         }
-        async fn download(&self, _: &str, to: &Path, _: &mut (dyn FnMut(u64) + Send)) -> Result<()> {
+        async fn download(
+            &self,
+            _: &str,
+            to: &Path,
+            _: &mut (dyn FnMut(u64) + Send),
+        ) -> Result<()> {
             std::fs::write(to, b"virtio")?;
             Ok(())
         }
@@ -478,7 +489,9 @@ mod tests {
             ..Default::default()
         };
         let r = request("11", Some(iso.clone()));
-        let disk = ensure_base_with(&layout, &r, &NoNet, &fake, &Roomy).await.unwrap();
+        let disk = ensure_base_with(&layout, &r, &NoNet, &fake, &Roomy)
+            .await
+            .unwrap();
         assert_eq!(disk, layout.disk(r.version, r.arch));
         assert!(cached_base(&layout, r.version, r.arch).is_some());
         {
@@ -489,7 +502,9 @@ mod tests {
             assert!(plans[0].virtio_iso.ends_with("virtio-win.iso"));
         }
         // The second create does not install again.
-        ensure_base_with(&layout, &r, &NoNet, &fake, &Roomy).await.unwrap();
+        ensure_base_with(&layout, &r, &NoNet, &fake, &Roomy)
+            .await
+            .unwrap();
         assert_eq!(fake.plans.lock().unwrap().len(), 1);
         // The scratch is gone, the lock released.
         assert!(!layout.dir(r.version, r.arch).join("work").exists());
@@ -506,7 +521,9 @@ mod tests {
             ..Default::default()
         };
         let r = request("2025", Some(iso));
-        let e = ensure_base_with(&layout, &r, &NoNet, &fake, &Roomy).await.unwrap_err();
+        let e = ensure_base_with(&layout, &r, &NoNet, &fake, &Roomy)
+            .await
+            .unwrap_err();
         assert!(e.to_string().contains("did not finish"), "{e}");
         assert!(cached_base(&layout, r.version, r.arch).is_none());
         assert!(!layout.dir(r.version, r.arch).join("build.lock").exists());

@@ -529,7 +529,10 @@ mod tests {
         assert_eq!(registered(&cache, v, WindowsArch::Amd64), None);
         register(&cache, v, WindowsArch::Amd64, &iso).unwrap();
         let got = registered(&cache, v, WindowsArch::Amd64).unwrap();
-        assert_eq!(std::fs::canonicalize(&got).unwrap(), std::fs::canonicalize(&iso).unwrap());
+        assert_eq!(
+            std::fs::canonicalize(&got).unwrap(),
+            std::fs::canonicalize(&iso).unwrap()
+        );
         assert!(register(&cache, v, WindowsArch::Amd64, &d.path().join("none.iso")).is_err());
         std::fs::remove_file(&iso).unwrap();
         assert_eq!(registered(&cache, v, WindowsArch::Amd64), None);

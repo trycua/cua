@@ -92,7 +92,10 @@ fn component(name: &str, arch: &str) -> String {
     )
 }
 
-fn driver_paths(o: &UnattendOptions<'_>) -> String {
+/// The virtio-win driver paths as a `DriverPaths` component: `component_name`
+/// is the WinPE one (storage and network while Setup runs) or the one for the
+/// installed system (offline servicing: the network adapter after the first boot).
+fn driver_paths(o: &UnattendOptions<'_>, component_name: &str) -> String {
     if !o.virtio {
         return String::new();
     }
@@ -111,10 +114,7 @@ fn driver_paths(o: &UnattendOptions<'_>) -> String {
     }
     format!(
         "    {}\n      <DriverPaths>\n{paths}      </DriverPaths>\n    </component>\n",
-        component(
-            "Microsoft-Windows-PnpCustomizationsWinPE",
-            o.arch.processor()
-        )
+        component(component_name, o.arch.processor())
     )
 }
 
@@ -194,7 +194,7 @@ pub fn autounattend_xml(o: &UnattendOptions<'_>) -> String {
         "    {}\n      <SetupUILanguage><UILanguage>en-US</UILanguage></SetupUILanguage>\n      <InputLocale>0409:00000409</InputLocale><SystemLocale>en-US</SystemLocale><UILanguage>en-US</UILanguage><UserLocale>en-US</UserLocale>\n    </component>\n",
         component("Microsoft-Windows-International-Core-WinPE", arch)
     ));
-    x.push_str(&driver_paths(o));
+    x.push_str(&driver_paths(o, "Microsoft-Windows-PnpCustomizationsWinPE"));
     x.push_str(&format!(
         r#"    {setup}
       <DiskConfiguration>
@@ -234,7 +234,7 @@ pub fn autounattend_xml(o: &UnattendOptions<'_>) -> String {
     {lua}
       <EnableLUA>false</EnableLUA>
     </component>
-  </settings>
+{offline_drivers}  </settings>
   <settings pass="specialize">
     {deploy}
       <RunSynchronous>
@@ -283,6 +283,7 @@ pub fn autounattend_xml(o: &UnattendOptions<'_>) -> String {
   </settings>
 </unattend>
 "#,
+        offline_drivers = driver_paths(o, "Microsoft-Windows-PnpCustomizationsNonWinPE"),
         setup = component("Microsoft-Windows-Setup", arch),
         lua = component("Microsoft-Windows-LUA-Settings", arch),
         deploy = component("Microsoft-Windows-Deployment", arch),
@@ -382,6 +383,8 @@ mod tests {
         );
         assert!(x.contains("BypassTPMCheck") && x.contains("BypassSecureBootCheck"));
         assert!(x.contains(r"E:\viostor\w11\amd64"));
+        // The network adapter's driver goes into the installed system too.
+        assert!(x.contains("Microsoft-Windows-PnpCustomizationsNonWinPE"));
         assert!(x.contains("<Name>User</Name>") && x.contains("<Username>User</Username>"));
         assert!(x.contains("<fDenyTSConnections>false"));
         assert!(!x.contains("arm64"));

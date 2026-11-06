@@ -127,8 +127,6 @@ impl CanonicalOs {
             (Self::Linux, "noble") => "24.04".into(),
             // `windows:server-2022`, `windows:win11`, ...: the table's id.
             (Self::Windows, _) => crate::windows::normalize_version(version),
-            // `windows:server-2022`, `windows:win11`, ...: the table's id.
-            (Self::Windows, _) => crate::windows::normalize_version(version),
             _ => version.trim().to_string(),
         }
     }

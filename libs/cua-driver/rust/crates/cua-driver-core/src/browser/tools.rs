@@ -3783,6 +3783,49 @@ mod tests {
 
     #[cfg(unix)]
     #[tokio::test]
+    async fn implicit_session_expiry_preserves_named_browser_until_transport_end() {
+        use crate::session::{SessionClientKind, SessionEndReason, SessionTransport};
+        let engine = launching_engine();
+        let (session, owner) = start_lifecycle_session(None);
+        crate::session::activate_session_with_ttl(
+            &owner,
+            None,
+            &owner,
+            true,
+            SessionTransport::McpStdio,
+            SessionClientKind::Mcp,
+            std::time::Duration::from_millis(1),
+        )
+        .unwrap();
+        let prepared =
+            prepare_isolated(&engine, &session, &owner, json!({ "mode": "isolated_new" })).await;
+        let pid = prepared["prepared_pid"].as_i64().unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+
+        let ended = crate::session::evict_idle_with_prefix(
+            crate::session::DEFAULT_SESSION_IDLE_TTL,
+            &owner,
+        );
+        assert_eq!(ended, vec![owner.clone()]);
+        assert!(!crate::session::is_session_ended(&session));
+        assert!(
+            engine.is_driver_owned_pid_for_session(&session, pid),
+            "the idle implicit session must not reap a live named session's browser"
+        );
+        assert_eq!(unsafe { libc::kill(pid as i32, 0) }, 0);
+
+        crate::session::end_sessions_for_owner(&owner, SessionEndReason::Explicit);
+        assert!(crate::session::is_session_ended(&session));
+        assert!(!engine.is_driver_owned_pid_for_session(&session, pid));
+        assert_eq!(unsafe { libc::kill(pid as i32, 0) }, -1);
+        assert_eq!(
+            std::io::Error::last_os_error().raw_os_error(),
+            Some(libc::ESRCH)
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
     async fn isolated_new_publishes_the_session_effective_idle_ttl() {
         let engine = launching_engine();
         for (idle_ttl, expected) in [

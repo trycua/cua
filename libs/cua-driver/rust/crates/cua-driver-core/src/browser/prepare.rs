@@ -306,7 +306,8 @@ pub(crate) struct ManagedBrowser {
     profile: PathBuf,
     delete_profile: bool,
     marker: ProfileMarker,
-    owner_sessions: Vec<String>,
+    owner_session: String,
+    owner_transport: Option<String>,
 }
 
 impl Drop for ManagedBrowser {
@@ -791,7 +792,9 @@ fn spawned_runtime_pid(ownership: &EndpointOwnershipProof) -> i64 {
 impl BrowserEngine {
     pub(crate) fn is_driver_owned_pid_for_session(&self, session: &str, pid: i64) -> bool {
         self.managed_browsers.lock().unwrap().iter().any(|browser| {
-            browser.owned_pid == pid && browser.owner_sessions.iter().any(|owner| owner == session)
+            browser.owned_pid == pid
+                && (browser.owner_session == session
+                    || browser.owner_transport.as_deref() == Some(session))
         })
     }
 
@@ -800,7 +803,11 @@ impl BrowserEngine {
         self.managed_browsers
             .lock()
             .unwrap()
-            .retain(|browser| !browser.owner_sessions.iter().any(|owner| owner == session));
+            // A transport's implicit session may idle while a named session
+            // on that transport is active. It is an access alias, not a second
+            // browser lifetime. Transport disconnect ends all owned sessions
+            // through end_sessions_for_owner, including the preparing one.
+            .retain(|browser| browser.owner_session != session);
     }
 
     pub(crate) async fn prepare_browser(
@@ -894,14 +901,10 @@ impl BrowserEngine {
             }
         };
         let prepared_pid = endpoint.ownership.owner_pid;
-        let mut owner_sessions = vec![request.session];
-        if let Some(transport_session) = request.transport_session {
-            if !owner_sessions.contains(&transport_session) {
-                owner_sessions.push(transport_session);
-            }
-        }
+        let owner_session = request.session;
+        let owner_transport = request.transport_session;
         if let Ok(fingerprint) = self.platform.process_fingerprint(prepared_pid).await {
-            for owner in &owner_sessions {
+            for owner in std::iter::once(&owner_session).chain(owner_transport.iter()) {
                 self.protected_resource_ownership
                     .mark_driver_owned_process(owner, fingerprint.clone());
             }
@@ -912,7 +915,8 @@ impl BrowserEngine {
             profile: prepared_profile.path,
             delete_profile: prepared_profile.delete_on_cleanup,
             marker: prepared_profile.marker,
-            owner_sessions,
+            owner_session,
+            owner_transport,
         });
         Ok(PrepareOutcome {
             action: PrepareAction::LaunchedIsolatedBrowser,

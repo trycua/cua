@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.40.4](https://github.com/trycua/cua/compare/cua-driver-rs-v0.40.3...cua-driver-rs-v0.40.4) (2026-11-06)
+
+
+### Bug Fixes
+
+* **cua-driver:** admit any native Wayland app to Hyprland background input ([#6706](https://github.com/trycua/cua/issues/6706)) ([895aec7](https://github.com/trycua/cua/commit/895aec7e51b0409b2b22c958920d52c22b0d2b03))
+* **hyprland-plugin:** keep background popups and drags off the user's seat (CUA-3582) ([#6705](https://github.com/trycua/cua/issues/6705)) ([354ed93](https://github.com/trycua/cua/commit/354ed93a5cb0d19dfb41dd01d5d1f91b11726ce4))
+
 ## [0.40.3](https://github.com/trycua/cua/compare/cua-driver-rs-v0.40.2...cua-driver-rs-v0.40.3) (2026-11-06)
 
 

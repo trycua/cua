@@ -158,15 +158,34 @@ impl Tool for DoubleClickTool {
                 "double_click.ax",
                 || async move {
                     tokio::task::spawn_blocking(move || {
-                        ax_double_click(
-                            pid,
+                        let act = || {
+                            ax_double_click(
+                                pid,
+                                wid,
+                                element_guard.as_ptr(),
+                                idx,
+                                &ck,
+                                has_ax_open,
+                                foreground,
+                            )
+                        };
+                        if !foreground {
+                            return act();
+                        }
+                        // Front, act, restore, as click's foreground AX path
+                        // does; activation can enable the control.
+                        let mut outcome = None;
+                        crate::input::skylight::with_foreground_assist(
+                            pid as libc::pid_t,
                             wid,
-                            element_guard.as_ptr(),
-                            idx,
-                            &ck,
-                            has_ax_open,
-                            foreground,
-                        )
+                            || {
+                                outcome = Some(act()?);
+                                Ok(())
+                            },
+                        )?;
+                        outcome.ok_or_else(|| {
+                            anyhow::anyhow!("foreground double_click did not execute")
+                        })
                     })
                     .await
                 },

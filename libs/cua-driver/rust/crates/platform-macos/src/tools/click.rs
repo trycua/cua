@@ -754,6 +754,16 @@ impl ClickTool {
                                 )
                             },
                         )
+                    } else if foreground {
+                        crate::input::skylight::with_foreground_assist(
+                            pid as libc::pid_t,
+                            wid,
+                            || {
+                                ensure_enabled()?;
+                                crate::input::mouse::middle_click_at_xy(pid, cx, cy, &m)
+                            },
+                        )
+                        .map(|_| ())
                     } else {
                         ensure_enabled()?;
                         crate::input::mouse::middle_click_at_xy(pid, cx, cy, &m)

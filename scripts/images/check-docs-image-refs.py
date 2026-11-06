@@ -14,8 +14,8 @@ scripts/images/docs-image-refs-baseline.json with a reason. The baseline may
 only shrink: a new entry fails the gate (``--baseline-base`` is the base
 branch's copy), and an entry that now passes must be removed.
 
-Historical plan and spec notes (``EXCLUDE``: docs/superpowers) are not
-scanned: they are dated records, not guides.
+Historical plan and spec notes and blog posts (``EXCLUDE``: docs/superpowers,
+docs/blog) are not scanned: they are dated records, not guides.
 
 A ref on a line with (or right after) ``<!-- cua-image-unverified -->``
 (``{/* cua-image-unverified */}`` in MDX) is
@@ -55,9 +55,9 @@ SCAN = [
     "libs/cua/crates/cua-image/src/resolve.rs",
 ]
 SKIP_DIRS = {"node_modules", ".git", "target", ".venv", "dist", "build"}
-# Historical notes, not published docs: dated agent plans and design specs
+# Historical notes, not guides: dated agent plans, design specs and blog posts
 # record the refs of their day (check-image-refs.py excludes them too).
-EXCLUDE = ["docs/superpowers/**"]
+EXCLUDE = ["docs/superpowers/**", "docs/blog/**"]
 # A tag never ends in "." or "-" (so a sentence's full stop is not part of it).
 TAG = r"[A-Za-z0-9_](?:[A-Za-z0-9_.-]{0,126}[A-Za-z0-9_])?"
 REF_RE = re.compile(

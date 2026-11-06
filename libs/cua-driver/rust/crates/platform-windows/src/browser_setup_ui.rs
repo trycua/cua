@@ -460,8 +460,8 @@ impl SetupUiHandle {
         let focused_setup_address_field = self.focused_setup_address_field;
         let foregrounded_window = self.foregrounded_window;
         let injected_global_input = self.injected_global_input;
+        let closed_setup_page = self.close_setup_page().unwrap_or(false);
         let input_may_be_unread = self.input_may_be_unread;
-        let closed_setup_page = self.close().unwrap_or(false);
         let mut error = error;
         let cause = error.detail.take();
         error.with_detail(serde_json::json!({
@@ -508,7 +508,11 @@ impl SetupUiHandle {
         Ok(Some(true))
     }
 
-    pub fn close(self) -> Option<bool> {
+    pub fn close(mut self) -> Option<bool> {
+        self.close_setup_page()
+    }
+
+    fn close_setup_page(&mut self) -> Option<bool> {
         if !self.opened_setup_page {
             return None;
         }
@@ -520,10 +524,14 @@ impl SetupUiHandle {
             release_nodes(&nodes);
             proven
         });
-        Some(
-            proven
-                && crate::input::keyboard::send_key_synthesized(self.hwnd, "w", &["ctrl"]).is_ok(),
-        )
+        if !proven {
+            return Some(false);
+        }
+        let sent = crate::input::keyboard::send_key_synthesized(self.hwnd, "w", &["ctrl"]);
+        if let Err(error) = &sent {
+            self.input_may_be_unread |= input_may_be_unread(error);
+        }
+        Some(sent.is_ok())
     }
 }
 

@@ -114,7 +114,20 @@ if [ -f "$helper" ]; then
 else
   bad "no helper plist $want_helper.plist in Contents/Library/LaunchAgents"
 fi
-others="$(find "$agents" -maxdepth 1 -name '*.plist' ! -name "$want_helper.plist" 2>/dev/null || true)"
+# Cua Driver's login item: its own Local label and owner.
+want_driver="${want_helper%.helper}.driver"
+prod_driver="${prod_helper%.helper}.driver"
+[ ! -e "$agents/$prod_driver.plist" ] || bad "Stable's driver plist ($prod_driver.plist) is in the bundle"
+driver_item="$agents/$want_driver.plist"
+if [ -f "$driver_item" ]; then
+  label="$($pb -c "Print :Label" "$driver_item" 2>/dev/null || true)"
+  [ "$label" = "$want_driver" ] || bad "driver plist Label is '$label', want '$want_driver'"
+  owner="$($pb -c "Print :AssociatedBundleIdentifiers:0" "$driver_item" 2>/dev/null || true)"
+  [ "$owner" = "$want_id" ] || bad "driver AssociatedBundleIdentifiers is '$owner', want '$want_id'"
+else
+  bad "no driver plist $want_driver.plist in Contents/Library/LaunchAgents"
+fi
+others="$(find "$agents" -maxdepth 1 -name '*.plist' ! -name "$want_helper.plist" ! -name "$want_driver.plist" 2>/dev/null || true)"
 [ -z "$others" ] || bad "other launch agents in the bundle: $(printf '%s' "$others" | tr '\n' ' ')"
 
 # The signature (build-app.sh signs ad hoc under the bundle id; install-local

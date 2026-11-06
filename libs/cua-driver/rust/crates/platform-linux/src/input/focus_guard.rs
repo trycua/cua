@@ -664,6 +664,12 @@ impl FocusSnapshot {
                 .or(target_pid);
         }
 
+        // diff() skips a None/PointerRoot core focus; the foreground restore
+        // still owes the saved focus back.
+        let (focus_now, _) = x.core_focus();
+        if !same_app && changes.is_empty() && self.core_focus > 1 && focus_now != self.core_focus {
+            changes.push(format!("focus 0x{:x}->0x{focus_now:x}", self.core_focus));
+        }
         if changes.is_empty() {
             report.same_app_window = own_window;
             report.elapsed_ms = started.elapsed().as_millis() as u64;

@@ -257,8 +257,8 @@ impl ChangeSink for Invalidator {
     fn changed(&self, change: Change) {
         if let Some(v) = self.0.upgrade() {
             match change {
-                Change::Put(m) => v.invalidate_key(&m.key.clone(), Some(m)),
-                Change::Delete(k) => v.invalidate_key(&k, None),
+                Change::Put(m) => v.invalidate_key(&m.key),
+                Change::Delete(k) => v.invalidate_key(&k),
             }
         }
     }
@@ -267,7 +267,7 @@ impl ChangeSink for Invalidator {
 impl RemoteListener for Invalidator {
     fn remote_changed(&self, e: &FeedEntry) {
         if let Some(v) = self.0.upgrade() {
-            v.invalidate_key(&e.key, None);
+            v.invalidate_key(&e.key);
         }
     }
 }
@@ -409,7 +409,7 @@ impl Vfs {
         st
     }
 
-    fn invalidate_key(&self, key: &str, put: Option<ObjectMeta>) {
+    fn invalidate_key(&self, key: &str) {
         let parent = parent_of(key);
         let now = now_ms();
         {
@@ -434,15 +434,10 @@ impl Vfs {
                 p = parent_of(&p);
             }
         }
-        let mut pins = self.pins.lock().unwrap();
-        match put {
-            Some(m) if !m.version.is_empty() => {
-                pins.insert(key.to_string(), (m, Instant::now()));
-            }
-            _ => {
-                pins.remove(key);
-            }
-        }
+        // The next read pins what the store reports then, not the version
+        // id a write answered with: a store without versioning (Cloudflare
+        // R2) answers a write with an id and then refuses to read by it.
+        self.pins.lock().unwrap().remove(key);
     }
 
     fn ino_for(&self, key: &str, is_dir: bool) -> u64 {
@@ -977,7 +972,7 @@ impl Vfs {
             Ok(()) => Ok(()),
             // Only ever existed here.
             Err(Error::NotFound(_)) if pending.is_some() => {
-                self.invalidate_key(&key, None);
+                self.invalidate_key(&key);
                 Ok(())
             }
             Err(e) => Err(e),
@@ -998,7 +993,7 @@ impl Vfs {
             return Err(Error::Precondition(format!("{key} is not empty")));
         }
         self.session().rmdir(&key).await?;
-        self.invalidate_key(&key, None);
+        self.invalidate_key(&key);
         Ok(())
     }
 
@@ -1060,8 +1055,8 @@ impl Vfs {
                 session.copy(&m.key, &target).await?;
                 session.delete(&m.key, Condition::None).await?;
             }
-            self.invalidate_key(&from_folder, None);
-            self.invalidate_key(&to_folder, None);
+            self.invalidate_key(&from_folder);
+            self.invalidate_key(&to_folder);
         }
         // Keep inode numbers: the moved node (and its children) now name
         // the new keys.
@@ -1132,7 +1127,7 @@ impl Vfs {
                     x.base_etag = Some(meta.etag.clone());
                 }
                 drop(d);
-                self.invalidate_key(key, Some(meta));
+                self.invalidate_key(key);
                 Ok(())
             }
             Err(e) => {
@@ -1621,5 +1616,175 @@ mod tests {
         }
         fa.stop();
         fb.stop();
+    }
+
+    /// An S3-compatible store without object versioning, as Cloudflare R2
+    /// behaves: a write answers with a version id, but reads report none
+    /// and refuse to read a given version. Remote, so the block cache sits
+    /// in front of it.
+    struct NoVersions(FsBackend);
+
+    fn no_version(m: ObjectMeta) -> ObjectMeta {
+        ObjectMeta {
+            version: String::new(),
+            ..m
+        }
+    }
+
+    fn refuse_version(version: Option<&str>) -> Result<()> {
+        match version {
+            Some(v) if !v.is_empty() => Err(Error::Backend("versionId not implemented".into())),
+            _ => Ok(()),
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl crate::Backend for NoVersions {
+        fn kind(&self) -> &'static str {
+            "no-versions"
+        }
+        fn remote(&self) -> bool {
+            true
+        }
+        async fn put(&self, key: &str, bytes: Vec<u8>, cond: Condition) -> Result<ObjectMeta> {
+            Ok(ObjectMeta {
+                version: crate::new_id(),
+                ..self.0.put(key, bytes, cond).await?
+            })
+        }
+        async fn get(&self, key: &str, version: Option<&str>) -> Result<(Vec<u8>, ObjectMeta)> {
+            refuse_version(version)?;
+            let (b, m) = self.0.get(key, None).await?;
+            Ok((b, no_version(m)))
+        }
+        async fn get_range(
+            &self,
+            key: &str,
+            version: &str,
+            offset: u64,
+            len: u64,
+        ) -> Result<Vec<u8>> {
+            refuse_version(Some(version))?;
+            let (b, _) = self.0.get(key, None).await?;
+            let start = (offset as usize).min(b.len());
+            let end = start.saturating_add(len as usize).min(b.len());
+            Ok(b[start..end].to_vec())
+        }
+        async fn head(&self, key: &str) -> Result<Option<ObjectMeta>> {
+            Ok(self.0.head(key).await?.map(no_version))
+        }
+        async fn list(&self, prefix: &str) -> Result<Vec<ObjectMeta>> {
+            Ok(self
+                .0
+                .list(prefix)
+                .await?
+                .into_iter()
+                .map(no_version)
+                .collect())
+        }
+        async fn delete(&self, key: &str, cond: Condition) -> Result<()> {
+            self.0.delete(key, cond).await
+        }
+        async fn versions(&self, _: &str) -> Result<Vec<crate::VersionInfo>> {
+            Err(Error::Backend("ListObjectVersions not implemented".into()))
+        }
+    }
+
+    /// One device (a cua home) on `store`, with its own block cache.
+    fn device(
+        dir: &Path,
+        name: &str,
+        store: &Arc<dyn crate::Backend>,
+    ) -> (Drive, Arc<Feed>, Arc<Vfs>) {
+        let state = dir.join(name);
+        let d = Drive::new(store.clone(), &state);
+        let f = Feed::new(
+            &d,
+            DeviceId {
+                id: format!("dev{name}"),
+                name: name.to_string(),
+            },
+        );
+        let cache =
+            Arc::new(BlockCache::open(state.join("cache"), crate::cache::MIN_CAPACITY).unwrap());
+        let v = Vfs::new(&d, Context::user(), Some(cache), Some(f.clone()), &state).unwrap();
+        (d, f, v)
+    }
+
+    /// Reads a whole file the way a kernel client does: ranges until EOF.
+    async fn read_all(v: &Vfs, ino: u64) -> Vec<u8> {
+        let mut out = vec![];
+        loop {
+            let (b, eof) = v.read(ino, out.len() as u64, 4096).await.unwrap();
+            out.extend_from_slice(&b);
+            if eof || b.is_empty() {
+                return out;
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn another_devices_rewrite_reads_whole_on_a_bucket_without_versions() {
+        let dir = tempfile::tempdir().unwrap();
+        let store: Arc<dyn crate::Backend> =
+            Arc::new(NoVersions(FsBackend::new(dir.path().join("bucket"))));
+        let (oracle, fo, _) = device(dir.path(), "oracle", &store);
+        let (_mac, fm, mac) = device(dir.path(), "mac", &store);
+        fo.spawn();
+        fm.spawn();
+        let s = oracle.session(Context::user());
+        let key = "public/settings.json";
+        s.write(key, br#"{"v":1}"#.to_vec(), Condition::None)
+            .await
+            .unwrap();
+        // The Mac reads it once: its cache now holds that content.
+        let f = find(&mac, key).await.unwrap();
+        assert_eq!(read_all(&mac, f.ino).await, br#"{"v":1}"#);
+        for next in [
+            &br#"{"v":2,"name":"Ada","model":"opus"}"#[..], // longer
+            &br#"{}"#[..],                                  // shorter
+        ] {
+            s.write(key, next.to_vec(), Condition::None).await.unwrap();
+            // The Mac hears of the change through the feed...
+            let t0 = Instant::now();
+            while find(&mac, key).await.unwrap().size != next.len() as u64 {
+                assert!(
+                    t0.elapsed() < Duration::from_secs(8),
+                    "the Mac never saw the change"
+                );
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+            // ...and reads the new content, not the old content cut or padded
+            // to the new size.
+            let got = read_all(&mac, f.ino).await;
+            assert_eq!(
+                String::from_utf8_lossy(&got),
+                String::from_utf8_lossy(next),
+                "the Mac read stale cached bytes"
+            );
+        }
+        fo.stop();
+        fm.stop();
+    }
+
+    #[tokio::test]
+    async fn a_file_reads_back_right_after_it_is_written_on_a_bucket_without_versions() {
+        let dir = tempfile::tempdir().unwrap();
+        let store: Arc<dyn crate::Backend> =
+            Arc::new(NoVersions(FsBackend::new(dir.path().join("bucket"))));
+        let (d, _f, v) = device(dir.path(), "oracle", &store);
+        // Through the mount: create, write, close (upload), read.
+        let public = find(&v, "public").await.unwrap();
+        let a = v.create(public.ino, "a.txt").await.unwrap();
+        v.write(a.ino, 0, b"written here").await.unwrap();
+        v.flush("public/a.txt").await.unwrap();
+        assert_eq!(read_all(&v, a.ino).await, b"written here");
+        // Through a tool call (`cua volume put`), then the mount.
+        d.session(Context::user())
+            .write("public/b.txt", b"put by a tool".to_vec(), Condition::None)
+            .await
+            .unwrap();
+        let b = find(&v, "public/b.txt").await.unwrap();
+        assert_eq!(read_all(&v, b.ino).await, b"put by a tool");
     }
 }

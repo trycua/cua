@@ -164,7 +164,7 @@ class DeskTest(unittest.TestCase):
         return json.loads(result.read_text("utf-8"))
 
     def test_desk_starts_empty_and_names_its_window(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             plan = self.start(Path(tmp), 1)
             state = json.loads(plan[0]["state"].read_text("utf-8"))
             self.assertEqual(state["mode"], "desk")
@@ -180,12 +180,10 @@ class DeskTest(unittest.TestCase):
             self.assertTrue(win.exists(timeout=10))
             radios = win.descendants(control_type="RadioButton")
             self.assertEqual([r.window_text() for r in radios], C.DESK_SHELVES)
-            self.assertFalse(
-                any(r.get_toggle_state() for r in radios), "a shelf is selected at start"
-            )
+            self.assertFalse(any(r.is_selected() for r in radios), "a shelf is selected at start")
 
     def test_oracle_passes_each_copy(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             root = Path(tmp)
             plan = self.start(root)
             t0 = time.time() * 1000
@@ -197,7 +195,7 @@ class DeskTest(unittest.TestCase):
             self.assertEqual(result["diagnostics"]["cross_talk_instances"]["value"], 0)
 
     def test_noop_fails(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             root = Path(tmp)
             self.start(root)
             result = self.evaluate(root, time.time() * 1000)
@@ -205,7 +203,7 @@ class DeskTest(unittest.TestCase):
             self.assertEqual(result["diagnostics"]["instances_passed"]["value"], 0)
 
     def test_foreign_code_in_a_copy_is_caught(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             root = Path(tmp)
             plan = self.start(root)
             t0 = time.time() * 1000
@@ -246,7 +244,7 @@ class MouseUserTest(unittest.TestCase):
                 subprocess.run(["taskkill", "/T", "/F", "/PID", str(proc.pid)], capture_output=True)
 
     def run_user(self, seconds: float = 4.0, during=None, cover: bool = False) -> dict:
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             root = Path(tmp)
             script, log, control = root / "mouse-user.json", root / "s.jsonl", root / "control"
             shared_desktop.write_mouse_script(9, script)
@@ -274,7 +272,9 @@ class MouseUserTest(unittest.TestCase):
             self.say(control, "disarm")
             self.assertTrue(_wait(lambda: any(x.get("ev") == "disarmed" for x in _lines(log)), 10))
             self.say(control, "quit")
-            return summarize_sentinel.summarize(str(log))["mouse_user"]
+            summary = summarize_sentinel.summarize(str(log))["mouse_user"]
+            self.stop()  # end every process before the temporary directory goes
+            return summary
 
     @staticmethod
     def say(control: Path, command: str) -> None:

@@ -1350,8 +1350,8 @@ fn mark_session_ended(
     transition
 }
 
-/// Replaces any unfinished idle cleanup: a terminal end reruns every hook
-/// with its own reason.
+/// A terminal end after an idle end reruns every hook with its own reason.
+/// An idle run still in flight keeps `running` and picks up the rerun.
 fn initialize_session_cleanup(session_id: &str, reason: SessionEndReason) {
     let mut registered = hooks()
         .lock()
@@ -1360,23 +1360,27 @@ fn initialize_session_cleanup(session_id: &str, reason: SessionEndReason) {
         .map(|(id, hook)| (*id, hook.clone()))
         .collect::<Vec<_>>();
     registered.sort_by_key(|(id, _)| *id);
-    cleanup_progress().lock().unwrap().insert(
-        session_id.to_owned(),
-        SessionCleanupProgress {
+    let mut all = cleanup_progress().lock().unwrap();
+    let progress = all
+        .entry(session_id.to_owned())
+        .or_insert_with(|| SessionCleanupProgress {
             reason,
-            hooks: registered,
+            hooks: Vec::new(),
             completed: HashSet::new(),
             failures: Vec::new(),
             running: false,
-        },
-    );
+        });
+    progress.reason = reason;
+    progress.hooks = registered;
+    progress.completed.clear();
+    progress.failures.clear();
 }
 
 /// Retry only the cleanup hooks that have not yet succeeded for this ended
 /// lifecycle episode. Panics are converted to structured failures so another
 /// explicit end can retry them instead of losing cleanup state.
 pub fn retry_session_cleanup(session_id: &str) -> SessionCleanupReport {
-    let (reason, work) = {
+    let (mut reason, mut work) = {
         let mut all = cleanup_progress().lock().unwrap();
         let Some(progress) = all.get_mut(session_id) else {
             return SessionCleanupReport {
@@ -1406,23 +1410,36 @@ pub fn retry_session_cleanup(session_id: &str) -> SessionCleanupReport {
 
     let mut successes = Vec::new();
     let mut failures = Vec::new();
-    for (id, hook) in work {
-        let result =
-            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| (hook.callback)(session_id)));
-        match result {
-            Ok(Ok(())) => successes.push(id),
-            Ok(Err(error)) => failures.push(SessionCleanupFailure {
-                hook: hook.name,
-                error,
-            }),
-            Err(_) => failures.push(SessionCleanupFailure {
-                hook: hook.name,
-                error: "cleanup hook panicked".into(),
-            }),
+    let mut all = loop {
+        for (id, hook) in work {
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                (hook.callback)(session_id)
+            }));
+            match result {
+                Ok(Ok(())) => successes.push(id),
+                Ok(Err(error)) => failures.push(SessionCleanupFailure {
+                    hook: hook.name,
+                    error,
+                }),
+                Err(_) => failures.push(SessionCleanupFailure {
+                    hook: hook.name,
+                    error: "cleanup hook panicked".into(),
+                }),
+            }
         }
-    }
-
-    let mut all = cleanup_progress().lock().unwrap();
+        let all = cleanup_progress().lock().unwrap();
+        match all.get(session_id) {
+            // A terminal end arrived while these idle hooks ran: run its
+            // hooks before anyone may revive the session.
+            Some(progress) if progress.reason != reason => {
+                reason = progress.reason;
+                work = progress.hooks.clone();
+                successes.clear();
+                failures.clear();
+            }
+            _ => break all,
+        }
+    };
     let Some(progress) = all.get_mut(session_id) else {
         return SessionCleanupReport {
             complete: true,
@@ -1430,15 +1447,6 @@ pub fn retry_session_cleanup(session_id: &str) -> SessionCleanupReport {
             failures: Vec::new(),
         };
     };
-    if progress.reason != reason {
-        // A terminal end replaced this idle cleanup while its hooks ran; that
-        // cleanup owns the progress now.
-        return SessionCleanupReport {
-            complete: false,
-            in_progress: true,
-            failures: progress.failures.clone(),
-        };
-    }
     progress.completed.extend(successes);
     progress.failures = failures;
     progress.running = false;
@@ -2413,6 +2421,77 @@ mod tests {
         end_session(&sid);
         assert_eq!(forget_ended_sessions_with_prefix(prefix), 1);
         assert!(!is_session_ended(&sid));
+    }
+
+    #[test]
+    fn a_terminal_end_during_idle_cleanup_blocks_revival_until_its_hooks_ran() {
+        let sid = "__cua_runtime_idle-then-terminal:named";
+        let owner = "idle-then-terminal-owner";
+        activate_session(
+            sid,
+            Some("named"),
+            owner,
+            false,
+            SessionTransport::Daemon,
+            SessionClientKind::Cli,
+        )
+        .unwrap();
+        let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+        let release_rx = Mutex::new(release_rx);
+        let reasons = Arc::new(Mutex::new(Vec::new()));
+        let seen = reasons.clone();
+        let _hook = register_scoped_session_end_hook(move |id| {
+            if id != sid {
+                return;
+            }
+            let reason = session_end_reason(id);
+            seen.lock().unwrap().push(reason);
+            if reason == Some(SessionEndReason::IdleTimeout) {
+                entered_tx.send(()).unwrap();
+                release_rx.lock().unwrap().recv().unwrap();
+            }
+        });
+
+        let idle = std::thread::spawn(|| evict_idle_with_prefix(Duration::ZERO, sid));
+        entered_rx.recv().unwrap();
+        end_session(sid);
+        assert!(
+            activate_or_revive_session_for_owner(
+                sid,
+                Some("named"),
+                owner,
+                false,
+                SessionTransport::Daemon,
+                SessionClientKind::Cli,
+                None,
+            )
+            .is_err(),
+            "revival must wait for the terminal end's hooks"
+        );
+
+        release_tx.send(()).unwrap();
+        assert_eq!(idle.join().unwrap(), vec![sid.to_owned()]);
+        assert_eq!(
+            *reasons.lock().unwrap(),
+            [
+                Some(SessionEndReason::IdleTimeout),
+                Some(SessionEndReason::Explicit)
+            ]
+        );
+        assert_eq!(
+            activate_or_revive_session_for_owner(
+                sid,
+                Some("named"),
+                owner,
+                false,
+                SessionTransport::Daemon,
+                SessionClientKind::Cli,
+                None,
+            ),
+            Ok(true)
+        );
+        end_session(sid);
     }
 
     #[test]

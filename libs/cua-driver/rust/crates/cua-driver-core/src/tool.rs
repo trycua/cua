@@ -3576,26 +3576,12 @@ fn canonical_proposed_path(raw: &str) -> Result<String, ToolResult> {
     Ok(canonical.to_string_lossy().into_owned())
 }
 
+/// Tools that drive shared native input or window state. Derived from the
+/// contract's action-result vocabulary so a new native action tool cannot
+/// skip the desktop lane. `bring_to_front` returns its own result shape but
+/// still activates a window.
 fn is_physical_desktop_action(tool: &str) -> bool {
-    matches!(
-        tool,
-        "click"
-            | "double_click"
-            | "right_click"
-            | "scroll"
-            | "drag"
-            | "mouse_drag"
-            | "parallel_mouse_drag"
-            | "move_cursor"
-            | "mouse_button_down"
-            | "mouse_button_up"
-            | "type_text"
-            | "press_key"
-            | "hotkey"
-            | "set_value"
-            | "bring_to_front"
-            | "set_window_frame"
-    )
+    cua_driver_contract::is_desktop_action_result_tool(tool) || tool == "bring_to_front"
 }
 
 fn requires_desktop_coordination(tool: &str, args: &Value, independent_lane: bool) -> bool {
@@ -6549,6 +6535,27 @@ resources:
         tokio::time::sleep(Duration::from_millis(500)).await;
         drop(call);
         assert!(next.await.unwrap());
+    }
+
+    #[test]
+    fn every_native_action_result_tool_takes_the_desktop_lane() {
+        use super::is_physical_desktop_action;
+        for name in cua_driver_contract::ACTION_RESULT_TOOLS {
+            assert_eq!(
+                is_physical_desktop_action(name),
+                !name.starts_with("browser_"),
+                "{name}"
+            );
+        }
+        assert!(is_physical_desktop_action("bring_to_front"));
+        for name in [
+            "get_window_state",
+            "screenshot",
+            "launch_app",
+            "browser_click",
+        ] {
+            assert!(!is_physical_desktop_action(name), "{name}");
+        }
     }
 
     #[test]

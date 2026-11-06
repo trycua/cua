@@ -56,7 +56,9 @@ def test_the_library_is_compiled_once_and_downloaded_by_the_rest():
     assert [n for n in JOBS if "./.github/actions/spaces-rust-slice" in uses(n)] == ["ffi"]
     for name in SWIFT_JOBS:
         job = JOBS[name]
-        assert job["needs"] == "ffi", name
+        needs = [job["needs"]] if isinstance(job["needs"], str) else job["needs"]
+        # Downloads the library from `ffi`; `changes` (the packaging-path filter) is the only other job it may wait for.
+        assert "ffi" in needs and set(needs) <= {"ffi", "changes"}, name
         download = [s for s in job["steps"] if str(s.get("uses", "")).startswith("actions/download-artifact")]
         assert len(download) == 1 and download[0]["with"]["name"] == ARTIFACT, name
         assert download[0]["with"]["path"] == "libs/cua/target/release", name

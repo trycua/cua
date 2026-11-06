@@ -103,7 +103,8 @@ jobs:
   # alerts and opens an issue (ci-postmerge-issue.yml).
   changes:
     name: changes
-    if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}
+    needs: quick
+    if: ${{ !failure() && !cancelled() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! niri identity, geometry and focus over niri's IPC socket.
 //!
 //! Window ids are niri's own window ids. Every IPC connection is attested:

@@ -1143,7 +1143,7 @@ dev = [
 
 [[package]]
 name = "cua-som"
-version = "0.1.4"
+version = "0.2.0"
 source = { editable = "libs/python/som" }
 dependencies = [
     { name = "easyocr" },

@@ -276,7 +276,7 @@ struct SnapshotTests {
             AppSpaceRow(id: id, name: name, displayName: nil, provider: provider, spacesdVersion: "0.4.0",
                         features: ["desktop_stream"], addedAt: "2026-09-25T08:00:00Z",
                         os: os, osName: osName, osPrettyName: nil, image: nil, imageDigest: nil,
-                        kind: nil, arch: "arm64", reachable: true, error: nil, host: host, hostName: hostName,
+                        kind: nil, arch: "arm64", hidden: false, reachable: true, error: nil, host: host, hostName: hostName,
                         power: nil, powerState: nil, cloud: nil, cloudPlace: nil, cloudDelete: nil, stopReason: nil, sharing: nil)
         }
         let backend = FixtureSpacesBackend(rows: [

@@ -290,6 +290,8 @@ impl EgressEnforcement {
 /// - `localhost`: `internet`, plus this computer's localhost on
 ///   `localhost_ports` (every port only with `all_localhost_ports`);
 /// - `lan`: `internet`, plus your local network (not this computer);
+/// - `localhost+lan`: `internet`, plus both of the above (`localhost` and
+///   `lan` are independent extras; this is the one preset with both);
 /// - `custom`: `custom_base` (`internet` or `none`) plus `allow` and `deny`;
 /// - `unprotected`: everything but cloud metadata, other trees and the
 ///   daemon.
@@ -299,17 +301,18 @@ impl EgressEnforcement {
 /// preset is `unprotected`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, uniffi::Record, Deserialize)]
 pub struct NetworkSettings {
-    /// `internet`, `none`, `localhost`, `lan`, `custom` or `unprotected`;
-    /// empty is `internet`.
+    /// `internet`, `none`, `localhost`, `lan`, `localhost+lan`, `custom` or
+    /// `unprotected`; empty is `internet`.
     #[uniffi(default)]
     #[serde(default)]
     pub preset: String,
-    /// `localhost`: the ports of this computer's localhost the Space may
-    /// reach.
+    /// `localhost` and `localhost+lan`: the ports of this computer's
+    /// localhost the Space may reach.
     #[uniffi(default)]
     #[serde(default)]
     pub localhost_ports: Vec<u16>,
-    /// `localhost`: every port (the daemon's stay blocked).
+    /// `localhost` and `localhost+lan`: every port (the daemon's stay
+    /// blocked).
     #[uniffi(default)]
     #[serde(default)]
     pub all_localhost_ports: bool,
@@ -4105,6 +4108,7 @@ impl Spaces {
                             instance_type: text(&options.instance_type),
                             region: text(&options.region),
                             tree: None,
+                            relay: None,
                         })
                         .await?;
                     if options.children == Some(true)
@@ -5150,6 +5154,33 @@ impl Spaces {
         run(async move {
             let v = host
                 .tool_value("relay_unregister_space", json!({"space": space}))
+                .await?;
+            Ok(v.get("unregistered")
+                .and_then(Value::as_bool)
+                .unwrap_or(false))
+        })
+        .await
+    }
+
+    /// [`Spaces::relay_unregister`] for one of your computers
+    /// (`relay:<machine>`), choosing what happens to the Spaces it
+    /// provides: with `delete_spaces` false they stay on the account,
+    /// detached (they come back when the computer registers again); with
+    /// true they are deleted too, files first (through the computer while
+    /// it answers), then their records. Returns false when it was not on
+    /// the relay.
+    pub async fn relay_unregister_computer(
+        &self,
+        space: String,
+        delete_spaces: bool,
+    ) -> Result<bool> {
+        let host = self.host.clone();
+        run(async move {
+            let v = host
+                .tool_value(
+                    "relay_unregister_space",
+                    json!({"space": space, "delete_spaces": delete_spaces}),
+                )
                 .await?;
             Ok(v.get("unregistered")
                 .and_then(Value::as_bool)

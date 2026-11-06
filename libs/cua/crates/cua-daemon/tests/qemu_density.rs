@@ -449,7 +449,10 @@ async fn bake_world(root: &Path, disk: &Path, forkable: bool) -> Vec<String> {
 /// `CUA_VMM_TEST_BURST` VMs of 2 vCPU / 2 GiB (what the E2B gateway asks
 /// for) are created at once under a memory cap of `CUA_VMM_TEST_CAP_GIB`
 /// (default 24.6, the cap of the 32 GiB host of the failing run, whatever
-/// this host's size). `CUA_VMM_TEST_MODE`: `cold` boots each from the disk;
+/// this host's size). The vCPU limit fits the burst and the fork's world VM
+/// whatever this host's CPUs, so only memory can refuse one: the default 8x
+/// of a 4-CPU runner allows 32 vCPUs, 16 of these VMs (15 beside a world).
+/// `CUA_VMM_TEST_MODE`: `cold` boots each from the disk;
 /// `fork` (the gateway's path) checkpoints one world VM and forks it,
 /// `CUA_VMM_TEST_FORKABLE=1` for a world with a shared RAM file.
 ///
@@ -471,8 +474,11 @@ async fn burst(mode: &str) {
     let total_mb = cua_vmm::density::host_memory()
         .expect("host memory")
         .total_mb;
+    let cpus = cua_vmm::density::host_cpus().max(1) as usize;
     let capped = DensityConfig {
         max_rss_fraction: (cap_gib * 1024.0 / total_mb as f64).min(1.0),
+        vcpu_overcommit: ((2 * (n + 1)).div_ceil(cpus) as f64)
+            .max(cua_vmm::density::DEFAULT_VCPU_OVERCOMMIT),
         ..DensityConfig::default()
     };
     let mut made: Vec<String> = vec![];

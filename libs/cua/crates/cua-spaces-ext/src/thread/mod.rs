@@ -848,6 +848,14 @@ pub fn supervisor_wake() -> Arc<tokio::sync::Notify> {
     W.get_or_init(Default::default).clone()
 }
 
+/// Wakes the dispatcher of this process alone (it runs apart from the
+/// supervisor's pass, so a pass held up by a slow Space never delays a
+/// new message reaching its agent).
+pub fn dispatch_wake() -> Arc<tokio::sync::Notify> {
+    static W: OnceLock<Arc<tokio::sync::Notify>> = OnceLock::new();
+    W.get_or_init(Default::default).clone()
+}
+
 fn fold_cache() -> &'static Mutex<HashMap<PathBuf, Fold>> {
     static CACHE: OnceLock<Mutex<HashMap<PathBuf, Fold>>> = OnceLock::new();
     CACHE.get_or_init(Default::default)
@@ -1078,6 +1086,7 @@ impl ThreadStore {
         self.notifier().notify_waiters();
         if wakes {
             supervisor_wake().notify_one();
+            dispatch_wake().notify_one();
         }
         if let Some(hook) = APPEND_HOOK.get() {
             hook(self.space(), &out);

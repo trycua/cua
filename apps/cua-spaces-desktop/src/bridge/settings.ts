@@ -88,12 +88,8 @@ export function settingsPage(model: AppModel, parts: HostParts) {
   return model.native.appSettingsWithStorage(page, parts.storage.section, model.settings.experiments);
 }
 
-/** The SwiftUI app's New UI switch ("Use classic UI", and the older `experiment:web_ui`): this app is the web UI, so it (and its note) is not offered here. */
-export const WEB_UI_ROWS = new Set(["experiment:classic_ui", "experiment:classic_ui-note", "experiment:web_ui", "experiment:web_ui-note"]);
-
 export function experimentsPage(model: AppModel) {
-  const page = model.native.appExperimentsPage(model.settings.experiments);
-  return { ...page, sections: page.sections.map((s) => ({ ...s, rows: s.rows.filter((r) => !WEB_UI_ROWS.has(r.id)) })) };
+  return model.native.appExperimentsPage(model.settings.experiments);
 }
 
 /** The experiments the daemon enforces (Secure Spaces, Child Spaces, Ask first, CI runners, Public TCP shares, Phone app, Warm start) as the cua home keeps them: what `cua experiments enable` set shows the next time Settings is read. */
@@ -124,6 +120,8 @@ export function settingsState(model: AppModel, parts: HostParts) {
     tips: { off: model.settings.tips.off, done: [...model.settings.tips.done] },
     // The Spaces and machine desktops pinned to the notch, in pin order.
     notchPinned: [...model.settings.notchPinned],
+    // Which coding apps the agent menu shows (`AppSettings.agentMenu*`, the core's `agent_menu`).
+    agentMenu: { shown: [...model.settings.agentMenuShown], hidden: [...model.settings.agentMenuHidden], seen: [...model.settings.agentMenuSeen] },
   };
 }
 
@@ -141,6 +139,14 @@ export function settingsUpdate(args: Record<string, unknown>): Partial<AppModel[
     const ids = args.notchPinned;
     if (!Array.isArray(ids) || !ids.every((id) => typeof id === "string")) throw Failure.badArgs("notchPinned: string[]");
     patch.notchPinned = ids as string[];
+  }
+  if ("agentMenu" in args) {
+    const m = args.agentMenu as { shown?: unknown; hidden?: unknown; seen?: unknown } | null;
+    const strings = (v: unknown) => Array.isArray(v) && v.every((x) => typeof x === "string");
+    if (!m || typeof m !== "object" || !strings(m.shown) || !strings(m.hidden) || !strings(m.seen)) throw Failure.badArgs("agentMenu: {shown: string[], hidden: string[], seen: string[]}");
+    patch.agentMenuShown = m.shown as string[];
+    patch.agentMenuHidden = m.hidden as string[];
+    patch.agentMenuSeen = m.seen as string[];
   }
   if (!Object.keys(patch).length) throw Failure.badArgs("tips");
   return patch;
@@ -300,7 +306,6 @@ export function settingsMethods(ctx: BridgeContext): Handlers {
         if (!updates.updater) throw Failure.unsupported("Updates are off in this build");
         updates.choose(option);
       } else if (row.startsWith("experiment:")) {
-        if (WEB_UI_ROWS.has(row)) throw Failure.unsupported("This app is the new UI");
         chooseExperiment(model, row, option);
       } else if (row.startsWith("agent:")) {
         // An AI agents row: configure it, or remove what cua added.

@@ -77,7 +77,8 @@ def test_spaces_builds_use_the_release_config_overlay() -> None:
 def test_spaces_signing_fails_closed_only_on_trycua_cua() -> None:
     wf = workflow("cd-cua-spaces.yml")
     assert wf["env"]["REQUIRE_SIGNING"] == (
-        "${{ github.repository == 'trycua/cua' && startsWith(github.ref, 'refs/tags/') }}"
+        "${{ github.repository == 'trycua/cua' && (startsWith(github.ref, 'refs/tags/') "
+        "|| (github.event_name == 'workflow_dispatch' && inputs.rebuild_tag != '')) }}"
     )
     gate = step("cd-cua-spaces.yml", "build-macos", "Signing configuration")["run"]
     assert 'elif [ "$REQUIRE_SIGNING" = true ]; then' in gate
@@ -303,3 +304,10 @@ def test_release_config_requires_a_stable_tag_to_match_the_app_version(tmp_path:
     assert code == 1 and "does not match" in err
     for bad_version, bad_repo in (("1.2", "trycua/cua"), ("1.2.3", "trycua"), ("1.2.3", "a/b'c")):
         assert release_config(tmp_path, bad_version, bad_repo)[0] == 1
+
+
+def test_spacesd_releases_never_become_latest() -> None:
+    # Only cua-spaces is the repository Latest; a stable cua-spacesd release
+    # took it on 5 Nov 2026.
+    publish = step("cd-cua-spacesd.yml", "release", "Upload to the GitHub release")["run"]
+    assert "FLAGS=(--draft=false --latest=false)" in publish

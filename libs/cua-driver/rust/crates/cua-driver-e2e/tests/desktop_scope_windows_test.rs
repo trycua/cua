@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Harness integration test for the **desktop-scope** modality (#1968 / #2019).
 //!
 //! Desktop-scope is cua-driver's *foreground*, vision-only, **screen-absolute**

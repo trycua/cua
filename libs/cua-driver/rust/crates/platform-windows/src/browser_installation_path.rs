@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Path normalization and reparse-point resolution for the Windows isolated
 //! browser installation check.
 //!

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Testable authorization policy for the Windows UIAccess worker.
 //!
 //! The production binary carries a `uiAccess=true` manifest and therefore

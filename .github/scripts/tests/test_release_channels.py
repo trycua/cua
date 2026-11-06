@@ -494,7 +494,7 @@ def test_manifest_uses_stable_authority_with_a_separately_versioned_asset_tree(
 
     assert changed == ["release-stage/cua-driver-skills/SKILL.md"]
     assert source_skill.read_text(encoding="utf-8") == source_before
-    assert version in (staged / "SKILL.md").read_text(encoding="utf-8")
+    assert f"  version: {version} # x-release-please-version" in (staged / "SKILL.md").read_text(encoding="utf-8")
     load_registry(registry, root=root)
 
     assets = root / "release-upload"

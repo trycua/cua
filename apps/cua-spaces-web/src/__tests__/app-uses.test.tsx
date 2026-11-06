@@ -86,7 +86,7 @@ describe.skipIf(!wasmBuilt)("an app's Uses row", () => {
     const row = await found("[data-connector-uses=connected]");
     // The first connected one that works is in use until the person chooses.
     expect(row.querySelector("[data-uses-provider]")!.textContent).toBe("Anthropic");
-    expect(row.querySelector("[data-uses-line]")!.textContent).toContain("API key ending a91c");
+    expect(row.querySelector("[data-uses-line]")!.textContent).toContain("API Key (*a91c)");
     expect(document.body.textContent).toContain("Takes effect the next time Hermes runs.");
     const popup = await openMenu();
     const options = qa("[data-uses-option]").map((o) => o.dataset.usesOption);
@@ -100,7 +100,7 @@ describe.skipIf(!wasmBuilt)("an app's Uses row", () => {
     await waitFor(() => expect(q("[data-connector-uses-app=hermes] [data-uses-provider]")!.textContent).toBe("OpenRouter"));
     // Nothing was signed out or removed by choosing.
     expect(calls.filter((c) => c.op === "agentKeys.remove")).toEqual([]);
-    expect(q("[data-connector-uses-app=hermes] [data-uses-line]")!.textContent).toContain("API key ending cdef");
+    expect(q("[data-connector-uses-app=hermes] [data-uses-line]")!.textContent).toContain("API Key (*cdef)");
   });
 
   it("Connect another provider opens the provider choice for this app", async () => {

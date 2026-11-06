@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Rust-owned lifecycle for a host-embedded Cua Driver daemon.
 //!
 //! Language bindings deliberately expose this object rather than reimplementing

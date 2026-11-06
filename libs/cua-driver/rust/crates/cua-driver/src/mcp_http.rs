@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Streamable-HTTP MCP transport for the daemon (trycua/cua#1799).
 //!
 //! Why: over **stdio**, one `cua-driver mcp` process is a single pipe, so all of

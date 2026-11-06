@@ -28,7 +28,7 @@
         "channel": {
           "enum": [
             "stable",
-            "beta"
+            "nightly"
           ]
         },
         "lastCheck": {
@@ -1764,6 +1764,65 @@
         "percent"
       ]
     },
+    "DefaultSpace": {
+      "type": "object",
+      "properties": {
+        "space": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "reason": {
+          "type": "string"
+        },
+        "defaultSpace": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "defaultOnline": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "order": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "space": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "online": {
+                "type": "boolean"
+              },
+              "role": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "space",
+              "name",
+              "online",
+              "role"
+            ]
+          }
+        }
+      },
+      "required": [
+        "space",
+        "reason",
+        "defaultSpace",
+        "defaultOnline",
+        "order"
+      ]
+    },
     "DevicesInput": {
       "type": "object",
       "properties": {
@@ -2001,6 +2060,206 @@
         "method"
       ]
     },
+    "DriverLiveTest": {
+      "type": "object",
+      "properties": {
+        "passed": {
+          "type": "boolean"
+        },
+        "atMs": {
+          "type": "number"
+        },
+        "failure": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tookMs": {
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "passed",
+        "atMs",
+        "failure"
+      ]
+    },
+    "DriverPermission": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "enum": [
+            "screen",
+            "accessibility"
+          ]
+        },
+        "granted": {
+          "type": "boolean"
+        },
+        "settingsUrl": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "granted",
+        "settingsUrl"
+      ]
+    },
+    "DriverStatus": {
+      "type": "object",
+      "properties": {
+        "machineId": {
+          "type": "string"
+        },
+        "machineName": {
+          "type": "string"
+        },
+        "thisMachine": {
+          "type": "boolean"
+        },
+        "state": {
+          "enum": [
+            "ready",
+            "starting",
+            "stopped",
+            "paused",
+            "needs-permission",
+            "failed"
+          ]
+        },
+        "version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "update": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "version": {
+              "type": "string"
+            },
+            "note": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "version",
+            "note"
+          ]
+        },
+        "lastTest": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DriverLiveTest"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "lastError": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "permissions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DriverPermission"
+          }
+        },
+        "appName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "apps": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "on": {
+                "type": "boolean"
+              },
+              "own": {
+                "type": "boolean"
+              },
+              "bringsOwn": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "on",
+              "own",
+              "bringsOwn"
+            ]
+          }
+        },
+        "activity": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "app": {
+                "type": "string"
+              },
+              "target": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "app",
+              "target"
+            ]
+          }
+        },
+        "canPause": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "machineId",
+        "machineName",
+        "thisMachine",
+        "state",
+        "version",
+        "update",
+        "lastTest",
+        "lastError",
+        "permissions",
+        "apps",
+        "activity",
+        "canPause"
+      ]
+    },
     "DriveStorageInput": {
       "type": "object",
       "properties": {
@@ -2032,15 +2291,6 @@
       "type": "object",
       "properties": {
         "cuaVolume": {
-          "type": "boolean"
-        },
-        "yourCloud": {
-          "type": "boolean"
-        },
-        "sharing": {
-          "type": "boolean"
-        },
-        "webUi": {
           "type": "boolean"
         },
         "secureSpaces": {
@@ -4986,7 +5236,7 @@
             "updateChannel": {
               "enum": [
                 "stable",
-                "beta",
+                "nightly",
                 null
               ]
             },
@@ -5016,6 +5266,34 @@
               "items": {
                 "type": "string"
               }
+            },
+            "agentMenu": {
+              "type": "object",
+              "properties": {
+                "shown": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "hidden": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "seen": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "shown",
+                "hidden",
+                "seen"
+              ]
             }
           },
           "required": [
@@ -5720,6 +5998,37 @@
         "reachable"
       ]
     },
+    "SpaceService": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "command": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        },
+        "restarts": {
+          "type": "number"
+        },
+        "lastEnd": {
+          "type": "string"
+        },
+        "probeError": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "command",
+        "state",
+        "restarts",
+        "lastEnd",
+        "probeError"
+      ]
+    },
     "SpaceSharingFacts": {
       "type": "object",
       "properties": {
@@ -5791,6 +6100,35 @@
       "required": [
         "ownerId",
         "role"
+      ]
+    },
+    "SpacesSettings": {
+      "type": "object",
+      "properties": {
+        "defaultSpace": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "fallback": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "fallbackOn": {
+          "type": "boolean"
+        },
+        "updatedAt": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "defaultSpace",
+        "fallback",
+        "fallbackOn",
+        "updatedAt"
       ]
     },
     "StartupState": {
@@ -6400,6 +6738,129 @@
         "update",
         "runsOnKeysOf",
         "event"
+      ]
+    },
+    "TreeBudget": {
+      "type": "object",
+      "properties": {
+        "root": {
+          "type": "string"
+        },
+        "set": {
+          "$ref": "#/$defs/TreeBudgetLimits"
+        },
+        "maxSpaces": {
+          "type": "number"
+        },
+        "maxVcpus": {
+          "type": "number"
+        },
+        "maxMemoryMb": {
+          "type": "number"
+        },
+        "usdPerHour": {
+          "type": "number"
+        },
+        "usdTotal": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "spaces": {
+          "type": "number"
+        },
+        "vcpus": {
+          "type": "number"
+        },
+        "memoryMb": {
+          "type": "number"
+        },
+        "usdPerHourUsed": {
+          "type": "number"
+        },
+        "usdSpent": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "root",
+        "set",
+        "maxSpaces",
+        "maxVcpus",
+        "maxMemoryMb",
+        "usdPerHour",
+        "spaces",
+        "vcpus",
+        "memoryMb",
+        "usdPerHourUsed",
+        "usdSpent"
+      ]
+    },
+    "TreeBudgetLimits": {
+      "type": "object",
+      "properties": {
+        "maxSpaces": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "maxVcpus": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "maxMemoryMb": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "usdPerHour": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "usdTotal": {
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      }
+    },
+    "TreeNode": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "parent": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "depth": {
+          "type": "number"
+        },
+        "children": {
+          "type": "boolean"
+        },
+        "home": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "depth",
+        "children"
       ]
     },
     "UpdateState": {
@@ -7622,7 +8083,7 @@
         "updateChannel": {
           "enum": [
             "stable",
-            "beta",
+            "nightly",
             null
           ]
         },
@@ -7691,6 +8152,34 @@
           "items": {
             "type": "string"
           }
+        },
+        "agentMenu": {
+          "type": "object",
+          "properties": {
+            "shown": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "hidden": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "seen": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "shown",
+            "hidden",
+            "seen"
+          ]
         },
         "runtimes": {
           "anyOf": [
@@ -8003,6 +8492,9 @@
       "$ref": "#/$defs/AgentKeysReport"
     },
     "agentKeys.remove": {
+      "$ref": "#/$defs/AgentKeysReport"
+    },
+    "agentKeys.rename": {
       "$ref": "#/$defs/AgentKeysReport"
     },
     "agentKeys.set": {
@@ -8447,6 +8939,12 @@
         "earlierOmitted"
       ]
     },
+    "budget.get": {
+      "$ref": "#/$defs/TreeBudget"
+    },
+    "budget.set": {
+      "$ref": "#/$defs/TreeBudget"
+    },
     "checklist.get": {
       "type": "object",
       "properties": {
@@ -8520,6 +9018,9 @@
       "required": [
         "state"
       ]
+    },
+    "children.set": {
+      "type": "null"
     },
     "ci.connect": {
       "$ref": "#/$defs/CiConnectAnswer"
@@ -8762,6 +9263,122 @@
       "type": "null"
     },
     "devices.revokePairingCode": {
+      "type": "null"
+    },
+    "driver.config": {
+      "type": "object",
+      "additionalProperties": {}
+    },
+    "driver.list": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "machineId": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "os": {
+            "enum": [
+              "macos",
+              "windows",
+              "linux"
+            ]
+          },
+          "thisMachine": {
+            "type": "boolean"
+          },
+          "state": {
+            "enum": [
+              "ready",
+              "starting",
+              "stopped",
+              "paused",
+              "needs-permission",
+              "failed"
+            ]
+          },
+          "version": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "update": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "machineId",
+          "name",
+          "os",
+          "thisMachine",
+          "state",
+          "version",
+          "update"
+        ]
+      }
+    },
+    "driver.pause": {
+      "type": "null"
+    },
+    "driver.permissions": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "appName": {
+          "type": "string"
+        },
+        "permissions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DriverPermission"
+          }
+        }
+      },
+      "required": [
+        "appName",
+        "permissions"
+      ]
+    },
+    "driver.setApp": {
+      "type": "null"
+    },
+    "driver.setConfig": {
+      "type": "object",
+      "additionalProperties": {}
+    },
+    "driver.setup": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/DriverStatus"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "driver.status": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/DriverStatus"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "driver.test": {
+      "$ref": "#/$defs/DriverLiveTest"
+    },
+    "driver.update": {
       "type": "null"
     },
     "experiments.get": {
@@ -9481,6 +10098,15 @@
     "runtimes.check": {
       "$ref": "#/$defs/RuntimePathCheck"
     },
+    "services.control": {
+      "type": "null"
+    },
+    "services.list": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/SpaceService"
+      }
+    },
     "session.completeOnboarding": {
       "type": "null"
     },
@@ -9798,6 +10424,16 @@
     "spaces.rename": {
       "type": "null"
     },
+    "spaces.resolveDefault": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/DefaultSpace"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
     "spaces.sendFiles": {
       "type": "array",
       "items": {
@@ -9846,6 +10482,26 @@
         "message"
       ]
     },
+    "spaces.setSettings": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/SpacesSettings"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "spaces.settings": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/SpacesSettings"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
     "spaces.thumbnail": {
       "type": [
         "object",
@@ -9863,6 +10519,12 @@
         "url",
         "capturedAtMs"
       ]
+    },
+    "spaces.tree": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/TreeNode"
+      }
     },
     "spaces.usage": {
       "type": [
@@ -11104,6 +11766,111 @@
         "available"
       ]
     },
+    "agentKeys.rename": {
+      "type": "object",
+      "properties": {
+        "keys": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "provider": {
+                "type": "string"
+              },
+              "env": {
+                "type": "string"
+              },
+              "slot": {
+                "type": "string"
+              },
+              "last4": {
+                "type": "string"
+              },
+              "added_ms": {
+                "type": "number"
+              },
+              "expired": {
+                "type": "boolean"
+              },
+              "label": {
+                "type": "string"
+              },
+              "region": {
+                "type": "string"
+              },
+              "fields": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "provider",
+              "env",
+              "last4",
+              "added_ms"
+            ]
+          }
+        },
+        "uses": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "provider": {
+                "type": "string"
+              },
+              "env": {
+                "type": "string"
+              },
+              "slot": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "provider",
+              "env"
+            ]
+          }
+        },
+        "providers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "env": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "env"
+            ]
+          }
+        },
+        "available": {
+          "type": "boolean"
+        },
+        "unavailable": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "keys",
+        "providers",
+        "available"
+      ]
+    },
     "agentKeys.set": {
       "type": "object",
       "properties": {
@@ -11718,6 +12485,12 @@
         "methods"
       ]
     },
+    "budget.get": {
+      "$ref": "#/$defs/TreeBudget"
+    },
+    "budget.set": {
+      "$ref": "#/$defs/TreeBudget"
+    },
     "checklist.get": {
       "type": "object",
       "properties": {
@@ -11791,6 +12564,10 @@
       "required": [
         "state"
       ]
+    },
+    "children.set": {
+      "type": "object",
+      "properties": {}
     },
     "ci.connect": {
       "$ref": "#/$defs/CiConnectAnswer"
@@ -12045,6 +12822,111 @@
     },
     "devices.revokePairingCode": {
       "type": "null"
+    },
+    "driver.list": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "machineId": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "os": {
+            "enum": [
+              "macos",
+              "windows",
+              "linux"
+            ]
+          },
+          "thisMachine": {
+            "type": "boolean"
+          },
+          "state": {
+            "enum": [
+              "ready",
+              "starting",
+              "stopped",
+              "paused",
+              "needs-permission",
+              "failed"
+            ]
+          },
+          "version": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "update": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "machineId",
+          "name",
+          "os",
+          "thisMachine",
+          "state",
+          "version",
+          "update"
+        ]
+      }
+    },
+    "driver.pause": {
+      "type": "null"
+    },
+    "driver.permissions": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "appName": {
+          "type": "string"
+        },
+        "permissions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DriverPermission"
+          }
+        }
+      },
+      "required": [
+        "appName",
+        "permissions"
+      ]
+    },
+    "driver.setApp": {
+      "type": "null"
+    },
+    "driver.setup": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/DriverStatus"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "driver.status": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/DriverStatus"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "driver.test": {
+      "$ref": "#/$defs/DriverLiveTest"
     },
     "github.enable": {
       "type": "object",
@@ -13389,6 +14271,16 @@
     "runtimes.check": {
       "$ref": "#/$defs/RuntimePathCheck"
     },
+    "services.control": {
+      "type": "object",
+      "properties": {}
+    },
+    "services.list": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/SpaceService"
+      }
+    },
     "session.get": {
       "$ref": "#/$defs/WkSession"
     },
@@ -13657,6 +14549,16 @@
       "type": "object",
       "properties": {}
     },
+    "spaces.resolveDefault": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/DefaultSpace"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
     "spaces.sendFiles": {
       "type": "array",
       "items": {
@@ -13686,6 +14588,26 @@
     "spaces.setPower": {
       "$ref": "#/$defs/WkSpaces"
     },
+    "spaces.setSettings": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/SpacesSettings"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "spaces.settings": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/SpacesSettings"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
     "spaces.thumbnail": {
       "type": [
         "object",
@@ -13703,6 +14625,12 @@
         "url",
         "capturedAtMs"
       ]
+    },
+    "spaces.tree": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/TreeNode"
+      }
     },
     "spaces.usage": {
       "type": [
@@ -14278,6 +15206,8 @@
   "webkitUnshaped": {
     "agents.recentThreads": "the daemon tool's JSON as-is (agent_threads, agent_thread_read); ops/agent-threads.ts maps it for every host",
     "agents.threadHistory": "the daemon tool's JSON as-is (agent_threads, agent_thread_read); ops/agent-threads.ts maps it for every host",
+    "driver.config": "the driver's get_config JSON as-is; bridge/driver.ts reads only the keys it knows",
+    "driver.setConfig": "the driver's get_config JSON as-is, after the change",
     "thread.agentAdd": "the daemon tool's JSON as-is (thread_read, thread_post, agent_members, agent_set_rights, agent_add, agent_remove, thread_join_code_create, thread_join_code_list, thread_join_code_cancel, thread_settings); ops/thread.ts maps it for every host",
     "thread.agentRemove": "the daemon tool's JSON as-is (thread_read, thread_post, agent_members, agent_set_rights, agent_add, agent_remove, thread_join_code_create, thread_join_code_list, thread_join_code_cancel, thread_settings); ops/thread.ts maps it for every host",
     "thread.joinCodeCancel": "the daemon tool's JSON as-is (thread_read, thread_post, agent_members, agent_set_rights, agent_add, agent_remove, thread_join_code_create, thread_join_code_list, thread_join_code_cancel, thread_settings); ops/thread.ts maps it for every host",

@@ -196,6 +196,12 @@ describe.skipIf(!built)("the bridge on the app core", () => {
       ["network.log", { spaceId: "local:aurora" }],
       ["network.ackNotice", { spaceId: "local:aurora" }],
       ["spaces.setAccess", { spaceId: "local:aurora", clipboard: "ask" }],
+      ["spaces.tree", {}],
+      ["children.set", { spaceId: "local:aurora", enabled: true }],
+      ["budget.get", { spaceId: "local:aurora" }],
+      ["budget.set", { spaceId: "local:aurora", limits: { maxSpaces: 4 } }],
+      ["services.list", { spaceId: "local:aurora" }],
+      ["services.control", { spaceId: "local:aurora", name: "web", action: "restart" }],
       ["checklist.get", {}],
       ["cli.plan", {}],
       ["checklist.send", { action: { type: "done", step: "teleport" } }],
@@ -206,9 +212,9 @@ describe.skipIf(!built)("the bridge on the app core", () => {
     for (const [method, args] of cases) problems.push(...shapeProblems(method, await call(method, args)));
     expect(problems).toEqual([]);
     // Every ported method has its case (or is checked below).
-    // (Teleport and the Keyvault: vault-native.test.ts; This machine, Devices, Settings and the rest: host-bridge.test.ts; the relay allowance: relay-usage.test.ts; resource numbers: resources.test.ts; presence: presence-bridge.test.ts; the Machines page's rename, remove and health checks: machines-view.test.ts; the Windows runtime fix: below.)
+    // (Teleport and the Keyvault: vault-native.test.ts; This machine, Devices, Settings and the rest: host-bridge.test.ts; the relay allowance: relay-usage.test.ts; resource numbers: resources.test.ts; presence: presence-bridge.test.ts; the Machines page's rename, remove and health checks, and the default Space: machines-view.test.ts; the Windows runtime fix: below.)
     // (The CI Runners methods, ci.*: ci.test.ts. They run the bundled `cua`, which this core-only test does not have.)
-    const elsewhere = new Set(["ci.overview", "ci.connect", "ci.connectToken", "ci.connectCancel", "ci.repositories", "ci.goal", "ci.log", "session.signIn", "spaces.create", "spaces.delete", "spaces.openStream", "relay.usage", "sharing.removals", "sharing.ackRemovals", "resources.get", "machines.rename", "machines.remove", "machines.checkHealth", "presence.join", "presence.publish", "presence.leave", "spaces.fixRuntime", "cli.install", "runtimes.check", "runtimes.browse", "repoCache.get", "repoCache.set", "repoCache.clear", ...THREAD_OPERATIONS, ...AGENT_METHODS, ...VAULT_METHODS, ...HOST_METHODS]);
+    const elsewhere = new Set(["ci.overview", "ci.connect", "ci.connectToken", "ci.connectCancel", "ci.repositories", "ci.goal", "ci.log", "session.signIn", "spaces.create", "spaces.delete", "spaces.openStream", "relay.usage", "sharing.removals", "sharing.ackRemovals", "resources.get", "machines.rename", "machines.remove", "machines.checkHealth", "spaces.settings", "spaces.setSettings", "spaces.resolveDefault", "presence.join", "presence.publish", "presence.leave", "spaces.fixRuntime", "cli.install", "runtimes.check", "runtimes.browse", "repoCache.get", "repoCache.set", "repoCache.clear", "driver.status", "driver.list", "driver.config", "driver.setConfig", "driver.test", "driver.pause", "driver.setup", "driver.setApp", "driver.permissions", ...THREAD_OPERATIONS, ...AGENT_METHODS, ...VAULT_METHODS, ...HOST_METHODS]);
     const ported = bridge.registry.methods.filter((m) => !NOT_YET.includes(m) && !elsewhere.has(m));
     expect(ported.filter((m) => !cases.some(([c]) => c === m))).toEqual([]);
   });
@@ -640,6 +646,11 @@ describe.skipIf(!built)("the bridge on the app core", () => {
       "network.log": { spaceId: "local:aurora" },
       "network.ackNotice": { spaceId: "local:aurora" },
       "spaces.setAccess": { spaceId: "local:aurora", clipboard: "ask" },
+      "children.set": { spaceId: "local:aurora", enabled: true },
+      "budget.get": { spaceId: "local:aurora" },
+      "budget.set": { spaceId: "local:aurora", limits: { maxSpaces: 4 } },
+      "services.list": { spaceId: "local:aurora" },
+      "services.control": { spaceId: "local:aurora", name: "web", action: "restart" },
       "checklist.send": { action: { type: "done", step: "teleport" } },
       "links.approve": { id: "share-000000000001" },
       "links.deny": { id: "share-000000000001" },
@@ -649,7 +660,8 @@ describe.skipIf(!built)("the bridge on the app core", () => {
     };
     // This machine, Devices, Settings and the rest: host-bridge.test.ts reads them with their arguments (the Machines page's rename and remove: machines-view.test.ts).
     // (The CI Runners methods, ci.*: ci.test.ts. They run the bundled `cua`, which this core-only test does not have.)
-    const skip = new Set<OpName>(["ci.overview", "ci.connect", "ci.connectToken", "ci.connectCancel", "ci.repositories", "ci.goal", "ci.log", "spaces.create", "spaces.delete", "session.signIn", "session.signOut", "session.openExternal", "spaces.openStream", "relay.usage", "sharing.removals", "sharing.ackRemovals", "resources.get", "machines.rename", "machines.remove", "machines.checkHealth", "presence.join", "presence.publish", "presence.leave", "spaces.fixRuntime", "cli.install", "runtimes.check", "runtimes.browse", "repoCache.get", "repoCache.set", "repoCache.clear", ...(THREAD_OPERATIONS as readonly string[] as OpName[]), ...VAULT_OPS, ...(HOST_OPS as OpName[])]);
+    // (The Cua Driver page, driver.*: the Electron app has no driver and refuses with "comes with the Mac app".)
+    const skip = new Set<OpName>(["driver.status", "driver.list", "driver.config", "driver.setConfig", "driver.test", "driver.pause", "driver.setup", "driver.setApp", "driver.permissions", "ci.overview", "ci.connect", "ci.connectToken", "ci.connectCancel", "ci.repositories", "ci.goal", "ci.log", "spaces.create", "spaces.delete", "session.signIn", "session.signOut", "session.openExternal", "spaces.openStream", "relay.usage", "sharing.removals", "sharing.ackRemovals", "resources.get", "machines.rename", "machines.remove", "machines.checkHealth", "spaces.settings", "spaces.setSettings", "spaces.resolveDefault", "presence.join", "presence.publish", "presence.leave", "spaces.fixRuntime", "cli.install", "runtimes.check", "runtimes.browse", "repoCache.get", "repoCache.set", "repoCache.clear", ...(THREAD_OPERATIONS as readonly string[] as OpName[]), ...VAULT_OPS, ...(HOST_OPS as OpName[])]);
     // (The thread: thread.test.ts.)
     const problems: string[] = [];
     const checked: string[] = [];

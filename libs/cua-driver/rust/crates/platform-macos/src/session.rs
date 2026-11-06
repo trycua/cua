@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Security-session capability probe.
 //!
 //! AppKit's `+[NSApplication sharedApplication]` registers the process with

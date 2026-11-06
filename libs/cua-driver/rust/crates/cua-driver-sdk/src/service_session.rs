@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Authenticated, connection-bound session client for an explicit service.
 //!
 //! The accepted service connection owns exactly one trusted session. Authority

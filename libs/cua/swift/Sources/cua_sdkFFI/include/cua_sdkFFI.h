@@ -864,6 +864,11 @@ uint64_t uniffi_cua_sdk_fn_method_devices_rename(uint64_t ptr, RustBuffer id, Ru
 uint64_t uniffi_cua_sdk_fn_method_devices_rename_machine(uint64_t ptr, RustBuffer machine_id, RustBuffer name
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_DEVICES_RESOLVE_DEFAULT_SPACE
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_DEVICES_RESOLVE_DEFAULT_SPACE
+uint64_t uniffi_cua_sdk_fn_method_devices_resolve_default_space(uint64_t ptr
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_DEVICES_REVOKE
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_DEVICES_REVOKE
 uint64_t uniffi_cua_sdk_fn_method_devices_revoke(uint64_t ptr, RustBuffer id
@@ -874,9 +879,19 @@ uint64_t uniffi_cua_sdk_fn_method_devices_revoke(uint64_t ptr, RustBuffer id
 uint64_t uniffi_cua_sdk_fn_method_devices_revoke_pairing_code(uint64_t ptr, RustBuffer id
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_DEVICES_SET_SPACES_SETTINGS
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_DEVICES_SET_SPACES_SETTINGS
+uint64_t uniffi_cua_sdk_fn_method_devices_set_spaces_settings(uint64_t ptr, RustBuffer settings
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_DEVICES_SNAPSHOT
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_DEVICES_SNAPSHOT
 uint64_t uniffi_cua_sdk_fn_method_devices_snapshot(uint64_t ptr, uint32_t audit_limit
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_DEVICES_SPACES_SETTINGS
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_DEVICES_SPACES_SETTINGS
+uint64_t uniffi_cua_sdk_fn_method_devices_spaces_settings(uint64_t ptr
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_CLONE_HOST
@@ -2437,6 +2452,11 @@ uint64_t uniffi_cua_sdk_fn_method_spaces_relay_register(uint64_t ptr, RustBuffer
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_RELAY_UNREGISTER
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_RELAY_UNREGISTER
 uint64_t uniffi_cua_sdk_fn_method_spaces_relay_unregister(uint64_t ptr, RustBuffer space
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_RELAY_UNREGISTER_COMPUTER
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_RELAY_UNREGISTER_COMPUTER
+uint64_t uniffi_cua_sdk_fn_method_spaces_relay_unregister_computer(uint64_t ptr, RustBuffer space, int8_t delete_spaces
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_REMOVE
@@ -4490,6 +4510,12 @@ uint16_t uniffi_cua_sdk_checksum_method_devices_rename_machine(void
 
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_DEVICES_RESOLVE_DEFAULT_SPACE
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_DEVICES_RESOLVE_DEFAULT_SPACE
+uint16_t uniffi_cua_sdk_checksum_method_devices_resolve_default_space(void
+
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_DEVICES_REVOKE
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_DEVICES_REVOKE
 uint16_t uniffi_cua_sdk_checksum_method_devices_revoke(void
@@ -4502,9 +4528,21 @@ uint16_t uniffi_cua_sdk_checksum_method_devices_revoke_pairing_code(void
 
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_DEVICES_SET_SPACES_SETTINGS
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_DEVICES_SET_SPACES_SETTINGS
+uint16_t uniffi_cua_sdk_checksum_method_devices_set_spaces_settings(void
+
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_DEVICES_SNAPSHOT
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_DEVICES_SNAPSHOT
 uint16_t uniffi_cua_sdk_checksum_method_devices_snapshot(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_DEVICES_SPACES_SETTINGS
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_DEVICES_SPACES_SETTINGS
+uint16_t uniffi_cua_sdk_checksum_method_devices_spaces_settings(void
 
 );
 #endif
@@ -6083,6 +6121,12 @@ uint16_t uniffi_cua_sdk_checksum_method_spaces_relay_register(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_RELAY_UNREGISTER
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_RELAY_UNREGISTER
 uint16_t uniffi_cua_sdk_checksum_method_spaces_relay_unregister(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_RELAY_UNREGISTER_COMPUTER
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_RELAY_UNREGISTER_COMPUTER
+uint16_t uniffi_cua_sdk_checksum_method_spaces_relay_unregister_computer(void
 
 );
 #endif

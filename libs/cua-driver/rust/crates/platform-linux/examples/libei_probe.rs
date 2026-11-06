@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Portal/libei probe that establishes the session and enumerates readiness
 //! without sending keyboard or pointer input.
 

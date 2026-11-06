@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 #[cfg(not(target_os = "macos"))]
 fn main() {}
 

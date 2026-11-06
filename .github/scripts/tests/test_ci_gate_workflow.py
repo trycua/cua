@@ -17,7 +17,6 @@ SCRIPT = STEPS['Wait for every other workflow on the pull request head']['run']
 @pytest.mark.parametrize('filename', [
     'ci-contributor-attribution.yml',
     'ci-release-metadata.yml',
-    'fleet-mirror-guard.yml',
 ])
 def test_required_workflow_queue_wiring(filename):
     workflow = yaml.safe_load((WORKFLOWS / filename).read_text())
@@ -285,8 +284,7 @@ def test_gate_fails_a_failure_that_is_not_quarantined(tmp_path):
 
 
 def test_gate_reads_the_quarantine_list_from_the_base_commit():
-    steps = GATE['jobs']['ci-gate']['steps']
-    base = steps[0]['with']['sparse-checkout'].split()
+    base = STEPS['Check out the selector from the base commit']['with']['sparse-checkout'].split()
     assert '/.github/flaky/quarantine.json' in base and '/.github/scripts/flaky/flaky.py' in base
     env = STEPS['Wait for every other workflow on the pull request head']['env']
     assert env['FLAKY_PY'].startswith('base/') and env['QUARANTINE_FILE'].startswith('base/')
@@ -324,60 +322,89 @@ def test_quick_stage_is_wired_into_heavy_workflows():
                 assert '!failure() && !cancelled()' in str(job['if']), f'{path.name}: {name}'
 
 
-LOCAL_CI = STEPS['Require local sign-off on agent pull requests']['run']
-GH_STUB = '''
+LOCAL_CI_FAST = STEPS['Check the sign-off on the pull request (fail fast)']['run']
+LOCAL_CI_WAIT = STEPS['Require the sign-off on the pull request']['run']
+# The stub answers every sign-off lookup with STATE: a commit status for a branch of this repository,
+# the newest CI: Quick run for a fork. SOURCE records which one the gate asked.
+GH_STUB = """
 sleep() { :; }
 gh() {
   case "$*" in
-    *'/pulls/'*) printf '%s\\t%s\\t%s\\t%s\\n' "$AUTHOR" "deadbeefcafe" "$REF" "$HEAD_REPO" ;;
-    *'/labels'*) printf '%s\\n' "$LABELS" ;;
-    *'/statuses'*) printf '%s\\n' "$STATE" ;;
+    *'/pulls/'*) printf '%s\\t%s\\n' "deadbeefcafe" "$HEAD_REPO" ;;
+    *'/statuses'*) echo statuses >> "$SOURCE"; printf '%s\\n' "$STATE" ;;
+    *'/workflows/ci-quick.yml/runs'*) echo quick-run >> "$SOURCE"; printf '%s\\n' "$STATE" ;;
   esac
 }
-'''
+"""
 
 
-def run_local_ci(author='someone', labels='', ref='fix/x', head_repo='fork/repo', state='', require='true'):
-    return subprocess.run(
-        ['bash', '-e', '-c', GH_STUB + LOCAL_CI],
-        env={**os.environ, 'PR_NUMBER': '7', 'QUEUE_REF': '', 'GITHUB_REPOSITORY': 'test/repo',
-             'AUTHOR': author, 'LABELS': labels, 'REF': ref, 'HEAD_REPO': head_repo, 'STATE': state,
-             'REQUIRE_LOCAL_CI': require},
-        capture_output=True, text=True, timeout=20,
-    )
+def run_local_ci(head_repo='test/repo', state='', require='true'):
+    """Run the two sign-off steps in order, as the job does: the fast check, then the wait that is
+    the last step. Returns the first failure, or the last result; `.source` is what was asked."""
+    import tempfile
+    with tempfile.NamedTemporaryFile('r+') as out, tempfile.NamedTemporaryFile('r+') as source:
+        env = {**os.environ, 'PR_NUMBER': '7', 'QUEUE_REF': '', 'GITHUB_REPOSITORY': 'test/repo',
+               'HEAD_REPO': head_repo, 'STATE': state, 'SOURCE': source.name,
+               'REQUIRE_LOCAL_CI': require, 'GITHUB_OUTPUT': out.name}
+        fast = subprocess.run(['bash', '-e', '-c', GH_STUB + LOCAL_CI_FAST], env=env,
+                              capture_output=True, text=True, timeout=20)
+        outputs = dict(line.split('=', 1) for line in out.read().splitlines())
+        if fast.returncode != 0:
+            fast.source = source.read().split()
+            return fast
+        wait = subprocess.run(['bash', '-e', '-c', GH_STUB + LOCAL_CI_WAIT],
+                              env={**env, 'SHA': outputs['sha'], 'KIND': outputs['kind']},
+                              capture_output=True, text=True, timeout=20)
+        wait.stdout = fast.stdout + wait.stdout
+        wait.source = source.read().split()
+    return wait
 
 
-@pytest.mark.parametrize('kwargs', [
-    {'author': 'cua-agents[bot]'},
-    {'labels': 'bug,agent'},
-    {'ref': 'agent/cua-1-x', 'head_repo': 'test/repo'},
-])
-def test_local_ci_is_required_for_agent_pull_requests(kwargs):
-    missing = run_local_ci(**kwargs)
+def test_every_pull_request_needs_a_sign_off_whoever_opens_it():
+    # The author, the labels and the commit trailers are not read: a branch of this repository
+    # always needs the local-ci status, a fork always needs the CI: Quick run.
+    assert 'author' not in LOCAL_CI_FAST.lower().replace('author:', '')
+    for word in ('labels', 'trailer', 'agent/'):
+        assert word not in LOCAL_CI_FAST
+        assert word not in LOCAL_CI_WAIT
+
+
+def test_branch_of_this_repo_needs_a_local_ci_status():
+    missing = run_local_ci()
     assert missing.returncode == 1
-    assert 'Run bin/ci and bin/ci --signoff on this head commit.' in missing.stdout
-    assert run_local_ci(**kwargs, state='failure').returncode == 1
-    assert run_local_ci(**kwargs, state='success').returncode == 0
+    assert 'Run bin/ci --quick and bin/ci --signoff on this head commit.' in missing.stdout
+    assert set(missing.source) == {'statuses'}
+    assert run_local_ci(state='failure').returncode == 1
+    assert run_local_ci(state='success').returncode == 0
 
 
-@pytest.mark.parametrize('kwargs', [
-    {},
-    {'ref': 'agent/x', 'head_repo': 'fork/repo'},  # a fork cannot opt in or out by branch name
-    {'labels': 'agents,bug'},
-])
-def test_local_ci_is_not_required_for_community_pull_requests(kwargs):
-    done = run_local_ci(**kwargs)
-    assert done.returncode == 0, done.stdout
-    assert 'Not an agent pull request' in done.stdout
+def test_fork_needs_a_successful_quick_run_in_github_actions():
+    missing = run_local_ci(head_repo='someone/fork')
+    assert missing.returncode == 1
+    assert 'no successful run on this head commit' in missing.stdout
+    assert set(missing.source) == {'quick-run'}  # never the local-ci status, which only our Macs set
+    assert run_local_ci(head_repo='someone/fork', state='failure').returncode == 1
+    assert run_local_ci(head_repo='someone/fork', state='success').returncode == 0
 
 
-def test_local_ci_is_report_only_until_the_switch_is_on():
-    for state in ('', 'failure'):
-        done = run_local_ci(author='cua-agents[bot]', state=state, require='')
-        assert done.returncode == 0, done.stdout
-        assert '::warning' in done.stdout
-        assert 'Run bin/ci and bin/ci --signoff on this head commit.' in done.stdout
-    assert run_local_ci(author='cua-agents[bot]', state='success', require='').returncode == 0
+def test_sign_off_is_report_only_until_the_switch_is_on():
+    for head_repo in ('test/repo', 'someone/fork'):
+        for state in ('', 'failure'):
+            done = run_local_ci(head_repo=head_repo, state=state, require='')
+            assert done.returncode == 0, done.stdout
+            assert '::warning' in done.stdout
+        assert run_local_ci(head_repo=head_repo, state='success', require='').returncode == 0
+
+
+def test_the_quick_workflow_a_fork_relies_on_is_safe_to_run_on_its_code():
+    wf = yaml.safe_load((WORKFLOWS / 'ci-quick.yml').read_text())
+    triggers = wf.get(True) or wf.get('on')
+    assert 'pull_request' in triggers  # runs on fork PRs, GitHub-hosted
+    assert 'pull_request_target' not in triggers
+    assert wf['permissions'] == {'contents': 'read'}
+    text = (WORKFLOWS / 'ci-quick.yml').read_text()
+    assert 'secrets.' not in text
+    assert 'self-hosted' not in text
 
 
 def test_quick_stage_runs_once_per_commit():

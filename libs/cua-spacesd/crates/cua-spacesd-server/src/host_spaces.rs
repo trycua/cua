@@ -165,7 +165,7 @@ mod routed_tests {
     }
 }
 
-fn read_policy(path: &Path) -> Result<HostPolicy, Status> {
+pub(crate) fn read_policy(path: &Path) -> Result<HostPolicy, Status> {
     let raw = std::fs::read(path).map_err(|e| {
         status(
             Code::FailedPrecondition,
@@ -484,7 +484,9 @@ fn caller_json_of<T>(req: &Request<T>) -> Result<String, Status> {
 #[cfg(unix)]
 static STARTING: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
-async fn daemon_channel(daemon: &SpacesDaemon) -> Result<tonic::transport::Channel, Status> {
+pub(crate) async fn daemon_channel(
+    daemon: &SpacesDaemon,
+) -> Result<tonic::transport::Channel, Status> {
     #[cfg(unix)]
     {
         let socket = PathBuf::from(&daemon.socket);

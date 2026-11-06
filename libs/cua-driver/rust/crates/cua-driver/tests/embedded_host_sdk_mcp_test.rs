@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! One embedded daemon, two public client models.
 //!
 //! The SDK route uses the generated UniFFI implementation crate directly; the

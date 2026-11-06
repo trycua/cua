@@ -85,6 +85,11 @@ pub trait Runtime: Send + Sync {
         })
     }
 
+    /// Whether [`Runtime::save_prepared`] keeps an image on this backend.
+    fn keeps_prepared(&self) -> bool {
+        false
+    }
+
     /// Saves the filesystem of the running instance `name` as an image that
     /// instances start from instead of the one they were made from (what is
     /// installed in it stays), named `tag`, and returns it. Used by the warm

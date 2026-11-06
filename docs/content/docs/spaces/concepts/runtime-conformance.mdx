@@ -37,6 +37,11 @@ does with them, and shows how Cua checks them.
   ready answers with its own token and nothing else opens it, not even the
   member's own secret, and it behaves as one that started cold. A runtime
   that cannot claim a member refuses a pool in plain words and starts cold.
+- **A running Space is on your account.** While the computer is signed in
+  and sharing, the Space is listed on your cua.ai account, so your phone and
+  your other computers see and open it, and it leaves the account when it
+  stops or is deleted. This is the same for a macOS VM, a QEMU VM, a
+  container and a microVM, and it needs no step of yours.
 - **Delete leaves nothing.** No Space, process, container or network remains.
 
 A runtime that cannot keep a promise refuses it at once, in plain words that
@@ -118,8 +123,8 @@ CUA=/path/to/cua libs/cua/scripts/conformance/run.py --entry vz-microvm --out re
 ```
 
 The children case needs the `cua` CLI in the guest. When the Space under
-test does not ship it, the run makes a home Space from the `agent-home` image
-(the slim Linux image plus the CLI) on the same runtime and runs the case
+test does not ship it, the run makes a home Space from the slim Linux image
+(`ghcr.io/trycua/linux:24.04-slim`, which carries the CLI) on the same runtime and runs the case
 there; `--home-image` and `--entry-home-image ID=IMAGE` name another build.
 
 The roster and what each entry must do is `libs/cua/scripts/conformance/entries.json`,

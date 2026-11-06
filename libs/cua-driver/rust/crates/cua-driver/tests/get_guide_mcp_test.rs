@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! `get_guide` over the real MCP wire: the server instructions and tool
 //! descriptions point at it, and an agent with no skill installed can fetch a
 //! guide, or learn the valid topics from an error, through a tool call.

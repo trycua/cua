@@ -871,6 +871,16 @@ async fn a_spare_machine_provides_spaces_without_its_desktop() {
             spec.args
         );
     }
+    // Keeping the screen private never turns off the Cua Driver this Mac's
+    // own coding agents use (cua-spacesd runs it whatever the flags say).
+    assert!(
+        !spec
+            .env
+            .iter()
+            .any(|(k, _)| k == "CUA_SPACESD_EMBEDDED_DRIVER"),
+        "{:?}",
+        spec.env
+    );
     let policy = host.policy().unwrap().unwrap();
     assert!(!policy.share_desktop && policy.provide_spaces);
     let daemon = policy.spaces_daemon.clone().unwrap();
@@ -2559,7 +2569,7 @@ fn a_host_moved_off_the_channels_ports_is_told_its_own() {
     assert!(spec.env.contains(&var("CUA_ENV_PORT", "3231")));
     assert!(spec.env.contains(&var("CUA_ENV_QUIC_PORT", "3232")));
     assert!(spec.env.iter().all(|(k, _)| k != "CUA_CHANNEL"));
-    let plist = crate::service::launchd_plist(&spec);
+    let plist = crate::service::launchd_plist(&spec, "com.trycua.spacesd.host");
     assert!(
         plist.contains("<key>CUA_ENV_PORT</key>\n    <string>3231</string>"),
         "{plist}"
@@ -2613,7 +2623,7 @@ fn the_service_keeps_the_credential_store_and_home_setup_ran_with() {
     let var = |k: &str, v: &str| (k.to_string(), v.to_string());
     assert!(spec.env.contains(&var("CUA_CREDENTIAL_STORE", "file")));
     assert!(spec.env.contains(&var("CUA_HOME", "/Users/ada/.cua-spare")));
-    let plist = crate::service::launchd_plist(&spec);
+    let plist = crate::service::launchd_plist(&spec, "com.trycua.spacesd.host");
     assert!(
         plist.contains("<key>CUA_CREDENTIAL_STORE</key>\n    <string>file</string>"),
         "{plist}"
@@ -2755,4 +2765,353 @@ async fn setup_says_so_when_no_port_is_free() {
         "{msg}"
     );
     assert!(f.manager.calls.lock().unwrap().is_empty());
+}
+
+// ---------------------------------------------------------------------
+// One id per computer: turning remote access off and on, removal that the
+// relay missed, and signing in as another account and back.
+
+/// A JWT-shaped token with a `sub` and an `email` claim.
+fn jwt_with_email(sub: &str, email: &str) -> String {
+    use base64::Engine as _;
+    let b = |v: &str| base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(v);
+    format!(
+        "{}.{}.sig",
+        b("{}"),
+        b(&format!(r#"{{"sub":"{sub}","email":"{email}"}}"#))
+    )
+}
+
+/// The ids of the computers `token`'s account has on the relay.
+async fn listed(relay: &FakeRelay, token: &str) -> Vec<String> {
+    let mut ids: Vec<String> = RelayClient::new(&relay.url)
+        .unwrap()
+        .machines(token)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|m| m.id)
+        .collect();
+    ids.sort();
+    ids
+}
+
+/// Off and on again (remove the host setup, set it up again) is the same
+/// computer: the same id, one row on the relay, however often it is done.
+#[tokio::test]
+async fn turning_remote_access_off_and_on_keeps_one_computer() {
+    let relay = FakeRelay::start().await;
+    relay.add_account("acct", "user-1", Some("ada@example.com"));
+    let f = fixture();
+    let host = f.host();
+    let first = host
+        .setup(f.relay_opts(&relay.url), &StaticToken("acct".into()))
+        .await
+        .unwrap();
+    let id = first.machine_id.clone().unwrap();
+    for _ in 0..3 {
+        host.remove().await.unwrap();
+        assert!(listed(&relay, "acct").await.is_empty(), "off: gone");
+        let again = host
+            .setup(f.relay_opts(&relay.url), &StaticToken("acct".into()))
+            .await
+            .unwrap();
+        assert_eq!(again.machine_id.as_deref(), Some(id.as_str()));
+        assert_eq!(listed(&relay, "acct").await, vec![id.clone()], "on: one");
+    }
+}
+
+/// A removal the relay could not take (it was mid-deploy) is remembered
+/// outside the directory a removal deletes, and finished once the relay
+/// answers: the computer does not stay listed with nothing left here to
+/// retry it from.
+#[tokio::test]
+async fn a_removal_the_relay_missed_is_remembered_and_finished() {
+    let relay = FakeRelay::start().await;
+    relay.add_account("acct", "user-1", Some("ada@example.com"));
+    let f = fixture();
+    let host = f.host();
+    let id = host
+        .setup(f.relay_opts(&relay.url), &StaticToken("acct".into()))
+        .await
+        .unwrap()
+        .machine_id
+        .unwrap();
+
+    relay.fail_deletes(&[503]);
+    let err = host.remove().await.unwrap_err().to_string();
+    assert!(err.contains("removed locally"), "{err}");
+    assert!(
+        err.contains("next time"),
+        "it says it will be retried: {err}"
+    );
+    assert!(relay.machine(&id).is_some(), "still listed for now");
+    assert_eq!(
+        host.pending_removals(),
+        vec![(relay.url.clone(), id.clone())]
+    );
+
+    // The next time the relay answers it goes: a status asks (at most once
+    // a minute), and so does anything that finishes removals.
+    assert!(!host.status().await.unwrap().configured);
+    assert!(relay.machine(&id).is_none(), "the status finished it");
+    assert!(host.pending_removals().is_empty());
+}
+
+/// A relay that refuses the computer's own token (rotated, or lost) still
+/// lets the owner take it off, so removing never needs the computer to
+/// prove itself.
+#[tokio::test]
+async fn a_refused_computer_token_falls_back_to_the_owner_on_remove() {
+    let relay = FakeRelay::start().await;
+    relay.add_account("acct", "user-1", Some("ada@example.com"));
+    let f = fixture();
+    let host = f.host();
+    let id = host
+        .setup(f.relay_opts(&relay.url), &StaticToken("acct".into()))
+        .await
+        .unwrap()
+        .machine_id
+        .unwrap();
+
+    // Without the account the refusal is reported and remembered.
+    relay.fail_deletes(&[403]);
+    assert!(host.remove().await.is_err());
+    assert!(relay.machine(&id).is_some());
+    // The owner finishes it.
+    let tokens = StaticToken("acct".into());
+    let left = host
+        .finish_removals(Some(&RemovalAccount {
+            tokens: &tokens,
+            device_session: None,
+        }))
+        .await;
+    assert!(left.is_empty(), "{left:?}");
+    assert!(relay.machine(&id).is_none());
+
+    // And at once, when the account is there for the removal itself.
+    host.setup(f.relay_opts(&relay.url), &StaticToken("acct".into()))
+        .await
+        .unwrap();
+    relay.fail_deletes(&[401]);
+    host.remove_with_account(&RemovalAccount {
+        tokens: &tokens,
+        device_session: None,
+    })
+    .await
+    .unwrap();
+    assert!(listed(&relay, "acct").await.is_empty());
+    assert!(host.pending_removals().is_empty());
+}
+
+/// Setting up again after a removal the relay missed registers the same id
+/// (so it is one row), and the pending removal never deletes the live
+/// registration.
+#[tokio::test]
+async fn setting_up_again_after_a_missed_removal_reuses_the_row() {
+    let relay = FakeRelay::start().await;
+    relay.add_account("acct", "user-1", Some("ada@example.com"));
+    let f = fixture();
+    let host = f.host();
+    let id = host
+        .setup(f.relay_opts(&relay.url), &StaticToken("acct".into()))
+        .await
+        .unwrap()
+        .machine_id
+        .unwrap();
+    relay.fail_deletes(&[503]);
+    assert!(host.remove().await.is_err());
+    assert_eq!(host.pending_removals().len(), 1);
+
+    let again = host
+        .setup(f.relay_opts(&relay.url), &StaticToken("acct".into()))
+        .await
+        .unwrap();
+    assert_eq!(again.machine_id.as_deref(), Some(id.as_str()));
+    assert!(host.pending_removals().is_empty(), "nothing left to retry");
+    assert_eq!(listed(&relay, "acct").await, vec![id.clone()]);
+    assert!(relay.machine(&id).is_some(), "the live row was not deleted");
+}
+
+/// Signing in as another account and back is the same two computers every
+/// time, and a relay that refuses the saved registration is an error that
+/// says why, never a third, new computer.
+#[tokio::test]
+async fn switching_accounts_reuses_each_registration_and_never_mints_a_new_id() {
+    let relay = FakeRelay::start().await;
+    let (a, b) = (jwt("user-1"), jwt("user-2"));
+    relay.add_account(&a, "user-1", Some("ada@example.com"));
+    relay.add_account(&b, "user-2", Some("bob@example.com"));
+    let f = fixture();
+    let host = f.host();
+    let id_a = host
+        .setup(f.relay_opts(&relay.url), &StaticToken(a.clone()))
+        .await
+        .unwrap()
+        .machine_id
+        .unwrap();
+    let id_b = host
+        .resume_or_switch_account("user-2", &StaticToken(b.clone()))
+        .await
+        .unwrap()
+        .machine_id
+        .unwrap();
+    assert_ne!(id_a, id_b, "another account has its own computer id");
+    for _ in 0..2 {
+        let s = host
+            .resume_or_switch_account("user-1", &StaticToken(a.clone()))
+            .await
+            .unwrap();
+        assert_eq!(s.machine_id.as_deref(), Some(id_a.as_str()));
+        let s = host
+            .resume_or_switch_account("user-2", &StaticToken(b.clone()))
+            .await
+            .unwrap();
+        assert_eq!(s.machine_id.as_deref(), Some(id_b.as_str()));
+    }
+    assert_eq!(listed(&relay, &a).await, vec![id_a.clone()]);
+    assert_eq!(listed(&relay, &b).await, vec![id_b.clone()]);
+
+    // The relay refuses the saved registration of the first account.
+    let registered = relay.register_calls();
+    relay.fail_registrations(&[403]);
+    let err = host
+        .resume_or_switch_account("user-1", &StaticToken(a.clone()))
+        .await
+        .unwrap_err();
+    assert!(matches!(err, Error::PermissionDenied(_)), "{err}");
+    assert!(err.to_string().contains("saved registration"), "{err}");
+    assert_eq!(relay.register_calls(), registered + 1, "asked once");
+    assert_eq!(listed(&relay, &a).await, vec![id_a.clone()], "no new row");
+    // Next time it goes through with the same id.
+    let s = host
+        .resume_or_switch_account("user-1", &StaticToken(a.clone()))
+        .await
+        .unwrap();
+    assert_eq!(s.machine_id.as_deref(), Some(id_a.as_str()));
+}
+
+/// A relay whose account id is not the token's `sub` (it takes another
+/// claim) still finds the saved registration, by the token's email.
+#[tokio::test]
+async fn the_saved_registration_is_found_by_email_when_the_account_id_is_not_the_subject() {
+    let relay = FakeRelay::start().await;
+    let a = jwt_with_email("sub-a", "ada@example.com");
+    let b = jwt_with_email("sub-b", "bob@example.com");
+    // The relay's account ids are not the subjects.
+    relay.add_account(&a, "acct-ada", Some("ada@example.com"));
+    relay.add_account(&b, "acct-bob", Some("bob@example.com"));
+    let f = fixture();
+    let host = f.host();
+    let id_a = host
+        .setup(f.relay_opts(&relay.url), &StaticToken(a.clone()))
+        .await
+        .unwrap()
+        .machine_id
+        .unwrap();
+    host.resume_or_switch_account("acct-bob", &StaticToken(b.clone()))
+        .await
+        .unwrap();
+    let back = host
+        .resume_or_switch_account("acct-ada", &StaticToken(a.clone()))
+        .await
+        .unwrap();
+    assert_eq!(back.machine_id.as_deref(), Some(id_a.as_str()));
+    assert_eq!(listed(&relay, &a).await, vec![id_a]);
+}
+
+fn quick_verify() -> VerifyTiming {
+    VerifyTiming {
+        timeout: std::time::Duration::from_millis(1500),
+        stable: std::time::Duration::from_millis(10),
+        offline_grace: std::time::Duration::from_millis(10),
+        poll: std::time::Duration::from_millis(20),
+    }
+}
+
+/// CUA-3513: "Added" means online. Setup waits until the relay sees the
+/// machine's session before it reports success.
+#[tokio::test]
+async fn setup_waits_until_the_relay_sees_the_machine_online() {
+    let relay = FakeRelay::start().await;
+    relay.add_account("acct-token", "user-1", Some("ada@example.com"));
+    let f = fixture();
+    let host = f
+        .host()
+        .with_online_check(true)
+        .with_verify_timing(VerifyTiming {
+            timeout: std::time::Duration::from_secs(20),
+            ..quick_verify()
+        });
+    let id_file = host.paths().machine_id.clone();
+    let joined = async {
+        // The driver joins a moment after it starts.
+        let id = loop {
+            if let Ok(id) = std::fs::read_to_string(&id_file)
+                && relay.machine(id.trim()).is_some()
+            {
+                break id.trim().to_string();
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        };
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        relay.set_online(&id, true, "test");
+        std::time::Instant::now()
+    };
+    let token = StaticToken("acct-token".into());
+    let (status, online_at) = tokio::join!(host.setup(f.relay_opts(&relay.url), &token), joined);
+    let status = status.unwrap();
+    assert!(online_at.elapsed() < std::time::Duration::from_secs(5));
+    assert_eq!(status.online, Some(true));
+}
+
+/// CUA-3513: a service that runs but never reaches the relay fails setup
+/// with the reason, so the app never says "Added" for a computer that
+/// stays offline.
+#[tokio::test]
+async fn setup_fails_when_the_machine_never_comes_online() {
+    let relay = FakeRelay::start().await;
+    relay.add_account("acct-token", "user-1", Some("ada@example.com"));
+    let f = fixture();
+    let host = f
+        .host()
+        .with_online_check(true)
+        .with_verify_timing(quick_verify());
+    std::fs::create_dir_all(host.paths().dir.clone()).unwrap();
+    std::fs::write(host.paths().log(), "joining relay\nrelay refused: 503\n").unwrap();
+    let err = host
+        .setup(f.relay_opts(&relay.url), &StaticToken("acct-token".into()))
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("did not come online"), "{err}");
+    assert!(err.contains("the relay does not see it yet"), "{err}");
+    assert!(err.contains("relay refused: 503"), "{err}");
+}
+
+/// CUA-3512: a service an older build left under another home's names
+/// moves to this home's own on the next setup, even when nothing else
+/// changes (`migrate_service_names`), and not at all when there is none.
+#[tokio::test]
+async fn an_old_service_name_moves_to_the_home_own_one() {
+    let relay = FakeRelay::start().await;
+    relay.add_account("acct-token", "user-1", Some("ada@example.com"));
+    let f = fixture();
+    let host = f.host();
+    host.setup(f.relay_opts(&relay.url), &StaticToken("acct-token".into()))
+        .await
+        .unwrap();
+    f.manager.calls.lock().unwrap().clear();
+    assert!(host.migrate_service_names().unwrap().is_empty());
+    assert!(f.manager.calls.lock().unwrap().is_empty());
+
+    *f.manager.legacy_names.lock().unwrap() = vec!["cua-spacesd-host-e9140ee2".into()];
+    assert_eq!(
+        host.migrate_service_names().unwrap(),
+        vec!["cua-spacesd-host-e9140ee2".to_string()]
+    );
+    assert_eq!(
+        *f.manager.calls.lock().unwrap(),
+        ["retire", "install", "start"]
+    );
 }

@@ -123,9 +123,7 @@ and source file must be declared with its exact size, SHA-256, license source,
 target, and protocol version as applicable. Models and bundled source also need
 complete ledgers. The workflow emits a deterministic archive, SPDX SBOM, signed
 catalog, redacted provenance, and checksums as retained CI artifacts; only the
-release workflow publishes them. `cd-cua-perception-candidate-manual.yml`
-remains for staging candidates from a reviewed pull request head and never
-publishes.
+release workflow publishes them.
 
 Candidate catalogs use the same Ed25519 envelope consumed by Cua Driver's
 extension manager: `{ "payload": <compact catalog payload>,

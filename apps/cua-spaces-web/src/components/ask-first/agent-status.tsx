@@ -1,0 +1,33 @@
+// SPDX-License-Identifier: FSL-1.1-MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
+import { cn } from "@/lib/utils";
+
+/** What the agent behind the box is doing: ready with its session open, starting, or needing a reconnect. */
+export type AgentReadiness = "ready" | "starting" | "reconnect" | "none";
+
+const WORDS: Record<Exclude<AgentReadiness, "none">, string> = {
+  ready: "Agent ready",
+  starting: "Starting agent",
+  reconnect: "Reconnect needed",
+};
+
+/**
+ * One quiet line under the box: "Agent ready" when the standby agent is up,
+ * "Starting agent" while it starts, "Reconnect needed" with the way to fix it.
+ * No badge and no animation: only the dot's colour changes.
+ */
+export function AgentStatus({ state, onReconnect }: { state: AgentReadiness; onReconnect?: () => void }) {
+  if (state === "none") return null;
+  return (
+    <p data-agent-status={state} className="flex items-center gap-2 px-2 text-[12px] text-muted-foreground" role="status">
+      <span className={cn("size-1.5 rounded-full", state === "ready" ? "bg-success" : state === "reconnect" ? "bg-warning" : "bg-muted-foreground/40")} aria-hidden />
+      {WORDS[state]}
+      {state === "reconnect" && onReconnect ? (
+        <button type="button" onClick={onReconnect} className="text-foreground underline-offset-2 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring/60">
+          Reconnect
+        </button>
+      ) : null}
+    </p>
+  );
+}

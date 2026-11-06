@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Background mouse event synthesis via SLEventPostToPid (SkyLight SPI),
 //! with fallback to the public CGEvent::post_to_pid for older OS releases.
 //!

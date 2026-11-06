@@ -14,13 +14,11 @@ on:
       - "libs/cua/**"
       - "libs/cua-spacesd/**"
       - ".github/workflows/ci-openkoalabot-example-tauri.yml"
-  push:
-    branches: [main]
-    paths:
-      - "examples/openkoalabot-example-tauri/**"
-      - "libs/cua/**"
-      - "libs/cua-spacesd/**"
-      - ".github/workflows/ci-openkoalabot-example-tauri.yml"
+  # Not on every push to main: the pull request above already built the same
+  # paths. A breakage from a change that raced in after the PR shows up in the
+  # nightly build.
+  schedule:
+    - cron: "37 5 * * *"
   workflow_dispatch:
 
 permissions:

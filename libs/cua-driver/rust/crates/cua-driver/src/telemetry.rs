@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Content-free product telemetry for Cua Driver.
 //!
 //! Routine telemetry is enabled by default, with precedence

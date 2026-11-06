@@ -18,6 +18,8 @@ import { toast } from "@/components/ui/toast";
 import { AddAgentSheet } from "@/components/add-agent/add-agent-sheet";
 import { registerAddAgent } from "@/components/add-agent/add-agent-launcher";
 
+import { useAbilityAnswer } from "@/lib/agent-home/answer";
+
 import { CallSplit } from "./call-split";
 import { defaultAddressee, EMPTY_ADDRESS, resolveAddressing, setAddress, unpinAgent, useAddressing } from "@/lib/addressing";
 import { EVERYONE, type MentionCandidate } from "@/lib/mentions";
@@ -172,6 +174,8 @@ export function SpaceCall({
   const preparedQueue = usePreparedQueue(spaceId);
   const preparedWords = preparedQueue.length ? prepared.view?.queued[0]?.note : undefined;
   const items = useMemo(() => [...thread.items, ...queuedItems(queued, thread.me ?? "me", myName)], [thread.items, thread.me, queued, myName]);
+  // An agent's request for an ability (list Spaces, use a machine) is a standard approval card; allowing it is remembered for that agent.
+  const answerApproval = useAbilityAnswer(spaceId, thread.items, roster, thread.answer);
   const after = (seq: number) =>
     seq < 0 ? (
       <div data-queued-note="" data-only-you="" className="-mt-0.5 mb-1 ml-11 w-fit rounded-lg bg-brand-surface px-2.5 py-1.5">
@@ -277,7 +281,7 @@ export function SpaceCall({
           <LiveRows live={thread.live} roster={shown} />
         </>
       }
-      onAnswer={thread.answer}
+      onAnswer={answerApproval}
       onOpenAttachment={openAttachment}
       onRemoveAgent={thread.removeAgent ?? undefined}
       onRetry={(text) => summon.send(text, view ?? null)}

@@ -162,6 +162,12 @@ pub const ERROR_KINDS: &[&str] = &[
     // Cua Cloud has ended: a cloud create is refused up front. Expected, so
     // reports can leave it out of the failures that need a fix.
     "cloud_ended",
+    // QEMU, Lume or UEFI firmware missing; a container that exited at
+    // start; QEMU or Lume refusing or failing; any other engine error.
+    "vm_runtime_missing",
+    "container_exited",
+    "vm_error",
+    "engine_error",
     "env",
     "http",
     "unauthenticated",
@@ -709,8 +715,6 @@ pub const PLANS: &[&str] = &["free", "pro", "teams", "unknown"];
 /// `cua-spaces-app-core` `experiments::Experiment::id`).
 pub const EXPERIMENTS: &[&str] = &[
     "cua_volume",
-    "your_cloud",
-    "sharing",
     "secure_spaces",
     "child_spaces",
     "ask_first",
@@ -1816,7 +1820,7 @@ pub const EVENTS: &[EventSpec] = &[
             p(
                 "experiments_on",
                 Kind::Set(EXPERIMENTS),
-                "The Spaces app's experiments turned on in Settings, Experiments on this install (cua_volume, your_cloud, sharing, secure_spaces, child_spaces, ask_first, ci_runners, tcp_shares, mobile, warm_pools, joined with +), or none.",
+                "The Spaces app's experiments turned on in Settings, Experiments on this install (cua_volume, secure_spaces, child_spaces, ask_first, ci_runners, tcp_shares, mobile, warm_pools, joined with +), or none.",
             ),
             p(
                 "ui_locale",
@@ -2251,7 +2255,7 @@ pub const EVENTS: &[EventSpec] = &[
             p(
                 "experiment",
                 Kind::Enum(EXPERIMENTS),
-                "Which experiment: cua_volume, your_cloud, sharing, secure_spaces, child_spaces, ask_first, ci_runners, tcp_shares, mobile or warm_pools.",
+                "Which experiment: cua_volume, secure_spaces, child_spaces, ask_first, ci_runners, tcp_shares, mobile or warm_pools.",
             ),
         ],
         purpose: "Which experiments people try, and which they turn off again.",

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Parity check for `press_key`.
 
 #[cfg(target_os = "windows")]

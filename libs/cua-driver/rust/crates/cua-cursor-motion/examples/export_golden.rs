@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Write the golden trajectories shared with `@trycua/cursor-motion`:
 //!
 //! ```bash

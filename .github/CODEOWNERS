@@ -25,7 +25,6 @@
 /.github/workflows/ci-cua-driver-contract-clients.yml @f-trycua @injaneity
 /.github/workflows/ci-cua-driver-installer-compat.yml @f-trycua @injaneity
 /.github/workflows/ci-distro-compat-cua-driver.yml @f-trycua @injaneity
-/.github/workflows/ci-rust-format.yml @f-trycua @injaneity
 /.github/workflows/ci-rust-linux.yml @f-trycua @injaneity
 /.github/workflows/ci-rust-macos.yml @f-trycua @injaneity
 /.github/workflows/ci-rust-windows.yml @f-trycua @injaneity

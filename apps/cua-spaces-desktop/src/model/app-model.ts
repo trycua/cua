@@ -432,7 +432,7 @@ export class AppModel {
 
   /** The detail as this machine sees it (`appSpaceDetailFor`). */
   detail(space: AppSpace): AppSpaceDetail {
-    return this.native.appSpaceDetailFor(space, this.usage.get(space.id), this.hostArch, this.settings.experiments, this.devices.accessNotice);
+    return this.native.appSpaceDetailFor(space, this.usage.get(space.id), this.hostArch, this.devices.accessNotice);
   }
 
   /** The Spaces whose desktop can be shown (running and reachable). */

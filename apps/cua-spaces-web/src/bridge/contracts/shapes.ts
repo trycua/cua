@@ -68,6 +68,8 @@ import type { GithubAccount, GithubHost, GithubReport, GithubSourceRow } from ".
 import type { TelemetryLinkNotice } from "../ops/telemetry";
 import type { SentFileInfo, SpaceThumbnail, SpaceUsage, SpaceWindows } from "../ops/space-detail";
 import type { RelayUsage } from "../ops/relay-usage";
+import type { AppPermissions, DriverActivity, DriverApp, DriverLiveTest, DriverMachine, DriverPermission, DriverStatus, DriverUpdate } from "../ops/driver";
+import type { DefaultSpace, DefaultSpaceStep, SpacesSettings } from "../ops/spaces-settings";
 import type { RiskyRequest } from "../ops/nudges";
 import type { PastMessage, PastThread, RecentThread } from "../ops/agent-threads";
 import type { ComputerResources, DiskOnHost, DiskWarning, GuestUsage, ResourcesSnapshot, SharedBase, SpaceResources } from "../ops/resources";
@@ -80,7 +82,7 @@ import type { AgentMember, JoinCode, JoinCodeRow, LiveAgent, MemberIdentity, Thr
 import type { PresenceCursorWire, PresenceJoinInfo, PresenceParticipantWire } from "../ops/presence";
 import type { StartupState } from "../ops/startup";
 import type { StreamTicket } from "../ops/stream";
-import type { CliInfo, GlobalShortcut, HostSettings, HostSignIn, HostSignInFailure, NetworkEventWire, OpName, SessionSnapshot, SettingsSnapshot, SettingsValues, SpaceNetworkWire } from "../protocol";
+import type { AgentMenuPrefs, CliInfo, GlobalShortcut, HostSettings, HostSignIn, HostSignInFailure, NetworkEventWire, OpName, ServiceWire, SessionSnapshot, SettingsSnapshot, SettingsValues, SpaceNetworkWire, TreeBudgetLimitsWire, TreeBudgetWire, TreeNodeWire } from "../protocol";
 import type { WebkitMethod, WkHostState, WkMachines, WkOnboarding, WkSession, WkSettings, WkSettingsRow, WkSpace, WkSpaces } from "../webkit-protocol";
 import { Defs, any, bool, dict, list, nul, nullable, num, obj, object, oneOf, opt, optNull, str, union, type Schema } from "./schema";
 
@@ -89,9 +91,40 @@ const ref = (name: string, s: Schema) => defs.ref(name, s);
 const strings = list(str);
 const limits = list(object({ resource: str, used: num, limit: num, reason: str }));
 const os = oneOf("macos", "windows", "linux", "unknown");
+const SpacesSettingsShape = ref("SpacesSettings", obj<SpacesSettings>()({ defaultSpace: nullable(str), fallback: strings, fallbackOn: bool, updatedAt: num }));
+const DefaultSpaceShape = ref(
+  "DefaultSpace",
+  obj<DefaultSpace>()({
+    space: nullable(str),
+    reason: str,
+    defaultSpace: nullable(str),
+    defaultOnline: nullable(bool),
+    order: list(obj<DefaultSpaceStep>()({ space: str, name: str, online: bool, role: str })),
+  }),
+);
 const RecentThreadShape = ref(
   "RecentThread",
   obj<RecentThread>()({ agent: oneOf("claude-code", "openai-codex", "hermes"), id: str, title: str, cwd: nullable(str), lastActiveMs: num, resume: strings }),
+);
+const DriverLiveTestShape = ref("DriverLiveTest", obj<DriverLiveTest>()({ passed: bool, atMs: num, failure: nullable(str), tookMs: optNull(num) }));
+const DriverPermissionShape = ref("DriverPermission", obj<DriverPermission>()({ id: oneOf("screen", "accessibility"), granted: bool, settingsUrl: nullable(str) }));
+const DriverStatusShape = ref(
+  "DriverStatus",
+  obj<DriverStatus>()({
+    machineId: str,
+    machineName: str,
+    thisMachine: bool,
+    state: oneOf("ready", "starting", "stopped", "paused", "needs-permission", "failed"),
+    version: nullable(str),
+    update: nullable(obj<DriverUpdate>()({ version: str, note: nullable(str) })),
+    lastTest: nullable(DriverLiveTestShape),
+    lastError: nullable(str),
+    permissions: list(DriverPermissionShape),
+    appName: optNull(str),
+    apps: nullable(list(obj<DriverApp>()({ id: str, name: str, on: bool, own: bool, bringsOwn: bool }))),
+    activity: list(obj<DriverActivity>()({ app: str, target: str })),
+    canPause: bool,
+  }),
 );
 
 /* ---- Spaces and machines --------------------------------------------------- */
@@ -391,6 +424,9 @@ const SessionShape = ref(
 /** `AppSettings.tips` (`tips::TipsState`). */
 const TipsStateShape = obj<TipsState>()({ off: bool, done: strings });
 
+/** `AppSettings.agentMenu*` (`agent_menu::AgentMenuPrefs`). */
+const AgentMenuPrefsShape = obj<AgentMenuPrefs>()({ shown: strings, hidden: strings, seen: strings });
+
 const RuntimePathCheckShape = ref(
   "RuntimePathCheck",
   obj<RuntimePathCheck>()({
@@ -440,10 +476,11 @@ const SettingsShape = ref(
       telemetry: bool,
       defaultLocation: str,
       launchAtLogin: nullable(bool),
-      updateChannel: nullable(oneOf("stable", "beta")),
+      updateChannel: nullable(oneOf("stable", "nightly")),
       autoConnect: opt(bool),
       tips: opt(TipsStateShape),
       notchPinned: opt(strings),
+      agentMenu: opt(AgentMenuPrefsShape),
     }),
     defaultLocation: nullable(obj<DefaultLocation>()({ value: str, source: oneOf("env", "config", "default"), env: opt(str), path: str })),
     telemetry: nullable(
@@ -468,7 +505,7 @@ const SettingsShape = ref(
 
 const ExperimentsShape = ref(
   "Experiments",
-  obj<Experiments>()({ cuaVolume: opt(bool), yourCloud: opt(bool), sharing: opt(bool), webUi: opt(bool), secureSpaces: opt(bool), childSpaces: opt(bool), askFirst: opt(bool), ciRunners: opt(bool), tcpShares: opt(bool), mobile: opt(bool), warmPools: opt(bool) }),
+  obj<Experiments>()({ cuaVolume: opt(bool), secureSpaces: opt(bool), childSpaces: opt(bool), askFirst: opt(bool), ciRunners: opt(bool), tcpShares: opt(bool), mobile: opt(bool), warmPools: opt(bool) }),
 );
 
 const RepoCacheShape = ref(
@@ -497,7 +534,7 @@ const AboutShape = ref(
     updater: bool,
     autoCheck: bool,
     autoInstall: bool,
-    channel: oneOf("stable", "beta"),
+    channel: oneOf("stable", "nightly"),
     lastCheck: nullable(str),
     checking: bool,
   }),
@@ -1329,6 +1366,39 @@ const NetworkEventShape = ref(
   obj<NetworkEventWire>()({ reason: str, dst: str, proto: optNull(str), count: num, lastUnix: optNull(num) }),
 );
 
+const TreeNodeShape = ref("TreeNode", obj<TreeNodeWire>()({ id: str, parent: optNull(str), depth: num, children: bool, home: optNull(str) }));
+const TreeBudgetLimitsShape = ref(
+  "TreeBudgetLimits",
+  obj<TreeBudgetLimitsWire>()({
+    maxSpaces: optNull(num),
+    maxVcpus: optNull(num),
+    maxMemoryMb: optNull(num),
+    usdPerHour: optNull(num),
+    usdTotal: optNull(num),
+  }),
+);
+const TreeBudgetShape = ref(
+  "TreeBudget",
+  obj<TreeBudgetWire>()({
+    root: str,
+    set: TreeBudgetLimitsShape,
+    maxSpaces: num,
+    maxVcpus: num,
+    maxMemoryMb: num,
+    usdPerHour: num,
+    usdTotal: optNull(num),
+    spaces: num,
+    vcpus: num,
+    memoryMb: num,
+    usdPerHourUsed: num,
+    usdSpent: num,
+  }),
+);
+const ServiceShape = ref(
+  "SpaceService",
+  obj<ServiceWire>()({ name: str, command: str, state: str, restarts: num, lastEnd: str, probeError: str }),
+);
+
 export const OP_SHAPES: Record<OpName, Schema> = {
   "spaces.list": list(SpaceRowShape),
   "spaces.create": SpaceRowShape,
@@ -1343,6 +1413,12 @@ export const OP_SHAPES: Record<OpName, Schema> = {
   "network.log": list(NetworkEventShape),
   "network.ackNotice": nul,
   "spaces.setAccess": nul,
+  "spaces.tree": list(TreeNodeShape),
+  "children.set": nul,
+  "budget.get": TreeBudgetShape,
+  "budget.set": TreeBudgetShape,
+  "services.list": list(ServiceShape),
+  "services.control": nul,
   "spaces.open": nul,
   "machines.list": list(MachineRowShape),
   "host.status": hostStatusOrNull,
@@ -1507,6 +1583,7 @@ export const OP_SHAPES: Record<OpName, Schema> = {
   "agentKeys.set": AgentKeysShape,
   "agentKeys.remove": AgentKeysShape,
   "agentKeys.use": AgentKeysShape,
+  "agentKeys.rename": AgentKeysShape,
   "agentKeys.shell": object({ names: list(str) }),
   "agentKeys.fromShell": AgentKeysShape,
   "github.status": GithubShape,
@@ -1529,6 +1606,9 @@ export const OP_SHAPES: Record<OpName, Schema> = {
   "machines.rename": nul,
   "machines.remove": nul,
   "machines.checkHealth": nul,
+  "spaces.settings": nullable(SpacesSettingsShape),
+  "spaces.setSettings": nullable(SpacesSettingsShape),
+  "spaces.resolveDefault": nullable(DefaultSpaceShape),
   "spaces.openStream": obj<StreamTicket>()({ wsUrl: str, expiresAt: nullable(str) }),
   "nudges.pending": list(obj<RiskyRequest>()({ id: str, agent: str, action: str, atMs: num, expiresMs: num })),
   "agents.recentThreads": list(RecentThreadShape),
@@ -1538,6 +1618,26 @@ export const OP_SHAPES: Record<OpName, Schema> = {
     earlierOmitted: num,
   }),
   "nudges.answer": nul,
+  "driver.status": nullable(DriverStatusShape),
+  "driver.setup": nullable(DriverStatusShape),
+  "driver.list": list(
+    obj<DriverMachine>()({
+      machineId: str,
+      name: str,
+      os: oneOf("macos", "windows", "linux"),
+      thisMachine: bool,
+      state: oneOf("ready", "starting", "stopped", "paused", "needs-permission", "failed"),
+      version: nullable(str),
+      update: nullable(str),
+    }),
+  ),
+  "driver.config": dict(any),
+  "driver.setConfig": dict(any),
+  "driver.test": DriverLiveTestShape,
+  "driver.pause": nul,
+  "driver.setApp": nul,
+  "driver.update": nul,
+  "driver.permissions": nullable(obj<AppPermissions>()({ appName: str, permissions: list(DriverPermissionShape) })),
   "relay.usage": nullable(
     obj<RelayUsage>()({
       metered: bool,
@@ -1804,12 +1904,13 @@ const WkSettingsShape = ref(
         }),
       ),
     }),
-    updateChannel: optNull(oneOf("stable", "beta")),
+    updateChannel: optNull(oneOf("stable", "nightly")),
     globalShortcut: optNull(object({ label: str, registered: bool })),
     accountUrl: optNull(str),
     cli: optNull(object({ name: str, installed: bool })),
     tips: opt(TipsStateShape),
     notchPinned: opt(strings),
+    agentMenu: opt(AgentMenuPrefsShape),
     runtimes: optNull(RuntimesInputShape),
   }),
 );
@@ -1970,6 +2071,12 @@ export const WEBKIT_SHAPES: Partial<Record<WebkitMethod, Schema>> = {
   "network.log": list(NetworkEventShape),
   "network.ackNotice": object({}),
   "spaces.setAccess": object({}),
+  "spaces.tree": list(TreeNodeShape),
+  "children.set": object({}),
+  "budget.get": TreeBudgetShape,
+  "budget.set": TreeBudgetShape,
+  "services.list": list(ServiceShape),
+  "services.control": object({}),
   // The page's wizard runs on `env`, and reads `local`.
   "spaces.createOptions": ref("WkCreateOptions", createOptions(true)),
   "spaces.create": WkSpaceShape,
@@ -1997,6 +2104,13 @@ export const WEBKIT_SHAPES: Partial<Record<WebkitMethod, Schema>> = {
   "agents.signInStart": SignInStartShape,
   "agents.signInWait": SignInWaitShape,
   "agents.setupDriver": OP_SHAPES["agents.setupDriver"],
+  "driver.status": OP_SHAPES["driver.status"],
+  "driver.list": OP_SHAPES["driver.list"],
+  "driver.test": OP_SHAPES["driver.test"],
+  "driver.pause": OP_SHAPES["driver.pause"],
+  "driver.setup": OP_SHAPES["driver.setup"],
+  "driver.setApp": OP_SHAPES["driver.setApp"],
+  "driver.permissions": OP_SHAPES["driver.permissions"],
   "agents.detail": AgentDetailShape,
   "agents.readFile": AgentOpenFileShape,
   "agents.restoreFile": nul,
@@ -2010,6 +2124,7 @@ export const WEBKIT_SHAPES: Partial<Record<WebkitMethod, Schema>> = {
   "agentKeys.set": AgentKeysWire,
   "agentKeys.remove": AgentKeysWire,
   "agentKeys.use": AgentKeysWire,
+  "agentKeys.rename": AgentKeysWire,
   "agentKeys.shell": object({ names: list(str) }),
   "agentKeys.fromShell": AgentKeysWire,
   "github.status": GithubWire,
@@ -2117,6 +2232,9 @@ export const WEBKIT_SHAPES: Partial<Record<WebkitMethod, Schema>> = {
   "machines.rename": nul,
   "machines.remove": nul,
   "machines.checkHealth": nul,
+  "spaces.settings": OP_SHAPES["spaces.settings"],
+  "spaces.setSettings": OP_SHAPES["spaces.setSettings"],
+  "spaces.resolveDefault": OP_SHAPES["spaces.resolveDefault"],
   "checklist.get": OP_SHAPES["checklist.get"],
   "checklist.send": OP_SHAPES["checklist.send"],
   "links.list": OP_SHAPES["links.list"],
@@ -2156,6 +2274,8 @@ export const WEBKIT_UNSHAPED: Partial<Record<WebkitMethod, string>> = {
   "thread.settings": THREAD_TOOL_JSON,
   "agents.recentThreads": AGENT_THREADS_TOOL_JSON,
   "agents.threadHistory": AGENT_THREADS_TOOL_JSON,
+  "driver.config": "the driver's get_config JSON as-is; bridge/driver.ts reads only the keys it knows",
+  "driver.setConfig": "the driver's get_config JSON as-is, after the change",
 };
 
 /** The exported document (`bridge-shapes.json`): `ops` and `webkit` map

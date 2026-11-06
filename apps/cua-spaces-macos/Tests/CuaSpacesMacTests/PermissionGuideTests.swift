@@ -33,6 +33,28 @@ struct PermissionGuideTests {
         #expect(!PermissionGuide.needsReopen(after: .accessibility))
     }
 
+    /// The first run's step, the Driver page and This Mac read the same two
+    /// rows (`driver.permissions`), each with the pane its Allow guides.
+    @Test func thePagesReadBothPermissionsWithTheirPanes() throws {
+        let rows = PermissionGuide.rows(granted: [.accessibility])
+        #expect(rows.map { $0["id"] as? String } == ["screen", "accessibility"])
+        #expect(rows.map { $0["granted"] as? Bool } == [false, true])
+        for row in rows {
+            let url = try #require(row["settingsUrl"] as? String)
+            #expect(PermissionGuide.pane(for: url) != nil)
+        }
+        #expect(PermissionGuide.rows(granted: []).allSatisfy { $0["granted"] as? Bool == false })
+    }
+
+    /// Cua Spaces Local has its own bundle id, so its own grants: the pages
+    /// name the app System Settings lists.
+    @Test func namesTheAppSystemSettingsLists() {
+        #expect(PermissionGuide.appName(info: ["CFBundleDisplayName": "Cua Spaces Local", "CFBundleName": "CuaSpacesMac"]) == "Cua Spaces Local")
+        #expect(PermissionGuide.appName(info: ["CFBundleName": "Cua Spaces"]) == "Cua Spaces")
+        #expect(PermissionGuide.appName(info: ["CFBundleDisplayName": ""]) == "Cua Spaces")
+        #expect(PermissionGuide.appName(info: nil) == "Cua Spaces")
+    }
+
     @Test func everyGuidedPaneHasItsSettingsURL() {
         for pane in PermissionGuide.guided {
             let url = PermissionGuide.settingsURL(for: pane)

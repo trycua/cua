@@ -353,6 +353,12 @@ pub struct AppSpace {
     /// Who it belongs to, who else has it and what you may do with it
     /// ([`crate::spaces::access`]). Absent reads as yours with nobody else.
     pub access: Option<AppSpaceAccess>,
+    /// The home that warms in the background for Home's prompt box, until a
+    /// person writes into it: no list shows it (not the Spaces list, the
+    /// sidebar, the palette, the menu bar item or the notch; see
+    /// [`crate::spaces::openable_spaces`]). Its own page still opens. The
+    /// SDK and `cua spaces ls` still return it, marked.
+    pub hidden: bool,
 }
 
 /// One row of the SDK's `list_spaces`.
@@ -390,6 +396,9 @@ pub struct AppSpaceRow {
     /// The guest's CPU architecture, when known (any spelling: `arm64`,
     /// `aarch64`, `amd64`, `x86_64`).
     pub arch: Option<String>,
+    /// The SDK's `SpaceInfo.hidden` (label `cua.hidden`): the home warming
+    /// for Home's prompt box. No list shows it ([`Space::hidden`]).
+    pub hidden: bool,
     /// Answered the last connect.
     pub reachable: bool,
     /// Why not.
@@ -3589,11 +3598,11 @@ pub struct AppWizardEnv {
     /// when known.
     pub storage: Option<AppLocalStorage>,
     /// The user's connected clouds (`cloud_status`), for "Your cloud"
-    /// (offered only while its experiment is on: [`offered_clouds`]).
+    /// ([`offered_clouds`]).
     pub clouds: Vec<AppConnectedCloud>,
     /// The user's machines that provide Spaces (`Spaces.hosts()`).
     pub hosts: Vec<AppSpaceHost>,
-    /// Settings, Experiments ("Your cloud" decides whether clouds show).
+    /// Settings, Experiments (the daemon-enforced switches the wizard reads).
     pub experiments: AppExperiments,
     /// The GPU option of each runtime that has one (the SDK's
     /// `gpu_support`), when known. A runtime not listed has none: the
@@ -6574,14 +6583,17 @@ pub struct AppDriveMountFrame {
     pub arrived: Vec<f64>,
 }
 
-/// Which releases the updater offers.
+/// Which builds the updater offers.
 pub type AppUpdateChannel = core::about::UpdateChannel;
 #[uniffi::remote(Enum)]
 pub enum AppUpdateChannel {
     /// Releases (the default).
     Stable,
-    /// Releases and prereleases (`X.Y.Z-suffix`).
-    Beta,
+    /// A build of main every night (`X.Y.Z-nightly.YYYYMMDD[+sha]`), from
+    /// its own feed. It replaced the Beta channel, so `beta` (an older
+    /// build's word, and what the settings file still stores, see
+    /// [`crate::settings::save`]) reads as Nightly.
+    Nightly,
 }
 
 /// What the About pane shows.
@@ -6653,12 +6665,21 @@ pub struct AppAboutUpdates {
     pub auto_install: bool,
     /// It can be used (only with automatic checks).
     pub auto_install_enabled: bool,
-    /// "Update to:".
+    /// "Updates".
     pub channel_label: String,
-    /// Stable, Beta.
+    /// Stable, Nightly.
     pub channels: Vec<AppSettingsOption>,
-    /// The channel picker's tooltip.
+    /// What the chosen channel gets, in a line.
     pub channel_help: String,
+    /// A word about the version running on this channel: a nightly build
+    /// back on Stable stays until the next stable release passes it;
+    /// `None`: nothing to say.
+    pub channel_note: Option<String>,
+    /// "Download Stable": the way back to Stable right now
+    /// ([`DOWNLOAD_URL`]); `None` when no way back is needed.
+    pub download_label: Option<String>,
+    /// Where [`AboutUpdates::download_label`] goes.
+    pub download_url: Option<String>,
     /// "Check Now" (or "Checking…").
     pub check_label: String,
     /// Check Now can be used.
@@ -6960,14 +6981,6 @@ pub type AppExperiments = core::experiments::Experiments;
 pub struct AppExperiments {
     /// Cua Volume in the first run and Settings, Storage.
     pub cua_volume: bool,
-    /// Your own clouds in the New Space wizard.
-    pub your_cloud: bool,
-    /// Sharing a Space with other accounts. On unless turned off: a missing
-    /// key reads as on (the plans on cua.ai/pricing list sharing).
-    pub sharing: bool,
-    /// The shared web UI is the main window. Always on in the macOS shell
-    /// ([`crate::settings::resolve_new_ui`]); kept for older files and builds.
-    pub web_ui: bool,
     /// Secure Spaces: a Space reaches the internet and nothing else on the
     /// network unless it is opened. Off unless turned on; the daemon enforces
     /// it (the switch is kept in the cua home).
@@ -7123,15 +7136,8 @@ pub struct AppSettings {
     /// Settings); `None`: never chosen ([`crate::login_item::launch_plan`]).
     pub launch_at_login: Option<bool>,
     /// Settings, Experiments: every switch off unless turned on
-    /// ([`crate::experiments`]). Its `webUi` is always on in the macOS
-    /// shell ([`resolve_new_ui`]); the file keeps only [`Self::new_ui`]'s
-    /// "on" there, the value older builds read.
+    /// ([`crate::experiments`]).
     pub experiments: AppExperiments,
-    /// The New UI as an older build's "Use classic UI" saved it. Read and
-    /// kept for those builds, never acted on: the web UI is the only UI
-    /// ([`resolve_new_ui`]). An older build's saved `webUi: true` reads as
-    /// `Some(true)`; its `false` was only the saved default ([`load`]).
-    pub new_ui: Option<bool>,
     /// Keyvault copies (import ids) the user dismissed from the notch: it no
     /// longer shows them, nothing is revoked or wiped
     /// ([`crate::keyvault::view::prune_dismissed`] forgets the gone ones).
@@ -7159,6 +7165,18 @@ pub struct AppSettings {
     /// Tips ([`crate::tips`]): "Don't show tips" and the ones done. An
     /// older settings file without it reads as tips on, none done.
     pub tips: AppTipsState,
+    /// Settings, Connections, Agent menu ([`crate::agent_menu`]): the apps
+    /// Home's agent menu shows although the default hides them (an app
+    /// outside Codex, Hermes, Claude Code and OpenCode, not signed in).
+    pub agent_menu_shown: Vec<String>,
+    /// The apps the menu hides although the default shows them. Nothing is
+    /// signed out: a hidden app keeps its sign-ins and stays on the Agents
+    /// page and available by name.
+    pub agent_menu_hidden: Vec<String>,
+    /// The working accounts the menu last saw (`app|variable|slot`): a new
+    /// one is a connect, which shows its app again
+    /// ([`crate::agent_menu::sync`]).
+    pub agent_menu_seen: Vec<String>,
 }
 
 /// A pressed key combination.
@@ -10319,7 +10337,7 @@ pub enum AppTelemetrySignal {
     Experiment {
         /// `experiment_on` or `experiment_off`.
         action: String,
-        /// `cua_volume`, `your_cloud` or `sharing`.
+        /// `cua_volume`, `mobile`, ...
         experiment: String,
     },
     /// Which experiments are on now (no event of its own: the daily

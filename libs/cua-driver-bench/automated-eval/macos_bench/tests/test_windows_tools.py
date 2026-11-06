@@ -275,6 +275,19 @@ class GuardTest(unittest.TestCase):
     def test_descendants(self) -> None:
         self.assertEqual(G.descendants(self.ROWS, 200), {200, 210, 220})
 
+    def test_shell_started_by_the_tool_binary_is_a_helper(self) -> None:
+        rows = [
+            (10, 1, "cua-driver.exe"),
+            (11, 10, "powershell.exe"),
+            (20, 1, "python.exe"),
+            (21, 20, "powershell.exe"),
+        ]
+        self.assertEqual(G.started_by_tool(rows, 11, ["cua-driver.exe"]), "cua-driver")
+        self.assertIsNone(
+            G.started_by_tool(rows, 21, ["cua-driver.exe"])
+        )  # agent code in an interpreter
+        self.assertIsNone(G.started_by_tool(rows, 11, []))
+
     def test_new_side_doors(self) -> None:
         hits = G.new_side_doors(self.ROWS, baseline={4, 100}, runner=200, own={250})
         self.assertEqual(sorted(hits), [(230, "Windows PowerShell"), (240, "Windows Terminal")])

@@ -25,7 +25,7 @@ use crate::tool_args::ArgsExt;
 
 use super::cdp_ws::CdpConnection;
 use super::download::BrowserDownloadTool;
-use super::engine::{BrowserEngine, BrowserTabScreenshot};
+use super::engine::{BrowserEngine, BrowserTabScreenshot, DIALOG_SUBSCRIPTION_TIMEOUT};
 use super::platform::{
     BrowserVisualActionKind, PrepareAction, PrepareProfile, PrepareProfileMode, PrepareRequest,
     PrepareStrategy,
@@ -2847,9 +2847,19 @@ impl Tool for BrowserDialogTool {
         let cdp_target_id = validated.tab.cdp_target_id.as_str();
         if conn.dialog_state(cdp_target_id).is_none() && !conn.has_dialog_session(cdp_target_id) {
             // Register before Page.enable so an opening event delivered before
-            // the command reply is still attributed to the exact target.
+            // the command reply is still attributed to the exact target. A
+            // renderer blocked by an unseen dialog never answers, so use the
+            // short subscription deadline rather than the full call timeout.
             conn.register_dialog_session(cdp_session, cdp_target_id);
-            if let Err(error) = conn.call(Some(cdp_session), "Page.enable", json!({})).await {
+            if let Err(error) = conn
+                .call_with_timeout(
+                    Some(cdp_session),
+                    "Page.enable",
+                    json!({}),
+                    DIALOG_SUBSCRIPTION_TIMEOUT,
+                )
+                .await
+            {
                 if conn.dialog_state(cdp_target_id).is_none() {
                     conn.unregister_dialog_session(cdp_session, cdp_target_id);
                     return BrowserRefusal::new(

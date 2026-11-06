@@ -192,6 +192,8 @@ the agent harness and model are not confounded with the tool layer:
 | **Cua Driver**, driven by Claude Code | Run | Cua Driver's MCP server, with its skill and `run_script` on (Cua Driver 0.35 defaults), built from a pinned main commit (arm `cc-cua-driver-script`) |
 | **Codex Computer-Use (Sky)**, driven by Claude Code | Run | OpenAI's `cua_repl` launcher from the ChatGPT app 26.930 plugin, talking to OpenAI's Sky computer-use service, registered in Claude Code as MCP server `codex-cu` (arm `cc-codex-cu`). Claude chooses the actions through this MCP bridge; OpenAI's model is not involved. |
 | **Claude Computer-Use (Desktop helper): Claude Desktop 2.31226.0 computer-use helper via a minimal adapter; an internal interface, not an Anthropic-supported procedure** | Run | The `app-cu-helper` binary of Claude Desktop 2.31226.0, used unmodified in place, behind Cua's small MCP adapter ([`tools/claude_cu_helper/`](automated-eval/macos_bench/tools/claude_cu_helper)), registered in Claude Code as MCP server `claude-cu-helper` (arm `cc-claude-cu-helper`). The adapter adds a window list and window screenshots; all input goes through the helper. |
+| **Vercel agent-desktop**, driven by Claude Code | Run (macOS and Windows) | agent-desktop 1.2.0 (Vercel Labs, Apache-2.0), an accessibility-tree CLI, behind Cua's small MCP adapter ([`tools/agent_desktop/`](automated-eval/macos_bench/tools/agent_desktop)): one MCP tool per CLI command, MCP server `agentdesktop` (arm `cc-agent-desktop`). The vendor skill text is the server instructions. |
+| **Browser Use harness**, driven by Claude Code | Run (macOS and Windows) | The Browser Use macOS harness 0.2.1 or Windows harness 0.2.2 behind Cua's small MCP adapter ([`tools/browser_use_harness/`](automated-eval/macos_bench/tools/browser_use_harness)): one `macos_harness` (or `windows_harness`) tool that takes the vendor's own command line, plus `view_screenshot`; MCP server `browseruse` (arm `cc-browser-use`). The vendor skill is the server instructions. |
 | **Cua Driver**, driven by Codex CLI | Planned (Amendment 23, not yet run) | The same Cua Driver build, daemon, MCP entry and system prompt as `cc-cua-driver-script`, driven by the Codex CLI bundled with the ChatGPT app, run as `codex app-server` (arm `cx-cua-driver`). No skill files: without a shell or file tool Codex cannot read one. No numbers yet. |
 | **Codex Computer-Use (Sky)**, driven by Codex CLI | Planned (Amendments 20 and 23, not yet run) | The same Codex tool layer driven by OpenAI's own agent and model, with the same prompts, approvals, limits, guard and checkers (arm `cx-codex-cu`). No numbers yet. |
 | **Claude Computer-Use (Desktop helper): Claude Desktop 2.31226.0 computer-use helper via a minimal adapter; an internal interface, not an Anthropic-supported procedure**, driven by Codex CLI | Planned (Amendment 23, not yet run) | The same helper, adapter and MCP entry as `cc-claude-cu-helper`, driven by the Codex CLI (arm `cx-claude-cu-helper`). No numbers yet. |
@@ -274,6 +276,9 @@ done
   The launcher wraps both helper and capture; Terminal, the adapter and launcher
   receive no new grants. No Claude Desktop binary,
   app code or asset is included in this repository; only Cua's adapter is.
+* **Vercel agent-desktop** (arm `cc-agent-desktop`). In the VM, `npm install --prefix "$CDB_BENCH_WORK/agent-desktop" agent-desktop@1.2.0 --allow-scripts=agent-desktop` (npm 11; the package carries the prebuilt binaries and the install script only links the one for your platform). Give the `agent-desktop` binary Accessibility and Screen Recording in System Settings. Check it with `"$CDB_BENCH_WORK/agent-desktop/node_modules/.bin/agent-desktop" --version`. To use a binary elsewhere, set `CDB_AGENT_DESKTOP_BIN`. The adapter is `tools/agent_desktop/ad_mcp.py`; its `ad-instructions.md` is the skill text from the agent-desktop package (Apache-2.0, Vercel Labs), unmodified. The adapter offers the observe, act, window, clipboard and wait commands, and leaves out the skills, session, trace, notification, permission and system-surface commands. Physical input (`headed`) is the model's choice on the tools that can move the pointer, and forced on the tools that only exist as pointer input (`hover`, `drag`, `mouse_*`).
+* **Browser Use macOS harness** (arm `cc-browser-use`). In the VM, `python3 -m venv "$CDB_BENCH_WORK/browser-use-harness/venv" && "$CDB_BENCH_WORK/browser-use-harness/venv/bin/pip" install macos-harness==0.2.1`, then run `macos-harness doctor` once by hand and approve what it asks for (Accessibility and Screen Recording for the helper it starts); the adapter refuses `doctor`, `install` and `approve` so the model cannot change the setup. Set `CDB_MACOS_HARNESS_BIN` to use another install. The adapter `tools/browser_use_harness/bu_mcp.py` reads the skill from `macos-harness skill`, so the instructions always match the installed version. `BU_SHOT=always` attaches the screenshot to every `get_app_state`; the default is the vendor's: only when the model opens the file named on the `Screenshot` line.
+* **Codex Computer-Use (Sky): what you need before it works.** This arm drives OpenAI's computer-use plugin from the ChatGPT desktop app. It needs the ChatGPT desktop app with **Computer Use enabled** (Settings → Computer use → Any App) and you must sign in with **your own ChatGPT account that has Work or Codex access** (the app sign-in, or `codex login --device-auth` for the bundled Codex CLI). No credentials are shipped here or read by the harness. It is OpenAI's plugin with Claude choosing the actions through an MCP bridge, not OpenAI's own agent: the numbers describe the plugin as a tool layer under Claude Sonnet 5.5, not what OpenAI's agent can do with it. It is not available on Linux yet ([compatibility and limitations](https://learn.chatgpt.com/docs/linux/linux-app#compatibility-and-limitations)), and on Windows it runs foreground only ([Computer Use](https://learn.chatgpt.com/docs/computer-use)). The macOS release run used ChatGPT app 26.930; the Windows run used the ChatGPT/Codex app 26.1029.9216.0.
 * **Codex CLI setups** (arms `cx-codex-cu`, `cx-cua-driver`, `cx-claude-cu-helper`). Nothing extra to install beyond the matching Claude Code setup: they use the Codex CLI bundled in the same ChatGPT app (`Contents/Resources/codex-cli/CodexCLI.app`) and the MCP config of the matching Claude Code setup (`cc-codex-cu`, `cc-cua-driver-script` or `cc-claude-cu-helper`). Point `CDB_CODEX_GATEWAY` at an OpenAI-compatible Responses endpoint serving `gpt-6.1-sol` (default `http://127.0.0.1:4000/v1`). The pinned CLI build is in `pins.json` (`codex_native`).
 
 **Terms checks (open).** Two questions have not been reviewed:
@@ -344,6 +349,12 @@ launch/linux_session.sh --evidence "$CDB_BENCH_WORK/evidence" -- <runner command
 ```
 
 Seeds, the state file, the event log, the checkers and the sentinel summary are the same as on macOS.
+
+Of the comparison setups, agent-desktop runs on Linux (`npm install agent-desktop@1.2.0`, then
+`run_bench.py --arms cc-agent-desktop` inside the session; the adapter is platform-neutral, but the release
+tables do not include a Linux agent-desktop run). The Browser Use harnesses exist for macOS and Windows only, and
+Codex computer use is not available on Linux yet
+([compatibility and limitations](https://learn.chatgpt.com/docs/linux/linux-app#compatibility-and-limitations)).
 `tests/test_linux_session.py` and `tests/test_linux_tools.py` check the session and the tools without a model.
 
 ### Windows (the BenchLab tasks)
@@ -369,6 +380,35 @@ with the GUI-only guard watching, then runs the checker and writes `row.json`. `
 each task through the GUI with real input; `tests/test_windows_desktop.py` checks that the oracle passes
 every task, that doing nothing fails and leaves the user undisturbed, and that a deliberate disturbance
 is seen.
+
+#### The comparison setups on Windows
+
+Each setup is one stdio MCP server in an `--mcp-config` file, run in the same interactive desktop session as the
+trial. The adapters and the filter are in `automated-eval/macos_bench/tools/`; paths below are examples.
+
+| Setup | Install | MCP server command |
+| --- | --- | --- |
+| agent-desktop 1.2.0 | `npm install agent-desktop@1.2.0` (prebuilt `win32-x64` binary included) | `python -I -B tools\agent_desktop\ad_mcp.py` with `AD_BIN=<...>\node_modules\agent-desktop\bin\agent-desktop-win32-x64.exe` (agent-desktop 1.2.0 also has its own `mcp` subcommand; the Windows release run used that one) |
+| Browser Use Windows harness 0.2.2 | `pip install "git+https://github.com/browser-use/windows-harness@46a37cf1d411c7816adffc274d5bdc2cca2bd9f0"` | `python -I -B tools\browser_use_harness\wh_mcp.py` with `WH_BIN=<...>\Scripts\windows-harness.exe` |
+| Codex Computer-Use (ChatGPT/Codex app 26.1029.9216.0) | Install the app, enable Computer Use, sign in with your own ChatGPT account with Work or Codex access | `python tools\codex_cu\codex_cu_filter.py --allow BenchLab --windows-app "<app dir>\resources"` |
+
+For Codex on Windows the filter does four things the plugin expects of the ChatGPT app and Claude Code does not
+do: it adds the sandbox metadata to tool calls, answers the per-app approval prompt (accepting only apps on
+`--allow`, here BenchLab, and declining everything else), answers Claude Code's `server/discover` probe locally,
+and flattens the `js` tool's top-level `oneOf` input schema, which the Anthropic API rejects. Computer Use runs
+foreground only on Windows, so run the foreground condition for it; the Windows release tables mark it that way.
+
+A config file looks like this (server names are the ones the runner and the analysis expect: `agentdesktop`,
+`browseruse`, `codex-cu`):
+
+```json
+{"mcpServers": {"agentdesktop": {"command": "python", "args": ["-I", "-B", "tools\\agent_desktop\\ad_mcp.py"],
+  "env": {"AD_BIN": "C:\\bench\\agent-desktop\\node_modules\\agent-desktop\\bin\\agent-desktop-win32-x64.exe"}}}}
+```
+
+The agent command that `launch\windows_session.py` runs is then the same `claude -p` call as on macOS (see
+[`RUNNER.md`](automated-eval/macos_bench/RUNNER.md), "The claude invocation"), with `--strict-mcp-config
+--mcp-config <file>`, `--allowedTools mcp__<server>` and a system prompt that says "Windows desktop".
 
 Where Windows differs:
 

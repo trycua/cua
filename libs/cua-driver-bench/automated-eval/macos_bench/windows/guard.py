@@ -92,6 +92,21 @@ def new_side_doors(
     ]
 
 
+def started_by_tool(
+    rows: Iterable[tuple[int, int, str]], pid: int, tool_exes: Iterable[str]
+) -> str | None:
+    """The executable name of `pid`'s parent when that parent is one of the setup's own tool binaries
+    (`--tool-exe`), else None. A shell a driver binary starts for itself (to query a process, say) is part of
+    the tool, as a helper process is on macOS; a shell started by code the agent supplied (a harness's Python
+    `exec`, a JavaScript REPL) has an interpreter as its parent and stays a side door."""
+    names = {name_of(t) for t in tool_exes}
+    if not names:
+        return None
+    parent = {p: pp for p, pp, _ in rows}.get(pid)
+    exe = {p: e for p, _, e in rows}.get(parent, "") if parent is not None else ""
+    return name_of(exe) if name_of(exe) in names else None
+
+
 def scan_tool_use(name: str, tool_input: Any) -> tuple[list[str], list[str]]:
     hard, soft = v2.scan_tool_use(name, tool_input)
     if name.startswith("mcp__"):

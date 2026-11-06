@@ -457,7 +457,10 @@ Where Windows differs:
 * **GUI-only guard.** A shell or script host (PowerShell, cmd, Windows Terminal, the script hosts,
   mshta, WSL) started in the desktop session outside the runner's own processes, or a side-door window
   in front, fails and stops the trial. Tool inputs are also scanned for PowerShell, cmd and script-host
-  commands.
+  commands. A shell whose parent is the setup's own binary (`--tool-exe cua-driver.exe`, for example: Cua
+  Driver starts PowerShell to read browser processes) is part of the tool, as a driver's helper process is
+  on macOS: it is logged in `gui_only.tool_helpers` and does not count. A shell started from code the agent
+  supplied (a harness's Python `exec`, a JavaScript REPL) has an interpreter as its parent and still counts.
 * **Sentinel.** Windows has no signals, so the runner arms it through a control file. A window counts as
   raised when it is above the user window in the z-order and overlaps it. The desktop measure is
   `IVirtualDesktopManager`; a dialog on the user's app is a window owned by the user window.
@@ -505,6 +508,10 @@ Where the multi-app tasks differ on Windows:
   it off for the bench user before the trials: `org.openoffice.Office.Update/Update/Enabled` and
   `org.openoffice.Office.Jobs/Jobs/UpdateCheck/Arguments/AutoCheckEnabled` set to `false` (as
   `Software\Policies\LibreOffice` registry policies, which an administrator writes).
+* **Codex approvals.** Codex computer use names a Windows app by its process when it asks for approval:
+  `soffice.bin` for LibreOffice, `GnuCash`, `Google Chrome`, and the Electron apps by their named executables
+  (`copperfield mail`, ...). Put those names on the adapter's `--allow` list for CDB-G02 to CDB-G04; a name
+  missing from it is declined and the setup cannot use that app.
 * **Leftovers.** Before and after a trial the launcher stops the task's own executables in the desktop
   session by exact name and whatever listens on the task's loopback port (4184 for CDB-G04).
 * **Validation.** `windows\cdb_oracle.py` stands in for the agent: by default it applies the scripted

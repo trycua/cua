@@ -194,6 +194,7 @@ def run(args: argparse.Namespace, command: list[str]) -> dict:
         )
         procs.append(agent)
         own_tree: set[int] = set()
+        helpers: dict[int, dict] = {}
         session = W.session_of(os.getpid())
         front = G.FrontWatch()
         violations: list[dict] = []
@@ -204,6 +205,14 @@ def run(args: argparse.Namespace, command: list[str]) -> dict:
             # Only the runner's own (interactive) session: remote administration (SSH in session 0) is not the GUI.
             here = [r for r in rows if W.session_of(r[0]) == session]
             for pid, label in G.new_side_doors(here, baseline, os.getpid(), own_tree):
+                by = G.started_by_tool(rows, pid, args.tool_exe)
+                if (
+                    by
+                ):  # the setup's own binary started it: part of the tool, logged, not a side door
+                    helpers.setdefault(
+                        pid, {"t_s": round(time.monotonic() - t0, 1), "detail": label, "parent": by}
+                    )
+                    continue
                 violations.append(
                     {
                         "t_s": round(time.monotonic() - t0, 1),
@@ -269,7 +278,8 @@ def run(args: argparse.Namespace, command: list[str]) -> dict:
             evaluation={k: evaluation.get(k) for k in ("passed", "score", "checks", "diagnostics")},
             checker_passed=bool(evaluation.get("passed")),
             gui_only={"violation": bool(violations), "violations": violations[:20],
-                      "mentions": soft, "frontmost_seen": sorted(front.seen)},
+                      "mentions": soft, "frontmost_seen": sorted(front.seen),
+                      "tool_helpers": list(helpers.values())[:20]},
             passed=passed,
             disturbance=disturbance,
             background=bg,
@@ -307,6 +317,10 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--label", default="")
     parser.add_argument("--timeout", type=float, default=360.0)
     parser.add_argument("--no-enforce", dest="enforce", action="store_false")
+    parser.add_argument(
+        "--tool-exe", action="append", default=[],
+        help="executable of the setup's own tool (repeatable): a shell it starts itself is not a side door",
+    )  # fmt: skip
     args = parser.parse_args(argv[:split])
     command = argv[split + 1 :]
     if sys.platform != "win32":

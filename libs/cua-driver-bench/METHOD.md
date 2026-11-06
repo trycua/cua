@@ -152,6 +152,29 @@ setup. The evidence is kept in the row. A side-door app in front for one or two
 samples, or a tool input that only names such an app, is recorded but is not a
 violation.
 
+**Windows.** The Windows guard has no list of side-door apps to look for, so it
+counts any shell or script host (PowerShell, cmd, Windows Terminal, the script
+hosts, mshta, WSL) that starts in the desktop session outside the runner's own
+processes, plus the same tool-input scan. One rule keeps it equal to macOS for
+every setup: a shell whose parent process is the setup's own binary (the
+`--tool-exe` of `launch/windows_session.py`: `cua-driver.exe`,
+`agent-desktop-win32-x64.exe`, `windows-harness.exe`, `codex-computer-use.exe`)
+is part of the tool. It is logged in the row (`gui_only.tool_helpers`) and is
+not a violation. On macOS the process rule names only side-door apps ("a process
+named Script Editor, Automator, iTerm2 or Shortcuts exists"), and the input rule
+flags only "a computer-use tool input [that] contains code that runs outside the
+GUI or touches files", so a driver's own helper processes were never violations
+there either. A shell started from code the agent supplied (Python passed to a
+harness's `exec`, JavaScript passed to a REPL) has an interpreter as its parent
+(`python.exe`, `node.exe`), which is never a `--tool-exe`, and still counts. The
+rule was added on 6 November 2026, during the Windows multi-app run. Cua Driver
+starts PowerShell to read browser processes in `get_browser_state` and
+`browser_prepare`; before the rule, 7 of its 10 CDB-G04 trials were stopped for
+that. Those trials were rerun with the same seeds. Applied to every earlier
+Windows row, the rule changes no other verdict: every other process violation
+on Windows followed a tool input in which the agent itself asked for PowerShell
+or a subprocess.
+
 ## Metrics
 
 **Success:** every required check of the task's checker passed, and there was no
@@ -259,8 +282,9 @@ differences are directional only.
   checkers and sentinel measures as macOS, but a Windows or Linux result is its
   own condition: a different desktop, accessibility stack and window manager, so
   compare setups within a platform, not across platforms. The Windows release
-  run covers the seven BenchLab tasks (MB-09, MB-10, MB-11, IR-01 to IR-04); it
-  does not include CDB-G02 to CDB-G04.
+  run covers all ten tasks: the seven BenchLab tasks and CDB-G02 to CDB-G04
+  (LibreOffice 26.2.6.3, GnuCash 5.17, Google Chrome 157, the pack's Electron
+  43.8.1 apps), with the same seeds as macOS.
 * **Vendor setups are driven through Cua's adapters.** agent-desktop, the Browser Use
   harnesses and OpenAI's computer-use plugin are not built for Claude Code as their
   client, so each is run through a small adapter in `automated-eval/macos_bench/tools/`
@@ -278,4 +302,5 @@ differences are directional only.
   the Browser Use macOS harness 0.2.1 (Codex computer use as installed for the
   run; Claude Code 2.1.318, Claude Sonnet 5.5, 3 trials with the same seeds in
   the foreground run). Windows: the Cua Driver 0.38.0 Windows build,
-  agent-desktop 1.2.0 and the Browser Use Windows harness 0.2.2.
+  agent-desktop 1.2.0, the Browser Use Windows harness 0.2.2 and Codex computer
+  use from the ChatGPT app 26.1029.9216.0 (Claude Code 2.1.316, Claude Sonnet 5.5).

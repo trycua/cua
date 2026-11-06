@@ -1570,7 +1570,7 @@ impl crate::pool::PoolHost for PoolHost {
         let Some(h) = cua_agents::harness::harness(harness) else {
             return harness.to_string();
         };
-        let ids: Vec<&str> = h.installs.iter().copied().collect();
+        let ids: Vec<&str> = h.installs.to_vec();
         let Ok(order) = cua_agents::installables::resolve(&ids) else {
             return harness.to_string();
         };

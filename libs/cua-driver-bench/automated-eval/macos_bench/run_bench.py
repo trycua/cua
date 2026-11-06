@@ -963,6 +963,7 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
     side_door: set[str] = set()
     watcher: FrontWatcher | None = None
     guard: v2.GuiOnlyGuard | None = None
+    pi_root: Path | None = None
     gui_only: dict[str, Any] | None = None
     try:
         ctx.set_state(
@@ -1086,9 +1087,10 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
                     server=cxn.SERVER_OF[arm],
                 )
             elif arm in pia.ARMS:
+                pi_root = pia.new_root()
                 claude = pia.run_pi(
                     argv,
-                    pia.render_agent_dir(trial_dir / "pi-agent", mcp_path, pia.skill_dir(cwd)),
+                    pia.render_agent_dir(pi_root, mcp_path, pia.skill_dir(cwd), max_turns),
                     cwd,
                     prompt,
                     timeout_s,
@@ -1172,8 +1174,8 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
                 artifacts, pia.SOURCE_ARM.get(arm, arm), bool(failure.get("kind"))
             )
         finally:
-            if arm in pia.ARMS:
-                pia.unlink_auth(trial_dir / "pi-agent")
+            if pi_root is not None:
+                pia.keep_config(pi_root, trial_dir / "pi-agent")
             codex_home = trial_dir / "codex-home" / ".codex"
             if arm in cxn.ARMS and codex_home.is_dir():
                 try:

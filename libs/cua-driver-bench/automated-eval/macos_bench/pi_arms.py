@@ -11,18 +11,20 @@ limit. Only the host and the model differ: ``pi --mode json`` on ``openai-codex`
 The tool surface mirrors Claude Code's ``Skill, Read, ToolSearch`` plus ``mcp__cua``: pi's ``read`` and ``tool_search``
 built-ins, the ``cua`` server with ``deferred`` exposure (loaded through ``tool_search``, as Claude Code defers it
 behind ToolSearch) and the build's skill through ``--skill``. Claude Code denies every ``Read`` in those arms
-(``dontAsk`` with only ``mcp__cua`` allowed) and loads the skill through ``Skill``, so ``pi_read_gate.ts`` blocks
+(``dontAsk`` with only ``mcp__cua`` allowed) and loads the skill through ``Skill``, so ``pi_gate.ts`` blocks
 every ``read`` except the skill's ``SKILL.md``. Every other built-in, extension, context file, prompt
 template and codemode is off. ``Translator`` turns pi's JSON events into the Claude-shaped stream that the GUI-only
 guard and ``claude_events.summarize`` read; a pi tool outside that surface maps to a forbidden built-in, so it ends
 the trial as a violation.
 
-pi has no turn cap, so the host stops it once the ``max_turns``-th assistant turn has finished and asked for more
-tools (Claude Code's ``error_max_turns``). Cost is pi's own figure for the reported tokens at the model's list price;
+pi has no turn cap, so ``pi_gate.ts`` gives it Claude Code's ``--max-turns``: the ``max_turns``-th turn may run its
+tools, the next one is aborted before its model request, and the host records ``error_max_turns``. A pi that exits
+without settling (a crash, not a cap, timeout or abort) leaves no result event, so the row is a harness failure. Cost is pi's own figure for the reported tokens at the model's list price;
 ``openai-codex`` is a ChatGPT subscription, so it is not a billed amount.
 
-Nothing here reads credentials: the trial's pi agent directory gets a symlink to the operator's ``auth.json``
-(``CDB_PI_AUTH_FILE``, default ``~/.pi/agent/auth.json``), removed when the trial ends.
+Nothing here reads credentials: the trial's pi agent directory, under the private ``/tmp`` of the session, gets a
+symlink to the operator's ``auth.json`` (``CDB_PI_AUTH_FILE``, default ``~/.pi/agent/auth.json``); only its
+configuration is copied into the run directory.
 """
 
 from __future__ import annotations
@@ -34,6 +36,7 @@ import re
 import shutil
 import signal
 import subprocess
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -52,7 +55,7 @@ THINKING = (
 PI_BIN = Path(os.environ.get("CDB_PI_BIN") or shutil.which("pi") or Path.home() / ".local/bin/pi")
 AGENT_DIR = Path(os.environ.get("CDB_PI_AGENT_DIR") or Path.home() / ".pi" / "agent")
 TOOLS = ("read", "tool_search", "mcp__cua__*")
-READ_GATE = Path(__file__).resolve().parent / "pi_read_gate.ts"
+GATE = Path(__file__).resolve().parent / "pi_gate.ts"
 # pi built-in -> the Claude Code built-in the guard knows; any other non-MCP tool is "Task" (forbidden in v2)
 AS_CLAUDE = {
     "read": "Read",
@@ -67,7 +70,7 @@ DESCRIPTIONS = {arm: f"pi + {PROVIDER}/{MODEL}, the {SOURCE_ARM[arm]} setup" for
 
 
 def claude_name(name: str) -> str:
-    return name if name.startswith("mcp__") else AS_CLAUDE.get(name, "Task")
+    return name if name.startswith("mcp__cua__") else AS_CLAUDE.get(name, "Task")
 
 
 def skill_dir(cwd: Path) -> Path:
@@ -76,8 +79,9 @@ def skill_dir(cwd: Path) -> Path:
     )  # written by claude_arms.prepare_cwd(source arm)
 
 
-def render_agent_dir(agent_dir: Path, mcp_json: Path, skills: Path) -> dict[str, str]:
-    """A fresh pi agent directory for one trial; returns pi's closed environment."""
+def render_agent_dir(root: Path, mcp_json: Path, skills: Path, max_turns: int) -> dict[str, str]:
+    """A fresh pi agent directory and HOME under ``root`` for one trial; returns pi's closed environment."""
+    agent_dir = root / "agent"
     agent_dir.mkdir(parents=True, exist_ok=True)
     entry = json.loads(mcp_json.read_text("utf-8"))["mcpServers"]["cua"]
     config = {"mcpServers": {"cua": {**entry, "exposure": "deferred"}}, "autoEnableCodemode": False}
@@ -92,9 +96,8 @@ def render_agent_dir(agent_dir: Path, mcp_json: Path, skills: Path) -> dict[str,
     )
     if not auth.is_file():
         raise FileNotFoundError("pi auth file is missing")
-    (agent_dir / "auth.json").unlink(missing_ok=True)
     (agent_dir / "auth.json").symlink_to(auth)
-    home = agent_dir.parent / "home"
+    home = root / "home"
     (home / "tmp").mkdir(parents=True, exist_ok=True)
     return {
         "HOME": str(home),
@@ -105,13 +108,23 @@ def render_agent_dir(agent_dir: Path, mcp_json: Path, skills: Path) -> dict[str,
         "PI_OFFLINE": "1",
         "PI_SKIP_VERSION_CHECK": "1",
         "PI_TELEMETRY": "0",
-        "CDB_PI_READ_ALLOW": str(skills / "SKILL.md"),  # pi_read_gate.ts
+        "CDB_PI_READ_ALLOW": str(skills / "SKILL.md"),  # pi_gate.ts
+        "CDB_PI_MAX_TURNS": str(max_turns),
     }
 
 
-def unlink_auth(agent_dir: Path) -> None:
-    """Remove the credential link (or a file pi put in its place) so no run directory keeps a credential."""
-    (agent_dir / "auth.json").unlink(missing_ok=True)
+def new_root() -> Path:
+    """The trial's pi state, outside the run directory (the session's private /tmp on Linux)."""
+    return Path(tempfile.mkdtemp(prefix="cdb-pi-"))
+
+
+def keep_config(root: Path, dest: Path) -> None:
+    """Copy the trial's pi configuration (never the credential) to ``dest``, then delete ``root``."""
+    dest.mkdir(parents=True, exist_ok=True)
+    for name in ("mcp.json", "settings.json"):
+        if (root / "agent" / name).is_file():
+            shutil.copyfile(root / "agent" / name, dest / name)
+    shutil.rmtree(root, ignore_errors=True)
 
 
 def argv(system_prompt: str, skills: Path | None, pi_bin: Path | None = None) -> list[str]:
@@ -134,7 +147,7 @@ def argv(system_prompt: str, skills: Path | None, pi_bin: Path | None = None) ->
         "-e",
         "builtin:tool-search",
         "-e",
-        str(READ_GATE),
+        str(GATE),
         "--no-skills",
         "--no-context-files",
         "--no-prompt-templates",
@@ -154,8 +167,10 @@ class Translator:
         self.final_text = ""
         self.error = ""
         self.last_stop: str | None = None
-        self.last_tools = False
-        self.capped = threading.Event()  # the cap-th turn finished and asked for more tools
+        self.started = 0
+        self.capped = (
+            threading.Event()
+        )  # a turn past the cap started; pi_gate.ts aborts it before its request
         self.usage = {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0}
         self.cost = 0.0
         self.models: set[str] = set()
@@ -163,11 +178,17 @@ class Translator:
         self.declared: list[str] = []
         self.mcp_loaded = False
         self.empty_search = False
+        self.settled = False
 
     def feed(self, event: dict[str, Any]) -> list[dict[str, Any]]:
         if self.capped.is_set():
-            return []  # pi may start the next turn before the host stops it; that turn is past the cap
+            return []  # the aborted turn past the cap is not a turn of the trial
         kind = event.get("type")
+        if kind == "turn_start":
+            self.started += 1
+            if self.started > self.max_turns:
+                self.capped.set()
+                return []
         message = event.get("message") or {}
         role = message.get("role")
         if kind == "message_end" and role == "system":
@@ -198,7 +219,6 @@ class Translator:
             text = "".join(b["text"] for b in content if b["type"] == "text")
             self.final_text = text if text.strip() else self.final_text
             self.last_stop = message.get("stopReason")
-            self.last_tools = any(b["type"] == "tool_use" for b in content)
             if self.last_stop == "error":
                 self.error = str(message.get("errorMessage") or "pi provider error")
             return [
@@ -229,8 +249,8 @@ class Translator:
                 "content": text[:300] if failed else "",
             }
             return [{"type": "user", "message": {"content": [block]}}]
-        elif kind == "turn_end" and self.turns >= self.max_turns and self.last_tools:
-            self.capped.set()
+        elif kind == "agent_settled":
+            self.settled = True
         elif kind == "auto_retry_start":
             retry = {"error": event.get("errorMessage"), "attempt": event.get("attempt")}
             return [
@@ -243,12 +263,17 @@ class Translator:
             ]
         return []
 
-    def finish(self, capped: bool, wall_ms: float) -> list[dict[str, Any]]:
-        """The init and result events, written when pi has stopped. None when pi produced no turn at all, so the
-        row is classified from stderr (a harness or auth failure, not an agent result)."""
-        if not self.turns:
+    def finish(
+        self, capped: bool, wall_ms: float, returncode: int | None = 0, stopped: bool = False
+    ) -> list[dict[str, Any]]:
+        """The init and result events, written when pi has stopped (``stopped``: the host ended it on purpose, at a
+        timeout or an abort). None when pi produced no turn, or exited without settling on its own, so the row is
+        classified from stderr as a harness, auth or quota failure rather than scored as an agent result."""
+        if not self.turns or not (capped or stopped or self.settled):
             return []
-        is_error = self.last_stop == "error"
+        is_error = self.last_stop == "error" or (self.settled and returncode not in (0, None))
+        if is_error and not self.error:
+            self.error = f"pi exited with status {returncode}"
         status = next(
             (c for c in (429, 401, 403, 500, 502, 503, 504, 529) if str(c) in self.error), None
         )
@@ -378,7 +403,8 @@ def run_pi(
         except subprocess.TimeoutExpired:
             pass
         with lock:
-            for out in translator.finish(capped, (time.monotonic() - started) * 1000):
+            wall_ms = (time.monotonic() - started) * 1000
+            for out in translator.finish(capped, wall_ms, proc.returncode, timed_out or aborted):
                 write(out)
     return {
         "returncode": proc.returncode,
@@ -419,7 +445,7 @@ def observed(pi_bin: Path | None = None) -> dict[str, Any]:
         "thinking": THINKING,
         "tools": list(TOOLS),
         "mcp_exposure": "deferred",
-        "read_gate_sha256": hashlib.sha256(READ_GATE.read_bytes()).hexdigest(),
+        "gate_sha256": hashlib.sha256(GATE.read_bytes()).hexdigest(),
         "models_store_sha256": hashlib.sha256(store.read_bytes()).hexdigest()
         if store.is_file()
         else None,
@@ -435,8 +461,9 @@ def init_check(
     shutil.rmtree(work, ignore_errors=True)
     work.mkdir(parents=True)
     stream = work / "stream.tsv"
+    root = new_root()
     try:
-        env = render_agent_dir(work / "agent", mcp_json, skill_dir(cwd))
+        env = render_agent_dir(root, mcp_json, skill_dir(cwd), 3)
         result = run_pi(
             argv(system_prompt, skill_dir(cwd)),
             env,
@@ -449,7 +476,7 @@ def init_check(
             work / "stderr.txt",
         )
     finally:
-        unlink_auth(work / "agent")
+        keep_config(root, work / "pi-agent")
     summary = claude_events.summarize(claude_events.read_events(stream))
     text = (summary.get("final_text") or "").strip()
     init = summary["init"]

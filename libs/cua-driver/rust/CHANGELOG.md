@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.40.1](https://github.com/trycua/cua/compare/cua-driver-rs-v0.40.0...cua-driver-rs-v0.40.1) (2026-11-06)
+
+
+### Bug Fixes
+
+* **cua-driver:** refuse disabled macOS controls on every token writer ([#6503](https://github.com/trycua/cua/issues/6503)) ([6c78994](https://github.com/trycua/cua/commit/6c78994788f46a65f8e772d98106ce3971d1acd4))
+
 ## [0.40.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.39.0...cua-driver-rs-v0.40.0) (2026-11-06)
 
 

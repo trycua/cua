@@ -109,6 +109,10 @@ export function foldThread(entries: readonly ThreadEntry[], opts: { readSeq?: nu
       continue;
     }
     if (e.kind === "system") {
+      // An agent that wakes for a person's message answers it in the same breath: the live row says it is
+      // starting, and the reply follows, so "woke up and joined" is not drawn between the two. It stays
+      // for a task another agent gave (nothing else says why that agent appeared).
+      if (e.noteFor != null && /woke up and joined$/.test(e.text) && bySeq.get(e.noteFor)?.author.kind !== "agent") continue;
       items.push({ type: "system", key: `s${e.seq}`, entry: e, text: e.text });
       continue;
     }
@@ -141,7 +145,7 @@ export function foldThread(entries: readonly ThreadEntry[], opts: { readSeq?: nu
   }
   const readSeq = opts.readSeq;
   if (readSeq == null) return items;
-  const first = items.findIndex((i) => i.type !== "unread" && i.type !== "system" && unreadIn(i, readSeq, opts.me ?? null));
+  const first = items.findIndex((i) => i.type !== "unread" && i.type !== "system" && unreadIn(i, readSeq, opts.me ?? null, bySeq));
   if (first < 0) return items;
   // A note just above the first unread entry belongs below the divider.
   let at = first;
@@ -150,8 +154,11 @@ export function foldThread(entries: readonly ThreadEntry[], opts: { readSeq?: nu
   return items;
 }
 
-function unreadIn(item: Exclude<ThreadItem, { type: "unread" }>, readSeq: number, me: string | null): boolean {
-  return item.entry.seq > readSeq && item.entry.author.id !== me;
+function unreadIn(item: Exclude<ThreadItem, { type: "unread" }>, readSeq: number, me: string | null, bySeq: ReadonlyMap<number, ThreadEntry>): boolean {
+  if (item.entry.seq <= readSeq || item.entry.author.id === me) return false;
+  // An agent's answer to the reader's own message is what they are waiting for, not news.
+  const to = item.entry.replyTo !== null ? bySeq.get(item.entry.replyTo) : undefined;
+  return !(item.entry.author.kind === "agent" && to && me !== null && to.author.id === me);
 }
 
 function dedupe(entries: readonly ThreadEntry[]): ThreadEntry[] {

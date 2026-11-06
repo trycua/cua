@@ -29,6 +29,7 @@ pub use events::{AgentEvent, EventPage};
 pub use harness::{Endpoint, Harness, Wire};
 pub use runs::{
     Agents, Artifact, Attachment, McpServer, RunInfo, RunOptions, RunResult, RunStatus, Started,
+    final_reply,
 };
 pub use transcript::{Transcript, TranscriptItem};
 

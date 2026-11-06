@@ -137,6 +137,13 @@ pub fn strip_trailing_agent_protocol_tags(text: &str) -> Cow<'_, str> {
     Cow::Owned(kept_trimmed.to_owned())
 }
 
+pub fn strip_unless_literal<'a>(text: &'a str, args: &serde_json::Value) -> Cow<'a, str> {
+    if args.get("literal").and_then(serde_json::Value::as_bool) == Some(true) {
+        return Cow::Borrowed(text);
+    }
+    strip_trailing_agent_protocol_tags(text)
+}
+
 /// Returns true iff `prelude` contains an opening tag matching `name`
 /// (case-insensitive, with or without attributes). Used by the
 /// balance-check guardrail so legitimately-balanced document content
@@ -191,6 +198,18 @@ mod tests {
         let out = strip_trailing_agent_protocol_tags(&bad);
         assert!(matches!(out, Cow::Owned(_)));
         assert_eq!(out, "End of document.");
+    }
+
+    #[test]
+    fn a_literal_call_keeps_a_trailing_closing_tag() {
+        let line = substitute("{C}");
+        let literal = serde_json::json!({"literal": true});
+        assert_eq!(strip_unless_literal(&line, &literal), line);
+        assert_eq!(strip_unless_literal(&line, &serde_json::json!({})), "");
+        assert_eq!(
+            strip_unless_literal(&line, &serde_json::json!({"literal": false})),
+            ""
+        );
     }
 
     #[test]

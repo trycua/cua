@@ -1280,9 +1280,6 @@ pub fn fire_session_end(session_id: &str) -> bool {
 
 fn fire_session_end_for_owner(session_id: &str, owner_transport: Option<&str>) -> bool {
     let transition = mark_session_ended(session_id, owner_transport, SessionEndReason::Unknown);
-    if transition != EndTransition::Repeat {
-        crate::capture_scope::clear_session(session_id);
-    }
     let _ = retry_session_cleanup(session_id);
     transition == EndTransition::First
 }
@@ -1408,6 +1405,9 @@ pub fn retry_session_cleanup(session_id: &str) -> SessionCleanupReport {
         )
     };
 
+    // Part of the tracked cleanup, so a revival waiting on it cannot have
+    // its new capture policy cleared by this end.
+    crate::capture_scope::clear_session(session_id);
     let mut successes = Vec::new();
     let mut failures = Vec::new();
     let mut all = loop {
@@ -1753,9 +1753,6 @@ fn finish_session_end(session_id: &str, reason: SessionEndReason) {
         }
     });
     let cursor = cursor.or(fallback);
-    if transition != EndTransition::Repeat {
-        crate::capture_scope::clear_session(session_id);
-    }
     let _ = retry_session_cleanup(session_id);
     if first_fire {
         if let Some(observer) = SESSION_OBSERVER.get() {
@@ -2491,6 +2488,47 @@ mod tests {
             ),
             Ok(true)
         );
+        end_session(sid);
+    }
+
+    #[test]
+    fn a_revival_during_a_slow_end_keeps_its_capture_policy() {
+        let sid = "__cua_runtime_slow-end:named";
+        let owner = "slow-end-owner";
+        let start = || {
+            activate_or_revive_session_for_owner(
+                sid,
+                Some("named"),
+                owner,
+                false,
+                SessionTransport::Daemon,
+                SessionClientKind::Cli,
+                None,
+            )
+        };
+        start().unwrap();
+        let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+        let release_rx = Mutex::new(release_rx);
+        let reader = register_scoped_cursor_outcome_reader(Arc::new(move |id| {
+            if id == sid {
+                entered_tx.send(()).unwrap();
+                release_rx.lock().unwrap().recv().unwrap();
+            }
+            bounded_cursor_outcome(false, false, false, None, false, 0)
+        }));
+
+        let end = std::thread::spawn(|| end_session(sid));
+        entered_rx.recv().unwrap();
+        // The end is waiting on a cursor reader; a revival in that window
+        // runs the cleanup itself and then binds its new policy.
+        assert_eq!(start(), Ok(true));
+        crate::capture_scope::bind_session(sid, Some(CaptureScope::Desktop)).unwrap();
+        release_tx.send(()).unwrap();
+        end.join().unwrap();
+
+        assert!(crate::capture_scope::get_session(sid).is_some());
+        drop(reader);
         end_session(sid);
     }
 

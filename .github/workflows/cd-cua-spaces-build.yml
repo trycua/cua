@@ -252,9 +252,10 @@ jobs:
     permissions:
       contents: read
 
-  # The SwiftUI app's Rust slices, restored from the cache `slice` just
-  # filled. A miss here is an alert (the workflow is watched by
-  # workflow-failure-alerts.yml): it never compiles a second copy.
+  # The SwiftUI app's Rust slices, taken from the artifact `slice` just
+  # uploaded (the cache is the fallback). Neither being there is an alert (the
+  # workflow is watched by workflow-failure-alerts.yml): it never compiles a
+  # second copy.
   macos-rust:
     name: SwiftUI Rust (${{ matrix.arch }})
     needs: [plan, spacesd-published, slice]
@@ -269,16 +270,35 @@ jobs:
           - { arch: x86_64, triple: x86_64-apple-darwin }
     steps:
       - uses: actions/checkout@v4
-      - uses: ./.github/actions/spaces-rust-slice
+      # The producer stage hands the slice over as an artifact of this run
+      # (an Actions cache entry can be evicted before this job starts).
+      - name: Download the slice the producer built
+        id: artifact
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: swiftui-rust-slice-${{ matrix.arch }}
+          path: libs/cua/target/${{ matrix.triple }}/release
+      - name: Restore the slice from the cache (artifact missing)
         id: slice
+        if: steps.artifact.outcome != 'success'
+        uses: ./.github/actions/spaces-rust-slice
         with:
           triple: ${{ matrix.triple }}
           build: "false"
-      - name: The producer left the slice in the cache
-        if: steps.slice.outputs.cache-hit != 'true'
+      - name: The producer left the slice
+        if: steps.artifact.outcome != 'success' && steps.slice.outputs.cache-hit != 'true'
         run: |
-          echo "::error title=Cache miss on main::The SwiftUI Rust slice (${{ matrix.triple }}) is not in the Actions cache although the producer stage just ran. Key: ${{ steps.slice.outputs.key }}. Not compiling a second copy."
+          echo "::error title=Slice missing::The SwiftUI Rust slice (${{ matrix.triple }}) is neither an artifact of this run nor in the Actions cache although the producer stage just ran. Key: ${{ steps.slice.outputs.key }}. Not compiling a second copy."
           exit 1
+      - name: The slice is complete
+        run: |
+          set -euo pipefail
+          d="libs/cua/target/${{ matrix.triple }}/release"
+          chmod +x "$d/cua-spaces-cli"
+          for f in libcua_spaces_ffi.dylib cua-spaces-cli; do
+            test -s "$d/$f" || { echo "::error::missing or empty $f"; exit 1; }
+          done
       # microVMs on Apple silicon: the static aarch64 guest init the app
       # bundles (build-release.sh --skip-cargo takes it from here). Same
       # step as cd-cua-spaces.yml.

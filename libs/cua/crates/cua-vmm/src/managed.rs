@@ -944,7 +944,11 @@ async fn ensure_windows() -> Result<String> {
         let started = std::time::Instant::now();
         let pin = wsl::rootfs_pin();
         std::fs::create_dir_all(root())?;
-        crate::disk::ensure_space(&root(), 2 << 30, "set up the built-in Linux runtime")?;
+        crate::disk::ensure_space(
+            &root(),
+            wsl::SETUP_DISK_BYTES,
+            "set up the built-in Linux runtime",
+        )?;
         if registered {
             // A setup that did not finish: start it over (this home's distribution only).
             wsl::unregister(&w, &name).await;

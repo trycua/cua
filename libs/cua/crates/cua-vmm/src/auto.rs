@@ -839,6 +839,26 @@ fn managed_status(
     }
     let picked = source.allows_builtin()
         && (source == LinuxSource::Builtin || managed::exists() || !engine_ready);
+    // Windows: the runtime's disk and downloads go under the cua home; say
+    // so now, not midway, when that drive has no room for them.
+    if picked
+        && cfg!(windows)
+        && !managed::exists()
+        && let Err(e) = crate::disk::ensure_space(
+            &nearest_existing(&managed::root()),
+            managed::wsl::SETUP_DISK_BYTES,
+            "set up the built-in Linux runtime",
+        )
+    {
+        return BackendStatus {
+            backend: BackendKind::Managed,
+            ready: false,
+            provisionable: false,
+            detail: e.to_string(),
+            missing: vec!["disk space".into()],
+            provisioning: vec![],
+        };
+    }
     let running = picked && managed::running();
     BackendStatus {
         backend: BackendKind::Managed,
@@ -881,6 +901,14 @@ fn managed_status(
             vec![]
         },
     }
+}
+
+/// `path`, or its nearest ancestor that exists (a volume to ask about).
+fn nearest_existing(path: &std::path::Path) -> std::path::PathBuf {
+    path.ancestors()
+        .find(|p| p.exists())
+        .unwrap_or(path)
+        .to_path_buf()
 }
 
 /// What WSL 2 gives the built-in Linux runtime on Windows (`None` elsewhere).
@@ -1030,6 +1058,34 @@ fn lume_builtin_allowed() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A drive without room for the runtime's disk says so before setup
+    /// starts (a fake free-space source; no disk is filled).
+    #[cfg(windows)]
+    #[test]
+    fn windows_without_disk_room_says_how_much_is_needed() {
+        use crate::disk::{Space, SpaceProbe, set_probe};
+        use crate::managed::{LinuxSource, wsl::Probe};
+        struct Low;
+        impl SpaceProbe for Low {
+            fn space(&self, _: &std::path::Path) -> std::io::Result<Space> {
+                Ok(Space {
+                    available: 1 << 30,
+                    total: 100 << 30,
+                })
+            }
+        }
+        set_probe(Some(std::sync::Arc::new(Low)));
+        let s = managed_status(
+            LinuxSource::Builtin,
+            false,
+            Some(Probe::Available { distro: false }),
+        );
+        set_probe(None);
+        assert!(!s.provisionable && !s.ready, "{s:?}");
+        assert!(s.detail.contains("not enough disk space"), "{}", s.detail);
+        assert_eq!(s.missing, vec!["disk space".to_string()]);
+    }
 
     /// A PC whose WSL 2 cannot run says what to turn on, and is not offered
     /// as a runtime that sets itself up.

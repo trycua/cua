@@ -697,7 +697,7 @@ export class AppModel {
     // Windows: Cua Spaces runs its own engine in WSL 2; when the doctor says why it cannot
     // (WSL 2 or virtualization off), that is the reason, not "install Docker Desktop".
     const managed = runtimes.details.get("managed");
-    if (process.platform === "win32" && managed && /wsl|virtual/i.test(managed)) {
+    if (process.platform === "win32" && managed && /wsl|virtual|not enough disk space/i.test(managed)) {
       this.runtimeAdvice = {
         reason: managed,
         fix: /Windows feature|wsl --install/i.test(managed)

@@ -87,6 +87,11 @@ pub fn rootfs_pin() -> Pin {
     }
 }
 
+/// What setting up writes under the cua home: the rootfs, the distribution's
+/// disk (a sparse VHDX that grows with images and Spaces) and Docker's
+/// packages. The guard keeps `CUA_DISK_MIN_FREE` (5 GiB) free on top.
+pub const SETUP_DISK_BYTES: u64 = 2 << 30;
+
 /// What the first Linux Space downloads: the rootfs and about 90 MB of packages.
 pub fn first_use_download() -> u64 {
     rootfs_pin().size + (90 << 20)

@@ -297,19 +297,25 @@ unsafe fn invoke(element_ptr: usize, description: &str) -> Result<(), BrowserRef
     })
 }
 
+fn input_may_be_unread(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<crate::typing_turn::ForegroundNotRestored>()
+        .is_some()
+}
+
 fn confirm_setup_navigation(
     hwnd: u64,
     element_ptr: usize,
     foregrounded_window: &mut bool,
     injected_global_input: &mut bool,
     focused_setup_address_field: &mut bool,
+    input_may_be_unread: &mut bool,
 ) -> Result<(), BrowserRefusal> {
     use windows::Win32::Foundation::HWND;
     use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
 
     let target = HWND(hwnd as *mut _);
     let prior = unsafe { GetForegroundWindow() };
-    let mut input_may_be_unread = false;
     let navigation = (|| {
         let (fronted, injected) = force_setup_foreground(target);
         *injected_global_input |= injected;
@@ -346,9 +352,7 @@ fn confirm_setup_navigation(
 
         *injected_global_input = true;
         crate::input::keyboard::send_key_synthesized(hwnd, "enter", &[]).map_err(|error| {
-            input_may_be_unread = error
-                .downcast_ref::<crate::typing_turn::ForegroundNotRestored>()
-                .is_some();
+            *input_may_be_unread = self::input_may_be_unread(&error);
             BrowserRefusal::new(
                 BrowserRefusalCode::BrowserWrongTargetRefused,
                 format!("could not confirm the bounded setup navigation: {error}"),
@@ -357,7 +361,7 @@ fn confirm_setup_navigation(
     })();
 
     // An unread Enter must not follow the user back to their window.
-    let restored = if prior.0.is_null() || prior == target || input_may_be_unread {
+    let restored = if prior.0.is_null() || prior == target || *input_may_be_unread {
         true
     } else {
         let (restored, injected) = force_setup_foreground(prior);
@@ -423,6 +427,9 @@ pub struct SetupUiHandle {
     pub focused_setup_address_field: bool,
     pub foregrounded_window: bool,
     pub injected_global_input: bool,
+    /// A setup key was inserted but not confirmed read; cleanup sends no more
+    /// input, so a late Enter or Ctrl+W cannot combine with another one.
+    input_may_be_unread: bool,
     enable_attempted: bool,
 }
 
@@ -453,6 +460,7 @@ impl SetupUiHandle {
         let focused_setup_address_field = self.focused_setup_address_field;
         let foregrounded_window = self.foregrounded_window;
         let injected_global_input = self.injected_global_input;
+        let input_may_be_unread = self.input_may_be_unread;
         let closed_setup_page = self.close().unwrap_or(false);
         let mut error = error;
         let cause = error.detail.take();
@@ -464,6 +472,7 @@ impl SetupUiHandle {
                 "enabled_remote_debugging": enabled_remote_debugging,
                 "foregrounded_window": foregrounded_window,
                 "injected_global_input": injected_global_input,
+                "input_may_be_unread": input_may_be_unread,
                 "restored_remote_debugging": restored_remote_debugging,
             },
             "cause": cause,
@@ -488,13 +497,7 @@ impl SetupUiHandle {
         }
         if let Err(error) = crate::input::keyboard::send_key_synthesized(self.hwnd, "w", &["ctrl"])
         {
-            // The chord may still be read; a second Ctrl+W could close another tab.
-            if error
-                .downcast_ref::<crate::typing_turn::ForegroundNotRestored>()
-                .is_some()
-            {
-                self.opened_setup_page = false;
-            }
+            self.input_may_be_unread |= input_may_be_unread(&error);
             let error = BrowserRefusal::new(
                 BrowserRefusalCode::BrowserWrongTargetRefused,
                 format!("could not close the exact temporary setup tab: {error}"),
@@ -508,6 +511,9 @@ impl SetupUiHandle {
     pub fn close(self) -> Option<bool> {
         if !self.opened_setup_page {
             return None;
+        }
+        if self.input_may_be_unread {
+            return Some(false);
         }
         let proven = native_nodes(self.hwnd).is_ok_and(|nodes| {
             let proven = setup_page_proven(&nodes, self.descriptor);
@@ -589,6 +595,7 @@ fn set_remote_debugging(
             focused_setup_address_field: false,
             foregrounded_window: false,
             injected_global_input: false,
+            input_may_be_unread: false,
             enable_attempted: false,
         },
         Ok(None) => {
@@ -603,6 +610,7 @@ fn set_remote_debugging(
                 focused_setup_address_field: false,
                 foregrounded_window: false,
                 injected_global_input: false,
+                input_may_be_unread: false,
                 enable_attempted: false,
             };
             let tab_tree = match native_nodes(hwnd) {
@@ -707,6 +715,7 @@ fn set_remote_debugging(
                 &mut handle.foregrounded_window,
                 &mut handle.injected_global_input,
                 &mut handle.focused_setup_address_field,
+                &mut handle.input_may_be_unread,
             ) {
                 release_nodes(&created);
                 return Err(handle.abort(error));

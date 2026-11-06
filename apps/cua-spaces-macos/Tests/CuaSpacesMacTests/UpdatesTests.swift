@@ -239,7 +239,7 @@ struct UpdatesTests {
     /// install (returns true), and taking it loses the install on quit
     /// (CUA-3065). So the delegate leaves it to Sparkle.
     @Test func quitInstallStaysWithSparkle() {
-        #expect(UpdatesModel.handlesQuitInstallItself == false)
+        #expect(SparkleUpdater.handlesQuitInstallItself == false)
     }
 
     /// 0.21.1: "Restart to update" did nothing on the silent path, since the

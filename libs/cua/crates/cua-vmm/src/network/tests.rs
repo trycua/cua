@@ -647,7 +647,7 @@ fn settings() -> impl Strategy<Value = NetworkSettings> {
                 ..Default::default()
             };
             match preset {
-                NetworkPreset::Localhost => {
+                p if p.opens_localhost() => {
                     s.localhost_ports = ports;
                     s.all_localhost_ports = all || s.localhost_ports.is_empty();
                     s.localhost_ports.dedup();
@@ -719,7 +719,7 @@ proptest! {
             prop_assert!(!asked.allows_port(ip(host), Proto::Tcp, 3200));
         }
         // Only localhost (or no protection) reaches the host.
-        if !matches!(s.preset, NetworkPreset::Localhost | NetworkPreset::Unprotected) {
+        if !(s.preset.opens_localhost() || s.preset == NetworkPreset::Unprotected) {
             for host in ["10.0.2.2", "192.168.64.1", "192.168.1.20", "203.0.113.7", "::ffff:10.0.2.2"] {
                 for port in PORTS {
                     prop_assert!(!asked.allows_port(ip(host), Proto::Tcp, port), "{:?} {}", s, host);
@@ -1112,5 +1112,161 @@ fn the_summary_names_the_exit() {
         }
         .summary(),
         "Internet only, through the Space proxy"
+    );
+}
+
+fn both(ports: &[u16]) -> NetworkSettings {
+    NetworkSettings {
+        preset: NetworkPreset::LocalhostLan,
+        localhost_ports: ports.to_vec(),
+        ..Default::default()
+    }
+}
+
+#[test]
+fn localhost_and_lan_are_independent_extras_and_together_open_both() {
+    let r = secure(&both(&[5432]));
+    // The host's loopback on the listed port only.
+    assert!(r.allows_port(ip("10.0.2.2"), Proto::Tcp, 5432));
+    assert!(!r.allows_port(ip("10.0.2.2"), Proto::Tcp, 22));
+    // The local network, plus the internet.
+    for ok in ["192.168.0.9", "10.9.9.9", "fd00::5", "1.1.1.1"] {
+        assert!(r.allows(ip(ok)), "{ok}");
+    }
+    // Still closed: the host's other addresses, cloud metadata, CGNAT.
+    for blocked in ["192.168.1.20", "169.254.169.254", "100.64.1.1", "127.0.0.1"] {
+        assert!(!r.allows(ip(blocked)), "{blocked}");
+    }
+    // Neither single preset opens the other's extra.
+    assert!(!secure(&localhost(&[5432])).allows(ip("192.168.0.9")));
+    assert!(
+        !secure(&NetworkSettings::preset(NetworkPreset::Lan)).allows_port(
+            ip("10.0.2.2"),
+            Proto::Tcp,
+            5432
+        )
+    );
+    // Its ports are checked like localhost's.
+    assert!(both(&[]).validate().is_err());
+    assert!(both(&[0]).validate().is_err());
+    let all = NetworkSettings {
+        preset: NetworkPreset::LocalhostLan,
+        all_localhost_ports: true,
+        ..Default::default()
+    };
+    assert!(all.validate().is_ok());
+    // Ports belong to the presets that open localhost only.
+    let mut lan = NetworkSettings::preset(NetworkPreset::Lan);
+    lan.localhost_ports = vec![1];
+    assert!(lan.validate().is_err());
+}
+
+#[test]
+fn localhost_lan_words_json_and_old_values() {
+    assert_eq!(
+        NetworkPreset::parse("localhost+lan").unwrap(),
+        NetworkPreset::LocalhostLan
+    );
+    assert_eq!(
+        NetworkPreset::parse("LAN+Localhost").unwrap(),
+        NetworkPreset::LocalhostLan
+    );
+    assert_eq!(NetworkPreset::LocalhostLan.as_str(), "localhost+lan");
+    // The old words still mean what they did.
+    assert_eq!(
+        NetworkPreset::parse("localhost").unwrap(),
+        NetworkPreset::Localhost
+    );
+    assert_eq!(NetworkPreset::parse("lan").unwrap(), NetworkPreset::Lan);
+    for p in NetworkPreset::ALL {
+        assert_eq!(NetworkPreset::parse(p.as_str()).unwrap(), p);
+        let j = serde_json::to_string(&p).unwrap();
+        assert_eq!(j, format!("\"{}\"", p.as_str()));
+        assert_eq!(serde_json::from_str::<NetworkPreset>(&j).unwrap(), p);
+    }
+    // Settings files written before the combination keep loading.
+    let old: NetworkSettings =
+        serde_json::from_str(r#"{"preset":"localhost","localhost_ports":[5432]}"#).unwrap();
+    assert_eq!(old, localhost(&[5432]));
+    let old: NetworkSettings = serde_json::from_str(r#"{"preset":"lan"}"#).unwrap();
+    assert_eq!(old, NetworkSettings::preset(NetworkPreset::Lan));
+    let new: NetworkSettings =
+        serde_json::from_str(r#"{"preset":"localhost+lan","localhost_ports":[3000]}"#).unwrap();
+    assert_eq!(new, both(&[3000]));
+    assert_eq!(
+        NetworkPreset::with_extras(true, true),
+        NetworkPreset::LocalhostLan
+    );
+    assert_eq!(
+        NetworkPreset::with_extras(false, false),
+        NetworkPreset::Internet
+    );
+}
+
+#[test]
+fn localhost_lan_summary_and_widenings_name_both() {
+    let s = both(&[5432, 3000]);
+    assert_eq!(
+        s.summary(),
+        "Allow this computer's localhost and my local network (ports 5432, 3000)"
+    );
+    let w = s.widenings();
+    assert_eq!(w.len(), 2, "{w:?}");
+    assert!(w[0].contains("localhost (ports 5432, 3000)"), "{w:?}");
+    assert_eq!(w[1], "Allows your local network");
+}
+
+#[test]
+fn localhost_lan_children_keep_only_the_extras_both_open() {
+    let lan = NetworkSettings::preset(NetworkPreset::Lan);
+    // A child can only have less than its parent, and the two extras are
+    // independent.
+    assert_eq!(both(&[5432]).intersect(&both(&[5432])), both(&[5432]));
+    assert_eq!(both(&[5432]).intersect(&lan), lan);
+    assert_eq!(lan.intersect(&both(&[5432])), lan);
+    assert_eq!(
+        both(&[5432, 3000]).intersect(&localhost(&[5432])),
+        localhost(&[5432])
+    );
+    assert_eq!(
+        localhost(&[5432]).intersect(&both(&[5432, 3000])),
+        localhost(&[5432])
+    );
+    assert_eq!(
+        both(&[5432]).intersect(&NetworkSettings::internet()),
+        NetworkSettings::internet()
+    );
+    assert_eq!(
+        NetworkSettings::internet().intersect(&both(&[5432])),
+        NetworkSettings::internet()
+    );
+    assert_eq!(
+        both(&[5432]).intersect(&NetworkSettings::none()),
+        NetworkSettings::none()
+    );
+    // Both open, but no port in common: the local network stays, the
+    // localhost extra goes.
+    assert_eq!(both(&[1]).intersect(&both(&[2])), lan);
+    assert_eq!(
+        both(&[1]).intersect(&localhost(&[2])),
+        NetworkSettings::internet()
+    );
+    // Ports under a combination parent narrow like localhost's.
+    assert_eq!(both(&[1, 2]).intersect(&both(&[2, 3])), both(&[2]));
+    // Lan and localhost are siblings: neither is under the other.
+    assert_eq!(
+        lan.intersect(&localhost(&[5432])),
+        NetworkSettings::internet()
+    );
+}
+
+#[test]
+fn vms_forward_localhost_lan_ports_too() {
+    if Mode::from_env() == Mode::Legacy {
+        return;
+    }
+    assert_eq!(
+        vm_localhost_ports(Some(&both(&[3000, 5432]))).unwrap(),
+        [3000, 5432]
     );
 }

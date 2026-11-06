@@ -144,14 +144,14 @@ export function createDemoNetwork({ now, flags }: { now: () => number; flags: Se
       const s = security.get(spaceId);
       if (!s) return;
       const self = spaceNameOf(spaceId);
-      security.set(spaceId, { ...s, network: { ...network, inheritedFrom: undefined }, topology: demoTopology(self, network.via, false, network.preset === "localhost", remote) });
+      security.set(spaceId, { ...s, network: { ...network, inheritedFrom: undefined }, topology: demoTopology(self, network.via, false, (network.preset === "localhost" || network.preset === "localhost+lan"), remote) });
       // Children follow a parent's change (its exit too).
       for (const [id, child] of security) {
         if (child.parent?.id === spaceId) {
           security.set(id, {
             ...child,
             network: { ...network, inheritedFrom: s.parent ? undefined : self },
-            topology: demoTopology(spaceNameOf(id), network.via, false, network.preset === "localhost", remote),
+            topology: demoTopology(spaceNameOf(id), network.via, false, (network.preset === "localhost" || network.preset === "localhost+lan"), remote),
           });
         }
       }

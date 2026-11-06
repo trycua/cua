@@ -100,6 +100,12 @@ where
 /// says "not found: …" already, so a cua-spaces message that ends with "not
 /// found" ("{what} not found") loses that ending instead of saying it twice.
 pub(crate) fn not_found_message(message: String) -> String {
+    // A message that already starts with "not found: " (a Volume path error)
+    // would print it twice.
+    let message = match message.strip_prefix("not found: ") {
+        Some(rest) if !rest.trim().is_empty() => rest.to_string(),
+        _ => message,
+    };
     match message.strip_suffix(" not found") {
         Some(what) if !what.trim().is_empty() => what.to_string(),
         _ => message,
@@ -265,6 +271,10 @@ mod not_found_tests {
         // A message that is only the word stays as it is.
         assert_eq!(not_found_message(" not found".into()), " not found");
         assert_eq!(not_found_message("local:box".into()), "local:box");
+        assert_eq!(
+            not_found_message("not found: public/ws/main.py".into()),
+            "public/ws/main.py"
+        );
     }
 }
 

@@ -1817,6 +1817,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "yaml")]
     #[test]
     fn standard_manifest_scope_is_checked_before_existing_profile_approval() {
         use std::io::Write as _;

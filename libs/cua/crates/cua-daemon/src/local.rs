@@ -945,7 +945,9 @@ impl VmmLocal {
                         .insert(key.clone(), (std::time::Instant::now(), next));
                     self.pending.lock().unwrap().remove(&key);
                 }
-                Ok(k) => tracing::debug!(shape = %k, "warm-pools: the new image is being made ready"),
+                Ok(k) => {
+                    tracing::debug!(shape = %k, "warm-pools: the new image is being made ready")
+                }
                 Err(e) => {
                     tracing::warn!("warm-pools: cannot prepare the new image: {e}");
                     self.pending.lock().unwrap().remove(&key);
@@ -1027,7 +1029,8 @@ impl VmmLocal {
                 let (image, os, runtime) = (image.to_string(), os.to_string(), runtime.clone());
                 let served = r.clone();
                 tokio::spawn(async move {
-                    if let Ok(fresh) = resolve_placement_for(&image, &os, kind, &runtime, None).await
+                    if let Ok(fresh) =
+                        resolve_placement_for(&image, &os, kind, &runtime, None).await
                         && fresh.image.is_some()
                     {
                         // The image of a kept-warm request moved: creates keep
@@ -2092,26 +2095,25 @@ impl VmmLocal {
                 .await
             }
         };
-        let mut r = resolved
-            .map_err(|e| match e {
-                Error::Unsupported(m) => RuntimeError::UnsupportedImage(m),
-                Error::InvalidPlacement {
-                    message,
-                    axis,
-                    valid,
-                } => RuntimeError::InvalidPlacement(PlacementError {
-                    axis: match axis.as_str() {
-                        "on" => cua_sandbox_core::placement::Axis::On,
-                        "kind" => cua_sandbox_core::placement::Axis::Kind,
-                        "runtime" => cua_sandbox_core::placement::Axis::Runtime,
-                        _ => cua_sandbox_core::placement::Axis::Image,
-                    },
-                    given: spec.image.clone(),
-                    message,
-                    valid,
-                }),
-                other => RuntimeError::Other(other.to_string()),
-            })?;
+        let mut r = resolved.map_err(|e| match e {
+            Error::Unsupported(m) => RuntimeError::UnsupportedImage(m),
+            Error::InvalidPlacement {
+                message,
+                axis,
+                valid,
+            } => RuntimeError::InvalidPlacement(PlacementError {
+                axis: match axis.as_str() {
+                    "on" => cua_sandbox_core::placement::Axis::On,
+                    "kind" => cua_sandbox_core::placement::Axis::Kind,
+                    "runtime" => cua_sandbox_core::placement::Axis::Runtime,
+                    _ => cua_sandbox_core::placement::Axis::Image,
+                },
+                given: spec.image.clone(),
+                message,
+                valid,
+            }),
+            other => RuntimeError::Other(other.to_string()),
+        })?;
         if missing_fallback_allowed(
             kind,
             &runtime,
@@ -4166,7 +4168,6 @@ mod tests {
             )
         );
     }
-
 
     #[test]
     fn missing_fallback_requires_auto_linux_source() {

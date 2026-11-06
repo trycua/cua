@@ -2330,6 +2330,7 @@ dependencies = [
  "cua-create-failure",
  "cua-home",
  "cua-keyvault",
+ "cua-spaces-contract",
  "cua-telemetry",
  "serde",
  "serde_json",

@@ -2993,11 +2993,7 @@ impl Spaces {
         {
             return Ok(SpaceCreated::Ready { info, reused: true });
         }
-        let name = sanitize_label(
-            &opts
-                .name
-                .unwrap_or_else(|| self.fresh_name()),
-        );
+        let name = sanitize_label(&opts.name.unwrap_or_else(|| self.fresh_name()));
         let local = LocalProvision {
             image: opts.image,
             kind: opts.kind,
@@ -3042,12 +3038,7 @@ impl Spaces {
                 "no local runtime passed to SpacesBuilder; using the sandbox manager's"
             );
         }
-        let name = sanitize_label(
-            &opts
-                .name
-                .clone()
-                .unwrap_or_else(|| self.fresh_name()),
-        );
+        let name = sanitize_label(&opts.name.clone().unwrap_or_else(|| self.fresh_name()));
         let expect_env = expects_spacesd(opts.image.as_deref(), opts.spacesd);
         // An alias (`linux`, `macos:26`, `macos:26-slim`) names a canonical
         // image, as it does for a cloud or host Space; the local runtime

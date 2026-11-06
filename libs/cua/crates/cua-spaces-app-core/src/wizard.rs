@@ -7120,10 +7120,7 @@ mod tests {
                 .map(|f| f.value.clone())
         };
         assert_eq!(name_row(&v).as_deref(), Some("dapper-mole"));
-        assert_eq!(
-            create_args(&v.plan).name.as_deref(),
-            Some("dapper-mole")
-        );
+        assert_eq!(create_args(&v.plan).name.as_deref(), Some("dapper-mole"));
         assert_eq!(
             creating_text(&v.plan),
             "Creating dapper-mole. It appears in the list when it is ready."

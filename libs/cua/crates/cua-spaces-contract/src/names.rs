@@ -17,31 +17,127 @@
 /// Adjectives: short, kind, neutral.
 pub const ADJECTIVES: &[&str] = &[
     "agile", "amber", "ample", "bold", "brave", "breezy", "bright", "brisk", "calm", "candid",
-    "careful", "clever", "cosmic", "cozy", "crisp", "curious", "dapper", "daring", "dewy",
-    "deft", "eager", "early", "easy", "epic", "fair", "fancy", "fast", "fine", "fleet", "fond",
-    "frosty", "gentle", "giant", "glad", "golden", "grand", "happy", "hardy", "honest", "humble",
-    "jolly", "jovial", "keen", "kind", "lively", "lucky", "lunar", "mellow", "merry", "mighty",
-    "mild", "misty", "modest", "nifty", "nimble", "noble", "novel", "open", "patient", "peppy",
-    "placid", "plucky", "polite", "proud", "quick", "quiet", "rapid", "ready", "rosy", "royal",
-    "rustic", "sandy", "serene", "shiny", "silent", "silver", "simple", "sleek", "smart",
-    "smooth", "snowy", "solar", "solid", "spry", "steady", "stellar", "sunny", "super", "swift",
-    "tidy", "tiny", "topaz", "true", "trusty", "upbeat", "vivid", "warm", "wise", "witty",
-    "zesty", "zippy", "balmy", "lush", "azure", "ivory", "jade", "coral", "olive", "velvet",
+    "careful", "clever", "cosmic", "cozy", "crisp", "curious", "dapper", "daring", "dewy", "deft",
+    "eager", "early", "easy", "epic", "fair", "fancy", "fast", "fine", "fleet", "fond", "frosty",
+    "gentle", "giant", "glad", "golden", "grand", "happy", "hardy", "honest", "humble", "jolly",
+    "jovial", "keen", "kind", "lively", "lucky", "lunar", "mellow", "merry", "mighty", "mild",
+    "misty", "modest", "nifty", "nimble", "noble", "novel", "open", "patient", "peppy", "placid",
+    "plucky", "polite", "proud", "quick", "quiet", "rapid", "ready", "rosy", "royal", "rustic",
+    "sandy", "serene", "shiny", "silent", "silver", "simple", "sleek", "smart", "smooth", "snowy",
+    "solar", "solid", "spry", "steady", "stellar", "sunny", "super", "swift", "tidy", "tiny",
+    "topaz", "true", "trusty", "upbeat", "vivid", "warm", "wise", "witty", "zesty", "zippy",
+    "balmy", "lush", "azure", "ivory", "jade", "coral", "olive", "velvet",
 ];
 
 /// Animals: short, familiar.
 pub const ANIMALS: &[&str] = &[
-    "alpaca", "badger", "bat", "bear", "beaver", "bee", "bison", "bobcat", "camel", "cat",
-    "civet", "cobra", "condor", "coyote", "crane", "crow", "deer", "dingo", "dolphin", "dove",
-    "dragonfly", "eagle", "egret", "elk", "falcon", "ferret", "finch", "fox", "frog", "gecko",
-    "gibbon", "goat", "goose", "gopher", "gull", "hare", "hawk", "hedgehog", "heron", "horse",
-    "hound", "ibis", "iguana", "jackal", "jaguar", "jay", "kestrel", "kiwi", "koala", "lark",
-    "lemur", "llama", "lynx", "magpie", "mallard", "marten", "meerkat", "mink", "mole", "moose",
-    "moth", "mouse", "newt", "ocelot", "orca", "osprey", "otter", "owl", "panda", "parrot",
-    "pelican", "penguin", "pika", "plover", "pony", "puffin", "puma", "quail", "rabbit", "raven",
-    "robin", "salmon", "seal", "shrew", "skink", "sloth", "sparrow", "squid", "stoat", "stork",
-    "swan", "tapir", "tern", "tiger", "toad", "trout", "turtle", "viper", "vole",
-    "walrus", "weasel", "whale", "wolf", "wombat", "wren", "yak", "zebra",
+    "alpaca",
+    "badger",
+    "bat",
+    "bear",
+    "beaver",
+    "bee",
+    "bison",
+    "bobcat",
+    "camel",
+    "cat",
+    "civet",
+    "cobra",
+    "condor",
+    "coyote",
+    "crane",
+    "crow",
+    "deer",
+    "dingo",
+    "dolphin",
+    "dove",
+    "dragonfly",
+    "eagle",
+    "egret",
+    "elk",
+    "falcon",
+    "ferret",
+    "finch",
+    "fox",
+    "frog",
+    "gecko",
+    "gibbon",
+    "goat",
+    "goose",
+    "gopher",
+    "gull",
+    "hare",
+    "hawk",
+    "hedgehog",
+    "heron",
+    "horse",
+    "hound",
+    "ibis",
+    "iguana",
+    "jackal",
+    "jaguar",
+    "jay",
+    "kestrel",
+    "kiwi",
+    "koala",
+    "lark",
+    "lemur",
+    "llama",
+    "lynx",
+    "magpie",
+    "mallard",
+    "marten",
+    "meerkat",
+    "mink",
+    "mole",
+    "moose",
+    "moth",
+    "mouse",
+    "newt",
+    "ocelot",
+    "orca",
+    "osprey",
+    "otter",
+    "owl",
+    "panda",
+    "parrot",
+    "pelican",
+    "penguin",
+    "pika",
+    "plover",
+    "pony",
+    "puffin",
+    "puma",
+    "quail",
+    "rabbit",
+    "raven",
+    "robin",
+    "salmon",
+    "seal",
+    "shrew",
+    "skink",
+    "sloth",
+    "sparrow",
+    "squid",
+    "stoat",
+    "stork",
+    "swan",
+    "tapir",
+    "tern",
+    "tiger",
+    "toad",
+    "trout",
+    "turtle",
+    "viper",
+    "vole",
+    "walrus",
+    "weasel",
+    "whale",
+    "wolf",
+    "wombat",
+    "wren",
+    "yak",
+    "zebra",
 ];
 
 /// A random 64-bit seed (the standard library's hasher keys are random).
@@ -123,7 +219,7 @@ pub fn web_module() -> String {
             .join(", ")
     };
     format!(
-        "// Generated from libs/cua/crates/cua-spaces-contract/src/names.rs (CUA_UPDATE_PET_NAMES=1 cargo test -p cua-spaces-contract pet_names). Do not edit.\n\
+        "// SPDX-License-Identifier: FSL-1.1-MIT\n// Copyright (c) 2026 Cua AI, Inc.\n\n// Generated from libs/cua/crates/cua-spaces-contract/src/names.rs (CUA_UPDATE_PET_NAMES=1 cargo test -p cua-spaces-contract pet_names). Do not edit.\n\
          export const PET_ADJECTIVES = [{}] as const;\n\
          export const PET_ANIMALS = [{}] as const;\n",
         list(ADJECTIVES),
@@ -143,8 +239,7 @@ mod tests {
             assert!(is_pet_name(&n), "{n}");
             assert!(n.len() <= 24, "{n} is not short");
             assert!(
-                n.bytes()
-                    .all(|c| c.is_ascii_lowercase() || c == b'-')
+                n.bytes().all(|c| c.is_ascii_lowercase() || c == b'-')
                     && !n.starts_with('-')
                     && !n.ends_with('-'),
                 "{n}"
@@ -197,7 +292,14 @@ mod tests {
     fn only_generated_forms_count_as_pet_names() {
         assert!(is_pet_name("brave-otter"));
         assert!(is_pet_name("brave-otter-00ff"));
-        for no in ["my-space", "brave-otter-xyz1", "brave", "brave-otter-00ff-1", "Brave-Otter", "space-0123456789"] {
+        for no in [
+            "my-space",
+            "brave-otter-xyz1",
+            "brave",
+            "brave-otter-00ff-1",
+            "Brave-Otter",
+            "space-0123456789",
+        ] {
             assert!(!is_pet_name(no), "{no}");
         }
     }

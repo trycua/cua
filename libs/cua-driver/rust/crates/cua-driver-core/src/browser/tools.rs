@@ -3192,6 +3192,8 @@ mod tests {
     struct MockPlatform {
         devtools: Option<std::net::TcpListener>,
         launch_delay: std::time::Duration,
+        /// Start time reported for every pid; a change stands for pid reuse.
+        start_time: std::sync::atomic::AtomicU64,
     }
 
     impl MockPlatform {
@@ -3305,7 +3307,7 @@ mod tests {
         ) -> Result<ProcessFingerprint, BrowserRefusal> {
             Ok(ProcessFingerprint {
                 pid,
-                start_time: Some(1),
+                start_time: Some(1 + self.start_time.load(std::sync::atomic::Ordering::SeqCst)),
                 executable: None,
             })
         }
@@ -3381,6 +3383,7 @@ mod tests {
         BrowserEngine::new(Arc::new(MockPlatform {
             devtools: Some(std::net::TcpListener::bind("127.0.0.1:0").unwrap()),
             launch_delay,
+            ..MockPlatform::default()
         }))
     }
 
@@ -3941,7 +3944,12 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn a_reused_browser_pid_is_not_driver_owned() {
-        let engine = launching_engine();
+        let platform = Arc::new(MockPlatform {
+            devtools: Some(std::net::TcpListener::bind("127.0.0.1:0").unwrap()),
+            ..MockPlatform::default()
+        });
+        launching_engine();
+        let engine = BrowserEngine::new(platform.clone());
         let (session, owner) = start_lifecycle_session(None);
         let prepared =
             prepare_isolated(&engine, &session, &owner, json!({ "mode": "isolated_new" })).await;
@@ -3952,22 +3960,28 @@ mod tests {
             ProtectedResourceOwnership::DriverOwned
         );
 
-        // The mock reports start time 1 for every pid; a record made at a
-        // different start time stands for a pid the OS has since reused.
-        let launched_earlier = ProcessFingerprint {
+        // The browser exits and the session's next launch_app gets its pid.
+        platform
+            .start_time
+            .store(1, std::sync::atomic::Ordering::SeqCst);
+        let reused = ProcessFingerprint {
             pid,
-            start_time: Some(0),
+            start_time: Some(2),
             executable: None,
         };
-        for key in [&session, &owner] {
-            engine
-                .protected_resource_ownership
-                .mark_driver_owned_process(key, launched_earlier.clone());
-        }
+        let ownership = engine.protected_resource_ownership.clone();
+        ownership.mark_driver_owned_process(&session, reused.clone());
         assert_eq!(
             browser_resource_ownership(&engine, &args).await,
             ProtectedResourceOwnership::UserOwned
         );
+
+        // Reaping the browser forgets only its own launch, not the app's.
+        assert_eq!(
+            crate::session::evict_idle_with_prefix(Duration::ZERO, &session),
+            vec![session.clone()]
+        );
+        assert!(ownership.reprove_driver_owned_process(&session, &reused));
         crate::session::end_session(&session);
     }
 

@@ -3300,7 +3300,9 @@ impl Spaces {
 
     /// Recovers local creates left by a dead process when their cua-spacesd
     /// authenticates within `budget`. Failed, cancelled or borrowed local
-    /// attempts retain their resources and journals for explicit cleanup.
+    /// attempts retain their resources and journals for explicit cleanup;
+    /// a journal whose sandbox the local runtime says is gone (and that no
+    /// state file records) has nothing left to inspect and is removed.
     /// Live processes are left alone; nonlocal creates retain cancellation
     /// cleanup. The daemon runs this at startup.
     pub async fn recover_interrupted_creates(&self, budget: Duration) -> Vec<RecoveredCreate> {
@@ -3332,7 +3334,20 @@ impl Spaces {
             let id = SpaceId::Local {
                 name: j.name.clone(),
             };
-            let outcome = if crate::creating::cancel_marked(&home, &stem)
+            let unregistered = || {
+                self.inner
+                    .registry
+                    .get(&id.to_string())
+                    .ok()
+                    .flatten()
+                    .is_none()
+            };
+            let outcome = if !j.name.is_empty()
+                && unregistered()
+                && self.inner.sandboxes.local_name_gone(&j.name).await
+            {
+                RecoveryOutcome::NothingLeft
+            } else if crate::creating::cancel_marked(&home, &stem)
                 || local_made == Some(false)
                 || j.token.trim().is_empty()
                 || !j.spacesd

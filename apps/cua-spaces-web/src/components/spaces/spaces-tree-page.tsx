@@ -5,7 +5,7 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { ChevronRightIcon, HardDriveIcon, MoreHorizontalIcon, PlusIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
-import { useMachines, useSpaces } from "@/bridge";
+import { useMachines, useSpaces, useSpacesDefault } from "@/bridge";
 import { AddComputerSheet } from "@/components/add-computer-sheet";
 import { Page, PageHeader } from "@/components/page";
 import { Button } from "@/components/ui/button";
@@ -23,6 +23,7 @@ import { cn } from "@/lib/utils";
 
 import { PeopleFaces, TreeDot, TreeIcon, toggleCollapsed, useCollapsed } from "./tree-parts";
 import { useRunningBySpace, useSpacesTreeData } from "./use-spaces-tree";
+import { thisComputerLabel, thisComputerText } from "@/lib/host-labels";
 
 // Name gets the most room; Status shares what is left, so neither is cut to a few letters in a narrow window.
 /** How long a click on a name waits for a second one (a double-click renames) before it opens the row. */
@@ -106,10 +107,10 @@ export function SpacesTreePage() {
       <Page>
         <div className="mx-auto max-w-xl pt-24" data-tree-empty="">
           <h1 className="font-heading text-[32px] font-semibold tracking-tight">No Spaces yet</h1>
-          <p className="mt-3 text-[15px] text-muted-foreground">A Space is a computer your agents can work on. Add this Mac, or another computer you own, and agents run there while you keep working.</p>
+          <p className="mt-3 text-[15px] text-muted-foreground">A Space is a computer your agents can work on. Add {thisComputerText()}, or another computer you own, and agents run there while you keep working.</p>
           <div className="mt-6 flex flex-wrap gap-2">
             <Button size="lg" render={<Link to="/machines" />} data-tree-add-this-mac="">
-              Add this Mac
+              Add {thisComputerText()}
             </Button>
             <Button size="lg" variant="outline" onClick={() => setAdding(true)}>
               Add another computer
@@ -118,7 +119,7 @@ export function SpacesTreePage() {
           <p className="mt-5 text-[13px] text-muted-foreground">
             Or{" "}
             <button type="button" className="underline underline-offset-2 hover:text-foreground" onClick={newSpace} data-tree-new-local="">
-              make a new Linux or Mac computer on this Mac
+              make a new Linux or Mac computer on {thisComputerText()}
             </button>
             .
           </p>
@@ -292,7 +293,7 @@ export function SpacesTreePage() {
             <HardDriveIcon className="size-6 shrink-0 text-muted-foreground" strokeWidth={1.5} />
             <div className="min-w-0 flex-1">
               <div className="text-[15px] font-medium">Add a computer you're not using</div>
-              <div className="text-[13px] text-muted-foreground">A Mac mini or PC you own. Agents work there and This Mac stays yours.</div>
+              <div className="text-[13px] text-muted-foreground">A Mac mini or PC you own. Agents work there and {thisComputerLabel()} stays yours.</div>
             </div>
             <Button variant="outline" onClick={() => setAdding(true)}>
               Add a computer
@@ -328,6 +329,7 @@ export function SpacesTreePage() {
  */
 export function RemoveComputerDialog({ node, onClose }: { node: TreeNode; onClose: () => void }) {
   const machines = useMachines();
+  const defaults = useSpacesDefault();
   const [alsoDelete, setAlsoDelete] = useState(false);
   const [busy, setBusy] = useState(false);
   const text = removeText(node, alsoDelete);
@@ -336,6 +338,8 @@ export function RemoveComputerDialog({ node, onClose }: { node: TreeNode; onClos
     setBusy(true);
     try {
       await machines.remove(r?.machine ?? node.machine!.id, r?.device ?? null, alsoDelete);
+      // The default setting may have named it (the host clears it): read it again, so the tree has no ghost of it.
+      await defaults.refresh().catch(() => {});
       toast(`Removed ${node.name}`, { type: "success" });
       onClose();
     } catch (e) {

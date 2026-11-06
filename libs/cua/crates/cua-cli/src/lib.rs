@@ -3969,8 +3969,34 @@ mod tests {
         assert!(parse(&["sandbox", "pool", "rm", "agents"]).is_ok());
     }
 
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn spacesd_commands_against_the_mock() {
+    /// Runs the test future `f` builds the way `main` runs a command: on an
+    /// 8 MiB thread blocking on a 2-worker runtime with 8 MiB stacks, so a
+    /// whole command's unoptimized frames fit without `RUST_MIN_STACK`
+    /// (libtest's threads get 2 MiB).
+    fn on_cli_stack<F: Future<Output = ()>>(f: impl FnOnce() -> F + Send + 'static) {
+        const STACK: usize = 8 * 1024 * 1024;
+        std::thread::Builder::new()
+            .stack_size(STACK)
+            .spawn(move || {
+                tokio::runtime::Builder::new_multi_thread()
+                    .worker_threads(2)
+                    .thread_stack_size(STACK)
+                    .enable_all()
+                    .build()
+                    .unwrap()
+                    .block_on(f())
+            })
+            .unwrap()
+            .join()
+            .unwrap_or_else(|e| std::panic::resume_unwind(e));
+    }
+
+    #[test]
+    fn spacesd_commands_against_the_mock() {
+        on_cli_stack(spacesd_commands_against_the_mock_body);
+    }
+
+    async fn spacesd_commands_against_the_mock_body() {
         let env = fixtures::start_env(Some("t"), None).await;
         let dir = tempfile::tempdir().unwrap();
         let (r, out) = cli(&["--embedded", "spacesd", "caps", &env.url, "--token", "t"]).await;

@@ -1702,6 +1702,10 @@ impl Runtime for ContainerRuntime {
         ))
     }
 
+    fn keeps_prepared(&self) -> bool {
+        true
+    }
+
     async fn save_prepared(&self, name: &str, tag: &str) -> Result<Option<ImageSource>> {
         validate_name(tag)?;
         let i = self

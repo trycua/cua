@@ -28,7 +28,7 @@
         "channel": {
           "enum": [
             "stable",
-            "beta"
+            "nightly"
           ]
         },
         "lastCheck": {
@@ -2088,6 +2088,31 @@
         "failure"
       ]
     },
+    "DriverPermission": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "enum": [
+            "screen",
+            "accessibility"
+          ]
+        },
+        "granted": {
+          "type": "boolean"
+        },
+        "settingsUrl": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "granted",
+        "settingsUrl"
+      ]
+    },
     "DriverStatus": {
       "type": "object",
       "properties": {
@@ -2156,30 +2181,14 @@
         "permissions": {
           "type": "array",
           "items": {
-            "type": "object",
-            "properties": {
-              "id": {
-                "enum": [
-                  "screen",
-                  "accessibility"
-                ]
-              },
-              "granted": {
-                "type": "boolean"
-              },
-              "settingsUrl": {
-                "type": [
-                  "string",
-                  "null"
-                ]
-              }
-            },
-            "required": [
-              "id",
-              "granted",
-              "settingsUrl"
-            ]
+            "$ref": "#/$defs/DriverPermission"
           }
+        },
+        "appName": {
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "apps": {
           "type": [
@@ -2282,15 +2291,6 @@
       "type": "object",
       "properties": {
         "cuaVolume": {
-          "type": "boolean"
-        },
-        "yourCloud": {
-          "type": "boolean"
-        },
-        "sharing": {
-          "type": "boolean"
-        },
-        "webUi": {
           "type": "boolean"
         },
         "secureSpaces": {
@@ -5236,7 +5236,7 @@
             "updateChannel": {
               "enum": [
                 "stable",
-                "beta",
+                "nightly",
                 null
               ]
             },
@@ -8083,7 +8083,7 @@
         "updateChannel": {
           "enum": [
             "stable",
-            "beta",
+            "nightly",
             null
           ]
         },
@@ -9326,6 +9326,27 @@
     },
     "driver.pause": {
       "type": "null"
+    },
+    "driver.permissions": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "appName": {
+          "type": "string"
+        },
+        "permissions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DriverPermission"
+          }
+        }
+      },
+      "required": [
+        "appName",
+        "permissions"
+      ]
     },
     "driver.setApp": {
       "type": "null"
@@ -12859,6 +12880,27 @@
     },
     "driver.pause": {
       "type": "null"
+    },
+    "driver.permissions": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "appName": {
+          "type": "string"
+        },
+        "permissions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DriverPermission"
+          }
+        }
+      },
+      "required": [
+        "appName",
+        "permissions"
+      ]
     },
     "driver.setApp": {
       "type": "null"

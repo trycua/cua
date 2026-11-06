@@ -89,7 +89,7 @@ describe("Cua Driver in the app", () => {
     expect(document.querySelector("[data-driver-app=claude-code]")?.textContent).toContain("Uses Cua Driver in Cua Spaces.");
     expect(document.querySelector("[data-driver-app=codex]")?.textContent).toContain("Not connected. Set up connects it.");
     expect(document.querySelector("[data-driver-app=t3-code]")?.textContent).toContain("Brings its own Cua Driver");
-    expect(document.querySelector("[data-driver-permission=screen]")?.textContent).toContain("On");
+    await waitFor(() => expect(document.querySelector("[data-app-permission=screen]")?.textContent).toContain("On"));
     expect(document.querySelector("[data-driver-computers]")).toBeNull();
   });
 
@@ -146,8 +146,13 @@ describe("Cua Driver in the app", () => {
     });
     mount(spy, () => <DriverPage machine={null} />);
     expect(await screen.findByText("A permission is missing. Allow it below.")).toBeTruthy();
-    expect(document.querySelector("[data-driver-permission=screen]")?.textContent).toContain("Missing");
+    await waitFor(() => expect(document.querySelector("[data-app-permission=screen]")?.textContent).toContain("Missing"));
+    // The app the grant goes to, by name, and that the driver needs no second one.
+    expect(document.querySelector("[data-app-permission=screen]")?.textContent).toContain("Screen Recording, given to Cua Spaces");
+    expect(document.body.textContent).toContain("Cua Driver uses the permissions you give Cua Spaces. It never asks for its own.");
     fireEvent.click(screen.getByRole("button", { name: "Allow" }));
     await waitFor(() => expect(calls).toContain("host.openSettings"));
+    // The demo plays the grant in System Settings: the row turns On without another click.
+    await waitFor(() => expect(document.querySelector("[data-app-permission=screen]")?.textContent).toContain("On"), { timeout: 5_000 });
   });
 });

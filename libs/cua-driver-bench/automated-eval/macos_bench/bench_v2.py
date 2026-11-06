@@ -53,6 +53,42 @@ V2_TASKS: tuple[str, ...] = (
     "IR-03",
     "IR-04",
 )
+# `../../taskpack/v2-taskset.json` lists every task with its category, OS availability, conditions and split (public,
+# or held out of this repository). `--task-set` selects a set; the default stays `v2`, so earlier runs reproduce.
+TASKSET_FILE = Path(__file__).resolve().parents[2] / "taskpack" / "v2-taskset.json"
+SPLITS = ("public", "heldout")
+
+
+def load_taskset(path: Path | None = None) -> dict[str, Any]:
+    """The task manifest: one entry per task with `id`, `category`, `split` and `os`."""
+    return json.loads((path or TASKSET_FILE).read_text("utf-8"))
+
+
+def split_of(task_id: str, taskset: dict[str, Any] | None = None) -> str:
+    """`public` or `heldout`. Tasks not in the manifest (the ten core tasks are listed too) default to public."""
+    for entry in (taskset or load_taskset())["tasks"]:
+        if entry["id"] == task_id:
+            return str(entry["split"])
+    return "public"
+
+
+def task_sets(taskset: dict[str, Any] | None = None) -> dict[str, tuple[str, ...]]:
+    """Named task sets for `--task-set`. `-public` and `-heldout` keep schedule order and only that split."""
+    data = taskset or load_taskset()
+    split = {e["id"]: e["split"] for e in data["tasks"]}
+    sets: dict[str, tuple[str, ...]] = {"v2": V2_TASKS}
+    for part in SPLITS:
+        sets[f"v2-{part}"] = tuple(t for t in V2_TASKS if split.get(t, "public") == part)
+    return sets
+
+
+def tasks_for_condition(
+    task_ids: list[str], condition: str | None, specs: dict[str, dict[str, Any]]
+) -> list[str]:
+    """The tasks of one condition: a task whose task.json lists `conditions` runs only in those."""
+    return [t for t in task_ids if condition in (specs.get(t, {}).get("conditions") or CONDITIONS)]
+
+
 # v1 tasks that are not in v2, and why (the S/G split is dropped).
 NOT_IN_V2: dict[str, str] = {
     "CDB-S01": "its end state needs a source-code fix and a test; no GUI-only version without changing the pack",

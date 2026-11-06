@@ -13,15 +13,7 @@ use cua_driver_core::{
     tool::{Tool, ToolDef},
 };
 use serde_json::Value;
-use std::{
-    ffi::c_void,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        mpsc::{self, SyncSender},
-        Arc,
-    },
-    time::Duration,
-};
+use std::time::Duration;
 
 use crate::ax::bindings::{
     ax_get_window_id, copy_action_names, copy_ax_windows, copy_bool_attr, copy_children,
@@ -418,70 +410,18 @@ fn focus_ax_window(pid: i32, window_id: u32) -> Result<(), String> {
     Ok(())
 }
 
-struct AxWindowFocusRequest {
-    pid: i32,
-    window_id: u32,
-    tx: SyncSender<Result<(), String>>,
-    cancelled: Arc<AtomicBool>,
-}
-
-#[link(name = "System", kind = "framework")]
-extern "C" {
-    static _dispatch_main_q: u8;
-    fn dispatch_async_f(
-        queue: *const c_void,
-        context: *mut c_void,
-        work: unsafe extern "C" fn(*mut c_void),
-    );
-}
-
-unsafe extern "C" fn focus_ax_window_on_main(context: *mut c_void) {
-    let request = unsafe { Box::from_raw(context.cast::<AxWindowFocusRequest>()) };
-    if request.cancelled.load(Ordering::Acquire) {
-        return;
-    }
-    let result = focus_ax_window(request.pid, request.window_id);
-    let _ = request.tx.send(result);
-}
-
 fn focus_ax_window_with_thread_affinity(pid: i32, window_id: u32) -> Result<(), String> {
-    let is_main_thread = objc2_foundation::MainThreadMarker::new().is_some();
-    if pid != std::process::id() as i32 || is_main_thread {
-        return focus_ax_window(pid, window_id);
-    }
-
-    // AX actions against another process execute in that process. An embedded
-    // driver targeting its own window is different: AppKit services AXRaise
-    // in this process, and window ordering is main-thread-only. Queue just the
-    // self-process AX mutation onto AppKit's main queue, then return to the
-    // blocking worker for readiness polling and menu traversal.
-    let (tx, rx) = mpsc::sync_channel(1);
-    let cancelled = Arc::new(AtomicBool::new(false));
-    let request = Box::new(AxWindowFocusRequest {
-        pid,
-        window_id,
-        tx,
-        cancelled: Arc::clone(&cancelled),
-    });
-    unsafe {
-        let main_queue = &raw const _dispatch_main_q as *const c_void;
-        dispatch_async_f(
-            main_queue,
-            Box::into_raw(request).cast::<c_void>(),
-            focus_ax_window_on_main,
-        );
-    }
-    match rx.recv_timeout(MAIN_QUEUE_TIMEOUT) {
-        Ok(result) => result,
-        Err(error) => {
-            // If AppKit never serviced the request, prevent a stale focus
-            // change from firing after this tool call has already failed.
-            cancelled.store(true, Ordering::Release);
-            Err(format!(
-                "invoke_menu: failed waiting for the embedded host window on the AppKit main queue: {error}"
-            ))
-        }
-    }
+    // An embedded driver targeting its own window must raise it on AppKit's
+    // main queue; see `ax::main_thread`. Only the AX mutation moves there; the
+    // blocking worker keeps readiness polling and menu traversal.
+    crate::ax::main_thread::run_ax_mutation(pid, MAIN_QUEUE_TIMEOUT, move || {
+        focus_ax_window(pid, window_id)
+    })
+    .unwrap_or_else(|error| {
+        Err(format!(
+            "invoke_menu: failed waiting for the embedded host window on the AppKit main queue: {error}"
+        ))
+    })
 }
 
 fn focus_exact_window(pid: i32, window_id: u32) -> Result<(), String> {

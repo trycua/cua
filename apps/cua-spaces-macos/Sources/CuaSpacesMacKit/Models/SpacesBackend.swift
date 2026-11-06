@@ -913,16 +913,17 @@ public final class LiveSpacesBackend: SpacesBackend, @unchecked Sendable {
     }
 
     /// The SDK's `NetworkSettings` for a preset word (`internet`, `none`,
-    /// `localhost:5432,3000`, `localhost:all`, `lan`, `custom`, `custom:none`,
-    /// `unprotected`) and lists.
+    /// `localhost:5432,3000`, `localhost:all`, `lan`, `localhost+lan:5432,3000`,
+    /// `custom`, `custom:none`, `unprotected`) and lists.
     /// `via`: where its internet traffic leaves (`internet`, `this-machine`,
     /// `space:<id>`, `socks5://...`); nil keeps the exit it has.
     static func networkSettings(word: String, allow: [String], deny: [String], via: String? = nil) -> CuaSDK.NetworkSettings {
         let parts = word.trimmingCharacters(in: .whitespaces).lowercased().split(separator: ":", maxSplits: 1).map(String.init)
         let preset = parts.first ?? "internet"
         let rest = parts.count > 1 ? parts[1] : ""
-        let all = preset == "localhost" && rest == "all"
-        let ports: [UInt16] = preset == "localhost" && !all
+        let opensLocalhost = preset == "localhost" || preset == "localhost+lan"
+        let all = opensLocalhost && rest == "all"
+        let ports: [UInt16] = opensLocalhost && !all
             ? rest.split(separator: ",").compactMap { UInt16($0.trimmingCharacters(in: .whitespaces)) }.filter { $0 > 0 }
             : []
         return CuaSDK.NetworkSettings(

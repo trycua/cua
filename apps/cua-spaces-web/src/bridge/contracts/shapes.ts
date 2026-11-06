@@ -68,7 +68,7 @@ import type { GithubAccount, GithubHost, GithubReport, GithubSourceRow } from ".
 import type { TelemetryLinkNotice } from "../ops/telemetry";
 import type { SentFileInfo, SpaceThumbnail, SpaceUsage, SpaceWindows } from "../ops/space-detail";
 import type { RelayUsage } from "../ops/relay-usage";
-import type { DriverActivity, DriverApp, DriverLiveTest, DriverMachine, DriverPermission, DriverStatus, DriverUpdate } from "../ops/driver";
+import type { AppPermissions, DriverActivity, DriverApp, DriverLiveTest, DriverMachine, DriverPermission, DriverStatus, DriverUpdate } from "../ops/driver";
 import type { DefaultSpace, DefaultSpaceStep, SpacesSettings } from "../ops/spaces-settings";
 import type { RiskyRequest } from "../ops/nudges";
 import type { PastMessage, PastThread, RecentThread } from "../ops/agent-threads";
@@ -107,6 +107,7 @@ const RecentThreadShape = ref(
   obj<RecentThread>()({ agent: oneOf("claude-code", "openai-codex", "hermes"), id: str, title: str, cwd: nullable(str), lastActiveMs: num, resume: strings }),
 );
 const DriverLiveTestShape = ref("DriverLiveTest", obj<DriverLiveTest>()({ passed: bool, atMs: num, failure: nullable(str), tookMs: optNull(num) }));
+const DriverPermissionShape = ref("DriverPermission", obj<DriverPermission>()({ id: oneOf("screen", "accessibility"), granted: bool, settingsUrl: nullable(str) }));
 const DriverStatusShape = ref(
   "DriverStatus",
   obj<DriverStatus>()({
@@ -118,7 +119,8 @@ const DriverStatusShape = ref(
     update: nullable(obj<DriverUpdate>()({ version: str, note: nullable(str) })),
     lastTest: nullable(DriverLiveTestShape),
     lastError: nullable(str),
-    permissions: list(obj<DriverPermission>()({ id: oneOf("screen", "accessibility"), granted: bool, settingsUrl: nullable(str) })),
+    permissions: list(DriverPermissionShape),
+    appName: optNull(str),
     apps: nullable(list(obj<DriverApp>()({ id: str, name: str, on: bool, own: bool, bringsOwn: bool }))),
     activity: list(obj<DriverActivity>()({ app: str, target: str })),
     canPause: bool,
@@ -474,7 +476,7 @@ const SettingsShape = ref(
       telemetry: bool,
       defaultLocation: str,
       launchAtLogin: nullable(bool),
-      updateChannel: nullable(oneOf("stable", "beta")),
+      updateChannel: nullable(oneOf("stable", "nightly")),
       autoConnect: opt(bool),
       tips: opt(TipsStateShape),
       notchPinned: opt(strings),
@@ -503,7 +505,7 @@ const SettingsShape = ref(
 
 const ExperimentsShape = ref(
   "Experiments",
-  obj<Experiments>()({ cuaVolume: opt(bool), yourCloud: opt(bool), sharing: opt(bool), webUi: opt(bool), secureSpaces: opt(bool), childSpaces: opt(bool), askFirst: opt(bool), ciRunners: opt(bool), tcpShares: opt(bool), mobile: opt(bool), warmPools: opt(bool) }),
+  obj<Experiments>()({ cuaVolume: opt(bool), secureSpaces: opt(bool), childSpaces: opt(bool), askFirst: opt(bool), ciRunners: opt(bool), tcpShares: opt(bool), mobile: opt(bool), warmPools: opt(bool) }),
 );
 
 const RepoCacheShape = ref(
@@ -532,7 +534,7 @@ const AboutShape = ref(
     updater: bool,
     autoCheck: bool,
     autoInstall: bool,
-    channel: oneOf("stable", "beta"),
+    channel: oneOf("stable", "nightly"),
     lastCheck: nullable(str),
     checking: bool,
   }),
@@ -1635,6 +1637,7 @@ export const OP_SHAPES: Record<OpName, Schema> = {
   "driver.pause": nul,
   "driver.setApp": nul,
   "driver.update": nul,
+  "driver.permissions": nullable(obj<AppPermissions>()({ appName: str, permissions: list(DriverPermissionShape) })),
   "relay.usage": nullable(
     obj<RelayUsage>()({
       metered: bool,
@@ -1901,7 +1904,7 @@ const WkSettingsShape = ref(
         }),
       ),
     }),
-    updateChannel: optNull(oneOf("stable", "beta")),
+    updateChannel: optNull(oneOf("stable", "nightly")),
     globalShortcut: optNull(object({ label: str, registered: bool })),
     accountUrl: optNull(str),
     cli: optNull(object({ name: str, installed: bool })),
@@ -2107,6 +2110,7 @@ export const WEBKIT_SHAPES: Partial<Record<WebkitMethod, Schema>> = {
   "driver.pause": OP_SHAPES["driver.pause"],
   "driver.setup": OP_SHAPES["driver.setup"],
   "driver.setApp": OP_SHAPES["driver.setApp"],
+  "driver.permissions": OP_SHAPES["driver.permissions"],
   "agents.detail": AgentDetailShape,
   "agents.readFile": AgentOpenFileShape,
   "agents.restoreFile": nul,

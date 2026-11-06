@@ -155,7 +155,7 @@ function bridgeMethods(core: CoreClient, record: (c: ParityCheckpoint) => void):
 
     // A Space's detail (space-detail.ts).
     "sidebar.detail": (a) => {
-      const detail = spaceDetail(core, a.space, a.usage, a.hostArch, a.experiments);
+      const detail = spaceDetail(core, a.space, a.usage, a.hostArch);
       record({ kind: "space-detail", space: a.space, usage: a.usage ?? null, hostArch: a.hostArch ?? null, detail });
       return detail;
     },

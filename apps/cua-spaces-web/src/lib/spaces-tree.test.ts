@@ -320,3 +320,25 @@ describe("currentTreeWhere", () => {
     expect(findNode(t, "relay:mac-here")?.name).toBe("This Mac");
   });
 });
+
+describe("a removed computer", () => {
+  const ghost = space({ id: "relay:a77e7c1777f98e7", name: "a77e7c1777f98e7", status: "running" });
+  const ghostChild = space({ id: "relay:a77e7c1777f98e7/box", name: "Build box", host: "a77e7c1777f98e7" });
+
+  it("leaves no computer named by its raw id, nor its Spaces, when its machine is gone", () => {
+    const t = tree({ spaces: [...SPACES, ghost, ghostChild] });
+    expect(t.roots.map((r) => r.name)).toEqual(["This Mac", "Studio Mac mini", "Dillon's PC"]);
+    expect([t.computers, t.spaces]).toEqual([3, 4]);
+  });
+
+  it("is not the default even when the setting still names it", () => {
+    const t = tree({ spaces: [...SPACES, ghost, ghostChild], defaultSpace: ghost.id });
+    expect(t.defaultKey).not.toBe(ghost.id);
+    expect(t.roots.some((r) => r.isDefault && r.key === ghost.id)).toBe(false);
+  });
+
+  it("does not hide a teammate's Space whose own name is shown", () => {
+    const t = tree({ spaces: [...SPACES, space({ id: "relay:space-sam-qa", name: "Sam's QA" })] });
+    expect(t.roots.map((r) => r.name)).toContain("Sam's QA");
+  });
+});

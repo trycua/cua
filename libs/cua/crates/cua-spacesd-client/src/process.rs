@@ -23,6 +23,11 @@ use tonic::Streaming;
 
 /// Default server-side keepalive interval requested for process streams.
 pub const DEFAULT_PROCESS_KEEPALIVE: Duration = Duration::from_secs(15);
+/// How long a start waits for `ProcessStart` (or the start's failure). A
+/// stream that stays silent past it fails with [`Error::Timeout`] instead of
+/// hanging: the server answers a start at once, so silence means the link
+/// or the Space is gone.
+pub const PROCESS_START_DEADLINE: Duration = Duration::from_secs(30);
 
 /// Read-ahead bound: messages already received are taken off the HTTP/2
 /// connection up to this many bytes, so a caller that consumes events more
@@ -952,12 +957,18 @@ impl SpacesdClient {
     async fn start(&self, cmd: &Command) -> Result<ProcessHandle> {
         let cmd = cmd.clone();
         let keepalive = cmd.keepalive.unwrap_or(DEFAULT_PROCESS_KEEPALIVE);
-        let mut stream = self
-            .process()
-            .start_process(cmd.to_request())
-            .await?
-            .into_inner();
-        let first = stream.message().await?;
+        let deadline = self.inner.options.start_timeout;
+        let (stream, first) = tokio::time::timeout(deadline, async {
+            let mut stream = self
+                .process()
+                .start_process(cmd.to_request())
+                .await?
+                .into_inner();
+            let first = stream.message().await?;
+            Ok::<_, Error>((stream, first))
+        })
+        .await
+        .map_err(|_| Error::Timeout(deadline))??;
         let start = match first.and_then(|m| m.event).and_then(|e| e.event) {
             Some(Event::Start(s)) => s,
             Some(Event::End(end)) => {

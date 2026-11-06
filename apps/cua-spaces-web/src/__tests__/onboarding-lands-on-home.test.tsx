@@ -48,6 +48,9 @@ async function throughOnboarding(hold?: Promise<void>) {
   click("[data-onboarding-later]");
   await waitFor(() => expect(heading()).toBe("Pick where your agents work"));
   click("[data-onboarding-primary]");
+  // On a Mac, Cua Spaces' permissions come next (CUA-3550); a person can go on without them.
+  await waitFor(() => expect(document.querySelector("[data-new-run=permissions], [data-new-run=agent]")).not.toBeNull(), { timeout: 15_000 });
+  if (document.querySelector("[data-new-run=permissions]")) click("[data-onboarding-primary]");
   await waitFor(() => expect(document.querySelector("[data-new-run=agent]:not([data-state=looking])")).not.toBeNull(), { timeout: 15_000 });
   const several = document.querySelector("[data-new-run=agent][data-state=several]");
   if (several) click("[data-new-run-agent=claude-code]");

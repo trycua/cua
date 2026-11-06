@@ -16,6 +16,10 @@ path = "src/lib.rs"
 name = "cua"
 path = "src/main.rs"
 
+[build-dependencies]
+# The Windows version resource of cua.exe (build.rs).
+embed-resource = "2"
+
 [features]
 default = []
 byoc = ["cua-sdk/byoc", "cua-daemon/byoc", "dep:cua-byoc"]

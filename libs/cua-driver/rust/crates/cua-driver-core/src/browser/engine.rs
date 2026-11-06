@@ -76,8 +76,10 @@ pub const MAX_REFS_PER_SNAPSHOT: usize = 300;
 /// compromised or malformed endpoint before its response reaches consumers.
 const MAX_BROWSER_SCREENSHOT_BYTES: usize = 16 * 1024 * 1024;
 
-/// Reply deadline for the best-effort `Page.enable` sent on a tab's first attach.
-const DIALOG_SUBSCRIPTION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+/// Reply deadline for the `Page.enable` dialog subscription, sent on a tab's
+/// first attach and retried by `browser_dialog`.
+pub(crate) const DIALOG_SUBSCRIPTION_TIMEOUT: std::time::Duration =
+    std::time::Duration::from_secs(2);
 
 pub struct BrowserEngine {
     pub(crate) platform: Arc<dyn BrowserPlatform>,

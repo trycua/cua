@@ -13,6 +13,7 @@
  * | `driver.config`, `driver.setConfig` | `get_config` / `set_config` on the driver | unsupported |
  * | `driver.test`, `driver.pause`, `driver.setup`, `driver.setApp` | the host methods of the same names | unsupported |
  * | `driver.update` | fails by design: the driver updates with Cua Spaces | unsupported |
+ * | `driver.permissions` | the host method of the same name | unsupported |
  *
  * The Electron shell (Windows, Linux) runs the driver in-process in
  * `cua-spacesd` and routes none of these methods: its "unimplemented"
@@ -28,6 +29,12 @@
  * proxy (`cua-driver mcp --embedded --socket …`) into Claude Code's and
  * Codex's MCP configs, starts a driver whose permission answer is stale
  * again, runs the live test, and answers the new status.
+ *
+ * `driver.permissions` is Cua Spaces' own Screen Recording and Accessibility,
+ * which the driver uses: answered on any Mac, with or without a driver (the
+ * first run's permissions step, the Driver page, This Mac). Once both are
+ * on, the host starts a driver whose answer is stale again, once. The
+ * Electron shell answers null: no step, no rows.
  *
  * Settings are the driver's own `get_config` JSON as-is (`driver.config`);
  * `driver.setConfig` takes `set_config` keys (`cursor.float`,
@@ -47,6 +54,13 @@ export interface DriverPermission {
   granted: boolean;
   /** The System Settings pane (`x-apple.systempreferences:`); `host.openSettings` guides it. */
   settingsUrl: string | null;
+}
+
+/** Cua Spaces' own permissions (`driver.permissions`), which Cua Driver uses. */
+export interface AppPermissions {
+  /** The name System Settings lists the app under: "Cua Spaces", or "Cua Spaces Local" (its own grants). */
+  appName: string;
+  permissions: DriverPermission[];
 }
 
 /** `embedded_driver::LiveTest`: both permissions, the screen read, and one agent-pointer move. */
@@ -104,6 +118,8 @@ export interface DriverStatus {
   lastTest: DriverLiveTest | null;
   lastError: string | null;
   permissions: DriverPermission[];
+  /** The app the permissions are given to ("Cua Spaces Local"); absent from older hosts. */
+  appName?: string | null;
   /** Null: the host can't say which apps use it (the section hides). */
   apps: DriverApp[] | null;
   activity: DriverActivity[];
@@ -142,6 +158,8 @@ export interface DriverOps {
   /** Set up and Repair: the agents' MCP entries, a fresh driver, the live test. */
   "driver.setup": { args: Record<string, never>; result: DriverStatus | null };
   "driver.update": { args: Machine; result: null };
+  /** Cua Spaces' own Screen Recording and Accessibility; null where the app has none to give (Windows, Linux). */
+  "driver.permissions": { args: Record<string, never>; result: AppPermissions | null };
 }
 
 export const DRIVER_OPERATIONS = [
@@ -154,6 +172,7 @@ export const DRIVER_OPERATIONS = [
   "driver.setApp",
   "driver.setup",
   "driver.update",
+  "driver.permissions",
 ] as const satisfies readonly (keyof DriverOps)[];
 
 const TAURI = "the Tauri shell is not the shipped app and runs no embedded driver";
@@ -179,6 +198,7 @@ export function webkitDriverOps(request: <T>(method: WebkitMethod, args?: Record
     "driver.setApp": (a) => request<null>("driver.setApp", { app: a.app, on: a.on }),
     "driver.setup": () => request<DriverStatus | null>("driver.setup"),
     "driver.update": () => Promise.reject(new HostError(UPDATE, "by_design")),
+    "driver.permissions": () => request<AppPermissions | null>("driver.permissions"),
   };
 }
 
@@ -193,4 +213,5 @@ export const DRIVER_ARGS = {
   "driver.setApp": { app: "codex", on: true },
   "driver.setup": {},
   "driver.update": {},
+  "driver.permissions": {},
 };

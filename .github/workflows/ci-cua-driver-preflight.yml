@@ -1,7 +1,26 @@
 name: "CI: Cua Driver desktop readiness (non-certifying)"
 
+# Not a certifying check (its own name says so), so it is nightly-shaped: 18 minutes
+# on every driver change that tells the author nothing the E2E gate does not.
+#   - pull requests: only when the readiness checks themselves change (the
+#     preflight scripts, the sandbox actions, this workflow).
+#   - push to main on those paths plus the driver crates it builds, and nightly.
+#   - a failed main or nightly run opens or updates one issue (`report` job).
 on:
   pull_request:
+    paths:
+      - "scripts/ci/linux/preflight-rust-e2e.sh"
+      - "scripts/ci/windows/preflight-rust-e2e.ps1"
+      - "scripts/ci/windows/verify-user-session.ps1"
+      - ".github/actions/cua-sandbox/**"
+      - ".github/actions/build-cua-under-test/**"
+      - ".github/workflows/ci-cua-driver-preflight.yml"
+      # Docs-only edits never start the sandbox job.
+      - "!.github/actions/cua-sandbox/lint-docs-yaml.py"
+      - "!**/*.md"
+      - "!**/*.mdx"
+  push:
+    branches: [main]
     paths:
       - "scripts/ci/linux/preflight-rust-e2e.sh"
       - "scripts/ci/windows/preflight-rust-e2e.ps1"
@@ -12,10 +31,11 @@ on:
       - "libs/cua-driver/rust/crates/cua-driver-core/**"
       - "libs/cua-driver/rust/crates/platform-linux/**"
       - ".github/workflows/ci-cua-driver-preflight.yml"
-      # Docs-only edits never start the sandbox job.
       - "!.github/actions/cua-sandbox/lint-docs-yaml.py"
       - "!**/*.md"
       - "!**/*.mdx"
+  schedule:
+    - cron: "17 4 * * *"
   workflow_dispatch:
 
 permissions:
@@ -28,6 +48,7 @@ env:
 
 concurrency:
   group: ci-cua-driver-preflight-${{ github.ref }}
+  # A main or nightly run always finishes.
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -89,3 +110,24 @@ jobs:
       - name: Check host readiness
         shell: pwsh
         run: .\scripts\ci\windows\preflight-rust-e2e.ps1
+
+  report:
+    name: open or update the issue
+    needs: [linux, windows]
+    if: ${{ failure() && github.event_name != 'pull_request' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/actions/nightly-issue
+      - uses: ./.github/actions/nightly-issue
+        with:
+          title: "Cua Driver desktop readiness is failing on main"
+          detail: >-
+            The desktop readiness checks (Linux sandbox, Windows host) failed on a main push or the nightly run.
+            Pull requests only run them when the readiness scripts or actions change. This check does not
+            certify a release.

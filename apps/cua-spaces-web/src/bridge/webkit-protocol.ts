@@ -208,6 +208,7 @@ export const WEBKIT_METHODS = [
   "driver.pause",
   "driver.setup",
   "driver.setApp",
+  "driver.permissions",
   "resources.get",
   "machines.rename",
   "machines.remove",
@@ -402,7 +403,7 @@ export interface WkSettingsRow {
 /** `settings.get`, `settings.choose`, `settings.press`: the core's Settings page. */
 export interface WkSettings {
   page: { title: string; sections: { id: string; rows: WkSettingsRow[] }[] };
-  /** `AppSettings.updateChannel` (`stable` or `beta`); null while the build
+  /** `AppSettings.updateChannel` (`stable` or `nightly`; `beta` from an older host); null while the build
    * has no updater. Set with `settings.choose {row: "update-channel"}`. */
   updateChannel?: string | null;
   /** The global shortcut the host registered; absent or null: none. */

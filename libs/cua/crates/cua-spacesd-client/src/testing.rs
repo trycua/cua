@@ -313,6 +313,9 @@ pub struct MockState {
     /// Report pointer input as delivered in the foreground without moving
     /// the pointer (input that reached nothing).
     pub pointer_not_moved: AtomicBool,
+    /// Accept `StartProcess` and never send a message on its stream (a
+    /// relay stream that went silent).
+    pub silent_start: AtomicBool,
     /// The `desktop` component `Health` reports (none: an older spacesd).
     pub desktop_health: Mutex<Option<pb::ComponentHealth>>,
     /// Extra supported features reported by `GetCapabilities` (for clients
@@ -1593,6 +1596,11 @@ impl ProcessService for Svc {
     ) -> Result<tonic::Response<Self::StartProcessStream>, Status> {
         let req = req.into_inner();
         self.0.started.lock().unwrap().push(req.clone());
+        if self.0.silent_start.load(Ordering::Relaxed) {
+            return Ok(tonic::Response::new(Box::pin(
+                futures_util::stream::pending(),
+            )));
+        }
         let cfg = req.config.clone().unwrap_or_default();
         if cfg.command == "sudo" {
             self.0.sudo_runs.fetch_add(1, Ordering::Relaxed);

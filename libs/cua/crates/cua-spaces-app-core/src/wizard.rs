@@ -1061,14 +1061,9 @@ pub fn ttl_text(ttl_hours: u32) -> String {
     }
 }
 
-/// The connected clouds the wizard offers: none while the "Your cloud"
-/// experiment is off (they stay connected; the wizard does not show them).
+/// The connected clouds the wizard offers: all of them.
 pub fn offered_clouds(env: &WizardEnv) -> &[ConnectedCloud] {
-    if env.experiments.your_cloud {
-        &env.clouds
-    } else {
-        &[]
-    }
+    &env.clouds
 }
 
 /// The connected cloud the wizard creates in: the chosen one, else the
@@ -1687,13 +1682,13 @@ pub struct WizardEnv {
     #[serde(default)]
     pub storage: Option<LocalStorage>,
     /// The user's connected clouds (`cloud_status`), for "Your cloud"
-    /// (offered only while its experiment is on: [`offered_clouds`]).
+    /// ([`offered_clouds`]).
     #[serde(default)]
     pub clouds: Vec<ConnectedCloud>,
     /// The user's machines that provide Spaces (`Spaces.hosts()`).
     #[serde(default)]
     pub hosts: Vec<SpaceHost>,
-    /// Settings, Experiments ("Your cloud" decides whether clouds show).
+    /// Settings, Experiments (the daemon-enforced switches the wizard reads).
     #[serde(default)]
     pub experiments: crate::experiments::Experiments,
     /// The GPU option of each runtime that has one (the SDK's
@@ -3028,7 +3023,6 @@ fn field(id: &str, label: &str) -> WizardField {
 /// The current step's fields, in order.
 fn fields(
     state: &WizardState,
-    env: &WizardEnv,
     image_error: Option<String>,
     placement_error: Option<String>,
     name_error: Option<String>,
@@ -3079,12 +3073,7 @@ fn fields(
             },
         ]
         .into_iter()
-        // Connecting a cloud only with the "Your cloud" experiment.
-        .chain(
-            env.experiments
-                .your_cloud
-                .then(|| field("connect-cloud", CONNECT_CLOUD_LABEL)),
-        )
+        .chain(std::iter::once(field("connect-cloud", CONNECT_CLOUD_LABEL)))
         .collect(),
         // The cloud picks the machine: no sliders, its facts only.
         (WizardMode::Create, 1) if yours => vec![],
@@ -4163,7 +4152,6 @@ pub fn view_on(state: &WizardState, env: &WizardEnv, os: SpaceOs) -> WizardView 
         },
         fields: fields(
             state,
-            env,
             image_error,
             placement_error_for_fields,
             name_error,
@@ -4412,7 +4400,6 @@ mod tests {
     fn with_cloud(e: &WizardEnv) -> WizardEnv {
         WizardEnv {
             clouds: vec![aws()],
-            experiments: your_cloud_on(),
             ..e.clone()
         }
     }
@@ -4431,26 +4418,9 @@ mod tests {
             storage: None,
             clouds: vec![],
             hosts: vec![],
-            experiments: your_cloud_off(),
+            experiments: Default::default(),
             gpus: None,
             name_seed: Some(0x2a),
-        }
-    }
-
-    /// The "Your cloud" experiment turned off (the tests' baseline; it is on
-    /// by default).
-    fn your_cloud_off() -> crate::experiments::Experiments {
-        crate::experiments::Experiments {
-            your_cloud: false,
-            ..Default::default()
-        }
-    }
-
-    /// The "Your cloud" experiment on.
-    fn your_cloud_on() -> crate::experiments::Experiments {
-        crate::experiments::Experiments {
-            your_cloud: true,
-            ..Default::default()
         }
     }
 
@@ -5507,10 +5477,9 @@ mod tests {
     }
 
     #[test]
-    fn a_linked_cloud_is_in_run_on_by_default() {
+    fn a_linked_cloud_is_in_run_on() {
         let e = WizardEnv {
             clouds: vec![aws()],
-            experiments: Default::default(),
             ..env()
         };
         let v = view(&initial(&e), &e);
@@ -5518,15 +5487,6 @@ mod tests {
             menu(&v).last().map(String::as_str),
             Some("aws [clouds] AWS \u{b7} us-west-2"),
             "a fresh install lists the linked cloud"
-        );
-        let off = WizardEnv {
-            experiments: your_cloud_off(),
-            ..e
-        };
-        assert!(
-            !menu(&view(&initial(&off), &off))
-                .iter()
-                .any(|m| m.starts_with("aws "))
         );
     }
 
@@ -5541,18 +5501,8 @@ mod tests {
         assert!(v.placements[0].selected && v.placements[0].enabled);
         assert_eq!(v.placement_id, "local");
         assert!(
-            v.fields.iter().all(|f| f.id != "connect-cloud"),
-            "Connect a cloud only with the experiment"
-        );
-        let with = WizardEnv {
-            experiments: your_cloud_on(),
-            ..e.clone()
-        };
-        assert!(
-            view(&s, &with)
-                .fields
-                .iter()
-                .any(|f| f.id == "connect-cloud")
+            v.fields.iter().any(|f| f.id == "connect-cloud"),
+            "Connect a cloud is always offered"
         );
         let picked = reduce(
             &s,
@@ -5573,7 +5523,6 @@ mod tests {
     fn a_connected_cloud_runs_what_it_offers_with_its_cost_and_lifetime() {
         let e = WizardEnv {
             clouds: vec![aws()],
-            experiments: your_cloud_on(),
             ..env()
         };
         let s = initial(&e);
@@ -5669,7 +5618,6 @@ mod tests {
         let e = WizardEnv {
             default_location: Location::Yours,
             clouds: vec![aws(), gcp],
-            experiments: your_cloud_on(),
             ..env()
         };
         let s = initial(&e);
@@ -5960,11 +5908,11 @@ mod tests {
         );
     }
 
-    /// The "Run on" menu lists This Mac and your machines; your clouds
-    /// unless "Your cloud" was turned off (it is on by default). Disabled machines say why.
+    /// The "Run on" menu lists This Mac, your machines and your clouds.
+    /// Disabled machines say why.
     #[test]
-    fn the_run_on_menu_lists_every_machine_and_clouds_unless_the_experiment_is_off() {
-        let mut e = WizardEnv {
+    fn the_run_on_menu_lists_every_machine_and_cloud() {
+        let e = WizardEnv {
             hosts: hosts(),
             clouds: vec![aws()],
             ..env()
@@ -5979,41 +5927,27 @@ mod tests {
                 "host:m-mini [hosts] Mac mini",
                 "host:lab [hosts] lab",
                 "host:m-studio [hosts] Studio (offline) (disabled)",
-            ],
-            "no cloud with the experiment off, though AWS is connected"
+                "aws [clouds] AWS \u{b7} us-west-2",
+            ]
         );
         let studio = &v.placements[4];
         assert_eq!(studio.detail, "Studio is offline.");
         assert_eq!(v.placements[0].detail, AUTO_PLACEMENT_DETAIL);
         assert_eq!(v.placements[2].detail, "Through the Cua relay");
         assert_eq!(v.placements[3].detail, "Over Tailscale or your network");
-        // A cloud cannot be chosen while hidden, nor an offline machine.
-        let s1 = reduce(&s, &WizardAction::ChoosePlacement { on: "aws".into() }, &e);
-        assert_eq!(s1.placement, Location::Local);
+        // An offline machine cannot be chosen.
         let s1 = reduce(
-            &s1,
+            &s,
             &WizardAction::ChoosePlacement {
                 on: "host:m-studio".into(),
             },
             &e,
         );
         assert_eq!(s1.placement, Location::Local);
-        // With the experiment: the connected cloud, after the machines.
-        e.experiments = your_cloud_on();
-        let v = view(&s, &e);
-        assert_eq!(
-            menu(&v).last().map(String::as_str),
-            Some("aws [clouds] AWS \u{b7} us-west-2")
-        );
-        assert_eq!(v.placements.len(), 6);
-        // Off again while AWS is chosen: back on this Mac, AWS untouched.
+        // The connected cloud can.
         let on_aws = reduce(&s, &WizardAction::ChoosePlacement { on: "aws".into() }, &e);
         assert_eq!(view(&on_aws, &e).placement_id, "aws");
-        e.experiments = your_cloud_off();
-        let v = view(&on_aws, &e);
-        assert_eq!(v.placement_id, "local");
-        assert_eq!(create_args(&v.plan).on, "local");
-        assert_eq!(e.clouds.len(), 1, "still connected");
+        assert_eq!(v.placements.len(), 6);
     }
 
     /// Auto ("the least-loaded of your machines") is offered only while you
@@ -6919,7 +6853,17 @@ mod tests {
         let ids = |s: &WizardState| -> Vec<String> {
             view(s, &e).fields.into_iter().map(|f| f.id).collect()
         };
-        assert_eq!(ids(&s), ["os", "image", "placement", "kind", "runtime"]);
+        assert_eq!(
+            ids(&s),
+            [
+                "os",
+                "image",
+                "placement",
+                "kind",
+                "runtime",
+                "connect-cloud"
+            ]
+        );
         let s1 = reduce(&s, &WizardAction::Next, &e);
         assert_eq!(
             ids(&s1),

@@ -19,6 +19,7 @@ import type { DataAdapter } from "@/bridge/adapter";
 import { threadOpAvailable } from "@/bridge/ops/thread";
 
 import { isMachineDesktop, orderSpaces, spaceState } from "./spaces";
+import { thisComputerLabel, thisComputerText } from "./host-labels";
 
 export type TaskEnding = "kept" | "thrown";
 
@@ -232,7 +233,7 @@ export type TaskWhere =
   | { kind: "new"; os: SpaceOs; on?: NewSpaceOn }
   | { kind: "space"; space: Space }
   | { kind: "this-mac" }
-  | { kind: "agent"; fresh?: boolean }
+  | { kind: "agent"; /** Continue in the agent's existing Home; absent, a message starts a new Home. */ reuse?: boolean }
   | { kind: "machine"; machine: { id: string; name: string } };
 
 /** Another of your computers a new Space is made on ("New Space on Studio Mac mini"); absent: this Mac. */
@@ -307,6 +308,13 @@ export function pickableSpaces(spaces: readonly Space[] | undefined): Space[] {
   return orderSpaces((spaces ?? []).filter((s) => !isMachineDesktop(s) && spaceState(s) === "running"));
 }
 
+/** Your other computers whose desktops are online to run a job on: never this computer's own (`this-mac` is its row). */
+export function otherComputerDesktops(spaces: readonly Space[] | undefined, thisMachineId: string | null): Space[] {
+  return (spaces ?? []).filter(
+    (s) => isMachineDesktop(s) && s.id !== THIS_MAC_ID && s.status !== "local" && s.id !== `relay:${thisMachineId}` && s.status === "running" && spaceState(s) === "running",
+  );
+}
+
 /** Where a job runs unless you pick: a new Linux computer on this Mac (or the first kind this Mac can make). */
 export function defaultWhere(kinds: readonly NewKind[]): TaskWhere {
   const ok = kinds.filter((k) => !k.blocked);
@@ -362,8 +370,8 @@ export function useThisMacConfirmed(): boolean {
 /** What the person is told, once, before a task works on this Mac itself. */
 export function thisMacConfirmText(agent: string): { title: string; description: string } {
   return {
-    title: "Work on this Mac?",
-    description: `${agent} will work directly on this Mac, with your files and apps. It can't be undone by throwing the computer away. ${agent} doesn't ask before each step here, the same as on a new computer.`,
+    title: `Work on ${thisComputerText()}?`,
+    description: `${agent} will work directly on ${thisComputerText()}, with your files and apps. It can't be undone by throwing the computer away. ${agent} doesn't ask before each step here, the same as on a new computer.`,
   };
 }
 
@@ -388,16 +396,16 @@ export function startErrorView(raw: string, agent: string): StartErrorView {
   const e = raw.toLowerCase();
   if (e.includes("isn't shared"))
     return {
-      title: "This Mac isn't set up for tasks yet",
-      body: "Turn on sharing for this Mac on the Machines page, then try again. Or pick another machine.",
+      title: `${thisComputerLabel()} isn't set up for tasks yet`,
+      body: `Turn on sharing for ${thisComputerText()} on the Machines page, then try again. Or pick another machine.`,
       action: "set-up-host",
       retry: true,
     };
   // A task from before this Mac was turned into its own Space id: trying again now works.
   if (e.includes(`"${THIS_MAC_ID}"`))
-    return { title: "Couldn't start on this Mac", body: "Try again to start it on this Mac, or pick another machine.", action: "retry", retry: true };
+    return { title: `Couldn't start on ${thisComputerText()}`, body: `Try again to start it on ${thisComputerText()}, or pick another machine.`, action: "retry", retry: true };
   if (/cloud has ended/.test(e))
-    return { title: "That computer is no longer available", body: "Cua Cloud has ended. Pick a computer on this Mac instead.", action: "change-computer", retry: false };
+    return { title: "That computer is no longer available", body: `Cua Cloud has ended. Pick a computer on ${thisComputerText()} instead.`, action: "change-computer", retry: false };
   if (/more than one|ambiguous/.test(e))
     return { title: "More than one computer has that name", body: "Pick the one you mean.", action: "change-computer", retry: false };
   if (/not found|no such|unknown space|add_space/.test(e))
@@ -407,7 +415,7 @@ export function startErrorView(raw: string, agent: string): StartErrorView {
   if (/not running|space_off|stopped|suspended|offline|unreachable|timed out|timeout|connection|refused/.test(e))
     return { title: "Couldn't reach that computer", body: "Check it's on, then try again. Or pick another one.", action: "retry", retry: true };
   if (/disk|space left|no room|memory|quota|limit/.test(e))
-    return { title: "This Mac doesn't have room for a new computer", body: "Free some disk space or turn off a computer you're not using, then try again.", action: "retry", retry: true };
+    return { title: `${thisComputerLabel()} doesn't have room for a new computer`, body: "Free some disk space or turn off a computer you're not using, then try again.", action: "retry", retry: true };
   return { title: `${agent} couldn't start`, body: "Something went wrong. Try again, or pick another machine.", action: "retry", retry: true };
 }
 

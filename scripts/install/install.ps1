@@ -477,15 +477,19 @@ function Find-Artifact($Manifest, [string]$Component, [string]$Platform, [string
     return $hit[0]
 }
 
-# The exact Sigstore identity that must have signed a manifest entry: the CLI
-# by cd-cua-sdk.yml at refs/tags/cua-sdk-v<version>, the app by
-# cd-cua-spaces.yml at refs/tags/cua-spaces-v<version>.
+# The exact Sigstore identities, one of which must have signed a manifest
+# entry: the CLI by cd-cua-sdk.yml at refs/tags/cua-sdk-v<version>, the app by
+# cd-cua-spaces.yml at refs/tags/cua-spaces-v<version>, or at refs/heads/main
+# for a release rebuilt from main (rebuild_tag; only a run that passed every
+# release gate signs).
 function Get-CosignIdentity($Entry) {
     $v = [string]$Entry.version
     if ($v -notmatch '^[0-9A-Za-z.+-]+$') { return $null }
     switch ([string]$Entry.component) {
-        'cli' { return "https://github.com/$Repo/.github/workflows/cd-cua-sdk.yml@refs/tags/cua-sdk-v$v" }
-        'app' { return "https://github.com/$Repo/.github/workflows/cd-cua-spaces.yml@refs/tags/cua-spaces-v$v" }
+        'cli' { return @("https://github.com/$Repo/.github/workflows/cd-cua-sdk.yml@refs/tags/cua-sdk-v$v") }
+        'app' { return @(
+                "https://github.com/$Repo/.github/workflows/cd-cua-spaces.yml@refs/tags/cua-spaces-v$v",
+                "https://github.com/$Repo/.github/workflows/cd-cua-spaces.yml@refs/heads/main") }
         default { return $null }
     }
 }
@@ -502,12 +506,16 @@ function Test-Signature([string]$File, $Entry, [string]$ManifestUrl) {
     $cosign = Get-Command cosign -ErrorAction SilentlyContinue
     if (-not $ok -and $Entry.PSObject.Properties['cosign_bundle'] -and $cosign) {
         Get-Remote (Resolve-ArtifactUrl $Entry.cosign_bundle $ManifestUrl) "$File.sigstore.json" $ManifestUrl
-        $identity = Get-CosignIdentity $Entry
-        if (-not $identity) { Stop-Install "no release identity for $(Split-Path -Leaf $File) in the manifest" }
-        & $cosign.Source verify-blob --bundle "$File.sigstore.json" `
-            --certificate-identity $identity `
-            --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' $File *> $null
-        if ($LASTEXITCODE -ne 0) { Stop-Install "cosign signature check failed for $(Split-Path -Leaf $File)" }
+        $identities = Get-CosignIdentity $Entry
+        if (-not $identities) { Stop-Install "no release identity for $(Split-Path -Leaf $File) in the manifest" }
+        $verified = $false
+        foreach ($identity in $identities) {
+            & $cosign.Source verify-blob --bundle "$File.sigstore.json" `
+                --certificate-identity $identity `
+                --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' $File *> $null
+            if ($LASTEXITCODE -eq 0) { $verified = $true; break }
+        }
+        if (-not $verified) { Stop-Install "cosign signature check failed for $(Split-Path -Leaf $File)" }
         $ok = $true
     }
     if (-not $ok -and $RequireSignature) {

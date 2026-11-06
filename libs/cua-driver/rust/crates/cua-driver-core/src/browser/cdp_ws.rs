@@ -230,6 +230,19 @@ async fn read_loop(mut read: SplitStream<WsStream>, demux: Arc<Demux>) {
                     }
                     _ => {}
                 }
+            } else if event.method == "Target.detachedFromTarget" {
+                // A detached session reports nothing more, its dialog close
+                // included, and cannot resolve the dialog, so its record
+                // would lock the tab for good. Drop it; the next attach
+                // subscribes a new session.
+                if let Some(session_id) = event.params.get("sessionId").and_then(Value::as_str) {
+                    demux.session_targets.lock().unwrap().remove(session_id);
+                    demux
+                        .dialogs
+                        .lock()
+                        .unwrap()
+                        .retain(|_, dialog| dialog.session_id != session_id);
+                }
             }
             demux
                 .subscribers
@@ -1361,6 +1374,39 @@ mod tests {
             .await
             .unwrap();
         assert!(conn.dialog_state("page-target").is_none());
+    }
+
+    #[tokio::test]
+    async fn a_detached_dialog_session_drops_its_dialog_record() {
+        let server = MockCdpServer::start(StdArc::new(|call| match call.method.as_str() {
+            "Dialog.open" => MockReply::ok(json!({})).with_events(vec![MockEvent {
+                method: "Page.javascriptDialogOpening".into(),
+                session_id: call.session_id.clone(),
+                params: json!({ "type": "alert" }),
+            }]),
+            "Target.detachFromTarget" => MockReply::ok(json!({})).with_events(vec![MockEvent {
+                method: "Target.detachedFromTarget".into(),
+                session_id: None,
+                params: json!({ "sessionId": call.params["sessionId"], "targetId": "page-target" }),
+            }]),
+            _ => MockReply::ok(json!({})),
+        }))
+        .await;
+        let conn = CdpConnection::connect(&server.ws_url()).await.unwrap();
+        conn.register_dialog_session("tab-session-a", "page-target");
+        conn.call(Some("tab-session-a"), "Dialog.open", json!({}))
+            .await
+            .unwrap();
+        assert!(conn.dialog_state("page-target").is_some());
+        conn.call(
+            None,
+            "Target.detachFromTarget",
+            json!({ "sessionId": "tab-session-a" }),
+        )
+        .await
+        .unwrap();
+        assert!(conn.dialog_state("page-target").is_none());
+        assert!(!conn.has_dialog_session("page-target"));
     }
 
     #[tokio::test]

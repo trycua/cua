@@ -348,7 +348,8 @@ jobs:
 
           # Installers no feed names any more go (the fixed-name downloads stay).
           mkdir -p "$RUNNER_TEMP/live"
-          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "*.yml" --pattern "$APPCAST" \
+          . "$GITHUB_WORKSPACE/.github/scripts/retry.sh"
+          retry gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "*.yml" --pattern "$APPCAST" \
             --dir "$RUNNER_TEMP/live" --clobber
           keep="$(python3 -I - "$RUNNER_TEMP/live" <<'PY'
           import os, re, sys, urllib.parse
@@ -381,14 +382,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          # Never Latest, always a prerelease.
-          latest="$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name 2>/dev/null || true)"
-          [ "$latest" != "$TAG" ] || { echo "::error::$TAG is the repository's Latest release"; exit 1; }
+          # Always a prerelease. Nothing reads the repo-wide Latest.
           [ "$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isPrerelease --jq .isPrerelease)" = true ] ||
             { echo "::error::$TAG is not a prerelease"; exit 1; }
           # Every installer a nightly feed names, and every fixed-name download, resolves.
           dir="$RUNNER_TEMP/check"; mkdir -p "$dir"
-          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "*.yml" --pattern "$APPCAST" --dir "$dir" --clobber
+          . "$GITHUB_WORKSPACE/.github/scripts/retry.sh"
+          retry gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "*.yml" --pattern "$APPCAST" --dir "$dir" --clobber
           [ ! -f "$dir/$APPCAST" ] || python3 -I .github/scripts/sparkle_feed.py nightly "$dir/$APPCAST"
           urls="$( { grep -hoE 'https://[^"'"'"' ]+' "$dir"/*.yml 2>/dev/null || true; \
                      grep -hoE 'url="https://[^"]+"' "$dir"/*.xml 2>/dev/null | sed 's/^url="//; s/"$//' || true; } | sort -u)"
@@ -397,7 +397,12 @@ jobs:
           bad=0
           while read -r url; do
             [ -n "$url" ] || continue
-            code="$(curl -s -o /dev/null -w '%{http_code}' -L -r 0-0 "$url")"
+            # GitHub's release CDN answers 5xx for minutes at a time: retry with a pause.
+            for attempt in 1 2 3 4 5; do
+              code="$(curl -s -o /dev/null -w '%{http_code}' -L -r 0-0 --max-time 60 "$url" || true)"
+              case "$code" in 200|206|404) break ;; esac
+              sleep $((15 * attempt))
+            done
             if [ "$code" = 200 ] || [ "$code" = 206 ]; then echo "ok $url"; else echo "::error::$url answers $code"; bad=1; fi
           done <<<"$urls"
           # The stable feeds are not this workflow's: they hold no nightly.

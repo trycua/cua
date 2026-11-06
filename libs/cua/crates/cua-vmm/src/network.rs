@@ -4,7 +4,9 @@
 //! **Presets.** [`NetworkPreset::Internet`] is the default: the public
 //! internet and the Space's own tree. [`NetworkPreset::None`] reaches
 //! nothing. [`NetworkPreset::Localhost`] and [`NetworkPreset::Lan`] add the
-//! host's loopback (on listed ports) or the local network.
+//! host's loopback (on listed ports) or the local network, each on top of
+//! `internet` and independent of the other; [`NetworkPreset::LocalhostLan`]
+//! (`localhost+lan`) adds both.
 //! [`NetworkPreset::Custom`] starts from `internet` or `none` and adds the
 //! user's allow and deny lists. [`NetworkPreset::Unprotected`] opens
 //! everything but the platform denies.
@@ -67,6 +69,11 @@ pub enum NetworkPreset {
     Localhost,
     /// `internet`, plus the local network.
     Lan,
+    /// `internet`, plus the host's loopback on listed ports and the local
+    /// network: `localhost` and `lan` together. The two extras are
+    /// independent; this is the one preset that has both.
+    #[serde(rename = "localhost+lan")]
+    LocalhostLan,
     /// `internet` or `none`, plus the user's allow and deny lists.
     Custom,
     /// Everything but the platform denies.
@@ -75,11 +82,12 @@ pub enum NetworkPreset {
 
 impl NetworkPreset {
     /// Every preset.
-    pub const ALL: [NetworkPreset; 6] = [
+    pub const ALL: [NetworkPreset; 7] = [
         NetworkPreset::Internet,
         NetworkPreset::None,
         NetworkPreset::Localhost,
         NetworkPreset::Lan,
+        NetworkPreset::LocalhostLan,
         NetworkPreset::Custom,
         NetworkPreset::Unprotected,
     ];
@@ -91,6 +99,7 @@ impl NetworkPreset {
             NetworkPreset::None => "none",
             NetworkPreset::Localhost => "localhost",
             NetworkPreset::Lan => "lan",
+            NetworkPreset::LocalhostLan => "localhost+lan",
             NetworkPreset::Custom => "custom",
             NetworkPreset::Unprotected => "unprotected",
         }
@@ -103,25 +112,53 @@ impl NetworkPreset {
             NetworkPreset::None => "No network",
             NetworkPreset::Localhost => "Allow this computer's localhost",
             NetworkPreset::Lan => "Allow my local network",
+            NetworkPreset::LocalhostLan => "Allow this computer's localhost and my local network",
             NetworkPreset::Custom => "Custom",
             NetworkPreset::Unprotected => "No protection",
         }
     }
 
+    /// Whether the preset opens the host's loopback (on listed ports):
+    /// `localhost`, alone or with `lan`.
+    pub fn opens_localhost(self) -> bool {
+        matches!(self, NetworkPreset::Localhost | NetworkPreset::LocalhostLan)
+    }
+
+    /// Whether the preset opens the local network: `lan`, alone or with
+    /// `localhost`.
+    pub fn opens_lan(self) -> bool {
+        matches!(self, NetworkPreset::Lan | NetworkPreset::LocalhostLan)
+    }
+
+    /// The `internet` preset plus the extras asked for: `internet`,
+    /// `localhost`, `lan` or `localhost+lan`.
+    pub fn with_extras(localhost: bool, lan: bool) -> NetworkPreset {
+        match (localhost, lan) {
+            (false, false) => NetworkPreset::Internet,
+            (true, false) => NetworkPreset::Localhost,
+            (false, true) => NetworkPreset::Lan,
+            (true, true) => NetworkPreset::LocalhostLan,
+        }
+    }
+
     /// Parses a preset word (case-insensitive). `default` is `internet`,
-    /// as the old `network="default"` was.
+    /// as the old `network="default"` was; `lan+localhost` is
+    /// `localhost+lan`.
     pub fn parse(text: &str) -> Result<NetworkPreset, PolicyError> {
         let t = text.trim().to_ascii_lowercase();
         if t == "default" {
             return Ok(NetworkPreset::Internet);
+        }
+        if t == "lan+localhost" {
+            return Ok(NetworkPreset::LocalhostLan);
         }
         NetworkPreset::ALL
             .into_iter()
             .find(|p| p.as_str() == t)
             .ok_or_else(|| {
                 PolicyError(format!(
-                    "network {text:?}: expected internet, none, localhost, lan, custom or \
-                     unprotected"
+                    "network {text:?}: expected internet, none, localhost, lan, localhost+lan, \
+                     custom or unprotected"
                 ))
             })
     }
@@ -359,7 +396,7 @@ impl NetworkSettings {
                     .into(),
             ));
         }
-        let localhost = self.preset == NetworkPreset::Localhost;
+        let localhost = self.preset.opens_localhost();
         if !localhost && (!self.localhost_ports.is_empty() || self.all_localhost_ports) {
             return Err(PolicyError(
                 "localhost ports go with the localhost preset".into(),
@@ -470,19 +507,21 @@ impl NetworkSettings {
     /// and anything stricter.
     pub fn widenings(&self) -> Vec<String> {
         let mut out = Vec::new();
-        match self.preset {
-            NetworkPreset::Lan => out.push("Allows your local network".to_string()),
-            NetworkPreset::Localhost if self.all_localhost_ports => {
-                out.push("Allows this computer's localhost (all ports)".to_string())
-            }
-            NetworkPreset::Localhost => out.push(format!(
-                "Allows this computer's localhost (ports {})",
-                join_ports(&self.localhost_ports)
-            )),
-            NetworkPreset::Unprotected => {
-                out.push("No protection: allows everything but cloud metadata".to_string())
-            }
-            NetworkPreset::Internet | NetworkPreset::None | NetworkPreset::Custom => {}
+        if self.preset.opens_localhost() {
+            out.push(if self.all_localhost_ports {
+                "Allows this computer's localhost (all ports)".to_string()
+            } else {
+                format!(
+                    "Allows this computer's localhost (ports {})",
+                    join_ports(&self.localhost_ports)
+                )
+            });
+        }
+        if self.preset.opens_lan() {
+            out.push("Allows your local network".to_string());
+        }
+        if self.preset == NetworkPreset::Unprotected {
+            out.push("No protection: allows everything but cloud metadata".to_string());
         }
         if let Ok(rules) = self.custom.split_domains().0.parse() {
             for r in rules.rules.iter().filter(|r| r.accept) {
@@ -511,10 +550,10 @@ impl NetworkSettings {
 
     fn preset_summary(&self) -> String {
         match self.preset {
-            NetworkPreset::Localhost if self.all_localhost_ports => {
+            p if p.opens_localhost() && self.all_localhost_ports => {
                 format!("{} (all ports)", self.preset.label())
             }
-            NetworkPreset::Localhost => format!(
+            p if p.opens_localhost() => format!(
                 "{} (ports {})",
                 self.preset.label(),
                 join_ports(&self.localhost_ports)
@@ -546,7 +585,7 @@ impl NetworkSettings {
             },
             ..Default::default()
         };
-        if preset == P::Localhost {
+        if preset.opens_localhost() {
             let both_all = self.all_localhost_ports && parent.all_localhost_ports;
             out.all_localhost_ports = both_all;
             if !both_all {
@@ -558,7 +597,9 @@ impl NetworkSettings {
                     _ => mine.into_iter().filter(|p| theirs.contains(p)).collect(),
                 };
                 if out.localhost_ports.is_empty() {
-                    out.preset = P::Internet;
+                    // No port both list: the localhost extra goes, a shared
+                    // `lan` extra stays.
+                    out.preset = NetworkPreset::with_extras(false, preset.opens_lan());
                 }
             }
         }
@@ -620,7 +661,7 @@ impl NetworkSettings {
 }
 
 fn ports_of(s: &NetworkSettings) -> Vec<u16> {
-    if s.preset == NetworkPreset::Localhost {
+    if s.preset.opens_localhost() {
         s.localhost_ports.clone()
     } else {
         Vec::new()
@@ -641,9 +682,14 @@ fn meet(a: &NetworkSettings, b: &NetworkSettings) -> (NetworkPreset, NetworkPres
     match (pa, pb) {
         (P::Unprotected, other) | (other, P::Unprotected) => (other, P::Internet),
         (P::Custom, _) | (_, P::Custom) => (P::Custom, P::Internet),
-        (P::Lan, P::Lan) => (P::Lan, P::Internet),
-        (P::Localhost, P::Localhost) => (P::Localhost, P::Internet),
-        (P::Internet | P::Lan | P::Localhost, _) => (P::Internet, P::Internet),
+        // The two extras are independent: the meet keeps those both open.
+        (P::Internet | P::Lan | P::Localhost | P::LocalhostLan, _) => (
+            P::with_extras(
+                pa.opens_localhost() && pb.opens_localhost(),
+                pa.opens_lan() && pb.opens_lan(),
+            ),
+            P::Internet,
+        ),
         (P::None, _) => (P::None, P::Internet),
     }
 }
@@ -844,7 +890,7 @@ pub fn vm_rules(
 /// daemon's. Every port is refused for VMs: a namespace forwards listed
 /// ports only. Empty for any other preset or under the old default.
 pub fn vm_localhost_ports(settings: Option<&NetworkSettings>) -> Result<Vec<u16>, PolicyError> {
-    let Some(s) = settings.filter(|s| s.preset == NetworkPreset::Localhost) else {
+    let Some(s) = settings.filter(|s| s.preset.opens_localhost()) else {
         return Ok(Vec::new());
     };
     if Mode::from_env() == Mode::Legacy {
@@ -1056,7 +1102,7 @@ pub fn compile_mode(
     }
     // 3. The host: only `localhost` opens its aliases, on its ports.
     if !unprotected {
-        if settings.preset == NetworkPreset::Localhost {
+        if settings.preset.opens_localhost() {
             for ip in dedup(ctx.host_aliases.iter().copied()) {
                 r.push(Rule {
                     ports: (!settings.all_localhost_ports)
@@ -1090,7 +1136,7 @@ pub fn compile_mode(
         for n in default_reserved() {
             r.push(Rule::net(n, false, Reason::DefaultReserved));
         }
-        if settings.preset != NetworkPreset::Lan {
+        if !settings.preset.opens_lan() {
             for n in default_lan() {
                 r.push(Rule::net(n, false, Reason::DefaultLan));
             }

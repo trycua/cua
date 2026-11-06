@@ -191,7 +191,7 @@ export const DEMO_ARGS: { [K in OpName]: OpArgs<K> } = {
   "presence.leave": { handle: "p1" },
   "spaces.fixRuntime": { action: "start-docker" },
   "about.get": {},
-  "about.set": { channel: "beta" },
+  "about.set": { channel: "nightly" },
   "about.checkNow": {},
   "update.get": {},
   "update.install": {},
@@ -248,6 +248,7 @@ export const DEMO_ARGS: { [K in OpName]: OpArgs<K> } = {
   "driver.setApp": { app: "codex", on: true },
   "driver.setup": {},
   "driver.update": {},
+  "driver.permissions": {},
 };
 
 /** Operations the demo host refuses on purpose, and why. */

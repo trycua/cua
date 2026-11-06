@@ -52,6 +52,7 @@ import { Key, KeyInputSchema, MouseButton, ScrollUnit } from "./gen/cua/env/v1/c
 import { clients, transportFor, type Credentials, type FetchLike } from "./grpc";
 import type { RelayClient } from "./relay";
 import { directory, placementOffered, type ComputerRow } from "../../core/views";
+import { isNotEnrolled, reachKind, withProvidingNotes, type ReachProblem, type WaitingApproval } from "./reach";
 import { mapDirectory, type SpaceMachine } from "./spaces";
 
 export interface LiveDeps {
@@ -59,6 +60,8 @@ export interface LiveDeps {
   /** The account's access token (refreshing) and this device's relay session. */
   token(): Promise<string>;
   deviceSession(): Promise<string | null>;
+  /** Whether the relay says this phone is waiting for approval (the device manager's last answer), with its code. */
+  approval?(): WaitingApproval | null;
   /** The reader's account id (`sub`), for roles. */
   me(): string | null;
   /** This phone's relay device id (`dev_...`), for push registration. */
@@ -173,19 +176,23 @@ export function createLiveBackend(d: LiveDeps): Backend {
     async listSpaces(): Promise<SpaceList> {
       const token = await d.token();
       const session = await d.deviceSession();
+      // A phone that is waiting for approval has no session: the relay refuses every per Space call, so none is made.
+      let waiting: WaitingApproval | null = d.approval?.() ?? null;
       const rows = await d.relay.machines(token, session);
       // The account's phones are part of the pool; not being able to list them never hides the rest.
       const devices = await d.relay.devices(token, session).catch(() => []);
       // The pool, by the desktop's rules (the app core): a computer is never a Space.
       const view = directory({ machines: rows, devices, error: "", reading: false, now: now() });
       if (!view) throw new Error("This build cannot list your Spaces yet: the app core is not linked.");
-      computersKnown = view.computers;
-      const m = mapDirectory(rows, view.computers, view.spaces);
+      const computers = withProvidingNotes(view.computers);
+      computersKnown = computers;
+      const m = mapDirectory(rows, computers, view.spaces);
       machinesKnown = m.machines;
       spaces = new Map(m.spaces.map((s) => [idOf(s), s]));
       hosts = new Set(rows.map((r) => r.id));
       const inputs: SpaceInput[] = [];
       let missed = 0;
+      const problems = new Map<string, ReachProblem>();
       // Bounded fan-out: a few Spaces at a time, so a long list does not open a hundred calls.
       const queue = [...m.spaces];
       const work = async () => {
@@ -194,14 +201,20 @@ export function createLiveBackend(d: LiveDeps): Backend {
           let members: AgentMember[] = [];
           let last: ThreadEntry | null = null;
           let unread = 0;
-          if (s.machine.online || machine.online) {
+          if (!waiting && (s.machine.online || machine.online)) {
             try {
               members = agentMembersFromTool(await tool(s, "agent_members", agentMembersArgs({ spaceId: idOf(s), overview: true }))).members;
               const p = threadPageFromTool(await tool(s, "thread_read", threadReadArgs({ spaceId: idOf(s), limit: 10 })));
               last = [...p.entries].reverse().find((e) => e.kind === "message" || e.kind === "approval") ?? null;
               unread = p.unread;
-            } catch {
-              missed++;
+            } catch (e) {
+              // This phone's own approval is not the computer's fault: it is said once, apart from the computers.
+              if (isNotEnrolled(e)) waiting = waiting ?? { code: null };
+              else {
+                missed++;
+                const kind = reachKind(e);
+                if (kind && !problems.has(s.hostId)) problems.set(s.hostId, { computerId: s.hostId, computer: machine.name, kind });
+              }
             }
           }
           inputs.push({
@@ -223,7 +236,7 @@ export function createLiveBackend(d: LiveDeps): Backend {
         }
       };
       await Promise.all([work(), work(), work(), work()]);
-      return { ...summarize(inputs, m.machines, true, missed > 0), computers: view.computers, words: { reachingLine: view.reachingLine, empty: view.empty } };
+      return { ...summarize(inputs, m.machines, true, missed > 0), problems: [...problems.values()], waiting, computers, words: { reachingLine: view.reachingLine, empty: view.empty } };
     },
     async readThread(spaceId, o): Promise<ThreadPage> {
       const s = spaceOf(spaceId);

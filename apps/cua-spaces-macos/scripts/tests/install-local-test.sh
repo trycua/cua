@@ -381,6 +381,9 @@ run() {
         # The own signing Keychain of the script is off unless a test turns it on:
         # these tests shim the login Keychain.
         export CUA_LOCAL_SIGNING_OWN_KEYCHAIN="${TEST_OWN_KEYCHAIN:-0}"
+        # The shipped default is ad hoc (no Keychain); the older tests cover the
+        # stable certificate path, so they opt into it unless a test sets TEST_SIGN.
+        export CUA_LOCAL_SIGN="${TEST_SIGN:-stable}"
         # CI is set on a CI runner and not on a Mac. The web UI check expects
         # CI=true only where install-local.sh sets it (pnpm install), so drop it.
         unset SUDO_USER CUA_DRIVER_LOCAL_SIGNING_KEYCHAIN CUA_DRIVER_LOCAL_SIGNING_IDENTITY CUA_CHANNEL CUA_HOME CUA_ENV \
@@ -596,6 +599,17 @@ check "an ad hoc cdhash change resets the Local TCC rows, and only those" \
     'grep >/dev/null "^tccutil reset ScreenCapture com.trycua.spaces.macos.local\$" "$SHIM_LOG" && ! grep "^tccutil" "$SHIM_LOG" | grep -v "com.trycua.spaces.macos.local"'
 check "Stable files are byte-identical after a rebuild" '[ "$(snap_stable)" = "$STABLE_BEFORE" ]'
 check "nothing but the Local app changed" '[ "$(snap_all | grep -v "Cua Spaces Local.app")" = "$(printf "%s\n" "$ALL_BEFORE" | grep -v "Cua Spaces Local.app")" ]'
+
+echo "== default signing is ad hoc: no Keychain is asked for anything =="
+reset_fixture
+: > "$SHIM_LOG"
+run env -u CUA_LOCAL_SIGN "$FAKE_SCRIPTS/install-local.sh" --no-launch
+check "a plain install-local.sh run succeeds (status $RC)" '[ "$RC" = 0 ]'
+check "a plain run makes no security(1) call that reads or writes a Keychain item (only the read-only list-keychains)" \
+    '! grep "^security " "$SHIM_LOG" | grep -v "^security list-keychains " | grep >/dev/null .'
+check "a plain run says it signed ad hoc" 'printf "%s" "$OUT" | grep -i >/dev/null "ad hoc"'
+check "the ad hoc signature verifies" '/usr/bin/codesign --verify --deep --strict "$LOCAL_APP" 2>/dev/null'
+reset_fixture
 
 # --- 3. Launch and --prefix ----------------------------------------------------------------
 

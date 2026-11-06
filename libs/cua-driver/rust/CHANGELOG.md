@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.40.2](https://github.com/trycua/cua/compare/cua-driver-rs-v0.40.1...cua-driver-rs-v0.40.2) (2026-11-06)
+
+
+### Bug Fixes
+
+* **cua-driver:** start the composited X11 overlay test's reads once its desktop is on screen ([#6512](https://github.com/trycua/cua/issues/6512)) ([566a4ce](https://github.com/trycua/cua/commit/566a4ce655905c0d28065f4f534e221e92916e24))
+
 ## [0.40.1](https://github.com/trycua/cua/compare/cua-driver-rs-v0.40.0...cua-driver-rs-v0.40.1) (2026-11-06)
 
 

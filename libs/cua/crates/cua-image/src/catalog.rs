@@ -301,6 +301,9 @@ mod tests {
             let tag = e.reference.rsplit(':').next().unwrap();
             assert!(crate::windows::lookup(tag).is_some_and(|v| v.builds_locally()));
             assert!(require_published(e.reference.clone()).is_ok());
+            // The create path reads the guest OS from here: a local build has
+            // no image metadata to say it is Windows.
+            assert_eq!(catalog_os(&e.reference).as_deref(), Some("windows"));
         }
         // The published default is pulled, never built.
         assert!(find("ghcr.io/trycua/windows:2022").is_some_and(|e| e.local_build.is_none()));

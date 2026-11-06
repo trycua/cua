@@ -179,6 +179,8 @@ pub trait Installer: Send + Sync {
 /// come after it and start the readiness clock).
 fn progress(detail: impl Into<String>, fraction: f64) {
     use cua_vmm::progress::{Phase, Progress, report};
+    let detail: String = detail.into();
+    tracing::info!(%detail, fraction, "windows build progress");
     report(
         Progress::phase(Phase::Pulling)
             .detail(detail)

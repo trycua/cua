@@ -3066,6 +3066,15 @@ impl Spaces {
         let mut create = CreateOptions::new(ProviderKind::Local, &image).name(&name);
         create.kind = opts.kind;
         create.runtime = opts.runtime.clone();
+        // The catalog knows the guest OS of its images. A Windows disk built
+        // on this computer carries no metadata the runtime could read it from
+        // (on arm64 nothing is sniffed from the partitions), so without this
+        // it would boot as a Linux guest: no TPM, the wrong display and disk.
+        if create.os.is_empty()
+            && let Some(os) = cua_image::catalog::catalog_os(&image)
+        {
+            create.os = os;
+        }
         create.cpus = opts.cpus.unwrap_or(crate::local_load::DEFAULT_CPUS);
         create.memory_mb = opts
             .memory_mb

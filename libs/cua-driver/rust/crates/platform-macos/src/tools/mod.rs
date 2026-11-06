@@ -307,6 +307,89 @@ pub(crate) fn background_refusal_result(
     .with_structured(structured)
 }
 
+/// Structured `element_disabled` refusal: the control reported
+/// `AXEnabled=false` immediately before dispatch and nothing was sent.
+///
+/// Some controls (menu and toolbar items) are disabled only while their app is
+/// in the background, so a background call into an app that is not frontmost
+/// gets a foreground escalation. Otherwise fronting cannot help.
+pub(crate) fn element_disabled_result(
+    pid: i32,
+    window_id: u32,
+    disabled: &crate::input::ax_actions::ElementDisabled,
+    foreground: bool,
+) -> cua_driver_core::protocol::ToolResult {
+    let suggest_foreground = !foreground && crate::apps::frontmost_pid() != Some(pid);
+    disabled_refusal(pid, window_id, disabled, suggest_foreground)
+}
+
+/// The `element_disabled` refusal for a dispatch error that is an
+/// [`crate::input::ax_actions::ElementDisabled`], or `None` for any other error.
+pub(crate) fn element_disabled_error(
+    pid: i32,
+    window_id: u32,
+    error: &anyhow::Error,
+    foreground: bool,
+) -> Option<cua_driver_core::protocol::ToolResult> {
+    let disabled = error.downcast_ref::<crate::input::ax_actions::ElementDisabled>()?;
+    Some(element_disabled_result(
+        pid, window_id, disabled, foreground,
+    ))
+}
+
+fn disabled_refusal(
+    pid: i32,
+    window_id: u32,
+    disabled: &crate::input::ax_actions::ElementDisabled,
+    suggest_foreground: bool,
+) -> cua_driver_core::protocol::ToolResult {
+    let mut text = disabled.to_string();
+    let mut structured = serde_json::json!({
+        "code": crate::input::ax_actions::ElementDisabled::CODE,
+        "effect": "refused",
+        "pid": pid,
+        "window_id": window_id,
+        "action": disabled.action,
+    });
+    if suggest_foreground {
+        let reason = "the app is in the background, which disables some controls";
+        text.push_str(&format!(
+            ". If {reason}, retry with delivery_mode:\"foreground\""
+        ));
+        structured["escalation"] =
+            serde_json::json!({ "recommended": "foreground", "reason": reason });
+    }
+    cua_driver_core::protocol::ToolResult::error(text).with_structured(structured)
+}
+
+/// Re-read `AXEnabled` on a token target and refuse a disabled one before any
+/// cursor or input work. The snapshot's `enabled` can be stale. A foreground
+/// call into an app that is not frontmost skips the read: activation can
+/// enable the control, so a read before activation would refuse a live target.
+/// Such a caller must read it again after activation, immediately before input.
+pub(crate) async fn refuse_if_disabled(
+    pid: i32,
+    window_id: u32,
+    element: &crate::ax::snapshot::RetainedElement,
+    action: &'static str,
+    foreground: bool,
+) -> Option<cua_driver_core::protocol::ToolResult> {
+    if foreground && crate::apps::frontmost_pid() != Some(pid) {
+        return None;
+    }
+    let element = element.clone();
+    let checked = tokio::task::spawn_blocking(move || {
+        crate::input::ax_actions::ensure_ax_action_enabled(element.as_ptr(), action)
+    })
+    .await
+    .ok()?;
+    let error = checked.err()?;
+    let disabled = error.downcast_ref::<crate::input::ax_actions::ElementDisabled>()?;
+    Some(element_disabled_result(
+        pid, window_id, disabled, foreground,
+    ))
+}
+
 /// Hint shown with every `windowserver_connection_invalid` refusal.
 pub(crate) const WINDOWSERVER_INVALID_HINT: &str = "This daemon runs without its own app-bundle identity (a bare `cua-driver serve`), so macOS gives it no valid WindowServer connection and every no-raise focus step fails. Run the app-bundle daemon: `cua-driver permissions grant`.";
 
@@ -1433,5 +1516,38 @@ mod windowserver_refusal_tests {
             .as_str()
             .unwrap()
             .contains("cua-driver permissions grant"));
+    }
+}
+
+#[cfg(test)]
+mod element_disabled_tests {
+    use super::*;
+    use crate::input::ax_actions::ElementDisabled;
+
+    fn disabled() -> ElementDisabled {
+        ElementDisabled {
+            action: "set_value".into(),
+        }
+    }
+
+    #[test]
+    fn background_app_refusal_is_coded_and_escalates_to_foreground() {
+        let result = disabled_refusal(42, 7, &disabled(), true);
+        assert_eq!(result.is_error, Some(true));
+        let structured = result.structured_content.expect("structured");
+        assert_eq!(structured["code"], "element_disabled");
+        assert_eq!(structured["effect"], "refused");
+        assert_eq!(structured["action"], "set_value");
+        assert_eq!(structured["window_id"], 7);
+        // run_steps' foreground_fallback keys off this field.
+        assert_eq!(structured["escalation"]["recommended"], "foreground");
+    }
+
+    #[test]
+    fn frontmost_app_refusal_does_not_suggest_fronting() {
+        let result = disabled_refusal(42, 7, &disabled(), false);
+        let structured = result.structured_content.expect("structured");
+        assert_eq!(structured["code"], "element_disabled");
+        assert!(structured.get("escalation").is_none(), "{structured}");
     }
 }

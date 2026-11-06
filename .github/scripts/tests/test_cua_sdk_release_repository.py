@@ -77,7 +77,8 @@ def test_spaces_builds_use_the_release_config_overlay() -> None:
 def test_spaces_signing_fails_closed_only_on_trycua_cua() -> None:
     wf = workflow("cd-cua-spaces.yml")
     assert wf["env"]["REQUIRE_SIGNING"] == (
-        "${{ github.repository == 'trycua/cua' && startsWith(github.ref, 'refs/tags/') }}"
+        "${{ github.repository == 'trycua/cua' && (startsWith(github.ref, 'refs/tags/') "
+        "|| (github.event_name == 'workflow_dispatch' && inputs.rebuild_tag != '')) }}"
     )
     gate = step("cd-cua-spaces.yml", "build-macos", "Signing configuration")["run"]
     assert 'elif [ "$REQUIRE_SIGNING" = true ]; then' in gate
@@ -204,7 +205,7 @@ def test_spaces_sparkle_cutover_is_off_and_guarded() -> None:
 
 def test_spaces_prereleases_never_become_latest_or_move_canonical_feeds() -> None:
     publish = step("cd-cua-spaces.yml", "installer-manifest", "Publish the release")["run"]
-    assert "--prerelease --latest=false" in publish
+    assert "--latest=false" in publish and "--prerelease" in publish
     assert "UNSIGNED" in publish
     feeds = step("cd-cua-spaces.yml", "installer-manifest", "Update the rolling feeds")
     assert feeds["if"] == "needs.electron-plan.outputs.prerelease != 'true' || github.repository != 'trycua/cua'"

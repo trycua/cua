@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.12.2](https://github.com/trycua/cua/compare/cua-spacesd-v0.12.1...cua-spacesd-v0.12.2) (2026-11-06)
+
+
+### Bug Fixes
+
+* **cua-driver:** find a macOS app by any name it ships, without guessing ([#6657](https://github.com/trycua/cua/issues/6657)) ([22d8c1b](https://github.com/trycua/cua/commit/22d8c1b9867fa2cf1dff32e28d577f953144266f))
+* **cua-spacesd:** wait for each VideoToolbox frame on macOS so encoder surfaces do not pile up ([#6621](https://github.com/trycua/cua/issues/6621)) ([d81ab3e](https://github.com/trycua/cua/commit/d81ab3e3b291029100f83b9273f49ca03c6dad25))
+
+## [0.12.1](https://github.com/trycua/cua/compare/cua-spacesd-v0.12.0...cua-spacesd-v0.12.1) (2026-11-05)
+
+
+### Bug Fixes
+
+* **spacesd:** volume attach no longer deadlocks a 1 vCPU Space ([#6565](https://github.com/trycua/cua/issues/6565)) ([8a708ab](https://github.com/trycua/cua/commit/8a708abf6a60b76894df8d95ff94450436a3032f))
+* **windows:** no firewall prompt for cua and cua-spacesd, and a real publisher name ([#6558](https://github.com/trycua/cua/issues/6558)) ([0d196ad](https://github.com/trycua/cua/commit/0d196ad7669848951b7f5fa336af01e3f571d1f8))
+
 ## [0.12.0](https://github.com/trycua/cua/compare/cua-spacesd-v0.11.0...cua-spacesd-v0.12.0) (2026-11-05)
 
 

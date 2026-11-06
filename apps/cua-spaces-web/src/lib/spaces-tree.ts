@@ -90,6 +90,17 @@ export function computerSpaceId(m: Pick<Machine, "id" | "current" | "relayId" | 
   return m.connection === "direct" ? null : `relay:${m.id}`;
 }
 
+/** The relay's own online answer per computer Space id, from the resolved default's order (This Mac is not the relay's to answer). */
+export function buildRelayOnline(order: readonly { space: string; online: boolean; role?: string }[] | undefined): Map<string, boolean> {
+  return new Map((order ?? []).filter((o) => o.role !== "here").map((o) => [o.space, o.online] as const));
+}
+
+/** Whether the relay calls this computer offline, whatever the computer list still counts. */
+export function relayCallsOffline(m: Pick<Machine, "id" | "current" | "relayId" | "connection">, relayOnline: ReadonlyMap<string, boolean> | undefined): boolean {
+  const id = computerSpaceId(m);
+  return id !== null && !m.current && relayOnline?.get(id) === false;
+}
+
 /**
  * A computer row left in the Spaces list after its machine went (Remove from
  * account, or a machine the relay forgot): `relay:<machine>` named by its raw
@@ -201,7 +212,7 @@ export function buildSpacesTree({ spaces, machines, defaultSpace, running = new 
     const kids = listed.filter((s) => !placed.has(s.id) && (m.current ? s.provider === "local" || (m.relayId !== undefined && s.host === m.relayId) : s.host === m.id));
     // This Mac before it is shared, with no Space on it: not a Space yet (the empty state offers "Add this Mac").
     if (m.current && !id && !m.connection && kids.length === 0) continue;
-    const online = reachable(m) && !(id !== null && !m.current && relayOnline?.get(id) === false);
+    const online = reachable(m) && !relayCallsOffline(m, relayOnline);
     const isDefault = key === defaultKey;
     const word = online ? "Online" : m.online && m.notSharing ? "Not sharing" : offlineWord(m, now);
     const node: TreeNode = {

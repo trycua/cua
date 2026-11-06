@@ -10,8 +10,10 @@
 //! Nothing here writes, caches or sends anything. Each agent's store stays
 //! the source of truth, and every format is read defensively: a record,
 //! column or line this crate does not know is skipped, a file it cannot read
-//! is left out, and large files are read from their head and tail only when
-//! listing.
+//! is left out. Large files are read from their head and tail only when
+//! listing, and a chat's messages are read from the end of its file, within a
+//! byte and time budget, so a chat of any size opens at once (older messages
+//! are left unread: `earlier_omitted` is then at least 1).
 
 use std::path::{Path, PathBuf};
 
@@ -261,15 +263,19 @@ pub fn history(
     };
     let root = roots.root(agent).ok_or_else(not_found)?;
     let max = max_messages.unwrap_or(HISTORY_DEFAULT).clamp(1, 5000);
-    let (thread, messages) = match agent {
-        Agent::ClaudeCode => claude::history(root, id)?,
-        Agent::Codex => codex::history(root, id)?,
-        Agent::Hermes => hermes::history(root, id)?,
+    // Agent replies in a row are merged into one afterwards, so more than
+    // `max` are read; only the newest part of a chat is ever read.
+    let cap = max.saturating_mul(4).saturating_add(64);
+    let (thread, messages, unread) = match agent {
+        Agent::ClaudeCode => claude::history(root, id, cap)?,
+        Agent::Codex => codex::history(root, id, cap)?,
+        Agent::Hermes => hermes::history(root, id, cap)?,
     }
     .ok_or_else(not_found)?;
     let mut messages = text::merge_agent_runs(messages);
-    let earlier_omitted = messages.len().saturating_sub(max);
-    messages.drain(..earlier_omitted);
+    // A lower bound when older messages were left unread: at least one more.
+    let earlier_omitted = messages.len().saturating_sub(max).max(usize::from(unread));
+    messages.drain(..messages.len().saturating_sub(max));
     for m in &mut messages {
         let (t, cut) = text::cut_bytes(&m.text, MESSAGE_MAX_BYTES);
         m.cut |= cut;
@@ -342,6 +348,38 @@ mod tests {
         assert_eq!(
             Agent::Codex.resume_command("x"),
             vec!["codex".to_string(), "resume".into(), "x".into()]
+        );
+    }
+
+    /// A chat of hundreds of megabytes opens by reading the end of its file
+    /// (CUA-3548: the whole file was read and every message kept).
+    #[test]
+    fn a_huge_chat_is_read_from_its_end_only() {
+        use std::io::Write;
+        let home = tempfile::tempdir().unwrap();
+        let id = "0b1e5c2a-1111-4222-8333-944445555666";
+        let path = home
+            .path()
+            .join(format!(".claude/projects/-Users-sam-kettle/{id}.jsonl"));
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let mut f = std::io::BufWriter::new(std::fs::File::create(&path).unwrap());
+        let pad = "x".repeat(200_000);
+        for n in 0..400 {
+            writeln!(f, r#"{{"type":"user","uuid":"u{n}","cwd":"/k","timestamp":"2026-11-04T10:00:00Z","message":{{"role":"user","content":"q{n}"}}}}"#).unwrap();
+            writeln!(f, r#"{{"type":"user","uuid":"t{n}","message":{{"role":"user","content":[{{"type":"tool_result","content":"{pad}"}}]}}}}"#).unwrap();
+            writeln!(f, r#"{{"type":"assistant","uuid":"a{n}","message":{{"role":"assistant","content":[{{"type":"text","text":"a{n}"}}]}}}}"#).unwrap();
+        }
+        drop(f);
+        assert!(std::fs::metadata(&path).unwrap().len() > 70 * 1024 * 1024);
+        let roots = Roots::under_home(home.path());
+        lines::REV_BYTES_READ.with(|c| c.set(0));
+        let h = history(&roots, Agent::ClaudeCode, id, Some(30)).unwrap();
+        assert_eq!(h.messages.len(), 30);
+        assert_eq!(h.messages.last().unwrap().text, "a399");
+        assert!(h.earlier_omitted > 0);
+        // The listing's head and tail edges are on top of this; the reader itself stays in its budget.
+        assert!(
+            lines::REV_BYTES_READ.with(|c| c.get()) <= lines::HISTORY_BUDGET.bytes + 512 * 1024
         );
     }
 }

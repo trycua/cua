@@ -122,9 +122,7 @@ Started, ⌘⇧Space and the app's notifications (a Space that came up: its page
 a machine asking to be added: Machines; an agent: Agents). A Space's
 desktop opens in its own native window (video stays native).
 
-There is no native main window and no switch back: the "Use classic UI"
-setting is gone. An install that had it on (`AppSettings.new_ui` false) opens
-the web UI like every other one (`settings::resolve_new_ui` is always on).
+There is no native main window and no switch back.
 
 - Release: `scripts/build-app.sh` copies the web build (`apps/cua-spaces-web/dist`,
   or `CUA_WEBUI_DIST`) to `Contents/Resources/WebUI`, served at

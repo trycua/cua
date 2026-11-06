@@ -108,8 +108,11 @@ class ScopeTests(unittest.TestCase):
 
     def test_full_build_everywhere_else(self):
         for lane in LANES:
-            for event in ("push", "schedule", "workflow_dispatch"):
+            for event in ("schedule", "workflow_dispatch"):
                 self.assertTrue(run(lane, ["docs/a.md"], event=event), (lane, event))
+            # A push to main is scoped like a pull request; no listing fails closed.
+            self.assertFalse(run(lane, ["docs/a.md"], event="push"), lane)
+            self.assertTrue(run(lane, [], event="push"), lane)
             self.assertTrue(run(lane, ["docs/a.md"], labels=["ci:full"]), lane)
             self.assertFalse(run(lane, ["docs/a.md"], labels=["agent", "bug"]), lane)
 
@@ -156,7 +159,8 @@ class ScopeTests(unittest.TestCase):
             self.assertTrue(run_typescript([f]), f)
         for f in ("docs/content/docs/other.mdx", "apps/cua-spaces/src/a.ts", "examples/infinite-canvas-swift/Package.swift"):
             self.assertFalse(run_typescript([f]), f)
-        self.assertTrue(run_typescript(["docs/a.md"], event="push"))
+        self.assertFalse(run_typescript(["docs/a.md"], event="push"))
+        self.assertTrue(run_typescript([], event="push"))
         self.assertTrue(run_typescript(["docs/a.md"], labels=["ci:full"]))
         self.assertTrue(run_typescript([]))
 
@@ -197,6 +201,8 @@ class CommandTests(unittest.TestCase):
         out = self.scope("openkoalabot", ["docs/other.md"], EVENT="pull_request")
         self.assertEqual((out["run"], out["typescript"]), ("false", "false"))
         out = self.scope("openkoalabot", ["docs/other.md"], EVENT="push")
+        self.assertEqual((out["run"], out["typescript"]), ("false", "false"))
+        out = self.scope("openkoalabot", ["docs/other.md"], EVENT="schedule")
         self.assertEqual((out["run"], out["typescript"]), ("true", "true"))
         out = self.scope("infinite-canvas", ["docs/other.md"], EVENT="pull_request", LABELS='["ci:full"]')
         self.assertEqual(out, {"run": "true", "reason": "ci:full label"})
@@ -270,7 +276,7 @@ class WorkflowWiringTests(unittest.TestCase):
             self.assertIn("./.github/actions/setup-protoc", uses)
             self.assertIn("./.github/actions/rust-cache", uses)
 
-    def test_full_run_on_main_and_nightly(self):
+    def test_scoped_on_main_full_nightly(self):
         for lane in LANES:
             on = self.load(lane)[True]
             self.assertEqual(on["push"], {"branches": ["main"]})

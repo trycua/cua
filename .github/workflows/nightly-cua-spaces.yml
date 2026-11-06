@@ -382,9 +382,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          # Never Latest, always a prerelease.
-          latest="$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name 2>/dev/null || true)"
-          [ "$latest" != "$TAG" ] || { echo "::error::$TAG is the repository's Latest release"; exit 1; }
+          # Always a prerelease. Nothing reads the repo-wide Latest.
           [ "$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isPrerelease --jq .isPrerelease)" = true ] ||
             { echo "::error::$TAG is not a prerelease"; exit 1; }
           # Every installer a nightly feed names, and every fixed-name download, resolves.

@@ -20,6 +20,10 @@ public struct HostSetupFailure: Equatable, Sendable {
         case signedOut
         /// macOS did not start the host service (launchd).
         case service
+        /// The account already has computers: a new one is added from one
+        /// of them, or with a pairing code (the relay's rule for an
+        /// account with phone support).
+        case addFromAnotherComputer
         case other
     }
 
@@ -107,6 +111,8 @@ public struct HostSetupFailure: Equatable, Sendable {
 
         if any(["launchctl", "launchd", "host service", "bootstrap failed"]) { return .service }
 
+        if any(["add computers from a computer you already added"]) { return .addFromAnotherComputer }
+
         if word("401") || any([
             "signed out", "not signed in", "sign in again", "please sign in", "unauthenticated", "unauthorized",
             "login required", "not logged in", "session expired", "token expired", "invalid token",
@@ -142,6 +148,10 @@ public struct HostSetupFailure: Equatable, Sendable {
             return ("Couldn\u{2019}t start the Cua host service",
                     "macOS didn\u{2019}t start the service your other machines connect to. Try again; "
                         + "if it keeps failing, restart this Mac.")
+        case .addFromAnotherComputer:
+            return ("Add this Mac from another computer",
+                    "Your account already has computers, so a new Mac is added from one of them or with a pairing code. "
+                        + "Open Cua Spaces on one of your computers and add this Mac from there.")
         case .other:
             return ("Couldn\u{2019}t set up this Mac for access",
                     "Something went wrong. Try again, or open Details to see what happened.")

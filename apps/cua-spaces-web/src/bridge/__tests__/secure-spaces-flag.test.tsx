@@ -98,7 +98,7 @@ describe("Secure Spaces (Labs) on", () => {
     ));
     await waitFor(() => expect(document.querySelector("[data-security-rows]")).not.toBeNull());
     expect(document.querySelectorAll("[data-network-row]").length).toBe(2);
-    expect(document.querySelector("[data-network-row]")?.textContent).toContain("This computer's localhost");
+    expect(document.querySelector("[data-network-row]")?.textContent).toContain("Internet and this computer's services");
   });
 
   it("opens the Network sheet from the row", async () => {

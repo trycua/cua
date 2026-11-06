@@ -16,6 +16,15 @@
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 
+# Shared retry policy: per-fetch retries and timeouts (also see the inline
+# bootstraps in cd-rust-cua-driver.yml and cd-cua-sdk.yml).
+mkdir -p /etc/apt/apt.conf.d
+cat > /etc/apt/apt.conf.d/80-cua-retries <<'EOF'
+Acquire::Retries "5";
+Acquire::http::Timeout "30";
+Acquire::https::Timeout "30";
+EOF
+
 PACKAGES=(
   git ca-certificates curl unzip xz-utils file binutils
   build-essential pkg-config perl make cmake nasm clang
@@ -30,9 +39,10 @@ install_packages() {
 }
 
 if install_packages; then
+  echo "apt mirror used: image default (deb.debian.org)" >&2
   exit 0
 fi
-echo "falling back to archive.debian.org sources" >&2
+echo "::warning::default mirror failed after retries; falling back to archive.debian.org" >&2
 cat > /etc/apt/sources.list <<'EOF'
 deb [check-valid-until=no] http://archive.debian.org/debian bullseye main
 deb [check-valid-until=no] http://archive.debian.org/debian bullseye-updates main
@@ -40,3 +50,4 @@ deb [check-valid-until=no] http://archive.debian.org/debian-security bullseye-se
 EOF
 rm -f /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources
 install_packages -o Acquire::Check-Valid-Until=false -o Acquire::Retries=5
+echo "apt mirror used: archive.debian.org (fallback)" >&2

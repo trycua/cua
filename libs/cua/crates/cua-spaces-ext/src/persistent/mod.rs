@@ -112,6 +112,10 @@ pub enum SpaceState {
     Suspended,
     /// A cloud Space we released on pause; resume creates it again.
     Released,
+    /// The Space was deleted (or is not registered any more): the agent is
+    /// paused for good and nothing supervises it. Its home stays in the Cua
+    /// Volume; `agent rm` forgets the record.
+    Gone,
 }
 
 /// What resume needs to create a released cloud Space again.
@@ -490,6 +494,9 @@ pub(crate) struct Live {
     joining: HashMap<String, u64>,
     /// Agent-to-agent wakes per Space ([`wake`]).
     wake: wake::LiveWake,
+    /// Local Spaces some agent names that the registry does not have, and
+    /// since when ([`Persistent::reconcile_gone`]).
+    missing: HashMap<String, std::time::Instant>,
     /// When a standby run may be started again after one that failed, by member.
     standby_retry: HashMap<String, std::time::Instant>,
     /// The credential hash an agent's run would start with now, by agent
@@ -517,6 +524,9 @@ pub struct Persistent {
     /// The supervisor serves each member's queued tasks on a task of its
     /// own instead of inside its pass (see [`Persistent::detached`]).
     detach_dispatch: bool,
+    /// Errors of the per-agent passes that ran on their own tasks (detached),
+    /// handed to the next pass's report.
+    detached_errors: Arc<std::sync::Mutex<Vec<String>>>,
 }
 
 /// What each working session has said so far this turn, by `<space>/<name>#<session>`; shared by every
@@ -568,6 +578,7 @@ impl Persistent {
             owner,
             admins,
             detach_dispatch: false,
+            detached_errors: Arc::default(),
         }
     }
 
@@ -766,6 +777,111 @@ impl Persistent {
             all.retain(|a| a.name != name)
         })?;
         Ok(rec)
+    }
+
+    /// A Space was deleted: the persistent agents that lived in it go with
+    /// it, as `agent rm` would (run stopped, open tasks failed, routines and
+    /// standby sessions dropped, record forgotten; the agent's home stays
+    /// in the Cua Volume). An agent whose Space is only being replaced is
+    /// kept: a cloud Space released on pause (`recreate`) and a durable
+    /// member, whose copy the coordinator renews. Returns the names removed.
+    pub async fn space_deleted(&self, space: &str) -> Vec<String> {
+        let Ok(all) = self.list() else {
+            return vec![];
+        };
+        let mut removed = vec![];
+        for rec in all.into_iter().filter(|r| {
+            r.space == space
+                && r.recreate.is_none()
+                && r.space_state != SpaceState::Released
+                && !r.policy.durable
+                && r.durable_space.is_none()
+        }) {
+            match tokio::time::timeout(Duration::from_secs(30), self.remove(&rec.name)).await {
+                Ok(Ok(_)) => {
+                    tracing::info!(agent = %rec.name, space, "persistent agents: removed an agent whose Space was deleted");
+                    removed.push(rec.name);
+                }
+                Ok(Err(e)) => {
+                    tracing::warn!(agent = %rec.name, space, "persistent agents: could not remove an agent of a deleted Space: {e}")
+                }
+                Err(_) => {
+                    tracing::warn!(agent = %rec.name, space, "persistent agents: removing an agent of a deleted Space timed out")
+                }
+            }
+        }
+        removed
+    }
+
+    /// Marks `gone` the agents whose local Space is no longer registered
+    /// (deleted behind the supervisor's back: the sandbox CLI, an older
+    /// daemon, a crash between the delete and its cleanup), once the Space
+    /// has been missing for `grace` (a Space deleted and created again under
+    /// its name is not missed). A gone agent is paused and unsupervised, its
+    /// runs, sessions and routines are dropped, its home stays in the Cua
+    /// Volume, and `agent rm` forgets it. Returns the names marked.
+    pub async fn reconcile_gone(&self, grace: Duration) -> Vec<String> {
+        let (Ok(all), Ok(known)) = (self.list(), self.spaces.list()) else {
+            return vec![];
+        };
+        let known: std::collections::HashSet<String> = known.into_iter().map(|s| s.id).collect();
+        let now = Instant::now();
+        let mut due = vec![];
+        {
+            let mut live = self.live.lock().await;
+            live.missing.retain(|space, _| {
+                all.iter()
+                    .any(|r| &r.space == space && r.space_state != SpaceState::Gone)
+                    && !known.contains(space)
+            });
+            for rec in all.iter().filter(|r| {
+                r.space_state != SpaceState::Gone
+                    && r.space.starts_with("local:")
+                    && !known.contains(&r.space)
+                    && r.recreate.is_none()
+                    && !identity::is_external(r)
+            }) {
+                let since = *live.missing.entry(rec.space.clone()).or_insert(now);
+                if now.duration_since(since) >= grace {
+                    due.push(rec.clone());
+                }
+            }
+        }
+        let mut marked = vec![];
+        for rec in due {
+            let name = rec.name.clone();
+            if let Err(e) = self.fail_open_tasks(&rec, &format!("{name}'s Space was deleted")) {
+                tracing::warn!(agent = %name, "open tasks not closed: {e}");
+            }
+            self.release_lease(&name).await;
+            if let Ok(store) = self.routine_store().await {
+                let mut s = store.lock().await;
+                for r in s.routines_for(&name) {
+                    s.delete(&r.id);
+                }
+            }
+            let why = format!(
+                "its Space {} was deleted; its home stays in the Cua Volume (`agent rm {name}` forgets the agent)",
+                rec.space
+            );
+            let done = self.update(&name, |r| {
+                r.space_state = SpaceState::Gone;
+                r.paused = true;
+                r.run_id = None;
+                r.activity = None;
+                r.session_runs.clear();
+                r.relaunch = false;
+                r.last_error = Some(why.clone());
+            });
+            match done {
+                Ok(()) => {
+                    tracing::info!(agent = %name, space = %rec.space, "persistent agents: {why}");
+                    marked.push(name);
+                }
+                Err(e) => tracing::warn!(agent = %name, "could not mark an agent gone: {e}"),
+            }
+        }
+        marked
     }
 
     fn session(&self, rec: &AgentRecord) -> cua_volume::Session {
@@ -1331,6 +1447,11 @@ impl Persistent {
         let t0 = Instant::now();
         let rec = self.get(name)?;
         self.not_external(&rec)?;
+        if rec.space_state == SpaceState::Gone {
+            return Err(Error::invalid(format!(
+                "{name}'s Space was deleted; remove the agent with `agent rm {name}`"
+            )));
+        }
         if rec.paused {
             return Ok(PauseReport {
                 space_state: rec.space_state,
@@ -1387,12 +1508,18 @@ impl Persistent {
                             ))
                         })?;
                     self.forget_space(&rec.space).await;
-                    self.spaces.delete(&rec.space).await?;
+                    // Recorded before the delete: a Space's deletion removes
+                    // the agents that lived in it, except one waiting to be
+                    // created again ([`Persistent::space_deleted`]).
                     let recreate = Recreate {
                         image,
                         name: claim.clone(),
                     };
                     self.update(name, |r| r.recreate = Some(recreate))?;
+                    if let Err(e) = self.spaces.delete(&rec.space).await {
+                        let _ = self.update(name, |r| r.recreate = None);
+                        return Err(e);
+                    }
                     report.space_state = SpaceState::Released;
                 }
                 // Someone's own machine or an added address: only the agent
@@ -1430,6 +1557,11 @@ impl Persistent {
             ..Default::default()
         };
         match rec.space_state {
+            SpaceState::Gone => {
+                return Err(Error::invalid(format!(
+                    "{name}'s Space was deleted; its home stays in the Cua Volume. Remove the agent with `agent rm {name}`"
+                )));
+            }
             SpaceState::Running => {}
             SpaceState::Suspended => {
                 if let SpaceId::Local { name: sandbox } = self.spaces.resolve(&rec.space)? {
@@ -1779,6 +1911,7 @@ impl Persistent {
             }
             Err(e) => report.errors.push(format!("routines: {e}")),
         }
+        self.reconcile_gone(GONE_GRACE).await;
         let records = match self.list() {
             Ok(r) => r,
             Err(e) => {
@@ -1789,27 +1922,21 @@ impl Persistent {
         // A Space someone stopped or suspended is left alone: its durable
         // members wait for it to run again instead of waking it.
         let off = self.spaces_off();
-        for rec in records
-            .iter()
-            .filter(|r| !r.paused && !(r.policy.durable && off.contains(&r.space)))
-            .flat_map(|r| r.session_views())
-            .filter(|r| r.run_id.is_some())
-        {
-            let name = match rec.k() {
-                1 => rec.name.clone(),
-                k => format!("{} session {k}", rec.name),
-            };
-            let view = rec.clone();
-            match tokio::time::timeout(AGENT_TICK_BUDGET, self.tick_agent(rec, &mut report)).await {
-                Ok(Ok(())) => {}
-                Ok(Err(e)) => {
-                    let msg = e.to_string();
-                    let _ = self.update_in(&view, |r| r.last_error = Some(msg.clone()));
-                    report.errors.push(format!("{name}: {msg}"));
-                }
-                Err(_) => report
-                    .errors
-                    .push(format!("{name}: supervisor pass timed out")),
+        if self.detach_dispatch {
+            // A posted message is handed to its member first, ahead of
+            // anything below that can wait on a Space; each session is read
+            // on a task of its own (see `serve_sessions`).
+            self.dispatch(&mut report).await;
+            self.serve_sessions(&records, &off, &mut report);
+        } else {
+            let live_sessions: Vec<AgentRecord> = records
+                .iter()
+                .filter(|r| !r.paused && !(r.policy.durable && off.contains(&r.space)))
+                .flat_map(|r| r.session_views())
+                .filter(|r| r.run_id.is_some())
+                .collect();
+            for rec in live_sessions {
+                self.tick_one(rec, &mut report).await;
             }
         }
         // Durable members whose run is lost with their Space.
@@ -1829,14 +1956,126 @@ impl Persistent {
             }
         }
         self.tick_setups(&mut report).await;
-        self.tick_standby(&mut report).await;
+        self.tick_standby(&mut report, false).await;
         // Thread tasks for members that are free (after the turns that
         // ended above closed theirs).
-        self.dispatch(&mut report).await;
+        if !self.detach_dispatch {
+            self.dispatch(&mut report).await;
+        }
         self.tick_watched(&mut report).await;
         self.tick_watched_jobs(&mut report).await;
         self.tick_mirror(&mut report).await;
         report
+    }
+
+    /// Starts a task for every live session whose last one has finished:
+    /// each is read on its own, so a Space that does not answer (a minute,
+    /// at worst) holds up only its own agent. While an agent talks to its
+    /// bridge (its tool list at start, then every tool call) its session is
+    /// read every quarter second instead of every pass, so a call is
+    /// answered at once; ten quiet seconds go back to the pass.
+    fn serve_sessions(
+        &self,
+        records: &[AgentRecord],
+        off: &std::collections::BTreeSet<String>,
+        report: &mut TickReport,
+    ) {
+        report.errors.append(
+            &mut self
+                .detached_errors
+                .lock()
+                .unwrap_or_else(|p| p.into_inner()),
+        );
+        let live_sessions = records
+            .iter()
+            .filter(|r| !r.paused && !(r.policy.durable && off.contains(&r.space)))
+            .flat_map(|r| r.session_views())
+            .filter(|r| r.run_id.is_some());
+        for rec in live_sessions {
+            let key = format!("{}#{}\u{0}tick", rec.name, rec.k());
+            let Some(guard) = phases::ServingGuard::take(&self.dir, &key) else {
+                continue; // the earlier pass for it is still running
+            };
+            let me = self.clone();
+            tokio::spawn(async move {
+                let _guard = guard;
+                // While the agent is talking to its bridge (its tool list at
+                // start, then every tool call) the session is read every
+                // quarter second instead of every pass, so a call is
+                // answered at once; ten quiet seconds go back to the pass.
+                let (name, k) = (rec.name.clone(), rec.k());
+                let mut rec = rec;
+                let mut fast_until: Option<Instant> = None;
+                loop {
+                    let mut r = TickReport::default();
+                    me.tick_one(rec.clone(), &mut r).await;
+                    if r.bridged > 0 {
+                        fast_until = Some(Instant::now() + Duration::from_secs(10));
+                    }
+                    if !r.errors.is_empty() {
+                        me.detached_errors
+                            .lock()
+                            .unwrap_or_else(|p| p.into_inner())
+                            .append(&mut r.errors);
+                        break;
+                    }
+                    if !fast_until.is_some_and(|t| Instant::now() < t) {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(250)).await;
+                    match me.get(&name) {
+                        Ok(fresh) if !fresh.paused && fresh.session(k).run_id.is_some() => {
+                            rec = fresh.session(k);
+                        }
+                        _ => break,
+                    }
+                }
+            });
+        }
+    }
+
+    /// One session's pass, within its budget.
+    async fn tick_one(&self, rec: AgentRecord, report: &mut TickReport) {
+        let name = match rec.k() {
+            1 => rec.name.clone(),
+            k => format!("{} session {k}", rec.name),
+        };
+        let view = rec.clone();
+        match tokio::time::timeout(AGENT_TICK_BUDGET, self.tick_agent(rec, report)).await {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => {
+                let msg = e.to_string();
+                let _ = self.update_in(&view, |r| r.last_error = Some(msg.clone()));
+                report.errors.push(format!("{name}: {msg}"));
+            }
+            Err(_) => report
+                .errors
+                .push(format!("{name}: supervisor pass timed out")),
+        }
+    }
+
+    /// Hands the queued tasks to their members now, outside a pass (only the
+    /// process holding the supervisor lock does).
+    pub async fn dispatch_now(&self) {
+        if !matches!(self.claim_supervisor().await, Ok(true)) {
+            return;
+        }
+        let mut report = TickReport::default();
+        // A new member is settled (no `.cua/setup` hook) and its standby run
+        // started here, ahead of the pass, which can be held up by a Space
+        // that does not answer; a member with a setup hook is left to the pass.
+        let _ = tokio::time::timeout(Duration::from_secs(10), self.tick_setups(&mut report)).await;
+        self.tick_standby(&mut report, true).await;
+        self.dispatch(&mut report).await;
+        if let (Ok(records), off) = (self.list(), self.spaces_off()) {
+            self.serve_sessions(&records, &off, &mut report);
+        }
+        if !report.errors.is_empty() {
+            self.detached_errors
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .append(&mut report.errors);
+        }
     }
 
     /// The Spaces of this machine that are stopped or suspended now.
@@ -1856,7 +2095,7 @@ impl Persistent {
     /// whose run is gone): the agent process, its handshake and its session,
     /// no prompt. A message later finds a session ready. A start that fails
     /// is tried again after half a minute.
-    async fn tick_standby(&self, _report: &mut TickReport) {
+    async fn tick_standby(&self, _report: &mut TickReport, fresh_only: bool) {
         let Ok(records) = self.list() else { return };
         let off = self.spaces_off();
         let wanted: Vec<AgentRecord> = records
@@ -1871,6 +2110,7 @@ impl Persistent {
                     && r.setup != durable::setup::PENDING
                     && r.setup != durable::setup::FAILED
                     && !identity::is_external(r)
+                    && (!fresh_only || r.run_id.is_none())
             })
             .collect();
         for rec in wanted {
@@ -1913,12 +2153,16 @@ impl Persistent {
             let me = self.clone();
             tokio::spawn(async move {
                 let _guard = guard;
+                let t0 = Instant::now();
+                tracing::info!(agent = %rec.name, "standby run starting");
                 match Box::pin(me.start_session(&rec, "", "standby", None)).await {
                     Ok(d) => {
                         me.live.lock().await.standby_retry.remove(&rec.name);
-                        tracing::info!(agent = %rec.name, run = %d.run_id, "standby run started");
+                        tracing::info!(agent = %rec.name, run = %d.run_id, ms = t0.elapsed().as_millis() as u64, "standby run started");
                     }
-                    Err(e) => tracing::warn!(agent = %rec.name, "standby run did not start: {e}"),
+                    Err(e) => {
+                        tracing::warn!(agent = %rec.name, ms = t0.elapsed().as_millis() as u64, "standby run did not start: {e}")
+                    }
                 }
             });
         }
@@ -2341,6 +2585,37 @@ impl RoutineRunner for Runner {
     }
 }
 
+/// How long a local Space must be missing from the registry before the
+/// agents that name it are marked gone.
+const GONE_GRACE: Duration = Duration::from_secs(20);
+
+/// How long the supervisor stays quiet about an error it already logged.
+const ERROR_REPEAT: Duration = Duration::from_secs(300);
+
+/// Logs each supervisor error once per [`ERROR_REPEAT`]: a stopped Space
+/// makes every pass (about once a second) fail the same way for every agent
+/// in it, which used to fill the daemon log with ~9 lines a second.
+#[derive(Default)]
+struct ErrorThrottle {
+    seen: HashMap<String, Instant>,
+}
+
+impl ErrorThrottle {
+    fn should_say(&mut self, error: &str, now: Instant) -> bool {
+        if self.seen.len() > 1024 {
+            self.seen
+                .retain(|_, at| now.duration_since(*at) < ERROR_REPEAT);
+        }
+        match self.seen.get(error) {
+            Some(at) if now.duration_since(*at) < ERROR_REPEAT => false,
+            _ => {
+                self.seen.insert(error.to_string(), now);
+                true
+            }
+        }
+    }
+}
+
 /// Persistent agents on a [`Spaces`] runtime that registered the
 /// [`crate::DriveExtension`].
 pub trait SpacesPersistent {
@@ -2361,11 +2636,30 @@ pub trait SpacesPersistent {
         // is the longest the supervisor sleeps.
         let p = p.detached();
         let wake = crate::thread::supervisor_wake();
+        // The dispatcher has its own task: a message is handed to its agent
+        // the moment it is posted (in this process by a wake, by another
+        // process, such as the app, within half a second), whatever the
+        // supervisor's pass is waiting on.
+        let d = p.clone();
+        let dispatch_wake = crate::thread::dispatch_wake();
+        let dispatcher = tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    () = dispatch_wake.notified() => {}
+                    () = tokio::time::sleep(Duration::from_millis(500)) => {}
+                }
+                d.dispatch_now().await;
+            }
+        });
         tokio::spawn(async move {
+            let _dispatcher = AbortOnDrop(dispatcher);
+            let mut said = ErrorThrottle::default();
             loop {
                 let r = p.tick().await;
                 for e in &r.errors {
-                    tracing::warn!("persistent agents: {e}");
+                    if said.should_say(e, Instant::now()) {
+                        tracing::warn!("persistent agents: {e}");
+                    }
                 }
                 tokio::select! {
                     () = tokio::time::sleep(every) => {}
@@ -2373,6 +2667,15 @@ pub trait SpacesPersistent {
                 }
             }
         })
+    }
+}
+
+/// Aborts its task when dropped (the supervisor's, when it is aborted).
+struct AbortOnDrop(tokio::task::JoinHandle<()>);
+
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        self.0.abort();
     }
 }
 
@@ -2459,6 +2762,20 @@ pub fn parse_schedule(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_repeated_supervisor_error_is_logged_once_per_window() {
+        let mut t = ErrorThrottle::default();
+        let t0 = Instant::now();
+        assert!(t.should_say("sandbox a is Stopped", t0));
+        assert!(!t.should_say("sandbox a is Stopped", t0 + Duration::from_secs(1)));
+        assert!(t.should_say("sandbox b is Stopped", t0 + Duration::from_secs(1)));
+        assert!(!t.should_say(
+            "sandbox a is Stopped",
+            t0 + ERROR_REPEAT - Duration::from_secs(1)
+        ));
+        assert!(t.should_say("sandbox a is Stopped", t0 + ERROR_REPEAT));
+    }
 
     // An events.jsonl line as the runner writes it.
     fn ev(kind: &str, turn: u32, text: Option<&str>) -> ag::AgentEvent {

@@ -31833,6 +31833,8 @@ public func FfiConverterTypeNetworkEvent_lower(_ value: NetworkEvent) -> RustBuf
  * - `localhost`: `internet`, plus this computer's localhost on
  * `localhost_ports` (every port only with `all_localhost_ports`);
  * - `lan`: `internet`, plus your local network (not this computer);
+ * - `localhost+lan`: `internet`, plus both of the above (`localhost` and
+ * `lan` are independent extras; this is the one preset with both);
  * - `custom`: `custom_base` (`internet` or `none`) plus `allow` and `deny`;
  * - `unprotected`: everything but cloud metadata, other trees and the
  * daemon.
@@ -31843,17 +31845,18 @@ public func FfiConverterTypeNetworkEvent_lower(_ value: NetworkEvent) -> RustBuf
  */
 public struct NetworkSettings: Equatable, Hashable {
     /**
-     * `internet`, `none`, `localhost`, `lan`, `custom` or `unprotected`;
-     * empty is `internet`.
+     * `internet`, `none`, `localhost`, `lan`, `localhost+lan`, `custom` or
+     * `unprotected`; empty is `internet`.
      */
     public var preset: String
     /**
-     * `localhost`: the ports of this computer's localhost the Space may
-     * reach.
+     * `localhost` and `localhost+lan`: the ports of this computer's
+     * localhost the Space may reach.
      */
     public var localhostPorts: [UInt16]
     /**
-     * `localhost`: every port (the daemon's stay blocked).
+     * `localhost` and `localhost+lan`: every port (the daemon's stay
+     * blocked).
      */
     public var allLocalhostPorts: Bool
     /**
@@ -31884,15 +31887,16 @@ public struct NetworkSettings: Equatable, Hashable {
     // declare one manually.
     public init(
         /**
-         * `internet`, `none`, `localhost`, `lan`, `custom` or `unprotected`;
-         * empty is `internet`.
+         * `internet`, `none`, `localhost`, `lan`, `localhost+lan`, `custom` or
+         * `unprotected`; empty is `internet`.
          */preset: String = "",
         /**
-         * `localhost`: the ports of this computer's localhost the Space may
-         * reach.
+         * `localhost` and `localhost+lan`: the ports of this computer's
+         * localhost the Space may reach.
          */localhostPorts: [UInt16] = [],
         /**
-         * `localhost`: every port (the daemon's stay blocked).
+         * `localhost` and `localhost+lan`: every port (the daemon's stay
+         * blocked).
          */allLocalhostPorts: Bool = false,
         /**
          * Destinations that stay reachable (addresses or CIDRs).

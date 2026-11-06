@@ -159,23 +159,58 @@ jobs:
       - name: Install base tooling (debian:11 is bare)
         if: matrix.container != ''
         run: |
-          # The live bullseye-security mirror now 404s: freeze indexes and
-          # packages on snapshot.debian.org (same pin as cd-rust-cua-driver.yml;
-          # the glibc 2.31 floor is unchanged). HTTP bootstraps ca-certificates;
-          # APT still verifies Debian signatures and hashes.
+          # Debian 11 is past its support window, so bullseye indexes and packages
+          # are frozen on snapshot.debian.org (the live security mirror advertises
+          # packages it no longer serves). HTTP bootstraps ca-certificates; APT still
+          # verifies Debian signatures and hashes.
+          # snapshot.debian.org answers 504/503 under load. APT retries each fetch
+          # with timeouts, the shell retries the whole step with a backoff, and if
+          # the snapshot is still down we fall back to archive.debian.org, which
+          # holds the same final bullseye packages (the pin exists for
+          # reproducibility, not for different versions). Same retry policy as
+          # libs/cua-spacesd/packaging/release/debian-build-deps.sh.
+          mkdir -p /etc/apt/apt.conf.d
+          cat > /etc/apt/apt.conf.d/80-cua-retries <<'EOF'
+          Acquire::Retries "5";
+          Acquire::http::Timeout "30";
+          Acquire::https::Timeout "30";
+          EOF
+          PACKAGES="git ca-certificates curl build-essential pkg-config unzip python3 xz-utils cmake"
+          apt_retry() {
+            n=0
+            until "$@"; do
+              n=$((n + 1))
+              if [ "$n" -ge 3 ]; then return 1; fi
+              echo "apt step failed (attempt $n of 3); retrying in $((n * 20))s" >&2
+              sleep $((n * 20))
+            done
+          }
+          apt_bootstrap() {
+            # Ignore any additional image-provided sources for this bootstrap.
+            apt_retry apt-get -o Dir::Etc::sourceparts=- "$@" update &&
+              apt_retry apt-get -o Dir::Etc::sourceparts=- "$@" install -y --no-install-recommends $PACKAGES
+          }
+          rm -f /etc/apt/sources.list.d/debian.sources
           cat > /etc/apt/sources.list <<'EOF'
           deb [check-valid-until=no signed-by=/usr/share/keyrings/debian-archive-keyring.gpg] http://snapshot.debian.org/archive/debian/20260901T000000Z/ bullseye main
           deb [check-valid-until=no signed-by=/usr/share/keyrings/debian-archive-keyring.gpg] http://snapshot.debian.org/archive/debian/20260901T000000Z/ bullseye-updates main
           deb [check-valid-until=no signed-by=/usr/share/keyrings/debian-archive-keyring.gpg] http://snapshot.debian.org/archive/debian-security/20260901T000000Z/ bullseye-security main
           EOF
-          rm -f /etc/apt/sources.list.d/debian.sources
-          # snapshot.debian.org answers 504 under load; retry each fetch.
-          echo 'Acquire::Retries "5";' > /etc/apt/apt.conf.d/80-retries
-          apt-get update
-          apt-get install -y --no-install-recommends git ca-certificates curl build-essential \
-            pkg-config unzip python3 xz-utils cmake
+          if apt_bootstrap; then
+            echo "apt mirror used: snapshot.debian.org 20260901T000000Z"
+          else
+            echo "::warning::snapshot.debian.org failed after retries; falling back to archive.debian.org"
+            rm -rf /var/lib/apt/lists/*
+            cat > /etc/apt/sources.list <<'EOF'
+          deb [check-valid-until=no] http://archive.debian.org/debian bullseye main
+          deb [check-valid-until=no] http://archive.debian.org/debian bullseye-updates main
+          deb [check-valid-until=no] http://archive.debian.org/debian-security bullseye-security main
+          EOF
+            apt_bootstrap
+            echo "apt mirror used: archive.debian.org (snapshot fallback)"
+          fi
           curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors --connect-timeout 20 https://deb.nodesource.com/setup_22.x | bash -
-          apt-get install -y nodejs
+          apt_retry apt-get install -y nodejs
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - name: Install protoc
         uses: ./.github/actions/setup-protoc
@@ -723,9 +758,10 @@ jobs:
           PRERELEASE: ${{ needs.version.outputs.prerelease }}
         run: |
           set -euo pipefail
-          flags=(--draft=false)
-          # Staging builds and X.Y.Z-suffix versions are prereleases, never latest.
-          [ "$PRERELEASE" = true ] && flags+=(--prerelease --latest=false)
+          # Never the repo-wide "Latest": only Cua Spaces is (release-latest-policy test).
+          flags=(--draft=false --latest=false)
+          # Staging builds and X.Y.Z-suffix versions are prereleases.
+          [ "$PRERELEASE" = true ] && flags+=(--prerelease)
           if [ "$CANONICAL" != true ] || grep -q UNSIGNED dist/signing-*/*.txt; then
             label="staging"; [ "$CANONICAL" = true ] && label="test"
             # Name the unsigned platforms: "UNSIGNED: windows-x64".
@@ -744,6 +780,18 @@ jobs:
             flags+=(--title "cua SDK $VERSION ($label)" --notes-file notes.md)
           fi
           gh release edit "$TAG" "${flags[@]}" --repo "$GITHUB_REPOSITORY"
+      # Publishing a draft can still hand this component the repo-wide "Latest"
+      # (cua-spacesd 0.12.1 and 0.12.2 did, despite --latest=false). Put it back
+      # on Cua Spaces; the release-latest-guard schedule is the backstop.
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        if: always() && github.repository == 'trycua/cua'
+        with:
+          sparse-checkout: .github/scripts/pin_latest_release.py
+      - name: Keep Latest on Cua Spaces
+        if: always() && github.repository == 'trycua/cua'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 .github/scripts/pin_latest_release.py
       # A prerelease on trycua/cua stays off the rolling feed; on any other
       # repository the feed is that repository's own and follows every release.
       - name: Update the rolling installer manifest (cua-install-latest)

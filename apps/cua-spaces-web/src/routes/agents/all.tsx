@@ -94,7 +94,7 @@ function AgentsPage() {
   const detail = opened && (selected.ref || selected.agent);
 
   return (
-    <div className="h-full overflow-y-auto [scrollbar-gutter:stable]">
+    <div className="h-full scroll-y-stable">
       <div className="mx-auto flex min-h-full w-full max-w-5xl flex-col px-8 pt-8 pb-16">
         {detail ? (
           <div className="flex min-h-0 flex-1 flex-col" data-agent-view>

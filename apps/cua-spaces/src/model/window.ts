@@ -137,19 +137,16 @@ export const USAGE_REFRESH_MS = 10_000;
 
 /** The selected Space's detail (`spaces::sidebar::detail_live`). */
 /** `hostArch`: this Mac's CPU architecture; a local Space of another one
- * warns on its Architecture (emulated). With `experiments`, what Settings,
- * Experiments hides is left out (Share while Sharing is off). */
+ * warns on its Architecture (emulated). */
 export function spaceDetail(
   space: Space,
   usage?: SpaceUsage | null,
   hostArch?: string | null,
-  experiments?: import("./experiments").Experiments | null,
 ): SpaceDetailView {
   return core("sidebar.detail", {
     space,
     usage: usage ?? null,
     hostArch: hostArch ?? null,
-    experiments: experiments ?? null,
   });
 }
 

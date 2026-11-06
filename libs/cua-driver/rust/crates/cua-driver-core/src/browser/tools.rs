@@ -25,7 +25,7 @@ use crate::tool_args::ArgsExt;
 
 use super::cdp_ws::CdpConnection;
 use super::download::BrowserDownloadTool;
-use super::engine::{BrowserEngine, BrowserTabScreenshot};
+use super::engine::{BrowserEngine, BrowserTabScreenshot, DIALOG_SUBSCRIPTION_TIMEOUT};
 use super::platform::{
     BrowserVisualActionKind, PrepareAction, PrepareProfile, PrepareProfileMode, PrepareRequest,
     PrepareStrategy,
@@ -1308,10 +1308,15 @@ impl Tool for BrowserClickTool {
             .conn
             .dialog_state(validated.tab.cdp_target_id.as_str())
         {
+            let remedy = if open.detached {
+                "its CDP session was detached, so browser_dialog cannot resolve it; close it in the browser"
+            } else {
+                "resolve it with browser_dialog before clicking"
+            };
             return BrowserRefusal::new(
                 BrowserRefusalCode::BrowserActionUnavailable,
                 format!(
-                    "a {} dialog is already open on the exact tab; resolve it with browser_dialog before clicking",
+                    "a {} dialog is already open on the exact tab; {remedy}",
                     open.kind
                 ),
             )
@@ -1695,6 +1700,7 @@ fn dialog_block(dialog: &super::cdp_ws::CdpDialogState) -> Value {
         "present": true,
         "kind": dialog.kind,
         "dialog_id": dialog_capability_id(dialog.generation),
+        "resolvable": !dialog.detached,
     })
 }
 
@@ -2847,9 +2853,19 @@ impl Tool for BrowserDialogTool {
         let cdp_target_id = validated.tab.cdp_target_id.as_str();
         if conn.dialog_state(cdp_target_id).is_none() && !conn.has_dialog_session(cdp_target_id) {
             // Register before Page.enable so an opening event delivered before
-            // the command reply is still attributed to the exact target.
+            // the command reply is still attributed to the exact target. A
+            // renderer blocked by an unseen dialog never answers, so use the
+            // short subscription deadline rather than the full call timeout.
             conn.register_dialog_session(cdp_session, cdp_target_id);
-            if let Err(error) = conn.call(Some(cdp_session), "Page.enable", json!({})).await {
+            if let Err(error) = conn
+                .call_with_timeout(
+                    Some(cdp_session),
+                    "Page.enable",
+                    json!({}),
+                    DIALOG_SUBSCRIPTION_TIMEOUT,
+                )
+                .await
+            {
                 if conn.dialog_state(cdp_target_id).is_none() {
                     conn.unregister_dialog_session(cdp_session, cdp_target_id);
                     return BrowserRefusal::new(
@@ -2884,8 +2900,19 @@ impl Tool for BrowserDialogTool {
             return ToolResult::text(format!("{} dialog is open in {tab_id}", dialog.kind))
                 .with_structured(json!({
                     "status": "ok", "target_id": target_id, "tab_id": tab_id,
-                    "present": true, "dialog_id": dialog_id, "kind": dialog.kind
+                    "present": true, "dialog_id": dialog_id, "kind": dialog.kind,
+                    "resolvable": !dialog.detached
                 }));
+        }
+        if dialog.detached {
+            // Chromium lets only the session that saw the dialog open resolve
+            // it; every other session is told none is showing.
+            return BrowserRefusal::new(
+                BrowserRefusalCode::BrowserActionUnavailable,
+                "the dialog's CDP session was detached, so the driver cannot resolve it; close it in the browser",
+            )
+            .with_detail(json!({ "dialog": dialog_block(&dialog) }))
+            .to_tool_result();
         }
 
         let supplied_id = match args.require_str("dialog_id") {
@@ -2922,6 +2949,20 @@ impl Tool for BrowserDialogTool {
                         "status": "ok", "target_id": target_id, "tab_id": tab_id,
                         "dialog_id": dialog_id, "kind": dialog.kind, "action": action
                     }))
+            }
+            // The journal only mirrors Chromium. If the close event was lost,
+            // the dialog's own session saying none is showing wins.
+            Err(error)
+                if error.to_string().contains("(-32602)")
+                    && error.to_string().contains("No dialog is showing") =>
+            {
+                conn.clear_dialog_state(cdp_target_id, dialog.generation);
+                BrowserRefusal::new(
+                    BrowserRefusalCode::BrowserActionUnavailable,
+                    "the dialog is no longer showing on the exact tab; refresh page state",
+                )
+                .with_detail(json!({ "dialog": { "present": false } }))
+                .to_tool_result()
             }
             Err(error) => BrowserRefusal::new(
                 BrowserRefusalCode::BrowserActionUnavailable,

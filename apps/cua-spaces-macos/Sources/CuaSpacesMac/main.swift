@@ -54,6 +54,16 @@ if launchArgs.first == "--service-helper" {
     if launchArgs.dropFirst().first == "run" { ServiceLauncher.serve() }
     exit(HelperService.run(Array(launchArgs.dropFirst())))
 }
+// Cua Driver's own login item (DriverLauncher.swift, CUA-3638):
+//  * `--driver-helper run`: keeps Contents/Helpers/cua-driver running for the
+//    coding agents on this Mac, whatever this Mac shares;
+//  * `--driver-helper register|unregister|status`: the login item
+//    (Contents/Library/LaunchAgents/<label>.plist, by default
+//    com.trycua.spaces.driver.plist).
+if launchArgs.first == "--driver-helper" {
+    if launchArgs.dropFirst().first == "run" { DriverLauncher.serve() }
+    exit(DriverService.run(Array(launchArgs.dropFirst())))
+}
 if launchArgs.first == "check-permissions" {
     ServiceLauncher.passthrough(launchArgs)
 }

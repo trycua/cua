@@ -31,7 +31,6 @@ APP_INSTALL_DIR="$HOME/.local/share/lume"
 
 # GitHub info
 GITHUB_REPO="trycua/cua"
-LATEST_RELEASE_URL="https://api.github.com/repos/$GITHUB_REPO/releases/latest"
 
 # Option to skip background service setup (default: install it)
 INSTALL_BACKGROUND_SERVICE=true
@@ -53,7 +52,7 @@ LUME_HOME="${LUME_HOME:-$HOME/.lume}"
 LUME_CHANNEL=""
 LUME_CHANNEL_EXPLICIT=false
 # ~~~ BAKED_VERSION: auto-updated in the release PR — do not edit ~~~
-LUME_BAKED_VERSION="0.6.1" # x-release-please-version
+LUME_BAKED_VERSION="0.7.0" # x-release-please-version
 # ~~~ END_BAKED_VERSION ~~~
 
 # Default port for lume serve (default: 7777)

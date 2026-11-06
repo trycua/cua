@@ -1170,14 +1170,15 @@ export function createExtrasOf(config: Record<string, unknown>): CreateExtras {
 }
 
 /** The SDK's `NetworkSettings` for a preset word (`internet`, `none`,
- * `localhost:5432,3000`, `localhost:all`, `lan`, `custom`, `custom:none`,
- * `unprotected`) and lists. `via`: where its internet traffic leaves
+ * `localhost:5432,3000`, `localhost:all`, `lan`, `localhost+lan:5432,3000`, `custom`,
+ * `custom:none`, `unprotected`) and lists. `via`: where its internet traffic leaves
  * (`internet`, `this-machine`, `space:<id>`, `socks5://...`); left out:
  * the exit it has. */
 export function networkSettingsOf(word: string, allow: string[], deny: string[], via?: string) {
   const [preset, rest = ""] = word.trim().toLowerCase().split(":", 2) as [string, string?];
-  const all = preset === "localhost" && rest === "all";
-  const ports = preset === "localhost" && !all ? rest.split(",").map((p) => Number(p.trim())).filter((p) => Number.isInteger(p) && p > 0 && p < 65536) : [];
+  const opensLocalhost = preset === "localhost" || preset === "localhost+lan";
+  const all = opensLocalhost && rest === "all";
+  const ports = opensLocalhost && !all ? rest.split(",").map((p) => Number(p.trim())).filter((p) => Number.isInteger(p) && p > 0 && p < 65536) : [];
   return {
     preset,
     localhostPorts: ports,

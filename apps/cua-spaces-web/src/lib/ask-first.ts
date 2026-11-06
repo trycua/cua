@@ -233,7 +233,7 @@ export type TaskWhere =
   | { kind: "new"; os: SpaceOs; on?: NewSpaceOn }
   | { kind: "space"; space: Space }
   | { kind: "this-mac" }
-  | { kind: "agent"; fresh?: boolean }
+  | { kind: "agent"; /** Continue in the agent's existing Home; absent, a message starts a new Home. */ reuse?: boolean }
   | { kind: "machine"; machine: { id: string; name: string } };
 
 /** Another of your computers a new Space is made on ("New Space on Studio Mac mini"); absent: this Mac. */

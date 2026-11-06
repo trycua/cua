@@ -20,6 +20,12 @@ each failure. Run it before you push. It catches in minutes what otherwise costs
 - Python isort, black and ruff; TypeScript typecheck, tests and the design lint for the web packages you touched;
 - actionlint for workflows, SPDX headers, and the unit tests of the crates you changed.
 
+`CI: Quick` runs `bin/ci --quick` on every pull request, so these checks have no workflow of their own: SPDX
+headers, lockfiles, actionlint, the larger-runner ban, image refs, Python lint, rustfmt and the docs image
+refs (the last also runs nightly in `ci-check-docs-image-refs.yml`). On the runner a missing tool fails them
+(`CUA_CI_REQUIRE_TOOLS=1`) instead of skipping them, and `bin/ci --verify-sync` fails if `ci-quick.yml`
+stops running `bin/ci --quick`. Do not add a workflow that repeats one of them.
+
 ```bash
 bin/ci                 # the checks your change affects (compares with the merge base with origin/main)
 bin/ci --quick         # only checks that build nothing: seconds
@@ -76,10 +82,18 @@ After a green run on a clean tree, `bin/ci --signoff` sets the `local-ci` commit
 `gh api`. If the commit is not on GitHub yet, push and run it again: it reuses the green run. It refuses to
 sign off a run that failed or skipped a check. Sign off again after every new commit.
 
-`ci-gate` requires a successful `local-ci` status on the head commit for **agent pull requests**: those
-opened by the Cua Agents GitHub App (`cua-agents[bot]`), labelled `agent`, or opened from an `agent/` branch
-of this repository. Community pull requests are not asked for it. When it is missing the gate says "Run
-bin/ci and bin/ci --signoff on this head commit."
+`ci-gate` requires a sign-off on the head commit of **every pull request**, whoever opens it. The author,
+labels and commit trailers are not read.
+
+- **A branch of this repository** (members and agents): a successful `local-ci` status. Our Mac runner sets
+  it after `bin/ci --quick` (`ci-remote-sweep` starts that run for each such PR), or you set it with
+  `bin/ci --signoff`. When it is missing the gate says "Run bin/ci --quick and bin/ci --signoff on this head
+  commit."
+- **A fork** (community): fork code never runs on our Macs. The sign-off is a successful `CI: Quick` run
+  (`ci-quick.yml`, which runs `bin/ci --quick`) on the head commit in GitHub Actions: a `pull_request` job
+  with a read-only token and no secrets. A first-time contributor's run needs a maintainer to approve it.
+
+The `agent` label is only for filtering; it does not change the gate.
 
 The requirement is **report-only** at first: the gate prints that line as a warning and passes. Setting the
 repository variable `REQUIRE_LOCAL_CI` to `true` makes it blocking. It is the only switch. When blocking, the
@@ -197,6 +211,26 @@ to a relay change. Every other area lists every workflow whose own `paths:` reac
 or add a path to one, add it to the matching areas in `.github/ci-areas.json`. Changing the map or the gate
 is a `.github/**` change, so it waits for every workflow, and it takes effect only once it is on `main`.
 
+## Heavy bundles run after merge
+
+The installer bundles take 55 to 100 minutes, so a pull request does not wait for them:
+
+- `CI: Cua Spaces` `bundle` (Tauri: Windows NSIS and MSI, macOS DMG, Linux deb and AppImage) builds on every push to
+  `main` that touches the app or `libs/cua`. A pull request builds it only when it changes a packaging path and
+  carries the `ci:full` label.
+- `CI: Cua Spaces for macOS (SwiftUI)` `SwiftUI app (bundle, launch check, XCUITest)` runs on every push to `main`
+  and on a manual run. A pull request runs it only when it changes a packaging path: `apps/cua-spaces-macos`
+  `scripts/`, `Support/`, `UITests/`, `project.yml`, the Swift package manifests, the pinned driver files, the
+  `libs/spaces-app-swift/scripts/` staging script, or the workflow itself (the `changes` job).
+- Pull requests keep the 2 to 5 minute installer smokes (`CI: Installers`, the desktop install smoke) and the
+  core, binding and Swift test jobs. A release still builds every bundle.
+- The gate waits only for runs and jobs that exist on the pull request, so a job that the pull request does not
+  start (a skipped `if`, or a trigger that is `push` only) is never waited for. No change to the area map is needed.
+
+A red run on `main` is already merged, so it is fixed forward. It alerts through `workflow-failure-alerts.yml`
+(Alertmanager, `#alerts-staging`) and `ci-postmerge-issue-bundles.yml` opens one issue per workflow, labelled
+`ci-postmerge`, comments on it for each later failure and closes it on the next green run.
+
 ## Flaky checks
 
 Known flakes are listed in [`.github/flaky/quarantine.json`](../../.github/flaky/quarantine.json) and
@@ -205,6 +239,22 @@ matches a `job` entry and its log contains the entry's `signature`, the gate rer
 they pass, the run passes. If they fail again the same way, the gate reports a quarantined flake and does not
 fail. The gate reads the list from the base commit. Every entry has an owner, an issue and an expiry date.
 The nightly **Flaky job scan** files a `flaky` issue for each job that failed and then passed on a rerun.
+
+## Measuring CI speed
+
+- **Per-file test times.** Jobs that run under `flaky.py` (nextest JUnit, vitest, Swift logs) and the pytest and
+  `swift test` steps of `ci-test-python`, `ci-py-bench`, `ci-cua-sdk` and `ci-cua-microvm` write a "Slowest test
+  files" table to the job summary and upload `timings-<suite>` (10 days) through
+  `.github/scripts/flaky/timings.py`. pytest also prints `--durations=25`. A new suite gets this by calling
+  `flaky.sh run` plus the `flaky-upload` action, or `timings.py` plus `ci-timings-upload`.
+- **Weekly report.** `ci-weekly-report.yml` rewrites ONE issue, "CI speed this week", every Monday
+  (`.github/scripts/ci_weekly_report.py`): push to green, green to merged, the `ci-gate` tail split into
+  "waiting for the `local-ci` sign-off" and "other", release-PR wait, CD time per workflow, and the slowest
+  test files. Run it by hand with `gh workflow run ci-weekly-report.yml`.
+- **The gate tail.** After the last other workflow finishes, `ci-gate` needs one confirming listing (10 s once
+  everything is complete) and then the `local-ci` sign-off, polled every 15 s for up to 75 minutes. A long tail is
+  almost always the sign-off queue on the Mac runner or a quarantined-flake rerun, not a poll interval; the
+  weekly report shows which.
 
 ## Urgent-fix lane
 

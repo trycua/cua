@@ -150,7 +150,7 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         "thread.joinCodeCreate", "thread.joinCodeList", "thread.joinCodeCancel", "thread.settings",
         // Cua Driver inside Cua Spaces: the embedded driver's page (WebUIBridge+Driver.swift).
         "driver.status", "driver.list", "driver.config", "driver.setConfig", "driver.test", "driver.pause",
-        "driver.setup", "driver.setApp",
+        "driver.setup", "driver.setApp", "driver.permissions",
     ]
 
     let model: AppModel

@@ -260,7 +260,8 @@ async fn cli_mcp_and_app_report_the_same_connection_in_every_state() {
     assert_eq!(row(&r, "codex")["state"], "connected", "{r}");
     assert_eq!(row(&r, "codex")["signin_import"], "ok");
     assert_eq!(row(&r, "hermes")["state"], "attention");
-    assert_eq!(row(&r, "hermes")["problem"]["action"], "none");
+    // Hermes has its own `hermes login`, so the row offers Sign in.
+    assert_eq!(row(&r, "hermes")["problem"]["action"], "sign_in");
     assert_eq!(row(&r, "cursor")["state"], "connected");
     assert_eq!(row(&r, "cursor")["signed_in"], "unknown");
 

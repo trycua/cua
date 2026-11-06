@@ -23,6 +23,18 @@ struct HostSetupFailureTests {
         #expect(f.details == Self.missingRelease, "details stay raw")
     }
 
+    /// The relay refuses a new computer that arrives with a token alone on
+    /// an account that already has computers: the page says what to do,
+    /// not "Something went wrong" (seen on Share With This Account, 0.21.0).
+    @Test func aNewComputerOnAnAccountWithComputersIsAddedFromOne() {
+        let raw = "permission denied: relay: add computers from a computer you already added, or with a pairing code"
+        let f = HostSetupFailure.presenting(raw)
+        #expect(f.kind == .addFromAnotherComputer)
+        #expect(f.title == "Add this Mac from another computer")
+        #expect(f.message.contains("pairing code"))
+        #expect(f.details == raw)
+    }
+
     @Test func aThrottledSetupSaysHowLongToWaitInPlainWords() {
         let raw = "http: Too many attempts right now. Wait 3 seconds, then try again."
         let f = HostSetupFailure.presenting(raw)

@@ -229,6 +229,16 @@ and operations outside its qualification scope.
   a refusal, never permission to try a weaker route.
 - The plugin never redirects a target-addressed request to the primary seat,
   focused window, pointer location, or another target.
+- Two client requests take the user's whole seat in Hyprland 0.56 and 0.57,
+  whatever seat and serial they name: a popup grab (a menu, a combo-box list)
+  moves the user's keyboard to the popup until it closes, and a drag start makes
+  the drag follow the user's pointer and drop on their next click. A background
+  app can make either request when an agent seat or an accessibility action
+  works in it. Input builds hook both (`src/user_seat_guard.cpp`) and grant them
+  only to the client that holds the user's keyboard or pointer focus, as every
+  popup and drag the user starts does. Other popups open without the grab;
+  other drags are cancelled. `cua:status` reports `user_seat_guard`,
+  `popup_grabs_withheld` and `drags_withheld`.
 - A transport acknowledgement proves only receipt and validation. Application
   behavior requires a separate typed result and independent state evidence.
 

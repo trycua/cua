@@ -57,3 +57,30 @@ allow one in an emergency, set the repository variable `ALLOW_SPACES_BETA` to
 `true` (Settings, Secrets and variables, Actions, Variables), then delete it
 right after. Betas published before November 2026 remain as prereleases;
 their items in the beta feeds are no longer updated.
+
+## Rebuilding a tag whose run never published
+
+If a tag exists but its tag-push run never published (for example the workflow
+itself was broken), do not move or delete the tag. Dispatch the workflow from
+`main`, which carries the fix, with the tag and its commit:
+
+```sh
+gh workflow run cd-cua-spaces.yml -R trycua/cua --ref main \
+  -f rebuild_tag=cua-spaces-vX.Y.Z -f rebuild_sha=<full commit SHA of the tag>
+```
+
+The run builds the tagged commit with `main`'s workflow files and publishes
+the existing draft release (or creates it for that tag). It refuses a release
+that is already published, a tag that does not point at `rebuild_sha`, a
+non-stable tag, and a dispatch from any other branch. Every gate runs exactly
+as on a tag push: signing, notarization, the staging smoke for that commit,
+`verify-release`, the cua.ai check and the staged rollout. `electron_dry_run`,
+`sparkle_electron`, `skip_staging_gate` and `platforms` are refused. Its
+Sigstore identity is the workflow at `refs/heads/main`, which says nothing
+about the tag, so the installers accept it only with a signed claim: the run
+signs `rebuild-claim.txt` (a `tag cua-spaces-vX.Y.Z` line and the sha256 of
+every asset) and uploads it with its bundle next to the assets. The installers
+check the claim and the artifact under that identity, the `workflow_dispatch`
+trigger and the `main` ref, then require the claim to name the tag being
+installed and list the artifact's sha256. A release rebuilt by a workflow
+without the claim step (before this check) does not verify.

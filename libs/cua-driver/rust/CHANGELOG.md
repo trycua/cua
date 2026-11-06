@@ -1,5 +1,50 @@
 # Changelog
 
+## [0.40.3](https://github.com/trycua/cua/compare/cua-driver-rs-v0.40.2...cua-driver-rs-v0.40.3) (2026-11-06)
+
+
+### Bug Fixes
+
+* **cua-driver:** clear platform-linux test-target clippy lints ([#6695](https://github.com/trycua/cua/issues/6695)) ([8232555](https://github.com/trycua/cua/commit/823255524bfa90da7b5222e222d591bc86beb3cf))
+* **cua-driver:** re-read AXEnabled after foreground activation on macOS ([#6702](https://github.com/trycua/cua/issues/6702)) ([044f7a7](https://github.com/trycua/cua/commit/044f7a70cc886ea15bdbdc4f8195a2c09e06224e))
+
+## [0.40.2](https://github.com/trycua/cua/compare/cua-driver-rs-v0.40.1...cua-driver-rs-v0.40.2) (2026-11-06)
+
+
+### Bug Fixes
+
+* **cua-driver:** start the composited X11 overlay test's reads once its desktop is on screen ([#6512](https://github.com/trycua/cua/issues/6512)) ([566a4ce](https://github.com/trycua/cua/commit/566a4ce655905c0d28065f4f534e221e92916e24))
+
+## [0.40.1](https://github.com/trycua/cua/compare/cua-driver-rs-v0.40.0...cua-driver-rs-v0.40.1) (2026-11-06)
+
+
+### Bug Fixes
+
+* **cua-driver:** refuse disabled macOS controls on every token writer ([#6503](https://github.com/trycua/cua/issues/6503)) ([6c78994](https://github.com/trycua/cua/commit/6c78994788f46a65f8e772d98106ce3971d1acd4))
+
+## [0.40.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.39.0...cua-driver-rs-v0.40.0) (2026-11-06)
+
+
+### Features
+
+* **cua-driver:** keep typed secrets out of recordings ([#6333](https://github.com/trycua/cua/issues/6333)) ([69d4280](https://github.com/trycua/cua/commit/69d42802d44546c78318778431a1af827353a7db))
+
+
+### Bug Fixes
+
+* **cua-driver-core:** derive desktop coordination from the action contract ([#6638](https://github.com/trycua/cua/issues/6638)) ([13fdf9c](https://github.com/trycua/cua/commit/13fdf9cb6a805f3aaa88fe68bdc15e49c3f923cb))
+* **cua-driver-core:** gate YAML capability-manifest tests on the yaml feature ([#6627](https://github.com/trycua/cua/issues/6627)) ([3d7d657](https://github.com/trycua/cua/commit/3d7d6573a351a555a6d690e7ca7c5c0f64e71b8f))
+* **cua-driver:** bound browser_dialog Page.enable retry by the dialog subscription deadline ([#6643](https://github.com/trycua/cua/issues/6643)) ([c696680](https://github.com/trycua/cua/commit/c69668087c070e57aaf10b5c54af8f57edd3c9eb))
+* **cua-driver:** clear a dialog record Chromium no longer shows ([#6514](https://github.com/trycua/cua/issues/6514)) ([6e7e939](https://github.com/trycua/cua/commit/6e7e939d5b05f1bca0cc01a8b1f863a7593c0e49))
+* **cua-driver:** clear Rust 1.97 clippy lints in platform-linux ([#6658](https://github.com/trycua/cua/issues/6658)) ([615c76e](https://github.com/trycua/cua/commit/615c76e8a0327aa94673165eadf056043d4a40a8))
+* **cua-driver:** cover the desktop lane for invoke_menu and type_text_chars on Linux ([#6653](https://github.com/trycua/cua/issues/6653)) ([3733464](https://github.com/trycua/cua/commit/373346436ff949bc0b9cb91d102c912ecbf28cf9))
+* **cua-driver:** find a macOS app by any name it ships, without guessing ([#6657](https://github.com/trycua/cua/issues/6657)) ([22d8c1b](https://github.com/trycua/cua/commit/22d8c1b9867fa2cf1dff32e28d577f953144266f))
+* **cua-driver:** keep the Windows daemon pid file owned by the running daemon ([#6654](https://github.com/trycua/cua/issues/6654)) ([f42ce47](https://github.com/trycua/cua/commit/f42ce475706e4fe49412eeb441a2fd7a071c4d5c))
+* **cua-driver:** lock the daemon socket so a racing launch cannot orphan a daemon ([#6652](https://github.com/trycua/cua/issues/6652)) ([4108f2a](https://github.com/trycua/cua/commit/4108f2a4604a40b43228e67726813857690c0109))
+* **cua-driver:** move the skill version under metadata.version ([#6647](https://github.com/trycua/cua/issues/6647)) ([0402233](https://github.com/trycua/cua/commit/0402233c44647f16e5af1bef23af5bc89e64d2ab))
+* **cua-driver:** press a shortcut's key where the keyboard layout types it on macOS ([#6659](https://github.com/trycua/cua/issues/6659)) ([9425d2f](https://github.com/trycua/cua/commit/9425d2f79022752464838a534f132c39761ce2e4))
+* **cua-driver:** refuse clicks fast while a detached session's dialog blocks the tab ([#6646](https://github.com/trycua/cua/issues/6646)) ([a550948](https://github.com/trycua/cua/commit/a550948860dd11ff09ed56ae504a8cb3578764c3))
+
 ## [0.39.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.38.0...cua-driver-rs-v0.39.0) (2026-11-05)
 
 

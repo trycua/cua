@@ -64,15 +64,8 @@ pub struct AppSettings {
     /// Settings); `None`: never chosen ([`crate::login_item::launch_plan`]).
     pub launch_at_login: Option<bool>,
     /// Settings, Experiments: every switch off unless turned on
-    /// ([`crate::experiments`]). Its `webUi` is always on in the macOS
-    /// shell ([`resolve_new_ui`]); the file keeps only [`Self::new_ui`]'s
-    /// "on" there, the value older builds read.
+    /// ([`crate::experiments`]).
     pub experiments: Experiments,
-    /// The New UI as an older build's "Use classic UI" saved it. Read and
-    /// kept for those builds, never acted on: the web UI is the only UI
-    /// ([`resolve_new_ui`]). An older build's saved `webUi: true` reads as
-    /// `Some(true)`; its `false` was only the saved default ([`load`]).
-    pub new_ui: Option<bool>,
     /// Keyvault copies (import ids) the user dismissed from the notch: it no
     /// longer shows them, nothing is revoked or wiped
     /// ([`crate::keyvault::view::prune_dismissed`] forgets the gone ones).
@@ -127,7 +120,6 @@ impl Default for AppSettings {
             update_channel: UpdateChannel::Stable,
             launch_at_login: None,
             experiments: Experiments::default(),
-            new_ui: None,
             dismissed_access: vec![],
             notch_pinned: vec![],
             keyvault_site_icons: true,
@@ -146,12 +138,6 @@ impl Default for AppSettings {
 /// file (not valid settings JSON) is kept beside it as
 /// `<name>.damaged` before the shell saves the defaults over it, so a
 /// person's settings are never lost without a copy.
-///
-/// The New UI: a file with no choice yet ([`AppSettings::new_ui`]) takes an
-/// older build's `experiments.webUi: true` as the choice and its `false`
-/// as no choice (every older install saved `false` without anyone choosing
-/// it). Until [`resolve_new_ui`] runs with the app's version, the New UI
-/// is on only by choice.
 pub fn load(path: &Path) -> AppSettings {
     let text = std::fs::read_to_string(path).ok();
     let parsed = text.as_deref().map(serde_json::from_str::<AppSettings>);
@@ -169,13 +155,7 @@ pub fn load(path: &Path) -> AppSettings {
             ),
         }
     }
-    let mut s: AppSettings = parsed.and_then(Result::ok).unwrap_or_default();
-    migrate_defaults(path, &mut s);
-    if s.new_ui.is_none() && s.experiments.web_ui {
-        s.new_ui = Some(true);
-    }
-    s.experiments.web_ui = s.new_ui == Some(true);
-    s
+    parsed.and_then(Result::ok).unwrap_or_default()
 }
 
 /// Where a damaged settings file is kept (`settings.json.damaged`).
@@ -183,76 +163,6 @@ pub fn damaged_path(path: &Path) -> std::path::PathBuf {
     let mut name = path.file_name().unwrap_or_default().to_os_string();
     name.push(".damaged");
     path.with_file_name(name)
-}
-
-/// The migration marker next to the settings file. The shells round-trip
-/// [`AppSettings`] through their own mirrors, so the marker lives in a file of
-/// its own that no shell rewrites.
-fn migrations_path(path: &Path) -> std::path::PathBuf {
-    path.with_file_name("settings-migrations.json")
-}
-
-/// Defaults that turned on after releases saved them as off, and switches
-/// that were retired (Settings, Advanced no longer has a Sharing or a Your
-/// cloud switch). Each one has a key in the migration marker.
-const MIGRATIONS: [&str; 4] = [
-    "sharingDefaultOn",
-    "yourCloudDefaultOn",
-    "sharingSwitchRetired",
-    "yourCloudSwitchRetired",
-];
-
-/// Sharing became on by default in 0.9.1 (CUA-1668) and Your cloud later
-/// (a linked cloud showed under Run on only after digging into Settings).
-/// Earlier builds saved `false` for anyone who toggled any experiment,
-/// without them choosing it, and left no record of an explicit choice. The
-/// first load without a switch's marker turns a stored `false` on once and
-/// writes the marker (also on a fresh install, so a later "off" is never
-/// overridden); from then on the stored value is the user's. A missing key
-/// already reads as on. Best effort: a failed write only repeats the
-/// migration on the next load.
-fn migrate_defaults(path: &Path, s: &mut AppSettings) {
-    let marker = migrations_path(path);
-    let mut done: serde_json::Map<String, serde_json::Value> = std::fs::read_to_string(&marker)
-        .ok()
-        .and_then(|m| serde_json::from_str(&m).ok())
-        .unwrap_or_default();
-    let pending = |k: &str| done.get(k) != Some(&serde_json::Value::Bool(true));
-    if !MIGRATIONS.iter().any(|k| pending(k)) {
-        return;
-    }
-    // The retired switches: with no switch to turn them back on, a stored
-    // `false` (a choice nobody can make or undo any more) reads as on, once.
-    // The plan decides who can share or use a cloud, on the server.
-    let turn_sharing_on =
-        (pending(MIGRATIONS[0]) || pending(MIGRATIONS[2])) && !s.experiments.sharing;
-    let turn_cloud_on =
-        (pending(MIGRATIONS[1]) || pending(MIGRATIONS[3])) && !s.experiments.your_cloud;
-    if turn_sharing_on || turn_cloud_on {
-        s.experiments.sharing |= turn_sharing_on;
-        s.experiments.your_cloud |= turn_cloud_on;
-        if path.exists() && save(path, s).is_err() {
-            return;
-        }
-    }
-    for k in MIGRATIONS {
-        done.insert(k.into(), true.into());
-    }
-    if let Some(dir) = marker.parent() {
-        let _ = std::fs::create_dir_all(dir);
-    }
-    let _ = std::fs::write(&marker, serde_json::Value::Object(done).to_string());
-}
-
-/// `settings` with the New UI as this launch shows it: always on. The shared
-/// web UI is the only UI of the macOS app (the SwiftUI views are gone), so an
-/// older build's "Use classic UI" choice ([`AppSettings::new_ui`] `false`)
-/// no longer applies: that install opens the web UI like every other one.
-/// `version` is unused, kept for the shells' binding.
-pub fn resolve_new_ui(settings: &AppSettings, _version: &str) -> AppSettings {
-    let mut s = settings.clone();
-    s.experiments.web_ui = true;
-    s
 }
 
 /// The update channel of an install's first launch, from the one in the
@@ -275,18 +185,14 @@ pub fn choose_experiment(settings: &AppSettings, row: &str, option: &str) -> App
     s
 }
 
-/// Writes settings atomically (temp file, then rename). The New UI is
-/// saved as chosen ([`AppSettings::new_ui`]), never as its default: the
-/// default follows the version and channel of each launch.
+/// Writes settings atomically (temp file, then rename).
 pub fn save(path: &Path, settings: &AppSettings) -> Result<(), CoreError> {
-    let mut stored = settings.clone();
-    stored.experiments.web_ui = stored.new_ui == Some(true);
-    let mut value = serde_json::to_value(&stored).map_err(|e| CoreError::Io(e.to_string()))?;
+    let mut value = serde_json::to_value(settings).map_err(|e| CoreError::Io(e.to_string()))?;
     // Nightly is stored as `beta`, its old name: a release from before
     // Nightly (someone going back to Stable by hand) reads the whole file
     // with serde and starts over with the defaults on a word it does not
     // know. This build reads `beta` as Nightly ([`UpdateChannel`]).
-    if stored.update_channel == UpdateChannel::Nightly
+    if settings.update_channel == UpdateChannel::Nightly
         && let Some(o) = value.as_object_mut()
     {
         o.insert("updateChannel".into(), STORED_NIGHTLY.into());
@@ -1458,56 +1364,6 @@ mod tests {
         assert_eq!(old.experiments, Experiments::default());
     }
 
-    /// A settings file in a fresh temp dir.
-    fn temp_settings(name: &str) -> (std::path::PathBuf, std::path::PathBuf) {
-        let dir =
-            std::env::temp_dir().join(format!("cua-app-core-new-ui-{name}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("settings.json");
-        (dir, path)
-    }
-
-    #[test]
-    fn the_web_ui_is_on_for_every_install_whatever_an_older_build_saved() {
-        let (dir, path) = temp_settings("web-only");
-        // "Use classic UI" on (an older build's choice), a never-chosen
-        // `webUi: false`, a chosen `true`, no file: the web UI every time,
-        // on either channel and any version.
-        for raw in [
-            Some(r#"{"updateChannel":"stable","newUi":false,"experiments":{"webUi":false}}"#),
-            Some(r#"{"updateChannel":"beta","experiments":{"cuaVolume":true,"webUi":false}}"#),
-            Some(r#"{"experiments":{"webUi":true}}"#),
-            None,
-        ] {
-            match raw {
-                Some(raw) => std::fs::write(&path, raw).unwrap(),
-                None => {
-                    let _ = std::fs::remove_file(&path);
-                }
-            }
-            for version in ["0.7.2", "0.8.0", "0.16.1", "dev", ""] {
-                assert!(
-                    resolve_new_ui(&load(&path), version).experiments.web_ui,
-                    "{raw:?} {version}"
-                );
-            }
-        }
-        // The retired rows change nothing, and leave the old choice alone.
-        let s = AppSettings {
-            new_ui: Some(false),
-            ..Default::default()
-        };
-        for row in ["experiment:classic_ui", "experiment:web_ui"] {
-            for option in ["on", "off"] {
-                let after = choose_experiment(&s, row, option);
-                assert_eq!(after.new_ui, Some(false));
-                assert_eq!(after.experiments, s.experiments);
-            }
-        }
-        let _ = std::fs::remove_dir_all(dir);
-    }
-
     #[test]
     fn a_prerelease_installs_first_launch_is_on_nightly() {
         use UpdateChannel::{Nightly, Stable};
@@ -1578,130 +1434,6 @@ mod tests {
         )
         .unwrap();
         assert_eq!(load(&path).update_channel, UpdateChannel::Stable);
-        let _ = std::fs::remove_dir_all(dir);
-    }
-
-    #[test]
-    fn sharing_on_by_default_migrates_a_0_9_0_false_once() {
-        // Fresh install: on, and an "off" afterwards survives restarts.
-        let (dir, path) = temp_settings("sharing-fresh");
-        let s = load(&path);
-        assert!(s.experiments.sharing);
-        let off = choose_experiment(&s, "experiment:sharing", "off");
-        save(&path, &off).unwrap();
-        assert!(!load(&path).experiments.sharing);
-        assert!(!load(&path).experiments.sharing, "and again");
-        let _ = std::fs::remove_dir_all(dir);
-
-        // 0.9.0: toggling any experiment saved sharing false, no marker.
-        let (dir, path) = temp_settings("sharing-090");
-        std::fs::write(
-            &path,
-            r#"{"experiments":{"cuaVolume":true,"sharing":false}}"#,
-        )
-        .unwrap();
-        let s = load(&path);
-        assert!(s.experiments.sharing && s.experiments.cua_volume);
-        let raw: serde_json::Value =
-            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-        assert_eq!(raw["experiments"]["sharing"], true, "persisted");
-        // The user turns it off in 0.9.1: stays off across restarts.
-        save(&path, &choose_experiment(&s, "experiment:sharing", "off")).unwrap();
-        assert!(!load(&path).experiments.sharing);
-        assert!(!load(&path).experiments.sharing);
-        assert!(load(&path).experiments.cua_volume);
-        let _ = std::fs::remove_dir_all(dir);
-
-        // 0.9.0 settings with sharing already true stay true.
-        let (dir, path) = temp_settings("sharing-true");
-        std::fs::write(&path, r#"{"experiments":{"sharing":true}}"#).unwrap();
-        assert!(load(&path).experiments.sharing);
-        let _ = std::fs::remove_dir_all(dir);
-    }
-
-    #[test]
-    fn your_cloud_on_by_default_migrates_a_stored_false_once() {
-        // Fresh install: on, and an "off" afterwards survives restarts.
-        let (dir, path) = temp_settings("cloud-fresh");
-        let s = load(&path);
-        assert!(s.experiments.your_cloud);
-        save(
-            &path,
-            &choose_experiment(&s, "experiment:your_cloud", "off"),
-        )
-        .unwrap();
-        assert!(!load(&path).experiments.your_cloud);
-        assert!(!load(&path).experiments.your_cloud, "and again");
-        let _ = std::fs::remove_dir_all(dir);
-
-        // No value stored: on. An older build's saved false (no marker for
-        // it, though the sharing marker exists): on once, then the user's.
-        let (dir, path) = temp_settings("cloud-old");
-        std::fs::write(&path, r#"{"experiments":{"cuaVolume":true}}"#).unwrap();
-        std::fs::write(
-            path.with_file_name("settings-migrations.json"),
-            r#"{"sharingDefaultOn":true,"sharingSwitchRetired":true}"#,
-        )
-        .unwrap();
-        assert!(load(&path).experiments.your_cloud, "never set reads as on");
-        std::fs::write(
-            &path,
-            r#"{"experiments":{"yourCloud":false,"sharing":false}}"#,
-        )
-        .unwrap();
-        std::fs::remove_file(path.with_file_name("settings-migrations.json")).unwrap();
-        std::fs::write(
-            path.with_file_name("settings-migrations.json"),
-            r#"{"sharingDefaultOn":true,"sharingSwitchRetired":true}"#,
-        )
-        .unwrap();
-        let s = load(&path);
-        assert!(s.experiments.your_cloud, "the saved default, not a choice");
-        assert!(
-            !s.experiments.sharing,
-            "sharing's own marker kept its choice"
-        );
-        save(
-            &path,
-            &choose_experiment(&s, "experiment:your_cloud", "off"),
-        )
-        .unwrap();
-        assert!(!load(&path).experiments.your_cloud);
-        let _ = std::fs::remove_dir_all(dir);
-    }
-
-    #[test]
-    fn the_retired_sharing_and_cloud_switches_turn_a_stored_off_on_once() {
-        // Both default-on migrations already ran; the switches were still
-        // there, and someone turned both off.
-        let (dir, path) = temp_settings("retired");
-        std::fs::write(
-            &path,
-            r#"{"experiments":{"cuaVolume":true,"sharing":false,"yourCloud":false},"menuBar":true}"#,
-        )
-        .unwrap();
-        std::fs::write(
-            path.with_file_name("settings-migrations.json"),
-            r#"{"sharingDefaultOn":true,"yourCloudDefaultOn":true}"#,
-        )
-        .unwrap();
-        let s = load(&path);
-        assert!(s.experiments.sharing && s.experiments.your_cloud);
-        // Everything else the person set is kept.
-        assert!(s.experiments.cua_volume && s.menu_bar);
-        let raw: serde_json::Value =
-            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-        assert_eq!(raw["experiments"]["sharing"], true);
-        assert_eq!(raw["menuBar"], true);
-        // It runs once: the markers say so, and a later load changes nothing.
-        let marks: serde_json::Value = serde_json::from_str(
-            &std::fs::read_to_string(path.with_file_name("settings-migrations.json")).unwrap(),
-        )
-        .unwrap();
-        assert_eq!(marks["sharingSwitchRetired"], true);
-        assert_eq!(marks["yourCloudSwitchRetired"], true);
-        let again = load(&path);
-        assert_eq!(again.experiments, s.experiments);
         let _ = std::fs::remove_dir_all(dir);
     }
 }

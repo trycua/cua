@@ -176,7 +176,7 @@ pub enum TelemetrySignal {
     Experiment {
         /// `experiment_on` or `experiment_off`.
         action: String,
-        /// `cua_volume`, `your_cloud` or `sharing`.
+        /// `cua_volume`, `mobile`, ...
         experiment: String,
     },
     /// Which experiments are on now (no event of its own: the daily
@@ -2201,29 +2201,29 @@ mod tests {
     #[test]
     fn an_experiment_toggle_is_one_event_and_the_set_that_is_on() {
         use crate::experiments::Experiments;
-        let off = Experiments {
-            sharing: false,
+        let off = Experiments::default();
+        let on = Experiments {
+            mobile: true,
             ..Default::default()
         };
-        let on = Experiments::default();
         let signals = experiments_changed(&off, &on);
         assert_eq!(
             signals,
             vec![
                 TelemetrySignal::Experiment {
                     action: "experiment_on".into(),
-                    experiment: "sharing".into(),
+                    experiment: "mobile".into(),
                 },
                 TelemetrySignal::ExperimentsOn {
-                    experiments: vec!["your_cloud".into(), "sharing".into()],
+                    experiments: vec!["mobile".into()],
                 },
             ]
         );
         assert_eq!(
             serde_json::to_value(&signals).unwrap(),
             serde_json::json!([
-                {"type": "experiment", "action": "experiment_on", "experiment": "sharing"},
-                {"type": "experiments-on", "experiments": ["your_cloud", "sharing"]},
+                {"type": "experiment", "action": "experiment_on", "experiment": "mobile"},
+                {"type": "experiments-on", "experiments": ["mobile"]},
             ])
         );
         assert_eq!(
@@ -2231,10 +2231,10 @@ mod tests {
             vec![
                 TelemetrySignal::Experiment {
                     action: "experiment_off".into(),
-                    experiment: "sharing".into(),
+                    experiment: "mobile".into(),
                 },
                 TelemetrySignal::ExperimentsOn {
-                    experiments: vec!["your_cloud".into()]
+                    experiments: vec![]
                 },
             ]
         );
@@ -2244,9 +2244,6 @@ mod tests {
             vec![TelemetrySignal::ExperimentsOn {
                 experiments: vec![
                     "cua_volume".into(),
-                    "your_cloud".into(),
-                    "sharing".into(),
-                    "web_ui".into(),
                     "secure_spaces".into(),
                     "child_spaces".into(),
                     "ask_first".into(),
@@ -2287,13 +2284,10 @@ mod tests {
             .foreground()
             .build();
         t.acknowledge_notice();
-        let off = Experiments {
-            sharing: false,
-            ..Default::default()
-        };
+        let off = Experiments::default();
         let on = Experiments {
             cua_volume: true,
-            sharing: true,
+            mobile: true,
             ..Default::default()
         };
         let signals = experiments_changed(&off, &on);
@@ -2318,18 +2312,14 @@ mod tests {
             toggles,
             [
                 ("experiment_on".to_string(), "cua_volume".to_string()),
-                ("experiment_on".to_string(), "sharing".to_string())
+                ("experiment_on".to_string(), "mobile".to_string())
             ]
         );
         let active = events
             .iter()
             .find(|e| e["event"] == "cua_app_active")
             .expect("the day is active");
-        // `your_cloud` is on by default, so the active day carries it too.
-        assert_eq!(
-            active["properties"]["experiments_on"],
-            "cua_volume+your_cloud+sharing"
-        );
+        assert_eq!(active["properties"]["experiments_on"], "cua_volume+mobile");
     }
 
     /// A `step_*` onboarding-page signal sends the first-run funnel events

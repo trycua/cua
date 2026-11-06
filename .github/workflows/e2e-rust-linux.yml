@@ -24,6 +24,11 @@ on:
         required: false
         type: string
         default: ""
+      harness_filter:
+        description: "Comma list of harness hosts for the shared lane (the PR quick lane passes electron); empty runs them all"
+        required: false
+        type: string
+        default: ""
   workflow_dispatch:
     inputs:
       ref:
@@ -44,6 +49,10 @@ on:
           - verify
       cell_filter:
         description: "Optional shared-cell substring for targeted diagnostics"
+        required: false
+        default: ""
+      harness_filter:
+        description: "Comma list of harness hosts for the shared lane (for example electron); empty runs them all"
         required: false
         default: ""
 
@@ -155,6 +164,7 @@ jobs:
     env:
       CUA_E2E_SOURCE_SHA: ${{ needs.source.outputs.sha }}
       CUA_E2E_CELL_FILTER: ${{ inputs.cell_filter }}
+      CUA_E2E_HARNESS_FILTER: ${{ inputs.harness_filter }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:

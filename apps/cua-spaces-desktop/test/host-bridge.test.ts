@@ -630,14 +630,11 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
     expect(model.settings.tips).toEqual({ off: false, done: [] });
   });
 
-  it("offers every experiment but the New UI switch (Use classic UI), which this app is", async () => {
+  it("offers every experiment, and none of the switches that are gone", async () => {
     const s = (await call("settings.get")) as { experiments: { sections: { rows: { id: string }[] }[] } };
     const rows = s.experiments.sections.flatMap((x) => x.rows.map((r) => r.id));
-    expect(rows).toEqual(expect.arrayContaining(["experiment:cua_volume", "experiment:your_cloud", "experiment:sharing"]));
-    expect(rows).not.toContain("experiment:web_ui");
-    expect(rows).not.toContain("experiment:classic_ui");
-    expect(await code("settings.choose", { row: "experiment:web_ui", option: "off" })).toBe("unsupported");
-    expect(await code("settings.choose", { row: "experiment:classic_ui", option: "on" })).toBe("unsupported");
+    expect(rows).toEqual(expect.arrayContaining(["experiment:cua_volume", "experiment:secure_spaces", "experiment:warm_pools"]));
+    for (const gone of ["your_cloud", "sharing", "web_ui", "classic_ui"]) expect(rows).not.toContain(`experiment:${gone}`);
   });
 
   it("New Space's \u201cUse built-in Lume\u201d and Settings' kind rows write the per-kind runtime settings", async () => {

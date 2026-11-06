@@ -4371,6 +4371,25 @@ mod tests {
             drawn: std::cell::RefCell::new(Vec::new()),
         };
         conn.sync()?;
+        // A compositing manager shows a newly mapped window only once it has
+        // painted it. Until then the root shows through, and picom 12.5 paints
+        // a root with no wallpaper black, so the first read can be all black
+        // before the overlay has drawn anything. Start reading once the white
+        // desktop is on screen, so every read is of the overlay's frames.
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while conn
+            .get_image(ImageFormat::Z_PIXMAP, root, 0, 0, AREA, AREA, !0)?
+            .reply()?
+            .data
+            .chunks_exact(4)
+            .any(|px| px[..3] != [255, 255, 255])
+        {
+            anyhow::ensure!(
+                Instant::now() < deadline,
+                "the white desktop never came on screen"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
 
         let done = Arc::new(AtomicBool::new(false));
         let reads = Arc::new(AtomicUsize::new(0));

@@ -39,6 +39,11 @@ export function earlierItems(history: PastThread | null): TranscriptItem[] {
  * own session on this Mac, in the chat's folder, and the run's turns follow
  * the earlier ones. The chat stays private: nothing goes to a Space thread.
  */
+/** The newest messages a chat opens with: a long chat is never read or drawn whole. */
+export const FIRST_VIEW_MESSAGES = 30;
+/** Each "Show earlier messages" adds this many. */
+export const MORE_MESSAGES = 100;
+
 export function ImportedTaskView({ task }: { task: AskTask & { imported: NonNullable<AskTask["imported"]> } }) {
   const { data } = useBridge();
   const { startRun, sendMessage } = useAgents();
@@ -46,16 +51,21 @@ export function ImportedTaskView({ task }: { task: AskTask & { imported: NonNull
   const name = agentName(task.agent);
   const [history, setHistory] = useState<PastThread | null>(null);
   const [historyError, setHistoryError] = useState<string | null>(null);
+  // Only the newest messages are read at first (the host reads the end of the chat's file, never all
+  // of it); Show earlier messages asks for more. The page never waits on more than it shows.
+  const [limit, setLimit] = useState(FIRST_VIEW_MESSAGES);
+  const [loadingMore, setLoadingMore] = useState(false);
   useEffect(() => {
     let live = true;
     data
-      ?.call("agents.threadHistory", { agent: task.agent as ThreadAgent, id: chat.sessionId })
+      ?.call("agents.threadHistory", { agent: task.agent as ThreadAgent, id: chat.sessionId, limit })
       .then((h) => live && setHistory(h))
-      .catch((e: unknown) => live && setHistoryError(e instanceof Error ? e.message : String(e)));
+      .catch((e: unknown) => live && setHistoryError(e instanceof Error ? e.message : String(e)))
+      .finally(() => live && setLoadingMore(false));
     return () => {
       live = false;
     };
-  }, [data, task.agent, chat.sessionId]);
+  }, [data, task.agent, chat.sessionId, limit]);
 
   const ref = task.runId && task.spaceId ? { spaceId: task.spaceId, runId: task.runId } : null;
   const live = useAgentTimeline(ref);
@@ -116,7 +126,21 @@ export function ImportedTaskView({ task }: { task: AskTask & { imported: NonNull
       <div className="flex min-h-0 flex-1 flex-col">
         <p className="mx-auto w-full max-w-[720px] shrink-0 px-8 pt-6 text-[12px] font-medium text-muted-foreground" data-earlier-heading="">
           Earlier on {thisComputerText()}
-          {history?.earlierOmitted ? ` (${history.earlierOmitted} older messages aren't shown)` : ""}
+          {history?.earlierOmitted ? " (older messages aren't shown)" : ""}
+          {history?.earlierOmitted ? (
+            <button
+              type="button"
+              disabled={loadingMore}
+              onClick={() => {
+                setLoadingMore(true);
+                setLimit((n) => n + MORE_MESSAGES);
+              }}
+              className="ml-2 underline underline-offset-2 hover:text-foreground disabled:opacity-60"
+              data-earlier-more=""
+            >
+              {loadingMore ? "Loading…" : "Show earlier messages"}
+            </button>
+          ) : null}
         </p>
         {loading ? (
           <div className="flex flex-1 items-center justify-center text-muted-foreground">

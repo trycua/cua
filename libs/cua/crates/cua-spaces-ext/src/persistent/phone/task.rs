@@ -504,7 +504,6 @@ pub(crate) async fn task_start(
         agent,
         model,
         text,
-        prompt,
         place,
         fresh,
     };
@@ -529,7 +528,6 @@ struct Job {
     agent: &'static Startable,
     model: Option<String>,
     text: String,
-    prompt: String,
     place: Where,
     fresh: bool,
 }

@@ -127,7 +127,7 @@ jobs:
   native-reference:
     name: Reference / ${{ matrix.library }} / ${{ matrix.platform }}
     needs: scope
-    if: needs.scope.outputs.selected == 'true'
+    if: ${{ !failure() && !cancelled() && !contains(needs.*.result, 'skipped') && (needs.scope.outputs.selected == 'true') }}
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.scope.outputs.matrix) }}

@@ -605,6 +605,12 @@ pub fn image_distro(image_ref: &str) -> Option<ImageDistro> {
     catalog_fact(image_ref, |i| i.distro.clone()).flatten()
 }
 
+/// Whether the catalog lists `image_ref` as built on this computer on first
+/// use (`local_build`) rather than pulled.
+pub fn image_builds_locally(image_ref: &str) -> bool {
+    catalog_fact(image_ref, |i| i.local_build.is_some()).unwrap_or(false)
+}
+
 /// Container or VM, as the catalog lists `image_ref`.
 pub fn image_kind(image_ref: &str) -> Option<SpaceKind> {
     catalog_fact(image_ref, |i| i.variant)

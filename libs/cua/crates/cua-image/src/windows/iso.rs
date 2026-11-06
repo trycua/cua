@@ -1,7 +1,7 @@
 //! Finding the Windows ISO a build installs from.
 //!
 //! Order: the ISO you name (`--iso`), then the cached one, then Microsoft's
-//! evaluation media downloaded into the cache (resumable, the digest of what
+//! media (the Evaluation Center, or the consumer download for ARM64 Windows 11) downloaded into the cache (resumable, the digest of what
 //! arrived recorded next to it and checked on every later use).
 //! Microsoft publishes no checksum for its evaluation ISOs, so the first
 //! download is trusted and every later use is held to it; pass `sha256` to
@@ -12,8 +12,11 @@ use std::path::{Path, PathBuf};
 use async_trait::async_trait;
 use sha2::{Digest, Sha256};
 
-use super::table::{WindowsArch, WindowsVersion};
+use super::table::{Media, WindowsArch, WindowsVersion};
 use crate::error::{ImageError, Result};
+
+/// Where the ISO download sits in the whole build's progress (0 to 1).
+pub const ISO_SPAN: (f64, f64) = (0.01, 0.40);
 
 /// A real Windows ISO is gigabytes; anything under this is an error page.
 pub const MIN_ISO_BYTES: u64 = 1 << 30;
@@ -55,6 +58,15 @@ pub trait IsoFetcher: Send + Sync {
     async fn eval_page(&self, slug: &str) -> Result<String>;
     /// Where a go.microsoft.com link ends up.
     async fn final_url(&self, link: &str) -> Result<String>;
+    /// A web page or API answer as text, with an optional `Referer`
+    /// (Microsoft's download service). Offline by default.
+    async fn get_text(&self, url: &str, _referer: Option<&str>) -> Result<String> {
+        Err(ImageError::Registry(format!("no network for {url}")))
+    }
+    /// The size of what `url` serves, when it can be told.
+    async fn size_of(&self, _url: &str) -> Option<u64> {
+        None
+    }
     /// Downloads `url` to `to` (resuming `to` + `.partial`), reporting bytes.
     async fn download(
         &self,
@@ -210,6 +222,39 @@ pub async fn eval_link(v: &WindowsVersion, fetcher: &dyn IsoFetcher) -> Result<S
     }
 }
 
+/// Downloads `url` to `to`, reporting how far it is to whoever watches the
+/// create (bytes, rate and time left) under the phase of a first-time
+/// download.
+pub(crate) async fn download_reporting(
+    fetcher: &dyn IsoFetcher,
+    url: &str,
+    to: &Path,
+    label: &str,
+    span: (f64, f64),
+    on_bytes: &mut (dyn FnMut(u64) + Send),
+) -> Result<()> {
+    use cua_vmm::progress::{Meter, Phase, Progress, report};
+    let total = fetcher.size_of(url).await.unwrap_or(0);
+    let (mut done, mut meter) = (0u64, Meter::new());
+    report(Progress::phase(Phase::Pulling).detail(label).fraction(span.0));
+    fetcher
+        .download(url, to, &mut |n| {
+            done += n;
+            on_bytes(n);
+            if let Some(t) = meter.sample(done, total) {
+                let mut p = Progress::phase(Phase::Pulling).detail(label);
+                // Where this download sits in the whole build, so the bar of the
+                // build only ever moves forward.
+                if total > 0 {
+                    p = p.fraction(span.0 + (span.1 - span.0) * done as f64 / total as f64);
+                }
+                p.bytes = Some(t);
+                report(p);
+            }
+        })
+        .await
+}
+
 /// Resolves the ISO to install from. See the module docs for the order.
 pub async fn resolve_iso(
     req: &IsoRequest<'_>,
@@ -243,23 +288,46 @@ pub async fn resolve_iso(
             }
         }
     }
-    if !req.version.has_eval_media(req.arch) {
-        return Err(ImageError::Build {
-            step: "windows iso".into(),
-            detail: format!(
-                "Microsoft publishes no {} evaluation ISO for {} {}. Download one yourself (for Windows 11 on ARM: \
-                 https://www.microsoft.com/software-download/windows11arm64) and pass it with --iso <path>",
-                req.arch.as_str(),
-                req.version.name,
-                req.arch.as_str()
-            ),
+    std::fs::create_dir_all(req.cache_dir)?;
+    // The checksum Microsoft publishes for the file, when it publishes one.
+    let mut published: Option<String> = None;
+    match req.version.media(req.arch) {
+        Media::Evaluation => {
+            let link = eval_link(req.version, fetcher).await?;
+            let url = fetcher.final_url(&link).await.unwrap_or(link);
+            let label = format!("Downloading the {} ISO", req.version.name);
+            download_reporting(fetcher, &url, &cached, &label, ISO_SPAN, on_bytes).await?;
+        }
+        Media::Consumer(slug) => {
+            let m = super::msdl::resolve(fetcher, slug).await?;
+            published = m.sha256;
+            let label = format!("Downloading the {} ISO", req.version.name);
+            download_reporting(fetcher, &m.url, &cached, &label, ISO_SPAN, on_bytes).await?;
+        }
+        Media::None => {
+            return Err(ImageError::Build {
+                step: "windows iso".into(),
+                detail: format!(
+                    "Microsoft publishes no {} ISO for {}. Download one yourself and pass it with --iso <path>",
+                    req.arch.as_str(),
+                    req.version.name,
+                ),
+            });
+        }
+    }
+    let digest = sha256_file(&cached)?;
+    // Microsoft's own value is checked too: a truncated or altered download
+    // is never installed from.
+    if let Some(want) = published.as_deref()
+        && !want.eq_ignore_ascii_case(&digest)
+    {
+        let _ = std::fs::remove_file(&cached);
+        return Err(ImageError::Digest {
+            what: format!("{} ISO (against the checksum on Microsoft's download page)", req.version.name),
+            expected: want.to_string(),
+            actual: digest,
         });
     }
-    std::fs::create_dir_all(req.cache_dir)?;
-    let link = eval_link(req.version, fetcher).await?;
-    let url = fetcher.final_url(&link).await.unwrap_or(link);
-    fetcher.download(&url, &cached, on_bytes).await?;
-    let digest = sha256_file(&cached)?;
     if let Some(want) = req.sha256
         && !want.eq_ignore_ascii_case(&digest)
     {
@@ -317,6 +385,14 @@ impl IsoFetcher for HttpFetcher {
 
     async fn final_url(&self, link: &str) -> Result<String> {
         Ok(cua_vmm::fetch::final_url(link, std::time::Duration::from_secs(30)).await?)
+    }
+
+    async fn size_of(&self, url: &str) -> Option<u64> {
+        cua_vmm::fetch::content_length(url, std::time::Duration::from_secs(30)).await
+    }
+
+    async fn get_text(&self, url: &str, referer: Option<&str>) -> Result<String> {
+        Ok(cua_vmm::fetch::get_text_from(url, referer, std::time::Duration::from_secs(30)).await?)
     }
 
     async fn download(
@@ -505,16 +581,118 @@ mod tests {
         assert!(e.contains("--iso"), "{e}");
     }
 
-    #[tokio::test]
-    async fn arm_windows_11_has_no_evaluation_media() {
-        let d = tempfile::tempdir().unwrap();
-        let mut r = req("11", None, d.path());
+    /// Microsoft's download service, answered from memory: the page, the
+    /// session calls, the SKU list and the link.
+    struct Microsoft {
+        sha256: String,
+        calls: Mutex<Vec<String>>,
+    }
+
+    #[async_trait]
+    impl IsoFetcher for Microsoft {
+        async fn eval_page(&self, _: &str) -> Result<String> {
+            Err(ImageError::Registry("no evaluation page in this test".into()))
+        }
+        async fn final_url(&self, l: &str) -> Result<String> {
+            Ok(l.into())
+        }
+        async fn get_text(&self, url: &str, _referer: Option<&str>) -> Result<String> {
+            self.calls.lock().unwrap().push(url.to_string());
+            Ok(if url.contains("software-download/windows11arm64") {
+                format!(
+                    r#"<option value="3816">Windows 11 (multi-edition ISO for Arm64)</option><table><tr><td>English  64-bit</td><td>{}</td></tr></table>"#,
+                    self.sha256.to_ascii_uppercase()
+                )
+            } else if url.contains("getskuinformationbyproductedition") {
+                assert!(url.contains("productEditionId=3816"), "{url}");
+                r#"{"Skus":[{"Id":"27200","Language":"English"}]}"#.into()
+            } else if url.contains("GetProductDownloadLinksBySku") {
+                assert!(url.contains("SKU=27200"), "{url}");
+                r#"{"ProductDownloadOptions":[{"Uri":"https://software.download.prss.microsoft.com/w11arm.iso?t=1","ProductDisplayName":"Windows 11 ARM 64"}]}"#.into()
+            } else {
+                String::new()
+            })
+        }
+        async fn size_of(&self, _: &str) -> Option<u64> {
+            Some(MIN_ISO_BYTES + 10)
+        }
+        async fn download(
+            &self,
+            url: &str,
+            to: &Path,
+            on: &mut (dyn FnMut(u64) + Send),
+        ) -> Result<()> {
+            self.calls.lock().unwrap().push(format!("get {url}"));
+            fake_iso(to);
+            on(MIN_ISO_BYTES + 10);
+            Ok(())
+        }
+    }
+
+    fn arm_req<'a>(dir: &'a Path) -> IsoRequest<'a> {
+        let mut r = req("11", None, dir);
         r.arch = WindowsArch::Arm64;
-        let e = resolve_iso(&r, &Fake::default(), &mut |_| {})
+        r
+    }
+
+    #[tokio::test]
+    async fn arm_windows_11_is_downloaded_from_microsoft_and_checked_against_its_checksum() {
+        let d = tempfile::tempdir().unwrap();
+        // The digest of the fake ISO the download writes.
+        let probe = d.path().join("probe.iso");
+        fake_iso(&probe);
+        let sha = sha256_file(&probe).unwrap();
+        let ms = Microsoft {
+            sha256: sha,
+            calls: Mutex::new(vec![]),
+        };
+        let r = resolve_iso(&arm_req(d.path()), &ms, &mut |_| {}).await.unwrap();
+        assert_eq!(r.origin, IsoOrigin::Downloaded);
+        assert!(r.path.ends_with("windows-11-arm64.iso"));
+        let calls = ms.calls.lock().unwrap().clone();
+        assert!(calls.iter().any(|c| c.contains("software.download.prss.microsoft.com")));
+        // The second use is the cache: no network at all.
+        let again = Microsoft {
+            sha256: String::new(),
+            calls: Mutex::new(vec![]),
+        };
+        let r = resolve_iso(&arm_req(d.path()), &again, &mut |_| {}).await.unwrap();
+        assert_eq!(r.origin, IsoOrigin::Cached);
+        assert!(again.calls.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_download_that_does_not_match_microsofts_checksum_is_never_kept() {
+        let d = tempfile::tempdir().unwrap();
+        let ms = Microsoft {
+            sha256: "00".repeat(32),
+            calls: Mutex::new(vec![]),
+        };
+        let e = resolve_iso(&arm_req(d.path()), &ms, &mut |_| {})
             .await
             .unwrap_err()
             .to_string();
-        assert!(e.contains("--iso") && e.contains("windows11arm64"), "{e}");
+        assert!(e.contains("Microsoft"), "{e}");
+        assert!(!cache_path(d.path(), lookup("11").unwrap(), WindowsArch::Arm64).exists());
+    }
+
+    #[tokio::test]
+    async fn offline_arm_windows_11_says_to_pass_an_iso() {
+        let d = tempfile::tempdir().unwrap();
+        let e = resolve_iso(&arm_req(d.path()), &Fake::default(), &mut |_| {})
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("Microsoft"), "{e}");
+    }
+
+    #[tokio::test]
+    async fn a_version_microsoft_offers_nothing_for_asks_for_your_iso() {
+        let d = tempfile::tempdir().unwrap();
+        let mut r = req("2025", None, d.path());
+        r.arch = WindowsArch::Arm64;
+        // Server has no ARM64 build at all: refused before any network.
+        assert!(resolve_iso(&r, &Fake::default(), &mut |_| {}).await.is_err());
     }
 
     #[test]

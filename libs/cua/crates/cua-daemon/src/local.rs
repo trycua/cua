@@ -358,6 +358,43 @@ async fn resolve_placement_inner(
         arch: None,
         image: None,
     };
+    // A Windows image built on this computer (`windows:11`) has no registry
+    // entry to read: it is a VM disk that carries cua-spacesd, so readiness
+    // waits for it like for a published Windows image.
+    if let ImageSource::Oci { reference } = &placement.image
+        && matches!(placement.backend, BackendKind::Qemu)
+        && let Some(version) = cua_image::windows::build::local_build_target(reference)
+    {
+        // The host's own architecture when the version has a build for it
+        // (ARM64 Windows 11 on Apple silicon: hardware accelerated), else the
+        // one it has (x64 Windows Server on an ARM Mac: the build says why
+        // that is not done).
+        let own = cua_image::windows::WindowsArch::host();
+        let guest = if version.supports(own) {
+            own
+        } else {
+            version.iso_arch.first().copied().unwrap_or(own)
+        };
+        let host = cua_image::windows::native::vmm_arch(guest);
+        let image = cua_image::ResolvedImage {
+            reference: reference.clone(),
+            variant_ref: reference.clone(),
+            pinned_ref: reference.clone(),
+            digest: String::new(),
+            variant: Variant::Containerdisk,
+            arch: Some(host.oci().to_string()),
+            architectures: vec![host.oci().to_string()],
+            emulated: false,
+            os: "windows".into(),
+            spacesd: Some(true),
+            layers: vec![],
+        };
+        return Ok(Resolved {
+            placement,
+            arch: Some(host),
+            image: Some(image),
+        });
+    }
     let (reference, backend) = match (&placement.backend, &placement.image, prefix) {
         (_, ImageSource::Oci { reference }, Some("container" | "docker")) => {
             (reference.clone(), Backend::Container)

@@ -15,6 +15,7 @@
 pub mod build;
 pub mod iso;
 pub mod joliet;
+pub mod msdl;
 pub mod native;
 pub mod table;
 pub mod unattend;

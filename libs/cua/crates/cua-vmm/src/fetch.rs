@@ -300,13 +300,25 @@ pub const BROWSER_UA: &str =
 
 /// GETs a web page as text (a few redirects followed).
 pub async fn get_text(url: &str, timeout: Duration) -> Result<String, VmmError> {
+    get_text_from(url, None, timeout).await
+}
+
+/// [`get_text`] with a `Referer` header (Microsoft's download API wants one).
+pub async fn get_text_from(
+    url: &str,
+    referer: Option<&str>,
+    timeout: Duration,
+) -> Result<String, VmmError> {
     let c = reqwest::Client::builder()
         .user_agent(BROWSER_UA)
         .timeout(timeout)
         .build()
         .map_err(|e| VmmError::other(format!("fetch {url}: {e}")))?;
-    let r = c
-        .get(url)
+    let mut req = c.get(url);
+    if let Some(r) = referer {
+        req = req.header(reqwest::header::REFERER, r);
+    }
+    let r = req
         .send()
         .await
         .map_err(|e| VmmError::other(format!("fetch {url}: {e}")))?;
@@ -335,6 +347,21 @@ pub async fn final_url(url: &str, timeout: Duration) -> Result<String, VmmError>
         return Err(VmmError::other(format!("resolve {url}: {}", r.status())));
     }
     Ok(r.url().to_string())
+}
+
+/// The size of what `url` serves (a HEAD request), when the server says.
+pub async fn content_length(url: &str, timeout: Duration) -> Option<u64> {
+    let c = reqwest::Client::builder()
+        .user_agent(BROWSER_UA)
+        .timeout(timeout)
+        .build()
+        .ok()?;
+    let r = c.head(url).send().await.ok()?;
+    r.status()
+        .is_success()
+        .then(|| r.headers().get(reqwest::header::CONTENT_LENGTH))
+        .flatten()
+        .and_then(|v| v.to_str().ok()?.parse().ok())
 }
 
 #[cfg(test)]

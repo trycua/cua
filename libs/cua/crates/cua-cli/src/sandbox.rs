@@ -1548,20 +1548,33 @@ fn windows_build_note(
             }
         }
         None if build::cached_base(&layout, version, arch).is_none() => {
-            let source = if isomod::registered(&layout.iso_dir(), version, arch).is_some() {
-                "from the ISO you gave earlier"
-            } else if version.has_eval_media(arch) {
-                "from Microsoft's evaluation ISO (a download of about 7 GB, kept for next time)"
+            use cua_image::windows::table::Media;
+            let (source, licence) = if isomod::registered(&layout.iso_dir(), version, arch)
+                .is_some()
+            {
+                ("from the ISO you gave earlier", String::new())
             } else {
-                return Err(CuaError::InvalidArgument(format!(
-                    "Microsoft publishes no {} evaluation ISO for {}: pass your own with --iso <path> (for Windows 11 on ARM: https://www.microsoft.com/software-download/windows11arm64)",
-                    arch.as_str(),
-                    version.name
-                )));
+                match version.media(arch) {
+                    Media::Evaluation => (
+                        "from Microsoft's evaluation ISO (a download of about 7 GB, kept for next time)",
+                        format!(" It is a {}-day evaluation.", version.eval_days),
+                    ),
+                    Media::Consumer(_) => (
+                        "from the Windows ISO Microsoft offers for download (about 8 GB, checked against Microsoft's published checksum, kept for next time)",
+                        " Windows installs unactivated: it runs, with a watermark and limited personalisation, until you add a licence.".into(),
+                    ),
+                    Media::None => {
+                        return Err(CuaError::InvalidArgument(format!(
+                            "Microsoft publishes no {} ISO for {}: pass your own with --iso <path>",
+                            arch.as_str(),
+                            version.name
+                        )));
+                    }
+                }
             };
             eprintln!(
-                "note: {} is built on this computer the first time, {source}: about 20 to 40 minutes with hardware acceleration, then every create is fast. It is a {}-day evaluation.",
-                version.name, version.eval_days
+                "note: {} is built on this computer the first time, {source}: about 20 to 40 minutes with hardware acceleration, then every create is fast.{licence}",
+                version.name
             );
         }
         None => {}
@@ -2740,7 +2753,7 @@ pub async fn run(
             }
             let o = env
                 .run(shell::with_opts(
-                    shell::command_of(&sh_argv(&image_defaults(&name, exec_line(&command)))),
+                    shell::command_of(&guest_argv(&env, &name, exec_line(&command)).await),
                     flags.opts(Some(120_000)),
                 ))
                 .await?;
@@ -2777,11 +2790,14 @@ pub async fn run(
             let name = at.apply(&name)?;
             let env = env_of(cua, &name).await?;
             if !command.is_empty() && !util::interactive() {
-                let line = image_defaults(&name, exec_line(&command));
-                return shell::exec(&env, &sh_argv(&line), out).await;
+                let argv = guest_argv(&env, &name, exec_line(&command)).await;
+                return shell::exec(&env, &argv, out).await;
             }
-            let cmd =
-                (!command.is_empty()).then(|| sh_argv(&image_defaults(&name, exec_line(&command))));
+            let cmd = if command.is_empty() {
+                None
+            } else {
+                Some(guest_argv(&env, &name, exec_line(&command)).await)
+            };
             return shell::interactive(&env, cmd, cols, rows).await;
         }
         SandboxCmd::Screenshot { name, at, output } => {
@@ -3117,6 +3133,33 @@ fn exec_line(args: &[String]) -> String {
 
 fn sh_argv(line: &str) -> Vec<String> {
     vec!["/bin/sh".into(), "-c".into(), line.into()]
+}
+
+/// Whether the guest of `env` is Windows (no `/bin/sh`: its shell is `cmd.exe`).
+async fn is_windows(env: &cua_sdk::SpacesdClient) -> bool {
+    env.capabilities()
+        .await
+        .is_ok_and(|c| c.os_family.eq_ignore_ascii_case("windows"))
+}
+
+/// The argv that runs `line` in `env`'s guest.
+async fn guest_argv(env: &cua_sdk::SpacesdClient, name: &str, line: String) -> Vec<String> {
+    if is_windows(env).await {
+        windows_argv(&line)
+    } else {
+        sh_argv(&image_defaults(name, line))
+    }
+}
+
+/// `cmd.exe /d /s /c "line"`: `/s` keeps the quotes of the line as typed.
+fn windows_argv(line: &str) -> Vec<String> {
+    vec![
+        "cmd.exe".into(),
+        "/d".into(),
+        "/s".into(),
+        "/c".into(),
+        line.into(),
+    ]
 }
 
 /// suspend / resume / restart by sandbox name.
@@ -3998,6 +4041,15 @@ mod tests {
         // A backslash path survives.
         assert_eq!(exec_line(&v(&["cmd", r"C:\x y"])), r"cmd 'C:\x y'");
         assert_eq!(exec_line(&v(&["echo", ""])), "echo ''");
+    }
+
+    #[test]
+    fn a_windows_guest_runs_the_line_in_cmd_not_sh() {
+        assert_eq!(
+            windows_argv("echo hi & ver"),
+            ["cmd.exe", "/d", "/s", "/c", "echo hi & ver"]
+        );
+        assert_eq!(sh_argv("ls"), ["/bin/sh", "-c", "ls"]);
     }
 
     #[test]

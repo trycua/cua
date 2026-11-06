@@ -47,6 +47,18 @@ impl WindowsArch {
     }
 }
 
+/// Where a version's ISO comes from when you do not give one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Media {
+    /// Microsoft's Evaluation Center (time-limited, fully featured).
+    Evaluation,
+    /// Microsoft's consumer download page with this slug (retail media,
+    /// installed unactivated).
+    Consumer(&'static str),
+    /// Microsoft offers nothing for this architecture: bring an ISO.
+    None,
+}
+
 /// One Windows version cua can build.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WindowsVersion {
@@ -66,6 +78,10 @@ pub struct WindowsVersion {
     pub eval_linkid: Option<&'static str>,
     /// Architectures Microsoft publishes evaluation media for.
     pub eval_arch: &'static [WindowsArch],
+    /// Microsoft's consumer download pages (`software-download/<slug>`) that
+    /// serve an ISO of an architecture the Evaluation Center does not: the
+    /// ARM64 Windows 11 ISO, for example. Unactivated retail media.
+    pub consumer: &'static [(WindowsArch, &'static str)],
     /// Architectures cua can build with your own ISO.
     pub iso_arch: &'static [WindowsArch],
     /// Disk size in GiB.
@@ -89,14 +105,15 @@ const VERSIONS: &[WindowsVersion] = &[
             "11-eval",
             "windows11",
         ],
-        name: "Windows 11 Enterprise Evaluation",
+        name: "Windows 11",
         server: false,
         edition: "Windows 11 Enterprise Evaluation",
         eval_slug: "windows-11-enterprise",
         eval_linkid: Some("2382600"),
-        // Microsoft's evaluation centre has no ARM64 Windows 11 ISO: on an
-        // Apple silicon Mac you bring the ARM64 ISO (`--iso`).
+        // Microsoft's evaluation centre has no ARM64 Windows 11 ISO: that one
+        // is Microsoft's consumer ARM64 download (`consumer`).
         eval_arch: &[Amd64],
+        consumer: &[(Arm64, "windows11arm64")],
         iso_arch: &[Amd64, Arm64],
         disk_gb: 64,
         eval_days: 90,
@@ -117,6 +134,7 @@ const VERSIONS: &[WindowsVersion] = &[
         eval_slug: "windows-10-enterprise",
         eval_linkid: None,
         eval_arch: &[Amd64],
+        consumer: &[],
         iso_arch: &[Amd64],
         disk_gb: 64,
         eval_days: 90,
@@ -131,6 +149,7 @@ const VERSIONS: &[WindowsVersion] = &[
         eval_slug: "windows-server-2025",
         eval_linkid: Some("2345730"),
         eval_arch: &[Amd64],
+        consumer: &[],
         iso_arch: &[Amd64],
         disk_gb: 64,
         eval_days: 180,
@@ -145,6 +164,7 @@ const VERSIONS: &[WindowsVersion] = &[
         eval_slug: "windows-server-2022",
         eval_linkid: None,
         eval_arch: &[Amd64],
+        consumer: &[],
         iso_arch: &[Amd64],
         disk_gb: 64,
         eval_days: 180,
@@ -160,6 +180,7 @@ const VERSIONS: &[WindowsVersion] = &[
         eval_slug: "windows-server-2019",
         eval_linkid: None,
         eval_arch: &[Amd64],
+        consumer: &[],
         iso_arch: &[Amd64],
         disk_gb: 64,
         eval_days: 180,
@@ -198,6 +219,17 @@ impl WindowsVersion {
     /// Whether `arch` can be built at all (with a user ISO if need be).
     pub fn supports(&self, arch: WindowsArch) -> bool {
         self.iso_arch.contains(&arch)
+    }
+
+    /// Where the ISO for `arch` comes from when you give none.
+    pub fn media(&self, arch: WindowsArch) -> Media {
+        if self.eval_arch.contains(&arch) {
+            Media::Evaluation
+        } else if let Some((_, slug)) = self.consumer.iter().find(|(a, _)| *a == arch) {
+            Media::Consumer(slug)
+        } else {
+            Media::None
+        }
     }
 
     /// Whether Microsoft's evaluation media can be downloaded for `arch`.
@@ -266,10 +298,13 @@ mod tests {
     }
 
     #[test]
-    fn arm_windows_11_needs_your_iso() {
+    fn arm_windows_11_comes_from_microsofts_consumer_download() {
         let v = lookup("11").unwrap();
         assert!(v.supports(WindowsArch::Arm64));
         assert!(!v.has_eval_media(WindowsArch::Arm64));
+        assert_eq!(v.media(WindowsArch::Arm64), Media::Consumer("windows11arm64"));
+        assert_eq!(v.media(WindowsArch::Amd64), Media::Evaluation);
+        assert_eq!(lookup("2025").unwrap().media(WindowsArch::Arm64), Media::None);
         assert!(v.has_eval_media(WindowsArch::Amd64));
         let s = lookup("2025").unwrap();
         let e = s.check_arch(WindowsArch::Arm64).unwrap_err().to_string();

@@ -14,7 +14,7 @@ resolves to `ghcr.io/trycua/<os>:<tag>` (`macos:tahoe` is `macos:26`; `linux` is
 | Alias | Tag | Name | Built from | Archs | Evaluation |
 |---|---|---|---|---|---|
 | `windows`, `windows:2022` | `2022` | Windows Server 2022 | **pulled** (published containerDisk) | amd64 | 180 days |
-| `windows:11` (`win11`, `11-enterprise-eval`) | `11` | Windows 11 Enterprise Evaluation | Microsoft evaluation ISO, or yours | amd64; arm64 with your ISO | 90 days |
+| `windows:11` (`win11`, `11-enterprise-eval`) | `11` | Windows 11 | amd64: Microsoft evaluation ISO; arm64: the ARM64 ISO Microsoft offers for download; or yours | amd64, arm64 | 90 days (amd64 evaluation); arm64 installs unactivated |
 | `windows:2025` (`server-2025`) | `2025` | Windows Server 2025 Evaluation | evaluation ISO, or yours | amd64 | 180 days |
 | `windows:2019` (`server-2019`) | `2019` | Windows Server 2019 Evaluation | evaluation ISO, or yours | amd64 | 180 days |
 | `windows:10` (`win10`) | `10` | Windows 10 Enterprise Evaluation | evaluation ISO, or yours | amd64 | 90 days |
@@ -24,9 +24,10 @@ The table is `cua_image::windows::table` (code) and the picker entries are in
 `published` is false, like a `derived_from` image). Which editions ship as aliases is
 a default; adding one is a table row plus a catalog row.
 
-Microsoft's evaluation centre publishes **no ARM64 Windows 11 ISO**, so on an Apple
-silicon Mac `windows:11` needs your own ARM64 ISO
-(<https://www.microsoft.com/software-download/windows11arm64>): `--iso`.
+Microsoft's evaluation centre publishes **no ARM64 Windows 11 ISO**. On an Apple silicon Mac
+`windows:11` is ARM64 Windows (native speed, and it runs x64 apps) and its ISO comes from the
+page Microsoft itself offers for it, <https://www.microsoft.com/software-download/windows11arm64>:
+see "ISO resolution". You can still pass your own with `--iso`.
 
 ## ISO resolution
 
@@ -36,13 +37,33 @@ silicon Mac `windows:11` needs your own ARM64 ISO
    pins the digest.
 2. The cached ISO `$CUA_HOME/images/windows/iso/windows-<tag>-<arch>.iso`, held to the
    digest recorded when it was downloaded.
-3. Microsoft's evaluation media: find the `go.microsoft.com/fwlink` for the version's
-   Evaluation Center page (falling back to a known link id), follow it, and download with
-   cua's resumable fetcher (`.partial` file, HTTP Range, retries). Microsoft publishes no
-   checksum for these, so the first download is trusted and its SHA-256 recorded; a cached
-   ISO that no longer matches is downloaded again.
+3. **Microsoft's media, by architecture** (`WindowsVersion::media`):
+   * *Evaluation Center* (Windows 11 and Server on x64): find the `go.microsoft.com/fwlink`
+     for the version's page (falling back to a known link id), follow it, and download with cua's
+     resumable fetcher (`.partial` file, HTTP Range, retries). Microsoft publishes no checksum
+     for these, so the first download is trusted and its SHA-256 recorded; a cached ISO that no
+     longer matches is downloaded again.
+   * *Consumer download* (Windows 11 ARM64): Microsoft's software-download service, the one
+     behind the "Download Windows 11" web pages and used by tools like Fido. cua reads the current
+     edition id from the page (`<option value="3816">Windows 11 (multi-edition ISO for Arm64)`;
+     ids change every release, so they are never hard-coded), registers a random session id,
+     asks `getskuinformationbyproductedition` for the English release and
+     `GetProductDownloadLinksBySku` for a link on `software.download.prss.microsoft.com`
+     (valid 24 hours), and downloads it resumably. **The page publishes the SHA-256 of every
+     language's ISO, and cua checks the download against it**: a truncated or altered file is
+     deleted, never installed from. No account is needed. The ISO is downloaded from Microsoft
+     to this computer for the person who asked for it; cua never bundles, mirrors or republishes it.
 
 If nothing works the error says to download the ISO yourself and pass `--iso`.
+
+### Licence
+
+An ARM64 Windows 11 build installs **Windows 11 Pro from Microsoft's consumer media, unactivated**
+(the answer file uses the public generic Pro key, which selects the edition and activates
+nothing). Unactivated Windows 11 runs with a watermark and limited personalisation until a
+licence is added; Microsoft offers no evaluation edition for ARM64. This is the consumer
+route Microsoft documents for personal use and testing, not an evaluation: whether cua should ship
+it as the default (versus asking for `--iso`) is a product decision, flagged in the pull request.
 
 ## The build
 
@@ -57,9 +78,17 @@ Space is created; `cached_base` makes later creates instant):
 4. Generate `Autounattend.xml` and `setup-spacesd.ps1` and write them on a small
    ISO 9660 + Joliet data disc (in Rust, no `genisoimage`); Setup reads
    `Autounattend.xml` from any drive, so the Windows ISO stays untouched.
-5. Install in a VM until cua-spacesd answers on port 3211, power it off with ACPI, keep the
-   disk as `base.qcow2` plus `base.json` (ISO digest, account, spacesd version). A disk
-   under 4 GiB is an unfinished install and is refused.
+5. Install in a VM. At the first logon the guest runs `setup-spacesd.ps1`: it downloads the newest
+   published cua-spacesd with a Windows build (the pinned one when GitHub cannot be read), installs it
+   exactly as the published Windows image does (`C:\Program Files\Cua\spacesd`, a scheduled task in
+   the desktop session, bootstrap mode on `0.0.0.0:3211`, the token directory with its ACL), proves it
+   listens, then **seals** the image (no token, no machine key, no per-machine state, as
+   `libs/images/windows-2022/seal.ps1`) and powers off. The host waits for the power-off, keeps
+   the disk as `base.qcow2` plus `base.json` (ISO digest, account, spacesd version). A disk
+   under 4 GiB is an unfinished install and is refused. The install VM is stopped and deleted if the
+   create is cancelled; the ISO download resumes from its `.partial` file.
+6. Every Space is a copy-on-write clone of `base.qcow2` that boots in about 30 seconds; the create
+   returns when cua-spacesd answers (the Space token is installed by the first authenticated `Init`).
 
 The answer file: GPT (EFI, MSR, NTFS), edition by name (Server) or index 1, TPM/Secure
 Boot/RAM/CPU checks bypassed (`LabConfig`), virtio storage and network drivers in WinPE and
@@ -82,14 +111,28 @@ selects an edition by name (`Windows 11 Pro` also gets the generic Pro key).
 | macOS Apple silicon | cua-vmm QEMU | HVF (ARM64 guest only) | `brew install qemu` (existing) |
 | Windows PC x64 | **QEMU with KVM inside WSL2** | KVM | probe `wsl`, `/dev/kvm`, QEMU, OVMF; cua installs QEMU/OVMF/swtpm in the distribution; guides WSL / virtualization (they need an administrator or a reboot); `winget install SoftwareFreedomConservancy.QEMU` for native QEMU |
 
-**Never software emulation.** A foreign-architecture guest (x64 Windows on an ARM Mac,
-ARM64 Windows on a Windows PC) is refused with the reason, and cua-vmm refuses a Windows guest
-that would run under TCG unless the accelerator was set explicitly. Why WSL2: QEMU for
-Windows under WHPX hangs in OVMF's flash on current builds, and TCG takes hours. Dogfooding
+**`--runtime auto` and software emulation.** `auto` picks QEMU for a Windows guest and the accelerator
+for the guest's architecture: HVF for ARM64 Windows on Apple silicon, KVM on Linux, WSL2/KVM on a
+Windows PC. A guest of the *other* architecture (x64 Windows on an Apple silicon Mac, ARM64 Windows on
+an x64 computer) could only run in software emulation (TCG). cua **refuses that by default, in plain
+words, before anything is downloaded**: x64 Windows under TCG on an M-series Mac takes hours to install
+and is too slow for an agent's screenshot and click loop (its readiness and exec time-outs expire first).
+The message names the way out: on a Mac use `windows:11` (ARM64, which runs x64 apps), and
+`CUA_ALLOW_SOFTWARE_EMULATION=1` accepts the slowness knowingly (the install is then given 12 hours).
+The refusal lives in `cua_vmm::auto::select`, in the QEMU runtime's start and in the build, from one
+message (`cua_vmm::qemu::windows_emulation_message`). Why WSL2 on a Windows PC: QEMU for
+Windows under WHPX hangs in OVMF's flash on current builds. Dogfooding
 (`fix/winlike-windows-builder-whpx`) found the rest, all built in: stage files on the WSL ext4
 disk, not `/mnt` (9p stalls); boot the install media first (a blank disk first leaves OVMF in the
-EFI shell); press Enter every half second from power-on for a minute to catch "Press any key to
-boot from CD".
+EFI shell); press Enter to catch "Press any key to boot from CD" (on a Mac: every 0.3 s for the
+first 25 s after power-on, then stop, so no Enter reaches Setup's own window).
+
+**ARM64 Windows on a Mac** runs `qemu-system-aarch64 -accel hvf -cpu host` on the `virt` machine with
+edk2 firmware (the one Homebrew's QEMU ships; Microsoft's Secure Boot key pair is used when present,
+and Setup's Secure Boot and TPM checks are bypassed in the answer file), an NVMe system disk, the
+install and data discs as USB storage on xHCI, `virtio-net` (driver from virtio-win, loaded by the
+answer file), `ramfb` (800x600) and a swtpm TPM 2.0. cua installs `swtpm` with Homebrew when it
+provisions QEMU (`brew install qemu swtpm` by hand otherwise).
 
 Known gap: building on a Windows PC works through WSL2; **running** a UEFI Windows guest from
 the Rust QEMU runtime on a Windows PC still uses WHPX, which hangs in OVMF on current QEMU. Until
@@ -99,19 +142,23 @@ or Hyper-V there.
 ## Trying it
 
 ```sh
-cua sb create windows:11                      # evaluation ISO downloaded, built once, cached
-cua sb create windows:11 --iso ~/Win11_ARM64.iso   # your ISO (needed on a Mac)
-cua sb create windows:2025 --name srv
+cua sb create windows:11 --kind vm            # ISO downloaded, built once (about 10 minutes on an M-series Mac), cached
+cua sb create windows:11 --kind vm --iso ~/Win11_ARM64.iso   # your own ISO instead
+cua sb create windows:2025 --name srv         # x64 hosts
 cua sb create windows:11 --kind vm --runtime qemu --cpu 4 --memory 8GB
 ```
 
-In the New Space dialog (the catalog entries are offered in the image picker; auto-download is the default) pick Windows 11 Enterprise Evaluation (or Server 2025/2022): the
-progress shows "Finding the ISO", "Downloading", "Installing Windows (about 20 to 40 minutes,
-once)", "Sealing the image".
+In the New Space dialog the catalog entries are offered in the image picker; auto-download is the
+default. The first Space of a version shows "Downloading Windows (first time only)" with the ISO's
+bytes and time left, then "Installing Windows (first time only)" with a bar that only moves forward
+(the app watches for a stalled create, so the build keeps its fraction rising even while Windows
+writes nothing), then the ordinary "Preparing the disk", "Booting Windows" and "Starting Cua inside
+the Space". Cancelling the create stops the install VM.
 
 UI gap: the dialog has no ISO-path field yet. That needs `isoPath` on the wizard's `CreatePlan` and
 the UniFFI/TS generated bindings regenerated; until then register an ISO once with
-`cua sb create windows:11 --iso <path>` (or set `CUA_WINDOWS_ISO`), and the dialog uses it.
+`cua sb create windows:11 --iso <path>` (or set `CUA_WINDOWS_ISO`), and the dialog uses it. It is
+optional: Windows 11 on Apple silicon needs no manual step.
 
 ## Guard rails from dogfooding
 
@@ -123,8 +170,8 @@ the UniFFI/TS generated bindings regenerated; until then register an ISO once wi
   "The command line is too long"). Copy the script, then run it:
   copy it with `cua sb cp` to the guest (for a Windows daemon: `direct:<addr>:C:/script.ps1`), then run `powershell -File C:/script.ps1`.
 * `sb exec` has a 120 s default limit: `--timeout 0` for long jobs (or detach them).
-* `sb exec <local space>` runs on the Linux side of a Space that has one, while
-  `sb exec direct:<addr>` runs on the Windows daemon: pick the target deliberately.
+* `cua sb exec NAME ...` on a Windows Space runs the line in `cmd.exe /d /s /c` (it used to try
+  `/bin/sh`, which a Windows guest does not have).
 
 ## Not verified here
 

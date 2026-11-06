@@ -29,6 +29,8 @@ pub const BUILD_SCRATCH_BYTES: u64 = 24 << 30;
 /// The most an install may take. With hardware acceleration it is 15 to 40
 /// minutes; this is the wall where a stuck one is given up on.
 pub const INSTALL_TIMEOUT: Duration = Duration::from_secs(2 * 60 * 60);
+/// The wall for an install the person accepted to run in software emulation.
+pub const EMULATED_INSTALL_TIMEOUT: Duration = Duration::from_secs(12 * 60 * 60);
 /// A build lock older than this is a crashed build's.
 const STALE_LOCK: Duration = Duration::from_secs(4 * 60 * 60);
 
@@ -71,6 +73,12 @@ impl Layout {
         self.dir(v, arch).join("base.json")
     }
 }
+
+/// The part of a first-time build's progress (0 to 1) that is downloading (the
+/// ISO, then the drivers): the app tells "Downloading Windows" from
+/// "Installing Windows" by this fraction (`cua-spaces-app-core`
+/// `WINDOWS_INSTALL_FROM`, which a test there holds to this value).
+pub const DOWNLOADS_END: f64 = 0.45;
 
 /// What a finished base records.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -166,12 +174,32 @@ pub trait Installer: Send + Sync {
     async fn install(&self, plan: &InstallPlan) -> Result<PathBuf>;
 }
 
+/// A first-time build reports under the download phase of the create (the
+/// image is "pulled" once; the Space's own phases, the clone and the boot,
+/// come after it and start the readiness clock).
 fn progress(detail: impl Into<String>, fraction: f64) {
     use cua_vmm::progress::{Phase, Progress, report};
     report(
-        Progress::phase(Phase::Creating)
+        Progress::phase(Phase::Pulling)
             .detail(detail)
             .fraction(fraction),
+    );
+}
+
+/// Reports how far the install is: the guest writes about 12 GiB of the disk
+/// (sparse) before it is done, so the file's size is the best clock there is.
+pub fn report_install_progress(disk: &Path, _disk_gb: u32) {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    // Windows spends minutes at a time not writing (the first logon, the
+    // driver and service setup): the fraction still creeps up with every
+    // report, so the app's stall watch sees an install that is alive.
+    static REPORTS: AtomicU64 = AtomicU64::new(0);
+    let n = REPORTS.fetch_add(1, Ordering::Relaxed) as f64;
+    let used = std::fs::metadata(disk).map(|m| m.len()).unwrap_or(0);
+    let frac = (used as f64 / (14u64 << 30) as f64).clamp(0.0, 1.0);
+    progress(
+        "Installing Windows (about 20 to 40 minutes, once)",
+        (0.47 + 0.48 * frac + n * 1e-5).min(0.96),
     );
 }
 
@@ -267,7 +295,6 @@ pub async fn ensure_base_with(
     }
 
     progress(format!("Finding the {} ISO", v.name), 0.0);
-    let mut got = 0u64;
     let isop = iso::resolve_iso(
         &IsoRequest {
             version: v,
@@ -277,39 +304,63 @@ pub async fn ensure_base_with(
             sha256: req.iso_sha256.as_deref(),
         },
         fetcher,
-        &mut |n| {
-            got += n;
-            use cua_vmm::progress::{Phase, Progress, report};
-            report(
-                Progress::phase(Phase::Pulling)
-                    .detail(format!("Downloading {} evaluation ISO", v.name)),
-            );
-        },
+        &mut |_| {},
     )
     .await?;
-    let evaluation_media = isop.origin != iso::IsoOrigin::User;
-    progress("Preparing the unattended install", 0.05);
+    use super::table::Media;
+    let media = if isop.origin == iso::IsoOrigin::User {
+        Media::None
+    } else {
+        v.media(arch)
+    };
+    let evaluation_media = media == Media::Evaluation;
+    // Consumer media holds many editions: install Pro (the answer file gives
+    // it the generic Pro key, which activates nothing).
+    let edition = req.edition.clone().or_else(|| {
+        matches!(media, Media::Consumer(_)).then(|| "Windows 11 Pro".to_string())
+    });
+    progress("Preparing the unattended install", 0.46);
     let work = dir.join("work");
     std::fs::create_dir_all(&work)?;
     std::fs::create_dir_all(layout.iso_dir())?;
     let virtio = layout.iso_dir().join("virtio-win.iso");
     if !virtio.is_file() {
-        fetcher.download(VIRTIO_URL, &virtio, &mut |_| {}).await?;
+        iso::download_reporting(
+            fetcher,
+            VIRTIO_URL,
+            &virtio,
+            "Downloading the Windows drivers for the virtual computer",
+            (0.40, 0.45),
+            &mut |_| {},
+        )
+        .await?;
     }
+    // The newest cua-spacesd with a Windows build (the pinned one when GitHub
+    // cannot be read).
+    let spacesd = fetcher
+        .get_text(
+            "https://api.github.com/repos/trycua/cua/releases?per_page=40",
+            None,
+        )
+        .await
+        .ok()
+        .and_then(|j| unattend::latest_spacesd(&j))
+        .unwrap_or_else(|| unattend::SPACESD_VERSION.to_string());
     let data_iso = work.join("unattend.iso");
     let disc = unattend::data_disc(&UnattendOptions {
         version: v,
         arch,
         account: &req.account,
-        edition: req.edition.as_deref(),
+        edition: edition.as_deref(),
         evaluation_media,
         virtio: true,
+        spacesd_version: &spacesd,
     });
     std::fs::write(&data_iso, disc)?;
 
     progress(
         format!("Installing {} (about 20 to 40 minutes, once)", v.name),
-        0.1,
+        0.47,
     );
     let plan = InstallPlan {
         name: format!("cua-build-windows-{}-{}", v.id, arch.as_str()),
@@ -321,7 +372,11 @@ pub async fn ensure_base_with(
         cpus: req.cpus,
         memory_mb: req.memory_mb,
         work_dir: work.clone(),
-        timeout: INSTALL_TIMEOUT,
+        timeout: if arch == WindowsArch::host() {
+            INSTALL_TIMEOUT
+        } else {
+            EMULATED_INSTALL_TIMEOUT
+        },
     };
     let installed = installer.install(&plan).await?;
     let size = std::fs::metadata(&installed)?.len();
@@ -334,7 +389,7 @@ pub async fn ensure_base_with(
             ),
         });
     }
-    progress("Sealing the image", 0.95);
+    progress("Sealing the image", 0.97);
     let disk = layout.disk(v, arch);
     if disk.exists() {
         std::fs::remove_file(&disk)?;
@@ -348,7 +403,7 @@ pub async fn ensure_base_with(
         arch: arch.as_str().into(),
         iso_sha256: iso::sha256_file(&isop.path).unwrap_or_default(),
         account: req.account.clone(),
-        spacesd: unattend::SPACESD_VERSION.into(),
+        spacesd: spacesd.clone(),
         built_at: now(),
         disk_bytes: std::fs::metadata(&disk)?.len(),
     };

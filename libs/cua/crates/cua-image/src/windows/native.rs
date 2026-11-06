@@ -15,11 +15,10 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use cua_vmm::qemu::{QemuConfig, QemuRuntime};
-use cua_vmm::{Arch, GuestOs, ImageSource, Probe, Runtime, StartSpec};
+use cua_vmm::{Arch, GuestOs, ImageSource, Probe, Runtime, StartSpec, Status};
 
 use super::build::{InstallPlan, Installer};
 use super::table::WindowsArch;
-use super::unattend::SPACESD_PORT;
 use crate::error::{ImageError, Result};
 
 /// The guest architecture as the VMM names it.
@@ -30,21 +29,15 @@ pub fn vmm_arch(a: WindowsArch) -> Arch {
     }
 }
 
-/// Errors when `guest` could only run under software emulation on `host`.
+/// Errors when `guest` could only run under software emulation on `host`,
+/// unless the person accepted that (`CUA_ALLOW_SOFTWARE_EMULATION=1`).
 pub fn refuse_software_emulation(guest: WindowsArch, host: WindowsArch) -> Result<()> {
-    if guest == host {
+    if guest == host || cua_vmm::qemu::software_emulation_allowed() {
         return Ok(());
     }
     Err(ImageError::Build {
         step: "windows".into(),
-        detail: format!(
-            "this {} computer would run {} Windows under software emulation, which takes hours; cua does not do that. \
-             Use {} Windows here, or build on a {} computer",
-            host.as_str(),
-            guest.as_str(),
-            host.as_str(),
-            guest.as_str()
-        ),
+        detail: cua_vmm::qemu::windows_emulation_message(vmm_arch(guest), vmm_arch(host)),
     })
 }
 
@@ -77,11 +70,46 @@ pub fn start_spec(plan: &InstallPlan) -> StartSpec {
         .arch(vmm_arch(plan.arch))
         .cpus(plan.cpus)
         .memory_mb(plan.memory_mb)
-        .probe(Probe::tcp(SPACESD_PORT))
+        // No probe: the guest installs cua-spacesd, seals itself and powers
+        // off; the installer waits for that power-off.
+        .probe(Probe::None)
         .ready_timeout(plan.timeout);
     spec.disk_size_gb = Some(plan.disk_gb);
     spec.extra_args = extra_drives(plan);
     spec
+}
+
+/// Stops a background task when dropped.
+struct AbortOnDrop(tokio::task::JoinHandle<()>);
+
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+/// Ends the install VM when the build is dropped half-way (a cancelled
+/// create): QEMU runs detached from this process, so without this it would go
+/// on installing Windows with nobody waiting for it.
+struct VmGuard {
+    rt: Arc<QemuRuntime>,
+    name: String,
+    armed: bool,
+}
+
+impl Drop for VmGuard {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        let (rt, name) = (self.rt.clone(), self.name.clone());
+        if let Ok(h) = tokio::runtime::Handle::try_current() {
+            h.spawn(async move {
+                let _ = rt.stop(&name).await;
+                let _ = rt.delete(&name).await;
+            });
+        }
+    }
 }
 
 /// Runs the install under cua-vmm's QEMU runtime.
@@ -121,28 +149,89 @@ impl Installer for QemuInstaller {
         let name = plan.name.clone();
         // Start from nothing: a half-built VM of an earlier attempt is not reused.
         let _ = rt.delete(&name).await;
-        // "Press any key to boot from CD" stays up a few seconds; missing it
-        // leaves the firmware in the EFI shell. Press Enter every half second
-        // for a minute from power-on (the installer's own window takes far
-        // longer than that to appear, so nothing here reaches its buttons).
+        // "Press any key to boot from CD" shows from about 7 s after power-on
+        // and times out a few seconds later; missing it leaves the firmware in
+        // the EFI shell. Press Enter every 0.3 s for the first 25 s after the
+        // VM answers on QMP, and stop: Setup's own window opens after about
+        // 35 s, and an Enter that reached its Cancel button would end the
+        // install.
         let keys = {
             let rt = rt.clone();
             let name = name.clone();
-            tokio::spawn(async move {
-                for _ in 0..120 {
-                    if let Ok(mut q) = rt.qmp(&name).await {
-                        let _ = q.send_keys(&["ret"]).await;
+            AbortOnDrop(tokio::spawn(async move {
+                let (mut sent, mut failed) = (0u32, 0u32);
+                let mut up_at: Option<std::time::Instant> = None;
+                // Up to a minute for the VM to exist, then 25 s of presses.
+                for _ in 0..200 {
+                    if up_at.is_some_and(|t| t.elapsed() > Duration::from_secs(25)) {
+                        break;
                     }
-                    tokio::time::sleep(Duration::from_millis(500)).await;
+                    match rt.qmp(&name).await {
+                        Ok(mut q) => {
+                            up_at.get_or_insert_with(std::time::Instant::now);
+                            match q.send_keys(&["ret"]).await {
+                                Ok(()) => sent += 1,
+                                Err(e) => {
+                                    failed += 1;
+                                    tracing::debug!("boot key press failed: {e}");
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            failed += 1;
+                            tracing::debug!("boot key press: no QMP yet: {e}");
+                        }
+                    }
+                    tokio::time::sleep(Duration::from_millis(300)).await;
                 }
-            })
+                tracing::info!(sent, failed, "boot key presses done");
+            }))
+        };
+        let mut vm = VmGuard {
+            rt: rt.clone(),
+            name: name.clone(),
+            armed: true,
         };
         let started = rt.start(&start_spec(plan)).await;
-        keys.abort();
-        started?;
-        // cua-spacesd answers: the install finished. Shut down cleanly so the
-        // disk is consistent, then keep the disk.
-        rt.stop(&name).await?;
+        // The presses go on after the VM is up: the prompt shows a few
+        // seconds after power-on, and a start with no probe returns at once.
+        if let Err(e) = started {
+            keys.0.abort();
+            return Err(e.into());
+        }
+        // The guest installs Windows, installs cua-spacesd, seals itself and
+        // powers off. Wait for the power-off (QEMU exits), then keep the disk.
+        let deadline = std::time::Instant::now() + plan.timeout;
+        let mut last_report = std::time::Instant::now();
+        loop {
+            match rt.status(&name).await {
+                Ok(Status::Stopped) => break,
+                Ok(_) => {}
+                // The VM is gone: it powered itself off.
+                Err(_) => break,
+            }
+            if std::time::Instant::now() > deadline {
+                keys.0.abort();
+                let _ = rt.stop(&name).await;
+                return Err(ImageError::Build {
+                    step: "windows install".into(),
+                    detail: format!(
+                        "Windows did not finish installing in {} minutes (the install VM was stopped; its files are in {})",
+                        plan.timeout.as_secs() / 60,
+                        plan.work_dir.display()
+                    ),
+                });
+            }
+            if last_report.elapsed() >= Duration::from_secs(20) {
+                last_report = std::time::Instant::now();
+                if let Ok(st) = rt.load(&name) {
+                    super::build::report_install_progress(&st.disk, plan.disk_gb);
+                }
+            }
+            tokio::time::sleep(Duration::from_secs(5)).await;
+        }
+        keys.0.abort();
+        let _ = rt.stop(&name).await;
         let disk = rt.load(&name)?.disk;
         let out = plan.work_dir.join("installed.qcow2");
         if out.exists() {
@@ -151,6 +240,7 @@ impl Installer for QemuInstaller {
         if std::fs::rename(&disk, &out).is_err() {
             std::fs::copy(&disk, &out)?;
         }
+        vm.armed = false;
         let _ = rt.delete(&name).await;
         Ok(out)
     }
@@ -196,13 +286,13 @@ mod tests {
     }
 
     #[test]
-    fn the_spec_boots_the_iso_on_a_blank_disk_and_waits_for_spacesd() {
+    fn the_spec_boots_the_iso_on_a_blank_disk_and_waits_for_the_guests_power_off() {
         let s = start_spec(&plan(WindowsArch::Amd64));
         assert_eq!(s.os, GuestOs::Windows);
         assert_eq!(s.disk_size_gb, Some(64));
         assert!(matches!(&s.image, ImageSource::Disk { path } if path.ends_with("w.iso")));
-        assert!(s.probes.contains(&Probe::tcp(3211)));
-        assert!(s.ports.contains(&3211));
+        // No readiness probe: the guest seals itself and powers off.
+        assert!(s.probes.iter().all(|p| *p == Probe::None));
         assert_eq!(s.ready_timeout, Duration::from_secs(60));
         assert_eq!(s.effective_arch(), Arch::X86_64);
         assert_eq!(
@@ -218,7 +308,7 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(
-            e.contains("software emulation") && e.contains("hours"),
+            e.contains("software emulation") && e.contains("hours") && e.contains("windows:11"),
             "{e}"
         );
     }

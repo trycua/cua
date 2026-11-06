@@ -13,8 +13,9 @@
 use super::joliet::{DiscFile, write_disc};
 use super::table::{WindowsArch, WindowsVersion};
 
-/// The cua-spacesd release the guest downloads.
-pub const SPACESD_VERSION: &str = "0.1.0";
+/// The cua-spacesd release the guest downloads when the newest one cannot be
+/// looked up ([`latest_spacesd`] asks GitHub).
+pub const SPACESD_VERSION: &str = "0.12.2";
 /// The port cua-spacesd listens on in the guest.
 pub const SPACESD_PORT: u16 = 3211;
 /// The default local account (`CUA_WINDOWS_USER` overrides it: benchmark
@@ -42,6 +43,8 @@ pub struct UnattendOptions<'a> {
     pub evaluation_media: bool,
     /// Whether to load the virtio drivers (QEMU yes, Hyper-V no).
     pub virtio: bool,
+    /// The cua-spacesd release the guest installs (`0.12.2`).
+    pub spacesd_version: &'a str,
 }
 
 /// The account name from the options or the environment, checked: it ends up
@@ -294,29 +297,58 @@ pub fn autounattend_xml(o: &UnattendOptions<'_>) -> String {
     x
 }
 
-/// The cua-spacesd download for `arch`.
-pub fn spacesd_url(arch: WindowsArch) -> String {
-    let target = match arch {
-        WindowsArch::Amd64 => "x86_64-pc-windows-msvc",
-        WindowsArch::Arm64 => "aarch64-pc-windows-msvc",
+/// The cua-spacesd downloads the guest tries, best first. ARM64 Windows runs
+/// x64 programs under its own emulation, so while no native ARM64 build is
+/// released the x64 one is the fallback (the native one is used as soon as a
+/// release carries it).
+pub fn spacesd_urls(arch: WindowsArch, version: &str) -> Vec<String> {
+    let url = |target: &str| {
+        format!(
+            "https://github.com/trycua/cua/releases/download/cua-spacesd-v{version}/cua-spacesd-{target}.exe"
+        )
     };
-    format!(
-        "https://github.com/trycua/cua/releases/download/cua-spacesd-v{SPACESD_VERSION}/cua-spacesd-{target}.zip"
-    )
+    match arch {
+        WindowsArch::Amd64 => vec![url("x86_64-pc-windows-msvc")],
+        WindowsArch::Arm64 => vec![
+            url("aarch64-pc-windows-msvc"),
+            url("x86_64-pc-windows-msvc"),
+        ],
+    }
+}
+
+/// The newest published cua-spacesd release that carries a Windows build, from
+/// GitHub's release list; `None` when it cannot be read.
+pub fn latest_spacesd(releases_json: &str) -> Option<String> {
+    let v: serde_json::Value = serde_json::from_str(releases_json).ok()?;
+    v.as_array()?.iter().find_map(|r| {
+        let tag = r.get("tag_name")?.as_str()?.strip_prefix("cua-spacesd-v")?;
+        let live = !r.get("draft")?.as_bool()? && !r.get("prerelease")?.as_bool()?;
+        let windows = r
+            .get("assets")?
+            .as_array()?
+            .iter()
+            .any(|a| a.get("name").and_then(|n| n.as_str()) == Some("cua-spacesd-x86_64-pc-windows-msvc.exe"));
+        (live && windows).then(|| tag.to_string())
+    })
 }
 
 /// The setup script for `arch`, placeholders filled.
-pub fn setup_script(arch: WindowsArch) -> String {
+pub fn setup_script(arch: WindowsArch, version: &str) -> String {
+    let urls = spacesd_urls(arch, version)
+        .iter()
+        .map(|u| format!("'{u}'"))
+        .collect::<Vec<_>>()
+        .join(", ");
     SETUP_SCRIPT
-        .replace("__VERSION__", SPACESD_VERSION)
+        .replace("__VERSION__", version)
         .replace("__PORT__", &SPACESD_PORT.to_string())
-        .replace("__URL__", &spacesd_url(arch))
+        .replace("__URLS__", &urls)
 }
 
 /// The data disc: `Autounattend.xml` and `setup-spacesd.ps1`, labelled `OEMDRV`.
 pub fn data_disc(o: &UnattendOptions<'_>) -> Vec<u8> {
     let xml = autounattend_xml(o);
-    let ps1 = setup_script(o.arch);
+    let ps1 = setup_script(o.arch, o.spacesd_version);
     write_disc(
         "OEMDRV",
         &[
@@ -347,6 +379,7 @@ mod tests {
             edition: None,
             evaluation_media: true,
             virtio: true,
+            spacesd_version: "0.12.2",
         }
     }
 
@@ -441,14 +474,34 @@ mod tests {
 
     #[test]
     fn the_setup_script_has_what_the_dogfooding_needed() {
-        let s = setup_script(WindowsArch::Arm64);
+        let s = setup_script(WindowsArch::Arm64, "0.12.2");
         assert!(!s.contains("__"), "placeholders left: {s}");
-        assert!(s.contains("aarch64-pc-windows-msvc.zip"));
+        // The native ARM64 build first, the x64 one (emulated) as the fallback.
+        let native = s.find("cua-spacesd-aarch64-pc-windows-msvc.exe").unwrap();
+        let x64 = s.find("cua-spacesd-x86_64-pc-windows-msvc.exe").unwrap();
+        assert!(native < x64);
+        assert!(s.contains("cua-spacesd-v0.12.2/"));
         // The program firewall rule (without it Windows prompts and blocks the daemon).
-        assert!(s.contains(r#"name="cua-spacesd program""#));
+        assert!(s.contains("-Program $Exe"));
         // The disk guard.
         assert!(s.contains("Cua-DiskGuard") && s.contains("disk-low.txt"));
+        // Bootstrap mode on every interface, as the published Windows image runs it.
+        assert!(s.contains("serve --listen 0.0.0.0:$Port --insecure-bootstrap --token-file"));
+        assert!(s.contains("$Port = '3211'"));
+        // Sealed and powered off.
+        assert!(s.contains("machine-seal.key") && s.contains("shutdown.exe /s"));
         assert!(s.is_ascii());
+    }
+
+    #[test]
+    fn the_newest_release_with_a_windows_build_is_found() {
+        let json = r#"[
+          {"tag_name":"cua-spacesd-v0.12.3","draft":true,"prerelease":false,"assets":[{"name":"cua-spacesd-x86_64-pc-windows-msvc.exe"}]},
+          {"tag_name":"cua-spaces-v0.30.0","draft":false,"prerelease":false,"assets":[]},
+          {"tag_name":"cua-spacesd-v0.12.2","draft":false,"prerelease":false,"assets":[{"name":"cua-spacesd-x86_64-pc-windows-msvc.exe"}]},
+          {"tag_name":"cua-spacesd-v0.12.1","draft":false,"prerelease":false,"assets":[]}]"#;
+        assert_eq!(latest_spacesd(json).as_deref(), Some("0.12.2"));
+        assert_eq!(latest_spacesd("not json"), None);
     }
 
     #[test]
@@ -456,7 +509,7 @@ mod tests {
         let disc = data_disc(&opts("11", WindowsArch::Amd64, "User"));
         let text = String::from_utf8_lossy(&disc);
         assert!(text.contains("CD001"));
-        assert!(text.contains("<unattend") && text.contains("cua-spacesd program"));
+        assert!(text.contains("<unattend") && text.contains("setup-spacesd.ps1"));
         // `CUA_DUMP_DISC=<path> cargo test` writes the disc for a look with isoinfo / 7z.
         if let Ok(path) = std::env::var("CUA_DUMP_DISC") {
             std::fs::write(path, &disc).unwrap();

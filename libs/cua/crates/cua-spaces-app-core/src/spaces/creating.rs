@@ -644,6 +644,21 @@ pub fn time_left(secs: f64) -> String {
     }
 }
 
+/// Where the downloads of a first-time Windows build end in its progress
+/// (0 to 1) and the install begins: `cua_image::windows::build::DOWNLOADS_END`
+/// (a test holds the two to one value).
+pub const WINDOWS_INSTALL_FROM: f64 = 0.45;
+
+/// Whether this create builds its Windows image on this Mac (the catalog's
+/// `local_build` images, `windows:11`): the first one takes a download and an
+/// install, not a pull.
+fn builds_windows_here(p: &PendingCreate) -> bool {
+    p.os == SpaceOs::Windows
+        && p.image
+            .as_deref()
+            .is_some_and(crate::wizard::image_builds_locally)
+}
+
 /// The words for a phase: "Starting…", "Downloading image…", ...
 pub fn phase_label(phase: &str) -> &'static str {
     match phase {
@@ -674,6 +689,16 @@ pub fn stage_label(p: &PendingCreate) -> String {
         SpaceOs::Unknown => "",
     };
     match p.phase.as_str() {
+        // A Windows image built on this Mac (Windows 11): the first Space
+        // downloads the ISO, installs Windows unattended and seals the disk;
+        // every later one clones it.
+        "pulling" if builds_windows_here(p) => {
+            if p.fraction.is_some_and(|f| f >= WINDOWS_INSTALL_FROM) {
+                "Installing Windows (first time only)\u{2026}".into()
+            } else {
+                "Downloading Windows (first time only)\u{2026}".into()
+            }
+        }
         // Lume keeps the base image: later macOS Spaces clone it.
         "pulling" if p.os == SpaceOs::Macos => "Downloading macOS (first time only)\u{2026}".into(),
         "creating" if vm => "Preparing the disk\u{2026}".into(),
@@ -1394,6 +1419,17 @@ pub fn reduce(state: &CreatesState, action: &CreateAction) -> CreatesState {
                 // Setting up a runtime: its download done, its boot reports
                 // a fraction only (no bytes left to show).
                 if phase == "preparing" && bytes_done.is_none() && fraction.is_some() {
+                    p.bytes_done = None;
+                    p.bytes_total = None;
+                    p.bytes_per_second = None;
+                }
+                // A Windows image built here: past the downloads the bar is the
+                // install's, and the ISO's byte count no longer applies.
+                if phase == "pulling"
+                    && bytes_done.is_none()
+                    && fraction.is_some_and(|f| f >= WINDOWS_INSTALL_FROM)
+                    && builds_windows_here(p)
+                {
                     p.bytes_done = None;
                     p.bytes_total = None;
                     p.bytes_per_second = None;
@@ -2267,6 +2303,63 @@ mod tests {
             bytes_total: Some(total),
             bytes_per_second: Some(rate),
         }
+    }
+
+    /// A Windows image built on this Mac says "Downloading Windows" while the
+    /// ISO comes down (with its bytes), then "Installing Windows" with no
+    /// stale byte count, then the ordinary clone and boot words.
+    #[test]
+    fn a_windows_image_built_here_downloads_then_installs() {
+        let image = "ghcr.io/trycua/windows:11";
+        let mut s = reduce(
+            &CreatesState::default(),
+            &CreateAction::Start {
+                id: "pending:w".into(),
+                name: String::new(),
+                os: SpaceOs::Windows,
+                provider: SpaceProvider::Local,
+                now: 1_000,
+                image: Some(image.into()),
+                kind: Some(SpaceKind::Vm),
+                host_arch: Some("aarch64".into()),
+                gpu: false,
+                host: None,
+                host_name: None,
+            },
+        );
+        let row = |s: &CreatesState| pending_space(&s.pending[0]).progress.unwrap();
+        s = reduce(&s, &bytes_at("pending:w", 2 << 30, 8 << 30, 1e7, 2_000));
+        assert_eq!(row(&s).label, "Downloading Windows (first time only)\u{2026}");
+        assert!(row(&s).transfer.is_some());
+        // The install: a fraction past the downloads, no bytes.
+        s = reduce(&s, &at("pending:w", "pulling", Some(0.5), 3_000));
+        let r = row(&s);
+        assert_eq!(r.label, "Installing Windows (first time only)\u{2026}");
+        assert_eq!(r.transfer, None, "the ISO's bytes are not the install's");
+        // Then the Space's own steps.
+        s = reduce(&s, &at("pending:w", "creating", None, 4_000));
+        assert_eq!(row(&s).label, "Preparing the disk\u{2026}");
+        s = reduce(&s, &at("pending:w", "booting", None, 5_000));
+        assert_eq!(row(&s).label, "Booting Windows\u{2026}");
+        // A pulled Windows image (Server 2022) is just a download.
+        let mut pulled = reduce(
+            &CreatesState::default(),
+            &start_image("pending:p", "ghcr.io/trycua/windows:2022", Some(SpaceKind::Vm)),
+        );
+        pulled.pending[0].os = SpaceOs::Windows;
+        pulled = reduce(&pulled, &at("pending:p", "pulling", Some(0.9), 2_000));
+        assert_eq!(pending_space(&pulled.pending[0]).progress.unwrap().label, "Downloading image\u{2026}");
+    }
+
+    /// The fraction the app tells "downloading" from "installing" by is the
+    /// one the build reports (`cua-image`'s `DOWNLOADS_END`).
+    #[test]
+    fn the_install_fraction_is_the_one_the_build_reports() {
+        let build = include_str!("../../../cua-image/src/windows/build.rs");
+        assert!(
+            build.contains(&format!("pub const DOWNLOADS_END: f64 = {WINDOWS_INSTALL_FROM};")),
+            "cua-image's DOWNLOADS_END must equal WINDOWS_INSTALL_FROM ({WINDOWS_INSTALL_FROM})"
+        );
     }
 
     /// A create says which step it is on, in the words of its kind of

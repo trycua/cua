@@ -585,10 +585,14 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
             a.get::<Option<String>>("keyvault")?.as_deref(),
         )),
         "wizard.initial" => out(wizard::initial(&a.get("env")?)),
-        "wizard.reduce" => out(wizard::reduce(
+        // `hostOs`: the shell's system, which decides whether Continue is
+        // allowed (macOS when absent).
+        "wizard.reduce" => out(wizard::reduce_on(
             &a.get("state")?,
             &a.get("action")?,
             &a.get("env")?,
+            a.get::<Option<SpaceOs>>("hostOs")?
+                .unwrap_or(SpaceOs::Macos),
         )),
         // `hostOs`: the shell's system, for its words (macOS when absent).
         "wizard.view" => out(wizard::view_on(

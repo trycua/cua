@@ -3301,6 +3301,7 @@ dependencies = [
  "cua-host",
  "cua-keyvault",
  "cua-sandbox-core",
+ "cua-spaces-contract",
  "cua-telemetry",
  "serde",
  "serde_json",

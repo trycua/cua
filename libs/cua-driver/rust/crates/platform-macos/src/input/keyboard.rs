@@ -53,14 +53,14 @@ pub fn press_key(pid: i32, key: &str, modifiers: &[&str]) -> anyhow::Result<()> 
     // Handle "+" / "plus" → Shift+= (US keyboard layout).
     if key == "+" || key.to_lowercase() == "plus" {
         let flags = modifier_flags(&["shift"]);
-        let eq_code = layout_key_code("=", modifiers)?;
+        let eq_code = target_key_code(pid, "=", modifiers)?;
         post_key(pid, eq_code, true, modifier_flags(modifiers) | flags)?;
         key_gap_sleep();
         post_key(pid, eq_code, false, modifier_flags(modifiers) | flags)?;
         return Ok(());
     }
 
-    let key_code = layout_key_code(key, modifiers)?;
+    let key_code = target_key_code(pid, key, modifiers)?;
     let flags = modifier_flags(modifiers);
 
     post_key(pid, key_code, true, flags)?;
@@ -155,7 +155,7 @@ pub fn hotkey(pid: i32, key: &str, modifiers: &[&str]) -> anyhow::Result<()> {
 /// sees those events. Without the envelope the path goes through IOHIDPostEvent
 /// so NSApplication.sendEvent: dispatches NSMenu key equivalents.
 pub fn hotkey_no_auth(pid: i32, key: &str, modifiers: &[&str]) -> anyhow::Result<()> {
-    let key_code = layout_key_code(key, modifiers)?;
+    let key_code = target_key_code(pid, key, modifiers)?;
     let flags = modifier_flags(modifiers);
     post_key_no_auth(pid, key_code, true, flags)?;
     key_gap_sleep();
@@ -166,7 +166,7 @@ pub fn hotkey_no_auth(pid: i32, key: &str, modifiers: &[&str]) -> anyhow::Result
 /// Press and release a single key to `pid` WITHOUT the auth-message envelope.
 /// Works for single keys as well as combinations (same as hotkey_no_auth for single key).
 pub fn press_key_no_auth(pid: i32, key: &str, modifiers: &[&str]) -> anyhow::Result<()> {
-    let key_code = layout_key_code(key, modifiers)?;
+    let key_code = target_key_code(pid, key, modifiers)?;
     let flags = modifier_flags(modifiers);
     post_key_no_auth(pid, key_code, true, flags)?;
     key_gap_sleep();
@@ -454,10 +454,10 @@ pub fn type_text_physical_global(text: &str, inter_char_delay_ms: u64) -> anyhow
 /// key carries no flags arrives as the bare key: `cmd+a` inserts a literal `a`.
 /// Remote-input clients such as Screen Sharing re-derive modifiers from the
 /// keycode transitions and ignore the flags, so both consumers are served.
-pub fn press_key_bare_global(key: &str, modifiers: &[&str]) -> anyhow::Result<()> {
+pub fn press_key_bare_global(pid: i32, key: &str, modifiers: &[&str]) -> anyhow::Result<()> {
     use core_graphics::event::CGEventTapLocation;
 
-    let key_code = layout_key_code(key, modifiers)?;
+    let key_code = target_key_code(pid, key, modifiers)?;
     let mut modifier_keys = Vec::new();
     for modifier in modifiers {
         let Some((modifier_code, flag)) = modifier_key_code_and_flag(modifier) else {
@@ -910,6 +910,19 @@ fn chord_key_code(
 /// The virtual key a chord presses for `key` on the current keyboard layout.
 pub(super) fn layout_key_code(key: &str, modifiers: &[&str]) -> anyhow::Result<u16> {
     chord_key_code(key, modifiers, current_layout().as_ref())
+}
+
+/// The virtual key a chord aimed at `pid` presses. Screen Sharing forwards key
+/// positions to a guest whose layout this host cannot read, so it keeps the US
+/// positions its text path (`physical_key_for_char`) assumes too: the host
+/// layout would press AZERTY's A key (US Q) for `cmd+a` on a US guest.
+fn target_key_code(pid: i32, key: &str, modifiers: &[&str]) -> anyhow::Result<u16> {
+    let layout = target_layout(is_screen_sharing_pid(pid));
+    chord_key_code(key, modifiers, layout.as_ref())
+}
+
+fn target_layout(screen_sharing: bool) -> Option<KeyLayout> {
+    (!screen_sharing).then(current_layout).flatten()
 }
 
 /// The main typing keys (the ANSI/ISO block). The keypad is left out: its
@@ -1409,6 +1422,17 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("Unknown key name"));
+    }
+
+    /// A French host driving a US guest through Screen Sharing: `cmd+a` must
+    /// press the US A key, not the host's AZERTY A key (US Q).
+    #[test]
+    fn screen_sharing_chords_keep_us_positions() {
+        assert!(target_layout(true).is_none());
+        assert_eq!(
+            chord_key_code("a", &["cmd"], target_layout(true).as_ref()).unwrap(),
+            0
+        );
     }
 
     /// Reads the host's real layout through Carbon: per-user state, so not in

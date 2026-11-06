@@ -730,9 +730,9 @@ fn main() {
                     }
                 },
             );
-            if gate_result.is_ok() {
-                serve::set_permission_gate_pending(false);
-            }
+            serve::settle_permission_gate(gate_result.is_ok(), move || {
+                platform_macos::permissions::gate::wait_for_grants(&slow_opts)
+            });
             let gate_context = platform_macos::permissions::gate::telemetry_context();
             if gate_context.engaged {
                 telemetry::capture_permissions_gate_completed(
@@ -753,15 +753,6 @@ fn main() {
                     "[cua-driver] desktop tool calls remain gated until Accessibility and \
                      Screen Recording are granted; still checking in the background."
                 );
-                // Off the main thread, which the AppKit loop below needs.
-                std::thread::Builder::new()
-                    .name("cua-permissions-poll".into())
-                    .spawn(move || {
-                        if platform_macos::permissions::gate::wait_for_grants(&slow_opts).is_ok() {
-                            serve::set_permission_gate_pending(false);
-                        }
-                    })
-                    .expect("spawn permissions poll thread");
             }
 
             // Keep the main thread alive for the daemon.

@@ -445,6 +445,9 @@ def test_cua_sdk_rust_tests_are_built_once_and_run_from_the_archive():
     build_text, shard_text = str(build["steps"]), str(shards["steps"])
     assert "cargo nextest archive" in build_text and "rust-linux-tests" in build_text
     assert "cargo nextest run" in shard_text and "--archive-file" in shard_text and "--workspace-remap" in shard_text
+    # Integration tests bake CARGO_BIN_EXE_* and CARGO_TARGET_TMPDIR in at compile time: the archive must be
+    # unpacked into the build's target directory and target/tmp must exist, or every cua-cli test fails to spawn.
+    assert "--extract-to ." in shard_text and "--extract-overwrite" in shard_text and "mkdir -p target/tmp" in shard_text
     # The shards never compile the nextest packages again: they only restore the cache.
     assert "cargo nextest run --locked" not in shard_text
     assert any(s.get("with", {}).get("save-if") == "false" for s in shards["steps"] if "rust-cache" in str(s.get("uses", "")))

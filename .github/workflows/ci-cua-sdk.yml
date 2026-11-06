@@ -321,6 +321,12 @@ jobs:
         # half-open: each scenario asserts wall-clock budgets, so they run
         # one at a time.
         run: cargo test --locked -p cua-spaces --test scale -- --test-threads=1 --nocapture
+      # The archive is unpacked into libs/cua/target, the path the build job compiled in:
+      # integration tests bake env!("CARGO_BIN_EXE_cua") and env!("CARGO_TARGET_TMPDIR") in at
+      # compile time, so a run from a temporary directory fails with "No such file" (spawn cua,
+      # tempdir_in). cargo creates target/tmp during a build; the archive does not carry it.
+      - name: Prepare the archive's target directory
+        run: mkdir -p target/tmp
       # One retry; a test that passes only on the retry is reported and gets a
       # `flaky` issue (.github/flaky/). The packages below are split by test
       # name hash, so a shard runs about a third of every crate's tests.
@@ -329,7 +335,7 @@ jobs:
           "$GITHUB_WORKSPACE/.github/scripts/flaky/flaky.sh" run --suite "sdk-rust-ubuntu-shard-${{ matrix.shard }}" --format junit
           --results target/nextest/ci/junit.xml --
           cargo nextest run --no-fail-fast --config-file "$GITHUB_WORKSPACE/.github/flaky/nextest.toml" --profile ci
-          --archive-file "$RUNNER_TEMP/rust-tests.tar.zst" --workspace-remap .
+          --archive-file "$RUNNER_TEMP/rust-tests.tar.zst" --workspace-remap . --extract-to . --extract-overwrite
           --partition hash:${{ matrix.shard }}/3 --test-threads 4
           ${{ (github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'ci:full')) && '-E "not (binary(pool_model) & (test(=pool_protocol_is_safe) | test(=mutation_no_epoch_check_breaks_single_writer) | test(=finding_stale_holder_cancels_current_attempt)))"' || '' }}
         env:

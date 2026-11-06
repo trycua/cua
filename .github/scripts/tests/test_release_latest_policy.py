@@ -73,3 +73,20 @@ def test_no_repo_wide_latest_lookup_for_trycua_cua():
             if pattern.search(line) or re.search(r"gh release view\s*(--|$)", line):
                 bad.append(f"{rel}:{n}: {line.strip()[:120]}")
     assert not bad, "repo-wide Latest lookups; filter by tag prefix instead:\n" + "\n".join(bad)
+
+
+def test_publishing_workflows_run_the_latest_pin_after_publishing():
+    # --latest=false is not enough: publishing a draft handed cua-spacesd 0.12.1
+    # and 0.12.2 the repo-wide Latest anyway. Every workflow that publishes a
+    # release draft re-pins Latest right after.
+    missing = []
+    for wf in sorted(WORKFLOWS.glob("*.yml")):
+        text = wf.read_text()
+        if wf.name == LATEST_OWNER or wf.name == "release-latest-guard.yml":
+            continue
+        if re.search(r"gh release edit[^\n]*--draft=false", text) or re.search(
+            r'gh release edit[^\n]*"\$\{(flags|FLAGS)\[@\]\}"', text
+        ):
+            if "pin_latest_release.py" not in text:
+                missing.append(wf.name)
+    assert not missing, f"publish without re-pinning Latest: {missing}"

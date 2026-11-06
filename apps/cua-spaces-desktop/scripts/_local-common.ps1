@@ -264,10 +264,24 @@ public static extern System.IntPtr SendMessageTimeout(System.IntPtr h, uint m, S
     [void][CuaLocalNative.Win]::SendMessageTimeout([IntPtr]0xffff, 0x1A, [UIntPtr]::Zero, 'Environment', 2, 2000, [ref]$r)
 }
 
-function Get-UserPath { return [Environment]::GetEnvironmentVariable('Path', 'User') }
+# The user PATH as stored: [Environment]::GetEnvironmentVariable expands %VARS% and writing it back would
+# store every entry expanded (and change the value's type), so the registry value is read and written as it is.
+function Get-UserPath {
+    $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $false)
+    try {
+        $value = $key.GetValue('Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+        return [string]$value
+    } finally { $key.Close() }
+}
 function Set-UserPath([string]$Value) {
-    [Environment]::SetEnvironmentVariable('Path', $Value, 'User')
+    $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $true)
+    try { $key.SetValue('Path', $Value, [Microsoft.Win32.RegistryValueKind]::ExpandString) } finally { $key.Close() }
     Send-EnvironmentChange
+}
+
+# Whether `Text` contains `Part`, as plain text (a path can hold wildcard characters), any case.
+function Test-ContainsText([string]$Text, [string]$Part) {
+    return ($Text.IndexOf($Part, [System.StringComparison]::OrdinalIgnoreCase) -ge 0)
 }
 
 # The protocol key for cua-local:// (what Electron's setAsDefaultProtocolClient

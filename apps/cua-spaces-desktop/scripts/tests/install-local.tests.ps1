@@ -83,6 +83,8 @@ try {
     Check 'Remove-PathListEntry removes only that entry' ((Remove-PathListEntry $added $bin) -eq $list)
     Check 'Remove-PathListEntry keeps the released cua folder' ((Remove-PathListEntry $added $bin) -like "*$relBin*")
 
+    Check 'Test-ContainsText is plain text, any case (a path may hold [ or *)' ((Test-ContainsText 'x C:\A[1]\App.exe y' 'c:\a[1]\app.exe') -and -not (Test-ContainsText 'C:\a\b' 'C:\a*'))
+
     # --- Versions and pins -----------------------------------------------------------------
     Check 'Node 22 is enough' (Test-NodeVersionOk 'v22.0.0')
     Check 'Node 24 is enough' (Test-NodeVersionOk 'v24.13.0')

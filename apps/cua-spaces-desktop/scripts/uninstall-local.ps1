@@ -63,7 +63,7 @@ if ($userPath -and (Test-PathListHas $userPath $BinDir)) {
 
 # The scheme, when it is still the Local app's.
 $command = Get-LocalProtocolCommand
-if ($command -and ($command -like "*$ExePath*")) {
+if ($command -and (Test-ContainsText $command $ExePath)) {
     Remove-Item -Path "HKCU:\Software\Classes\$($Local.UrlScheme)" -Recurse -Force
     Write-Host "  removed the $($Local.UrlScheme):// scheme"
 } elseif ($command) {

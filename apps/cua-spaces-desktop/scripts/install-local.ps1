@@ -386,5 +386,7 @@ Write-Host '  scheme: cua-local://   updates: none'
 
 if (-not $NoLaunch) {
     Write-Step 'starting Cua Spaces Local'
+    # The app inherits this script's priority: it runs at the normal one.
+    try { (Get-Process -Id $PID).PriorityClass = 'Normal' } catch { }
     Start-Process -FilePath $ExePath -WorkingDirectory $InstallDir
 }

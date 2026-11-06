@@ -119,6 +119,9 @@ impl ImportRegistry {
         ));
         registry.register(Box::new(ElectronImporter::vscode().with_host(host.clone())));
         registry.register(Box::new(ElectronImporter::notion().with_host(host.clone())));
+        registry.register(Box::new(
+            ElectronImporter::claude_desktop().with_host(host.clone()),
+        ));
         registry.register(Box::new(ElectronImporter::unity_hub().with_host(host)));
         registry.register(Box::new(SteamImporter::new()));
         registry.register(Box::new(WhatsAppImporter::new()));

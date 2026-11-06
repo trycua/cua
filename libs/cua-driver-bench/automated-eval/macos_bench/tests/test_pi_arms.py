@@ -191,12 +191,49 @@ class PiArmsTest(unittest.TestCase):
             claude_events.classify_failure(summary, "TypeError", 1)["kind"], "harness_crash"
         )
 
-    def test_settled_with_nonzero_exit_is_an_error_result(self):
+    def test_settled_with_nonzero_exit_is_a_harness_failure(self):
         tr = pia.Translator(max_turns=45)
-        tr.feed(assistant([{"type": "text", "text": "DONE"}], stop="stop"))
+        events = tr.feed(SYSTEM) + tr.feed(
+            assistant([{"type": "text", "text": "DONE"}], stop="stop")
+        )
         tr.feed({"type": "agent_settled"})
-        result = tr.finish(capped=False, wall_ms=1, returncode=1)[-1]
-        self.assertEqual((result["subtype"], result["is_error"]), ("error_during_execution", True))
+        self.assertEqual(tr.finish(capped=False, wall_ms=1, returncode=1), [])
+        summary = claude_events.summarize(events)
+        self.assertEqual(claude_events.classify_failure(summary, "", 1)["kind"], "harness_crash")
+
+    def test_cap_is_read_after_pi_exits_right_after_the_over_cap_turn(self):
+        lines = [
+            assistant([call("c1", "mcp__cua__click")]),
+            assistant([call("c2", "mcp__cua__click")]),
+        ]
+        script = textwrap.dedent(
+            """\
+            import json, sys
+            sys.stdin.read()
+            for event in json.load(open(sys.argv[1])):
+                print(json.dumps({"type": "turn_start"}))
+                print(json.dumps(event))
+            print(json.dumps({"type": "turn_start"}), flush=True)
+            """
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "fake.py").write_text(script)
+            (root / "events.json").write_text(json.dumps(lines))
+            result = pia.run_pi(
+                [sys.executable, str(root / "fake.py"), str(root / "events.json")],
+                {"PATH": os.environ["PATH"]},
+                root,
+                "brief",
+                20,
+                2,
+                root / "raw.tsv",
+                root / "stream.tsv",
+                root / "stderr",
+            )
+            events = claude_events.read_events(root / "stream.tsv")
+            self.assertTrue(result["capped"])
+            self.assertEqual(events[-1]["subtype"], "error_max_turns")
 
     def test_no_turn_leaves_no_result_so_stderr_classifies_the_row(self):
         tr = pia.Translator(max_turns=45)

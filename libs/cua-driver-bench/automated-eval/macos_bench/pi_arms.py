@@ -267,13 +267,14 @@ class Translator:
         self, capped: bool, wall_ms: float, returncode: int | None = 0, stopped: bool = False
     ) -> list[dict[str, Any]]:
         """The init and result events, written when pi has stopped (``stopped``: the host ended it on purpose, at a
-        timeout or an abort). None when pi produced no turn, or exited without settling on its own, so the row is
-        classified from stderr as a harness, auth or quota failure rather than scored as an agent result."""
+        timeout or an abort). None when pi produced no turn, exited without settling, or exited nonzero without a
+        provider error, so the row is classified from stderr as a harness failure (retried, never scored) rather
+        than scored as an agent result. A provider error keeps its message, so a 429 or 5xx is classified as such."""
         if not self.turns or not (capped or stopped or self.settled):
             return []
-        is_error = self.last_stop == "error" or (self.settled and returncode not in (0, None))
-        if is_error and not self.error:
-            self.error = f"pi exited with status {returncode}"
+        is_error = self.last_stop == "error"
+        if not (capped or stopped or is_error) and returncode not in (0, None):
+            return []
         status = next(
             (c for c in (429, 401, 403, 500, 502, 503, 504, 529) if str(c) in self.error), None
         )
@@ -391,9 +392,10 @@ def run_pi(
                 aborted = True
                 break
             time.sleep(0.25)
-        capped = translator.capped.is_set() and not timed_out and not aborted
         stop_group(proc.pid)
         reader.join(timeout=5)
+        # read after the reader has drained pi's output: pi may print the over-cap turn_start and exit at once
+        capped = translator.capped.is_set() and not timed_out and not aborted
         try:
             os.killpg(proc.pid, signal.SIGKILL)  # the MCP server child must not outlive the trial
         except OSError:

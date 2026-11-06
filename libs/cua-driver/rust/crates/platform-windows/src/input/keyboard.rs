@@ -752,14 +752,15 @@ fn with_confirmed_foreground<T>(
         };
     }
     drop(attachment);
-    if previous.0.is_null() || previous == target {
-        return result;
+    if !restores_previous(turn) {
+        // Marked even when the target was already in front: a caller that
+        // fronted it (browser setup) must not restore its own prior window.
+        return result.map_err(|error| ForegroundNotRestored { error, turn }.into());
     }
-    if restores_previous(turn) {
+    if !previous.0.is_null() && previous != target {
         let _ = unsafe { SetForegroundWindow(previous) };
-        return result;
     }
-    result.map_err(|error| ForegroundNotRestored { error, turn }.into())
+    result
 }
 
 /// Unassigned virtual key used as a harmless input-drain sentinel (the same

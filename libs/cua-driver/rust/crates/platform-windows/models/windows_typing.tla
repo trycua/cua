@@ -26,7 +26,7 @@ VARIABLES front,   \* "U", "T" or "O"
           sent,    \* events inserted so far
           pending, \* inserted events the target thread has not read
           reader,  \* the target's input thread: "live" or "hung"
-          turn,    \* "sending", then how it ended: "drained", "undrained" or "lost"
+          turn,    \* "sending", then how it ended: "drained", "notsent", "undrained" or "lost"
           done,    \* the restore decision ran
           userGot, \* U read input the driver meant for T
           stolen   \* the restore took the foreground from O
@@ -44,6 +44,9 @@ Send(b) == /\ turn = "sending" /\ front = "T" /\ pending = 0 /\ sent + b <= N
 Short == /\ turn = "sending" /\ front = "T" /\ pending = 0 /\ sent < N
          /\ sent' = sent + 1 /\ pending' = 1 /\ turn' = "undrained"
          /\ UNCHANGED <<front, reader, done, userGot, stolen>>
+\* SendInput inserts nothing, so nothing is pending.
+ShortNone == /\ turn = "sending" /\ front = "T" /\ pending = 0 /\ turn' = "notsent"
+             /\ UNCHANGED <<front, sent, pending, reader, done, userGot, stolen>>
 \* A 2 s read wait (per text unit, or the final drain) runs out.
 Timeout == /\ turn = "sending" /\ pending > 0 /\ turn' = "undrained"
            /\ UNCHANGED <<front, sent, pending, reader, done, userGot, stolen>>
@@ -65,7 +68,7 @@ Wake == reader = "hung" /\ reader' = "live"
 OtherTakesFront == /\ ~done /\ front = "T" /\ front' = "O"
                    /\ UNCHANGED <<sent, pending, reader, turn, done, userGot, stolen>>
 
-Restores == IF RestoreRule = "always" THEN TRUE ELSE turn = "drained"
+Restores == IF RestoreRule = "always" THEN TRUE ELSE turn \in {"drained", "notsent"}
 Finish == /\ turn # "sending" /\ ~done /\ done' = TRUE
           /\ front' = IF Restores THEN "U" ELSE front
           /\ stolen' = (Restores /\ front = "O")
@@ -73,19 +76,19 @@ Finish == /\ turn # "sending" /\ ~done /\ done' = TRUE
 Idle == done /\ UNCHANGED vars
 
 Next == \/ \E b \in 1..N : Send(b)
-        \/ Short \/ Timeout \/ Drained \/ Lost \/ Read \/ Hang \/ Wake
+        \/ Short \/ ShortNone \/ Timeout \/ Drained \/ Lost \/ Read \/ Hang \/ Wake
         \/ OtherTakesFront \/ Finish \/ Idle
 Spec == Init /\ [][Next]_vars
 
 TypeOK == /\ front \in {"U", "T", "O"} /\ sent \in 0..N /\ pending \in 0..N
           /\ reader \in {"live", "hung"} /\ done \in BOOLEAN
-          /\ turn \in {"sending", "drained", "undrained", "lost"}
+          /\ turn \in {"sending", "drained", "notsent", "undrained", "lost"}
 \* A keystroke meant for the target never lands in the user's window.
 NoLateKeystroke == ~userGot
 \* After foreground_lost the driver does not take the foreground back from the
 \* window that took it. A window that takes it after the last read check is
 \* not observed, and the restore still runs, as before.
 NoSteal == ~(stolen /\ turn = "lost")
-\* A turn whose input was all read gives the user's window back.
-GivesWindowBack == (done /\ turn = "drained") => front = "U"
+\* A turn with nothing left unread gives the user's window back.
+GivesWindowBack == (done /\ turn \in {"drained", "notsent"}) => front = "U"
 ====

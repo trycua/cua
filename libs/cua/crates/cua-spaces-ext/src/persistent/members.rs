@@ -743,6 +743,9 @@ impl Persistent {
         if self.detach_dispatch {
             for rec in members {
                 let Some(guard) = super::phases::ServingGuard::take(&self.dir, &rec.name) else {
+                    if store_has_queued(&self.thread_store(&rec.space), &rec.name) {
+                        tracing::info!(agent = %rec.name, "a queued task waits: the member is still being served");
+                    }
                     continue; // still being served by an earlier pass
                 };
                 let me = self.clone();
@@ -2819,4 +2822,16 @@ fn clip_words(s: &str, n: usize) -> String {
     let mut out: String = one.chars().take(n.saturating_sub(1)).collect();
     out.push('\u{2026}');
     out
+}
+
+/// Whether `name` has a task queued in `store` (for the log of a wait).
+fn store_has_queued(store: &ThreadStore, name: &str) -> bool {
+    store
+        .fold()
+        .map(|f| {
+            f.open_tasks(Some(name))
+                .iter()
+                .any(|t| t.state == TaskState::Queued)
+        })
+        .unwrap_or(false)
 }

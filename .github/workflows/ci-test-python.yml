@@ -113,7 +113,7 @@ jobs:
         if: always()
         run: |
           if [ -f "$RUNNER_TEMP/pytest-${{ matrix.package }}.xml" ]; then
-            python3 .github/scripts/flaky/timings.py junit --suite "pytest-${{ matrix.package }}" "$RUNNER_TEMP/pytest-${{ matrix.package }}.xml"
+            python3 "$GITHUB_WORKSPACE/.github/scripts/flaky/timings.py" junit --suite "pytest-${{ matrix.package }}" "$RUNNER_TEMP/pytest-${{ matrix.package }}.xml"
           fi
         shell: bash
       - uses: ./.github/actions/ci-timings-upload
@@ -182,7 +182,7 @@ jobs:
         if: always()
         run: |
           if [ -f "$RUNNER_TEMP/pytest-cua-sandbox.xml" ]; then
-            python3 .github/scripts/flaky/timings.py junit --suite pytest-cua-sandbox "$RUNNER_TEMP/pytest-cua-sandbox.xml"
+            python3 "$GITHUB_WORKSPACE/.github/scripts/flaky/timings.py" junit --suite pytest-cua-sandbox "$RUNNER_TEMP/pytest-cua-sandbox.xml"
           fi
       - uses: ./.github/actions/ci-timings-upload
         if: always()

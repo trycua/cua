@@ -57,7 +57,7 @@ jobs:
         if: always()
         run: |
           if [ -f "$RUNNER_TEMP/pytest-cua-bench.xml" ]; then
-            python3 .github/scripts/flaky/timings.py junit --suite pytest-cua-bench "$RUNNER_TEMP/pytest-cua-bench.xml"
+            python3 "$GITHUB_WORKSPACE/.github/scripts/flaky/timings.py" junit --suite pytest-cua-bench "$RUNNER_TEMP/pytest-cua-bench.xml"
           fi
       - uses: ./.github/actions/ci-timings-upload
         if: always()

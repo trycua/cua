@@ -97,5 +97,17 @@ Test Suite 'All tests' passed at 2026-11-02 10:00:01.0.
         self.assertEqual([(x["file"], x["seconds"], x["tests"]) for x in rows], [("FooTests", 1.25, 3)])
 
 
+class WorkflowCallsTimingsByAbsolutePath(unittest.TestCase):
+    def test_every_workflow_runs_timings_py_from_the_workspace_root(self):
+        """Jobs set `working-directory` (libs/cua-bench, libs/python/cua-sandbox, ...): a relative path is not found there."""
+        import re
+        workflows = Path(__file__).resolve().parents[2] / "workflows"
+        calls = [(f.name, m) for f in workflows.glob("*.yml")
+                 for m in re.findall(r"python3\s+(\S*flaky/timings\.py\S*)", f.read_text())]
+        self.assertTrue(calls)
+        for name, path in calls:
+            self.assertEqual(path, '"$GITHUB_WORKSPACE/.github/scripts/flaky/timings.py"', name)
+
+
 if __name__ == "__main__":
     unittest.main()

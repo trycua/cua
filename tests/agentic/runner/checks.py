@@ -124,7 +124,10 @@ def ui_assert(tree: str, body: dict) -> tuple[bool, str]:
                 missing = [a for a in near if a.lower() not in text]
                 if not missing:
                     return True, f"row {line.strip()[:120]!r} has {near}"
-                return False, f"row {line.strip()[:120]!r} (and its {len(sub) - 1} children) lacks {missing}"
+                return (
+                    False,
+                    f"row {line.strip()[:120]!r} (and its {len(sub) - 1} children) lacks {missing}",
+                )
         return False, f"no row with {has}"
     return True, "assertion holds"
 

@@ -84,10 +84,15 @@ gate once the secrets exist and the nightly has been green for a week. PR
   in with the device code flow, as a person would, and refuses any realm
   but staging. Canary variables are stripped from the agent's environment.
   Nothing secret is logged. Only the staging environment is ever touched.
-- **Cost:** about $0.17 to write the tool list into the cache once per run,
-  then cents per step. Measured live runs are in the PR. The nightly
-  budget is (tests × OS lanes) × that. Runner minutes: one GitHub-hosted job
-  per OS.
+- **Cost:** measured on 5 Nov (Linux, 8 live runs): $0.22 to $0.74 per live
+  run, typically about $0.50 for 30 to 60 tool calls. About $0.17 of that is
+  caching Cua Driver's tool list once. A replay costs nothing. A nightly of
+  the 5 tests is about 9 live runs (4 tests on 2 OSes, 1 on Windows only):
+  about $5 a night, if nothing replays. Runner minutes: one GitHub-hosted
+  job per OS.
+- **Canary devices:** a fresh sign-in enrolls the computer as a device of
+  the account, and the relay caps an account at 64. Teardown revokes each
+  host's own device. A run that cannot revoke would lock later runs out.
 
 ## Flakiness
 
@@ -110,3 +115,6 @@ gate once the secrets exist and the nightly has been green for a week. PR
 - PR replay (v2), and the release gate wiring (after the secrets and a green
   week).
 - Pid, window and token mapping inside `replay_trajectory`.
+- Status shown only as a coloured dot is invisible to the tree: the
+  Machines list rows carry no online or offline text. The tests read the
+  computer's details instead.

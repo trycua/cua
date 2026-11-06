@@ -345,10 +345,13 @@ class Machine:
                     raise SetupError(
                         f"host {n}: could not turn on experiment {exp}: {r.err[-300:]}"
                     )
+        # Joins after every sign-in: a host the relay will not take from a
+        # fresh sign-in joins with a pairing code from another host.
+        for spec_host in self.spec.hosts:
             if spec_host.joined:
-                self.join(n)
+                self.join(spec_host.id)
             if spec_host.terminal:
-                self.open_terminal(n)
+                self.open_terminal(spec_host.id)
         app_host = next(h for h in self.spec.hosts if h.role == "app")
         self.launch_app(app_host.id)
 
@@ -412,7 +415,15 @@ class Machine:
         if proc.returncode != 0:
             tail = canary.USER_CODE.sub("XXXX-XXXX", "".join(out))[-300:]
             raise SetupError(f"host {n}: sign-in failed: {tail}")
-        self.note(f"host {n} signed in as the canary account")
+        # A fresh sign-in enrolls this computer as a device of the account
+        # (teardown revokes it): the relay adds new computers only from an
+        # enrolled device or with a pairing code.
+        r = self.cua(n, ["devices", "status", "--json"], timeout=60)
+        enrolled = '"enrolled"' in r.out or '"state": "enrolled"' in r.out
+        self.note(
+            f"host {n} signed in as the canary account"
+            + ("" if enrolled else f"; device not enrolled: {(r.err or r.out).strip()[-200:]}")
+        )
 
     def join(self, n: int) -> None:
         h = self.hosts[n]
@@ -420,11 +431,109 @@ class Machine:
         if h.spec.service == "process":
             args += ["--runner", "process", "--share", "desktop"]
         r = self.cua(n, args, timeout=240)
+        if r.rc != 0 and "pairing code" in (r.err + r.out):
+            code = self.pairing_code(n, h.name)
+            r = self.cua(n, [*args, "--pair", code], timeout=240)
         if r.rc != 0:
             raise SetupError(f"host {n}: `cua host setup` failed: {(r.err or r.out)[-500:]}")
         st = self.status(n)
         h.initial_machine_id = st.get("machineId", "") if st else ""
         self.note(f"host {n} joined as {h.name} ({h.initial_machine_id or 'no id'})")
+
+    def pairing_code(self, n: int, name: str) -> str:
+        """A one-time code from another signed-in staging host, the way a
+        person adds a computer from one they already added."""
+        why = "no other signed-in staging host"
+        for m, other in self.hosts.items():
+            if m == n or not other.spec.signed_in or other.spec.env != "staging":
+                continue
+            r = self.cua(
+                m, ["host", "pair", "--name", name, "--expires", "15", "--json"], timeout=60
+            )
+            try:
+                doc = json.loads(r.out.strip().splitlines()[0])
+            except (ValueError, IndexError):
+                why = f"host {m}: `cua host pair` exit {r.rc}: {canary.USER_CODE.sub('XXXX', (r.err or r.out).strip())[-300:]}"
+                continue
+            code = doc.get("code") or (doc.get("pairing") or {}).get("code")
+            if code:
+                self.note(f"host {n}: joining with a pairing code from host {m}")
+                return code
+        # No host here can: add a helper computer (staging, its own home),
+        # make the code there, and remove the helper again.
+        code = self.helper_pairing_code(name)
+        if code:
+            self.note(f"host {n}: joining with a pairing code from a helper computer")
+            return code
+        raise SetupError(
+            f"host {n}: the relay asks for a pairing code and no other host could make one ({why})"
+        )
+
+    def helper_pairing_code(self, name: str) -> str | None:
+        helper = Host(
+            id=9, role="computer", env="staging", signed_in=True, joined=True, service="process"
+        )
+        home = self.t.path(self.workdir, "helper")
+        self.t.mkdirs(home)
+        hr = HostRun(
+            spec=helper,
+            name=f"e2e-{self.run_id}-helper",
+            home=home,
+            env=self.host_env(helper, home),
+        )
+        self.hosts[9] = hr
+        try:
+            self.sign_in(9)
+            r = self.cua(
+                9,
+                [
+                    "host",
+                    "setup",
+                    "--name",
+                    hr.name,
+                    "--json",
+                    "--runner",
+                    "process",
+                    "--share",
+                    "desktop",
+                ],
+                timeout=240,
+            )
+            if r.rc != 0:
+                self.note(f"helper could not join: {(r.err or r.out).strip()[-200:]}")
+                return None
+            r = self.cua(
+                9, ["host", "pair", "--name", name, "--expires", "15", "--json"], timeout=60
+            )
+            try:
+                doc = json.loads(r.out.strip().splitlines()[0])
+            except (ValueError, IndexError):
+                self.note(
+                    f"helper could not make a code: {canary.USER_CODE.sub('XXXX', (r.err or r.out).strip())[-200:]}"
+                )
+                return None
+            return doc.get("code") or (doc.get("pairing") or {}).get("code")
+        finally:
+            self.cua(9, ["host", "remove", "--force", "--json"], timeout=180)
+            self.revoke_device(9)
+            self.cua(9, ["auth", "logout"], timeout=60)
+            del self.hosts[9]
+
+    def revoke_device(self, n: int) -> None:
+        """Take this sign-in's device off the canary account again. A fresh
+        sign-in enrolls the computer as a device, and the relay caps an
+        account at 64 devices, so a run that left its devices behind would
+        lock every later run out."""
+        r = self.cua(n, ["devices", "status", "--json"], timeout=60)
+        try:
+            device_id = str(first_doc(r.out).get("device_id") or "")
+        except (ValueError, AttributeError):
+            device_id = ""
+        if not device_id:
+            return
+        r = self.cua(n, ["devices", "revoke", device_id, "--yes"], timeout=60)
+        if r.rc != 0:
+            self.note(f"host {n}: could not revoke its device: {(r.err or r.out).strip()[-200:]}")
 
     def status(self, n: int) -> dict | None:
         r = self.cua(n, ["host", "status", "--json"], timeout=60)
@@ -634,6 +743,7 @@ if __name__ == "__main__":
                 r = self.cua(n, ["host", "remove", "--force", "--json"], timeout=180)
                 if r.rc != 0 and "not set up" not in (r.out + r.err).lower():
                     problems.append(f"host {n}: host remove: {(r.err or r.out).strip()[-200:]}")
+                self.revoke_device(n)
                 self.cua(n, ["auth", "logout"], timeout=60)
         # Every computer this run added leaves the canary account, whatever
         # the test did; then stale ones from runs that died (over 3 h old).
@@ -647,9 +757,32 @@ if __name__ == "__main__":
                 self.t.kill_tree(self.driver_proc.pid)
             except Exception:
                 pass
+        # Anything still running from this run's files (the app's cua
+        # daemon, a host it started) goes too.
+        if self.t.os == "windows":
+            self.t.run(
+                [
+                    "powershell",
+                    "-NoProfile",
+                    "-Command",
+                    "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*"
+                    + self.workdir
+                    + "*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }",
+                ],
+                timeout=60,
+            )
+        else:
+            self.t.run(["pkill", "-f", self.workdir], timeout=30)
         if not self.t.ephemeral:
             self.t.rmtree(self.workdir)
         return problems
+
+
+def first_doc(text: str):
+    text = text.strip()
+    if not text:
+        raise ValueError("no output")
+    return json.JSONDecoder().raw_decode(text)[0]
 
 
 def is_app_window(w: dict) -> bool:

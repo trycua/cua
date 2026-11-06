@@ -1485,7 +1485,7 @@ jobs:
           # canonical one-liners both fetch from
           # raw.githubusercontent.com/trycua/cua/main/... so they always
           # serve the current installer regardless of release flags
-          # (prerelease excludes us from the /releases/latest/ endpoint).
+          # (no installer reads the repo-wide Latest release).
           # The tag-pinned asset URLs below are a convenience for users who
           # want to audit the exact installer that shipped with a release.
           #

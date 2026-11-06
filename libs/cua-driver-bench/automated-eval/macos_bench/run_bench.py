@@ -55,6 +55,7 @@ import bench_core as core  # noqa: E402
 import claude_arms as ca  # noqa: E402
 import cdb_adapter  # noqa: E402
 import codex_native as cxn  # noqa: E402
+import pi_arms as pia  # noqa: E402
 import browser_use_cli as bu
 import claude_driver  # noqa: E402
 import claude_events  # noqa: E402
@@ -64,6 +65,10 @@ import desktop_runtime as desktop
 from dataclasses import replace
 
 SCHEMA = "cdb-bench-trial/1"
+# The Claude Code arm whose driver build, MCP entry, skill and system prompt a Codex or pi arm uses
+SOURCE_ARM = {**cxn.SOURCE_ARM, **pia.SOURCE_ARM}
+# Arms that use no Claude seat: no quota gate, no Haiku probes
+NO_CLAUDE_SEAT = cxn.ARMS + pia.ARMS
 WEB_TASKS = ("WEB-01", "WEB-02")
 WORK = ca.WORK
 DEFAULT_LEDGER = WORK / "ledger" / "spend.jsonl"
@@ -487,7 +492,7 @@ def check_pins(pins: dict[str, Any], arm_names: list[str]) -> list[tuple[str, st
     """Compare every pinned version and hash with what is installed now. Any difference fails."""
     observed = ca.observed_pins(
         include_codex=any(a in ca.CODEX_ARMS or a in cxn.ARMS for a in arm_names),
-        include_cua="cc-cua-driver" in arm_names,
+        include_cua="cc-cua-driver" in {SOURCE_ARM.get(a, a) for a in arm_names},
     )
     if (
         "cc-codex-cu-1007-browser" in arm_names
@@ -586,7 +591,7 @@ def capture_subject(work: Path):
 def real_capture_check(ctx: "Ctx", arm: str) -> tuple[str, str, str]:
     client = None
     try:
-        source = cxn.SOURCE_ARM.get(arm, arm)
+        source = SOURCE_ARM.get(arm, arm)
         path, _ = ctx.mcp[arm]
         if source in ca.CUA_ARMS:
             ensure_agent_daemon(ctx, source)
@@ -726,7 +731,7 @@ def cu_helper_live_checks(ctx: "Ctx", arm: str) -> list[tuple[str, str, str]]:
         )
     )
     try:
-        selected = next(a for a in ctx.arm_names if cxn.SOURCE_ARM.get(a, a) == arm)
+        selected = next(a for a in ctx.arm_names if SOURCE_ARM.get(a, a) == arm)
         path, _server = ctx.mcp[selected]
         if selected in cxn.ARMS:
             entry = cxn.server_entry(path, selected)
@@ -854,13 +859,13 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
     run_index = entry["run_index"]
     seed = core.probe_seed(task.id, run_index)
     system_prompt = ca.system_prompt_for(
-        cxn.SOURCE_ARM.get(arm, arm), browser=bool(spec.get("browser"))
+        SOURCE_ARM.get(arm, arm), browser=bool(spec.get("browser"))
     )
     bench_v2 = bool(getattr(args, "bench_v2", False))  # Amendment 14
     sentinel_front = True if bench_v2 else bool(spec.get("sentinel_frontmost", True))
     condition = getattr(args, "condition", "foreground") if bench_v2 else None  # Amendment 15
     # Per-build Cua Driver identity (Amendment 3); arm B rows keep the 0.34.0 values of the recorder build.
-    build_versions = (ctx.versions.get("builds") or {}).get(cxn.SOURCE_ARM.get(arm, arm)) or (
+    build_versions = (ctx.versions.get("builds") or {}).get(SOURCE_ARM.get(arm, arm)) or (
         ctx.versions.get("builds") or {}
     ).get("cc-cua-driver", {})
     trial_dir = ctx.run_dir / "trials" / entry["trial_id"] / f"a{attempt}"
@@ -910,14 +915,16 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
         "cua_driver_git_sha": build_versions.get("cua_driver_git_sha"),
         "cua_driver_daemon_version": build_versions.get("cua_daemon_version"),
         "skills_tree_sha256": build_versions.get("cua_skills_tree_sha256")
-        if arm in ca.CUA_ARMS
+        if pia.SOURCE_ARM.get(arm, arm) in ca.CUA_ARMS
         else None,
         "macos": ctx.versions.get("macos"),
         "os_version": ctx.versions.get("os_version"),
         "bench_repo_commit": ctx.versions.get("bench_repo_commit"),
         "bench_src_sha256": ctx.versions.get("bench_src_sha256"),
         "system_prompt_sha256": hashlib.sha256(system_prompt.encode()).hexdigest(),
-        "skill_in_prompt": bool(getattr(ca.CUA_BUILDS.get(arm), "skill_in_prompt", False)),
+        "skill_in_prompt": bool(
+            getattr(ca.CUA_BUILDS.get(pia.SOURCE_ARM.get(arm, arm)), "skill_in_prompt", False)
+        ),
         "electron_named_bundles": spec.get("kind") == "cdb"
         and os.environ.get("CDB_ELECTRON_SHARED") != "1",
         "quota_five_hour_before": (ctx.quota or {}).get("five_hour"),
@@ -926,13 +933,16 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
         "force_accessibility": ca.force_accessibility(arm),
         # Amendment 11: the helper arm's identity (Desktop version, helper and adapter hashes, offered actions)
         "claude_cu_helper": cu_helper_row_identity(ctx)
-        if cxn.SOURCE_ARM.get(arm, arm) in ca.CU_HELPER_ARMS
+        if SOURCE_ARM.get(arm, arm) in ca.CU_HELPER_ARMS
         else None,
         # Amendment 20: the native Codex arm's identity (Codex CLI build, model, effort)
         "codex_native": ctx.versions.get("codex_native") if arm in cxn.ARMS else None,
+        "pi": ctx.versions.get("pi") if arm in pia.ARMS else None,
     }
     if arm in cxn.ARMS:
         row["model"], row["effort"] = cxn.MODEL, cxn.EFFORT
+    if arm in pia.ARMS:
+        row["model"], row["effort"] = f"{pia.PROVIDER}/{pia.MODEL}", pia.THINKING
     sentinel = pilot.Sentinel(
         Path(args.build_dir or HERE / "linux") / "BenchSentinel.app"
         if (args.build_dir or desktop.detect_platform() == "linux") and not args.no_sentinel
@@ -965,6 +975,7 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
     side_door: set[str] = set()
     watcher: FrontWatcher | None = None
     guard: v2.GuiOnlyGuard | None = None
+    pi_root: Path | None = None
     gui_only: dict[str, Any] | None = None
     try:
         ctx.set_state(
@@ -979,9 +990,9 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
         if arm in ca.CUA_ARMS:
             ensure_agent_daemon(ctx, arm)
         elif (
-            cxn.SOURCE_ARM.get(arm) in ca.CUA_ARMS
+            SOURCE_ARM.get(arm) in ca.CUA_ARMS
         ):  # A23: Cua Driver under Codex uses that build's daemon
-            ensure_agent_daemon(ctx, cxn.SOURCE_ARM[arm])
+            ensure_agent_daemon(ctx, SOURCE_ARM[arm])
         if getattr(args, "park_pointer", False):
             row["pointer_parked"] = park_pointer(ctx)
         lab_app = Path(args.build_dir or HERE / "linux") / "BenchLab.app"
@@ -1016,12 +1027,14 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
         elif cdb is None and getattr(args, "check_occlusion", True):
             row["lab_occlusion"] = ensure_lab_unoccluded(ctx)
             row["lab_unoccluded"] = row["lab_occlusion"].get("unoccluded")
-        cwd = ca.prepare_cwd(arm)
+        cwd = ca.prepare_cwd(pia.SOURCE_ARM.get(arm, arm))  # a pi arm gets its source arm's skill
         mcp_path, server = ctx.mcp[arm]
         native = arm in cxn.MCP_ARMS
         argv = (
             cxn.argv()
             if native
+            else pia.argv(system_prompt, pia.skill_dir(cwd))
+            if arm in pia.ARMS
             else ca.claude_argv(
                 mcp_config=mcp_path,
                 server=server,
@@ -1084,6 +1097,20 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
                     elicitation_path=artifacts / "elicitations.jsonl",
                     abort=v2.EitherEvent(ctx.abort, guard.stop) if guard else ctx.abort,
                     server=cxn.SERVER_OF[arm],
+                )
+            elif arm in pia.ARMS:
+                pi_root = pia.new_root()
+                claude = pia.run_pi(
+                    argv,
+                    pia.render_agent_dir(pi_root, mcp_path, pia.skill_dir(cwd), max_turns),
+                    cwd,
+                    prompt,
+                    timeout_s,
+                    max_turns,
+                    trial_dir / "pi-events.tsv",
+                    stream_path,
+                    stderr_path,
+                    abort=v2.EitherEvent(ctx.abort, guard.stop) if guard else ctx.abort,
                 )
             else:
                 claude = claude_driver.run_claude(
@@ -1155,8 +1182,12 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
         note = failure["message"]
     finally:
         try:
-            _collect_linux_evidence(artifacts, arm, bool(failure.get("kind")))
+            _collect_linux_evidence(
+                artifacts, pia.SOURCE_ARM.get(arm, arm), bool(failure.get("kind"))
+            )
         finally:
+            if pi_root is not None:
+                pia.keep_config(pi_root, trial_dir / "pi-agent")
             codex_home = trial_dir / "codex-home" / ".codex"
             if arm in cxn.ARMS and codex_home.is_dir():
                 try:
@@ -1180,9 +1211,7 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
         if cdb is not None:
             cdb.stop_apps()
         pilot.sweep_processes(str(trial_dir))
-        helper_arm = cxn.SOURCE_ARM.get(
-            arm, arm
-        )  # A23: the helper under Codex CLI uses the same build
+        helper_arm = SOURCE_ARM.get(arm, arm)  # A23: the helper under Codex CLI uses the same build
         if helper_arm in ca.CU_HELPER_ARMS:
             # the adapter and its helper end with claude's process group; a survivor could post input later
             row["cu_helper_leftover_killed"] = pilot.sweep_processes(
@@ -1203,6 +1232,8 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
             None,
             "not priced (Codex subscription; tokens reported)",
         )
+    elif entry["arm"] in pia.ARMS:
+        cost_source = pia.COST_SOURCE
     elif cost is None:
         cost = estimate_cost(tokens)
         cost_source = "estimated_from_tokens (no result event)"
@@ -1765,7 +1796,7 @@ def append_row(ctx: Ctx, row: dict[str, Any]) -> None:
     ctx.ledger.append(
         ctx.args.ledger_who,
         f"{'smoke ' if row.get('smoke') else ''}trial {row['trial_id']} a{row['attempt']}",
-        ctx.args.model,
+        row.get("model") or ctx.args.model,
         cost,
         run_id=ctx.run_dir.name,
         status=row.get("status"),
@@ -1869,10 +1900,10 @@ def execute_trial(ctx: Ctx, entry: dict[str, Any]) -> dict[str, Any]:
             return row
         if (
             kind in ("mcp_start", "tool_setup")
-            and cxn.SOURCE_ARM.get(entry["arm"], entry["arm"]) in ca.CUA_ARMS
+            and SOURCE_ARM.get(entry["arm"], entry["arm"]) in ca.CUA_ARMS
         ):
             try:
-                ensure_agent_daemon(ctx, cxn.SOURCE_ARM.get(entry["arm"], entry["arm"]))
+                ensure_agent_daemon(ctx, SOURCE_ARM.get(entry["arm"], entry["arm"]))
             except Exception as error:  # noqa: BLE001
                 ctx.log(f"daemon restart failed: {error}")
         log_pause(ctx, f"retry_{kind}", wait_s, row.get("infra_message", ""), entry["trial_id"])
@@ -1990,7 +2021,7 @@ def native_codex_checks(ctx: Ctx, arm: str, with_models: bool) -> list[tuple[str
     checks: list[tuple[str, str, str]] = []
     try:
         env = cxn.render_home(
-            home, mcp_path, cxn.MODEL, cxn.EFFORT, ca.system_prompt_for(cxn.SOURCE_ARM[arm]), arm
+            home, mcp_path, cxn.MODEL, cxn.EFFORT, ca.system_prompt_for(SOURCE_ARM[arm]), arm
         )
         if chatgpt:
             checks.extend(cxn.chatgpt_checks(cxn.CODEX_CLI, env, cxn.MODEL))
@@ -2151,6 +2182,17 @@ def v2_static_checks(ctx: Ctx) -> list[tuple[str, str, str]]:
         )
     )
     for arm in ctx.arm_names:
+        if arm in pia.ARMS:
+            tools = [pia.claude_name(t) for t in pia.TOOLS if not t.startswith("mcp__")]
+            bad = [t for t in tools if t in v2.FORBIDDEN_BUILTINS or t == "Task"]
+            out.append(
+                (
+                    f"v2 GUI-only surface {arm}",
+                    "fail" if bad else "pass",
+                    f"pi tools {list(pia.TOOLS)}" + (f"; forbidden {bad}" if bad else ""),
+                )
+            )
+            continue
         argv = ca.claude_argv(
             mcp_config=Path("/dev/null"),
             server=(ctx.mcp.get(arm) or (None, "server"))[1],
@@ -2189,11 +2231,15 @@ def preflight(ctx: Ctx, with_models: bool = True) -> list[tuple[str, str, str]]:
     if getattr(args, "bench_v2", False):
         for name, status, detail in v2_static_checks(ctx):
             add(name, status, detail)
-    add(
-        "claude binary",
-        "pass" if ca.CLAUDE_BIN.is_file() else "fail",
-        f"{ca.CLAUDE_BIN} {ctx.versions.get('claude')}",
-    )
+    if any(a not in pia.ARMS for a in ctx.arm_names):
+        add(
+            "claude binary",
+            "pass" if ca.CLAUDE_BIN.is_file() else "fail",
+            f"{ca.CLAUDE_BIN} {ctx.versions.get('claude')}",
+        )
+    if any(a in pia.ARMS for a in ctx.arm_names):
+        pi = ctx.versions.get("pi") or {}
+        add("pi binary", "pass" if pi.get("pi_version") else "fail", f"{pia.PI_BIN} {pi}")
     add(
         "terminal.app ancestor",
         "skip"
@@ -2224,12 +2270,15 @@ def preflight(ctx: Ctx, with_models: bool = True) -> list[tuple[str, str, str]]:
     for name, status, detail in check_pins(pins, ctx.arm_names):
         add(name, status, detail)
     offline = bool(getattr(args, "offline", False))
-    if any(ca.CUA_BUILDS[a].label == "main" for a in ctx.arm_names if a in ca.CUA_BUILDS):
+    driver_arms = [pia.SOURCE_ARM.get(a, a) for a in ctx.arm_names]
+    if any(ca.CUA_BUILDS[a].label == "main" for a in driver_arms if a in ca.CUA_BUILDS):
         main = pins.get("cua_main", {})
         spec = ca.CUA_BUILDS["cc-cua-driver-main"]
         got_bin = ca.sha256_file(spec.bin) if spec.bin.is_file() else None
         for other in [
-            a for a in ctx.arm_names if a in ca.CUA_BUILDS and ca.CUA_BUILDS[a].label == "main"
+            a
+            for a in dict.fromkeys(driver_arms)
+            if a in ca.CUA_BUILDS and ca.CUA_BUILDS[a].label == "main"
         ]:
             ob = ca.CUA_BUILDS[other].bin
             got = ca.sha256_file(ob) if ob.is_file() else None
@@ -2250,7 +2299,7 @@ def preflight(ctx: Ctx, with_models: bool = True) -> list[tuple[str, str, str]]:
             "pass" if got_skills and got_skills == main.get("skills_tree_sha256") else "fail",
             str(got_skills),
         )
-    for cua_arm in [a for a in ca.CUA_ARMS if a in ctx.arm_names]:
+    for cua_arm in [a for a in ca.CUA_ARMS if a in driver_arms]:
         spec = ca.CUA_BUILDS[cua_arm]
         try:
             ensure_agent_daemon(ctx, cua_arm)
@@ -2276,7 +2325,7 @@ def preflight(ctx: Ctx, with_models: bool = True) -> list[tuple[str, str, str]]:
         ):
             add(name, status, detail)
     helper_sources = {
-        cxn.SOURCE_ARM.get(a, a) for a in ctx.arm_names
+        SOURCE_ARM.get(a, a) for a in ctx.arm_names
     }  # A23: also for cx-claude-cu-helper
     for helper_arm in [a for a in ca.CU_HELPER_ARMS if a in helper_sources]:
         observed = ca.cu_helper_observed(ca.CU_HELPER_BUILDS[helper_arm])
@@ -2426,7 +2475,7 @@ def preflight(ctx: Ctx, with_models: bool = True) -> list[tuple[str, str, str]]:
         "quota gate from the latest known reading",
         "warn"
         if gate["action"] == "gated"
-        and all(a in cxn.ARMS for a in ctx.arm_names)  # no Claude seat in use
+        and all(a in NO_CLAUDE_SEAT for a in ctx.arm_names)  # no Claude seat in use
         else "fail"
         if gate["action"] == "gated"
         else ("warn" if gate["action"] == "unknown" else "pass"),
@@ -2434,7 +2483,21 @@ def preflight(ctx: Ctx, with_models: bool = True) -> list[tuple[str, str, str]]:
     )
     if (WORK / "HOLD").exists():
         add("HOLD file", "fail", (WORK / "HOLD").read_text("utf-8").strip()[:200])
-    claude_arms = [a for a in ctx.arm_names if a not in cxn.ARMS]
+    for arm in [a for a in ctx.arm_names if a in pia.ARMS] if with_models and not offline else []:
+        try:
+            source = pia.SOURCE_ARM[arm]
+            ensure_agent_daemon(ctx, source)
+            status, detail = pia.init_check(
+                arm,
+                ctx.mcp[arm][0],
+                ca.prepare_cwd(source),
+                ca.system_prompt_for(source),
+                ctx.run_dir / f"preflight-{arm}",
+            )
+            add(f"init event check {arm}", status, detail)
+        except Exception as error:  # noqa: BLE001
+            add(f"init event check {arm}", "fail", f"{type(error).__name__}: {error}")
+    claude_arms = [a for a in ctx.arm_names if a not in NO_CLAUDE_SEAT]
     if with_models and not offline and claude_arms:  # a native-Codex-only run uses no Claude seat
         try:
             ok, detail = quota_probe(ctx)
@@ -2661,11 +2724,13 @@ def make_ctx(args: argparse.Namespace) -> Ctx:
     unsupported = []
     if desktop.detect_platform() == "linux":
         unsupported = [
-            f"unsupported-platform: {a} requires macOS" for a in arm_names if a not in ca.CUA_ARMS
+            f"unsupported-platform: {a} requires macOS"
+            for a in arm_names
+            if a not in ca.CUA_ARMS + pia.ARMS
         ]
         for reason in unsupported:
             print(reason, file=sys.stderr)
-        arm_names = [a for a in arm_names if a in ca.CUA_ARMS]
+        arm_names = [a for a in arm_names if a in ca.CUA_ARMS + pia.ARMS]
         if not arm_names:
             raise SystemExit("no supported arms remain: " + "; ".join(unsupported))
     if args.pins:
@@ -2725,7 +2790,7 @@ def setup_arms(ctx: Ctx) -> None:
             )
     observed = ca.observed_pins(
         include_codex=any(a in ca.CODEX_ARMS or a in cxn.ARMS for a in ctx.arm_names),
-        include_cua="cc-cua-driver" in ctx.arm_names,
+        include_cua="cc-cua-driver" in {SOURCE_ARM.get(a, a) for a in ctx.arm_names},
     )
     ctx.versions.update(
         pins_expected=pins,
@@ -2753,7 +2818,7 @@ def setup_arms(ctx: Ctx) -> None:
             for arm, build in ca.CUA_BUILDS.items()
             if arm in ctx.arm_names
             or arm == "cc-cua-driver"
-            or arm in {cxn.SOURCE_ARM.get(a) for a in ctx.arm_names}
+            or arm in {SOURCE_ARM.get(a) for a in ctx.arm_names}
         },
         pins=pins,
         system_prompt_sha256=hashlib.sha256(ca.SYSTEM_PROMPT.encode()).hexdigest(),
@@ -2769,13 +2834,18 @@ def setup_arms(ctx: Ctx) -> None:
         ):  # A20/A23: the source Claude arm's MCP entry, copied unmodified, driven by Codex CLI
             try:
                 path, _server = ca.mcp_config_for(
-                    cxn.SOURCE_ARM[arm], ctx.run_dir, ctx.args.codex_cu_mcp
+                    SOURCE_ARM[arm], ctx.run_dir, ctx.args.codex_cu_mcp
                 )
                 cxn.server_entry(path, arm)
                 ctx.mcp[arm] = (path, cxn.SERVER_OF[arm])
             except (FileNotFoundError, ValueError) as error:
                 raise SystemExit(f"arm {arm} unavailable: {error}")
             ctx.versions["codex_native"] = cxn.observed()
+        elif (
+            arm in pia.ARMS
+        ):  # the source arm's MCP entry; pi_arms.render_agent_dir copies it per trial
+            ctx.mcp[arm] = ca.mcp_config_for(SOURCE_ARM[arm], ctx.run_dir)
+            ctx.versions["pi"] = pia.observed()
     if ctx.args.build_dir or desktop.detect_platform() == "linux":
         apps: dict[str, str] = {}
         for name in BENCH_APPS:
@@ -2862,12 +2932,12 @@ def write_manifest(ctx: Ctx, first_schedule: list[dict[str, Any]]) -> None:
         "tool_search": args.tool_search,
         "system_prompt": ca.SYSTEM_PROMPT,
         "system_prompt_sha256_by_arm": {
-            a: hashlib.sha256(ca.system_prompt_for(cxn.SOURCE_ARM.get(a, a)).encode()).hexdigest()
+            a: hashlib.sha256(ca.system_prompt_for(SOURCE_ARM.get(a, a)).encode()).hexdigest()
             for a in ctx.arm_names
         },
         "system_prompt_sha256_by_arm_browser": {
             a: hashlib.sha256(
-                ca.system_prompt_for(cxn.SOURCE_ARM.get(a, a), browser=True).encode()
+                ca.system_prompt_for(SOURCE_ARM.get(a, a), browser=True).encode()
             ).hexdigest()
             for a in ctx.arm_names
         },
@@ -2877,7 +2947,9 @@ def write_manifest(ctx: Ctx, first_schedule: list[dict[str, Any]]) -> None:
         "versions": ctx.versions,
         "recorder": getattr(ctx.recorder, "name", "none"),
         "first_block_schedule": first_schedule,
-        "arm_descriptions": {a: ca.ARM_DESCRIPTIONS.get(a, a) for a in ctx.arm_names},
+        "arm_descriptions": {
+            a: ca.ARM_DESCRIPTIONS.get(a) or pia.DESCRIPTIONS.get(a, a) for a in ctx.arm_names
+        },
         "bench_version": v2.BENCH_VERSION if getattr(args, "bench_v2", False) else 1,
         "bench_v2": {
             "categories": v2.CATEGORIES,
@@ -2900,7 +2972,11 @@ def write_manifest(ctx: Ctx, first_schedule: list[dict[str, Any]]) -> None:
         "price_fallback_usd_per_mtok_ASSUMED": PRICE_FALLBACK,
         "example_argv_task": ctx.task_ids[0],
         "example_argv": {
-            a: ca.claude_argv(
+            a: pia.argv(
+                ca.system_prompt_for(SOURCE_ARM[a]), Path(ca.CWD_ROOT) / ".claude/skills/cua-driver"
+            )
+            if a in pia.ARMS
+            else ca.claude_argv(
                 mcp_config=ctx.mcp[a][0],
                 server=ctx.mcp[a][1],
                 model=args.model,
@@ -2909,7 +2985,7 @@ def write_manifest(ctx: Ctx, first_schedule: list[dict[str, Any]]) -> None:
                 tool_search=args.tool_search == "default",
                 effort=args.effort,
                 system_prompt=ca.system_prompt_for(
-                    cxn.SOURCE_ARM.get(a, a),
+                    SOURCE_ARM.get(a, a),
                     browser=bool(task_spec(ctx.tasks[ctx.task_ids[0]]).get("browser")),
                 ),
             )
@@ -3031,7 +3107,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         failed = [c for c in checks if c[1] == "fail"]
         known = ctx.quota is not None and ctx.quota.get("seven_day") is not None
         native_only = all(
-            a in cxn.ARMS for a in ctx.arm_names
+            a in NO_CLAUDE_SEAT for a in ctx.arm_names
         )  # Amendment 20: no Claude seat in use
         if (
             not known
@@ -3102,7 +3178,7 @@ def cmd_gate_check(args: argparse.Namespace) -> int:
     if decision["action"] == "gated":
         arm_names = [args.only_arm] if args.only_arm else list(args.arms)
         if arm_names and all(
-            a in cxn.ARMS for a in arm_names
+            a in NO_CLAUDE_SEAT for a in arm_names
         ):  # Amendment 20: no Claude seat in use
             print("quota gate not applied: only native Codex arms, which use no Claude seat")
             return 0
@@ -3162,7 +3238,7 @@ def cmd_dry_run(args: argparse.Namespace) -> int:
                     tool_search=args.tool_search == "default",
                     effort=args.effort,
                     system_prompt=ca.system_prompt_for(
-                        cxn.SOURCE_ARM.get(arm, arm),
+                        SOURCE_ARM.get(arm, arm),
                         browser=bool(task_spec(ctx.tasks[task_id]).get("browser")),
                     ),
                 )

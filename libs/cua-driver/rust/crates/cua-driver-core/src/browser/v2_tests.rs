@@ -96,6 +96,9 @@ pub(super) struct FixtureState {
     /// A page-owned JavaScript dialog is open in T1: `Page.enable` on a tab
     /// session announces it, and the renderer answers nothing else.
     dialog_open: bool,
+    /// `Page.enable` on a tab session never answers (a renderer blocked by a
+    /// dialog it has not yet announced).
+    page_enable_hangs: bool,
     dom_click_changes_readback: bool,
     dom_click_readback_available: bool,
     dom_click_stall_after: Option<usize>,
@@ -122,6 +125,7 @@ impl Default for FixtureState {
             omit_primary_target: false,
             primary_window_error: None,
             dialog_open: false,
+            page_enable_hangs: false,
             main_loader: "L_MAIN_1".into(),
             iframe_loader: "L_IFRAME_1".into(),
             oopif_loader: "L_OOPIF_1".into(),
@@ -531,6 +535,7 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                 st.tab_sessions += 1;
                 MockReply::ok(json!({ "sessionId": format!("tab-sess-{}", st.tab_sessions) }))
             }
+            "Page.enable" if is_tab && st.page_enable_hangs => MockReply::hang(),
             "Page.enable" if is_tab => {
                 st.page_sessions.push(sess.clone());
                 let mut reply = MockReply::ok(json!({}));
@@ -2879,6 +2884,34 @@ async fn an_open_dialog_moves_the_origin_proof_off_the_blocked_renderer() {
         1,
         "the first tab session subscribes to dialog events for every later caller"
     );
+}
+
+#[tokio::test]
+async fn browser_dialog_resubscribe_uses_the_short_dialog_deadline() {
+    let f = fixture_with(|st| st.page_enable_hangs = true).await;
+    let (target, tab) = bind(&f).await;
+
+    let started = std::time::Instant::now();
+    let inspected = BrowserDialogTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "action": "inspect", "session": SESSION
+        }))
+        .await;
+    // Revalidation's attach spends one short deadline on its best-effort
+    // subscribe and the tool's retry spends one more; the 20 s CDP call
+    // timeout must never be reached.
+    let elapsed = started.elapsed();
+    assert!(
+        elapsed
+            < 2 * super::engine::DIALOG_SUBSCRIPTION_TIMEOUT + std::time::Duration::from_secs(2),
+        "browser_dialog must not wait out the CDP call timeout: {elapsed:?}"
+    );
+    assert!(
+        recorded_calls(&f, "Page.enable").len() >= 2,
+        "browser_dialog retries the subscription the attach could not complete"
+    );
+    let s = structured(&inspected);
+    assert_eq!(s["refusal"]["code"], "browser_action_unavailable", "{s}");
 }
 
 #[tokio::test]

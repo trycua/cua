@@ -55,11 +55,19 @@ on:
       - "apps/cua-spaces-web/**"
       - "libs/cua/**"
       - "libs/cua-spacesd/VERSION"
+      # Files outside libs/cua that the SwiftUI Rust slice reads at compile
+      # time (spaces_rust_slice_inputs.py lists them; a unit test checks this
+      # list covers them). apps/cua-spaces-web is above.
+      - "libs/images/sandbox-images.json"
+      - ".cargo/**"
+      - ".github/scripts/spaces_rust_slice_inputs.py"
       - ".github/actions/spaces-native/**"
       - ".github/actions/spaces-rust-slice/**"
       - ".github/actions/setup-protoc/**"
       - ".github/scripts/spaces_build_*.py"
       - ".github/workflows/cd-cua-spaces-build.yml"
+      - ".github/workflows/ci-cua-spaces-rust-slice.yml"
+      - ".github/workflows/cd-cua-spaces-natives-main.yml"
   workflow_dispatch:
     inputs:
       force:
@@ -211,11 +219,37 @@ jobs:
           SPACESD_WAIT_MINUTES: "30"
         run: .github/scripts/check_spacesd_published.sh "$CUA_RELEASE_REPOSITORY"
 
-  # The SwiftUI app's Rust slices, restored from the cache the main producer
-  # (ci-cua-spaces-rust-slice.yml) fills, or built.
+  # The producers: the one place a libs/cua tree is compiled on main. Each
+  # builds on a cache miss and saves, under the keys the tag run
+  # (cd-cua-spaces.yml) restores, so a release of a commit that main built
+  # compiles nothing. They run once per tree (`plan` skips a tree with a live
+  # build) and one build at a time, never beside another producer.
+  #
+  # SwiftUI app Rust slices (arm64, x86_64), with the cache-key check.
+  slice:
+    name: Producer, SwiftUI Rust
+    needs: [plan, spacesd-published]
+    if: needs.plan.outputs.skip != 'true'
+    uses: ./.github/workflows/ci-cua-spaces-rust-slice.yml
+    permissions:
+      contents: read
+
+  # Electron macOS native layers (beta releases restore them). Not needed by
+  # the stable build set below, so a failure here does not block it.
+  natives-mac:
+    name: Producer, Electron macOS natives
+    needs: [plan, spacesd-published]
+    if: needs.plan.outputs.skip != 'true' && inputs.channel != 'nightly'
+    uses: ./.github/workflows/cd-cua-spaces-natives-main.yml
+    permissions:
+      contents: read
+
+  # The SwiftUI app's Rust slices, restored from the cache `slice` just
+  # filled. A miss here is an alert (the workflow is watched by
+  # workflow-failure-alerts.yml): it never compiles a second copy.
   macos-rust:
     name: SwiftUI Rust (${{ matrix.arch }})
-    needs: [plan, spacesd-published]
+    needs: [plan, spacesd-published, slice]
     runs-on: macos-26
     timeout-minutes: 180
     strategy:
@@ -227,8 +261,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/spaces-rust-slice
+        id: slice
         with:
           triple: ${{ matrix.triple }}
+          build: "false"
+      - name: The producer left the slice in the cache
+        if: steps.slice.outputs.cache-hit != 'true'
+        run: |
+          echo "::error title=Cache miss on main::The SwiftUI Rust slice (${{ matrix.triple }}) is not in the Actions cache although the producer stage just ran. Key: ${{ steps.slice.outputs.key }}. Not compiling a second copy."
+          exit 1
       # microVMs on Apple silicon: the static aarch64 guest init the app
       # bundles (build-release.sh --skip-cargo takes it from here). Same
       # step as cd-cua-spaces.yml.

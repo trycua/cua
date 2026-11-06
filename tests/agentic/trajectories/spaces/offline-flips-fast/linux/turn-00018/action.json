@@ -1,0 +1,28 @@
+{
+  "action_truth": {
+    "actual_delivery": "foreground",
+    "attempts": [],
+    "delivered_count": null,
+    "detail": null,
+    "effect": "unverifiable",
+    "escalation": null,
+    "evidence": [],
+    "fallbacks": [],
+    "refusal": null,
+    "requested_delivery": "foreground",
+    "route": "global_input",
+    "transport": "linux_x_test"
+  },
+  "arguments": {
+    "delivery_mode": "foreground",
+    "pid": 71673,
+    "text": "cua-e2e-power off",
+    "window_id": 48234499
+  },
+  "result_error": false,
+  "result_summary": "Typed 17 character(s) (terminal emulator: pty/XTest key events).",
+  "t_ms_from_session_start": 100260,
+  "t_start_ms_from_session_start": 98978,
+  "timestamp": "2026-11-06T00:12:58.596Z",
+  "tool": "type_text"
+}

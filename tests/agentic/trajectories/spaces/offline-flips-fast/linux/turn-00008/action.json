@@ -1,0 +1,26 @@
+{
+  "action_truth": {
+    "actual_delivery": "foreground",
+    "attempts": [],
+    "delivered_count": null,
+    "detail": null,
+    "effect": "unverifiable",
+    "escalation": null,
+    "evidence": [],
+    "fallbacks": [],
+    "refusal": null,
+    "requested_delivery": "foreground",
+    "route": "global_input",
+    "transport": "linux_x_test"
+  },
+  "arguments": {
+    "delivery_mode": "foreground",
+    "element_token": "s00000007:90"
+  },
+  "result_error": true,
+  "result_summary": "click: element [90] (pid 71756) has no usable on-screen bounds (the list item is not showing (its menu or page is closed)) and its AT-SPI action failed (element does not advertise a safe activation action); no input was sent. Open the containing menu first, re-snapshot with get_window_state, or click by pixel from a screenshot.",
+  "t_ms_from_session_start": 45219,
+  "t_start_ms_from_session_start": 44375,
+  "timestamp": "2026-11-06T00:12:03.555Z",
+  "tool": "click"
+}

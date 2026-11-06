@@ -29,6 +29,8 @@
 //! whole gestures (Hyprland, through the driver tools) folds batches with
 //! [`gestures::GestureFolder`].
 
+use std::time::{Duration, Instant};
+
 use thiserror::Error;
 
 pub mod gestures;
@@ -222,6 +224,67 @@ pub fn extract_integral(residual: &mut f64) -> i32 {
 /// Map a normalized coordinate onto `[0, extent - 1]` pixels.
 pub fn denormalize(value: f64, extent: u32) -> i32 {
     (value * f64::from(extent.saturating_sub(1))).round() as i32
+}
+
+/// The click count of a viewer's pointer presses: 1, 2, 3… for presses of
+/// one button that follow each other within an interval and within a few
+/// points of the previous press, as the operating system counts a physical
+/// mouse. Interactive batches carry no click count, so a native session that
+/// must stamp one on its events (macOS) counts the presses it receives with
+/// this. It performs no I/O: the caller passes each press's receipt time.
+#[derive(Debug, Clone)]
+pub struct ClickCounter {
+    interval: Duration,
+    slop: f64,
+    last: Option<LastPress>,
+    count: u32,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct LastPress {
+    button: PointerButton,
+    point: (f64, f64),
+    at: Instant,
+}
+
+impl ClickCounter {
+    /// Presses of one button within `interval` of each other and within
+    /// `slop` (native points) of each other continue a click sequence.
+    pub fn new(interval: Duration, slop: f64) -> Self {
+        Self {
+            interval,
+            slop,
+            last: None,
+            count: 0,
+        }
+    }
+
+    /// The click count of a press of `button` at `point` received at `now`.
+    pub fn press(&mut self, button: PointerButton, point: (f64, f64), now: Instant) -> u32 {
+        let continues = self.last.is_some_and(|last| {
+            last.button == button
+                && now.duration_since(last.at) <= self.interval
+                && (point.0 - last.point.0).hypot(point.1 - last.point.1) <= self.slop
+        });
+        self.count = if continues { self.count + 1 } else { 1 };
+        self.last = Some(LastPress {
+            button,
+            point,
+            at: now,
+        });
+        self.count
+    }
+
+    /// The click count of the last press (0 before the first).
+    pub fn count(&self) -> u32 {
+        self.count
+    }
+
+    /// Forget the sequence: the next press is a single click.
+    pub fn reset(&mut self) {
+        self.last = None;
+        self.count = 0;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -576,5 +639,56 @@ mod tests {
         let error = resolve_delivery(TargetedDelivery::Auto, false, None, false, "pointer events")
             .unwrap_err();
         assert_eq!(error.code(), "would_require_activation");
+    }
+
+    #[test]
+    fn presses_within_the_interval_and_slop_count_up() {
+        let start = Instant::now();
+        let mut clicks = ClickCounter::new(Duration::from_millis(500), 4.0);
+        assert_eq!(clicks.count(), 0);
+        assert_eq!(clicks.press(PointerButton::Left, (10.0, 10.0), start), 1);
+        assert_eq!(
+            clicks.press(
+                PointerButton::Left,
+                (12.0, 13.0),
+                start + Duration::from_millis(200)
+            ),
+            2,
+            "a second press 3.6 points away continues the sequence"
+        );
+        assert_eq!(
+            clicks.press(
+                PointerButton::Left,
+                (10.0, 10.0),
+                start + Duration::from_millis(400)
+            ),
+            3,
+            "the interval is measured from the previous press, not the first"
+        );
+        assert_eq!(clicks.count(), 3);
+    }
+
+    #[test]
+    fn a_late_far_other_button_or_reset_press_is_a_single_click() {
+        let start = Instant::now();
+        let mut clicks = ClickCounter::new(Duration::from_millis(500), 4.0);
+
+        clicks.press(PointerButton::Left, (10.0, 10.0), start);
+        let late = start + Duration::from_millis(501);
+        assert_eq!(clicks.press(PointerButton::Left, (10.0, 10.0), late), 1);
+
+        let soon = late + Duration::from_millis(100);
+        assert_eq!(
+            clicks.press(PointerButton::Left, (15.0, 10.0), soon),
+            1,
+            "5 points away is outside the slop"
+        );
+        assert_eq!(clicks.press(PointerButton::Right, (15.0, 10.0), soon), 1);
+
+        clicks.press(PointerButton::Right, (15.0, 10.0), soon);
+        assert_eq!(clicks.count(), 2);
+        clicks.reset();
+        assert_eq!(clicks.count(), 0);
+        assert_eq!(clicks.press(PointerButton::Right, (15.0, 10.0), soon), 1);
     }
 }

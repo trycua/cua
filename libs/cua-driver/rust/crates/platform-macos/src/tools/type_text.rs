@@ -644,6 +644,15 @@ fn synthesis_preflight(
     if route == TextDeliveryRoute::AtomicAx {
         return None;
     }
+    // Fail closed: with AX_ONLY, never fall back to CGEvent synthesis.
+    if std::env::var_os("CUA_DRIVER_AX_ONLY").is_some() {
+        return Some(SynthesisRefusal {
+            requested_chars,
+            estimated_duration_ms: u64::MAX,
+            per_character_ms: 0,
+            max_chunk_chars: 0,
+        });
+    }
     let per_character_ms = match route {
         TextDeliveryRoute::AtomicAx => unreachable!(),
         // PID-routed and desktop Unicode paths post one key-down and one

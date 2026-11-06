@@ -3,7 +3,7 @@
 
 //! MCP JSON-RPC 2.0 protocol types.
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 
 // ── Request ──────────────────────────────────────────────────────────────────
@@ -14,9 +14,17 @@ pub struct Request {
     #[allow(dead_code)]
     pub jsonrpc: String,
     /// Absent on notifications.
+    #[serde(default, deserialize_with = "deserialize_present_id")]
     pub id: Option<Value>,
     pub method: String,
     pub params: Option<Value>,
+}
+
+fn deserialize_present_id<'de, D>(deserializer: D) -> Result<Option<Value>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Value::deserialize(deserializer).map(Some)
 }
 
 impl Request {
@@ -609,6 +617,24 @@ mod agent_instruction_tests {
         assert!(bounded_query < discovery);
         assert!(instructions.contains("if ready"));
         assert!(instructions.split_whitespace().count() <= 200);
+    }
+}
+
+#[cfg(test)]
+mod request_id_tests {
+    use super::Request;
+    use serde_json::json;
+
+    #[test]
+    fn only_an_absent_id_is_a_notification() {
+        let notification: Request =
+            serde_json::from_value(json!({"jsonrpc":"2.0","method":"ping"})).unwrap();
+        let null_id: Request =
+            serde_json::from_value(json!({"jsonrpc":"2.0","id":null,"method":"ping"})).unwrap();
+
+        assert!(notification.is_notification());
+        assert!(!null_id.is_notification());
+        assert_eq!(null_id.id, Some(serde_json::Value::Null));
     }
 }
 

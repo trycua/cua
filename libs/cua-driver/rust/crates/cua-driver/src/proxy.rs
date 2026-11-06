@@ -19,10 +19,11 @@
 //!   Putting the proxy here avoids `mcp-server → cua-driver` reverse
 //!   coupling.
 
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 
 use cua_driver_core::mcp_wire::{self, ProtocolSession};
-use cua_driver_core::policy::{authorize_tool_call, validate_configured_policy};
+use cua_driver_core::policy::{authorize_tool_call, is_tool_listable, validate_configured_policy};
 use cua_driver_core::protocol::{initialize_result, Request, Response};
 use cua_driver_core::server::{
     observe_proxy_session_started, observe_proxy_tool_completed, tool_observation_timer,
@@ -35,20 +36,36 @@ use crate::serve::{
     is_daemon_listening, send_request, DaemonRequest, DaemonResponse, ToolObservationOrigin,
 };
 
+pub(crate) const DIRECT_WORKER_ENV: &str = "CUA_DRIVER_DIRECT_MCP_WORKER";
+pub(crate) const SERVICE_PROXY_WORKER_ENV: &str = "CUA_DRIVER_SERVICE_MCP_WORKER";
+const DIRECT_WORKER_INIT_ID: &str = "cua-idle-supervisor-init";
+const DIRECT_WORKER_START_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+const DIRECT_WORKER_CALL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15 * 60);
+
 /// Run stdio MCP directly over an SDK-owned runtime.
 ///
-/// Windows and Linux use this when no explicit service endpoint was selected.
-/// The runtime lives exactly as long as stdin: EOF ends every observed public
-/// session, drains admitted work through `shutdown`, and releases process
-/// ownership before returning.
-pub async fn run_direct(driver: Arc<cua_driver_sdk::CuaDriver>) -> anyhow::Result<()> {
+/// The stdio endpoint remains alive for its MCP host, but the desktop runtime
+/// is created only for actual `tools/call` requests and is released after the
+/// idle timeout. A later call rebuilds it through `driver_factory`, so an
+/// idle host connection does not pin the platform runtime or prevent wake-on-use.
+pub async fn run_direct<F>(
+    mut driver_factory: F,
+    tools_list: serde_json::Value,
+) -> anyhow::Result<()>
+where
+    F: FnMut() -> anyhow::Result<Arc<cua_driver_sdk::CuaDriver>>,
+{
     // Direct stdio is an action endpoint just like `serve`; enforce the same
     // admin lock, bounded-manifest approval/expiry, and legacy-approval
     // consistency before the first request can be read.
     cua_driver_core::authorization::validate_startup_authorization()?;
     validate_configured_policy()?;
-    let sdk = crate::sdk_adapter::SdkAdapter::load(driver.clone()).await?;
     if crate::mcp_envelope::configured()? {
+        // Typed envelopes hold a transport-owned receiver state that is not
+        // reconstructed by the legacy JSON-RPC loop below. Keep that opt-in
+        // transport on its existing explicit lifetime contract.
+        let driver = driver_factory()?;
+        let sdk = crate::sdk_adapter::SdkAdapter::load(driver).await?;
         let result = crate::mcp_envelope::run(
             sdk.clone(),
             BufReader::new(tokio::io::stdin()),
@@ -58,33 +75,72 @@ pub async fn run_direct(driver: Arc<cua_driver_sdk::CuaDriver>) -> anyhow::Resul
         sdk.shutdown().await.map_err(anyhow::Error::msg)?;
         return result;
     }
+
+    let idle_timeout = crate::serve::configured_idle_shutdown_timeout(
+        false,
+        false,
+        cfg!(target_os = "macos"),
+        std::env::var("CUA_DRIVER_IDLE_SHUTDOWN_SECONDS")
+            .ok()
+            .as_deref(),
+    );
+    if let Some(raw) = std::env::var("CUA_DRIVER_IDLE_SHUTDOWN_SECONDS").ok() {
+        if raw.parse::<u64>().is_err() {
+            eprintln!(
+                "ignoring invalid CUA_DRIVER_IDLE_SHUTDOWN_SECONDS; expected whole seconds (0 disables)"
+            );
+        }
+    }
+
+    // MCP metadata and tool inventory do not require the platform runtime.
+    // Hosts may keep this process open for a long time without using CUA.
+    let tools_list = Arc::new(tools_list);
+    let mut sdk: Option<Arc<crate::sdk_adapter::SdkAdapter>> = None;
     let stdin = tokio::io::stdin();
     let stdout = tokio::io::stdout();
-    let mut reader = BufReader::new(stdin);
+    let mut reader = BufReader::new(stdin).lines();
     let mut writer = tokio::io::BufWriter::new(stdout);
-    let mut line = String::new();
     let mut session_observed = false;
     let mut protocol_session = ProtocolSession::default();
     let transport_session = format!("mcp-{}", uuid::Uuid::new_v4());
-    struct DirectTransportCleanup {
-        sdk: Arc<crate::sdk_adapter::SdkAdapter>,
-        transport_session: String,
-    }
-    impl Drop for DirectTransportCleanup {
-        fn drop(&mut self) {
-            self.sdk.end_transport_sessions(&self.transport_session);
-        }
-    }
-    let _cleanup = DirectTransportCleanup {
-        sdk: sdk.clone(),
-        transport_session: transport_session.clone(),
-    };
+    let mut last_tool_activity = std::time::Instant::now();
+    let mut next_release_attempt = None;
 
     loop {
-        line.clear();
-        if reader.read_line(&mut line).await? == 0 {
-            break;
-        }
+        let idle_deadline = sdk.as_ref().and_then(|_| {
+            idle_timeout
+                .map(|timeout| next_release_attempt.unwrap_or_else(|| last_tool_activity + timeout))
+        });
+        let line = tokio::select! {
+            result = reader.next_line() => result?,
+            _ = async {
+                tokio::time::sleep_until(tokio::time::Instant::from_std(
+                    idle_deadline.expect("guarded idle deadline"),
+                )).await;
+            }, if idle_deadline.is_some() => {
+                if let Some(runtime) = sdk.take() {
+                    runtime.end_transport_sessions(&transport_session);
+                    match runtime.shutdown().await {
+                        Ok(()) => {
+                            next_release_attempt = None;
+                            eprintln!(
+                                "Cua Driver MCP runtime idle for {} seconds; released. The stdio endpoint remains ready to restart it on the next tool call.",
+                                idle_timeout.expect("idle deadline requires timeout").as_secs()
+                            );
+                        }
+                        Err(error) => {
+                            tracing::warn!("idle Cua Driver MCP runtime shutdown failed; retaining it for retry: {error}");
+                            sdk = Some(runtime);
+                            next_release_attempt = Some(
+                                std::time::Instant::now() + std::time::Duration::from_secs(60),
+                            );
+                        }
+                    }
+                }
+                continue;
+            }
+        };
+        let Some(line) = line else { break };
         let trimmed = line.trim();
         if trimmed.is_empty() {
             continue;
@@ -96,62 +152,90 @@ pub async fn run_direct(driver: Arc<cua_driver_sdk::CuaDriver>) -> anyhow::Resul
             }
             Ok(request) if request.is_notification() => continue,
             Ok(mut request) => {
-                let admission = protocol_session.validate(&request).and_then(|era| {
+                let era = match protocol_session.validate(&request).and_then(|era| {
                     if request.method == "tools/call" {
                         mcp_wire::validate_tool_call(
                             &request,
                             request.id.clone().unwrap_or_default(),
                             era,
-                            &sdk.tools_list(),
+                            &tools_list,
                         )?;
                     }
                     Ok(era)
-                });
-                if let Err(response) = admission {
-                    writer
-                        .write_all(serde_json::to_string(&response)?.as_bytes())
-                        .await?;
-                    writer.write_all(b"\n").await?;
-                    writer.flush().await?;
-                    continue;
-                }
+                }) {
+                    Ok(era) => era,
+                    Err(response) => {
+                        write_stdio_response(&mut writer, response).await?;
+                        continue;
+                    }
+                };
                 apply_direct_session_identity(&mut request, &transport_session);
                 let initialize_metadata = (!session_observed)
                     .then(|| request.initialize_metadata())
                     .flatten();
-                let session_context = request.tool_call().ok().and_then(|call| {
-                    sdk.begin_tool_call(
-                        &call.name,
-                        &call.args,
-                        cua_driver_core::session::SessionTransport::McpStdio,
-                        cua_driver_core::session::SessionClientKind::Mcp,
-                    )
-                });
-                let timer = tool_observation_timer(
-                    &request,
-                    |name| sdk.is_known_tool(name),
-                    StdioExecutionPath::DirectDaemon,
-                );
                 let id = request.id.clone().unwrap_or(serde_json::Value::Null);
-                let response = cua_driver_core::server::handle_request_with_transport_session(
-                    request,
-                    id,
-                    sdk.as_ref(),
-                    &transport_session,
-                )
-                .await;
+                let method = request.method.clone();
+                let response = if method == "initialize" {
+                    Response::ok(id.clone(), initialize_result())
+                } else if let Some(response) =
+                    mcp_wire::handle_metadata_request(&request, id.clone())
+                {
+                    response
+                } else if method == "tools/list" {
+                    Response::ok(id.clone(), (*tools_list).clone())
+                } else if method == "tools/call" {
+                    last_tool_activity = std::time::Instant::now();
+                    next_release_attempt = None;
+                    let runtime = match ensure_direct_sdk(&mut sdk, &mut driver_factory).await {
+                        Ok(runtime) => runtime,
+                        Err(error) => {
+                            let response = Response::error(id.clone(), -32603, error.to_string());
+                            writer
+                                .write_all(serde_json::to_string(&response)?.as_bytes())
+                                .await?;
+                            writer.write_all(b"\n").await?;
+                            writer.flush().await?;
+                            continue;
+                        }
+                    };
+                    apply_direct_session_identity(&mut request, &transport_session);
+                    let session_context = request.tool_call().ok().and_then(|call| {
+                        runtime.begin_tool_call(
+                            &call.name,
+                            &call.args,
+                            cua_driver_core::session::SessionTransport::McpStdio,
+                            cua_driver_core::session::SessionClientKind::Mcp,
+                        )
+                    });
+                    let timer = tool_observation_timer(
+                        &request,
+                        |name| runtime.is_known_tool(name),
+                        StdioExecutionPath::DirectDaemon,
+                    );
+                    let response = cua_driver_core::server::handle_request_with_transport_session(
+                        request,
+                        id.clone(),
+                        runtime.as_ref(),
+                        &transport_session,
+                    )
+                    .await;
+                    if let Some(timer) = timer {
+                        let outcome = timer.finish(&response);
+                        if let Some(context) = session_context {
+                            context.complete(&outcome);
+                        }
+                        observe_proxy_tool_completed(outcome);
+                    }
+                    last_tool_activity = std::time::Instant::now();
+                    response
+                } else {
+                    Response::method_not_found(id.clone(), &method)
+                };
                 if let Some(metadata) = initialize_metadata {
                     observe_proxy_session_started(metadata);
                     session_observed = true;
                 }
-                if let Some(timer) = timer {
-                    let outcome = timer.finish(&response);
-                    if let Some(context) = session_context {
-                        context.complete(&outcome);
-                    }
-                    observe_proxy_tool_completed(outcome);
-                }
-                response
+                mcp_wire::finish_response(era, &method, response)
             }
         };
         let serialized = serde_json::to_string(&response).unwrap_or_else(|error| {
@@ -164,7 +248,554 @@ pub async fn run_direct(driver: Arc<cua_driver_sdk::CuaDriver>) -> anyhow::Resul
         writer.flush().await?;
     }
 
-    sdk.shutdown().await.map_err(anyhow::Error::msg)
+    if let Some(runtime) = sdk {
+        runtime.end_transport_sessions(&transport_session);
+        runtime.shutdown().await.map_err(anyhow::Error::msg)?;
+    }
+    Ok(())
+}
+
+async fn ensure_direct_sdk<F>(
+    sdk: &mut Option<Arc<crate::sdk_adapter::SdkAdapter>>,
+    driver_factory: &mut F,
+) -> anyhow::Result<Arc<crate::sdk_adapter::SdkAdapter>>
+where
+    F: FnMut() -> anyhow::Result<Arc<cua_driver_sdk::CuaDriver>>,
+{
+    if sdk.is_none() {
+        let driver = driver_factory()?;
+        *sdk = Some(crate::sdk_adapter::SdkAdapter::load(driver).await?);
+    }
+    Ok(sdk.as_ref().expect("runtime was loaded").clone())
+}
+
+/// Keep the host-owned MCP stdio endpoint lightweight while supervising the
+/// native process that owns Cua Driver's desktop runtime. OpenCode does not
+/// reliably reconnect after an MCP child exits, so the endpoint must stay
+/// available to launch a fresh worker when the next `tools/call` arrives.
+pub async fn run_mcp_idle_supervisor(
+    executable: std::path::PathBuf,
+    arguments: Vec<std::ffi::OsString>,
+    tools_list: serde_json::Value,
+    worker_env: &'static str,
+    disable_worker_idle_timeout: bool,
+    envelopes: bool,
+) -> anyhow::Result<()> {
+    cua_driver_core::authorization::validate_startup_authorization()?;
+    validate_configured_policy()?;
+
+    let idle_timeout = crate::serve::configured_idle_shutdown_timeout(
+        false,
+        false,
+        cfg!(target_os = "macos"),
+        std::env::var("CUA_DRIVER_IDLE_SHUTDOWN_SECONDS")
+            .ok()
+            .as_deref(),
+    );
+    if let Some(raw) = std::env::var("CUA_DRIVER_IDLE_SHUTDOWN_SECONDS").ok() {
+        if raw.parse::<u64>().is_err() {
+            eprintln!(
+                "ignoring invalid CUA_DRIVER_IDLE_SHUTDOWN_SECONDS; expected whole seconds (0 disables)"
+            );
+        }
+    }
+
+    let tools_list = Arc::new(tools_list);
+    let mut worker: Option<DirectWorker> = None;
+    let mut last_tool_activity = std::time::Instant::now();
+    let stdin = tokio::io::stdin();
+    let stdout = tokio::io::stdout();
+    let mut reader = BufReader::new(stdin).lines();
+    let mut writer = tokio::io::BufWriter::new(stdout);
+    let mut deferred_lines = VecDeque::new();
+    let mut protocol_session = ProtocolSession::default();
+    let mut session_observed = false;
+    let mut worker_reaper = tokio::time::interval_at(
+        tokio::time::Instant::now() + std::time::Duration::from_millis(100),
+        std::time::Duration::from_millis(100),
+    );
+    worker_reaper.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+
+    loop {
+        let idle_deadline = worker
+            .as_ref()
+            .and_then(|_| idle_timeout.map(|timeout| last_tool_activity + timeout));
+        let line = if let Some(line) = deferred_lines.pop_front() {
+            Some(line)
+        } else {
+            tokio::select! {
+                result = reader.next_line() => result?,
+                _ = async {
+                    tokio::time::sleep_until(tokio::time::Instant::from_std(
+                        idle_deadline.expect("guarded idle deadline"),
+                    )).await;
+                }, if idle_deadline.is_some() => {
+                    if let Some(worker) = worker.take() {
+                        worker.shutdown().await;
+                        eprintln!(
+                            "Cua Driver runtime process idle for {} seconds since the last real use; stopped. The MCP endpoint will start a new process when the runtime is next needed.",
+                            idle_timeout.expect("idle deadline requires timeout").as_secs()
+                        );
+                    }
+                    continue;
+                },
+                _ = worker_reaper.tick(), if worker.is_some() => {
+                    if let Some(current) = worker.as_mut() {
+                        if let Some(status) = current.child.try_wait()? {
+                            eprintln!(
+                                "Cua Driver runtime worker exited ({status}); the MCP endpoint will start a replacement when the runtime is next needed."
+                            );
+                            worker.take();
+                        }
+                    }
+                    continue;
+                }
+            }
+        };
+        let Some(line) = line else { break };
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        let request = match serde_json::from_str::<Request>(trimmed) {
+            Ok(request) if request.is_notification() => continue,
+            Ok(request) => request,
+            Err(error) => {
+                let response = Response::parse_error();
+                tracing::warn!("invalid MCP request at idle supervisor: {error}");
+                write_stdio_response(&mut writer, response).await?;
+                continue;
+            }
+        };
+        let era = match protocol_session.validate(&request) {
+            Ok(era) => era,
+            Err(response) => {
+                write_stdio_response(&mut writer, response).await?;
+                continue;
+            }
+        };
+        if let Err(response) = mcp_wire::validate_tool_call(
+            &request,
+            request.id.clone().unwrap_or_default(),
+            era,
+            &tools_list,
+        ) {
+            write_stdio_response(&mut writer, response).await?;
+            continue;
+        }
+
+        let id = request.id.clone().unwrap_or(serde_json::Value::Null);
+        let method = request.method.clone();
+        let initialize_metadata = (!session_observed)
+            .then(|| request.initialize_metadata())
+            .flatten();
+
+        let starts_worker =
+            method == "tools/call" || (envelopes && method.starts_with("cua/driver/v1/"));
+        let worker_exited = match worker.as_mut() {
+            Some(current) => current.child.try_wait()?.is_some(),
+            None => false,
+        };
+        if worker_exited {
+            worker.take();
+        }
+        if starts_worker {
+            let request_line = trimmed.to_owned();
+            let call_result: anyhow::Result<String> = async {
+                if worker.is_none() {
+                    let mut command = tokio::process::Command::new(&executable);
+                    command.args(&arguments).env(worker_env, "1");
+                    if disable_worker_idle_timeout {
+                        // This mode's parent owns the process timeout. The
+                        // child stays until the parent closes stdin.
+                        command.env("CUA_DRIVER_IDLE_SHUTDOWN_SECONDS", "0");
+                    }
+                    worker = Some(
+                        tokio::time::timeout(
+                            DIRECT_WORKER_START_TIMEOUT,
+                            DirectWorker::spawn(command),
+                        )
+                        .await
+                        .map_err(|_| anyhow::anyhow!("Cua Driver worker startup timed out"))??,
+                    );
+                    eprintln!("Cua Driver runtime process started for MCP tools/call.");
+                }
+                let response = tokio::time::timeout(DIRECT_WORKER_CALL_TIMEOUT, async {
+                    let direct_worker = worker.as_mut().expect("worker was started");
+                    exchange_worker_request_with_controls(
+                        direct_worker.stdin.as_mut().expect("worker stdin is open"),
+                        &mut direct_worker.stdout,
+                        &mut direct_worker.output_buffer,
+                        &request_line,
+                        &mut reader,
+                        &mut writer,
+                        &mut deferred_lines,
+                        envelopes,
+                    )
+                    .await
+                })
+                .await
+                .map_err(|_| {
+                    anyhow::anyhow!(
+                        "Cua Driver tool call timed out after {} seconds; outcome may be unknown",
+                        DIRECT_WORKER_CALL_TIMEOUT.as_secs()
+                    )
+                })??;
+                Ok(response)
+            }
+            .await;
+            if worker_method_counts_as_use(&method) {
+                last_tool_activity = std::time::Instant::now();
+            }
+
+            let response_line = match call_result {
+                Ok(response_line) => response_line,
+                Err(error) => {
+                    if let Some(worker) = worker.take() {
+                        worker.shutdown().await;
+                    }
+                    let response = Response::error(
+                        id,
+                        -32603,
+                        format!(
+                            "Cua Driver worker disconnected during this call; outcome may be unknown. Observe the target state before retrying. {error}"
+                        ),
+                    );
+                    write_stdio_response(
+                        &mut writer,
+                        mcp_wire::finish_response(era, &method, response),
+                    )
+                    .await?;
+                    if let Some(metadata) = initialize_metadata {
+                        observe_proxy_session_started(metadata);
+                        session_observed = true;
+                    }
+                    continue;
+                }
+            };
+            if let Some(metadata) = initialize_metadata {
+                observe_proxy_session_started(metadata);
+                session_observed = true;
+            }
+            writer.write_all(response_line.as_bytes()).await?;
+            writer.write_all(b"\n").await?;
+            writer.flush().await?;
+            continue;
+        }
+
+        let response = if method == "initialize" {
+            let mut result = initialize_result();
+            if envelopes {
+                result["capabilities"]["experimental"][crate::mcp_envelope::CAPABILITY] =
+                    serde_json::json!({"version": 1});
+            }
+            Response::ok(id, result)
+        } else if method == "tools/list" {
+            Response::ok(id, (*tools_list).clone())
+        } else if let Some(response) = mcp_wire::handle_metadata_request(&request, id.clone()) {
+            response
+        } else {
+            Response::method_not_found(id, &method)
+        };
+        if let Some(metadata) = initialize_metadata {
+            observe_proxy_session_started(metadata);
+            session_observed = true;
+        }
+        write_stdio_response(
+            &mut writer,
+            mcp_wire::finish_response(era, &method, response),
+        )
+        .await?;
+    }
+
+    if let Some(worker) = worker.take() {
+        worker.shutdown().await;
+    }
+    Ok(())
+}
+
+fn worker_method_counts_as_use(method: &str) -> bool {
+    matches!(
+        method,
+        "tools/call" | "cua/driver/v1/open" | "cua/driver/v1/exchange"
+    )
+}
+
+async fn write_stdio_response<W: AsyncWrite + Unpin>(
+    writer: &mut W,
+    response: Response,
+) -> anyhow::Result<()> {
+    writer
+        .write_all(serde_json::to_string(&response)?.as_bytes())
+        .await?;
+    writer.write_all(b"\n").await?;
+    writer.flush().await?;
+    Ok(())
+}
+
+struct DirectWorker {
+    child: tokio::process::Child,
+    stdin: Option<tokio::process::ChildStdin>,
+    stdout: BufReader<tokio::process::ChildStdout>,
+    output_buffer: Vec<u8>,
+}
+
+impl DirectWorker {
+    async fn spawn(mut command: tokio::process::Command) -> anyhow::Result<Self> {
+        command
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::inherit())
+            .kill_on_drop(true);
+        let mut child = command.spawn()?;
+        let stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| anyhow::anyhow!("Cua Driver worker stdin was not piped"))?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| anyhow::anyhow!("Cua Driver worker stdout was not piped"))?;
+        let mut worker = Self {
+            child,
+            stdin: Some(stdin),
+            stdout: BufReader::new(stdout),
+            output_buffer: Vec::new(),
+        };
+
+        let initialize = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": DIRECT_WORKER_INIT_ID,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-06-18",
+                "capabilities": {},
+                "clientInfo": {"name": "cua-idle-supervisor", "version": "1"}
+            }
+        })
+        .to_string();
+        let response =
+            tokio::time::timeout(DIRECT_WORKER_START_TIMEOUT, worker.exchange(&initialize))
+                .await
+                .map_err(|_| anyhow::anyhow!("Cua Driver worker initialize timed out"))??;
+        let response: serde_json::Value = serde_json::from_str(&response)?;
+        anyhow::ensure!(
+            response.get("id").and_then(serde_json::Value::as_str) == Some(DIRECT_WORKER_INIT_ID)
+                && response.get("result").is_some(),
+            "Cua Driver worker did not initialize: {response}"
+        );
+        worker
+            .write_notification("notifications/initialized")
+            .await?;
+        Ok(worker)
+    }
+
+    async fn exchange(&mut self, request: &str) -> anyhow::Result<String> {
+        let request_value: serde_json::Value = serde_json::from_str(request)?;
+        let expected_id = request_value
+            .get("id")
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("MCP request has no id"))?;
+        let stdin = self
+            .stdin
+            .as_mut()
+            .ok_or_else(|| anyhow::anyhow!("Cua Driver worker stdin is closed"))?;
+        stdin.write_all(request.as_bytes()).await?;
+        stdin.write_all(b"\n").await?;
+        stdin.flush().await?;
+
+        loop {
+            let Some(response_line) =
+                read_worker_line(&mut self.stdout, &mut self.output_buffer).await?
+            else {
+                anyhow::bail!("Cua Driver worker closed stdout before replying");
+            };
+            let response: serde_json::Value = serde_json::from_str(response_line.trim())?;
+            if response.get("id") == Some(&expected_id) {
+                return Ok(response_line.trim_end().to_owned());
+            }
+        }
+    }
+
+    async fn write_notification(&mut self, method: &str) -> anyhow::Result<()> {
+        let stdin = self
+            .stdin
+            .as_mut()
+            .ok_or_else(|| anyhow::anyhow!("Cua Driver worker stdin is closed"))?;
+        stdin
+            .write_all(
+                serde_json::json!({"jsonrpc":"2.0","method":method})
+                    .to_string()
+                    .as_bytes(),
+            )
+            .await?;
+        stdin.write_all(b"\n").await?;
+        stdin.flush().await?;
+        Ok(())
+    }
+
+    async fn shutdown(mut self) {
+        // Closing stdin gives the worker a normal MCP EOF so it can end its
+        // sessions and shut down the SDK before the process is force-killed.
+        drop(self.stdin.take());
+        if tokio::time::timeout(std::time::Duration::from_secs(5), self.child.wait())
+            .await
+            .is_err()
+        {
+            tracing::warn!("Cua Driver worker did not exit after stdin EOF; terminating it");
+            let _ = self.child.kill().await;
+            let _ = self.child.wait().await;
+        }
+    }
+}
+
+async fn read_worker_line<R>(
+    stdout: &mut R,
+    output_buffer: &mut Vec<u8>,
+) -> anyhow::Result<Option<String>>
+where
+    R: AsyncBufRead + Unpin,
+{
+    let read = stdout.read_until(b'\n', output_buffer).await?;
+    if read == 0 {
+        return Ok(None);
+    }
+    let bytes = std::mem::take(output_buffer);
+    Ok(Some(String::from_utf8(bytes)?))
+}
+
+async fn write_worker_line<W>(stdin: &mut W, line: &str) -> anyhow::Result<()>
+where
+    W: AsyncWrite + Unpin,
+{
+    stdin.write_all(line.trim_end().as_bytes()).await?;
+    stdin.write_all(b"\n").await?;
+    stdin.flush().await?;
+    Ok(())
+}
+
+async fn write_stdio_line<W>(writer: &mut W, line: &str) -> anyhow::Result<()>
+where
+    W: AsyncWrite + Unpin,
+{
+    writer.write_all(line.trim_end().as_bytes()).await?;
+    writer.write_all(b"\n").await?;
+    writer.flush().await?;
+    Ok(())
+}
+
+fn valid_worker_request_id(id: &serde_json::Value) -> bool {
+    id.is_string() || id.as_i64().is_some() || id.as_u64().is_some()
+}
+
+/// Keep typed envelope cancellation and close requests responsive while the
+/// worker is waiting for a native action. Other client requests stay queued
+/// until that action completes; worker responses are correlated by JSON-RPC id.
+async fn exchange_worker_request_with_controls<R, W, S, O>(
+    stdin: &mut S,
+    stdout: &mut O,
+    output_buffer: &mut Vec<u8>,
+    request_line: &str,
+    reader: &mut tokio::io::Lines<R>,
+    writer: &mut W,
+    deferred_lines: &mut VecDeque<String>,
+    envelopes: bool,
+) -> anyhow::Result<String>
+where
+    R: AsyncBufRead + Unpin,
+    W: AsyncWrite + Unpin,
+    S: AsyncWrite + Unpin,
+    O: AsyncBufRead + Unpin,
+{
+    let request: serde_json::Value = serde_json::from_str(request_line)?;
+    let expected_id = request
+        .get("id")
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("MCP request has no id"))?;
+    let expected_key = expected_id.to_string();
+    write_worker_line(stdin, request_line).await?;
+
+    let mut control_ids = HashMap::<String, serde_json::Value>::new();
+    let mut request_response = None;
+    loop {
+        if control_ids.is_empty() {
+            if let Some(response) = request_response.take() {
+                return Ok(response);
+            }
+        }
+
+        tokio::select! {
+            worker_line = read_worker_line(stdout, output_buffer) => {
+                let Some(worker_line) = worker_line? else {
+                    for (_, id) in control_ids.drain() {
+                        let error = serde_json::json!({
+                            "jsonrpc": "2.0",
+                            "id": id,
+                            "error": {"code": -32603, "message": "worker cerró antes de responder al control"}
+                        });
+                        write_stdio_line(writer, &error.to_string()).await?;
+                    }
+                    anyhow::bail!("Cua Driver worker closed stdout before replying");
+                };
+                let message: serde_json::Value = match serde_json::from_str(worker_line.trim()) {
+                    Ok(message) => message,
+                    Err(_) => continue,
+                };
+                if message.get("method").and_then(serde_json::Value::as_str).is_some() {
+                    write_stdio_line(writer, &worker_line).await?;
+                    continue;
+                }
+                let Some(id) = message.get("id") else { continue };
+                let key = id.to_string();
+                if control_ids.remove(&key).is_some() {
+                    write_stdio_line(writer, &worker_line).await?;
+                } else if key == expected_key && request_response.is_none() {
+                    request_response = Some(worker_line.trim_end().to_owned());
+                }
+            }
+            client_line_result = reader.next_line() => {
+                let Some(client_line) = client_line_result? else {
+                    anyhow::bail!("MCP client closed stdin while a worker request was active");
+                };
+                let message: serde_json::Value = match serde_json::from_str(&client_line) {
+                    Ok(message) => message,
+                    Err(_) => {
+                        deferred_lines.push_back(client_line);
+                        continue;
+                    }
+                };
+                let id = message.get("id").filter(|id| valid_worker_request_id(id));
+                let key = id.map(serde_json::Value::to_string);
+                let method = message.get("method").and_then(serde_json::Value::as_str);
+                let valid_jsonrpc = message.get("jsonrpc").and_then(serde_json::Value::as_str) == Some("2.0");
+                let has_result = message.as_object().is_some_and(|object| object.contains_key("result"));
+                let has_error = message.as_object().is_some_and(|object| object.contains_key("error"));
+                let is_response = valid_jsonrpc && method.is_none() && key.is_some() && (has_result ^ has_error);
+                let is_cancellation = valid_jsonrpc
+                    && message.get("method").and_then(serde_json::Value::as_str) == Some("notifications/cancelled")
+                    && message.get("id").is_none();
+                let is_envelope_control = envelopes
+                    && valid_jsonrpc
+                    && matches!(method, Some("cua/driver/v1/cancel" | "cua/driver/v1/close"))
+                    && key.is_some();
+
+                if is_envelope_control {
+                    let control_key = key.expect("control requires id");
+                    if control_key == expected_key || control_ids.contains_key(&control_key) {
+                        deferred_lines.push_back(client_line);
+                        continue;
+                    }
+                    control_ids.insert(control_key, id.expect("control requires id").clone());
+                    write_worker_line(stdin, &client_line).await?;
+                } else if is_cancellation || is_response {
+                    write_worker_line(stdin, &client_line).await?;
+                } else {
+                    deferred_lines.push_back(client_line);
+                }
+            }
+        }
+    }
 }
 
 pub(crate) fn apply_direct_session_identity(request: &mut Request, transport_session: &str) {
@@ -805,6 +1436,23 @@ fn proxy_tool_result_response(
     }
 }
 
+/// With `CUA_DRIVER_AX_ONLY=1`, hide tools that the configured policy can
+/// never allow (e.g. physical mouse/keyboard tools) from `tools/list`.
+pub(crate) fn filtered_tools_list(cached: &serde_json::Value) -> serde_json::Value {
+    if std::env::var_os("CUA_DRIVER_AX_ONLY").is_none() {
+        return cached.clone();
+    }
+    let mut out = cached.clone();
+    if let Some(tools) = out.get_mut("tools").and_then(|t| t.as_array_mut()) {
+        tools.retain(|tool| {
+            tool.get("name")
+                .and_then(|n| n.as_str())
+                .is_some_and(is_tool_listable)
+        });
+    }
+    out
+}
+
 fn daemon_owns_tool_observation(result: &serde_json::Value) -> bool {
     result
         .get("tool_observation_owner")
@@ -867,7 +1515,7 @@ async fn handle_proxy_tool_request(
             Response::ok(id, initialize_result())
         }
 
-        "tools/list" => Response::ok(id, (**cached_tools_list).clone()),
+        "tools/list" => Response::ok(id, filtered_tools_list(cached_tools_list)),
 
         "tools/call" => match req.tool_call() {
             Err(e) => Response::error(id, -32602, format!("Invalid params: {e}")),
@@ -1021,6 +1669,193 @@ fn daemon_response_to_tool_result(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn envelope_lifecycle_controls_do_not_refresh_real_use_timeout() {
+        assert!(worker_method_counts_as_use("tools/call"));
+        assert!(worker_method_counts_as_use("cua/driver/v1/open"));
+        assert!(worker_method_counts_as_use("cua/driver/v1/exchange"));
+        assert!(!worker_method_counts_as_use("cua/driver/v1/cancel"));
+        assert!(!worker_method_counts_as_use("cua/driver/v1/close"));
+        assert!(!worker_method_counts_as_use("ping"));
+        assert!(!worker_method_counts_as_use("tools/list"));
+    }
+
+    #[test]
+    fn envelope_multiplexer_rejects_ids_the_worker_rejects() {
+        for id in [
+            serde_json::json!("request"),
+            serde_json::json!(0),
+            serde_json::json!(-1),
+            serde_json::json!(u64::MAX),
+        ] {
+            assert!(valid_worker_request_id(&id), "id={id}");
+        }
+        for id in [
+            serde_json::json!(null),
+            serde_json::json!(false),
+            serde_json::json!(1.5),
+            serde_json::json!({}),
+            serde_json::json!([]),
+        ] {
+            assert!(!valid_worker_request_id(&id), "id={id}");
+        }
+    }
+
+    #[tokio::test]
+    async fn supervisor_forwards_envelope_cancel_and_close_during_exchange() {
+        let (mut proxy_stdin, worker_stdin) = tokio::io::duplex(4096);
+        let (mut worker_stdout, proxy_stdout) = tokio::io::duplex(4096);
+        let (mut client_stdin, client_reader) = tokio::io::duplex(4096);
+        let (client_writer, client_stdout) = tokio::io::duplex(4096);
+
+        let worker = tokio::spawn(async move {
+            let mut reader = BufReader::new(worker_stdin);
+            let mut line = String::new();
+            reader.read_line(&mut line).await.unwrap();
+            assert_eq!(
+                serde_json::from_str::<serde_json::Value>(&line).unwrap()["id"],
+                "action"
+            );
+            line.clear();
+            reader.read_line(&mut line).await.unwrap();
+            assert_eq!(
+                serde_json::from_str::<serde_json::Value>(&line).unwrap()["id"],
+                2
+            );
+            line.clear();
+            reader.read_line(&mut line).await.unwrap();
+            assert_eq!(
+                serde_json::from_str::<serde_json::Value>(&line).unwrap()["id"],
+                3
+            );
+            worker_stdout
+                .write_all(
+                    b"{\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{\"ok\":true}}\n{\"jsonrpc\":\"2.0\",\"id\":3,\"result\":{\"ok\":true}}\n{\"jsonrpc\":\"2.0\",\"id\":\"action\",\"result\":{\"ok\":false}}\n",
+                )
+                .await
+                .unwrap();
+        });
+
+        let exchange = tokio::spawn(async move {
+            let mut reader = BufReader::new(client_reader).lines();
+            let mut writer = tokio::io::BufWriter::new(client_writer);
+            let mut worker_reader = BufReader::new(proxy_stdout);
+            let mut output_buffer = Vec::new();
+            let mut deferred = VecDeque::new();
+            exchange_worker_request_with_controls(
+                &mut proxy_stdin,
+                &mut worker_reader,
+                &mut output_buffer,
+                r#"{"jsonrpc":"2.0","id":"action","method":"cua/driver/v1/exchange","params":{}}"#,
+                &mut reader,
+                &mut writer,
+                &mut deferred,
+                true,
+            )
+            .await
+        });
+
+        client_stdin
+            .write_all(
+                b"{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"cua/driver/v1/cancel\",\"params\":{}}\n{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"cua/driver/v1/close\",\"params\":{}}\n",
+            )
+            .await
+            .unwrap();
+
+        let mut replies = BufReader::new(client_stdout);
+        let mut line = String::new();
+        replies.read_line(&mut line).await.unwrap();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&line).unwrap()["id"],
+            2
+        );
+        line.clear();
+        replies.read_line(&mut line).await.unwrap();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&line).unwrap()["id"],
+            3
+        );
+        let action = exchange.await.unwrap().unwrap();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&action).unwrap()["id"],
+            "action"
+        );
+        worker.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn fractional_control_id_does_not_block_exchange_response() {
+        let (mut proxy_stdin, worker_stdin) = tokio::io::duplex(4096);
+        let (mut worker_stdout, proxy_stdout) = tokio::io::duplex(4096);
+        let (mut client_stdin, client_reader) = tokio::io::duplex(4096);
+        client_stdin
+            .write_all(
+                b"{\"jsonrpc\":\"2.0\",\"id\":1.5,\"method\":\"cua/driver/v1/cancel\",\"params\":{}}\n",
+            )
+            .await
+            .unwrap();
+
+        let worker = tokio::spawn(async move {
+            let mut reader = BufReader::new(worker_stdin);
+            let mut line = String::new();
+            reader.read_line(&mut line).await.unwrap();
+            assert_eq!(
+                serde_json::from_str::<serde_json::Value>(&line).unwrap()["id"],
+                "action"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            worker_stdout
+                .write_all(b"{\"jsonrpc\":\"2.0\",\"id\":\"action\",\"result\":{\"ok\":true}}\n")
+                .await
+                .unwrap();
+            line.clear();
+            tokio::time::timeout(
+                std::time::Duration::from_secs(1),
+                reader.read_line(&mut line),
+            )
+            .await
+            .expect("worker stdin should close after the action response")
+            .unwrap()
+        });
+
+        let mut reader = BufReader::new(client_reader).lines();
+        let mut writer = Vec::new();
+        let mut worker_reader = BufReader::new(proxy_stdout);
+        let mut output_buffer = Vec::new();
+        let mut deferred = VecDeque::new();
+        let action = exchange_worker_request_with_controls(
+            &mut proxy_stdin,
+            &mut worker_reader,
+            &mut output_buffer,
+            r#"{"jsonrpc":"2.0","id":"action","method":"cua/driver/v1/exchange","params":{}}"#,
+            &mut reader,
+            &mut writer,
+            &mut deferred,
+            true,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&action).unwrap()["id"],
+            "action"
+        );
+        assert!(
+            writer.is_empty(),
+            "a rejected ID must not produce a control response"
+        );
+        assert_eq!(deferred.len(), 1);
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(deferred.front().unwrap()).unwrap()["id"],
+            1.5
+        );
+        drop(proxy_stdin);
+        assert_eq!(
+            worker.await.unwrap(),
+            0,
+            "fractional control was not sent to the worker"
+        );
+    }
 
     #[tokio::test]
     async fn modern_proxy_metadata_and_rejections_need_no_daemon_call() {

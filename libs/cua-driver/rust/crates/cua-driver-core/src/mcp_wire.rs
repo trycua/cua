@@ -55,6 +55,13 @@ fn valid_request_id(req: &Request) -> bool {
 /// Classify an individual request, retaining legacy compatibility for embedders.
 /// Stdio adapters additionally use `ProtocolSession` to reject absent metadata.
 pub fn classify_request(req: &Request) -> Result<ProtocolEra, Response> {
+    if req.jsonrpc != "2.0" || !valid_request_id(req) {
+        return Err(Response::error(
+            Value::Null,
+            -32600,
+            "Invalid JSON-RPC request",
+        ));
+    }
     let meta = req.params.as_ref().and_then(|params| params.get("_meta"));
     let modern_keys_present = meta.is_some_and(|meta| {
         meta.get(PROTOCOL_VERSION_KEY).is_some() || meta.get(CLIENT_CAPABILITIES_KEY).is_some()
@@ -64,13 +71,6 @@ pub fn classify_request(req: &Request) -> Result<ProtocolEra, Response> {
             return Err(invalid_params(req, "MCP _meta must be an object"));
         }
         return Ok(ProtocolEra::Legacy);
-    }
-    if req.jsonrpc != "2.0" || !valid_request_id(req) {
-        return Err(Response::error(
-            Value::Null,
-            -32600,
-            "Invalid JSON-RPC request",
-        ));
     }
     if !req.params.as_ref().is_some_and(Value::is_object) {
         return Err(invalid_params(req, "MCP params must be an object"));
@@ -338,5 +338,29 @@ mod tests {
         .unwrap();
         let response = serde_json::to_value(classify_request(&req).unwrap_err()).unwrap();
         assert_eq!(response["error"]["code"], -32602);
+    }
+
+    #[test]
+    fn legacy_requests_validate_jsonrpc_version_and_id_before_classification() {
+        for id in [json!(null), json!(false), json!({}), json!([]), json!(1.5)] {
+            let req = serde_json::from_value(json!({
+                "jsonrpc": "2.0", "id": id, "method": "tools/call",
+                "params": {"name": "list_apps", "arguments": {}}
+            }))
+            .unwrap();
+            let response =
+                serde_json::to_value(ProtocolSession::default().validate(&req).unwrap_err())
+                    .unwrap();
+            assert_eq!(response["error"]["code"], -32600, "id={id}");
+            assert!(response["id"].is_null());
+        }
+
+        let req = serde_json::from_value(json!({
+            "jsonrpc": "1.0", "id": 1, "method": "ping", "params": {}
+        }))
+        .unwrap();
+        let response =
+            serde_json::to_value(ProtocolSession::default().validate(&req).unwrap_err()).unwrap();
+        assert_eq!(response["error"]["code"], -32600);
     }
 }

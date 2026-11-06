@@ -216,6 +216,7 @@ fn with_existing_profile_next_call(
                 "window_id": window_id,
                 "session": session,
                 "strategy": { "kind": "existing_profile" },
+                "delivery_mode": "background",
             },
         }),
     );

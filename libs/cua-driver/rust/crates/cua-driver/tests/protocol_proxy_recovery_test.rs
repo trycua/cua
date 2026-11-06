@@ -382,17 +382,31 @@ async fn real_proxies_recover_from_control_loss_without_waiting_for_stdin() {
     let (control_tx, mut controls) = async_mpsc::unbounded_channel();
     let relay_task = relay(&proxy_endpoint, daemon_endpoint.clone(), control_tx).await;
     let mut idle = Client::spawn(&proxy_endpoint);
+    idle.request("tools/list", json!({}));
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), controls.recv())
+            .await
+            .is_err(),
+        "metadata-only MCP startup must not connect to the runtime daemon"
+    );
+    idle.call("start_session", json!({"session":"idle-client"}));
     let idle_control = tokio::time::timeout(BOUND, controls.recv())
         .await
         .unwrap()
         .unwrap();
-    idle.call("start_session", json!({"session":"idle-client"}));
     let mut peer = Client::spawn(&proxy_endpoint);
+    peer.request("tools/list", json!({}));
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), controls.recv())
+            .await
+            .is_err(),
+        "metadata-only MCP startup must not connect to the runtime daemon"
+    );
+    peer.call("start_session", json!({"session":"peer-client"}));
     let _peer_control = tokio::time::timeout(BOUND, controls.recv())
         .await
         .unwrap()
         .unwrap();
-    peer.call("start_session", json!({"session":"peer-client"}));
     session_active(&daemon_endpoint, "peer-client").await;
     session_active(&daemon_endpoint, "idle-client").await;
 
@@ -410,22 +424,42 @@ async fn real_proxies_recover_from_control_loss_without_waiting_for_stdin() {
     idle.call("get_session_state", json!({"session":"idle-client"}));
 
     let mut survivor = Client::spawn(&proxy_endpoint);
+    survivor.request("tools/list", json!({}));
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), controls.recv())
+            .await
+            .is_err(),
+        "metadata-only MCP startup must not connect to the runtime daemon"
+    );
+    survivor.call("start_session", json!({"session":"survivor"}));
     let _survivor_control = tokio::time::timeout(BOUND, controls.recv())
         .await
         .unwrap()
         .unwrap();
-    survivor.call("start_session", json!({"session":"survivor"}));
     idle_control
         .send(())
         .expect("idle control must still be connected");
     assert!(idle.stdin.is_some(), "retain stdin during control loss");
     assert!(
-        !idle.process.exit().success(),
-        "lost control must fail the proxy"
+        idle.process.0.try_wait().unwrap().is_none(),
+        "the lightweight MCP endpoint must survive worker control loss"
     );
-    idle.eof();
     session_absent(&daemon_endpoint, "idle-client").await;
     session_active(&daemon_endpoint, "survivor").await;
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    idle.call("start_session", json!({"session":"idle-recovered"}));
+    let _recovered_control = tokio::time::timeout(BOUND, controls.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    session_active(&daemon_endpoint, "idle-recovered").await;
+    drop(idle.stdin.take());
+    assert!(
+        idle.process.exit().success(),
+        "the MCP endpoint should exit cleanly when its host closes stdin"
+    );
+    idle.eof();
+    session_absent(&daemon_endpoint, "idle-recovered").await;
     survivor.call("get_config", json!({"session":"survivor"}));
     assert!(
         daemon.0.try_wait().unwrap().is_none(),
@@ -433,11 +467,18 @@ async fn real_proxies_recover_from_control_loss_without_waiting_for_stdin() {
     );
 
     let mut fresh = Client::spawn(&proxy_endpoint);
+    fresh.request("tools/list", json!({}));
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), controls.recv())
+            .await
+            .is_err(),
+        "metadata-only MCP startup must not connect to the runtime daemon"
+    );
+    fresh.call("get_config", json!({}));
     let _fresh_control = tokio::time::timeout(BOUND, controls.recv())
         .await
         .unwrap()
         .unwrap();
-    fresh.call("get_config", json!({}));
     fresh.call("start_session", json!({"session":"fresh-client"}));
     fresh.call("get_session_state", json!({"session":"fresh-client"}));
     survivor.call("get_config", json!({"session":"survivor"}));

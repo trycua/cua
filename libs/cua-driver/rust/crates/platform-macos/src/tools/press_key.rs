@@ -289,6 +289,11 @@ impl Tool for PressKeyTool {
             Ok(v) => v,
             Err(e) => return e,
         };
+        if std::env::var_os("CUA_DRIVER_AX_ONLY").is_some() && apps::frontmost_pid() == Some(pid) {
+            return ToolResult::error(
+                "CUA_DRIVER_AX_ONLY: the target pid is frontmost; refusing to send keys that compete with the user.",
+            );
+        }
         let key_raw = match args.require_str("key") {
             Ok(v) => v,
             Err(e) => return e,

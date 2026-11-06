@@ -474,7 +474,11 @@ impl Tool for PressKeyTool {
                                                 pid, target,
                                             )
                                         },
-                                        || crate::input::keyboard::press_key_bare_global(&key, &m),
+                                        || {
+                                            crate::input::keyboard::press_key_bare_global(
+                                                pid, &key, &m,
+                                            )
+                                        },
                                     )
                                 },
                             )

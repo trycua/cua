@@ -1934,12 +1934,39 @@ fn harness_appkit_disabled_control_is_published_and_its_press_refused() {
                     "{}",
                     refused.raw
                 );
+                assert_eq!(
+                    refused.structured()["code"],
+                    "element_disabled",
+                    "{}",
+                    refused.raw
+                );
+
+                // Every other token writer refuses the same control the same way.
+                let token = &element["element_token"];
+                let writers = [
+                    ("set_value", serde_json::json!({ "value": "1" })),
+                    ("right_click", serde_json::json!({})),
+                    ("double_click", serde_json::json!({})),
+                    ("click", serde_json::json!({ "button": "middle" })),
+                    ("type_text", serde_json::json!({ "text": "x" })),
+                ];
+                for (tool, mut args) in writers {
+                    args["pid"] = serde_json::json!(pid as i64);
+                    args["window_id"] = serde_json::json!(wid);
+                    args["element_token"] = token.clone();
+                    let refused = driver.call(tool, args);
+                    assert!(
+                        refused.is_error() && refused.structured()["code"] == "element_disabled",
+                        "{tool} on a disabled control was not refused as element_disabled: {}",
+                        refused.raw
+                    );
+                }
 
                 std::thread::sleep(Duration::from_millis(200));
                 let after = snapshot_elements(driver, pid, wid);
                 assert!(
                     after.tree_text().contains("disabled_checked=false"),
-                    "the refused press changed the disabled checkbox:\n{}",
+                    "a refused action changed the disabled checkbox:\n{}",
                     after.tree_text()
                 );
             },

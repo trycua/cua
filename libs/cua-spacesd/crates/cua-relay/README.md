@@ -514,7 +514,7 @@ register machines: `CUA_RELAY_TOKENS`/`CUA_RELAY_TOKEN_FILE` or
 | `CUA_RELAY_MAX_STREAMS` | `256` | Concurrent client streams per machine (app-level check; S7). |
 | `CUA_RELAY_MACHINE_MAX_STREAMS` | `256` | yamux's own per-machine stream cap (S7); keep `>=` the value above. |
 | `CUA_RELAY_MACHINE_WINDOW_BYTES` | `67108864` (64 MiB) | yamux's per-machine connection receive window (S7); must be `>=` `machine-max-streams * 256 KiB`. |
-| `CUA_RELAY_MAX_GLOBAL_STREAMS` | `4096` | Concurrent client streams across every machine at once: the relay-wide memory budget (S7). Tune to the pod's memory limit. |
+| `CUA_RELAY_MAX_GLOBAL_STREAMS` | from the memory limit | Concurrent client streams across every machine at once: the relay-wide memory budget (S7). Unset, the relay derives it from its container's memory limit (cgroup): half the limit divided by 768 KiB, the worst case one slow-reading stream buffers, between 64 and 4096. Without a limit, 4096. `/metrics` shows it as `cua_relay_client_streams_budget`, next to `cua_relay_client_streams` and `cua_relay_client_streams_refused_total`. |
 | `CUA_RELAY_IDLE_SECS` | `90` | Seconds without a heartbeat before a machine is dropped (min 5). |
 | `CUA_RELAY_SHUTDOWN_GRACE_SECS` | `10` | Seconds open requests get after SIGTERM / SIGINT. Machine tunnels and mesh connections are closed at once, so they reconnect to the next relay. |
 | `CUA_RELAY_HEALTH_LISTEN` | unset | Probe address (`0.0.0.0:8081`) answering `GET /healthz` from start, standby included. Point the Kubernetes probes here for rolling deploys. |

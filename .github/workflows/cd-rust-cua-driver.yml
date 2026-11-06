@@ -1824,6 +1824,12 @@ jobs:
 
             # Wait for the required checks, then merge. Repository auto-merge
             # is off, so merge explicitly once they pass.
+            # Checks register a few seconds after the PR opens; `gh pr checks`
+            # fails at once with "no checks reported" before then.
+            for _ in $(seq 1 30); do
+              [ "$(gh pr view "$PR_URL" --json statusCheckRollup -q '.statusCheckRollup|length')" -gt 0 ] && break
+              sleep 10
+            done
             if timeout 40m gh pr checks "$PR_URL" --required --watch --fail-fast \
               && gh pr merge "$PR_URL" --squash --delete-branch; then
               echo "Public installers now advertise ${VERSION}."

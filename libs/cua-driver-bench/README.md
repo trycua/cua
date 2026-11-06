@@ -508,6 +508,10 @@ Where the multi-app tasks differ on Windows:
   it off for the bench user before the trials: `org.openoffice.Office.Update/Update/Enabled` and
   `org.openoffice.Office.Jobs/Jobs/UpdateCheck/Arguments/AutoCheckEnabled` set to `false` (as
   `Software\Policies\LibreOffice` registry policies, which an administrator writes).
+* **Codex approvals.** Codex computer use names a Windows app by its process when it asks for approval:
+  `soffice.bin` for LibreOffice, `GnuCash`, `Google Chrome`, and the Electron apps by their named executables
+  (`copperfield mail`, ...). Put those names on the adapter's `--allow` list for CDB-G02 to CDB-G04; a name
+  missing from it is declined and the setup cannot use that app.
 * **Leftovers.** Before and after a trial the launcher stops the task's own executables in the desktop
   session by exact name and whatever listens on the task's loopback port (4184 for CDB-G04).
 * **Validation.** `windows\cdb_oracle.py` stands in for the agent: by default it applies the scripted

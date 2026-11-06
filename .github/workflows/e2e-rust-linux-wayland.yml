@@ -99,17 +99,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5 # 1.97.1
       - name: Install Sway and Rust build dependencies
         if: startsWith(inputs.environment, 'sway')
-        shell: bash
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            sway xwayland x11-utils wf-recorder grim wtype dbus dbus-x11 at-spi2-core libglib2.0-bin \
-            python3-gi gir1.2-gtk-3.0 gir1.2-gtk-4.0 libgtk-3-dev clang pkg-config \
-            libdbus-1-dev libpipewire-0.3-dev libspa-0.2-dev libei-dev \
-            libwayland-dev libxkbcommon-dev libx11-dev libxi-dev libxtst-dev \
-            libxext-dev libdrm-dev libgbm-dev libwebkit2gtk-4.1-dev \
-            libssl-dev libxdo-dev libayatana-appindicator3-dev librsvg2-dev \
-            ffmpeg jq gnome-keyring
+        uses: ./.github/actions/apt-install
+        with:
+          packages: >-
+            sway xwayland x11-utils wf-recorder grim wtype dbus dbus-x11 at-spi2-core libglib2.0-bin python3-gi gir1.2-gtk-3.0 gir1.2-gtk-4.0 libgtk-3-dev clang pkg-config libdbus-1-dev libpipewire-0.3-dev libspa-0.2-dev libei-dev libwayland-dev libxkbcommon-dev libx11-dev libxi-dev libxtst-dev libxext-dev libdrm-dev libgbm-dev libwebkit2gtk-4.1-dev libssl-dev libxdo-dev libayatana-appindicator3-dev librsvg2-dev ffmpeg jq gnome-keyring
       - name: Install Nix for the nested compositor environments
         if: inputs.environment == 'cua-compositor' || inputs.environment == 'niri'
         uses: cachix/install-nix-action@08dcb3a5e62fa31e2da3d490afc4176ef55ecd72 # v30

@@ -166,9 +166,10 @@ jobs:
         run: gh run download "$RUN_ID" -n electron-linux -D dl
 
       - name: Tools
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq xvfb xdotool wmctrl imagemagick x11-apps x11-utils dbus-x11 openbox
+        uses: ./.github/actions/apt-install
+        with:
+          packages: >-
+            xvfb xdotool wmctrl imagemagick x11-apps x11-utils dbus-x11 openbox
 
       - name: Install the .deb
         run: |

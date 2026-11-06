@@ -190,6 +190,8 @@ def watch_agents(
         own_tree |= G.descendants(rows, os.getpid())
         here = [r for r in rows if W.session_of(r[0]) == session]
         for pid, label in G.new_side_doors(here, baseline, os.getpid(), own_tree):
+            if G.started_by_tool(rows, pid, args.tool_exe):  # the setup's own binary: a tool helper
+                continue
             violations.append(
                 {
                     "t_s": round(time.monotonic() - t0, 1),

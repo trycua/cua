@@ -72,6 +72,7 @@ impl Tool for TypeTextTool {
                     "scope":{"type":"string","enum":["window","desktop"],"description":"Use desktop with no pid/window_id to type into the current foreground application."},
                     "pid":{"type":"integer","description":"Target process ID."},
                     "text":{"type":"string","description":"Text to insert at the focused element's cursor."},
+                    "literal":{"type":"boolean","description":"Type text exactly as given; by default a trailing run of unbalanced agent-protocol closing tags is dropped."},
                     "window_id":{"type":"integer","description":"HWND of the target window. Omit when element_token is supplied (the token carries it)."},
                     "element_token":{"type":"string","pattern":"^s[0-9a-f]{8}:[0-9]+$","description":"Opaque element handle from get_window_state. When supplied, type_text writes through UIA ValuePattern and reads that exact element back by handle. The shared ActionResult is confirmed only when the complete expected value is synchronously visible. If SetValue succeeds but read-back is stale or unavailable, the result is unverifiable with no escalation; take a fresh snapshot before retrying because deferred providers may publish only after this call returns."},
                     "x":{"type":"number","description":"Window-local screenshot-pixel X of the field to type into — the element px action form. Pass x,y (no element_token) and the tool pixel-clicks there to establish real renderer focus, then types. Use for Chromium/Electron inputs the UIA/WM_CHAR path can't reach. Read straight off the get_window_state PNG, same convention as click."},
@@ -96,9 +97,8 @@ impl Tool for TypeTextTool {
                 Ok(input) => input,
                 Err(result) => return result,
             };
-            let text =
-                cua_driver_core::text_sanitize::strip_trailing_agent_protocol_tags(&input.text)
-                    .into_owned();
+            let text = cua_driver_core::text_sanitize::strip_unless_literal(&input.text, &args)
+                .into_owned();
             let hwnd = match crate::input::mouse::foreground_window() {
                 Ok(hwnd) => hwnd,
                 Err(error) => return ToolResult::error(error.to_string()),
@@ -138,8 +138,8 @@ impl Tool for TypeTextTool {
         // invocation tags into the text param (see text_sanitize docs).
         // Returns Cow::Borrowed on the no-match fast path so the common
         // case is allocation-free.
-        let text = cua_driver_core::text_sanitize::strip_trailing_agent_protocol_tags(&text_raw)
-            .into_owned();
+        let text =
+            cua_driver_core::text_sanitize::strip_unless_literal(&text_raw, &args).into_owned();
         let raw_pid = match args.require_i64("pid") {
             Ok(v) => v,
             Err(e) => return e,

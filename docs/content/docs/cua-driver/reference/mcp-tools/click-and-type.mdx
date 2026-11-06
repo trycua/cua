@@ -382,6 +382,7 @@ Special keys (Return, Escape, arrows, Tab) go through `press_key` / `hotkey`: th
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
+| <span id="type_text--literal"></span>`literal` | `boolean` |  | Type text exactly as given; by default a trailing run of unbalanced agent-protocol closing tags is dropped. |
 | <span id="type_text--target"></span>`target` | `object` |  | Preferred per-call target: an exact window (`kind="window"`, `pid`, `window_id`) or the primary desktop (`kind="desktop"`, `display_id="primary"`). |
 | <span id="type_text--target-display_id"></span>`target.display_id` | `string` |  | Display id. Required when kind is desktop; use "primary". |
 | <span id="type_text--target-kind"></span>`target.kind` | `"window" \| "desktop"` |  | window requires pid and window_id; desktop requires display_id. |

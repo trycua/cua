@@ -311,6 +311,10 @@ Canonical Actions wrapper: manually dispatch
 logged-in Lume wrapper, including its standalone browser matrix, and emits the certification
 artifact consumed by protected evidence workflows.
 
+For focused native development, the maintainer runner also accepts an exact
+AppKit cell in single-cell mode. See [the runner instructions](../tests/runners/macos-lume/README.md#focused-appkit-development).
+This retains native preflights and evidence checks but does not certify the full matrix.
+
 Supplemental hosted runner: manually dispatch
 `.github/workflows/e2e-rust-macos.yml` with an exact 40-character source SHA.
 Its probe must pass before independent shared, native, capture, and browser

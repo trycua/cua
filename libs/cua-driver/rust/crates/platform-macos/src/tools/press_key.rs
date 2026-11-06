@@ -367,6 +367,14 @@ impl Tool for PressKeyTool {
             None
         };
 
+        if px.is_some() {
+            if let Err(refusal) =
+                super::px_frame::refuse_pixel_on_native_mismatch(pid, window_id).await
+            {
+                return refusal;
+            }
+        }
+
         // The addressed window must be the app's confirmed key window before
         // any key (or focus click) goes out; otherwise refuse (window_not_key).
         let _key_scope = match super::acquire_key_scope(pid, window_id, fg).await {

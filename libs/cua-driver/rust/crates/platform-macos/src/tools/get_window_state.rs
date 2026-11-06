@@ -38,7 +38,7 @@ fn def() -> &'static ToolDef {
             \n\
             A new snapshot of the same (pid, window_id) replaces the previous one and stales its tokens (`invalidated_snapshot_ids`). `include_screenshot:false` returns the tree only and keeps the last screenshot's pixel frame while the window keeps its size; `include_accessibility_tree:false` returns only the screenshot and keeps the current snapshot's rows and tokens valid (use it, not `max_elements:1`, when you just need to look); adding `display_only:true` (live previews) also leaves the pixel frame alone. The tree can lie on some surfaces (Electron, Catalyst, virtualized rows with `h:1` frames): cross-check the screenshot, and use pixel x,y at action time only for elements missing from the tree.\n\
             \n\
-            Refusals: `window_id_not_found`; `window_owner_pid_mismatch` names the real `owner_pid` (sandboxed Open/Save panels belong to a panel service). `degraded_reason` `ax_window_unresolved` or `ax_app_launching` (the latter with `truncation_reason: app_lookup_timeout`) means an empty tree: re-snapshot, or act with `delivery_mode:\"foreground\"`. `degraded_reason` `screen_locked` means the screen saver, display sleep or a lock hid every window from accessibility: wake and unlock the Mac, then re-snapshot; foreground input would reach the lock screen. `px_frame_mismatch` / `px_capture_unavailable` omit the unprovable screenshot; the AX payload stays valid.".into(),
+            Refusals: `window_id_not_found`; `window_owner_pid_mismatch` names the real `owner_pid` (sandboxed Open/Save panels belong to a panel service). `degraded_reason` `ax_window_unresolved` or `ax_app_launching` (the latter with `truncation_reason: app_lookup_timeout`) means an empty tree: re-snapshot, or act with `delivery_mode:\"foreground\"`. `degraded_reason` `screen_locked` means the screen saver, display sleep or a lock hid every window from accessibility: wake and unlock the Mac, then re-snapshot; foreground input would reach the lock screen. `px_frame_mismatch` / `px_capture_unavailable` omit the unprovable screenshot; the AX payload stays valid. `native_window_geometry` reports whether the window's logical and compositor frames agree: aligned, mismatched, unstable or unavailable. A mismatch keeps the observation and semantic actions but refuses pixel targeting; it does not identify Stage Manager or prove image freshness.".into(),
         input_schema: cua_driver_core::window_state_view::extend_input_schema(serde_json::json!({
             "type": "object",
             "required": ["pid", "window_id"],
@@ -435,6 +435,8 @@ impl Tool for GetWindowStateTool {
         // and native dimensions, the WindowServer bounds it was validated
         // against, and the raw capture's backing scale.
         let mut screenshot_frame_error = None;
+        let mut native_geometry =
+            cua_driver_core::native_window_geometry::GeometryAssessment::Unavailable;
         let mut screenshot_resize_scale = None;
         let prefetched_raw = match prefetched_capture {
             Some(handle) => Some(handle.await.unwrap_or_else(|e| Err(anyhow::anyhow!(e)))),
@@ -442,7 +444,8 @@ impl Tool for GetWindowStateTool {
         };
         let screenshot = if should_capture {
             let out_file = screenshot_out_file.clone();
-            let res = tokio::task::spawn_blocking(move || -> Result<
+            let res = tokio::task::spawn_blocking(move || {
+                crate::native_window_geometry::observe_capture(pid, window_id, || -> Result<
                 (
                     Vec<u8>,
                     Option<String>,
@@ -502,7 +505,13 @@ impl Tool for GetWindowStateTool {
                         scale,
                     ))
                 }
-            }).await;
+            })
+            })
+            .await;
+            let res = res.map(|(capture, geometry)| {
+                native_geometry = geometry;
+                capture
+            });
             match res {
                 Ok(Ok((png, file_path, w, h, orig_w, orig_h, bounds, scale))) => {
                     if !observation_only {
@@ -864,6 +873,7 @@ impl Tool for GetWindowStateTool {
                 structured["background_input"] = report;
             }
         }
+        native_geometry.project_snapshot(&mut structured);
         if let Some((sw, sh)) = screenshot_dims {
             structured["screenshot_width"] = serde_json::json!(sw);
             structured["screenshot_height"] = serde_json::json!(sh);

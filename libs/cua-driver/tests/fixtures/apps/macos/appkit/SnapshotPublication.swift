@@ -4,7 +4,7 @@
 import AppKit
 
 final class SnapshotPublicationFixture: NSObject {
-    let window: NSWindow
+    let window: NativeGeometryWindow
     private let directory: URL
     private let content = NSView(frame: NSRect(x: 0, y: 0, width: 720, height: 700))
     private var original: NSButton!
@@ -17,7 +17,7 @@ final class SnapshotPublicationFixture: NSObject {
 
     init(directory: URL) {
         self.directory = directory
-        window = NSWindow(
+        window = NativeGeometryWindow(
             contentRect: NSRect(x: 100, y: 100, width: 720, height: 700),
             styleMask: [.titled, .closable], backing: .buffered, defer: false)
         super.init()
@@ -61,6 +61,16 @@ final class SnapshotPublicationFixture: NSObject {
 
     private func readCommand() {
         guard let command = try? String(contentsOf: directory.appendingPathComponent("command"), encoding: .utf8) else { return }
+        if command == "mismatch" && !window.reportsMismatch {
+            window.reportsMismatch = true
+            publish()
+            return
+        }
+        if command == "align" && window.reportsMismatch {
+            window.reportsMismatch = false
+            publish()
+            return
+        }
         if command == "checkpoint" && !checkpoint {
             checkpoint = true
             publish()
@@ -94,6 +104,7 @@ final class SnapshotPublicationFixture: NSObject {
                 "pid": ProcessInfo.processInfo.processIdentifier,
                 "window_id": window.windowNumber,
                 "generation": generation,
+                "mismatched": window.reportsMismatch,
                 "checkpoint": checkpoint,
                 "original_clicks": originalClicks,
                 "replacement_clicks": replacementClicks,

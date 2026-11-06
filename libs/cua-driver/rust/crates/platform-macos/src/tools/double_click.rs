@@ -165,7 +165,7 @@ impl Tool for DoubleClickTool {
 
             return match result {
                 Ok(Ok(msg)) => ToolResult::text(format!("{msg}{}", changes.result_suffix())),
-                Ok(Err(e)) => ToolResult::error(format!("double_click failed: {e}")),
+                Ok(Err(e)) => super::px_frame::action_error(e.context("double_click failed")),
                 Err(e) => ToolResult::error(format!("Task error: {e}")),
             };
         }
@@ -223,6 +223,8 @@ fn ax_double_click(
             "AXOpen returned {err} for element [{idx}], falling back to pixel double-click"
         );
     }
+
+    super::px_frame::verify_native_geometry(pid, wid)?;
 
     // Resolve screen center and fall back to pixel double-click.
     let (cx, cy) = unsafe { element_screen_center(element) }

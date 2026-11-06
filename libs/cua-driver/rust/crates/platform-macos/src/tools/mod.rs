@@ -597,10 +597,10 @@ pub(crate) async fn focus_by_pixel(
         if !foreground || pixel_focus_landed(pid, window_id, x, y).await {
             return Ok(());
         }
-    } else if !foreground {
-        return Err(cua_driver_core::protocol::ToolResult::error(format!(
-            "focus pixel-click at ({x:.0},{y:.0}) failed."
-        )));
+    } else if !foreground || is_native_geometry_refusal(&focus) {
+        // A geometry mismatch is the window's state, not this rung's: the
+        // foreground fallback would refuse too, so return the refusal as is.
+        return Err(focus_pixel_failure(focus, x, y));
     }
 
     // Some renderer surfaces do not expose a usable AX focus action. The
@@ -626,13 +626,37 @@ pub(crate) async fn focus_by_pixel(
         .invoke(click_args)
         .await;
     if focus.is_error == Some(true) {
-        return Err(cua_driver_core::protocol::ToolResult::error(format!(
-            "focus pixel-click at ({x:.0},{y:.0}) failed."
-        )));
+        return Err(focus_pixel_failure(focus, x, y));
     }
     // Brief settle so the renderer registers focus before the keystrokes.
     tokio::time::sleep(std::time::Duration::from_millis(120)).await;
     Ok(())
+}
+
+/// The error for a failed focus click: a native geometry refusal passes
+/// through with its structured code, anything else keeps the generic message.
+fn focus_pixel_failure(
+    focus: cua_driver_core::protocol::ToolResult,
+    x: f64,
+    y: f64,
+) -> cua_driver_core::protocol::ToolResult {
+    if is_native_geometry_refusal(&focus) {
+        focus
+    } else {
+        cua_driver_core::protocol::ToolResult::error(format!(
+            "focus pixel-click at ({x:.0},{y:.0}) failed."
+        ))
+    }
+}
+
+fn is_native_geometry_refusal(result: &cua_driver_core::protocol::ToolResult) -> bool {
+    result.is_error == Some(true)
+        && result
+            .structured_content
+            .as_ref()
+            .and_then(|structured| structured.get("code"))
+            .and_then(serde_json::Value::as_str)
+            == Some("native_window_geometry_mismatch")
 }
 
 /// Confirm that a focus pixel-click actually moved the application's focused
@@ -668,7 +692,7 @@ async fn focused_element_holds_point(
         return false;
     };
     tokio::task::spawn_blocking(move || {
-        let Ok(frame) = px_frame::resolve_window_px_frame(wid) else {
+        let Ok(frame) = px_frame::resolve_window_px_frame(pid, wid) else {
             return false;
         };
         let (screen_x, screen_y, _, _) = frame.to_screen(x, y);

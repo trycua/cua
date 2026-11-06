@@ -414,11 +414,11 @@ impl Tool for HotkeyTool {
             None
         };
 
-        // Key post: the addressed window must be the confirmed key window.
-        if key_scope.is_none() {
-            match super::acquire_key_scope(pid, window_id, fg).await {
-                Ok(scope) => key_scope = scope,
-                Err(refusal) => return refusal,
+        if px.is_some() {
+            if let Err(refusal) =
+                super::px_frame::refuse_pixel_on_native_mismatch(pid, window_id).await
+            {
+                return refusal;
             }
         }
 
@@ -444,24 +444,48 @@ impl Tool for HotkeyTool {
             .await
             .unwrap_or(true);
             if is_web {
-                tokio::task::spawn_blocking(move || unsafe {
-                    let (screen_x, screen_y) = crate::ax::bindings::element_screen_center(
+                let target = tokio::task::spawn_blocking(move || unsafe {
+                    let Some((screen_x, screen_y)) = crate::ax::bindings::element_screen_center(
                         guard.as_ptr() as crate::ax::bindings::AXUIElementRef,
-                    )?;
-                    let frame = super::px_frame::resolve_window_px_frame(wid).ok()?;
-                    Some((
+                    ) else {
+                        return Ok(None);
+                    };
+                    let frame = match super::px_frame::resolve_window_px_frame(pid, wid) {
+                        Ok(frame) => frame,
+                        Err(
+                            error @ super::px_frame::PxFrameError::NativeGeometryMismatch { .. },
+                        ) => return Err(error),
+                        Err(_) => return Ok(None),
+                    };
+                    Ok(Some((
                         (screen_x - frame.bounds.x) * frame.scale,
                         (screen_y - frame.bounds.y) * frame.scale,
-                    ))
+                    )))
                 })
-                .await
-                .unwrap_or(None)
+                .await;
+                match target {
+                    Ok(Ok(target)) => target,
+                    Ok(Err(error)) => return super::px_frame::refusal(&error),
+                    Err(error) => {
+                        return ToolResult::error(format!("Native focus lookup failed: {error}"))
+                    }
+                }
             } else {
                 None
             }
         } else {
             None
         };
+
+        // Key post: the addressed window must be the confirmed key window.
+        // Taken after the web focus lookup, which can refuse on a native
+        // geometry mismatch before the key window changes.
+        if key_scope.is_none() {
+            match super::acquire_key_scope(pid, window_id, fg).await {
+                Ok(scope) => key_scope = scope,
+                Err(refusal) => return refusal,
+            }
+        }
 
         // PX form, plus the web-content AX fallback above: focus the field
         // before sending the combo. Foreground delivery still needs to front

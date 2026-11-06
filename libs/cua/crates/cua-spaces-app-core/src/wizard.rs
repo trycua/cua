@@ -1446,6 +1446,26 @@ fn lume_needs_apple_silicon(image: &SandboxImage, env: &WizardEnv) -> bool {
     image.local == Some(LocalEngine::Lume) && arch_word(env.host_arch.as_deref()) == Some("amd64")
 }
 
+/// Whether `image` has a build for this machine's architecture (an image that
+/// lists none, or a machine whose architecture is unknown, passes).
+fn has_build_for_host(image: &SandboxImage, env: &WizardEnv) -> bool {
+    match arch_word(env.host_arch.as_deref()) {
+        Some(a) => image.arch.is_empty() || image.arch.iter().any(|x| x == a),
+        None => true,
+    }
+}
+
+/// Windows on a Mac: only an image built on this computer (`windows:11`) with
+/// a build for the Mac's architecture runs (ARM64 Windows 11 on Apple
+/// silicon, hardware accelerated). The published Server image is x64 and a
+/// Mac with Apple silicon could only emulate it.
+fn windows_runs_on_this_mac(image: &SandboxImage, env: &WizardEnv) -> bool {
+    image.os == SpaceOs::Windows
+        && image.local_build.is_some()
+        && arch_word(env.host_arch.as_deref()).is_some()
+        && has_build_for_host(image, env)
+}
+
 /// The first machine of yours that can run `image` now (online, not at a
 /// limit, the right OS).
 fn usable_host<'a>(image: &SandboxImage, env: &'a WizardEnv) -> Option<&'a SpaceHost> {
@@ -2241,9 +2261,16 @@ pub fn reduce(state: &WizardState, action: &WizardAction, env: &WizardEnv) -> Wi
         WizardAction::ChooseOs { os } => {
             s.microvm = false;
             let images = &catalog().images;
+            // Of the system's images, the first this machine has a build for
+            // (Windows 11 on an Apple silicon Mac, not the x64 Server image).
             let first = images
                 .iter()
-                .find(|i| i.os == *os && can_place(i, s.placement))
+                .find(|i| i.os == *os && can_place(i, s.placement) && has_build_for_host(i, env))
+                .or_else(|| {
+                    images
+                        .iter()
+                        .find(|i| i.os == *os && can_place(i, s.placement))
+                })
                 .or_else(|| images.iter().find(|i| i.os == *os))
                 .map(|i| i.image_ref.clone());
             if let Some(r) = first {
@@ -3577,6 +3604,9 @@ pub fn placement_options_on(
     out
 }
 
+/// Why an x64 Windows image does not run on a Mac with Apple silicon.
+const WINDOWS_ARM_ONLY_ON_MAC: &str = "This Mac runs ARM64 Windows at full speed. This image is x64 Windows, which it could only emulate, taking hours. Choose Windows 11.";
+
 /// The Windows tile's title on a Mac host.
 const WINDOWS_SOON_TITLE: &str = "Windows (coming soon)";
 /// Its tooltip.
@@ -3681,7 +3711,9 @@ pub fn view_on(state: &WizardState, env: &WizardEnv, os: SpaceOs) -> WizardView 
             f.value = kind.label().into();
         }
     }
-    let windows_soon = os == SpaceOs::Macos && image.os == SpaceOs::Windows;
+    let windows_soon = os == SpaceOs::Macos
+        && image.os == SpaceOs::Windows
+        && !windows_runs_on_this_mac(&image, env);
     let can_continue = image.os != SpaceOs::Unknown
         && !windows_soon
         && match state.step {
@@ -3709,8 +3741,12 @@ pub fn view_on(state: &WizardState, env: &WizardEnv, os: SpaceOs) -> WizardView 
                 reasons.into_iter().next()
             })
             .flatten();
-        // Windows Spaces are not offered from a Mac yet: shown, not chosen.
-        let soon = host_os == SpaceOs::Macos && os == SpaceOs::Windows;
+        // Windows Spaces on a Mac: offered where an image built here has a build
+        // for this Mac (Windows 11 on Apple silicon), shown but not chosen
+        // elsewhere.
+        let soon = host_os == SpaceOs::Macos
+            && os == SpaceOs::Windows
+            && !images.iter().any(|i| windows_runs_on_this_mac(i, env));
         Tile {
             id: os.as_str().into(),
             title: if soon { WINDOWS_SOON_TITLE } else { title }.into(),
@@ -3798,6 +3834,13 @@ pub fn view_on(state: &WizardState, env: &WizardEnv, os: SpaceOs) -> WizardView 
             }
         }
     });
+    // A Windows image this Mac could only emulate (Server, or Windows 10, on
+    // Apple silicon): said in words, with the one that runs natively.
+    let windows_hint = (windows_soon
+        && image.os == SpaceOs::Windows
+        && images.iter().any(|i| windows_runs_on_this_mac(i, env)))
+    .then(|| WINDOWS_ARM_ONLY_ON_MAC.to_string());
+    let placement_error = windows_hint.or(placement_error);
     let mut kind_tiles: Vec<Tile> = [SpaceKind::Container, SpaceKind::Vm]
         .into_iter()
         .map(|k| {
@@ -4810,7 +4853,7 @@ mod tests {
     }
 
     #[test]
-    fn windows_is_coming_soon_on_a_mac_and_cannot_continue() {
+    fn windows_on_a_mac_is_the_image_built_here_and_server_is_refused_in_words() {
         let e = env();
         let s = reduce(
             &initial(&e),
@@ -4819,7 +4862,42 @@ mod tests {
             },
             &e,
         );
+        // Apple silicon: the Windows tile is offered, and its image is Windows
+        // 11 (ARM64, built here), not the x64 Server image.
         let mac = view_on(&s, &e, SpaceOs::Macos);
+        let tile = mac.os_tiles.iter().find(|t| t.id == "windows").unwrap();
+        assert!(tile.enabled && tile.title == "Windows", "{tile:?}");
+        assert_eq!(mac.image.image_ref, "ghcr.io/trycua/windows:11");
+        // Server 2022 is x64: refused with the reason and the way out.
+        let server = reduce(
+            &s,
+            &WizardAction::ChooseImage {
+                image_ref: "ghcr.io/trycua/windows:2022".into(),
+            },
+            &e,
+        );
+        let v = view_on(&server, &e, SpaceOs::Macos);
+        assert!(!v.can_continue);
+        assert!(
+            v.placement_error
+                .as_deref()
+                .is_some_and(|m| m.contains("Choose Windows 11")),
+            "{:?}",
+            v.placement_error
+        );
+        // A Mac whose architecture is not known keeps the old guard.
+        let unknown = WizardEnv {
+            host_arch: None,
+            ..env()
+        };
+        let u = reduce(
+            &initial(&unknown),
+            &WizardAction::ChooseOs {
+                os: SpaceOs::Windows,
+            },
+            &unknown,
+        );
+        let mac = view_on(&u, &unknown, SpaceOs::Macos);
         let tile = mac.os_tiles.iter().find(|t| t.id == "windows").unwrap();
         assert!(!tile.enabled && tile.title.contains("coming soon"));
         assert!(!mac.can_continue);
@@ -5563,10 +5641,10 @@ mod tests {
             "each cloud is its own entry: no second menu"
         );
         // Systems and kinds it cannot run are greyed out with why.
-        let soon = v.os_tiles.iter().find(|t| t.id == "windows").unwrap();
-        assert!(!soon.enabled);
-        assert_eq!(soon.title, "Windows (coming soon)");
-        assert_eq!(soon.detail, "Windows Spaces are coming soon on Mac.");
+        let win = v.os_tiles.iter().find(|t| t.id == "windows").unwrap();
+        assert!(!win.enabled);
+        assert_eq!(win.title, "Windows");
+        assert!(win.detail.starts_with("Windows on AWS is not offered yet."), "{}", win.detail);
         // Off a Mac, the cloud's own reason shows.
         let v_linux = view_on(&s, &e, SpaceOs::Linux);
         let win = v_linux.os_tiles.iter().find(|t| t.id == "windows").unwrap();

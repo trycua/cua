@@ -486,6 +486,16 @@ describe("QEMU VMs", () => {
     pick("ghcr.io/trycua/windows:2022");
     expect(continueButton()).toBeEnabled();
   });
+
+  it("go on to the next step on a Windows PC when Continue is enabled (it did nothing)", () => {
+    vi.spyOn(navigator, "platform", "get").mockReturnValue("Win32");
+    renderWizard({ localBackends: ["docker", "qemu"] });
+    runOn("local");
+    pick("ghcr.io/trycua/windows:2022");
+    expect(continueButton()).toBeEnabled();
+    next();
+    expect(screen.getByRole("slider", { name: "CPU cores" })).toBeInTheDocument();
+  });
 });
 
 describe("default placement", () => {

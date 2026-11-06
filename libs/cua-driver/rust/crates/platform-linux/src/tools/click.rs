@@ -551,6 +551,7 @@ impl ClickTool {
                         crate::interaction::with_x11_foreground(
                             xid,
                             crate::input::ForegroundOptions::pointer(),
+                            crate::interaction::RestoreMode::LeaveFocused,
                             || {
                                 crate::input::send_click_xtest_desktop_with_modifiers(
                                     sx.round() as i32,
@@ -645,6 +646,7 @@ impl ClickTool {
                         crate::interaction::with_x11_foreground(
                             xid,
                             crate::input::ForegroundOptions::pointer(),
+                            crate::interaction::RestoreMode::LeaveFocused,
                             || crate::atspi::perform_action_observed(&observed_for_ax),
                         )
                     },
@@ -1355,6 +1357,7 @@ impl Tool for ClickTool {
                         crate::interaction::with_x11_foreground(
                             xid2,
                             crate::input::ForegroundOptions::pointer(),
+                            crate::interaction::RestoreMode::LeaveFocused,
                             || {
                                 crate::input::send_click_xtest_desktop_with_modifiers(
                                     sx.round() as i32,
@@ -1724,6 +1727,7 @@ impl Tool for ClickTool {
                 crate::interaction::with_x11_foreground(
                     xid,
                     crate::input::ForegroundOptions::pointer(),
+                    crate::interaction::RestoreMode::LeaveFocused,
                     || inject(true),
                 )
                 .map(|((path, route, guard), report)| (path, Some(report), route, guard))

@@ -50,9 +50,9 @@ pub fn pointer_gesture_restore() -> RestoreMode {
 /// Run `body` with the exact `pid`/`window_id` pair focused. On Wayland a
 /// compositor adapter confirms the pair and restores the prior focus
 /// afterwards; global input is refused when no adapter can confirm it. On
-/// X11 [`with_x11_foreground`] activates the window and leaves it active.
-/// [`RestoreMode::LeaveFocused`] runs `body` as it is: it activates the
-/// target itself and leaves it focused.
+/// X11 [`with_x11_foreground`] activates the window and restores the prior
+/// focus afterwards. [`RestoreMode::LeaveFocused`] runs `body` as it is: it
+/// activates the target itself and leaves it focused.
 pub fn with_target_foreground<T>(
     pid: u32,
     window_id: u64,
@@ -68,7 +68,7 @@ pub fn with_target_foreground<T>(
         return body();
     }
     if std::env::var_os("WAYLAND_DISPLAY").is_none() {
-        return with_x11_foreground(window_id, ForegroundOptions::pointer(), body)
+        return with_x11_foreground(window_id, ForegroundOptions::pointer(), mode, body)
             .map(|(value, _report)| value);
     }
     let body = || {
@@ -144,16 +144,39 @@ pub fn with_target_foreground<T>(
 /// The X11 foreground transaction (`delivery_mode:"foreground"`): activate
 /// `xid` and read back that it holds the active window and input focus,
 /// admit the lock for window input, run `body`, then report where focus and
-/// the target process's windows ended up. The target is left active.
+/// the target process's windows ended up. [`RestoreMode::RestorePrevious`]
+/// then gives the focus back to the window that held it before, even when
+/// activation or the body failed, since focus may have moved either way;
+/// [`RestoreMode::LeaveFocused`] leaves the target active.
 pub fn with_x11_foreground<T>(
     xid: u64,
     opts: ForegroundOptions,
+    mode: RestoreMode,
     body: impl FnOnce() -> Result<T>,
 ) -> Result<(T, ForegroundReport)> {
-    let activated = crate::input::foreground::activate(xid, opts)?;
-    admit_lock(policy::Scope::WindowInput, facts::Fact::Known(true))?;
-    let value = body()?;
-    Ok((value, activated.report()))
+    let (_transaction, prior) = match mode {
+        RestoreMode::RestorePrevious => (
+            Some(hold_transaction()?),
+            crate::input::focus_guard::FocusSnapshot::capture(),
+        ),
+        RestoreMode::LeaveFocused => (None, None),
+    };
+    let ran = crate::input::foreground::activate(xid, opts).and_then(|activated| {
+        admit_lock(policy::Scope::WindowInput, facts::Fact::Known(true))?;
+        let value = body()?;
+        Ok((value, activated.report()))
+    });
+    // No target pid: a prior window of the target's own process is given
+    // back too, unlike the background guard's same-app rule.
+    let restore = prior.map(|prior| prior.restore_if_changed_opts(None, false));
+    let value = ran?;
+    match restore.as_ref().and_then(|r| r.outcome()) {
+        Some("not_restored") => anyhow::bail!(
+            "the input was sent, but the prior focus could not be restored ({})",
+            restore.map(|r| r.changes.join(", ")).unwrap_or_default()
+        ),
+        _ => Ok(value),
+    }
 }
 
 /// How long a compositor may take to apply and report a focus change.

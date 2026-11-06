@@ -220,6 +220,22 @@ they pass, the run passes. If they fail again the same way, the gate reports a q
 fail. The gate reads the list from the base commit. Every entry has an owner, an issue and an expiry date.
 The nightly **Flaky job scan** files a `flaky` issue for each job that failed and then passed on a rerun.
 
+## Measuring CI speed
+
+- **Per-file test times.** Jobs that run under `flaky.py` (nextest JUnit, vitest, Swift logs) and the pytest and
+  `swift test` steps of `ci-test-python`, `ci-py-bench`, `ci-cua-sdk` and `ci-cua-microvm` write a "Slowest test
+  files" table to the job summary and upload `timings-<suite>` (10 days) through
+  `.github/scripts/flaky/timings.py`. pytest also prints `--durations=25`. A new suite gets this by calling
+  `flaky.sh run` plus the `flaky-upload` action, or `timings.py` plus `ci-timings-upload`.
+- **Weekly report.** `ci-weekly-report.yml` rewrites ONE issue, "CI speed this week", every Monday
+  (`.github/scripts/ci_weekly_report.py`): push to green, green to merged, the `ci-gate` tail split into
+  "waiting for the `local-ci` sign-off" and "other", release-PR wait, CD time per workflow, and the slowest
+  test files. Run it by hand with `gh workflow run ci-weekly-report.yml`.
+- **The gate tail.** After the last other workflow finishes, `ci-gate` needs one confirming listing (10 s once
+  everything is complete) and then the `local-ci` sign-off, polled every 15 s for up to 75 minutes. A long tail is
+  almost always the sign-off queue on the Mac runner or a quarantined-flake rerun, not a poll interval; the
+  weekly report shows which.
+
 ## Urgent-fix lane
 
 Label a pull request `urgent` for a production fix that cannot wait for the full suite:

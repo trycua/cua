@@ -13,3 +13,7 @@ runs:
         path: ${{ runner.temp }}/flaky-results/
         if-no-files-found: ignore
         retention-days: 10
+    # Per-file test times written by flaky.py run (timings.py), for the weekly CI speed report.
+    - uses: ./.github/actions/ci-timings-upload
+      with:
+        suite: ${{ inputs.suite }}

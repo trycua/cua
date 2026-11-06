@@ -210,7 +210,14 @@ jobs:
               break
             fi
             previous=$current
-            sleep "$(poll_interval)"
+            # Everything finished: the next listing only has to confirm the same set, so look again
+            # in 10 s instead of after a full poll interval (up to 60 s). That wait, twice, was most
+            # of the gate's median 1.9 min after the last check (CUA-3558).
+            if [[ -n "$current" ]] && awk -F'\t' '$NF != "completed" { exit 1 }' <<<"$current"; then
+              sleep 10
+            else
+              sleep "$(poll_interval)"
+            fi
           done
           failed=0
           again=0
@@ -261,7 +268,9 @@ jobs:
           api() { local out; for _ in 1 2 3 4 5 6; do out=$(gh api "$@") && { printf '%s\n' "$out"; return; }; sleep 20; done; return 1; }
           sha=$SHA
           tries=1
-          [[ "${REQUIRE_LOCAL_CI:-}" == true ]] && tries=75
+          # Polled every 15 s (it was 60 s, so a sign-off that landed just after a poll cost up to a
+          # minute). Still bounded at 75 minutes.
+          [[ "${REQUIRE_LOCAL_CI:-}" == true ]] && tries=300
           for i in $(seq 1 "$tries"); do
             if [[ "$KIND" == local ]]; then
               state=$(api "repos/$GITHUB_REPOSITORY/commits/$sha/statuses?per_page=100" --jq '[.[] | select(.context == "local-ci")][0].state // ""')
@@ -271,7 +280,7 @@ jobs:
             fi
             if [[ "$state" == success ]]; then echo "sign-off: success"; exit 0; fi
             [[ "$state" == failure || "$state" == error ]] && break
-            (( i < tries )) && sleep 60
+            (( i < tries )) && sleep 15
           done
           if [[ "$KIND" == local ]]; then
             msg="Run bin/ci --quick and bin/ci --signoff on this head commit. (local-ci on ${sha:0:10}: ${state:-not set})"

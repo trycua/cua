@@ -4418,7 +4418,7 @@ mod own_dialog_tests {
     use super::*;
     use std::io::{BufRead, BufReader};
     use std::process::{Command, Stdio};
-    use x11rb::protocol::{xproto::*, Event};
+    use x11rb::protocol::Event;
     use x11rb::wrapper::ConnectionExt as _;
 
     struct Server(std::process::Child);

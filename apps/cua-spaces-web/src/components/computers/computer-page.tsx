@@ -22,7 +22,7 @@ import {
 } from "@/bridge";
 import { AddComputerSheet } from "@/components/add-computer-sheet";
 import { BackLink } from "@/components/back-link";
-import { DRIVER_LINE } from "@/components/driver/copy";
+import { driverLine } from "@/components/driver/copy";
 import { EnrollSheet, RecentAccess, TrustSection, useMachinesAccount } from "@/components/machines/account-parts";
 import { EmptyState, Page } from "@/components/page";
 import { RestartDialog, useUpdateIndicator } from "@/components/shell/update-indicator";
@@ -103,7 +103,7 @@ function DriverRow({ computerId }: { computerId: string }) {
         <MousePointer2Icon className="size-4 shrink-0 text-muted-foreground" strokeWidth={1.75} />
         <span className="min-w-0 flex-1">
           <span className="block text-[13px] font-medium">Cua Driver</span>
-          <span className="block text-xs text-muted-foreground">{DRIVER_LINE}</span>
+          <span className="block text-xs text-muted-foreground">{driverLine()}</span>
         </span>
         <ChevronRightIcon className="size-3.5 shrink-0 text-muted-foreground/60" />
       </Link>

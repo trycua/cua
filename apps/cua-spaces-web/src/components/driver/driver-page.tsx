@@ -20,12 +20,11 @@ import { Select } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { toast, toastError } from "@/components/ui/toast";
 import { driverUsesAppPermissions, repairOutcome } from "@/lib/app-permissions";
-import { thisComputerLabel } from "@/lib/host-labels";
+import { thisComputerLabel, thisComputerText } from "@/lib/host-labels";
 import { THIS_COMPUTER } from "@/lib/machines";
 import { cn } from "@/lib/utils";
 import { driverLine, markFor, stateText, testText, versionText } from "./copy";
 import { PointerPreview } from "./pointer-preview";
-import { thisComputerLabel, thisComputerText } from "@/lib/host-labels";
 
 /**
  * The Cua Driver page (CUA-2706, design A): what it is in one line, its

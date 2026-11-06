@@ -5,13 +5,16 @@
 # Usage: windows_session.py --task ID --run-index N --condition foreground|background --out DIR
 #                           [--timeout S] -- COMMAND [ARG...]
 #
-# One BenchLab trial on a Windows desktop, run in the interactive session of the user who owns it:
+# One trial on a Windows desktop, run in the interactive session of the user who owns it:
 #   1. derive the seed (fairness rule), render the brief (+ the background paragraph), write DIR/brief.md;
-#   2. start BenchLab (windows/benchlab.py) and the sentinel (windows/sentinel.py): in the background
-#      condition the "User activity" window partly covers BenchLab, is brought to the front and types;
-#   3. arm the sentinel, run COMMAND (the agent; `{brief}`, `{out}`, `{seed}`, `{mode}` in its arguments are filled in)
-#      with the GUI-only guard watching, stop it at the time limit or on a violation;
-#   4. disarm, run the task's checker, summarise the sentinel, write DIR/row.json.
+#   2. start the task's apps: BenchLab (windows/benchlab.py) for the BenchLab tasks, or for a pack task
+#      (CDB-G02 to CDB-G04) reset its workspace and start the apps of its platform/launch.windows.json
+#      (windows/cdb.py); then the sentinel (windows/sentinel.py): in the background condition the
+#      "User activity" window partly covers the task's windows, is brought to the front and types;
+#   3. arm the sentinel, run COMMAND (the agent; `{brief}`, `{out}`, `{seed}`, `{mode}`, `{workspace}` in its
+#      arguments are filled in) with the GUI-only guard watching, stop it at the time limit or on a violation;
+#   4. disarm, run the task's checker, summarise the sentinel, write DIR/row.json (a pack task also leaves
+#      DIR/workspace-final.zip), stop the apps.
 # BenchLab and the sentinel run from copies of pythonw.exe named BenchLab.exe and BenchSentinel.exe, so every
 # tool sees them under those names.
 from __future__ import annotations
@@ -36,7 +39,9 @@ import bench_v2 as v2  # noqa: E402
 import cdb_fairness  # noqa: E402
 import summarize_sentinel  # noqa: E402
 
-TASKS = ("MB-09", "MB-10", "MB-11", "IR-01", "IR-02", "IR-03", "IR-04")
+LAB_TASKS = ("MB-09", "MB-10", "MB-11", "IR-01", "IR-02", "IR-03", "IR-04")
+CDB_TASKS = ("CDB-G02", "CDB-G03", "CDB-G04")
+TASKS = CDB_TASKS + LAB_TASKS
 LAB_FRAME = (40, 40, 760, 540)
 WITNESS_FRAME = (1000, 640, 600, 320)
 PLATFORM_WORDS = ("on your Mac", "on this Windows PC")
@@ -46,7 +51,9 @@ def task_spec(task: str) -> dict:
     return json.loads((BENCH / "probes" / task / "task.json").read_text(encoding="utf-8"))
 
 
-def render_brief(task: str, seed: int, condition: str) -> str:
+def render_brief(task: str, seed: int, condition: str, cdb=None) -> str:
+    if cdb is not None:
+        return v2.brief_for(cdb.brief().strip(), condition)
     spec = importlib.util.spec_from_file_location(
         f"render_{task}", BENCH / "probes" / task / "render_brief.py"
     )
@@ -97,9 +104,16 @@ def run(args: argparse.Namespace, command: list[str]) -> dict:
     out: Path = args.out.resolve()
     out.mkdir(parents=True, exist_ok=True)
     spec = task_spec(args.task)
-    mode = spec["app_args"][spec["app_args"].index("--mode") + 1]
     seed = cdb_fairness.trial_seed(args.task, args.run_index)
-    brief = render_brief(args.task, seed, args.condition)
+    cdb = None
+    if spec.get("kind") == "cdb":
+        import cdb as C
+
+        cdb = C.CdbTask(spec, out, seed=seed)
+        mode = spec["pack_task"]
+    else:
+        mode = spec["app_args"][spec["app_args"].index("--mode") + 1]
+    brief = render_brief(args.task, seed, args.condition, cdb)
     (out / "brief.md").write_text(brief, encoding="utf-8")
     background = args.condition == "background"
     row: dict = {
@@ -113,16 +127,29 @@ def run(args: argparse.Namespace, command: list[str]) -> dict:
     for stale in (state, events, log, control):
         stale.unlink(missing_ok=True)
     control.write_text("", encoding="utf-8")
-    lab = subprocess.Popen(
-        [str(named_python("BenchLab")), str(BENCH / "windows" / "benchlab.py"), "--mode", mode,
-         "--seed", str(seed), "--state", str(state), "--events", str(events),
-         "--frame", ",".join(map(str, LAB_FRAME)), *(["--no-activate"] if background else [])],
-    )  # fmt: skip
-    procs = [lab]
+    procs = []
     try:
-        if not wait_for(state.exists, 30):
-            row["harness_error"] = "BenchLab did not start"
-            return row
+        if cdb is not None:
+            row["workspace"] = str(cdb.workspace)
+            try:
+                cdb.reset()
+                cdb.start_apps()
+                cdb.place_windows()
+                row["health"] = cdb.health_check()
+            except Exception as error:  # noqa: BLE001 - any setup failure is a harness error, never scored
+                row["harness_error"] = f"setup: {type(error).__name__}: {str(error)[:400]}"
+                return row
+            finally:
+                row["setup_log"] = list(cdb.log)
+        else:
+            procs.append(subprocess.Popen(
+                [str(named_python("BenchLab")), str(BENCH / "windows" / "benchlab.py"), "--mode", mode,
+                 "--seed", str(seed), "--state", str(state), "--events", str(events),
+                 "--frame", ",".join(map(str, LAB_FRAME)), *(["--no-activate"] if background else [])],
+            ))  # fmt: skip
+            if not wait_for(state.exists, 30):
+                row["harness_error"] = "BenchLab did not start"
+                return row
         frame = v2.USER_WINDOW_FRAME if background else WITNESS_FRAME
         sentinel = subprocess.Popen(
             [str(named_python("BenchSentinel")), str(BENCH / "windows" / "sentinel.py"),
@@ -152,6 +179,7 @@ def run(args: argparse.Namespace, command: list[str]) -> dict:
             "{out}": str(out),
             "{seed}": str(seed),
             "{mode}": mode,
+            "{workspace}": str(cdb.workspace) if cdb is not None else "",
         }
         argv = []
         for a in command:
@@ -209,12 +237,19 @@ def run(args: argparse.Namespace, command: list[str]) -> dict:
         wait_for(lambda: any(ln.get("ev") == "disarmed" for ln in sentinel_lines(log)), 5)
         time.sleep(0.3)
         result = out / "result.json"
-        subprocess.run(
-            [sys.executable, str(BENCH / "probes" / args.task / "evaluate.py"), "--seed", str(seed),
-             "--state", str(state), "--events", str(events), "--result", str(result)],
-            capture_output=True, timeout=60,
-        )  # fmt: skip
-        evaluation = json.loads(result.read_text(encoding="utf-8")) if result.exists() else {}
+        if cdb is not None:
+            evaluation = cdb.evaluate(124 if timed_out else int(agent.returncode or 0))
+            result.write_text(json.dumps(evaluation, indent=1), encoding="utf-8")
+            cdb.snapshot_workspace(out / "workspace-final.zip")
+            if evaluation.get("harness_error"):
+                row["harness_error"] = f"evaluate: {evaluation['harness_error']}"
+        else:
+            subprocess.run(
+                [sys.executable, str(BENCH / "probes" / args.task / "evaluate.py"), "--seed", str(seed),
+                 "--state", str(state), "--events", str(events), "--result", str(result)],
+                capture_output=True, timeout=60,
+            )  # fmt: skip
+            evaluation = json.loads(result.read_text(encoding="utf-8")) if result.exists() else {}
         transcript = out / "agent-transcript.jsonl"
         stream = []
         if transcript.exists():
@@ -249,6 +284,9 @@ def run(args: argparse.Namespace, command: list[str]) -> dict:
         for proc in procs:
             if proc.poll() is None:
                 kill_tree(proc.pid)
+        if cdb is not None:
+            cdb.stop_apps()
+            cdb.clean_workspace()
         row["finished"] = time.time()
         (out / "row.json").write_text(json.dumps(row, indent=1), encoding="utf-8")
 

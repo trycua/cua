@@ -100,8 +100,7 @@ background.
   per platform" in `METHOD.md`). Rerun with the version you want
   to measure and record it.
 * **Rerun on your platform.** macOS: steps 1 to 5 under "Reproduce", one
-  condition per run. Linux: "Linux (the BenchLab tasks)". Windows: "Windows (the
-  BenchLab tasks)". Then `tools/analyze_v2.py` on the run directories. The
+  condition per run. Linux: "Linux (the BenchLab tasks)". Windows: "Windows". Then `tools/analyze_v2.py` on the run directories. The
   manifest decides which tasks run in which condition, so a rerun needs no task
   list.
 
@@ -357,7 +356,7 @@ Codex computer use is not available on Linux yet
 ([compatibility and limitations](https://learn.chatgpt.com/docs/linux/linux-app#compatibility-and-limitations)).
 `tests/test_linux_session.py` and `tests/test_linux_tools.py` check the session and the tools without a model.
 
-### Windows (the BenchLab tasks)
+### Windows
 
 The Windows port of BenchLab and the sentinel is in
 [`automated-eval/macos_bench/windows`](automated-eval/macos_bench/windows): Python with wxPython, so
@@ -427,6 +426,49 @@ Where Windows differs:
   and the tooltip control read the cursor position), so both stay foreground-only. A tooltip counts as
   shown when BenchLab's own tooltip window is visible.
 * **Brief.** "on your Mac" reads "on this Windows PC".
+
+#### Multi-app tasks on Windows (CDB-G02 to CDB-G04)
+
+The same launcher runs the pack's multi-app tasks from each task's own
+`platform/launch.windows.json` (`windows/cdb.py`): it resets the workspace with the pack's setup and
+byte-level verify, starts the apps, gives each window the descriptor's bounds, runs the agent as above, then
+runs the pack's evaluator and leaves the final workspace in `DIR\workspace-final.zip`. The workspace is
+`%USERPROFILE%\cdb-s0N`; `{workspace}` in the agent command is filled in.
+
+```powershell
+python launch\windows_session.py --task CDB-G03 --run-index 0 --condition background --out C:\bench\CDB-G03-bg-r0 -- <agent command>
+```
+
+Install before the trials (the network can be off during them):
+
+| Component | Version used | Where the descriptor expects it |
+|---|---|---|
+| Node.js | 22 or later (24.15.0 used) | `node` on `PATH` (the CDB-G04 archive site and its evaluator) |
+| Electron | 43.8.1, from each app's `package-lock.json` | `npm ci` in `taskpack/tasks/shared/cdb-s0N/apps/<app>`; if npm skips Electron's install script, run `node install.js` in `node_modules\electron` |
+| LibreOffice | 26.2 (26.2.6.3 used) | `C:\Program Files\LibreOffice\program` |
+| GnuCash | 5.17 (`gnucash-5.17.setup.exe`, sha256 `a3e8049755e536f647640762a483ebe1b6c79cc50cc81a746fa64a404e98d271`) | `C:\Program Files (x86)\gnucash\bin\gnucash.exe` |
+| Google Chrome | stable (157.0.8103.39 used) | `C:\Program Files\Google\Chrome\Application\chrome.exe` |
+
+Where the multi-app tasks differ on Windows:
+
+* **Electron apps.** Each app runs from a copy of the pack's own `electron.exe` named after its window title
+  (`Copperfield Mail.exe`, `Rillwatch Cases.exe`, ...) in the same `dist` folder, as macOS gives each app its
+  own bundle (Amendment 4): same binary, code and arguments, but a setup that names apps by process can tell
+  them apart.
+* **GnuCash preferences.** GnuCash keeps its preferences in the registry on Windows
+  (`HKCU\Software\GSettings\org\gnucash`), outside the task workspace, so the reset deletes that key:
+  every trial starts GnuCash with default preferences.
+* **LibreOffice updates.** LibreOffice's Windows updater can replace the installation when Calc starts. Turn
+  it off for the bench user before the trials: `org.openoffice.Office.Update/Update/Enabled` and
+  `org.openoffice.Office.Jobs/Jobs/UpdateCheck/Arguments/AutoCheckEnabled` set to `false` (as
+  `Software\Policies\LibreOffice` registry policies, which an administrator writes).
+* **Leftovers.** Before and after a trial the launcher stops the task's own executables in the desktop
+  session by exact name and whatever listens on the task's loopback port (4184 for CDB-G04).
+* **Validation.** `windows\cdb_oracle.py` stands in for the agent: by default it applies the scripted
+  correct solution of the pack's own test module to the workspace (the checker passes), `--noop` does
+  nothing (the checker fails, the user window stays undisturbed) and `--disturb` steals focus once (the
+  sentinel sees it). `tests/test_windows_cdb.py` checks the descriptors, the named executables and the
+  oracle without a desktop.
 
 ### Tests
 

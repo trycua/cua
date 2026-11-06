@@ -27,6 +27,7 @@ import summarize_sentinel  # noqa: E402
 import windows_session as WS  # noqa: E402
 
 BENCHLAB_TASKS = ("MB-09", "MB-10", "MB-11", "IR-01", "IR-02", "IR-03", "IR-04")
+CDB_TASKS = ("CDB-G02", "CDB-G03", "CDB-G04")
 
 
 def _emitted(path: Path) -> set[str]:
@@ -77,7 +78,7 @@ class ParityTest(unittest.TestCase):
             self.assertEqual(launch["app_args"], spec["app_args"], tid)
             self.assertEqual(launch["conditions"], manifest[tid]["conditions"], tid)
             self.assertIn("windows", manifest[tid]["os"])
-        self.assertEqual(set(WS.TASKS), set(BENCHLAB_TASKS))
+        self.assertEqual(set(WS.TASKS), set(BENCHLAB_TASKS) | set(CDB_TASKS))
 
 
 class BriefTest(unittest.TestCase):

@@ -156,7 +156,7 @@ fn home_dir() -> Result<PathBuf> {
     {
         let userprofile =
             std::env::var("USERPROFILE").map_err(|_| anyhow!("USERPROFILE not set"))?;
-        return Ok(PathBuf::from(userprofile).join(crate::bundle::user_home_subdirectory()));
+        Ok(PathBuf::from(userprofile).join(crate::bundle::user_home_subdirectory()))
     }
     #[cfg(not(windows))]
     {

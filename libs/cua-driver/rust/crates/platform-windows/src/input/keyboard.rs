@@ -104,7 +104,7 @@ fn owning_exe_basename(hwnd: HWND) -> Option<String> {
     }
     let path = String::from_utf16_lossy(&buf[..len as usize]);
     let name = path
-        .rsplit(|c: char| c == '\\' || c == '/')
+        .rsplit(['\\', '/'])
         .next()
         .unwrap_or(&path)
         .to_ascii_lowercase();
@@ -200,7 +200,7 @@ fn focused_descendant(parent: HWND) -> Option<HWND> {
             depth += 1;
             current = next;
         }
-        if current == parent && best.as_ref().map_or(true, |(d, _)| depth > *d) {
+        if current == parent && best.as_ref().is_none_or(|(d, _)| depth > *d) {
             best = Some((depth, focused));
         }
     }

@@ -1585,7 +1585,7 @@ fn spawn_detached_windows_daemon(
         .chain(std::iter::once(0))
         .collect::<Vec<_>>();
     let mut command_line = windows_command_line(executable, arguments);
-    let mut startup = STARTUPINFOW {
+    let startup = STARTUPINFOW {
         cb: std::mem::size_of::<STARTUPINFOW>() as u32,
         ..Default::default()
     };
@@ -1604,7 +1604,7 @@ fn spawn_detached_windows_daemon(
             CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS,
             None,
             PCWSTR::null(),
-            &mut startup,
+            &startup,
             &mut process,
         )
     }

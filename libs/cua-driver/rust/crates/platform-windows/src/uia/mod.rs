@@ -962,9 +962,11 @@ fn read_cached_bool(
 /// Read bounding rect as (center_x, center_y, Some((l,t,r,b))). Returns
 /// rect=None when the element has no meaningful BoundingRectangle (offscreen
 /// containers, structure-only elements).
+type BoundingRect = (i32, i32, i32, i32);
+
 fn read_cached_bounding_rect_full(
     element: &IUIAutomationElement,
-) -> (i32, i32, Option<(i32, i32, i32, i32)>) {
+) -> (i32, i32, Option<BoundingRect>) {
     unsafe {
         match element.CachedBoundingRectangle() {
             Ok(r) if r.right > r.left && r.bottom > r.top => (
@@ -1160,8 +1162,12 @@ fn filter_tree(markdown: &str, query: &str) -> String {
             ancestors.push("");
             last_emitted.push(None);
         }
-        for d in (depth + 1)..ancestors.len() {
-            last_emitted[d] = None;
+        for slot in last_emitted
+            .iter_mut()
+            .take(ancestors.len())
+            .skip(depth + 1)
+        {
+            *slot = None;
         }
         ancestors[depth] = line;
 
@@ -1201,8 +1207,8 @@ mod tests {
 
     fn chain(len: usize) -> Vec<Vec<usize>> {
         let mut children = vec![Vec::new(); len];
-        for i in 0..len.saturating_sub(1) {
-            children[i] = vec![i + 1];
+        for (i, slot) in children.iter_mut().enumerate().take(len.saturating_sub(1)) {
+            *slot = vec![i + 1];
         }
         children
     }

@@ -254,6 +254,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions: {}
+    # This job has no checkout, so the workflow-wide apps/cua-spaces default
+    # does not exist on the runner and the step cannot start.
+    defaults:
+      run:
+        working-directory: .
     steps:
       - name: Refuse beta versions
         env:

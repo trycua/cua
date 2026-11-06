@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Permission policy must shape the MCP tool roster as well as invocation.
 
 #![cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]

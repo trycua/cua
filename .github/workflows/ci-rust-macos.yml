@@ -51,8 +51,14 @@ env:
   CARGO_HTTP_MULTIPLEXING: "false"
 
 jobs:
+  quick:
+    name: quick
+    if: github.event_name == 'pull_request'
+    uses: ./.github/workflows/ci-quick.yml
+
   unit:
-    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
+    needs: quick
+    if: ${{ !failure() && !cancelled() && (!startsWith(github.head_ref, 'release-please--branches--')) }}
     name: Rust macOS unit
     runs-on: macos-latest
     timeout-minutes: 30

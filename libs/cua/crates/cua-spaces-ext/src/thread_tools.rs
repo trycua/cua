@@ -126,6 +126,12 @@ pub(crate) async fn call(
                     }),
                 })
                 .await?;
+            // A person writing into a hidden Space (the home warming for
+            // Home's prompt box) makes it visible: listed in the apps and on
+            // the owner's account from now on.
+            if e.author.kind == crate::thread::AuthorKind::Person {
+                let _ = spaces.reveal(t.store().space()).await;
+            }
             Ok(ToolOutcome::json(&json!({"entry": e})))
         }
         "thread_inbox" => {

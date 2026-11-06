@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Build identity of the running process: which source revision it was built
 //! from and the sha256 of the executable actually running.
 //!

@@ -80,7 +80,7 @@ function NetworkButton({ spaceId, summary }: { spaceId: string; summary: string 
       >
         <span className="shrink-0 text-muted-foreground">Network</span>
         <span className="flex min-w-0 items-center gap-1">
-          <span className="truncate">{summary}</span>
+          <span className="truncate" title={summary}>{summary}</span>
           <ChevronRightIcon className="size-3.5 shrink-0 text-muted-foreground" />
         </span>
       </button>
@@ -108,7 +108,7 @@ export function SecurityRows({ spaceId, className }: { spaceId: string; classNam
       >
         <span className="shrink-0 text-muted-foreground">Network</span>
         <span className="flex min-w-0 items-center gap-1">
-          <span className="truncate">{networkSummary(s.network)}</span>
+          <span className="truncate" title={networkSummary(s.network)}>{networkSummary(s.network)}</span>
           <ChevronRightIcon className="size-3.5 shrink-0 text-muted-foreground" />
         </span>
       </button>

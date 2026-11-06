@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Platform-agnostic browser-tool v1 core.
 //!
 //! Typed browser inspection, preparation, navigation, input, dialog, upload,

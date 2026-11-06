@@ -301,6 +301,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         // The host service still running from before an update: onto this build (CUA-2457).
         HelperService.restartIfStale()
+        // Cua Driver for this Mac's coding agents: its own login item,
+        // registered and started here whatever this Mac shares (CUA-3638).
+        if DriverService.isBundled(), EmbeddedDriver.current() != nil {
+            DispatchQueue.global(qos: .utility).async {
+                if let why = DriverService.start(restart: false) { NSLog("cua-spaces: %@", why) }
+            }
+        }
         start(Self.model)
         // The menu bar's low-disk warning: read now, then every 5 minutes.
         LowDiskMonitor.shared.start()

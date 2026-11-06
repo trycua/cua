@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Real Linux tool implementations (compiled only on Linux).
 
 use cua_driver_core::{
@@ -3033,6 +3036,13 @@ pub(crate) fn hyprland_input_result(result: anyhow::Result<Value>, foreground: b
             } else {
                 unavailable
             };
+            if !foreground && code.starts_with("client_") {
+                value["hint"] = json!(
+                    "This app does not take background pointer or key input on Hyprland's \
+                     agent seats. Use element_token (accessibility actions), the browser \
+                     tools for a browser page, or delivery_mode:\"foreground\"."
+                );
+            }
             value["reason"] = json!(code);
             value["code"] = json!(refusal);
             value["route"] = json!(if foreground {
@@ -3503,6 +3513,27 @@ fn failed_session_end_release_remains_retryable_and_bounded() {
         .unwrap()
         .insert(session_id.to_owned(), hold)
         .is_none());
+}
+
+#[cfg(test)]
+#[test]
+fn background_client_refusals_name_the_alternatives() {
+    for code in ["client_not_bound", "client_xwayland", "client_unattested"] {
+        let result = isolated_hyprland_result(Ok(json!({"ok":false,"code":code,"detail":code})));
+        let value = result.structured_content.as_ref().unwrap();
+        assert_eq!(value["code"], "background_unavailable");
+        assert_eq!(value["reason"], code);
+        assert!(value["hint"].as_str().unwrap().contains("element_token"));
+    }
+    let foreground = hyprland_input_result(
+        Ok(json!({"ok":false,"code":"client_not_bound","detail":"client_not_bound"})),
+        true,
+    );
+    assert!(foreground.structured_content.as_ref().unwrap()["hint"].is_null());
+    let other = isolated_hyprland_result(Ok(
+        json!({"ok":false,"code":"primary_target_busy","detail":"primary_target_busy"}),
+    ));
+    assert!(other.structured_content.as_ref().unwrap()["hint"].is_null());
 }
 
 #[cfg(test)]
@@ -4430,6 +4461,7 @@ pub fn build_registry_with_provider(
 ) -> ToolRegistry {
     let mut r = ToolRegistry::new_with_protected_consent_provider(provider);
     let state = ToolState::new_with_capture_service(r.capture_service());
+    crate::recording_hooks::install();
     if crate::wayland::is_wayland() && crate::wayland::hyprland::is_session() {
         let recording_state = Arc::downgrade(&state);
         r.recording

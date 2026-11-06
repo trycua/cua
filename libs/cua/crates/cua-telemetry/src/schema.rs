@@ -162,6 +162,12 @@ pub const ERROR_KINDS: &[&str] = &[
     // Cua Cloud has ended: a cloud create is refused up front. Expected, so
     // reports can leave it out of the failures that need a fix.
     "cloud_ended",
+    // QEMU, Lume or UEFI firmware missing; a container that exited at
+    // start; QEMU or Lume refusing or failing; any other engine error.
+    "vm_runtime_missing",
+    "container_exited",
+    "vm_error",
+    "engine_error",
     "env",
     "http",
     "unauthenticated",
@@ -556,6 +562,21 @@ pub const FAILED_STEPS: &[&str] = &[
     "connect_services",
     "unknown",
 ];
+/// The step a failed sign-in stopped at (`cua_onboarding_step` `signed_in`
+/// with outcome `error`), derived on device from its fixed `error_kind`,
+/// never from text: reaching Cua's sign-in service, confirming in the
+/// browser, the code exchange, saving the session on this computer, or
+/// stopped by the person. `unknown` when the kind says nothing about it;
+/// `none` for every other step and outcome.
+pub const SIGN_IN_STEPS: &[&str] = &[
+    "none",
+    "reach_service",
+    "confirm_in_browser",
+    "exchange_code",
+    "save_session",
+    "cancelled",
+    "unknown",
+];
 /// Time from create to ready (or to the failure), bucketed finely enough
 /// for median and p90 estimates.
 pub const CREATE_TIMES: &[&str] = &[
@@ -694,14 +715,13 @@ pub const PLANS: &[&str] = &["free", "pro", "teams", "unknown"];
 /// `cua-spaces-app-core` `experiments::Experiment::id`).
 pub const EXPERIMENTS: &[&str] = &[
     "cua_volume",
-    "your_cloud",
-    "sharing",
     "secure_spaces",
     "child_spaces",
     "ask_first",
     "ci_runners",
     "tcp_shares",
     "mobile",
+    "warm_pools",
 ];
 /// The Spaces app's interface language, as a fixed set: the languages it
 /// ships or plans to; any other language reads `other`. No region, no text.
@@ -1354,7 +1374,7 @@ pub const EVENTS: &[EventSpec] = &[
     },
     EventSpec {
         name: event::ONBOARDING_STEP,
-        version: 3,
+        version: 4,
         tier: Tier::Usage,
         sample_rate: 1.0,
         products: &[
@@ -1381,7 +1401,12 @@ pub const EVENTS: &[EventSpec] = &[
             p(
                 "error_kind",
                 Kind::Enum(ERROR_KINDS),
-                "A failed signed_in: why, as a fixed kind (timeout, cancelled, permission_denied, transport, unauthenticated, other); none otherwise. Never the message.",
+                "A failed signed_in: why, as a fixed kind (timeout, cancelled, permission_denied, transport, unauthenticated, http, internal, other); none otherwise. Never the message.",
+            ),
+            p(
+                "failed_step",
+                Kind::Enum(SIGN_IN_STEPS),
+                "A failed signed_in: the step it stopped at (reach_service, confirm_in_browser, exchange_code, save_session, cancelled), from its error_kind; unknown when the kind does not say; none otherwise.",
             ),
         ],
         purpose: "Install and onboarding funnel: where people drop off.",
@@ -1795,7 +1820,7 @@ pub const EVENTS: &[EventSpec] = &[
             p(
                 "experiments_on",
                 Kind::Set(EXPERIMENTS),
-                "The Spaces app's experiments turned on in Settings, Experiments on this install (cua_volume, your_cloud, sharing, secure_spaces, child_spaces, ask_first, ci_runners, tcp_shares, mobile, joined with +), or none.",
+                "The Spaces app's experiments turned on in Settings, Experiments on this install (cua_volume, secure_spaces, child_spaces, ask_first, ci_runners, tcp_shares, mobile, warm_pools, joined with +), or none.",
             ),
             p(
                 "ui_locale",
@@ -2230,7 +2255,7 @@ pub const EVENTS: &[EventSpec] = &[
             p(
                 "experiment",
                 Kind::Enum(EXPERIMENTS),
-                "Which experiment: cua_volume, your_cloud, sharing, secure_spaces, child_spaces, ask_first, ci_runners, tcp_shares or mobile.",
+                "Which experiment: cua_volume, secure_spaces, child_spaces, ask_first, ci_runners, tcp_shares, mobile or warm_pools.",
             ),
         ],
         purpose: "Which experiments people try, and which they turn off again.",

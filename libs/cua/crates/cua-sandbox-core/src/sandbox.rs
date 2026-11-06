@@ -1469,6 +1469,18 @@ impl Sandboxes {
         }
     }
 
+    /// Whether `name` is provably gone locally: a local runtime is
+    /// configured, nothing is recorded under it and the runtime answers
+    /// [`crate::RuntimeError::NotFound`]. Any other answer (no runtime, an
+    /// engine that is down) is not proof.
+    pub async fn local_name_gone(&self, name: &str) -> bool {
+        let Ok(rt) = self.local() else {
+            return false;
+        };
+        self.inner.state.load(name).is_none()
+            && matches!(rt.status(name).await, Err(crate::RuntimeError::NotFound(_)))
+    }
+
     /// Deletes local instance `name` straight through the local runtime,
     /// whether or not this machine recorded it: an instance whose create
     /// was cut off (its process died between starting it and recording

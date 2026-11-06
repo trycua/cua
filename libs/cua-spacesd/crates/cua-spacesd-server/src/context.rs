@@ -632,6 +632,11 @@ impl ServerContext {
         );
         // A machine attached at run time is a Space: it runs no gangs.
         mesh.gang_home = None;
+        // ... on the default network, which refuses the local network: its
+        // node does not probe the computers' local addresses (the network would
+        // refuse each probe and count it as something the Space tried). A
+        // network that opens the local network says so with `CUA_MESH_LAN=1`.
+        mesh.lan = std::env::var("CUA_MESH_LAN").is_ok_and(|v| v == "1");
         tokio::spawn(crate::mesh_host::run(mesh, stop.clone()));
         tokio::spawn(cua_relay::client::run(join, stop));
         Ok(())
@@ -682,6 +687,7 @@ impl ServerContext {
             recheck: crate::mesh_host::GATE_RECHECK,
             gang_home: home,
             gang_wait: crate::mesh_host::GANG_WAIT,
+            lan: true,
         }
     }
 

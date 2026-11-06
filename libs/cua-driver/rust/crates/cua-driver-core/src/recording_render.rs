@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Zoom-on-click renderer. Reads a recording directory produced by
 //! `start_recording`, builds an ffmpeg filter graph that applies the
 //! zoom curve from `recording_zoom`, and writes a new MP4.

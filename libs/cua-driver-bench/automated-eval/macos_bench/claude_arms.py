@@ -308,6 +308,54 @@ def check_cu_helper_pins(
     return out
 
 
+# Other vendors' tools, driven by Claude Code through minimal stdlib MCP adapters kept in tools/. The vendor tool is
+# installed by the reader (see README "Install each setup"); nothing of it is redistributed here. Server names are
+# the names the adapters announce.
+ADAPTER_TOOLS = HERE / "tools"
+AGENT_DESKTOP_DIR = WORK / "agent-desktop"
+AGENT_DESKTOP_BIN = Path(
+    os.environ.get("CDB_AGENT_DESKTOP_BIN")
+    or AGENT_DESKTOP_DIR / "node_modules" / ".bin" / "agent-desktop"
+)
+AGENT_DESKTOP_ADAPTER = ADAPTER_TOOLS / "agent_desktop" / "ad_mcp.py"
+AGENT_DESKTOP_SERVER = "agentdesktop"
+BROWSER_USE_DIR = WORK / "browser-use-harness"
+BROWSER_USE_BIN = Path(
+    os.environ.get("CDB_MACOS_HARNESS_BIN") or BROWSER_USE_DIR / "venv" / "bin" / "macos-harness"
+)
+BROWSER_USE_ADAPTER = ADAPTER_TOOLS / "browser_use_harness" / "bu_mcp.py"
+BROWSER_USE_SERVER = "browseruse"
+ADAPTER_ARMS = {
+    "cc-agent-desktop": AGENT_DESKTOP_SERVER,
+    "cc-browser-use": BROWSER_USE_SERVER,
+}
+
+
+def adapter_entry(arm: str) -> dict[str, Any]:
+    """The stdio MCP entry of an adapter arm: the adapter under a closed environment, pointing at the vendor binary."""
+    env = {
+        "HOME": os.environ.get("HOME", "/tmp"),
+        "PATH": CLAUDE_PATH,
+        "DO_NOT_TRACK": "1",
+    }
+    if arm == "cc-agent-desktop":
+        script = AGENT_DESKTOP_ADAPTER
+        env.update(
+            {"AD_BIN": str(AGENT_DESKTOP_BIN), "AD_HEADED": "agent", "AGENT_DESKTOP_TELEMETRY": "0"}
+        )
+    elif arm == "cc-browser-use":
+        script = BROWSER_USE_ADAPTER
+        env.update({"BU_BIN": str(BROWSER_USE_BIN), "BU_SHOT": "ondemand"})
+    else:
+        raise ValueError(f"not an adapter arm: {arm}")
+    return {
+        "type": "stdio",
+        "command": sys.executable,
+        "args": ["-I", "-B", str(script)],
+        "env": env,
+    }
+
+
 CODEX_CU_MCP_CANDIDATES = (
     WORK / "codex-access" / "mcp.json",
     WORK / "codex-access" / "mcp_cua_repl_computer.json",
@@ -332,6 +380,10 @@ ARM_DESCRIPTIONS = {
     "cc-claude-cu-helper": "Claude Code + "
     + CU_HELPER_LABEL
     + " (MCP server claude-cu-helper; Amendment 11), no skill",
+    "cc-agent-desktop": "Claude Code + Vercel agent-desktop 1.2.0 through a minimal MCP adapter (server agentdesktop), "
+    "the vendor skill text as the server instructions",
+    "cc-browser-use": "Claude Code + Browser Use macOS harness 0.2.1 through a minimal MCP adapter (server browseruse), "
+    "the vendor skill as the server instructions",
 }
 
 SKILL_PROMPT_HEADER = (
@@ -440,6 +492,13 @@ def mcp_config_for(
         path = run_dir / f"mcp-{arm}.json"
         path.write_text(json.dumps(config, indent=2) + "\n", "utf-8")
         return path, CU_HELPER_SERVER
+    if arm in ADAPTER_ARMS:
+        server = ADAPTER_ARMS[arm]
+        path = run_dir / f"mcp-{arm}.json"
+        path.write_text(
+            json.dumps({"mcpServers": {server: adapter_entry(arm)}}, indent=2) + "\n", "utf-8"
+        )
+        return path, server
     if arm in CODEX_ARMS:
         source = (
             resolve_codex_cu_config(codex_cu_config)

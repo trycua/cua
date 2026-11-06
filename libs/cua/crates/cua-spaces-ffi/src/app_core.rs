@@ -123,19 +123,7 @@ pub fn app_space_detail_live(
     core::spaces::sidebar::detail_live(&space, usage.as_ref(), host_arch.as_deref())
 }
 
-/// [`app_space_detail_live`] without what Settings, Experiments hides (the
-/// Share button while Sharing is off).
-#[uniffi::export]
-pub fn app_space_detail_with(
-    space: AppSpace,
-    usage: Option<AppSpaceUsage>,
-    host_arch: Option<String>,
-    experiments: AppExperiments,
-) -> AppSpaceDetail {
-    core::spaces::sidebar::detail_with(&space, usage.as_ref(), host_arch.as_deref(), &experiments)
-}
-
-/// [`app_space_detail_with`] as this device sees it: `access` (from
+/// [`app_space_detail_live`] as this device sees it: `access` (from
 /// [`app_machine_access_notice`]) greys out Connect on every Space reached
 /// through the relay while this device is not enrolled; one of your
 /// machines that does not share its desktop shows its note in place of the
@@ -145,14 +133,12 @@ pub fn app_space_detail_for(
     space: AppSpace,
     usage: Option<AppSpaceUsage>,
     host_arch: Option<String>,
-    experiments: AppExperiments,
     access: Option<AppMachineAccessNotice>,
 ) -> AppSpaceDetail {
     core::spaces::sidebar::detail_for(
         &space,
         usage.as_ref(),
         host_arch.as_deref(),
-        &experiments,
         access.as_ref(),
     )
 }
@@ -1061,6 +1047,14 @@ pub fn app_about_view(input: AppAboutInput) -> AppAboutView {
 #[uniffi::export]
 pub fn app_about_allowed_channels(channel: AppUpdateChannel) -> Vec<String> {
     core::about::allowed_channels(channel)
+}
+
+/// The appcast a Sparkle updater on `channel` reads, from the app's own
+/// `SUFeedURL` (`stable_feed`): the nightly appcast for Nightly; `None`
+/// keeps `SUFeedURL` (for Nightly: this feed has no nightly next to it).
+#[uniffi::export]
+pub fn app_about_feed_url(channel: AppUpdateChannel, stable_feed: String) -> Option<String> {
+    core::about::feed_url(channel, &stable_feed)
 }
 
 /// What this launch does (refresh after an update; the version to record).
@@ -2205,6 +2199,9 @@ fn sync_experiments_from_home(
     if let Some(on) = switch(home, Gate::Mobile) {
         experiments.mobile = on;
     }
+    if let Some(on) = switch(home, Gate::WarmPools) {
+        experiments.warm_pools = on;
+    }
     experiments
 }
 
@@ -2220,7 +2217,8 @@ fn sync_experiments_to_home(
     set_switch(home, Gate::AskFirst, experiments.ask_first)?;
     set_switch(home, Gate::CiRunners, experiments.ci_runners)?;
     set_switch(home, Gate::TcpShares, experiments.tcp_shares)?;
-    set_switch(home, Gate::Mobile, experiments.mobile)
+    set_switch(home, Gate::Mobile, experiments.mobile)?;
+    set_switch(home, Gate::WarmPools, experiments.warm_pools)
 }
 
 /// Writes the settings file, and keeps the experiments the daemon enforces
@@ -2277,22 +2275,15 @@ mod experiment_sync_tests {
                 || n == "ask-first"
                 || n == "ci-runners"
                 || n == "tcp-shares"
-                || n == "mobile"),
+                || n == "mobile"
+                || n == "warm-pools"),
             "{kept:?}"
         );
     }
 }
 
-/// The settings with the New UI as a launch of `version` shows it: the
-/// user's choice, else the default for the update channel and version
-/// (again after the channel changes).
-#[uniffi::export]
-pub fn app_settings_resolve_new_ui(settings: AppSettings, version: String) -> AppSettings {
-    core::settings::resolve_new_ui(&settings, &version)
-}
-
 /// The update channel of an install's first launch, from the file's
-/// `channel`: Beta for a prerelease, else unchanged.
+/// `channel`: Nightly for a prerelease, else unchanged.
 #[uniffi::export]
 pub fn app_settings_first_launch_channel(
     channel: AppUpdateChannel,

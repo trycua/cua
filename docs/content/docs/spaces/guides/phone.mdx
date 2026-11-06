@@ -40,6 +40,27 @@ if you last unlocked more than five minutes ago, so a stolen, unlocked phone is
 not instant access. It is on by default; Settings, Privacy turns it off. A phone
 with no passcode cannot be asked anything, and Settings says so.
 
+## Which Spaces it shows
+
+Every Space running on a computer that is signed in and sharing is on your
+account, so the phone lists it without a step from you, whichever way it was
+made: in the Mac app, with `cua spaces create`, from an SDK, by an agent or by
+a job. A new Space shows up a few seconds after it runs, and while you are
+creating many at once they are listed once you pause. A Space leaves the list when it stops or is deleted, and when you sign
+out of the computer. Only your account reaches them, and a Space you have not
+shared with anyone stays yours alone.
+
+To keep one Space off your account, make it with `--no-relay`
+(`cua spaces create --no-relay`); a child Space follows its parent. To keep all
+of them off, turn the setting off. `cua spaces ls` says which Spaces stay off.
+
+```bash test="cli-shape" id="relay-spaces-off"
+cua config set relay.spaces off
+```
+
+A Space you added by its address (`cua spaces add`) was not made by Cua and is
+never listed this way.
+
 ## What you can do
 
 - Start a task: write the job, pick an agent and the computer it runs on, and

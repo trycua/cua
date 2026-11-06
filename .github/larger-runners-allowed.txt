@@ -1,0 +1,10 @@
+# Opt-out list for scripts/ci/check-no-larger-runners.py (bin/ci --quick, check larger-runners).
+#
+# GitHub bills larger runners (macOS xlarge/large, Linux or Windows N-core,
+# custom larger-runner groups) even on public repositories. Standard runners on
+# trycua/cua are free. October 2026: $3.4k on this repo for larger runners.
+#
+# To allow one workflow to use one larger-runner label, add a line:
+#     <workflow file name> <label>   # why, who approved, tracking issue
+# Every entry needs a comment with the reason and Francesco's approval.
+# This list starts empty on purpose.

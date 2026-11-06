@@ -198,6 +198,7 @@ const LABS: Record<string, { label?: string; note: string }> = {
   "experiment:ci_runners": { note: "Run GitHub Actions jobs in a fresh Space each, on this computer. Adds CI Runners to the sidebar." },
   "experiment:tcp_shares": { note: "Share a game server or another TCP service in a Space at a public address." },
   "experiment:mobile": { note: "Your computers answer the Cua Spaces phone app: start a task, follow the thread and review changes." },
+  "experiment:warm_pools": { note: "Keep one Linux Space ready on this computer, with its coding apps installed, so the next Create from Home starts at once." },
 };
 
 async function checkExperiments(page: Page, checkpoints: ParityCheckpoint[]): Promise<number> {

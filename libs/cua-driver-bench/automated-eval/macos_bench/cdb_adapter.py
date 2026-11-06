@@ -19,6 +19,13 @@ Mechanical adaptations, all recorded in TASKS.md:
   them apart. Each app instead runs from its own copy of the pack's own `Electron.app`, with the app's window
   title as its name and its own bundle id (`com.trycua.cdbbench.<name>`). Same Electron binary, same app code,
   same arguments; only the bundle's name and id differ.
+
+The task manifest (`taskpack/v2-taskset.json`) also covers pack tasks under `tasks/v2/` that share `tasks/v2/_kit`. Their
+descriptors may declare native macOS apps (`kind: native`, exact `process_names`, started with `open -a`) and an
+optional `semantics.export` step that reads app data (Calendar, Reminders, Notes, Finder metadata) into the
+workspace after the agent and before the evaluator. A task whose selector says `"split": "heldout"` is read from the
+held-out pack (`CDB_TASKPACK_HELDOUT`, the same layout as the public pack), so the same adapter, reset, export and
+evaluator code runs both splits.
 """
 
 from __future__ import annotations
@@ -45,14 +52,59 @@ ELECTRON_DIST = Path("node_modules/electron/dist")
 
 
 REPO_TASKPACK = Path(__file__).resolve().parents[2] / "taskpack"
+FAIRNESS_DIR = Path(__file__).resolve().parents[2] / "fairness"
+TASKSET_FILE = REPO_TASKPACK / "v2-taskset.json"
 
 
-def pack_tasks_root() -> Path:
+def fairness():  # noqa: ANN201 - the runner-agnostic checks in ../../fairness (standard library only)
+    if str(FAIRNESS_DIR) not in sys.path:
+        sys.path.insert(0, str(FAIRNESS_DIR))
+    import cdb_fairness
+
+    return cdb_fairness
+
+
+def task_health(task_id: str) -> dict[str, Any]:
+    """The task's `health` block of the task-set manifest (automation apps, ready URLs, checker tools)."""
+    files = [TASKSET_FILE]
+    heldout = os.environ.get("CDB_TASKPACK_HELDOUT")
+    if heldout:  # held-out tasks keep their full entries in the held-out pack
+        files.insert(0, Path(heldout) / "v2-taskset.heldout.json")
+    for path in files:
+        if not path.is_file():
+            continue
+        for entry in json.loads(path.read_text("utf-8"))["tasks"]:
+            if entry["id"] == task_id and entry.get("health"):
+                return dict(entry["health"])
+    return {}
+
+
+def pack_tasks_root(spec: dict[str, Any] | None = None) -> Path:
+    if spec is not None and spec.get("split") == "heldout":
+        heldout = os.environ.get("CDB_TASKPACK_HELDOUT")
+        if not heldout:
+            raise RuntimeError(f"{spec.get('id')}: a held-out task needs CDB_TASKPACK_HELDOUT")
+        return Path(heldout) / "tasks"
     env = os.environ.get("CDB_TASKPACK")
     if env:
         return Path(env) / "tasks"
     work = ca.WORK / "taskpack"
     return (work if work.is_dir() else REPO_TASKPACK) / "tasks"
+
+
+def heldout_pins() -> dict[str, str]:
+    """Tree digests of the held-out pack's tasks (`<held-out pack>/pins.heldout.json` `tree_sha256`), else {}."""
+    heldout = os.environ.get("CDB_TASKPACK_HELDOUT")
+    path = Path(heldout) / "pins.heldout.json" if heldout else None
+    if path is None or not path.is_file():
+        return {}
+    return dict(json.loads(path.read_text("utf-8")).get("tree_sha256", {}))
+
+
+def shared_kit(spec: dict[str, Any]) -> Path | None:
+    """The shared helper tree a `v2/...` task's descriptor uses (`${bundle}/../_kit`), or None."""
+    kit = pack_tasks_root(spec) / spec["pack_task"] / ".." / "_kit"
+    return kit.resolve() if kit.is_dir() else None
 
 
 def missing_electron_apps(root: Path | None = None) -> tuple[list[str], list[str]]:
@@ -88,7 +140,9 @@ def node_facts(node: str = "/usr/local/bin/node") -> dict[str, str]:
 
 def _descriptor(spec: dict[str, Any]) -> dict[str, Any]:
     path = (
-        pack_tasks_root() / spec["pack_task"] / f"platform/launch.{desktop.detect_platform()}.json"
+        pack_tasks_root(spec)
+        / spec["pack_task"]
+        / f"platform/launch.{desktop.detect_platform()}.json"
     )
     return json.loads(path.read_text("utf-8"))
 
@@ -112,6 +166,12 @@ def allowed_app_names(spec: dict[str, Any]) -> set[str]:
             names.update({"libreoffice", "soffice"})
         if any("gnucash" in part.lower() for part in app["command"]):
             names.add("gnucash")
+        # native apps: their exact process names, and the app `open -a` names
+        names.update(str(n).lower() for n in app.get("process_names") or [])
+        if app["command"][:2] == ["/usr/bin/open", "-a"] and len(app["command"]) > 2:
+            names.add(str(app["command"][2]).lower())
+        if app.get("kind") == "native" and app.get("role"):
+            names.add(str(app["role"]).lower())
     return names
 
 
@@ -262,6 +322,10 @@ def kill_policy(spec: dict[str, Any]) -> tuple[list[str], list[int]]:
         names += ["soffice", "soffice.bin"]
     if "gnucash" in text.lower():
         names += ["gnucash", "Gnucash"]
+    for app in _descriptor(spec)["apps"]:  # native apps declare their exact process names
+        for name in app.get("process_names") or []:
+            if str(name) not in names:
+                names.append(str(name))
     ports = sorted({int(p) for p in re.findall(r"127\.0\.0\.1:(\d+)", text)})
     return names, ports
 
@@ -291,7 +355,7 @@ class CdbTask:
     def __init__(self, spec: dict[str, Any], artifacts: Path, seed: int | None = None) -> None:
         self.spec = spec
         self.seed = seed
-        self.bundle = pack_tasks_root() / spec["pack_task"]
+        self.bundle = pack_tasks_root(spec) / spec["pack_task"]
         self.descriptor = _descriptor(spec)
         self.artifacts = artifacts
         self.workspace = Path(
@@ -339,6 +403,29 @@ class CdbTask:
             self.log.append(f"reset.{step} rc={done.returncode}")
             if done.returncode != 0:
                 raise RuntimeError(f"reset {step} failed: {(done.stderr or done.stdout)[-400:]}")
+
+    def health_check(self) -> list[dict[str, Any]]:
+        """Fairness checks once the reset is done and the apps are up, before the agent (../../fairness/SPEC.md):
+        the checker toolchain is on the PATH the evaluator gets, loopback works for tasks with a local web app,
+        and every running app the reset or export automates accepts Apple events (macOS). A failed check raises,
+        so the trial is a harness error: re-run with the same seed, never scored."""
+        fx = fairness()
+        health = task_health(str(self.spec.get("id")))
+        resolve = {"python": sys.executable, "evaluator_node": self.node["path"]}
+        programs = list(health.get("evaluator_tools") or [])
+        programs += [
+            p for p in fx.programs_of_descriptor(self.descriptor, resolve) if p not in programs
+        ]
+        checks = fx.toolchain_health(programs, path=APP_PATH)
+        if health.get("ready_urls"):
+            checks.append(fx.loopback_health())
+        if desktop.detect_platform() == "macos" and health.get("automation_apps"):
+            checks += fx.appleevents_health(health["automation_apps"])
+        bad = [c for c in checks if not c.ok]
+        self.log.append(f"health {len(checks) - len(bad)}/{len(checks)} ok")
+        if bad:
+            raise RuntimeError("harness health: " + "; ".join(f"{c.name}: {c.reason}" for c in bad))
+        return [c.to_json() for c in checks]
 
     def brief(self) -> str:
         brief = self.sub(self.descriptor["semantics"].get("brief", "brief.md"))
@@ -422,7 +509,32 @@ class CdbTask:
         )
         return done.stdout.strip() or None
 
+    def export_state(self) -> int | None:
+        """The descriptor's optional `semantics.export` step: read app data the evaluator needs into the
+        workspace, as the bench user, after the agent and before the evaluator. None when there is none."""
+        command = self.descriptor["semantics"].get("export")
+        if not command:
+            return None
+        done = self._run(command, timeout=240)
+        self.log.append(f"export rc={done.returncode}")
+        (self.artifacts / "cdb-export.stderr").write_text((done.stderr or "")[-4000:], "utf-8")
+        return done.returncode
+
     def evaluate(self, agent_exit_code: int) -> dict[str, Any]:
+        """Run the export step and the evaluator. A result with `harness_error` set means the harness, not the
+        agent, failed (no export, no evaluator result): the runner re-runs that trial and never scores it."""
+        try:
+            export_rc = self.export_state()
+        except subprocess.TimeoutExpired:
+            export_rc = 124
+        if export_rc not in (None, 0):
+            return {
+                "passed": False,
+                "score": None,
+                "error": f"export step failed (rc {export_rc})",
+                "harness_error": "export_failed",
+                "diagnostics": {"export_rc": export_rc},
+            }
         result = self.artifacts / "cdb-result.json"
         if os.environ.get("CDB_EVAL_SUDO") == "1":
             # The pack's evaluator, oracle and hidden tests live in a home the agent's user cannot read.
@@ -457,7 +569,13 @@ class CdbTask:
             )
         (self.artifacts / "cdb-evaluator.stderr").write_text((done.stderr or "")[-4000:], "utf-8")
         if not result.is_file():
-            return {"passed": False, "score": None, "error": "evaluator wrote no result"}
+            return {
+                "passed": False,
+                "score": None,
+                "error": "evaluator wrote no result",
+                "harness_error": "evaluator_no_result",
+                "diagnostics": {"export_rc": export_rc},
+            }
         data = json.loads(result.read_text("utf-8"))
         checks_raw = (data.get("detail") or {}).get("checks") or data.get("checks") or {}
         checks = {
@@ -475,7 +593,12 @@ class CdbTask:
             "passed": bool(passed),
             "score": data.get("score"),
             "checks": checks,
-            "diagnostics": {"raw_keys": sorted(data)[:12]},
+            "diagnostics": {
+                "raw_keys": sorted(data)[:12],
+                # a task's own diagnostics (an IR task's `interruption`, for example) reach the row
+                **(data.get("diagnostics") if isinstance(data.get("diagnostics"), dict) else {}),
+                "export_rc": export_rc,
+            },
         }
 
     def stop_apps(self) -> None:

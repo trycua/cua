@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! In-memory read-time state for the guards: element fingerprints per
 //! snapshot, and the latest window image plus window fingerprint per window.
 //! Nothing goes to disk. Fingerprints of retired snapshots stay for the same

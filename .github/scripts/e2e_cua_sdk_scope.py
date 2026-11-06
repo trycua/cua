@@ -39,6 +39,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional, Sequence
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import ci_graph  # noqa: E402
+
 REPO = Path(__file__).resolve().parents[2]
 EXTRACT = REPO / "tests" / "e2e" / "cua-sdk" / "docs" / "extract.py"
 
@@ -90,6 +93,7 @@ PATHS = (
     ".github/actions/setup-protoc/**",
     ".github/actions/rust-cache/**",
     ".github/scripts/e2e_cua_sdk_scope.py",
+    ".github/scripts/ci_graph.py",
     ".github/workflows/e2e-cua-sdk.yml",
 )
 
@@ -116,8 +120,46 @@ def _glob(pattern: str) -> re.Pattern[str]:
 _INPUTS = [_glob(p) for p in PATHS]
 
 
-def is_input(path: str) -> bool:
-    return any(rx.match(path) for rx in _INPUTS)
+# The package graph narrows the two broad entries of PATHS (CUA-3558): a file under libs/cua/ or
+# libs/cua-spacesd/ is an input only when it belongs to the dependency closure of what the suite
+# builds and runs. The roots are the SDK and CLI crates, the static cua-spacesd, the cua-test-fixtures
+# crate (libs/cua-spacesd/tests/spaces-e2e), the Rust half of the suite and the TypeScript package.
+GRAPH_SCOPED = ("libs/cua/", "libs/cua-spacesd/")
+ROOT_NAMES = ("cua-sdk", "cua-cli", "cua-spacesd", "cua-sdk-e2e", "cua-spaces-e2e")
+ROOT_DIRS = ("libs/cua/typescript", "libs/cua/python")
+# Directories of libs/cua that the suite never builds, loads or runs.
+NOT_INPUT_DIRS = ("libs/cua/swift/", "libs/cua/kotlin/", "libs/cua/vz/", "libs/cua/bench/")
+
+
+def closure(graph: "ci_graph.Graph") -> set[str]:
+    roots = {d for n in ROOT_NAMES for d in graph.by_name(n)} | {d for d in ROOT_DIRS if d in graph.packages}
+    return graph.closure(roots)
+
+
+# Release notes and a package's top-level README are read by no build or test.
+_NOT_BUILT = re.compile(r"(^|.*/)CHANGELOG\.md\Z|libs/cua(-spacesd)?/[^/]+\.md\Z")
+
+
+def _graph_input(path: str, graph: "ci_graph.Graph", closed: set[str]) -> bool:
+    if _NOT_BUILT.match(path):
+        return False
+    if graph.workspace_file(path):
+        return True  # a workspace root manifest, lockfile or toolchain pin affects every member
+    if path.startswith(NOT_INPUT_DIRS):
+        return False
+    owner = graph.owner(path)
+    if owner is None:
+        return True  # scripts, protos, images, config: no package to ask, so it counts
+    # A package nested in a closure package (a crate's web/ folder) is built into it.
+    return owner in closed or any(owner.startswith(d + "/") for d in closed)
+
+
+def is_input(path: str, graph: Optional["ci_graph.Graph"] = None) -> bool:
+    if not any(rx.match(path) for rx in _INPUTS):
+        return False
+    if graph is not None and path.startswith(GRAPH_SCOPED):
+        return _graph_input(path, graph, closure(graph))
+    return True
 
 
 def is_page(path: str) -> bool:
@@ -197,6 +239,7 @@ def decide(
     event: str = "pull_request",
     head_ref: str = "",
     extract=None,
+    graph: Optional["ci_graph.Graph"] = None,
 ) -> tuple[bool, str]:
     if event != "pull_request":
         return True, f"{event} runs the suite"
@@ -208,7 +251,7 @@ def decide(
     for change in changes:
         touched = [change.path] + ([change.old_path] if change.old_path else [])
         for path in touched:
-            if is_input(path):
+            if is_input(path, graph):
                 return True, f"{path} is an input of the suite"
         if any(is_page(p) for p in touched):
             pages.append(change)
@@ -277,11 +320,16 @@ def main(argv: Sequence[str]) -> int:
         if event != "pull_request":
             run, why = True, f"{event} runs the suite"
         else:
+            try:
+                graph = ci_graph.load(args.repo)
+            except Exception:  # noqa: BLE001 - no graph, no narrowing: the old, wider filter
+                graph = None
             run, why = decide(
                 git_changes(args.repo, args.base, args.head),
                 git_reader(args.repo, args.base, args.head),
                 event,
                 head_ref,
+                graph=graph,
             )
     except Exception as exc:  # noqa: BLE001 - any doubt runs the suite
         run, why = True, f"cannot list the changed files ({exc}), failing closed"

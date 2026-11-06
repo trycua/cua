@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Incarnation-aware ownership encoded atomically in XIAddMaster's name.
 //! No separate property-write window can leave an unmarked new master after SIGKILL.
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};

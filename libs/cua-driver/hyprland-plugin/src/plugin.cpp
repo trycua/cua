@@ -1,6 +1,7 @@
 #include "inject_server.hpp"
 #if defined(CUA_HYPRLAND_TEST_INPUT) || defined(CUA_HYPRLAND_INPUT)
 #include "input_experiment.hpp"
+#include "user_seat_guard.hpp"
 #endif
 
 #include "cua_hyprland/protocol.hpp"
@@ -218,6 +219,14 @@ std::string status_output(bool json) {
 
     if (json) {
         auto result = cua::hyprland::render_status_json(report);
+#if defined(CUA_HYPRLAND_TEST_INPUT) || defined(CUA_HYPRLAND_INPUT)
+        // Whether popups and drags the user did not start are kept off the
+        // user's seat (user_seat_policy.hpp), and how many it withheld.
+        result.pop_back();
+        result += std::format(R"(,"user_seat_guard":{},"popup_grabs_withheld":{},"drags_withheld":{}}})",
+            cua::hyprland::user_seat_guard_active(), cua::hyprland::popup_grabs_withheld(),
+            cua::hyprland::drags_withheld());
+#endif
 #ifdef CUA_HYPRLAND_INPUT
         // Compiled keyboard behavior of this loaded module, reported whether or
         // not input is enabled, so an installer can tell it from an older module
@@ -341,6 +350,13 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
         }
     });
 
+#if defined(CUA_HYPRLAND_TEST_INPUT) || defined(CUA_HYPRLAND_INPUT)
+    // The agent seats can open popups and start drags in a background app, and
+    // so can an accessibility action; neither may take the user's seat. Best
+    // effort: without the hooks the plugin still works, and status says so.
+    static_cast<void>(cua::hyprland::install_user_seat_guard(handle));
+#endif
+
     return {
         "cua-hyprland-plugin",
         "Discovery foundation for isolated background computer use",
@@ -351,6 +367,9 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
 
 APICALL EXPORT void PLUGIN_EXIT() {
     g_config_listener.reset();
+#if defined(CUA_HYPRLAND_TEST_INPUT) || defined(CUA_HYPRLAND_INPUT)
+    cua::hyprland::remove_user_seat_guard();
+#endif
 #if defined(CUA_HYPRLAND_TEST_INPUT) || defined(CUA_HYPRLAND_INPUT)
     // Retire input directly so an in-flight action receives plugin_shutdown,
     // not the config-disable reason from stop_server()'s suspend path.

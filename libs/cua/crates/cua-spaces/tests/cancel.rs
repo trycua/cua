@@ -300,6 +300,30 @@ async fn a_cancel_after_a_restart_undoes_the_journal() {
         assert!(dir.join(format!("{name}.cancel")).exists());
     }
     assert_eq!(e.rt.deleted.lock().unwrap().as_slice(), ["orphan"]);
+
+    // Once the retained sandbox is gone (removed by hand, or never started),
+    // the next recovery retires its journal and marker instead of reporting
+    // it again on every restart. One whose sandbox still exists stays.
+    e.rt.running.lock().unwrap().remove("marked");
+    let got = e
+        .spaces
+        .recover_interrupted_creates(Duration::from_secs(1))
+        .await;
+    let outcome = |id: &str| got.iter().find(|r| r.id == id).map(|r| r.outcome.clone());
+    assert_eq!(
+        outcome("local:marked"),
+        Some(cua_spaces::RecoveryOutcome::NothingLeft),
+        "{got:?}"
+    );
+    assert!(matches!(
+        outcome("local:borrowed"),
+        Some(cua_spaces::RecoveryOutcome::Failed(_))
+    ));
+    assert!(!dir.join("marked.json").exists());
+    assert!(!dir.join("marked.cancel").exists());
+    assert!(dir.join("borrowed.json").exists());
+    assert!(e.rt.running.lock().unwrap().contains_key("borrowed"));
+    assert_eq!(e.rt.deleted.lock().unwrap().as_slice(), ["orphan"]);
 }
 
 /// Cancelled after the instance is up, while the create waits for its

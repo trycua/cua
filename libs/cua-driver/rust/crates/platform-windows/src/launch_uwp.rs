@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Launch packaged (Microsoft Store / UWP / MSIX) apps on Windows via
 //! `IApplicationActivationManager::ActivateApplication`.
 //!

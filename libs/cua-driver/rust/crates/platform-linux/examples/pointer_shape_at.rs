@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Print the pointer-shape backend's answers at screen points, for
 //! diagnosing presence cursor shapes inside a guest:
 //!

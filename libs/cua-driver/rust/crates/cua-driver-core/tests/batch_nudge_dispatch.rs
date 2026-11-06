@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! An agent that sends action after action as single calls is told, at the
 //! dispatch seam, to chain them with `run_steps`. Steps inside `run_steps` are
 //! never nudged.

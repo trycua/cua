@@ -4,7 +4,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { BridgeProvider, defaultTeam, eligibleTeams, setFlagOverride, useShareSheet } from "@/bridge";
+import { BridgeProvider, defaultTeam, eligibleTeams, useShareSheet } from "@/bridge";
 import type { DataAdapter } from "@/bridge/adapter";
 import { createDemoAdapter } from "@/bridge/adapters/demo";
 import type { CoreClient } from "@/bridge/core";
@@ -153,33 +153,7 @@ describe("Teams in Share and Add a machine", () => {
     expect([...document.querySelectorAll("[data-share-team]")].map((b) => b.textContent)).toEqual(["Share with Beta"]);
   });
 
-  it("without a team the sheet explains, links to Teams and offers nothing to share with", async () => {
-    const opened: string[] = [];
-    const { adapter } = host({ teams: [], currentTeamId: null } as never);
-    const base = adapter.call as (o: string, a: unknown) => Promise<unknown>;
-    (adapter as { call: unknown }).call = (op: string, args: Record<string, unknown>) => {
-      if (op === "session.openExternal") {
-        opened.push(String(args.url));
-        return Promise.resolve(null);
-      }
-      return base(op, args);
-    };
-    render(
-      <BridgeProvider adapter={adapter} core={shareCore()}>
-        <Opener />
-        <ShareSheet />
-      </BridgeProvider>,
-    );
-    await act(() => new Promise((r) => setTimeout(r, 10)));
-    fireEvent.click(screen.getByText("open"));
-    await waitFor(() => expect(document.querySelector("[data-share-disabled]")?.textContent).toBe("Sharing is for teams. Start a team to share this Space."));
-    expect(document.querySelector("[data-share-teams]")).toBeNull();
-    expect((document.querySelector("[data-share-who]") as HTMLInputElement).disabled).toBe(true);
-    expect(screen.getByText("See Teams")).toBeTruthy();
-  });
-
-  it("with the upsell cards on, an account with no team gets the card in place of the plain gate", async () => {
-    setFlagOverride("upsell_cards", true);
+  it("an account with no team gets the card in place of the plain gate", async () => {
     const opened: string[] = [];
     const { adapter } = host({ teams: [], currentTeamId: null } as never);
     const base = adapter.call as (o: string, a: unknown) => Promise<unknown>;

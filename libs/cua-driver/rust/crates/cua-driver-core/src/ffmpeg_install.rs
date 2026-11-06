@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Best-effort ffmpeg installer for the `install_ffmpeg` tool.
 //!
 //! The Linux/Windows video-recording backend shells out to the ffmpeg

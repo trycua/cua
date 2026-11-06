@@ -105,7 +105,7 @@ import Testing
         AppSpaceRow(id: id, name: String(id.split(separator: ":").last ?? ""), displayName: nil, provider: "local",
                     spacesdVersion: "0.5.3", features: ["desktop_stream"], addedAt: nil, os: .linux,
                     osName: nil, osPrettyName: nil, image: "ghcr.io/trycua/linux:24.04", imageDigest: nil,
-                    kind: .container, arch: nil, reachable: true, error: nil, host: nil, hostName: nil,
+                    kind: .container, arch: nil, hidden: false, reachable: true, error: nil, host: nil, hostName: nil,
                     power: nil, powerState: "running", cloud: nil, cloudPlace: nil, cloudDelete: nil, stopReason: nil, sharing: nil)
     }
 

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Per-test daemon lifecycle for CLI and MCP transport fixtures.
 
 use std::path::Path;

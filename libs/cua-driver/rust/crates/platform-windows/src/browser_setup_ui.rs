@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Exact Windows UIA setup for Chromium existing-profile attachment.
 
 use std::time::{Duration, Instant};

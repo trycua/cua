@@ -1861,14 +1861,14 @@ dependencies = [
 
 [[package]]
 name = "cua-cursor-motion"
-version = "0.38.0"
+version = "0.40.3"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "cua-driver-contract"
-version = "0.38.0"
+version = "0.40.3"
 dependencies = [
  "schemars",
  "serde",
@@ -1878,7 +1878,7 @@ dependencies = [
 
 [[package]]
 name = "cua-driver-core"
-version = "0.38.0"
+version = "0.40.3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1892,6 +1892,7 @@ dependencies = [
  "getrandom 0.4.3",
  "hkdf 0.12.4",
  "hmac 0.12.1",
+ "icu_normalizer",
  "image",
  "indexmap",
  "jsonschema",
@@ -1919,7 +1920,7 @@ dependencies = [
 
 [[package]]
 name = "cua-driver-sdk"
-version = "0.38.0"
+version = "0.40.3"
 dependencies = [
  "async-trait",
  "core-foundation 0.10.1",
@@ -2074,7 +2075,7 @@ dependencies = [
 
 [[package]]
 name = "cua-oidc"
-version = "0.10.1"
+version = "0.12.2"
 dependencies = [
  "async-trait",
  "aws-config",
@@ -2138,7 +2139,7 @@ dependencies = [
 
 [[package]]
 name = "cua-relay"
-version = "0.10.1"
+version = "0.12.2"
 dependencies = [
  "axum 0.8.9",
  "base64 0.22.1",
@@ -2200,12 +2201,14 @@ dependencies = [
 
 [[package]]
 name = "cua-spacesd"
-version = "0.10.1"
+version = "0.12.2"
 dependencies = [
  "axum 0.7.9",
  "bytes",
  "clap",
  "cua-driver-core",
+ "cua-driver-sdk",
+ "cua-home",
  "cua-logging",
  "cua-media-codec",
  "cua-media-protocol",
@@ -2281,7 +2284,7 @@ dependencies = [
 
 [[package]]
 name = "cua-spacesd-desktop"
-version = "0.10.1"
+version = "0.12.2"
 dependencies = [
  "async-trait",
  "axum 0.8.9",
@@ -2330,7 +2333,7 @@ dependencies = [
 
 [[package]]
 name = "cua-spacesd-doctor"
-version = "0.10.1"
+version = "0.12.2"
 dependencies = [
  "bytes",
  "cua-hotspot",
@@ -2372,7 +2375,7 @@ dependencies = [
 
 [[package]]
 name = "cua-spacesd-provider-api"
-version = "0.10.1"
+version = "0.12.2"
 dependencies = [
  "cua-media-protocol",
  "serde_json",
@@ -2381,7 +2384,7 @@ dependencies = [
 
 [[package]]
 name = "cua-spacesd-server"
-version = "0.10.1"
+version = "0.12.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2449,7 +2452,7 @@ dependencies = [
 
 [[package]]
 name = "cua-spacesd-session"
-version = "0.10.1"
+version = "0.12.2"
 dependencies = [
  "cua-media-codec",
  "cua-media-protocol",
@@ -2466,7 +2469,7 @@ dependencies = [
 
 [[package]]
 name = "cua-spacesd-socks"
-version = "0.10.1"
+version = "0.12.2"
 dependencies = [
  "cua-hotspot",
  "futures-util",
@@ -2476,14 +2479,14 @@ dependencies = [
 
 [[package]]
 name = "cua-spacesd-supervise"
-version = "0.10.1"
+version = "0.12.2"
 dependencies = [
  "libc",
 ]
 
 [[package]]
 name = "cua-spacesd-teleport"
-version = "0.10.1"
+version = "0.12.2"
 dependencies = [
  "cua-chromium-storage",
  "cua-teleport-bundle",
@@ -2500,7 +2503,7 @@ dependencies = [
 
 [[package]]
 name = "cua-spacesd-test-apps"
-version = "0.10.1"
+version = "0.12.2"
 dependencies = [
  "libc",
  "libloading",
@@ -2563,7 +2566,7 @@ dependencies = [
 
 [[package]]
 name = "cursor-overlay"
-version = "0.38.0"
+version = "0.40.3"
 dependencies = [
  "anyhow",
  "cua-cursor-motion",
@@ -5284,7 +5287,7 @@ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
 name = "pip-preview"
-version = "0.38.0"
+version = "0.40.3"
 dependencies = [
  "serde_json",
 ]
@@ -5314,7 +5317,7 @@ checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
 
 [[package]]
 name = "platform-linux"
-version = "0.38.0"
+version = "0.40.3"
 dependencies = [
  "anyhow",
  "ashpd",
@@ -5358,7 +5361,7 @@ dependencies = [
 
 [[package]]
 name = "platform-macos"
-version = "0.38.0"
+version = "0.40.3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5396,7 +5399,7 @@ dependencies = [
 
 [[package]]
 name = "platform-windows"
-version = "0.38.0"
+version = "0.40.3"
 dependencies = [
  "anyhow",
  "async-trait",

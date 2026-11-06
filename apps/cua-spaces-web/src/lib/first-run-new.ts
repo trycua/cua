@@ -10,6 +10,8 @@
  * 1b Finish signing in in your browser: Try again, Use a code instead; "Sign-in didn't finish".
  * 2 Pick where your agents work: this Mac, the account's other computers (offline ones can't be
  *   picked), Add another computer you own, and a separate computer on this Mac.
+ * 2b On a Mac: let Cua Spaces see and use apps (Screen Recording and Accessibility, which Cua Driver
+ *   uses too), each with Allow, or Later. `lib/app-permissions.ts` has its words.
  * 3 The coding agent found on this Mac, or Install Claude Code / Install Codex instead.
  * 4 Ready: "<agent> can now use <computers>", one line to try in their own terminal.
  * 6 Next steps: invite a teammate, add another computer, let agents use apps on this Mac.
@@ -18,9 +20,14 @@
 import type { Machine, SignInPhase } from "@/bridge";
 import { relativeTime } from "@/lib/utils";
 
-export type NewRunScreen = "welcome" | "signin" | "where" | "agent" | "ready" | "next";
+export type NewRunScreen = "welcome" | "signin" | "where" | "permissions" | "agent" | "ready" | "next";
 
-export const NEW_RUN_SCREENS: NewRunScreen[] = ["welcome", "signin", "where", "agent", "ready", "next"];
+export const NEW_RUN_SCREENS: NewRunScreen[] = ["welcome", "signin", "where", "permissions", "agent", "ready", "next"];
+
+/** The screen after 2: the permissions step on a Mac, else the coding agent. */
+export function afterWhere(os: string): NewRunScreen {
+  return os === "macos" ? "permissions" : "agent";
+}
 
 /** What the run keeps between launches (inside the first run's saved record, so Reset & Show clears it). */
 export interface NewRunSaved {
@@ -33,9 +40,11 @@ export interface NewRunSaved {
   addedInRun: boolean;
   /** The separate computer's create (its pending row id), once asked for. */
   separatePendingId: string | null;
+  /** The furthest step dot reached (0 to 2), so a dot can go forward again only to a step already reached. */
+  reached: number;
 }
 
-export const NEW_RUN_EMPTY: NewRunSaved = { screen: "welcome", picks: ["this"], agent: null, addedInRun: false, separatePendingId: null };
+export const NEW_RUN_EMPTY: NewRunSaved = { screen: "welcome", picks: ["this"], agent: null, addedInRun: false, separatePendingId: null, reached: 0 };
 
 /** "this Mac", "this PC", "this machine" (the app's THIS_MACHINE). */
 export function placeName(os: string): string {
@@ -115,8 +124,28 @@ export interface ComputerRow {
   os: "macos" | "windows" | "linux" | null;
   sub: string;
   picked: boolean;
-  /** Offline: shown greyed, with no check circle, and it can't be picked. */
+  /** Offline or not sharing: shown greyed, with no check circle, and it can't be picked. */
   disabled: boolean;
+  /** Offline: with others offline too, it folds into one "N offline" row (`OfflineFold`). */
+  offline: boolean;
+}
+
+/** Offline computers folded into one row, so a long list never pushes Continue off the screen. */
+export interface OfflineFold {
+  /** "14 offline". */
+  label: string;
+  sub: string;
+  rows: ComputerRow[];
+}
+
+/** From this many offline computers on, they fold into one row; a single one is shown as itself. */
+export const OFFLINE_FOLD_AT = 2;
+
+/** The offline rows as one fold, or null when there are too few to fold. */
+export function offlineFold(rows: readonly ComputerRow[]): OfflineFold | null {
+  const off = rows.filter((r) => r.offline);
+  if (off.length < OFFLINE_FOLD_AT) return null;
+  return { label: `${off.length} offline`, sub: "They can be picked once they're back online.", rows: off };
 }
 
 export interface WhereView {
@@ -137,6 +166,8 @@ export interface WhereView {
   };
   /** Signed in: the account's other computers (empty: `emptyLine`). Signed out: null, and `signInLine` shows instead. */
   others: ComputerRow[] | null;
+  /** The offline ones among `others`, folded into one row (null: none, or only one, which shows as itself). */
+  offlineFold: OfflineFold | null;
   othersLabel: string;
   emptyLine: string;
   signInLine: { link: string; rest: string } | null;
@@ -189,7 +220,7 @@ export function otherComputers(input: Pick<WhereInput, "machines" | "picks" | "n
           ? "Not sharing"
           : `${os ? OS_WORD[os] : "Computer"} · ready`;
       const disabled = offline || Boolean(m.notSharing);
-      return { id: m.id, name: m.name, os, sub, picked: !disabled && input.picks.includes(m.id), disabled };
+      return { id: m.id, name: m.name, os, sub, picked: !disabled && input.picks.includes(m.id), disabled, offline };
     });
 }
 
@@ -228,6 +259,7 @@ export function whereView(input: WhereInput): WhereView {
       line: `Your agents can work on ${place} without an account. Add ${place} to an account when you want them on your other computers too.`,
       thisRow: { name: Place, status: "not added yet", tick: false, model: input.model, modelFirst: true, picked: thisPicked, action: { id: "add", label: "Add" } },
       others: null,
+      offlineFold: null,
       othersLabel: "Other computers in your account",
       emptyLine: "",
       signInLine: { link: "Sign in", rest: " to see your other computers." },
@@ -236,6 +268,7 @@ export function whereView(input: WhereInput): WhereView {
       continueEnabled: input.picks.length > 0,
     };
   }
+  const others = otherComputers(input);
   const status =
     input.thisState === "adding"
       ? "Adding to your account…"
@@ -256,7 +289,8 @@ export function whereView(input: WhereInput): WhereView {
       picked: thisPicked,
       action: input.thisState === "failed" ? { id: "retry-add", label: "Try again" } : null,
     },
-    others: otherComputers(input),
+    others,
+    offlineFold: offlineFold(others),
     othersLabel: "Other computers in your account",
     emptyLine: "None yet. Computers you or your team sign in on show up here.",
     signInLine: null,
@@ -410,5 +444,43 @@ export function nextView(input: { os: string }): NextView {
 
 /** Which progress dot is lit (screens 1 to 3 have dots; 4 and 6 none). */
 export function dotFor(screen: NewRunScreen): number | null {
-  return screen === "welcome" || screen === "signin" ? 0 : screen === "where" ? 1 : screen === "agent" ? 2 : null;
+  return screen === "welcome" || screen === "signin" ? 0 : screen === "where" || screen === "permissions" ? 1 : screen === "agent" ? 2 : null;
+}
+
+/** The screen each step dot opens. */
+export const DOT_SCREENS = ["welcome", "where", "agent"] as const satisfies readonly NewRunScreen[];
+
+/** Each step's name, read out with its dot ("Step 2 of 3: Pick where your agents work"). */
+export const DOT_NAMES = [WELCOME.title, "Pick where your agents work", "Pick your coding agent"] as const;
+
+/** How far a run has got, once it's on `screen`: Ready and Next steps count as past the last dot. */
+export function reachedAfter(reached: number, screen: NewRunScreen): number {
+  return Math.max(reached, dotFor(screen) ?? DOT_SCREENS.length - 1);
+}
+
+export interface StepDot {
+  /** "Step 2 of 3: Pick where your agents work". */
+  label: string;
+  current: boolean;
+  /** The screen a click opens; null: it can't be opened from here (a step not reached yet, or the one showing). */
+  to: NewRunScreen | null;
+}
+
+/**
+ * The step dots on `screen`. A dot opens any earlier step, and a later step only once the run has
+ * reached it, so a dot never skips the sign-in. On the sign-in, the first dot goes back to its start.
+ */
+export function stepDots(screen: NewRunScreen, reached: number): StepDot[] | null {
+  const at = dotFor(screen);
+  if (at === null) return null;
+  return DOT_SCREENS.map((to, i) => {
+    const open = to !== screen && (i <= at || i <= reached);
+    return { label: `Step ${i + 1} of ${DOT_SCREENS.length}: ${DOT_NAMES[i]}`, current: i === at, to: open ? to : null };
+  });
+}
+
+/** The step an arrow key moves to from the dot at `from`: the nearest one in that direction that can be opened. */
+export function dotStep(dots: readonly StepDot[], from: number, dir: -1 | 1): number | null {
+  for (let i = from + dir; i >= 0 && i < dots.length; i += dir) if (dots[i]!.to) return i;
+  return null;
 }

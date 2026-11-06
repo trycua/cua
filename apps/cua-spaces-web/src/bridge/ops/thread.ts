@@ -14,7 +14,7 @@
  * | `thread.post {spaceId, text, replyTo?, answer?, toSession?, view?}` | `thread_post` | the tool's JSON as-is | unsupported |
  * | `thread.members {spaceId}` | `agent_members` | the tool's JSON as-is | unsupported |
  * | `thread.setRights {spaceId, name, task?, control?, approve?}` | `agent_set_rights` | the tool's JSON as-is | unsupported |
- * | `thread.agentAdd {spaceId, name, harness}` | `agent_add` | the tool's JSON as-is | unsupported |
+ * | `thread.agentAdd {spaceId, name, harness, model?, standby?, brief?}` | `agent_add` | the tool's JSON as-is | unsupported |
  * | `thread.agentRemove {spaceId, name}` | `agent_remove` | the tool's JSON as-is | unsupported |
  * | `thread.joinCodeCreate {spaceId, ttlS?, canTask?, askBeforeJoin?}` | `thread_join_code_create` | the tool's JSON as-is | unsupported |
  * | `thread.joinCodeList {spaceId}` | `thread_join_code_list` | the tool's JSON as-is | unsupported |
@@ -320,6 +320,12 @@ export interface ThreadAgentAddArgs {
   name: string;
   /** The harness id (`hermes`, `claude-code`, `openai-codex`, ...). */
   harness: string;
+  /** The model its next message uses (an open session switches to it before the turn). On a member that exists, it is updated. */
+  model?: string;
+  /** Keep its run open with the session ready, so a message starts its turn at once. */
+  standby?: boolean;
+  /** Standing instructions: the first message each run takes carries them in front of its text. */
+  brief?: string;
 }
 
 export interface ThreadJoinCodeCreateArgs {
@@ -496,7 +502,14 @@ export function threadSetRightsArgs(a: ThreadSetRightsArgs): Json {
 export const threadAgentRemoveArgs = (a: ThreadAgentRemoveArgs): Json => ({ name: a.name });
 
 /** `agent_add`: a started member of the Space (`agent` is the harness id). */
-export const threadAgentAddArgs = (a: ThreadAgentAddArgs): Json => ({ space: a.spaceId, name: a.name, agent: a.harness });
+export const threadAgentAddArgs = (a: ThreadAgentAddArgs): Json => ({
+  space: a.spaceId,
+  name: a.name,
+  agent: a.harness,
+  ...(a.model ? { model: a.model } : {}),
+  ...(a.standby !== undefined ? { standby: a.standby } : {}),
+  ...(a.brief ? { brief: a.brief } : {}),
+});
 
 export function threadJoinCodeCreateArgs(a: ThreadJoinCodeCreateArgs): Json {
   const out: Json = { space: a.spaceId };

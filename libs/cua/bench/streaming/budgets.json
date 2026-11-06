@@ -103,8 +103,8 @@
     {
       "match": "runsc/*/rust/avsync",
       "metric": "av_skew_abs_ms_p50",
-      "max": 80,
-      "note": "gVisor (runsc) exception, measured 2026-09-22: the avsync fixture writes its beep with pacat (--latency-msec=20) and draws the flash at the same instant; in-container parec onset detection shows the beep reaching the sink monitor 40-53 ms after the write under runsc vs 18-42 ms under runc (pipewire-pulse IPC and timers run through the gVisor Sentry), while the flash is drawn within 1 ms in both. The capture side is not the cause: monitor delivery jitter is the same in both runtimes (p50 4-7 ms, rate within 0.2% of real time). So the skew is the fixture content's own playback latency, which does not fit ±40 under runsc; the driver reports it as an audio.desktop limitation under gVisor."
+      "max": 150,
+      "note": "gVisor (runsc) exception, measured 2026-09-22: the avsync fixture writes its beep with pacat (--latency-msec=20) and draws the flash at the same instant; in-container parec onset detection shows the beep reaching the sink monitor 40-53 ms after the write under runsc vs 18-42 ms under runc (pipewire-pulse IPC and timers run through the gVisor Sentry), while the flash is drawn within 1 ms in both. The capture side is not the cause: monitor delivery jitter is the same in both runtimes (p50 4-7 ms, rate within 0.2% of real time). So the skew is the fixture content's own playback latency, which does not fit ±40 under runsc; the driver reports it as an audio.desktop limitation under gVisor. Re-baselined 2026-11-05 (CUA-3274): nightly history shows two hosted-runner classes; on the slower class (the static scenario also costs more container CPU) the runsc playback latency roughly doubles, and 80 failed there with no code change. 150 covers the slower class with headroom and still sits well under the 250 audio latency budget."
     },
     {
       "match": "*/rust/avsync",

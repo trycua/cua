@@ -7,7 +7,8 @@ name: "CI: Cua Spaces for macOS (SwiftUI)"
 # (libs/spaces-app-swift: drift gate and tests), the notch package shared
 # with the Electron app's notch helper (libs/spaces-notch-swift), the Swift package's unit,
 # parity and snapshot tests, the app bundle (with Sparkle, and a launch
-# check), and the XCUITests. Unsigned; the only secret is the optional
+# check), and the XCUITests (the bundle and the XCUITests run on a pull request
+# only when it changes a packaging path, see `changes`; always on main). Unsigned; the only secret is the optional
 # Sparkle key, for the appcast dry run. The Keyvault's live paths need a daemon and are not
 # exercised here (the view models run against a fake broker).
 #
@@ -88,8 +89,55 @@ env:
   CARGO_HTTP_MULTIPLEXING: "false"
 
 jobs:
+  quick:
+    name: quick
+    if: github.event_name == 'pull_request'
+    uses: ./.github/workflows/ci-quick.yml
+
+  # What the app bundle job (bundle, launch check, XCUITest; about an hour on a
+  # cold runner) must prove is packaging: the build scripts, the bundle's
+  # resources and plists, the XcodeGen project and the UI tests, the Swift
+  # package manifests and the pinned driver. A pull request runs that job only
+  # when it changes one of those paths. Every push to main and every manual run
+  # runs it, so any other change is checked after it merges, and a failure there
+  # alerts and opens an issue (ci-postmerge-issue.yml).
+  changes:
+    name: changes
+    needs: quick
+    if: ${{ !failure() && !cancelled() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    defaults:
+      run:
+        working-directory: /tmp
+    outputs:
+      packaging: ${{ steps.scope.outputs.packaging }}
+    steps:
+      - id: scope
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          packaging=true
+          if [[ "$EVENT" == pull_request ]]; then
+            files=$(gh api --paginate "repos/$REPO/pulls/$PR_NUMBER/files?per_page=100" --jq '.[].filename')
+            if grep -Eq '^(apps/cua-spaces-macos/(scripts/|Support/|UITests/|project\.yml$|Package\.swift$|Package\.resolved$|cua-driver\.release\.json$|BUNDLED_CUA_VERSION$|VERSION$)|libs/spaces-app-swift/scripts/|\.github/workflows/ci-cua-spaces-macos\.yml$)' <<<"$files"; then
+              packaging=true
+            else
+              packaging=false
+            fi
+          fi
+          echo "packaging=$packaging" | tee -a "$GITHUB_OUTPUT" "$GITHUB_STEP_SUMMARY"
+
   core:
-    if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--')) }}
+    needs: quick
+    if: ${{ !failure() && !cancelled() && ((github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--'))) }}
     name: app core (Rust) + FFI mirror gate
     runs-on: ubuntu-24.04
     defaults:
@@ -128,7 +176,8 @@ jobs:
   # each compiling it (the checks that need the Rust toolchain compile only
   # the small bindgen tools).
   ffi:
-    if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--')) }}
+    needs: quick
+    if: ${{ !failure() && !cancelled() && ((github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--'))) }}
     name: Cua Spaces app library (built once)
     runs-on: macos-26
     # A cold build takes 20 to 60+ minutes (a push to main ran 73 minutes). 45
@@ -286,9 +335,11 @@ jobs:
           pnpm native -- --skip-build --check-bindings
 
   app-bundle:
-    if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) }}
+    # On a pull request only when it changes a packaging path (see `changes`);
+    # always on main and on a manual run.
+    if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (github.event_name != 'pull_request' || needs.changes.outputs.packaging == 'true') }}
     name: SwiftUI app (bundle, launch check, XCUITest)
-    needs: ffi
+    needs: [ffi, changes]
     runs-on: macos-26
     timeout-minutes: 45
     steps:

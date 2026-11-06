@@ -13,7 +13,9 @@ Usage:
 
 The workflows have no event-level `paths:` filter: a cheap ubuntu scope job is
 the only thing that always runs, so the `ci:full` label, pushes to main and the
-nightly schedule reach it whatever changed. `scope` writes GitHub Actions
+nightly schedule reach it whatever changed. A push to main is scoped like a pull
+request, by the paths the push changed (the workflow lists them for the openkoalabot
+lane; an empty listing fails closed to the full build). `scope` writes GitHub Actions
 outputs (`run`, plus `typescript` for the openkoalabot lane, and `reason`).
 `check-manifests` fails when the dependency map below no longer matches the
 repository.
@@ -37,10 +39,10 @@ vmm, spaces, host, ...). A change there that alters the Swift API must
 regenerate libs/cua/swift/Sources/CuaSDK, which the `bindings drift` job of
 ci-cua-sdk.yml enforces on every libs/cua pull request, and that path is a
 trigger here. A change that only alters runtime behavior is covered by the
-full run on every push to main and the nightly schedule.
+nightly full run.
 
-Always the full build: any event other than pull_request (every push to main,
-the schedule, a manual run), a pull request labelled `ci:full`, a change to the
+Always the full build: any event other than pull_request or push (the nightly
+schedule, a manual run), a pull request labelled `ci:full`, a change to the
 workflow or this script, and a file listing that is empty or may be truncated
 (fail closed). The file listing carries both names of a renamed file, so moving
 a dependency out of a mapped directory still counts. Release-please branches
@@ -153,7 +155,7 @@ def decide(
     """
     inert = INERT if inputs is None else re.compile(r"(?!)")
     inputs = LANES[lane]["inputs"] if inputs is None else inputs
-    if event != "pull_request":
+    if event not in ("pull_request", "push"):
         return True, f"{event} runs the full build"
     if "ci:full" in labels:
         return True, "ci:full label"

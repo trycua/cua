@@ -12,8 +12,6 @@ description: "Your computers, unattended access on this computer, teams and your
 
 | Command | Description |
 | --- | --- |
-| [`cua machines`](#cua-machines) | Your computers on the relay: remove one that is gone. |
-| [`cua machines rm`](#cua-machines-rm) | Remove a computer that is gone: its row leaves your relay directory, then the signed-in device with exactly its name is revoked (never this device; nothing when several match). |
 | [`cua host`](#cua-host) | Unattended access to this computer (setup, status, stop, start, remove). |
 | [`cua host setup`](#cua-host-setup) | Set this computer up for unattended access: install cua-spacesd as a service that joins the cua.ai relay as your account (default) or serves on a direct ip:port. |
 | [`cua host pair`](#cua-host-pair) | Make a one-time code (with a link and the install command) that adds another computer to your account: run the command it prints on that computer. |
@@ -57,37 +55,6 @@ description: "Your computers, unattended access on this computer, teams and your
 | [`cua usage`](#cua-usage) | Your remote use this month: live sessions, remote hours, and your plan. |
 
 Every command also accepts the [global options](/cua-cli/reference/cli#global-options).
-
-## `cua machines`
-
-Your computers on the relay: remove one that is gone.
-
-```text output
-cua machines [OPTIONS] <COMMAND>
-```
-
-### `cua machines rm`
-
-Remove a computer that is gone: its row leaves your relay directory, then the signed-in device with exactly its name is revoked (never this device; nothing when several match). A computer that is connected now is refused: run `cua host remove` on it.
-
-```text output
-cua machines rm [OPTIONS] <NAME>
-```
-
-| Argument | Type | Default | Description |
-| --- | --- | --- | --- |
-| `<NAME>` | string | required | The computer's name, machine id or `relay:<id>` (`cua spaces ls`). |
-
-| Flag | Short | Type | Default | Description |
-| --- | --- | --- | --- | --- |
-| <span id="cua-machines-rm--yes"></span>`--yes` | `-y` | boolean | `false` | Remove without asking. |
-
-**Examples**
-
-```bash test="cli-shape" id="ref-cua-machines-rm"
-cua machines rm old-laptop
-cua machines rm relay:0123abcd4567ef89 --yes --json
-```
 
 ## `cua host`
 

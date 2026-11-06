@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! `get_guide` through the real registry: listed, callable without a session,
 //! closed to unknown arguments, and pointed at from the tools that need it.
 

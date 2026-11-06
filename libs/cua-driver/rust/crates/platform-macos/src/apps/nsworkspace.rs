@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Thin NSWorkspace launch helpers.
 //!
 //! Wraps the two AppKit launch entry points used by Swift's `AppLauncher.swift`:

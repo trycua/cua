@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! macOS implementation of the cross-platform `PageBackend` trait.
 //!
 //! Routes by `bundle_id` / Electron-detection / WKWebView-detection to:

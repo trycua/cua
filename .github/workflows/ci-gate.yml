@@ -12,6 +12,7 @@ permissions:
   actions: write
   contents: read
   pull-requests: read
+  statuses: read
 
 jobs:
   ci-gate:
@@ -19,6 +20,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 180
     steps:
+      # A pull request labelled `hold` never merges, auto-merge or not (CUA-3559). The gate
+      # reruns when the label is added or removed (labeled/unlabeled above).
+      - name: Fail while the pull request is on hold
+        if: ${{ github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'hold') }}
+        run: |
+          echo "::error::This pull request has the hold label. Remove it to let the gate pass."
+          exit 1
       # Which workflows this gate may ignore, from the paths the PR changes, the area map
       # (.github/ci-areas.json) and the package graph (.github/scripts/ci_graph.py); see
       # docs/contributing/CI.md. The map and both scripts come from the base commit, never
@@ -77,6 +85,59 @@ jobs:
           # The files API stops at 3000 entries; a PR that large waits on everything.
           if (( $(wc -l < "$RUNNER_TEMP/files.txt") >= 3000 )); then echo ".github/too-many-files" > "$RUNNER_TEMP/files.txt"; fi
           python3 base/.github/scripts/ci_gate_scope.py --labels "$labels" --body-file "$RUNNER_TEMP/pr-body.txt" < "$RUNNER_TEMP/files.txt"
+      # Every pull request needs a sign-off on its head commit. Which one depends on where the code lives:
+      #  - A branch of this repository (members and agents, any author): a `local-ci` commit status, set
+      #    by `bin/ci --signoff` (or our Mac CI runner, which `ci-remote-sweep` starts for each such PR)
+      #    after a green quick run.
+      #  - A fork (community): untrusted code, which never runs on our Macs. Its sign-off is a successful
+      #    `CI: Quick` run (ci-quick.yml, `bin/ci --quick`) on the head commit in GitHub Actions: a
+      #    pull_request job with a read-only token and no secrets.
+      # Neither the author, the labels nor the commit trailers decide anything here.
+      # The requirement is report-only (a warning) until the repository variable REQUIRE_LOCAL_CI is
+      # set to "true"; that variable is the one switch that makes a missing sign-off block the merge.
+      # A sign-off can take 20-40 minutes (a queued run on the Mac runner), so it is checked twice:
+      # here, once and without waiting, so a failure fails the gate at once; and after the other
+      # workflows have finished (the last step), where a still-missing sign-off is waited for.
+      - name: Check the sign-off on the pull request (fail fast)
+        id: signoff
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          QUEUE_REF: ${{ github.event.merge_group.head_ref }}
+          REQUIRE_LOCAL_CI: ${{ vars.REQUIRE_LOCAL_CI }}
+        run: |
+          set -euo pipefail
+          api() { local out; for _ in 1 2 3 4 5 6; do out=$(gh api "$@") && { printf '%s\n' "$out"; return; }; sleep 20; done; return 1; }
+          pr=$PR_NUMBER
+          if [[ -n "$QUEUE_REF" ]]; then
+            [[ "$QUEUE_REF" =~ /pr-([0-9]+) ]] || { echo "::error::cannot read the pull request from $QUEUE_REF"; exit 1; }
+            pr=${BASH_REMATCH[1]}
+          fi
+          info=$(api "repos/$GITHUB_REPOSITORY/pulls/$pr" --jq '[.head.sha, (.head.repo.full_name // "")] | @tsv')
+          IFS=$'\t' read -r sha head_repo <<<"$info"
+          if [[ "$head_repo" == "$GITHUB_REPOSITORY" ]]; then
+            kind=local
+            what="a successful local-ci status (bin/ci --quick, then bin/ci --signoff)"
+          else
+            kind=fork
+            what="a successful CI: Quick run (bin/ci --quick in GitHub Actions)"
+          fi
+          echo "Requiring $what on ${sha:0:10}."
+          { echo "kind=$kind"; echo "sha=$sha"; } >> "$GITHUB_OUTPUT"
+          if [[ "$kind" == local ]]; then
+            state=$(api "repos/$GITHUB_REPOSITORY/commits/$sha/statuses?per_page=100" --jq '[.[] | select(.context == "local-ci")][0].state // ""')
+          else
+            # The newest run only: an older one may have been cancelled by a newer push.
+            state=$(api "repos/$GITHUB_REPOSITORY/actions/workflows/ci-quick.yml/runs?head_sha=$sha&event=pull_request&per_page=30" \
+              --jq '[.workflow_runs[]] | sort_by(.created_at) | last | if . == null or .status != "completed" then "" elif .conclusion == "success" then "success" elif .conclusion == "cancelled" then "" else "failure" end')
+          fi
+          echo "sign-off on ${sha:0:10}: ${state:-not set yet}"
+          if [[ "$state" == failure || "$state" == error ]]; then
+            msg="The sign-off reported $state on ${sha:0:10}. Fix the failing checks and push."
+            if [[ "${REQUIRE_LOCAL_CI:-}" == true ]]; then echo "::error title=sign-off failed::$msg"; exit 1; fi
+            echo "::warning title=sign-off failed (report-only)::$msg"
+          fi
+
       - name: Wait for every other workflow on the pull request head
         env:
           GH_TOKEN: ${{ github.token }}
@@ -149,7 +210,14 @@ jobs:
               break
             fi
             previous=$current
-            sleep "$(poll_interval)"
+            # Everything finished: the next listing only has to confirm the same set, so look again
+            # in 10 s instead of after a full poll interval (up to 60 s). That wait, twice, was most
+            # of the gate's median 1.9 min after the last check (CUA-3558).
+            if [[ -n "$current" ]] && awk -F'\t' '$NF != "completed" { exit 1 }' <<<"$current"; then
+              sleep 10
+            else
+              sleep "$(poll_interval)"
+            fi
           done
           failed=0
           again=0
@@ -185,3 +253,43 @@ jobs:
           sleep 30
           done
           exit $failed
+
+      # Last step: the other workflows are done, so only the sign-off can still be missing. Wait for
+      # it (bounded, 75 minutes: a queued 20-40 minute run on the Mac runner plus slack). A failure
+      # fails at once. Report-only mode looks once and only warns.
+      - name: Require the sign-off on the pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ steps.signoff.outputs.sha }}
+          KIND: ${{ steps.signoff.outputs.kind }}
+          REQUIRE_LOCAL_CI: ${{ vars.REQUIRE_LOCAL_CI }}
+        run: |
+          set -euo pipefail
+          api() { local out; for _ in 1 2 3 4 5 6; do out=$(gh api "$@") && { printf '%s\n' "$out"; return; }; sleep 20; done; return 1; }
+          sha=$SHA
+          tries=1
+          # Polled every 15 s (it was 60 s, so a sign-off that landed just after a poll cost up to a
+          # minute). Still bounded at 75 minutes.
+          [[ "${REQUIRE_LOCAL_CI:-}" == true ]] && tries=300
+          for i in $(seq 1 "$tries"); do
+            if [[ "$KIND" == local ]]; then
+              state=$(api "repos/$GITHUB_REPOSITORY/commits/$sha/statuses?per_page=100" --jq '[.[] | select(.context == "local-ci")][0].state // ""')
+            else
+              state=$(api "repos/$GITHUB_REPOSITORY/actions/workflows/ci-quick.yml/runs?head_sha=$sha&event=pull_request&per_page=30" \
+                --jq '[.workflow_runs[]] | sort_by(.created_at) | last | if . == null or .status != "completed" then "" elif .conclusion == "success" then "success" elif .conclusion == "cancelled" then "" else "failure" end')
+            fi
+            if [[ "$state" == success ]]; then echo "sign-off: success"; exit 0; fi
+            [[ "$state" == failure || "$state" == error ]] && break
+            (( i < tries )) && sleep 15
+          done
+          if [[ "$KIND" == local ]]; then
+            msg="Run bin/ci --quick and bin/ci --signoff on this head commit. (local-ci on ${sha:0:10}: ${state:-not set})"
+          else
+            msg="The CI: Quick workflow has no successful run on this head commit. (${sha:0:10}: ${state:-not run yet}; a first-time contributor's run needs a maintainer to approve it)"
+          fi
+          if [[ "${REQUIRE_LOCAL_CI:-}" == true ]]; then
+            echo "::error title=sign-off missing::$msg"
+            exit 1
+          fi
+          echo "::warning title=sign-off missing (report-only)::$msg"
+          echo "The sign-off is report-only until the repository variable REQUIRE_LOCAL_CI is true; not failing the gate."

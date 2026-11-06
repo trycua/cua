@@ -1,5 +1,6 @@
 {
   "separate-pull-requests": true,
+  "commit-search-depth": 2000,
   "include-component-in-tag": true,
   "include-v-in-tag": true,
   "tag-separator": "-",

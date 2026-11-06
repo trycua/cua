@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! macOS **desktop-scope** (vision/foreground) modality, exercised through the
 //! SAME cua-driver interface as the Windows `desktop_scope_windows_test`:
 //! a window-less screen-absolute `click` with `scope=desktop`

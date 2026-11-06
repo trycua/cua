@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Windows hosted-runner desktop cleanup performed before behavioral capture.
 
 #[cfg(any(target_os = "windows", test))]

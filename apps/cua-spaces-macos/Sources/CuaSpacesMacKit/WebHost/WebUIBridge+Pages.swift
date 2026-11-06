@@ -138,6 +138,11 @@ extension WebUIBridge {
             if let env = args["env"] as? String, !env.isEmpty { useArgs["env"] = env }
             if let slot = args["slot"] as? String, !slot.isEmpty { useArgs["slot"] = slot }
             return try await model.agentKeys.call("agent_keys.use", useArgs)
+        // A saved key or sign-in gets a name (no slot: the first saved for env).
+        case "agentKeys.rename":
+            var renameArgs: [String: Any] = ["env": try string(args, "env"), "label": try string(args, "label")]
+            if let slot = args["slot"] as? String, !slot.isEmpty { renameArgs["slot"] = slot }
+            return try await model.agentKeys.call("agent_keys.rename", renameArgs)
         // Which provider keys your login shell has (names only), and one saved from it (the value never crosses the bridge).
         case "agentKeys.shell": return try await model.agentKeys.call("agent_keys.shell")
         case "agentKeys.fromShell":
@@ -262,8 +267,30 @@ extension WebUIBridge {
             let machine = (args["machine"] as? String).flatMap { $0.isEmpty ? nil : $0 }
             let device = (args["device"] as? String).flatMap { $0.isEmpty ? nil : $0 }
             guard machine != nil || device != nil else { throw Failure.badArgs("machine or device") }
-            try await model.removeMachine(machine: machine, device: device)
+            // The Spaces made on it are detached unless the page asked to delete them too.
+            try await model.removeMachine(machine: machine, device: device, deleteSpaces: args["deleteSpaces"] as? Bool == true)
             return NSNull()
+
+        // The account's default Space (the relay keeps it, so the apps, the
+        // CLI and agents agree) and where a new task goes now. Signed out or
+        // not enrolled: null. Nothing here creates a Space.
+        case "spaces.settings":
+            guard let relay = signedInDevices() else { return NSNull() }
+            return BridgeValue.encode(try await relay.spacesSettings())
+        case "spaces.setSettings":
+            let defaultSpace = (args["defaultSpace"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+            let fallback = try strings(args, "fallback")
+            guard let fallbackOn = args["fallbackOn"] as? Bool else { throw Failure.badArgs("fallbackOn: boolean") }
+            for id in [defaultSpace].compactMap({ $0 }) + fallback where !Self.isRelaySpaceId(id) {
+                throw Failure.badArgs("not a Space id: \(id)")
+            }
+            guard let relay = signedInDevices() else { return NSNull() }
+            let saved = try await relay.setSpacesSettings(
+                SpacesSettings(defaultSpace: defaultSpace, fallback: fallback, fallbackOn: fallbackOn, updatedAt: 0))
+            return BridgeValue.encode(saved)
+        case "spaces.resolveDefault":
+            guard let relay = signedInDevices() else { return NSNull() }
+            return BridgeValue.encode(try await relay.resolveDefaultSpace())
         // Each machine's own daemon checks its health; the next
         // `machines.list` view carries the issues.
         case "machines.checkHealth":
@@ -463,6 +490,34 @@ extension WebUIBridge {
         return try await model.persistent.daemonTool(name, args)
     }
 
+    /// `agents.recentThreads {limit?}` and `agents.threadHistory {agent, id, limit?}`:
+    /// the person-only daemon tools `agent_threads` and `agent_thread_read`,
+    /// their JSON back untouched (`ops/agent-threads.ts` maps it). A daemon
+    /// without them answers `unsupported`, and the Ready screen hides the list.
+    func agentThreads(_ method: String, _ args: [String: Any]) async throws -> Any {
+        var out: [String: Any] = [:]
+        if let limit = args["limit"] as? NSNumber { out["limit"] = limit }
+        let name: String
+        if method == "agents.threadHistory" {
+            guard let agent = args["agent"] as? String, !agent.isEmpty else { throw Failure.badArgs("agent: string") }
+            guard let id = args["id"] as? String, !id.isEmpty else { throw Failure.badArgs("id: string") }
+            out["agent"] = agent
+            out["id"] = id
+            name = "agent_thread_read"
+        } else {
+            name = "agent_threads"
+        }
+        do {
+            return try await tool(name, out)
+        } catch let f as Failure {
+            throw f
+        } catch {
+            let words = LiveSpacesBackend.words(error)
+            if Self.missingThreadTool(words) { throw Failure.unsupported("This cua daemon can't list your agents' chats; update Cua") }
+            throw Failure(code: "failed", message: words)
+        }
+    }
+
     /// `thread.read`, `thread.post`, `thread.members`, `thread.setRights`,
     /// `thread.agentAdd`, `thread.agentRemove`, `thread.joinCodeCreate`,
     /// `thread.joinCodeList`, `thread.joinCodeCancel`, `thread.settings`: the operation's
@@ -532,6 +587,9 @@ extension WebUIBridge {
             guard let harness = args["harness"] as? String, !harness.isEmpty else { throw Failure.badArgs("harness: string") }
             out["name"] = name
             out["agent"] = harness
+            if let model = args["model"] as? String, !model.isEmpty { out["model"] = model }
+            if let standby = args["standby"] as? Bool { out["standby"] = standby }
+            if let brief = args["brief"] as? String, !brief.isEmpty { out["brief"] = brief }
             return ("agent_add", out)
         case "thread.agentRemove":
             // Member names are unique per machine: the tool takes the name.
@@ -564,7 +622,7 @@ extension WebUIBridge {
     static func missingThreadTool(_ message: String) -> Bool {
         let m = message.lowercased()
         let tools = ["thread_read", "thread_post", "agent_members", "thread_join_code_create", "thread_join_code_list",
-                     "thread_join_code_cancel", "thread_settings"]
+                     "thread_join_code_cancel", "thread_settings", "agent_threads", "agent_thread_read"]
         return tools.contains { t in m.contains("spaces tool \(t)") || ((m.contains("unknown tool") || m.contains("no such tool")) && m.contains(t)) }
     }
 
@@ -1093,5 +1151,19 @@ extension WebUIBridge {
         else if data.first == UInt8(ascii: "<") { type = "image/svg+xml" }
         else { type = "application/octet-stream" }
         return "data:\(type);base64,\(data.base64EncodedString())"
+    }
+}
+
+extension WebUIBridge {
+    /// The session's relay devices, or nil (signed out, or before the SDK is in).
+    func signedInDevices() -> DevicesRunning? {
+        let devices = model.devices
+        guard devices.signedIn else { return nil }
+        return devices.devices
+    }
+
+    /// A Space id the relay keeps: `relay:<machine>` or `relay:<machine>/<name>`.
+    static func isRelaySpaceId(_ id: String) -> Bool {
+        id.range(of: #"^relay:[^/\s]+(/[a-z0-9-]{1,63})?$"#, options: .regularExpression) != nil
     }
 }

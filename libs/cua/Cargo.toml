@@ -90,6 +90,9 @@ members = [
     "crates/cua-spacesd-html5",
     # Agent onboarding: detect coding agents, install skills, configure MCP.
     "crates/cua-agent-setup",
+    # The coding agents' own recent chats on this computer (Claude Code,
+    # Codex, Hermes), read-only, for "Pick up where you left off".
+    "crates/cua-agent-threads",
     # Sign-in and the shared credential store.
     "crates/cua-auth",
     # Scripted mock LLM provider (tests and e2e: real harnesses, scripted output).

@@ -31,7 +31,7 @@ final class FakeAgentKeysTools: AgentsToolRunning, @unchecked Sendable {
             } else {
                 keys.removeAll { $0["env"] as? String == args["env"] as? String }
             }
-        case "agent_keys.use": break
+        case "agent_keys.use", "agent_keys.rename": break
         // Your login shell has an Anthropic key: names only, and a copy saved on request.
         case "agent_keys.shell": return ["names": ["ANTHROPIC_API_KEY"]]
         case "agent_keys.from_shell":
@@ -107,7 +107,7 @@ struct AgentKeysTests {
     }
 
     @Test func theWebBridgeRoutesAgentKeysToTheDaemon() {
-        for m in ["agentKeys.list", "agentKeys.check", "agentKeys.set", "agentKeys.remove", "agentKeys.use", "agentKeys.shell", "agentKeys.fromShell"] {
+        for m in ["agentKeys.list", "agentKeys.check", "agentKeys.set", "agentKeys.remove", "agentKeys.use", "agentKeys.rename", "agentKeys.shell", "agentKeys.fromShell"] {
             #expect(WebUIBridge.methods.contains(m))
         }
     }

@@ -5,7 +5,7 @@ import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { ArrowDownCircleIcon, ChevronLeftIcon, MonitorIcon, PictureInPicture2Icon, PlayIcon, SquareIcon, Trash2Icon, UserPlusIcon } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
-import { hostResources, parseDropped, runCreateFix, spaceResources, useBridge, useResources, useDevices, useExperiments, useMachines, useSession, useShareSheet, useSpaceDetail, useSpaceFiles, useSpaces, useSpaceThread, useTeleport, type CreateReport, type Machine, type ResourcesSnapshot, type Space, type StreamRow, type ThreadView } from "@/bridge";
+import { hostResources, parseDropped, runCreateFix, spaceResources, useBridge, useResources, useDevices, useMachines, useSession, useShareSheet, useSpaceDetail, useSpaceFiles, useSpaces, useSpaceThread, useTeleport, type CreateReport, type Machine, type ResourcesSnapshot, type Space, type StreamRow, type ThreadView } from "@/bridge";
 import { DiagnosticReportDialog } from "@/components/diagnostic-report-dialog";
 import { OsIcon } from "@/components/os-icon";
 import { EmptyState, Page } from "@/components/page";
@@ -99,14 +99,11 @@ function SpaceDetailPage() {
   }, [dropped, space?.id]);
   const thisMachine = machines.find((m) => m.current);
   const hostArch = thisMachine?.arch ?? null;
-  // As this device sees it: Share only with Settings, Experiments, Sharing
-  // on (every action where the host has no experiments), and a machine on
-  // the relay greyed out while this device is not enrolled.
-  const exp = useExperiments();
-  const experiments = exp.unsupported ? undefined : (exp.data?.experiments ?? {});
+  // As this device sees it: a machine on the relay greyed out while this
+  // device is not enrolled.
   const access = thisMachine?.accessNotice ?? null;
   const devices = useDevices();
-  const { detail, stream, windowsUnsupported, pip, query, setQuery, agents, copy } = useSpaceDetail(space, hostArch, { experiments, access });
+  const { detail, stream, windowsUnsupported, pip, query, setQuery, agents, copy } = useSpaceDetail(space, hostArch, { access });
   // Call view or thread view, remembered per Space.
   const [layout, setLayout] = useSpaceLayout(space?.id ?? "");
   const volumeError = useSpaceVolumeError(space, space ? spaceState(space) === "running" : false);

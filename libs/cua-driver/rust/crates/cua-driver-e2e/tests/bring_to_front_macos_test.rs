@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Exact-window certification for macOS `bring_to_front`.
 //!
 //! The assertions deliberately do not consume cua-driver's `list_windows` or

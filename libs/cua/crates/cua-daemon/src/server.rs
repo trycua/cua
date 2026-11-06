@@ -131,6 +131,17 @@ const IDLE_RUNTIME_CHECK: Duration = Duration::from_secs(300);
 /// Space's settings.
 #[cfg(feature = "spaces")]
 const NETWORK_RECONCILE: Duration = Duration::from_secs(15);
+
+/// How often the Spaces listed on the account are looked at again without
+/// being woken.
+#[cfg(feature = "spaces")]
+const PUBLISH_TO_RELAY: Duration = Duration::from_secs(15);
+/// The next pass when the last one left Spaces waiting.
+#[cfg(feature = "spaces")]
+const PUBLISH_MORE: Duration = Duration::from_secs(4);
+/// Changes this close together are one pass.
+#[cfg(feature = "spaces")]
+const PUBLISH_COALESCE: Duration = Duration::from_secs(2);
 /// First maintenance pass after start.
 const MAINTENANCE_FIRST: Duration = Duration::from_secs(60);
 /// How often the daemon checks that its home is still there.
@@ -775,6 +786,66 @@ pub async fn start(runtime: Runtime, config: ServerConfig) -> Result<DaemonHandl
                     _ = rx.changed() => return,
                     _ = tokio::time::sleep(NETWORK_RECONCILE) => {}
                 }
+            }
+        }));
+    }
+    // Spaces running on this computer are listed on the signed-in account
+    // (the phone and the owner's other computers open them): a Space made
+    // by any path, one that was already here, and one that stopped or was
+    // deleted are kept in line with the relay (`relay.spaces`).
+    #[cfg(feature = "spaces")]
+    {
+        let rt = shared.runtime.clone();
+        let mut rx = shared.shutdown.subscribe();
+        tasks.push(tokio::spawn(async move {
+            // The first look comes after the daemon settled, at a different
+            // moment on every computer.
+            let mut wait = cua_spaces::share::jitter(Duration::from_secs(5));
+            let spaces = rt.spaces().clone();
+            loop {
+                let changed = tokio::select! {
+                    _ = rx.changed() => return,
+                    _ = tokio::time::sleep(wait) => false,
+                    _ = cua_spaces::share::PUBLISH_CHANGED.notified() => true,
+                };
+                if changed {
+                    // A burst of changes is one pass.
+                    tokio::select! {
+                        _ = rx.changed() => return,
+                        _ = tokio::time::sleep(cua_spaces::share::jitter(PUBLISH_COALESCE)) => {}
+                    }
+                }
+                // A shutdown never waits for a pass that is still working.
+                let pass = tokio::spawn({
+                    let spaces = spaces.clone();
+                    async move { spaces.publish_to_relay().await }
+                });
+                let more = tokio::select! {
+                    _ = rx.changed() => {
+                        return;
+                    }
+                    r = pass => match r {
+                        Ok(Ok(r)) => {
+                            if !r.published.is_empty() || !r.unpublished.is_empty() {
+                                tracing::info!(
+                                    listed = r.published.len(),
+                                    taken_off = r.unpublished.len(),
+                                    "Spaces on the account updated"
+                                );
+                            }
+                            r.more
+                        }
+                        Ok(Err(e)) => {
+                            tracing::debug!(error = %e, "Spaces on the account not updated");
+                            false
+                        }
+                        Err(_) => false,
+                    },
+                };
+                // A pass with nothing to do asks the relay for nothing, so
+                // the interval is cheap; more waiting is picked up sooner.
+                wait =
+                    cua_spaces::share::jitter(if more { PUBLISH_MORE } else { PUBLISH_TO_RELAY });
             }
         }));
     }

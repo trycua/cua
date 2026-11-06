@@ -403,6 +403,7 @@ pub async fn doctor() -> DoctorReport {
                 ))
             }
             HostOs::Linux => QemuPackageManager::detect().map(|(manager, _)| manager.render()),
+            HostOs::Windows => windows_qemu_step(host::which("winget").is_some()),
             _ => None,
         };
         if let Some(s) = step {
@@ -951,6 +952,16 @@ pub fn select(req: &SelectRequest, report: &DoctorReport) -> Result<Selection> {
     }
 }
 
+/// What setup runs to get QEMU onto a Windows PC: winget, when the PC has it.
+pub(crate) fn windows_qemu_step(has_winget: bool) -> Option<String> {
+    has_winget.then(|| {
+        format!(
+            "winget install -e --id {}",
+            crate::qemu::WINDOWS_QEMU_WINGET_ID
+        )
+    })
+}
+
 /// How to get a container engine here.
 fn engine_install_hint() -> &'static str {
     #[cfg(feature = "container")]
@@ -990,6 +1001,15 @@ fn lume_builtin_allowed() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_windows_pc_with_winget_can_have_qemu_set_up() {
+        assert_eq!(
+            windows_qemu_step(true).as_deref(),
+            Some("winget install -e --id SoftwareFreedomConservancy.QEMU")
+        );
+        assert_eq!(windows_qemu_step(false), None);
+    }
 
     fn report(
         qemu_ready: bool,

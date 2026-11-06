@@ -171,9 +171,7 @@ pub fn eval_links(html: &str, culture: &str) -> Vec<String> {
     let mut rest = html;
     while let Some(i) = rest.find(needle) {
         let tail = &rest[i..];
-        let end = tail
-            .find(|c: char| c == '"' || c == '\'' || c == '<' || c == ' ' || c == ')')
-            .unwrap_or(tail.len());
+        let end = tail.find(['"', '\'', '<', ' ', ')']).unwrap_or(tail.len());
         let link = tail[..end].replace("&amp;", "&");
         if link.contains("LinkID=") || link.contains("linkid=") {
             let want = format!("culture={culture}");

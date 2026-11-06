@@ -301,6 +301,22 @@ pub struct QemuState {
     pub tpm: bool,
 }
 
+/// A Windows guest never runs under software emulation unless the person
+/// asked for it (`QemuConfig::accel`): Windows under TCG takes hours to
+/// install and is too slow to use, so the create fails with the way out.
+pub(crate) fn refuse_windows_software_emulation(
+    os: GuestOs,
+    accel: &str,
+    asked_for: bool,
+) -> Result<()> {
+    if os == GuestOs::Windows && accel == "tcg" && !asked_for {
+        return Err(VmmError::invalid(
+            "this computer cannot run this Windows guest with hardware acceleration (KVM, HVF or WHPX) and cua does not fall back to software emulation: it takes hours. Use a computer with matching hardware (an x64 Windows image needs an x64 host, an ARM64 one an Apple silicon Mac or arm64 Linux with KVM), or set the accelerator yourself to accept the slowness",
+        ));
+    }
+    Ok(())
+}
+
 /// Windows 11 on ARM: the guest that needs Secure Boot firmware and a TPM.
 fn is_windows_arm(os: GuestOs, arch: Arch) -> bool {
     os == GuestOs::Windows && arch == Arch::Aarch64
@@ -1210,6 +1226,7 @@ impl QemuRuntime {
         } else {
             self.accel_for(st.arch, &host::kvm_usable())?
         };
+        refuse_windows_software_emulation(st.os, &st.accel, self.cfg.accel.is_some())?;
         st.cpus = spec.cpus;
         st.memory_mb = spec.memory_mb;
         st.restrict_network = spec.restrict_network
@@ -2517,10 +2534,38 @@ fn unique_suffix() -> String {
     format!("{nanos:x}")
 }
 
-/// How QEMU gets onto a Windows host: cua does not install it there.
-pub const WINDOWS_QEMU_HINT: &str = "Windows VMs on a Windows PC need QEMU, which Cua does not \
-     install for you. Install QEMU for Windows from https://qemu.weilnetz.de/ and add it to PATH, \
-     or create a Linux Space instead";
+/// How QEMU gets onto a Windows host. Cua installs it with winget when
+/// `allow_install` is set ([`windows_install`]); this is what to do by hand.
+pub const WINDOWS_QEMU_HINT: &str = "Windows VMs on a Windows PC need QEMU. Install it with \
+     `winget install -e --id SoftwareFreedomConservancy.QEMU`, or from https://qemu.weilnetz.de/ \
+     (then add it to PATH), or create a Linux Space instead";
+
+/// The winget package of QEMU for Windows (the QEMU project's own build).
+pub const WINDOWS_QEMU_WINGET_ID: &str = "SoftwareFreedomConservancy.QEMU";
+
+/// Installs QEMU on a Windows host with winget (silent; Windows asks for
+/// administrator approval itself). `winget` is where `which("winget")` found it.
+pub(crate) async fn windows_install(
+    winget: Option<PathBuf>,
+    run: impl AsyncFn(&str, &[&str]) -> Result<String>,
+) -> Result<()> {
+    let winget = winget.ok_or_else(|| VmmError::missing("winget", WINDOWS_QEMU_HINT))?;
+    tracing::info!("installing QEMU with winget");
+    run(
+        &winget.to_string_lossy(),
+        &[
+            "install",
+            "-e",
+            "--id",
+            WINDOWS_QEMU_WINGET_ID,
+            "--silent",
+            "--accept-source-agreements",
+            "--accept-package-agreements",
+        ],
+    )
+    .await?;
+    Ok(())
+}
 
 /// What a QEMU VM needs that `which` does not find on an `os` host, as the
 /// error a create returns before pulling its image; `None` when both
@@ -2669,7 +2714,7 @@ async fn install_qemu_with(
             }
         }
         host::HostOs::Windows => {
-            return Err(VmmError::missing("QEMU", WINDOWS_QEMU_HINT));
+            windows_install(host::which("winget"), run).await?;
         }
     }
     Ok(())
@@ -3792,6 +3837,25 @@ fn admission_file(memory: &Memory) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn a_windows_guest_is_never_silently_emulated() {
+        use super::refuse_windows_software_emulation as refuse;
+        use crate::types::GuestOs;
+        assert!(refuse(GuestOs::Windows, "tcg", false).is_err());
+        let e = refuse(GuestOs::Windows, "tcg", false)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            e.contains("software emulation") && e.contains("hours"),
+            "{e}"
+        );
+        // Hardware acceleration, an explicit request, and other guests pass.
+        assert!(refuse(GuestOs::Windows, "kvm", false).is_ok());
+        assert!(refuse(GuestOs::Windows, "whpx", false).is_ok());
+        assert!(refuse(GuestOs::Windows, "tcg", true).is_ok());
+        assert!(refuse(GuestOs::Linux, "tcg", false).is_ok());
+    }
+
+    #[test]
     fn the_gateway_sockets_live_in_a_short_folder_of_their_own() {
         use super::gateway_run_dir;
         use std::path::Path;
@@ -4744,6 +4808,30 @@ mod tests {
             .await
             .unwrap_err();
         assert!(err.to_string().contains("DiskResolver"));
+    }
+
+    #[tokio::test]
+    async fn windows_installs_qemu_with_winget_or_says_how() {
+        let calls = std::sync::Mutex::new(Vec::new());
+        windows_install(Some(PathBuf::from("winget")), async |program, args| {
+            calls.lock().unwrap().push((
+                program.to_string(),
+                args.iter().map(|a| a.to_string()).collect::<Vec<_>>(),
+            ));
+            Ok(String::new())
+        })
+        .await
+        .unwrap();
+        let calls = calls.lock().unwrap();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].0, "winget");
+        assert!(calls[0].1.contains(&WINDOWS_QEMU_WINGET_ID.to_string()));
+        assert!(calls[0].1.contains(&"--silent".to_string()));
+        let err = windows_install(None, async |_, _| Ok(String::new()))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("winget"), "{err}");
     }
 
     #[cfg(target_os = "linux")]

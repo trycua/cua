@@ -38,7 +38,7 @@ const STABLE: Channel = {
   appName: "Cua Spaces",
   appUserModelId: "ai.cua.spaces.desktop",
   deepLinkScheme: "cua",
-  registryKey: "Software\ai.cua.spaces.desktop",
+  registryKey: "Software\\ai.cua.spaces.desktop",
   userDataDirName: "Cua Spaces",
   homeDirName: ".cua",
 };
@@ -49,7 +49,7 @@ const LOCAL: Channel = {
   appName: "Cua Spaces Local",
   appUserModelId: "ai.cua.spaces.desktop.local",
   deepLinkScheme: "cua-local",
-  registryKey: "Software\ai.cua.spaces.desktop.local",
+  registryKey: "Software\\ai.cua.spaces.desktop.local",
   userDataDirName: "Cua Spaces Local",
   homeDirName: ".cua-local",
 };

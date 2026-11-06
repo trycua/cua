@@ -8,8 +8,8 @@ import * as path from "node:path";
 import { describe, expect, it } from "vitest";
 import { LOCAL_EXECUTABLE, localCuaHome, resolveChannel } from "../src/channel";
 
-const STABLE_EXE = "C:\Users\me\AppData\Local\Programs\cua-spaces\Cua Spaces.exe";
-const LOCAL_EXE = "C:\Users\me\AppData\Local\Programs\Cua Spaces Local\Cua Spaces Local.exe";
+const STABLE_EXE = "C:\\Users\\me\\AppData\\Local\\Programs\\cua-spaces\\Cua Spaces.exe";
+const LOCAL_EXE = "C:\\Users\\me\\AppData\\Local\\Programs\\Cua Spaces Local\\Cua Spaces Local.exe";
 
 describe("resolveChannel", () => {
   it("is Stable for the released executable and an empty environment", () => {
@@ -42,12 +42,14 @@ describe("Local shares nothing with Stable", () => {
     }
   });
   it("keeps Stable's names as released", () => {
+    expect(stable.registryKey).toBe("Software\\ai.cua.spaces.desktop");
+    expect(local.registryKey).toBe("Software\\ai.cua.spaces.desktop.local");
     expect(stable).toMatchObject({ appName: "Cua Spaces", appUserModelId: "ai.cua.spaces.desktop", deepLinkScheme: "cua", homeDirName: ".cua" });
   });
   it("homes on staging in ~/.cua-local and on prod below it, as CuaChannel::Local does", () => {
-    expect(localCuaHome("C:\Users\me", {})).toBe("C:\Users\me\.cua-local");
-    expect(localCuaHome("C:\Users\me", { CUA_ENV: "prod" })).toBe("C:\Users\me\.cua-local\envs\prod");
-    expect(localCuaHome("C:\Users\me", { CUA_ENV: "staging" })).toBe("C:\Users\me\.cua-local");
+    expect(localCuaHome("C:\\Users\\me", {})).toBe("C:\\Users\\me\\.cua-local");
+    expect(localCuaHome("C:\\Users\\me", { CUA_ENV: "prod" })).toBe("C:\\Users\\me\\.cua-local\\envs\\prod");
+    expect(localCuaHome("C:\\Users\\me", { CUA_ENV: "staging" })).toBe("C:\\Users\\me\\.cua-local");
   });
   it("matches the Rust names", () => {
     const rs = readFileSync(path.join(__dirname, "../../../libs/cua/crates/cua-home/src/channel.rs"), "utf8");

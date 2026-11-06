@@ -12,6 +12,11 @@ on:
         description: "Full 40-character commit SHA to certify"
         required: true
         type: string
+      rebuild_of_released_source:
+        description: "Rebuild dispatch: certify an already-tagged source SHA with the workflow from a newer ref"
+        required: false
+        type: boolean
+        default: false
   workflow_dispatch:
     inputs:
       source_sha:
@@ -67,6 +72,7 @@ jobs:
     env:
       CUA_E2E_SOURCE_SHA: ${{ inputs.source_sha }}
       CUA_E2E_WORKFLOW_SHA: ${{ github.sha }}
+      CUA_E2E_REBUILD: ${{ inputs.rebuild_of_released_source && 'true' || 'false' }}
 
     steps:
       - name: Initialize evidence directory
@@ -88,7 +94,7 @@ jobs:
           fi
           source_sha_lower="$(printf '%s' "${CUA_E2E_SOURCE_SHA}" | tr '[:upper:]' '[:lower:]')"
           workflow_sha_lower="$(printf '%s' "${CUA_E2E_WORKFLOW_SHA}" | tr '[:upper:]' '[:lower:]')"
-          if [[ "${source_sha_lower}" != "${workflow_sha_lower}" ]]; then
+          if [[ "${source_sha_lower}" != "${workflow_sha_lower}" && "${CUA_E2E_REBUILD}" != "true" ]]; then
             echo "source_sha must match the selected workflow ref tip (${CUA_E2E_WORKFLOW_SHA})" >&2
             exit 2
           fi
@@ -141,6 +147,7 @@ jobs:
     env:
       CUA_E2E_SOURCE_SHA: ${{ inputs.source_sha }}
       CUA_E2E_WORKFLOW_SHA: ${{ github.sha }}
+      CUA_E2E_REBUILD: ${{ inputs.rebuild_of_released_source && 'true' || 'false' }}
       CUA_E2E_INTERNAL_LANE: ${{ matrix.lane }}
 
     steps:
@@ -154,7 +161,7 @@ jobs:
           fi
           source_sha_lower="$(printf '%s' "${CUA_E2E_SOURCE_SHA}" | tr '[:upper:]' '[:lower:]')"
           workflow_sha_lower="$(printf '%s' "${CUA_E2E_WORKFLOW_SHA}" | tr '[:upper:]' '[:lower:]')"
-          if [[ "${source_sha_lower}" != "${workflow_sha_lower}" ]]; then
+          if [[ "${source_sha_lower}" != "${workflow_sha_lower}" && "${CUA_E2E_REBUILD}" != "true" ]]; then
             echo "source_sha must match the selected workflow ref tip (${CUA_E2E_WORKFLOW_SHA})" >&2
             exit 2
           fi

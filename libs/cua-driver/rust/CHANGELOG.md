@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.40.6](https://github.com/trycua/cua/compare/cua-driver-rs-v0.40.5...cua-driver-rs-v0.40.6) (2026-11-06)
+
+
+### Bug Fixes
+
+* **cua-driver:** keep idle-end launch ownership only until a terminal end ([#6738](https://github.com/trycua/cua/issues/6738)) ([ec4d973](https://github.com/trycua/cua/commit/ec4d973dbd7eb04d85cde0f157b43c05e1204948))
+
 ## [0.40.5](https://github.com/trycua/cua/compare/cua-driver-rs-v0.40.4...cua-driver-rs-v0.40.5) (2026-11-06)
 
 

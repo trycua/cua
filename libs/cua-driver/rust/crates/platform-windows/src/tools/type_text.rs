@@ -779,11 +779,16 @@ fn normalize_newlines(s: &str) -> String {
 
 /// The text `after` has that `before` did not: strip the common prefix and
 /// suffix of the two values. Newlines are normalized (Edit controls store
-/// Enter as CRLF).
-fn inserted_segment(before: &str, after: &str) -> String {
+/// Enter as CRLF). Typing over a selection replaces text, so when the whole
+/// requested text follows the common prefix it is all counted as inserted: a
+/// tail it shares with the replaced value is not stripped as old text.
+fn inserted_segment(before: &str, after: &str, requested: &[char]) -> String {
     let b: Vec<char> = normalize_newlines(before).chars().collect();
     let a: Vec<char> = normalize_newlines(after).chars().collect();
     let p = b.iter().zip(a.iter()).take_while(|(x, y)| x == y).count();
+    if a[p..].starts_with(requested) {
+        return requested.iter().collect();
+    }
     let s = b[p..]
         .iter()
         .rev()
@@ -799,7 +804,7 @@ fn inserted_segment(before: &str, after: &str) -> String {
 /// is reordered or garbled (retyping would make it worse).
 fn plan_tail_retry(before: &str, after: &str, requested: &str) -> TailPlan {
     let want = normalize_newlines(requested);
-    let got = inserted_segment(before, after);
+    let got = inserted_segment(before, after, &want.chars().collect::<Vec<_>>());
     if got.is_empty() || got.len() >= want.len() || !want.starts_with(&got) {
         return TailPlan::Done;
     }
@@ -842,6 +847,18 @@ mod tail_retry_tests {
         assert_eq!(
             plan_tail_retry("ad", "abcd", "bcXY"),
             TailPlan::Retype("XY".into())
+        );
+    }
+
+    #[test]
+    fn text_typed_over_a_selection_that_shares_its_tail_is_complete() {
+        assert_eq!(
+            plan_tail_retry("hello from cua", "set by cua", "set by cua"),
+            TailPlan::Done
+        );
+        assert_eq!(
+            plan_tail_retry("hello from cua", "set by", "set by cua"),
+            TailPlan::Retype(" cua".into())
         );
     }
 

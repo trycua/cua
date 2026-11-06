@@ -39,8 +39,12 @@ platform.
 
 ```bash test="cli-shape" id="cua-driver-permissions-grant"
 /bin/bash -c "$(curl -fsSL https://cua.ai/driver/install.sh)"
-cua-driver permissions grant
+~/.local/bin/cua-driver permissions grant
 ```
+
+The second line uses the full path because the installer adds `~/.local/bin`
+to your `PATH` only for new terminal windows. In a new window, plain
+`cua-driver` works.
 
 `permissions grant` starts the installed app by its exact path, so macOS
 attributes the prompts to that copy of CuaDriver and the grant sticks to the driver.
@@ -58,6 +62,10 @@ off. Switching it on is what grants access.
 ![CuaDriver listed under Accessibility in System Settings with its toggle switched off](https://github.com/user-attachments/assets/d149fe5a-28cb-460c-8868-4eda80d540a4)
 
 ![CuaDriver listed under Screen & System Audio Recording in System Settings with its toggle switched off](https://github.com/user-attachments/assets/469308b5-84d7-4fd6-a580-e62925120337)
+
+If CuaDriver is not in the **Screen & System Audio Recording** list, add it
+yourself: click **+** under the list, open **Applications**, choose
+**CuaDriver**, then click **Open** and **Allow**.
 
 <Callout type="warn">
   Switch on both **Accessibility** and **Screen & System Audio Recording**. If you choose
@@ -93,7 +101,7 @@ a second terminal for the checks below. Over SSH, see
 
 ```bash test="cli-shape" id="cua-driver-serve"
 /bin/bash -c "$(curl -fsSL https://cua.ai/driver/install.sh)"
-cua-driver serve
+~/.local/bin/cua-driver serve
 ```
 
 Run it in a terminal inside the desktop session, so the driver can reach its

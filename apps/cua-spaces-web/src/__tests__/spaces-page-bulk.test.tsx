@@ -233,6 +233,17 @@ describe.skipIf(!wasmBuilt)("on the page", () => {
     expect(document.body.textContent).toMatch(/Deleted 1 of 2|Couldn't delete/);
   });
 
+  it("a delete the app refuses as a whole says why for every Space and frees the page again", async () => {
+    await mountApp("/spaces", { ...HOST, intercept: (op) => (op === "spaces.deleteMany" ? Promise.reject(new Error("the daemon did not answer")) : undefined) });
+    await waitFor(() => expect(tile(STOPPED)).not.toBeNull());
+    fireEvent.click(tile(STOPPED), { metaKey: true });
+    fireEvent.click(tile(RUNNING), { metaKey: true });
+    fireEvent.click(await waitFor(() => bar()!.querySelector<HTMLElement>("[data-bulk-remove]")!));
+    fireEvent.click(await waitFor(() => document.querySelector<HTMLElement>("[data-confirm-bulk]") ?? Promise.reject(new Error("no confirm"))));
+    await waitFor(() => expect(document.body.textContent).toContain("the daemon did not answer"));
+    expect(document.body.textContent).toContain("agent-sandbox: the daemon did not answer");
+  });
+
   it("cleanup: the disk alert's list for This Mac, biggest first, Select stopped picks only the stopped ones", async () => {
     const { router } = await mountApp("/spaces?view=list&on=this-mac&sort=size", HOST);
     const stoppedButton = await waitFor(() => document.querySelector<HTMLElement>("[data-select-stopped]") ?? Promise.reject(new Error("no Select stopped")));

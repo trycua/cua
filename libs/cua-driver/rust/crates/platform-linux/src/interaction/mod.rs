@@ -177,16 +177,22 @@ pub fn with_x11_foreground<T>(
         let value = body()?;
         Ok((value, activated.report()))
     });
-    let unrestored = prior
-        .map(|prior| prior.restore_after_foreground(target_pid))
-        .filter(|r| matches!(r.outcome(), Some("not_restored" | "grab_held")))
-        .map(|r| {
-            format!(
-                "{} ({})",
-                r.outcome().unwrap_or_default(),
-                r.changes.join(", ")
-            )
-        });
+    // Judged on whether the focus came back, not on the background guard's
+    // outcome order: a focused new dialog of the target is not a restore.
+    // Only a prior window the body closed leaves nothing to restore.
+    let unrestored = prior.and_then(|prior| match prior.restore_after_foreground(target_pid) {
+        None => Some("the display could not be opened".to_owned()),
+        Some(r) if r.changed && !r.restored && r.closed_window.is_none() => Some(format!(
+            "{} ({})",
+            if r.grab_held_by.is_some() {
+                "grab_held"
+            } else {
+                "not_restored"
+            },
+            r.changes.join(", ")
+        )),
+        Some(_) => None,
+    });
     match (ran, unrestored) {
         (ran, None) => ran,
         (Ok(_), Some(why)) => {

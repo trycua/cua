@@ -593,12 +593,17 @@ impl FocusSnapshot {
         settle_watch: bool,
     ) -> FocusGuardReport {
         self.restore_guarded(target_pid, settle_watch, true)
+            .unwrap_or_default()
     }
 
     /// The foreground transaction's restore: `target_pid` attributes a new
     /// popup's grab, but the same-app rule is off, since a foreground action
     /// gives the focus back even to a prior window of the target's process.
-    pub(crate) fn restore_after_foreground(&self, target_pid: Option<u32>) -> FocusGuardReport {
+    /// `None` when the display could not be opened to restore.
+    pub(crate) fn restore_after_foreground(
+        &self,
+        target_pid: Option<u32>,
+    ) -> Option<FocusGuardReport> {
         self.restore_guarded(target_pid, false, false)
     }
 
@@ -607,11 +612,9 @@ impl FocusSnapshot {
         target_pid: Option<u32>,
         settle_watch: bool,
         same_app: bool,
-    ) -> FocusGuardReport {
+    ) -> Option<FocusGuardReport> {
         let started = Instant::now();
-        let Ok(x) = X::open() else {
-            return FocusGuardReport::default();
-        };
+        let x = X::open().ok()?;
         let mut report = FocusGuardReport::default();
 
         // Settle watch: stop at the first observed change. A new top-level
@@ -652,7 +655,7 @@ impl FocusSnapshot {
             .mapped_popups()
             .difference(&self.popups)
             .copied()
-            .filter(|w| !x.window_title(*w).starts_with("Cua.AgentCursorOverlay."))
+            .filter(|w| !crate::overlay::is_x11_overlay_window(*w))
             .collect();
         if !new_popups.is_empty() {
             report.grab_held_by = new_popups
@@ -664,7 +667,7 @@ impl FocusSnapshot {
         if changes.is_empty() {
             report.same_app_window = own_window;
             report.elapsed_ms = started.elapsed().as_millis() as u64;
-            return report;
+            return Some(report);
         }
         report.changed = true;
         report.changes = changes;
@@ -705,7 +708,7 @@ impl FocusSnapshot {
                     focused: true,
                 });
                 report.elapsed_ms = started.elapsed().as_millis() as u64;
-                return report;
+                return Some(report);
             }
             GuardRestore::SameAppDialog => {
                 let window = focus_window.unwrap_or(0);
@@ -715,11 +718,11 @@ impl FocusSnapshot {
                     focused: true,
                 });
                 report.elapsed_ms = started.elapsed().as_millis() as u64;
-                return report;
+                return Some(report);
             }
             GuardRestore::GrabHeld => {
                 report.elapsed_ms = started.elapsed().as_millis() as u64;
-                return report;
+                return Some(report);
             }
             GuardRestore::Restore => {}
         }
@@ -758,7 +761,7 @@ impl FocusSnapshot {
             );
         }
         report.elapsed_ms = started.elapsed().as_millis() as u64;
-        report
+        Some(report)
     }
 
     /// The topmost freshly mapped toplevel of the target pid, when the target

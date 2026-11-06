@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.21.1](https://github.com/trycua/cua/compare/cua-spaces-v0.21.0...cua-spaces-v0.21.1) (2026-11-06)
+
+
+### Bug Fixes
+
+* **spaces-macos:** Cua Driver runs on every Mac, not only one set up for sharing (CUA-3638) ([#6704](https://github.com/trycua/cua/issues/6704)) ([8b780ae](https://github.com/trycua/cua/commit/8b780ae694c1276933c4088bc366e810d418cac8))
+
 ## [0.21.0](https://github.com/trycua/cua/compare/cua-spaces-v0.20.0...cua-spaces-v0.21.0) (2026-11-06)
 
 

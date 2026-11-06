@@ -2537,15 +2537,10 @@ impl Persistent {
         self.renew_claims(&rec, &agents, &run).await?;
         let rec = self.get(&rec.name)?.session(rec.k());
         let (ended, failed) = turn_outcome(&page.events);
-        // Everything the agent said, as it said it, one entry per message. An unfinished message
-        // keeps the bookmark where it is, so it is read whole again.
-        let said_open = self.post_said(&rec, &run, &page.events)?;
-        self.track_subagents(&rec, &agents, &run, &page.events)
-            .await?;
-        self.track_children(&rec)?;
         // A harness may answer a refused credential as an ordinary turn (Hermes does, with its own
         // advice): read the reply as the failed turn it is, so the person's message is not "Done",
         // the reply is the standard Connect card and the credential reads as needing a reconnect.
+        let mut reply_is_the_failure = None;
         let failed = match (&failed, ended) {
             (None, Some(turn)) if turn > rec.saved_turn => agents
                 .result(&run)
@@ -2553,9 +2548,30 @@ impl Persistent {
                 .ok()
                 .map(|r| r.text)
                 .filter(|text| ag::failure::is_auth_failure_reply(&rec.harness, text))
-                .map(|text| (turn, text.trim().to_string())),
+                .map(|text| {
+                    reply_is_the_failure = Some(turn);
+                    (turn, text.trim().to_string())
+                }),
             _ => failed,
         };
+        // Everything the agent said, as it said it, one entry per message (the words of a turn
+        // that only carried a provider's refusal are the failure, which is said in plain words
+        // below). An unfinished message keeps the bookmark where it is, so it is read whole again.
+        let said_open = match reply_is_the_failure {
+            Some(turn) => {
+                let kept: Vec<ag::AgentEvent> = page
+                    .events
+                    .iter()
+                    .filter(|e| !(e.kind == "message" && e.turn == turn))
+                    .cloned()
+                    .collect();
+                self.post_said(&rec, &run, &kept)?
+            }
+            None => self.post_said(&rec, &run, &page.events)?,
+        };
+        self.track_subagents(&rec, &agents, &run, &page.events)
+            .await?;
+        self.track_children(&rec)?;
         // The thread task this run's turn worked on: its reply and state.
         let mut anchor = None;
         let mut task_ended = false;

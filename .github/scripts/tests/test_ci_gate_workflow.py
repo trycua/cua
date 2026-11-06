@@ -285,8 +285,7 @@ def test_gate_fails_a_failure_that_is_not_quarantined(tmp_path):
 
 
 def test_gate_reads_the_quarantine_list_from_the_base_commit():
-    steps = GATE['jobs']['ci-gate']['steps']
-    base = steps[0]['with']['sparse-checkout'].split()
+    base = STEPS['Check out the selector from the base commit']['with']['sparse-checkout'].split()
     assert '/.github/flaky/quarantine.json' in base and '/.github/scripts/flaky/flaky.py' in base
     env = STEPS['Wait for every other workflow on the pull request head']['env']
     assert env['FLAKY_PY'].startswith('base/') and env['QUARANTINE_FILE'].startswith('base/')

@@ -336,7 +336,9 @@ function Connect({ fr, view }: { fr: FirstRunHook; view: FirstRunView }) {
   const perms = useAppPermissions(everyAppConnected);
   const driver = useDriver();
   const [repairing, setRepairing] = useState(false);
-  const readiness = everyAppConnected ? driverReadiness({ permissions: perms, driver: driver.available ? driver.status : null }) : "ready";
+  // Until both have answered, nothing is "Ready" yet: no green check that flips back to "Almost ready".
+  const checking = perms.loading || driver.loading;
+  const readiness = !everyAppConnected ? "ready" : checking ? "starting" : driverReadiness({ permissions: perms, driver: driver.available ? driver.status : null });
   const working = busy || rows.some((a) => a.note === "Connecting\u2026");
   const failed = tried && !working ? pending : [];
   const why = (agent: string, name: string) =>

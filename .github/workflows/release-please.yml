@@ -20,15 +20,7 @@ on:
           - cua-spacesd
           - cua-sdk
           - cua-spaces
-          - agent
-          - core
           - bench
-          - bench-ui
-          - som
-          - sandbox-apps
-          - npm-core
-          - npm-playground
-          - cuabot
       bump:
         description: "Version bump for the selected component"
         required: true

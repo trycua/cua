@@ -457,7 +457,10 @@ Where Windows differs:
 * **GUI-only guard.** A shell or script host (PowerShell, cmd, Windows Terminal, the script hosts,
   mshta, WSL) started in the desktop session outside the runner's own processes, or a side-door window
   in front, fails and stops the trial. Tool inputs are also scanned for PowerShell, cmd and script-host
-  commands.
+  commands. A shell whose parent is the setup's own binary (`--tool-exe cua-driver.exe`, for example: Cua
+  Driver starts PowerShell to read browser processes) is part of the tool, as a driver's helper process is
+  on macOS: it is logged in `gui_only.tool_helpers` and does not count. A shell started from code the agent
+  supplied (a harness's Python `exec`, a JavaScript REPL) has an interpreter as its parent and still counts.
 * **Sentinel.** Windows has no signals, so the runner arms it through a control file. A window counts as
   raised when it is above the user window in the z-order and overlaps it. The desktop measure is
   `IVirtualDesktopManager`; a dialog on the user's app is a window owned by the user window.

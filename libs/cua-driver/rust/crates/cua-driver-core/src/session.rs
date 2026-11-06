@@ -1715,7 +1715,12 @@ fn end_session_with_reason(session_id: &str, reason: SessionEndReason) {
         let mut records = lifecycle_records().lock().unwrap();
         match records.get_mut(session_id) {
             Some(record) if record.in_flight > 0 => {
-                record.pending_end.get_or_insert(reason);
+                // A terminal end overrides a pending idle end, which would
+                // keep the session's launch records.
+                let pending = record.pending_end.get_or_insert(reason);
+                if *pending == SessionEndReason::IdleTimeout {
+                    *pending = reason;
+                }
                 true
             }
             _ => false,
@@ -2530,6 +2535,36 @@ mod tests {
         assert!(crate::capture_scope::get_session(sid).is_some());
         drop(reader);
         end_session(sid);
+    }
+
+    #[test]
+    fn a_terminal_end_overrides_an_idle_end_deferred_behind_a_dispatch() {
+        let sid = "__cua_runtime_deferred-idle:named";
+        let owner = "deferred-idle-owner";
+        let guard = begin_session_dispatch(
+            sid,
+            Some("named"),
+            owner,
+            false,
+            SessionTransport::Daemon,
+            SessionClientKind::Cli,
+        )
+        .unwrap();
+        let reasons = Arc::new(Mutex::new(Vec::new()));
+        let seen = reasons.clone();
+        let _hook = register_scoped_session_end_hook(move |id| {
+            if id == sid {
+                seen.lock().unwrap().push(session_end_reason(id));
+            }
+        });
+
+        end_session_with_reason(sid, SessionEndReason::IdleTimeout);
+        end_session(sid);
+        drop(guard);
+
+        assert_eq!(*reasons.lock().unwrap(), [Some(SessionEndReason::Explicit)]);
+        assert!(is_session_ended(sid));
+        assert!(revive_session_for_owner(sid, owner).is_ok());
     }
 
     #[test]

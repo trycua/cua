@@ -52,7 +52,17 @@ jobs:
       # Hermetic: cua-sandbox is replaced by in-memory fakes. Live tests
       # (tests/live, CUA_E2E_*) never run here.
       - name: Tests (CLI goldens, export snapshots, runner)
-        run: uv run --frozen pytest -q cua_bench/tests --ignore=cua_bench/tests/live
+        run: uv run --frozen pytest -q cua_bench/tests --ignore=cua_bench/tests/live --durations=25 --durations-min=1.0 --junitxml="$RUNNER_TEMP/pytest-cua-bench.xml"
+      - name: Per-file test times
+        if: always()
+        run: |
+          if [ -f "$RUNNER_TEMP/pytest-cua-bench.xml" ]; then
+            python3 "$GITHUB_WORKSPACE/.github/scripts/flaky/timings.py" junit --suite pytest-cua-bench "$RUNNER_TEMP/pytest-cua-bench.xml"
+          fi
+      - uses: ./.github/actions/ci-timings-upload
+        if: always()
+        with:
+          suite: pytest-cua-bench
 
   test-rl:
     name: cua-bench-rl (workers, dataloader) tests

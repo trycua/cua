@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Local daemon server and client for `cua-driver serve`/`stop`/`status`.
 //!
 //! Protocol: line-delimited JSON over a Unix domain socket or Windows named
@@ -551,6 +554,50 @@ pub fn read_pid_file(pid_file_path: &str) -> Option<u32> {
     std::fs::read_to_string(pid_file_path)
         .ok()
         .and_then(|s| s.trim().parse().ok())
+}
+
+/// Remove `pid_file_path` only while it still names this process. The default
+/// pid file is shared by daemons on different sockets, so another daemon may
+/// own it by the time this one exits.
+fn remove_owned_pid_file(pid_file_path: &str) {
+    if read_pid_file(pid_file_path) == Some(std::process::id()) {
+        let _ = std::fs::remove_file(pid_file_path);
+    }
+}
+
+/// Take an exclusive lock on `lock_path`, retrying for up to `wait` while
+/// another daemon holds it. The OS drops the lock when the returned file
+/// closes or the process dies, so a crashed daemon never blocks a relaunch.
+#[cfg(any(target_os = "windows", test))]
+fn claim_daemon_lock(
+    lock_path: &std::path::Path,
+    socket_path: &str,
+    wait: std::time::Duration,
+) -> anyhow::Result<std::fs::File> {
+    if let Some(dir) = lock_path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let lock = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(lock_path)
+        .map_err(|e| anyhow::anyhow!("open daemon lock {}: {e}", lock_path.display()))?;
+    let deadline = std::time::Instant::now() + wait;
+    loop {
+        match lock.try_lock() {
+            Ok(()) => return Ok(lock),
+            Err(std::fs::TryLockError::WouldBlock) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            Err(std::fs::TryLockError::WouldBlock) => anyhow::bail!(
+                "Cua Driver daemon is already running on {socket_path}. Run `cua-driver stop` first."
+            ),
+            Err(std::fs::TryLockError::Error(e)) => {
+                anyhow::bail!("lock daemon {}: {e}", lock_path.display())
+            }
+        }
+    }
 }
 
 // ── Server ────────────────────────────────────────────────────────────────────
@@ -1390,7 +1437,7 @@ pub async fn run_serve(
     // Do not unlink a replacement socket created after this listener was bound.
     remove_owned_socket(socket_path, bound_socket);
     if let Some(pid_path) = pid_file_path {
-        let _ = std::fs::remove_file(pid_path);
+        remove_owned_pid_file(pid_path);
     }
     sdk.shutdown()
         .await
@@ -1678,7 +1725,20 @@ pub async fn run_serve(
         None => std::ptr::null_mut(),
     };
 
-    // Write PID file.
+    // Standalone pipes accept extra instances under one name, so a second
+    // launch that passes the liveness probe would serve beside this one and
+    // overwrite its pid file. The lock lets only one daemon own the name.
+    // Embedded daemons already reserve their host-chosen name below.
+    let socket_lock = if embedded {
+        None
+    } else {
+        Some(claim_daemon_lock(
+            &named_pipe_lock_path(socket_path),
+            socket_path,
+            PIPE_LOCK_WAIT,
+        )?)
+    };
+
     if let Some(pid_path) = pid_file_path {
         if let Some(dir) = std::path::Path::new(pid_path).parent() {
             let _ = std::fs::create_dir_all(dir);
@@ -2160,8 +2220,11 @@ pub async fn run_serve(
     }
 
     if let Some(pid_path) = pid_file_path {
-        let _ = std::fs::remove_file(pid_path);
+        remove_owned_pid_file(pid_path);
     }
+    // The listening instance is gone, so a successor may take the name while
+    // this process finishes tearing down.
+    drop(socket_lock);
     sdk.shutdown()
         .await
         .map_err(|error| anyhow::anyhow!("shut down SDK runtime: {error}"))?;
@@ -2170,6 +2233,28 @@ pub async fn run_serve(
         None => Ok(()),
     }
 }
+
+/// Per-user lock file for one pipe name. It lives under `%LOCALAPPDATA%`,
+/// which stays the same across a user's sessions where `%TEMP%` may not. The
+/// file name is a fixed-length digest of the uppercased name, because Windows
+/// compares pipe names case-insensitively and a name can outgrow a path
+/// component.
+#[cfg(target_os = "windows")]
+fn named_pipe_lock_path(socket_path: &str) -> std::path::PathBuf {
+    use sha2::Digest as _;
+    let base = std::env::var_os("LOCALAPPDATA")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir);
+    let digest = sha2::Sha256::digest(socket_path.to_uppercase().as_bytes());
+    base.join("cua-driver-pipe-locks")
+        .join(format!("{digest:x}.lock"))
+}
+
+/// How long a launch waits for a stopping daemon to release its pipe lock.
+/// `stop` returns once the listening instance is gone, a moment before the
+/// daemon drops the lock.
+#[cfg(target_os = "windows")]
+const PIPE_LOCK_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
 
 /// Pause between attempts to replace a named-pipe instance that failed.
 #[cfg(target_os = "windows")]
@@ -2529,6 +2614,56 @@ pub fn run_revoke_cmd(socket_path: &str, session: Option<&str>, all: bool) {
 }
 
 // ── Tests ───────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod daemon_ownership_tests {
+    #[test]
+    fn a_second_daemon_cannot_take_a_held_lock() {
+        let directory = tempfile::tempdir().unwrap();
+        let lock_path = directory.path().join("driver.lock");
+        let wait = std::time::Duration::ZERO;
+        let first = super::claim_daemon_lock(&lock_path, "pipe", wait).unwrap();
+
+        let second = super::claim_daemon_lock(&lock_path, "pipe", wait);
+
+        assert!(second.unwrap_err().to_string().contains("already running"));
+        drop(first);
+        assert!(super::claim_daemon_lock(&lock_path, "pipe", wait).is_ok());
+    }
+
+    #[test]
+    fn a_waiting_daemon_takes_the_lock_once_it_is_released() {
+        let directory = tempfile::tempdir().unwrap();
+        let lock_path = directory.path().join("driver.lock");
+        let first = super::claim_daemon_lock(&lock_path, "pipe", Default::default()).unwrap();
+        let release = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            drop(first);
+        });
+
+        let second =
+            super::claim_daemon_lock(&lock_path, "pipe", std::time::Duration::from_secs(5));
+
+        release.join().unwrap();
+        assert!(second.is_ok());
+    }
+
+    #[test]
+    fn exit_keeps_a_pid_file_owned_by_another_daemon() {
+        let directory = tempfile::tempdir().unwrap();
+        let pid_file = directory.path().join("driver.pid");
+        let pid_file = pid_file.to_str().unwrap();
+        let other = std::process::id().wrapping_add(1);
+        std::fs::write(pid_file, other.to_string()).unwrap();
+
+        super::remove_owned_pid_file(pid_file);
+        assert_eq!(super::read_pid_file(pid_file), Some(other));
+
+        std::fs::write(pid_file, std::process::id().to_string()).unwrap();
+        super::remove_owned_pid_file(pid_file);
+        assert!(!std::path::Path::new(pid_file).exists());
+    }
+}
 
 #[cfg(all(test, unix))]
 mod socket_tests {

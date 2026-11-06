@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Wire timestamps shared by every platform adapter.
 
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};

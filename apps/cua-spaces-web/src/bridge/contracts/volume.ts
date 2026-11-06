@@ -22,12 +22,9 @@ export type { DriveCheckInput, DriveS3Input, DriveStorageInput, DriveStorageUpda
 
 /* ---- Experiments ----------------------------------------------------------- */
 
-/** `experiments::Experiments`: Settings, Experiments' switches (all off by default except sharing, on unless turned off). */
+/** `experiments::Experiments`: Settings, Experiments' switches (all off by default). */
 export interface Experiments {
   cuaVolume?: boolean;
-  yourCloud?: boolean;
-  sharing?: boolean;
-  webUi?: boolean;
   /** Secure Spaces: a Space reaches the internet and nothing else on the network unless opened. Off unless turned on; the daemon enforces it. */
   secureSpaces?: boolean;
   /** Child Spaces: a Space may make Spaces of its own. Off unless turned on; the daemon enforces it. */
@@ -43,7 +40,7 @@ export interface Experiments {
   warmPools?: boolean;
 }
 
-export const NO_EXPERIMENTS: Required<Experiments> = { cuaVolume: false, yourCloud: true, sharing: true, webUi: false, secureSpaces: false, childSpaces: false, askFirst: false, ciRunners: false, tcpShares: false, mobile: false, warmPools: false };
+export const NO_EXPERIMENTS: Required<Experiments> = { cuaVolume: false, secureSpaces: false, childSpaces: false, askFirst: false, ciRunners: false, tcpShares: false, mobile: false, warmPools: false };
 
 /* ---- The daemon's answers (volume_*) ---------------------------------------- */
 

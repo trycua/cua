@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! The cursor hook must obey the registry's write-boundary resurrection guard.
 //!
 //! `CursorRegistry` refuses to create or touch a cursor whose id is empty or

@@ -16,7 +16,7 @@ import { resetConnectedAppsState } from "@/hooks/use-connected-apps";
 import { resetAskTasks } from "@/lib/ask-first";
 import { rememberAgent, resetPickedAgent } from "@/lib/ask-first-model";
 import { getDriver, resetPrepare } from "@/lib/prepare/store";
-import { mountApp, stubBrowserApis } from "./app-harness";
+import { mountApp, pickNewLinux, stubBrowserApis } from "./app-harness";
 
 stubBrowserApis();
 beforeEach(() => {
@@ -78,6 +78,7 @@ describe.skipIf(!wasmBuilt)("the warming home is not on any list until a person 
     await screen.findByLabelText("What should it do?");
     await waitFor(() => expect(getDriver()?.state?.pendingId).toBeTruthy());
     expect(getDriver()?.state?.askedMs).toBeNull();
+    await pickNewLinux();
     fireEvent.change(screen.getByLabelText("What should it do?"), { target: { value: "fix the build" } });
     fireEvent.click(screen.getByRole("button", { name: "Start" }));
     await waitFor(() => expect(getDriver()?.state?.askedMs).not.toBeNull());

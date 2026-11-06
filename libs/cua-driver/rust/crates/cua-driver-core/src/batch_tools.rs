@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! `run_steps`: run an ordered list of existing action tools in one call.
 //!
 //! The tool owns no input logic. Every step is dispatched through the same

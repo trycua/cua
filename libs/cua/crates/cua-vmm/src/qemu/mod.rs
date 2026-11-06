@@ -766,6 +766,10 @@ impl QemuRuntime {
         )?;
         let dir = self.dir(name);
         std::fs::create_dir_all(&dir)?;
+        // A create dropped mid-way (its client cancelled) runs neither arm
+        // below: the directory it made goes with the future, or a disk with
+        // no state file stays where nothing lists or deletes it.
+        let mut made = DirGuard(Some(dir.clone()));
         let arch = spec_like.effective_arch();
         let disk = dir.join("disk.qcow2");
         let res: Result<QemuState> = async {
@@ -835,16 +839,10 @@ impl QemuRuntime {
             })
         }
         .await;
-        match res {
-            Ok(st) => {
-                self.save(&st)?;
-                Ok(st)
-            }
-            Err(e) => {
-                let _ = std::fs::remove_dir_all(&dir);
-                Err(e)
-            }
-        }
+        let st = res?;
+        self.save(&st)?;
+        made.0 = None;
+        Ok(st)
     }
 
     /// Write the cloud-init seed for this run: SSH key and/or raw user-data,
@@ -3791,6 +3789,24 @@ fn admission_file(memory: &Memory) -> Option<PathBuf> {
 
 #[cfg(test)]
 mod tests {
+    /// A VM create dropped before its state file was written takes its
+    /// directory with it; one that finished keeps it.
+    #[test]
+    fn a_dropped_create_leaves_no_directory() {
+        let d = tempfile::tempdir().unwrap();
+        let dropped = d.path().join("a");
+        std::fs::create_dir_all(&dropped).unwrap();
+        std::fs::write(dropped.join("disk.qcow2"), b"x").unwrap();
+        drop(super::DirGuard(Some(dropped.clone())));
+        assert!(!dropped.exists());
+        let kept = d.path().join("b");
+        std::fs::create_dir_all(&kept).unwrap();
+        let mut g = super::DirGuard(Some(kept.clone()));
+        g.0 = None;
+        drop(g);
+        assert!(kept.exists());
+    }
+
     #[test]
     fn the_gateway_sockets_live_in_a_short_folder_of_their_own() {
         use super::gateway_run_dir;
@@ -5537,6 +5553,18 @@ impl LaunchGuard {
 
     fn disarm(&mut self) {
         self.armed = false;
+    }
+}
+
+/// Removes a new VM's directory when dropped armed (its create failed or
+/// was dropped before the state file was written).
+struct DirGuard(Option<PathBuf>);
+
+impl Drop for DirGuard {
+    fn drop(&mut self) {
+        if let Some(d) = self.0.take() {
+            let _ = std::fs::remove_dir_all(d);
+        }
     }
 }
 

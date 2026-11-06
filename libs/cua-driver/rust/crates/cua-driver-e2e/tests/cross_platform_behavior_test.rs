@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Cross-platform behavioral scenarios derived from the external CUA matrix.
 //!
 //! These are source-owned Rust tests, not a copy of a partner test runner. The

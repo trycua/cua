@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Trusted standalone-daemon assembly for the Computer History preview.
 
 use std::{

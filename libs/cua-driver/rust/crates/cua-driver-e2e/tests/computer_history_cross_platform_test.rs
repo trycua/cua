@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Packaged Windows/Linux lifecycle gate for encrypted Computer History.
 //!
 //! This test intentionally uses the installed local product, its authenticated

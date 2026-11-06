@@ -67,6 +67,7 @@ import { startupFromHost, webkitStartupOps } from "../ops/startup";
 import { webkitTelemetryNoticeOps } from "../ops/telemetry";
 import { unsupportedStreamOps, type StreamTicket } from "../ops/stream";
 import type { RelayUsage } from "../ops/relay-usage";
+import type { DefaultSpace, SpacesSettings } from "../ops/spaces-settings";
 import type { RiskyRequest } from "../ops/nudges";
 import type { ResourcesSnapshot } from "../ops/resources";
 import type { HostChecklistState } from "../ops/checklist";
@@ -75,6 +76,7 @@ import type { LinkCreate, ShareLink, ShareSettings } from "../ops/links";
 import { unsupportedPresenceOps, type PresenceJoinInfo } from "../ops/presence";
 import { cloudApproveWebkitOps } from "../ops/cloud-approve";
 import { unsupportedRuntimeFixOps } from "../ops/runtime-fix";
+import { webkitDriverOps } from "../ops/driver";
 import type { CliInstallPlan } from "../contracts/first-run";
 import type { BulkResult } from "../contracts/spaces-page";
 import type { CreatingElsewhere, ListStatus, SpaceAccess, SpaceRow, SpaceSharingFacts } from "../contracts/spaces";
@@ -322,7 +324,8 @@ export function toSettingsSnapshot(s: WkSettings, page: Pick<SettingsValues, "th
       defaultLocation: DEFAULT_SETTINGS.defaultLocation,
       // The core lays out `launch-at-login` once the host read the login item.
       launchAtLogin: loginRow && loginRow.enabled ? active(loginRow) === "on" : null,
-      updateChannel: s.updateChannel === "beta" || s.updateChannel === "stable" ? s.updateChannel : null,
+      // `beta` (a host from before Nightly) is Nightly.
+      updateChannel: s.updateChannel === "stable" ? "stable" : s.updateChannel === "nightly" || s.updateChannel === "beta" ? "nightly" : null,
       // The core's General row (`settings::auto_connect_row`), when the host lays it out.
       ...(rows.has("auto-connect") ? { autoConnect: active(rows.get("auto-connect")) === "on" } : {}),
       // The core's own settings the page changes (`settings.update`); an older host has none.
@@ -794,10 +797,15 @@ export function createWebkitAdapter(
       await request("machines.checkHealth");
       return null;
     },
-    "machines.remove": async ({ machine, device }) => {
-      await request("machines.remove", { machine: machine ?? null, device: device ?? null });
+    "machines.remove": async ({ machine, device, deleteSpaces }) => {
+      // `deleteSpaces` only when asked: an older host never sees it.
+      await request("machines.remove", { machine: machine ?? null, device: device ?? null, ...(deleteSpaces ? { deleteSpaces: true } : {}) });
       return null;
     },
+    // The default Space (ops/spaces-settings.ts): the relay's own words.
+    "spaces.settings": () => request<SpacesSettings | null>("spaces.settings"),
+    "spaces.setSettings": ({ defaultSpace, fallback, fallbackOn }) => request<SpacesSettings | null>("spaces.setSettings", { defaultSpace, fallback: [...(fallback ?? [])], fallbackOn: fallbackOn ?? true }),
+    "spaces.resolveDefault": () => request<DefaultSpace | null>("spaces.resolveDefault"),
     "checklist.get": () => request<{ state: HostChecklistState }>("checklist.get"),
     "checklist.send": ({ action }) => request<{ state: HostChecklistState }>("checklist.send", { action }),
     "links.list": () => request<{ links: ShareLink[] }>("links.list"),
@@ -836,6 +844,8 @@ export function createWebkitAdapter(
     ...(electron
       ? { "spaces.fixRuntime": (args: OpArgs<"spaces.fixRuntime">) => request<null>("spaces.fixRuntime", { ...args }) }
       : unsupportedRuntimeFixOps("webkit")),
+    // Cua Driver inside Cua Spaces: the Mac app's embedded driver (ops/driver.ts).
+    ...webkitDriverOps(request),
   };
 
   const onEvent = (detail: WebkitEventDetail) => {

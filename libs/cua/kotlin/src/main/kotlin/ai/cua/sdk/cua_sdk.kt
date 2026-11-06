@@ -1075,11 +1075,17 @@ external fun uniffi_cua_sdk_checksum_method_devices_rename(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_devices_rename_machine(
 ): Short
+external fun uniffi_cua_sdk_checksum_method_devices_resolve_default_space(
+): Short
 external fun uniffi_cua_sdk_checksum_method_devices_revoke(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_devices_revoke_pairing_code(
 ): Short
+external fun uniffi_cua_sdk_checksum_method_devices_set_spaces_settings(
+): Short
 external fun uniffi_cua_sdk_checksum_method_devices_snapshot(
+): Short
+external fun uniffi_cua_sdk_checksum_method_devices_spaces_settings(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_host_configure(
 ): Short
@@ -1607,6 +1613,8 @@ external fun uniffi_cua_sdk_checksum_method_spaces_relay_register(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_spaces_relay_unregister(
 ): Short
+external fun uniffi_cua_sdk_checksum_method_spaces_relay_unregister_computer(
+): Short
 external fun uniffi_cua_sdk_checksum_method_spaces_remove(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_spaces_rename(
@@ -2076,11 +2084,17 @@ external fun uniffi_cua_sdk_fn_method_devices_rename(`ptr`: Long,`id`: RustBuffe
 ): Long
 external fun uniffi_cua_sdk_fn_method_devices_rename_machine(`ptr`: Long,`machineId`: RustBuffer.ByValue,`name`: RustBuffer.ByValue,
 ): Long
+external fun uniffi_cua_sdk_fn_method_devices_resolve_default_space(`ptr`: Long,
+): Long
 external fun uniffi_cua_sdk_fn_method_devices_revoke(`ptr`: Long,`id`: RustBuffer.ByValue,
 ): Long
 external fun uniffi_cua_sdk_fn_method_devices_revoke_pairing_code(`ptr`: Long,`id`: RustBuffer.ByValue,
 ): Long
+external fun uniffi_cua_sdk_fn_method_devices_set_spaces_settings(`ptr`: Long,`settings`: RustBuffer.ByValue,
+): Long
 external fun uniffi_cua_sdk_fn_method_devices_snapshot(`ptr`: Long,`auditLimit`: Int,
+): Long
+external fun uniffi_cua_sdk_fn_method_devices_spaces_settings(`ptr`: Long,
 ): Long
 external fun uniffi_cua_sdk_fn_clone_host(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
 ): Long
@@ -2705,6 +2719,8 @@ external fun uniffi_cua_sdk_fn_method_spaces_orphans(`ptr`: Long,
 external fun uniffi_cua_sdk_fn_method_spaces_relay_register(`ptr`: Long,`space`: RustBuffer.ByValue,
 ): Long
 external fun uniffi_cua_sdk_fn_method_spaces_relay_unregister(`ptr`: Long,`space`: RustBuffer.ByValue,
+): Long
+external fun uniffi_cua_sdk_fn_method_spaces_relay_unregister_computer(`ptr`: Long,`space`: RustBuffer.ByValue,`deleteSpaces`: Byte,
 ): Long
 external fun uniffi_cua_sdk_fn_method_spaces_remove(`ptr`: Long,`space`: RustBuffer.ByValue,
 ): Long
@@ -3613,13 +3629,22 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_cua_sdk_checksum_method_devices_rename_machine() != 63088.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_cua_sdk_checksum_method_devices_resolve_default_space() != 5493.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_cua_sdk_checksum_method_devices_revoke() != 27802.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cua_sdk_checksum_method_devices_revoke_pairing_code() != 3143.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_cua_sdk_checksum_method_devices_set_spaces_settings() != 38780.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_cua_sdk_checksum_method_devices_snapshot() != 26132.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cua_sdk_checksum_method_devices_spaces_settings() != 1866.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cua_sdk_checksum_method_host_configure() != 36828.toShort()) {
@@ -4409,6 +4434,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cua_sdk_checksum_method_spaces_relay_unregister() != 53366.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cua_sdk_checksum_method_spaces_relay_unregister_computer() != 32336.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cua_sdk_checksum_method_spaces_remove() != 23086.toShort()) {
@@ -9409,6 +9437,13 @@ public interface DevicesInterface {
     suspend fun `renameMachine`(`machineId`: kotlin.String, `name`: kotlin.String): RelayMachine
 
     /**
+     * Where the default Space resolves now: the first online entry of the
+     * default, the fallback order, then this computer (its own relay
+     * machine id, when it has one). Creates nothing.
+     */
+    suspend fun `resolveDefaultSpace`(): DefaultSpace
+
+    /**
      * Revokes a device (from this enrolled device). Revoking this device
      * also deletes its key.
      */
@@ -9420,11 +9455,23 @@ public interface DevicesInterface {
     suspend fun `revokePairingCode`(`id`: kotlin.String)
 
     /**
+     * Replaces the account's default Space settings (the whole object;
+     * `updated_at` is set by the relay). Returns what the relay saved.
+     */
+    suspend fun `setSpacesSettings`(`settings`: SpacesSettings): SpacesSettings
+
+    /**
      * The account's devices, the grace period, the newest `audit_limit`
      * audit events and the machines' names. Only the device list must
      * succeed; the rest is empty when the relay refuses it.
      */
     suspend fun `snapshot`(`auditLimit`: kotlin.UInt): DevicesSnapshot
+
+    /**
+     * The account's default Space and fallback order. A relay that
+     * predates them answers "the Cua relay needs an update".
+     */
+    suspend fun `spacesSettings`(): SpacesSettings
 
     companion object
 }
@@ -9769,6 +9816,32 @@ open class Devices: Disposable, AutoCloseable, DevicesInterface
 
 
     /**
+     * Where the default Space resolves now: the first online entry of the
+     * default, the fallback order, then this computer (its own relay
+     * machine id, when it has one). Creates nothing.
+     */
+    @Throws(CuaException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `resolveDefaultSpace`() : DefaultSpace {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cua_sdk_fn_method_devices_resolve_default_space(
+                uniffiHandle,
+
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypeDefaultSpace.lift(it) },
+        // Error FFI converter
+        CuaException.ErrorHandler,
+    )
+    }
+
+
+    /**
      * Revokes a device (from this enrolled device). Revoking this device
      * also deletes its key.
      */
@@ -9819,6 +9892,31 @@ open class Devices: Disposable, AutoCloseable, DevicesInterface
 
 
     /**
+     * Replaces the account's default Space settings (the whole object;
+     * `updated_at` is set by the relay). Returns what the relay saved.
+     */
+    @Throws(CuaException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `setSpacesSettings`(`settings`: SpacesSettings) : SpacesSettings {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cua_sdk_fn_method_devices_set_spaces_settings(
+                uniffiHandle,
+                FfiConverterTypeSpacesSettings.lower(`settings`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypeSpacesSettings.lift(it) },
+        // Error FFI converter
+        CuaException.ErrorHandler,
+    )
+    }
+
+
+    /**
      * The account's devices, the grace period, the newest `audit_limit`
      * audit events and the machines' names. Only the device list must
      * succeed; the rest is empty when the relay refuses it.
@@ -9838,6 +9936,31 @@ open class Devices: Disposable, AutoCloseable, DevicesInterface
         { future -> UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer(future) },
         // lift function
         { FfiConverterTypeDevicesSnapshot.lift(it) },
+        // Error FFI converter
+        CuaException.ErrorHandler,
+    )
+    }
+
+
+    /**
+     * The account's default Space and fallback order. A relay that
+     * predates them answers "the Cua relay needs an update".
+     */
+    @Throws(CuaException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `spacesSettings`() : SpacesSettings {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cua_sdk_fn_method_devices_spaces_settings(
+                uniffiHandle,
+
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypeSpacesSettings.lift(it) },
         // Error FFI converter
         CuaException.ErrorHandler,
     )
@@ -21545,6 +21668,17 @@ public interface SpacesInterface {
     suspend fun `relayUnregister`(`space`: kotlin.String): kotlin.Boolean
 
     /**
+     * [`Spaces::relay_unregister`] for one of your computers
+     * (`relay:<machine>`), choosing what happens to the Spaces it
+     * provides: with `delete_spaces` false they stay on the account,
+     * detached (they come back when the computer registers again); with
+     * true they are deleted too, files first (through the computer while
+     * it answers), then their records. Returns false when it was not on
+     * the relay.
+     */
+    suspend fun `relayUnregisterComputer`(`space`: kotlin.String, `deleteSpaces`: kotlin.Boolean): kotlin.Boolean
+
+    /**
      * Unregisters a Space (the sandbox is not touched).
      */
     suspend fun `remove`(`space`: kotlin.String)
@@ -23501,6 +23635,36 @@ open class Spaces: Disposable, AutoCloseable, SpacesInterface
             UniffiLib.uniffi_cua_sdk_fn_method_spaces_relay_unregister(
                 uniffiHandle,
                 FfiConverterString.lower(`space`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cua_sdk_rust_future_poll_i8(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cua_sdk_rust_future_complete_i8(future, continuation) },
+        { future -> UniffiLib.ffi_cua_sdk_rust_future_free_i8(future) },
+        // lift function
+        { FfiConverterBoolean.lift(it) },
+        // Error FFI converter
+        CuaException.ErrorHandler,
+    )
+    }
+
+
+    /**
+     * [`Spaces::relay_unregister`] for one of your computers
+     * (`relay:<machine>`), choosing what happens to the Spaces it
+     * provides: with `delete_spaces` false they stay on the account,
+     * detached (they come back when the computer registers again); with
+     * true they are deleted too, files first (through the computer while
+     * it answers), then their records. Returns false when it was not on
+     * the relay.
+     */
+    @Throws(CuaException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `relayUnregisterComputer`(`space`: kotlin.String, `deleteSpaces`: kotlin.Boolean) : kotlin.Boolean {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cua_sdk_fn_method_spaces_relay_unregister_computer(
+                uniffiHandle,
+                FfiConverterString.lower(`space`),FfiConverterBoolean.lower(`deleteSpaces`),
             )
         },
         { future, callback, continuation -> UniffiLib.ffi_cua_sdk_rust_future_poll_i8(future, callback, continuation) },
@@ -33492,6 +33656,141 @@ public object FfiConverterTypeCursorArt: FfiConverterRustBuffer<CursorArt> {
 
 
 /**
+ * Where the default Space resolves now.
+ */
+data class DefaultSpace (
+    /**
+     * The first online entry; none when this device is the answer
+     * (`reason` `here`).
+     */
+    var `space`: kotlin.String?
+    ,
+    /**
+     * `default`, `fallback`, `here` or `unset`.
+     */
+    var `reason`: kotlin.String
+    ,
+    /**
+     * The chosen default, online or not.
+     */
+    var `defaultSpace`: kotlin.String?
+    ,
+    /**
+     * Whether the default is online; none when unset.
+     */
+    var `defaultOnline`: kotlin.Boolean?
+    ,
+    /**
+     * The order the relay tried.
+     */
+    var `order`: List<DefaultSpaceStep>
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeDefaultSpace: FfiConverterRustBuffer<DefaultSpace> {
+    override fun read(buf: ByteBuffer): DefaultSpace {
+        return DefaultSpace(
+            FfiConverterOptionalString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalBoolean.read(buf),
+            FfiConverterSequenceTypeDefaultSpaceStep.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: DefaultSpace) = (
+            FfiConverterOptionalString.allocationSize(value.`space`) +
+            FfiConverterString.allocationSize(value.`reason`) +
+            FfiConverterOptionalString.allocationSize(value.`defaultSpace`) +
+            FfiConverterOptionalBoolean.allocationSize(value.`defaultOnline`) +
+            FfiConverterSequenceTypeDefaultSpaceStep.allocationSize(value.`order`)
+    )
+
+    override fun write(value: DefaultSpace, buf: ByteBuffer) {
+            FfiConverterOptionalString.write(value.`space`, buf)
+            FfiConverterString.write(value.`reason`, buf)
+            FfiConverterOptionalString.write(value.`defaultSpace`, buf)
+            FfiConverterOptionalBoolean.write(value.`defaultOnline`, buf)
+            FfiConverterSequenceTypeDefaultSpaceStep.write(value.`order`, buf)
+    }
+}
+
+
+
+/**
+ * One entry of the order [`Devices::resolve_default_space`] tried.
+ */
+data class DefaultSpaceStep (
+    /**
+     * The Space id.
+     */
+    var `space`: kotlin.String
+    ,
+    /**
+     * Its display name.
+     */
+    var `name`: kotlin.String
+    ,
+    /**
+     * Connected and sharing now.
+     */
+    var `online`: kotlin.Boolean
+    ,
+    /**
+     * `default`, `fallback` or `here`.
+     */
+    var `role`: kotlin.String
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeDefaultSpaceStep: FfiConverterRustBuffer<DefaultSpaceStep> {
+    override fun read(buf: ByteBuffer): DefaultSpaceStep {
+        return DefaultSpaceStep(
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterBoolean.read(buf),
+            FfiConverterString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: DefaultSpaceStep) = (
+            FfiConverterString.allocationSize(value.`space`) +
+            FfiConverterString.allocationSize(value.`name`) +
+            FfiConverterBoolean.allocationSize(value.`online`) +
+            FfiConverterString.allocationSize(value.`role`)
+    )
+
+    override fun write(value: DefaultSpaceStep, buf: ByteBuffer) {
+            FfiConverterString.write(value.`space`, buf)
+            FfiConverterString.write(value.`name`, buf)
+            FfiConverterBoolean.write(value.`online`, buf)
+            FfiConverterString.write(value.`role`, buf)
+    }
+}
+
+
+
+/**
  * `Devices.enroll`'s result.
  */
 data class DeviceEnrollment (
@@ -39226,6 +39525,8 @@ public object FfiConverterTypeNetworkEvent: FfiConverterRustBuffer<NetworkEvent>
  * - `localhost`: `internet`, plus this computer's localhost on
  * `localhost_ports` (every port only with `all_localhost_ports`);
  * - `lan`: `internet`, plus your local network (not this computer);
+ * - `localhost+lan`: `internet`, plus both of the above (`localhost` and
+ * `lan` are independent extras; this is the one preset with both);
  * - `custom`: `custom_base` (`internet` or `none`) plus `allow` and `deny`;
  * - `unprotected`: everything but cloud metadata, other trees and the
  * daemon.
@@ -39236,19 +39537,20 @@ public object FfiConverterTypeNetworkEvent: FfiConverterRustBuffer<NetworkEvent>
  */
 data class NetworkSettings (
     /**
-     * `internet`, `none`, `localhost`, `lan`, `custom` or `unprotected`;
-     * empty is `internet`.
+     * `internet`, `none`, `localhost`, `lan`, `localhost+lan`, `custom` or
+     * `unprotected`; empty is `internet`.
      */
     var `preset`: kotlin.String = ""
     ,
     /**
-     * `localhost`: the ports of this computer's localhost the Space may
-     * reach.
+     * `localhost` and `localhost+lan`: the ports of this computer's
+     * localhost the Space may reach.
      */
     var `localhostPorts`: List<kotlin.UShort> = listOf()
     ,
     /**
-     * `localhost`: every port (the daemon's stay blocked).
+     * `localhost` and `localhost+lan`: every port (the daemon's stay
+     * blocked).
      */
     var `allLocalhostPorts`: kotlin.Boolean = false
     ,
@@ -48213,6 +48515,70 @@ public object FfiConverterTypeSpacesHostLoad: FfiConverterRustBuffer<SpacesHostL
 
 
 /**
+ * The account's default Space and the order to try when it is offline.
+ */
+data class SpacesSettings (
+    /**
+     * `relay:<machine>` or `relay:<machine>/<name>`; none when unset.
+     */
+    var `defaultSpace`: kotlin.String?
+    ,
+    /**
+     * The order to try when the default is offline; empty means every
+     * online computer you can use, oldest first.
+     */
+    var `fallback`: List<kotlin.String>
+    ,
+    /**
+     * false: only the default, then this device.
+     */
+    var `fallbackOn`: kotlin.Boolean
+    ,
+    /**
+     * Unix seconds the relay saved it (ignored when writing).
+     */
+    var `updatedAt`: kotlin.ULong
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeSpacesSettings: FfiConverterRustBuffer<SpacesSettings> {
+    override fun read(buf: ByteBuffer): SpacesSettings {
+        return SpacesSettings(
+            FfiConverterOptionalString.read(buf),
+            FfiConverterSequenceString.read(buf),
+            FfiConverterBoolean.read(buf),
+            FfiConverterULong.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: SpacesSettings) = (
+            FfiConverterOptionalString.allocationSize(value.`defaultSpace`) +
+            FfiConverterSequenceString.allocationSize(value.`fallback`) +
+            FfiConverterBoolean.allocationSize(value.`fallbackOn`) +
+            FfiConverterULong.allocationSize(value.`updatedAt`)
+    )
+
+    override fun write(value: SpacesSettings, buf: ByteBuffer) {
+            FfiConverterOptionalString.write(value.`defaultSpace`, buf)
+            FfiConverterSequenceString.write(value.`fallback`, buf)
+            FfiConverterBoolean.write(value.`fallbackOn`, buf)
+            FfiConverterULong.write(value.`updatedAt`, buf)
+    }
+}
+
+
+
+/**
  * One row of [`SPACES_TOOL_METHODS`].
  */
 data class SpacesToolMethod (
@@ -55248,6 +55614,34 @@ public object FfiConverterSequenceTypeCursorArt: FfiConverterRustBuffer<List<Cur
         buf.putInt(value.size)
         value.iterator().forEach {
             FfiConverterTypeCursorArt.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceTypeDefaultSpaceStep: FfiConverterRustBuffer<List<DefaultSpaceStep>> {
+    override fun read(buf: ByteBuffer): List<DefaultSpaceStep> {
+        val len = buf.getInt()
+        return List<DefaultSpaceStep>(len) {
+            FfiConverterTypeDefaultSpaceStep.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<DefaultSpaceStep>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeDefaultSpaceStep.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<DefaultSpaceStep>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeDefaultSpaceStep.write(it, buf)
         }
     }
 }

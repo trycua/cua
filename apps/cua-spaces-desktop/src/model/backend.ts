@@ -247,8 +247,9 @@ export interface SpacesBackend {
   /** `services.list` / `services.control`: the commands a Space keeps running. */
   services?(id: string): Promise<ServiceJson[]>;
   controlService?(id: string, name: string, action: string): Promise<void>;
-  /** Takes one of your machines off the relay directory (`relay:<machine>`), refused while it is online. */
-  relayUnregister(machineId: string): Promise<void>;
+  /** Takes one of your machines off the relay directory (`relay:<machine>`), refused while it is online. The Spaces made on
+   * it are detached, or with `deleteSpaces` deleted too (the SDK's `relay_unregister_computer`). */
+  relayUnregister(machineId: string, deleteSpaces?: boolean): Promise<void>;
   /** A machine's health as its own cua daemon checks it (the SDK's `Spaces.machine_health`): null for this one, else another of yours by id. */
   machineHealth(machine: string | null): Promise<MachineHealthReport>;
   setPower(id: string, on: boolean): Promise<void>;
@@ -525,6 +526,8 @@ export class LiveSpacesBackend implements SpacesBackend {
           imageDigest: text(info.imageDigest),
           kind: kindOf(this.native, info.kind),
           arch: text(info.arch),
+          // The home warming for Home's prompt box (label `cua.hidden`): no list shows it.
+          hidden: Boolean(info.labels?.has("cua.hidden")),
           reachable: false,
           error: undefined,
           host: text(info.host),
@@ -765,8 +768,9 @@ export class LiveSpacesBackend implements SpacesBackend {
     }
   }
 
-  async relayUnregister(machineId: string): Promise<void> {
-    await this.cua.spaces().relayUnregister(`relay:${machineId}`);
+  async relayUnregister(machineId: string, deleteSpaces = false): Promise<void> {
+    if (deleteSpaces) await this.cua.spaces().relayUnregisterComputer(`relay:${machineId}`, true);
+    else await this.cua.spaces().relayUnregister(`relay:${machineId}`);
   }
 
   async machineHealth(machine: string | null): Promise<MachineHealthReport> {
@@ -1166,14 +1170,15 @@ export function createExtrasOf(config: Record<string, unknown>): CreateExtras {
 }
 
 /** The SDK's `NetworkSettings` for a preset word (`internet`, `none`,
- * `localhost:5432,3000`, `localhost:all`, `lan`, `custom`, `custom:none`,
- * `unprotected`) and lists. `via`: where its internet traffic leaves
+ * `localhost:5432,3000`, `localhost:all`, `lan`, `localhost+lan:5432,3000`, `custom`,
+ * `custom:none`, `unprotected`) and lists. `via`: where its internet traffic leaves
  * (`internet`, `this-machine`, `space:<id>`, `socks5://...`); left out:
  * the exit it has. */
 export function networkSettingsOf(word: string, allow: string[], deny: string[], via?: string) {
   const [preset, rest = ""] = word.trim().toLowerCase().split(":", 2) as [string, string?];
-  const all = preset === "localhost" && rest === "all";
-  const ports = preset === "localhost" && !all ? rest.split(",").map((p) => Number(p.trim())).filter((p) => Number.isInteger(p) && p > 0 && p < 65536) : [];
+  const opensLocalhost = preset === "localhost" || preset === "localhost+lan";
+  const all = opensLocalhost && rest === "all";
+  const ports = opensLocalhost && !all ? rest.split(",").map((p) => Number(p.trim())).filter((p) => Number.isInteger(p) && p > 0 && p < 65536) : [];
   return {
     preset,
     localhostPorts: ports,

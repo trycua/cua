@@ -199,7 +199,13 @@ fn build(v: &Value, p: &Value, role: Role, text: String) -> Option<Message> {
     })
 }
 
-pub(crate) fn history(root: &Path, id: &str) -> Result<Option<(ThreadSummary, Vec<Message>)>> {
+/// A chat's newest messages, read from the end of the file within
+/// [`lines::HISTORY_BUDGET`]; see [`crate::claude::history`].
+pub(crate) fn history(
+    root: &Path,
+    id: &str,
+    cap: usize,
+) -> Result<Option<(ThreadSummary, Vec<Message>, bool)>> {
     let Some(path) = find(root, id) else {
         return Ok(None);
     };
@@ -211,12 +217,13 @@ pub(crate) fn history(root: &Path, id: &str) -> Result<Option<(ThreadSummary, Ve
         return Ok(None);
     }
     let (mut items, mut events) = (vec![], vec![]);
-    lines::each(&path, |v| {
+    let whole = lines::rev_each(&path, lines::HISTORY_BUDGET, |v| {
         if let Some(m) = message(&v) {
             items.push(m);
         } else if let Some(m) = event_message(&v) {
             events.push(m);
         }
+        items.len() < cap && events.len() < cap
     })
     .map_err(|source| crate::Error::Io {
         path: path.display().to_string(),
@@ -224,12 +231,13 @@ pub(crate) fn history(root: &Path, id: &str) -> Result<Option<(ThreadSummary, Ve
     })?;
     // Newer rollouts write each message both ways: the response items win.
     let mut out = if items.is_empty() { events } else { items };
+    out.reverse();
     for (i, m) in out.iter_mut().enumerate() {
         if m.key.is_empty() {
             m.key = format!("item-{i}");
         }
     }
-    Ok(Some((thread, out)))
+    Ok(Some((thread, out, !whole)))
 }
 
 /// The rollout whose name ends in `-<id>.jsonl`.

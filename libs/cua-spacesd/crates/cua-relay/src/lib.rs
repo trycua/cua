@@ -49,6 +49,7 @@ pub mod mesh;
 pub mod mux;
 pub mod oidc;
 pub mod pairing;
+pub mod pending_deletions;
 pub mod phone;
 pub mod pool;
 pub mod proxies;

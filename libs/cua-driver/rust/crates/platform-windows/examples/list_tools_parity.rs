@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Parity check for the `list-tools` CLI subcommand.
 //!
 //! Runs the binary directly and asserts:

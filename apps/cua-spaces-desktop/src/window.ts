@@ -9,7 +9,7 @@ import { opensOutside } from "./external-url";
 import { windowIconPath } from "./icon";
 import { APP_ORIGIN } from "./protocol";
 import { readSettings, writeSettings, type WindowBounds } from "./settings";
-import { DIM_CHANNEL, overlayColors, overlaySteps } from "./overlay";
+import { DIM_CHANNEL, SURFACE_CHANNEL, overlayColors, overlayColorsFor, overlaySteps, parseSurface } from "./overlay";
 import { KEYBOARD_CHANNEL, applyKeyboard } from "./keyboard";
 import { BACKGROUND, resolvedTheme } from "./theme";
 import { showWhenReady } from "./show-when-ready";
@@ -98,13 +98,16 @@ function syncTitlebarInset(win: BrowserWindow): void {
 // Windows whose page shows a dialog backdrop (see overlay.ts).
 const dimmed = new WeakSet<BrowserWindow>();
 
+// The dark surface a window's page marked (see SURFACE_ATTRIBUTE), if any.
+const surfaces = new WeakMap<BrowserWindow, string>();
+
 // Each window's pending second overlay step (overlaySteps); a newer style replaces it.
 const overlayNext = new WeakMap<BrowserWindow, NodeJS.Timeout>();
 
 /** The title bar overlay (Windows, Linux) in `theme`, dimmed while the page shows a backdrop. */
 function applyOverlay(win: BrowserWindow, theme: "dark" | "light"): void {
   if (process.platform === "darwin") return;
-  const { now, next } = overlaySteps(process.platform, overlayColors(theme, dimmed.has(win)), TITLEBAR_HEIGHT);
+  const { now, next } = overlaySteps(process.platform, overlayColorsFor(theme, dimmed.has(win), surfaces.get(win)), TITLEBAR_HEIGHT);
   clearTimeout(overlayNext.get(win));
   for (const style of now) win.setTitleBarOverlay(style);
   if (next) {
@@ -147,6 +150,19 @@ export function handleOverlayDim(): void {
     if (!win || !event.senderFrame?.url.startsWith(`${APP_ORIGIN}/`)) return;
     if (dim === true) dimmed.add(win);
     else dimmed.delete(win);
+    applyThemeToWindow(win);
+  });
+}
+
+// The preload reports a page's marked dark surface (the first run) and when
+// it goes; the overlay follows it, then the theme again.
+export function handleOverlaySurface(): void {
+  ipcMain.on(SURFACE_CHANNEL, (event, value: unknown) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win || !event.senderFrame?.url.startsWith(`${APP_ORIGIN}/`)) return;
+    const surface = parseSurface(value);
+    if (surface) surfaces.set(win, surface);
+    else surfaces.delete(win);
     applyThemeToWindow(win);
   });
 }

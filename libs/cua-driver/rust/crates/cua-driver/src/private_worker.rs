@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Hidden process-isolated SDK runtime entry point.
 //!
 //! This is intentionally not a CLI product surface. A trusted SDK host starts

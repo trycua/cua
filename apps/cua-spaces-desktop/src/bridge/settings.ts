@@ -88,12 +88,8 @@ export function settingsPage(model: AppModel, parts: HostParts) {
   return model.native.appSettingsWithStorage(page, parts.storage.section, model.settings.experiments);
 }
 
-/** The SwiftUI app's New UI switch ("Use classic UI", and the older `experiment:web_ui`): this app is the web UI, so it (and its note) is not offered here. */
-export const WEB_UI_ROWS = new Set(["experiment:classic_ui", "experiment:classic_ui-note", "experiment:web_ui", "experiment:web_ui-note"]);
-
 export function experimentsPage(model: AppModel) {
-  const page = model.native.appExperimentsPage(model.settings.experiments);
-  return { ...page, sections: page.sections.map((s) => ({ ...s, rows: s.rows.filter((r) => !WEB_UI_ROWS.has(r.id)) })) };
+  return model.native.appExperimentsPage(model.settings.experiments);
 }
 
 /** The experiments the daemon enforces (Secure Spaces, Child Spaces, Ask first, CI runners, Public TCP shares, Phone app, Warm start) as the cua home keeps them: what `cua experiments enable` set shows the next time Settings is read. */
@@ -310,7 +306,6 @@ export function settingsMethods(ctx: BridgeContext): Handlers {
         if (!updates.updater) throw Failure.unsupported("Updates are off in this build");
         updates.choose(option);
       } else if (row.startsWith("experiment:")) {
-        if (WEB_UI_ROWS.has(row)) throw Failure.unsupported("This app is the new UI");
         chooseExperiment(model, row, option);
       } else if (row.startsWith("agent:")) {
         // An AI agents row: configure it, or remove what cua added.

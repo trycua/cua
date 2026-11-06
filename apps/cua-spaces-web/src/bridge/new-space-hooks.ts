@@ -131,7 +131,7 @@ export function useNewSpaceWizard(): NewSpaceWizardHook {
       // The Network choice under Advanced (Internet only unless changed).
       const net = ctx.adapter?.network;
       if (net && net.wizardPreset !== "internet") {
-        args = { ...args, network: net.wizardPreset === "localhost" ? "localhost:all" : net.wizardPreset };
+        args = { ...args, network: net.wizardPreset === "localhost" || net.wizardPreset === "localhost+lan" ? `${net.wizardPreset}:all` : net.wizardPreset };
       }
       net?.setWizardPreset("internet");
       update((x) => ({ ...x, open: false, state: null, pinnedEnv: null }));

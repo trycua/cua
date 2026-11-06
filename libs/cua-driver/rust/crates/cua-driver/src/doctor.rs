@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! `cua-driver doctor` — environment + install diagnostic probes.
 //!
 //! The doctor subcommand runs a battery of platform-aware probes and emits

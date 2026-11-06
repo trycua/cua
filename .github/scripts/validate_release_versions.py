@@ -139,7 +139,7 @@ def driver_versions(root: Path) -> tuple[str, dict[str, str]]:
         ),
         "rust/Skills/cua-driver/SKILL.md": read_match(
             base / "rust/Skills/cua-driver/SKILL.md",
-            r"^version:\s*([^\s#]+)",
+            r"^  version:\s*([^\s#]+)",
         ),
     }
     for relative in driver_reference_paths(root):

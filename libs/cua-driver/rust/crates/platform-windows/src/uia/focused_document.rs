@@ -17,8 +17,8 @@ use windows::core::Interface;
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::Accessibility::{
     IUIAutomationElement, IUIAutomationTextPattern, SupportedTextSelection_Single,
-    TextPatternRangeEndpoint_End, TextPatternRangeEndpoint_Start, UIA_DocumentControlTypeId,
-    UIA_TextPatternId, UIA_ValuePatternId,
+    TextPatternRangeEndpoint_End, TextPatternRangeEndpoint_Start, TextUnit_Character,
+    UIA_DocumentControlTypeId, UIA_TextPatternId, UIA_ValuePatternId,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     GetAncestor, GetForegroundWindow, IsWindow, GA_ROOT,
@@ -32,6 +32,8 @@ pub(crate) enum FocusedDocumentTypeOutcome {
     Confirmed,
     Unknown(&'static str),
 }
+
+const MAX_TYPED_DOCUMENT_UNITS: i32 = 1 << 20;
 
 static PENDING_WRITE: AtomicBool = AtomicBool::new(false);
 
@@ -134,26 +136,54 @@ fn try_type_focused_document_append_unbounded(
         let Ok(initial_read_only) = (unsafe { value_pattern.CurrentIsReadOnly() }) else {
             return not_applicable("value_read_only_state_unavailable");
         };
-        let Ok(initial_value) = (unsafe { value_pattern.CurrentValue() }) else {
-            return not_applicable("value_unavailable");
-        };
-        let initial_value = initial_value.to_string();
-
         let Ok(text_pattern) = (unsafe { focused.GetCurrentPattern(UIA_TextPatternId) }) else {
             return not_applicable("text_pattern_unavailable");
         };
         let Ok(text_pattern) = text_pattern.cast::<IUIAutomationTextPattern>() else {
             return not_applicable("text_pattern_cast_failed");
         };
+        let probed = unsafe { text_pattern.DocumentRange() }
+            .and_then(|range| unsafe { range.GetText(MAX_TYPED_DOCUMENT_UNITS + 1) });
+        if !probed.is_ok_and(|text| within_size_cap(text.len())) {
+            return not_applicable("document_over_size_cap");
+        }
+        let Ok(initial_value) = (unsafe { value_pattern.CurrentValue() }) else {
+            return not_applicable("value_unavailable");
+        };
+        let initial_value = initial_value.to_string();
         let single_text_selection = unsafe { text_pattern.SupportedTextSelection() }
             .is_ok_and(|selection| selection == SupportedTextSelection_Single);
         let document_matches = unsafe { text_pattern.DocumentRange() }
             .and_then(|range| unsafe { range.GetText(-1) })
             .is_ok_and(|value| value == initial_value);
+        let read_selection = || -> Option<(String, String)> {
+            let selection = unsafe { text_pattern.GetSelection() }
+                .ok()
+                .filter(|selections| unsafe { selections.Length() }.ok() == Some(1))
+                .and_then(|selections| unsafe { selections.GetElement(0) }.ok())?;
+            let before = unsafe { text_pattern.DocumentRange() }
+                .and_then(|document| unsafe { document.Clone() })
+                .ok()?;
+            unsafe {
+                before.MoveEndpointByRange(
+                    TextPatternRangeEndpoint_End,
+                    &selection,
+                    TextPatternRangeEndpoint_Start,
+                )
+            }
+            .ok()?;
+            let prefix = unsafe { before.GetText(-1) }.ok()?.to_string();
+            let selected = unsafe { selection.GetText(-1) }.ok()?.to_string();
+            Some((prefix, selected))
+        };
+        let probed_selection = read_selection();
+        let mapped = probed_selection
+            .as_ref()
+            .and_then(|(prefix, selected)| split_at_selection(&initial_value, prefix, selected));
         if !focused_document_eligible(
             exact_foreground_target(target, Some(target_pid)),
             !initial_read_only.as_bool(),
-            initial_value.is_empty(),
+            mapped.is_some(),
             single_text_selection,
             document_matches,
         ) {
@@ -185,6 +215,9 @@ fn try_type_focused_document_append_unbounded(
         {
             return not_applicable("document_changed_before_write");
         }
+        if !same_selection(probed_selection.as_ref(), read_selection().as_ref()) {
+            return not_applicable("selection_changed_before_write");
+        }
         // If the UIA deadline fired during pre-write checks, do not start a
         // write after the caller has already returned an unknown result.
         PENDING_WRITE.store(true, Ordering::Release);
@@ -196,7 +229,11 @@ fn try_type_focused_document_append_unbounded(
             return not_applicable("cancelled_before_write");
         }
 
-        let expected_value = text.to_owned();
+        let Some((prefix, rest)) = mapped else {
+            return not_applicable("selection_not_mapped");
+        };
+        let caret_text = format!("{prefix}{text}");
+        let expected_value = format!("{caret_text}{rest}");
         let write_result = (|| -> Result<(), &'static str> {
             let value = BSTR::from(expected_value.as_str());
             unsafe { value_pattern.SetValue(&value) }
@@ -209,12 +246,40 @@ fn try_type_focused_document_append_unbounded(
 
             let document_range = unsafe { text_pattern.DocumentRange() }
                 .map_err(|_| "TextPattern DocumentRange failed after dispatch")?;
-            let caret_range = unsafe { document_range.Clone() }
-                .map_err(|_| "TextPattern range clone failed after dispatch")?;
+            let mut landed = None;
+            for units in caret_unit_counts(&caret_text) {
+                let range = unsafe { document_range.Clone() }
+                    .map_err(|_| "TextPattern range clone failed after dispatch")?;
+                unsafe {
+                    range.MoveEndpointByRange(
+                        TextPatternRangeEndpoint_End,
+                        &document_range,
+                        TextPatternRangeEndpoint_Start,
+                    )
+                }
+                .map_err(|_| "TextPattern caret collapse failed after dispatch")?;
+                unsafe {
+                    range.MoveEndpointByUnit(
+                        TextPatternRangeEndpoint_End,
+                        TextUnit_Character,
+                        units,
+                    )
+                }
+                .map_err(|_| "TextPattern caret move failed after dispatch")?;
+                let reached = unsafe { range.GetText(-1) }
+                    .map_err(|_| "TextPattern caret read-back failed after dispatch")?;
+                if normalized_text_matches(&caret_text, &reached.to_string()) {
+                    landed = Some(range);
+                    break;
+                }
+            }
+            let Some(caret_range) = landed else {
+                return Err("TextPattern caret did not land after the typed text");
+            };
             unsafe {
                 caret_range.MoveEndpointByRange(
                     TextPatternRangeEndpoint_Start,
-                    &document_range,
+                    &caret_range,
                     TextPatternRangeEndpoint_End,
                 )
             }
@@ -222,8 +287,6 @@ fn try_type_focused_document_append_unbounded(
             unsafe { caret_range.Select() }
                 .map_err(|_| "TextPattern caret placement failed after dispatch")?;
 
-            let fresh_document_range = unsafe { text_pattern.DocumentRange() }
-                .map_err(|_| "TextPattern verification range failed after dispatch")?;
             let selections = unsafe { text_pattern.GetSelection() }
                 .map_err(|_| "TextPattern selection read-back failed after dispatch")?;
             if unsafe { selections.Length() }
@@ -234,24 +297,30 @@ fn try_type_focused_document_append_unbounded(
             }
             let selection = unsafe { selections.GetElement(0) }
                 .map_err(|_| "TextPattern caret read-back failed after dispatch")?;
-            let start_at_end = unsafe {
+            let collapsed = unsafe {
                 selection.CompareEndpoints(
                     TextPatternRangeEndpoint_Start,
-                    &fresh_document_range,
+                    &selection,
                     TextPatternRangeEndpoint_End,
                 )
             }
-            .map_err(|_| "TextPattern caret start comparison failed after dispatch")?;
-            let end_at_end = unsafe {
-                selection.CompareEndpoints(
+            .map_err(|_| "TextPattern caret comparison failed after dispatch")?;
+            let fresh_document_range = unsafe { text_pattern.DocumentRange() }
+                .map_err(|_| "TextPattern verification range failed after dispatch")?;
+            let before_caret = unsafe { fresh_document_range.Clone() }
+                .map_err(|_| "TextPattern range clone failed after dispatch")?;
+            unsafe {
+                before_caret.MoveEndpointByRange(
                     TextPatternRangeEndpoint_End,
-                    &fresh_document_range,
-                    TextPatternRangeEndpoint_End,
+                    &selection,
+                    TextPatternRangeEndpoint_Start,
                 )
             }
-            .map_err(|_| "TextPattern caret end comparison failed after dispatch")?;
-            if start_at_end != 0 || end_at_end != 0 {
-                return Err("TextPattern caret was not at the document end after dispatch");
+            .map_err(|_| "TextPattern caret range failed after dispatch")?;
+            let before_text = unsafe { before_caret.GetText(-1) }
+                .map_err(|_| "TextPattern caret text failed after dispatch")?;
+            if collapsed != 0 || !normalized_text_matches(&caret_text, &before_text.to_string()) {
+                return Err("TextPattern caret was not right after the typed text after dispatch");
             }
             let final_value = unsafe { value_pattern.CurrentValue() }
                 .map_err(|_| "Final ValuePattern read-back failed after dispatch")?;
@@ -334,11 +403,35 @@ fn exact_foreground_target(target: HWND, expected_pid: Option<u32>) -> bool {
 fn focused_document_eligible(
     exact_target: bool,
     writable_value: bool,
-    value_is_empty: bool,
+    selection_mapped: bool,
     single_text_selection: bool,
     document_matches: bool,
 ) -> bool {
-    exact_target && writable_value && single_text_selection && value_is_empty && document_matches
+    exact_target && writable_value && single_text_selection && selection_mapped && document_matches
+}
+
+fn caret_unit_counts(text: &str) -> Vec<i32> {
+    let text = normalize_document_line_endings(text);
+    let utf16 = text.encode_utf16().count() as i32;
+    let chars = text.chars().count() as i32;
+    if utf16 == chars {
+        vec![chars]
+    } else {
+        vec![utf16, chars]
+    }
+}
+
+fn within_size_cap(probed_units: usize) -> bool {
+    probed_units <= MAX_TYPED_DOCUMENT_UNITS as usize
+}
+
+fn same_selection(probed: Option<&(String, String)>, now: Option<&(String, String)>) -> bool {
+    probed.is_some() && probed == now
+}
+
+fn split_at_selection(value: &str, prefix: &str, selected: &str) -> Option<(String, String)> {
+    let rest = value.strip_prefix(prefix)?.strip_prefix(selected)?;
+    Some((prefix.to_owned(), rest.to_owned()))
 }
 
 fn classify_focused_document_write(
@@ -387,8 +480,10 @@ fn focused_document_worker_error(
 #[cfg(test)]
 mod tests {
     use super::{
-        classify_focused_document_write, focused_document_eligible, focused_document_worker_error,
-        normalize_document_line_endings, normalized_text_matches, FocusedDocumentTypeOutcome,
+        caret_unit_counts, classify_focused_document_write, focused_document_eligible,
+        focused_document_worker_error, normalize_document_line_endings, normalized_text_matches,
+        same_selection, split_at_selection, within_size_cap, FocusedDocumentTypeOutcome,
+        MAX_TYPED_DOCUMENT_UNITS,
     };
     use crate::uia::windows_enum::UiaDeadlineError;
 
@@ -404,6 +499,49 @@ mod tests {
         assert!(!focused_document_eligible(true, true, false, false, true));
         assert!(!focused_document_eligible(false, true, false, true, true));
         assert!(!focused_document_eligible(true, false, false, true, true));
+    }
+
+    #[test]
+    fn the_size_probe_admits_the_cap_and_refuses_one_unit_more() {
+        let cap = MAX_TYPED_DOCUMENT_UNITS as usize;
+        assert!(within_size_cap(0));
+        assert!(within_size_cap(cap));
+        assert!(!within_size_cap(cap + 1));
+    }
+
+    #[test]
+    fn a_selection_that_moved_before_the_write_sends_the_text_by_keys() {
+        let world = ("hello ".to_owned(), "world".to_owned());
+        let caret = ("hello world".to_owned(), String::new());
+        assert!(same_selection(Some(&world), Some(&world.clone())));
+        assert!(!same_selection(Some(&world), Some(&caret)));
+        assert!(!same_selection(Some(&world), None));
+        assert!(!same_selection(None, None));
+    }
+
+    #[test]
+    fn the_caret_tries_utf16_units_before_scalar_values_when_they_differ() {
+        assert_eq!(caret_unit_counts("line1\rab"), vec![8]);
+        assert_eq!(caret_unit_counts("a\r\nb"), vec![3]);
+        assert_eq!(caret_unit_counts("x \u{1f642} y"), vec![6, 5]);
+    }
+
+    #[test]
+    fn a_selection_maps_onto_the_value_only_when_prefix_selection_and_rest_rebuild_it() {
+        assert_eq!(
+            split_at_selection("line1\rab", "line1\rab", ""),
+            Some(("line1\rab".to_owned(), String::new()))
+        );
+        assert_eq!(
+            split_at_selection("hello world", "hello ", ""),
+            Some(("hello ".to_owned(), "world".to_owned()))
+        );
+        assert_eq!(
+            split_at_selection("xyz tail", "", "xyz"),
+            Some((String::new(), " tail".to_owned()))
+        );
+        assert_eq!(split_at_selection("hello", "help", ""), None);
+        assert_eq!(split_at_selection("hello", "he", "x"), None);
     }
 
     #[test]

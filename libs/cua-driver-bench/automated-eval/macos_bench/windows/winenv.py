@@ -231,6 +231,14 @@ def force_foreground(hwnd: int) -> bool:
     front = user32.GetForegroundWindow()
     if front == hwnd:
         return True
+    # A shell flyout (Search, Start) that holds the foreground refuses the takeover: dismiss it with Escape first.
+    if front and process_path(window_pid(front)).lower().endswith(("\\searchhost.exe", "\\startmenuexperiencehost.exe")):
+        user32.keybd_event(0x1B, 0, 0, 0)
+        user32.keybd_event(0x1B, 0, 2, 0)
+        time.sleep(0.5)
+        front = user32.GetForegroundWindow()
+        if front == hwnd:
+            return True
     mine = kernel32.GetCurrentThreadId()
     theirs = window_thread(front) if front else 0
     attached = bool(theirs and theirs != mine and user32.AttachThreadInput(mine, theirs, True))

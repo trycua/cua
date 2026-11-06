@@ -35,12 +35,13 @@ testing, packaging, and release requirements.
 Bounded instrumented app proof and an uninstrumented smoke are retained from
 source `f180e8828b8f31cc153e3c44eaa89a9c13c5bc68`, with an unchanged plugin
 tree and uninstrumented module hash at
-`1133a06e4f205cf80188a7ac9e41102f37611fea`. Raw background qualification is
-limited to native Calc from `libreoffice-fresh 26.2.5-3`, Inkscape `1.4.4-6`,
-the plain compiled `evdev`/`pc105`/`us` keymap, and the two seats `Cua-Agent`
-and `Cua-Agent-2`. The proof covers the recorded actions and observation
-intervals. Chromium, Electron, and XWayland raw background input remain
-unqualified; semantic AT-SPI actions are separate.
+`1133a06e4f205cf80188a7ac9e41102f37611fea`. The proof covers the recorded
+actions and observation intervals. Background input now admits any native
+Wayland window whose app bound the agent seats `Cua-Agent` and `Cua-Agent-2`
+(GTK 3 and 4 and Qt 6 do; Qt 6 keys refuse), with the plain compiled
+`evdev`/`pc105`/`us` keymap. Chromium and Electron bind only the user's seat and
+refuse with `client_not_bound`; XWayland refuses. Semantic AT-SPI actions are
+separate.
 
 The exact-target foreground route intentionally changes primary focus and,
 for pointer actions, cursor position, without restoration. The canonical native
@@ -306,5 +307,5 @@ remains discovery-only in its normal build. The separate physical run has explic
 activation observation, GTK3, GTK4, Qt6, LibreOffice, Chromium/Ozone, Electron,
 DPMS-off refusal, and one-shot and long-lived graphical-session client rows;
 see `tests/README.md` for the required evidence. Those broader application rows
-do not widen the raw-background qualification beyond the exact Calc/Inkscape
-packages, plain US keymap, and two seats documented in the input v3 contract.
+are separate from the per-target background admission, plain US keymap, and
+two seats documented in the input v3 contract.

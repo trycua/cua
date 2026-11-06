@@ -249,19 +249,6 @@ pub fn enabled() -> bool {
             }))
 }
 
-/// Whether background (isolated seat) input is admitted for `pid`'s windows,
-/// the check a background action makes before dispatch. `Err` carries the
-/// refusal reason (`client_not_qualified`, ...). Only meaningful while
-/// [`enabled`]: without the isolated seats the tools route background input
-/// elsewhere.
-pub fn background_admission(pid: u32) -> std::result::Result<(), &'static str> {
-    if protocol() == InputProtocol::Production {
-        super::hyprland_compatibility::qualify(pid)
-    } else {
-        Ok(())
-    }
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum InputProtocol {
     Production,
@@ -1203,7 +1190,10 @@ fn execute_actions_routed(
         "foreground input requires production protocol; no downgrade is permitted"
     );
     if route == DeliveryRoute::Background && protocol() == InputProtocol::Production {
-        if let Err(reason) = super::hyprland_compatibility::qualify(pid) {
+        let keyboard = actions
+            .iter()
+            .any(|action| matches!(action, Action::Key { .. } | Action::TextKey { .. }));
+        if let Err(reason) = super::hyprland_compatibility::admit(pid, address, keyboard) {
             return Ok(json!({"ok":false,"code":reason,"detail":reason}));
         }
     }

@@ -1202,8 +1202,16 @@ fn invoke_operation(
     false
 }
 
+/// Hyprland's agent seats (the Cua plugin's isolated input) take background
+/// pointer and key input for any native Wayland client that binds them, the
+/// GTK3 fixture included.
+fn hyprland_agent_seats() -> bool {
+    DisplayServer::current() == DisplayServer::Wayland
+        && platform_linux::wayland::hyprland_input::enabled()
+}
+
 fn row_expects_refusal(row: CatalogRow) -> bool {
-    if row.delivery != Delivery::Background {
+    if row.delivery != Delivery::Background || hyprland_agent_seats() {
         return false;
     }
     // X11 promotes a plain left click on an accessible GTK control to the
@@ -1263,6 +1271,8 @@ fn run_catalog_row(row: CatalogRow) {
         ) && row.delivery == Delivery::Background
         {
             DriverRoute::LinuxAtSpiAction
+        } else if row.delivery == Delivery::Background && hyprland_agent_seats() {
+            DriverRoute::LinuxHyprlandIsolatedInput
         } else if std::env::var_os("CUA_INJECT_SOCKET").is_some() {
             DriverRoute::LinuxCuaCompositorInject
         } else {

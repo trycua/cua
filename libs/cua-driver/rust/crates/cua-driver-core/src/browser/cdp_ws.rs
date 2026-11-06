@@ -122,6 +122,10 @@ pub struct CdpDialogState {
     pub generation: u64,
     pub kind: String,
     pub session_id: String,
+    /// The session that saw the dialog open detached while it was showing.
+    /// Chromium answers every other session `No dialog is showing`, so the
+    /// driver cannot resolve it, yet the page stays blocked until it closes.
+    pub detached: bool,
 }
 
 /// What the reader routed back for one in-flight call.
@@ -219,6 +223,7 @@ async fn read_loop(mut read: SplitStream<WsStream>, demux: Arc<Demux>) {
                                     generation,
                                     kind: kind.to_owned(),
                                     session_id: session_id.to_owned(),
+                                    detached: false,
                                 },
                             );
                         }
@@ -231,17 +236,17 @@ async fn read_loop(mut read: SplitStream<WsStream>, demux: Arc<Demux>) {
                     _ => {}
                 }
             } else if event.method == "Target.detachedFromTarget" {
-                // A detached session reports nothing more, its dialog close
-                // included, and cannot resolve the dialog, so its record
-                // would lock the tab for good. Drop it; the next attach
-                // subscribes a new session.
+                // A detached session reports nothing more and cannot resolve
+                // its dialog, but the page stays blocked. Keep the record,
+                // marked unresolvable, so callers fail fast; the next attach
+                // subscribes a new session whose close event clears it.
                 if let Some(session_id) = event.params.get("sessionId").and_then(Value::as_str) {
                     demux.session_targets.lock().unwrap().remove(session_id);
-                    demux
-                        .dialogs
-                        .lock()
-                        .unwrap()
-                        .retain(|_, dialog| dialog.session_id != session_id);
+                    for dialog in demux.dialogs.lock().unwrap().values_mut() {
+                        if dialog.session_id == session_id {
+                            dialog.detached = true;
+                        }
+                    }
                 }
             }
             demux
@@ -1377,7 +1382,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_detached_dialog_session_drops_its_dialog_record() {
+    async fn a_detached_dialog_session_marks_its_dialog_unresolvable() {
         let server = MockCdpServer::start(StdArc::new(|call| match call.method.as_str() {
             "Dialog.open" => MockReply::ok(json!({})).with_events(vec![MockEvent {
                 method: "Page.javascriptDialogOpening".into(),
@@ -1388,6 +1393,11 @@ mod tests {
                 method: "Target.detachedFromTarget".into(),
                 session_id: None,
                 params: json!({ "sessionId": call.params["sessionId"], "targetId": "page-target" }),
+            }]),
+            "Dialog.close" => MockReply::ok(json!({})).with_events(vec![MockEvent {
+                method: "Page.javascriptDialogClosed".into(),
+                session_id: call.session_id.clone(),
+                params: json!({}),
             }]),
             _ => MockReply::ok(json!({})),
         }))
@@ -1405,8 +1415,16 @@ mod tests {
         )
         .await
         .unwrap();
-        assert!(conn.dialog_state("page-target").is_none());
+        // The page is still blocked, so the record stays, marked unresolvable.
+        let dialog = conn.dialog_state("page-target").expect("dialog kept");
+        assert!(dialog.detached);
         assert!(!conn.has_dialog_session("page-target"));
+        // A new subscriber's close event clears it.
+        conn.register_dialog_session("tab-session-b", "page-target");
+        conn.call(Some("tab-session-b"), "Dialog.close", json!({}))
+            .await
+            .unwrap();
+        assert!(conn.dialog_state("page-target").is_none());
     }
 
     #[tokio::test]

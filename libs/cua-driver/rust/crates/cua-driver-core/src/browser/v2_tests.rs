@@ -73,6 +73,11 @@ pub(super) struct FixtureState {
     /// or emulation command until it closes.
     trusted_click_opens_dialog: Option<&'static str>,
     renderer_blocked: bool,
+    /// Something outside the driver detaches the dialog's Page session on
+    /// the next attach. While `dialog_blocks_page`, the renderer cannot
+    /// answer `Page.enable` on the new session.
+    detach_dialog_session: bool,
+    dialog_blocks_page: bool,
     /// Tab sessions that enabled the Page domain. Chromium reports a dialog
     /// to each of them, not to the session whose call opened it.
     page_sessions: Vec<String>,
@@ -141,6 +146,8 @@ impl Default for FixtureState {
             dialog_vanished: false,
             trusted_click_opens_dialog: None,
             renderer_blocked: false,
+            detach_dialog_session: false,
+            dialog_blocks_page: false,
             page_sessions: Vec::new(),
             semantic_large_page: false,
             semantic_html_style: String::new(),
@@ -538,9 +545,26 @@ fn fixture_handler(state: SharedState) -> MockHandler {
             })),
             "Target.attachToTarget" => {
                 st.tab_sessions += 1;
-                MockReply::ok(json!({ "sessionId": format!("tab-sess-{}", st.tab_sessions) }))
+                let reply =
+                    MockReply::ok(json!({ "sessionId": format!("tab-sess-{}", st.tab_sessions) }));
+                if !std::mem::take(&mut st.detach_dialog_session) {
+                    return reply;
+                }
+                let detached = std::mem::take(&mut st.page_sessions);
+                reply.with_events(
+                    detached
+                        .into_iter()
+                        .map(|session| MockEvent {
+                            method: "Target.detachedFromTarget".into(),
+                            params: json!({ "sessionId": session, "targetId": "T1" }),
+                            session_id: None,
+                        })
+                        .collect(),
+                )
             }
-            "Page.enable" if is_tab && st.page_enable_hangs => MockReply::hang(),
+            "Page.enable" if is_tab && (st.page_enable_hangs || st.dialog_blocks_page) => {
+                MockReply::hang()
+            }
             "Page.enable" if is_tab => {
                 st.page_sessions.push(sess.clone());
                 let mut reply = MockReply::ok(json!({}));
@@ -4160,4 +4184,78 @@ async fn trusted_click_returns_when_a_dialog_opens_on(opener: &'static str) {
         }))
         .await;
     assert_eq!(structured(&accepted)["status"], "ok");
+}
+
+/// Opens a confirm with a dom_event click, then has the next attach detach
+/// the session that saw it open.
+async fn click_then_detach_dialog_session(f: &Fixture, page_blocked: bool) -> (String, String) {
+    let (target, tab) = bind(f).await;
+    let snap = snapshot(f, &target, &tab).await;
+    let button = ref_of(&snap, "main", "main-btn");
+    let first = BrowserClickTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "ref": button,
+            "input_route": "dom_event", "session": SESSION
+        }))
+        .await;
+    assert_eq!(structured(&first)["dialog"]["present"], true);
+    let mut state = f.state.lock().unwrap();
+    state.click_opens_dialog = false;
+    state.detach_dialog_session = true;
+    state.dialog_blocks_page = page_blocked;
+    (target, tab)
+}
+
+#[tokio::test]
+async fn a_dialog_whose_session_detached_refuses_clicks_without_waiting() {
+    let f = fixture_with(|state| state.click_opens_dialog = true).await;
+    let (target, tab) = click_then_detach_dialog_session(&f, true).await;
+
+    let started = std::time::Instant::now();
+    let clicked = BrowserClickTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "session": SESSION, "x": 10, "y": 20
+        }))
+        .await;
+    let c = structured(&clicked);
+    assert_eq!(c["refusal"]["code"], "browser_action_unavailable", "{c}");
+    assert_eq!(c["refusal"]["detail"]["dialog"]["present"], true, "{c}");
+    assert_eq!(c["refusal"]["detail"]["dialog"]["resolvable"], false, "{c}");
+    // Only the bounded dialog subscription waits; the 20 s call timeout never runs.
+    assert!(started.elapsed() < std::time::Duration::from_secs(10));
+    assert!(recorded_calls(&f, "Input.dispatchMouseEvent").is_empty());
+
+    let inspected = BrowserDialogTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "action": "inspect", "session": SESSION
+        }))
+        .await;
+    let i = structured(&inspected);
+    assert_eq!(i["present"], true, "{i}");
+    assert_eq!(i["resolvable"], false, "{i}");
+    let dismissed = BrowserDialogTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "action": "dismiss",
+            "dialog_id": i["dialog_id"], "session": SESSION, "delivery_mode": "foreground"
+        }))
+        .await;
+    let d = structured(&dismissed);
+    assert_eq!(d["refusal"]["code"], "browser_action_unavailable", "{d}");
+    assert_eq!(d["refusal"]["detail"]["dialog"]["resolvable"], false, "{d}");
+    assert!(recorded_calls(&f, "Page.handleJavaScriptDialog").is_empty());
+}
+
+#[tokio::test]
+async fn a_detached_dialog_that_closed_unseen_stops_blocking_clicks() {
+    let f = fixture_with(|state| state.click_opens_dialog = true).await;
+    let (target, tab) = click_then_detach_dialog_session(&f, false).await;
+
+    // The new session's Page.enable answers, so the renderer is no longer blocked.
+    let clicked = BrowserClickTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "session": SESSION, "x": 10, "y": 20
+        }))
+        .await;
+    assert_ne!(clicked.is_error, Some(true), "{:?}", structured(&clicked));
+    assert!(!recorded_calls(&f, "Input.dispatchMouseEvent").is_empty());
 }

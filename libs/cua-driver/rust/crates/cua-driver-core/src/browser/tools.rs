@@ -1308,10 +1308,15 @@ impl Tool for BrowserClickTool {
             .conn
             .dialog_state(validated.tab.cdp_target_id.as_str())
         {
+            let remedy = if open.detached {
+                "its CDP session was detached, so browser_dialog cannot resolve it; close it in the browser"
+            } else {
+                "resolve it with browser_dialog before clicking"
+            };
             return BrowserRefusal::new(
                 BrowserRefusalCode::BrowserActionUnavailable,
                 format!(
-                    "a {} dialog is already open on the exact tab; resolve it with browser_dialog before clicking",
+                    "a {} dialog is already open on the exact tab; {remedy}",
                     open.kind
                 ),
             )
@@ -1695,6 +1700,7 @@ fn dialog_block(dialog: &super::cdp_ws::CdpDialogState) -> Value {
         "present": true,
         "kind": dialog.kind,
         "dialog_id": dialog_capability_id(dialog.generation),
+        "resolvable": !dialog.detached,
     })
 }
 
@@ -2894,8 +2900,19 @@ impl Tool for BrowserDialogTool {
             return ToolResult::text(format!("{} dialog is open in {tab_id}", dialog.kind))
                 .with_structured(json!({
                     "status": "ok", "target_id": target_id, "tab_id": tab_id,
-                    "present": true, "dialog_id": dialog_id, "kind": dialog.kind
+                    "present": true, "dialog_id": dialog_id, "kind": dialog.kind,
+                    "resolvable": !dialog.detached
                 }));
+        }
+        if dialog.detached {
+            // Chromium lets only the session that saw the dialog open resolve
+            // it; every other session is told none is showing.
+            return BrowserRefusal::new(
+                BrowserRefusalCode::BrowserActionUnavailable,
+                "the dialog's CDP session was detached, so the driver cannot resolve it; close it in the browser",
+            )
+            .with_detail(json!({ "dialog": dialog_block(&dialog) }))
+            .to_tool_result();
         }
 
         let supplied_id = match args.require_str("dialog_id") {

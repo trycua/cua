@@ -230,13 +230,26 @@ def _n_of(row: dict[str, Any]) -> int:
 
 
 def shared_desktop(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
-    """PA-01 per number of copies and UM-01 (SHARED-DESKTOP.md). Speed-up is throughput at N over throughput at
-    N = 1 for the same run index (same seed), averaged over the pairs that have both."""
-    pa = [r for r in rows if r.get("task") == "PA-01" and r.get("parallel")]
-    um = [r for r in rows if r.get("task") == "UM-01"]
-    if not pa and not um:
-        return None
+    """PA-01 per number of copies and UM-01 (SHARED-DESKTOP.md), and the same tables for the hard variants PA-02
+    and UM-02 when present. Speed-up is throughput at N over throughput at N = 1 for the same run index (same
+    seed), averaged over the pairs that have both."""
     out: dict[str, Any] = {"PA-01": {}, "UM-01": None}
+    found = False
+    for pa_id, um_id in (("PA-01", "UM-01"), ("PA-02", "UM-02")):
+        pa = [r for r in rows if r.get("task") == pa_id and r.get("parallel")]
+        um = [r for r in rows if r.get("task") == um_id]
+        if not pa and not um:
+            continue
+        found = True
+        if pa_id != "PA-01":
+            out[pa_id], out[um_id] = {}, None
+        _pa_um_tables(out, pa_id, um_id, pa, um)
+    return out if found else None
+
+
+def _pa_um_tables(
+    out: dict[str, Any], pa_id: str, um_id: str, pa: list[dict[str, Any]], um: list[dict[str, Any]]
+) -> None:
     base = {
         r.get("run_index"): r["parallel"].get("throughput_per_min") for r in pa if _n_of(r) == 1
     }
@@ -249,7 +262,7 @@ def shared_desktop(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
             if base.get(r.get("run_index"))
             and isinstance(p.get("throughput_per_min"), (int, float))
         ]
-        out["PA-01"][str(n)] = {
+        out[pa_id][str(n)] = {
             "trials": len(sub),
             "all_copies_passed": _rate(sum(1 for r in sub if r.get("passed")), len(sub)),
             "copies_passed_mean": _mean([p.get("passed") for p in par]),
@@ -267,7 +280,7 @@ def shared_desktop(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
         }
     if um:
         mus = [((r.get("disturbance") or {}).get("mouse_user") or {}) for r in um]
-        out["UM-01"] = {
+        out[um_id] = {
             "trials": len(um),
             "checker_passed": _rate(sum(1 for r in um if r.get("passed")), len(um)),
             "full_pass": _rate(
@@ -284,6 +297,8 @@ def shared_desktop(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
             "trials_with_lost_clicks": sum(
                 1 for m in mus if int(m.get("clicks_landed") or 0) < int(m.get("clicks") or 0)
             ),
+            "user_drags": sum(int(m.get("drags") or 0) for m in mus),
+            "user_drags_cut": sum(int(m.get("drags_cut") or 0) for m in mus),
             "user_clicks": sum(int(m.get("clicks") or 0) for m in mus),
             "user_clicks_not_landed": sum(
                 int(m.get("clicks") or 0) - int(m.get("clicks_landed") or 0) for m in mus
@@ -294,7 +309,6 @@ def shared_desktop(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
                 int((r.get("disturbance") or {}).get("clicks_leaked") or 0) for r in um
             ),
         }
-    return out
 
 
 def analyze(rows: list[dict[str, Any]]) -> dict[str, Any]:
@@ -452,51 +466,63 @@ def markdown(report: dict[str, Any]) -> str:
             + " | ".join(cells)
             + " |"
         )
-    if any(a.get("shared_desktop") for a in report["arms"].values()):
-        lines += [
-            "",
-            "## Shared desktop: parallel agents (PA-01)",
-            "",
-            "All copies passed = every copy's checks held (code, shelf, one Submit, no other copy's code letters, in "
-            "the budget). Speed-up = throughput at N over throughput at N = 1, same run index.",
-            "",
-            "| Setup | N | All copies passed | Copies passed (mean) | Trials with cross-talk | Makespan s | "
-            "Copies per minute | Speed-up vs N = 1 | Full pass (background) |",
-            "|---|---|---|---|---|---|---|---|---|",
-        ]
-        for a in report["arms"].values():
-            sdk = (a.get("shared_desktop") or {}).get("PA-01") or {}
-            for n, p in sdk.items():
-                c = p["all_copies_passed"]
-                fp = p.get("full_pass_background")
-                lines.append(
-                    f"| {a['label']} | {n} | {c['k']}/{c['n']} | {_fmt(p['copies_passed_mean'])} | "
-                    f"{p['trials_with_cross_talk']} | {_fmt(p['makespan_s_mean'])} | "
-                    f"{_fmt(p['throughput_per_min_mean'])} | {_fmt(p['speedup_vs_1_mean'])} | "
-                    f"{_frac(fp)} |"
+    for pa_id, um_id in (("PA-01", "UM-01"), ("PA-02", "UM-02")):
+        if any(
+            (a.get("shared_desktop") or {}).get(pa_id) or (a.get("shared_desktop") or {}).get(um_id)
+            for a in report["arms"].values()
+        ):
+            hard = pa_id == "PA-02"
+            lines += [
+                "",
+                f"## Shared desktop: {'crowded desk, overlapping copies' if hard else 'parallel agents'} ({pa_id})",
+                "",
+                "All copies passed = every copy's checks held (code, shelf, one Submit"
+                + (
+                    ", the Confirm step, no fragment of another copy's code, in the copy's deadline"
+                    if hard
+                    else ", no other copy's code letters, in the budget"
                 )
-        lines += [
-            "",
-            "## Shared desktop: the user's mouse keeps working (UM-01)",
-            "",
-            "Full pass = checker passed, no GUI-only violation and the eight undisturbed criteria, with the pointer "
-            "compared against the user's own script and every user click on its dot.",
-            "",
-            "| Setup | Checker passed | Full pass | Trials pointer displaced | Max displacement px | "
-            "Trials with lost clicks | User clicks not landed | Foreign pointer events | Agent clicks in user window |",
-            "|---|---|---|---|---|---|---|---|---|",
-        ]
-        for a in report["arms"].values():
-            u = (a.get("shared_desktop") or {}).get("UM-01")
-            if not u:
-                continue
-            lines.append(
-                f"| {a['label']} | {u['checker_passed']['k']}/{u['checker_passed']['n']} | "
-                f"{u['full_pass']['k']}/{u['full_pass']['n']} | {u['trials_pointer_displaced']} | "
-                f"{_fmt(u['max_displacement_px'])} | {u['trials_with_lost_clicks']} | "
-                f"{u['user_clicks_not_landed']}/{u['user_clicks']} | {u['foreign_pointer_events']} | "
-                f"{u['agent_clicks_in_user_window']} |"
-            )
+                + "). Speed-up = throughput at N over throughput at N = 1, same run index.",
+                "",
+                "| Setup | N | All copies passed | Copies passed (mean) | Trials with cross-talk | Makespan s | "
+                "Copies per minute | Speed-up vs N = 1 | Full pass (background) |",
+                "|---|---|---|---|---|---|---|---|---|",
+            ]
+            for a in report["arms"].values():
+                sdk = (a.get("shared_desktop") or {}).get(pa_id) or {}
+                for n, p in sdk.items():
+                    c = p["all_copies_passed"]
+                    fp = p.get("full_pass_background")
+                    lines.append(
+                        f"| {a['label']} | {n} | {c['k']}/{c['n']} | {_fmt(p['copies_passed_mean'])} | "
+                        f"{p['trials_with_cross_talk']} | {_fmt(p['makespan_s_mean'])} | "
+                        f"{_fmt(p['throughput_per_min_mean'])} | {_fmt(p['speedup_vs_1_mean'])} | "
+                        f"{_frac(fp)} |"
+                    )
+            lines += [
+                "",
+                f"## Shared desktop: {'the busy user, fast clicks and drags' if hard else 'the user' + chr(39) + 's mouse keeps working'} ({um_id})",
+                "",
+                "Full pass = checker passed, no GUI-only violation and the eight undisturbed criteria, with the pointer "
+                "compared against the user's own script and every user click on its dot.",
+                "",
+                "| Setup | Checker passed | Full pass | Trials pointer displaced | Max displacement px | "
+                "Trials with lost clicks | User clicks not landed | Foreign pointer events | Agent clicks in user window |",
+                "|---|---|---|---|---|---|---|---|---|",
+            ]
+            for a in report["arms"].values():
+                u = (a.get("shared_desktop") or {}).get(um_id)
+                if not u:
+                    continue
+                lines.append(
+                    f"| {a['label']} | {u['checker_passed']['k']}/{u['checker_passed']['n']} | "
+                    f"{u['full_pass']['k']}/{u['full_pass']['n']} | {u['trials_pointer_displaced']} | "
+                    f"{_fmt(u['max_displacement_px'])} | {u['trials_with_lost_clicks']} | "
+                    f"{u['user_clicks_not_landed']}/{u['user_clicks']}"
+                    + (f" ({u['user_drags_cut']}/{u['user_drags']} drags cut)" if hard else "")
+                    + f" | {u['foreign_pointer_events']} | "
+                    f"{u['agent_clicks_in_user_window']} |"
+                )
     viol = [(a["label"], v) for a in report["arms"].values() for v in a["violations"]]
     lines += ["", "## GUI-only violations", ""]
     lines += [f"- {label}: {v['trial_id']}: {v['evidence']}" for label, v in viol] or ["None."]

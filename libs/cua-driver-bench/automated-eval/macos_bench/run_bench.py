@@ -813,11 +813,13 @@ def evaluate_probe(
     }
 
 
-def evaluate_parallel(seed: int, root: Path, artifacts: Path) -> dict[str, Any]:
-    """PA-01: the parallel checker over every copy's state and events (SHARED-DESKTOP.md)."""
+def evaluate_parallel(
+    seed: int, root: Path, artifacts: Path, task: str = "PA-01"
+) -> dict[str, Any]:
+    """PA-01 / PA-02: the parallel checker over every copy's state and events (SHARED-DESKTOP.md)."""
     result = artifacts / "evaluator-result.json"
     completed = subprocess.run(
-        sd.evaluate_argv(sys.executable, seed, root, result),
+        sd.evaluate_argv(sys.executable, seed, root, result, task),
         capture_output=True,
         text=True,
         timeout=120,
@@ -850,7 +852,7 @@ def evaluate_parallel(seed: int, root: Path, artifacts: Path) -> dict[str, Any]:
 def launch_desks(
     plan: list[dict[str, Any]], lab_app: Path, trial_dir: Path, background: bool
 ) -> list[subprocess.Popen[bytes]]:
-    """PA-01: one BenchLab process per copy, each with its own throwaway HOME, at its grid frame."""
+    """PA-01 / PA-02: one BenchLab process per copy, each with its own throwaway HOME, at its grid frame."""
     procs: list[subprocess.Popen[bytes]] = []
     for entry in plan:
         entry["dir"].mkdir(parents=True, exist_ok=True)
@@ -1127,6 +1129,9 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
     condition = getattr(args, "condition", "foreground") if bench_v2 else None  # Amendment 15
     parallel = sd.is_parallel(spec)  # PA-01: N copies, one agent each (SHARED-DESKTOP.md)
     mouse_user = sd.is_mouse_user(spec)  # UM-01: the user moves and clicks the mouse
+    task_id = str(
+        spec.get("id") or ""
+    )  # PA-02 / UM-02 are the hard variants (Hard variants, SHARED-DESKTOP.md)
     instances = sd.instances_for(spec, getattr(args, "instances", None)) if parallel else None
     # Per-build Cua Driver identity (Amendment 3); arm B rows keep the 0.34.0 values of the recorder build.
     build_versions = (ctx.versions.get("builds") or {}).get(cxn.SOURCE_ARM.get(arm, arm)) or (
@@ -1211,13 +1216,13 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
         artifacts / "sentinel.jsonl",
         (
             v2.sentinel_args(condition, artifacts / "mouse-user.json" if mouse_user else None)
-            or (["--frame", ",".join(map(str, sd.PA_WITNESS_FRAME))] if parallel else [])
+            or (["--frame", ",".join(map(str, sd.witness_frame(task_id)))] if parallel else [])
         )
         if bench_v2
         else None,
     )
     if mouse_user:
-        sd.write_mouse_script(seed, artifacts / "mouse-user.json")
+        sd.write_mouse_script(seed, artifacts / "mouse-user.json", task_id)
     app_env = pilot.clean_app_env(trial_dir / "apphome")
     lab: subprocess.Popen[bytes] | None = None
     desks: list[subprocess.Popen[bytes]] = []
@@ -1282,7 +1287,7 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
                     if line.endswith(ca.FORCE_ACCESSIBILITY_FLAG)
                 ]
         elif parallel:
-            plan = sd.pa_agents(seed, int(instances or 1), artifacts)
+            plan = sd.pa_agents(seed, int(instances or 1), artifacts, task=task_id)
             brief, paths = plan[0]["brief"], {}
             sentinel.start()
             desks = launch_desks(plan, lab_app, trial_dir, condition == "background")
@@ -1291,7 +1296,7 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
             sentinel.start()
             if mouse_user:
                 task = copy.copy(task)  # keeps the selector (`spec`) that replace() would drop
-                task.app_args = [*task.app_args, *sd.um_app_args(seed)]
+                task.app_args = [*task.app_args, *sd.um_app_args(seed, task_id)]
             lab = pilot.launch_lab(task, seed, paths, lab_app, app_env)
         if desktop.detect_platform() == "linux":
             desktop.capture_screenshot(os.environ["DISPLAY"], artifacts / "startup.png")
@@ -1349,7 +1354,17 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
         ctx.set_state(state="agent")
         agent_started = time.monotonic()
         if parallel:
-            sd.write_meta(artifacts, int(instances or 1), time.time() * 1000.0, timeout_s)
+            sd.write_meta(
+                artifacts,
+                int(instances or 1),
+                time.time() * 1000.0,
+                timeout_s,
+                **(
+                    {"copy_deadline_s": spec.get("copy_deadline_s")}
+                    if spec.get("copy_deadline_s")
+                    else {}
+                ),
+            )
         if bench_v2 and not parallel:  # A14.2: every v2 trial is guarded, CDB or BenchLab
             guard = v2.GuiOnlyGuard(
                 stream_path,
@@ -1470,7 +1485,7 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
                 if not spec.get("coding_tools"):
                     side_door |= set(side_door_scan(events))
             elif parallel:
-                evaluation = evaluate_parallel(seed, artifacts, artifacts)
+                evaluation = evaluate_parallel(seed, artifacts, artifacts, task_id)
                 row["parallel"] = sd.parallel_of(evaluation)
             else:
                 evaluation = evaluate_probe(
@@ -3011,7 +3026,11 @@ def make_ctx(args: argparse.Namespace) -> Ctx:
             f"{mouse_tasks}: the mouse-user task runs only with --condition background"
         )
     if getattr(args, "instances", None) is not None:
-        sd.instances_for({}, args.instances)  # 1..10, else a usage error before any trial
+        for (
+            tid
+        ) in selected:  # 1..10 for PA-01, 1..16 for PA-02, else a usage error before any trial
+            if sd.is_parallel(task_spec(tasks[tid])):
+                sd.instances_for(task_spec(tasks[tid]), args.instances)
     if bench_v2 or bu.ARM in arm_names:
         problems = v2.validate_tasks({t: task_spec(tasks[t]) for t in tasks}, selected, arm_names)
         if problems:

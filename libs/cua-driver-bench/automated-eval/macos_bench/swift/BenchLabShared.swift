@@ -15,6 +15,11 @@ let deskShelves = [
 final class DeskController: NSObject, ModeController, NSTextFieldDelegate {
     let rec: Recorder
     let instance: String
+    /// --confirm: Submit opens an inline Confirm / Cancel step instead of recording the submit.
+    let confirm: Bool
+    var confirmButton = NSButton()
+    var cancelButton = NSButton()
+    var confirmPending = false
     var codeField = NSTextField()
     var radios: [NSButton] = []
     var submitButton = NSButton()
@@ -26,9 +31,10 @@ final class DeskController: NSObject, ModeController, NSTextFieldDelegate {
     var submitted: [String: Any]?
     var pollTimer: Timer?
 
-    init(rec: Recorder, instance: String) {
+    init(rec: Recorder, instance: String, confirm: Bool = false) {
         self.rec = rec
         self.instance = instance
+        self.confirm = confirm
     }
 
     func build(in content: NSView, window: NSWindow) {
@@ -67,6 +73,21 @@ final class DeskController: NSObject, ModeController, NSTextFieldDelegate {
         submitButton.setAccessibilityLabel("Submit")
         content.addSubview(submitButton)  // not the default button: Return does nothing
 
+        if confirm {
+            confirmButton = NSButton(title: "Confirm", target: self, action: #selector(confirmSubmit(_:)))
+            confirmButton.frame = NSRect(x: lx + 108, y: 262, width: 100, height: 30)
+            confirmButton.bezelStyle = .rounded
+            confirmButton.setAccessibilityLabel("Confirm")
+            confirmButton.isHidden = true  // hidden, not disabled: absent from the accessibility tree
+            content.addSubview(confirmButton)
+            cancelButton = NSButton(title: "Cancel", target: self, action: #selector(cancelSubmit(_:)))
+            cancelButton.frame = NSRect(x: lx + 216, y: 262, width: 100, height: 30)
+            cancelButton.bezelStyle = .rounded
+            cancelButton.setAccessibilityLabel("Cancel")
+            cancelButton.isHidden = true
+            content.addSubview(cancelButton)
+        }
+
         status = makeLabel("Not submitted", x: lx, y: 304, w: 320)
         status.setAccessibilityLabel("Status")
         content.addSubview(status)
@@ -98,19 +119,60 @@ final class DeskController: NSObject, ModeController, NSTextFieldDelegate {
         window?.endEditing(for: nil)
         syncCode()
         let code = codeField.stringValue
+        if confirm {
+            confirmPending = true
+            submitButton.isEnabled = false
+            status.stringValue = "Confirm submit?"
+            confirmButton.isHidden = false
+            cancelButton.isHidden = false
+            rec.emit("confirm_open", ["code": code, "shelf": shelf.map { $0 as Any } ?? NSNull()])
+            return
+        }
+        record(code: code)
+    }
+
+    private func record(code: String) {
         submitCount += 1
         submitted = ["code": code, "shelf": shelf.map { $0 as Any } ?? NSNull()]
         status.stringValue = "Submitted: \(code) / \(shelf ?? "none")"
         rec.emit("submit", ["code": code, "shelf": shelf.map { $0 as Any } ?? NSNull()])
     }
 
+    private func closeConfirm() {
+        confirmPending = false
+        confirmButton.isHidden = true
+        cancelButton.isHidden = true
+        submitButton.isEnabled = true
+    }
+
+    @objc func confirmSubmit(_ sender: Any?) {
+        guard confirm, confirmPending else { return }
+        window?.endEditing(for: nil)
+        syncCode()
+        closeConfirm()  // before the record, so the state written with the submit event is settled
+        record(code: codeField.stringValue)  // the field and the shelf AT THIS MOMENT
+    }
+
+    @objc func cancelSubmit(_ sender: Any?) {
+        guard confirm, confirmPending else { return }
+        closeConfirm()
+        if let s = submitted {
+            status.stringValue = "Submitted: \(s["code"] as? String ?? "") / \(s["shelf"] as? String ?? "none")"
+        } else {
+            status.stringValue = "Not submitted"
+        }
+        rec.emit("confirm_cancel", [:])
+    }
+
     func state() -> [String: Any] {
-        return [
+        var st: [String: Any] = [
             "instance": instance,
             "code": codeField.stringValue,
             "shelf": shelf.map { $0 as Any } ?? NSNull(),
             "submit_count": submitCount,
             "submitted": submitted.map { $0 as Any } ?? NSNull(),
         ]
+        if confirm { st["confirm_pending"] = confirmPending }
+        return st
     }
 }

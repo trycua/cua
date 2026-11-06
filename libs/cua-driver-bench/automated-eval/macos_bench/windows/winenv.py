@@ -232,7 +232,9 @@ def force_foreground(hwnd: int) -> bool:
     if front == hwnd:
         return True
     # A shell flyout (Search, Start) that holds the foreground refuses the takeover: dismiss it with Escape first.
-    if front and process_path(window_pid(front)).lower().endswith(("\\searchhost.exe", "\\startmenuexperiencehost.exe")):
+    if front and process_path(window_pid(front)).lower().endswith(
+        ("\\searchhost.exe", "\\startmenuexperiencehost.exe")
+    ):
         user32.keybd_event(0x1B, 0, 0, 0)
         user32.keybd_event(0x1B, 0, 2, 0)
         time.sleep(0.5)
@@ -403,7 +405,7 @@ class MouseHook:
     """A WH_MOUSE_LL hook on the calling (GUI) thread. While `enabled`, events whose dwExtraInfo is not `magic`
     (the user's, or any other program's, injected or not) are queued in `foreign` as (ms since the epoch,
     kind), kind being move, drag, down, up or scroll (moves at most one per 20 ms); this process's own
-    button-downs are queued in `own_downs` (monotonic seconds). The callback does nothing else and always
+    left button-downs and button-ups are queued in `own_downs` and `own_ups` (monotonic seconds). The callback does nothing else and always
     calls the next hook, and the owner drains the queues from its own timer."""
 
     def __init__(self, magic: int = MAGIC) -> None:
@@ -411,6 +413,7 @@ class MouseHook:
         self.enabled = False
         self.foreign: list[tuple[float, str]] = []
         self.own_downs: list[float] = []
+        self.own_ups: list[float] = []
         self._held = 0
         self._last_move = 0.0
         self._proc = HOOKPROC(self._call)  # kept alive for as long as the hook
@@ -422,6 +425,7 @@ class MouseHook:
     def reset(self) -> None:
         self.foreign.clear()
         self.own_downs.clear()
+        self.own_ups.clear()
         self._held = 0
 
     def _call(self, code: int, wparam: int, lparam: int) -> int:
@@ -432,6 +436,8 @@ class MouseHook:
                 if info.dwExtraInfo == self.magic:
                     if wparam == WM_LBUTTONDOWN:
                         self.own_downs.append(now)
+                    elif wparam == WM_LBUTTONUP:
+                        self.own_ups.append(now)
                 elif wparam == WM_MOUSEMOVE:
                     if now - self._last_move >= 0.02:
                         self._last_move = now
@@ -452,6 +458,61 @@ class MouseHook:
         if self.handle:
             user32.UnhookWindowsHookEx(self.handle)
             self.handle = None
+
+
+# ----------------------------------------------------------------------------- precise waiting
+
+CREATE_WAITABLE_TIMER_HIGH_RESOLUTION = 0x2
+TIMER_ALL_ACCESS = 0x1F0003
+BUSY_TAIL_S = (
+    0.0015  # the last stretch of a wait is spun: even a high-resolution timer wakes ~0.5-1 ms late
+)
+kernel32.CreateWaitableTimerExW.restype = wintypes.HANDLE
+kernel32.CreateWaitableTimerExW.argtypes = [
+    ctypes.c_void_p,
+    wintypes.LPCWSTR,
+    wintypes.DWORD,
+    wintypes.DWORD,
+]
+kernel32.SetWaitableTimer.argtypes = [
+    wintypes.HANDLE, ctypes.POINTER(ctypes.c_longlong), wintypes.LONG, ctypes.c_void_p, ctypes.c_void_p, wintypes.BOOL
+]  # fmt: skip
+kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+kernel32.WaitForSingleObject.restype = wintypes.DWORD
+
+
+class PreciseWait:
+    """Sleep until a `time.monotonic()` deadline with about 1 ms accuracy. Plain `time.sleep` and WM_TIMER wake
+    on the ~15.6 ms system tick, too coarse for an 8 ms pointer step. A high-resolution waitable timer (Windows
+    10 1803 and later) covers all but the last BUSY_TAIL_S, which is spun; without the timer the wait is a
+    1 ms sleep loop. One instance per thread."""
+
+    def __init__(self) -> None:
+        self.timer = (
+            kernel32.CreateWaitableTimerExW(
+                None, None, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS
+            )
+            or None
+        )
+
+    def until(self, deadline: float) -> None:
+        coarse = deadline - BUSY_TAIL_S
+        remaining = coarse - time.monotonic()
+        if remaining > 0:
+            if self.timer:
+                due = ctypes.c_longlong(-int(remaining * 1e7))  # relative, 100 ns units
+                if kernel32.SetWaitableTimer(self.timer, ctypes.byref(due), 0, None, None, False):
+                    kernel32.WaitForSingleObject(self.timer, int(remaining * 1000) + 20)
+            else:
+                while time.monotonic() < coarse:
+                    time.sleep(0.001)
+        while time.monotonic() < deadline:
+            time.sleep(0)  # spin, yielding the GIL
+
+    def close(self) -> None:
+        if self.timer:
+            kernel32.CloseHandle(self.timer)
+            self.timer = None
 
 
 def distance(a: tuple[float, float], b: tuple[float, float]) -> float:

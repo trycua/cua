@@ -36,6 +36,7 @@ to that date.
 | `ad49a3c1a8e373834fbe78ce53c82aeb4dd504be` | 2026-10-11 15:18 | A23: the Claude helper also runs under Codex CLI (`cx-claude-cu-helper`), the full 2 x 3 matrix |
 | `a1036e6aac3f17ce15256e88cae7f1410e5eddd6` | 2026-10-11 15:22 | A23.1: GPT-6.1 Sol (`gpt-6.1-sol`, effort low) for the Codex CLI setups |
 | The `trycua/cua` commit that adds the shared-desktop amendment to this file | 2026-11-06 | Shared-desktop amendment: PA-01 and UM-01 with their scoring rules, before the first scored trial of either task (in this file, [below](#shared-desktop-tasks-amendment-of-6-nov-2026)) |
+| The `trycua/cua` commit that adds the hard-variants amendment to this file | 2026-11-06 | Hard-variants amendment: PA-02 and UM-02 with their scoring rules, before the first scored trial of either task (in this file, [below](#shared-desktop-hard-variants-amendment-of-6-nov-2026)) |
 
 Smoke runs (Amendments 14 to 17) validate the harness and are never analysed.
 Amendments 1 to 13 cover Bench v1, which used different tasks and tools; Bench
@@ -163,6 +164,58 @@ that adds this amendment. The scoring rules below are the design note's, word fo
 
 Everything else (seeds, harness errors, rate limits as infrastructure errors, the GUI-only guard, Wilson 95%
 intervals, comparing setups within a platform only) follows the rules of this document unchanged.
+
+### Shared-desktop hard variants (amendment of 6 Nov 2026)
+
+**Amendment, 6 Nov 2026 (UTC), registered before the first scored trial of either task.** The first
+measurements of PA-01 and UM-01 (above) found a ceiling for drivers that act on an app's window without the real
+pointer or keyboard focus: they passed every trial on macOS, Windows and Linux X11, so the two tasks stopped
+separating those drivers. Two tasks are added: **PA-02** (the crowded desk) and **UM-02** (the busy user). They
+are new ids with their own seeds. **PA-01 and UM-01 are unchanged: their definitions, seeds, checkers, scoring
+and results stand, the new tasks are never pooled with them, and a setup's PA-02 and UM-02 results are reported
+next to its PA-01 and UM-01 results, not instead of them.** They are measured on macOS, Windows and Linux (X11),
+each platform on its own, selected by id (`--tasks PA-02 UM-02`), and are not part of the ten core tasks or of
+their headline. Linux on Hyprland is not part of this amendment. The full design is the "Hard variants" section
+of [`automated-eval/macos_bench/SHARED-DESKTOP.md`](automated-eval/macos_bench/SHARED-DESKTOP.md) at the commit
+that adds this amendment; the scoring rules below are that section's, word for word.
+
+**PA-02 scoring.**
+
+* **Starting state and agents.** N copies of BenchLab `desk` mode (N = 16 headline; 8 and 1 also reported; cell k
+  is the same for every N) with a window title shared by every copy and a Confirm step, in a 4 x 4 cascade of
+  overlapping windows; one agent per copy, started at the same moment; 240 s of wall clock for the whole trial,
+  45 turns per agent; foreground and background, as PA-01.
+* **Checker** (`probes/PA-02/evaluate.py`, `benchlab_common.check_desk` with `hard=True`). Required per copy:
+  `integrity`, `instance_matches`, `code_correct` (the 15-character code, case-sensitive), `shelf_correct`,
+  `submitted_once`, `submit_values`, `no_foreign_input` (no Code value and no Submit ever held another copy's tag
+  or a 5-character fragment of another copy's code), `confirm_before_submit` (every Submit event followed a
+  `confirm_open`), `confirm_resolved` (no Confirm left pending) and `in_budget` (the confirmed Submit came within
+  180 s of the agents' start). A copy passes when all its checks pass.
+* **Cross-talk, trial pass (checker), throughput, speed-up, full pass, GUI-only guard**: as PA-01, with the
+  checker above. A driver that serialises the agents is allowed; its copies count if they are correct and
+  submitted within their deadline.
+
+**UM-02 scoring.**
+
+* **Starting state.** One desk at (320, 300, 360, 400), partly under the "User activity" window, whose user moves
+  the real pointer at about 1,500 px/s from a seeded script (schema `cdb-mouse-user/2`) and clicks about every
+  0.33 s, with every third action a drag (the left button held from one dot to another).
+* **Checker pass** (`probes/UM-02/evaluate.py`): the desk checks of UM-01. **Full pass**: as UM-01, with
+  `typing` requiring every scripted click and every scripted drag to have landed (a drag lands when the button
+  went down on its first dot and came up on its second).
+* **Harness error**: fewer than 15 scripted actions or 150 checks in the armed window, or no mouse-user log.
+  Re-run with the same seed, never scored.
+* **Condition.** Background only.
+
+**Before any scored trial of either task**, on each platform: the model-free validation of the design note passes
+(oracle passes, no-op fails, each disturbance is caught) and its result is committed here; the N = 1 baseline of
+PA-02 (three trials per setup) is run and reported with the others. The harness's own capacity is checked with the
+oracle, not with a driver: if the oracle needs more than 30 s from the agents' start to finish all 16 copies on a
+platform, that platform's headline is N = 8 and N = 16 is reported as a stress cell. This rule is fixed here and
+is not applied after any driver has been scored. The 180 s copy deadline and the 240 s budget
+are fixed by this amendment; they are not changed after seeing results. Everything else (seeds, harness errors,
+rate limits as infrastructure errors, Wilson 95% intervals, comparing setups within a platform only) follows the
+rules of this document unchanged.
 
 ## Conditions
 

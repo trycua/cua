@@ -18,11 +18,12 @@ Window events: WM_ACTIVATE (didBecomeActive / didResignKey), key, click and whee
 user window (keyDown, mouseDown, scrollWheel), and the simulated user's typing (user_type, user_blocked,
 user_text_disrupted, user_text).
 
-With --mouse-user PATH (UM-01, SHARED-DESKTOP.md) the user window holds a canvas with numbered dots instead of
+With --mouse-user PATH (UM-01 / UM-02, SHARED-DESKTOP.md) the user window holds a canvas with numbered dots instead of
 a text field, and while armed the sentinel's user moves and clicks the real pointer along the script at PATH
 (SendInput, every event tagged with dwExtraInfo = winenv.MAGIC). A WH_MOUSE_LL hook logs every pointer event
-that is not its own as mu_foreign. It writes mu_start, mu (the check), mu_click, mu_rx, mu_click_result,
-mu_error and mu_stop.
+that is not its own as mu_foreign. It writes mu_start, mu (the check), mu_click, mu_rx, mu_up, mu_click_result,
+mu_error and mu_stop, and for the busy user's drags (schema 2: `plan` legs, button held between two dots)
+mu_drag. Schema 2 steps every 8 ms: a pacer thread waits on a high-resolution timer for each deadline.
 """
 
 from __future__ import annotations
@@ -32,6 +33,7 @@ import ctypes
 import json
 import os
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -47,11 +49,17 @@ CANVAS_MARGIN = 8
 
 
 class MouseUser:
-    """The simulated user of UM-01: follows the script at --mouse-user while the sentinel is armed.
+    """The simulated user of UM-01 / UM-02: follows the script at --mouse-user while the sentinel is armed.
 
-    A wx.Timer state machine on the GUI thread (the one that owns the hook and pumps its messages), driven by
-    deadlines: home -> (leg: check + move per point, dwell, check, press, release)*. The canvas reports every
-    button-down it receives to `canvas_down`, which resolves the scripted clicks."""
+    A state machine on the GUI thread (the one that owns the hook and pumps its messages), driven by
+    deadlines: home -> (leg: check + move per point, dwell, check, press, release)*. A leg of the script's
+    `plan` is a click, or (schema 2) a drag: press at dot `from`, move to dot `to` with the button held, hold,
+    release. The canvas reports every button-down and button-up it receives to `canvas_down` / `canvas_up`, which
+    resolve the scripted actions.
+
+    Schema 1 (UM-01, 25 ms steps) is driven by a wx.Timer, as it always was. Schema 2 (8 ms steps) is finer than
+    the ~15.6 ms WM_TIMER tick, so a pacer thread waits on a high-resolution timer for each deadline and posts
+    the tick to the GUI thread (the state machine itself never leaves that thread)."""
 
     TICK_MS = 10
 
@@ -60,10 +68,20 @@ class MouseUser:
         self.tolerance = float(script.get("tolerance_px", 3))
         self.step_s = script["step_ms"] / 1000
         self.timeout_s = script.get("click_timeout_ms", 400) / 1000
+        self.drag_step_s = script.get("drag_step_ms", 8) / 1000
+        self.drag_step_px = script.get("drag_step_px", 12)
+        self.drag_hold_s = script.get("drag_hold_ms", 40) / 1000
+        self.drag_timeout_s = script.get("drag_timeout_ms", 600) / 1000
+        self.fast = "plan" in script  # schema 2
+        self.plan = script.get("plan") or [{"kind": "click", "dot": d} for d in script["sequence"]]
         self.hook = W.MouseHook()
         self.tagging = self.hook.handle is not None
         self.active = False
         self.finishing = False
+        self.pace_gen = 0
+        self.queued = False
+        self.next_at = 0.0
+        self.released: dict | None = None
         self.timer = wx.Timer(owner.frame)
         owner.frame.Bind(wx.EVT_TIMER, lambda _: self.tick(), self.timer)
 
@@ -90,13 +108,26 @@ class MouseUser:
     # -- control
 
     def start(self) -> None:
+        extra = (
+            {
+                "click_timeout_ms": self.timeout_s * 1000,
+                "drag_timeout_ms": self.drag_timeout_s * 1000,
+            }
+            if self.fast
+            else {}
+        )
         self.owner.emit(
-            "mu_start", tagging=self.tagging, tolerance_px=self.tolerance, platform="windows"
+            "mu_start",
+            tagging=self.tagging,
+            tolerance_px=self.tolerance,
+            platform="windows",
+            **extra,
         )
         self.checks = self.clicks = self.leg = self.index = 0
         self.pending: list[dict] = []
         self.pressed = False
         self.prev = None
+        self.released = None
         self.last = tuple(self.script["home"])
         self.hook.reset()
         self.hook.enabled = self.tagging
@@ -104,26 +135,67 @@ class MouseUser:
         self.post(self.last)
         now = time.monotonic()
         self.phase, self.next_at, self.home_by = "home", now + 0.02, now + 0.2
-        self.timer.Start(self.TICK_MS)
+        if self.fast:
+            self.start_pacer()
+        else:
+            self.timer.Start(self.TICK_MS)
 
     def request_stop(self) -> None:
-        """Disarmed: stop at once (never leave a button down), then wait for the clicks in flight."""
+        """Disarmed: stop at once (never leave a button down), then wait for the actions in flight. A drag
+        that is still in progress is released and dropped (no result, its number is given back)."""
         if self.pressed:
             self.post(self.last, W.MOUSEEVENTF_LEFTUP)
             self.pressed = False
+            if self.click.get("kind") == "drag":
+                self.click["done"] = True
+                self.clicks -= 1
         self.active, self.finishing = False, True
         self.owner.emit("mu_stop", clicks=self.clicks, checks=self.checks)
 
     def stop_timer(self) -> None:
         self.timer.Stop()
+        self.pace_gen += 1  # ends the pacer thread
         self.hook.enabled = False
         self.finishing = False
+
+    # -- pacing (schema 2)
+
+    def start_pacer(self) -> None:
+        self.pace_gen += 1
+        self.queued = False
+        threading.Thread(target=self.pace, args=(self.pace_gen,), daemon=True).start()
+
+    def pace(self, gen: int) -> None:
+        """Wait (about 1 ms accurate) for the state machine's next deadline, then post one tick."""
+        wait = W.PreciseWait()
+        try:
+            while self.pace_gen == gen:
+                wait.until(self.next_at if self.active else time.monotonic() + 0.005)
+                if self.pace_gen != gen:
+                    break
+                if self.queued:
+                    time.sleep(0.0005)  # the GUI thread has not run the last tick yet
+                    continue
+                self.queued = True
+                wx.CallAfter(self.paced_tick, gen)
+        finally:
+            wait.close()
+
+    def paced_tick(self, gen: int) -> None:
+        self.queued = False
+        if gen == self.pace_gen:
+            self.tick()
 
     def tick(self) -> None:
         now = time.monotonic()
         self.drain()
         for p in self.pending:
-            if not p["done"] and now - p["t"] > self.timeout_s:
+            if p["done"]:
+                continue
+            if p.get("kind") == "drag":
+                if p["released"] is not None and now - p["released"] > self.drag_timeout_s:
+                    self.resolve(p, False, "cut" if p["down_why"] == "landed" else "lost")
+            elif now - p["t"] > self.timeout_s:
                 self.resolve(p, False, "lost")
         self.pending = [p for p in self.pending if not p["done"]]
         if self.finishing:
@@ -152,10 +224,14 @@ class MouseUser:
             self.owner.emit("mu_error", why="the pointer did not reach home within 200 ms")
             self.active = False
 
+    def dot_xy(self, index: int) -> tuple[int, int]:
+        dot = self.script["dots"][index]
+        return dot["x"], dot["y"]
+
     def begin_leg(self, now: float) -> None:
-        dots = self.script["dots"]
-        sequence = self.script["sequence"]
-        self.target = dots[sequence[self.leg % len(sequence)]]
+        self.leg_plan = self.plan[self.leg % len(self.plan)]
+        drag = self.leg_plan.get("kind") == "drag"
+        self.target = self.script["dots"][self.leg_plan["from" if drag else "dot"]]
         self.points = C.mouse_leg(
             self.last, (self.target["x"], self.target["y"]), self.script["step_px"]
         )
@@ -177,6 +253,7 @@ class MouseUser:
 
     def do_press(self, now: float) -> None:
         self.check()
+        self.released = None
         self.post(self.last, W.MOUSEEVENTF_LEFTDOWN)
         self.pressed = True
         self.clicks += 1
@@ -189,23 +266,57 @@ class MouseUser:
             "done": False,
         }
         self.pending.append(self.click)
+        if self.leg_plan.get("kind") == "drag":
+            to = self.dot_xy(self.leg_plan["to"])
+            self.click.update(
+                kind="drag", to_dot=self.leg_plan["to"], at_to=list(to), released=None,
+                down_seen=False, down_own=False, down_why=None,
+            )  # fmt: skip
+            self.points = C.mouse_leg(self.last, to, self.drag_step_px)
+            self.index = 0
+            self.phase = "drag_move"
+            self.advance(now, self.drag_step_s)
+            return
         self.phase = "release"
         self.advance(now, self.script["press_ms"] / 1000)
 
+    def do_drag_move(self, now: float) -> None:
+        self.check()
+        point = self.points[self.index]
+        self.post(point)  # plain motion with the button held
+        self.prev, self.last = self.last, point
+        self.index += 1
+        if self.index < len(self.points):
+            self.advance(now, self.drag_step_s)
+        else:
+            self.phase = "release"
+            self.advance(now, self.drag_step_s + self.drag_hold_s)
+
     def do_release(self, now: float) -> None:
+        p = self.click
+        drag = p.get("kind") == "drag"
+        if drag:
+            p["released"] = now
+        self.released = {"t": now, "at": self.last, "p": p if drag else None, "used": False}
         self.post(self.last, W.MOUSEEVENTF_LEFTUP)
         self.pressed = False
-        p = self.click
-        self.owner.emit("mu_click", n=p["n"], dot=p["dot"], at=p["at"])
+        if drag:
+            self.owner.emit(
+                "mu_drag", n=p["n"], **{"from": p["dot"]}, to=p["to_dot"], at_from=p["at"],
+                at_to=p["at_to"],
+            )  # fmt: skip
+        else:
+            self.owner.emit("mu_click", n=p["n"], dot=p["dot"], at=p["at"])
         self.leg += 1
         self.advance(now, self.script["dwell_after_ms"] / 1000)
         self.begin_leg(self.next_at)
 
-    # -- clicks
+    # -- actions
 
     def resolve(self, pending: dict, ok: bool, why: str) -> None:
         pending["done"] = True
-        self.owner.emit("mu_click_result", n=pending["n"], ok=ok, why=why)
+        extra = {"kind": "drag"} if pending.get("kind") == "drag" else {}
+        self.owner.emit("mu_click_result", n=pending["n"], ok=ok, why=why, **extra)
 
     def take_own(self, at: tuple[int, int] | None) -> bool:
         """Is a button-down the script's own? By its tag where the hook runs, else by matching a pending click."""
@@ -218,10 +329,34 @@ class MouseUser:
             return False
         return at is not None and any(
             not p["done"]
-            and now - p["t"] <= self.timeout_s
+            and now - p["t"] <= (self.drag_timeout_s if p.get("kind") == "drag" else self.timeout_s)
             and W.distance(at, p["at"]) <= self.tolerance
             for p in self.pending
         )
+
+    def take_own_up(self, at: tuple[int, int] | None) -> bool:
+        """Is a button-up the script's own: tagged (where the hook runs), shortly after our last release, at its
+        point (`at` None: the point is not known, the tag alone decides), and for a drag only when its
+        button-down was our own and the up is within drag_timeout_ms of the release."""
+        now = time.monotonic()
+        tagged = True
+        if self.tagging:
+            self.hook.own_ups[:] = [t for t in self.hook.own_ups if now - t <= 0.5]
+            tagged = bool(self.hook.own_ups)
+            if tagged:
+                self.hook.own_ups.pop(0)
+        rec = self.released
+        if not tagged or rec is None or rec["used"]:
+            return False
+        drag = rec["p"]
+        if now - rec["t"] > (self.drag_timeout_s if drag else 0.5):
+            return False
+        if at is not None and W.distance(at, rec["at"]) > self.tolerance:
+            return False
+        if drag is not None and not drag["down_own"]:
+            return False
+        rec["used"] = True
+        return True
 
     def canvas_down(self, at: tuple[int, int]) -> bool:
         """The canvas received a button-down at canvas point `at`. Returns whether it was the script's own."""
@@ -230,12 +365,48 @@ class MouseUser:
         self.owner.emit("mu_rx", dot=dot, at=list(at), own=own)
         waiting = next((p for p in self.pending if not p["done"]), None)
         if own and waiting is not None:
-            if dot == waiting["dot"] and W.distance(at, waiting["at"]) <= self.tolerance:
+            landed = dot == waiting["dot"] and W.distance(at, waiting["at"]) <= self.tolerance
+            if waiting.get("kind") == "drag":
+                waiting["down_seen"] = waiting["down_own"] = True
+                waiting["down_why"] = (
+                    "landed" if landed else "wrong_dot" if dot is not None else "off_target"
+                )
+                if not landed:
+                    self.resolve(
+                        waiting, False, waiting["down_why"]
+                    )  # the drag cannot land any more
+            elif landed:
                 self.resolve(waiting, True, "landed")
             elif dot is not None:
                 self.resolve(waiting, False, "wrong_dot")
             else:
                 self.resolve(waiting, False, "off_target")
+        return own
+
+    def canvas_up(self, at: tuple[int, int]) -> bool:
+        """The canvas received a button-up at canvas point `at`. Returns whether it was the script's own. A
+        drag lands when its button-down landed and its own button-up lands on the `to` dot; any other
+        button-up that reaches the canvas while a drag is waiting for its own cuts that drag."""
+        own = self.take_own_up(at)
+        dot = C.dot_at(self.script, at[0], at[1])
+        self.owner.emit("mu_up", dot=dot, at=list(at), own=own)
+        rec = self.released
+        drag = rec["p"] if own and rec is not None else None
+        if drag is not None:
+            if not drag["done"] and drag["down_why"] == "landed":
+                ok = dot == drag["to_dot"] and W.distance(at, drag["at_to"]) <= self.tolerance
+                self.resolve(drag, ok, "landed" if ok else "cut")
+        elif not own:
+            waiting = next(
+                (
+                    p
+                    for p in self.pending
+                    if not p["done"] and p.get("kind") == "drag" and p["down_why"] == "landed"
+                ),
+                None,
+            )
+            if waiting is not None:
+                self.resolve(waiting, False, "cut")
         return own
 
 
@@ -266,6 +437,7 @@ class Sentinel:
             sizer.Add(self.canvas, 0, wx.ALL, CANVAS_MARGIN)
             self.mouse = MouseUser(self, self.script, self.canvas)
             panel.Bind(wx.EVT_LEFT_DOWN, self.panel_down)
+            panel.Bind(wx.EVT_LEFT_UP, self.panel_up)
         else:
             self.entry = wx.TextCtrl(panel, name="User activity text")
             sizer.Add(self.entry, 0, wx.EXPAND | wx.ALL, 16)
@@ -302,6 +474,7 @@ class Sentinel:
         canvas.SetBackgroundStyle(wx.BG_STYLE_PAINT)
         canvas.Bind(wx.EVT_PAINT, self.paint)
         canvas.Bind(wx.EVT_LEFT_DOWN, self.canvas_down)
+        canvas.Bind(wx.EVT_LEFT_UP, self.canvas_up)
         canvas.Bind(wx.EVT_KEY_DOWN, lambda e: (self.emit("keyDown"), e.Skip()))
         canvas.Bind(wx.EVT_MOUSEWHEEL, lambda e: (self.emit("scrollWheel"), e.Skip()))
         return canvas
@@ -328,6 +501,19 @@ class Sentinel:
             self.emit(
                 "mouseDown"
             )  # not the script's own: a leak, like any other click in the user window
+
+    def canvas_up(self, event: wx.MouseEvent) -> None:
+        event.Skip()
+        pos = event.GetPosition()
+        if not self.armed:
+            return
+        if not self.mouse.canvas_up((pos.x, pos.y)):
+            self.emit("mouseUp")  # not the script's own: a leak
+
+    def panel_up(self, event: wx.MouseEvent) -> None:
+        event.Skip()
+        if self.armed and not self.mouse.take_own_up(None):
+            self.emit("mouseUp")
 
     def panel_down(self, event: wx.MouseEvent) -> None:
         event.Skip()

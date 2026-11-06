@@ -1445,6 +1445,7 @@ final class ClipboardController: NSObject, ModeController, NSTextFieldDelegate {
                 c.syncCode()
                 c.radios.first { $0.title == "Coral" }?.performClick(nil)
                 c.submit(nil)
+                if c.confirm { c.confirmSubmit(nil) }
             default:
                 let c = controller as! ClipboardController
                 let p = ClipboardParams(seed: opts.seed)
@@ -1469,6 +1470,10 @@ struct Options {
     /// Desk mode: the copy's label, and the outer frame in top-left screen coordinates.
     var instance = ""
     var frame: [Double]?
+    /// Desk mode: the window title instead of "BenchLab Desk <instance>".
+    var title: String?
+    /// Desk mode: an inline two-step Submit (Submit, then Confirm or Cancel).
+    var confirm = false
 
     static func parse(_ args: [String]) -> Options? {
         var o = Options()
@@ -1492,6 +1497,8 @@ struct Options {
                     if v.count == 4 { o.frame = v }
                     i += 1
                 }
+            case "--title": if let n = next { o.title = n; i += 1 }
+            case "--confirm": o.confirm = true
             case "--no-activate": break  // BenchLab never activates itself
             case "--ax-rows": if let n = next { o.axAllRows = n == "all"; i += 1 }
             default: break
@@ -1531,7 +1538,7 @@ final class LabDelegate: NSObject, NSApplicationDelegate {
         case "irbanner": controller = IRBannerController(rec: rec, seed: opts.seed)
         case "irunsaved": controller = IRUnsavedController(rec: rec, seed: opts.seed)
         case "irconsent": controller = IRConsentController(rec: rec, seed: opts.seed)
-        case "desk": controller = DeskController(rec: rec, instance: opts.instance)
+        case "desk": controller = DeskController(rec: rec, instance: opts.instance, confirm: opts.confirm)
         default: controller = ClipboardController(rec: rec)
         }
 
@@ -1539,7 +1546,7 @@ final class LabDelegate: NSObject, NSApplicationDelegate {
         window = NSWindow(
             contentRect: content.frame, styleMask: [.titled, .closable, .miniaturizable],
             backing: .buffered, defer: false)
-        window.title = opts.mode == "desk" ? "BenchLab Desk \(opts.instance)" : "BenchLab"
+        window.title = opts.mode == "desk" ? (opts.title ?? "BenchLab Desk \(opts.instance)") : "BenchLab"
         window.isReleasedWhenClosed = false
         window.contentView = content
         // Outer frame 760x560 with its top-left at (60, 80) on the primary screen (desk: --frame).
@@ -1588,7 +1595,7 @@ enum BenchLabMain {
         else {
             FileHandle.standardError.write(
                 Data(
-                    "usage: BenchLab --mode forms|table|canvas|canvasclick|hover|clipboard|canvasmenu|tablesel|richtext|settings|listdrag|tooltip|irmodal|irbanner|irunsaved|irconsent|desk --seed N --state PATH --events PATH [--instance L --frame X,Y,W,H --no-activate (desk)]\n"
+                    "usage: BenchLab --mode forms|table|canvas|canvasclick|hover|clipboard|canvasmenu|tablesel|richtext|settings|listdrag|tooltip|irmodal|irbanner|irunsaved|irconsent|desk --seed N --state PATH --events PATH [--instance L --frame X,Y,W,H --title TEXT --confirm --no-activate (desk)]\n"
                         .utf8))
             exit(2)
         }

@@ -46,6 +46,10 @@ import shared_desktop  # noqa: E402
 import summarize_sentinel  # noqa: E402
 
 TASKS = ("MB-09", "MB-10", "MB-11", "IR-01", "IR-02", "IR-03", "IR-04", "PA-01", "UM-01")
+HARD_TASKS = (
+    "PA-02",
+    "UM-02",
+)  # X11, Windows and macOS only: a Hyprland desktop does not run the hard variants
 LAB_FRAME = (40, 40, 760, 540)
 WITNESS_FRAME = (1000, 640, 600, 320)
 PA_WITNESS_FRAME = shared_desktop.PA_WITNESS_FRAME  # below the PA-01 grid (which ends at y = 900)
@@ -574,7 +578,7 @@ def main(argv: list[str]) -> int:
         return 2
     split = argv.index("--")
     parser = argparse.ArgumentParser()
-    parser.add_argument("--task", choices=TASKS, required=True)
+    parser.add_argument("--task", choices=(*TASKS, *HARD_TASKS), required=True)
     parser.add_argument("--run-index", type=int, required=True)
     parser.add_argument("--condition", choices=v2.CONDITIONS, required=True)
     parser.add_argument("--out", type=Path, required=True)
@@ -583,6 +587,14 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--instances", type=int, help="PA-01: number of BenchLab copies and agents")
     parser.add_argument("--no-enforce", dest="enforce", action="store_false")
     args = parser.parse_args(argv[:split])
+    if args.task in HARD_TASKS:  # not a fail: the task is simply not run here
+        message = (
+            f"{args.task} is not supported on Hyprland (use the X11 launcher, Windows or macOS)"
+        )
+        print(message, file=sys.stderr)
+        print(json.dumps({"task": args.task, "seed": None, "condition": args.condition, "passed": None,
+                          "harness_error": message}))  # fmt: skip
+        return 3
     if args.task == "UM-01" and args.condition != "background":
         parser.error("UM-01 runs only in the background condition")
     if args.instances is not None and args.task != "PA-01":

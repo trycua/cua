@@ -292,15 +292,23 @@ def _mouse_user(body: list[dict[str, Any]], result: dict[str, Any]) -> None:
             inside = True
         else:
             inside = False
-    clicks = [ln for ln in body if ln.get("ev") == "mu_click"]
+    # Scripted actions: clicks (`mu_click`) and, for the busy user of UM-02, drags (`mu_drag`, the button held
+    # between two dots). Both are resolved by a `mu_click_result` and count as "clicks" here; drags are also
+    # counted on their own.
+    drag_ns = {ln.get("n") for ln in body if ln.get("ev") == "mu_drag"}
+    clicks = [ln for ln in body if ln.get("ev") in ("mu_click", "mu_drag")]
     results = {ln.get("n"): ln for ln in body if ln.get("ev") == "mu_click_result" and "n" in ln}
-    # A click posted within the click timeout of the end has no verdict yet when the user is disarmed: not counted.
+    drag_ns |= {n for n, ln in results.items() if ln.get("kind") == "drag"}
+    # An action posted within its timeout of the end has no verdict yet when the user is disarmed: not counted.
     timeout_ms = float((start or {}).get("click_timeout_ms") or 400)
+    if drag_ns:
+        timeout_ms = max(timeout_ms, float((start or {}).get("drag_timeout_ms") or 600))
     end_t = float(body[-1]["t"]) if body else 0.0
     clicks = [
         c for c in clicks if c.get("n") in results or float(c.get("t") or 0.0) < end_t - timeout_ms
     ]
-    why = {"landed": 0, "lost": 0, "off_target": 0, "wrong_dot": 0}
+    why = {"landed": 0, "lost": 0, "off_target": 0, "wrong_dot": 0, "cut": 0}
+    drags = {"drags": 0, "drags_landed": 0, "drags_cut": 0}
     for click in clicks:
         res = results.get(click.get("n"))
         reason = (
@@ -311,6 +319,10 @@ def _mouse_user(body: list[dict[str, Any]], result: dict[str, Any]) -> None:
         if res is not None and res.get("ok"):
             reason = "landed"
         why[reason if reason in why else "lost"] += 1
+        if click.get("n") in drag_ns:
+            drags["drags"] += 1
+            drags["drags_landed"] += reason == "landed"
+            drags["drags_cut"] += reason == "cut"
     foreign = [ln for ln in body if ln.get("ev") == "mu_foreign"]
     kinds: dict[str, int] = {}
     for ln in foreign:
@@ -329,6 +341,8 @@ def _mouse_user(body: list[dict[str, Any]], result: dict[str, Any]) -> None:
         "clicks_lost": why["lost"],
         "clicks_off_target": why["off_target"],
         "clicks_wrong_dot": why["wrong_dot"],
+        "clicks_cut": why["cut"],
+        **drags,
         "foreign_pointer_events": len(foreign) if tagging else None,
         "foreign_pointer_kinds": kinds if tagging else None,
     }

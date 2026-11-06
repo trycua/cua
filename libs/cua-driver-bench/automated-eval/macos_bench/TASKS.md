@@ -59,9 +59,9 @@ The existing evaluator-peek detector also flags `/__state`, retaining oracle and
 pack patterns. This is a policy/detection boundary, not endpoint authorization.
 All web content is self-written, FSL-1.1-MIT; provenance lives in each pack task.
 
-## Shared desktop: PA-01 and UM-01
+## Shared desktop: PA-01, UM-01 and the hard variants PA-02, UM-02
 
-Two tasks in the `shared_desktop` category, selected by id or with `--task-set shared-desktop` and not added to
+Four tasks in the `shared_desktop` category, selected by id or with `--task-set shared-desktop` and not added to
 `bench_v2.V2_TASKS`. The full design (starting states, seeds, checkers, scoring, budgets, platform notes and
 threats to validity) is in [`SHARED-DESKTOP.md`](SHARED-DESKTOP.md). Both use BenchLab's `desk` mode: a Code
 field, twelve Shelf radio buttons and a Submit button, in a window titled `BenchLab Desk <label>`.
@@ -70,6 +70,9 @@ field, twelve Shelf radio buttons and a Submit button, in a window titled `Bench
 | --- | --- | --- | --- | --- |
 | PA-01 | N copies of BenchLab in a seeded 5 x 2 grid and N agents started at once, one per copy (`--instances`, 10 by default, also 4 and 1); 360 s shared by all | both | every copy: right code, right shelf, one Submit, no letter of another copy's code, Submit within the budget | background: the eight undisturbed criteria |
 | UM-01 | one copy; the sentinel's user moves and clicks the real pointer in its own window from a seeded script | background only | the copy's checks | the pointer never displaced from the user's script (3 px), every user click landed, no agent input in the user window, and the other undisturbed criteria |
+
+| PA-02 | the hard variant: 16 overlapping copies (4 x 4 cascade, one shared window title) with a 15-character mixed-case code and a Confirm step (`--instances`, 16 by default, also 8 and 1); 240 s shared, 180 s per copy | both | PA-01's checks with a tag/fragment cross-talk rule, the Confirm step, and the per-copy deadline | background: the eight undisturbed criteria |
+| UM-02 | the hard variant: a fast user (about 4 x the events) clicks and drags with the real pointer, and its window covers almost all of the desk | background only | the copy's checks | as UM-01, with every scripted click and drag landed |
 
 PA-01 also reports copies passed, cross-talk, makespan, throughput (copies per minute) and, in the analysis,
 the speed-up over N = 1 for the same run index. A driver that serialises the agents still counts when its

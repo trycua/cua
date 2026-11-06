@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: FSL-1.1-MIT
 # Copyright (c) 2026 Cua AI, Inc.
 #
-# Usage: macos_session.py --build DIR --task PA-01|UM-01 --run-index N --condition foreground|background --out DIR
+# Usage: macos_session.py --build DIR --task PA-01|PA-02|UM-01|UM-02 --run-index N --condition foreground|background --out DIR
 #                         [--timeout S] [--instances N] -- COMMAND [ARG...]
 #
 # One shared-desktop trial (SHARED-DESKTOP.md) on a macOS desktop, run as the console user in its GUI session. It is
@@ -21,8 +21,12 @@
 # PA-01 [--instances N]: N BenchLab copies in the 5x2 grid, one COMMAND per copy, all started at the same moment;
 #   `{brief}` and `{out}` are that agent's own (DIR/desk-L/), plus `{instance}` and `{title}`; CDB_BRIEF_FILE and
 #   CDB_INSTANCE are in its environment. Any GUI-only violation stops all of them. Needs a 1920x1080 screen.
+# PA-02 [--instances N, 1..16]: the crowded desk: N copies in a 4x4 cascade that overlap, all with the same window
+#   title (the heading "Desk L" tells them apart) and a two-step Submit (Submit, then Confirm); nothing here finds a
+#   copy by its title (processes and frames only). Needs a 1920x1060 screen.
 # UM-01 (background only): one desk; the sentinel needs Accessibility (to post the user's events) and Input
 #   Monitoring (for the listen-only tap that tells the user's tagged events from anyone else's).
+# UM-02 (background only): UM-01's desk with a faster pointer that also drags (schema-2 script).
 # An agent's stream is read from `agent-transcript.jsonl` in its output directory once COMMAND has ended.
 # TCC attributes a process to its responsible ancestor. When the trial is started over ssh, pass
 # `--sentinel-launcher HELPER`: a helper that runs its arguments as their own responsible process, so the
@@ -47,15 +51,15 @@ sys.path.insert(0, str(BENCH / "probes" / "_common"))
 sys.path.insert(0, str(BENCH / "swift"))
 sys.path.insert(0, str(BENCH.parents[1] / "fairness"))
 import bench_v2 as v2  # noqa: E402
+import benchlab_common as C  # noqa: E402
 import cdb_fairness  # noqa: E402
 import shared_desktop  # noqa: E402
 import summarize_sentinel  # noqa: E402
 
-TASKS = ("PA-01", "UM-01")
+TASKS = ("PA-01", "PA-02", "UM-01", "UM-02")
 LSREGISTER = "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
 BENCH_APPS = ("BenchLab.app", "BenchSentinel.app")
 SENTINEL_ID = "ai.cua.benchsentinel"
-PA_MIN_SCREEN = (1920, 1000)
 
 
 def exe(build: Path, name: str) -> str:
@@ -363,14 +367,15 @@ def run(args: argparse.Namespace, command: list[str]) -> dict:
     procs: list[subprocess.Popen] = []
     sentinel: Sentinel | None = None
     try:
-        script = shared_desktop.write_mouse_script(seed, out / "mouse-user.json")
+        script = shared_desktop.write_mouse_script(seed, out / "mouse-user.json", args.task)
         row["mouse_user_script"] = {
             "dots": len(script["dots"]),
-            "sequence": len(script["sequence"]),
+            "sequence": len(script.get("sequence") or []),
+            "legs": len(script.get("plan") or script.get("sequence") or []),
         }
         lab = start_app(
             [exe(args.build, "BenchLab"), "--mode", "desk", "--seed", str(seed), "--state", str(state),
-             "--events", str(events), *shared_desktop.um_app_args(seed), "--no-activate"],
+             "--events", str(events), *shared_desktop.um_app_args(seed, args.task), "--no-activate"],
             out / "apphome", desk / "benchlab.log",
         )  # fmt: skip
         procs.append(lab)
@@ -434,10 +439,10 @@ def run(args: argparse.Namespace, command: list[str]) -> dict:
 
 
 def run_parallel(args: argparse.Namespace, command: list[str], spec: dict) -> dict:
-    """PA-01: N desks, N agents started at the same moment, one GUI-only guard over all of them."""
+    """PA-01 / PA-02: N desks, N agents started at the same moment, one GUI-only guard over all of them."""
     out: Path = args.out.resolve()
     out.mkdir(parents=True, exist_ok=True)
-    instances = shared_desktop.instances_for(spec, args.instances)
+    instances = shared_desktop.instances_for(spec, args.instances, args.task)
     seed = cdb_fairness.trial_seed(args.task, args.run_index)
     background = args.condition == "background"
     row: dict = {
@@ -448,7 +453,7 @@ def run_parallel(args: argparse.Namespace, command: list[str], spec: dict) -> di
     log = out / "sentinel.jsonl"
     if log.exists():
         log.unlink()
-    agents = shared_desktop.pa_agents(seed, instances, out)
+    agents = shared_desktop.pa_agents(seed, instances, out, task=args.task)
     for entry in agents:
         entry["dir"].mkdir(parents=True, exist_ok=True)
         for stale in (entry["state"], entry["events"]):
@@ -461,10 +466,9 @@ def run_parallel(args: argparse.Namespace, command: list[str], spec: dict) -> di
     sentinel: Sentinel | None = None
     try:
         width, height = screen_size()
-        if width < PA_MIN_SCREEN[0] or height < PA_MIN_SCREEN[1]:
-            row["harness_error"] = (
-                f"screen {width}x{height} smaller than {PA_MIN_SCREEN[0]}x{PA_MIN_SCREEN[1]}"
-            )
+        need = shared_desktop.min_screen(args.task)
+        if width < need[0] or height < need[1]:
+            row["harness_error"] = f"screen {width}x{height} smaller than {need[0]}x{need[1]}"
             return row
         for entry in agents:
             entry["lab"] = start_app(
@@ -479,7 +483,7 @@ def run_parallel(args: argparse.Namespace, command: list[str], spec: dict) -> di
             return row
         time.sleep(1.5)
         sentinel_args = v2.sentinel_args(args.condition) or [
-            "--frame", ",".join(map(str, shared_desktop.PA_WITNESS_FRAME)), "--no-activate"
+            "--frame", ",".join(map(str, shared_desktop.witness_frame(args.task))), "--no-activate"
         ]  # fmt: skip
         sentinel = Sentinel(args.build, out, log, sentinel_args, args.launcher)
         ok = sentinel.start()
@@ -496,7 +500,12 @@ def run_parallel(args: argparse.Namespace, command: list[str], spec: dict) -> di
         guard = new_guard(args.enforce)
         t0_ms = time.time() * 1000
         t0 = time.monotonic()
-        shared_desktop.write_meta(out, instances, t0_ms, args.timeout)
+        extra = (
+            {"copy_deadline_s": C.PA2_COPY_DEADLINE_S}
+            if shared_desktop.is_crowded(args.task)
+            else {}
+        )
+        shared_desktop.write_meta(out, instances, t0_ms, args.timeout, **extra)
         for entry in agents:
             subs = {"{brief}": str(entry["dir"] / "brief.md"), "{out}": str(entry["dir"]), "{seed}": str(seed),
                     "{mode}": "desk", "{instance}": entry["label"], "{title}": entry["title"]}  # fmt: skip
@@ -512,7 +521,7 @@ def run_parallel(args: argparse.Namespace, command: list[str], spec: dict) -> di
         time.sleep(0.3)
         result = out / "result.json"
         subprocess.run(
-            shared_desktop.evaluate_argv(sys.executable, seed, out, result),
+            shared_desktop.evaluate_argv(sys.executable, seed, out, result, args.task),
             capture_output=True,
             timeout=60,
         )
@@ -561,8 +570,17 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--condition", choices=v2.CONDITIONS, required=True)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--label", default="")
-    parser.add_argument("--timeout", type=float, default=360.0)
-    parser.add_argument("--instances", type=int, help="PA-01: number of BenchLab copies and agents")
+    parser.add_argument(
+        "--timeout",
+        type=float,
+        default=None,
+        help="seconds; default: the task's budget (360, PA-02 240)",
+    )
+    parser.add_argument(
+        "--instances",
+        type=int,
+        help=f"PA-01 (1..{shared_desktop.max_instances('PA-01')}) / PA-02 (1..{shared_desktop.max_instances('PA-02')}): number of BenchLab copies and agents",
+    )
     parser.add_argument("--no-enforce", dest="enforce", action="store_false")
     parser.add_argument(
         "--sentinel-launcher",
@@ -571,10 +589,18 @@ def main(argv: list[str]) -> int:
     )
     args = parser.parse_args(argv[:split])
     args.launcher = shlex.split(args.sentinel_launcher)
-    if args.task == "UM-01" and args.condition != "background":
-        parser.error("UM-01 runs only in the background condition")
-    if args.instances is not None and args.task != "PA-01":
-        parser.error("--instances applies to PA-01 only")
+    if args.task in ("UM-01", "UM-02") and args.condition != "background":
+        parser.error(f"{args.task} runs only in the background condition")
+    if args.instances is not None and not args.task.startswith("PA-"):
+        parser.error("--instances applies to PA-01 and PA-02 only")
+    if args.instances is not None and not 1 <= args.instances <= shared_desktop.max_instances(
+        args.task
+    ):
+        parser.error(
+            f"--instances for {args.task} must be 1..{shared_desktop.max_instances(args.task)}"
+        )
+    if args.timeout is None:
+        args.timeout = float(shared_desktop.budget_s(args.task))
     command = argv[split + 1 :]
     if not command:
         print("macos_session.py needs a command", file=sys.stderr)

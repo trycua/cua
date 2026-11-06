@@ -16,8 +16,10 @@ Windows-specific behaviour, kept close to the Linux port:
   sends no notification, and the state file must still follow the control.
 * MB-09: rows reorder by a native list drag (LVN_BEGINDRAG, then the button release over a row).
 * MB-11: a tooltip counts as shown when BenchLab's own tooltip window is visible (polled every 100 ms).
-* desk (PA-01, UM-01): a Code field, twelve Shelf radio buttons (none selected at start) and a Submit button
-  in a 360 x 400 window titled "BenchLab Desk L" (SHARED-DESKTOP.md). It derives nothing from the seed.
+* desk (PA-01, UM-01, PA-02, UM-02): a Code field, twelve Shelf radio buttons (none selected at start) and a
+  Submit button in a 360 x 400 window titled "BenchLab Desk L" (SHARED-DESKTOP.md). It derives nothing from the
+  seed. `--title TEXT` replaces the window title; `--confirm` makes Submit a two-step action (inline Confirm and
+  Cancel buttons, hidden until Submit is pressed).
 """
 
 from __future__ import annotations
@@ -89,7 +91,10 @@ class Lab:
         self.dialog_open: wx.Dialog | None = None
         args.events.parent.mkdir(parents=True, exist_ok=True)
         self.events = args.events.open("w", buffering=1, encoding="utf-8")
-        title = C.desk_title(args.instance) if args.mode == "desk" else f"BenchLab — {args.mode}"
+        if args.mode == "desk":
+            title = args.title or C.desk_title(args.instance)
+        else:
+            title = f"BenchLab — {args.mode}"
         self.frame = wx.Frame(
             None, title=title, size=C.DESK_SIZE if args.mode == "desk" else (760, 540)
         )
@@ -645,9 +650,23 @@ class Lab:
             self.shelves.append(radio)
             grid.Add(radio, 0, wx.ALIGN_CENTER_VERTICAL)
         self.box.Add(grid, 0, wx.EXPAND | wx.BOTTOM, 8)
-        self.button("Submit", self.desk_submit)  # not the default button: Return does nothing
-        self.status = wx.StaticText(self.panel, label="Not submitted", name="Status")
+        row = wx.BoxSizer(wx.HORIZONTAL)
+        self.submit_button = self.button(
+            "Submit", self.desk_submit, sizer=row
+        )  # not the default button: Return does nothing
+        self.box.Add(row, 0, wx.EXPAND)
+        self.status_text = "Not submitted"
+        if self.args.confirm:
+            self.state["confirm_pending"] = False
+            # Hidden (not merely disabled) until Submit is pressed: absent from the accessibility tree.
+            self.confirm_button = self.button("Confirm", self.desk_confirm, sizer=row)
+            self.cancel_button = self.button("Cancel", self.desk_cancel, sizer=row)
+            self.hidden += [self.confirm_button, self.cancel_button]
+        self.status = wx.StaticText(self.panel, label=self.status_text, name="Status")
         self.box.Add(self.status, 0, wx.TOP, 4)
+
+    def set_status(self, text: str) -> None:
+        self.status.SetLabel(text)
 
     def clear_shelves(self) -> None:
         """No shelf is selected at start: a radio group starts with its first button checked on Windows."""
@@ -670,6 +689,20 @@ class Lab:
         self.emit("shelf_select", shelf=shelf)
 
     def desk_submit(self) -> None:
+        if self.args.confirm:
+            if self.state["confirm_pending"]:
+                return
+            self.poll_shelf()
+            code, shelf = self.code.GetValue(), self.state["shelf"]
+            self.state["confirm_pending"] = True
+            self.submit_button.Enable(False)
+            self.status_text = "Confirm submit?"
+            self.set_status(self.status_text)
+            self.confirm_button.Show()
+            self.cancel_button.Show()
+            self.panel.Layout()
+            self.emit("confirm_open", code=code, shelf=shelf)
+            return
         code, shelf = self.code.GetValue(), self.state["shelf"]
         self.state.update(
             code=code, submit_count=self.state["submit_count"] + 1,
@@ -677,6 +710,38 @@ class Lab:
         )  # fmt: skip
         self.status.SetLabel(f"Submitted: {code} / {shelf or 'none'}")
         self.emit("submit", code=code, shelf=shelf)
+
+    def confirm_close(self, status: str) -> None:
+        self.confirm_button.Hide()
+        self.cancel_button.Hide()
+        self.submit_button.Enable(True)
+        self.status_text = status
+        self.set_status(status)
+        self.panel.Layout()
+
+    def desk_confirm(self) -> None:
+        if not self.state["confirm_pending"]:
+            return
+        self.poll_shelf()
+        code, shelf = self.code.GetValue(), self.state["shelf"]  # the values at this moment
+        self.state.update(
+            code=code, submit_count=self.state["submit_count"] + 1,
+            submitted={"code": code, "shelf": shelf}, confirm_pending=False,
+        )  # fmt: skip
+        self.confirm_close(f"Submitted: {code} / {shelf or 'none'}")
+        self.emit("submit", code=code, shelf=shelf)
+
+    def desk_cancel(self) -> None:
+        if not self.state["confirm_pending"]:
+            return
+        self.state["confirm_pending"] = False
+        submitted = self.state.get("submitted")
+        self.confirm_close(
+            f"Submitted: {submitted['code']} / {submitted['shelf'] or 'none'}"
+            if submitted
+            else "Not submitted"
+        )
+        self.emit("confirm_cancel")
 
 
 def main() -> None:
@@ -688,6 +753,11 @@ def main() -> None:
     parser.add_argument(
         "--instance", help="desk mode: the copy's label (the window is BenchLab Desk L)"
     )
+    parser.add_argument("--title", help='desk mode: the window title (default "BenchLab Desk L")')
+    parser.add_argument(
+        "--confirm", action="store_true",
+        help="desk mode: Submit opens an inline Confirm / Cancel step before it records a submit",
+    )  # fmt: skip
     parser.add_argument("--frame", help="x,y,width,height of the window")
     parser.add_argument(
         "--no-activate", action="store_true", help="show the window without activating it"
@@ -695,6 +765,8 @@ def main() -> None:
     args = parser.parse_args()
     if args.mode == "desk" and not args.instance:
         parser.error("--instance is required in desk mode")
+    if (args.title or args.confirm) and args.mode != "desk":
+        parser.error("--title and --confirm apply to desk mode only")
     ctypes.windll.shcore.SetProcessDpiAwareness(2)
     app = wx.App(False)
     app.SetAppName("BenchLab")

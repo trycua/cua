@@ -35,11 +35,20 @@ def desk_dir(root: Path, label: str) -> Path:
 
 
 def evaluate_dir(
-    seed: int, root: Path, instances: int, t0_ms: float | None, budget_s: float
+    seed: int,
+    root: Path,
+    instances: int,
+    t0_ms: float | None,
+    budget_s: float,
+    *,
+    hard: bool = False,
+    copy_deadline_s: float | None = None,
 ) -> dict[str, Any]:
-    plan = C.derive_parallel(seed, instances)
+    """`hard` is PA-02 (crowded desk): its derivation, attribution by code fragments and the Confirm-step checks;
+    `copy_deadline_s` (PA-02) is each copy's own deadline, from the agents' start, instead of the trial budget."""
+    plan = C.derive_crowded(seed, instances) if hard else C.derive_parallel(seed, instances)
     cells = plan["cells"]
-    deadline = None if t0_ms is None else t0_ms + budget_s * 1000.0
+    deadline = None if t0_ms is None else t0_ms + (copy_deadline_s or budget_s) * 1000.0
     total = C.Checks()
     per: dict[str, Any] = {}
     passed_submits: list[float] = []
@@ -58,7 +67,7 @@ def evaluate_dir(
         found: dict[str, Any] = {}
 
         def check(s: int, st: dict[str, Any], ev: list[dict[str, Any]], ch: C.Checks) -> None:
-            found.update(C.check_desk(cell, others, st, ev, ch, deadline_ms=deadline))
+            found.update(C.check_desk(cell, others, st, ev, ch, deadline_ms=deadline, hard=hard))
 
         result = C.evaluate_inputs(MODE, seed, state, events, bad, check)
         per[cell["label"]] = {
@@ -119,6 +128,7 @@ def evaluate_dir(
                 "makespan_s": makespan,
                 "throughput_per_min": throughput,
                 "budget_s": budget_s,
+                "copy_deadline_s": copy_deadline_s,
             }
         },
     }

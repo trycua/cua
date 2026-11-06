@@ -56,7 +56,7 @@ V2_TASKS: tuple[str, ...] = (
 )
 # The shared-desktop tasks (SHARED-DESKTOP.md): selected by id like WEB-01 and WEB-02, not in V2_TASKS. PA-01 runs
 # N agents at once (one per copy of BenchLab); UM-01 runs while the simulated user moves and clicks the mouse.
-SHARED_DESKTOP_TASKS: tuple[str, ...] = ("PA-01", "UM-01")
+SHARED_DESKTOP_TASKS: tuple[str, ...] = ("PA-01", "UM-01", "PA-02", "UM-02")
 # `../../taskpack/v2-taskset.json` lists every task with its category, OS availability, conditions and split (public,
 # or held out of this repository). `--task-set` selects a set; the default stays `v2`, so earlier runs reproduce.
 TASKSET_FILE = Path(__file__).resolve().parents[2] / "taskpack" / "v2-taskset.json"

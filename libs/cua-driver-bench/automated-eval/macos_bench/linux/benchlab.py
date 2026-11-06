@@ -48,7 +48,7 @@ class Lab:
         self.events = args.events.open("w", buffering=1)
         desk = args.mode == "desk"
         self.window = Gtk.Window(
-            title=C.desk_title(args.instance) if desk else f"BenchLab — {args.mode}"
+            title=(args.title or C.desk_title(args.instance)) if desk else f"BenchLab — {args.mode}"
         )
         self.window.set_wmclass("BenchLab", "BenchLab")
         self.window.set_default_size(*(self.frame()[2:] if desk else (760, 540)))
@@ -467,7 +467,18 @@ class Lab:
             radio.connect("toggled", self.desk_shelf, shelf)
             grid.attach(radio, index % 3, index // 3, 1, 1)
         self.box.pack_start(grid, False, False, 0)
-        self.button("Submit", self.desk_submit)
+        if self.args.confirm:
+            # --confirm: Submit opens an inline two-step; Confirm and Cancel are hidden (absent from the
+            # accessibility tree) until then.
+            self.state["confirm_pending"] = False
+            row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+            self.box.pack_start(row, False, False, 0)
+            self.submit_button = self.button("Submit", self.desk_submit, row)
+            self.confirm_button = self.button("Confirm", self.desk_confirm, row)
+            self.cancel_button = self.button("Cancel", self.desk_cancel, row)
+            self.hidden = [self.confirm_button, self.cancel_button]
+        else:
+            self.button("Submit", self.desk_submit)
         self.status = self.label("Not submitted")
         self.status.set_xalign(0)
 
@@ -482,10 +493,46 @@ class Lab:
         self.emit("shelf_select", shelf=shelf)
 
     def desk_submit(self) -> None:
+        if self.args.confirm:
+            if self.state["confirm_pending"]:
+                return
+            self.state["confirm_pending"] = True
+            self.submit_button.set_sensitive(False)
+            self.status.set_text("Confirm submit?")
+            self.confirm_button.show()
+            self.cancel_button.show()
+            self.emit("confirm_open", code=self.state["code"], shelf=self.state["shelf"])
+            return
+        self.desk_record_submit()
+
+    def desk_record_submit(self) -> None:
         submitted = {"code": self.state["code"], "shelf": self.state["shelf"]}
         self.state.update(submit_count=self.state["submit_count"] + 1, submitted=submitted)
         self.status.set_text(f"Submitted: {submitted['code']} / {submitted['shelf']}")
         self.emit("submit", **submitted)
+
+    def desk_confirm_close(self) -> None:
+        self.state["confirm_pending"] = False
+        self.confirm_button.hide()
+        self.cancel_button.hide()
+        self.submit_button.set_sensitive(True)
+
+    def desk_confirm(self) -> None:
+        if not self.state["confirm_pending"]:
+            return
+        self.desk_confirm_close()
+        self.desk_record_submit()  # the field's text and the shelf at this moment
+
+    def desk_cancel(self) -> None:
+        if not self.state["confirm_pending"]:
+            return
+        self.status.set_text(
+            "Not submitted"
+            if self.state["submitted"] is None
+            else f"Submitted: {self.state['submitted']['code']} / {self.state['submitted']['shelf']}"
+        )
+        self.desk_confirm_close()
+        self.emit("confirm_cancel")
 
     def irconsent(self) -> None:
         self.state.update(
@@ -531,6 +578,12 @@ def main() -> None:
     parser.add_argument("--instance", help="desk mode: the copy's label")
     parser.add_argument(
         "--frame", help="desk mode: outer frame X,Y,W,H (top-left screen coordinates)"
+    )
+    parser.add_argument("--title", help='desk mode: the window title (default "BenchLab Desk L")')
+    parser.add_argument(
+        "--confirm",
+        action="store_true",
+        help="desk mode: Submit opens an inline Confirm / Cancel step",
     )
     parser.add_argument("--no-activate", action="store_true", help="desk mode: show without focus")
     args = parser.parse_args()

@@ -36,13 +36,17 @@ sys.path.insert(0, str(BENCH / "probes" / "_common"))
 sys.path.insert(0, str(BENCH / "swift"))
 sys.path.insert(0, str(BENCH.parents[1] / "fairness"))
 import bench_v2 as v2  # noqa: E402
+import benchlab_common as C  # noqa: E402
 import cdb_fairness  # noqa: E402
 import shared_desktop  # noqa: E402
 import summarize_sentinel  # noqa: E402
 
 LAB_TASKS = ("MB-09", "MB-10", "MB-11", "IR-01", "IR-02", "IR-03", "IR-04")
 CDB_TASKS = ("CDB-G02", "CDB-G03", "CDB-G04")
-SHARED_DESKTOP_TASKS = ("PA-01", "UM-01")
+SHARED_DESKTOP_TASKS = ("PA-01", "UM-01", "PA-02", "UM-02")
+PARALLEL_TASKS = ("PA-01", "PA-02")
+MOUSE_USER_TASKS = ("UM-01", "UM-02")
+HARD_TASKS = ("PA-02", "UM-02")
 TASKS = CDB_TASKS + LAB_TASKS + SHARED_DESKTOP_TASKS
 LAB_FRAME = (40, 40, 760, 540)
 WITNESS_FRAME = (1000, 640, 600, 320)
@@ -100,7 +104,8 @@ def sentinel_lines(log: Path) -> list[dict]:
 
 
 def fill(command: list[str], subs: dict[str, str]) -> list[str]:
-    """The agent command with {brief}, {out}, {seed}, {mode} (and, for PA-01, {instance}, {title}) filled in."""
+    """The agent command with {brief}, {out}, {seed}, {mode} (and, for PA-01 / PA-02, {instance}, {title}; the
+    PA-02 title is the one shared by every copy, so an agent must tell its copy apart by {instance}) filled in."""
     argv = []
     for a in command:
         for key, value in subs.items():
@@ -125,9 +130,9 @@ def desk_argv(app_args: list[str], *, background: bool) -> list[str]:
             *app_args, *(["--no-activate"] if background else [])]  # fmt: skip
 
 
-def um_desk_args(seed: int, state: Path, events: Path) -> list[str]:
+def um_desk_args(seed: int, state: Path, events: Path, task: str = "UM-01") -> list[str]:
     return ["--seed", str(seed), "--state", str(state), "--events", str(events),
-            *shared_desktop.um_app_args(seed)]  # fmt: skip
+            *shared_desktop.um_app_args(seed, task)]  # fmt: skip
 
 
 def sentinel_argv(
@@ -142,9 +147,29 @@ def sentinel_argv(
     return argv
 
 
-def pa_plan(seed: int, instances: int, out: Path) -> list[dict]:
-    """The copies of a PA-01 trial (cell order): label, title, frame, brief, directory, state, events, app_args."""
-    return shared_desktop.pa_agents(seed, instances, out, PLATFORM_WORDS)
+def pa_plan(seed: int, instances: int, out: Path, task: str = "PA-01") -> list[dict]:
+    """The copies of a PA-01 / PA-02 trial (cell order): label, title, frame, brief, directory, state, events,
+    app_args. The copies of PA-02 share one window title: find a copy by its label, process or frame."""
+    return shared_desktop.pa_agents(seed, instances, out, PLATFORM_WORDS, task=task)
+
+
+def screen_too_small(task: str) -> str | None:
+    """A harness error text when the primary screen is smaller than the task's minimum (hard variants only)."""
+    import ctypes
+
+    if task not in HARD_TASKS:
+        return None
+    try:
+        ctypes.windll.shcore.SetProcessDpiAwareness(
+            2
+        )  # physical pixels; fails harmlessly when already set
+    except Exception:  # noqa: BLE001
+        pass
+    width, height = (ctypes.windll.user32.GetSystemMetrics(i) for i in (0, 1))
+    need = shared_desktop.min_screen(task)
+    if width < need[0] or height < need[1]:
+        return f"{task} needs a screen of at least {need[0]} x {need[1]}, this one is {width} x {height}"
+    return None
 
 
 def agent_env(brief: Path, **extra: str) -> dict[str, str]:
@@ -238,16 +263,16 @@ def disarm(control: Path, log: Path) -> None:
 
 
 def run_parallel(args: argparse.Namespace, command: list[str]) -> dict:
-    """PA-01: N copies of BenchLab (desk), one agent each, started at the same moment."""
+    """PA-01 / PA-02: N copies of BenchLab (desk), one agent each, started at the same moment."""
     import winenv as W
 
     out: Path = args.out.resolve()
     out.mkdir(parents=True, exist_ok=True)
     spec = task_spec(args.task)
-    n = shared_desktop.instances_for(spec, args.instances)
+    n = shared_desktop.instances_for(spec, args.instances, args.task)
     seed = cdb_fairness.trial_seed(args.task, args.run_index)
     background = args.condition == "background"
-    plan = pa_plan(seed, n, out)
+    plan = pa_plan(seed, n, out, args.task)
     row: dict = {
         "task": args.task, "run_index": args.run_index, "seed": seed, "condition": args.condition,
         "mode": "desk", "platform": "windows", "label": args.label, "started": time.time(),
@@ -259,6 +284,9 @@ def run_parallel(args: argparse.Namespace, command: list[str]) -> dict:
     control.write_text("", encoding="utf-8")
     procs: list[subprocess.Popen] = []
     try:
+        if problem := screen_too_small(args.task):
+            row["harness_error"] = problem
+            return row
         for entry in plan:
             entry["dir"].mkdir(parents=True, exist_ok=True)
             for stale in (entry["state"], entry["events"]):
@@ -281,7 +309,7 @@ def run_parallel(args: argparse.Namespace, command: list[str]) -> dict:
             procs.append(
                 subprocess.Popen(
                     sentinel_argv(
-                        log, control, shared_desktop.PA_WITNESS_FRAME, user_activity=False
+                        log, control, shared_desktop.witness_frame(args.task), user_activity=False
                     )
                 )
             )
@@ -297,7 +325,8 @@ def run_parallel(args: argparse.Namespace, command: list[str]) -> dict:
         arm(control, log)
 
         t0_ms = time.time() * 1000
-        shared_desktop.write_meta(out, n, t0_ms, args.timeout)
+        extra = {"copy_deadline_s": C.PA2_COPY_DEADLINE_S} if args.task == "PA-02" else {}
+        shared_desktop.write_meta(out, n, t0_ms, args.timeout, **extra)
         agents = []
         for entry in plan:
             subs = {
@@ -317,7 +346,7 @@ def run_parallel(args: argparse.Namespace, command: list[str]) -> dict:
         disarm(control, log)
 
         result = out / "result.json"
-        subprocess.run(shared_desktop.evaluate_argv(sys.executable, seed, out, result),
+        subprocess.run(shared_desktop.evaluate_argv(sys.executable, seed, out, result, args.task),
                        capture_output=True, timeout=120)  # fmt: skip
         evaluation = json.loads(result.read_text(encoding="utf-8")) if result.exists() else {}
         soft: list[str] = []
@@ -360,15 +389,16 @@ def run_parallel(args: argparse.Namespace, command: list[str]) -> dict:
 
 
 def run_mouse_user(args: argparse.Namespace, command: list[str]) -> dict:
-    """UM-01: one desk, and a sentinel whose user moves and clicks the real pointer (background only)."""
+    """UM-01 / UM-02: one desk, and a sentinel whose user moves and clicks (UM-02: and drags) the real pointer
+    (background only)."""
     import winenv as W
 
     out: Path = args.out.resolve()
     out.mkdir(parents=True, exist_ok=True)
     seed = cdb_fairness.trial_seed(args.task, args.run_index)
-    desk = shared_desktop.um_desk(seed)
+    desk = shared_desktop.um_desk(seed, args.task)
     script = out / "mouse-user.json"
-    shared_desktop.write_mouse_script(seed, script)
+    shared_desktop.write_mouse_script(seed, script, args.task)
     brief = v2.brief_for(
         render_raw(args.task, seed).replace(*PLATFORM_WORDS), "background", mouse_user=True
     )
@@ -385,8 +415,13 @@ def run_mouse_user(args: argparse.Namespace, command: list[str]) -> dict:
     control.write_text("", encoding="utf-8")
     procs: list[subprocess.Popen] = []
     try:
+        if problem := screen_too_small(args.task):
+            row["harness_error"] = problem
+            return row
         procs.append(
-            subprocess.Popen(desk_argv(um_desk_args(seed, state, events), background=True))
+            subprocess.Popen(
+                desk_argv(um_desk_args(seed, state, events, args.task), background=True)
+            )
         )
         if not wait_for(state.exists, 30):
             row["harness_error"] = "BenchLab did not start"
@@ -471,9 +506,9 @@ def finish(row: dict, procs: list[subprocess.Popen], control: Path, out: Path) -
 
 
 def run(args: argparse.Namespace, command: list[str]) -> dict:
-    if args.task == "PA-01":
+    if args.task in PARALLEL_TASKS:
         return run_parallel(args, command)
-    if args.task == "UM-01":
+    if args.task in MOUSE_USER_TASKS:
         return run_mouse_user(args, command)
     return run_single(args, command)
 
@@ -696,11 +731,14 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--condition", choices=v2.CONDITIONS, required=True)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--label", default="")
-    parser.add_argument("--timeout", type=float, default=360.0)
+    parser.add_argument(
+        "--timeout", type=float, default=None,
+        help="seconds (default: the task's budget, 360; PA-02 240)",
+    )  # fmt: skip
     parser.add_argument(
         "--instances",
         type=int,
-        help="PA-01: copies of BenchLab, one agent each (default: task.json)",
+        help="PA-01 (1..10) / PA-02 (1..16): copies of BenchLab, one agent each (default: task.json)",
     )
     parser.add_argument("--no-enforce", dest="enforce", action="store_false")
     parser.add_argument(
@@ -709,10 +747,17 @@ def main(argv: list[str]) -> int:
     )  # fmt: skip
     args = parser.parse_args(argv[:split])
     command = argv[split + 1 :]
-    if args.task == "UM-01" and args.condition != "background":
-        parser.error("UM-01 runs in the background condition only")
-    if args.instances is not None and args.task != "PA-01":
-        parser.error("--instances applies to PA-01 only")
+    if args.task in MOUSE_USER_TASKS and args.condition != "background":
+        parser.error(f"{args.task} runs in the background condition only")
+    if args.instances is not None:
+        if args.task not in PARALLEL_TASKS:
+            parser.error("--instances applies to PA-01 and PA-02 only")
+        if not 1 <= args.instances <= shared_desktop.max_instances(args.task):
+            parser.error(
+                f"--instances for {args.task} must be 1..{shared_desktop.max_instances(args.task)}"
+            )
+    if args.timeout is None:
+        args.timeout = float(shared_desktop.budget_s(args.task))
     if sys.platform != "win32":
         print("windows_session.py requires Windows", file=sys.stderr)
         return 2

@@ -390,12 +390,22 @@ final class SentinelDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelega
 /// Tag on every event the mouse user posts (kCGEventSourceUserData); anything else is someone else's.
 let muMagic: Int64 = 0x4344_4253_4D55_0001
 
+/// One action of the mouse user: a click on a dot, or a drag (button held) from one dot to another.
+enum MouseLeg {
+    case click(Int)
+    case drag(from: Int, to: Int)
+}
+
 struct MouseScript {
     var canvas: (w: Double, h: Double)
     var home: (x: Double, y: Double)
     var dots: [(x: Double, y: Double)]
     var radius: Double
     var sequence: [Int]
+    /// Schema 2 `plan`; a schema-1 script has none and the plan is its `sequence` as click legs.
+    var plan: [MouseLeg]
+    var hasPlan = false
+    var dragStepMs = 8.0, dragStepPx = 12.0, dragHoldMs = 40.0, dragTimeoutMs = 600.0
     var stepMs: Double, stepPx: Double, dwellBeforeMs: Double, pressMs: Double, dwellAfterMs: Double
     var tolerancePx: Double, clickTimeoutMs: Double
 
@@ -405,7 +415,6 @@ struct MouseScript {
               let canvas = (j["canvas"] as? [NSNumber])?.map({ $0.doubleValue }), canvas.count == 2,
               let home = (j["home"] as? [NSNumber])?.map({ $0.doubleValue }), home.count == 2,
               let rawDots = j["dots"] as? [[String: Any]],
-              let seq = (j["sequence"] as? [NSNumber])?.map({ $0.intValue }), !seq.isEmpty,
               let radius = (j["radius"] as? NSNumber)?.doubleValue
         else { return nil }
         func num(_ k: String) -> Double? { (j[k] as? NSNumber)?.doubleValue }
@@ -414,6 +423,9 @@ struct MouseScript {
               let after = num("dwell_after_ms"), let tol = num("tolerance_px"),
               let timeout = num("click_timeout_ms")
         else { return nil }
+        let rawPlan = j["plan"] as? [[String: Any]]
+        let seq = (j["sequence"] as? [NSNumber])?.map({ $0.intValue }) ?? []
+        guard rawPlan != nil || !seq.isEmpty else { return nil }
         var dots = [(x: Double, y: Double)](repeating: (0, 0), count: rawDots.count)
         for d in rawDots {
             guard let i = (d["index"] as? NSNumber)?.intValue, i >= 0, i < dots.count,
@@ -422,6 +434,34 @@ struct MouseScript {
             dots[i] = (x, y)
         }
         guard seq.allSatisfy({ $0 >= 0 && $0 < dots.count }) else { return nil }
+        var legs: [MouseLeg] = []
+        if let rawPlan = rawPlan {
+            for l in rawPlan {
+                func idx(_ k: String) -> Int? {
+                    guard let v = (l[k] as? NSNumber)?.intValue, v >= 0, v < dots.count else { return nil }
+                    return v
+                }
+                switch l["kind"] as? String {
+                case "click":
+                    guard let d = idx("dot") else { return nil }
+                    legs.append(.click(d))
+                case "drag":
+                    guard let a = idx("from"), let b = idx("to") else { return nil }
+                    legs.append(.drag(from: a, to: b))
+                default:
+                    return nil
+                }
+            }
+            guard !legs.isEmpty else { return nil }
+            hasPlan = true
+            if let v = num("drag_step_ms") { dragStepMs = v }
+            if let v = num("drag_step_px"), v > 0 { dragStepPx = v }
+            if let v = num("drag_hold_ms") { dragHoldMs = v }
+            if let v = num("drag_timeout_ms") { dragTimeoutMs = v }
+        } else {
+            legs = seq.map { .click($0) }
+        }
+        self.plan = legs
         self.canvas = (canvas[0], canvas[1])
         self.home = (home[0], home[1])
         self.dots = dots
@@ -445,9 +485,12 @@ struct MouseScript {
     }
 
     /// Points of one leg from p to q, excluding p and ending exactly at q.
-    func leg(from p: (x: Double, y: Double), to q: (x: Double, y: Double)) -> [(x: Double, y: Double)] {
+    func leg(from p: (x: Double, y: Double), to q: (x: Double, y: Double), stepPx: Double? = nil)
+        -> [(x: Double, y: Double)]
+    {
+        let step = stepPx ?? self.stepPx
         let dist = hypot(q.x - p.x, q.y - p.y)
-        let n = max(1, Int((dist / stepPx).rounded(.up)))
+        let n = max(1, Int((dist / step).rounded(.up)))
         return (1...n).map { k in
             (floor(p.x + (q.x - p.x) * Double(k) / Double(n) + 0.5),
              floor(p.y + (q.y - p.y) * Double(k) / Double(n) + 0.5))
@@ -459,6 +502,7 @@ struct MouseScript {
 final class MouseCanvasView: NSView {
     let script: MouseScript
     var onMouseDown: ((NSEvent) -> Void)?
+    var onMouseUp: ((NSEvent) -> Void)?
     private var flashDot: Int?
     private var flashUntil = Date.distantPast
 
@@ -474,6 +518,7 @@ final class MouseCanvasView: NSView {
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
     override func mouseDown(with event: NSEvent) { onMouseDown?(event) }
+    override func mouseUp(with event: NSEvent) { onMouseUp?(event) }
 
     func flash(_ dot: Int?) {
         flashDot = dot
@@ -519,7 +564,18 @@ private let muTapCallback: CGEventTapCallBack = { _, type, event, refcon in
 /// The simulated mouse user: a state machine on a main-queue timer, so the clicks the canvas receives are matched
 /// on the same queue that posts them.
 final class MouseUser {
-    private enum Phase { case idle, homing, moving, press, release, dwellAfter }
+    private enum Phase { case idle, homing, moving, press, release, dwellAfter, dragMoving, dragHold, dragRelease }
+
+    /// A drag whose result is not known yet: the canvas reports its button-down and button-up.
+    private struct DragPending {
+        var n: Int, from: Int, to: Int
+        var downSeen = false
+        var downWhy = "lost"
+        var cut = false
+        var releasedAt: Double?
+        var upOk = false
+        var upSeen = false
+    }
 
     let script: MouseScript
     let canvas: MouseCanvasView
@@ -542,6 +598,9 @@ final class MouseUser {
     private var clicks = 0
     private var buttonDown = false
     private var pending: (n: Int, dot: Int, deadline: Double)?
+    private var drag: DragPending?
+    private var curLeg = MouseLeg.click(0)
+    private var dragFrom = (x: 0.0, y: 0.0)
     private let source = CGEventSource(stateID: .hidSystemState)
 
     init(script: MouseScript, canvas: MouseCanvasView, emit: @escaping (String, [String: Any]) -> Void) {
@@ -549,8 +608,9 @@ final class MouseUser {
         self.canvas = canvas
         self.emit = emit
         canvas.onMouseDown = { [weak self] e in self?.canvasMouseDown(e) }
+        canvas.onMouseUp = { [weak self] e in self?.canvasMouseUp(e) }
         let t = DispatchSource.makeTimerSource(queue: .main)
-        t.schedule(deadline: .now() + 0.005, repeating: .milliseconds(5), leeway: .milliseconds(1))
+        t.schedule(deadline: .now() + 0.005, repeating: .milliseconds(2), leeway: .microseconds(500))
         t.setEventHandler { [weak self] in self?.tick() }
         t.resume()
         timer = t
@@ -560,12 +620,15 @@ final class MouseUser {
 
     func start() {
         installTap()
-        emit("mu_start", ["tagging": tagging, "tolerance_px": script.tolerancePx, "platform": "macos"])
+        var startInfo: [String: Any] = ["tagging": tagging, "tolerance_px": script.tolerancePx, "platform": "macos"]
+        if script.hasPlan { startInfo["drag_timeout_ms"] = script.dragTimeoutMs }  // schema 2 only
+        emit("mu_start", startInfo)
         started = true
         leg = 0
         clicks = 0
         checks = 0
         pending = nil
+        drag = nil
         last = script.home
         prev = script.home
         guard let g = globalPoint(script.home) else { fail(); return }
@@ -583,6 +646,7 @@ final class MouseUser {
         }
         phase = .idle
         pending = nil
+        drag = nil  // an unfinished drag is dropped
         started = false
         emit("mu_stop", [:])
     }
@@ -622,6 +686,7 @@ final class MouseUser {
         guard let loc = realPointer(), let o = canvasOrigin() else { return }
         let got = (x: Double(loc.x - o.x), y: Double(loc.y - o.y))
         let d = min(hypot(got.x - last.x, got.y - last.y), hypot(got.x - prev.x, got.y - prev.y))
+        if drag != nil && buttonDown && d > script.tolerancePx { drag?.cut = true }
         emit("mu", ["i": checks, "want": [last.x, last.y], "got": [got.x, got.y], "d": d])
         checks += 1
     }
@@ -635,6 +700,7 @@ final class MouseUser {
             pending = nil
             emit("mu_click_result", ["n": p.n, "ok": false, "why": "lost"])
         }
+        if let d = drag, let rel = d.releasedAt, now >= rel + script.dragTimeoutMs { resolveDrag() }
         guard now >= nextAt else { return }
         switch phase {
         case .idle:
@@ -662,12 +728,51 @@ final class MouseUser {
             }
         case .press:
             check()
-            if let g = globalPoint(last) { post(.leftMouseDown, g) }
-            buttonDown = true
             clicks += 1
-            pending = (clicks, target, now + script.clickTimeoutMs)
-            phase = .release
-            nextAt = now + script.pressMs
+            if case let .drag(_, to) = curLeg {
+                resolveDrag()  // a stale unresolved drag
+                drag = DragPending(n: clicks, from: target, to: to)
+                dragFrom = last
+                if let g = globalPoint(last) { post(.leftMouseDown, g) }
+                buttonDown = true
+                points = script.leg(from: last, to: script.dots[to], stepPx: script.dragStepPx)
+                pointIdx = 0
+                phase = .dragMoving
+                nextAt = now + script.dragStepMs
+            } else {
+                if let g = globalPoint(last) { post(.leftMouseDown, g) }
+                buttonDown = true
+                pending = (clicks, target, now + script.clickTimeoutMs)
+                phase = .release
+                nextAt = now + script.pressMs
+            }
+        case .dragMoving:
+            check()
+            let pt = points[pointIdx]
+            if let g = globalPoint(pt) { post(.leftMouseDragged, g) }
+            prev = last
+            last = pt
+            pointIdx += 1
+            if pointIdx >= points.count {
+                phase = .dragHold
+                nextAt = now + script.dragHoldMs
+            } else {
+                nextAt = now + script.dragStepMs
+            }
+        case .dragHold:
+            phase = .dragRelease
+        case .dragRelease:
+            if drag != nil { drag?.releasedAt = now }
+            if let g = globalPoint(last) { post(.leftMouseUp, g) }
+            buttonDown = false
+            if case let .drag(a, b) = curLeg {
+                emit(
+                    "mu_drag",
+                    ["n": clicks, "from": a, "to": b, "at_from": [Int(dragFrom.x), Int(dragFrom.y)],
+                     "at_to": [Int(last.x), Int(last.y)]])
+            }
+            phase = .dwellAfter
+            nextAt = now + script.dwellAfterMs
         case .release:
             if let g = globalPoint(last) { post(.leftMouseUp, g) }
             buttonDown = false
@@ -680,7 +785,11 @@ final class MouseUser {
     }
 
     private func startLeg(_ now: Double) {
-        target = script.sequence[leg % script.sequence.count]
+        curLeg = script.plan[leg % script.plan.count]
+        switch curLeg {
+        case .click(let d): target = d
+        case .drag(let a, _): target = a
+        }
         leg += 1
         points = script.leg(from: last, to: script.dots[target])
         pointIdx = 0
@@ -696,6 +805,19 @@ final class MouseUser {
         let dot = script.dotAt(Double(p.x), Double(p.y))
         emit("mu_rx", ["dot": dot.map { $0 as Any } ?? NSNull(), "at": [Double(p.x), Double(p.y)], "own": own])
         canvas.flash(dot)
+        if own, let d = drag, !d.downSeen {
+            let c = script.dots[d.from]
+            let near = hypot(Double(p.x) - c.x, Double(p.y) - c.y) <= script.tolerancePx
+            drag?.downSeen = true
+            if dot == d.from && near {
+                drag?.downWhy = "landed"
+            } else if let dot = dot, dot != d.from {
+                drag?.downWhy = "wrong_dot"
+            } else {
+                drag?.downWhy = "off_target"
+            }
+            return
+        }
         guard own, let pend = pending else { return }
         pending = nil
         let c = script.dots[pend.dot]
@@ -709,6 +831,46 @@ final class MouseUser {
             why = "off_target"
         }
         emit("mu_click_result", ["n": pend.n, "ok": why == "landed", "why": why])
+    }
+
+    /// The canvas received a button-up. Logs `mu_up`; settles the pending drag once its own up arrives.
+    private func canvasMouseUp(_ e: NSEvent) {
+        let p = canvas.convert(e.locationInWindow, from: nil)
+        let tagged = e.cgEvent?.getIntegerValueField(.eventSourceUserData) == muMagic
+        let dot = script.dotAt(Double(p.x), Double(p.y))
+        var own = false
+        if let d = drag, d.downSeen, d.downWhy == "landed", tagged, let rel = d.releasedAt {
+            let c = script.dots[d.to]
+            let near = hypot(Double(p.x) - c.x, Double(p.y) - c.y) <= script.tolerancePx
+            own = near && muMonoMs() <= rel + script.dragTimeoutMs
+        }
+        emit("mu_up", ["dot": dot.map { $0 as Any } ?? NSNull(), "at": [Double(p.x), Double(p.y)], "own": own])
+        guard drag != nil else { return }
+        if !tagged {
+            // Someone else's button-up (a stolen release) while the drag is pending.
+            drag?.cut = true
+            return
+        }
+        drag?.upSeen = true
+        drag?.upOk = own
+        if drag?.releasedAt != nil { resolveDrag() }
+    }
+
+    /// Emit the result of the pending drag (also on timeout, when the up never reached the canvas).
+    private func resolveDrag() {
+        guard let d = drag else { return }
+        drag = nil
+        let why: String
+        if !d.downSeen {
+            why = "lost"
+        } else if d.downWhy != "landed" {
+            why = d.downWhy
+        } else if d.cut || !d.upOk {
+            why = "cut"
+        } else {
+            why = "landed"
+        }
+        emit("mu_click_result", ["n": d.n, "ok": why == "landed", "why": why, "kind": "drag"])
     }
 
     // MARK: foreign pointer events
@@ -748,6 +910,7 @@ final class MouseUser {
         case .scrollWheel: kind = "scroll"
         default: return
         }
+        if drag != nil && buttonDown { drag?.cut = true }
         emit("mu_foreign", ["kind": kind])
     }
 }

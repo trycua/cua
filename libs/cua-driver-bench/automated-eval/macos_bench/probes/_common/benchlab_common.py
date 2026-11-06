@@ -543,6 +543,129 @@ def desk_app_args(cell: dict[str, Any]) -> list[str]:
     return ["--instance", cell["label"], "--frame", ",".join(str(v) for v in cell["frame"])]
 
 
+# ---- hard variants (PA-02, UM-02): additive, they never change what PA-01 and UM-01 derive or check.
+# PA-02 "Crowded desk": 16 copies in an overlapping 4 x 4 cascade, one window title for all of them, a long
+# mixed-case code with symbols, and a modal confirmation dialog (identical title and buttons in every copy).
+PA2_SALT = 0x5A035A035A035A03
+UM2_SALT = 0x5A045A045A045A04
+PA2_LABELS = "ABCDEFGHIJKLMNOP"
+PA2_MAX_INSTANCES = 16
+PA2_DEFAULT_INSTANCES = 16
+PA2_INSTANCE_VARIANTS = (1, 8, 16)
+PA2_GRID_COLS, PA2_GRID_ROWS = 4, 4
+PA2_ORIGIN = (20, 36)
+PA2_PITCH = (
+    400,
+    205,
+)  # 205 < 400: a row covers the lower 195 px (Submit, status, lower shelves) of the row above
+PA2_WINDOW_TITLE = (
+    "BenchLab Desk"  # the same for every copy: the heading "Desk L" inside tells them apart
+)
+PA2_WITNESS_FRAME = (1610, 40, 290, 120)  # the free strip right of the grid
+PA2_MIN_SCREEN = (1920, 1060)
+PA2_BUDGET_S = 240  # the trial's wall clock, shared by the N agents
+PA2_COPY_DEADLINE_S = (
+    180  # every copy's confirmed Submit must come within this, from the agents' start
+)
+DESK_CODE_UPPER = "ABCDEFGHJKLMNPQRSTUVWXYZ"
+DESK_CODE_MIXED = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+DESK_CODE_SYMBOLS = "#@%+&"
+DESK_FRAGMENT = 5  # a foreign code fragment of this many characters in a Code value is cross-talk
+
+
+def pa2_cell_frame(cell: int) -> tuple[int, int, int, int]:
+    """Outer frame of cell `cell` of the 4 x 4 cascade (reading order); later cells are opened later, so lower
+    rows sit on top of the rows above them."""
+    if not 0 <= cell < PA2_GRID_COLS * PA2_GRID_ROWS:
+        raise ValueError(f"cell {cell} outside the {PA2_GRID_COLS}x{PA2_GRID_ROWS} grid")
+    col, row = cell % PA2_GRID_COLS, cell // PA2_GRID_COLS
+    return (PA2_ORIGIN[0] + col * PA2_PITCH[0], PA2_ORIGIN[1] + row * PA2_PITCH[1], *DESK_SIZE)
+
+
+def _fragments(code: str, n: int = DESK_FRAGMENT) -> set[str]:
+    return {code[i : i + n] for i in range(len(code) - n + 1)}
+
+
+def _hard_code(r: SplitMix64, tag: str) -> str:
+    """`TAG-dddd-xxxxxs`: a 3-letter tag, 4 digits, 5 mixed-case characters and one symbol (15 characters)."""
+    digits = f"{r.randint(1000, 9999)}"
+    mixed = "".join(DESK_CODE_MIXED[r.index(len(DESK_CODE_MIXED))] for _ in range(5))
+    symbol = DESK_CODE_SYMBOLS[r.index(len(DESK_CODE_SYMBOLS))]
+    return f"{tag}-{digits}-{mixed}{symbol}"
+
+
+def _hard_cells(r: SplitMix64, count: int) -> list[dict[str, Any]]:
+    """Per copy: label, a unique 3-letter tag, a 15-character code and a target shelf. No two codes share a tag
+    or a 5-character fragment, so any fragment of another copy's code in a Code field is attributable."""
+    labels = r.shuffled(list(PA2_LABELS))[:count]
+    shelves = [DESK_SHELVES[r.index(len(DESK_SHELVES))] for _ in range(count)]
+    tags: list[str] = []
+    while len(tags) < count:
+        tag = "".join(DESK_CODE_UPPER[r.index(len(DESK_CODE_UPPER))] for _ in range(3))
+        if tag not in tags and len(set(tag)) == 3:
+            tags.append(tag)
+    codes: list[str] = []
+    seen: set[str] = set()
+    for tag in tags:
+        for _ in range(1000):
+            code = _hard_code(r, tag)
+            if not (_fragments(code) & seen):
+                break
+        else:  # pragma: no cover - the code space is far larger than 16 codes
+            raise RuntimeError("could not draw distinct codes")
+        codes.append(code)
+        seen |= _fragments(code)
+    return [
+        {
+            "cell": k,
+            "label": labels[k],
+            "title": PA2_WINDOW_TITLE,
+            "heading": f"Desk {labels[k]}",
+            "code": codes[k],
+            "tag": tags[k],
+            "shelf": shelves[k],
+        }
+        for k in range(count)
+    ]
+
+
+def derive_crowded(seed: int, instances: int = PA2_DEFAULT_INSTANCES) -> dict[str, Any]:
+    """PA-02: the copies of a trial. Cell k (label, code, shelf) does not depend on `instances`."""
+    if not 1 <= instances <= PA2_MAX_INSTANCES:
+        raise ValueError(f"instances must be 1..{PA2_MAX_INSTANCES}, got {instances}")
+    cells = _hard_cells(SplitMix64(seed ^ PA2_SALT), PA2_MAX_INSTANCES)[:instances]
+    for c in cells:
+        col, row = c["cell"] % PA2_GRID_COLS, c["cell"] // PA2_GRID_COLS
+        c["frame"] = list(pa2_cell_frame(c["cell"]))
+        c["row"], c["col"] = row + 1, col + 1
+        c["position"] = f"row {row + 1}, column {col + 1}"
+    return {"instances": instances, "cells": cells}
+
+
+# UM-02 "Busy user": the user's pointer is fast (about 4 x UM-01's events), every third action is a drag with
+# the button held, and the user's window covers almost all of the agent's desk.
+UM2_DESK_FRAME = (
+    320,
+    300,
+    360,
+    400,
+)  # under the user window (420, 340, 900, 520) except a 100 px strip
+UM2_DRAG_EVERY = 3
+
+
+def derive_busy_desk(seed: int) -> dict[str, Any]:
+    """UM-02: the one desk the agent works in (the UM-01 desk sub-task; the difficulty is the user's)."""
+    cell = _desk_cells(SplitMix64(seed ^ UM2_SALT), 1)[0]
+    cell["frame"] = list(UM2_DESK_FRAME)
+    return cell
+
+
+def crowded_app_args(cell: dict[str, Any]) -> list[str]:
+    """BenchLab arguments after `--mode desk --seed S --state P --events E` for a PA-02 copy: the usual
+    instance and frame, the window title shared by every copy, and the inline Confirm step."""
+    return [*desk_app_args(cell), "--title", cell["title"], "--confirm"]
+
+
 def check_desk(
     cell: dict[str, Any],
     others: list[dict[str, Any]],
@@ -550,9 +673,14 @@ def check_desk(
     events: list[dict[str, Any]],
     checks: Checks,
     deadline_ms: float | None = None,
+    hard: bool = False,
 ) -> dict[str, Any]:
     """The checks of one desk. `others` are the other active instances (their codes and shelves are foreign
-    here). Returns the cross-talk evidence found in this desk's log."""
+    here). Returns the cross-talk evidence found in this desk's log.
+
+    `hard` (PA-02) swaps the attribution rule: a Code value is foreign when it holds another copy's tag or any
+    5-character fragment of another copy's code that is not also in this copy's own code (see `_hard_cells`),
+    and it adds the confirmation-step checks (`confirm_before_submit`, `confirm_resolved`)."""
     code, shelf = cell["code"], cell["shelf"]
     checks.add(
         "instance_matches",
@@ -592,7 +720,7 @@ def check_desk(
         0.2,
         f"submitted code {submit_code!r} and shelf {last.get('shelf')!r}",
     )
-    foreign_letters = {ch: o["label"] for o in others for ch in o["letters"]}
+    foreign_letters = {ch: o["label"] for o in others for ch in o.get("letters", "")}
     foreign_codes = {o["code"]: o["label"] for o in others}
     foreign_shelves = {o["shelf"]: o["label"] for o in others}
     evidence: list[dict[str, Any]] = []
@@ -604,16 +732,27 @@ def check_desk(
         if e.get("type") == "submit" and isinstance(d.get("code"), str):
             values.append(d["code"])
         for value in values:
-            upper = value.upper()
-            owners = sorted({lab for c, lab in foreign_codes.items() if c in upper})
-            owners += sorted(
-                {
-                    lab
-                    for ch, lab in foreign_letters.items()
-                    if ch in upper and ch not in cell["letters"]
-                }
-                - set(owners)
-            )
+            if hard:
+                own_frags = _fragments(code)
+                owners = sorted(
+                    {
+                        o["label"]
+                        for o in others
+                        if o["tag"] in value
+                        or any(f in value and f not in own_frags for f in _fragments(o["code"]))
+                    }
+                )
+            else:
+                upper = value.upper()
+                owners = sorted({lab for c, lab in foreign_codes.items() if c in upper})
+                owners += sorted(
+                    {
+                        lab
+                        for ch, lab in foreign_letters.items()
+                        if ch in upper and ch not in cell["letters"]
+                    }
+                    - set(owners)
+                )
             if owners:
                 evidence.append(
                     {"seq": e.get("seq"), "type": e.get("type"), "value": value, "from": owners}
@@ -626,6 +765,29 @@ def check_desk(
         if not evidence
         else f"{len(evidence)} edit(s) carry another instance's code letters: {evidence[:3]}",
     )
+    if hard:
+        order = [e.get("type") for e in events]
+        opens = order.count("confirm_open")
+        ordered = (
+            all("confirm_open" in order[:i] for i, t in enumerate(order) if t == "submit")
+            and order.count("submit") <= opens
+        )
+        checks.add(
+            "confirm_before_submit",
+            ordered,
+            0.05,
+            "every Submit went through the Confirm step"
+            if ordered
+            else "a submit event has no confirm_open before it",
+        )
+        checks.add(
+            "confirm_resolved",
+            state.get("confirm_pending") is False,
+            0.05,
+            f"confirm_pending is {state.get('confirm_pending')!r} (False once Confirm or Cancel was pressed)",
+        )
+        checks.diag("confirm_opens", opens)
+        checks.diag("confirm_cancels", order.count("confirm_cancel"))
     if deadline_ms is not None:
         late = [s for s in submits if not is_num(s.get("t")) or s["t"] > deadline_ms]
         checks.add(
@@ -661,13 +823,21 @@ MU_SEQUENCE = 24
 MU_MIN_SPACING = 110
 
 
-def derive_mouse_user(seed: int) -> dict[str, Any]:
-    """UM-01: the simulated user's pointer script (see SHARED-DESKTOP.md, "Mouse user script").
+def derive_mouse_user(seed: int, profile: str = "um01") -> dict[str, Any]:
+    """The simulated user's pointer script (see SHARED-DESKTOP.md, "Mouse user script").
 
     Canvas-local coordinates (origin top-left of the user window's drawing area, MU_CANVAS in size). The user
-    starts at `home`, then visits `sequence[j % len(sequence)]` for leg j = 0, 1, ... until disarmed: it moves
+    starts at `home`, then performs the legs of `plan` in order, repeating it until disarmed. A click leg moves
     in `mouse_leg` steps of `step_px` every `step_ms`, waits `dwell_before_ms`, presses the left button for
-    `press_ms` at the dot centre, then waits `dwell_after_ms`."""
+    `press_ms` at the dot centre, then waits `dwell_after_ms`. A drag leg (profile "um02") moves to dot `from`,
+    waits `dwell_before_ms`, presses and, with the button held, moves to dot `to` in `mouse_leg` steps of
+    `drag_step_px` every `drag_step_ms`, waits `drag_hold_ms` and releases.
+
+    Profile "um01" is UM-01 exactly as registered on 6 Nov 2026 (schema 1, clicks only, no `plan`): do not
+    change its values. Profile "um02" (schema 2) is the busy user of UM-02: a fast pointer (about 4 x the
+    events) and a drag as every UM2_DRAG_EVERY-th leg."""
+    if profile not in ("um01", "um02"):
+        raise ValueError(f"unknown mouse-user profile {profile!r}")
     r = SplitMix64(seed ^ MU_SALT)
     w, h = MU_CANVAS
     dots: list[dict[str, int]] = []
@@ -688,7 +858,7 @@ def derive_mouse_user(seed: int) -> dict[str, Any]:
             d = r.index(MU_DOTS)
         sequence.append(d)
         prev = d
-    return {
+    script: dict[str, Any] = {
         "schema": "cdb-mouse-user/1",
         "seed": seed,
         "canvas": [w, h],
@@ -704,6 +874,42 @@ def derive_mouse_user(seed: int) -> dict[str, Any]:
         "tolerance_px": 3,
         "click_timeout_ms": 400,
     }
+    if profile == "um02":
+        script.update(
+            {
+                "schema": "cdb-mouse-user/2",
+                "plan": mouse_plan(sequence, UM2_DRAG_EVERY),
+                "step_ms": 8,
+                "step_px": 12,
+                "dwell_before_ms": 30,
+                "press_ms": 25,
+                "dwell_after_ms": 40,
+                "drag_step_ms": 8,
+                "drag_step_px": 12,
+                "drag_hold_ms": 40,
+                "drag_timeout_ms": 600,
+            }
+        )
+    return script
+
+
+def mouse_plan(sequence: list[int], drag_every: int) -> list[dict[str, Any]]:
+    """The legs of a busy user: walk `sequence`; every `drag_every`-th leg is a drag from the dot the leg
+    reaches to the next dot of the sequence (consuming both), the others are clicks. Leg j of the script is
+    `plan[j % len(plan)]`; a click leg is `{"kind": "click", "dot": d}`, a drag leg
+    `{"kind": "drag", "from": a, "to": b}`. Inside the plan no leg starts on the dot where the previous
+    one ended; at the wrap-around a click may repeat the last dot (the user then clicks without moving)."""
+    plan: list[dict[str, Any]] = []
+    i, n = 0, len(sequence)
+    while i < n - 1:
+        leg = len(plan)
+        if drag_every and leg % drag_every == drag_every - 1:
+            plan.append({"kind": "drag", "from": sequence[i], "to": sequence[i + 1]})
+            i += 2
+        else:
+            plan.append({"kind": "click", "dot": sequence[i]})
+            i += 1
+    return plan
 
 
 def mouse_leg(
@@ -733,8 +939,10 @@ def dot_at(script: dict[str, Any], x: float, y: float) -> int | None:
     return None
 
 
-def write_mouse_script(seed: int, path: str | os.PathLike[str]) -> dict[str, Any]:
-    script = derive_mouse_user(seed)
+def write_mouse_script(
+    seed: int, path: str | os.PathLike[str], profile: str = "um01"
+) -> dict[str, Any]:
+    script = derive_mouse_user(seed, profile)
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     Path(path).write_text(json.dumps(script, indent=1) + "\n", "utf-8")
     return script

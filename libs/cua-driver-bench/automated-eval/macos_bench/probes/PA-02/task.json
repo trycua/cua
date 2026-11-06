@@ -1,0 +1,36 @@
+{
+  "id": "PA-02",
+  "title": "Crowded desk: sixteen overlapping copies of an app, one agent each, with long mixed-case codes and a Confirm step, without cross-talk",
+  "group": "SD",
+  "category": "shared_desktop",
+  "ability": "parallel_agents_crowded",
+  "dimension_tags": [
+    "multi_agent",
+    "parallel",
+    "multi_instance",
+    "form_fill",
+    "occlusion",
+    "text_entry",
+    "hard_variant"
+  ],
+  "timeout_s": 240,
+  "max_turns": 45,
+  "app_args": [
+    "--mode",
+    "desk"
+  ],
+  "parallel": true,
+  "instances": 16,
+  "instance_variants": [
+    1,
+    8,
+    16
+  ],
+  "conditions": [
+    "foreground",
+    "background"
+  ],
+  "separate_run": true,
+  "coverage_caveat": "Sixteen agent processes and tool servers share one desktop. The cascade hides Submit and the lower shelves of twelve copies behind the next row, so a driver that clicks screen coordinates without raising windows hits other copies. See SHARED-DESKTOP.md, Hard variants.",
+  "copy_deadline_s": 180
+}

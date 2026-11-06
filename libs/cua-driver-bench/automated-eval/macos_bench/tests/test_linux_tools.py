@@ -244,32 +244,44 @@ class LinuxSharedDesktopTest(unittest.TestCase):
         return {k: int(v) for k, v in (line.split("=") for line in out.split())}
 
     def start_desk(
-        self, label: str, frame: str | None = None, name: str = "desk"
+        self,
+        label: str,
+        frame: str | None = None,
+        name: str = "desk",
+        extra: tuple[str, ...] = (),
+        title: str | None = None,
     ) -> tuple[Path, Path]:
         state, events = self.tmp / f"{name}-state.json", self.tmp / f"{name}-events.jsonl"
         argv = ["--mode", "desk", "--seed", str(self.SEED), "--state", str(state),
                 "--events", str(events), "--instance", label]  # fmt: skip
         if frame:
             argv += ["--frame", frame]
-        self.spawn("benchlab.py", *argv, name=name)
+        self.spawn("benchlab.py", *argv, *extra, name=name)
         self.wait_for(lambda: state.exists(), what="BenchLab desk state")
-        self.wait_for(lambda: self.window_ids(f"BenchLab Desk {label}"), what="the desk window")
+        self.wait_for(
+            lambda: self.window_ids(title or f"BenchLab Desk {label}"), what="the desk window"
+        )
         time.sleep(0.5)
         return state, events
 
-    def evaluate_desk(self, cell: dict, others: list[dict], state: Path, events: Path) -> dict:
+    def evaluate_desk(
+        self, cell: dict, others: list[dict], state: Path, events: Path, hard: bool = False
+    ) -> dict:
         import benchlab_common as C
 
         loaded = C.load_state(state)
         evs, bad = C.load_events(events)
 
         def check(seed, st, ev, checks):
-            C.check_desk(cell, others, st, ev, checks)
+            C.check_desk(cell, others, st, ev, checks, hard=hard)
 
         return C.evaluate_inputs("desk", self.SEED, loaded, evs, bad, check)
 
-    def control(self, name: str, role: str, window: str):
-        """Screen centre of the accessible control `name` of `role` inside the window titled `window`."""
+    def control(
+        self, name: str, role: str, window: str, limit: float = 10, missing_ok: bool = False
+    ):
+        """Screen centre of the accessible control `name` of `role` inside the window titled `window`; with
+        `missing_ok`, None when it is not in the tree within `limit` seconds (hidden controls are absent)."""
         import gi
 
         gi.require_version("Atspi", "2.0")
@@ -288,7 +300,7 @@ class LinuxSharedDesktopTest(unittest.TestCase):
                     return found
             return None
 
-        end = time.monotonic() + 10
+        end = time.monotonic() + limit
         while time.monotonic() < end:
             node = walk(Atspi.get_desktop(0), False)
             if node is not None:
@@ -296,6 +308,8 @@ class LinuxSharedDesktopTest(unittest.TestCase):
                 if box.width > 0 and box.height > 0:
                     return box.x + box.width // 2, box.y + box.height // 2
             time.sleep(0.1)
+        if missing_ok:
+            return None
         self.fail(f"accessible control not found: {name} / {role} in {window}")
 
     def xdo(self, *argv: object) -> None:
@@ -370,12 +384,14 @@ class LinuxSharedDesktopTest(unittest.TestCase):
         self.assertFalse(result["checks"]["no_foreign_input"]["passed"])
 
     # --- the mouse user
-    def run_mouse_user(self, seconds: float, during=None, cover: bool = False) -> dict:
+    def run_mouse_user(
+        self, seconds: float, during=None, cover: bool = False, profile: str = "um01"
+    ) -> dict:
         import benchlab_common as C
         import summarize_sentinel
 
         script = self.tmp / f"mouse-user-{len(self.procs)}.json"
-        C.write_mouse_script(self.SEED, script)
+        C.write_mouse_script(self.SEED, script, profile)
         log = script.with_suffix(".jsonl")
         sentinel = self.spawn(
             "sentinel.py", "--log", str(log), "--mouse-user", str(script), "--frame", "420,340,900,520",
@@ -432,6 +448,109 @@ class LinuxSharedDesktopTest(unittest.TestCase):
         self.assertGreaterEqual(mu["clicks"], 2, mu)
         self.assertEqual(mu["clicks_landed"], 0, mu)
         self.assertGreaterEqual(mu["clicks_lost"], 1, mu)
+
+    # --- hard variants: BenchLab --title / --confirm
+    def test_desk_title_and_the_inline_confirm_step(self) -> None:
+        import benchlab_common as C
+
+        cell = C.derive_crowded(self.SEED, 2)["cells"][0]
+        args = C.crowded_app_args(cell)
+        self.assertIn("--confirm", args)
+        title = cell["title"]
+        self.assertEqual(title, "BenchLab Desk")  # one title for every copy
+        state, events = self.start_desk(
+            cell["label"], ",".join(map(str, cell["frame"])), extra=("--title", title, "--confirm"),
+            title=title,
+        )  # fmt: skip
+        start = json.loads(state.read_text())
+        self.assertIs(start["confirm_pending"], False)
+        self.assertIsNone(self.control("Confirm", "button", title, limit=1, missing_ok=True))
+        self.assertIsNone(self.control("Cancel", "button", title, limit=1, missing_ok=True))
+
+        # a premature Submit and Cancel: nothing is submitted
+        x, y = self.control("Submit", "button", title)
+        self.xdo("mousemove", x, y, "click", 1)
+        pending = json.loads(state.read_text())
+        self.assertIs(pending["confirm_pending"], True)
+        self.assertEqual(pending["submit_count"], 0)
+        self.assertIsNotNone(self.control("Confirm", "button", title))
+        x, y = self.control("Cancel", "button", title)
+        self.xdo("mousemove", x, y, "click", 1)
+        cancelled = json.loads(state.read_text())
+        self.assertIs(cancelled["confirm_pending"], False)
+        self.assertEqual(cancelled["submit_count"], 0)
+        self.assertIsNone(self.control("Confirm", "button", title, limit=1, missing_ok=True))
+
+        # the real thing: fill, Submit, Confirm
+        x, y = self.control("Code", "text", title)
+        self.xdo("mousemove", x, y, "click", 1)
+        self.xdo("type", "--clearmodifiers", cell["code"])
+        x, y = self.control(cell["shelf"], "radio button", title)
+        self.xdo("mousemove", x, y, "click", 1)
+        x, y = self.control("Submit", "button", title)
+        self.xdo("mousemove", x, y, "click", 1)
+        self.assertEqual(json.loads(state.read_text())["submit_count"], 0)
+        x, y = self.control("Confirm", "button", title)
+        self.xdo("mousemove", x, y, "click", 1)
+        done = json.loads(state.read_text())
+        self.assertEqual(done["submit_count"], 1)
+        self.assertEqual(done["submitted"], {"code": cell["code"], "shelf": cell["shelf"]})
+        self.assertIs(done["confirm_pending"], False)
+        types = [json.loads(ln)["type"] for ln in events.read_text().splitlines()]
+        self.assertEqual(
+            [t for t in types if t.startswith("confirm") or t == "submit"],
+            ["confirm_open", "confirm_cancel", "confirm_open", "submit"],
+        )
+        result = self.evaluate_desk(cell, [], state, events, hard=True)
+        self.assertTrue(result["passed"], result["checks"])
+
+    def test_desk_without_confirm_is_unchanged(self) -> None:
+        import benchlab_common as C
+
+        cell = C.derive_um_desk(self.SEED)
+        state, events = self.start_desk(cell["label"], ",".join(map(str, cell["frame"])))
+        self.assertNotIn("confirm_pending", json.loads(state.read_text()))
+        title = f"BenchLab Desk {cell['label']}"
+        self.assertIsNone(self.control("Confirm", "button", title, limit=1, missing_ok=True))
+
+    # --- the busy user (UM-02): clicks and drags with the button held
+    def test_busy_user_clicks_and_drags_land(self) -> None:
+        mu = self.run_mouse_user(5.0, profile="um02")["mouse_user"]
+        self.assertGreaterEqual(mu["clicks"], 8, mu)
+        self.assertGreaterEqual(mu["drags"], 2, mu)
+        self.assertEqual(mu["clicks_landed"], mu["clicks"], mu)
+        self.assertEqual(mu["drags_landed"], mu["drags"], mu)
+        self.assertLessEqual(mu["max_displacement_px"], 3, mu)
+        self.assertGreater(mu["checks"], 150, mu)  # about 4 x UM-01's event rate
+
+    def test_busy_user_a_warp_is_displacement(self) -> None:
+        def warp(started: float) -> None:
+            time.sleep(1.0)
+            subprocess.run(["xdotool", "mousemove", "5", "5"], check=True, timeout=10)
+
+        mu = self.run_mouse_user(5.0, during=warp, profile="um02")["mouse_user"]
+        self.assertGreater(mu["max_displacement_px"], 3, mu)
+
+    def test_busy_user_into_a_covered_canvas_is_lost(self) -> None:
+        mu = self.run_mouse_user(5.0, cover=True, profile="um02")["mouse_user"]
+        self.assertGreaterEqual(mu["clicks_lost"], 1, mu)
+        self.assertGreaterEqual(mu["drags"], 1, mu)
+        self.assertEqual(mu["drags_landed"], 0, mu)
+
+    def test_busy_user_a_stolen_button_up_cuts_the_drag(self) -> None:
+        def steal(started: float) -> None:
+            end = time.monotonic() + 4.0
+            time.sleep(0.5)
+            while (
+                time.monotonic() < end
+            ):  # a second synthetic click, with a warp, while the button is held
+                subprocess.run(
+                    ["xdotool", "mousemove", "5", "5", "click", "1"], check=True, timeout=10
+                )
+                time.sleep(0.1)
+
+        mu = self.run_mouse_user(5.0, during=steal, profile="um02")["mouse_user"]
+        self.assertGreaterEqual(mu["drags_cut"], 1, mu)
 
 
 class LinuxCaptureSubjectOffLinuxTest(unittest.TestCase):
@@ -1139,3 +1258,369 @@ class PinsTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ---------------------------------------------------------------------------------------------------------
+# The Linux mouse user's state machine against a simulated X server and canvas (no display, GTK or XTest):
+# the schema-2 plan with click and drag legs, the button-up handler, drag resolution and stop-while-dragging.
+
+
+def _load_sentinel():
+    import types
+
+    gi = types.ModuleType("gi")
+    gi.require_version = lambda *a, **k: None
+    repo = types.ModuleType("gi.repository")
+    for name in ("Atspi", "Gdk", "GLib", "Gtk"):
+        setattr(repo, name, mock.MagicMock())
+    gi.repository = repo
+    with mock.patch.dict(sys.modules, {"gi": gi, "gi.repository": repo}):
+        spec = importlib.util.spec_from_file_location(
+            "cdb_sentinel_sim", BENCH / "linux" / "sentinel.py"
+        )
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+    return module
+
+
+class SimWorld:
+    """A fake clock, pointer, button and canvas around one MouseUser. Button events are queued and delivered
+    after the tick that posted them, as the GTK main loop does."""
+
+    ORIGIN = (100, 100)
+
+    def __init__(self, sentinel_module, script: dict, covered: bool = False) -> None:
+        import types
+
+        self.sm = sentinel_module
+        self.now = 1000.0
+        self.queue: list[tuple[str, tuple[int, int]]] = []
+        self.events: list[dict] = []
+        self.pointer = (0, 0)
+        self.held = False
+        self.armed = True
+        self.covered = covered
+        world = self
+
+        class FakeSentinel:
+            canvas = None
+
+            def emit(self, event: str, **details: object) -> bool:
+                world.events.append({"ev": event, "t": world.now * 1000, **details})
+                return False
+
+        class FakeXTest:
+            def move(self, x: int, y: int) -> None:
+                world.pointer = (x, y)
+
+            def button(self, down: bool) -> None:
+                if down != world.held:  # an X server drops a repeated press or release
+                    world.held = down
+                    world.queue.append(("down" if down else "up", world.pointer))
+
+            def pointer(self) -> tuple[int, int]:
+                return world.pointer
+
+            def close(self) -> None:
+                pass
+
+        self.clock = types.SimpleNamespace(monotonic=lambda: world.now, time=lambda: world.now)
+        self.mu = sentinel_module.MouseUser(FakeSentinel(), script)
+        self.mu.xt = FakeXTest()
+        self.mu.origin = lambda: SimWorld.ORIGIN
+        sentinel_module.Gtk.main_iteration_do = lambda *_: self.advance(0.002)
+
+    def flush(self) -> None:
+        import types
+
+        queue, self.queue = self.queue, []
+        for kind, (x, y) in queue:
+            if self.covered or not self.armed:
+                continue
+            event = types.SimpleNamespace(x=x - self.ORIGIN[0], y=y - self.ORIGIN[1])
+            (self.mu.rx if kind == "down" else self.mu.up)(event)
+
+    def advance(self, dt: float) -> None:
+        self.now += dt
+        self.flush()
+
+    def run(self, seconds: float, hook=None) -> None:
+        end = self.now + seconds
+        while self.now < end and self.mu.running:
+            self.now += self.sm.MouseUser.TICK_MS / 1000
+            self.mu.tick()
+            self.flush()
+            if hook:
+                hook(self)
+
+    def go(self, seconds: float, hook=None) -> "SimWorld":
+        with mock.patch.object(self.sm, "time", self.clock):
+            self.mu.start()
+            self.run(seconds, hook)
+        return self
+
+    def stop(self) -> None:
+        with mock.patch.object(self.sm, "time", self.clock):
+            self.mu.stop()
+            self.armed = (
+                False  # the sentinel disarms right after stopping; late events are not forwarded
+            )
+            self.flush()
+
+    def of(self, name: str) -> list[dict]:
+        return [e for e in self.events if e["ev"] == name]
+
+
+class LinuxMouseUserSimulationTest(unittest.TestCase):
+    SEED = 7
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        if str(BENCH / "probes" / "_common") not in sys.path:
+            sys.path.insert(0, str(BENCH / "probes" / "_common"))
+        cls.sm = _load_sentinel()
+
+    def script(self, profile: str) -> dict:
+        import benchlab_common as C
+
+        return C.derive_mouse_user(self.SEED, profile)
+
+    def test_tick_is_fine_enough_for_an_8_ms_step(self) -> None:
+        self.assertLessEqual(self.sm.MouseUser.TICK_MS, 4)
+
+    def test_schema_one_script_is_all_click_legs_and_logs_no_button_up(self) -> None:
+        script = self.script("um01")
+        self.assertNotIn("plan", script)
+        world = SimWorld(self.sm, script).go(8.0)
+        self.assertEqual(world.mu.plan, [{"kind": "click", "dot": d} for d in script["sequence"]])
+        results = world.of("mu_click_result")
+        self.assertGreaterEqual(len(results), 5)
+        self.assertTrue(all(r["ok"] and r["why"] == "landed" for r in results), results)
+        self.assertTrue(all("kind" not in r for r in results))
+        self.assertEqual(world.of("mu_drag"), [])
+        self.assertEqual(world.of("mu_up") + world.of("mouseUp") + world.of("mouseDown"), [])
+        start = world.of("mu_start")[0]
+        self.assertEqual(sorted(start), ["ev", "platform", "t", "tagging", "tolerance_px"])
+        self.assertLessEqual(max(e["d"] for e in world.of("mu")), 3)
+        gaps = [b["t"] - a["t"] for a, b in zip(world.of("mu"), world.of("mu")[1:])]
+        self.assertGreater(
+            sum(1 for g in gaps if abs(g - 25) <= 1), len(gaps) / 2
+        )  # UM-01 keeps 25 ms
+
+    def test_busy_user_lands_every_click_and_drag_at_an_8_ms_step(self) -> None:
+        script = self.script("um02")
+        self.assertEqual(script["schema"], "cdb-mouse-user/2")
+        world = SimWorld(self.sm, script).go(6.0)
+        results = world.of("mu_click_result")
+        drags = [r for r in results if r.get("kind") == "drag"]
+        self.assertGreaterEqual(len(results), 12, len(results))
+        self.assertGreaterEqual(len(drags), 3)
+        self.assertTrue(all(r["ok"] and r["why"] == "landed" for r in results), results)
+        self.assertEqual(
+            [r["n"] for r in results], sorted({r["n"] for r in results}), "one n per action"
+        )
+        self.assertGreaterEqual(len(world.of("mu_drag")), len(drags))
+        drag = world.of("mu_drag")[0]
+        for key in ("n", "from", "to", "at_from", "at_to"):
+            self.assertIn(key, drag)
+        self.assertEqual(world.of("mouseDown") + world.of("mouseUp"), [])
+        ups = world.of("mu_up")
+        self.assertTrue(ups and all(u["own"] for u in ups), ups)
+        self.assertLessEqual(max(e["d"] for e in world.of("mu")), 3)
+        gaps = [b["t"] - a["t"] for a, b in zip(world.of("mu"), world.of("mu")[1:])]
+        self.assertGreater(sum(1 for g in gaps if abs(g - 8) <= 1), len(gaps) / 2)
+        start = world.of("mu_start")[0]
+        self.assertEqual((start["click_timeout_ms"], start["drag_timeout_ms"]), (400, 600))
+        # the legs follow the plan, drags with the button held between two dots
+        plan_kinds = [leg["kind"] for leg in script["plan"]]
+        self.assertIn("drag", plan_kinds)
+        got = [("drag" if r.get("kind") == "drag" else "click") for r in results]
+        self.assertEqual(got, [plan_kinds[i % len(plan_kinds)] for i in range(len(got))])
+
+    def test_a_covered_canvas_loses_clicks_and_drags(self) -> None:
+        world = SimWorld(self.sm, self.script("um02"), covered=True).go(5.0)
+        world.stop()
+        results = world.of("mu_click_result")
+        self.assertTrue(results)
+        self.assertTrue(all(not r["ok"] and r["why"] == "lost" for r in results), results)
+        self.assertTrue(any(r.get("kind") == "drag" for r in results))
+
+    def test_a_stolen_button_up_mid_drag_cuts_the_drag(self) -> None:
+        done: list[int] = []
+
+        def steal(world: SimWorld) -> None:
+            mu = world.mu
+            if not done and mu.state == "drag_move" and mu.k == 3:
+                world.pointer = (
+                    5,
+                    5,
+                )  # a pointer warp, then a second synthetic click while the button is held
+                world.held = False
+                world.queue.append(("up", (5, 5)))
+                done.append(mu.pending["n"])
+
+        world = SimWorld(self.sm, self.script("um02")).go(3.0, steal)
+        self.assertTrue(done)
+        cut = [r for r in world.of("mu_click_result") if r["n"] == done[0]]
+        self.assertEqual([(r["ok"], r["why"], r["kind"]) for r in cut], [(False, "cut", "drag")])
+        self.assertEqual(len(world.of("mouseUp")), 1)
+        self.assertEqual([u["own"] for u in world.of("mu_up")].count(False), 1)
+        later = [r for r in world.of("mu_click_result") if r["n"] > done[0]]
+        self.assertTrue(later and all(r["ok"] for r in later), later)
+
+    def test_a_drag_whose_release_never_reaches_the_canvas_is_cut(self) -> None:
+        done: list[int] = []
+
+        def drop(world: SimWorld) -> None:
+            mu = world.mu
+            if not done and mu.state == "drag_release":
+                done.append(mu.pending["n"])
+                world.covered = True  # the release goes elsewhere
+            elif done and mu.state == "plan":
+                world.covered = False
+
+        world = SimWorld(self.sm, self.script("um02")).go(3.0, drop)
+        res = [r for r in world.of("mu_click_result") if r["n"] == done[0]]
+        self.assertEqual([(r["why"], r["kind"]) for r in res], [("cut", "drag")])
+
+    def test_a_pointer_warp_during_a_drag_is_displacement_not_a_cut(self) -> None:
+        done: list[int] = []
+
+        def warp(world: SimWorld) -> None:
+            if not done and world.mu.state == "drag_move" and world.mu.k == 3:
+                world.pointer = (5, 5)
+                done.append(1)
+
+        world = SimWorld(self.sm, self.script("um02")).go(3.0, warp)
+        self.assertGreater(max(e["d"] for e in world.of("mu")), 3)
+
+    def test_stop_while_dragging_releases_the_button_and_drops_the_drag(self) -> None:
+        seen: dict = {}
+
+        def stop_mid_drag(world: SimWorld) -> None:
+            mu = world.mu
+            if not seen and mu.state == "drag_move" and mu.k == 3:
+                seen["n"] = mu.pending["n"]
+                world.stop()
+
+        world = SimWorld(self.sm, self.script("um02")).go(3.0, stop_mid_drag)
+        self.assertTrue(seen)
+        self.assertFalse(world.held)
+        self.assertFalse(world.mu.running)
+        self.assertEqual(len(world.of("mu_stop")), 1)
+        self.assertEqual([r for r in world.of("mu_click_result") if r["n"] == seen["n"]], [])
+        self.assertEqual([d for d in world.of("mu_drag") if d["n"] == seen["n"]], [])
+        self.assertEqual(world.of("mouseUp"), [])  # the release came after disarming: not a leak
+
+
+class HardVariantLaunchersTest(unittest.TestCase):
+    """PA-02 and UM-02 on the launchers and the validator, without a display."""
+
+    def run_launcher(self, name: str, *argv: str) -> subprocess.CompletedProcess:
+        env = {
+            k: v
+            for k, v in os.environ.items()
+            if k not in ("DISPLAY", "HYPRLAND_INSTANCE_SIGNATURE")
+        }
+        return subprocess.run(
+            [sys.executable, str(BENCH / "launch" / name), *argv],
+            capture_output=True, text=True, timeout=60, env=env,
+        )  # fmt: skip
+
+    def test_hyprland_rejects_the_hard_variants_as_a_harness_error(self) -> None:
+        for task, condition in (("PA-02", "foreground"), ("UM-02", "background")):
+            done = self.run_launcher(
+                "hyprland_session.py", "--task", task, "--run-index", "0", "--condition", condition,
+                "--out", tempfile.mkdtemp(prefix="cdb-hyprland-"), "--", "true",
+            )  # fmt: skip
+            self.assertEqual(done.returncode, 3, done.stderr)
+            row = json.loads(done.stdout.strip().splitlines()[-1])
+            self.assertIn("not supported on Hyprland", row["harness_error"])
+            self.assertIsNone(row["passed"])  # never a fail
+
+    def test_x11_validates_task_condition_and_instances_before_starting(self) -> None:
+        out = tempfile.mkdtemp(prefix="cdb-x11-")
+        for argv in (
+            ["--task", "PA-02", "--instances", "17", "--condition", "foreground"],
+            ["--task", "PA-02", "--instances", "0", "--condition", "foreground"],
+            ["--task", "PA-01", "--instances", "11", "--condition", "foreground"],
+            ["--task", "UM-02", "--condition", "foreground"],
+            ["--task", "UM-02", "--instances", "2", "--condition", "background"],
+        ):
+            done = self.run_launcher(
+                "x11_session.py", *argv, "--run-index", "0", "--out", out, "--", "true"
+            )
+            self.assertEqual(done.returncode, 2, (argv, done.stderr))
+            self.assertIn("error", done.stderr)
+        help_text = " ".join(self.run_launcher("x11_session.py", "-h", "--", "true").stdout.split())
+        self.assertIn("PA-02 1..16", help_text)
+
+    def test_x11_accepts_the_hard_tasks_and_the_variant_counts(self) -> None:
+        for argv in (
+            ["--task", "PA-02", "--instances", "16", "--condition", "foreground"],
+            ["--task", "PA-02", "--instances", "8", "--condition", "background"],
+            ["--task", "PA-02", "--instances", "1", "--condition", "background"],
+            ["--task", "UM-02", "--condition", "background"],
+        ):
+            done = self.run_launcher(
+                "x11_session.py", *argv, "--run-index", "0", "--out", tempfile.mkdtemp(prefix="cdb-x11-"), "--", "true"
+            )  # fmt: skip
+            self.assertEqual(
+                done.returncode, 2, (argv, done.stderr)
+            )  # past the parser: stops at "needs DISPLAY"
+            self.assertIn("needs an X11 session", done.stderr)
+
+    def test_x11_plans_the_crowded_desk_through_the_shared_helpers(self) -> None:
+        for path in (BENCH / "probes" / "_common", BENCH / "swift", BENCH):
+            if str(path) not in sys.path:
+                sys.path.insert(0, str(path))
+        import shared_desktop
+
+        out = Path(tempfile.mkdtemp(prefix="cdb-pa2-"))
+        agents = shared_desktop.pa_agents(
+            7, 16, out, ("on your Mac", "on this Linux computer"), task="PA-02"
+        )
+        self.assertEqual(len(agents), 16)
+        self.assertEqual({a["title"] for a in agents}, {"BenchLab Desk"})
+        for a in agents:
+            argv = a["app_args"]
+            self.assertEqual(argv[argv.index("--title") + 1], "BenchLab Desk")
+            self.assertIn("--confirm", argv)
+        self.assertEqual(shared_desktop.min_screen("PA-02"), shared_desktop.C.PA2_MIN_SCREEN)
+        self.assertEqual(shared_desktop.max_instances("PA-02"), 16)
+
+    def test_validator_reads_the_hard_briefs(self) -> None:
+        for path in (BENCH / "probes" / "_common", BENCH / "swift", BENCH):
+            if str(path) not in sys.path:
+                sys.path.insert(0, str(path))
+        import shared_desktop
+
+        validator = _load("validate_shared_linux")
+        out = Path(tempfile.mkdtemp(prefix="cdb-brief-"))
+        agents = shared_desktop.pa_agents(
+            7, 16, out, ("on your Mac", "on this Linux computer"), task="PA-02"
+        )
+        import benchlab_common as C
+
+        cells = C.derive_crowded(7, 16)["cells"]
+        for agent, cell in zip(agents, cells):
+            agent["dir"].mkdir(parents=True)
+            brief = agent["dir"] / "brief.md"
+            brief.write_text(agent["brief"], encoding="utf-8")
+            values = validator.brief_values(brief)
+            self.assertEqual(
+                (values["title"], values["label"], values["code"], values["shelf"]),
+                ("BenchLab Desk", cell["label"], cell["code"], cell["shelf"]),
+            )
+        um = BENCH / "probes" / "UM-02"
+        render = importlib.util.spec_from_file_location("um02_render", um / "render_brief.py")
+        module = importlib.util.module_from_spec(render)
+        render.loader.exec_module(module)
+        brief = out / "um02.md"
+        brief.write_text(module.render(7), encoding="utf-8")
+        desk = C.derive_busy_desk(7)
+        values = validator.brief_values(brief)
+        self.assertEqual(
+            (values["title"], values["code"], values["shelf"]),
+            (f"BenchLab Desk {desk['label']}", desk["code"], desk["shelf"]),
+        )

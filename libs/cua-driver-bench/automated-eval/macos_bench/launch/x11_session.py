@@ -22,6 +22,10 @@
 #     Needs a screen of at least 1920x1000.
 #   UM-01 (background only): one desk, and the sentinel's user moves the real pointer and clicks through XTest
 #     from a seeded script (trajectory check only: X11 cannot tell XTest input apart).
+#   PA-02 [--instances 1..16] (crowded desk) and UM-02 (busy user, background only): the hard variants of the two,
+#     selected by --task through the shared_desktop helpers. The PA-02 copies share one window title, so they are
+#     found by process, never by title, and are opened one after the other so the cascade stacks in cell order.
+#     PA-02 needs the screen size of shared_desktop.min_screen("PA-02"). Hyprland does not run the hard variants.
 # The GUI-only guard is the Linux one of hyprland/guard.py (terminal processes and windows, exec patterns in tool
 # inputs); it reads only /proc, window classes and the agent's stream, so it applies to X11 unchanged.
 # Needs xdotool and xprop on PATH, and libXtst for UM-01.
@@ -45,11 +49,12 @@ v2, cdb_fairness, shared_desktop, summarize_sentinel = (
     hs.v2, hs.cdb_fairness, hs.shared_desktop, hs.summarize_sentinel,
 )  # fmt: skip
 BENCH = hs.BENCH
-TASKS = hs.TASKS
+TASKS = (*hs.TASKS, *hs.HARD_TASKS)  # the hard variants run here (X11) but not on Hyprland
 LAB_FRAME = hs.LAB_FRAME
 WITNESS_FRAME = hs.WITNESS_FRAME
 PA_WITNESS_FRAME = hs.PA_WITNESS_FRAME
 PA_MIN_SCREEN = hs.PA_MIN_SCREEN
+DEFAULT_TIMEOUT_S = 360.0
 PLATFORM_WORDS = hs.PLATFORM_WORDS
 SENTINEL_ID = "ai.cua.benchsentinel"
 
@@ -122,6 +127,8 @@ class X:
         out = {}
         for window in cls.stacking():
             name = cls.title(window) or cls.wm_class(window) or hex(window)
+            if name in out:  # the PA-02 copies share one title
+                name = f"{name} [{hex(window)}]"
             out[name] = cls.geometry(window)
         return out
 
@@ -291,10 +298,10 @@ def run(args: argparse.Namespace, command: list[str]) -> dict:
         sentinel_extra = ["--user-activity"] if background else []
         if um:
             if not background:
-                row["harness_error"] = "UM-01 runs only in the background condition"
+                row["harness_error"] = f"{args.task} runs only in the background condition"
                 return row
-            script = shared_desktop.write_mouse_script(seed, out / "mouse-user.json")
-            lab_args += shared_desktop.um_app_args(seed)
+            script = shared_desktop.write_mouse_script(seed, out / "mouse-user.json", args.task)
+            lab_args += shared_desktop.um_app_args(seed, args.task)
             sentinel_extra = v2.sentinel_args("background", mouse_script=out / "mouse-user.json")[
                 :2
             ]
@@ -302,6 +309,11 @@ def run(args: argparse.Namespace, command: list[str]) -> dict:
                 "dots": len(script["dots"]),
                 "sequence": len(script["sequence"]),
             }
+            if script.get("plan"):
+                row["mouse_user_script"]["legs"] = len(script["plan"])
+                row["mouse_user_script"]["drags"] = sum(
+                    1 for leg in script["plan"] if leg["kind"] == "drag"
+                )
         lab = subprocess.Popen(
             [sys.executable, str(BENCH / "linux" / "benchlab.py"), *lab_args],
             env=env, start_new_session=True, stdout=(out / "benchlab.log").open("w"), stderr=subprocess.STDOUT,
@@ -369,10 +381,11 @@ def run(args: argparse.Namespace, command: list[str]) -> dict:
 
 
 def run_parallel(args: argparse.Namespace, command: list[str], G, spec: dict) -> dict:
-    """PA-01: N desks, N agents started at the same moment, one GUI-only guard over all of them."""
+    """PA-01 / PA-02: N desks, N agents started at the same moment, one GUI-only guard over all of them."""
     out: Path = args.out.resolve()
     out.mkdir(parents=True, exist_ok=True)
-    instances = shared_desktop.instances_for(spec, args.instances)
+    crowded = shared_desktop.is_crowded(args.task)
+    instances = shared_desktop.instances_for(spec, args.instances, args.task)
     seed = cdb_fairness.trial_seed(args.task, args.run_index)
     background = args.condition == "background"
     row: dict = {
@@ -382,7 +395,8 @@ def run_parallel(args: argparse.Namespace, command: list[str], G, spec: dict) ->
     }  # fmt: skip
     log = out / "sentinel.jsonl"
     log.unlink(missing_ok=True)
-    agents = shared_desktop.pa_agents(seed, instances, out, PLATFORM_WORDS)
+    agents = shared_desktop.pa_agents(seed, instances, out, PLATFORM_WORDS, task=args.task)
+    min_screen = shared_desktop.min_screen(args.task)
     for entry in agents:
         entry["dir"].mkdir(parents=True, exist_ok=True)
         entry["state"].unlink(missing_ok=True)
@@ -392,10 +406,14 @@ def run_parallel(args: argparse.Namespace, command: list[str], G, spec: dict) ->
         )
     procs: list[subprocess.Popen] = []
     try:
-        if screen_too_small(*PA_MIN_SCREEN):
-            row["harness_error"] = f"screen smaller than {PA_MIN_SCREEN[0]}x{PA_MIN_SCREEN[1]}"
+        if screen_too_small(*min_screen):
+            row["harness_error"] = f"screen smaller than {min_screen[0]}x{min_screen[1]}"
             return row
         env = session_env()
+
+        def copy_ready(entry: dict) -> bool:  # by process: the PA-02 copies share one window title
+            return entry["state"].exists() and bool(X.windows_of(entry["lab"].pid))
+
         for entry in agents:
             entry["lab"] = subprocess.Popen(
                 [sys.executable, str(BENCH / "linux" / "benchlab.py"), "--mode", "desk", *entry["app_args"],
@@ -404,12 +422,14 @@ def run_parallel(args: argparse.Namespace, command: list[str], G, spec: dict) ->
                 stdout=(entry["dir"] / "benchlab.log").open("w"), stderr=subprocess.STDOUT,
             )  # fmt: skip
             procs.append(entry["lab"])
+            if crowded and not hs.wait_for(lambda e=entry: copy_ready(e), 30):
+                row["harness_error"] = f"BenchLab copy {entry['label']} did not start"
+                return row  # one after the other: later copies stack on top of earlier ones
         for entry in agents:
-            lab = entry["lab"]
-            if not hs.wait_for(lambda: entry["state"].exists() and X.windows_of(lab.pid), 30):
+            if not hs.wait_for(lambda e=entry: copy_ready(e), 30):
                 row["harness_error"] = f"BenchLab copy {entry['label']} did not start"
                 return row
-        frame = v2.USER_WINDOW_FRAME if background else PA_WITNESS_FRAME
+        frame = v2.USER_WINDOW_FRAME if background else shared_desktop.witness_frame(args.task)
         sentinel, own = start_sentinel(
             env, out, log, frame, ["--user-activity"] if background else []
         )
@@ -425,7 +445,10 @@ def run_parallel(args: argparse.Namespace, command: list[str], G, spec: dict) ->
         baseline = {pid for pid, _, _ in G.process_rows()}
         t0_ms = time.time() * 1000
         t0 = time.monotonic()
-        shared_desktop.write_meta(out, instances, t0_ms, args.timeout)
+        shared_desktop.write_meta(
+            out, instances, t0_ms, args.timeout,
+            **({"copy_deadline_s": shared_desktop.C.PA2_COPY_DEADLINE_S} if crowded else {}),
+        )  # fmt: skip
         for entry in agents:
             subs = {"{brief}": str(entry["dir"] / "brief.md"), "{out}": str(entry["dir"]), "{seed}": str(seed),
                     "{mode}": "desk", "{instance}": entry["label"], "{title}": entry["title"]}  # fmt: skip
@@ -444,7 +467,8 @@ def run_parallel(args: argparse.Namespace, command: list[str], G, spec: dict) ->
         toggle(sentinel, log, "disarmed")
         time.sleep(0.3)
         result = out / "result.json"
-        subprocess.run(shared_desktop.evaluate_argv(sys.executable, seed, out, result), capture_output=True,
+        subprocess.run(shared_desktop.evaluate_argv(sys.executable, seed, out, result, args.task),
+                       capture_output=True,
                        timeout=60)  # fmt: skip
         evaluation = json.loads(result.read_text(encoding="utf-8")) if result.exists() else {}
         if evaluation.get("harness_error"):
@@ -486,14 +510,34 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--condition", choices=v2.CONDITIONS, required=True)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--label", default="")
-    parser.add_argument("--timeout", type=float, default=360.0)
-    parser.add_argument("--instances", type=int, help="PA-01: number of BenchLab copies and agents")
+    parser.add_argument(
+        "--timeout", type=float, default=None,
+        help="the trial's time limit in seconds (default: the task's budget, 360 except PA-02's 240)",
+    )  # fmt: skip
+    parser.add_argument(
+        "--instances", type=int,
+        help="PA-01 / PA-02: number of BenchLab copies and agents "
+        f"(PA-01 1..{shared_desktop.max_instances('PA-01')}, PA-02 1..{shared_desktop.max_instances('PA-02')})",
+    )  # fmt: skip
     parser.add_argument("--no-enforce", dest="enforce", action="store_false")
     args = parser.parse_args(argv[:split])
-    if args.task == "UM-01" and args.condition != "background":
-        parser.error("UM-01 runs only in the background condition")
-    if args.instances is not None and args.task != "PA-01":
-        parser.error("--instances applies to PA-01 only")
+    if args.task in ("UM-01", "UM-02") and args.condition != "background":
+        parser.error(f"{args.task} runs only in the background condition")
+    if args.instances is not None and args.task not in ("PA-01", "PA-02"):
+        parser.error("--instances applies to PA-01 and PA-02 only")
+    if args.instances is not None:
+        if args.instances < 1:
+            parser.error(f"--instances must be at least 1, got {args.instances}")
+        try:
+            shared_desktop.instances_for(hs.task_spec(args.task), args.instances, args.task)
+        except ValueError as error:
+            parser.error(str(error))
+    if args.timeout is None:
+        args.timeout = (
+            float(shared_desktop.budget_s(args.task))
+            if hs.task_spec(args.task).get("parallel")
+            else DEFAULT_TIMEOUT_S
+        )
     command = argv[split + 1 :]
     if not os.environ.get("DISPLAY") or not command:
         print("x11_session.py needs an X11 session (DISPLAY) and a command", file=sys.stderr)

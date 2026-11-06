@@ -345,6 +345,61 @@
           "python3"
         ]
       }
+    },
+    {
+      "id": "PA-02",
+      "category": "shared_desktop",
+      "split": "public",
+      "set": "shared-desktop",
+      "pack_task": null,
+      "title": "Crowded desk: sixteen overlapping copies of BenchLab, one agent each, with long mixed-case codes and a Confirm step, without cross-talk (N = 16, also 8 and 1)",
+      "apps": [
+        "BenchLab (N copies)"
+      ],
+      "os": [
+        "macos",
+        "linux",
+        "windows"
+      ],
+      "cross_os_candidate": null,
+      "conditions": [
+        "foreground",
+        "background"
+      ],
+      "health": {
+        "automation_apps": [],
+        "ready_urls": [],
+        "evaluator_tools": [
+          "python3"
+        ]
+      }
+    },
+    {
+      "id": "UM-02",
+      "category": "shared_desktop",
+      "split": "public",
+      "set": "shared-desktop",
+      "pack_task": null,
+      "title": "The busy user: a short task in the background while the user clicks and drags with a fast mouse over most of the window",
+      "apps": [
+        "BenchLab"
+      ],
+      "os": [
+        "macos",
+        "linux",
+        "windows"
+      ],
+      "cross_os_candidate": null,
+      "conditions": [
+        "background"
+      ],
+      "health": {
+        "automation_apps": [],
+        "ready_urls": [],
+        "evaluator_tools": [
+          "python3"
+        ]
+      }
     }
   ]
 }

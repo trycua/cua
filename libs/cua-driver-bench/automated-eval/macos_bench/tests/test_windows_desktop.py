@@ -12,6 +12,11 @@ Through launch/windows_session.py, the real launcher:
   code and shelf, pass the PA-01 checker; a no-op run fails; one copy's code typed into the other is caught;
 * the sentinel's mouse user (UM-01, `--mouse-user`): it moves and clicks the real pointer with every click
   landing and no displacement; a pointer yanked away mid-run, or a topmost window over the canvas, is seen.
+* the crowded desk (PA-02): up to sixteen copies with one shared window title and an inline Confirm step, all
+  worked by one UI Automation oracle (windows/oracle.py --mode crowded): it passes at N = 16 and 8, a no-op
+  fails, cross-talk, a premature Confirm and a Confirm left pending are caught.
+* the busy user (UM-02, schema 2): the same mouse-user contracts with drag legs at 8 ms steps, plus a drag cut
+  by a foreign click while the button is held.
 """
 
 from __future__ import annotations
@@ -234,6 +239,8 @@ class MouseUserTest(unittest.TestCase):
         "app.MainLoop()\n"
     )
 
+    TASK = "UM-01"
+
     def setUp(self) -> None:
         self.procs: list[subprocess.Popen] = []
         self.addCleanup(self.stop)
@@ -247,7 +254,7 @@ class MouseUserTest(unittest.TestCase):
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             root = Path(tmp)
             script, log, control = root / "mouse-user.json", root / "s.jsonl", root / "control"
-            shared_desktop.write_mouse_script(9, script)
+            shared_desktop.write_mouse_script(9, script, self.TASK)
             control.write_text("", "utf-8")
             sentinel = subprocess.Popen(
                 [str(PYTHONW), str(SENTINEL), "--mouse-user", str(script), "--log", str(log),
@@ -298,6 +305,172 @@ class MouseUserTest(unittest.TestCase):
         self.assertGreaterEqual(mu["clicks"], 2, mu)
         self.assertGreater(mu["clicks_lost"], 0, mu)
         self.assertLess(mu["clicks_landed"], mu["clicks"], mu)
+
+
+@unittest.skipUnless(_available(), "needs a Windows desktop with wxPython and pywinauto")
+class CrowdedDeskTest(unittest.TestCase):
+    """PA-02: copies of BenchLab desk mode with one shared title and --confirm, worked by one oracle."""
+
+    SEED = 4242
+
+    def setUp(self) -> None:
+        self.procs: list[subprocess.Popen] = []
+        self.addCleanup(self.stop)
+
+    def stop(self) -> None:
+        for proc in self.procs:
+            if proc.poll() is None:
+                subprocess.run(["taskkill", "/T", "/F", "/PID", str(proc.pid)], capture_output=True)
+
+    def start(self, root: Path, instances: int) -> list[dict]:
+        plan = shared_desktop.pa_agents(self.SEED, instances, root, task="PA-02")
+        for entry in plan:
+            entry["dir"].mkdir(parents=True)
+            self.procs.append(
+                subprocess.Popen(
+                    [str(PYTHONW), str(BENCHLAB), "--mode", "desk", *entry["app_args"]]
+                )
+            )
+        for entry in plan:
+            self.assertTrue(
+                _wait(entry["state"].exists, 30), f"desk {entry['label']} did not start"
+            )
+        return plan
+
+    def oracle(self, instances: int, *extra: str) -> None:
+        done = subprocess.run(
+            [sys.executable, str(ORACLE), "--mode", "crowded", "--seed", str(self.SEED),
+             "--instances", str(instances), *extra],
+            capture_output=True, text=True, timeout=240,
+        )  # fmt: skip
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+
+    def evaluate(self, root: Path, instances: int, t0_ms: float) -> dict:
+        shared_desktop.write_meta(
+            root, instances, t0_ms, C.PA2_BUDGET_S, copy_deadline_s=C.PA2_COPY_DEADLINE_S
+        )
+        result = root / "result.json"
+        subprocess.run(
+            shared_desktop.evaluate_argv(sys.executable, self.SEED, root, result, "PA-02"),
+            capture_output=True, timeout=60, check=True,
+        )  # fmt: skip
+        return json.loads(result.read_text("utf-8"))
+
+    def run_oracle(self, instances: int, *extra: str) -> dict:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            root = Path(tmp)
+            self.start(root, instances)
+            t0 = time.time() * 1000
+            self.oracle(instances, *extra)
+            result = self.evaluate(root, instances, t0)
+            self.stop()  # end every process before the temporary directory goes
+            return result
+
+    @staticmethod
+    def failed(result: dict, label: str | None = None) -> list[str]:
+        return [
+            k
+            for k, v in result["checks"].items()
+            if not v["passed"] and (label is None or k.startswith(f"{label}."))
+        ]
+
+    def code_of(self, label: str) -> str:
+        return next(c["code"] for c in C.derive_crowded(self.SEED)["cells"] if c["label"] == label)
+
+    def test_copies_share_a_title_and_hide_confirm_until_submit(self) -> None:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            plan = self.start(Path(tmp), 2)
+            self.assertEqual({e["title"] for e in plan}, {C.PA2_WINDOW_TITLE})
+            for entry in plan:
+                state = json.loads(entry["state"].read_text("utf-8"))
+                self.assertIs(state["confirm_pending"], False)
+            from pywinauto import Desktop
+
+            windows = Desktop(backend="uia").windows(title=C.PA2_WINDOW_TITLE)
+            self.assertEqual(len(windows), 2)
+            for win in windows:
+                names = {b.window_text() for b in win.descendants(control_type="Button")}
+                self.assertIn("Submit", names)
+                self.assertFalse({"Confirm", "Cancel"} & names, names)
+
+    def test_oracle_passes_all_sixteen_copies(self) -> None:
+        result = self.run_oracle(16)
+        self.assertTrue(result["passed"], self.failed(result))
+        self.assertEqual(result["diagnostics"]["cross_talk_instances"]["value"], 0)
+        self.assertEqual(result["diagnostics"]["instances_passed"]["value"], 16)
+
+    def test_oracle_passes_eight_copies(self) -> None:
+        result = self.run_oracle(8)
+        self.assertTrue(result["passed"], self.failed(result))
+        self.assertEqual(result["diagnostics"]["instances_passed"]["value"], 8)
+
+    def test_noop_fails(self) -> None:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            root = Path(tmp)
+            self.start(root, 8)
+            result = self.evaluate(root, 8, time.time() * 1000)
+            self.stop()
+            self.assertFalse(result["passed"])
+            self.assertEqual(result["diagnostics"]["instances_passed"]["value"], 0)
+
+    def test_cross_talk_is_caught(self) -> None:
+        first, second = C.derive_crowded(self.SEED, 8)["cells"][:2]
+        result = self.run_oracle(8, "--type", f"{first['label']}={second['code']}")
+        self.assertFalse(result["passed"])
+        self.assertGreaterEqual(result["diagnostics"]["cross_talk_instances"]["value"], 1)
+        self.assertIn(f"{first['label']}.no_foreign_input", self.failed(result, first["label"]))
+        self.assertEqual(self.failed(result, second["label"]), [])
+
+    def test_a_premature_confirm_fails_that_copy(self) -> None:
+        first, second = C.derive_crowded(self.SEED, 8)["cells"][:2]
+        result = self.run_oracle(8, "--premature", first["label"])
+        self.assertFalse(result["passed"])
+        self.assertNotEqual(self.failed(result, first["label"]), [])
+        self.assertEqual(self.failed(result, second["label"]), [])
+
+    def test_a_pending_confirm_fails_that_copy(self) -> None:
+        first, second = C.derive_crowded(self.SEED, 8)["cells"][:2]
+        result = self.run_oracle(8, "--pending", first["label"])
+        self.assertFalse(result["passed"])
+        self.assertIn(f"{first['label']}.confirm_resolved", self.failed(result, first["label"]))
+        self.assertEqual(self.failed(result, second["label"]), [])
+
+
+@unittest.skipUnless(_available(), "needs a Windows desktop with wxPython and pywinauto")
+class BusyUserTest(MouseUserTest):
+    """UM-02: the schema-2 mouse user (8 ms steps, drag legs, button-up handling) on the canvas. The UM-01
+    contracts above run again with this script."""
+
+    TASK = "UM-02"
+
+    def test_every_click_and_drag_landed(self) -> None:
+        mu = self.run_user(seconds=6.0)
+        self.assertTrue(mu["tagging"], mu)
+        self.assertGreaterEqual(mu["drags"], 2, mu)
+        self.assertEqual(mu["clicks_landed"], mu["clicks"], mu)
+        self.assertEqual(mu["drags_landed"], mu["drags"], mu)
+        self.assertEqual(mu["drags_cut"], 0, mu)
+        self.assertLessEqual(mu["max_displacement_px"], 3, mu)
+        self.assertEqual(mu["foreign_pointer_events"], 0, mu)
+
+    def test_a_window_over_the_canvas_loses_clicks_and_drags(self) -> None:
+        mu = self.run_user(seconds=6.0, cover=True)
+        self.assertGreaterEqual(mu["drags"], 1, mu)
+        self.assertGreater(mu["clicks_lost"], 0, mu)
+        self.assertEqual(mu["drags_landed"], 0, mu)
+
+    def test_a_foreign_click_while_the_button_is_held_cuts_a_drag(self) -> None:
+        def stray_clicks() -> None:
+            # Untagged button events at the pointer's place, for two seconds: some fall inside a drag.
+            user32, end = ctypes.windll.user32, time.monotonic() + 2.0
+            while time.monotonic() < end:
+                user32.mouse_event(0x2, 0, 0, 0, 0)  # left down
+                user32.mouse_event(0x4, 0, 0, 0, 0)  # left up
+                time.sleep(0.037)
+
+        mu = self.run_user(seconds=7.0, during=stray_clicks)
+        self.assertGreaterEqual(mu["drags_cut"], 1, mu)
+        self.assertFalse(mu["foreign_pointer_events"] == 0, mu)
 
 
 if __name__ == "__main__":

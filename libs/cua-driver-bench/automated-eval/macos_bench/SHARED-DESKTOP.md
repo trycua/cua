@@ -177,6 +177,83 @@ click (within 400 ms and 3 px).
 * **Harness error**: fewer than 5 scripted clicks or 50 checks in the armed window, or no mouse-user log
   (the user simulator did not run). Re-run with the same seed, never scored.
 
+## Hard variants: PA-02 and UM-02
+
+PA-01 and UM-01 are registered and measured as written above, and nothing in this section changes what they
+derive, run or score. The two variants below are new task ids with their own seeds and their own tables. They
+exist because the first measurements showed a ceiling: a driver that acts on an app's window directly, without
+the real pointer or keyboard focus, passes every PA-01 and UM-01 trial on every platform, so the tasks separate
+drivers that need the foreground from drivers that do not, and then stop separating. Each variant keeps the
+sub-task (a code, a shelf, Submit) and adds one pressure that a clean per-window driver can still fail.
+
+| What a trial never asked for in PA-01 / UM-01 | PA-02 / UM-02 adds |
+| --- | --- |
+| Two windows that overlap, so a click on screen coordinates can reach the wrong copy | PA-02: a 4 x 4 cascade; each row covers the lower 195 px (Submit, status, the lower shelves) of the row above |
+| Windows that cannot be told apart by title | PA-02: every copy has the same window title; only the heading `Desk L` and the grid position differ |
+| Typing with real exposure to a stray keystroke | PA-02: a 15-character code with capitals, small letters, digits and a symbol (`TAG-1234-aBcDe#`), so 16 agents type about 240 characters |
+| A control label that exists in more than one window | PA-02: a Confirm step (`Confirm`, `Cancel`) after Submit, the same labels in all 16 copies |
+| A deadline per copy | PA-02: each copy's confirmed Submit must come within 180 s of the agents' start (the trial budget is 240 s) |
+| A user who clicks about once per 1.4 s | UM-02: a pointer that moves at about 1,500 px/s and clicks about every 0.33 s (about 4 x the events) |
+| A user whose button is held | UM-02: every third action is a drag, the button held from one dot to another |
+| An agent target that is mostly visible | UM-02: the user's window covers all but a 100 px strip of the desk (including Submit and most shelves) |
+
+Why these and not others. A modal dialog window per copy (all opening at once, same title) was not built: a new
+window that takes keyboard focus makes every driver fail the key-focus criterion in the background condition, so
+it would measure BenchLab, not the driver; the inline Confirm step keeps the identical-label trap without a new
+window. A drag the agent must make was not built: it needs a new custom-drawn widget in three toolkits and an
+accessibility-value shortcut would bypass it. The user typing as well as moving (UM-01's typist and mouse user
+at once) and the user dragging windows or scrolling were not built; the typist's criterion is already measured
+by the background condition of every core task, and window drags and scrolls need window-manager input on
+every platform. They are candidates for a later amendment, not hidden omissions.
+
+### PA-02: the crowded desk
+
+* **Starting state.** N copies (N = 16 headline; 8 and 1 also reported; cell k is the same for every N) of the
+  `desk` mode with `--title "BenchLab Desk" --confirm`, in a 4 x 4 cascade: cell k at
+  (20 + 400 * (k mod 4), 36 + 205 * (k div 4)), outer size 360 x 400, opened in cell order so lower rows sit on
+  top where the platform keeps the opening order. A 1920 x 1080 screen is needed (the grid ends at y = 1051).
+  The foreground condition's witness window is in the free strip at (1610, 40, 290, 120).
+* **`--title TEXT`** sets the window title; **`--confirm`** makes Submit a two-step action: Submit records
+  `confirm_open {code, shelf}`, sets state `confirm_pending`, disables Submit and shows `Confirm` and `Cancel`
+  (hidden before). Confirm records `submit {code, shelf}` with the values at that moment and hides them; Cancel
+  records `confirm_cancel`. Without `--confirm`, Submit is as in PA-01.
+* **Codes.** `TAG-dddd-xxxxxs`: a 3-letter tag unique to the copy, four digits, five characters from
+  `abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789` and one symbol of `#@%+&`. No two codes share a tag
+  or a 5-character fragment, so a fragment of another copy's code in a Code value is attributable to that copy's
+  agent.
+* **Brief.** PA-01's, with "overlapping" in the setting, the heading `Desk L` instead of the title, a warning
+  that some windows hide parts of others, "exactly as written (capital and small letters matter)" and "Press
+  Submit, then press Confirm."
+* **Checker** (`probes/PA-02/evaluate.py`). Per copy, PA-01's checks with two changes and two additions:
+  `no_foreign_input` is the tag/fragment rule; `in_budget` uses the copy's own deadline (180 s from the agents'
+  start); `confirm_before_submit` (every `submit` is preceded by a `confirm_open`) and `confirm_resolved`
+  (`confirm_pending` is false at the end) are required. A Confirm pressed in a copy whose agent has not filled it
+  in submits that copy's current values, which fail its own `submit_values`. Cross-talk, throughput and speed-up
+  are as in PA-01.
+* **Conditions and full pass.** As PA-01 (foreground and background; background adds the eight undisturbed
+  criteria and the GUI-only guard over all agents). The trial budget is 240 s.
+* **Platforms.** macOS, Windows, Linux X11. Not Hyprland: it is rejected as a harness error there, never scored.
+
+### UM-02: the busy user
+
+* **Starting state.** One desk (the UM-01 sub-task and seed derivation, own salt) at (320, 300, 360, 400). The
+  sentinel is the same "User activity" window at (420, 340, 900, 520), so it covers the desk except a strip 100
+  px wide on the left and 40 px on top.
+* **User script** (`derive_mouse_user(seed, "um02")`, schema `cdb-mouse-user/2`). The dots and sequence are
+  UM-01's; steps of 12 px every 8 ms, dwell before 30 ms, press 25 ms, dwell after 40 ms. The `plan` walks the
+  sequence: every third leg is a drag (`from` the dot the leg reaches, `to` the next dot, button held, steps of
+  12 px every 8 ms, 40 ms hold), the others are clicks. A schema-1 script has no plan and plays as before.
+* **Drags.** The canvas logs the button-up as `mu_up`. The sentinel logs `mu_drag` and resolves it as a
+  `mu_click_result` with `kind: "drag"`: `landed` only when the down landed on `from` and the up on `to`; `lost`
+  (no down reached the canvas), `cut` (the up did not arrive on `to`, or too late), `wrong_dot` or `off_target`.
+  A drag counts as one scripted click in `clicks` and `clicks_landed`; `drags`, `drags_landed` and `drags_cut`
+  are reported too. A foreign button-down or button-up is a leak.
+* **Full pass.** As UM-01: checker pass, no GUI-only violation, the eight criteria with `pointer` (at most 3 px
+  off the script, no foreign pointer event where tagging exists) and `typing` (every scripted click **and drag**
+  landed, nothing else reached the user window).
+* **Harness error.** Fewer than 15 scripted actions or 150 checks in the armed window, or no mouse-user log.
+* **Platforms.** macOS, Windows, Linux X11 (trajectory only there, as UM-01). Not Hyprland.
+
 ## Relation to the eight undisturbed criteria
 
 Both tasks reuse the sentinel and the eight criteria unchanged (key focus, window raised, typing, pointer,

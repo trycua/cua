@@ -94,14 +94,18 @@ class XTest:
 
 
 class MouseUser:
-    """UM-01's simulated user (SHARED-DESKTOP.md, "Mouse user script"), a 25 ms GLib timeout state machine on the
-    main loop, so scripted input, checks and the canvas's button-down handler never run concurrently."""
+    """The simulated user (SHARED-DESKTOP.md, "Mouse user script"), a GLib timeout state machine on the main loop,
+    so scripted input, checks and the canvas's button handlers never run concurrently. A schema-1 script (UM-01)
+    has clicks only; a schema-2 script (UM-02) has a `plan` of click and drag legs and a finer pointer."""
 
-    TICK_MS = 25
+    TICK_MS = 4  # finer than the fastest step_ms (8); waits are measured on the monotonic clock, not counted in ticks
 
     def __init__(self, sentinel: "Sentinel", script: dict) -> None:
         self.s = sentinel
         self.script = script
+        # schema 1 has no plan: its sequence is a plan of click legs, so UM-01 behaves exactly as before
+        self.v2 = "plan" in script
+        self.plan = script.get("plan") or [{"kind": "click", "dot": d} for d in script["sequence"]]
         self.xt: XTest | None = None
         self.running = False
         self.stopping = False
@@ -119,13 +123,26 @@ class MouseUser:
         o = self.origin()
         return None if o is None else (round(p[0]) + o[0], round(p[1]) + o[1])
 
+    def dot_xy(self, index: int) -> tuple[int, int]:
+        dot = self.script["dots"][index]
+        return dot["x"], dot["y"]
+
     # --- lifecycle
     def start(self) -> None:
+        extra = (
+            {
+                "click_timeout_ms": self.script["click_timeout_ms"],
+                "drag_timeout_ms": self.script["drag_timeout_ms"],
+            }
+            if self.v2
+            else {}
+        )
         self.s.emit(
             "mu_start",
             tagging=False,
             tolerance_px=self.script.get("tolerance_px", 3),
             platform="linux-x11",
+            **extra,
         )
         try:
             self.xt = self.xt or XTest()
@@ -140,6 +157,13 @@ class MouseUser:
         self.checks = 0
         self.clicks = 0
         self.pending: dict | None = None
+        self.open: list[
+            dict
+        ] = []  # schema 2: released actions still waiting for their button events
+        self.expect_up: list[
+            dict
+        ] = []  # schema 2: our own releases, so the canvas can tell them from leaks
+        self.action: dict = {}
         self.down = False
         self.state = "home"
         self.t_start = time.monotonic()
@@ -150,7 +174,7 @@ class MouseUser:
         if not self.running:
             return
         self.stopping = True
-        # stopped between the button-down and the button-up: that click is dropped
+        # stopped between the button-down and the button-up: that click (or drag) is dropped
         if self.down and self.xt:
             self.xt.button(False)
             self.down = False
@@ -161,9 +185,13 @@ class MouseUser:
             while time.monotonic() < end and not self.pending.get("rx"):
                 Gtk.main_iteration_do(False)
             self.resolve(force=True)
+        for p in list(self.open):
+            self.resolve(p, force=True)
         self.running = False
         self.stopping = False
         self.pending = None
+        self.open = []
+        self.expect_up = []
         self.s.emit("mu_stop", clicks=self.clicks, checks=self.checks)
 
     def fail(self, why: str) -> None:
@@ -195,7 +223,7 @@ class MouseUser:
     def wait(self, ms: float, now: float) -> None:
         self.next_at = max(self.next_at + ms / 1000.0, now) if self.next_at else now + ms / 1000.0
 
-    # --- the button-down handler of the canvas
+    # --- the button handlers of the canvas
     def rx(self, event: Gdk.EventButton) -> None:
         at = (event.x, event.y)
         dot = C.dot_at(self.script, *at)
@@ -214,24 +242,100 @@ class MouseUser:
         if not own:  # a button-down that is not ours is a leak, as on any other window
             self.s.emit("mouseDown")
 
-    def resolve(self, force: bool = False) -> None:
-        p = self.pending
+    def up(self, event: Gdk.EventButton) -> None:
+        """The canvas's button-up handler (schema 2 only: a UM-01 log has no button-up events). Own = the release
+        we posted for the action in flight, at its end dot, in time, with a button-down of ours before it."""
+        if not self.v2:
+            return
+        at = (event.x, event.y)
+        dot = C.dot_at(self.script, *at)
+        now = time.monotonic()
+        tol = self.script.get("tolerance_px", 3)
+        own = False
+        mine = None
+        for entry in self.expect_up:
+            p = entry["p"]
+            near = ((at[0] - entry["at"][0]) ** 2 + (at[1] - entry["at"][1]) ** 2) ** 0.5 <= tol
+            down_ok = bool(p.get("rx") and p["rx"]["own"])
+            if (
+                near
+                and now <= entry["deadline"]
+                and not p.get("up")
+                and (down_ok or entry["kind"] == "click")
+            ):
+                own, mine = True, entry
+                break
+        if mine is not None:
+            mine["p"]["up"] = {"dot": dot, "at": at, "own": True}
+            self.expect_up.remove(mine)
+        else:
+            # a release that is not ours: it cuts the drag in flight (if its down was ours and no release came yet)
+            for p in [*self.open, *([self.pending] if self.pending else [])]:
+                if p.get("kind") == "drag" and p.get("rx") and p["rx"]["own"] and not p.get("up"):
+                    p["up"] = {"dot": dot, "at": at, "own": False}
+        self.s.emit("mu_up", dot=dot, at=[round(at[0], 1), round(at[1], 1)], own=own)
+        if not own:
+            self.s.emit("mouseUp")
+
+    def resolve(self, p: dict | None = None, force: bool = False) -> None:
+        if p is None:
+            p = self.pending
         if not p or not p.get("logged"):
             return
+        drag = p.get("kind") == "drag"
         rx = p.get("rx")
-        late = time.monotonic() - p["t"] > self.script["click_timeout_ms"] / 1000
-        if rx is None and not (late or force):
-            return
-        if rx is None:
-            ok, why = False, "lost"
-        elif rx["own"] and rx["dot"] == p["dot"]:
-            ok, why = True, "landed"
-        elif rx["dot"] is None:
-            ok, why = False, "off_target"
+        timeout = self.script["drag_timeout_ms" if drag else "click_timeout_ms"] / 1000
+        late = time.monotonic() - (p["released_t"] if drag else p["t"]) > timeout
+        if drag:
+            up = p.get("up")
+            if not (late or force or (rx is not None and up is not None)):
+                return
+            if rx is None:
+                ok, why = False, "lost"
+            elif not rx["own"]:
+                ok, why = False, ("off_target" if rx["dot"] is None else "wrong_dot")
+            elif up is not None and up["own"] and up["dot"] == p["to"]:
+                ok, why = True, "landed"
+            else:
+                ok, why = False, "cut"
+            self.s.emit("mu_click_result", n=p["n"], ok=ok, why=why, kind="drag")
         else:
-            ok, why = False, "wrong_dot"
-        self.s.emit("mu_click_result", n=p["n"], ok=ok, why=why)
-        self.pending = None
+            if rx is None and not (late or force):
+                return
+            if rx is None:
+                ok, why = False, "lost"
+            elif rx["own"] and rx["dot"] == p["dot"]:
+                ok, why = True, "landed"
+            elif rx["dot"] is None:
+                ok, why = False, "off_target"
+            else:
+                ok, why = False, "wrong_dot"
+            self.s.emit("mu_click_result", n=p["n"], ok=ok, why=why)
+        if p is self.pending:
+            self.pending = None
+        if p in self.open:
+            self.open.remove(p)
+
+    def release(self, now: float, p: dict, at: tuple[float, float], timeout_ms: float) -> None:
+        """Post our button-up; schema 2 first records it as expected so the canvas can tell it from a leak."""
+        if p.get("kind") == "drag":
+            screen = self.to_screen(at)
+            if screen is not None:
+                self.xt.move(
+                    *screen
+                )  # a drag ends at the end dot's centre, wherever the pointer really is
+        p["released_t"] = now
+        if self.v2:
+            self.expect_up.append(
+                {
+                    "p": p,
+                    "at": at,
+                    "kind": p.get("kind", "click"),
+                    "deadline": now + timeout_ms / 1000,
+                }
+            )
+        self.xt.button(False)
+        self.down = False
 
     # --- the state machine
     def tick(self) -> bool:
@@ -240,6 +344,9 @@ class MouseUser:
         now = time.monotonic()
         if self.pending:
             self.resolve()
+        for p in list(self.open):
+            self.resolve(p)
+        self.expect_up = [e for e in self.expect_up if e["deadline"] + 0.5 > now]
         if now < self.next_at - 0.002:
             return True
         script = self.script
@@ -263,8 +370,10 @@ class MouseUser:
                 self.fail("the pointer did not reach home within 200 ms")
                 return True
         if self.state == "plan":
-            dot = script["dots"][script["sequence"][self.leg % len(script["sequence"])]]
-            self.target = (dot["x"], dot["y"])
+            leg = self.plan[self.leg % len(self.plan)]
+            self.action = leg
+            first = leg["from"] if leg["kind"] == "drag" else leg["dot"]
+            self.target = self.dot_xy(first)
             self.points = C.mouse_leg(self.cur, self.target, script["step_px"])
             self.k = 0
             self.state = "move"
@@ -287,17 +396,52 @@ class MouseUser:
                     *screen
                 )  # the click is at the dot's centre, wherever the pointer really is
             self.clicks += 1
+            if self.pending and self.v2:
+                self.open.append(
+                    self.pending
+                )  # still waiting for its button events: keep resolving it
+            leg = self.action
             self.pending = {
-                "n": self.clicks, "dot": script["sequence"][self.leg % len(script["sequence"])],
+                "n": self.clicks, "dot": leg.get("dot"),
                 "at": self.target, "t": now, "rx": None, "logged": False,
             }  # fmt: skip
+            if leg["kind"] == "drag":
+                end = self.dot_xy(leg["to"])
+                self.pending.update(kind="drag", dot=leg["from"], to=leg["to"], to_at=end, up=None)
+                self.points = C.mouse_leg(self.target, end, script["drag_step_px"])
+                self.k = 0
             self.xt.button(True)
             self.down = True
-            self.state = "release"
-            self.wait(script["press_ms"], now)
+            if leg["kind"] == "drag":
+                self.state = "drag_move"
+                self.wait(script["drag_step_ms"], now)
+            else:
+                self.state = "release"
+                self.wait(script["press_ms"], now)
+        elif self.state == "drag_move":
+            self.check()
+            self.post_move(self.points[self.k])  # plain motion with the button held
+            self.k += 1
+            if self.k >= len(self.points):
+                self.state = "drag_release"
+                self.wait(script["drag_hold_ms"], now)
+            else:
+                self.wait(script["drag_step_ms"], now)
+        elif self.state == "drag_release":
+            p = self.pending
+            self.release(now, p, p["to_at"], script["drag_timeout_ms"])
+            p["logged"] = True
+            self.s.emit(
+                "mu_drag", n=p["n"], to=p["to"], at_from=[p["at"][0], p["at"][1]],
+                at_to=[p["to_at"][0], p["to_at"][1]], **{"from": p["dot"]},
+            )  # fmt: skip
+            self.cur = p["to_at"]
+            self.leg += 1
+            self.state = "plan"
+            self.wait(script["dwell_after_ms"], now)
+            self.resolve()
         elif self.state == "release":
-            self.xt.button(False)
-            self.down = False
+            self.release(now, self.pending, self.target, script["click_timeout_ms"])
             self.pending["logged"] = True
             self.s.emit(
                 "mu_click", n=self.pending["n"], dot=self.pending["dot"],
@@ -349,12 +493,14 @@ class Sentinel:
             self.canvas.set_can_focus(True)
             self.canvas.add_events(
                 Gdk.EventMask.BUTTON_PRESS_MASK
+                | Gdk.EventMask.BUTTON_RELEASE_MASK
                 | Gdk.EventMask.KEY_PRESS_MASK
                 | Gdk.EventMask.SCROLL_MASK
             )
             self.canvas.connect("draw", self.draw_canvas)
             self.canvas.get_accessible().set_name("User activity canvas")
             self.canvas.connect("button-press-event", self.canvas_press)
+            self.canvas.connect("button-release-event", self.canvas_release)
             self.canvas.connect("key-press-event", lambda *_: self.emit("keyDown"))
             self.canvas.connect("scroll-event", lambda *_: self.emit("scrollWheel"))
             self.window.add(self.canvas)
@@ -406,6 +552,11 @@ class Sentinel:
         if event.type == Gdk.EventType.BUTTON_PRESS and self.mouse is not None:
             if self.armed:
                 self.mouse.rx(event)
+        return True
+
+    def canvas_release(self, widget: Gtk.DrawingArea, event: Gdk.EventButton) -> bool:
+        if self.mouse is not None and self.armed:
+            self.mouse.up(event)
         return True
 
     def clip_changed(self, *_: object) -> None:

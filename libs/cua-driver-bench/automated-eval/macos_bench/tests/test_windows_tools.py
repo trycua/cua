@@ -32,7 +32,7 @@ import windows_session as WS  # noqa: E402
 
 BENCHLAB_TASKS = ("MB-09", "MB-10", "MB-11", "IR-01", "IR-02", "IR-03", "IR-04")
 CDB_TASKS = ("CDB-G02", "CDB-G03", "CDB-G04")
-SHARED_DESKTOP_TASKS = ("PA-01", "UM-01")
+SHARED_DESKTOP_TASKS = ("PA-01", "UM-01", "PA-02", "UM-02")
 
 
 def _emitted(path: Path) -> set[str]:
@@ -190,6 +190,9 @@ class SharedDesktopLaunchTest(unittest.TestCase):
             "mu_start",
             "mu_click",
             "mu_rx",
+            "mu_up",
+            "mu_drag",
+            "mouseUp",
             "mu_click_result",
             "mu_foreign",
             "mu_stop",
@@ -237,6 +240,126 @@ class SharedDesktopLaunchTest(unittest.TestCase):
             self.assertGreater(mu["max_displacement_px"], 3)
             self.assertEqual(mu["foreign_pointer_events"], 1)
             self.assertFalse(v2.mouse_user_held(mu)[0])
+
+
+class HardVariantLaunchTest(unittest.TestCase):
+    """PA-02 and UM-02 on Windows: arguments, the shared window title, limits and the launcher's checks."""
+
+    def test_crowded_copies_share_one_title_and_confirm(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(WS, "named_python", _named):
+            plan = WS.pa_plan(11, 16, Path(tmp), "PA-02")
+            self.assertEqual(len(plan), 16)
+            self.assertEqual({e["title"] for e in plan}, {C.PA2_WINDOW_TITLE})
+            self.assertEqual(len({e["label"] for e in plan}), 16)
+            self.assertEqual(
+                len({tuple(e["frame"]) for e in plan}), 16
+            )  # told apart by frame, not title
+            for entry in plan:
+                argv = WS.desk_argv(entry["app_args"], background=True)
+                self.assertEqual(argv[argv.index("--title") + 1], C.PA2_WINDOW_TITLE)
+                self.assertIn("--confirm", argv)
+                self.assertEqual(argv[argv.index("--instance") + 1], entry["label"])
+                self.assertEqual(
+                    argv[argv.index("--frame") + 1], ",".join(map(str, entry["frame"]))
+                )
+            subs = {"{instance}": plan[3]["label"], "{title}": plan[3]["title"]}
+            self.assertEqual(
+                WS.fill(["{instance}:{title}"], subs), [f"{plan[3]['label']}:{C.PA2_WINDOW_TITLE}"]
+            )
+            # PA-01 copies carry neither option
+            old = WS.desk_argv(WS.pa_plan(11, 2, Path(tmp))[0]["app_args"], background=False)
+            self.assertNotIn("--title", old)
+            self.assertNotIn("--confirm", old)
+
+    def test_limits(self) -> None:
+        spec = WS.task_spec("PA-02")
+        self.assertEqual(shared_desktop.instances_for(spec), 16)
+        self.assertEqual(shared_desktop.instances_for(spec, 8, "PA-02"), 8)
+        with self.assertRaises(ValueError):
+            shared_desktop.instances_for(spec, 17, "PA-02")
+        self.assertEqual(shared_desktop.max_instances("PA-02"), 16)
+        self.assertEqual(shared_desktop.max_instances("PA-01"), C.PA_MAX_INSTANCES)
+
+    def test_launcher_rejects_what_the_task_does_not_allow(self) -> None:
+        base = ["--run-index", "0", "--out", "x", "--"]
+        for argv in (
+            ["--task", "PA-02", "--condition", "foreground", "--instances", "17", *base, "a"],
+            ["--task", "PA-01", "--condition", "foreground", "--instances", "11", *base, "a"],
+            ["--task", "UM-02", "--condition", "foreground", *base, "a"],
+            ["--task", "UM-02", "--condition", "background", "--instances", "2", *base, "a"],
+        ):
+            with self.subTest(argv=argv), mock.patch("sys.stderr"):
+                with self.assertRaises(SystemExit):
+                    WS.main(argv)
+
+    def test_descriptors_and_helpers(self) -> None:
+        pa = json.loads((BENCH / "probes/PA-02/launch.windows.json").read_text("utf-8"))
+        self.assertEqual(pa["launcher"][pa["launcher"].index("--instances") + 1], "${instances}")
+        self.assertIn("same for every copy", pa["agent_command_placeholders"]["{title}"])
+        um = json.loads((BENCH / "probes/UM-02/launch.windows.json").read_text("utf-8"))
+        self.assertEqual(um["conditions"], ["background"])
+        self.assertEqual(WS.HARD_TASKS, ("PA-02", "UM-02"))
+        self.assertIsNone(WS.screen_too_small("PA-01"))  # PA-01 never checks the screen
+
+    def test_busy_user_arguments(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(WS, "named_python", _named):
+            tmp_path = Path(tmp)
+            desk = WS.desk_argv(
+                WS.um_desk_args(5, tmp_path / "s.json", tmp_path / "e.jsonl", "UM-02"),
+                background=True,
+            )
+            cell = C.derive_busy_desk(5)
+            self.assertEqual(desk[desk.index("--instance") + 1], cell["label"])
+            self.assertEqual(desk[desk.index("--frame") + 1], ",".join(map(str, C.UM2_DESK_FRAME)))
+            self.assertNotIn("--confirm", desk)
+            script = tmp_path / "mouse-user.json"
+            written = shared_desktop.write_mouse_script(5, script, "UM-02")
+            self.assertEqual(written["schema"], "cdb-mouse-user/2")
+            self.assertEqual(written["step_ms"], 8)
+            kinds = {leg["kind"] for leg in written["plan"]}
+            self.assertEqual(kinds, {"click", "drag"})
+            self.assertEqual(json.loads(script.read_text("utf-8"))["plan"], written["plan"])
+            # UM-01's script is unchanged: schema 1, no plan
+            old = shared_desktop.write_mouse_script(5, tmp_path / "old.json")
+            self.assertEqual(old["schema"], "cdb-mouse-user/1")
+            self.assertNotIn("plan", old)
+
+    def test_ports_declare_the_hard_options(self) -> None:
+        lab = (BENCH / "windows/benchlab.py").read_text("utf-8")
+        self.assertIn('"--title"', lab)
+        self.assertIn('"--confirm"', lab)
+        for name in ("confirm_open", "confirm_cancel", "confirm_pending"):
+            self.assertIn(name, lab)
+        sentinel = (BENCH / "windows/sentinel.py").read_text("utf-8")
+        self.assertIn("PreciseWait", sentinel)  # 8 ms steps need more than a WM_TIMER
+        self.assertIn("EVT_LEFT_UP", sentinel)
+        self.assertIn("own_ups", (BENCH / "windows/winenv.py").read_text("utf-8"))
+
+    def test_the_busy_user_log_shape_is_summarised(self) -> None:
+        """A log in the shape windows/sentinel.py writes for drags: landed drags and a cut one."""
+        lines = [{"t": 0, "ev": "ready", "hwnd": 1}, {"t": 1, "ev": "armed"},
+                 {"t": 2, "ev": "mu_start", "tagging": True, "tolerance_px": 3, "platform": "windows",
+                  "click_timeout_ms": 400.0, "drag_timeout_ms": 600.0}]  # fmt: skip
+        for i in range(60):
+            lines.append(
+                {"t": 3 + i, "ev": "mu", "i": i, "want": [10, 10], "got": [10, 10], "d": 0.0}
+            )
+        for n in range(1, 7):
+            lines += [
+                {"t": 70 + n, "ev": "mu_drag", "n": n, "from": 1, "to": 2, "at_from": [1, 1], "at_to": [9, 9]},
+                {"t": 70 + n, "ev": "mu_up", "dot": 2, "at": [9, 9], "own": n != 6},
+                {"t": 70 + n, "ev": "mu_click_result", "n": n, "ok": n != 6,
+                 "why": "landed" if n != 6 else "cut", "kind": "drag"},
+            ]  # fmt: skip
+        lines += [{"t": 90, "ev": "mu_stop"}, {"t": 91, "ev": "disarmed"}]
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "s.jsonl"
+            path.write_text("\n".join(json.dumps(x) for x in lines) + "\n", "utf-8")
+            mu = summarize_sentinel.summarize(str(path))["mouse_user"]
+        self.assertEqual((mu["drags"], mu["drags_landed"], mu["drags_cut"]), (6, 5, 1))
+        self.assertEqual(mu["clicks"], 6)
+        self.assertTrue(v2.mouse_user_held(mu)[0])
+        self.assertFalse(v2.mouse_user_held(mu)[1])  # one drag did not land
 
 
 class BriefTest(unittest.TestCase):

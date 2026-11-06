@@ -525,7 +525,8 @@ mod tests {
         let e = AgentEvent::parse(child).unwrap();
         assert_eq!(e.parent_tool_id.as_deref(), Some("toolu_1"));
         assert_eq!(e.render().unwrap(), "  | [tool execute] ls");
-        let own = AgentEvent::parse(&child.replace("\"parentToolUseId\":\"toolu_1\"", "\"x\":1")).unwrap();
+        let own = AgentEvent::parse(&child.replace("\"parentToolUseId\":\"toolu_1\"", "\"x\":1"))
+            .unwrap();
         assert!(own.parent_tool_id.is_none());
         assert_eq!(own.render().unwrap(), "[tool execute] ls");
     }

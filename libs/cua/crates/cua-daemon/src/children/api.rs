@@ -1290,7 +1290,10 @@ mod agent_words_tests {
     fn a_full_disk_is_said_for_the_person_not_the_terminal() {
         let m = "not enough disk space to pull ghcr.io/trycua/macos:26: it needs about 55.0 GiB and cua keeps 5.0 GiB free, but only 24.5 GiB is available on /Users/a/.cua (run `cua cache prune` to free space, or lower CUA_DISK_MIN_FREE)";
         let w = agent_words(m).unwrap();
-        assert!(w.contains("needs about 55.0 GiB") && w.contains("only 24.5 GiB is free"), "{w}");
+        assert!(
+            w.contains("needs about 55.0 GiB") && w.contains("only 24.5 GiB is free"),
+            "{w}"
+        );
         assert!(!w.contains("cache prune") && !w.contains("CUA_DISK_MIN_FREE"));
         assert!(w.contains("Tell the person"));
     }
@@ -1304,6 +1307,9 @@ mod agent_words_tests {
     #[test]
     fn other_errors_pass_through() {
         assert!(agent_words("the budget is spent").is_none());
-        assert_eq!(for_the_agent(Status::resource_exhausted("the budget is spent")).message(), "the budget is spent");
+        assert_eq!(
+            for_the_agent(Status::resource_exhausted("the budget is spent")).message(),
+            "the budget is spent"
+        );
     }
 }

@@ -51,10 +51,10 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use crate::thread::{Author, Draft, EntryKind, check_text};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use crate::thread::{Author, Draft, EntryKind, check_text};
 
 use cua_spaces::agents::{self as ag, Agents, RunOptions, RunStatus};
 use cua_spaces::routines::{
@@ -2208,12 +2208,7 @@ impl Persistent {
     /// still saying as the thread's live entry. A message is finished when a tool call, a thought or
     /// the end of the turn follows it, or when it stayed unchanged for [`QUIET`]. Returns whether
     /// one is still open (the caller then keeps its event bookmark, so a restart reads it whole).
-    fn post_said(
-        &self,
-        rec: &AgentRecord,
-        run: &str,
-        events: &[ag::AgentEvent],
-    ) -> Result<bool> {
+    fn post_said(&self, rec: &AgentRecord, run: &str, events: &[ag::AgentEvent]) -> Result<bool> {
         let key = format!("{}/{}#{}", rec.space, rec.name, rec.k());
         let said = cua_agents::subagents::said(events);
         let mut open = false;
@@ -2290,7 +2285,13 @@ impl Persistent {
             // mid-sentence for longer than [`QUIET`]).
             let done = recent
                 .iter()
-                .filter_map(|e| e.client_id.as_deref()?.strip_prefix(prefix.as_str())?.parse::<usize>().ok())
+                .filter_map(|e| {
+                    e.client_id
+                        .as_deref()?
+                        .strip_prefix(prefix.as_str())?
+                        .parse::<usize>()
+                        .ok()
+                })
                 .max()
                 .unwrap_or(0);
             let total = s.text.chars().count();
@@ -2343,7 +2344,10 @@ impl Persistent {
         let mut drafts = vec![];
         for id in kids {
             let key = format!("child:{id}");
-            if recent.iter().any(|e| e.client_id.as_deref() == Some(key.as_str())) {
+            if recent
+                .iter()
+                .any(|e| e.client_id.as_deref() == Some(key.as_str()))
+            {
                 continue;
             }
             let Some(info) = infos.iter().find(|i| i.id == id) else {
@@ -2459,7 +2463,10 @@ impl Persistent {
             }
             for state in states {
                 let id = format!("sub:{run}:{}:{state}", s.id);
-                if recent.iter().any(|e| e.client_id.as_deref() == Some(id.as_str())) {
+                if recent
+                    .iter()
+                    .any(|e| e.client_id.as_deref() == Some(id.as_str()))
+                {
                     continue;
                 }
                 let title = members::clip_line(&s.title, 120);
@@ -2526,7 +2533,8 @@ impl Persistent {
         // Everything the agent said, as it said it, one entry per message. An unfinished message
         // keeps the bookmark where it is, so it is read whole again.
         let said_open = self.post_said(&rec, &run, &page.events)?;
-        self.track_subagents(&rec, &agents, &run, &page.events).await?;
+        self.track_subagents(&rec, &agents, &run, &page.events)
+            .await?;
         self.track_children(&rec)?;
         // A harness may answer a refused credential as an ordinary turn (Hermes does, with its own
         // advice): read the reply as the failed turn it is, so the person's message is not "Done",

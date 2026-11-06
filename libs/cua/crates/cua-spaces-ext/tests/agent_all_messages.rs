@@ -241,7 +241,6 @@ fn ended(turn: u32) -> Value {
     json!({"turn": turn, "type": "turn_ended", "stopReason": "end_turn"})
 }
 
-
 fn child_tool(turn: u32, id: &str) -> Value {
     json!({"turn": turn, "type": "update", "update": {"_meta": {"claudeCode": {"parentToolUseId": "toolu_sub"}}, "sessionUpdate": "tool_call", "toolCallId": id, "title": "ls", "kind": "execute", "status": "pending"}})
 }
@@ -328,7 +327,12 @@ async fn every_message_of_a_turn_is_appended_in_order() {
 async fn a_second_tick_does_not_post_anything_twice() {
     let (fx, p, _seq, t) = play(
         "@ada give me two facts about otters",
-        &[chunk(2, "Otters hold hands."), tool(2), chunk(2, "Sea otters use tools."), ended(2)],
+        &[
+            chunk(2, "Otters hold hands."),
+            tool(2),
+            chunk(2, "Sea otters use tools."),
+            ended(2),
+        ],
     )
     .await;
     assert_eq!(says(&t).len(), 2);
@@ -343,11 +347,23 @@ async fn words_after_the_turn_ended_are_appended_not_dropped() {
     // job failed and the agent woke up and explained, in the same turn number.
     let (fx, p, _seq, t) = play(
         "@ada start the long job",
-        &[tool(2), chunk(2, "Starting the job, this may take a while."), ended(2)],
+        &[
+            tool(2),
+            chunk(2, "Starting the job, this may take a while."),
+            ended(2),
+        ],
     )
     .await;
     assert_eq!(says(&t), ["Starting the job, this may take a while."]);
-    events(&fx, 1, &[tool(2), chunk(2, "The job failed: "), chunk(2, "the gateway is missing.")]);
+    events(
+        &fx,
+        1,
+        &[
+            tool(2),
+            chunk(2, "The job failed: "),
+            chunk(2, "the gateway is missing."),
+        ],
+    );
     Box::pin(p.tick()).await;
     // Still being written: not posted yet, and not lost.
     tokio::time::sleep(std::time::Duration::from_millis(1700)).await;
@@ -368,7 +384,14 @@ async fn an_agent_can_say_more_under_a_task_it_closed() {
     assert_eq!(task(&fx, seq).await["state"], "done");
     let p = fx.spaces.persistent();
     let rec = p.get("ada").unwrap();
-    let late = bridge_call(&fx, &p, 1, "thread_reply", json!({"task": seq, "text": "One more thing."})).await;
+    let late = bridge_call(
+        &fx,
+        &p,
+        1,
+        "thread_reply",
+        json!({"task": seq, "text": "One more thing."}),
+    )
+    .await;
     assert!(late["result"]["isError"] != json!(true), "{late}");
     let all = says(&thread(&fx).await);
     assert_eq!(all, ["Hello!", "One more thing."], "{rec:?} {t:?}");
@@ -382,12 +405,31 @@ async fn what_the_agent_posted_itself_is_not_posted_twice() {
     let seq = post(&fx, json!({"text": "@ada status?"})).await.unwrap();
     Box::pin(p.tick()).await;
     run_state(&fx, 1, json!({"status": "running", "turn": 2}));
-    let said = bridge_call(&fx, &p, 1, "thread_reply", json!({"task": seq, "text": "Working on it.", "state": "working"})).await;
+    let said = bridge_call(
+        &fx,
+        &p,
+        1,
+        "thread_reply",
+        json!({"task": seq, "text": "Working on it.", "state": "working"}),
+    )
+    .await;
     assert!(said["result"]["isError"] != json!(true), "{said}");
-    events(&fx, 1, &[chunk(2, "Working on it."), tool(2), chunk(2, "Done, all green."), ended(2)]);
+    events(
+        &fx,
+        1,
+        &[
+            chunk(2, "Working on it."),
+            tool(2),
+            chunk(2, "Done, all green."),
+            ended(2),
+        ],
+    );
     run_state(&fx, 1, json!({"status": "idle", "turn": 2}));
     Box::pin(p.tick()).await;
-    assert_eq!(says(&thread(&fx).await), ["Working on it.", "Done, all green."]);
+    assert_eq!(
+        says(&thread(&fx).await),
+        ["Working on it.", "Done, all green."]
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -413,27 +455,59 @@ fn subagent_notes(entries: &[Value]) -> Vec<(String, String)> {
 async fn a_subagent_is_recorded_when_it_starts_and_when_it_ends() {
     let mut fx = setup().await;
     let p = member(&mut fx, 1).await;
-    let seq = post(&fx, json!({"text": "@ada have a subagent map my files"})).await.unwrap();
+    let seq = post(&fx, json!({"text": "@ada have a subagent map my files"}))
+        .await
+        .unwrap();
     Box::pin(p.tick()).await;
     run_state(&fx, 1, json!({"status": "running", "turn": 2}));
-    events(&fx, 1, &[task_call(2, None, false), child_tool(2, "c1"), child_tool(2, "c2")]);
+    events(
+        &fx,
+        1,
+        &[
+            task_call(2, None, false),
+            child_tool(2, "c1"),
+            child_tool(2, "c2"),
+        ],
+    );
     Box::pin(p.tick()).await;
     let t = thread(&fx).await;
-    assert_eq!(subagent_notes(&t), [("running".to_string(), "Map the desktop".to_string())]);
+    assert_eq!(
+        subagent_notes(&t),
+        [("running".to_string(), "Map the desktop".to_string())]
+    );
     // The live row carries it while it runs.
-    let live = call(&fx.mcp, "thread_read", json!({"space": fx.space})).await.unwrap();
-    let rows = live["live"]["agents"].as_array().cloned().unwrap_or_default();
+    let live = call(&fx.mcp, "thread_read", json!({"space": fx.space}))
+        .await
+        .unwrap();
+    let rows = live["live"]["agents"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
     assert_eq!(rows[0]["children"][0]["title"], "Map the desktop", "{live}");
     assert_eq!(rows[0]["children"][0]["steps"], 2);
-    events(&fx, 1, &[task_call(2, Some("completed"), false), chunk(2, "The tree is on your desktop."), ended(2)]);
+    events(
+        &fx,
+        1,
+        &[
+            task_call(2, Some("completed"), false),
+            chunk(2, "The tree is on your desktop."),
+            ended(2),
+        ],
+    );
     run_state(&fx, 1, json!({"status": "idle", "turn": 2}));
     Box::pin(p.tick()).await;
     Box::pin(p.tick()).await;
     let t = thread(&fx).await;
     assert_eq!(
         subagent_notes(&t),
-        [("running".to_string(), "Map the desktop".to_string()), ("done".to_string(), "Map the desktop".to_string())]
+        [
+            ("running".to_string(), "Map the desktop".to_string()),
+            ("done".to_string(), "Map the desktop".to_string())
+        ]
     );
     assert_eq!(says(&t), ["The tree is on your desktop."]);
-    assert!(t.iter().any(|e| e["event"]["kind"] == "subagent" && e["task_seq"] == seq));
+    assert!(
+        t.iter()
+            .any(|e| e["event"]["kind"] == "subagent" && e["task_seq"] == seq)
+    );
 }

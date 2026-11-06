@@ -9039,6 +9039,12 @@ export type AppAgentKeysInput = {
      */
     unavailable?: string,
     /**
+     * Keys can be saved but only in an unencrypted file (a Local
+     * development build without the Keychain): the daemon's warning, shown
+     * in the notice while the buttons stay on.
+     */
+    warning?: string,
+    /**
      * The keys could not be read (no daemon, a refused Keychain).
      */
     error?: string
@@ -9067,17 +9073,20 @@ const FfiConverterTypeAppAgentKeysInput = (() => {
             return {
                 keys: FfiConverterSequenceTypeAppAgentKeyInput.read(from),
                 unavailable: FfiConverterOptionalString.read(from),
+                warning: FfiConverterOptionalString.read(from),
                 error: FfiConverterOptionalString.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
             FfiConverterSequenceTypeAppAgentKeyInput.write(value.keys, into);
             FfiConverterOptionalString.write(value.unavailable, into);
+            FfiConverterOptionalString.write(value.warning, into);
             FfiConverterOptionalString.write(value.error, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterSequenceTypeAppAgentKeyInput.allocationSize(value.keys) +
              FfiConverterOptionalString.allocationSize(value.unavailable) +
+             FfiConverterOptionalString.allocationSize(value.warning) +
              FfiConverterOptionalString.allocationSize(value.error);
 
         }

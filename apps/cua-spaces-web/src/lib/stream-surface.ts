@@ -71,7 +71,8 @@ export type StreamSurfaceMessage =
 export type SurfacePhase = "connecting" | "live" | "failed";
 
 export interface VideoHandler {
-  postMessage(message: StreamSurfaceMessage): void;
+  /** WebKit returns a promise that rejects when the host removed the handler. */
+  postMessage(message: StreamSurfaceMessage): unknown;
 }
 
 interface VideoHostWindow {

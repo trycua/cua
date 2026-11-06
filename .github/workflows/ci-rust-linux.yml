@@ -149,6 +149,8 @@ jobs:
       - name: Verify shared fixture scroll journal
         run: node --test libs/cua-driver/tests/fixtures/shared/web/journal.test.cjs
       - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5 # 1.97.1
+        with:
+          components: clippy
       - uses: ./.github/actions/rust-cache
         with:
           workspaces: "libs/cua-driver/rust -> target"
@@ -169,6 +171,9 @@ jobs:
             echo "::error::cua-driver resolves atspi-connection with its p2p feature; see the atspi-connection entry in crates/platform-linux/Cargo.toml"
             exit 1
           fi
+      - name: Clippy platform-linux (all targets)
+        working-directory: libs/cua-driver/rust
+        run: cargo clippy --locked -p platform-linux --all-targets -- -D warnings
       - name: Run Linux Rust tests
         working-directory: libs/cua-driver/rust
         env:

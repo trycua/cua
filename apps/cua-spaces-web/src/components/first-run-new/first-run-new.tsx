@@ -13,7 +13,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { CheckIcon, ChevronRightIcon, CopyIcon, LoaderCircleIcon, MonitorIcon, PlusIcon, ShieldIcon, UserPlusIcon } from "lucide-react";
 import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 
-import { folderLabel, newPendingId, useMachines, useSession, useSettings, useSpaces, type SignInPhase } from "@/bridge";
+import { folderLabel, isNeedsProof, newPendingId, useMachines, useSession, useSettings, useSpaces, type SignInPhase } from "@/bridge";
 import { BridgeContext } from "@/bridge/BridgeProvider";
 import { useAppPermissions, type AppPermissionsState } from "@/bridge/app-permissions";
 import { readFirstRun, useFirstRunSaved, writeFirstRun } from "@/bridge/first-run";
@@ -308,7 +308,7 @@ export function WhereScreen({
 }: {
   view: WhereView;
   onToggle: (id: string) => void;
-  onAddThis: () => void;
+  onAddThis: (action: "add" | "retry-add" | "use-code") => void;
   onSignIn: () => void;
   onAddAnother: () => void;
   onSeparate: () => void;
@@ -347,7 +347,7 @@ export function WhereScreen({
                   className={cn(GLASS_CHIP, "mr-1 h-[30px] px-3.5 text-[13.5px]")}
                   onClick={(e) => {
                     e.stopPropagation();
-                    onAddThis();
+                    onAddThis(t.action!.id);
                   }}
                   data-new-run-add-this={t.action.id}
                 >
@@ -662,8 +662,11 @@ export function NewFirstRun() {
   const [connectError, setConnectError] = useState<string | null>(null);
   const [thisState, setThisState] = useState<"adding" | "added" | "failed">("adding");
   const [addError, setAddError] = useState<string | null>(null);
+  const [addNeedsProof, setAddNeedsProof] = useState(false);
   const [explain, setExplain] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
+  // "Use a code from another computer": the sheet opens on "Enter a code".
+  const [addEnter, setAddEnter] = useState(false);
   const [appsOpen, setAppsOpen] = useState(false);
   const mainRef = useRef<HTMLElement>(null);
   useFadeUnder(mainRef, s.screen);
@@ -721,10 +724,15 @@ export function NewFirstRun() {
     const n = ++addRun.current;
     setThisState("adding");
     setAddError(null);
+    setAddNeedsProof(false);
     const ok = await store.addThisComputer(session.data?.identity ?? null).catch(() => false);
     if (n !== addRun.current) return;
     setThisState(ok ? "added" : "failed");
-    if (!ok) setAddError(store.thisMachine.get().setupError?.message ?? null);
+    if (!ok) {
+      const failure = store.thisMachine.get().setupError;
+      setAddError(failure?.message ?? null);
+      setAddNeedsProof(isNeedsProof(failure));
+    }
   };
   useEffect(() => {
     if (s.screen === "where" && signedIn) void addThis();
@@ -807,6 +815,7 @@ export function NewFirstRun() {
     thisState: signedIn ? thisState : ("signed-out" as const),
     addedInRun: s.addedInRun,
     addError,
+    addNeedsProof,
     model: machines.data?.find((m) => m.current)?.model ?? null,
     machines: machines.data ?? null,
     picks: s.picks,
@@ -927,7 +936,13 @@ export function NewFirstRun() {
         <WhereScreen
           view={where}
           onToggle={(id) => save({ picks: togglePick(s.picks, id, where.others ?? []) })}
-          onAddThis={() => (signedIn ? void addThis() : startSignIn())}
+          onAddThis={(action) => {
+            if (action === "use-code") {
+              setAddEnter(true);
+              setAddOpen(true);
+            } else if (signedIn) void addThis();
+            else startSignIn();
+          }}
           onSignIn={startSignIn}
           onAddAnother={() => setAddOpen(true)}
           onSeparate={makeSeparate}
@@ -1002,7 +1017,21 @@ export function NewFirstRun() {
       <div className="relative z-20 flex h-[38px] shrink-0 flex-col justify-end" data-new-run-dots-row="">
         {dots ? <StepDots dots={dots} onGo={goDot} /> : null}
       </div>
-      <AddComputerSheet open={addOpen} onOpenChange={setAddOpen} />
+      <AddComputerSheet
+        open={addOpen}
+        onOpenChange={(open) => {
+          setAddOpen(open);
+          if (open) return;
+          setAddEnter(false);
+          // Joined with a code: this computer is in the account now.
+          if (addNeedsProof && store?.thisMachine.get().setupError === null) {
+            setAddNeedsProof(false);
+            setAddError(null);
+            setThisState("added");
+          }
+        }}
+        initialView={addEnter ? "enter" : "pick"}
+      />
     </div>
   );
 }

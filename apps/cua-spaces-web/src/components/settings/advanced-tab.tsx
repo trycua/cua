@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
+import { useState } from "react";
+
 import { setFlagOverride, useAbout, useBridge, useExperiments, useFlag, useMachines, useSession, useSettings, useThisMachine, type SettingsRow as CoreRow } from "@/bridge";
 import { aboutView } from "@/bridge/settings-derive";
 import { SettingsGroup } from "@/components/settings-group";
@@ -9,6 +11,7 @@ import { SharingSettings } from "@/components/links/sharing-settings";
 import { SettingRow } from "@/components/ui/grouped";
 import { CoreSettingsRow } from "@/components/settings/core-section";
 import { RuntimeKindRows } from "@/components/settings/runtime-rows";
+import { AddComputerSheet } from "@/components/add-computer-sheet";
 import { HostSetupForm } from "@/components/this-machine";
 import { Button } from "@/components/ui/button";
 import { toastError } from "@/components/ui/toast";
@@ -214,10 +217,13 @@ function OwnConnection() {
   const { data: machines } = useMachines();
   const host = useThisMachine(session?.identity ?? null);
   const form = host.formView?.advancedOpen ? host.formView : null;
+  // "Use a code from another computer", when the server wants proof it's the owner adding this computer.
+  const [enterCode, setEnterCode] = useState(false);
   return (
     <SettingsGroup title="Connection">
+      <AddComputerSheet open={enterCode} onOpenChange={setEnterCode} initialView="enter" />
       {form ? (
-        <HostSetupForm view={form} host={host} failure={host.setupError} progress={machines?.find((m) => m.current)?.hostProgress} onRetry={() => void host.retrySetUp()} />
+        <HostSetupForm view={form} host={host} failure={host.setupError} progress={machines?.find((m) => m.current)?.hostProgress} onRetry={() => void host.retrySetUp()} onUseCode={() => setEnterCode(true)} />
       ) : (
         <SettingRow
           data-self-hosting=""

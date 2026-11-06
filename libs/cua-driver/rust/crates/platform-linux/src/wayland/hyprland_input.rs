@@ -249,14 +249,14 @@ pub fn enabled() -> bool {
             }))
 }
 
-/// Whether background (isolated seat) input is admitted for `pid`'s windows,
-/// the check a background action makes before dispatch. `Err` carries the
-/// refusal reason (`client_not_qualified`, ...). Only meaningful while
-/// [`enabled`]: without the isolated seats the tools route background input
-/// elsewhere.
-pub fn background_admission(pid: u32) -> std::result::Result<(), &'static str> {
+/// Whether background (isolated seat) input can reach window `address` of
+/// `pid`, the check a background session makes when it opens. `Err` carries
+/// the refusal reason (`client_xwayland`, ...). Per-action checks, such as a
+/// toolkit that drops background keys, still apply to each action. Only
+/// meaningful while [`enabled`].
+pub fn background_admission(pid: u32, address: u64) -> std::result::Result<(), &'static str> {
     if protocol() == InputProtocol::Production {
-        super::hyprland_compatibility::qualify(pid)
+        super::hyprland_compatibility::admit(pid, address, false)
     } else {
         Ok(())
     }
@@ -1203,7 +1203,10 @@ fn execute_actions_routed(
         "foreground input requires production protocol; no downgrade is permitted"
     );
     if route == DeliveryRoute::Background && protocol() == InputProtocol::Production {
-        if let Err(reason) = super::hyprland_compatibility::qualify(pid) {
+        let keyboard = actions
+            .iter()
+            .any(|action| matches!(action, Action::Key { .. } | Action::TextKey { .. }));
+        if let Err(reason) = super::hyprland_compatibility::admit(pid, address, keyboard) {
             return Ok(json!({"ok":false,"code":reason,"detail":reason}));
         }
     }

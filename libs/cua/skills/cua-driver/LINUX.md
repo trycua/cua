@@ -276,14 +276,15 @@ signer. The plugin accepts the trusted desktop account over same-user local
 sockets; this does not sandbox native code running as that user. Application
 qualification is a compatibility check, not authorization.
 
-The initial native qualification scope is Calc from `libreoffice-fresh 26.2.5-3`
-and Inkscape `1.4.4-6`, subject to per-operation native evidence. Before each
-action, Driver matches `/proc/<pid>/exe` to the canonical executable path
-(`/usr/lib/libreoffice/program/soffice.bin` or `/usr/bin/inkscape`), checks the
-exact package name and version in the local pacman database and its executable
-file listing, and rechecks process identity. Unknown or unavailable package
-identity refuses. Package eligibility does not certify every LibreOffice
-application or operation.
+Background input reaches any native Wayland app that binds the agent seats
+(GTK 3 and 4 and Qt 6 apps do). Before each action, Driver checks that the
+compositor reports the target as a native Wayland window of that process;
+XWayland windows refuse with `client_xwayland`. The plugin refuses an app that
+never bound the agent seat with `client_not_bound`: Chromium and Electron bind
+only the user's seat, so use the browser tools for their pages. Qt 6 apps take
+background clicks, scrolls and drags, but refuse keys
+(`client_drops_background_keys`): Qt sends keys only to the window the user has
+active.
 
 The plugin separately binds the exact live native surface and checks geometry,
 desktop availability, and primary-client and other-lane conflicts. Each
@@ -308,7 +309,7 @@ The candidate also adds an explicitly requested foreground route, advertised
 by the plugin as `foreground_target:true`. It binds the exact native top-level
 surface on the compositor thread and intentionally changes primary focus and,
 for pointer actions, cursor position. It does not restore the previous focus or
-cursor. This route has no Calc/Inkscape background package gate. The canonical
+cursor. The canonical
 native harness covers defined GTK3, Electron, and Tauri foreground cases. It refuses
 held physical input, grabs, constraints, drag-and-drop, ambiguous primary seat
 bindings, and non-neutral keyboard modifiers. Background refusal never selects

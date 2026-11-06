@@ -219,12 +219,13 @@ public enum HelperService {
     public static let restartExitCode: Int32 = 75
 
     /// A launch of this executable that is not the app's window: the host
-    /// service and its commands (`--service-helper`, `check-permissions`,
+    /// service, Cua Driver's login item and their commands
+    /// (`--service-helper`, `--driver-helper`, `check-permissions`,
     /// `preflight-permissions`). These must never touch AppKit or start
     /// anything that does (the Sentry SDK): a windowless process checked in
     /// with LaunchServices as "Cua Spaces" makes opening the app fail.
     public static func isServiceCommand(_ args: [String]) -> Bool {
-        ["--service-helper", "check-permissions", "preflight-permissions"].contains(args.first ?? "")
+        ["--service-helper", "--driver-helper", "check-permissions", "preflight-permissions"].contains(args.first ?? "")
     }
 
     /// The service holds the app's LaunchServices entry: it shows as a

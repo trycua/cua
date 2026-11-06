@@ -549,7 +549,7 @@ export function createWebkitAdapter(
           else if (r.ok) resolve(r.result as T);
           else {
             const e = r.error;
-            reject(new HostError(e?.message ?? `${method} failed`, e?.code, e && { title: e.title, details: e.details, actionLabel: e.actionLabel }));
+            reject(new HostError(e?.message ?? `${method} failed`, e?.code, e && { title: e.title, details: e.details, actionLabel: e.actionLabel, kind: e.kind, refusalCode: e.refusalCode }));
           }
         },
         (e: unknown) => {

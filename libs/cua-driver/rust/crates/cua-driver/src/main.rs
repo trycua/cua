@@ -711,6 +711,7 @@ fn main() {
             // already active.  Honors --no-permissions-gate and
             // CUA_DRIVER_RS_PERMISSIONS_GATE=0 for CI / headless.
             //
+            let slow_opts = gate_opts.after_timeout();
             let gate_result = platform_macos::permissions::run_if_needed_with_observer(
                 gate_opts,
                 |progress, context| match progress {
@@ -729,9 +730,9 @@ fn main() {
                     }
                 },
             );
-            if gate_result.is_ok() {
-                serve::set_permission_gate_pending(false);
-            }
+            serve::settle_permission_gate(gate_result.is_ok(), move || {
+                platform_macos::permissions::gate::wait_for_grants(&slow_opts)
+            });
             let gate_context = platform_macos::permissions::gate::telemetry_context();
             if gate_context.engaged {
                 telemetry::capture_permissions_gate_completed(
@@ -749,8 +750,8 @@ fn main() {
             if let Err(e) = gate_result {
                 eprintln!("[cua-driver] permissions gate: {e}");
                 eprintln!(
-                    "[cua-driver] desktop tool calls remain gated; grant Accessibility and \
-                     Screen Recording permissions, then restart the daemon."
+                    "[cua-driver] desktop tool calls remain gated until Accessibility and \
+                     Screen Recording are granted; still checking in the background."
                 );
             }
 

@@ -1818,6 +1818,51 @@ fn jwt(user: &str) -> String {
     format!("{}.{}.sig", b("{}"), b(&format!(r#"{{"sub":"{user}"}}"#)))
 }
 
+/// A computer paused for another account joins the account that made a
+/// pairing code (the app's "Use a code from another computer"): it is
+/// registered again for that account, keeping its setup. A computer that
+/// is not paused like that is left to a plain setup.
+#[tokio::test]
+async fn a_pairing_code_moves_a_paused_computer_to_the_codes_account() {
+    let relay = FakeRelay::start().await;
+    relay.add_account(&jwt("user-1"), "user-1", Some("ada@example.com"));
+    relay.add_account(&jwt("user-2"), "user-2", Some("bob@example.com"));
+    // Made on a computer already in user-2's account.
+    let minted = RelayClient::new(&relay.url)
+        .unwrap()
+        .create_pairing_code(
+            &jwt("user-2"),
+            &crate::pairing::PairingCodeRequest::default(),
+        )
+        .await
+        .unwrap()
+        .code
+        .unwrap();
+    let code = crate::pairing::PairingCodeToken::parse(&minted).unwrap();
+    let f = fixture();
+    let host = f.host();
+    let before = host
+        .setup(f.relay_opts(&relay.url), &StaticToken(jwt("user-1")))
+        .await
+        .unwrap();
+    let old_id = before.machine_id.clone().unwrap();
+
+    // Sharing (not paused): nothing to move, a plain setup applies.
+    assert!(host.rejoin_with_code(&code).await.unwrap().is_none());
+
+    host.pause_signed_out().await.unwrap();
+    let moved = host.rejoin_with_code(&code).await.unwrap().expect("moved");
+    assert!(!moved.paused_signed_out);
+    assert!(moved.service.installed && moved.service.running);
+    assert_eq!(moved.owner.as_deref(), Some("user-2"));
+    assert_ne!(moved.machine_id.as_deref(), Some(old_id.as_str()));
+    assert_eq!(moved.name.as_deref(), Some("mini"));
+    let on_relay = relay
+        .machine(moved.machine_id.as_deref().unwrap())
+        .expect("registered");
+    assert_eq!(on_relay.owner.id, "user-2");
+}
+
 /// Signing in as another account re-registers this computer for it: a new
 /// machine id and mesh key, while the name and the Provide Spaces setting
 /// stay.

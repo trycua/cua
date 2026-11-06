@@ -1302,7 +1302,7 @@ dependencies = [
 
 [[package]]
 name = "cua-agent-setup"
-version = "0.10.1"
+version = "0.11.0"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -1320,7 +1320,7 @@ dependencies = [
 
 [[package]]
 name = "cua-agents"
-version = "0.10.1"
+version = "0.11.0"
 dependencies = [
  "base64 0.22.1",
  "cua-agent-setup",
@@ -1341,7 +1341,7 @@ dependencies = [
 
 [[package]]
 name = "cua-auth"
-version = "0.10.1"
+version = "0.11.0"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -1363,7 +1363,7 @@ dependencies = [
 
 [[package]]
 name = "cua-byoc"
-version = "0.10.1"
+version = "0.11.0"
 dependencies = [
  "async-trait",
  "aws-config",
@@ -1393,7 +1393,7 @@ dependencies = [
 
 [[package]]
 name = "cua-cluster"
-version = "0.10.1"
+version = "0.11.0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -1423,7 +1423,7 @@ dependencies = [
 
 [[package]]
 name = "cua-connections"
-version = "0.10.1"
+version = "0.11.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -1432,7 +1432,7 @@ dependencies = [
 
 [[package]]
 name = "cua-contrib"
-version = "0.10.1"
+version = "0.11.0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -1450,14 +1450,14 @@ dependencies = [
 
 [[package]]
 name = "cua-create-failure"
-version = "0.10.1"
+version = "0.11.0"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "cua-daemon"
-version = "0.10.1"
+version = "0.11.0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -1505,7 +1505,7 @@ dependencies = [
 
 [[package]]
 name = "cua-disk"
-version = "0.10.1"
+version = "0.11.0"
 dependencies = [
  "async-trait",
  "bollard",
@@ -1519,7 +1519,7 @@ dependencies = [
 
 [[package]]
 name = "cua-home"
-version = "0.10.1"
+version = "0.11.0"
 dependencies = [
  "libc",
  "windows-sys 0.61.2",
@@ -1527,7 +1527,7 @@ dependencies = [
 
 [[package]]
 name = "cua-host"
-version = "0.10.1"
+version = "0.11.0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -1553,7 +1553,7 @@ dependencies = [
 
 [[package]]
 name = "cua-hotspot"
-version = "0.10.1"
+version = "0.11.0"
 dependencies = [
  "futures-util",
  "tokio",
@@ -1561,7 +1561,7 @@ dependencies = [
 
 [[package]]
 name = "cua-icon-cache"
-version = "0.10.1"
+version = "0.11.0"
 dependencies = [
  "cua-home",
  "hex",
@@ -1573,7 +1573,7 @@ dependencies = [
 
 [[package]]
 name = "cua-image"
-version = "0.10.1"
+version = "0.11.0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -1599,7 +1599,7 @@ dependencies = [
 
 [[package]]
 name = "cua-mesh"
-version = "0.10.1"
+version = "0.11.0"
 dependencies = [
  "base64 0.22.1",
  "boringtun",
@@ -1630,7 +1630,7 @@ dependencies = [
 
 [[package]]
 name = "cua-microvm-init"
-version = "0.10.1"
+version = "0.11.0"
 dependencies = [
  "base64 0.22.1",
  "libc",
@@ -1640,7 +1640,7 @@ dependencies = [
 
 [[package]]
 name = "cua-proto"
-version = "0.10.1"
+version = "0.11.0"
 dependencies = [
  "pbjson",
  "pbjson-build",
@@ -1656,7 +1656,7 @@ dependencies = [
 
 [[package]]
 name = "cua-repo-cache"
-version = "0.10.1"
+version = "0.11.0"
 dependencies = [
  "cua-home",
  "cua-telemetry",
@@ -1672,7 +1672,7 @@ dependencies = [
 
 [[package]]
 name = "cua-sandbox-core"
-version = "0.10.1"
+version = "0.11.0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -1703,7 +1703,7 @@ dependencies = [
 
 [[package]]
 name = "cua-sdk"
-version = "0.10.1"
+version = "0.11.0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -1745,7 +1745,7 @@ dependencies = [
 
 [[package]]
 name = "cua-share"
-version = "0.10.1"
+version = "0.11.0"
 dependencies = [
  "bytes",
  "cua-sandbox-core",
@@ -1772,7 +1772,7 @@ dependencies = [
 
 [[package]]
 name = "cua-snapshot-sync"
-version = "0.10.1"
+version = "0.11.0"
 dependencies = [
  "async-trait",
  "aws-config",
@@ -1794,7 +1794,7 @@ dependencies = [
 
 [[package]]
 name = "cua-spaces"
-version = "0.10.1"
+version = "0.11.0"
 dependencies = [
  "async-trait",
  "axum",
@@ -1846,7 +1846,7 @@ dependencies = [
 
 [[package]]
 name = "cua-spaces-contract"
-version = "0.10.1"
+version = "0.11.0"
 dependencies = [
  "schemars",
  "serde",
@@ -1855,7 +1855,7 @@ dependencies = [
 
 [[package]]
 name = "cua-spacesd-client"
-version = "0.10.1"
+version = "0.11.0"
 dependencies = [
  "base64 0.22.1",
  "bytes",
@@ -1902,7 +1902,7 @@ dependencies = [
 
 [[package]]
 name = "cua-telemetry"
-version = "0.10.1"
+version = "0.11.0"
 dependencies = [
  "hex",
  "rand 0.9.5",
@@ -1915,7 +1915,7 @@ dependencies = [
 
 [[package]]
 name = "cua-vmm"
-version = "0.10.1"
+version = "0.11.0"
 dependencies = [
  "async-trait",
  "backhand",

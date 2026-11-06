@@ -139,6 +139,7 @@ pub enum DriverRoute {
     LinuxLibei,
     LinuxWaylandVirtualPointer,
     LinuxCuaCompositorInject,
+    LinuxHyprlandIsolatedInput,
     Cdp,
     Composite,
 }

@@ -343,6 +343,21 @@ impl ProtectedResourceOwnershipStore {
         matches
     }
 
+    /// Forget one launched process instance. A later launch that reused its
+    /// pid keeps its own record.
+    pub fn remove_process(&self, session: &str, process: &crate::browser::ProcessFingerprint) {
+        let mut sessions = self.processes_by_session.lock().unwrap();
+        let Some(processes) = sessions.get_mut(session) else {
+            return;
+        };
+        if processes.get(&process.pid) == Some(process) {
+            processes.remove(&process.pid);
+        }
+        if processes.is_empty() {
+            sessions.remove(session);
+        }
+    }
+
     pub fn remove_session(&self, session: &str) {
         self.processes_by_session.lock().unwrap().remove(session);
     }

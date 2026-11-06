@@ -84,6 +84,8 @@ export interface AgentKeysReport {
   available: boolean;
   /** Why not, when they can't. */
   unavailable: string | null;
+  /** Keys are kept in an unencrypted file (a Local development build without the Keychain). */
+  insecure?: string | null;
 }
 
 declare module "../protocol" {
@@ -212,6 +214,7 @@ export function agentKeysFromWire(raw: unknown): AgentKeysReport {
     providers: providers.length ? providers : PROVIDERS,
     available: o.available !== false,
     unavailable: typeof o.unavailable === "string" && o.unavailable ? o.unavailable : null,
+    ...(typeof o.insecure === "string" && o.insecure ? { insecure: o.insecure } : {}),
   };
 }
 

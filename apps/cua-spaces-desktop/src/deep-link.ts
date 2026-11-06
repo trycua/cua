@@ -5,8 +5,10 @@
 // opened in this app. It brings the app forward on Machines with Join with a
 // code filled in. It never joins on its own: the page asks first.
 import { normalizeCode } from "./bridge/join-with-code";
+import { channel } from "./channel";
 
-export const DEEP_LINK_SCHEME = "cua";
+/** `cua`, or `cua-local` for Cua Spaces Local, which never opens the released app. */
+export const DEEP_LINK_SCHEME = channel.deepLinkScheme;
 
 /**
  * The app's route for a `cua://add/<code>[?relay=<url>]` link (also

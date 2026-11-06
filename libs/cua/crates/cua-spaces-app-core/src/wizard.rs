@@ -2215,6 +2215,19 @@ fn rebase(state: &mut WizardState, image_ref: &str) {
 
 /// Advances the wizard. `env` decides whether Continue is allowed.
 pub fn reduce(state: &WizardState, action: &WizardAction, env: &WizardEnv) -> WizardState {
+    reduce_on(state, action, env, SpaceOs::Macos)
+}
+
+/// [`reduce`] in a shell on `os`. Continue is allowed by the view the person
+/// sees ([`view_on`]), so the shell must name its system here too: judged as
+/// a Mac, the Windows image is "coming soon" and Continue silently did
+/// nothing on a Windows PC.
+pub fn reduce_on(
+    state: &WizardState,
+    action: &WizardAction,
+    env: &WizardEnv,
+    os: SpaceOs,
+) -> WizardState {
     let mut s = state.clone();
     match action {
         WizardAction::SyncDefault { location } => {
@@ -2388,7 +2401,7 @@ pub fn reduce(state: &WizardState, action: &WizardAction, env: &WizardEnv) -> Wi
             // A typed value is used first (one that breaks the limits
             // keeps the step, with why).
             commit_resource(&mut s, env);
-            if s.step < 3 && view(&s, env).can_continue {
+            if s.step < 3 && view_on(&s, env, os).can_continue {
                 s.step += 1;
             }
         }
@@ -4810,6 +4823,35 @@ mod tests {
         let win = view_on(&s, &e, SpaceOs::Windows);
         let tile = win.os_tiles.iter().find(|t| t.id == "windows").unwrap();
         assert_eq!(tile.title, "Windows");
+    }
+
+    /// Continue is judged for the system the shell runs on: on a Windows PC
+    /// the Windows image advances the wizard (judged as a Mac it silently
+    /// stayed on the first step), and on a Mac it still does not.
+    #[test]
+    fn continue_advances_a_windows_image_on_a_windows_pc() {
+        let e = WizardEnv {
+            local_backends: Some(vec!["qemu".into()]),
+            ..env()
+        };
+        let s = reduce_on(
+            &initial(&e),
+            &WizardAction::ChooseImage {
+                image_ref: "ghcr.io/trycua/windows:2022".into(),
+            },
+            &e,
+            SpaceOs::Windows,
+        );
+        let s = reduce_on(
+            &s,
+            &WizardAction::ChoosePlacement { on: "local".into() },
+            &e,
+            SpaceOs::Windows,
+        );
+        assert!(view_on(&s, &e, SpaceOs::Windows).can_continue);
+        let next = |os| reduce_on(&s, &WizardAction::Next, &e, os).step;
+        assert_eq!(next(SpaceOs::Windows), 1);
+        assert_eq!(next(SpaceOs::Macos), 0);
     }
 
     /// A Windows VM runs on QEMU, which the app never installs: on a PC

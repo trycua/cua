@@ -14,6 +14,8 @@ final class FakeAgentKeysTools: AgentsToolRunning, @unchecked Sendable {
     var calls: [(String, [String: Any])] = []
     var keys: [[String: Any]] = [["provider": "openai", "env": "OPENAI_API_KEY", "last4": "3f9a", "added_ms": 1_790_000_000_000]]
     var available = true
+    /// A Local development build keeping keys in an unencrypted file: the daemon's warning.
+    var insecure: String?
 
     func agentsTool(_ tool: String, _ args: [String: Any]) async throws -> Any {
         calls.append((tool, args))
@@ -43,6 +45,7 @@ final class FakeAgentKeysTools: AgentsToolRunning, @unchecked Sendable {
         }
         var report: [String: Any] = ["keys": keys, "providers": [], "available": available]
         if !available { report["unavailable"] = "this build keeps credentials in a file" }
+        if let insecure { report["insecure"] = insecure }
         return report
     }
 }
@@ -92,6 +95,21 @@ struct AgentKeysTests {
         #expect(m.view.notice?.contains("keeps credentials in a file") == true)
         let none = AgentKeysModel(tools: nil)
         #expect(none.view.notice?.contains("need the cua daemon") == true)
+    }
+
+    @Test func aDevelopmentBuildWarnsThatKeysAreUnencryptedAndKeepsTheButtonsOn() async {
+        let tools = FakeAgentKeysTools()
+        tools.insecure = "Keychain not available in this development build: keys are stored unencrypted in ~/.cua-local/agent-keys. Do not use real production secrets"
+        let m = AgentKeysModel(tools: tools)
+        await m.load()
+        #expect(m.view.canEdit)
+        #expect(m.view.notice?.hasPrefix("Keychain not available in this development build") == true)
+        #expect(m.view.notice?.contains("unencrypted") == true)
+        // A refusal still wins over the warning.
+        tools.available = false
+        await m.load()
+        #expect(!m.view.canEdit)
+        #expect(m.view.notice?.hasPrefix("Keys can't be saved here") == true)
     }
 
     @Test func aKeyFromYourShellIsSavedAndTheNamesNeverReplaceTheList() async throws {

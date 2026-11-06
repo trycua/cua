@@ -694,6 +694,38 @@ pub fn set_permission_gate_pending(pending: bool) {
     PERMISSION_GATE_PENDING.store(pending, std::sync::atomic::Ordering::Release);
 }
 
+#[cfg(target_os = "macos")]
+/// Settle the gate after its interactive phase. A pass opens tool calls now.
+/// A timeout keeps them gated while `wait_after_timeout` keeps polling on its
+/// own thread, so a later grant opens them without a restart.
+pub fn settle_permission_gate(
+    gate_passed: bool,
+    wait_after_timeout: impl FnOnce() -> anyhow::Result<()> + Send + 'static,
+) {
+    settle_gate_flag(&PERMISSION_GATE_PENDING, gate_passed, wait_after_timeout);
+}
+
+#[cfg(target_os = "macos")]
+fn settle_gate_flag(
+    pending: &'static std::sync::atomic::AtomicBool,
+    gate_passed: bool,
+    wait_after_timeout: impl FnOnce() -> anyhow::Result<()> + Send + 'static,
+) -> Option<std::thread::JoinHandle<()>> {
+    if gate_passed {
+        pending.store(false, std::sync::atomic::Ordering::Release);
+        return None;
+    }
+    let poll = std::thread::Builder::new()
+        .name("cua-permissions-poll".into())
+        .spawn(move || {
+            if wait_after_timeout().is_ok() {
+                pending.store(false, std::sync::atomic::Ordering::Release);
+            }
+        })
+        .expect("spawn permissions poll thread");
+    Some(poll)
+}
+
 fn permission_gate_pending_response(request: &DaemonRequest) -> Option<DaemonResponse> {
     permission_gate_response_for_state(
         request,
@@ -3091,6 +3123,38 @@ mod permission_gate_routing_tests {
             .as_deref()
             .is_some_and(|message| message.starts_with("permissions_pending:")));
         assert_eq!(response.exit_code, Some(75));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_late_grant_reopens_tool_calls_without_a_restart() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        // Private flags: the daemon tests in this binary read the real one.
+        fn gated(pending: &AtomicBool) -> bool {
+            permission_gate_response_for_state(
+                &call("list_windows"),
+                pending.load(Ordering::Acquire),
+            )
+            .is_some()
+        }
+
+        static PASSED: AtomicBool = AtomicBool::new(true);
+        assert!(super::settle_gate_flag(&PASSED, true, || unreachable!()).is_none());
+        assert!(!gated(&PASSED));
+
+        static NEVER_GRANTED: AtomicBool = AtomicBool::new(true);
+        super::settle_gate_flag(&NEVER_GRANTED, false, || anyhow::bail!("not granted"))
+            .expect("a timed-out gate keeps polling")
+            .join()
+            .unwrap();
+        assert!(gated(&NEVER_GRANTED));
+
+        static LATE_GRANT: AtomicBool = AtomicBool::new(true);
+        super::settle_gate_flag(&LATE_GRANT, false, || Ok(()))
+            .expect("a timed-out gate keeps polling")
+            .join()
+            .unwrap();
+        assert!(!gated(&LATE_GRANT));
     }
 
     #[test]

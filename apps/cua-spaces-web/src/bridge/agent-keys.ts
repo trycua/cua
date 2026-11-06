@@ -30,6 +30,8 @@ export interface AgentKeysInput {
   /** Which credential each app that takes any provider uses, by app. */
   uses?: Record<string, { provider: string; env: string; slot?: string }>;
   unavailable?: string | null;
+  /** Keys are kept in an unencrypted file: shown as a notice while the buttons stay on. */
+  warning?: string | null;
   error?: string | null;
 }
 
@@ -104,6 +106,7 @@ export const agentKeysInputOf = (report: AgentKeysReport | undefined, error: Err
   ...((report?.keys ?? []).some((k) => k.slot) ? { extras: (report?.keys ?? []).filter((k) => k.slot).map(keyInput) } : {}),
   ...(report?.uses && Object.keys(report.uses).length ? { uses: report.uses } : {}),
   unavailable: report?.available === false ? (report.unavailable ?? "this machine can't keep keys") : null,
+  ...(report?.available !== false && report?.insecure ? { warning: report.insecure } : {}),
   error: error ? error.message : null,
 });
 
@@ -291,6 +294,7 @@ export class AgentKeysStore {
       providers: [],
       available: !input.unavailable,
       unavailable: input.unavailable ?? null,
+      ...(input.warning ? { insecure: input.warning } : {}),
     };
     this.set({ report, error: input.error ? new Error(input.error) : null, unsupported: false, sheet: open?.sheet ?? null, removing: open?.removing ?? null });
   }

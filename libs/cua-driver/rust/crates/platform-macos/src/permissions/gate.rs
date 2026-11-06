@@ -237,6 +237,18 @@ impl Default for GateOpts {
 }
 
 impl GateOpts {
+    /// Options for the wait that continues after the interactive gate timed
+    /// out: no deadline, so a later grant still unblocks the running daemon,
+    /// at a slower cadence than the interactive poll.
+    pub fn after_timeout(&self) -> Self {
+        Self {
+            deadline: None,
+            poll_interval: Duration::from_secs(5),
+            status_interval: Duration::from_secs(5 * 60),
+            ..self.clone()
+        }
+    }
+
     /// Construct from the standard env-var
     /// (`CUA_DRIVER_RS_PERMISSIONS_GATE` set to `0` / `false` / `no` /
     /// `off`, case-insensitive, disables the gate), an explicit
@@ -550,9 +562,16 @@ fn present_panel_if_available(initial: PermissionsStatus) -> PanelPresentation {
 /// short-lived copy of the signed executable, so the long-lived daemon never
 /// caches a negative preflight and never needs to replace its process image.
 pub fn wait_for_grants(opts: &GateOpts) -> Result<()> {
+    wait_for_grants_with(opts, check_required_permissions)
+}
+
+fn wait_for_grants_with(
+    opts: &GateOpts,
+    mut probe: impl FnMut() -> Vec<MissingPermission>,
+) -> Result<()> {
     let start = Instant::now();
     let mut last_status_print = start;
-    let mut last_missing: Vec<MissingPermission> = check_required_permissions();
+    let mut last_missing: Vec<MissingPermission> = probe();
 
     loop {
         if last_missing.is_empty() {
@@ -573,7 +592,7 @@ pub fn wait_for_grants(opts: &GateOpts) -> Result<()> {
 
         std::thread::sleep(opts.poll_interval);
 
-        let new_missing = check_required_permissions();
+        let new_missing = probe();
         if new_missing != last_missing {
             // State changed (red→green, or order-flipped).  Re-emit so the
             // user sees progress without waiting for the next status tick.
@@ -682,6 +701,34 @@ mod tests {
         assert!(context.panel_shown);
         assert!(context.dismissed);
         clear_telemetry_env();
+    }
+
+    #[test]
+    fn wait_after_timeout_picks_up_a_late_grant() {
+        let interactive = GateOpts {
+            deadline: Some(Duration::from_nanos(1)),
+            poll_interval: Duration::from_millis(1),
+            ..GateOpts::default()
+        };
+        let still_missing = || vec![MissingPermission::Accessibility];
+        assert!(wait_for_grants_with(&interactive, still_missing).is_err());
+
+        let slow = GateOpts {
+            poll_interval: Duration::from_millis(1),
+            ..interactive.after_timeout()
+        };
+        assert_eq!(slow.deadline, None);
+        let mut polls = 0;
+        let late_grant = || {
+            polls += 1;
+            if polls < 50 {
+                vec![MissingPermission::Accessibility]
+            } else {
+                Vec::new()
+            }
+        };
+        assert!(wait_for_grants_with(&slow, late_grant).is_ok());
+        assert_eq!(polls, 50);
     }
 
     #[test]

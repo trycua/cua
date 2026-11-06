@@ -47,29 +47,13 @@ DISPLAY_NAMES = {
     "cua-sdk": "cua SDK",
     "cua-spacesd": "cua-spacesd",
     "sandbox": "Cua Sandbox",
-    "agent": "Cua Agent",
-    "core": "Cua Core",
     "bench": "Cua Bench",
-    "bench-ui": "Cua Bench UI",
-    "som": "Cua SOM",
-    "sandbox-apps": "Cua Sandbox Apps",
-    "npm-core": "@trycua/core",
-    "npm-playground": "@trycua/playground",
-    "cuabot": "CuaBot",
 }
 # component -> (registry, package); the footer names the exact published version.
 INSTALL = {
     "cua-sdk": (("pypi", "cua"), ("npm", "@trycua/cua")),
     "sandbox": (("pypi", "cua-sandbox"),),
-    "agent": (("pypi", "cua-agent"),),
-    "core": (("pypi", "cua-core"),),
     "bench": (("pypi", "cua-bench"),),
-    "bench-ui": (("pypi", "cua-bench-ui"),),
-    "som": (("pypi", "cua-som"),),
-    "sandbox-apps": (("pypi", "cua-sandbox-apps"),),
-    "npm-core": (("npm", "@trycua/core"),),
-    "npm-playground": (("npm", "@trycua/playground"),),
-    "cuabot": (("npm", "cuabot"),),
 }
 
 
@@ -80,15 +64,7 @@ INSTALL = {
 # release the notes come from git alone, so they still list every change; the
 # check that the changelog cites each pull request starts with the next one.
 LEGACY_BASELINE_TAGS = frozenset({
-    "agent-v0.9.0",
-    "core-v0.3.2",
     "bench-v0.3.0",
-    "bench-ui-v0.7.1",
-    "som-v0.1.4",
-    "sandbox-apps-v0.1.2",
-    "npm-core-v0.1.6",
-    "npm-playground-v0.3.0",
-    "cuabot-v1.0.16",
 })
 
 

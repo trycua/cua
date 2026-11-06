@@ -309,6 +309,7 @@ fn confirm_setup_navigation(
 
     let target = HWND(hwnd as *mut _);
     let prior = unsafe { GetForegroundWindow() };
+    let mut input_may_be_unread = false;
     let navigation = (|| {
         let (fronted, injected) = force_setup_foreground(target);
         *injected_global_input |= injected;
@@ -345,6 +346,9 @@ fn confirm_setup_navigation(
 
         *injected_global_input = true;
         crate::input::keyboard::send_key_synthesized(hwnd, "enter", &[]).map_err(|error| {
+            input_may_be_unread = error
+                .downcast_ref::<crate::typing_turn::ForegroundNotRestored>()
+                .is_some();
             BrowserRefusal::new(
                 BrowserRefusalCode::BrowserWrongTargetRefused,
                 format!("could not confirm the bounded setup navigation: {error}"),
@@ -352,7 +356,8 @@ fn confirm_setup_navigation(
         })
     })();
 
-    let restored = if prior.0.is_null() || prior == target {
+    // An unread Enter must not follow the user back to their window.
+    let restored = if prior.0.is_null() || prior == target || input_may_be_unread {
         true
     } else {
         let (restored, injected) = force_setup_foreground(prior);

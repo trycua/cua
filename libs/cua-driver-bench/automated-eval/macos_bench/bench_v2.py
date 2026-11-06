@@ -37,6 +37,7 @@ CATEGORIES: dict[str, str] = {  # report order
     "web_forms": "Web apps & forms",
     "precision": "Precision interactions",
     "interruptions": "Interruptions & recovery",
+    "shared_desktop": "Shared desktop",  # PA-01 and UM-01 (SHARED-DESKTOP.md), selected by id
 }
 BACKGROUND_LABEL = "Background operation"  # scored on every trial; never a task bucket
 
@@ -53,6 +54,9 @@ V2_TASKS: tuple[str, ...] = (
     "IR-03",
     "IR-04",
 )
+# The shared-desktop tasks (SHARED-DESKTOP.md): selected by id like WEB-01 and WEB-02, not in V2_TASKS. PA-01 runs
+# N agents at once (one per copy of BenchLab); UM-01 runs while the simulated user moves and clicks the mouse.
+SHARED_DESKTOP_TASKS: tuple[str, ...] = ("PA-01", "UM-01")
 # `../../taskpack/v2-taskset.json` lists every task with its category, OS availability, conditions and split (public,
 # or held out of this repository). `--task-set` selects a set; the default stays `v2`, so earlier runs reproduce.
 TASKSET_FILE = Path(__file__).resolve().parents[2] / "taskpack" / "v2-taskset.json"
@@ -79,6 +83,7 @@ def task_sets(taskset: dict[str, Any] | None = None) -> dict[str, tuple[str, ...
     sets: dict[str, tuple[str, ...]] = {"v2": V2_TASKS}
     for part in SPLITS:
         sets[f"v2-{part}"] = tuple(t for t in V2_TASKS if split.get(t, "public") == part)
+    sets["shared-desktop"] = SHARED_DESKTOP_TASKS
     return sets
 
 
@@ -508,14 +513,56 @@ BACKGROUND_BRIEF = (
 )
 
 
-def sentinel_args(condition: str) -> list[str]:
+# UM-01: the same paragraph for a user who is using the mouse instead of typing (SHARED-DESKTOP.md).
+BACKGROUND_BRIEF_MOUSE = BACKGROUND_BRIEF.replace(
+    "and is typing in it", "and is moving the pointer and clicking in it"
+)
+
+
+def sentinel_args(condition: str, mouse_script: str | Path | None = None) -> list[str]:
+    """The sentinel's arguments. In the background condition it is the user's window; with `mouse_script`
+    (UM-01) its user moves and clicks the real pointer from that script instead of typing."""
     if condition != "background":
         return []
-    return ["--user-activity", "--frame", ",".join(str(v) for v in USER_WINDOW_FRAME)]
+    frame = ["--frame", ",".join(str(v) for v in USER_WINDOW_FRAME)]
+    if mouse_script is not None:
+        return ["--mouse-user", str(mouse_script), *frame]
+    return ["--user-activity", *frame]
 
 
-def brief_for(brief: str, condition: str) -> str:
-    return brief if condition != "background" else brief.rstrip() + "\n\n" + BACKGROUND_BRIEF + "\n"
+def brief_for(brief: str, condition: str, mouse_user: bool = False) -> str:
+    if condition != "background":
+        return brief
+    return (
+        brief.rstrip()
+        + "\n\n"
+        + (BACKGROUND_BRIEF_MOUSE if mouse_user else BACKGROUND_BRIEF)
+        + "\n"
+    )
+
+
+def mouse_user_problem(disturbance: dict[str, Any] | None) -> str | None:
+    """UM-01: why the simulated mouse user cannot be scored (a harness error, re-run), or None."""
+    mu = (disturbance or {}).get("mouse_user")
+    if not isinstance(mu, dict):
+        return "no mouse-user log (the simulated user did not run)"
+    if int(mu.get("clicks") or 0) < 5 or int(mu.get("checks") or 0) < 50:
+        return (
+            f"the mouse user ran too little: {mu.get('clicks')} clicks, {mu.get('checks')} checks"
+        )
+    return None
+
+
+def mouse_user_held(mu: dict[str, Any]) -> tuple[bool, bool]:
+    """(pointer, input) criteria for the mouse user: the pointer stayed on the user's script (and, where the
+    platform tags input, nothing else moved it), and every scripted click landed on its dot."""
+    tolerance = float(mu.get("tolerance_px") or 3.0)
+    pointer = float(mu.get("max_displacement_px") or 0.0) <= tolerance and not mu.get(
+        "foreign_pointer_events"
+    )
+    clicks = int(mu.get("clicks") or 0)
+    landed = clicks > 0 and int(mu.get("clicks_landed") or 0) == clicks
+    return pointer, landed
 
 
 def background_condition_score(
@@ -524,6 +571,9 @@ def background_condition_score(
     """A15.3: background completion = the task passed AND the user window kept focus and frontmost status the
     whole time (no focus steal, no key loss, no window raised over it, no input landing in it, its text intact)."""
     ua = disturbance.get("user_activity") or None
+    mu = disturbance.get("mouse_user") or None
+    if ua is None and mu is not None:  # UM-01: the user's clicks are the user's input
+        ua = {"disrupted": not mouse_user_held(mu)[1], "text_disruptions": 0}
     if ua is None:
         # Amendment 19: in the background condition the user window's text is part of "held"; unmeasured is not held.
         text_ok = condition != "background"
@@ -591,6 +641,13 @@ def multiplayer_criteria(disturbance: dict[str, Any]) -> dict[str, bool | None]:
             and ua.get("text_intact_at_end") is not False
         )
     deviation = d.get("pointer_max_deviation_px")
+    pointer = None if deviation is None else float(deviation) <= POINTER_STILL_PX
+    mu = d.get("mouse_user")
+    if isinstance(
+        mu, dict
+    ):  # UM-01: compare with the user's own script, and the user's input is clicks
+        pointer, clicks_ok = mouse_user_held(mu)
+        typing = clicks_ok and all(int(v or 0) == 0 for v in leaked)
     lost, gained = d.get("activations_lost"), d.get("activations_gained")
     activation = (
         None
@@ -603,7 +660,7 @@ def multiplayer_criteria(disturbance: dict[str, Any]) -> dict[str, bool | None]:
         "key_focus": _zero(d.get("key_loss")),
         "window_raised": _zero(d.get("windows_raised")),
         "typing": typing,
-        "pointer": None if deviation is None else float(deviation) <= POINTER_STILL_PX,
+        "pointer": pointer,
         "clipboard": _zero(d.get("clipboard_changes")),
         "space": _zero(d.get("space_switches")),
         "dialog": _zero(d.get("sheets_shown")),

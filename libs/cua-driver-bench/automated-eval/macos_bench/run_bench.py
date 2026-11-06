@@ -27,6 +27,7 @@ from __future__ import annotations
 import argparse
 import base64
 import contextlib
+import copy
 import hashlib
 import json
 import math
@@ -61,6 +62,7 @@ import claude_events  # noqa: E402
 import recorder as rec  # noqa: E402
 import run_pilot as pilot  # noqa: E402
 import desktop_runtime as desktop
+import shared_desktop as sd  # noqa: E402
 from dataclasses import replace
 
 SCHEMA = "cdb-bench-trial/1"
@@ -807,6 +809,269 @@ def evaluate_probe(
             ).items()
         },
         "diagnostics": data.get("diagnostics"),
+        **({"harness_error": data["harness_error"]} if data.get("harness_error") else {}),
+    }
+
+
+def evaluate_parallel(seed: int, root: Path, artifacts: Path) -> dict[str, Any]:
+    """PA-01: the parallel checker over every copy's state and events (SHARED-DESKTOP.md)."""
+    result = artifacts / "evaluator-result.json"
+    completed = subprocess.run(
+        sd.evaluate_argv(sys.executable, seed, root, result),
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    (artifacts / "evaluator.stderr").write_text(completed.stderr[-4000:], "utf-8")
+    if not result.is_file():
+        return {
+            "passed": False,
+            "score": None,
+            "error": "evaluator wrote no result",
+            "harness_error": "evaluator",
+        }
+    data = json.loads(result.read_text("utf-8"))
+    out = {
+        "passed": bool(data.get("passed")),
+        "score": data.get("score"),
+        "checks": {
+            name: bool(check.get("passed")) if isinstance(check, dict) else check
+            for name, check in (data.get("checks") or {}).items()
+        },
+        "diagnostics": data.get("diagnostics"),
+        "instances": data.get("instances"),
+    }
+    if data.get("harness_error"):
+        out["harness_error"] = data["harness_error"]
+        out["error"] = data.get("error", "")
+    return out
+
+
+def launch_desks(
+    plan: list[dict[str, Any]], lab_app: Path, trial_dir: Path, background: bool
+) -> list[subprocess.Popen[bytes]]:
+    """PA-01: one BenchLab process per copy, each with its own throwaway HOME, at its grid frame."""
+    procs: list[subprocess.Popen[bytes]] = []
+    for entry in plan:
+        entry["dir"].mkdir(parents=True, exist_ok=True)
+        env = pilot.clean_app_env(trial_dir / f"apphome-{entry['label']}")
+        argv = [
+            *desktop.bench_app_argv("BenchLab", lab_app.parent),
+            "--mode",
+            "desk",
+            *entry["app_args"],
+            *(["--no-activate"] if background else []),
+        ]
+        procs.append(desktop.start_app(argv, Path(env["HOME"]), entry["dir"] / "lab.log", env=env))
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline and not all(e["state"].exists() for e in plan):
+        time.sleep(0.3)
+    missing = [e["label"] for e in plan if not e["state"].exists()]
+    if missing:
+        for proc in procs:
+            desktop.stop_group(proc.pid)
+        raise RuntimeError(f"BenchLab copies not ready: {missing}")
+    time.sleep(1.5)
+    return procs
+
+
+def merge_summaries(summaries: list[dict[str, Any]]) -> dict[str, Any]:
+    """PA-01: one trial-level summary from N agents' stream summaries. Turns, tool calls, tokens and cost
+    add up; the result is the first errored agent's, else the last one's."""
+    if not summaries:
+        return {}
+    out = dict(summaries[-1])
+    out["turns"] = sum(int(x.get("turns") or 0) for x in summaries)
+    out["api_calls"] = sum(int(x.get("api_calls") or 0) for x in summaries)
+    tokens: dict[str, int] = {}
+    for x in summaries:
+        for k, v in (x.get("tokens") or {}).items():
+            tokens[k] = tokens.get(k, 0) + int(v or 0)
+    out["tokens"] = tokens
+    costs = [x.get("total_cost_usd") for x in summaries]
+    out["total_cost_usd"] = None if any(c is None for c in costs) else round(sum(costs), 6)
+    calls: dict[str, Any] = {
+        "total": 0,
+        "mcp": 0,
+        "builtin": 0,
+        "failed": 0,
+        "by_name": {},
+        "by_class": {},
+    }
+    for x in summaries:
+        tc = x.get("tool_calls") or {}
+        for k in ("total", "mcp", "builtin", "failed"):
+            calls[k] += int(tc.get(k) or 0)
+        for k in ("by_name", "by_class"):
+            for name, n in (tc.get(k) or {}).items():
+                calls[k][name] = calls[k].get(name, 0) + int(n or 0)
+    out["tool_calls"] = calls
+    errored = next((x for x in summaries if (x.get("result") or {}).get("is_error")), None)
+    out["result"] = (errored or summaries[-1]).get("result") or {}
+    out["final_text"] = ""
+    out["baseline_prompt_tokens"] = max(
+        int(x.get("baseline_prompt_tokens") or 0) for x in summaries
+    )
+    quotas = [x.get("quota_last") for x in summaries if x.get("quota_last")]
+    out["quota_last"] = quotas[-1] if quotas else None
+    return out
+
+
+def run_parallel_agents(
+    ctx: "Ctx",
+    *,
+    arm: str,
+    task: pilot.Task,
+    plan: list[dict[str, Any]],
+    prompts: list[str],
+    argv: list[str],
+    native: bool,
+    mcp_path: Path,
+    system_prompt: str,
+    cwd: Path,
+    timeout_s: int,
+    max_turns: int,
+    trial_dir: Path,
+    guard_enforce: bool,
+) -> dict[str, Any]:
+    """PA-01: start N agents at the same moment, one per copy, each with its own stream, guard and prompt.
+    A GUI-only violation of any agent ends all of them (when enforcing). Returns the trial-level `claude`,
+    `summary`, `failure`, `gui_only` and the per-agent records."""
+    guards = [
+        v2.GuiOnlyGuard(
+            trial_dir / "agents" / e["label"] / "claude-stream.tsv",
+            frontmost_bundle,
+            enforce=guard_enforce,
+            terminal_ttys=v2.terminal_tty_inputs if k == 0 else None,
+        )
+        for k, e in enumerate(plan)
+    ]
+    abort = v2.EitherEvent(ctx.abort, *[g.stop for g in guards])
+    results: list[dict[str, Any] | None] = [None] * len(plan)
+
+    def one(k: int) -> None:
+        e = plan[k]
+        adir = trial_dir / "agents" / e["label"]
+        stream, stderr = adir / "claude-stream.tsv", adir / "claude.stderr"
+        try:
+            if native:
+                results[k] = cxn.run_codex(
+                    argv,
+                    cxn.render_home(
+                        adir / "codex-home", mcp_path, cxn.MODEL, cxn.EFFORT, system_prompt, arm
+                    ),
+                    cwd,
+                    prompts[k],
+                    timeout_s,
+                    max_turns,
+                    adir / "codex-app-server.tsv",
+                    stream,
+                    stderr,
+                    allowed_apps=allowed_apps(task),
+                    elicitation_path=adir / "elicitations.jsonl",
+                    abort=abort,
+                    server=cxn.SERVER_OF[arm],
+                )
+            else:
+                results[k] = claude_driver.run_claude(
+                    argv,
+                    ca.claude_env(),
+                    cwd,
+                    prompts[k],
+                    allowed_apps(task),
+                    timeout_s,
+                    stream,
+                    stderr,
+                    adir / "elicitations.jsonl",
+                    abort=abort,
+                )
+        except Exception as error:  # noqa: BLE001 - one agent's harness crash is recorded, not raised
+            results[k] = {"returncode": None, "timed_out": False, "wall_s": 0.0, "result_seen": False,
+                          "elicitations": [], "error": f"{type(error).__name__}: {error}"}  # fmt: skip
+
+    for e in plan:
+        (trial_dir / "agents" / e["label"]).mkdir(parents=True, exist_ok=True)
+        (trial_dir / "agents" / e["label"] / "claude-stream.tsv").touch()
+    for g in guards:
+        g.start()
+    threads = [threading.Thread(target=one, args=(k,), daemon=True) for k in range(len(plan))]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    for g in guards:
+        g.finish()
+    per: list[dict[str, Any]] = []
+    summaries: list[dict[str, Any]] = []
+    failure: dict[str, Any] = {"kind": None}
+    violations: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    stopped = False
+    for k, e in enumerate(plan):
+        adir = trial_dir / "agents" / e["label"]
+        res = results[k] or {}
+        events = claude_events.read_events(adir / "claude-stream.tsv")
+        summ = claude_events.summarize(events)
+        if native:
+            summ["turns"] = summ["api_calls"] = res.get("turns")
+        summaries.append(summ)
+        stderr_text = (
+            (adir / "claude.stderr").read_text("utf-8", "replace")[-4000:]
+            if (adir / "claude.stderr").exists()
+            else ""
+        )
+        fail = claude_events.classify_failure(summ, stderr_text, res.get("returncode"))
+        if res.get("error"):
+            fail = {"kind": "harness_exception", "message": res["error"]}
+        g = guards[k].summary(*v2.scan_events(events))
+        violations += [{**v, "agent": e["label"]} for v in g["violations"]]
+        seen |= set(g["frontmost_seen"])
+        stopped = stopped or g["stopped_trial"]
+        if fail.get("kind") and not failure.get("kind"):
+            failure = {**fail, "message": f"agent {e['label']}: {fail.get('message', '')}"}
+        per.append(
+            {
+                "label": e["label"],
+                "wall_s": res.get("wall_s"),
+                "turns": summ.get("turns"),
+                "cost_usd": summ.get("total_cost_usd"),
+                "tokens": summ.get("tokens"),
+                "timed_out": bool(res.get("timed_out")),
+                "returncode": res.get("returncode"),
+                "status": "timeout"
+                if res.get("timed_out")
+                else ("completed" if res.get("result_seen") else "agent_error"),
+                "infra": fail.get("kind"),
+                "final_text": summ.get("final_text", "")[:200],
+            }
+        )
+    if stopped:
+        failure = {"kind": None}  # the harness ended it on purpose: final, never retried
+    gui_only = {
+        "enforced": guard_enforce,
+        "violation": bool(violations),
+        "violations": violations[:20],
+        "stopped_trial": stopped,
+        "transient_front": sorted({t for g in guards for t in g.transient}),
+        "mentions": sorted({m for g in guards for m in g.mentions})[:20],
+        "frontmost_seen": sorted(seen),
+        "terminal_watched": True,
+        "terminal_ttys_at_start": None,
+        "agents": len(plan),
+    }
+    claude = {
+        "returncode": next((r.get("returncode") for r in results if r and r.get("returncode")), 0),
+        "timed_out": any(r and r.get("timed_out") for r in results),
+        "wall_s": max((float((r or {}).get("wall_s") or 0.0) for r in results), default=0.0),
+        "result_seen": all(r and r.get("result_seen") for r in results),
+        "elicitations": [x for r in results if r for x in r.get("elicitations", [])],
+    }
+    return {
+        "claude": claude,
+        "summary": merge_summaries(summaries),
+        "failure": failure,
+        "gui_only": gui_only,
+        "agents": sd.aggregate_agents(per) | {"per_agent": per},
     }
 
 
@@ -834,8 +1099,9 @@ def _collect_linux_evidence(artifacts: Path, arm: str, failed: bool) -> None:
     for name, log in logs.items():
         attempt(
             f"{name} log",
-            lambda name=name, log=log: log.is_file()
-            and shutil.copyfile(log, artifacts / f"{name}.log"),
+            lambda name=name, log=log: (
+                log.is_file() and shutil.copyfile(log, artifacts / f"{name}.log")
+            ),
         )
     if errors:
         try:
@@ -859,6 +1125,9 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
     bench_v2 = bool(getattr(args, "bench_v2", False))  # Amendment 14
     sentinel_front = True if bench_v2 else bool(spec.get("sentinel_frontmost", True))
     condition = getattr(args, "condition", "foreground") if bench_v2 else None  # Amendment 15
+    parallel = sd.is_parallel(spec)  # PA-01: N copies, one agent each (SHARED-DESKTOP.md)
+    mouse_user = sd.is_mouse_user(spec)  # UM-01: the user moves and clicks the mouse
+    instances = sd.instances_for(spec, getattr(args, "instances", None)) if parallel else None
     # Per-build Cua Driver identity (Amendment 3); arm B rows keep the 0.34.0 values of the recorder build.
     build_versions = (ctx.versions.get("builds") or {}).get(cxn.SOURCE_ARM.get(arm, arm)) or (
         ctx.versions.get("builds") or {}
@@ -891,6 +1160,8 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
         "bench_version": v2.BENCH_VERSION if bench_v2 else 1,
         "category": spec.get("category"),
         "condition": condition,
+        "instances": instances,
+        "mouse_user_task": mouse_user or None,
         "order_index": entry.get("order_index"),
         "task_pos": entry["task_pos"],
         "arm_slot": entry["arm_slot"],
@@ -938,10 +1209,20 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
         if (args.build_dir or desktop.detect_platform() == "linux") and not args.no_sentinel
         else None,
         artifacts / "sentinel.jsonl",
-        v2.sentinel_args(condition) if bench_v2 else None,
+        (
+            v2.sentinel_args(condition, artifacts / "mouse-user.json" if mouse_user else None)
+            or (["--frame", ",".join(map(str, sd.PA_WITNESS_FRAME))] if parallel else [])
+        )
+        if bench_v2
+        else None,
     )
+    if mouse_user:
+        sd.write_mouse_script(seed, artifacts / "mouse-user.json")
     app_env = pilot.clean_app_env(trial_dir / "apphome")
     lab: subprocess.Popen[bytes] | None = None
+    desks: list[subprocess.Popen[bytes]] = []
+    plan: list[dict[str, Any]] = []
+    parallel_run: dict[str, Any] | None = None
     claude: dict[str, Any] = {
         "returncode": None,
         "timed_out": False,
@@ -1000,9 +1281,17 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
                     for line in cdb.log
                     if line.endswith(ca.FORCE_ACCESSIBILITY_FLAG)
                 ]
+        elif parallel:
+            plan = sd.pa_agents(seed, int(instances or 1), artifacts)
+            brief, paths = plan[0]["brief"], {}
+            sentinel.start()
+            desks = launch_desks(plan, lab_app, trial_dir, condition == "background")
         else:
             brief, paths = pilot.prepare_probe(task, seed, trial_dir, lab_app)
             sentinel.start()
+            if mouse_user:
+                task = copy.copy(task)  # keeps the selector (`spec`) that replace() would drop
+                task.app_args = [*task.app_args, *sd.um_app_args(seed)]
             lab = pilot.launch_lab(task, seed, paths, lab_app, app_env)
         if desktop.detect_platform() == "linux":
             desktop.capture_screenshot(os.environ["DISPLAY"], artifacts / "startup.png")
@@ -1013,6 +1302,8 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
                 "skipped": "background condition",
                 "user_window": v2.USER_WINDOW_FRAME,
             }
+        elif parallel:
+            row["lab_occlusion"] = {"skipped": "parallel copies in a fixed grid"}
         elif cdb is None and getattr(args, "check_occlusion", True):
             row["lab_occlusion"] = ensure_lab_unoccluded(ctx)
             row["lab_unoccluded"] = row["lab_occlusion"].get("unoccluded")
@@ -1034,9 +1325,22 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
                 system_prompt=system_prompt,
             )
         )
-        prompt = (v2.brief_for(brief.strip(), condition) if bench_v2 else brief.strip()) + "\n"
-        if args.tell_budget:
-            prompt += f"\nYou have about {timeout_s // 60} minutes and at most {max_turns} turns.\n"
+
+        def finish_prompt(text: str) -> str:
+            out = (
+                v2.brief_for(text.strip(), condition, mouse_user) if bench_v2 else text.strip()
+            ) + "\n"
+            if args.tell_budget:
+                out += (
+                    f"\nYou have about {timeout_s // 60} minutes and at most {max_turns} turns.\n"
+                )
+            return out
+
+        prompt = finish_prompt(brief)
+        prompts = [finish_prompt(e["brief"]) for e in plan]
+        for e, text in zip(plan, prompts):
+            e["dir"].mkdir(parents=True, exist_ok=True)
+            (e["dir"] / "prompt.txt").write_text(text, "utf-8")
         (artifacts / "prompt.txt").write_text(prompt, "utf-8")
         (artifacts / "argv.json").write_text(json.dumps(argv, indent=2) + "\n", "utf-8")
         recording = ctx.recorder.start(trial_dir / "rec") if ctx.recorder else False
@@ -1044,7 +1348,9 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
         sentinel.toggle_armed()
         ctx.set_state(state="agent")
         agent_started = time.monotonic()
-        if bench_v2:  # A14.2: every v2 trial is guarded, CDB or BenchLab
+        if parallel:
+            sd.write_meta(artifacts, int(instances or 1), time.time() * 1000.0, timeout_s)
+        if bench_v2 and not parallel:  # A14.2: every v2 trial is guarded, CDB or BenchLab
             guard = v2.GuiOnlyGuard(
                 stream_path,
                 frontmost_bundle,
@@ -1061,6 +1367,26 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
             watcher.start()
         with pilot.IdleSampler(artifacts / "hid-idle.jsonl"):
             if (
+                parallel
+            ):  # PA-01: N agents at once, each with its own guard (any violation ends all)
+                parallel_run = run_parallel_agents(
+                    ctx,
+                    arm=arm,
+                    task=task,
+                    plan=plan,
+                    prompts=prompts,
+                    argv=argv,
+                    native=native,
+                    mcp_path=mcp_path,
+                    system_prompt=system_prompt,
+                    cwd=cwd,
+                    timeout_s=timeout_s,
+                    max_turns=max_turns,
+                    trial_dir=trial_dir,
+                    guard_enforce=getattr(args, "gui_only_enforce", True),
+                )
+                claude = parallel_run["claude"]
+            elif (
                 native
             ):  # Amendment 20: codex exec, its stream translated for the guard and the summaries
                 claude = cxn.run_codex(
@@ -1108,16 +1434,27 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
         sentinel.toggle_armed()
         ctx.set_state(state="teardown")
         video_raw = ctx.recorder.stop() if ctx.recorder and recording else None
-        events = claude_events.read_events(stream_path)
-        summary = claude_events.summarize(events)
-        if native:  # turns are sampling requests (thread/tokenUsage/updated), not tool uses
+        events = [] if parallel_run else claude_events.read_events(stream_path)
+        summary = parallel_run["summary"] if parallel_run else claude_events.summarize(events)
+        if (
+            native and not parallel_run
+        ):  # turns are sampling requests (thread/tokenUsage/updated), not tool uses
             summary["turns"] = summary["api_calls"] = claude.get("turns")
             row["codex_usage"] = claude.get("codex_usage")
             row["codex_non_gui_items"] = claude.get("non_gui_items")
         stderr_text = (
             stderr_path.read_text("utf-8", "replace")[-4000:] if stderr_path.exists() else ""
         )
-        failure = claude_events.classify_failure(summary, stderr_text, claude["returncode"])
+        failure = (
+            parallel_run["failure"]
+            if parallel_run
+            else claude_events.classify_failure(summary, stderr_text, claude["returncode"])
+        )
+        if parallel_run:
+            gui_only = parallel_run["gui_only"]
+            front_seen = gui_only["frontmost_seen"]
+            side_door = {v["detail"] for v in gui_only["violations"]}
+            row["agents"] = parallel_run["agents"]
         if guard:
             gui_only = guard.summary(*v2.scan_events(events))
             front_seen = gui_only["frontmost_seen"]
@@ -1132,6 +1469,9 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
                 peeks = evaluator_peeks(events, spec.get("peek_patterns", []))
                 if not spec.get("coding_tools"):
                     side_door |= set(side_door_scan(events))
+            elif parallel:
+                evaluation = evaluate_parallel(seed, artifacts, artifacts)
+                row["parallel"] = sd.parallel_of(evaluation)
             else:
                 evaluation = evaluate_probe(
                     task, seed, paths, artifacts, artifacts / "sentinel.jsonl"
@@ -1173,6 +1513,12 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
         if lab is not None:
             claude_driver.kill_group(lab.pid)
             lab.wait(timeout=5)
+        for proc in desks:
+            claude_driver.kill_group(proc.pid)
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                pass
         if watcher is not None:
             watcher.finish()
         if guard is not None:
@@ -1333,6 +1679,8 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
                 "clipboard_changes": summary_sentinel.get("clipboard_changes"),
                 "space_switches": summary_sentinel.get("space_switches"),
                 "sheets_shown": summary_sentinel.get("sheets_shown"),
+                # UM-01: the simulated mouse user (pointer displacement from its script, clicks landed)
+                "mouse_user": summary_sentinel.get("mouse_user"),
             },
             "sentinel_frontmost": sentinel_front,
             "gui_only": gui_only,
@@ -1376,7 +1724,7 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
     if video_raw and ctx.compress:
         ctx.compress.submit(video_raw, trial_dir / "video")
     (trial_dir / "trial.json").write_text(json.dumps(row, indent=2) + "\n", "utf-8")
-    for name in ("apphome",):
+    for name in ("apphome", *(f"apphome-{e['label']}" for e in plan)):
         shutil.rmtree(trial_dir / name, ignore_errors=True)
     return row
 
@@ -2510,6 +2858,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--max-turns", type=int, default=None, help="override every task's max_turns")
     p.add_argument(
+        "--instances",
+        type=int,
+        default=None,
+        help="PA-01: copies of BenchLab and agents per trial (1 to 10; default the task's, 10)",
+    )
+    p.add_argument(
         "--timeout-s", type=int, default=None, help="override every task's wall-time limit"
     )
     p.add_argument(
@@ -2651,6 +3005,13 @@ def make_ctx(args: argparse.Namespace) -> Ctx:
     unknown = [t for t in selected if t not in tasks]
     if unknown:
         raise SystemExit(f"unknown tasks {unknown}; known {sorted(tasks)}")
+    mouse_tasks = [t for t in selected if sd.is_mouse_user(task_spec(tasks[t]))]
+    if mouse_tasks and getattr(args, "condition", "foreground") != "background":
+        raise SystemExit(
+            f"{mouse_tasks}: the mouse-user task runs only with --condition background"
+        )
+    if getattr(args, "instances", None) is not None:
+        sd.instances_for({}, args.instances)  # 1..10, else a usage error before any trial
     if bench_v2 or bu.ARM in arm_names:
         problems = v2.validate_tasks({t: task_spec(tasks[t]) for t in tasks}, selected, arm_names)
         if problems:

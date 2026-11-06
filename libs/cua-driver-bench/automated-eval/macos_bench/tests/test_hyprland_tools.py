@@ -24,6 +24,7 @@ import hyprland_session as HS  # noqa: E402
 G = HS.hyprland_module("guard")
 H = HS.hyprland_module("hypr")
 BENCHLAB_TASKS = ("MB-09", "MB-10", "MB-11", "IR-01", "IR-02", "IR-03", "IR-04")
+SHARED_TASKS = ("PA-01", "UM-01")  # selected by id, not part of the registered core tasks
 
 
 def _emitted(path: Path) -> set[str]:
@@ -49,7 +50,7 @@ class PortTest(unittest.TestCase):
             self.assertEqual(launch["conditions"], manifest[tid]["conditions"], tid)
             self.assertIn("linux", manifest[tid]["os"])
             self.assertIn("launch/hyprland_session.py", launch["launcher"])
-        self.assertEqual(set(HS.TASKS), set(BENCHLAB_TASKS))
+        self.assertEqual(set(HS.TASKS), set(BENCHLAB_TASKS) | set(SHARED_TASKS))
 
     def test_window_rules(self) -> None:
         sent = []
@@ -147,6 +148,107 @@ class GuardTest(unittest.TestCase):
         for _ in range(2):
             self.assertIsNone(watch.sample("org.omarchy.btop"))
         self.assertEqual(watch.sample("org.omarchy.btop"), "Omarchy TUI")
+
+
+class SharedDesktopTest(unittest.TestCase):
+    def descriptor(self, tid: str) -> dict:
+        return json.loads((BENCH / "probes" / tid / "launch.hyprland.json").read_text("utf-8"))
+
+    def test_descriptors_follow_the_task_files(self) -> None:
+        for tid in SHARED_TASKS:
+            spec = json.loads((BENCH / "probes" / tid / "task.json").read_text("utf-8"))
+            launch = self.descriptor(tid)
+            self.assertEqual(launch["platform"], "linux-hyprland")
+            self.assertEqual(launch["task_id"], tid)
+            self.assertEqual(launch["app_args"], spec["app_args"])
+            self.assertEqual(launch["conditions"], spec["conditions"])
+            self.assertEqual(launch["launcher"][launch["launcher"].index("--task") + 1], tid)
+        pa = self.descriptor("PA-01")
+        self.assertEqual(pa["launcher"][pa["launcher"].index("--instances") + 1], "${instances}")
+        self.assertIn("{instance}", pa["agent_command_placeholders"])
+        um = self.descriptor("UM-01")
+        self.assertEqual(um["conditions"], ["background"])
+        self.assertIn("--sentinel", um["evaluate"])
+        self.assertEqual(um["sentinel_args"][0], "--mouse-user")
+
+    def test_briefs(self) -> None:
+        um = HS.render_brief("UM-01", 123456, "background", mouse_user=True)
+        self.assertTrue(um.rstrip().endswith(v2.BACKGROUND_BRIEF_MOUSE))
+        self.assertIn("on this Linux computer", um)
+        self.assertNotIn("your Mac", um)
+
+    def test_agent_command_placeholders(self) -> None:
+        subs = {"{brief}": "/o/desk-C/brief.md", "{out}": "/o/desk-C", "{instance}": "C",
+                "{title}": "BenchLab Desk C", "{seed}": "7", "{mode}": "desk"}  # fmt: skip
+        argv = HS.substitute(
+            ["agent", "--brief", "{brief}", "--cwd={out}", "{title}:{instance}"], subs
+        )
+        self.assertEqual(
+            argv, ["agent", "--brief", "/o/desk-C/brief.md", "--cwd=/o/desk-C", "BenchLab Desk C:C"]
+        )
+
+    def test_screen_check(self) -> None:
+        class Fake:
+            def __init__(self, monitors):
+                self.monitors = monitors
+
+            def query(self, what):
+                return self.monitors
+
+        big, small = {"width": 1920, "height": 1080}, {"width": 1280, "height": 800}
+        self.assertFalse(HS.screen_too_small(Fake([big]), *HS.PA_MIN_SCREEN))
+        self.assertTrue(HS.screen_too_small(Fake([small]), *HS.PA_MIN_SCREEN))
+        self.assertTrue(HS.screen_too_small(Fake([]), 1, 1))
+        # the foreground witness window stays clear of the grid and on the screen
+        wx, wy, ww, wh = HS.PA_WITNESS_FRAME
+        self.assertTrue(wy >= 60 + 440 + 400 and wx + ww <= 1920 and wy + wh <= 1080)
+
+    def test_trial_args(self) -> None:
+        self.assertEqual(HS.shared_desktop.instances_for({"instances": 10}, 4), 4)
+        with self.assertRaises(ValueError):
+            HS.shared_desktop.instances_for({"instances": 10}, 11)
+
+
+class MouseUserToolsTest(unittest.TestCase):
+    def test_click_tool_choice(self) -> None:
+        both = {"wlrctl", "ydotool"}
+        self.assertEqual(
+            H.click_command(lambda n: n if n in both else None),
+            ["wlrctl", "pointer", "click", "left"],
+        )
+        self.assertEqual(
+            H.click_command(lambda n: n if n == "ydotool" else None), ["ydotool", "click", "0xC0"]
+        )
+        self.assertIsNone(H.click_command(lambda n: None))
+
+    def test_cursor_commands(self) -> None:
+        classic, lua = H.cursor_commands(100.4, 200.6)
+        self.assertEqual(classic, "movecursor 100 201")
+        self.assertEqual(lua, "hl.dsp.cursor.move({ x = 100, y = 201 })")
+
+    def test_move_cursor_keeps_the_form_that_moves_the_pointer(self) -> None:
+        sent, pointer = [], [0.0, 0.0]
+
+        def dispatch(command: str) -> str:
+            sent.append(command)
+            if command.startswith("hl."):  # only the Lua form really moves the pointer here
+                pointer[:] = [50.0, 60.0]
+            return "ok"
+
+        saved = H.dispatch, H.cursor, H._cursor_form
+        H.dispatch, H.cursor, H._cursor_form = dispatch, lambda: tuple(pointer), None
+        try:
+            self.assertTrue(H.move_cursor(50, 60))
+            self.assertEqual(len(sent), 2)  # the classic form was tried first and did nothing
+            self.assertTrue(H.move_cursor(50, 60))
+            self.assertEqual(len(sent), 3)  # then only the working form
+            self.assertTrue(sent[-1].startswith("hl."))
+            pointer[:] = [0.0, 0.0]
+            H._cursor_form = None
+            H.dispatch = lambda command: "error"
+            self.assertFalse(H.move_cursor(50, 60))
+        finally:
+            H.dispatch, H.cursor, H._cursor_form = saved
 
 
 if __name__ == "__main__":

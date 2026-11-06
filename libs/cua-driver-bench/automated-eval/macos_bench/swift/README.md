@@ -16,10 +16,25 @@ Neither app is committed as a binary. Build them with:
 ## BenchSentinel
 
 ```text
-BenchSentinel --log PATH [--no-activate]
+BenchSentinel --log PATH [--no-activate] [--user-activity] [--mouse-user PATH] [--frame X,Y,W,H]
 ```
 
 One 360x140 window titled "Bench Sentinel" at the bottom-right of the primary screen, with one focused text field. It activates at launch unless `--no-activate` is given (a testing aid that the runner does not use).
+
+`--mouse-user PATH` (shared-desktop tasks, [`../SHARED-DESKTOP.md`](../SHARED-DESKTOP.md)) implies the "User activity" title and the `--frame` placement and has no typing user. The window shows an 840x360 canvas at (20, 20) of its content with eight numbered dots from the script JSON. While armed, the sentinel moves the real pointer along the script with `CGEventPost` at the HID tap, tags every event it posts with `kCGEventSourceUserData` = a fixed magic value, and logs:
+
+| `ev` | Extra fields |
+| --- | --- |
+| `mu_start` | `tagging` (the listen-only tap could be created), `tolerance_px`, `platform` |
+| `mu_error` | `why` (`cannot move the pointer`: the pointer did not reach `home` within 200 ms; nothing else runs) |
+| `mu` (check) | `i`, `want`, `got` (canvas-local), `d` (distance to the last or the second-last commanded point) |
+| `mu_click` | `n`, `dot`, `at` |
+| `mu_rx` | `dot`, `at`, `own` (button-down the canvas received) |
+| `mu_click_result` | `n`, `ok`, `why` (`landed`, `wrong_dot`, `off_target`, `lost` after 400 ms) |
+| `mu_foreign` | `kind` (`move`, `down`, `up`, `drag`, `scroll`): a pointer event without the tag, from a session-level listen-only tap |
+| `mu_stop` | on disarm |
+
+Own button-downs and button-ups are not logged as `mouseDown`/`mouseUp`; anyone else's still is. TCC needs: Accessibility (to post events) and Input Monitoring (for the tap). Without Input Monitoring `tagging` is false and no `mu_foreign` line is written.
 
 Signals, handled with `DispatchSource` on the main queue:
 
@@ -52,7 +67,8 @@ JSONL, appended, one `write(2)` per line. Every line has `ev`, `t` (epoch ms as 
 ## BenchLab
 
 ```text
-BenchLab --mode forms|table|canvas|canvasclick|hover|clipboard --seed N --state PATH --events PATH
+BenchLab --mode forms|table|canvas|canvasclick|hover|clipboard|desk --seed N --state PATH --events PATH
+         [--instance L --frame X,Y,W,H --no-activate]
 ```
 
 A 760x560 window titled "BenchLab" with its top-left at (60, 80) on the primary screen. It never calls activate itself.
@@ -72,6 +88,7 @@ Mouse events in canvas and hover mode use `{"phase": "mouseDown|mouseDragged|mou
 | `canvas` | One custom 700x420 view with three 56 px tiles and three 96 px target zones, drawn as pixels with no per-tile accessibility children. A Done button below. | `mouse`, `done_click` |
 | `canvasclick` | One custom 700x420 view with 24 numbered circles (radius 14) on a jittered 6x4 grid, again pixels only. A Done button below. A left-clicked circle turns darker and a right-clicked one gets an orange ring. | `mouse` (`mouseDown`, `mouseUp`, `rightMouseDown`, `rightMouseUp`, with `button`, `circle`, `label`), `done_click` |
 | `hover` | A toolbar strip with an "Actions" hot zone. While the pointer is in it, four buttons appear below. They are hidden (and absent from the accessibility tree) otherwise. | `mouse`, `overlay_shown`, `overlay_hidden`, `overlay_click` |
+| `desk` | Shared-desktop tasks. Needs `--instance L`; window titled "BenchLab Desk L" at `--frame` (outer, top-left coordinates; default 200,200,360,400). A heading, a Code field, 12 Shelf radio buttons (3 columns, Amber to Lumen, none selected), a Submit button that is not the default, and a status line. State adds `instance`, `code`, `shelf`, `submit_count`, `submitted`. Nothing is derived from the seed. | `app_start` (with `instance`), `field_edit`, `shelf_select`, `submit` |
 | `clipboard` | A Result field, Save and status. The agent computes `A x B + C` in Calculator. | `field_edit`, `save` |
 
 Hover behavior: the overlay shows on `mouseEntered` or `mouseMoved` in the hot zone and hides 400 ms after the pointer has left both the hot zone and the overlay. Each click records whether the overlay was visible.

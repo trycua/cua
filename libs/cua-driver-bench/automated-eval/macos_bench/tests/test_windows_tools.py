@@ -14,6 +14,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 HERE = Path(__file__).resolve().parent
 BENCH = HERE.parent
@@ -21,13 +22,17 @@ sys.path.insert(0, str(BENCH))
 sys.path.insert(0, str(BENCH / "windows"))
 sys.path.insert(0, str(BENCH / "launch"))
 sys.path.insert(0, str(BENCH / "swift"))
+sys.path.insert(0, str(BENCH / "probes" / "_common"))
 import bench_v2 as v2  # noqa: E402
+import benchlab_common as C  # noqa: E402
 import guard as G  # noqa: E402
+import shared_desktop  # noqa: E402
 import summarize_sentinel  # noqa: E402
 import windows_session as WS  # noqa: E402
 
 BENCHLAB_TASKS = ("MB-09", "MB-10", "MB-11", "IR-01", "IR-02", "IR-03", "IR-04")
 CDB_TASKS = ("CDB-G02", "CDB-G03", "CDB-G04")
+SHARED_DESKTOP_TASKS = ("PA-01", "UM-01")
 
 
 def _emitted(path: Path) -> set[str]:
@@ -78,7 +83,160 @@ class ParityTest(unittest.TestCase):
             self.assertEqual(launch["app_args"], spec["app_args"], tid)
             self.assertEqual(launch["conditions"], manifest[tid]["conditions"], tid)
             self.assertIn("windows", manifest[tid]["os"])
-        self.assertEqual(set(WS.TASKS), set(BENCHLAB_TASKS) | set(CDB_TASKS))
+        self.assertEqual(
+            set(WS.TASKS), set(BENCHLAB_TASKS) | set(CDB_TASKS) | set(SHARED_DESKTOP_TASKS)
+        )
+
+
+def _named(name: str) -> Path:
+    return Path(f"{name}.exe")
+
+
+class SharedDesktopLaunchTest(unittest.TestCase):
+    """PA-01 and UM-01 on Windows: descriptors, argument assembly and the plan of a parallel trial."""
+
+    def test_descriptors(self) -> None:
+        for tid in SHARED_DESKTOP_TASKS:
+            spec = json.loads((BENCH / "probes" / tid / "task.json").read_text("utf-8"))
+            launch = json.loads((BENCH / "probes" / tid / "launch.windows.json").read_text("utf-8"))
+            self.assertEqual(launch["platform"], "windows")
+            self.assertEqual(launch["task_id"], tid)
+            self.assertEqual(launch["app_args"], spec["app_args"], tid)
+            self.assertEqual(launch["conditions"], spec["conditions"], tid)
+            self.assertIn(tid, launch["launcher"])
+        pa = json.loads((BENCH / "probes/PA-01/launch.windows.json").read_text("utf-8"))
+        self.assertEqual(pa["launcher"][pa["launcher"].index("--instances") + 1], "${instances}")
+        self.assertIn("{instance}", pa["agent_command_placeholders"])
+        self.assertIn("{title}", pa["agent_command_placeholders"])
+        um = json.loads((BENCH / "probes/UM-01/launch.windows.json").read_text("utf-8"))
+        self.assertEqual(um["conditions"], ["background"])
+        self.assertIn("--sentinel", um["evaluate"])
+
+    def test_agent_command_fill(self) -> None:
+        subs = {"{brief}": "B.md", "{out}": "O", "{seed}": "7", "{mode}": "desk", "{instance}": "C",
+                "{title}": "BenchLab Desk C"}  # fmt: skip
+        argv = WS.fill(["agent", "--brief", "{brief}", "--cwd={out}", "{instance}:{title}"], subs)
+        self.assertEqual(argv, ["agent", "--brief", "B.md", "--cwd=O", "C:BenchLab Desk C"])
+
+    def test_parallel_plan_and_benchlab_arguments(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(WS, "named_python", _named):
+            plan = WS.pa_plan(11, 4, Path(tmp))
+            self.assertEqual([e["cell"] for e in plan], [0, 1, 2, 3])
+            self.assertEqual(len({e["label"] for e in plan}), 4)
+            for entry in plan:
+                argv = WS.desk_argv(entry["app_args"], background=True)
+                self.assertEqual(argv[0], "BenchLab.exe")
+                self.assertEqual(argv[argv.index("--mode") + 1], "desk")
+                self.assertEqual(argv[argv.index("--instance") + 1], entry["label"])
+                self.assertEqual(
+                    argv[argv.index("--frame") + 1], ",".join(map(str, entry["frame"]))
+                )
+                self.assertEqual(Path(argv[argv.index("--state") + 1]).parent, entry["dir"])
+                self.assertIn("--no-activate", argv)
+                self.assertNotIn("--no-activate", WS.desk_argv(entry["app_args"], background=False))
+                self.assertIn(entry["title"], entry["brief"])
+                self.assertIn("on this Windows PC", entry["brief"])
+                self.assertNotIn("your Mac", entry["brief"])
+            # cell k is the same for every N (N = 1 pairs with N = 10 by seed)
+            solo = WS.pa_plan(11, 1, Path(tmp))[0]
+            self.assertEqual((solo["label"], solo["frame"]), (plan[0]["label"], plan[0]["frame"]))
+
+    def test_instances_default_and_limits(self) -> None:
+        spec = WS.task_spec("PA-01")
+        self.assertEqual(shared_desktop.instances_for(spec), spec["instances"])
+        self.assertEqual(shared_desktop.instances_for(spec, 4), 4)
+        with self.assertRaises(ValueError):
+            shared_desktop.instances_for(spec, 11)
+
+    def test_mouse_user_arguments(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(WS, "named_python", _named):
+            tmp_path = Path(tmp)
+            desk = WS.desk_argv(
+                WS.um_desk_args(5, tmp_path / "s.json", tmp_path / "e.jsonl"), background=True
+            )
+            cell = C.derive_um_desk(5)
+            self.assertEqual(desk[desk.index("--instance") + 1], cell["label"])
+            self.assertEqual(desk[desk.index("--frame") + 1], ",".join(map(str, C.UM_DESK_FRAME)))
+            script = tmp_path / "mouse-user.json"
+            shared_desktop.write_mouse_script(5, script)
+            sentinel = WS.sentinel_argv(
+                tmp_path / "l.jsonl",
+                tmp_path / "c",
+                v2.USER_WINDOW_FRAME,
+                user_activity=False,
+                mouse_script=script,
+            )
+            self.assertEqual(sentinel[sentinel.index("--mouse-user") + 1], str(script))
+            self.assertNotIn("--user-activity", sentinel)
+            self.assertEqual(
+                sentinel[sentinel.index("--frame") + 1], ",".join(map(str, v2.USER_WINDOW_FRAME))
+            )
+            typing = WS.sentinel_argv(
+                tmp_path / "l", tmp_path / "c", v2.USER_WINDOW_FRAME, user_activity=True
+            )
+            self.assertIn("--user-activity", typing)
+            self.assertNotIn("--mouse-user", typing)
+        self.assertIn(
+            "moving the pointer and clicking", v2.brief_for("x", "background", mouse_user=True)
+        )
+
+    def test_ports_declare_the_desk_options(self) -> None:
+        lab = (BENCH / "windows/benchlab.py").read_text("utf-8")
+        self.assertIn('"desk"', lab)
+        self.assertIn("--instance", lab)
+        sentinel = (BENCH / "windows/sentinel.py").read_text("utf-8")
+        self.assertIn("--mouse-user", sentinel)
+        for name in (
+            "mu_start",
+            "mu_click",
+            "mu_rx",
+            "mu_click_result",
+            "mu_foreign",
+            "mu_stop",
+            "mu_error",
+        ):
+            self.assertIn(
+                f'"{name}"', sentinel + (BENCH / "windows/winenv.py").read_text("utf-8"), name
+            )
+
+    def test_the_sentinel_mouse_log_shape_is_summarised(self) -> None:
+        """Lines in the shape windows/sentinel.py writes read back as a clean (and a disturbed) mouse user."""
+
+        def log(path: Path, displaced: bool, foreign: bool) -> None:
+            lines = [{"t": 0, "ev": "ready", "hwnd": 1}, {"t": 1, "ev": "armed"},
+                     {"t": 2, "ev": "mu_start", "tagging": True, "tolerance_px": 3, "platform": "windows"}]  # fmt: skip
+            for i in range(60):
+                d = 40.0 if displaced and i == 30 else 0.0
+                lines.append(
+                    {"t": 3 + i, "ev": "mu", "i": i, "want": [10, 10], "got": [10, 10], "d": d}
+                )
+            for n in range(1, 7):
+                lines += [
+                    {"t": 70 + n, "ev": "mu_click", "n": n, "dot": 1, "at": [100, 100]},
+                    {"t": 70 + n, "ev": "mu_rx", "dot": 1, "at": [100, 100], "own": True},
+                    {"t": 70 + n, "ev": "mu_click_result", "n": n, "ok": True, "why": "landed"},
+                ]
+            if foreign:
+                lines.append({"t": 80, "ev": "mu_foreign", "kind": "move"})
+            lines += [{"t": 90, "ev": "mu_stop"}, {"t": 91, "ev": "disarmed"}]
+            path.write_text("\n".join(json.dumps(x) for x in lines) + "\n", "utf-8")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            clean = Path(tmp) / "clean.jsonl"
+            log(clean, False, False)
+            mu = summarize_sentinel.summarize(str(clean))["mouse_user"]
+            self.assertTrue(mu["tagging"])
+            self.assertEqual(
+                (mu["clicks"], mu["clicks_landed"], mu["foreign_pointer_events"]), (6, 6, 0)
+            )
+            self.assertEqual(mu["max_displacement_px"], 0.0)
+            self.assertIsNone(v2.mouse_user_problem({"mouse_user": mu}))
+            bad = Path(tmp) / "bad.jsonl"
+            log(bad, True, True)
+            mu = summarize_sentinel.summarize(str(bad))["mouse_user"]
+            self.assertGreater(mu["max_displacement_px"], 3)
+            self.assertEqual(mu["foreign_pointer_events"], 1)
+            self.assertFalse(v2.mouse_user_held(mu)[0])
 
 
 class BriefTest(unittest.TestCase):

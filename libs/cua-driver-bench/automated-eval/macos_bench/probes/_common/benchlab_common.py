@@ -459,6 +459,287 @@ def _head(seed: int, n: int) -> list[int]:
     return [r.next() for _ in range(n)]
 
 
+# ------------------------------------------- shared-desktop tasks (PA-01, UM-01)
+# See SHARED-DESKTOP.md. The BenchLab `desk` mode shows a label, a Code field, twelve Shelf radio buttons in a
+# fixed order and a Submit button; it derives nothing from the seed, so the expected values below live only in
+# the brief and the checker. The mouse user's script is computed here and handed to every platform's sentinel as
+# JSON (`--mouse-user PATH`), so no platform reimplements this PRNG.
+
+DESK_LABELS = "ABCDEFGHIJ"  # at most ten instances; no label is a prefix of another
+DESK_SHELVES = [
+    "Amber", "Birch", "Coral", "Dune", "Ember", "Fern",
+    "Glacier", "Heath", "Iris", "Jade", "Kelp", "Lumen",
+]  # fmt: skip
+# 24 letters (no I or O). Every instance's code gets two of them and no two instances share one, so a code
+# letter seen in another instance's Code field is attributable to the agent that owns it.
+DESK_CODE_LETTERS = "ABCDEFGHJKLMNPQRSTUVWXYZ"
+PA_SALT = 0x5A015A015A015A01
+UM_SALT = 0x5A025A025A025A02
+PA_MAX_INSTANCES = 10
+PA_DEFAULT_INSTANCES = 10
+PA_INSTANCE_VARIANTS = (1, 4, 10)
+PA_GRID_COLS, PA_GRID_ROWS = 5, 2
+PA_ORIGIN = (20, 60)  # top-left of cell 0, top-left screen coordinates
+PA_PITCH = (380, 440)
+DESK_SIZE = (360, 400)  # outer window size
+UM_DESK_FRAME = (200, 200, 360, 400)  # partly under the user window (420, 340, 900, 520)
+
+
+def pa_cell_frame(cell: int) -> tuple[int, int, int, int]:
+    """Outer frame (x, y, w, h) of grid cell `cell` (reading order, 5 columns by 2 rows)."""
+    if not 0 <= cell < PA_GRID_COLS * PA_GRID_ROWS:
+        raise ValueError(f"cell {cell} outside the {PA_GRID_COLS}x{PA_GRID_ROWS} grid")
+    col, row = cell % PA_GRID_COLS, cell // PA_GRID_COLS
+    return (PA_ORIGIN[0] + col * PA_PITCH[0], PA_ORIGIN[1] + row * PA_PITCH[1], *DESK_SIZE)
+
+
+def desk_title(label: str) -> str:
+    return f"BenchLab Desk {label}"
+
+
+def _desk_cells(r: SplitMix64, count: int) -> list[dict[str, Any]]:
+    labels = r.shuffled(list(DESK_LABELS))[:count]
+    shelves = r.shuffled(DESK_SHELVES)[:count]
+    letters = r.shuffled(list(DESK_CODE_LETTERS))
+    cells = []
+    for cell in range(count):
+        code = f"{letters[2 * cell]}{letters[2 * cell + 1]}-{r.randint(1000, 9999)}"
+        cells.append(
+            {
+                "cell": cell,
+                "label": labels[cell],
+                "title": desk_title(labels[cell]),
+                "code": code,
+                "letters": code[:2],
+                "shelf": shelves[cell],
+            }
+        )
+    return cells
+
+
+def derive_parallel(seed: int, instances: int = PA_DEFAULT_INSTANCES) -> dict[str, Any]:
+    """PA-01: the instances of a trial. Cells are filled in reading order; the label, code and shelf of each
+    cell come from the seed and do not depend on `instances` (cell k is the same for N = 1, 4 and 10)."""
+    if not 1 <= instances <= PA_MAX_INSTANCES:
+        raise ValueError(f"instances must be 1..{PA_MAX_INSTANCES}, got {instances}")
+    cells = _desk_cells(SplitMix64(seed ^ PA_SALT), PA_MAX_INSTANCES)[:instances]
+    for c in cells:
+        col, row = c["cell"] % PA_GRID_COLS, c["cell"] // PA_GRID_COLS
+        c["frame"] = list(pa_cell_frame(c["cell"]))
+        c["row"], c["col"] = row + 1, col + 1
+        c["position"] = f"row {row + 1}, column {col + 1}"
+    return {"instances": instances, "cells": cells}
+
+
+def derive_um_desk(seed: int) -> dict[str, Any]:
+    """UM-01: the one BenchLab desk the agent works in while the mouse user is active."""
+    cell = _desk_cells(SplitMix64(seed ^ UM_SALT), 1)[0]
+    cell["frame"] = list(UM_DESK_FRAME)
+    return cell
+
+
+def desk_app_args(cell: dict[str, Any]) -> list[str]:
+    """BenchLab arguments after `--mode desk --seed S --state P --events E` for one desk."""
+    return ["--instance", cell["label"], "--frame", ",".join(str(v) for v in cell["frame"])]
+
+
+def check_desk(
+    cell: dict[str, Any],
+    others: list[dict[str, Any]],
+    state: dict[str, Any],
+    events: list[dict[str, Any]],
+    checks: Checks,
+    deadline_ms: float | None = None,
+) -> dict[str, Any]:
+    """The checks of one desk. `others` are the other active instances (their codes and shelves are foreign
+    here). Returns the cross-talk evidence found in this desk's log."""
+    code, shelf = cell["code"], cell["shelf"]
+    checks.add(
+        "instance_matches",
+        state.get("instance") == cell["label"]
+        and _first_details(events).get("instance") == cell["label"],
+        0.05,
+        f"state instance {state.get('instance')!r}, expected {cell['label']!r}",
+    )
+    final_code = state.get("code")
+    checks.add(
+        "code_correct",
+        isinstance(final_code, str) and final_code.strip() == code,
+        0.25,
+        f"Code field {final_code!r}, expected {code!r}",
+    )
+    checks.add(
+        "shelf_correct",
+        state.get("shelf") == shelf,
+        0.2,
+        f"shelf {state.get('shelf')!r}, expected {shelf!r}",
+    )
+    submits = events_of(events, "submit")
+    checks.add(
+        "submitted_once",
+        len(submits) == 1 and state.get("submit_count") == 1,
+        0.15,
+        f"{len(submits)} submit event(s), state submit_count {state.get('submit_count')!r}",
+    )
+    last = details(submits[-1]) if submits else {}
+    submit_code = last.get("code")
+    checks.add(
+        "submit_values",
+        bool(submits)
+        and isinstance(submit_code, str)
+        and submit_code.strip() == code
+        and last.get("shelf") == shelf,
+        0.2,
+        f"submitted code {submit_code!r} and shelf {last.get('shelf')!r}",
+    )
+    foreign_letters = {ch: o["label"] for o in others for ch in o["letters"]}
+    foreign_codes = {o["code"]: o["label"] for o in others}
+    foreign_shelves = {o["shelf"]: o["label"] for o in others}
+    evidence: list[dict[str, Any]] = []
+    for e in events:
+        d = details(e)
+        values: list[str] = []
+        if e.get("type") == "field_edit" and isinstance(d.get("value"), str):
+            values.append(d["value"])
+        if e.get("type") == "submit" and isinstance(d.get("code"), str):
+            values.append(d["code"])
+        for value in values:
+            upper = value.upper()
+            owners = sorted({lab for c, lab in foreign_codes.items() if c in upper})
+            owners += sorted(
+                {
+                    lab
+                    for ch, lab in foreign_letters.items()
+                    if ch in upper and ch not in cell["letters"]
+                }
+                - set(owners)
+            )
+            if owners:
+                evidence.append(
+                    {"seq": e.get("seq"), "type": e.get("type"), "value": value, "from": owners}
+                )
+    checks.add(
+        "no_foreign_input",
+        not evidence,
+        0.1,
+        "no text of another instance's code reached this desk"
+        if not evidence
+        else f"{len(evidence)} edit(s) carry another instance's code letters: {evidence[:3]}",
+    )
+    if deadline_ms is not None:
+        late = [s for s in submits if not is_num(s.get("t")) or s["t"] > deadline_ms]
+        checks.add(
+            "in_budget",
+            bool(submits) and not late,
+            0.05,
+            f"{len(late)} submit(s) after the wall-clock budget"
+            if late
+            else "submitted within the budget",
+        )
+    shelf_picks = [details(e).get("shelf") for e in events_of(events, "shelf_select")]
+    foreign_picks = [
+        {"shelf": s, "target_of": foreign_shelves[s]} for s in shelf_picks if s in foreign_shelves
+    ]
+    checks.diag("shelf_selections", len(shelf_picks))
+    checks.diag(
+        "foreign_shelf_selections",
+        len(foreign_picks),
+        "selections of another instance's target shelf (suspected cross-talk; not attributable)",
+    )
+    return {"foreign_input": evidence, "foreign_shelf_selections": foreign_picks}
+
+
+def _first_details(events: list[dict[str, Any]]) -> dict[str, Any]:
+    return details(events[0]) if events else {}
+
+
+MU_SALT = 0x6D756D756D756D75
+MU_CANVAS = (840, 360)  # canvas-local coordinates, origin top-left
+MU_DOTS = 8
+MU_DOT_RADIUS = 18
+MU_SEQUENCE = 24
+MU_MIN_SPACING = 110
+
+
+def derive_mouse_user(seed: int) -> dict[str, Any]:
+    """UM-01: the simulated user's pointer script (see SHARED-DESKTOP.md, "Mouse user script").
+
+    Canvas-local coordinates (origin top-left of the user window's drawing area, MU_CANVAS in size). The user
+    starts at `home`, then visits `sequence[j % len(sequence)]` for leg j = 0, 1, ... until disarmed: it moves
+    in `mouse_leg` steps of `step_px` every `step_ms`, waits `dwell_before_ms`, presses the left button for
+    `press_ms` at the dot centre, then waits `dwell_after_ms`."""
+    r = SplitMix64(seed ^ MU_SALT)
+    w, h = MU_CANVAS
+    dots: list[dict[str, int]] = []
+    tries = 0
+    while len(dots) < MU_DOTS:
+        tries += 1
+        if tries > 10_000:  # pragma: no cover - the canvas fits 8 dots easily
+            raise RuntimeError("could not place the mouse-user dots")
+        x = r.randint(48, w - 48)
+        y = r.randint(48, h - 48)
+        if all((x - d["x"]) ** 2 + (y - d["y"]) ** 2 >= MU_MIN_SPACING**2 for d in dots):
+            dots.append({"index": len(dots), "x": x, "y": y})
+    sequence: list[int] = []
+    prev = -1
+    for _ in range(MU_SEQUENCE):
+        d = r.index(MU_DOTS)
+        while d == prev:
+            d = r.index(MU_DOTS)
+        sequence.append(d)
+        prev = d
+    return {
+        "schema": "cdb-mouse-user/1",
+        "seed": seed,
+        "canvas": [w, h],
+        "home": [w // 2, h // 2],
+        "dots": dots,
+        "radius": MU_DOT_RADIUS,
+        "sequence": sequence,
+        "step_ms": 25,
+        "step_px": 9,
+        "dwell_before_ms": 150,
+        "press_ms": 60,
+        "dwell_after_ms": 250,
+        "tolerance_px": 3,
+        "click_timeout_ms": 400,
+    }
+
+
+def mouse_leg(
+    p: tuple[float, float], q: tuple[float, float], step_px: float
+) -> list[tuple[int, int]]:
+    """The points of one leg from p to q, excluding p and ending exactly at q: n = max(1, ceil(|q - p| / step_px)),
+    point k = floor(p + (q - p) * k / n + 0.5) for k = 1..n. Every platform's sentinel uses this formula."""
+    import math
+
+    dist = math.hypot(q[0] - p[0], q[1] - p[1])
+    n = max(1, math.ceil(dist / step_px))
+    return [
+        (
+            math.floor(p[0] + (q[0] - p[0]) * k / n + 0.5),
+            math.floor(p[1] + (q[1] - p[1]) * k / n + 0.5),
+        )
+        for k in range(1, n + 1)
+    ]
+
+
+def dot_at(script: dict[str, Any], x: float, y: float) -> int | None:
+    """Index of the dot whose disc contains canvas point (x, y), else None."""
+    r2 = script["radius"] ** 2
+    for d in script["dots"]:
+        if (x - d["x"]) ** 2 + (y - d["y"]) ** 2 <= r2:
+            return int(d["index"])
+    return None
+
+
+def write_mouse_script(seed: int, path: str | os.PathLike[str]) -> dict[str, Any]:
+    script = derive_mouse_user(seed)
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    Path(path).write_text(json.dumps(script, indent=1) + "\n", "utf-8")
+    return script
+
+
 # ------------------------------------------------------------------ brief render
 
 
@@ -698,6 +979,11 @@ def run_cli(
         if args.sentinel:
             extra["sentinel"] = load_sentinel(args.sentinel)
         result = evaluate_inputs(mode, args.seed, state, events, bad, evaluate, extra=extra)
+        harness = (result.get("diagnostics") or {}).get("harness_error")
+        if (
+            harness
+        ):  # the harness, not the agent, failed (e.g. a user simulator that never ran): re-run
+            result["harness_error"] = harness.get("value")
     except LoadError as error:
         result = failed_result("inputs_loadable", str(error))
     except Exception as error:  # noqa: BLE001

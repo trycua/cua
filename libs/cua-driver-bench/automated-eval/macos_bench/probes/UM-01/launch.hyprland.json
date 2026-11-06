@@ -1,0 +1,56 @@
+{
+  "platform": "linux-hyprland",
+  "descriptor_version": "1",
+  "task_id": "UM-01",
+  "app": "linux/benchlab.py",
+  "app_args": [
+    "--mode",
+    "desk"
+  ],
+  "app_executable": "python3 linux/benchlab.py --mode desk (GTK3, native Wayland; process name and app id BenchLab)",
+  "sentinel": "hyprland/sentinel.py",
+  "launcher": [
+    "${python}",
+    "launch/hyprland_session.py",
+    "--task",
+    "UM-01",
+    "--run-index",
+    "${run_index}",
+    "--condition",
+    "${condition}",
+    "--out",
+    "${artifacts}",
+    "--",
+    "${agent_command}"
+  ],
+  "conditions": [
+    "background"
+  ],
+  "evaluate": [
+    "${python}",
+    "probes/UM-01/evaluate.py",
+    "--seed",
+    "${seed}",
+    "--state",
+    "${artifacts}/state.json",
+    "--events",
+    "${artifacts}/events.jsonl",
+    "--sentinel",
+    "${artifacts}/sentinel.jsonl",
+    "--result",
+    "${result}"
+  ],
+  "requires": [
+    "Python 3.11 or later with PyGObject, GTK 3 and AT-SPI",
+    "Hyprland 0.55 or later with a Lua config, hyprland/bench.lua loaded (1920x1080)",
+    "wl-clipboard",
+    "the desktop user's Hyprland session environment",
+    "wlrctl (virtual-pointer protocol) or ydotool with ydotoold running, for the mouse user's clicks; without either UM-01 is a harness error",
+    "a screen of at least 1320x860 (the user window and its canvas)"
+  ],
+  "mouse_user": true,
+  "sentinel_args": [
+    "--mouse-user",
+    "${artifacts}/mouse-user.json"
+  ]
+}

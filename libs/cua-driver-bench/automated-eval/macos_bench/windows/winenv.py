@@ -11,7 +11,9 @@ starts with BenchLab, so a BenchLab started from python.exe still reads as Bench
 from __future__ import annotations
 
 import ctypes
+import math
 import os
+import time
 from ctypes import wintypes
 
 user32 = ctypes.WinDLL("user32", use_last_error=True)
@@ -291,3 +293,158 @@ def session_of(pid: int) -> int | None:
     if not kernel32.ProcessIdToSessionId(pid, ctypes.byref(out)):
         return None
     return int(out.value)
+
+
+# ----------------------------------------------------------------------------- pointer input (UM-01)
+
+# dwExtraInfo of every event the sentinel's mouse user posts, so its low-level hook can tell them from anyone
+# else's ("CDBU").
+MAGIC = 0x43444255
+INPUT_MOUSE = 0
+MOUSEEVENTF_MOVE, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP = 0x1, 0x2, 0x4
+MOUSEEVENTF_VIRTUALDESK, MOUSEEVENTF_ABSOLUTE = 0x4000, 0x8000
+SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN = 76, 77, 78, 79
+WH_MOUSE_LL = 14
+WM_MOUSEMOVE, WM_LBUTTONDOWN, WM_LBUTTONUP = 0x200, 0x201, 0x202
+WM_RBUTTONDOWN, WM_RBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP = 0x204, 0x205, 0x207, 0x208
+WM_MOUSEWHEEL, WM_MOUSEHWHEEL = 0x20A, 0x20E
+_DOWNS = (WM_LBUTTONDOWN, WM_RBUTTONDOWN, WM_MBUTTONDOWN)
+_UPS = (WM_LBUTTONUP, WM_RBUTTONUP, WM_MBUTTONUP)
+
+
+class _MOUSEINPUT(ctypes.Structure):
+    _fields_ = [
+        ("dx", wintypes.LONG), ("dy", wintypes.LONG), ("mouseData", wintypes.DWORD),
+        ("dwFlags", wintypes.DWORD), ("time", wintypes.DWORD), ("dwExtraInfo", ctypes.c_size_t),
+    ]  # fmt: skip
+
+
+class _KEYBDINPUT(ctypes.Structure):
+    _fields_ = [
+        ("wVk", wintypes.WORD), ("wScan", wintypes.WORD), ("dwFlags", wintypes.DWORD),
+        ("time", wintypes.DWORD), ("dwExtraInfo", ctypes.c_size_t),
+    ]  # fmt: skip
+
+
+class _HARDWAREINPUT(ctypes.Structure):
+    _fields_ = [("uMsg", wintypes.DWORD), ("wParamL", wintypes.WORD), ("wParamH", wintypes.WORD)]
+
+
+class _INPUTUNION(ctypes.Union):
+    _fields_ = [("mi", _MOUSEINPUT), ("ki", _KEYBDINPUT), ("hi", _HARDWAREINPUT)]
+
+
+class _INPUT(ctypes.Structure):
+    _anonymous_ = ("u",)
+    _fields_ = [("type", wintypes.DWORD), ("u", _INPUTUNION)]
+
+
+class _MSLLHOOKSTRUCT(ctypes.Structure):
+    _fields_ = [
+        ("pt", wintypes.POINT), ("mouseData", wintypes.DWORD), ("flags", wintypes.DWORD),
+        ("time", wintypes.DWORD), ("dwExtraInfo", ctypes.c_size_t),
+    ]  # fmt: skip
+
+
+HOOKPROC = ctypes.WINFUNCTYPE(ctypes.c_ssize_t, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM)
+user32.SendInput.argtypes = [wintypes.UINT, ctypes.POINTER(_INPUT), ctypes.c_int]
+user32.SendInput.restype = wintypes.UINT
+user32.GetSystemMetrics.argtypes = [ctypes.c_int]
+user32.ClientToScreen.argtypes = [HWND, ctypes.POINTER(wintypes.POINT)]
+user32.SetWindowsHookExW.argtypes = [ctypes.c_int, HOOKPROC, wintypes.HINSTANCE, wintypes.DWORD]
+user32.SetWindowsHookExW.restype = ctypes.c_void_p
+user32.CallNextHookEx.argtypes = [ctypes.c_void_p, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM]
+user32.CallNextHookEx.restype = ctypes.c_ssize_t
+user32.UnhookWindowsHookEx.argtypes = [ctypes.c_void_p]
+kernel32.GetModuleHandleW.argtypes = [wintypes.LPCWSTR]
+kernel32.GetModuleHandleW.restype = wintypes.HMODULE
+
+
+def virtual_screen() -> tuple[int, int, int, int]:
+    """(left, top, width, height) of the virtual screen, physical pixels."""
+    g = user32.GetSystemMetrics
+    return g(SM_XVIRTUALSCREEN), g(SM_YVIRTUALSCREEN), g(SM_CXVIRTUALSCREEN), g(SM_CYVIRTUALSCREEN)
+
+
+def _normalized(value: int, origin: int, extent: int) -> int:
+    """The 0..65535 coordinate that Windows maps back to exactly pixel `value` (it truncates norm * extent / 65536)."""
+    pixel = min(max(value - origin, 0), extent - 1)
+    return min((pixel * 65536 + extent - 1) // extent, 65535)
+
+
+def send_mouse(x: int, y: int, buttons: int = 0, extra: int = MAGIC) -> bool:
+    """One SendInput mouse event at screen pixel (x, y): an absolute move over the virtual screen, with the
+    button flags in `buttons`, tagged with `extra` in dwExtraInfo."""
+    left, top, width, height = virtual_screen()
+    flags = MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK | buttons
+    event = _INPUT(type=INPUT_MOUSE)
+    event.mi = _MOUSEINPUT(
+        _normalized(x, left, width), _normalized(y, top, height), 0, flags, 0, extra
+    )
+    return user32.SendInput(1, ctypes.byref(event), ctypes.sizeof(_INPUT)) == 1
+
+
+def client_origin(hwnd: int) -> tuple[int, int]:
+    """Screen position of a window's client-area origin, physical pixels."""
+    p = wintypes.POINT(0, 0)
+    user32.ClientToScreen(hwnd, ctypes.byref(p))
+    return p.x, p.y
+
+
+class MouseHook:
+    """A WH_MOUSE_LL hook on the calling (GUI) thread. While `enabled`, events whose dwExtraInfo is not `magic`
+    (the user's, or any other program's, injected or not) are queued in `foreign` as (ms since the epoch,
+    kind), kind being move, drag, down, up or scroll (moves at most one per 20 ms); this process's own
+    button-downs are queued in `own_downs` (monotonic seconds). The callback does nothing else and always
+    calls the next hook, and the owner drains the queues from its own timer."""
+
+    def __init__(self, magic: int = MAGIC) -> None:
+        self.magic = magic
+        self.enabled = False
+        self.foreign: list[tuple[float, str]] = []
+        self.own_downs: list[float] = []
+        self._held = 0
+        self._last_move = 0.0
+        self._proc = HOOKPROC(self._call)  # kept alive for as long as the hook
+        handle = user32.SetWindowsHookExW(
+            WH_MOUSE_LL, self._proc, kernel32.GetModuleHandleW(None), 0
+        )
+        self.handle = handle or None
+
+    def reset(self) -> None:
+        self.foreign.clear()
+        self.own_downs.clear()
+        self._held = 0
+
+    def _call(self, code: int, wparam: int, lparam: int) -> int:
+        if code >= 0 and self.enabled:
+            try:
+                info = ctypes.cast(lparam, ctypes.POINTER(_MSLLHOOKSTRUCT)).contents
+                now = time.monotonic()
+                if info.dwExtraInfo == self.magic:
+                    if wparam == WM_LBUTTONDOWN:
+                        self.own_downs.append(now)
+                elif wparam == WM_MOUSEMOVE:
+                    if now - self._last_move >= 0.02:
+                        self._last_move = now
+                        self.foreign.append((time.time() * 1000, "drag" if self._held else "move"))
+                elif wparam in _DOWNS:
+                    self._held += 1
+                    self.foreign.append((time.time() * 1000, "down"))
+                elif wparam in _UPS:
+                    self._held = max(0, self._held - 1)
+                    self.foreign.append((time.time() * 1000, "up"))
+                elif wparam in (WM_MOUSEWHEEL, WM_MOUSEHWHEEL):
+                    self.foreign.append((time.time() * 1000, "scroll"))
+            except Exception:  # noqa: BLE001 - a hook must never raise
+                pass
+        return user32.CallNextHookEx(None, code, wparam, lparam)
+
+    def close(self) -> None:
+        if self.handle:
+            user32.UnhookWindowsHookEx(self.handle)
+            self.handle = None
+
+
+def distance(a: tuple[float, float], b: tuple[float, float]) -> float:
+    return math.hypot(a[0] - b[0], a[1] - b[1])

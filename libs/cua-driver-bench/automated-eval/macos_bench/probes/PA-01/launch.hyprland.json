@@ -1,0 +1,57 @@
+{
+  "platform": "linux-hyprland",
+  "descriptor_version": "1",
+  "task_id": "PA-01",
+  "app": "linux/benchlab.py",
+  "app_args": [
+    "--mode",
+    "desk"
+  ],
+  "app_executable": "python3 linux/benchlab.py --mode desk (GTK3, native Wayland; process name and app id BenchLab), one copy per instance, titled BenchLab Desk L",
+  "sentinel": "hyprland/sentinel.py",
+  "launcher": [
+    "${python}",
+    "launch/hyprland_session.py",
+    "--task",
+    "PA-01",
+    "--run-index",
+    "${run_index}",
+    "--condition",
+    "${condition}",
+    "--instances",
+    "${instances}",
+    "--out",
+    "${artifacts}",
+    "--",
+    "${agent_command}"
+  ],
+  "conditions": [
+    "foreground",
+    "background"
+  ],
+  "evaluate": [
+    "${python}",
+    "probes/PA-01/evaluate.py",
+    "--seed",
+    "${seed}",
+    "--dir",
+    "${artifacts}",
+    "--result",
+    "${result}"
+  ],
+  "requires": [
+    "Python 3.11 or later with PyGObject, GTK 3 and AT-SPI",
+    "Hyprland 0.55 or later with a Lua config, hyprland/bench.lua loaded (screen of at least 1920x1000 for the 5x2 grid)",
+    "wl-clipboard",
+    "the desktop user's Hyprland session environment"
+  ],
+  "agent_command_placeholders": {
+    "{brief}": "that agent's brief file",
+    "{out}": "that agent's directory (desk-L)",
+    "{seed}": "trial seed",
+    "{mode}": "desk",
+    "{instance}": "the copy's label (A..J)",
+    "{title}": "the copy's window title, BenchLab Desk L"
+  },
+  "parallel": true
+}

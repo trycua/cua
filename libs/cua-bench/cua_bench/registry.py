@@ -223,7 +223,11 @@ def materialize(entry: DatasetEntry, root: Optional[Path] = None) -> Path:
         for task in tasks:
             link = tasks_dir / _safe(task.name)
             if not link.exists():
-                link.symlink_to(repo / task.path, target_is_directory=True)
+                if link.is_symlink():
+                    link.unlink()
+                link.symlink_to(
+                    os.path.relpath(repo / task.path, tasks_dir), target_is_directory=True
+                )
     return tasks_dir
 
 

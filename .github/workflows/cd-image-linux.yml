@@ -91,7 +91,6 @@ on:
       - "libs/cua/crates/cua-vmm/src/density.rs"
       - "libs/cua/crates/cua-vmm/src/qemu/**"
       - ".github/workflows/cd-image-linux.yml"
-      - ".github/workflows/image-doctor.yml"
   workflow_dispatch:
     inputs:
       publish:

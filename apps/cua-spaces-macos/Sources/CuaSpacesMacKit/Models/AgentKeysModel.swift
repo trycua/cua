@@ -84,7 +84,8 @@ public final class AgentKeysModel {
         }
         let unavailable = report?["available"] as? Bool == false
             ? (report?["unavailable"] as? String ?? "this machine can't keep keys") : nil
-        return AppAgentKeysInput(keys: keys.filter { !$0.env.isEmpty }, unavailable: unavailable, error: error)
+        let warning = report?["available"] as? Bool != false ? (report?["insecure"] as? String).flatMap { $0.isEmpty ? nil : $0 } : nil
+        return AppAgentKeysInput(keys: keys.filter { !$0.env.isEmpty }, unavailable: unavailable, warning: warning, error: error)
     }
 
     public var view: AppAgentKeysView { appAgentKeysView(input: input) }

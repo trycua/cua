@@ -14,6 +14,7 @@
 // Quit is this app's own item rather than the `quit` role, and the app
 // registers `ApplePersistenceIgnoreState` as the Swift app does, so macOS
 // adds no "Quit and Keep Windows" beside it (this app restores no windows).
+import { channel } from "./channel";
 import { app, Menu, shell, systemPreferences, type MenuItemConstructorOptions } from "electron";
 
 /** The docs "Cua Spaces Help" opens. */
@@ -80,5 +81,5 @@ export function menuTemplate(platform: NodeJS.Platform, actions: MenuActions, { 
 export function installMenu(actions: MenuActions): void {
   // AppKit offers "Quit and Keep Windows" to apps that restore their windows; this one doesn't.
   if (process.platform === "darwin") systemPreferences.registerDefaults({ ApplePersistenceIgnoreState: true });
-  Menu.setApplicationMenu(Menu.buildFromTemplate(menuTemplate(process.platform, actions, { dev: !app.isPackaged })));
+  Menu.setApplicationMenu(Menu.buildFromTemplate(menuTemplate(process.platform, actions, { dev: !app.isPackaged, appName: channel.appName })));
 }

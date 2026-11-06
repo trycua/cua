@@ -16,7 +16,7 @@ name: "CD: Cua Spaces build (shadow)"
 #    them absolute when it publishes) and the signing notes.
 # Not built here: Sparkle appcast (needs the published release), Sigstore
 # bundles and release-artifacts.json (made at the tag), Electron macOS (beta
-# only), dSYMs.
+# only). The macOS dSYMs go to Sentry, not into the build set.
 #
 # Trigger: push to main when a release input changes (paths below). A push
 # runs only the producer stages (the SwiftUI Rust slice and the Electron macOS
@@ -352,7 +352,7 @@ jobs:
           retention-days: 1
 
   # macOS: sign, notarize, staple; DMG and .pkg. Same steps as build-macos in
-  # cd-cua-spaces.yml (without the release upload, the appcast and the dSYMs).
+  # cd-cua-spaces.yml (without the release upload and the appcast).
   build-macos:
     name: darwin-universal (SwiftUI)
     needs: [plan, spacesd-published, macos-rust, web]
@@ -479,6 +479,19 @@ jobs:
             "${bundle[@]}" --arch universal --skip-cargo \
             --sign "$identity" --out "$RUNNER_TEMP/spaces-app" \
             --feed-url "https://github.com/$GITHUB_REPOSITORY/releases/download/cua-spaces-latest/cua-spaces-appcast.xml"
+
+      # build-release.sh strips the shipped binaries and keeps their symbols
+      # here. Nightly and beta crash reports (CUA-SPACES-DESKTOP-2, -H) were
+      # unreadable without them: Sentry matches a crash to its dSYM by build
+      # UUID, so the build that ships must be the one that uploads. Never
+      # fails the build (see the action).
+      - name: Upload the macOS dSYMs to Sentry
+        uses: ./.github/actions/sentry-upload
+        with:
+          token: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          version: ${{ env.VERSION }}
+          kind: debug-files
+          path: ${{ runner.temp }}/spaces-app/cua-spaces-*-dSYMs.zip
 
       - name: Notarize and staple the app
         if: steps.signing.outputs.apple == 'true'

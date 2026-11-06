@@ -87,6 +87,8 @@ export class FakeAgentKeysTools {
   keys: Record<string, unknown>[] = [{ provider: "openai", env: "OPENAI_API_KEY", last4: "3f9a", added_ms: 1_790_000_000_000 }];
   uses: Record<string, Record<string, unknown>> = {};
   available = true;
+  /** A Local development build keeping keys in an unencrypted file: the daemon's warning. */
+  insecure: string | null = null;
 
   run: ToolRunner = async (tool, args) => {
     this.calls.push([tool, args]);
@@ -133,6 +135,7 @@ export class FakeAgentKeysTools {
     }
     const report: Record<string, unknown> = { keys: this.keys, providers: [], available: this.available, ...(Object.keys(this.uses).length ? { uses: this.uses } : {}) };
     if (!this.available) report.unavailable = "this build keeps credentials in a file";
+    if (this.insecure) report.insecure = this.insecure;
     return report;
   };
 }

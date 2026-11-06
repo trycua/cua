@@ -166,7 +166,7 @@ jobs:
   build-sdk:
     name: build / release SDK
     needs: changes
-    if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--') && needs.changes.outputs.run != 'false') }}
+    if: ${{ !failure() && !cancelled() && needs.changes.result == 'success' && ((github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--') && needs.changes.outputs.run != 'false')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 150
     env:
@@ -208,7 +208,7 @@ jobs:
   build-cli:
     name: build / debug CLI, TypeScript, wasm
     needs: changes
-    if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--') && needs.changes.outputs.run != 'false') }}
+    if: ${{ !failure() && !cancelled() && needs.changes.result == 'success' && ((github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--') && needs.changes.outputs.run != 'false')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 150
     env:
@@ -256,7 +256,7 @@ jobs:
   build-fixtures:
     name: build / fixtures, static cua-spacesd
     needs: changes
-    if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--') && needs.changes.outputs.run != 'false') }}
+    if: ${{ !failure() && !cancelled() && needs.changes.result == 'success' && ((github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--') && needs.changes.outputs.run != 'false')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 150
     env:
@@ -309,7 +309,7 @@ jobs:
   build-rust-tests:
     name: build / Rust test binaries
     needs: changes
-    if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--') && needs.changes.outputs.run != 'false') }}
+    if: ${{ !failure() && !cancelled() && needs.changes.result == 'success' && ((github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--') && needs.changes.outputs.run != 'false')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 150
     env:
@@ -350,7 +350,7 @@ jobs:
   build-images:
     name: build / reference images
     needs: changes
-    if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--') && needs.changes.outputs.run != 'false') }}
+    if: ${{ !failure() && !cancelled() && needs.changes.result == 'success' && ((github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--') && needs.changes.outputs.run != 'false')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 120
     env:
@@ -387,7 +387,7 @@ jobs:
 
   shard:
     # The nightly runs the build jobs only to save their caches; its suite is `live`.
-    if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && github.event_name != 'schedule' }}
+    if: ${{ !failure() && !cancelled() && needs.build-sdk.result == 'success' && needs.build-cli.result == 'success' && needs.build-fixtures.result == 'success' && needs.build-rust-tests.result == 'success' && needs.build-images.result == 'success' && ((github.event_name != 'pull_request' || !github.event.pull_request.draft) && github.event_name != 'schedule') }}
     name: tests (shard ${{ matrix.shard }})
     needs: [build-sdk, build-cli, build-fixtures, build-rust-tests, build-images]
     runs-on: ubuntu-24.04

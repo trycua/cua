@@ -4,10 +4,11 @@
 /** The Cua Driver page's words. Plain words only. */
 
 import { sinceText, type DriverStatus } from "@/bridge";
+import { thisComputerText } from "@/lib/host-labels";
 
-export const DRIVER_LINE = "Lets agents see and use the apps on this Mac.";
+export const driverLine = () => `Lets agents see and use the apps on ${thisComputerText()}.`;
 
-const place = (s: DriverStatus) => (s.thisMachine ? "this Mac" : s.machineName);
+const place = (s: DriverStatus) => (s.thisMachine ? thisComputerText() : s.machineName);
 
 /** "Working on this Mac." and friends: the status in one sentence. */
 export function stateText(s: DriverStatus): string {
@@ -15,7 +16,7 @@ export function stateText(s: DriverStatus): string {
     case "ready":
       return `Working on ${place(s)}.`;
     case "paused":
-      return "Off. Agents can't use apps on this Mac.";
+      return `Off. Agents can't use apps on ${thisComputerText()}.`;
     case "needs-permission":
       return "A permission is missing. Allow it below.";
     case "starting":

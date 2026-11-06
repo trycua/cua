@@ -1334,14 +1334,50 @@ fn plan_limit(h: &reqwest::header::HeaderMap) -> Option<cua_home::plan_limit::Pl
     )
 }
 
+/// The `code` the relay sends with a refusal of a new computer that came
+/// with no proof it is the account's owner (an enrolled device, a sign-in
+/// with a second factor, or a pairing code). Mirrors the relay's
+/// `api::NEW_COMPUTER_NEEDS_PROOF`.
+pub const NEW_COMPUTER_NEEDS_PROOF: &str = "new_computer_needs_proof";
+
+/// What a relay from before the code said for [`NEW_COMPUTER_NEEDS_PROOF`].
+const NEW_COMPUTER_NEEDS_PROOF_REASON: &str =
+    "add computers from a computer you already added, or with a pairing code";
+
+/// The code a refusal carries (see [`refusal_code`]), in the error's own
+/// words: `relay: <reason> [code: <code>]`.
+const CODE_OPEN: &str = " [code: ";
+
+/// The relay's code for a refusal (HTTP 403), when it gave one: the
+/// machine-readable half of the error, which survives every layer that
+/// passes errors on as text (the SDK, the FFI, the apps' bridges).
+pub fn refusal_code(message: &str) -> Option<&str> {
+    let start = message.rfind(CODE_OPEN)? + CODE_OPEN.len();
+    let code = message[start..].strip_suffix(']')?;
+    (!code.is_empty() && code.bytes().all(|b| b.is_ascii_lowercase() || b == b'_')).then_some(code)
+}
+
 fn http_error(status: u16, body: &str) -> Error {
-    let message = serde_json::from_str::<serde_json::Value>(body)
-        .ok()
+    let json = serde_json::from_str::<serde_json::Value>(body).ok();
+    let message = json
+        .as_ref()
         .and_then(|v| v["error"].as_str().map(str::to_string))
         .unwrap_or_else(|| body.chars().take(300).collect());
+    let code = json
+        .as_ref()
+        .and_then(|v| v["code"].as_str().map(str::to_string))
+        .filter(|c| !c.is_empty() && c.bytes().all(|b| b.is_ascii_lowercase() || b == b'_'))
+        // A relay from before the code: the same refusal, by its words.
+        .or_else(|| {
+            (status == 403 && message == NEW_COMPUTER_NEEDS_PROOF_REASON)
+                .then(|| NEW_COMPUTER_NEEDS_PROOF.to_string())
+        });
     match status {
         401 => Error::Unauthenticated(format!("relay: {message}")),
-        403 => Error::PermissionDenied(format!("relay: {message}")),
+        403 => Error::PermissionDenied(match code {
+            Some(code) => format!("relay: {message}{CODE_OPEN}{code}]"),
+            None => format!("relay: {message}"),
+        }),
         404 => Error::NotFound(format!("relay: {message}")),
         409 => Error::Conflict(format!("relay: {message}")),
         _ => Error::Relay(format!("HTTP {status}: {message}")),
@@ -1472,6 +1508,53 @@ mod tests {
     }
 
     use super::*;
+
+    /// A refusal keeps the relay's code next to its reason, so an app can
+    /// tell which refusal it was after the error has crossed into text.
+    #[test]
+    fn a_refusal_keeps_the_relays_code() {
+        let e = http_error(
+            403,
+            r#"{"error":"add computers from a computer you already added, or with a pairing code","code":"new_computer_needs_proof"}"#,
+        );
+        assert!(matches!(&e, Error::PermissionDenied(_)), "{e:?}");
+        let m = e.to_string();
+        assert!(m.starts_with("relay: add computers from"), "{m}");
+        assert_eq!(refusal_code(&m), Some(NEW_COMPUTER_NEEDS_PROOF));
+        assert_eq!(e.http_status(), Some(403));
+
+        // A relay from before the code: the same refusal, by its words.
+        let old = http_error(
+            403,
+            r#"{"error":"add computers from a computer you already added, or with a pairing code"}"#,
+        );
+        assert_eq!(
+            refusal_code(&old.to_string()),
+            Some(NEW_COMPUTER_NEEDS_PROOF)
+        );
+
+        // Any other refusal keeps its own code; one without a code has none.
+        let other = http_error(
+            403,
+            r#"{"error":"a phone does not host computers","code":"phone"}"#,
+        );
+        assert_eq!(refusal_code(&other.to_string()), Some("phone"));
+        let bare = http_error(
+            403,
+            r#"{"error":"that host is shared with you to watch only"}"#,
+        );
+        assert_eq!(
+            bare.to_string(),
+            "relay: that host is shared with you to watch only"
+        );
+        assert_eq!(refusal_code(&bare.to_string()), None);
+        // A code that is not a plain word is not echoed.
+        let odd = http_error(403, r#"{"error":"no","code":"<b>x</b>"}"#);
+        assert_eq!(refusal_code(&odd.to_string()), None);
+        // Other statuses are unchanged.
+        let missing = http_error(404, r#"{"error":"no such device","code":"not_found"}"#);
+        assert_eq!(missing.to_string(), "relay: no such device");
+    }
 
     #[test]
     fn normalizes_relay_urls() {

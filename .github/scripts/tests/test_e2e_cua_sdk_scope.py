@@ -363,7 +363,8 @@ def test_workflow_wiring():
         assert "needs.changes.outputs.run != 'false'" in jobs[name]["if"], name
     assert sorted(jobs["shard"]["needs"]) == sorted(builds)
     assert jobs["matrix"]["needs"] == "shard"
-    assert "needs" not in jobs["shard"].get("if", "")
+    # The shard is not behind the scope job: it depends only on the build results.
+    assert "needs.changes" not in jobs["shard"].get("if", "")
     assert changes["outputs"] == {"run": "${{ steps.scope.outputs.run }}"}
     checkout = changes["steps"][0]
     assert checkout["with"]["fetch-depth"] == 2

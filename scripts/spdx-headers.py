@@ -190,7 +190,7 @@ def main() -> int:
             for root in fsl_roots()
             for path in iter_source_files(root, extensions)
             if nearest_license_is_fsl(path, cache)
-            and not str(path.relative_to(REPO)).startswith(HEADER_EXEMPT_DIRS)
+            and not path.relative_to(REPO).as_posix().startswith(HEADER_EXEMPT_DIRS)
         ]
         label = "FSL packages"
     else:
@@ -220,7 +220,7 @@ def main() -> int:
             continue
         if (
             GENERATED_ELSEWHERE.search(path.name)
-            or str(rel).startswith(GENERATED_DIRS)
+            or rel.as_posix().startswith(GENERATED_DIRS)
             or (args.fsl and foreign_notice(head))
         ):
             foreign.append(rel)

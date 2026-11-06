@@ -348,7 +348,7 @@ pub enum SpacesCmd {
     /// Registered Spaces and your computers on the relay.
     #[command(
         visible_alias = "list",
-        after_help = "CPU, MEMORY and DISK ON THIS MAC show what each Space was given and what it
+        after_help = "CPU, MEMORY and the DISK column (on this computer) show what each Space was given and what it
 uses now (the numbers the Cua Spaces app shows); for another of your
 computers they show what it last reported. Numbers only: no file names.
 
@@ -2991,6 +2991,17 @@ pub async fn run_host_to(
             opts.max_spaces = max_spaces;
             opts.allow_any_address = allow_any_address;
             opts.dedicated = dedicated;
+            // A computer paused because it was set up for another account
+            // (the app's "Use a code from another computer"): the code
+            // moves it to the code's account, keeping its setup. A plain
+            // setup would resume the old account's registration instead.
+            if let Some(code) = pair.as_deref() {
+                let code = cua_host::PairingCodeToken::parse(code).map_err(host_err)?;
+                if let Some(s) = host.rejoin_with_code(&code).await.map_err(host_err)? {
+                    emit(&s, json, out)?;
+                    return Ok(0);
+                }
+            }
             let spaces_only = !opts.share_desktop && host.resolve_provide_spaces(&opts);
             // Running it again changes nothing when this machine already
             // is that host; a host whose service stopped is started again
@@ -5518,7 +5529,14 @@ mod tests {
         assert!(text.contains("lab-box") && text.contains("relay"), "{text}");
         // The new columns, and this machine's own row shows this Mac.
         assert!(text.starts_with("ID "), "{text}");
-        for column in ["CPU", "MEMORY", "DISK ON THIS MAC"] {
+        for column in [
+            "CPU",
+            "MEMORY",
+            &format!(
+                "DISK ON {}",
+                cua_spaces::resources::words::Host::current().this_upper()
+            ),
+        ] {
             assert!(text.lines().next().unwrap().contains(column), "{text}");
         }
         let row = text.lines().find(|l| l.contains("lab-box")).unwrap();

@@ -59,6 +59,7 @@ import { cn } from "@/lib/utils";
 import { FloatKeys } from "./float-keys";
 import { CARD, GLASS_CHIP, GREY } from "./hero";
 import { OsMark } from "./os-marks";
+import { thisComputerText } from "@/lib/host-labels";
 
 /* ---- The site's pieces ------------------------------------------------------------------ */
 
@@ -508,7 +509,7 @@ export function AgentScreen({ view, onPick, onContinue, onInstall, busy }: { vie
  * so far. Nothing runs until they send. Hidden when there are none. Only each chat's title, folder
  * and time are read here; its messages are read when it is picked.
  */
-export function PickUpWhereYouLeftOff({ onContinue, place = "this Mac", className }: { onContinue: (task: AskTask) => void; place?: string; className?: string }) {
+export function PickUpWhereYouLeftOff({ onContinue, place = thisComputerText(), className }: { onContinue: (task: AskTask) => void; place?: string; className?: string }) {
   const threads = useRecentThreads();
   if (!threads?.length) return null;
   return (

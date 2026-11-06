@@ -20,8 +20,9 @@ import { Switch } from "@/components/ui/switch";
 import { toast, toastError } from "@/components/ui/toast";
 import { driverUsesAppPermissions } from "@/lib/app-permissions";
 import { cn } from "@/lib/utils";
-import { DRIVER_LINE, markFor, stateText, testText, versionText } from "./copy";
+import { driverLine, markFor, stateText, testText, versionText } from "./copy";
 import { PointerPreview } from "./pointer-preview";
+import { thisComputerLabel, thisComputerText } from "@/lib/host-labels";
 
 /**
  * The Cua Driver page (CUA-2706, design A): what it is in one line, its
@@ -113,7 +114,7 @@ function Hero({ driver, status, settings }: { driver: DriverHook; status: Driver
         <CuaKey size={56} className="mt-1 size-14 self-start" />
         <div className="min-w-0">
           <h1 className="font-display text-[28px] leading-tight font-semibold tracking-[-0.02em]">Cua Driver</h1>
-          <p className="mt-1 text-[14px] text-muted-foreground">{status.thisMachine ? DRIVER_LINE : `Lets agents see and use the apps on ${status.machineName}.`}</p>
+          <p className="mt-1 text-[14px] text-muted-foreground">{status.thisMachine ? driverLine() : `Lets agents see and use the apps on ${status.machineName}.`}</p>
           <p className="mt-4 flex items-start gap-2 text-[13px]" data-driver-state={status.state}>
             {ok ? (
               <span className="mt-px flex size-4 shrink-0 items-center justify-center rounded-full bg-[#1f9d55] text-white" aria-hidden>
@@ -150,21 +151,21 @@ function Hero({ driver, status, settings }: { driver: DriverHook; status: Driver
           ) : null}
         </div>
       </div>
-      {status.thisMachine ? <PointerPreview settings={settings} caption="Live: the agent pointer as it looks on this Mac" /> : null}
+      {status.thisMachine ? <PointerPreview settings={settings} caption={`Live: the agent pointer as it looks on ${thisComputerText()}`} /> : null}
     </section>
   );
 }
 
-/* ---- Let agents use this Mac ---------------------------------------------------- */
+/* ---- Let agents use this computer ---------------------------------------------------- */
 
 function AllowSection({ driver, status }: { driver: DriverHook; status: DriverStatus }) {
   const on = status.state !== "paused";
   return (
     <GroupedSection title="Agents" className="mt-8 mb-8" data-driver-allow="">
       <SettingRow
-        label="Let agents use apps on this Mac"
+        label={`Let agents use apps on ${thisComputerText()}`}
         help={on ? "Coding agents you connect can see your screen and use your apps. Your own pointer never moves." : "Off. Agents can't see your screen or use your apps until you turn this on."}
-        control={<Switch checked={on} onCheckedChange={(next) => void driver.pause(!next).catch(toastError(next ? "Couldn't turn agents on" : "Couldn't turn agents off"))} aria-label="Let agents use apps on this Mac" />}
+        control={<Switch checked={on} onCheckedChange={(next) => void driver.pause(!next).catch(toastError(next ? "Couldn't turn agents on" : "Couldn't turn agents off"))} aria-label={`Let agents use apps on ${thisComputerText()}`} />}
       />
     </GroupedSection>
   );
@@ -177,7 +178,7 @@ function PointerSection({ driver, settings }: { driver: DriverHook; settings: Po
     void driver.setConfig(pointerChange(key, value)).catch(toastError("Couldn't change the pointer"));
   const off = settings.show === false;
   return (
-    <GroupedSection title="Agent pointer" className="mb-8 min-w-0" data-driver-pointer="" footer="Applies to every agent on this Mac.">
+    <GroupedSection title="Agent pointer" className="mb-8 min-w-0" data-driver-pointer="" footer={`Applies to every agent on ${thisComputerText()}.`}>
       {settings.show !== null ? (
         <SettingRow
           label="Show the agent's pointer"
@@ -291,7 +292,7 @@ function Computers({ current }: { current: string }) {
                 data-driver-computer={m.machineId}
               >
                 <OsIcon os={m.os} className="size-4 text-muted-foreground" />
-                <span className="flex-1 truncate">{m.thisMachine ? "This Mac" : m.name}</span>
+                <span className="flex-1 truncate">{m.thisMachine ? thisComputerLabel() : m.name}</span>
                 <span className="truncate text-xs text-muted-foreground">{line}</span>
                 <ChevronRightIcon className="size-3.5 text-muted-foreground" />
               </Link>

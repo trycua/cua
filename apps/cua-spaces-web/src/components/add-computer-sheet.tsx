@@ -32,6 +32,7 @@ import { Segmented } from "@/components/ui/segmented";
 import { Select } from "@/components/ui/select";
 import { UpgradeCard } from "@/components/upgrade-card";
 import { cn } from "@/lib/utils";
+import { THIS_MACHINE } from "@/bridge/host-os";
 
 /** Where Cua Spaces is downloaded; the page picks the download for the computer that opens it. */
 export const INSTALL_URL = "https://cua.ai/install";
@@ -251,9 +252,10 @@ function computerIds(list: readonly Machine[]): Set<string> {
   return new Set(list.filter((m) => !m.device).map((m) => m.id));
 }
 
-/** "This Mac" on a Mac, else "This computer". */
+/** What this computer is called, in the words of its own system ("This Mac", "This PC", "This machine"). */
 function thisComputerName(list: readonly Machine[]): string {
-  return list.find((m) => m.current)?.os === "macos" ? "This Mac" : "This machine";
+  const os = list.find((m) => m.current)?.os;
+  return os === "macos" || os === "windows" || os === "linux" ? THIS_MACHINE[os] : "This machine";
 }
 
 /* ---- The first page: the methods -------------------------------------------------- */

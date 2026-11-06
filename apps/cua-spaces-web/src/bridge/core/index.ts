@@ -12,6 +12,8 @@
  * the bridge falls back to its TypeScript stand-ins (see `../derive.ts`).
  */
 
+import { localizeHostWords } from "../host-words";
+
 /** The wasm-bindgen module (`core.js`, `--target web`). */
 export interface CoreWasmModule {
   default: (input?: unknown) => Promise<unknown>;
@@ -81,7 +83,7 @@ export function wasmCore(mod: Pick<CoreWasmModule, "call" | "methods" | "flows" 
   const methods = JSON.parse(mod.methods()) as string[];
   const known = new Set(methods);
   const call = <T>(method: string, args: Record<string, unknown> = {}): T =>
-    JSON.parse(mod.call(method, JSON.stringify(args))) as T;
+    localizeHostWords(JSON.parse(mod.call(method, JSON.stringify(args))) as T);
   return {
     status: "ready",
     methods,

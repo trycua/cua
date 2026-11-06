@@ -496,7 +496,9 @@ export function useAgentDm(chat: AgentChat | null, only: string | null): AgentDm
       const t = chat?.spaces.find((s) => s.spaceId === spaceId);
       if (!data || !t || !text.trim()) return;
       // Sending is posting: an @mention of the agent is its task in that Space.
-      const body = new RegExp(`(^|\\s)@${t.handle}\\b`, "i").test(text) ? text.trim() : `@${t.handle} ${text.trim()}`;
+      // It names the Space's handle (`@claude`), never the host's key for the member (`claude-8`).
+      const at = t.member.handle ?? t.handle;
+      const body = new RegExp(`(^|\\s)@${at}\\b`, "i").test(text) ? text.trim() : `@${at} ${text.trim()}`;
       const entry = await data.call("thread.post", { spaceId, text: body });
       if (entry) merge(spaceId, [entry]);
       setReadSeq((r) => ({ ...r, [spaceId]: null }));

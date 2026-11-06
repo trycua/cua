@@ -171,9 +171,12 @@ def test_macos_direct_lume_registration_is_manual_and_not_pr_event_chained() -> 
     entry_text, entry_workflow = load_workflow(MACOS_ENTRY)
     entry_triggers = triggers(entry_workflow)
     assert set(entry_triggers) == {"workflow_dispatch", "workflow_call"}
-    # The release-gate call exposes only the hosted source SHA; direct Lume
+    # The release-gate call exposes only the hosted source SHA and the rebuild flag; direct Lume
     # registration stays a manual dispatch.
-    assert set(entry_triggers["workflow_call"]["inputs"]) == {"source_sha"}
+    assert set(entry_triggers["workflow_call"]["inputs"]) == {
+        "source_sha",
+        "rebuild_of_released_source",
+    }
     assert entry_workflow["jobs"]["register-lume"]["if"] == "inputs.mode == 'lume'"
     callers = sorted(
         path.name

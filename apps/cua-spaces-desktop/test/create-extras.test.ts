@@ -6,6 +6,10 @@ import { describe, expect, it } from "vitest";
 import { createExtrasOf } from "../src/model/backend";
 
 describe("a create's extras", () => {
+  it("carries the warming home's labels (hidden, off the relay) as they come", () => {
+    expect(createExtrasOf({ image: "x", labels: { "cua.hidden": "home", "cua.relay": "off" } })).toEqual({ labels: { "cua.hidden": "home", "cua.relay": "off" } });
+  });
+
   it("carry an agent home's children and labels", () => {
     expect(createExtrasOf({ image: "x", children: true, labels: { "cua.home": "1", "cua.home.agent": "claude-code" } })).toEqual({
       children: true,

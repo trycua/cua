@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Greyscale crops, a perceptual hash, a normalised difference and a
 //! template match. Small and allocation-light: crops are about 64 to 96 pt.
 

@@ -1754,6 +1754,7 @@ pub fn pending_space(p: &PendingCreate) -> Space {
     // The catalog's distribution: the right icon and System from the start.
     let distro = p.image.as_deref().and_then(crate::wizard::image_distro);
     Space {
+        hidden: false,
         id: p.id.clone(),
         name: p.name.clone(),
         os: p.os,
@@ -3391,6 +3392,7 @@ mod tests {
     fn hosts_record(id: &str, name: &str, host: &str, added_at_ms: Option<i64>) -> Space {
         let mut s = crate::spaces::row_to_space(
             &crate::model::SpaceRow {
+                hidden: false,
                 id: id.into(),
                 name: name.into(),
                 display_name: None,

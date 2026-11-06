@@ -32,6 +32,10 @@ struct SecureNetworkTests {
         #expect(all.preset == "localhost" && all.allLocalhostPorts)
         let ports = LiveSpacesBackend.networkSettings(word: "localhost:5432, 3000", allow: [], deny: [])
         #expect(ports.localhostPorts == [5432, 3000] && !ports.allLocalhostPorts)
+        let both = LiveSpacesBackend.networkSettings(word: "localhost+lan:5432, 3000", allow: [], deny: [])
+        #expect(both.preset == "localhost+lan" && both.localhostPorts == [5432, 3000] && !both.allLocalhostPorts)
+        let bothAll = LiveSpacesBackend.networkSettings(word: "localhost+lan:all", allow: [], deny: [])
+        #expect(bothAll.preset == "localhost+lan" && bothAll.localhostPorts.isEmpty && bothAll.allLocalhostPorts)
         let custom = LiveSpacesBackend.networkSettings(word: "custom:none", allow: ["github.com"], deny: ["10.0.0.0/8"], via: "this-machine")
         #expect(custom.customBase == "none" && custom.allow == ["github.com"] && custom.deny == ["10.0.0.0/8"] && custom.via == "this-machine")
     }

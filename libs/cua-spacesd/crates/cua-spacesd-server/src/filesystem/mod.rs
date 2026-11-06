@@ -4,6 +4,7 @@
 //! `FilesystemService`: metadata, directory operations, watches, chunked
 //! reads and writes, resumable uploads and signed URLs.
 
+pub mod offworker;
 pub mod paths;
 pub mod runas;
 pub mod watch;
@@ -247,13 +248,17 @@ impl FilesystemServiceImpl {
                 "a bulk read needs a length within a slot and a slot of the lane",
             ));
         }
-        let file = std::fs::File::open(path).map_err(|e| io_status(&e, path))?;
+        // Opened (and closed) on a blocking thread: the path can be on the
+        // Cua Volume, which this runtime serves itself.
         let (offset, length) = (body.offset, body.length);
-        let (staged, sha) =
-            tokio::task::spawn_blocking(move || disk.stage(&file, offset, length, slot - 1))
-                .await
-                .map_err(|e| crate::error::internal(e.to_string()))?
-                .map_err(|e| crate::error::internal(format!("bulk lane: {e}")))?;
+        let open_path = path.to_path_buf();
+        let (staged, sha) = tokio::task::spawn_blocking(move || {
+            let file = std::fs::File::open(&open_path).map_err(|e| io_status(&e, &open_path))?;
+            disk.stage(&file, offset, length, slot - 1)
+                .map_err(|e| crate::error::internal(format!("bulk lane: {e}")))
+        })
+        .await
+        .map_err(|e| crate::error::internal(e.to_string()))??;
         // Like the streamed read: the file's metadata in the namespace asked for.
         let namespace = xattr::namespace(&body.xattr_namespace)?;
         let entry = entry_info_with_metadata(path, meta, &namespace, true);
@@ -646,7 +651,12 @@ impl FilesystemService for FilesystemServiceImpl {
                 remote_mode(body.mode)
             });
         }
-        builder.create(&path).map_err(|e| io_status(&e, &path))?;
+        // On a blocking thread: the path can be on the Cua Volume.
+        let made = path.clone();
+        tokio::task::spawn_blocking(move || builder.create(&made))
+            .await
+            .map_err(|e| crate::error::internal(e.to_string()))?
+            .map_err(|e| io_status(&e, &path))?;
         Ok(Response::new(MakeDirResponse {
             entry: Some(stat(&path, true, xattr::DEFAULT_NAMESPACE).await?),
             created: true,
@@ -971,9 +981,11 @@ impl FilesystemService for FilesystemServiceImpl {
         if body.bulk_slot != 0 {
             return self.read_file_bulk(&path, &meta, &body).await;
         }
-        let mut file = tokio::fs::File::open(&path)
-            .await
-            .map_err(|e| io_status(&e, &path))?;
+        let mut file = offworker::OffWorker::new(
+            tokio::fs::File::open(&path)
+                .await
+                .map_err(|e| io_status(&e, &path))?,
+        );
         if body.offset > 0 {
             file.seek(std::io::SeekFrom::Start(body.offset))
                 .await

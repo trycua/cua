@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Linux agent-cursor overlay — X11 RGBA override-redirect window.
 //!
 //! Architecture:

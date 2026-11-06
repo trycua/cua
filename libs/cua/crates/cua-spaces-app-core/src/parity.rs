@@ -2202,6 +2202,12 @@ pub mod frame {
                     .map(|o| format!("{}{}", str_of(&o["label"]), if o["active"] == true { "*" } else { "" }))
                     .collect::<Vec<_>>().join(" | ")),
                 "help": u["channelHelp"],
+                "note": u["channelNote"],
+                "download": if u["downloadUrl"].is_string() {
+                    json!(format!("{} -> {}", str_of(&u["downloadLabel"]), str_of(&u["downloadUrl"])))
+                } else {
+                    Value::Null
+                },
                 "check": format!("{} {}", str_of(&u["checkLabel"]), if u["checkEnabled"] == true { "on" } else { "off" }),
                 "lastCheck": u["lastCheck"],
                 "sparkleChannels": channels,
@@ -5076,9 +5082,8 @@ fn run_your_cloud(f: &Value, h: &dyn Host) -> Result<Value, String> {
 /// Settings, Experiments: the tab and what every switch decides, after
 /// each change (`changes`: a row's choice). Each frame has the tab, the
 /// events the change sends, Settings (Storage only with Cua Volume), the
-/// first run's pages and its Done page, a Space's buttons (Share only with
-/// Sharing) and New Space's Run on menu and links (clouds only with Your
-/// cloud).
+/// first run's pages and its Done page, a Space's buttons and New Space's
+/// Run on menu and links.
 fn run_experiments(f: &Value, h: &dyn Host) -> Result<Value, String> {
     let storage_state = c(h, "storage.initial", json!({}))?;
     let storage = c(
@@ -5153,11 +5158,7 @@ fn experiments_frame(
         }
     }
     let done = c(h, "onboarding.view", json!({ "state": st }))?;
-    let detail = c(
-        h,
-        "sidebar.detail",
-        json!({ "space": space, "experiments": x }),
-    )?;
+    let detail = c(h, "sidebar.detail", json!({ "space": space }))?;
     let chrome = c(h, "window.chrome", json!({ "input": { "experiments": x } }))?;
     let mut menu_input = f["menu"].clone();
     menu_input["experiments"] = x.clone();
@@ -5190,7 +5191,7 @@ fn experiments_frame(
 }
 
 /// New Space's Run on menu: This Mac, your machines (offline and at a limit
-/// say why) and, with the Your cloud experiment, your clouds. A step may
+/// say why) and your clouds. A step may
 /// patch the wizard's env (`env`: the experiments, the hosts) before its
 /// action; each frame is the wizard and the create's `on`.
 fn run_placement_picker(f: &Value, h: &dyn Host) -> Result<Value, String> {

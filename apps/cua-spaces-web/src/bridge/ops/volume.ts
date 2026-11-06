@@ -123,15 +123,12 @@ const list = <T>(v: unknown, key: string): T[] => {
   return Array.isArray(a) ? (a as T[]) : [];
 };
 
-/** Settings, Experiments as stored in the Tauri app's UI storage; missing keys read as off (sharing: as on). */
+/** Settings, Experiments as stored in the Tauri app's UI storage; missing keys read as off. */
 export function readExperiments(raw: string | undefined): Experiments {
   try {
     const stored = raw ? (JSON.parse(raw) as Partial<Record<keyof Experiments, unknown>>) : {};
     return {
       cuaVolume: stored.cuaVolume === true,
-      yourCloud: stored.yourCloud !== false,
-      sharing: stored.sharing !== false,
-      webUi: stored.webUi === true,
       secureSpaces: stored.secureSpaces === true,
       childSpaces: stored.childSpaces === true,
       askFirst: stored.askFirst === true,

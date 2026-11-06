@@ -10,7 +10,7 @@
 import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { testCore, wasmBuilt } from "@/bridge/__tests__/testCore";
 import type { MachineRow, MachinesView } from "@/bridge/contracts/host";
 import { readNewSpaceSession, resetNewSpaceSession } from "@/bridge/new-space";
@@ -572,5 +572,98 @@ describe.skipIf(!wasmBuilt)("the Machines page (real routes, wasm core)", () => 
     await waitFor(() => expect(hooks.machines.view?.clouds?.pages[0]?.status).toBe("Connected"));
     expect(hooks.machines.view?.clouds?.pages[0]?.settings.find((s) => s.id === "budget")?.value).toBe("$200");
     await waitFor(() => expect(document.querySelector("[data-cloud-deny]")).toBeNull());
+  });
+});
+
+/**
+ * A computer powered off. The host's list and view still count its relay connection (online, Remove disabled) while the
+ * relay's own answer already says offline; the page trusts the relay and re-reads every 30 s, as the Spaces tree does.
+ * A hand-made view, so these do not need the wasm core.
+ */
+describe("the Machines page when a computer powers off", () => {
+  afterEach(() => vi.useRealTimers());
+
+  const machine = (): MachinesView["machines"][number] =>
+    ({
+      id: "studio-pc",
+      name: "Studio PC",
+      line: "Windows · Cua relay",
+      online: true,
+      os: "windows",
+      current: false,
+      team: false,
+      status: "Online",
+      toggles: [],
+      spacesTitle: "Spaces",
+      spaces: [],
+      newSpace: { label: "New Space here", on: "host:studio-pc", enabled: true },
+      detailsTitle: "Details",
+      details: [],
+      remove: {
+        label: "Remove from account",
+        enabled: false,
+        help: "It is online: remove it on that computer.",
+        host: false,
+        machine: "studio-pc",
+        confirm: { title: "Remove Studio PC?", message: "", confirmLabel: "Remove", cancelLabel: "Cancel" },
+      },
+    }) as MachinesView["machines"][number];
+
+  const view = (): MachinesView => ({ summary: "1 machine, 1 online", groups: [{ id: "yours", title: "Your machines", collapsed: false, ids: ["studio-pc"] }], machines: [machine()], order: ["yours"] });
+
+  const step = (space: string, name: string, online: boolean, role: string) => ({ space, name, online, role });
+
+  async function mountPoweredOff(relayOnline: { value: boolean }) {
+    return mountApp("/machines", {
+      failsCreates: false,
+      listsGhost: false,
+      answer: (op, out) => (op === "machines.list" ? [...(out as MachineRow[]), { id: "studio-pc", name: "Studio PC", via: "relay", online: true, os: "windows", limits: [] }] : out),
+      intercept: (op) =>
+        op === "spaces.resolveDefault"
+          ? { space: "relay:studio-pc", reason: "setting", defaultSpace: "relay:studio-pc", defaultOnline: relayOnline.value, order: [step("relay:studio-pc", "Studio PC", relayOnline.value, "default"), step("relay:this-mac", "This Mac", true, "here")] }
+          : undefined,
+      machinesView: view,
+    });
+  }
+
+  const row = () => document.querySelector<HTMLElement>('[data-machine-id="studio-pc"]')!;
+
+  it("flips the row to Offline within one refresh, with text a screen reader reads", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    const relay = { value: true };
+    const { router } = await mountPoweredOff(relay);
+    await router.load();
+    await waitFor(() => expect(row()).toBeTruthy());
+    expect(row().getAttribute("data-online")).toBe("true");
+    expect(within(row()).getByText("Online")).toBeTruthy();
+
+    relay.value = false;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30_000);
+    });
+    await waitFor(() => expect(row().getAttribute("data-online")).toBe("false"));
+    expect(within(row()).getByText("Offline")).toBeTruthy();
+    expect(within(row()).queryByText("Online")).toBeNull();
+  });
+
+  it("enables Remove from account once the relay calls the computer offline", async () => {
+    const relay = { value: false };
+    const { router } = await mountPoweredOff(relay);
+    await router.load();
+    await waitFor(() => expect(row().getAttribute("data-online")).toBe("false"));
+    act(() => row().click());
+    const detail = await detailOf("Studio PC");
+    const remove = detail.querySelector<HTMLButtonElement>('[data-machine-remove="studio-pc"]')!;
+    expect(remove.disabled).toBe(false);
+  });
+
+  it("keeps Remove disabled while the relay still calls it online", async () => {
+    const relay = { value: true };
+    const { router } = await mountPoweredOff(relay);
+    await router.load();
+    await waitFor(() => expect(row()).toBeTruthy());
+    act(() => row().click());
+    const detail = await detailOf("Studio PC");
+    expect(detail.querySelector<HTMLButtonElement>('[data-machine-remove="studio-pc"]')!.disabled).toBe(true);
   });
 });

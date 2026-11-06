@@ -526,32 +526,20 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
             &a.get::<Option<String>>("query")?.unwrap_or_default(),
             &a.get::<Option<String>>("selectedId")?.unwrap_or_default(),
         )),
-        // With `experiments`, what Settings, Experiments hides is left out;
-        // with `access` (this device is signed in but not enrolled), the
-        // detail as this device sees it (`detail_for`, as the SwiftUI app's
-        // `AppModel.detail`).
+        // The detail as this device sees it (`detail_for`, as the SwiftUI
+        // app's `AppModel.detail`); with `access` (this device is signed in
+        // but not enrolled), the machines on the relay say why they are off.
         "sidebar.detail" => {
             let space = a.get("space")?;
             let usage = a.get::<Option<sidebar::SpaceUsage>>("usage")?;
             let host_arch = a.get::<Option<String>>("hostArch")?;
             let access = a.get::<Option<devices::MachineAccessNotice>>("access")?;
-            out(
-                match (
-                    a.get::<Option<experiments::Experiments>>("experiments")?,
-                    access,
-                ) {
-                    (None, None) => {
-                        sidebar::detail_live(&space, usage.as_ref(), host_arch.as_deref())
-                    }
-                    (x, access) => sidebar::detail_for(
-                        &space,
-                        usage.as_ref(),
-                        host_arch.as_deref(),
-                        &x.unwrap_or_default(),
-                        access.as_ref(),
-                    ),
-                },
-            )
+            out(sidebar::detail_for(
+                &space,
+                usage.as_ref(),
+                host_arch.as_deref(),
+                access.as_ref(),
+            ))
         }
         "sidebar.detailCopy" => out(sidebar::detail_copy()),
         "sidebar.deleteFailedText" => out(sidebar::delete_failed_text(
@@ -2015,7 +2003,7 @@ mod tests {
     /// out under the notice; one that keeps its desktop private says so,
     /// and Share follows Settings, Experiments.
     #[test]
-    fn the_detail_follows_access_and_experiments() {
+    fn the_detail_follows_access() {
         let space = |id: &str, features: &[&str]| {
             call_value(
                 "spaces.rowToSpace",
@@ -2044,22 +2032,9 @@ mod tests {
                 .collect()
         };
         let has = |d: &Value, id: &str| ids(d).iter().any(|(a, _)| a == id);
-        // No experiments, no access: every action, as before.
+        // No access: every action.
         let live = call_value("sidebar.detail", json!({ "space": shared })).unwrap();
         assert!(has(&live, "share"));
-        // Sharing off hides Share; on shows it.
-        let off = call_value(
-            "sidebar.detail",
-            json!({ "space": shared, "experiments": { "sharing": false } }),
-        )
-        .unwrap();
-        assert!(!has(&off, "share"));
-        let on = call_value(
-            "sidebar.detail",
-            json!({ "space": shared, "experiments": { "sharing": true } }),
-        )
-        .unwrap();
-        assert!(has(&on, "share") && on.get("access").is_none());
         // Not enrolled: the notice, Status says why, connection actions off.
         let notice = serde_json::to_value(
             devices::machine_access_notice(devices::EnrollmentKind::NeedsEnrollment, None).unwrap(),
@@ -2067,7 +2042,7 @@ mod tests {
         .unwrap();
         let d = call_value(
             "sidebar.detail",
-            json!({ "space": shared, "experiments": { "sharing": true }, "access": notice }),
+            json!({ "space": shared, "access": notice }),
         )
         .unwrap();
         assert_eq!(d["access"], notice);
@@ -2078,21 +2053,10 @@ mod tests {
                 assert!(!enabled, "{id} stays off while not enrolled");
             }
         }
-        // Without experiments, `access` still applies.
-        let d = call_value(
-            "sidebar.detail",
-            json!({ "space": shared, "access": notice }),
-        )
-        .unwrap();
-        assert_eq!(d["access"], notice);
         // A machine that keeps its desktop private: its note, no New Space
         // button word in the note itself, its desktop actions gone.
         let private = space("relay:m1", &["host_spaces", "files"]);
-        let d = call_value(
-            "sidebar.detail",
-            json!({ "space": private, "experiments": {} }),
-        )
-        .unwrap();
+        let d = call_value("sidebar.detail", json!({ "space": private })).unwrap();
         assert_eq!(
             d["desktopNote"],
             json!("Studio isn\u{2019}t sharing its desktop. You can still create Spaces on it.")

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Acting `browser_prepare` implementation for driver-owned Chromium profiles.
 
 use std::fs::{self, OpenOptions};

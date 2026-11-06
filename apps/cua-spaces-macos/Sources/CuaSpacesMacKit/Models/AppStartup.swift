@@ -674,6 +674,9 @@ public final class PendingSpacesBackend: SpacesBackend, AgentsToolRunning, Cloud
     // The Machines page: Remove from account and each computer's health
     // checks (the protocol's defaults would refuse them).
     public func relayUnregister(id: String) async throws { try await b().relayUnregister(id: id) }
+    public func relayUnregisterComputer(id: String, deleteSpaces: Bool) async throws {
+        try await b().relayUnregisterComputer(id: id, deleteSpaces: deleteSpaces)
+    }
     public func machineHealth(machine: String?) async throws -> AppMachinesViewHealth {
         try await b().machineHealth(machine: machine)
     }
@@ -820,6 +823,11 @@ public final class PendingDevices: DevicesRunning, @unchecked Sendable {
     public func pairingCodes() async throws -> [PairingCode] { try await d().pairingCodes() }
     public func revokePairingCode(id: String) async throws { try await d().revokePairingCode(id: id) }
     public func relayUsage() async throws -> AppRelayUsage? { try await d().relayUsage() }
+    public func spacesSettings() async throws -> SpacesSettings { try await d().spacesSettings() }
+    public func setSpacesSettings(_ settings: SpacesSettings) async throws -> SpacesSettings {
+        try await d().setSpacesSettings(settings)
+    }
+    public func resolveDefaultSpace() async throws -> DefaultSpace { try await d().resolveDefaultSpace() }
 }
 
 /// This machine's host service until the SDK is in.

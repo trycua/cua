@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Pure `tools/list` schema-shape assertions.
 //!
 //! These never invoke a tool — they only inspect the advertised schemas: that

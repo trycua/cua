@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Linux implementation of the cross-platform `PageBackend` trait.
 //!
 //! Read paths use AT-SPI via the existing `walk_tree` infrastructure

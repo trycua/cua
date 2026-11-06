@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Integration test against the CuaTestHarness.SwiftUI Swift app.
 //!
 //! macOS equivalent of `harness_winui3_test.rs` — SwiftUI plays the same

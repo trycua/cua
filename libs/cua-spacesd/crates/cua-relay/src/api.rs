@@ -12,7 +12,8 @@
 //!   listed and refused (403, "its computer was removed from the account")
 //!   until the computer registers again with the same id.
 //!   `DELETE ...?spaces=delete` (owner, not a computer token) also removes
-//!   them and cuts their connections.
+//!   them and cuts their connections; the computer deletes them the next
+//!   time it dials the relay ([`crate::pending_deletions`]).
 //! - `POST /v1/machines/{id}/stop-sharing` | `start-sharing` (owner or the
 //!   machine itself): cut every client and refuse new ones, or resume.
 //! - `POST /v1/machines/{id}/leave` (anyone it is shared with, never the
@@ -447,6 +448,14 @@ async fn register(
         return error(
             StatusCode::CONFLICT,
             "computer id is connected with a relay token",
+        );
+    }
+    // Deleted means deleted: a Space its owner deleted with its computer is
+    // not registered again before that computer has deleted it.
+    if relay.pending_deletions.is_pending_space(&body.id) {
+        return error(
+            StatusCode::GONE,
+            "this Space was deleted; its computer deletes it the next time it comes online",
         );
     }
     let existing = relay.directory.get(&body.id);
@@ -975,8 +984,9 @@ pub const DETACHED_MESSAGE: &str = "its computer was removed from the account";
 /// (records whose `host` is this id) are kept but detached: not listed, not
 /// reachable, back unchanged when the computer registers again with the
 /// same id. `?spaces=delete` also removes those records (the computer's
-/// owner only) and cuts their connections; deleting their files is the
-/// client's job, through the computer, before it removes it.
+/// owner only) and cuts their connections, and records them as pending
+/// deletions ([`crate::pending_deletions`]) first: the computer deletes
+/// them, files included, the next time it dials the relay.
 async fn delete_one(
     State(relay): State<Relay>,
     Path(id): Path<String>,
@@ -998,7 +1008,7 @@ async fn delete_one(
     if let Err(r) = caller.phone_needs_recent_sign_in(&relay) {
         return r;
     }
-    let (_, role) = match authorize(&caller, &relay, &id) {
+    let (record, role) = match authorize(&caller, &relay, &id) {
         Ok(v) => v,
         Err(r) => return r,
     };
@@ -1010,6 +1020,32 @@ async fn delete_one(
             StatusCode::FORBIDDEN,
             "a computer token cannot delete its Spaces; use your account",
         );
+    }
+    // The intent is durable before any record goes: a failed write refuses
+    // the removal, so no Space is forgotten without its delete pending.
+    if delete_spaces {
+        let spaces = relay
+            .directory
+            .children_of(&id)
+            .into_iter()
+            .map(|c| crate::pending_deletions::PendingSpace {
+                id: c.id,
+                name: c.name,
+            })
+            .collect();
+        if let Err(e) = relay.pending_deletions.record(
+            &id,
+            &record.owner.id,
+            &record.token_sha256,
+            caller.actor().or_else(|| Some(record.owner.id.clone())),
+            spaces,
+        ) {
+            tracing::error!(machine = %id, error = %e, "pending deletions not recorded");
+            return error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "could not record the Spaces to delete; nothing was removed",
+            );
+        }
     }
     match relay.directory.remove(&id) {
         Ok(removed) => {

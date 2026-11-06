@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Cross-platform `page` tool: browser JS execution, text extraction, and DOM querying.
 //!
 //! The tool itself (name, schema, action dispatch) lives here so every platform

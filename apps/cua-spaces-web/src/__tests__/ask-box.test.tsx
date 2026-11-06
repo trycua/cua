@@ -16,7 +16,7 @@ import { resetConnectState } from "@/hooks/use-connectors";
 import { askTasks, resetAskTasks } from "@/lib/ask-first";
 import { resetPickedAgent } from "@/lib/ask-first-model";
 import { resetRepos } from "@/lib/ask-first-repo";
-import { mountApp, stubBrowserApis } from "./app-harness";
+import { mountApp, pickNewLinux, stubBrowserApis } from "./app-harness";
 
 stubBrowserApis();
 beforeEach(() => {
@@ -176,6 +176,7 @@ describe.skipIf(!wasmBuilt)("the prompt box", () => {
     await act(async () => {
       fireEvent.click(q('[data-agent-group="claude-code"] [data-agent-account="kwork"]')!);
     });
+    await pickNewLinux();
     fireEvent.change(box, { target: { value: "fix the build" } });
     await act(async () => {
       fireEvent.keyDown(box, { key: "Enter", shiftKey: true });
@@ -219,6 +220,7 @@ describe.skipIf(!wasmBuilt)("the prompt box", () => {
       fireEvent.keyDown(field, { key: "Enter" });
     });
     await waitFor(() => expect(q("[data-ask-repo]")!.dataset.askRepo).toBe("trycua/demo-failing-tests"));
+    await pickNewLinux();
     fireEvent.change(box, { target: { value: "find out why the tests fail" } });
     await act(async () => {
       fireEvent.keyDown(box, { key: "Enter" });

@@ -11,7 +11,7 @@ import { enqueue, flushQueue, resolveQueue } from "@/components/space-thread/que
 import { useConnectors } from "@/hooks/use-connectors";
 import { containerHome } from "@/lib/agent-home/container";
 import { grantsFor, homeGrantsArg, homeMentionsArg } from "@/lib/agent-home/grants";
-import { rememberHome, reusableHome } from "@/lib/agent-home/home-space";
+import { homeForRequest, rememberHome } from "@/lib/agent-home/home-space";
 import { parseMentions } from "@/lib/agent-home/mentions";
 import { homeBrief, homePrompt } from "@/lib/agent-home/prompt";
 import type { AskRepo } from "@/lib/ask-first-repo";
@@ -45,9 +45,11 @@ const posted = new Set<string>();
  * (`retry(task, where)`).
  *
  * With Child Spaces on and the agent left to decide (or a computer named), the
- * Space is the agent's home (CUA-2630): the slim Linux image, made on the first
- * request and reused by the next ones (one per agent unless the person asks for
- * a fresh one), its spawn capability on. The agent decides where the work runs,
+ * Space is the agent's home (CUA-2630): the slim Linux image, a new one for
+ * every request from Home (cheap: it claims a warm Space), its spawn capability
+ * on. An existing home is continued only when the person picks it ("Let the agent
+ * decide, in your existing Home"), opens it from Your agents or Spaces (its thread
+ * posts in place), or retries a task (which keeps the Space it was made in). The agent decides where the work runs,
  * unless the person said where, and the Spaces it makes appear under the home.
  */
 export function useStartTask(): {
@@ -112,7 +114,7 @@ export function useStartTask(): {
           if (!spaceId) throw new Error(HOST_NOT_SHARED);
           updateAskTask(id, { spaceId, onHost: true });
         }
-        // The agent's home is made on the first request and reused by the next ones.
+        // A home the person chose to continue (`place.reuse`); otherwise one is made below.
         if (!spaceId && isHome && place?.reuse) {
           spaceId = place.reuse;
           updateAskTask(id, { spaceId, pendingId: null });
@@ -132,7 +134,9 @@ export function useStartTask(): {
             rememberHome(agent, space.id);
           } else {
             const offer = offers.find((o) => o.os === os);
-            space = await createSpace(offer ? { ...offer.args, os } : { os }, pendingId);
+            // "New Space on <computer>": made on that computer (`host:<machine>`), never silently.
+            const on = target.kind === "create" && target.on ? { on: target.on } : {};
+            space = await createSpace(offer ? { ...offer.args, os, ...on } : { os, ...on }, pendingId);
           }
           spaceId = space.id;
           updateAskTask(id, { spaceId, pendingId: null });
@@ -186,9 +190,8 @@ export function useStartTask(): {
       const target = taskTarget(where);
       // With Child Spaces on, the agent decides (or is told a computer): its home Space takes the request.
       const home = Boolean(children) && (where.kind === "agent" || where.kind === "machine");
-      const fresh = where.kind === "agent" && Boolean(where.fresh);
       const mentions = named(prompt, where);
-      const reuse = home ? reusableHome(agent, spaces, fresh, children?.homesOf(agent)) : null;
+      const reuse = home ? homeForRequest(where, agent, spaces, children?.homesOf(agent)) : null;
       // The new setup (Labs) made a Linux Space for this agent while the person was in the first run: the job is
       // kept by the preparing driver, which sends it exactly once when the agent is ready, even across a quit.
       const preparing = getDriver();

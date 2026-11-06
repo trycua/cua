@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Extended browser pointer actions.
 //!
 //! This module deliberately shares the exact-or-refused posture of the

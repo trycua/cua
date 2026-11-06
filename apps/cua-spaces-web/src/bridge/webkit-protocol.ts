@@ -39,6 +39,7 @@ import { KEYVAULT_MANAGE_WEBKIT_METHODS } from "./ops/keyvault-manage";
 import { KEYVAULT_SETUP_WEBKIT_METHODS } from "./ops/keyvault-setup";
 import { THREAD_WEBKIT_METHODS } from "./ops/thread";
 import { AGENT_THREADS_WEBKIT_METHODS } from "./ops/agent-threads";
+import { SPACES_SETTINGS_WEBKIT_METHODS } from "./ops/spaces-settings";
 
 export const WEBKIT_HANDLER_NAME = "cua";
 /** The window event the host dispatches. */
@@ -199,10 +200,20 @@ export const WEBKIT_METHODS = [
   "relay.usage",
   "nudges.pending",
   "nudges.answer",
+  "driver.status",
+  "driver.list",
+  "driver.config",
+  "driver.setConfig",
+  "driver.test",
+  "driver.pause",
+  "driver.setup",
+  "driver.setApp",
+  "driver.permissions",
   "resources.get",
   "machines.rename",
   "machines.remove",
   "machines.checkHealth",
+  ...SPACES_SETTINGS_WEBKIT_METHODS,
   "checklist.get",
   "checklist.send",
   "links.list",
@@ -392,7 +403,7 @@ export interface WkSettingsRow {
 /** `settings.get`, `settings.choose`, `settings.press`: the core's Settings page. */
 export interface WkSettings {
   page: { title: string; sections: { id: string; rows: WkSettingsRow[] }[] };
-  /** `AppSettings.updateChannel` (`stable` or `beta`); null while the build
+  /** `AppSettings.updateChannel` (`stable` or `nightly`; `beta` from an older host); null while the build
    * has no updater. Set with `settings.choose {row: "update-channel"}`. */
   updateChannel?: string | null;
   /** The global shortcut the host registered; absent or null: none. */

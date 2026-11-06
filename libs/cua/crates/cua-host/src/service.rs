@@ -25,84 +25,245 @@
 
 use crate::{Error, Result};
 use cua_home::channel::CuaChannel;
+use cua_home::env::CuaEnv;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Mutex;
 
-/// Service name / label used everywhere.
+/// Base systemd unit name of the host service (the production home's).
 pub const SERVICE_NAME: &str = "cua-spacesd-host";
-/// Windows task name.
+/// Base Windows task name (the production home's).
 pub const WINDOWS_TASK_NAME: &str = "Cua\\SpacesdHost";
+/// Base HKCU `Run` value of the Windows logon entry (the production home's).
+pub const WINDOWS_RUN_VALUE: &str = "CuaSpacesdHost";
 
-/// Keeps the services of a separate Cua home apart: with `CUA_HOME` set to
-/// anything but `~/.cua`, the unit and launchd label carry `-<8 hex>` of
-/// that path, so a second install (a cluster host beside a personal one, a
-/// test home) never replaces the first one's service.
-pub fn instance_suffix() -> String {
-    suffix_for(
-        CuaChannel::Stable,
-        std::env::var_os("CUA_HOME").as_deref(),
-        std::env::var_os("HOME").as_deref(),
-    )
+/// The names one cua home's host service is registered under, on every OS
+/// (CUA-3512).
+///
+/// Every cua home runs its own host service, so no two homes may share a
+/// unit, task, logon entry or launchd label: a staging setup on a computer
+/// that also runs the production host must never end, replace or delete
+/// production's. The names come from the resolved cua home and the
+/// channel, never from environment variables read later, so the CLI, the
+/// app's daemon and the uninstallers agree.
+///
+/// | Home                                   | Suffix       | systemd unit                    | Windows task              |
+/// |----------------------------------------|--------------|---------------------------------|---------------------------|
+/// | `~/.cua` (Stable, production)          | none         | `cua-spacesd-host`              | `Cua\SpacesdHost`         |
+/// | `~/.cua/envs/staging` (Stable, staging)| `-staging`   | `cua-spacesd-host-staging`      | `Cua\SpacesdHost-staging` |
+/// | `~/.cua-local` (Local, staging)        | none         | `cua-spacesd-host-local`        | `Cua\SpacesdHost-local`   |
+/// | `~/.cua-local/envs/prod` (Local, prod) | `-prod`      | `cua-spacesd-host-local-prod`   | `Cua\SpacesdHost-local-prod` |
+/// | any other `CUA_HOME`                   | `-<8 hex>`   | `cua-spacesd-host[-local]-<hex>`| `Cua\SpacesdHost[-local]-<hex>` |
+///
+/// The Windows logon entry is the task name without `Cua\` and the dash
+/// (`CuaSpacesdHost-staging`); the launchd label is the channel's
+/// [`CuaChannel::host_label`] plus the suffix. The production home keeps
+/// the names it has always had.
+///
+/// Builds before CUA-3512 named a staging home's service after `CUA_HOME`
+/// alone: without it, the production names; with it, a hash of the path.
+/// [`ServiceNames::legacy`] lists those, and the runners retire one only
+/// when it runs this home's host ([`ServiceNames::owns`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ServiceNames {
+    /// The channel the names are for.
+    pub channel: CuaChannel,
+    /// `""`, `-staging`, `-prod` or `-<8 hex>` (see the table).
+    pub suffix: String,
+    /// This home's host folder (`<home>/host`): what a runner of this home
+    /// mentions ([`ServiceNames::owns`]).
+    pub host_dir: PathBuf,
+    /// The user's home the cua homes are below.
+    pub user_home: PathBuf,
 }
 
-/// [`instance_suffix`] for `channel`: a home is "separate" when it is not
-/// that channel's own (`~/.cua`, or `~/.cua-local` for Local), so Local's
-/// own home adds nothing to its label.
-fn suffix_for(
-    channel: CuaChannel,
-    cua_home: Option<&std::ffi::OsStr>,
-    user_home: Option<&std::ffi::OsStr>,
-) -> String {
+/// Names of one runner kind: this home's, then the names older builds may
+/// have used for it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LegacyNames {
+    /// systemd units (without `.service`).
+    pub systemd: Vec<String>,
+    /// launchd labels.
+    pub launchd: Vec<String>,
+    /// Windows task names.
+    pub windows_task: Vec<String>,
+    /// Windows `Run` values.
+    pub windows_run: Vec<String>,
+}
+
+impl ServiceNames {
+    /// The names of the host service of `cua_home` (the resolved home, as
+    /// [`cua_home::cua_home`] gives it), for `channel`, below `user_home`.
+    pub fn for_home(channel: CuaChannel, cua_home: &Path, user_home: &Path) -> Self {
+        Self {
+            channel,
+            suffix: home_suffix(channel, cua_home, user_home),
+            host_dir: cua_home.join("host"),
+            user_home: user_home.to_path_buf(),
+        }
+    }
+
+    /// The current process's: [`cua_home::cua_home`] for
+    /// [`CuaChannel::current`].
+    pub fn current() -> Self {
+        let user = std::env::var_os("HOME")
+            .or_else(|| std::env::var_os("USERPROFILE"))
+            .map(PathBuf::from)
+            .unwrap_or_default();
+        Self::for_home(CuaChannel::current(), &cua_home::cua_home(), &user)
+    }
+
+    fn channel_tag(&self) -> &'static str {
+        match self.channel {
+            CuaChannel::Stable => "",
+            CuaChannel::Local => "-local",
+        }
+    }
+
+    /// The systemd unit name (without `.service`).
+    pub fn systemd_unit(&self) -> String {
+        format!("{SERVICE_NAME}{}{}", self.channel_tag(), self.suffix)
+    }
+
+    /// The launchd label.
+    pub fn launchd_label(&self) -> String {
+        format!("{}{}", self.channel.host_label(), self.suffix)
+    }
+
+    /// The Windows scheduled task name (`Cua\SpacesdHost…`).
+    pub fn windows_task(&self) -> String {
+        format!("{WINDOWS_TASK_NAME}{}{}", self.channel_tag(), self.suffix)
+    }
+
+    /// The HKCU `Run` value of the Windows logon entry.
+    pub fn windows_run_value(&self) -> String {
+        format!("{WINDOWS_RUN_VALUE}{}{}", self.channel_tag(), self.suffix)
+    }
+
+    /// Whether these are the production names of the channel's own home
+    /// (no suffix): the names every build before CUA-3512 also used for
+    /// other homes.
+    pub fn is_default(&self) -> bool {
+        self.suffix.is_empty()
+    }
+
+    /// Whether this is the channel's home for the environment that is not
+    /// its own (Stable's staging home, Local's production home), which
+    /// runs beside the channel's own host on the same computer.
+    pub fn other_env(&self) -> bool {
+        [CuaEnv::Prod, CuaEnv::Staging]
+            .iter()
+            .any(|e| self.suffix == format!("-{}", e.name()))
+    }
+
+    /// The names builds before CUA-3512 may have registered this home's
+    /// service under, other than its own: the unsuffixed names (a staging
+    /// home set up without `CUA_HOME`) and the `CUA_HOME` hash (one set up
+    /// with it). Retire one only when [`ServiceNames::owns`] its content.
+    pub fn legacy(&self) -> LegacyNames {
+        let home = self.host_dir_home();
+        let hash = format!("-{}", home_hash(&home));
+        // The old rule hashed every home but `~/.cua` for systemd, and every
+        // home but the channel's own for launchd.
+        let systemd_hash = (home != self.user_home.join(CuaChannel::Stable.home_dir_name()))
+            .then(|| format!("{SERVICE_NAME}{hash}"));
+        let launchd_hash = (home != self.user_home.join(self.channel.home_dir_name()))
+            .then(|| format!("{}{hash}", self.channel.host_label()));
+        let others = |own: String, candidates: Vec<String>| -> Vec<String> {
+            let mut out: Vec<String> = Vec::new();
+            for c in candidates {
+                if c != own && !out.contains(&c) {
+                    out.push(c);
+                }
+            }
+            out
+        };
+        LegacyNames {
+            systemd: others(
+                self.systemd_unit(),
+                std::iter::once(SERVICE_NAME.to_string())
+                    .chain(systemd_hash)
+                    .collect(),
+            ),
+            launchd: others(
+                self.launchd_label(),
+                std::iter::once(self.channel.host_label().to_string())
+                    .chain(launchd_hash)
+                    .collect(),
+            ),
+            windows_task: others(self.windows_task(), vec![WINDOWS_TASK_NAME.into()]),
+            windows_run: others(self.windows_run_value(), vec![WINDOWS_RUN_VALUE.into()]),
+        }
+    }
+
+    fn host_dir_home(&self) -> PathBuf {
+        self.host_dir
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_default()
+    }
+
+    /// Whether a unit, plist, task XML or logon command line (`content`)
+    /// runs this home's host: it names a file in this home's host folder
+    /// (the driver, its log). Another home's host folder never matches,
+    /// even one inside this home (`~/.cua/host/` is not part of
+    /// `~/.cua/envs/staging/host/`).
+    pub fn owns(&self, content: &str) -> bool {
+        // On Windows `/` and `\` are one separator (`envs/staging` joins
+        // into a path with both), and case does not matter.
+        let norm = |s: &str| {
+            if cfg!(windows) {
+                s.replace('/', "\\").to_lowercase()
+            } else {
+                s.to_string()
+            }
+        };
+        let content = norm(content);
+        let dir = self.host_dir.to_string_lossy();
+        let sep = std::path::MAIN_SEPARATOR;
+        [
+            format!("{dir}{sep}"),
+            format!("{dir}/"),
+            xml_escape(&format!("{dir}{sep}")),
+        ]
+        .iter()
+        .any(|needle| content.contains(norm(needle).as_str()))
+    }
+}
+
+/// `channel`'s cua home for `env` below `user_home` (`~/.cua`,
+/// `~/.cua/envs/staging`, `~/.cua-local`, `~/.cua-local/envs/prod`).
+fn env_home_in(channel: CuaChannel, env: CuaEnv, user_home: &Path) -> PathBuf {
+    let base = user_home.join(channel.home_dir_name());
+    match channel.home_subdir(env) {
+        Some(sub) => base.join(sub),
+        None => base,
+    }
+}
+
+/// The suffix of `cua_home`'s names: none for the channel's own home in its
+/// own environment, the environment's name for the channel's home of the
+/// other one, else a hash of the path.
+fn home_suffix(channel: CuaChannel, cua_home: &Path, user_home: &Path) -> String {
+    let own_env = channel.default_env();
+    if cua_home == env_home_in(channel, own_env, user_home) {
+        return String::new();
+    }
+    for env in [CuaEnv::Prod, CuaEnv::Staging] {
+        if env != own_env && cua_home == env_home_in(channel, env, user_home) {
+            return format!("-{}", env.name());
+        }
+    }
+    format!("-{}", home_hash(cua_home))
+}
+
+/// 8 hex digits of SHA-256 of the path: what builds before CUA-3512 added
+/// for a `CUA_HOME` other than the channel's own home.
+fn home_hash(home: &Path) -> String {
     use sha2::{Digest, Sha256};
-    let Some(home) = cua_home.filter(|h| !h.is_empty()).map(PathBuf::from) else {
-        return String::new();
-    };
-    let default = user_home.map(|h| channel_home_in(channel, Path::new(h)));
-    if Some(&home) == default.as_ref() {
-        return String::new();
-    }
     let digest = Sha256::digest(home.to_string_lossy().as_bytes());
-    format!("-{}", &hex::encode(digest)[..8])
-}
-
-/// `channel`'s cua home below `user_home`: `<user_home>/.cua`, or
-/// `<user_home>/.cua-local`. The directory name is [`CuaChannel::home_dir`]'s
-/// (the one place that owns it); only the user home is the caller's.
-fn channel_home_in(channel: CuaChannel, user_home: &Path) -> PathBuf {
-    match channel.home_dir().file_name() {
-        Some(name) => user_home.join(name),
-        None => channel.home_dir(),
-    }
-}
-
-/// The systemd unit name of this home's host service.
-pub fn service_name() -> String {
-    format!("{SERVICE_NAME}{}", instance_suffix())
-}
-
-/// The launchd label of this home's host service: the channel's
-/// [`CuaChannel::host_label`] (`com.trycua.spacesd.host`, or
-/// `com.trycua.spacesd.host.local` for Local) plus [`suffix_for`].
-pub fn launchd_label() -> String {
-    launchd_label_for(
-        CuaChannel::current(),
-        std::env::var_os("CUA_HOME").as_deref(),
-        std::env::var_os("HOME").as_deref(),
-    )
-}
-
-fn launchd_label_for(
-    channel: CuaChannel,
-    cua_home: Option<&std::ffi::OsStr>,
-    user_home: Option<&std::ffi::OsStr>,
-) -> String {
-    format!(
-        "{}{}",
-        channel.host_label(),
-        suffix_for(channel, cua_home, user_home)
-    )
+    hex::encode(digest)[..8].to_string()
 }
 
 /// What macOS shows for the app's login item (System Settings: Privacy &
@@ -261,6 +422,13 @@ pub trait ServiceManager: Send + Sync {
     /// now (setup asks before it chooses the service's ports). The real
     /// runners ask the operating system ([`crate::ports::os_port_free`]).
     fn port_free(&self, addr: std::net::SocketAddr, transport: crate::ports::Transport) -> bool;
+    /// Ends and deletes this home's service where a build before CUA-3512
+    /// registered it under another home's names (see [`ServiceNames`]),
+    /// never touching a runner of another home. Returns the names it
+    /// retired. Setup calls it before it installs; `uninstall` calls it too.
+    fn retire_legacy_names(&self) -> Vec<String> {
+        Vec::new()
+    }
 }
 
 // ------------------------------------------------------------- generators
@@ -349,7 +517,7 @@ fn xml_escape(s: &str) -> String {
 }
 
 /// The LaunchAgent plist (GUI session, kept alive).
-pub fn launchd_plist(spec: &ServiceSpec) -> String {
+pub fn launchd_plist(spec: &ServiceSpec, label: &str) -> String {
     let mut args = format!(
         "    <string>{}</string>\n",
         xml_escape(&spec.program.to_string_lossy())
@@ -401,7 +569,7 @@ pub fn launchd_plist(spec: &ServiceSpec) -> String {
 </dict>
 </plist>
 "#,
-        label = launchd_label(),
+        label = xml_escape(label),
         wd = xml_escape(&spec.working_dir.to_string_lossy()),
     )
 }
@@ -432,13 +600,9 @@ fn windows_quote(arg: &str) -> String {
     out
 }
 
-/// The program and arguments that run the driver in the user's session:
-/// `conhost.exe --headless cmd.exe /d /c [set K=V&& ...] driver args >> log`.
-/// `--headless` keeps the console out of sight; a visible one was an empty
-/// window that stopped the host when closed. `system_root` is
-/// `%SystemRoot%` in the task (which expands it) and the real directory in
-/// the logon entry.
-pub fn windows_action(spec: &ServiceSpec, system_root: &str) -> (String, String) {
+/// The `cmd.exe` arguments that run the driver and append its output to
+/// the log: `/d /c [set "K=V"&& ...] driver args >> log 2>&1`.
+pub fn windows_cmd_line(spec: &ServiceSpec) -> String {
     let driver = std::iter::once(windows_quote(&spec.program.to_string_lossy()))
         .chain(spec.args.iter().map(|a| windows_quote(a)))
         .collect::<Vec<_>>()
@@ -448,11 +612,22 @@ pub fn windows_action(spec: &ServiceSpec, system_root: &str) -> (String, String)
     for (k, v) in &spec.env {
         chain.push_str(&format!("set \"{k}={v}\"&& "));
     }
+    format!("/d /c {chain}{driver} >> {log} 2>&1")
+}
+
+/// The program and arguments that run the driver in the user's session at
+/// logon: `conhost.exe --headless cmd.exe` [`windows_cmd_line`].
+/// `--headless` keeps the console out of sight; a visible one was an empty
+/// window that stopped the host when closed. `system_root` is
+/// `%SystemRoot%` in the task (which expands it) and the real directory in
+/// the logon entry. Starting it now is [`windows_start_now`].
+pub fn windows_action(spec: &ServiceSpec, system_root: &str) -> (String, String) {
     (
         format!("{system_root}\\System32\\conhost.exe"),
         format!(
-            "--headless {} /d /c {chain}{driver} >> {log} 2>&1",
-            windows_quote(&format!("{system_root}\\System32\\cmd.exe"))
+            "--headless {} {}",
+            windows_quote(&format!("{system_root}\\System32\\cmd.exe")),
+            windows_cmd_line(spec)
         ),
     )
 }
@@ -462,7 +637,7 @@ pub fn windows_action(spec: &ServiceSpec, system_root: &str) -> (String, String)
 /// Environment variables are passed as `--env`-free arguments: the task
 /// runs `cmd.exe /d /c set K=V&& … && driver args` only when `env` is
 /// non-empty, since tasks have no environment block.
-pub fn windows_task_xml(spec: &ServiceSpec, user: &str) -> String {
+pub fn windows_task_xml(spec: &ServiceSpec, user: &str, task_name: &str) -> String {
     let (command, arguments) = windows_action(spec, "%SystemRoot%");
     let user_id = if user.is_empty() {
         String::new()
@@ -521,7 +696,7 @@ pub fn windows_task_xml(spec: &ServiceSpec, user: &str) -> String {
   </Actions>
 </Task>
 "#,
-        name = xml_escape(WINDOWS_TASK_NAME),
+        name = xml_escape(task_name),
         command = xml_escape(&command),
         arguments = xml_escape(&arguments),
         wd = xml_escape(&spec.working_dir.to_string_lossy()),
@@ -586,26 +761,34 @@ pub struct Systemd {
     pub system: bool,
     /// Unit directory.
     pub unit_dir: PathBuf,
+    /// The unit names of this home ([`ServiceNames`]).
+    pub names: ServiceNames,
+    /// The `systemctl` to run (tests pass a stand-in).
+    pub systemctl: PathBuf,
 }
 
 impl Systemd {
     /// A system unit when running as root, else a user unit under `home`.
-    pub fn for_current_user(user_home: &Path) -> Self {
-        if is_root() {
-            Self {
-                system: true,
-                unit_dir: PathBuf::from("/etc/systemd/system"),
-            }
+    pub fn for_current_user(user_home: &Path, names: ServiceNames) -> Self {
+        let (system, unit_dir) = if is_root() {
+            (true, PathBuf::from("/etc/systemd/system"))
         } else {
-            Self {
-                system: false,
-                unit_dir: user_home.join(".config/systemd/user"),
-            }
+            (false, user_home.join(".config/systemd/user"))
+        };
+        Self {
+            system,
+            unit_dir,
+            names,
+            systemctl: PathBuf::from("systemctl"),
         }
     }
 
+    fn unit(&self) -> String {
+        self.names.systemd_unit()
+    }
+
     fn unit_path(&self) -> PathBuf {
-        self.unit_dir.join(format!("{}.service", service_name()))
+        self.unit_dir.join(format!("{}.service", self.unit()))
     }
 
     fn remove_legacy(&self) {
@@ -619,7 +802,7 @@ impl Systemd {
     }
 
     fn systemctl(&self) -> Command {
-        let mut c = Command::new("systemctl");
+        let mut c = Command::new(&self.systemctl);
         if !self.system {
             c.arg("--user");
         }
@@ -635,27 +818,50 @@ impl ServiceManager for Systemd {
         self.remove_legacy();
         write_file(&self.unit_path(), &systemd_unit(spec, self.system))?;
         run(self.systemctl().arg("daemon-reload"))?;
-        run(self.systemctl().args(["enable", &service_name()]))?;
+        run(self.systemctl().args(["enable", &self.unit()]))?;
         Ok(())
     }
     fn start(&self) -> Result<()> {
-        run(self.systemctl().args(["restart", &service_name()])).map(drop)
+        run(self.systemctl().args(["restart", &self.unit()])).map(drop)
     }
     fn stop(&self) -> Result<()> {
-        run(self.systemctl().args(["stop", &service_name()])).map(drop)
+        run(self.systemctl().args(["stop", &self.unit()])).map(drop)
     }
     fn uninstall(&self) -> Result<()> {
-        let _ = run(self.systemctl().args(["disable", "--now", &service_name()]));
+        let _ = run(self.systemctl().args(["disable", "--now", &self.unit()]));
         let _ = std::fs::remove_file(self.unit_path());
         self.remove_legacy();
+        self.retire_legacy_names();
         let _ = run(self.systemctl().arg("daemon-reload"));
         Ok(())
+    }
+    fn retire_legacy_names(&self) -> Vec<String> {
+        let mut retired = Vec::new();
+        for name in self.names.legacy().systemd {
+            let path = self.unit_dir.join(format!("{name}.service"));
+            let Ok(content) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            if !self.names.owns(&content) {
+                // Another home's service (production's, most often):
+                // never touched.
+                continue;
+            }
+            tracing::info!(unit = %name, "retiring this home's host service from its old unit name");
+            let _ = run(self.systemctl().args(["disable", "--now", &name]));
+            let _ = std::fs::remove_file(&path);
+            retired.push(name);
+        }
+        if !retired.is_empty() {
+            let _ = run(self.systemctl().arg("daemon-reload"));
+        }
+        retired
     }
     fn state(&self) -> ServiceState {
         let installed = self.unit_path().exists();
         let active = self
             .systemctl()
-            .args(["is-active", &service_name()])
+            .args(["is-active", &self.unit()])
             .output()
             .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
             .unwrap_or_default();
@@ -685,11 +891,13 @@ pub struct Launchd {
     pub agents_dir: PathBuf,
     /// The user id (`gui/<uid>`).
     pub uid: u32,
+    /// The label of this home ([`ServiceNames`]).
+    pub names: ServiceNames,
 }
 
 impl Launchd {
     /// The current user's agents directory and uid.
-    pub fn for_current_user(user_home: &Path) -> Self {
+    pub fn for_current_user(user_home: &Path, names: ServiceNames) -> Self {
         #[cfg(unix)]
         // SAFETY: getuid has no preconditions.
         let uid = unsafe { libc::getuid() };
@@ -698,15 +906,17 @@ impl Launchd {
         Self {
             agents_dir: user_home.join("Library/LaunchAgents"),
             uid,
+            names,
         }
     }
 
     fn plist_path(&self) -> PathBuf {
-        self.agents_dir.join(format!("{}.plist", launchd_label()))
+        self.agents_dir
+            .join(format!("{}.plist", self.names.launchd_label()))
     }
 
     fn target(&self) -> String {
-        format!("gui/{}/{}", self.uid, launchd_label())
+        format!("gui/{}/{}", self.uid, self.names.launchd_label())
     }
 
     fn remove_legacy(&self) {
@@ -727,7 +937,10 @@ impl ServiceManager for Launchd {
     }
     fn install(&self, spec: &ServiceSpec) -> Result<()> {
         self.remove_legacy();
-        write_file(&self.plist_path(), &launchd_plist(spec))
+        write_file(
+            &self.plist_path(),
+            &launchd_plist(spec, &self.names.launchd_label()),
+        )
     }
     fn start(&self) -> Result<()> {
         let plist = self.plist_path().to_string_lossy().into_owned();
@@ -753,7 +966,25 @@ impl ServiceManager for Launchd {
         let _ = run(Command::new("launchctl").args(["bootout", &self.target()]));
         let _ = std::fs::remove_file(self.plist_path());
         self.remove_legacy();
+        self.retire_legacy_names();
         Ok(())
+    }
+    fn retire_legacy_names(&self) -> Vec<String> {
+        let mut retired = Vec::new();
+        for label in self.names.legacy().launchd {
+            let path = self.agents_dir.join(format!("{label}.plist"));
+            let Ok(content) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            if !self.names.owns(&content) {
+                continue;
+            }
+            let target = format!("gui/{}/{label}", self.uid);
+            let _ = run(Command::new("launchctl").args(["bootout", &target]));
+            let _ = std::fs::remove_file(&path);
+            retired.push(label);
+        }
+        retired
     }
     fn state(&self) -> ServiceState {
         let printed = Command::new("launchctl")
@@ -858,8 +1089,6 @@ fn remove_legacy_task() {
     }
 }
 
-/// HKCU `Run` value of the logon entry.
-pub const WINDOWS_RUN_VALUE: &str = "CuaSpacesdHost";
 const WINDOWS_RUN_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
 
 /// The logon-entry command line: the task's action with real paths.
@@ -873,16 +1102,22 @@ pub fn windows_run_value(spec: &ServiceSpec, system_root: &str) -> String {
 /// non-elevated desktop session), a per-user logon entry (HKCU `Run`) plus a
 /// hidden process started now. Both run the driver in the user's own
 /// session with no administrator rights; the task adds restart on failure.
+///
+/// The task and the logon entry are named after this cua home
+/// ([`ServiceNames`]), so a staging host never ends, replaces or deletes
+/// the production one on the same PC (CUA-3512).
 pub struct WindowsTask {
     /// Where the task XML is written before `schtasks /Create /XML`.
     pub xml_path: PathBuf,
     /// `DOMAIN\\user` the logon trigger fires for ("" = any user).
     pub user: String,
+    /// The task and logon-entry names of this home.
+    pub names: ServiceNames,
 }
 
 impl WindowsTask {
     /// The current user (`USERDOMAIN\\USERNAME`).
-    pub fn for_current_user(host_dir: &Path) -> Self {
+    pub fn for_current_user(host_dir: &Path, names: ServiceNames) -> Self {
         let user = match (std::env::var("USERDOMAIN"), std::env::var("USERNAME")) {
             (Ok(d), Ok(u)) if !d.is_empty() && !u.is_empty() => format!("{d}\\{u}"),
             (_, Ok(u)) => u,
@@ -891,7 +1126,16 @@ impl WindowsTask {
         Self {
             xml_path: host_dir.join("task.xml"),
             user,
+            names,
         }
+    }
+
+    fn task(&self) -> String {
+        self.names.windows_task()
+    }
+
+    fn run_value(&self) -> String {
+        self.names.windows_run_value()
     }
 
     /// The spec the logon entry runs (`service.json` next to the XML).
@@ -900,9 +1144,7 @@ impl WindowsTask {
     }
 
     fn run_entry_installed(&self) -> bool {
-        no_window(Command::new("reg").args(["query", WINDOWS_RUN_KEY, "/v", WINDOWS_RUN_VALUE]))
-            .output()
-            .is_ok_and(|o| o.status.success())
+        run_entry(&self.run_value()).is_some()
     }
 
     fn remove_run_entry(&self) {
@@ -911,7 +1153,7 @@ impl WindowsTask {
                 "delete",
                 WINDOWS_RUN_KEY,
                 "/v",
-                WINDOWS_RUN_VALUE,
+                &self.run_value(),
                 "/f",
             ]));
         }
@@ -927,7 +1169,7 @@ impl WindowsTask {
             "add",
             WINDOWS_RUN_KEY,
             "/v",
-            WINDOWS_RUN_VALUE,
+            &self.run_value(),
             "/t",
             "REG_SZ",
             "/d",
@@ -941,6 +1183,73 @@ impl WindowsTask {
         serde_json::from_slice(&std::fs::read(self.spec_path())?)
             .map_err(|e| Error::Service(format!("service.json: {e}")))
     }
+
+    /// This home's driver, as the runners start it (`<host>/bin/…`).
+    fn home_driver(&self) -> PathBuf {
+        self.names
+            .host_dir
+            .join("bin")
+            .join(crate::driver::binary_name())
+    }
+
+    /// Whether a task by this home's name exists and runs this home
+    /// (`Some(false)`: the name is another's, such as another Windows user's
+    /// production host, since task names are machine-wide; never ended,
+    /// replaced or deleted from here).
+    fn task_is_ours(&self) -> Option<bool> {
+        task_xml(&self.task()).map(|xml| self.names.owns(&xml))
+    }
+
+    fn kill_home_driver(&self) {
+        for pid in windows_procs::pids_of(&self.home_driver()) {
+            let _ = run(Command::new("taskkill").args(["/PID", &pid.to_string(), "/T", "/F"]));
+        }
+    }
+}
+
+/// The data of the HKCU `Run` value `name`, when it exists.
+fn run_entry(name: &str) -> Option<String> {
+    let out = no_window(Command::new("reg").args(["query", WINDOWS_RUN_KEY, "/v", name]))
+        .output()
+        .ok()?;
+    out.status.success().then(|| console_text(&out.stdout))
+}
+
+/// The XML of the scheduled task `name`, when it exists.
+fn task_xml(name: &str) -> Option<String> {
+    let out = no_window(Command::new("schtasks").args(["/Query", "/TN", name, "/XML"]))
+        .output()
+        .ok()?;
+    out.status.success().then(|| console_text(&out.stdout))
+}
+
+/// What `schtasks` and `reg` print into a pipe: UTF-8 when it is, else the
+/// console (OEM) code page, so a user folder with letters outside ASCII
+/// (`C:\Users\José`) still matches [`ServiceNames::owns`].
+fn console_text(bytes: &[u8]) -> String {
+    if let Ok(s) = std::str::from_utf8(bytes) {
+        return s.to_string();
+    }
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::Globalization::{CP_OEMCP, MultiByteToWideChar};
+        let Ok(len) = i32::try_from(bytes.len()) else {
+            return String::from_utf8_lossy(bytes).into_owned();
+        };
+        // SAFETY: the input and output buffers are sized and their lengths
+        // passed; the first call only measures.
+        unsafe {
+            let n = MultiByteToWideChar(CP_OEMCP, 0, bytes.as_ptr(), len, std::ptr::null_mut(), 0);
+            if n > 0 {
+                let mut wide = vec![0u16; n as usize];
+                let n = MultiByteToWideChar(CP_OEMCP, 0, bytes.as_ptr(), len, wide.as_mut_ptr(), n);
+                if n > 0 {
+                    return String::from_utf16_lossy(&wide[..n as usize]);
+                }
+            }
+        }
+    }
+    String::from_utf8_lossy(bytes).into_owned()
 }
 
 fn system_root() -> String {
@@ -954,6 +1263,69 @@ fn access_denied(e: &Error) -> bool {
     s.contains("access is denied") || s.contains("0x80070005")
 }
 
+/// How [`WindowsTask`] starts the logon entry's driver now, without waiting
+/// for the next sign-in (CUA-3513): `cmd.exe` with the logon entry's own
+/// `/d /c set …&& driver … >> log` line, in a console that has no window
+/// (`CREATE_NO_WINDOW`), in its own process group.
+///
+/// Not the logon entry's `conhost.exe --headless` wrapper: started by a
+/// program, headless conhost takes its standard input and output for the
+/// pseudo-console's pipes, and with them closed (a background program has
+/// none to give it) it shuts the console down at once, so the driver never
+/// ran and no `driver.log` was written. At sign-in Explorer starts it with
+/// no standard handles, which is why only the next sign-in brought the host
+/// up. A console without a window is what `--headless` gives at sign-in.
+pub fn windows_start_now(spec: &ServiceSpec, system_root: &str) -> (String, String) {
+    (
+        format!("{system_root}\\System32\\cmd.exe"),
+        windows_cmd_line(spec),
+    )
+}
+
+/// `CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP`, plus
+/// `CREATE_BREAKAWAY_FROM_JOB` on the first try so the driver outlives a
+/// job that kills its processes on close (a terminal's, an installer's).
+#[cfg(windows)]
+const START_NOW_FLAGS: u32 = 0x0800_0000 | 0x0000_0200;
+#[cfg(windows)]
+const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x0100_0000;
+
+impl WindowsTask {
+    fn start_run_entry(&self) -> Result<()> {
+        let _ = self.stop();
+        let spec = self.spec()?;
+        let (program, line) = windows_start_now(&spec, &system_root());
+        let spawn = |flags: u32| {
+            let mut cmd = Command::new(&program);
+            #[cfg(windows)]
+            {
+                use std::os::windows::process::CommandExt;
+                // The line is a cmd.exe line, passed as is.
+                cmd.raw_arg(&line);
+                cmd.creation_flags(flags);
+            }
+            #[cfg(not(windows))]
+            {
+                let _ = flags;
+                cmd.arg(&line);
+            }
+            cmd.current_dir(&spec.working_dir)
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+        };
+        #[cfg(windows)]
+        let spawned =
+            spawn(START_NOW_FLAGS | CREATE_BREAKAWAY_FROM_JOB).or_else(|_| spawn(START_NOW_FLAGS));
+        #[cfg(not(windows))]
+        let spawned = spawn(0);
+        spawned
+            .map(drop)
+            .map_err(|e| Error::Service(format!("start {program}: {e}")))
+    }
+}
+
 impl ServiceManager for WindowsTask {
     fn kind(&self) -> RunnerKind {
         RunnerKind::WindowsTask
@@ -961,7 +1333,7 @@ impl ServiceManager for WindowsTask {
     fn install(&self, spec: &ServiceSpec) -> Result<()> {
         // schtasks reads UTF-16 (the header says so) but also accepts UTF-8
         // without a BOM when the declaration matches; write UTF-16LE + BOM.
-        let xml = windows_task_xml(spec, &self.user);
+        let xml = windows_task_xml(spec, &self.user, &self.task());
         let mut bytes = vec![0xFF, 0xFE];
         for unit in xml.encode_utf16() {
             bytes.extend_from_slice(&unit.to_le_bytes());
@@ -971,10 +1343,17 @@ impl ServiceManager for WindowsTask {
         }
         std::fs::write(&self.xml_path, bytes)?;
         remove_legacy_task();
+        if self.task_is_ours() == Some(false) {
+            // Task names are machine-wide: this one is another Windows
+            // user's host. Never replaced; this user's runs from the logon
+            // entry instead.
+            tracing::info!(task = %self.task(), "the task name is another user's; using the logon entry");
+            return self.install_run_entry(spec);
+        }
         let created = run(Command::new("schtasks").args([
             "/Create",
             "/TN",
-            WINDOWS_TASK_NAME,
+            &self.task(),
             "/XML",
             &self.xml_path.to_string_lossy(),
             "/F",
@@ -993,37 +1372,30 @@ impl ServiceManager for WindowsTask {
     }
     fn start(&self) -> Result<()> {
         if !self.run_entry_installed() {
-            let _ = run(Command::new("schtasks").args(["/End", "/TN", WINDOWS_TASK_NAME]));
-            return run(Command::new("schtasks").args(["/Run", "/TN", WINDOWS_TASK_NAME]))
-                .map(drop);
+            if self.task_is_ours() == Some(false) {
+                return Err(Error::Service(format!(
+                    "the scheduled task {} runs another Windows user's host; run `{} host setup` again",
+                    self.task(),
+                    crate::cli()
+                )));
+            }
+            let _ = run(Command::new("schtasks").args(["/End", "/TN", &self.task()]));
+            return run(Command::new("schtasks").args(["/Run", "/TN", &self.task()])).map(drop);
         }
-        let _ = self.stop();
-        let spec = self.spec()?;
-        let (command, arguments) = windows_action(&spec, &system_root());
-        let mut cmd = Command::new(&command);
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            // The arguments are a cmd.exe line, passed as is.
-            cmd.raw_arg(&arguments);
-            const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
-            const DETACHED_PROCESS: u32 = 0x0000_0008;
-            cmd.creation_flags(CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS);
-        }
-        #[cfg(not(windows))]
-        cmd.arg(&arguments);
-        cmd.current_dir(&spec.working_dir)
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-            .map(drop)
-            .map_err(|e| Error::Service(format!("start {command}: {e}")))
+        self.start_run_entry()
     }
     fn stop(&self) -> Result<()> {
         if !self.run_entry_installed() {
-            return run(Command::new("schtasks").args(["/End", "/TN", WINDOWS_TASK_NAME]))
-                .map(drop);
+            if self.task_is_ours() == Some(false) {
+                return Ok(());
+            }
+            let ended = run(Command::new("schtasks").args(["/End", "/TN", &self.task()]));
+            // `/End` stops only the task's own process (conhost): cmd.exe
+            // and the driver under it keep running, holding the ports, so a
+            // setup again moved to other ports and its new driver never
+            // started (CUA-1749, CUA-3513).
+            self.kill_home_driver();
+            return ended.map(drop);
         }
         if let Ok(spec) = self.spec() {
             for pid in windows_procs::pids_of(&spec.program) {
@@ -1033,13 +1405,22 @@ impl ServiceManager for WindowsTask {
         Ok(())
     }
     fn uninstall(&self) -> Result<()> {
-        let program = self.spec().ok().map(|s| s.program);
+        // The logon entry's spec names the driver; the task has none, and
+        // runs this home's own (`<host>/bin`).
+        let program = Some(
+            self.spec()
+                .ok()
+                .map(|s| s.program)
+                .unwrap_or_else(|| self.home_driver()),
+        );
         if self.run_entry_installed() {
             let _ = self.stop();
         }
         self.remove_run_entry();
-        let _ = run(Command::new("schtasks").args(["/End", "/TN", WINDOWS_TASK_NAME]));
-        let _ = run(Command::new("schtasks").args(["/Delete", "/TN", WINDOWS_TASK_NAME, "/F"]));
+        if self.task_is_ours() == Some(true) {
+            let _ = run(Command::new("schtasks").args(["/End", "/TN", &self.task()]));
+            let _ = run(Command::new("schtasks").args(["/Delete", "/TN", &self.task(), "/F"]));
+        }
         // `/End` stops only the task's own process (conhost): the cmd.exe
         // and the driver under it keep running, the driver still online and
         // cmd.exe holding driver.log open, so ~/.cua/host could not be
@@ -1052,7 +1433,41 @@ impl ServiceManager for WindowsTask {
         }
         let _ = std::fs::remove_file(&self.xml_path);
         remove_legacy_task();
+        self.retire_legacy_names();
         Ok(())
+    }
+    fn retire_legacy_names(&self) -> Vec<String> {
+        let legacy = self.names.legacy();
+        let mut retired = Vec::new();
+        for name in legacy.windows_task {
+            let Some(xml) = task_xml(&name) else { continue };
+            if !self.names.owns(&xml) {
+                // Another home's task (production's, most often): never
+                // ended or deleted.
+                continue;
+            }
+            tracing::info!(task = %name, "retiring this home's host task from its old name");
+            let _ = run(Command::new("schtasks").args(["/End", "/TN", &name]));
+            let _ = run(Command::new("schtasks").args(["/Delete", "/TN", &name, "/F"]));
+            retired.push(name);
+        }
+        for name in legacy.windows_run {
+            let Some(data) = run_entry(&name) else {
+                continue;
+            };
+            if !self.names.owns(&data) {
+                continue;
+            }
+            tracing::info!(value = %name, "retiring this home's logon entry from its old name");
+            let _ = run(Command::new("reg").args(["delete", WINDOWS_RUN_KEY, "/v", &name, "/f"]));
+            retired.push(name);
+        }
+        if !retired.is_empty() {
+            // The driver the old task or entry started is this home's own
+            // (`owns` checked its path); the new one starts it again.
+            self.kill_home_driver();
+        }
+        retired
     }
     fn state(&self) -> ServiceState {
         if self.run_entry_installed() {
@@ -1065,21 +1480,24 @@ impl ServiceManager for WindowsTask {
                 running: !pids.is_empty(),
                 kind: "windows-task".into(),
                 detail: format!(
-                    "logon entry {WINDOWS_RUN_KEY}\\{WINDOWS_RUN_VALUE}; pids {pids:?}"
+                    "logon entry {WINDOWS_RUN_KEY}\\{}; pids {pids:?}",
+                    self.run_value()
                 ),
             };
         }
         let out = no_window(Command::new("schtasks").args([
             "/Query",
             "/TN",
-            WINDOWS_TASK_NAME,
+            &self.task(),
             "/FO",
             "CSV",
             "/NH",
         ]))
         .output();
         let (installed, text) = match out {
-            Ok(o) if o.status.success() => (true, String::from_utf8_lossy(&o.stdout).to_string()),
+            Ok(o) if o.status.success() && self.task_is_ours() != Some(false) => {
+                (true, String::from_utf8_lossy(&o.stdout).to_string())
+            }
             _ => (false, String::new()),
         };
         ServiceState {
@@ -1109,7 +1527,10 @@ mod windows_procs {
         use windows_sys::Win32::System::Threading::{
             OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
         };
-        let want = program.to_string_lossy().to_lowercase();
+        // `envs/staging` joins into a Windows path with a forward slash;
+        // Windows reports the image with backslashes. Compare both with
+        // backslashes, so the staging home's driver is found (CUA-3512).
+        let want = program.to_string_lossy().replace('/', "\\").to_lowercase();
         let want_name = program
             .file_name()
             .map(|n| n.to_string_lossy().to_lowercase())
@@ -1138,7 +1559,10 @@ mod windows_procs {
                         let mut buf = [0u16; 1024];
                         let mut n = buf.len() as u32;
                         if QueryFullProcessImageNameW(h, 0, buf.as_mut_ptr(), &mut n) != 0
-                            && String::from_utf16_lossy(&buf[..n as usize]).to_lowercase() == want
+                            && String::from_utf16_lossy(&buf[..n as usize])
+                                .replace('/', "\\")
+                                .to_lowercase()
+                                == want
                         {
                             out.push(e.th32ProcessID);
                         }
@@ -1360,7 +1784,8 @@ pub fn helper_spec_path(user_home: &Path) -> PathBuf {
 /// [`helper_spec_path`] for `channel`: [`CuaChannel::helper_spec_path`]
 /// below `user_home`.
 pub fn helper_spec_path_for(channel: CuaChannel, user_home: &Path) -> PathBuf {
-    channel_home_in(channel, user_home)
+    user_home
+        .join(channel.home_dir_name())
         .join("helper")
         .join("service.json")
 }
@@ -1801,6 +2226,8 @@ pub struct FakeServiceManager {
     pub held_by_others: Mutex<Vec<u16>>,
     /// Ports this service holds while it runs (free once it is stopped).
     pub held_while_running: Mutex<Vec<u16>>,
+    /// Old names `retire_legacy_names` reports retiring (once).
+    pub legacy_names: Mutex<Vec<String>>,
 }
 
 impl ServiceManager for FakeServiceManager {
@@ -1831,6 +2258,13 @@ impl ServiceManager for FakeServiceManager {
         *self.running.lock().unwrap() = false;
         Ok(())
     }
+    fn retire_legacy_names(&self) -> Vec<String> {
+        let retired = std::mem::take(&mut *self.legacy_names.lock().unwrap());
+        if !retired.is_empty() {
+            self.calls.lock().unwrap().push("retire".into());
+        }
+        retired
+    }
     fn state(&self) -> ServiceState {
         ServiceState {
             installed: self.spec.lock().unwrap().is_some(),
@@ -1848,17 +2282,23 @@ impl ServiceManager for FakeServiceManager {
 }
 
 /// The manager for `kind` (resolving `Auto`), for the current user.
-pub fn manager_for(kind: RunnerKind, user_home: &Path, host_dir: &Path) -> Box<dyn ServiceManager> {
+/// `names` are the cua home's ([`ServiceNames::for_home`]).
+pub fn manager_for(
+    kind: RunnerKind,
+    user_home: &Path,
+    host_dir: &Path,
+    names: ServiceNames,
+) -> Box<dyn ServiceManager> {
     match kind.resolve() {
-        RunnerKind::Systemd => Box::new(Systemd::for_current_user(user_home)),
-        RunnerKind::Launchd => Box::new(Launchd::for_current_user(user_home)),
+        RunnerKind::Systemd => Box::new(Systemd::for_current_user(user_home, names)),
+        RunnerKind::Launchd => Box::new(Launchd::for_current_user(user_home, names)),
         RunnerKind::AppHelper => match find_app_helper() {
             Some(app) => Box::new(AppHelper::for_current_user(app, user_home)),
             // The app was removed (or replaced by one without the helper):
             // nothing can run it; report it as not installed.
             None => Box::new(MissingAppHelper),
         },
-        RunnerKind::WindowsTask => Box::new(WindowsTask::for_current_user(host_dir)),
+        RunnerKind::WindowsTask => Box::new(WindowsTask::for_current_user(host_dir, names)),
         RunnerKind::Process | RunnerKind::Auto => Box::new(ProcessRunner {
             dir: host_dir.to_path_buf(),
         }),
@@ -2051,7 +2491,7 @@ mod tests {
     fn launchd_plist_is_a_gui_agent() {
         let mut s = spec();
         s.args.push("<&>".into());
-        let p = launchd_plist(&s);
+        let p = launchd_plist(&s, "com.trycua.spacesd.host");
         assert!(p.contains("<string>com.trycua.spacesd.host</string>"));
         assert!(p.contains("<key>LimitLoadToSessionType</key>\n  <string>Aqua</string>"));
         assert!(p.contains("<key>KeepAlive</key>\n  <true/>"));
@@ -2068,7 +2508,7 @@ mod tests {
         let mut s = spec();
         s.program = r"C:\Users\Ada\.cua\host\bin\cua-spacesd.exe".into();
         s.log_path = r"C:\Users\Ada\.cua\host\driver.log".into();
-        let x = windows_task_xml(&s, r"PC\Ada");
+        let x = windows_task_xml(&s, r"PC\Ada", WINDOWS_TASK_NAME);
         assert!(x.contains("<LogonTrigger>"));
         assert!(x.contains("<LogonType>InteractiveToken</LogonType>"));
         assert!(x.contains(r"<UserId>PC\Ada</UserId>"));
@@ -2079,7 +2519,7 @@ mod tests {
         assert!(x.contains("set &quot;CUA_ENV_LOG=info&quot;&amp;&amp; "));
         assert!(x.contains("&quot;/home/ada/.cua/host/machine token&quot;"));
         assert!(x.contains(r"&gt;&gt; C:\Users\Ada\.cua\host\driver.log 2&gt;&amp;1"));
-        let any = windows_task_xml(&s, "");
+        let any = windows_task_xml(&s, "", WINDOWS_TASK_NAME);
         assert!(!any.contains("<UserId>"));
     }
 
@@ -2088,7 +2528,7 @@ mod tests {
         let mut s = spec();
         s.program = r"C:\Users\Ada\.cua\host\bin\cua-spacesd.exe".into();
         s.log_path = r"C:\Users\Ada\.cua\host\driver.log".into();
-        let x = windows_task_xml(&s, r"PC\Ada");
+        let x = windows_task_xml(&s, r"PC\Ada", WINDOWS_TASK_NAME);
         assert!(x.contains(r"<Command>%SystemRoot%\System32\conhost.exe</Command>"));
         assert!(x.contains(r"<Arguments>--headless %SystemRoot%\System32\cmd.exe /d /c set "));
         // The logon entry runs the same line with real paths.
@@ -2100,6 +2540,36 @@ mod tests {
         assert!(v.ends_with(r">> C:\Users\Ada\.cua\host\driver.log 2>&1"));
         let v = windows_run_value(&s, r"C:\Program Files\Win");
         assert!(v.starts_with(r#""C:\Program Files\Win\System32\conhost.exe" --headless "#));
+    }
+
+    #[test]
+    fn the_logon_entry_starts_now_without_headless_conhost() {
+        // CUA-3513: started by a program, `conhost --headless` takes its
+        // closed standard handles for the pseudo-console and exits, so the
+        // driver never ran until the next sign-in. Starting now runs the
+        // logon entry's own cmd.exe line in a console without a window.
+        let mut s = spec();
+        s.program = r"C:\Users\Ada\.cua\envs\staging\host\bin\cua-spacesd.exe".into();
+        s.log_path = r"C:\Users\Ada\.cua\envs\staging\host\driver.log".into();
+        let (program, line) = windows_start_now(&s, r"C:\Windows");
+        assert_eq!(program, r"C:\Windows\System32\cmd.exe");
+        assert!(
+            !line.contains("conhost") && !line.contains("--headless"),
+            "{line}"
+        );
+        assert!(
+            line.starts_with("/d /c set \"CUA_ENV_LOG=info\"&& "),
+            "{line}"
+        );
+        assert!(line.ends_with(r">> C:\Users\Ada\.cua\envs\staging\host\driver.log 2>&1"));
+        // The same command the logon entry runs at sign-in.
+        let at_logon = windows_run_value(&s, r"C:\Windows");
+        assert!(at_logon.ends_with(&line), "{at_logon}");
+        #[cfg(windows)]
+        {
+            assert_eq!(START_NOW_FLAGS & 0x0000_0008, 0, "never DETACHED_PROCESS");
+            assert_ne!(START_NOW_FLAGS & 0x0800_0000, 0, "CREATE_NO_WINDOW");
+        }
     }
 
     #[test]
@@ -2215,13 +2685,9 @@ mod tests {
             Path::new("/Users/ada/.cua/helper/service.json")
         );
         assert_eq!(stable.host_label(), "com.trycua.spacesd.host");
-        let user = Some(std::ffi::OsStr::new("/Users/ada"));
+        let user = Path::new("/Users/ada");
         assert_eq!(
-            launchd_label_for(stable, None, user),
-            "com.trycua.spacesd.host"
-        );
-        assert_eq!(
-            launchd_label_for(stable, Some(std::ffi::OsStr::new("/Users/ada/.cua")), user),
+            ServiceNames::for_home(stable, Path::new("/Users/ada/.cua"), user).launchd_label(),
             "com.trycua.spacesd.host"
         );
         let helper = AppHelper::for_channel(
@@ -2253,29 +2719,24 @@ mod tests {
         );
         // The plain runner: Local's own home adds no suffix; another home
         // still gets one, so two Local test homes stay apart.
-        let user = Some(std::ffi::OsStr::new("/Users/ada"));
+        let user = Path::new("/Users/ada");
+        let label =
+            |home: &str| ServiceNames::for_home(local, Path::new(home), user).launchd_label();
         assert_eq!(
-            launchd_label_for(local, None, user),
+            label("/Users/ada/.cua-local"),
             "com.trycua.spacesd.host.local"
         );
         assert_eq!(
-            launchd_label_for(
-                local,
-                Some(std::ffi::OsStr::new("/Users/ada/.cua-local")),
-                user
-            ),
-            "com.trycua.spacesd.host.local"
+            label("/Users/ada/.cua-local/envs/prod"),
+            "com.trycua.spacesd.host.local-prod"
         );
-        let other = launchd_label_for(local, Some(std::ffi::OsStr::new("/tmp/h")), user);
+        let other = label("/tmp/h");
         assert!(
             other.starts_with("com.trycua.spacesd.host.local-"),
             "{other}"
         );
         // Stable's home is not Local's: it is a separate home to Local.
-        assert!(
-            launchd_label_for(local, Some(std::ffi::OsStr::new("/Users/ada/.cua")), user)
-                .starts_with("com.trycua.spacesd.host.local-")
-        );
+        assert!(label("/Users/ada/.cua").starts_with("com.trycua.spacesd.host.local-"));
         let helper = AppHelper::for_channel(
             local,
             PathBuf::from("/Users/ada/Applications/Cua Spaces Local.app"),
@@ -2536,45 +2997,276 @@ mod tests {
 
 #[cfg(test)]
 mod instance_tests {
-    use super::suffix_for;
+    use super::*;
     use cua_home::channel::CuaChannel::{Local, Stable};
-    use std::ffi::OsStr;
+
+    fn names(channel: CuaChannel, home: &str) -> ServiceNames {
+        ServiceNames::for_home(channel, Path::new(home), Path::new("/home/ada"))
+    }
 
     #[test]
-    fn a_separate_cua_home_gets_its_own_service_names() {
-        let user = Some(OsStr::new("/home/ada"));
-        assert_eq!(suffix_for(Stable, None, user), "");
-        assert_eq!(suffix_for(Stable, Some(OsStr::new("")), user), "");
+    fn production_keeps_the_names_it_always_had() {
+        let n = names(Stable, "/home/ada/.cua");
+        assert_eq!(n.suffix, "");
+        assert!(n.is_default());
+        assert!(!n.other_env());
+        assert_eq!(n.systemd_unit(), "cua-spacesd-host");
+        assert_eq!(n.windows_task(), r"Cua\SpacesdHost");
+        assert_eq!(n.windows_run_value(), "CuaSpacesdHost");
+        assert_eq!(n.launchd_label(), "com.trycua.spacesd.host");
+        // Nothing to retire: the old names are its own.
+        let l = n.legacy();
+        assert!(l.systemd.is_empty() && l.windows_task.is_empty() && l.windows_run.is_empty());
+        assert!(l.launchd.is_empty());
+    }
+
+    #[test]
+    fn staging_has_names_of_its_own_on_every_os() {
+        let prod = names(Stable, "/home/ada/.cua");
+        let staging = names(Stable, "/home/ada/.cua/envs/staging");
+        assert_eq!(staging.suffix, "-staging");
+        assert!(staging.other_env());
+        assert_eq!(staging.systemd_unit(), "cua-spacesd-host-staging");
+        assert_eq!(staging.windows_task(), r"Cua\SpacesdHost-staging");
+        assert_eq!(staging.windows_run_value(), "CuaSpacesdHost-staging");
+        assert_eq!(staging.launchd_label(), "com.trycua.spacesd.host-staging");
+        assert_ne!(staging.systemd_unit(), prod.systemd_unit());
+        assert_ne!(staging.windows_task(), prod.windows_task());
+        assert_ne!(staging.windows_run_value(), prod.windows_run_value());
+        assert_ne!(staging.launchd_label(), prod.launchd_label());
+    }
+
+    #[test]
+    fn every_home_has_its_own_names() {
+        let homes = [
+            (Stable, "/home/ada/.cua"),
+            (Stable, "/home/ada/.cua/envs/staging"),
+            (Local, "/home/ada/.cua-local"),
+            (Local, "/home/ada/.cua-local/envs/prod"),
+            (Stable, "/home/ada/fb/home"),
+            (Stable, "/home/ada/other"),
+            (Local, "/home/ada/.cua"),
+        ];
+        let all: Vec<ServiceNames> = homes.iter().map(|(c, h)| names(*c, h)).collect();
+        for (i, a) in all.iter().enumerate() {
+            for b in &all[i + 1..] {
+                assert_ne!(a.systemd_unit(), b.systemd_unit(), "{a:?} {b:?}");
+                assert_ne!(a.windows_task(), b.windows_task(), "{a:?} {b:?}");
+                assert_ne!(a.windows_run_value(), b.windows_run_value(), "{a:?} {b:?}");
+                assert_ne!(a.launchd_label(), b.launchd_label(), "{a:?} {b:?}");
+            }
+        }
         assert_eq!(
-            suffix_for(Stable, Some(OsStr::new("/home/ada/.cua")), user),
-            ""
+            names(Local, "/home/ada/.cua-local").systemd_unit(),
+            "cua-spacesd-host-local"
         );
-        let a = suffix_for(Stable, Some(OsStr::new("/home/ada/fb/home")), user);
-        let b = suffix_for(Stable, Some(OsStr::new("/home/ada/other")), user);
-        assert_eq!(a.len(), 9);
-        assert!(a.starts_with('-'));
-        assert_ne!(a, b);
         assert_eq!(
-            a,
-            suffix_for(Stable, Some(OsStr::new("/home/ada/fb/home")), user)
+            names(Local, "/home/ada/.cua-local/envs/prod").windows_task(),
+            r"Cua\SpacesdHost-local-prod"
+        );
+        // A separate home keeps the hash builds before CUA-3512 gave it.
+        let custom = names(Stable, "/home/ada/fb/home");
+        assert_eq!(custom.suffix.len(), 9);
+        assert_eq!(
+            custom.suffix,
+            format!("-{}", home_hash(Path::new("/home/ada/fb/home")))
+        );
+        assert!(!custom.other_env());
+        assert!(
+            custom
+                .legacy()
+                .systemd
+                .iter()
+                .all(|n| n != &custom.systemd_unit())
         );
     }
 
     #[test]
-    fn a_channel_own_home_is_not_a_separate_home() {
-        let user = Some(OsStr::new("/home/ada"));
+    fn staging_retires_its_old_names_only_when_they_run_it() {
+        let staging = names(Stable, "/home/ada/.cua/envs/staging");
+        let l = staging.legacy();
+        let hash = home_hash(Path::new("/home/ada/.cua/envs/staging"));
         assert_eq!(
-            suffix_for(Local, Some(OsStr::new("/home/ada/.cua-local")), user),
-            ""
+            l.systemd,
+            vec![
+                "cua-spacesd-host".to_string(),
+                format!("cua-spacesd-host-{hash}")
+            ]
         );
-        // Each channel's home is a separate home to the other.
+        assert_eq!(l.windows_task, vec![r"Cua\SpacesdHost".to_string()]);
+        assert_eq!(l.windows_run, vec!["CuaSpacesdHost".to_string()]);
+        // Production's unit never counts as staging's, although staging's
+        // home is inside production's.
+        let prod_unit = systemd_unit(
+            &ServiceSpec {
+                program: "/home/ada/.cua/host/bin/cua-spacesd".into(),
+                log_path: "/home/ada/.cua/host/driver.log".into(),
+                ..Default::default()
+            },
+            false,
+        );
+        assert!(!staging.owns(&prod_unit));
+        assert!(names(Stable, "/home/ada/.cua").owns(&prod_unit));
+        let staging_unit = systemd_unit(
+            &ServiceSpec {
+                program: "/home/ada/.cua/envs/staging/host/bin/cua-spacesd".into(),
+                log_path: "/home/ada/.cua/envs/staging/host/driver.log".into(),
+                ..Default::default()
+            },
+            false,
+        );
+        assert!(staging.owns(&staging_unit));
+        assert!(!names(Stable, "/home/ada/.cua").owns(&staging_unit));
+    }
+
+    #[test]
+    fn windows_ownership_reads_the_task_and_the_logon_entry() {
+        let home =
+            |h: &str| ServiceNames::for_home(Stable, Path::new(h), Path::new(r"C:\Users\Ada"));
+        let prod = home(r"C:\Users\Ada\.cua");
+        let staging = home(r"C:\Users\Ada\.cua\envs\staging");
+        if cfg!(windows) {
+            assert_eq!(staging.suffix, "-staging");
+        }
+        let spec = |dir: &str| ServiceSpec {
+            program: format!(r"{dir}\bin\cua-spacesd.exe").into(),
+            log_path: format!(r"{dir}\driver.log").into(),
+            ..Default::default()
+        };
+        let prod_spec = spec(r"C:\Users\Ada\.cua\host");
+        let staging_spec = spec(r"C:\Users\Ada\.cua\envs\staging\host");
+        if cfg!(windows) {
+            let prod_xml = windows_task_xml(&prod_spec, r"PC\Ada", &prod.windows_task());
+            let prod_run = windows_run_value(&prod_spec, r"C:\Windows");
+            assert!(prod.owns(&prod_xml) && prod.owns(&prod_run));
+            assert!(!staging.owns(&prod_xml) && !staging.owns(&prod_run));
+            let staging_xml = windows_task_xml(&staging_spec, r"PC\Ada", &staging.windows_task());
+            assert!(staging.owns(&staging_xml) && !prod.owns(&staging_xml));
+            assert!(staging_xml.contains(r"<URI>\Cua\SpacesdHost-staging</URI>"));
+            // `envs/staging` joins with a forward slash; Windows writes and
+            // reports backslashes, in any case.
+            let joined = home(r"C:\Users\Ada\.cua\envs/staging");
+            assert!(joined.owns(r"C:\USERS\ada\.cua\envs\staging\host\driver.log"));
+            assert!(!joined.owns(r"C:\Users\Ada\.cua\host\driver.log"));
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_staging_setup_never_touches_the_production_unit() {
+        // CUA-3512: a real Systemd runner (with a stand-in systemctl that
+        // records its calls) sets staging up next to production's unit.
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let user = dir.path();
+        let unit_dir = user.join(".config/systemd/user");
+        std::fs::create_dir_all(&unit_dir).unwrap();
+        let calls = user.join("calls.log");
+        let systemctl = user.join("systemctl");
+        std::fs::write(
+            &systemctl,
+            format!("#!/bin/sh\necho \"$*\" >> '{}'\n", calls.display()),
+        )
+        .unwrap();
+        std::fs::set_permissions(&systemctl, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let runner = |home: &Path| Systemd {
+            system: false,
+            unit_dir: unit_dir.clone(),
+            names: ServiceNames::for_home(Stable, home, user),
+            systemctl: systemctl.clone(),
+        };
+        let spec_of = |home: &Path| ServiceSpec {
+            program: home.join("host/bin/cua-spacesd"),
+            args: vec!["join".into()],
+            log_path: home.join("host/driver.log"),
+            ..Default::default()
+        };
+        let prod_home = user.join(".cua");
+        let staging_home = user.join(".cua/envs/staging");
+        let prod = runner(&prod_home);
+        prod.install(&spec_of(&prod_home)).unwrap();
+        let prod_unit = std::fs::read_to_string(unit_dir.join("cua-spacesd-host.service")).unwrap();
+        std::fs::write(&calls, "").unwrap();
+
+        let staging = runner(&staging_home);
+        assert!(staging.retire_legacy_names().is_empty());
+        staging.install(&spec_of(&staging_home)).unwrap();
+        staging.start().unwrap();
+        staging.stop().unwrap();
+        staging.uninstall().unwrap();
+
         assert_eq!(
-            suffix_for(Local, Some(OsStr::new("/home/ada/.cua")), user).len(),
-            9
+            std::fs::read_to_string(unit_dir.join("cua-spacesd-host.service")).unwrap(),
+            prod_unit,
+            "production's unit was rewritten"
         );
+        let log = std::fs::read_to_string(&calls).unwrap();
+        for line in log.lines() {
+            assert!(
+                !line.split_whitespace().any(|w| w == "cua-spacesd-host"),
+                "staging ran `systemctl {line}` on production's unit"
+            );
+        }
+        assert!(log.contains("enable cua-spacesd-host-staging"), "{log}");
+        assert!(log.contains("restart cua-spacesd-host-staging"), "{log}");
+        assert!(!unit_dir.join("cua-spacesd-host-staging.service").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn staging_moves_off_the_production_unit_it_had_taken() {
+        // A build before CUA-3512 wrote staging's command into
+        // production's unit; the next staging setup retires it from there
+        // (and leaves a production unit alone).
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let user = dir.path();
+        let unit_dir = user.join(".config/systemd/user");
+        std::fs::create_dir_all(&unit_dir).unwrap();
+        let systemctl = user.join("systemctl");
+        std::fs::write(&systemctl, "#!/bin/sh\nexit 0\n").unwrap();
+        std::fs::set_permissions(&systemctl, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let staging_home = user.join(".cua/envs/staging");
+        let staging = Systemd {
+            system: false,
+            unit_dir: unit_dir.clone(),
+            names: ServiceNames::for_home(Stable, &staging_home, user),
+            systemctl: systemctl.clone(),
+        };
+        let staging_spec = ServiceSpec {
+            program: staging_home.join("host/bin/cua-spacesd"),
+            log_path: staging_home.join("host/driver.log"),
+            ..Default::default()
+        };
+        let hashed = format!("cua-spacesd-host-{}", home_hash(&staging_home));
+        for name in ["cua-spacesd-host", hashed.as_str()] {
+            std::fs::write(
+                unit_dir.join(format!("{name}.service")),
+                systemd_unit(&staging_spec, false),
+            )
+            .unwrap();
+        }
+        let retired = staging.retire_legacy_names();
         assert_eq!(
-            suffix_for(Stable, Some(OsStr::new("/home/ada/.cua-local")), user).len(),
-            9
+            retired,
+            vec!["cua-spacesd-host".to_string(), hashed.clone()]
         );
+        assert!(!unit_dir.join("cua-spacesd-host.service").exists());
+        assert!(!unit_dir.join(format!("{hashed}.service")).exists());
+
+        // Production's own unit stays where it is.
+        let prod_home = user.join(".cua");
+        let prod_spec = ServiceSpec {
+            program: prod_home.join("host/bin/cua-spacesd"),
+            log_path: prod_home.join("host/driver.log"),
+            ..Default::default()
+        };
+        std::fs::write(
+            unit_dir.join("cua-spacesd-host.service"),
+            systemd_unit(&prod_spec, false),
+        )
+        .unwrap();
+        assert!(staging.retire_legacy_names().is_empty());
+        assert!(unit_dir.join("cua-spacesd-host.service").exists());
     }
 }

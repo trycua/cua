@@ -9,9 +9,10 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { BridgeProvider, setFlagOverride, type HostStatus } from "@/bridge";
+import { BridgeProvider, setFlagOverride, type DataAdapter, type HostStatus } from "@/bridge";
 import { createDemoAdapter } from "@/bridge/adapters/demo";
 import { testCore, wasmBuilt } from "@/bridge/__tests__/testCore";
+import { ContinueOn } from "@/components/ask-first/imported-task";
 import { PickUpWhereYouLeftOff, ReadyScreen } from "@/components/first-run-new/first-run-new";
 import { readyView } from "@/lib/first-run-new";
 import { addImportedTask, askTask, resetAskTasks, type AskTask } from "@/lib/ask-first";
@@ -77,6 +78,44 @@ describe("the new setup's Ready screen", () => {
   });
 });
 
+describe("Continue on", () => {
+  it("lists only your other computers that could run the chat, each once, and fits the window", async () => {
+    const demo = createDemoAdapter({ latencyMs: 1 });
+    const extra = [
+      { id: "browser-1", name: "Web browser", via: "relay", online: true, os: "web", current: false, device: true, limits: [] },
+      { id: "browser-2", name: "Web browser", via: "relay", online: true, os: "web", current: false, device: true, limits: [] },
+    ];
+    const adapter: DataAdapter = {
+      ...demo,
+      subscribe: (l) => demo.subscribe(l),
+      call: (async (op: string, args: never) => {
+        const out = await demo.call(op as never, args);
+        if (op !== "machines.list") return out;
+        const rows = out as { id: string }[];
+        // The Mac mini listed twice, plus two signed-in browsers.
+        return [...rows, rows.find((r) => r.id === "mac-mini")!, ...extra];
+      }) as DataAdapter["call"],
+    };
+    render(
+      <BridgeProvider adapter={adapter} core={await testCore()}>
+        <ContinueOn />
+      </BridgeProvider>,
+    );
+    fireEvent.click(await waitFor(() => q("[data-continue-on]")!));
+    await waitFor(() => expect(q("[data-continue-on-menu]")).not.toBeNull());
+    await waitFor(() => expect(document.querySelectorAll("[data-continue-on-other]").length).toBeGreaterThan(0));
+    const ids = [...document.querySelectorAll<HTMLElement>("[data-continue-on-other]")].map((e) => e.dataset.continueOnOther);
+    // Mac mini once, the Linux box; no browsers, and Studio PC is offline.
+    expect(ids).toEqual(["mac-mini", "linux-box"]);
+    expect(document.body.textContent).not.toContain("Web browser");
+    expect(q("[data-continue-on-offline]")?.textContent).toBe("1 more computer is offline.");
+    // It scrolls inside the room the window has rather than running off it.
+    const menu = q("[data-continue-on-menu]")!;
+    expect(menu.className).toContain("max-h-[min(480px,var(--available-height))]");
+    expect(menu.className).toContain("overflow-y-auto");
+  });
+});
+
 describe.skipIf(!wasmBuilt)("a continued chat in Home", () => {
   it("shows what was said, runs nothing, and resumes the agent's own session on send", { timeout: 30000 }, async () => {
     const task = addImportedTask(KETTLE);
@@ -94,7 +133,7 @@ describe.skipIf(!wasmBuilt)("a continued chat in Home", () => {
     await waitFor(() => expect(q("[data-imported-chat]")).not.toBeNull());
     // The earlier messages are read from the agent's own store when the task opens (the timeline is
     // virtualized, so jsdom draws none of its rows; the resume context below carries them).
-    await waitFor(() => expect(calls.find((c) => c.op === "agents.threadHistory")?.args).toEqual({ agent: "claude-code", id: KETTLE.id }));
+    await waitFor(() => expect(calls.find((c) => c.op === "agents.threadHistory")?.args).toEqual({ agent: "claude-code", id: KETTLE.id, limit: 30 }));
     expect(q("[data-earlier-heading]")?.textContent).toContain("Earlier on this Mac");
     expect(q("[data-continue-on]")?.textContent).toContain("This Mac");
     expect(q("[data-imported-note]")?.textContent).toContain("Nothing runs until you send");
@@ -109,5 +148,26 @@ describe.skipIf(!wasmBuilt)("a continued chat in Home", () => {
     expect(String(start.resumeContext)).toContain("Agent: It depends on the machine's time zone");
     expect(calls.some((c) => c.op === "thread.post")).toBe(false);
     await waitFor(() => expect(askTask(task.id)?.runId).toBeTruthy());
+  });
+});
+
+describe.skipIf(!wasmBuilt)("a long chat in Home", () => {
+  it("opens on its newest messages and reads more only when asked", { timeout: 30000 }, async () => {
+    const task = addImportedTask(KETTLE);
+    const calls: { op: string; args: Record<string, unknown> }[] = [];
+    await mountApp(`/home/${task.id}`, {
+      failsCreates: false,
+      listsGhost: false,
+      demo: { onboarded: true },
+      intercept: (op, args) => {
+        calls.push({ op, args: args as Record<string, unknown> });
+        return undefined;
+      },
+      answer: (op, out) => (op === "agents.threadHistory" ? { ...(out as object), earlierOmitted: 1 } : out),
+    });
+    await waitFor(() => expect(q("[data-earlier-more]")).not.toBeNull());
+    expect(calls.filter((c) => c.op === "agents.threadHistory").map((c) => c.args.limit)).toEqual([30]);
+    fireEvent.click(q("[data-earlier-more]")!);
+    await waitFor(() => expect(calls.filter((c) => c.op === "agents.threadHistory").map((c) => c.args.limit)).toEqual([30, 130]));
   });
 });

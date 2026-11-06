@@ -17,6 +17,7 @@ import { Route as SettingsRouteRouteImport } from './routes/settings/route'
 import { Route as AgentsIndexRouteImport } from './routes/agents/index'
 import { Route as AgentsAllRouteImport } from './routes/agents/all'
 import { Route as CiIndexRouteImport } from './routes/ci/index'
+import { Route as DriverIndexRouteImport } from './routes/driver/index'
 import { Route as HomeIndexRouteImport } from './routes/home/index'
 import { Route as HomeTaskIdRouteImport } from './routes/home/$taskId'
 import { Route as KeyvaultIndexRouteImport } from './routes/keyvault/index'
@@ -62,6 +63,11 @@ const AgentsAllRoute = AgentsAllRouteImport.update({
 const CiIndexRoute = CiIndexRouteImport.update({
   id: '/ci/',
   path: '/ci/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DriverIndexRoute = DriverIndexRouteImport.update({
+  id: '/driver/',
+  path: '/driver/',
   getParentRoute: () => rootRouteImport,
 } as any)
 const HomeIndexRoute = HomeIndexRouteImport.update({
@@ -187,6 +193,7 @@ export interface FileRoutesByFullPath {
   '/spaces/$spaceId': typeof SpacesSpaceIdRoute
   '/agents/': typeof AgentsIndexRoute
   '/ci/': typeof CiIndexRoute
+  '/driver/': typeof DriverIndexRoute
   '/home/': typeof HomeIndexRoute
   '/keyvault/': typeof KeyvaultIndexRoute
   '/machines/': typeof MachinesIndexRoute
@@ -214,6 +221,7 @@ export interface FileRoutesByTo {
   '/spaces/$spaceId': typeof SpacesSpaceIdRoute
   '/agents': typeof AgentsIndexRoute
   '/ci': typeof CiIndexRoute
+  '/driver': typeof DriverIndexRoute
   '/home': typeof HomeIndexRoute
   '/keyvault': typeof KeyvaultIndexRoute
   '/machines': typeof MachinesIndexRoute
@@ -243,6 +251,7 @@ export interface FileRoutesById {
   '/spaces/$spaceId': typeof SpacesSpaceIdRoute
   '/agents/': typeof AgentsIndexRoute
   '/ci/': typeof CiIndexRoute
+  '/driver/': typeof DriverIndexRoute
   '/home/': typeof HomeIndexRoute
   '/keyvault/': typeof KeyvaultIndexRoute
   '/machines/': typeof MachinesIndexRoute
@@ -273,6 +282,7 @@ export interface FileRouteTypes {
     | '/spaces/$spaceId'
     | '/agents/'
     | '/ci/'
+    | '/driver/'
     | '/home/'
     | '/keyvault/'
     | '/machines/'
@@ -300,6 +310,7 @@ export interface FileRouteTypes {
     | '/spaces/$spaceId'
     | '/agents'
     | '/ci'
+    | '/driver'
     | '/home'
     | '/keyvault'
     | '/machines'
@@ -328,6 +339,7 @@ export interface FileRouteTypes {
     | '/spaces/$spaceId'
     | '/agents/'
     | '/ci/'
+    | '/driver/'
     | '/home/'
     | '/keyvault/'
     | '/machines/'
@@ -348,6 +360,7 @@ export interface RootRouteChildren {
   SpacesSpaceIdRoute: typeof SpacesSpaceIdRoute
   AgentsIndexRoute: typeof AgentsIndexRoute
   CiIndexRoute: typeof CiIndexRoute
+  DriverIndexRoute: typeof DriverIndexRoute
   HomeIndexRoute: typeof HomeIndexRoute
   KeyvaultIndexRoute: typeof KeyvaultIndexRoute
   MachinesIndexRoute: typeof MachinesIndexRoute
@@ -392,6 +405,13 @@ declare module '@tanstack/react-router' {
       path: '/ci'
       fullPath: '/ci/'
       preLoaderRoute: typeof CiIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/driver/': {
+      id: '/driver/'
+      path: '/driver'
+      fullPath: '/driver/'
+      preLoaderRoute: typeof DriverIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/home/': {
@@ -604,6 +624,7 @@ const rootRouteChildren: RootRouteChildren = {
   SpacesSpaceIdRoute: SpacesSpaceIdRoute,
   AgentsIndexRoute: AgentsIndexRoute,
   CiIndexRoute: CiIndexRoute,
+  DriverIndexRoute: DriverIndexRoute,
   HomeIndexRoute: HomeIndexRoute,
   KeyvaultIndexRoute: KeyvaultIndexRoute,
   MachinesIndexRoute: MachinesIndexRoute,

@@ -247,6 +247,19 @@
   }
 }
 
+/*
+ * A vertical scroller whose content keeps its place whether or not it scrolls (Settings' tabs, Home, All agents).
+ * `scrollbar-gutter: stable` alone is not enough: the app styles its scrollbars (`::-webkit-scrollbar` above), and
+ * WebKit (the Mac app's web view) reserves no gutter for a styled scrollbar, so the bar took 10 px from the column
+ * only on the pages that scroll and the centred column moved 5 px sideways between them. `overflow-y: scroll`
+ * keeps the bar's room on every page in every engine; its track is transparent, so a page that doesn't scroll
+ * shows nothing there.
+ */
+@utility scroll-y-stable {
+  overflow-y: scroll;
+  scrollbar-gutter: stable;
+}
+
 @utility glass {
   background: color-mix(in oklch, var(--popover) 90%, transparent);
   backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));

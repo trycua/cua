@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Raw FFI bindings to the macOS Accessibility API (AXUIElement).
 //!
 //! We call the C-level AX API directly rather than using a crate wrapper,
@@ -560,7 +563,20 @@ pub fn focused_window_id_of_pid(pid: i32) -> Option<u32> {
 /// the alternative, is only a request under cooperative activation; Chromium
 /// keeps its window above it, and when it is honoured the user's app gets a
 /// fresh `didBecomeActive`.
+///
+/// When `pid` is this process, the raise runs on the AppKit main queue.
 pub fn raise_focused_window_of_pid(pid: i32) -> bool {
+    super::main_thread::run_ax_mutation(pid, OWN_WINDOW_RAISE_TIMEOUT, move || {
+        raise_focused_window_of_pid_here(pid)
+    })
+    .unwrap_or(false)
+}
+
+/// Bound on waiting for the main queue to raise one of this process's own
+/// windows; a stalled main thread must not hang the calling worker.
+const OWN_WINDOW_RAISE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+
+fn raise_focused_window_of_pid_here(pid: i32) -> bool {
     unsafe {
         let app = AXUIElementCreateApplication(pid);
         if app.is_null() {
@@ -586,7 +602,16 @@ pub fn raise_focused_window_of_pid(pid: i32) -> bool {
 /// is what moves the key window between siblings; a front-process change on
 /// its own leaves AppKit's key window where it was. No other window of the
 /// process is addressed.
+///
+/// When `pid` is this process, the raise runs on the AppKit main queue.
 pub fn raise_exact_window_of_pid(pid: i32, window_id: u32) -> bool {
+    super::main_thread::run_ax_mutation(pid, OWN_WINDOW_RAISE_TIMEOUT, move || {
+        raise_exact_window_of_pid_here(pid, window_id)
+    })
+    .unwrap_or(false)
+}
+
+fn raise_exact_window_of_pid_here(pid: i32, window_id: u32) -> bool {
     unsafe {
         let app = AXUIElementCreateApplication(pid);
         if app.is_null() {

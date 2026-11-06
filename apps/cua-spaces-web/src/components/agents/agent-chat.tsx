@@ -539,7 +539,7 @@ export function AgentPage({ chat, open, onOpenChange, me, identity }: { chat: Ag
                   <ProvenanceCard identity={s.member.identity} agent={roster.agents[0]} roster={roster} />
                 ) : (
                   <p className="p-3.5 text-[13px]">
-                    @{s.handle} in {s.spaceName}
+                    @{s.member.handle ?? s.handle} in {s.spaceName}
                   </p>
                 )}
               </div>

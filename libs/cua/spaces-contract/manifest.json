@@ -402,7 +402,7 @@
       "sdk_symbol": "SpacesConnection.spaces()",
       "rust_symbol": "Spaces::list",
       "notes": [],
-      "result": "JSON: an array of Spaces (`id`, `name`, `provider`, `spacesd_version`, `features`, `os`, `services`, `added_at`, for a Space one of your computers provides `host` and `host_name`, for a Space that can be turned off and on `power` (`suspend` or `stop`) and `power_state`, and for a Space in your cloud `cloud`, `cloud_place` and `cloud_delete`, and for a relay computer the relay cannot reach now `status` (`offline` or `not sharing`)), each with `phase`: `ready`, or `offline` for a relay computer the relay cannot reach now (a computer that is off or stopped sharing, or a Space that is gone and left its record; `relay_unregister_space` removes it).",
+      "result": "JSON: an array of Spaces (`id`, `name`, `provider`, `spacesd_version`, `features`, `os`, `services`, `added_at`, for a Space one of your computers provides `host` and `host_name`, for a Space that can be turned off and on `power` (`suspend` or `stop`) and `power_state`, and for a Space in your cloud `cloud`, `cloud_place` and `cloud_delete`, and for a relay computer the relay cannot reach now `status` (`offline` or `not sharing`)), `parent` (a Space one of your computers provides: that computer's Space id, `relay:<computer>`; null for a computer or any other Space) and `default` (true for the Space the account chose as its default, false for every other; false for all when signed out or the relay does not answer), each with `phase`: `ready`, or `offline` for a relay computer the relay cannot reach now (a computer that is off or stopped sharing, or a Space that is gone and left its record; `relay_unregister_space` removes it).",
       "errors": [
         "relay",
         "unauthenticated"
@@ -6833,7 +6833,7 @@
       "name": "relay_unregister_space",
       "category": "sharing",
       "description": "Take a Space off the relay.",
-      "instructions": "Takes the Space off the relay: its driver leaves and its computer is removed, with every share. A `relay:<computer>` id removes that computer's record from the relay directory, which only its owner may do: a Space that registered itself (also after it was deleted), or a computer that is no longer connected. A host that is connected now is taken off with `cua host remove` on that computer instead.",
+      "instructions": "Takes the Space off the relay: its driver leaves and its computer is removed, with every share. A `relay:<computer>` id removes that computer's record from the relay directory, which only its owner may do: a Space that registered itself (also after it was deleted), or a computer that is no longer connected. A host that is connected now is taken off with `cua host remove` on that computer instead. Removing one of your computers keeps the Spaces it provides on your account, detached (hidden, and refused until the computer registers again with the same id, which brings them back unchanged); `delete_spaces: true` deletes them too, files first (through the computer while it answers), then their records.",
       "platforms": [
         "macos",
         "windows",
@@ -6871,6 +6871,10 @@
       ],
       "input_schema": {
         "properties": {
+          "delete_spaces": {
+            "description": "For one of your computers: also delete the Spaces it provides, their\nfiles first (through the computer while it answers), then their\nrecords. Default false: they stay on your account, detached, and come\nback when the computer registers again.",
+            "type": "boolean"
+          },
           "space": {
             "description": "Space id or name.",
             "type": "string"

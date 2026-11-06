@@ -19,7 +19,7 @@ import { resetWakeNotes } from "@/components/space-thread/summon";
 import { resetConnectedAppsState } from "@/hooks/use-connected-apps";
 import { resetConnectState } from "@/hooks/use-connectors";
 import { askTasks, resetAskTasks } from "@/lib/ask-first";
-import { mountApp, stubBrowserApis } from "./app-harness";
+import { mountApp, pickNewLinux, stubBrowserApis } from "./app-harness";
 
 stubBrowserApis();
 beforeEach(() => {
@@ -49,7 +49,9 @@ const found = (s: string, timeout = 8000) =>
 /** A Space the person's own job made (no agent in it yet): Home, a job, then its page. */
 async function inAFreshSpace(host: Parameters<typeof mountApp>[1]) {
   const { router } = await mountApp("/home", host);
-  fireEvent.change(await screen.findByLabelText("What should it do?"), { target: { value: "look around" } });
+  await screen.findByLabelText("What should it do?");
+  await pickNewLinux();
+  fireEvent.change(screen.getByLabelText("What should it do?"), { target: { value: "look around" } });
   await act(async () => {
     fireEvent.click(screen.getByRole("button", { name: "Start" }));
   });
@@ -80,7 +82,9 @@ describe.skipIf(!wasmBuilt)("Ask first in the Space (both flags)", () => {
       listsGhost: false,
       intercept: (op, args) => (calls.push({ op, args: args as Record<string, unknown> }), undefined),
     });
-    fireEvent.change(await screen.findByLabelText("What should it do?"), { target: { value: "fix the build" } });
+    await screen.findByLabelText("What should it do?");
+    await pickNewLinux();
+    fireEvent.change(screen.getByLabelText("What should it do?"), { target: { value: "fix the build" } });
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Start" }));
     });
@@ -136,6 +140,25 @@ describe.skipIf(!wasmBuilt)("Send again when the agent can't join", () => {
     await waitFor(() => expect(calls.filter((c) => c.op === "thread.post" && c.args.text === "@claude fix the build")).toHaveLength(2));
   });
 
+  it("says plainly when an @ names nobody in the Space (never a silent no-op)", { timeout: 40000 }, async () => {
+    const calls: { op: string; args: Record<string, unknown> }[] = [];
+    await inAFreshSpace({
+      failsCreates: false,
+      listsGhost: false,
+      intercept: (op, args) => (calls.push({ op, args: args as Record<string, unknown> }), undefined),
+    });
+    calls.length = 0;
+    await compose("@ghost are you there");
+    await waitFor(() => expect(calls.some((c) => c.op === "thread.post" && String(c.args.text).includes("@ghost are you there"))).toBe(true), { timeout: 15000 });
+    const note = await found("[data-wake-note=ghost]", 15000);
+    expect(note.textContent).toContain("Nobody called @ghost is in this Space");
+    expect(note.textContent).toContain("Only visible to you");
+    // Nothing to connect or send again: it is not an agent that failed to start.
+    expect(q("[data-wake-connect]")).toBeNull();
+    expect(q("[data-wake-retry]")).toBeNull();
+    expect(calls.some((c) => c.op === "thread.agentAdd")).toBe(false);
+  });
+
   it("says why and posts nothing more (a message no agent reads would look sent)", { timeout: 40000 }, async () => {
     const posts: string[] = [];
     let armed = false;
@@ -171,7 +194,9 @@ describe.skipIf(!wasmBuilt)("notes only you see", () => {
     let release!: () => void;
     const hold = new Promise<void>((r) => (release = r));
     await mountApp("/home", { failsCreates: false, listsGhost: false, hold, intercept: (op, args) => (calls.push({ op, args }), undefined) });
-    fireEvent.change(await screen.findByLabelText("What should it do?"), { target: { value: "fix the build" } });
+    await screen.findByLabelText("What should it do?");
+    await pickNewLinux();
+    fireEvent.change(screen.getByLabelText("What should it do?"), { target: { value: "fix the build" } });
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Start" }));
     });

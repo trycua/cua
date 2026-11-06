@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Keep removed tools out of the live registry and maintained user guidance.
 
 use std::collections::HashSet;

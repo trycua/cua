@@ -634,29 +634,34 @@ async fn read_image(
     decode(width, height, stride, format, &pixels)
 }
 
-/// The whole desktop, every output included, in logical pixels. KWin answers
-/// directly, so unlike the portal this has no request to lose and no prompt, and
-/// a Deny saved in the portal doesn't apply. KWin 6.7 and older refuse an
+/// The whole desktop, every output included, in logical pixels: KWin's layout
+/// bounding box, the frame `kwin_layout` reads. KWin answers directly, with no
+/// portal request or prompt, and never consults a Deny saved in the portal, so
+/// the caller checks the operator's switch first. KWin 6.7 and older refuse an
 /// executable without the ScreenShot2 grant; KWin 6.8 has no such check.
 pub fn capture_workspace() -> anyhow::Result<Vec<u8>> {
     run(async move {
         let connection = zbus::Connection::session().await?;
         let owner = owner(&connection).await?;
-        let (result, mut reader) = request_image(
-            &connection,
-            &owner,
-            None,
-            [
-                ("include-cursor", false.into()),
-                // The action frame is logical. Asking for it here avoids encoding
-                // a full-size image only to decode and shrink it afterwards.
-                ("native-resolution", false.into()),
-            ]
-            .into(),
-        )
-        .await?;
-        read_image(&result, &mut reader).await
+        workspace_image(&connection, &owner).await
     })
+}
+
+async fn workspace_image(connection: &zbus::Connection, owner: &str) -> anyhow::Result<Vec<u8>> {
+    let (result, mut reader) = request_image(
+        connection,
+        owner,
+        None,
+        [
+            ("include-cursor", false.into()),
+            // The action frame is logical. Asking for it here avoids encoding
+            // a full-size image only to decode and shrink it afterwards.
+            ("native-resolution", false.into()),
+        ]
+        .into(),
+    )
+    .await?;
+    read_image(&result, &mut reader).await
 }
 
 /// Ask ScreenShot2 for one window, or the workspace with no `window`. The image
@@ -849,6 +854,144 @@ mod tests {
                  target-addressable activation adapter for window {window}; refusing global \
                  input because it could affect the wrong application"
             )
+        );
+    }
+
+    /// KWin's `ScreenShot2.CaptureWorkspace`: writes a 3x2 image to the pipe
+    /// and records the options it was asked for.
+    struct FakeScreenShot2 {
+        kind: &'static str,
+        asked: std::sync::Arc<Mutex<Option<Properties>>>,
+    }
+
+    #[zbus::interface(name = "org.kde.KWin.ScreenShot2")]
+    impl FakeScreenShot2 {
+        async fn capture_workspace(
+            &self,
+            options: Properties,
+            pipe: zbus::zvariant::OwnedFd,
+        ) -> Properties {
+            use std::io::Write;
+            *self.asked.lock().unwrap() = Some(options);
+            // Format 5 (ARGB32), stride padded to 16 bytes: red, green, blue on
+            // the first row, white on the second.
+            let mut pixels = Vec::new();
+            for row in [[0xFFFF_0000u32, 0xFF00_FF00, 0xFF00_00FF], [0xFFFF_FFFF; 3]] {
+                row.iter()
+                    .for_each(|pixel| pixels.extend(pixel.to_ne_bytes()));
+                pixels.extend([0; 4]);
+            }
+            let mut pipe = std::fs::File::from(std::os::fd::OwnedFd::from(pipe));
+            pipe.write_all(&pixels).unwrap();
+            [
+                (
+                    "type",
+                    OwnedValue::from(zbus::zvariant::Str::from(self.kind)),
+                ),
+                ("width", 3u32.into()),
+                ("height", 2u32.into()),
+                ("stride", 16u32.into()),
+                ("format", 5u32.into()),
+            ]
+            .into_iter()
+            .map(|(key, value)| (key.to_owned(), value))
+            .collect()
+        }
+    }
+
+    /// `workspace_image` against a fake KWin on a private bus, or None (skip)
+    /// when `dbus-daemon` is not installed.
+    fn workspace_from_fake(kind: &'static str) -> Option<(anyhow::Result<Vec<u8>>, Properties)> {
+        let directory = tempfile::tempdir().unwrap();
+        let config = directory.path().join("bus.conf");
+        std::fs::write(
+            &config,
+            format!(
+                "<busconfig><type>session</type><listen>unix:path={}</listen>\
+                 <auth>EXTERNAL</auth><policy context=\"default\">\
+                 <allow send_destination=\"*\"/><allow receive_sender=\"*\"/>\
+                 <allow own=\"*\"/></policy></busconfig>",
+                directory.path().join("bus").display()
+            ),
+        )
+        .unwrap();
+        let mut daemon = match std::process::Command::new("dbus-daemon")
+            .arg(format!("--config-file={}", config.display()))
+            .args(["--nofork", "--print-address=1"])
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+        {
+            Ok(daemon) => daemon,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                eprintln!("skipping: dbus-daemon is not installed");
+                return None;
+            }
+            Err(error) => panic!("dbus-daemon: {error}"),
+        };
+        let mut address = String::new();
+        std::io::BufRead::read_line(
+            &mut std::io::BufReader::new(daemon.stdout.take().unwrap()),
+            &mut address,
+        )
+        .unwrap();
+        let asked = std::sync::Arc::new(Mutex::new(None));
+        let fake = FakeScreenShot2 {
+            kind,
+            asked: asked.clone(),
+        };
+        let exchange = async {
+            let kwin = zbus::connection::Builder::address(address.trim())?
+                .name(KWIN)?
+                .serve_at("/org/kde/KWin/ScreenShot2", fake)?
+                .build()
+                .await?;
+            let owner = kwin.unique_name().unwrap().to_string();
+            let client = zbus::connection::Builder::address(address.trim())?
+                .build()
+                .await?;
+            workspace_image(&client, &owner).await
+        };
+        let result = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(async { tokio::time::timeout(TIMEOUT, exchange).await? });
+        let _ = daemon.kill();
+        let _ = daemon.wait();
+        let asked = asked.lock().unwrap().take().unwrap_or_default();
+        Some((result, asked))
+    }
+
+    #[test]
+    fn the_workspace_is_asked_for_in_logical_pixels_without_the_cursor_and_decoded() {
+        let Some((png, asked)) = workspace_from_fake("raw") else {
+            return;
+        };
+        let flag = |name: &str| asked.get(name).and_then(|value| bool::try_from(value).ok());
+        assert_eq!(flag("native-resolution"), Some(false));
+        assert_eq!(flag("include-cursor"), Some(false));
+        let image = image::load_from_memory(&png.unwrap()).unwrap().to_rgba8();
+        assert_eq!(image.dimensions(), (3, 2));
+        let pixels: Vec<[u8; 4]> = image.pixels().map(|pixel| pixel.0).collect();
+        assert_eq!(
+            pixels,
+            [
+                [255, 0, 0, 255],
+                [0, 255, 0, 255],
+                [0, 0, 255, 255],
+                [255, 255, 255, 255],
+                [255, 255, 255, 255],
+                [255, 255, 255, 255],
+            ]
+        );
+    }
+
+    #[test]
+    fn a_workspace_reply_that_is_not_raw_pixels_is_an_error() {
+        let Some((png, _)) = workspace_from_fake("png") else {
+            return;
+        };
+        assert_eq!(
+            png.unwrap_err().to_string(),
+            "KWin screenshot is not raw image data"
         );
     }
 

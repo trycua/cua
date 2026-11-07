@@ -5310,6 +5310,23 @@ mod tests {
     }
 
     #[test]
+    fn kwin_desktop_capture_runs_only_on_kwin_with_the_switch_on() {
+        let unasked = || -> bool { panic!("the switch is not read") };
+        let uncaptured = || -> anyhow::Result<Vec<u8>> { panic!("KWin is not asked") };
+        assert_eq!(kwin_workspace_capture(false, unasked, uncaptured), None);
+        // Off, or on with a saved portal Deny: the portal tier decides.
+        assert_eq!(kwin_workspace_capture(true, || false, uncaptured), None);
+        let shot = || Ok(b"kwin".to_vec());
+        assert_eq!(
+            kwin_workspace_capture(true, || true, shot),
+            Some(b"kwin".to_vec())
+        );
+        // A KWin that refuses leaves the rest of the cascade to run.
+        let refused = || anyhow::bail!("not authorized");
+        assert_eq!(kwin_workspace_capture(true, || true, refused), None);
+    }
+
+    #[test]
     fn unavailable_shell_helper_does_not_attempt_capture() {
         let called = std::cell::Cell::new(false);
         let result = checked_shell_helper_capture(false, || {

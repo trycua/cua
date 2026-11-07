@@ -117,7 +117,7 @@ pkgs.rustPlatform.buildRustPackage {
     Name=Cua Driver
     Exec=$out/bin/cua-driver serve
     NoDisplay=true
-    X-KDE-Wayland-Interfaces=org_kde_plasma_window_management
+    X-KDE-Wayland-Interfaces=org_kde_plasma_window_management,org_kde_kwin_keystate
     X-KDE-DBUS-Restricted-Interfaces=org.kde.KWin.ScreenShot2
     EOF
   '';

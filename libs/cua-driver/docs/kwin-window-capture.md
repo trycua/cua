@@ -50,9 +50,13 @@ Enable the existing native Wayland backend with
 installation must declare:
 
 ```ini
-X-KDE-Wayland-Interfaces=org_kde_plasma_window_management
+X-KDE-Wayland-Interfaces=org_kde_plasma_window_management,org_kde_kwin_keystate
 X-KDE-DBUS-Restricted-Interfaces=org.kde.KWin.ScreenShot2
 ```
+
+Separate the Wayland interfaces with commas: KWin 6.3.6 doesn't honor a semicolon
+list. `org_kde_kwin_keystate` isn't for capture. It tells desktop typing whether
+Caps Lock is on, and KWin 6.3 to 6.5 offers it only to an entry that lists it.
 
 KWin matches the desktop entry's executable to the running process. A source
 binary alone does not acquire these capabilities. The Nix package ships an entry

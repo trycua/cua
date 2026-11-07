@@ -1,5 +1,98 @@
 # Changelog
 
+## [0.42.1](https://github.com/trycua/cua/compare/cua-driver-rs-v0.42.0...cua-driver-rs-v0.42.1) (2026-11-07)
+
+
+### Bug Fixes
+
+* **cua-driver:** read backup publisher trust when its commit was interrupted ([#6835](https://github.com/trycua/cua/issues/6835)) ([96f7f52](https://github.com/trycua/cua/commit/96f7f522b3d668d238f142358a6041181d858421))
+
+## [0.42.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.41.5...cua-driver-rs-v0.42.0) (2026-11-07)
+
+
+### Features
+
+* **cua-driver:** connect Claude Code, Codex and Cursor during install (CUA-3660) ([#6763](https://github.com/trycua/cua/issues/6763)) ([1b0ecb8](https://github.com/trycua/cua/commit/1b0ecb8f26d4428ec5cad4d8007eb9a0efc299ff))
+
+## [0.41.5](https://github.com/trycua/cua/compare/cua-driver-rs-v0.41.4...cua-driver-rs-v0.41.5) (2026-11-07)
+
+
+### Bug Fixes
+
+* **cua-driver:** stop cutting off non-ASCII text typed into GTK3 and Qt fields ([#6829](https://github.com/trycua/cua/issues/6829)) ([6957956](https://github.com/trycua/cua/commit/69579562351a7b8c047fce4be06de0872eb4c8ba))
+
+## [0.41.4](https://github.com/trycua/cua/compare/cua-driver-rs-v0.41.3...cua-driver-rs-v0.41.4) (2026-11-07)
+
+
+### Bug Fixes
+
+* **cua-driver:** accept RPC_E_CHANGED_MODE when UIA walks initialise COM ([#6812](https://github.com/trycua/cua/issues/6812)) ([56d7f12](https://github.com/trycua/cua/commit/56d7f12f273e3383e30db30e90a20fb8ec8dade8))
+* **cua-driver:** drop needless return in selftest permissions fallback ([#6813](https://github.com/trycua/cua/issues/6813)) ([440c3bf](https://github.com/trycua/cua/commit/440c3bf10cabaf67b4f65058ae3939785bada44d))
+* **cua-driver:** find a pid's window on Wayland and name NO_AT_BRIDGE when it hides one ([#6822](https://github.com/trycua/cua/issues/6822)) ([83a60bd](https://github.com/trycua/cua/commit/83a60bd1dd9165f822f89a2ec6a8847832ac0a10))
+* **cua-driver:** use KWin's logical desktop frame for capture and input ([#6821](https://github.com/trycua/cua/issues/6821)) ([17ec649](https://github.com/trycua/cua/commit/17ec6492109166ebe7f7b38b02b333648c98d3eb))
+
+## [0.41.3](https://github.com/trycua/cua/compare/cua-driver-rs-v0.41.2...cua-driver-rs-v0.41.3) (2026-11-07)
+
+
+### Bug Fixes
+
+* **cua-driver:** admit per-pid state-capture workers in one critical section ([#6807](https://github.com/trycua/cua/issues/6807)) ([59c2fa6](https://github.com/trycua/cua/commit/59c2fa67f96bc76e05d1bf9f550f5cfc45519a1e))
+* **cua-driver:** commit or roll back browser setup explicitly ([#6808](https://github.com/trycua/cua/issues/6808)) ([169a6c6](https://github.com/trycua/cua/commit/169a6c6c5ffdfb8d5d9a3f58d392240de9590708))
+* **cua-driver:** hold every tool route on runtime admission while permissions are pending ([#6802](https://github.com/trycua/cua/issues/6802)) ([62806db](https://github.com/trycua/cua/commit/62806db62d1886787f7b4133d64d33b641fc26f1))
+* **cua-driver:** one macOS focus arbiter decides every activation undo ([#6803](https://github.com/trycua/cua/issues/6803)) ([14ae717](https://github.com/trycua/cua/commit/14ae717630ae3fb12eed3be3da0755d1fbb04f0e))
+* **cua-driver:** report a timed-out capture worker to the next caller ([#6809](https://github.com/trycua/cua/issues/6809)) ([85f9187](https://github.com/trycua/cua/commit/85f9187d0c04c9cc82ff805eb0c753714e069c31))
+
+## [0.41.2](https://github.com/trycua/cua/compare/cua-driver-rs-v0.41.1...cua-driver-rs-v0.41.2) (2026-11-07)
+
+
+### Bug Fixes
+
+* **cua-driver:** finalize the previous recording when a new one starts ([#6794](https://github.com/trycua/cua/issues/6794)) ([5e2cb47](https://github.com/trycua/cua/commit/5e2cb4714749e123de5f23300ef27183642df4b0))
+
+## [0.41.1](https://github.com/trycua/cua/compare/cua-driver-rs-v0.41.0...cua-driver-rs-v0.41.1) (2026-11-07)
+
+
+### Bug Fixes
+
+* **cua-driver:** keep a session's last use on its lifecycle record ([#6773](https://github.com/trycua/cua/issues/6773)) ([94e3d18](https://github.com/trycua/cua/commit/94e3d186262431c30cdf0891231eeee55909398e))
+* **cua-driver:** restore the Windows foreground only after typed input drained ([#6779](https://github.com/trycua/cua/issues/6779)) ([886c9ce](https://github.com/trycua/cua/commit/886c9ce30e02a337f2047d11ac8618cca4001a19))
+
+## [0.41.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.40.6...cua-driver-rs-v0.41.0) (2026-11-06)
+
+
+### Features
+
+* **cua-driver:** add cua-driver test to check a new install end to end (CUA-3660) ([#6765](https://github.com/trycua/cua/issues/6765)) ([afffae2](https://github.com/trycua/cua/commit/afffae21a76a7ffb56e5c536cdfa2e062d58caa8))
+
+
+### Bug Fixes
+
+* **cua-driver:** keep a macOS sheet's own id for focus and snapshot scope ([#6758](https://github.com/trycua/cua/issues/6758)) ([ab1d654](https://github.com/trycua/cua/commit/ab1d654a953df77a80583498f5515c2ddae16b4c))
+* **cua-driver:** restore the prior X11 foreground after foreground type_text ([#6768](https://github.com/trycua/cua/issues/6768)) ([0358eb2](https://github.com/trycua/cua/commit/0358eb27237ae9a27d3b375268cf129d7926980f))
+
+## [0.40.6](https://github.com/trycua/cua/compare/cua-driver-rs-v0.40.5...cua-driver-rs-v0.40.6) (2026-11-06)
+
+
+### Bug Fixes
+
+* **cua-driver:** keep idle-end launch ownership only until a terminal end ([#6738](https://github.com/trycua/cua/issues/6738)) ([ec4d973](https://github.com/trycua/cua/commit/ec4d973dbd7eb04d85cde0f157b43c05e1204948))
+
+## [0.40.5](https://github.com/trycua/cua/compare/cua-driver-rs-v0.40.4...cua-driver-rs-v0.40.5) (2026-11-06)
+
+
+### Bug Fixes
+
+* **cua-driver:** keep polling macOS grants after the permissions gate times out ([#6739](https://github.com/trycua/cua/issues/6739)) ([f54add4](https://github.com/trycua/cua/commit/f54add4681c070e81d73982cfae8cd4a10ec61ac))
+* **cua-driver:** refuse MCP requests before initialize on HTTP and envelope transports ([#6743](https://github.com/trycua/cua/issues/6743)) ([989941f](https://github.com/trycua/cua/commit/989941fde8a993f286dfbbd72f2a3030b2562983))
+
+## [0.40.4](https://github.com/trycua/cua/compare/cua-driver-rs-v0.40.3...cua-driver-rs-v0.40.4) (2026-11-06)
+
+
+### Bug Fixes
+
+* **cua-driver:** admit any native Wayland app to Hyprland background input ([#6706](https://github.com/trycua/cua/issues/6706)) ([895aec7](https://github.com/trycua/cua/commit/895aec7e51b0409b2b22c958920d52c22b0d2b03))
+* **hyprland-plugin:** keep background popups and drags off the user's seat (CUA-3582) ([#6705](https://github.com/trycua/cua/issues/6705)) ([354ed93](https://github.com/trycua/cua/commit/354ed93a5cb0d19dfb41dd01d5d1f91b11726ce4))
+
 ## [0.40.3](https://github.com/trycua/cua/compare/cua-driver-rs-v0.40.2...cua-driver-rs-v0.40.3) (2026-11-06)
 
 

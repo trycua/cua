@@ -76,7 +76,7 @@ fn window_target_candidates_for_pid(
         .collect()
 }
 
-fn pid_window_target_candidates(pid: i64) -> Vec<WindowTargetCandidate> {
+pub(crate) fn pid_window_target_candidates(pid: i64) -> Vec<WindowTargetCandidate> {
     let Ok(pid) = u32::try_from(pid) else {
         return Vec::new();
     };
@@ -131,22 +131,22 @@ fn topmost_window_at(
 /// toplevel (see [`crate::x11::pick_pid_window`]). A dialog the app just
 /// opened therefore receives the following `type_text` / `press_key` even
 /// while the main window is still the WM's active window.
-fn pid_fallback_window_resolver() -> cua_driver_core::window_target::PidFallbackWindowResolver {
+pub(crate) fn pid_fallback_window_resolver(
+) -> cua_driver_core::window_target::PidFallbackWindowResolver {
     Arc::new(|pid| {
         let pid = u32::try_from(pid).ok()?;
         if crate::wayland::is_wayland() && crate::wayland::niri::is_session() {
             return crate::wayland::niri::window_in_use(pid);
+        }
+        if crate::wayland::is_wayland() && crate::wayland::hyprland::is_session() {
+            return crate::wayland::hyprland::window_in_use(pid);
         }
         let windows: Vec<crate::x11::WindowInfo> = crate::wayland::list_windows_dispatch(Some(pid))
             .into_iter()
             .filter(|w| w.pid == Some(pid))
             .collect();
         if crate::wayland::is_wayland() {
-            return windows
-                .into_iter()
-                .filter(|w| w.is_on_screen)
-                .max_by_key(|w| w.z_index.unwrap_or(0))
-                .map(|w| w.xid);
+            return topmost_on_screen_window(&windows);
         }
         let ids: Vec<u64> = windows.iter().map(|w| w.xid).collect();
         crate::x11::pick_pid_window(
@@ -156,6 +156,20 @@ fn pid_fallback_window_resolver() -> cua_driver_core::window_target::PidFallback
             crate::x11::active_window(),
         )
     })
+}
+
+/// The only on-screen window, else the highest stacking position. Without one,
+/// several on-screen windows stay unresolved: list order is not stacking.
+fn topmost_on_screen_window(windows: &[crate::x11::WindowInfo]) -> Option<u64> {
+    let on_screen: Vec<_> = windows.iter().filter(|w| w.is_on_screen).collect();
+    if let [only] = on_screen.as_slice() {
+        return Some(only.xid);
+    }
+    on_screen
+        .iter()
+        .filter_map(|w| Some((w.z_index?, w.xid)))
+        .max()
+        .map(|(_, xid)| xid)
 }
 
 #[cfg(test)]
@@ -246,6 +260,29 @@ mod pid_window_resolver_tests {
     }
 
     #[test]
+    fn wayland_fallback_needs_a_stacking_position_to_choose_among_on_screen_windows() {
+        let hidden = win(3, Some(9), false, 800, 600);
+        assert_eq!(
+            topmost_on_screen_window(&[win(1, None, true, 800, 600), hidden.clone()]),
+            Some(1)
+        );
+        assert_eq!(
+            topmost_on_screen_window(&[win(1, None, true, 800, 600), win(2, None, true, 800, 600)]),
+            None
+        );
+        assert_eq!(
+            topmost_on_screen_window(&[
+                win(1, Some(4), true, 800, 600),
+                win(2, Some(2), true, 800, 600),
+                win(4, None, true, 800, 600),
+                hidden.clone()
+            ]),
+            Some(1)
+        );
+        assert_eq!(topmost_on_screen_window(&[hidden]), None);
+    }
+
+    #[test]
     fn pid_only_resolver_skips_unmapped_dialogs() {
         let main = win(1, Some(1), true, 800, 600);
         let unmapped_dialog = win(2, Some(2), false, 400, 300);
@@ -274,7 +311,10 @@ fn pid_window_guarded<T: Tool + 'static>(
             .with_point_resolver(point_resolver.clone())
             .with_fallback_resolver(fallback_resolver.clone())
             .with_snapshot_resolver(snapshot_resolver.clone())
-            .with_token_pid_resolver(token_pid_resolver.clone()),
+            .with_token_pid_resolver(token_pid_resolver.clone())
+            .with_not_found_note(Arc::new(|pid| {
+                crate::atspi::unlisted_window_note(u32::try_from(pid).ok()?)
+            })),
     )
 }
 
@@ -3036,6 +3076,13 @@ pub(crate) fn hyprland_input_result(result: anyhow::Result<Value>, foreground: b
             } else {
                 unavailable
             };
+            if !foreground && code.starts_with("client_") {
+                value["hint"] = json!(
+                    "This app does not take background pointer or key input on Hyprland's \
+                     agent seats. Use element_token (accessibility actions), the browser \
+                     tools for a browser page, or delivery_mode:\"foreground\"."
+                );
+            }
             value["reason"] = json!(code);
             value["code"] = json!(refusal);
             value["route"] = json!(if foreground {
@@ -3506,6 +3553,27 @@ fn failed_session_end_release_remains_retryable_and_bounded() {
         .unwrap()
         .insert(session_id.to_owned(), hold)
         .is_none());
+}
+
+#[cfg(test)]
+#[test]
+fn background_client_refusals_name_the_alternatives() {
+    for code in ["client_not_bound", "client_xwayland", "client_unattested"] {
+        let result = isolated_hyprland_result(Ok(json!({"ok":false,"code":code,"detail":code})));
+        let value = result.structured_content.as_ref().unwrap();
+        assert_eq!(value["code"], "background_unavailable");
+        assert_eq!(value["reason"], code);
+        assert!(value["hint"].as_str().unwrap().contains("element_token"));
+    }
+    let foreground = hyprland_input_result(
+        Ok(json!({"ok":false,"code":"client_not_bound","detail":"client_not_bound"})),
+        true,
+    );
+    assert!(foreground.structured_content.as_ref().unwrap()["hint"].is_null());
+    let other = isolated_hyprland_result(Ok(
+        json!({"ok":false,"code":"primary_target_busy","detail":"primary_target_busy"}),
+    ));
+    assert!(other.structured_content.as_ref().unwrap()["hint"].is_null());
 }
 
 #[cfg(test)]

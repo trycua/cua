@@ -86,7 +86,19 @@ describe("screen 2, signed in", () => {
     drawWhere({ ...base, thisState: "failed", addError: "The relay didn't answer." }, { onAddThis });
     expect(document.querySelector("[data-new-run-this-status]")!.textContent).toBe("Couldn't add it to your account. The relay didn't answer.");
     fireEvent.click(document.querySelector("[data-new-run-add-this=retry-add]")!);
-    expect(onAddThis).toHaveBeenCalled();
+    expect(onAddThis).toHaveBeenCalledWith("retry-add");
+  });
+
+  it("when the account wants proof, asks to confirm it's you with a code from another computer", () => {
+    const onAddThis = vi.fn();
+    const message = "To add this Mac to your account, enter a code from a computer you already added. On that computer, open Cua Spaces, go to Machines and click Add machine.";
+    drawWhere({ ...base, thisState: "failed", addError: message, addNeedsProof: true }, { onAddThis });
+    expect(document.querySelector("[data-new-run-this-status]")!.textContent).toBe(`Confirm it's you. ${message}`);
+    expect(document.querySelector("[data-new-run-add-this=retry-add]")).toBeNull();
+    const button = document.querySelector<HTMLElement>("[data-new-run-add-this=use-code]")!;
+    expect(button.textContent).toBe("Use a code from another computer");
+    fireEvent.click(button);
+    expect(onAddThis).toHaveBeenCalledWith("use-code");
   });
 });
 

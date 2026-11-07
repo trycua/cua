@@ -147,7 +147,7 @@ export { useWindowDropTarget } from "./window-drop";
 export { useSpaceFiles, parseDropped, dropSendingText, dropSentText, sendFiles, splitDrop, type DropStatus, type SpaceFilesHook } from "./space-files";
 export { agentRunLines, useDesktopCover, useSpaceDetail, type AgentRunLine, type DetailFor, type DetailReadings, type PipOutcome, type SpaceDetailHook } from "./space-detail";
 export type * from "./ops/space-detail";
-export { useThisMachine, type HostFailure, type HostFormView as HostSetupFormView, type ThisMachineHook } from "./this-machine";
+export { isNeedsProof, useThisMachine, type HostFailure, type HostFormView as HostSetupFormView, type ThisMachineHook } from "./this-machine";
 export type { HostFormAction, HostSetupRequest } from "./ops/host-setup";
 export type { TelemetrySignal } from "./ops/telemetry";
 export { useStartup, type StartupHook } from "./startup";
@@ -225,7 +225,9 @@ export {
   type JoinCodeState,
   type JoinRequest,
   type JoinMethod,
+  type ChildNote,
   type LiveAgent,
+  type LiveChild,
   type MemberEvent,
   type MemberIdentity,
   type MemberRef,

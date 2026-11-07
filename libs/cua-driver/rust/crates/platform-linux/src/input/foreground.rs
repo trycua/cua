@@ -7,10 +7,11 @@
 //! A foreground action behaves like a user at the keyboard: activate + raise the
 //! target toplevel, wait until the window manager confirms that it is the
 //! active window AND that the core X input focus sits inside it, then inject
-//! real input (XTest) and report where focus ended up. The target is left
-//! active afterwards — restoring the previously active window would pop down
-//! any menu the click just opened and would move keyboard focus away from the
-//! widget a following `type_text` needs.
+//! real input (XTest) and report where focus ended up. Pointer and key actions
+//! leave the target active afterwards — restoring the previously active window
+//! would pop down any menu the click just opened and would move keyboard focus
+//! away from the widget a following `type_text` needs. `type_text` restores
+//! the prior active window once its text is in.
 //!
 //! Everything here is bounded: the activation/confirmation phase and the
 //! post-check run on watchdog threads with hard deadlines, so a wedged X

@@ -3,8 +3,12 @@ name: "Release: Auto-merge release PRs"
 # CUA-3559. Release-please PRs wait for a human to merge them (median 8 h, p90 36 h; the
 # driver and SDK PRs waited 15 days and 2 days). This turns on auto-merge (squash) for each
 # one as it is opened or updated. It still merges only behind the required checks (ci-gate and
-# the rest of the main-safety-gates ruleset). The `hold` label stops it: a held PR gets
-# auto-merge switched off, and ci-gate fails while the label is on.
+# the rest of the main-safety-gates ruleset). The `release-hold` label (or the older `hold`)
+# stops it: a held PR gets auto-merge switched off, and ci-gate fails while the label is on.
+#
+# HOLD A RELEASE: add the `release-hold` label. Turning auto-merge off by hand is NOT a hold;
+# this workflow turns it back on at the next run (every PR update and every 30 minutes).
+# RELEASE: remove the label. See docs/release-hold.md.
 #
 # A merge made with the release App token starts the release pipeline (release-on-merge.yml);
 # one made with GITHUB_TOKEN would not. Same App as release-please.yml.
@@ -18,6 +22,8 @@ name: "Release: Auto-merge release PRs"
 on:
   pull_request_target:
     types: [opened, reopened, synchronize, edited, labeled, unlabeled, ready_for_review]
+    branches: [main]
+  push:
     branches: [main]
   schedule:
     - cron: "17,47 * * * *"
@@ -82,7 +88,7 @@ jobs:
           if [ -n "$PR_NUMBER" ]; then
             args+=(--pr "$PR_NUMBER")
           fi
-          if [ "$GITHUB_EVENT_NAME" != pull_request_target ]; then
+          if [ "$GITHUB_EVENT_NAME" != pull_request_target ] && [ "$GITHUB_EVENT_NAME" != push ]; then
             args+=(--alert)
           fi
           python3 .github/scripts/release_pr_automerge.py "${args[@]}"

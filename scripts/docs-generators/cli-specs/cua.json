@@ -14639,7 +14639,7 @@
    "subcommands": [
     {
      "abstract": "Registered Spaces and your computers on the relay",
-     "after_help": "CPU, MEMORY and DISK ON THIS MAC show what each Space was given and what it\nuses now (the numbers the Cua Spaces app shows); for another of your\ncomputers they show what it last reported. Numbers only: no file names.\n\nExamples:\n  cua spaces ls\n  cua spaces ls --no-size\n  cua spaces ls --json\n  # Only the Spaces created with these labels\n  cua spaces ls --label team=research --label run=7",
+     "after_help": "CPU, MEMORY and the DISK column (on this computer) show what each Space was given and what it\nuses now (the numbers the Cua Spaces app shows); for another of your\ncomputers they show what it last reported. Numbers only: no file names.\n\nExamples:\n  cua spaces ls\n  cua spaces ls --no-size\n  cua spaces ls --json\n  # Only the Spaces created with these labels\n  cua spaces ls --label team=research --label run=7",
      "aliases": [
       "list"
      ],
@@ -20778,7 +20778,7 @@
    "usage": "cua ci [OPTIONS] <COMMAND>"
   },
   {
-   "abstract": "Your remote use this month: live sessions, remote hours, and your plan. Remote hours are time spent using your computers from somewhere else; using a computer from itself is free",
+   "abstract": "Your remote use this month: computers in use at once, remote hours, and your plan. Remote hours are time spent using your computers from somewhere else; using a computer from itself is free",
    "after_help": "Examples:\n  cua usage\n  cua usage --json",
    "aliases": [],
    "arguments": [],
@@ -23314,5 +23314,5 @@
  ],
  "name": "cua",
  "usage": "cua [OPTIONS] <COMMAND>",
- "version": "0.10.1"
+ "version": "0.12.1"
 }

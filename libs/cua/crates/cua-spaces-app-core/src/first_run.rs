@@ -273,7 +273,7 @@ pub struct FirstRunPlan {
     pub metered: bool,
     /// `free`, `pro`, `team`.
     pub plan: String,
-    /// Free's connections at once (default 2).
+    /// Free's computers in use at once (default 2).
     pub sessions_limit: Option<u32>,
     /// Free's remote hours a month (default 20).
     pub hours_limit: Option<u32>,
@@ -1784,8 +1784,10 @@ pub fn upsell(plan: &FirstRunPlan, agent_used: bool) -> Option<UpsellCard> {
         plan: "pro".into(),
         title: "More remote hours with Pro".into(),
         lines: vec![
-            format!("Free: {hours} remote hours a month · {sessions} connections at once"),
-            format!("Pro: {PRO_HOURS} remote hours a month · {PRO_SESSIONS} connections at once"),
+            format!("Free: {hours} remote hours a month · {sessions} computers in use at once"),
+            format!(
+                "Pro: {PRO_HOURS} remote hours a month · {PRO_SESSIONS} computers in use at once"
+            ),
         ],
         price: "$18 a month".into(),
         cta: button("upsell", "Try Pro"),

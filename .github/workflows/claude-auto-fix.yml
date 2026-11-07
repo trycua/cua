@@ -164,9 +164,10 @@ jobs:
 
       - name: Install sandbox dependencies
         if: steps.context.outputs.has_failed_run == 'true'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y bubblewrap socat ripgrep
+        uses: ./.github/actions/apt-install
+        with:
+          packages: >-
+            bubblewrap socat ripgrep
 
       - name: Install Claude Code and Sandbox Runtime
         if: steps.context.outputs.has_failed_run == 'true'

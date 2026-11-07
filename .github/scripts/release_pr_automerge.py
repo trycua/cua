@@ -3,8 +3,10 @@
 
 Every release-please PR (branch release-please--branches--*, opened by the release
 App from this repository) gets `gh pr merge --auto --squash`. It then merges only
-when the required checks (ci-gate and the rest of the ruleset) are green. The `hold`
-label stops it: a held PR has auto-merge switched off, and ci-gate fails while the
+when the required checks (ci-gate and the rest of the ruleset) are green. The
+`release-hold` label (or the older `hold`) is the only hold it respects. Switching off
+auto-merge by hand is NOT a hold: the next run (on every PR update, and every 30 minutes)
+turns it back on, which is how #6749 (cua-spaces 0.22.0) merged while held. The label stops it: a held PR has auto-merge switched off, and ci-gate fails while the
 label is on (ci-gate.yml), so a hold also wins a race with this script.
 
     release_pr_automerge.py --repo trycua/cua                # all open release PRs
@@ -17,6 +19,9 @@ switched on (NODE_PATH must hold release-please@17.3.0). Release Please tags fro
 merged body; text above the version heading makes it tag every component (#6350, 15 stray
 v0.20.0 releases). A body that fails is repaired when the fix is only moving the heading
 back to the top; otherwise auto-merge is switched off and the run fails.
+
+Auto-merge is also held back while main has commits touching the component that the
+release branch lacks (staleness above), and the workflow sweeps on every main push.
 
 --alert posts one ReleasePRStuck alert to Alertmanager (same path as
 workflow_alerts.py) for each release PR whose ci-gate has been green for more than
@@ -39,7 +44,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import workflow_alerts  # noqa: E402
 
 BRANCH_PREFIX = "release-please--branches--"
-HOLD_LABEL = "hold"
+# `release-hold` is the documented label; `hold` is the older name and still works.
+# Keep this list in step with the label check in ci-gate.yml.
+HOLD_LABELS = ("release-hold", "hold")
 GATE_CHECK = "ci-gate"
 ALERTNAME = "ReleasePRStuck"
 
@@ -55,7 +62,7 @@ def is_release_pr(pr: dict, repo: str) -> bool:
 
 
 def on_hold(pr: dict) -> bool:
-    return any(label.get("name") == HOLD_LABEL for label in pr.get("labels", []))
+    return any(label.get("name") in HOLD_LABELS for label in pr.get("labels", []))
 
 
 def parse_time(text: str) -> dt.datetime:
@@ -136,8 +143,14 @@ def open_release_prs(repo: str, only: int | None) -> list[dict]:
     return [pr for pr in prs if is_release_pr(pr, repo)]
 
 
-def reconcile(pr: dict, repo: str, guard: str | None = None) -> str:
+def reconcile(pr: dict, repo: str, guard: str | None = None, config: dict | None = None) -> str:
     n = str(pr["number"])
+    if config is not None and not on_hold(pr):
+        reason = staleness(pr, repo, config)
+        if reason:
+            if pr.get("autoMergeRequest"):
+                gh("pr", "merge", n, "--repo", repo, "--disable-auto")
+            return "#%s: stale (%s); auto-merge off until Release Please refreshes it" % (n, reason)
     if guard and not on_hold(pr):
         problem = body_guard(pr, repo, guard)
         if problem:
@@ -153,6 +166,49 @@ def reconcile(pr: dict, repo: str, guard: str | None = None) -> str:
         return "#%s: auto-merge already on" % n
     gh("pr", "merge", n, "--repo", repo, "--auto", "--squash")
     return "#%s: auto-merge (squash) enabled" % n
+
+
+def relevant_paths(config: dict, branch: str) -> tuple[list[str], list[str]]:
+    """(component paths, paths Release Please ignores) for a release branch."""
+    component = branch[len(BRANCH_PREFIX) :].split("components--", 1)[-1]
+    paths: list[str] = []
+    excluded: list[str] = []
+    for path, package in config.get("packages", {}).items():
+        if package.get("component") == component:
+            paths.append(path)
+            excluded.extend(package.get("exclude-paths", []))
+    return paths, excluded
+
+
+def _under(file: str, prefixes: list[str]) -> bool:
+    return any(file == p or file.startswith(p.rstrip("/") + "/") for p in prefixes)
+
+
+def stale_files(files: list[str], paths: list[str], excluded: list[str]) -> list[str]:
+    """Files that landed on main after the release branch was built and that change its release."""
+    watched = [*paths, ".github/scripts", "release-please-config.json"]
+    return [f for f in files if _under(f, watched) and not _under(f, excluded)]
+
+
+def staleness(pr: dict, repo: str, config: dict) -> str | None:
+    """Why the PR body may miss merged work, or None when it is current.
+
+    Release Please runs once per main push, but GitHub keeps only one pending run, so
+    a burst of pushes drops runs. A release PR merged before the surviving run finishes
+    ships a changelog without the dropped PR, and the attribution preflight then fails
+    the release (cua-driver-rs 0.41.5, #6834 merged 13 s after #6766).
+    """
+    paths, excluded = relevant_paths(config, pr["headRefName"])
+    if not paths:
+        return None
+    compare = json.loads(gh("api", "repos/%s/compare/%s...main" % (repo, pr["headRefOid"])))
+    files = [f["filename"] for f in compare.get("files", [])]
+    if compare.get("ahead_by", 0) and len(files) >= 300:
+        return "main moved by 300+ files since the branch was built"
+    hit = stale_files(files, paths, excluded)
+    if hit:
+        return "main changed %d relevant file(s) after the branch was built, e.g. %s" % (len(hit), hit[0])
+    return None
 
 
 def stale_alerts(prs: list[dict], repo: str, stale_hours: float, now: dt.datetime) -> list[dict]:
@@ -173,15 +229,20 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--pr", type=int)
     ap.add_argument("--alert", action="store_true", help="post ReleasePRStuck alerts for stale green release PRs")
     ap.add_argument("--guard", help="release_please_tag_guard.cjs: check each body before enabling auto-merge")
+    ap.add_argument("--config", default="release-please-config.json", help="skip auto-merge while main has newer relevant commits")
     ap.add_argument("--stale-hours", type=float, default=6.0)
     ap.add_argument("--dry-run", action="store_true", help="print the alerts instead of posting them")
     args = ap.parse_args(argv)
     now = dt.datetime.now(dt.timezone.utc)
     prs = open_release_prs(args.repo, args.pr)
     failed = False
+    config = None
+    if os.path.exists(args.config):
+        with open(args.config, encoding="utf-8") as fh:
+            config = json.load(fh)
     for pr in prs:
         try:
-            print(reconcile(pr, args.repo, args.guard))
+            print(reconcile(pr, args.repo, args.guard, config))
         except BadReleaseBody as bad:
             print("::error::%s. Keep the version heading (## [x.y.z](...)) first after '---'; put added notes below it." % bad)
             failed = True

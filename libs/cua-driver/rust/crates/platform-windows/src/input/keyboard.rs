@@ -34,6 +34,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, SetForegroundWindow};
 
+use crate::typing_turn::{restores_previous, ForegroundNotRestored, TypingTurn};
 use crate::win32::{foreground_matches_target_or_owned_window, windows::ForegroundTarget};
 
 // ── XAML / UWP host detection ────────────────────────────────────────────────
@@ -104,7 +105,7 @@ fn owning_exe_basename(hwnd: HWND) -> Option<String> {
     }
     let path = String::from_utf16_lossy(&buf[..len as usize]);
     let name = path
-        .rsplit(|c: char| c == '\\' || c == '/')
+        .rsplit(['\\', '/'])
         .next()
         .unwrap_or(&path)
         .to_ascii_lowercase();
@@ -200,7 +201,7 @@ fn focused_descendant(parent: HWND) -> Option<HWND> {
             depth += 1;
             current = next;
         }
-        if current == parent && best.as_ref().map_or(true, |(d, _)| depth > *d) {
+        if current == parent && best.as_ref().is_none_or(|(d, _)| depth > *d) {
             best = Some((depth, focused));
         }
     }
@@ -515,8 +516,11 @@ pub fn send_key_synthesized_after_focus(
         events.push(key_input(*mvk, true));
     }
 
-    with_confirmed_foreground(target, "key delivery", focus, |_, _| unsafe {
+    with_confirmed_foreground(target, "key delivery", focus, |_, _, turn| unsafe {
         let sent = SendInput(&events, std::mem::size_of::<INPUT>() as i32);
+        if sent > 0 {
+            *turn = TypingTurn::Undrained;
+        }
         if sent as usize != events.len() {
             bail!(
                 "SendInput inserted only {sent} of {} events. Windows blocked the \
@@ -573,11 +577,12 @@ pub fn send_text_synthesized_after_focus(
     }
     let n = units.len();
 
-    with_confirmed_foreground(target, "text delivery", focus, |att, ft| unsafe {
+    with_confirmed_foreground(target, "text delivery", focus, |att, ft, turn| unsafe {
         if let Some(att) = att {
             for (k, unit) in units.iter().enumerate() {
                 let actual = GetForegroundWindow();
                 if !foreground_matches_target_or_owned_window(ft, actual.0 as usize as u64) {
+                    *turn = TypingTurn::Lost;
                     bail!(
                         "foreground_lost: foreground moved to HWND {h:?} after {k} of {n} \
                          text units were read; the remaining {remaining} were not sent. \
@@ -586,7 +591,13 @@ pub fn send_text_synthesized_after_focus(
                         remaining = n - k,
                     );
                 }
-                match att.send_and_await_read(&unit_events(unit), Duration::from_secs(2)) {
+                let read = att.send_and_await_read(&unit_events(unit), Duration::from_secs(2));
+                *turn = match read {
+                    UnitRead::Read => TypingTurn::Drained,
+                    UnitRead::Short(0) => *turn,
+                    UnitRead::Short(_) | UnitRead::Stalled => TypingTurn::Undrained,
+                };
+                match read {
                     UnitRead::Read => {}
                     UnitRead::Short(sent) => bail!(
                         "SendInput inserted only {sent} of 4 key events for text unit {} of {n} \
@@ -599,8 +610,8 @@ pub fn send_text_synthesized_after_focus(
                     UnitRead::Stalled => bail!(
                         "text_delivery_stalled: the target did not read text unit {} of {n} \
                          within 2000 ms; {k} earlier units were read. Unit {} was inserted \
-                         and may still appear, possibly in the previously foreground window. \
-                         Nothing was retried; inspect the target before sending the rest.",
+                         and may still appear in the target. Nothing was retried; inspect \
+                         the target before sending the rest.",
                         k + 1,
                         k + 1
                     ),
@@ -613,6 +624,9 @@ pub fn send_text_synthesized_after_focus(
             events.extend_from_slice(&unit_events(unit)[..2]);
         }
         let sent = SendInput(&events, std::mem::size_of::<INPUT>() as i32);
+        if sent > 0 {
+            *turn = TypingTurn::Undrained;
+        }
         if sent as usize != events.len() {
             bail!(
                 "SendInput inserted only {sent} of {} key events. Windows blocked \
@@ -644,13 +658,14 @@ fn wait_for_exact_foreground(target: HWND, timeout: Duration) -> bool {
 /// same-process window whose owner chain reaches `target`, is foreground.
 /// Foreground and optional child focus are checked against
 /// external Win32/UIA state instead of inferred from API return values or a
-/// fixed settle delay. The prior foreground is restored on every body/focus
-/// result after activation succeeds.
+/// fixed settle delay. The body records in `turn` what it inserted; the prior
+/// foreground is restored only as [`restores_previous`] allows, and a failed
+/// turn that keeps it returns [`ForegroundNotRestored`].
 fn with_confirmed_foreground<T>(
     target: HWND,
     operation: &str,
     focus: impl FnOnce() -> Result<()>,
-    body: impl FnOnce(Option<&InputQueueAttachment>, ForegroundTarget) -> Result<T>,
+    body: impl FnOnce(Option<&InputQueueAttachment>, ForegroundTarget, &mut TypingTurn) -> Result<T>,
 ) -> Result<T> {
     let previous = unsafe { GetForegroundWindow() };
     let _ = unsafe { crate::input::force_foreground_assisted(target) };
@@ -682,7 +697,8 @@ fn with_confirmed_foreground<T>(
     };
 
     let mut attachment: Option<InputQueueAttachment> = None;
-    let result = (|| {
+    let mut turn = TypingTurn::NotSent;
+    let mut result = (|| {
         focus()?;
         let deadline = Instant::now() + Duration::from_millis(250);
         let actual = loop {
@@ -710,19 +726,37 @@ fn with_confirmed_foreground<T>(
         // Attach before inserting anything: attaching resets the shared key
         // state, which must not race with modifiers the body is about to send.
         attachment = InputQueueAttachment::attach(actual);
-        body(attachment.as_ref(), foreground_target)
+        body(attachment.as_ref(), foreground_target, &mut turn)
     })();
 
     // Keep the target foreground until its thread has read every inserted
     // event; restoring earlier hands the unread tail to another window (#4477).
-    match (&result, attachment.as_ref()) {
-        (Ok(_), Some(attachment)) => {
-            attachment.wait_for_drain(Duration::from_secs(2));
-        }
-        (Ok(_), None) => sleep(Duration::from_millis(40)),
-        _ => {}
+    // Paced text already saw each unit read, so it skips the final drain.
+    if result.is_ok() && turn != TypingTurn::Drained {
+        turn = match attachment.as_ref() {
+            Some(attachment) if attachment.wait_for_drain(Duration::from_secs(2)) => {
+                TypingTurn::Drained
+            }
+            Some(_) => {
+                result = Err(anyhow::anyhow!(
+                    "input_delivery_stalled: Windows did not confirm that the target read the \
+                     {operation} input within 2000 ms. It was inserted and may still appear in \
+                     the target. Nothing was retried; inspect the target before repeating it."
+                ));
+                TypingTurn::Undrained
+            }
+            None => {
+                sleep(Duration::from_millis(40));
+                TypingTurn::Settled
+            }
+        };
     }
     drop(attachment);
+    if !restores_previous(turn) {
+        // Marked even when the target was already in front: a caller that
+        // fronted it (browser setup) must not restore its own prior window.
+        return result.map_err(|error| ForegroundNotRestored { error, turn }.into());
+    }
     if !previous.0.is_null() && previous != target {
         let _ = unsafe { SetForegroundWindow(previous) };
     }

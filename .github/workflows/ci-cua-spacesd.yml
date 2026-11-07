@@ -156,7 +156,7 @@ jobs:
   test:
     name: fmt, clippy, test (${{ matrix.os }})
     needs: changes
-    if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (needs.changes.outputs.run == 'true' && needs.changes.outputs.legs_test != '[]') }}
+    if: ${{ !failure() && !cancelled() && needs.changes.result == 'success' && ((github.event_name != 'pull_request' || !github.event.pull_request.draft) && (needs.changes.outputs.run == 'true' && needs.changes.outputs.legs_test != '[]')) }}
     strategy:
       fail-fast: false
       matrix:
@@ -188,14 +188,10 @@ jobs:
           workspaces: "libs/cua-spacesd -> target"
       - name: Install Linux build dependencies
         if: runner.os == 'Linux'
-        working-directory: .
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            build-essential pkg-config perl libx11-dev libxkbcommon-dev \
-            libwayland-dev libdbus-1-dev libxcb1-dev libx11-xcb-dev \
-            libxkbcommon-x11-dev libxrandr-dev libxi-dev libxtst-dev \
-            libxfixes-dev libxdamage-dev libudev-dev
+        uses: ./.github/actions/apt-install
+        with:
+          packages: >-
+            build-essential pkg-config perl libx11-dev libxkbcommon-dev libwayland-dev libdbus-1-dev libxcb1-dev libx11-xcb-dev libxkbcommon-x11-dev libxrandr-dev libxi-dev libxtst-dev libxfixes-dev libxdamage-dev libudev-dev
       - name: Format
         run: cargo fmt --all --check
       - uses: ./.github/actions/nextest
@@ -335,7 +331,7 @@ jobs:
   relay-e2e:
     name: relay e2e (docker)
     needs: changes
-    if: ${{ (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (needs.changes.outputs.run == 'true' && contains(needs.changes.outputs.matrix, 'ubuntu') && !contains(fromJSON(needs.changes.outputs.reused), 'relay e2e (docker)')) }}
+    if: ${{ !failure() && !cancelled() && needs.changes.result == 'success' && ((github.event_name != 'pull_request' || !github.event.pull_request.draft) && (needs.changes.outputs.run == 'true' && contains(needs.changes.outputs.matrix, 'ubuntu') && !contains(fromJSON(needs.changes.outputs.reused), 'relay e2e (docker)'))) }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
     defaults:

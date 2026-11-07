@@ -16,7 +16,7 @@ name: "CD: Cua Spaces build (shadow)"
 #    them absolute when it publishes) and the signing notes.
 # Not built here: Sparkle appcast (needs the published release), Sigstore
 # bundles and release-artifacts.json (made at the tag), Electron macOS (beta
-# only), dSYMs.
+# only). The macOS dSYMs go to Sentry, not into the build set.
 #
 # Trigger: push to main when a release input changes (paths below). A push
 # runs only the producer stages (the SwiftUI Rust slice and the Electron macOS
@@ -252,9 +252,10 @@ jobs:
     permissions:
       contents: read
 
-  # The SwiftUI app's Rust slices, restored from the cache `slice` just
-  # filled. A miss here is an alert (the workflow is watched by
-  # workflow-failure-alerts.yml): it never compiles a second copy.
+  # The SwiftUI app's Rust slices, taken from the artifact `slice` just
+  # uploaded (the cache is the fallback). Neither being there is an alert (the
+  # workflow is watched by workflow-failure-alerts.yml): it never compiles a
+  # second copy.
   macos-rust:
     name: SwiftUI Rust (${{ matrix.arch }})
     needs: [plan, spacesd-published, slice]
@@ -269,16 +270,35 @@ jobs:
           - { arch: x86_64, triple: x86_64-apple-darwin }
     steps:
       - uses: actions/checkout@v4
-      - uses: ./.github/actions/spaces-rust-slice
+      # The producer stage hands the slice over as an artifact of this run
+      # (an Actions cache entry can be evicted before this job starts).
+      - name: Download the slice the producer built
+        id: artifact
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: swiftui-rust-slice-${{ matrix.arch }}
+          path: libs/cua/target/${{ matrix.triple }}/release
+      - name: Restore the slice from the cache (artifact missing)
         id: slice
+        if: steps.artifact.outcome != 'success'
+        uses: ./.github/actions/spaces-rust-slice
         with:
           triple: ${{ matrix.triple }}
           build: "false"
-      - name: The producer left the slice in the cache
-        if: steps.slice.outputs.cache-hit != 'true'
+      - name: The producer left the slice
+        if: steps.artifact.outcome != 'success' && steps.slice.outputs.cache-hit != 'true'
         run: |
-          echo "::error title=Cache miss on main::The SwiftUI Rust slice (${{ matrix.triple }}) is not in the Actions cache although the producer stage just ran. Key: ${{ steps.slice.outputs.key }}. Not compiling a second copy."
+          echo "::error title=Slice missing::The SwiftUI Rust slice (${{ matrix.triple }}) is neither an artifact of this run nor in the Actions cache although the producer stage just ran. Key: ${{ steps.slice.outputs.key }}. Not compiling a second copy."
           exit 1
+      - name: The slice is complete
+        run: |
+          set -euo pipefail
+          d="libs/cua/target/${{ matrix.triple }}/release"
+          chmod +x "$d/cua-spaces-cli"
+          for f in libcua_spaces_ffi.dylib cua-spaces-cli; do
+            test -s "$d/$f" || { echo "::error::missing or empty $f"; exit 1; }
+          done
       # microVMs on Apple silicon: the static aarch64 guest init the app
       # bundles (build-release.sh --skip-cargo takes it from here). Same
       # step as cd-cua-spaces.yml.
@@ -352,7 +372,7 @@ jobs:
           retention-days: 1
 
   # macOS: sign, notarize, staple; DMG and .pkg. Same steps as build-macos in
-  # cd-cua-spaces.yml (without the release upload, the appcast and the dSYMs).
+  # cd-cua-spaces.yml (without the release upload and the appcast).
   build-macos:
     name: darwin-universal (SwiftUI)
     needs: [plan, spacesd-published, macos-rust, web]
@@ -479,6 +499,19 @@ jobs:
             "${bundle[@]}" --arch universal --skip-cargo \
             --sign "$identity" --out "$RUNNER_TEMP/spaces-app" \
             --feed-url "https://github.com/$GITHUB_REPOSITORY/releases/download/cua-spaces-latest/cua-spaces-appcast.xml"
+
+      # build-release.sh strips the shipped binaries and keeps their symbols
+      # here. Nightly and beta crash reports (CUA-SPACES-DESKTOP-2, -H) were
+      # unreadable without them: Sentry matches a crash to its dSYM by build
+      # UUID, so the build that ships must be the one that uploads. Never
+      # fails the build (see the action).
+      - name: Upload the macOS dSYMs to Sentry
+        uses: ./.github/actions/sentry-upload
+        with:
+          token: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          version: ${{ env.VERSION }}
+          kind: debug-files
+          path: ${{ runner.temp }}/spaces-app/cua-spaces-*-dSYMs.zip
 
       - name: Notarize and staple the app
         if: steps.signing.outputs.apple == 'true'

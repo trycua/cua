@@ -55,6 +55,46 @@ ROOT = Path(os.environ.get("CUA_CI_ROOT") or Path(__file__).resolve().parent.par
 HOOK_MARKER = "# bin/ci pre-push hook"
 CHAINED_HOOK = "pre-push.pre-bin-ci"
 STATUS_CONTEXT = "local-ci"
+IS_WINDOWS = os.name == "nt"
+
+
+def find_bash() -> str:
+    """The bash that runs the checks' commands (they are bash). On Windows that is Git for
+    Windows' bash (CUA_CI_BASH overrides it): a bare `bash` there is usually System32\\bash.exe,
+    which is WSL and would run the checks inside a Linux distribution."""
+    if not IS_WINDOWS:
+        return "bash"
+    given = os.environ.get("CUA_CI_BASH")
+    if given:
+        return given
+    git = shutil.which("git")
+    if git:
+        # .../Git/cmd/git.exe, .../Git/bin/git.exe or .../Git/mingw64/bin/git.exe: the Git root is above it.
+        for root in list(Path(git).resolve().parents)[:3]:
+            for rel in (("bin", "bash.exe"), ("usr", "bin", "bash.exe")):
+                candidate = root.joinpath(*rel)
+                if candidate.exists():
+                    return str(candidate)
+    sys.exit("bin/ci: needs Git for Windows' bash (install Git for Windows, or set CUA_CI_BASH to its bash.exe); it will not use `bash` from PATH, which may be WSL")
+
+
+BASH = find_bash()
+_shim_dir: Optional[str] = None
+
+
+def python3_shim_dir() -> Optional[str]:
+    """Windows: a directory with a `python3` for the checks (Python there is `python`, or the Store stub)."""
+    global _shim_dir
+    if not IS_WINDOWS:
+        return None
+    if _shim_dir is None:
+        _shim_dir = tempfile.mkdtemp(prefix="bin-ci-shim-")
+        exe = Path(sys.executable).as_posix()
+        for name in ("python3", "python"):
+            with open(os.path.join(_shim_dir, name), "w", newline="\n") as fh:
+                fh.write(f'#!/bin/sh\nexec "{exe}" "$@"\n')
+        atexit.register(shutil.rmtree, _shim_dir, True)
+    return _shim_dir
 
 # ---------------------------------------------------------------- model
 
@@ -142,10 +182,10 @@ def disk_free_gb(path: Path) -> float:
 def dir_size_gb(path: Path) -> float:
     if not Path(path).exists():
         return 0.0
-    out = subprocess.run(["du", "-sk", str(path)], capture_output=True, text=True)
     try:
+        out = subprocess.run(["du", "-sk", str(path)], capture_output=True, text=True)
         return int(out.stdout.split()[0]) * 1024 / 1e9
-    except (IndexError, ValueError):
+    except (IndexError, ValueError, OSError):
         total = 0
         for dp, _, files in os.walk(path):
             for f in files:
@@ -208,6 +248,10 @@ class DiskGuard:
     def kill_all(self) -> None:
         with self.lock:
             procs = list(self.procs.values())
+        if IS_WINDOWS:
+            for p in procs:
+                subprocess.run(["taskkill", "/T", "/F", "/PID", str(p.pid)], capture_output=True)
+            return
         for sig in (signal.SIGTERM, signal.SIGKILL):
             for p in procs:
                 try:
@@ -312,7 +356,7 @@ def rust_env(notes: List[str]) -> Dict[str, str]:
     """
     env: Dict[str, str] = {}
     channel = pinned_rust_channel()
-    rustup = shutil.which("rustup")
+    rustup = find_rustup()
     if not rustup or not channel:
         if have("cargo"):
             notes.append("rustup not found: using the cargo on PATH; rustfmt and clippy may differ from CI")
@@ -327,13 +371,54 @@ def rust_env(notes: List[str]) -> Dict[str, str]:
     env["RUSTUP_TOOLCHAIN"] = channel
     proxy_dirs = [Path(rustup).resolve().parent, Path(rustup).parent]
     brew = Path(rustup).resolve().parent.parent / "bin"  # Homebrew keeps the proxies next to rustup
-    for d in (Path("/opt/homebrew/opt/rustup/bin"), Path("/usr/local/opt/rustup/bin"), Path.home() / ".cargo/bin", brew, *proxy_dirs):
+    for d in (*RUSTUP_DIRS, Path.home() / ".cargo/bin", brew, *proxy_dirs):
         if (d / "cargo").exists() and (d / "cargo-clippy").exists():
             current = shutil.which("cargo")
             if current is None or Path(current).parent != d:
                 env["PATH"] = f"{d}{os.pathsep}{os.environ.get('PATH', '')}"
             break
     return env
+
+
+# Homebrew's rustup is keg-only: its `rustup` and the cargo/clippy proxies live
+# here, not on PATH, while Homebrew's own `cargo` (a different version that
+# ignores rust-toolchain.toml) is.
+RUSTUP_DIRS = (Path("/opt/homebrew/opt/rustup/bin"), Path("/usr/local/opt/rustup/bin"))
+
+
+def find_rustup() -> Optional[str]:
+    found = shutil.which("rustup")
+    if found:
+        return found
+    exe = "rustup.exe" if IS_WINDOWS else "rustup"
+    for d in (Path.home() / ".cargo/bin", *RUSTUP_DIRS):
+        if (d / exe).exists():
+            return str(d / exe)
+    return None
+
+
+def rust_pin_error(env: Dict[str, str]) -> Optional[str]:
+    """None when the `cargo` and `cargo clippy` bin/ci will run match the pinned toolchain, else why not.
+
+    A cargo from outside rustup (Homebrew's, a distro's) ignores rust-toolchain.toml and
+    reports lint findings CI never sees.
+    """
+    channel = pinned_rust_channel()
+    if not channel or not re.fullmatch(r"\d+\.\d+(\.\d+)?", channel) or not have("cargo"):
+        return None
+    full = {**os.environ, **env}
+    probes = (("cargo --version", ["cargo", "--version"], rf"^cargo {re.escape(channel)}\b"),
+              ("cargo clippy --version", ["cargo", "clippy", "--version"], rf"^clippy 0\.1\.{channel.split('.')[1]}\b"))
+    for label, cmd, rx in probes:
+        out = subprocess.run(cmd, capture_output=True, text=True, cwd=str(ROOT / "libs/cua-driver/rust" if (ROOT / "libs/cua-driver/rust").exists() else ROOT), env=full)
+        got = out.stdout.strip() or out.stderr.strip()
+        if out.returncode != 0 or not re.search(rx, got):
+            if label == "cargo clippy --version" and out.returncode != 0 and "no such command" in got:
+                return f"clippy is not installed for Rust {channel}: rustup component add clippy --toolchain {channel}"
+            return (f"`{label}` reports {got!r}, but CI pins Rust {channel} (rust-toolchain.toml). "
+                    f"Homebrew's cargo ignores the pin. Use rustup's: put ~/.cargo/bin (or /opt/homebrew/opt/rustup/bin) "
+                    f"before /opt/homebrew/bin on PATH, and run `rustup toolchain install {channel} --component clippy,rustfmt`.")
+    return None
 
 
 def pnpm_cmd(version: Optional[str]) -> str:
@@ -444,7 +529,7 @@ def package_of(path: str) -> Optional[Tuple[str, str]]:
             text = manifest.read_text(errors="replace")
             m = re.search(r'^\[package\][^\[]*?^name\s*=\s*"([^"]+)"', text, re.M | re.S)
             if m:
-                return str(d.relative_to(ROOT)), m.group(1)
+                return d.relative_to(ROOT).as_posix(), m.group(1)
         d = d.parent
     return None
 
@@ -887,7 +972,12 @@ class Context:
         self.guard: Optional[DiskGuard] = None
 
     def env(self) -> Dict[str, str]:
-        return {**self.lean, **os.environ, **self.rust_env, "CARGO_TARGET_DIR": str(self.target), "CUA_TELEMETRY": "0", "DO_NOT_TRACK": "1"}
+        env = {**self.lean, **os.environ, **self.rust_env, "CARGO_TARGET_DIR": str(self.target), "CUA_TELEMETRY": "0", "DO_NOT_TRACK": "1"}
+        shim = python3_shim_dir()
+        if shim:
+            key = next((k for k in env if k.upper() == "PATH"), "PATH")
+            env[key] = shim + os.pathsep + env.get(key, "")
+        return env
 
     def cleanup_target(self) -> None:
         if self.guard:
@@ -914,8 +1004,8 @@ class Context:
         with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as fh:
             fh.write("\n".join(changes.files) + "\n")
         try:
-            out = subprocess.run(f"{TSX} scripts/docs-generators/runner.ts --changed-files-file {shlex.quote(fh.name)}",
-                                 shell=True, cwd=str(ROOT), capture_output=True, text=True, env=self.env())
+            out = subprocess.run([BASH, "-c", f"{TSX} scripts/docs-generators/runner.ts --changed-files-file {shlex.quote(Path(fh.name).as_posix())}"],
+                                 cwd=str(ROOT), capture_output=True, text=True, env=self.env())
         finally:
             os.unlink(fh.name)
         if out.returncode != 0:
@@ -998,7 +1088,7 @@ class Runner:
                     return f"missing {path}: run {how}"
                 log.write(f"$ {how}\n".encode())
                 log.flush()
-                rc = subprocess.run(how, shell=True, cwd=str(ROOT), stdout=log, stderr=subprocess.STDOUT, env=self.ctx.env(), executable="/bin/bash").returncode
+                rc = subprocess.run([BASH, "-c", how], cwd=str(ROOT), stdout=log, stderr=subprocess.STDOUT, env=self.ctx.env()).returncode
                 if rc != 0 or not (ROOT / path).exists():
                     return f"could not install {path} ({how}); see the log"
         return None
@@ -1033,8 +1123,8 @@ class Runner:
                     env.setdefault("RUSTUP_HOME", str(real / ".rustup"))
                     home = tempfile.mkdtemp(prefix="bin-ci-home-")
                     env["HOME"] = home
-                proc = subprocess.Popen(["bash", "-o", "pipefail", "-c", c.cmd], cwd=str(ROOT / c.cwd), stdout=log, stderr=subprocess.STDOUT,
-                                        stdin=subprocess.DEVNULL, env=env, start_new_session=True)
+                proc = subprocess.Popen([BASH, "-o", "pipefail", "-c", c.cmd], cwd=str(ROOT / c.cwd), stdout=log, stderr=subprocess.STDOUT,
+                                        stdin=subprocess.DEVNULL, env=env, start_new_session=not IS_WINDOWS)
                 guard = self.ctx.guard if heavy else None
                 if guard:
                     guard.register(proc)
@@ -1136,7 +1226,7 @@ def apply_fixes(results: List[Result], ctx: Context, logdir: Path) -> List[Resul
             out.append(r)
             continue
         print(f"  {color('fixing', '36')} {r.check.title}: {'; '.join(cmds)}", flush=True)
-        ok = all(subprocess.run(["bash", "-c", cmd], cwd=str(ROOT), env=ctx.env()).returncode == 0 for cmd in cmds)
+        ok = all(subprocess.run([BASH, "-c", cmd], cwd=str(ROOT), env=ctx.env()).returncode == 0 for cmd in cmds)
         again = Runner(ctx, logdir, quiet=True).run(r.check) if ok else r
         if again.status == "pass":
             again.status, again.detail = "fixed", "fixed; review and commit the changes"
@@ -1360,6 +1450,10 @@ def raise_open_file_limit(want: int = 65536) -> None:
 
 
 def main(argv: Sequence[str]) -> int:
+    if IS_WINDOWS and not sys.flags.utf8_mode:
+        # Windows reads files in the ANSI code page by default; the repo is UTF-8. Run again in UTF-8
+        # mode (children inherit PYTHONUTF8).
+        return subprocess.run([sys.executable, "-X", "utf8", str(Path(__file__).resolve()), *argv], env={**os.environ, "PYTHONUTF8": "1"}).returncode
     args = parse_args(argv)
     os.chdir(ROOT)
     raise_open_file_limit()
@@ -1392,6 +1486,11 @@ def main(argv: Sequence[str]) -> int:
     ctx = Context(args)
     started = time.monotonic()
     plan = build_plan(changes, ctx)
+    if not args.list and any("cargo" in c.tools and not c.skip_reason for c in plan):
+        pin_error = rust_pin_error(ctx.rust_env)
+        if pin_error:
+            print(f"bin/ci: wrong Rust toolchain: {pin_error}", file=sys.stderr)
+            return 2
     scope = "every check" if args.full else f"{len(changes.files)} changed file(s) since {base[:10]} ({base_desc})"
     print(f"bin/ci: {mode} mode, {scope}: {len(plan)} check(s)")
     for n in ctx.notes:
@@ -1408,7 +1507,10 @@ def main(argv: Sequence[str]) -> int:
 
     logdir = state_dir() / "logs"
     for old in logdir.glob("*.log"):
-        old.unlink()
+        try:
+            old.unlink()
+        except OSError:  # Windows: a log another bin/ci run (a test of this one) still has open
+            pass
     sweep_stale_targets()
     atexit.register(ctx.cleanup_target)
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))

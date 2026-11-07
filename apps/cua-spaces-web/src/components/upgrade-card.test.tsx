@@ -58,7 +58,7 @@ describe.skipIf(!wasmBuilt)("<UpgradeCard>", () => {
     });
     expect(card.getAttribute("data-upgrade-card")).toBe("hours");
     expect(card.textContent).toContain("You've used this month's remote hours");
-    expect(card.textContent).toContain("Pro gives you 200 hours and 5 live sessions");
+    expect(card.textContent).toContain("Pro gives you 200 hours and 5 computers in use at once");
     expect(card.textContent).toContain("$18 a month");
     fireEvent.click(screen.getByRole("button", { name: "Upgrade to Pro" }));
     await waitFor(() => expect(opened).toEqual(["https://app.cua.ai/buy/pro?from=app_card_hours"]));
@@ -96,7 +96,7 @@ describe.skipIf(!wasmBuilt)("<RelayAllowanceNotice> with the cards on", () => {
     await waitFor(() => expect(document.querySelector("[data-upgrade-card]")).toBeNull());
   });
 
-  it("a Pro account at 5 of 5 live sessions with empty reasons gets the sessions card", async () => {
+  it("a Pro account at 5 of 5 computers in use at once with empty reasons gets the sessions card", async () => {
     const { view } = host({ ...reached, plan: "pro", hoursUsed: 10, hoursLimit: 200, liveSessions: 5, liveSessionsLimit: 5, reasons: [], softLimitReached: false });
     view();
     const card = await waitFor(() => {
@@ -105,7 +105,7 @@ describe.skipIf(!wasmBuilt)("<RelayAllowanceNotice> with the cards on", () => {
       return el as HTMLElement;
     });
     expect(card.getAttribute("data-upgrade-card")).toBe("sessions");
-    expect(card.textContent).toContain("You're using 5 of 5 live sessions");
+    expect(card.textContent).toContain("You have 5 of 5 computers in use at once");
   });
 
   it("a plan with no card keeps the notice and its Upgrade link", async () => {

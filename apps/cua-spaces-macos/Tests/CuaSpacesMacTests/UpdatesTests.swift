@@ -226,17 +226,52 @@ struct UpdatesTests {
         #expect(driver.state.status == .idle)
     }
 
-    @Test func theSilentPathReachesDownloadedWithItsImmediateInstall() {
+    @Test func theSilentPathReachesDownloaded() {
         let driver = UpdateUserDriver(currentVersion: "0.9.2")
         var events: [String] = []
-        var installs = 0
         driver.onEvent = { events.append($0) }
-        driver.silentlyDownloaded(version: "0.9.3") { installs += 1 }
+        driver.silentlyDownloaded(version: "0.9.3")
         #expect(driver.state.status == .downloaded && driver.state.version == "0.9.3")
         #expect(events == ["downloaded"])
-        #expect(installs == 0)
+    }
+
+    /// Sparkle ignores the install block unless the delegate takes the
+    /// install (returns true), and taking it loses the install on quit
+    /// (CUA-3065). So the delegate leaves it to Sparkle.
+    @Test func quitInstallStaysWithSparkle() {
+        #expect(SparkleUpdater.handlesQuitInstallItself == false)
+    }
+
+    /// 0.21.1: "Restart to update" did nothing on the silent path, since the
+    /// install block was dead. It must resume the update and install it.
+    @Test func restartToUpdateInstallsASilentlyDownloadedUpdate() {
+        let driver = UpdateUserDriver(currentVersion: "0.9.2")
+        var resumes = 0
+        var choices: [SPUUserUpdateChoice] = []
+        driver.resumeSilentUpdate = { resumes += 1 }
+        // Nothing downloaded: nothing to do.
+        #expect(!driver.installNow() && resumes == 0)
+        driver.silentlyDownloaded(version: "0.9.3")
         #expect(driver.installNow())
-        #expect(installs == 1)
+        #expect(resumes == 1)
+        // The resumed session asks to install: answered at once.
+        driver.showReady(toInstallAndRelaunch: { choices.append($0) })
+        #expect(choices == [.install])
+        // A later session's prompt is held again, not auto-answered.
+        driver.dismissUpdateInstallation()
+        driver.showReady(toInstallAndRelaunch: { choices.append($0) })
+        #expect(choices == [.install])
+    }
+
+    @Test func aFailedResumeDoesNotInstallALaterPrompt() {
+        let driver = UpdateUserDriver(currentVersion: "0.9.2")
+        var choices: [SPUUserUpdateChoice] = []
+        driver.resumeSilentUpdate = {}
+        driver.silentlyDownloaded(version: "0.9.3")
+        #expect(driver.installNow())
+        driver.handleError("offline")
+        driver.showReady(toInstallAndRelaunch: { choices.append($0) })
+        #expect(choices.isEmpty)
     }
 
     @Test func nothingFoundAndBackgroundErrorsStayQuiet() {

@@ -121,7 +121,7 @@ impl Tool for TypeTextTool {
                     "scope": "desktop", "path": "SendInput", "characters": text_len,
                     "effect": "unverifiable"
                 })),
-                Ok(Err(error)) => ToolResult::error(error.to_string()),
+                Ok(Err(error)) => crate::typing_turn::foreground_input_error(error),
                 Err(error) => ToolResult::error(format!("desktop type task failed: {error}")),
             };
         }
@@ -307,7 +307,7 @@ impl Tool for TypeTextTool {
                 let (cx, cy) = match resolve_onscreen_point_with_scroll(
                     &admitted,
                     hwnd,
-                    idx as usize,
+                    idx,
                     cx,
                     cy,
                     "foreground typing",
@@ -315,7 +315,7 @@ impl Tool for TypeTextTool {
                     Ok(point) => point,
                     Err(result) => return result,
                 };
-                Some((idx as usize, (cx, cy)))
+                Some((idx, (cx, cy)))
             } else {
                 None
             };
@@ -345,7 +345,7 @@ impl Tool for TypeTextTool {
                     // foreground IS the escalated rung (mirrors macOS PATH_KEY_EVENTS_FG).
                     "effect": "unverifiable",
                 })),
-                Ok(Err(e)) => ToolResult::error(e.to_string()),
+                Ok(Err(e)) => crate::typing_turn::foreground_input_error(e),
                 Err(e)     => ToolResult::error(format!("Task error: {e}")),
             };
         }
@@ -542,7 +542,7 @@ impl Tool for TypeTextTool {
         // can't confirm (conservative: under-claim rather than false-succeed).
         let text_for_post = text.clone();
         let verify_pid = pid;
-        let verify_idx = elem_idx.map(|i| i as usize);
+        let verify_idx = elem_idx;
         let delay_ms = _delay_ms;
         let result = tokio::task::spawn_blocking({
             let admitted = admitted.clone();

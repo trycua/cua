@@ -534,12 +534,14 @@ pub unsafe fn focused_element_of_pid(pid: i32) -> Option<AXUIElementRef> {
     Some(value as AXUIElementRef)
 }
 
-/// Return the CGWindowID of the application's focused AX window.
+/// The application's focused AX window, as the ids it answers to: a focused
+/// sheet (Finder's Go to Folder, a Save sheet) is both itself and the window
+/// it is attached to, because keys addressed to that window go to the sheet.
 ///
 /// This is a narrow read-only proof used before global keyboard delivery: an
 /// already focused exact window must not be re-activated, because doing so can
 /// make a focus-proxy renderer drop its current key target.
-pub fn focused_window_id_of_pid(pid: i32) -> Option<u32> {
+pub fn focused_window_id_of_pid(pid: i32) -> Option<super::exact_target::AxWindowId> {
     unsafe {
         let app = AXUIElementCreateApplication(pid);
         if app.is_null() {
@@ -548,7 +550,7 @@ pub fn focused_window_id_of_pid(pid: i32) -> Option<u32> {
         let window = copy_element_attr(app, "AXFocusedWindow");
         CFRelease(app as CFTypeRef);
         let window = window?;
-        let window_id = ax_get_window_id(window);
+        let window_id = super::exact_target::owning_window_id(window);
         CFRelease(window as CFTypeRef);
         window_id
     }

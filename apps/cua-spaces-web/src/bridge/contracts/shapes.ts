@@ -78,7 +78,7 @@ import type { TipsState } from "./spaces-page";
 import type { ShareLink, ShareSettings } from "../ops/links";
 import type { CliInstallPlan } from "./first-run";
 import type { CiConnectAnswer, CiGithub, CiJob, CiLogLine, CiOverview, CiPilotClass, CiRepoChoice, CiRepoUse, CiSetupStep, CiTarget } from "./ci-runners";
-import type { AgentMember, JoinCode, JoinCodeRow, LiveAgent, MemberIdentity, ThreadAttachment, ThreadAuthor, ThreadEntry, ThreadFailure, ThreadLive, ThreadPage } from "../ops/thread";
+import type { AgentMember, JoinCode, JoinCodeRow, LiveAgent, LiveChild, MemberIdentity, ThreadAttachment, ThreadAuthor, ThreadEntry, ThreadFailure, ThreadLive, ThreadPage } from "../ops/thread";
 import type { PresenceCursorWire, PresenceJoinInfo, PresenceParticipantWire } from "../ops/presence";
 import type { StartupState } from "../ops/startup";
 import type { StreamTicket } from "../ops/stream";
@@ -671,6 +671,7 @@ const AgentKeysShape = ref(
     providers: list(object({ id: str, label: str, env: str })),
     available: bool,
     unavailable: nullable(str),
+    insecure: optNull(str),
   }),
 );
 
@@ -1122,6 +1123,14 @@ const ThreadEntryShape = ref(
     update: nullable(object({ task: num, state: taskState, session: nullable(num), note: nullable(str) })),
     runsOnKeysOf: nullable(object({ id: str, name: str })),
     event: nullable(object({ kind: oneOf("member_joined", "member_removed", "name_refused", "rate_limited"), member: nullable(MemberIdentityShape), by: nullable(memberRef) })),
+    child: opt(
+      nullable(
+        union(
+          object({ kind: oneOf("subagent"), id: str, agent: str, title: str, state: oneOf("running", "done", "failed"), steps: num, result: nullable(str), startedMs: nullable(num), endedMs: nullable(num) }),
+          object({ kind: oneOf("child_space"), space: str, name: str, os: str, agent: str }),
+        ),
+      ),
+    ),
     joinRequest: opt(
       nullable(
         object({ member: nullable(MemberIdentityShape), canTask: oneOf("owner", "members"), state: str, codeId: str, youCanAnswer: bool }),
@@ -1147,7 +1156,7 @@ const JoinCodeRowShape = obj<JoinCodeRow>()({
 });
 const ThreadPageShape = obj<ThreadPage>()({
   entries: list(ThreadEntryShape),
-  live: obj<ThreadLive>()({ key: str, agents: list(obj<LiveAgent>()({ agent: str, stage: str, sinceMs: opt(num), text: opt(str) })) }),
+  live: obj<ThreadLive>()({ key: str, agents: list(obj<LiveAgent>()({ agent: str, stage: str, sinceMs: opt(num), text: opt(str), children: opt(list(obj<LiveChild>()({ id: str, title: str, steps: num, step: nullable(str), sinceMs: opt(num) }))) })) }),
   cursor: num,
   caughtUp: bool,
   unread: num,

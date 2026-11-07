@@ -65,10 +65,16 @@ runs:
         inputs_hash="$(python3 .github/scripts/spaces_rust_slice_inputs.py key)"
         repo="${CUA_RELEASE_REPOSITORY//\//-}"
         echo "key=swiftui-rust-v3-${TRIPLE}-rust1.97.1-${repo}-${inputs_hash}" >> "$GITHUB_OUTPUT"
+    # Restore and save are separate steps (not the combined actions/cache): its
+    # automatic save runs in the post phase, after Swatinem/rust-cache's post
+    # step has already cleaned the target directory, which deletes the
+    # compiled slice, so nothing was saved ("Path Validation Error") whenever
+    # the dependency cache was not an exact hit. The save below runs right
+    # after the build instead.
     - name: Restore the compiled slice
       id: cache
       if: inputs.build == 'true'
-      uses: actions/cache@v4
+      uses: actions/cache/restore@v4
       with:
         path: |
           libs/cua/target/${{ inputs.triple }}/release/libcua_spaces_ffi.dylib
@@ -134,3 +140,15 @@ runs:
         for f in libcua_spaces_ffi.dylib cua-spaces-cli; do
           test -s "libs/cua/target/${TRIPLE}/release/$f" || { echo "::error::missing or empty $f"; exit 1; }
         done
+    # Save now, while the files exist (see the restore step above). A failed
+    # save never fails the build: the caller hands the slice over as an
+    # artifact, and the cache is only an optimisation for later runs.
+    - name: Save the compiled slice
+      if: inputs.build == 'true' && steps.cache.outputs.cache-hit != 'true'
+      continue-on-error: true
+      uses: actions/cache/save@v4
+      with:
+        path: |
+          libs/cua/target/${{ inputs.triple }}/release/libcua_spaces_ffi.dylib
+          libs/cua/target/${{ inputs.triple }}/release/cua-spaces-cli
+        key: ${{ steps.key.outputs.key }}

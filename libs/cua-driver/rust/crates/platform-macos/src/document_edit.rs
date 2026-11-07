@@ -95,7 +95,7 @@ unsafe fn keys_reach_element_window(pid: i32, element: AXUIElementRef) -> bool {
     };
     let own = crate::ax::bindings::ax_get_window_id(window);
     core_foundation::base::CFRelease(window as _);
-    own.is_some() && crate::ax::bindings::focused_window_id_of_pid(pid) == own
+    own.is_some() && crate::ax::bindings::focused_window_id_of_pid(pid).map(|w| w.own) == own
 }
 
 /// After an AX text write on `element` (in `pid`) that changed its value, make
@@ -141,7 +141,7 @@ pub unsafe fn ensure_marked_after_ax_write(
         None => return DocumentEdited::NotMarked,
         Some(false) => {}
     }
-    let previous = crate::ax::bindings::focused_window_id_of_pid(pid);
+    let previous = crate::ax::bindings::focused_window_id_of_pid(pid).map(|w| w.own);
     if !crate::input::skylight::activate_without_raise_with(pid, own, false) {
         return DocumentEdited::NotMarked;
     }

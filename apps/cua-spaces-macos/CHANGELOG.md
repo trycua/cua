@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.22.0](https://github.com/trycua/cua/compare/cua-spaces-v0.21.1...cua-spaces-v0.22.0) (2026-11-07)
+
+
+### Features
+
+* **spaces:** Local dev builds keep agent keys in a private file without the Keychain; install-local.sh signs with its own Keychain ([#6587](https://github.com/trycua/cua/issues/6587)) ([ffa4c06](https://github.com/trycua/cua/commit/ffa4c068ac246b015c13b30982b1f57086443b5c))
+
+
+### Bug Fixes
+
+* **spaces-macos:** bundle cua 0.11.0 in Cua Spaces ([#6747](https://github.com/trycua/cua/issues/6747)) ([36be768](https://github.com/trycua/cua/commit/36be76831b8f373642c996898546478c5ea0215e))
+* **spaces:** explain a refused new computer and offer a code from another computer ([#6710](https://github.com/trycua/cua/issues/6710)) ([327f41c](https://github.com/trycua/cua/commit/327f41c89be3e8209a4bfc3b5785cb423f97de9c))
+
 ## [0.21.1](https://github.com/trycua/cua/compare/cua-spaces-v0.21.0...cua-spaces-v0.21.1) (2026-11-06)
 
 

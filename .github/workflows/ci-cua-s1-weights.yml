@@ -334,14 +334,10 @@ jobs:
 
       - name: Install GUI and Rust build dependencies
         if: steps.cpu.outputs.supported == 'true'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            xvfb dbus-x11 at-spi2-core openbox picom python3-gi gir1.2-gtk-3.0 \
-            libgtk-3-dev clang pkg-config libdbus-1-dev libpipewire-0.3-dev \
-            libspa-0.2-dev libei-dev libx11-dev libxi-dev libxtst-dev libxext-dev \
-            libwebkit2gtk-4.1-dev libssl-dev libxdo-dev \
-            libayatana-appindicator3-dev librsvg2-dev ffmpeg jq
+        uses: ./.github/actions/apt-install
+        with:
+          packages: >-
+            xvfb dbus-x11 at-spi2-core openbox picom python3-gi gir1.2-gtk-3.0 libgtk-3-dev clang pkg-config libdbus-1-dev libpipewire-0.3-dev libspa-0.2-dev libei-dev libx11-dev libxi-dev libxtst-dev libxext-dev libwebkit2gtk-4.1-dev libssl-dev libxdo-dev libayatana-appindicator3-dev librsvg2-dev ffmpeg jq
 
       - name: Set up uv and Python
         if: steps.cpu.outputs.supported == 'true'

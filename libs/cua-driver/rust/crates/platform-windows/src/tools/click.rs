@@ -678,7 +678,6 @@ impl Tool for ClickTool {
                             crate::uia::fg_bypass::run_with_uwp_bypass(hwnd as isize, || unsafe {
                                 pattern.Expand()
                             });
-                        std::mem::forget(element);
                         result.map_err(|error| {
                             anyhow::anyhow!("ExpandCollapse.Expand failed: {error}")
                         })

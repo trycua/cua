@@ -169,6 +169,7 @@ impl Tool for DoubleClickTool {
                                 return crate::interaction::with_x11_foreground(
                                     xid,
                                     crate::input::ForegroundOptions::pointer(),
+                                    crate::interaction::RestoreMode::LeaveFocused,
                                     || {
                                         let (sx, sy) =
                                             window_local_to_screen(xid, lxi as f64, lyi as f64)?;
@@ -296,6 +297,7 @@ impl Tool for DoubleClickTool {
                     return crate::interaction::with_x11_foreground(
                         xid,
                         crate::input::ForegroundOptions::pointer(),
+                        crate::interaction::RestoreMode::LeaveFocused,
                         || {
                             // Real XTest double-click at the screen point — synthetic
                             // XSendEvent button events are dropped by GTK/Qt and the MPX

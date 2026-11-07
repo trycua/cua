@@ -8,6 +8,7 @@ import type { OutboxRow } from "../../core/phone";
 import type { ThreadItem } from "../../data/thread/fold";
 import type { ToolCall, ToolGroup } from "../../data/thread/phone-protocol";
 import type { LiveAgent, ThreadEntry } from "../../data/types";
+import type { ChildNote, LiveChild } from "../../data/thread/protocol";
 import { dayLine } from "../../ui/time";
 
 export type { ToolCall };
@@ -19,7 +20,9 @@ export type Row =
   | { type: "system"; key: string; text: string }
   | { type: "unread"; key: string }
   | { type: "tools"; key: string; calls: ToolCall[] }
-  | { type: "live"; key: string; agent: string; stage: string; text: string }
+  | { type: "live"; key: string; agent: string; stage: string; text: string; children: LiveChild[] }
+  | { type: "subagent"; key: string; sub: Extract<ChildNote, { kind: "subagent" }> }
+  | { type: "child_space"; key: string; space: Extract<ChildNote, { kind: "child_space" }> }
   | { type: "pending"; key: string; row: OutboxRow };
 
 export interface Answered {
@@ -77,6 +80,16 @@ export function buildRows(opts: { items: ThreadItem[]; me: string | null; live: 
       lastWasMessage = false;
       continue;
     }
+    if (it.type === "subagent") {
+      rows.push({ type: "subagent", key: it.key, sub: it.sub });
+      lastWasMessage = false;
+      continue;
+    }
+    if (it.type === "child_space") {
+      rows.push({ type: "child_space", key: it.key, space: it.space });
+      lastWasMessage = false;
+      continue;
+    }
     if (it.type === "approval" || it.type === "join_request") {
       rows.push({ type: "approval", key: it.key, entry: e, answered: it.answer ? { approve: it.answer.approve, by: it.answer.by.name, tsMs: it.answer.tsMs, scope: it.answer.scope } : null });
       lastWasMessage = false;
@@ -94,7 +107,7 @@ export function buildRows(opts: { items: ThreadItem[]; me: string | null; live: 
     const calls = toolsAfter.get(e.seq);
     if (calls) rows.push({ type: "tools", key: `tools${e.seq}`, calls });
   }
-  for (const l of opts.live) rows.push({ type: "live", key: `live-${l.agent}`, agent: opts.agentName(l.agent.replace(/^@/, "")), stage: l.stage, text: l.text ?? "" });
+  for (const l of opts.live) rows.push({ type: "live", key: `live-${l.agent}`, agent: opts.agentName(l.agent.replace(/^@/, "")), stage: l.stage, text: l.text ?? "", children: l.children ?? [] });
   // Messages the machine has not taken yet (waiting, sending or failed) close the thread, as the person's own words; an answer to an
   // approval shows on its card instead.
   for (const p of opts.pending) if (p.kind === "post") rows.push({ type: "pending", key: `pending-${p.id}`, row: p });

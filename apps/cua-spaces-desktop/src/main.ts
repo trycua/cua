@@ -10,6 +10,7 @@ import { initCrashReporting } from "./crash-reporting-main";
 import { createBridge } from "./bridge";
 import { hasBrowser } from "./browser";
 import { appBuild } from "./bundle-version";
+import { channel, localCuaHome } from "./channel";
 import { ELECTRON_EVENT_CHANNEL } from "./channels";
 import { applyChromiumKeychainSwitches } from "./chromium-keychain";
 import { installGlobalShortcut, type GlobalShortcut } from "./global-shortcut";
@@ -40,8 +41,9 @@ import { applyThemeToWindow, createMainWindow, handleOverlayDim, handleOverlaySu
 import { WindowDropTargets, windowNumberOf, type DropWindow } from "./window-drop";
 
 // Must match `appId` (Windows; macOS has the Swift app's bundle id) and the
-// Linux desktop entry in electron-builder.config.cjs.
-const APP_USER_MODEL_ID = "ai.cua.spaces.desktop";
+// Linux desktop entry in electron-builder.config.cjs. Cua Spaces Local has its
+// own (src/channel.ts, packaging/electron-builder.local.cjs).
+const APP_USER_MODEL_ID = channel.appUserModelId;
 const LINUX_ID = "cua-spaces";
 
 /**
@@ -51,7 +53,15 @@ const LINUX_ID = "cua-spaces";
  */
 const E2E_DEMO = process.env.CUA_SPACES_E2E_DEMO === "1";
 
-app.setName("Cua Spaces");
+if (channel.isLocal) {
+  // Cua Spaces Local (a Windows build from scripts/install-local.ps1) shares nothing with the
+  // released app: its own cua home, channel (ports, names, sign-in), user data and URL scheme.
+  // Set before anything starts, so the native library and every child process inherit them; a
+  // variable that is already set wins.
+  process.env.CUA_CHANNEL = "local";
+  process.env.CUA_HOME ||= localCuaHome(process.env.USERPROFILE || homedir(), process.env);
+}
+app.setName(channel.appName);
 // Windows groups taskbar buttons and toasts by this id; the NSIS shortcuts carry the same one.
 if (process.platform === "win32") app.setAppUserModelId(APP_USER_MODEL_ID);
 // Linux: WM_CLASS (X11) and the Wayland app id must match the desktop entry's
@@ -61,6 +71,7 @@ if (process.platform === "linux") {
   app.setDesktopName(`${LINUX_ID}.desktop`);
 }
 if (process.env.CUA_SPACES_USER_DATA) app.setPath("userData", process.env.CUA_SPACES_USER_DATA);
+else if (channel.isLocal) app.setPath("userData", path.join(app.getPath("appData"), channel.userDataDirName));
 // Crash reporting as early as the app's name and data folder are settled (Sentry keeps its queue
 // and the Crashpad reports there) and before the native library loads, which reads CUA_CRASH_*.
 initCrashReporting();

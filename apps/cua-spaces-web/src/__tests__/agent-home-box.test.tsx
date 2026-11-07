@@ -75,7 +75,7 @@ describe.skipIf(!wasmBuilt)("the box with an agent home", () => {
       return c!;
     });
     const config = (create.args as { config: Record<string, unknown> }).config;
-    expect(config).toMatchObject({ image: AGENT_HOME_IMAGE, children: true, name: expect.stringMatching(/^home-/) });
+    expect(config).toMatchObject({ image: AGENT_HOME_IMAGE, children: true, name: expect.stringMatching(/^[a-z]+-[a-z]+$/) });
     expect(config.labels).toMatchObject({ "cua.home": "1", "cua.home.agent": "openai-codex" });
     expect(AGENT_HOME_IMAGE).toBe("ghcr.io/trycua/linux:24.04-slim");
     expect(config).not.toHaveProperty("headless");
@@ -119,7 +119,7 @@ describe.skipIf(!wasmBuilt)("the box with an agent home", () => {
     await act(async () => {
       fireEvent.keyDown(box2, { key: "Enter" });
     });
-    await waitFor(() => expect(router.state.location.pathname).toMatch(/^\/spaces\/local%3A(home-run-the-tests|agent-home-demo)/));
+    await waitFor(() => expect(router.state.location.pathname).toMatch(/^\/spaces\/local%3A([a-z]+-[a-z]+|agent-home-demo)/));
     expect(calls.some((c) => c.op === "spaces.create")).toBe(false);
     await waitFor(() => expect(calls.some((c) => c.op === "thread.post" && c.args.text === "@claude run the tests again")).toBe(true), { timeout: 15000 });
   });

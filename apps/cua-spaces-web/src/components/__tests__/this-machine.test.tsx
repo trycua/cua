@@ -174,6 +174,72 @@ describe("a failed This machine button", () => {
   });
 });
 
+describe("a new computer the account wants proof for", () => {
+  /** The relay refused this Mac (no enrolled device, no sign-in with a second factor, no code). */
+  const refused = () =>
+    new HostError("To add this Mac to your account, enter a code from a computer you already added. On that computer, open Cua Spaces, go to Machines and click Add machine.", "failed", {
+      title: "Confirm it’s you",
+      details: "permission denied: relay: add computers from a computer you already added, or with a pairing code [code: new_computer_needs_proof]",
+      actionLabel: "Use a code from another computer",
+      kind: "needsProof",
+      refusalCode: "new_computer_needs_proof",
+    });
+
+  it("says confirm it's you in plain words and offers a code from another computer, not Retry", async () => {
+    const { adapter, actions } = host(refused);
+    const useCode = vi.fn();
+    render(
+      <BridgeProvider adapter={adapter} core={unavailableCore("test: no core")}>
+        <Press action="stop-sharing" />
+        <ThisMachineExtras panel={sharing} part="alerts" onUseCode={useCode} />
+      </BridgeProvider>,
+    );
+    await act(() => new Promise((r) => setTimeout(r, 10)));
+    fireEvent.click(document.querySelector('[data-press="stop-sharing"]')!);
+    const failure = await waitFor(() => {
+      const f = document.querySelector<HTMLElement>('[data-host-failure="needs-proof"]');
+      if (!f) throw new Error("no failure");
+      return f;
+    });
+    expect(failure.querySelector("[data-host-failure-title]")?.textContent).toBe("Confirm it’s you");
+    const message = failure.querySelector("[data-host-failure-message]")?.textContent ?? "";
+    expect(message).toMatch(/enter a code from a computer you already added/);
+    for (const word of ["relay", "enrol", "MFA", "token"]) expect(message).not.toContain(word);
+    expect(failure.querySelector("[data-host-retry]")).toBeNull();
+    const button = failure.querySelector<HTMLButtonElement>("[data-host-use-code]")!;
+    expect(button.textContent).toBe("Use a code from another computer");
+    fireEvent.click(button);
+    expect(useCode).toHaveBeenCalledTimes(1);
+    expect(actions).toEqual(["stop-sharing"]);
+    // The raw refusal stays under Details.
+    fireEvent.click(failure.querySelector("[data-host-details]")!);
+    expect(failure.querySelector("[data-host-details-text]")?.textContent).toContain("[code: new_computer_needs_proof]");
+  });
+
+  it("a code that joined answers it, so it no longer shows", async () => {
+    const { adapter } = host(refused);
+    const store = new ThisMachineStore(adapter, unavailableCore("test"), async () => {});
+    await store.run("stop-sharing");
+    expect(store.get().error?.kind).toBe("needsProof");
+    expect(store.get().error?.refusalCode).toBe("new_computer_needs_proof");
+    store.joinedWithCode();
+    expect(store.get().error).toBeNull();
+  });
+
+  it("without a way to enter a code, falls back to Retry", () => {
+    render(
+      <HostSetupForm
+        view={form}
+        host={{ send: () => {}, submit: async () => false, closeForm: () => {} }}
+        failure={{ title: "Confirm it’s you", message: "To add this Mac…", details: "x [code: new_computer_needs_proof]", actionLabel: "Use a code from another computer", kind: "needsProof" }}
+        onRetry={() => {}}
+      />,
+    );
+    expect(document.querySelector("[data-host-use-code]")).toBeNull();
+    expect(document.querySelector("[data-host-retry]")?.textContent).toBe("Retry");
+  });
+});
+
 /* ---- Host setup --------------------------------------------------------------------- */
 
 const form: HostSetupFormView = {

@@ -9,7 +9,7 @@
  * divider before the first entry after the reader's cursor.
  */
 
-import type { ThreadAuthor, ThreadEntry, TaskState } from "./protocol";
+import type { ChildNote, ThreadAuthor, ThreadEntry, TaskState } from "./protocol";
 
 export interface ThreadAnswer {
   approve: boolean;
@@ -48,6 +48,10 @@ export type ThreadItem =
   /** Someone's agent asks to join (CUA-2264): answered like an approval. */
   | { type: "join_request"; key: string; entry: ThreadEntry; answer: ThreadAnswer | null }
   | { type: "system"; key: string; entry: ThreadEntry; text: string }
+  /** A subagent the agent started: one row for all its notes (running, then done or failed), at the first. */
+  | { type: "subagent"; key: string; entry: ThreadEntry; sub: Extract<ChildNote, { kind: "subagent" }> }
+  /** A child Space the agent made. */
+  | { type: "child_space"; key: string; entry: ThreadEntry; space: Extract<ChildNote, { kind: "child_space" }> }
   | { type: "unread"; key: string };
 
 /** The thread's entries (in any order, duplicates allowed) as the page draws them: one row each, in sequence. */
@@ -57,6 +61,9 @@ export function foldThread(entries: readonly ThreadEntry[], opts: { readSeq?: nu
   const bySeq = new Map<number, ThreadEntry>(sorted.map((e) => [e.seq, e]));
   const tasks = new Map<number, Extract<ThreadItem, { type: "task" }>>();
   const approvals = new Map<number, Extract<ThreadItem, { type: "approval" | "join_request" }>>();
+  const subs = new Map<string, Extract<ThreadItem, { type: "subagent" }>>();
+  const kids = new Map<string, Extract<ThreadItem, { type: "child_space" }>>();
+  const answered = new Set<string>();
   for (const e of sorted) {
     // The copy of a message that tasks one more agent: the original is the row.
     if (e.fanoutOf != null) continue;
@@ -77,6 +84,32 @@ export function foldThread(entries: readonly ThreadEntry[], opts: { readSeq?: nu
         continue;
       }
       items.push({ type: "system", key: `s${e.seq}`, entry: e, text: `${e.author.name} ${e.answer.approve ? "approved" : "denied"} a request` });
+      continue;
+    }
+    if (e.kind === "system" && e.child?.kind === "subagent") {
+      const known = subs.get(e.child.id);
+      if (known) {
+        known.sub = e.child;
+      } else {
+        const item = { type: "subagent" as const, key: `u${e.seq}`, entry: e, sub: e.child };
+        subs.set(e.child.id, item);
+        items.push(item);
+      }
+      continue;
+    }
+    if (e.kind === "system" && e.child?.kind === "child_space") {
+      // A Space still being made hangs under its agent's live row (a subagent's way), not in the thread; the row
+      // comes with its outcome, ready or failed, and keeps its place there.
+      if (e.child.state === "creating") continue;
+      // The notes of one create are one row, in the order it started.
+      const known = e.child.key ? kids.get(e.child.key) : undefined;
+      if (known) {
+        known.space = e.child;
+      } else {
+        const item = { type: "child_space" as const, key: `c${e.seq}`, entry: e, space: e.child };
+        if (e.child.key) kids.set(e.child.key, item);
+        items.push(item);
+      }
       continue;
     }
     if (e.kind === "system") {
@@ -102,17 +135,21 @@ export function foldThread(entries: readonly ThreadEntry[], opts: { readSeq?: nu
       continue;
     }
     const parent = e.replyTo !== null ? bySeq.get(e.replyTo) : undefined;
+    // An agent that says several things under one message names it once: the later ones follow the first.
+    const said = parent ? `${parent.seq}:${e.author.id}` : null;
+    const again = said !== null && answered.has(said);
+    if (said !== null) answered.add(said);
     items.push({
       type: "message",
       key: `m${e.seq}`,
       entry: e,
-      quote: parent ? { seq: parent.seq, author: parent.author, text: parent.text } : null,
+      quote: parent && !again ? { seq: parent.seq, author: parent.author, text: parent.text } : null,
       taskText: parent?.task ? parent.text : null,
     });
   }
   const readSeq = opts.readSeq;
   if (readSeq == null) return items;
-  const first = items.findIndex((i) => i.type !== "unread" && i.type !== "system" && unreadIn(i, readSeq, opts.me ?? null));
+  const first = items.findIndex((i) => i.type !== "unread" && i.type !== "system" && i.type !== "subagent" && i.type !== "child_space" && unreadIn(i, readSeq, opts.me ?? null));
   if (first < 0) return items;
   // A note just above the first unread entry belongs below the divider.
   let at = first;

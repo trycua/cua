@@ -784,7 +784,6 @@ public final class AppModel {
     /// Keeps the notch's hotspot indicator on while a Space exits through
     /// this computer ("Exit through: This computer"), as the hotspot's own
     /// indicator is. Read every 15 seconds, as the Electron notch does.
-    /// Only while Secure Spaces (Labs) is on: off, nothing is read.
     public func startExitsPoll(every interval: Duration = .seconds(15)) -> Task<Void, Never> {
         Task { @MainActor [weak self] in
             while !Task.isCancelled {
@@ -797,11 +796,6 @@ public final class AppModel {
 
     /// Reads the exits once and shows them on the notch.
     func syncNotchExits() async {
-        refreshDaemonExperiments()
-        guard settings.experiments.secureSpaces else {
-            notch.setExits([])
-            return
-        }
         notch.setExits(await backend.exitsThroughThisMachine())
     }
 
@@ -943,6 +937,7 @@ public final class AppModel {
             let now = Int64(Date().timeIntervalSince1970 * 1000)
             registrySpaces = appRowsToSpaces(rows: list.rows, nowMs: now)
             creates = appCreatesSettle(state: creates, spaces: registrySpaces)
+            reconcileAgentCreates()
             recompose()
             loaded = true
             listIncomplete = list.incomplete
@@ -1279,7 +1274,7 @@ public final class AppModel {
                           provider: args.on == "local" ? .local : .relay,
                           now: Self.nowMs(),
                           image: args.image, kind: args.kind, hostArch: Self.hostArch, gpu: args.gpu != nil,
-                          host: machine, hostName: machine.flatMap(machineName(of:))))
+                          host: machine, hostName: machine.flatMap(machineName(of:)), parent: nil))
         // The detail shows the live desktop inline: selecting the new Space
         // opens it (`plan.openDesktop`), starting with its progress.
         if open { select(pendingId) }
@@ -1484,6 +1479,22 @@ public final class AppModel {
         }
     }
 
+    /// The Spaces agents asked this computer to make show as the same pending rows a New Space made
+    /// here has (its page with progress, Cancel, Try again, Remove): the daemon records each create
+    /// and the core turns the record into row actions, the same for every poll.
+    func reconcileAgentCreates() {
+        let now = Int64(Date().timeIntervalSince1970 * 1000)
+        for action in appAgentCreatesActions(state: creates, nowMs: now) {
+            creates = appCreatesReduce(state: creates, action: action)
+        }
+    }
+
+    /// The row goes; for an agent's create, its record is hidden too so the next poll does not draw it again.
+    func dismissPending(_ id: String) {
+        sendCreate(.dismiss(id: id))
+        if appAgentCreateIsAgents(id: id) { appAgentCreateRemove(pendingId: id) }
+    }
+
     /// Cancel on a Space still being created: the row shows Cancelling
     /// until the SDK stopped the create and removed what it made, then goes;
     /// a cancel that fails says why on the row.
@@ -1493,7 +1504,10 @@ public final class AppModel {
         sendCreate(.cancelStart(id: pendingId))
         Task {
             do {
-                try await backend.cancelCreate(createId: pendingId)
+                // An agent's create is cancelled by the name it is made under.
+                let createId = appAgentCreateIsAgents(id: pendingId)
+                    ? (creates.pending.first { $0.id == pendingId }?.name ?? pendingId) : pendingId
+                try await backend.cancelCreate(createId: createId)
                 sendCreate(.cancelDone(id: pendingId))
             } catch {
                 sendCreate(.cancelFail(id: pendingId, error: LiveSpacesBackend.words(error)))
@@ -1521,7 +1535,12 @@ public final class AppModel {
         confirmDeleteId = nil
         // A failed create is only removed from the list.
         if appCreatesIsPending(id: space.id) {
-            sendCreate(.dismiss(id: space.id))
+            // A create still going is stopped (and what it made removed); a failed one only leaves the list.
+            if creates.pending.contains(where: { $0.id == space.id && $0.error == nil && $0.spaceId == nil }) {
+                cancelCreate(space.id)
+            } else {
+                dismissPending(space.id)
+            }
             return
         }
         guard !isDeleting(space.id) else { return }
@@ -1973,25 +1992,17 @@ public final class AppModel {
 
     // MARK: - Experiments
 
-    /// The experiments the daemon enforces (Secure Spaces, Child Spaces, CI runners, Public TCP shares, Phone app, Warm start) as
+    /// The experiments the daemon enforces (CI runners, Public TCP shares, Phone app) as
     /// the cua home keeps them: what `cua experiments enable` set shows here
     /// the next time Settings is read.
     public func refreshDaemonExperiments() {
         let kept = appSettingsLoad(path: settingsPath).experiments
-        guard kept.secureSpaces != settings.experiments.secureSpaces
-            || kept.childSpaces != settings.experiments.childSpaces
-            || kept.askFirst != settings.experiments.askFirst
-            || kept.ciRunners != settings.experiments.ciRunners
+        guard kept.ciRunners != settings.experiments.ciRunners
             || kept.tcpShares != settings.experiments.tcpShares
-            || kept.mobile != settings.experiments.mobile
-            || kept.warmPools != settings.experiments.warmPools else { return }
-        settings.experiments.secureSpaces = kept.secureSpaces
-        settings.experiments.childSpaces = kept.childSpaces
-        settings.experiments.askFirst = kept.askFirst
+            || kept.mobile != settings.experiments.mobile else { return }
         settings.experiments.ciRunners = kept.ciRunners
         settings.experiments.tcpShares = kept.tcpShares
         settings.experiments.mobile = kept.mobile
-        settings.experiments.warmPools = kept.warmPools
     }
 
     /// Settings, Experiments: a switch and one line per experiment.

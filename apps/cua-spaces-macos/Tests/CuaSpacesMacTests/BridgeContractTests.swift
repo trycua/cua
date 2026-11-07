@@ -499,7 +499,7 @@ struct BridgeContractTests {
         let open = AppOpenWindow(windowId: 41, appId: "", appName: "Slack", windowTitle: "general", supported: true,
                                  bundlePath: "/Applications/Slack.app")
         let remote = AppRemoteWindow(id: "w-1", appName: "Firefox", title: "Mozilla Firefox", visible: true, appId: "firefox",
-                                     targetEpoch: 3, widthPx: 1280, heightPx: nil, pid: nil)
+                                     targetEpoch: 3, widthPx: 1280, heightPx: nil, pid: nil, origin: nil)
         let png = WebUIBridge.dataURL(Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A]))
         return try [
             ("teleport.catalog", [BridgeValue.encode(entry)]),
@@ -633,5 +633,18 @@ enum JSONShape {
             }
         }
         return errors
+    }
+}
+
+/// The core reads a failed create's fix action in kebab case; the page gets it that way.
+@Suite("Bridge values")
+struct BridgeValueFixTests {
+    @Test("a fix action crosses the bridge in the case the core reads")
+    func fixActionIsKebabCase() {
+        let fix = AppCreateFix(text: "Docker is not running.", label: "Copy command", action: .copyCommand, value: "open -a Docker")
+        let out = BridgeValue.encode(fix) as? [String: Any]
+        #expect(out?["action"] as? String == "copy-command")
+        let url = AppCreateFix(text: "t", label: "l", action: .openUrl, value: "https://cua.ai")
+        #expect((BridgeValue.encode(url) as? [String: Any])?["action"] as? String == "open-url")
     }
 }

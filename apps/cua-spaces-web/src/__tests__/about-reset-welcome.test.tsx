@@ -107,11 +107,10 @@ describe.skipIf(!wasmBuilt)("About, Reset & Show", () => {
     // Only the welcome's keys went; the theme stays.
     expect(localStorage.getItem(TEAMMATES_KEY)).toBeNull();
     expect(localStorage.getItem("cua-spaces:theme")).toBe("dark");
-    expect(readFirstRun().step).toBe("welcome");
-    // The welcome's first page is on screen.
-    await waitFor(() => expect(document.body.textContent).toMatch(/Get started|Welcome/));
+    // The setup's first screen is on screen.
+    await waitFor(() => expect(document.querySelector("[data-new-first-run]")?.getAttribute("data-step")).toBe("welcome"));
     await act(async () => {});
-    expect(readFirstRun().step).toBe("welcome");
+    expect(document.body.textContent).toContain("Bring all your computers under one account");
   });
 
   it("Show, as before, asks nothing and resets nothing", async () => {

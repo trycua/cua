@@ -530,11 +530,19 @@ pub struct ListSpaceWindows {
     pub app_name: Option<String>,
 }
 
-/// `stream_space_window`: draw one Space window on the operator's desktop.
+/// `stream_space_window`: show one Space window in another Space's Stream
+/// section, or on the operator's desktop.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct StreamSpaceWindow {
-    /// Space id or name.
+    /// The Space the window lives in (id or name): the child Space you made
+    /// and opened the app in.
     pub space: SpaceArg,
+    /// The Space whose Stream section shows the window (id or name): your
+    /// own Space, where the person watches. Default: the Space that created
+    /// `space` (its parent); a Space with no parent shows the window on the
+    /// operator's desktop. `desktop` forces the desktop.
+    #[serde(default)]
+    pub into: Option<String>,
     /// Auto-pick this app's largest visible window, e.g. "Firefox".
     #[serde(default)]
     pub app_name: Option<String>,

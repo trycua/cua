@@ -2093,11 +2093,10 @@ impl QemuRuntime {
     }
 
     async fn guest_tcp_established(&self, st: &QemuState, guest_port: u16) -> Result<bool> {
-        let host_port = *st.ports.get(&guest_port).ok_or_else(|| {
-            VmmError::invalid(format!(
-                "probe port {guest_port} is not published by this sandbox"
-            ))
-        })?;
+        let host_port = *st
+            .ports
+            .get(&guest_port)
+            .ok_or_else(|| crate::probe::not_forwarded(guest_port))?;
         let Ok(Ok(mut stream)) = tokio::time::timeout(
             Duration::from_secs(3),
             tokio::net::TcpStream::connect(("127.0.0.1", host_port)),

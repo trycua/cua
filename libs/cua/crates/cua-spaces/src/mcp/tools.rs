@@ -12,6 +12,9 @@ use std::time::Duration;
 
 /// The most Spaces one `create_space` call makes.
 const MAX_CREATE_COUNT: u32 = 8;
+/// How long a tool that takes an app name waits for that app's window: `launch_app` answers when
+/// the process starts, a moment before its window exists.
+const APP_WINDOW_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
 
 pub(super) fn args<T: DeserializeOwned>(tool: &str, value: Value) -> Result<T> {
     let value = if value.is_null() { json!({}) } else { value };
@@ -752,12 +755,37 @@ async fn dispatch(
         "stream_endpoint" => {
             use crate::stream::{StreamOptions, StreamTarget};
             let a: i::StreamEndpoint = args(tool, a)?;
+            // A window another Space shows here: decided at open time, straight
+            // from its origin when the viewer may reach it.
+            if let Some(w) = a
+                .window_id
+                .as_deref()
+                .filter(|w| crate::stream_registry::entry_of_window_id(w).is_some())
+            {
+                let opened = spaces
+                    .open_stream_entry(
+                        w,
+                        StreamOptions {
+                            max_fps: a.max_fps.unwrap_or(0),
+                            ticket_ttl: a.ticket_ttl.map(Duration::from_secs),
+                            ..Default::default()
+                        },
+                    )
+                    .await?;
+                return Ok(ToolOutcome::json(&json!({
+                    "route": opened.route,
+                    "origin_space": opened.entry.origin_space,
+                    "minted_by": opened.minted_by,
+                    "access": opened.access,
+                    "ticket": opened.ticket,
+                })));
+            }
             let s = space_for(spaces, tool, &a.space).await?;
             let target = match (a.window_id, a.app_name) {
                 (Some(w), _) if !w.is_empty() => StreamTarget::Window(w),
-                (_, Some(app)) if !app.is_empty() => {
-                    StreamTarget::Window(s.find_window(&app).await?.window_id)
-                }
+                (_, Some(app)) if !app.is_empty() => StreamTarget::Window(
+                    s.find_window_within(&app, APP_WINDOW_WAIT).await?.window_id,
+                ),
                 _ => StreamTarget::Display(a.display),
             };
             let ticket = s
@@ -776,7 +804,19 @@ async fn dispatch(
         "list_space_windows" => {
             let a: i::ListSpaceWindows = args(tool, a)?;
             let s = space_for(spaces, tool, &a.space).await?;
-            Ok(ToolOutcome::json(&s.windows(a.app_name.as_deref()).await?))
+            let mut windows = s.windows(a.app_name.as_deref()).await?;
+            windows.extend(
+                spaces
+                    .stream_windows(s.id().to_string().as_str())
+                    .await
+                    .into_iter()
+                    .filter(|w| {
+                        a.app_name
+                            .as_deref()
+                            .is_none_or(|n| w.app_name.to_lowercase().contains(&n.to_lowercase()))
+                    }),
+            );
+            Ok(ToolOutcome::json(&windows))
         }
         #[cfg(feature = "spaces-stream")]
         "stream_space_window" => {
@@ -790,13 +830,50 @@ async fn dispatch(
                     .into_iter()
                     .find(|w| w.window_id == id)
                     .ok_or_else(|| Error::NotFound(format!("window {id} in {}", s.id())))?,
-                (None, Some(app)) if !app.is_empty() => s.find_window(app).await?,
+                (None, Some(app)) if !app.is_empty() => {
+                    s.find_window_within(app, APP_WINDOW_WAIT).await?
+                }
                 _ => {
                     return Err(Error::invalid(
                         "stream_space_window needs a window_id or an app_name",
                     ));
                 }
             };
+            // Into a Space: the explicit `into`, else the Space that made this
+            // one. `desktop` (or no parent) is the operator's desktop.
+            let into = match a.into.as_deref().map(str::trim).filter(|x| !x.is_empty()) {
+                Some("desktop") => None,
+                Some(x) => Some(x.to_string()),
+                None => spaces
+                    .tree_link(&s.id().to_string())
+                    .ok()
+                    .and_then(|l| l.parent),
+            };
+            if let Some(parent) = into {
+                let entry = spaces
+                    .register_stream(&parent, &s, &window, a.title.clone())
+                    .await?;
+                let parent_name = spaces
+                    .find(&entry.parent)
+                    .await
+                    .map(|i| i.shown_name().to_string())
+                    .unwrap_or_else(|_| entry.parent.clone());
+                return Ok(ToolOutcome::json(&json!({
+                    "shown": true,
+                    "message": format!(
+                        "Showing {} window ({}) of {} in {}'s Stream section.",
+                        if window.app_name.is_empty() { "a" } else { &window.app_name },
+                        window.window_id, entry.origin_name, parent_name
+                    ),
+                    "entry": entry.id,
+                    "window_id": crate::stream_registry::entry_window_id(&entry.id),
+                    "into": entry.parent,
+                    "origin_space": entry.origin_space,
+                    "origin_name": entry.origin_name,
+                    "app_name": entry.app_name,
+                    "title": entry.title,
+                })));
+            }
             let ticket = s
                 .open_stream(
                     StreamTarget::Window(window.window_id.clone()),

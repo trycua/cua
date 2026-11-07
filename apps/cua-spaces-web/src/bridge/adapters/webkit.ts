@@ -137,6 +137,7 @@ export function spaceToRow(s: WkSpace): SpaceRow {
     error: opt(s.sdk?.error),
     host: opt(s.host),
     hostName: opt(s.hostName),
+    parent: opt(s.parent),
     power: s.power?.control,
     powerState: running ? "running" : powerState,
     stopReason: off ? opt(s.power?.stopReason) : undefined,
@@ -633,7 +634,7 @@ export function createWebkitAdapter(
       await request("spaces.setAccess", args);
       return null;
     },
-    // Child Spaces (the Child Spaces experiment), as the host's SDK says them.
+    // Child Spaces, as the host's SDK says them.
     "spaces.tree": () => request<TreeNodeWire[]>("spaces.tree", {}),
     "children.set": async (args) => {
       await request("children.set", args);

@@ -46,8 +46,17 @@ export function reasonWords(reason: string): string {
     case "dns_stripped":
       return "A name that pointed to a private address";
     default:
-      return "Not allowed by this Space's settings";
+      return "a destination its settings don't allow";
   }
+}
+
+/**
+ * A block the person can do nothing about: the guest's own name-service broadcast (NetBIOS, UDP 137 and 138
+ * to the local network's `.255`) that macOS sends a few seconds after it boots. The log keeps it; the
+ * notice under the header does not, or every new macOS Space opens with a warning nobody asked for.
+ */
+export function isBackgroundNoise(address: string): boolean {
+  return /\.255:13[78]$/.test(address);
 }
 
 /** The page's network settings from the host's answer. */
@@ -239,7 +248,7 @@ export function createNetworkStore(adapter: DataAdapter, now: () => number = Dat
     error: (spaceId) => errors.get(spaceId) ?? null,
     blocked: (spaceId) => fresh(spaceId).blocked,
     notice(spaceId) {
-      const newest = fresh(spaceId).blocked.find((b) => b.at > Math.max(openedAt - 60_000, dismissed.get(spaceId) ?? 0));
+      const newest = fresh(spaceId).blocked.find((b) => b.at > Math.max(openedAt - 60_000, dismissed.get(spaceId) ?? 0) && !isBackgroundNoise(b.address));
       return newest ?? null;
     },
     dismissNotice(spaceId) {

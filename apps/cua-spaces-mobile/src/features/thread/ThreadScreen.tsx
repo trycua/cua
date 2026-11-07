@@ -21,7 +21,7 @@ import { now as clockNow } from "../../ui/clock";
 import { Text } from "../../ui/Text";
 import { StatusBadge, toneColor } from "../home/parts";
 import { StreamView } from "../stream/StreamView";
-import { AuthorLine, Bubble, DayLine, LiveRow, PendingRow, SystemNote, UnreadLine } from "./bubbles";
+import { AuthorLine, Bubble, ChildSpaceRow, DayLine, LiveRow, PendingRow, SubagentRow, SystemNote, UnreadLine } from "./bubbles";
 import { ExportCard, PlainApproval, ToolGroup, exportCardView } from "./cards";
 import { Composer, type Mentionable, type SendHow } from "./Composer";
 import { buildRows, type Row } from "./timeline";
@@ -75,7 +75,7 @@ export function ThreadScreen({ spaceId, onBack, onFullStream, hideHeaderStream, 
   const seen = useRef(0);
 
   const nameOf = useCallback((handle: string) => thread.members.find((m) => m.name === handle)?.identity?.displayName ?? handle, [thread.members]);
-  const rows = useMemo(() => buildRows({ items: thread.items, me: thread.me, live: thread.live, pending: thread.pending, tools, now: Date.now(), agentName: nameOf }), [thread.items, thread.me, thread.live, thread.pending, tools, nameOf]);
+  const rows = useMemo(() => buildRows({ items: thread.items, me: thread.me, live: thread.live, pending: thread.pending, tools, now: Date.now(), agentName: nameOf, members: new Set(thread.members.map((m) => m.name.toLowerCase())) }), [thread.items, thread.me, thread.live, thread.pending, tools, nameOf, thread.members]);
 
   // Opening lands on the newest entry. Rows of different heights (a card) are measured after the first draw, so the
   // end is asked for again while the list settles, until the reader scrolls by hand.
@@ -164,7 +164,11 @@ export function ThreadScreen({ spaceId, onBack, onFullStream, hideHeaderStream, 
       case "tools":
         return <ToolGroup calls={item.calls} />;
       case "live":
-        return <LiveRow agent={item.agent} stage={item.stage} text={item.text} />;
+        return <LiveRow agent={item.agent} stage={item.stage} text={item.text} children={item.children} />;
+      case "subagent":
+        return <SubagentRow sub={item.sub} />;
+      case "child_space":
+        return <ChildSpaceRow space={item.space} />;
       case "pending":
         return <PendingRow row={item.row} onRetry={() => thread.retry(item.row.id)} onDiscard={() => thread.discard(item.row.id)} />;
       case "approval": {

@@ -26,11 +26,14 @@ export function homeBrief(setup: HomeSetup, abilities: readonly AbilityDescripto
     "You are working in your own small Linux Space, a home with a shell. It is the root of the tree of Spaces for the person's jobs.",
     "Do each job by making Spaces of the kind it needs (Linux, Windows or macOS) and running the work in them, then report back here. Clean up the Spaces you made when you are done.",
     "",
+    "How you talk here: each stretch of text you write between tool calls is posted to the thread, in order, as its own message, and none is replaced. Before a long job say in one short sentence what you will do, then do it, then say how it went. Do not repeat a message, do not narrate starting up or installing (the app shows that), and answer a greeting or a plain question in a sentence or two without tools.",
+    "",
     "What you can do:",
     ...abilities.map((a) => `- ${a.summary} Run: ${a.call}`),
     "",
-    "Before an ability that needs the person's OK, ask in this thread with an approval whose action is the ability, for example",
-    `${approvalAction("spaces.list")} (to see all their Spaces) or ${approvalAction("machines.use")} with the computer's name in the details, and wait for the answer. Do not look for another way around a refusal.`,
+    "Before an ability that needs the person's OK, ask with the thread_post tool: give it an approval whose action is the ability and whose details say what for, for example",
+    `${approvalAction("spaces.list")} (to see all their Spaces) or ${approvalAction("machines.use")} with the computer's name in the details. That puts a card in front of the person; asking in plain words does not, and nothing will answer it. Do not look for another way around a refusal.`,
+    "After you ask, end your turn: the person's answer arrives as a new message to you, so do not poll for it. If it says no, do not ask again or work around it; say what you will do instead. If it says yes, do the thing, then say plainly how it went. If making a Space fails, tell the person the reason the command printed, in your own words, and offer a real next step.",
   ];
   const named = [...setup.mentions.spaces.map((s) => `the Space "${s.name}"`), ...setup.mentions.machines.map((m) => `the computer "${m.name}"`)];
   lines.push("");

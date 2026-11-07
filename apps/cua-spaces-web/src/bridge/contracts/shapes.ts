@@ -78,7 +78,7 @@ import type { TipsState } from "./spaces-page";
 import type { ShareLink, ShareSettings } from "../ops/links";
 import type { CliInstallPlan } from "./first-run";
 import type { CiConnectAnswer, CiGithub, CiJob, CiLogLine, CiOverview, CiPilotClass, CiRepoChoice, CiRepoUse, CiSetupStep, CiTarget } from "./ci-runners";
-import type { AgentMember, JoinCode, JoinCodeRow, LiveAgent, MemberIdentity, ThreadAttachment, ThreadAuthor, ThreadEntry, ThreadFailure, ThreadLive, ThreadPage } from "../ops/thread";
+import type { AgentMember, JoinCode, JoinCodeRow, LiveAgent, LiveChild, MemberIdentity, ThreadAttachment, ThreadAuthor, ThreadEntry, ThreadFailure, ThreadLive, ThreadPage } from "../ops/thread";
 import type { PresenceCursorWire, PresenceJoinInfo, PresenceParticipantWire } from "../ops/presence";
 import type { StartupState } from "../ops/startup";
 import type { StreamTicket } from "../ops/stream";
@@ -311,6 +311,7 @@ const SpaceRowShape = ref(
     error: opt(str),
     host: opt(str),
     hostName: opt(str),
+    parent: opt(str),
     power: opt(str),
     powerState: opt(str),
     stopReason: opt(str),
@@ -505,7 +506,7 @@ const SettingsShape = ref(
 
 const ExperimentsShape = ref(
   "Experiments",
-  obj<Experiments>()({ cuaVolume: opt(bool), secureSpaces: opt(bool), childSpaces: opt(bool), askFirst: opt(bool), ciRunners: opt(bool), tcpShares: opt(bool), mobile: opt(bool), warmPools: opt(bool) }),
+  obj<Experiments>()({ cuaVolume: opt(bool), ciRunners: opt(bool), tcpShares: opt(bool), mobile: opt(bool) }),
 );
 
 const RepoCacheShape = ref(
@@ -1123,6 +1124,28 @@ const ThreadEntryShape = ref(
     update: nullable(object({ task: num, state: taskState, session: nullable(num), note: nullable(str) })),
     runsOnKeysOf: nullable(object({ id: str, name: str })),
     event: nullable(object({ kind: oneOf("member_joined", "member_removed", "name_refused", "rate_limited"), member: nullable(MemberIdentityShape), by: nullable(memberRef) })),
+    child: opt(
+      nullable(
+        union(
+          object({ kind: oneOf("subagent"), id: str, agent: str, title: str, state: oneOf("running", "done", "failed"), steps: num, result: nullable(str), startedMs: nullable(num), endedMs: nullable(num) }),
+          object({
+            kind: oneOf("child_space"),
+            space: str,
+            key: opt(str),
+            name: str,
+            os: str,
+            agent: str,
+            by: opt(nullable(object({ id: str, name: str }))),
+            state: opt(oneOf("creating", "ready", "failed")),
+            phase: opt(str),
+            percent: opt(nullable(num)),
+            error: opt(str),
+            startedMs: opt(nullable(num)),
+            endedMs: opt(nullable(num)),
+          }),
+        ),
+      ),
+    ),
     joinRequest: opt(
       nullable(
         object({ member: nullable(MemberIdentityShape), canTask: oneOf("owner", "members"), state: str, codeId: str, youCanAnswer: bool }),
@@ -1148,7 +1171,7 @@ const JoinCodeRowShape = obj<JoinCodeRow>()({
 });
 const ThreadPageShape = obj<ThreadPage>()({
   entries: list(ThreadEntryShape),
-  live: obj<ThreadLive>()({ key: str, agents: list(obj<LiveAgent>()({ agent: str, stage: str, sinceMs: opt(num), text: opt(str) })) }),
+  live: obj<ThreadLive>()({ key: str, agents: list(obj<LiveAgent>()({ agent: str, stage: str, sinceMs: opt(num), text: opt(str), children: opt(list(obj<LiveChild>()({ id: str, title: str, steps: num, step: nullable(str), sinceMs: opt(num), space: opt(object({ os: str, page: str, percent: nullable(num) })) }))) })) }),
   cursor: num,
   caughtUp: bool,
   unread: num,
@@ -1855,6 +1878,7 @@ const WkSpaceShape = ref(
     arch: optNull(str),
     host: optNull(str),
     hostName: optNull(str),
+    parent: optNull(str),
     power: optNull(object({ control: str, off: bool, turningOn: optNull(bool), error: optNull(str), stopReason: optNull(str) })),
     cloud: optNull(str),
     cloudPlace: optNull(str),

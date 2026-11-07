@@ -11,6 +11,7 @@ import { isMacPlatform } from "@/lib/utils";
 
 import { markAsked, usePreparedQueue, usePrepare } from "@/lib/prepare/store";
 import { harnessName, queuedNote, summonPlan, useBridge, type SpaceFact, type SpaceThread, type StreamRow, type ThreadAttachment, type ThreadView as PostView } from "@/bridge";
+import { useChildren } from "@/components/children/use-children";
 import { useNetworkSheetFor } from "@/components/network/use-network";
 import { Dialog, DialogPopup, DialogTitle } from "@/components/ui/dialog";
 import { toast } from "@/components/ui/toast";
@@ -28,7 +29,8 @@ import { Composer, type ComposerHandle } from "./composer";
 import { LiveRows } from "./live-row";
 import { MembersPanel, type MemberPresence } from "./members-panel";
 import { panelFacts } from "./rail";
-import { useStreamHidden, type SpaceLayout } from "./layout-mode";
+import { useAutoOpenFirstStream } from "./auto-open-stream";
+import { hasStreamChoice, useStreamHidden, type SpaceLayout } from "./layout-mode";
 import { MiniPlayer } from "./mini-player";
 import { GUEST_COMPOSER } from "./rights";
 import { buildRoster } from "./roster";
@@ -57,8 +59,10 @@ export function SpaceCall({
   identity,
   facts,
   detailsExtra,
+  childSpaces,
   more,
   windows,
+  streamReady = false,
   desktop,
   selected,
   onSelect,
@@ -95,10 +99,14 @@ export function SpaceCall({
   facts: readonly SpaceFact[];
   /** Rows after the facts, before More (the Network row). */
   detailsExtra?: ReactNode;
+  /** The Space's child Spaces section in the side panel. */
+  childSpaces?: ReactNode;
   /** The classic page's sections (resources, all facts, Teleport, windows, runs). */
   more: ReactNode;
   /** The Space's windows (Stream rows without the desktop). */
   windows: StreamRow[];
+  /** The Stream list has loaded (a home opens its first new window stream by itself). */
+  streamReady?: boolean;
   /** The Desktop row (the default view), first in the Stream list. */
   desktop?: StreamRow | null;
   /** The row the stage shows (the desktop when none). */
@@ -137,7 +145,21 @@ export function SpaceCall({
   const [reserve, setReserve] = useState(0);
   const threadMode = layout === "thread" && Boolean(smallStage);
   // Clicking the already-selected stream hides the stream view (thread only); again shows it.
-  const [streamHidden, setStreamHidden] = useStreamHidden(spaceId);
+  // An agent's home starts with the desktop folded away (the chat is the page); a choice is kept per Space.
+  const isHome = Boolean(useChildren()?.node(spaceId)?.home);
+  const [streamHidden, setStreamHidden, showStreamNow] = useStreamHidden(spaceId, isHome);
+  // The first window that shows up in a home's Stream list opens by itself (once, never over the person's choice).
+  useAutoOpenFirstStream({
+    spaceId,
+    enabled: isHome && Boolean(onSelect),
+    ready: streamReady,
+    windows,
+    chosen: () => hasStreamChoice(spaceId),
+    onOpen: (row) => {
+      showStreamNow();
+      onSelect?.(row);
+    },
+  });
   // ⌘⇧T (Ctrl+Shift+T): thread view and back.
   useEffect(() => {
     if (!onLayout) return;
@@ -361,7 +383,7 @@ export function SpaceCall({
                 </Tooltip>
               ) : undefined
             }
-            stage={<div className="h-full px-5 pt-4">{stage}</div>}
+            stage={stage}
             below={
               <>
                 {threadView(0)}
@@ -375,6 +397,7 @@ export function SpaceCall({
           presence={presence}
           facts={panelFacts(facts)}
           extra={detailsExtra}
+          childSpaces={childSpaces}
           onMore={() => setMoreOpen(true)}
           windows={windows}
           desktop={desktop}

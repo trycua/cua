@@ -1874,14 +1874,15 @@ pub async fn run_spaces_sdk(
                             line(
                                 out,
                                 format!(
-                                    "Created {} ({}{})",
+                                    "Created {} ({}{}){}",
                                     info.id,
                                     info.name,
                                     if info.host_name.is_empty() {
                                         String::new()
                                     } else {
                                         format!(", on {}", info.host_name)
-                                    }
+                                    },
+                                    created_state(&info.power_state, &info.name),
                                 ),
                             );
                         }
@@ -4201,6 +4202,20 @@ pub async fn run_add_host(
     Ok(0)
 }
 
+/// What the create line says about the Space's state, as the daemon read it when the create returned:
+/// running (nothing more to say), or not running yet and what to do about it. Empty when the state is not
+/// known (the line stays as it was).
+fn created_state(power_state: &str, name: &str) -> String {
+    match power_state {
+        "running" => ", running".into(),
+        "stopped" | "suspended" => format!(
+            ", not running yet ({power_state}): `{} spaces start {name}` turns it on",
+            crate::util::cli()
+        ),
+        _ => String::new(),
+    }
+}
+
 /// How long `cua spaces ls` waits for the daemon's power answer.
 const LS_DAEMON_POWER_WAIT: std::time::Duration = std::time::Duration::from_secs(3);
 
@@ -4474,6 +4489,17 @@ impl cua_sdk::SpaceCreateListener for StepListener {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn the_create_line_says_whether_the_space_is_running() {
+        assert_eq!(created_state("running", "a"), ", running");
+        let t = created_state("stopped", "a");
+        assert!(
+            t.contains("not running yet (stopped)") && t.contains("spaces start a"),
+            "{t}"
+        );
+        assert_eq!(created_state("", "a"), "");
+    }
 
     #[test]
     fn spaces_placed_in_your_cloud_are_said_once() {
@@ -7109,6 +7135,7 @@ pub async fn run_children_ls(
                     "parent": parent_of(s),
                     "tree_address": s.tree_address,
                     "power": s.power,
+                    "state": s.power_state,
                     "image": s.image,
                     "expires_at_unix": s.expires_at_unix,
                 })
@@ -7134,10 +7161,12 @@ pub async fn run_children_ls(
         } else {
             &s.display_name
         };
-        let state = if s.power.is_empty() {
+        // The state (`running`, `stopped`), not how it turns off (`power`:
+        // `stop` or `suspend`), which reads as "stopped" for a running VM.
+        let state = if s.power_state.is_empty() {
             "-"
         } else {
-            s.power.as_str()
+            s.power_state.as_str()
         };
         // A VM's tree address; a container is reached by name on its
         // tree's network.

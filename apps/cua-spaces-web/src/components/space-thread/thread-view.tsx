@@ -17,11 +17,12 @@ import { askText } from "@/lib/agent-home/requests";
 import { cn, isMacPlatform } from "@/lib/utils";
 
 import { AgentTile, MemberAvatar } from "./avatar";
+import { ChildSpaceRow, SubagentRow } from "./child-rows";
 import { FailureNote } from "./failure-note";
 import { AgentName, AiTag, holderNames, MemberEventNote } from "./identity";
 import { MentionChip, ProfileTrigger } from "./profile-card";
 import { waitingFor } from "./rights";
-import type { Roster } from "./roster";
+import { SYSTEM_BOT, isUnresolvedAgent, type Roster } from "./roster";
 
 /**
  * Keeps `scroller` at its end while `content` grows, as long as `atEnd()`
@@ -169,7 +170,7 @@ export function ThreadView({
 export function aboveSeq(items: readonly ThreadItem[], i: number): number | null {
   for (let j = i - 1; j >= 0; j--) {
     const it = items[j]!;
-    if (it.type === "system" || it.type === "unread") continue;
+    if (it.type === "system" || it.type === "unread" || it.type === "subagent" || it.type === "child_space") continue;
     return it.entry.seq;
   }
   return null;
@@ -216,9 +217,14 @@ export const ThreadItemView = memo(function Item({
           {item.text}
         </p>
       );
+    case "subagent":
+      return <SubagentRow item={item} />;
+    case "child_space":
+      return <ChildSpaceRow item={item} />;
     case "message":
-      // One row, in order. A reply quotes the message it answers only when that is not the one right above it.
-      return <Message entry={item.entry} {...m} quote={item.quote && item.quote.seq !== above ? item.quote : null} task={item.taskText !== null ? { text: item.taskText, onRetry } : undefined} />;
+      // One row, in order. A person's reply quotes the message it answers only when that is not the one right above it;
+      // an AI message never shows the quote line (what it answers is clear from the thread).
+      return <Message entry={item.entry} {...m} quote={item.entry.author.kind !== "agent" && item.quote && item.quote.seq !== above ? item.quote : null} task={item.taskText !== null ? { text: item.taskText, onRetry } : undefined} />;
     case "task":
       // How the task is going is told by the chat: the live row, the agent's reply or its failure message. No chip here.
       return (
@@ -276,7 +282,10 @@ function Message({
   const who = roster.author(entry.author);
   // Cua's own entries (the host's cards and notices): the name Cua, one APP tag and the app icon, all from the core.
   const { core } = useBridge();
-  const app = useMemo(() => (entry.author.kind === "system" ? authorView(core, entry.author) : null), [core, entry.author]);
+  // An agent author no member stands behind is Cua's own system author, drawn like every other Cua entry (the Cua mark,
+  // its tag), never a guessed agent name or a generic robot.
+  const unresolved = isUnresolvedAgent(who);
+  const app = useMemo(() => (entry.author.kind === "system" || unresolved ? authorView(core, unresolved ? SYSTEM_BOT : entry.author) : null), [core, entry.author, unresolved]);
   // A person's card: the roster's entry for this author (by id, else by name).
   const person = who.kind === "person" ? (roster.people.find((p) => p.id === entry.author.id) ?? roster.people.find((p) => p.label === who.label)) : undefined;
   const avatar = app?.avatar ? (

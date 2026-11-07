@@ -3,7 +3,7 @@
 
 import { BellIcon, BotIcon, HardDriveIcon, HouseIcon, KeyRoundIcon, LayoutGridIcon, MousePointer2Icon, ServerIcon, SettingsIcon, WorkflowIcon, type LucideIcon } from "lucide-react";
 
-import { useDriver, useExperimentFlags, useFlag, useSpacesTree } from "@/bridge";
+import { useDriver, useExperimentFlags, useSpacesTree } from "@/bridge";
 import type { KeybindingCommand } from "@/lib/keybindings";
 
 export interface NavItem {
@@ -29,7 +29,7 @@ const VOLUME_ITEM: NavItem = { to: "/volume", label: "Volume", icon: HardDriveIc
 /** The sidebar's CI Runners entry, after Machines, while the CI runners experiment is on. */
 const CI_ITEM: NavItem = { to: "/ci", label: "CI Runners", icon: WorkflowIcon };
 
-/** The "Ask first" Home, first while its experiment flag is on (`spaces_ask_first_home`). */
+/** The "Ask first" Home, first in the nav. */
 const HOME_ITEM: NavItem = { to: "/home", label: "Home", icon: HouseIcon };
 
 /** Cua Driver, under Machines, while this Mac's Cua Spaces carries the driver (CUA-2706). */
@@ -37,12 +37,11 @@ const DRIVER_ITEM: NavItem = { to: "/driver", label: "Cua Driver", icon: MousePo
 
 /**
  * The nav, with Cua Driver while this Mac has it, Volume while the Cua Volume experiment is on, CI Runners while its
- * experiment is, and Home while the Ask-first flag is. With Spaces as a tree (Labs) your computers are in the Spaces
+ * experiment is, and Home first. With Spaces as a tree (Labs) your computers are in the Spaces
  * list, so Machines leaves the nav (its page still opens); Cua Driver keeps its place.
  */
 export function useNavItems(): NavItem[] {
   const experiments = useExperimentFlags();
-  const home = useFlag("spaces_ask_first_home");
   const driver = useDriver().available;
   const tree = useSpacesTree();
   let items = NAV_ITEMS;
@@ -59,5 +58,5 @@ export function useNavItems(): NavItem[] {
     const i = items.findIndex((n) => n.to === (tree ? "/spaces" : "/machines")) + 1;
     items = [...items.slice(0, i), CI_ITEM, ...items.slice(i)];
   }
-  return home ? [HOME_ITEM, ...items] : items;
+  return [HOME_ITEM, ...items];
 }

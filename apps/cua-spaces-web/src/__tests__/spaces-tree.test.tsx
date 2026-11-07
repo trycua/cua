@@ -75,12 +75,10 @@ const doubleClick = (el: HTMLElement) => {
 
 const on = () => {
   setFlagOverride("spaces_tree", true);
-  setFlagOverride("spaces_ask_first_home", true);
 };
 
 describe.skipIf(!wasmBuilt)("Spaces as a tree (Labs)", () => {
   it("off: the nav keeps Machines and the Spaces page is the grid", { timeout: 30000 }, async () => {
-    setFlagOverride("spaces_ask_first_home", true);
     const { router } = await mountApp("/spaces", host([]));
     await router.load();
     await waitFor(() => expect(screen.getByRole("link", { name: /Machines/ })).toBeTruthy());
@@ -302,7 +300,7 @@ describe.skipIf(!wasmBuilt)("Home with Spaces as a tree (Labs)", () => {
 });
 
 describe.skipIf(!wasmBuilt)("Labs and Settings with Spaces as a tree", () => {
-  it("the Labs switch is off by default and turns on the new Home with it", { timeout: 30000 }, async () => {
+  it("the Labs switch is off by default and turns the tree on", { timeout: 30000 }, async () => {
     await mountApp("/settings/advanced", host([]));
     const sw = () => q('[data-setting-row="flag:spaces_tree"] [role=switch]')!;
     await waitFor(() => expect(sw()).toBeTruthy());
@@ -311,7 +309,6 @@ describe.skipIf(!wasmBuilt)("Labs and Settings with Spaces as a tree", () => {
     fireEvent.click(sw());
     await waitFor(() => expect(sw().getAttribute("aria-checked")).toBe("true"));
     expect(localStorage.getItem("cua.flag.spaces_tree")).toBe("1");
-    expect(localStorage.getItem("cua.flag.spaces_ask_first_home")).toBe("1");
   });
 
   it("General has the default Space, If it's offline and the order to try, only while the switch is on", { timeout: 30000 }, async () => {

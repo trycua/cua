@@ -1,4 +1,4 @@
-//! Opt-in: the `warm-pools` experiment end to end on this computer's
+//! Opt-in: warm start end to end on this computer's
 //! container engine, measured the way Home uses it. A person asks for one
 //! thing, then another a few seconds later, and so on: each ask is a create
 //! of the Linux Space Home makes for an agent, then the coding app starts in
@@ -15,9 +15,9 @@
 //!   ready for the first message";
 //! - `warm_ready`: warm Spaces the daemon held when the create began.
 //!
-//! `CUA_WARM_LIVE_MODE=warm` (default) turns the experiment on and waits for
-//! the prepared warm Space first; `cold` leaves it off, so every create
-//! starts a Space and installs the coding app, as without the experiment.
+//! `CUA_WARM_LIVE_MODE=warm` (default) waits for the prepared warm Space
+//! first; `cold` does not wait, so the first creates start a Space and
+//! install the coding app themselves.
 //!
 //! ```text
 //! CUA_HOME=$HOME/projects/.cua-work/warmpool/home CUA_WARM_LIVE=1 \
@@ -107,8 +107,6 @@ async fn sequential_creates_start_the_agent_from_a_warm_home() {
     let n = env_u64("CUA_WARM_LIVE_N", 10) as usize;
     let gap = Duration::from_millis(env_u64("CUA_WARM_LIVE_GAP_MS", 3000));
     let out_path = std::env::var_os("CUA_WARM_LIVE_OUT").map(std::path::PathBuf::from);
-    // The experiment, for this process only.
-    cua_vmm::experiments::set_enabled(cua_vmm::experiments::Gate::WarmPools, Some(warm));
     // The apps the warm Space is prepared for: the daemon's default, or
     // `CUA_WARM_POOLS_HARNESSES` as given.
     let state = home.join("sandboxes");
@@ -161,7 +159,7 @@ async fn sequential_creates_start_the_agent_from_a_warm_home() {
                 began.elapsed().as_secs_f64()
             );
         } else {
-            // Without the experiment the image is pulled once, outside the
+            // In cold mode the image is pulled once, outside the
             // timing, so the numbers are starts and not downloads.
             // (`CUA_WARM_LIVE_NO_PULL=1` keeps it in: the first create of a
             // fresh install, with the runtime and the image still to fetch.)

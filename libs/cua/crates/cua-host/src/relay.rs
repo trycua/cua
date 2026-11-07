@@ -518,9 +518,9 @@ pub struct RelayUsage {
     /// The team whose allowance is pooled, if any.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub team: Option<RelayUsageTeam>,
-    /// Live sessions now.
+    /// Computers in use now.
     pub live_sessions: u32,
-    /// Live sessions allowed at once (none: no limit).
+    /// Computers in use allowed at once (none: no limit).
     pub live_sessions_limit: Option<u32>,
     /// Relay hours used this month (the team's, when pooled).
     pub hours_used: f64,
@@ -1791,7 +1791,7 @@ mod tests {
                             ("x-cua-relay-used", "5"),
                             ("x-cua-relay-limit", "5"),
                         ],
-                        "You're using 5 of 5 live sessions on Pro. Close one or upgrade to Teams: https://x",
+                        "You have 5 of 5 computers in use at once on Pro. Close one or upgrade to Teams: https://x",
                     )
                 }
             }),
@@ -1804,7 +1804,7 @@ mod tests {
         assert!(matches!(e, Error::PlanLimit(_)), "{e:?}");
         assert_eq!(
             e.to_string(),
-            "You're using 5 of 5 live sessions on Pro. Close one or upgrade to Teams."
+            "You have 5 of 5 computers in use at once on Pro. Close one or upgrade to Teams."
         );
         assert_eq!(e.http_status(), Some(429));
         assert!(!e.is_transient());

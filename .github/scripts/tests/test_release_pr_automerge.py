@@ -151,3 +151,24 @@ class Wiring(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReleaseHoldLabel(unittest.TestCase):
+    def test_release_hold_label_blocks_enable_and_disables_auto_merge(self):
+        with mock.patch.object(rp, "gh") as gh:
+            rp.reconcile(pr(labels=["release-hold"]), "trycua/cua")
+            gh.assert_not_called()
+            rp.reconcile(pr(6, labels=["release-hold"], auto={"mergeMethod": "SQUASH"}), "trycua/cua")
+        gh.assert_called_once_with("pr", "merge", "6", "--repo", "trycua/cua", "--disable-auto")
+
+    def test_manually_disabled_auto_merge_without_label_is_re_enabled(self):
+        with mock.patch.object(rp, "gh") as gh:
+            rp.reconcile(pr(8), "trycua/cua")
+        gh.assert_called_once_with("pr", "merge", "8", "--repo", "trycua/cua", "--auto", "--squash")
+
+    def test_ci_gate_fails_on_every_hold_label(self):
+        gate = (ROOT / ".github/workflows/ci-gate.yml").read_text()
+        for label in rp.HOLD_LABELS:
+            self.assertIn("contains(github.event.pull_request.labels.*.name, '%s')" % label, gate)
+        self.assertIn("labeled, unlabeled", gate)
+        self.assertIn("release-hold", (ROOT / ".github/workflows/release-pr-auto-merge.yml").read_text())

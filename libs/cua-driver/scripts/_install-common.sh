@@ -561,7 +561,7 @@ cua_driver_write_kwin_desktop_entry() {
         granted=$(sed -n 's/^Exec="\(.*\)" serve$/\1/p' "$entry")
         granted_cli=$(sed -n 's/^X-Cua-Cli=//p' "$entry")
         if [[ -n "$granted" && "$granted" != "$executable" && -x "$granted" \
-            && -n "$granted_cli" && "$(readlink "$granted_cli" 2>/dev/null)" == "$granted" ]]; then
+            && -n "$granted_cli" && "$granted_cli" -ef "$granted" ]]; then
             printf '==> kept KWin desktop entry: it grants %s\n' "$granted"
             return 0
         fi

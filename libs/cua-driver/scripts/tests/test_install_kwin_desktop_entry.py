@@ -39,7 +39,7 @@ def write_entry(
     home, fake_bin = tmp_path / "home", tmp_path / "bin"
     home.mkdir(exist_ok=True)
     fake_bin.mkdir(exist_ok=True)
-    for tool in ("mkdir", "mv", "readlink", "rm", "sed"):
+    for tool in ("mkdir", "mv", "rm", "sed"):
         link = fake_bin / tool
         if not link.exists():
             link.symlink_to(shutil.which(tool))
@@ -120,6 +120,16 @@ def test_a_second_install_with_its_own_cli_keeps_the_entry_of_a_live_install(tmp
     assert result.returncode == 0, result.stderr
     assert f'Exec="{live}" serve' in (home / ENTRY).read_text().splitlines()
     assert result.stdout == f"==> kept KWin desktop entry: it grants {live}\n"
+
+
+def test_a_relative_cli_link_still_counts_as_live(tmp_path: Path) -> None:
+    live, live_cli = live_install(tmp_path, "live")
+    home, _ = write_entry(tmp_path, str(live), cli=str(live_cli))
+    live_cli.unlink()
+    live_cli.symlink_to("../live/cua-driver")
+    _, result = write_entry(tmp_path, "/tmp/throwaway/cua-driver", cli="/tmp/throwaway-bin/cua-driver")
+    assert result.returncode == 0, result.stderr
+    assert f'Exec="{live}" serve' in (home / ENTRY).read_text().splitlines()
 
 
 def test_a_second_install_that_takes_the_cli_takes_the_entry(tmp_path: Path) -> None:

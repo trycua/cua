@@ -339,17 +339,17 @@ fn watch_self_activation(pid: i32, front: i32, stop: &std::sync::atomic::AtomicB
         || user_key_window.is_some_and(|wid| crate::input::skylight::return_key_to(front, wid));
     let mut last_rekey = Instant::now();
     let mut last_order_check = Instant::now();
-    // The watch outlives single driver activations: after each one it holds
-    // off briefly, then re-arms. After the user switched to Chrome it re-arms
-    // once they leave it.
+    // The watch outlives single driver activations and user switches: once
+    // the driver or the user has put Chrome in front, it leaves Chrome alone
+    // until Chrome is no longer in front, then holds off briefly and re-arms.
     let mut undo = UndoWatch::arm();
     let mut quiet_until = Instant::now();
     while !stop.load(Ordering::SeqCst) {
-        if !undo.epoch().is_current() {
+        if (undo.has_left() || !undo.epoch().is_current())
+            && crate::input::skylight::front_process_pid() != Some(pid)
+        {
             undo = UndoWatch::arm();
             quiet_until = Instant::now() + Duration::from_millis(400);
-        } else if undo.has_left() && crate::input::skylight::front_process_pid() != Some(pid) {
-            undo = UndoWatch::arm();
         }
         let calm = !crate::input::skylight::foreground_turn_active()
             && !super::setup_ui::BACKGROUND_KEY_TURN.load(Ordering::SeqCst)

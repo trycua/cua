@@ -458,7 +458,7 @@ function connectionOf(m: MachineRow): Machine["connection"] {
 
 /** What `machines.merge` reads (`machines::MachinesInput`). */
 export interface MachinesInput {
-  machines: { id: string; name: string; online: boolean; presence: boolean | null; hostname: string | null; os: string; current: boolean }[];
+  machines: { id: string; name: string; online: boolean; presence: boolean | null; hostname: string | null; deviceId?: string | null; os: string; current: boolean }[];
   devices: { id: string; name: string; platform: string; lastSeen: number | null; current: boolean; state: string }[];
   /** Unix seconds. */
   now: number;
@@ -476,8 +476,9 @@ export interface MergedMachine {
 
 const nameKey = (name: string) => name.trim().toLowerCase().replace(/\.$/, "");
 
-/** Without the core: a device merges into the machine with its id, or
- * the one whose cua-spacesd reported its name as the hostname. */
+/** Without the core: a device merges into the machine with its id, the one
+ * that published its id (`deviceId`), or (for machines without that) the one
+ * whose cua-spacesd reported its name as the hostname. */
 function fallbackMerge({ machines, devices }: MachinesInput): MergedMachine[] {
   const out: MergedMachine[] = machines.map((m) => ({
     id: m.id,
@@ -487,8 +488,14 @@ function fallbackMerge({ machines, devices }: MachinesInput): MergedMachine[] {
     deviceOnly: false,
     current: m.current,
   }));
+  // A machine that published its device id is paired by it alone.
   for (const d of devices) {
-    const i = machines.findIndex((m, i) => !out[i]!.device && (m.id === d.id || (m.current && d.current) || (m.hostname && nameKey(m.hostname) === nameKey(d.name))));
+    const i = machines.findIndex((m, i) => !out[i]!.device && m.deviceId === d.id);
+    if (i >= 0) out[i]!.device = d.id;
+  }
+  for (const d of devices) {
+    if (out.some((o) => o.device === d.id)) continue;
+    const i = machines.findIndex((m, i) => !out[i]!.device && !m.deviceId && (m.id === d.id || (m.current && d.current) || (m.hostname && nameKey(m.hostname) === nameKey(d.name))));
     if (i >= 0) out[i]!.device = d.id;
     else if (!d.current && d.state !== "revoked") out.push({ id: d.id, name: d.name || d.id, online: false, device: d.id, deviceOnly: true, current: false });
   }
@@ -512,6 +519,7 @@ export function machinesInput(rows: MachineRow[], now: number): MachinesInput {
         online: m.online,
         presence: m.presence ?? null,
         hostname: m.hostname ?? null,
+        deviceId: m.deviceId ?? null,
         os: m.os,
         current: Boolean(m.current),
       })),

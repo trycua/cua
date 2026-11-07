@@ -38316,6 +38316,12 @@ data class HostStatus (
      * macOS: the old hand-written LaunchAgent is still there.
      */
     var `legacyService`: kotlin.Boolean = false
+    ,
+    /**
+     * The last lines of the service's log while it is set up but not
+     * running (why it stopped).
+     */
+    var `serviceLog`: List<kotlin.String> = listOf()
 
 ){
 
@@ -38369,6 +38375,7 @@ public object FfiConverterTypeHostStatus: FfiConverterRustBuffer<HostStatus> {
             FfiConverterOptionalString.read(buf),
             FfiConverterBoolean.read(buf),
             FfiConverterBoolean.read(buf),
+            FfiConverterSequenceString.read(buf),
         )
     }
 
@@ -38409,7 +38416,8 @@ public object FfiConverterTypeHostStatus: FfiConverterRustBuffer<HostStatus> {
             FfiConverterOptionalString.allocationSize(value.`owner`) +
             FfiConverterOptionalString.allocationSize(value.`ownerEmail`) +
             FfiConverterBoolean.allocationSize(value.`helperAvailable`) +
-            FfiConverterBoolean.allocationSize(value.`legacyService`)
+            FfiConverterBoolean.allocationSize(value.`legacyService`) +
+            FfiConverterSequenceString.allocationSize(value.`serviceLog`)
     )
 
     override fun write(value: HostStatus, buf: ByteBuffer) {
@@ -38450,6 +38458,7 @@ public object FfiConverterTypeHostStatus: FfiConverterRustBuffer<HostStatus> {
             FfiConverterOptionalString.write(value.`ownerEmail`, buf)
             FfiConverterBoolean.write(value.`helperAvailable`, buf)
             FfiConverterBoolean.write(value.`legacyService`, buf)
+            FfiConverterSequenceString.write(value.`serviceLog`, buf)
     }
 }
 
@@ -41802,6 +41811,13 @@ data class RelayMachine (
      * registration (`None` from a host or relay that predates it).
      */
     var `providesSpaces`: kotlin.Boolean?
+    ,
+    /**
+     * The id of the device (`dev_…`) it runs on, as it published it at
+     * registration: the stable link between this machine and the account's
+     * device on the same computer (`None` from a host that predates it).
+     */
+    var `deviceId`: kotlin.String?
 
 ){
 
@@ -41833,6 +41849,7 @@ public object FfiConverterTypeRelayMachine: FfiConverterRustBuffer<RelayMachine>
             FfiConverterBoolean.read(buf),
             FfiConverterOptionalString.read(buf),
             FfiConverterOptionalBoolean.read(buf),
+            FfiConverterOptionalString.read(buf),
         )
     }
 
@@ -41851,7 +41868,8 @@ public object FfiConverterTypeRelayMachine: FfiConverterRustBuffer<RelayMachine>
             FfiConverterSequenceTypeRelayClientInfo.allocationSize(value.`clients`) +
             FfiConverterBoolean.allocationSize(value.`confirmed`) +
             FfiConverterOptionalString.allocationSize(value.`team`) +
-            FfiConverterOptionalBoolean.allocationSize(value.`providesSpaces`)
+            FfiConverterOptionalBoolean.allocationSize(value.`providesSpaces`) +
+            FfiConverterOptionalString.allocationSize(value.`deviceId`)
     )
 
     override fun write(value: RelayMachine, buf: ByteBuffer) {
@@ -41870,6 +41888,7 @@ public object FfiConverterTypeRelayMachine: FfiConverterRustBuffer<RelayMachine>
             FfiConverterBoolean.write(value.`confirmed`, buf)
             FfiConverterOptionalString.write(value.`team`, buf)
             FfiConverterOptionalBoolean.write(value.`providesSpaces`, buf)
+            FfiConverterOptionalString.write(value.`deviceId`, buf)
     }
 }
 

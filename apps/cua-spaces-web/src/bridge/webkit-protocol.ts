@@ -363,6 +363,8 @@ export interface WkMachines {
   /** What each machine on the relay reported as its hostname, by machine
    * id (to list a machine and its enrolled device once). */
   hostnames?: Record<string, string> | null;
+  /** The device each machine published as the one it runs on, by machine id (pairs it with its device by id). */
+  deviceIds?: Record<string, string> | null;
   /** Whether the relay sees each of the account's machines connected now,
    * by machine id (the devices snapshot's machines). */
   presence?: Record<string, boolean> | null;

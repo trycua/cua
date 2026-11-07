@@ -461,6 +461,9 @@ pub struct HostState {
     pub service_installed: bool,
     /// Service running.
     pub service_running: bool,
+    /// The service log's last lines while it is set up but not running.
+    #[serde(default)]
+    pub service_log: Vec<String>,
     /// `launchd`, `systemd`, `windows-task`, `process`.
     pub service_kind: String,
     /// Online at the relay.

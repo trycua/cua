@@ -7796,7 +7796,13 @@ export type RelayMachine = {
      * It creates Spaces for its owner's devices, when it said so at
      * registration (`None` from a host or relay that predates it).
      */
-    providesSpaces?: boolean
+    providesSpaces?: boolean,
+    /**
+     * The id of the device (`dev_…`) it runs on, as it published it at
+     * registration: the stable link between this machine and the account's
+     * device on the same computer (`None` from a host that predates it).
+     */
+    deviceId?: string
 }
 
 /**
@@ -7834,7 +7840,8 @@ const FfiConverterTypeRelayMachine = (() => {
                 clients: FfiConverterSequenceTypeRelayClientInfo.read(from),
                 confirmed: FfiConverterBool.read(from),
                 team: FfiConverterOptionalString.read(from),
-                providesSpaces: FfiConverterOptionalBoolean.read(from)
+                providesSpaces: FfiConverterOptionalBoolean.read(from),
+                deviceId: FfiConverterOptionalString.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -7853,6 +7860,7 @@ const FfiConverterTypeRelayMachine = (() => {
             FfiConverterBool.write(value.confirmed, into);
             FfiConverterOptionalString.write(value.team, into);
             FfiConverterOptionalBoolean.write(value.providesSpaces, into);
+            FfiConverterOptionalString.write(value.deviceId, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterString.allocationSize(value.id) +
@@ -7869,7 +7877,8 @@ const FfiConverterTypeRelayMachine = (() => {
              FfiConverterSequenceTypeRelayClientInfo.allocationSize(value.clients) +
              FfiConverterBool.allocationSize(value.confirmed) +
              FfiConverterOptionalString.allocationSize(value.team) +
-             FfiConverterOptionalBoolean.allocationSize(value.providesSpaces);
+             FfiConverterOptionalBoolean.allocationSize(value.providesSpaces) +
+             FfiConverterOptionalString.allocationSize(value.deviceId);
 
         }
     };
@@ -12483,7 +12492,12 @@ export type HostStatus = {
     /**
      * macOS: the old hand-written LaunchAgent is still there.
      */
-    legacyService: boolean
+    legacyService: boolean,
+    /**
+     * The last lines of the service's log while it is set up but not
+     * running (why it stopped).
+     */
+    serviceLog: Array<string>
 }
 
 /**
@@ -12511,7 +12525,8 @@ export const HostStatus = (() => {
         owner: undefined,
         ownerEmail: undefined,
         helperAvailable: false,
-        legacyService: false
+        legacyService: false,
+        serviceLog: []
     });
     const create = (() => {
         return uniffiCreateRecord<HostStatus, ReturnType<typeof defaults>>(defaults);
@@ -12564,7 +12579,8 @@ const FfiConverterTypeHostStatus = (() => {
                 owner: FfiConverterOptionalString.read(from),
                 ownerEmail: FfiConverterOptionalString.read(from),
                 helperAvailable: FfiConverterBool.read(from),
-                legacyService: FfiConverterBool.read(from)
+                legacyService: FfiConverterBool.read(from),
+                serviceLog: FfiConverterSequenceString.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -12605,6 +12621,7 @@ const FfiConverterTypeHostStatus = (() => {
             FfiConverterOptionalString.write(value.ownerEmail, into);
             FfiConverterBool.write(value.helperAvailable, into);
             FfiConverterBool.write(value.legacyService, into);
+            FfiConverterSequenceString.write(value.serviceLog, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterBool.allocationSize(value.configured) +
@@ -12643,7 +12660,8 @@ const FfiConverterTypeHostStatus = (() => {
              FfiConverterOptionalString.allocationSize(value.owner) +
              FfiConverterOptionalString.allocationSize(value.ownerEmail) +
              FfiConverterBool.allocationSize(value.helperAvailable) +
-             FfiConverterBool.allocationSize(value.legacyService);
+             FfiConverterBool.allocationSize(value.legacyService) +
+             FfiConverterSequenceString.allocationSize(value.serviceLog);
 
         }
     };

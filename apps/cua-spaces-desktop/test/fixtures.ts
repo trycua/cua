@@ -561,6 +561,7 @@ export function unconfiguredHost(): HostStatus {
     ownerEmail: undefined,
     helperAvailable: false,
     legacyService: false,
+    serviceLog: [],
   };
 }
 

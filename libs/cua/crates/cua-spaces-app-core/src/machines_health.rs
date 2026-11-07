@@ -92,6 +92,10 @@ pub struct MachinesViewIssue {
     /// Its fix, when there is one here.
     #[serde(default)]
     pub action: Option<MachinesViewIssueAction>,
+    /// Lines under the sentence, as they are (the service's last log
+    /// lines); empty for most issues.
+    #[serde(default)]
+    pub detail: Vec<String>,
 }
 
 /// What a shell passes to `Spaces.machine_health` for a row: `Some("")`
@@ -146,7 +150,7 @@ pub fn issues(
         && h.configured
     {
         if crate::machines_view::service_down(h) {
-            out.push(issue(
+            let mut down = issue(
                 "service",
                 "fail",
                 "The Cua service isn\u{2019}t running, so your other machines can\u{2019}t reach \
@@ -158,7 +162,11 @@ pub fn issues(
                     host_action: Some(HostActionId::ResumeSharing),
                     app_update: false,
                 }),
-            ));
+            );
+            // Why it stopped, from its own log (CUA-3746: the evidence used
+            // to be gone by the time anyone looked).
+            down.detail = h.service_log.clone();
+            out.push(down);
         } else if h.service_running && h.sharing && h.online == Some(false) {
             out.push(issue(
                 "relay",
@@ -345,6 +353,7 @@ fn issue(
         level: level.into(),
         text,
         action,
+        detail: vec![],
     }
 }
 
@@ -514,6 +523,27 @@ mod tests {
             ..OTHER
         };
         assert!(issues(&offline, Some(&h), None).is_empty());
+    }
+
+    #[test]
+    fn this_macs_stopped_service_shows_its_last_log_lines() {
+        let host = HostState {
+            configured: true,
+            service_installed: true,
+            service_running: false,
+            sharing: true,
+            provide_spaces: true,
+            service_log: vec!["port 3621 in use".into(), "exiting".into()],
+            ..HostState::default()
+        };
+        let i = issues(&THIS, None, Some(&host));
+        assert_eq!(i[0].detail, ["port 3621 in use", "exiting"]);
+        // Other issues carry none.
+        let h = health(
+            vec![check("machine.disk", "fail", &[("free_gb", "3")])],
+            "0.4.1",
+        );
+        assert!(issues(&OTHER, Some(&h), None)[0].detail.is_empty());
     }
 
     #[test]

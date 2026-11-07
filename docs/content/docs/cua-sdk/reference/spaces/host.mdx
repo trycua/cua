@@ -1004,6 +1004,7 @@ Returned by [`Host.configure`](#hostconfigure), [`Host.pause_signed_out`](#hostp
 | `owner_email` / `ownerEmail` | `Option<String>` | `None` | The owner's email, when the relay gave one. |
 | `helper_available` / `helperAvailable` | `bool` | `false` | macOS: a Cua Spaces app that can run the host service is installed, so the host service can run as it. |
 | `legacy_service` / `legacyService` | `bool` | `false` | macOS: the old hand-written LaunchAgent is still there. |
+| `service_log` / `serviceLog` | `Vec<String>` | `[]` | The last lines of the service's log while it is set up but not running (why it stopped). |
 
 ## `PairingCode` record
 
@@ -1061,6 +1062,7 @@ Returned by [`Devices.confirm_machine`](#devicesconfirm_machine), [`Devices.rena
 | `confirmed` | `bool` |  | Registered with an enrolled device's signature or MFA, or confirmed since from one; `true` for anything a relay registered before this check existed. `false` shows the machine as "new" until an enrolled device confirms it (`Devices.confirm_machine`) (S5). |
 | `team` | `Option<String>` |  | The team you reach it through, for a team machine not shared with you directly. |
 | `provides_spaces` / `providesSpaces` | `Option<bool>` |  | It creates Spaces for its owner's devices, when it said so at registration (`None` from a host or relay that predates it). |
+| `device_id` / `deviceId` | `Option<String>` |  | The id of the device (`dev_…`) it runs on, as it published it at registration: the stable link between this machine and the account's device on the same computer (`None` from a host that predates it). |
 
 ## This device on the relay
 

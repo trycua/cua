@@ -662,6 +662,9 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
             // What each machine on the relay said its hostname is, so the
             // page lists a machine and its enrolled device once.
             "hostnames": relayHostnames(),
+            // The device each machine published as the one it runs on: the
+            // link that pairs a machine with its device by id, not by name.
+            "deviceIds": model.devices.machineDeviceIds,
             // Who the relay sees connected, by machine id: the app's own
             // connect probe can time out on a host the relay reaches.
             "presence": model.devices.relayOnline,

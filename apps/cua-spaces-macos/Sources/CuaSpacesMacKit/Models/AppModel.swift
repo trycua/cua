@@ -397,7 +397,7 @@ public final class AppModel {
         }
         return AppMachinesPageInput(
             hostOs: .macos, spaces: spaces, devices: devices, hostnames: relayHostnames,
-            presence: self.devices.relayOnline, now: self.devices.nowSecs)
+            deviceIds: self.devices.machineDeviceIds, presence: self.devices.relayOnline, now: self.devices.nowSecs)
     }
 
     /// The Machines page as every UI draws it (the core's

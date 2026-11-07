@@ -7750,6 +7750,8 @@ pub struct AppHostState {
     pub service_installed: bool,
     /// Service running.
     pub service_running: bool,
+    /// The service log's last lines while it is set up but not running.
+    pub service_log: Vec<String>,
     /// `launchd`, `systemd`, `windows-task`, `process`.
     pub service_kind: String,
     /// Online at the relay.
@@ -10401,6 +10403,9 @@ pub struct AppMachinesPageInput {
     pub devices: Vec<AppDeviceIn>,
     /// The hostname each machine's cua-spacesd reported, by machine id.
     pub hostnames: std::collections::HashMap<String, String>,
+    /// The device each relay machine published as the one it runs on
+    /// (relay meta `cua.host.device`), by machine id.
+    pub device_ids: std::collections::HashMap<String, String>,
     /// Whether the relay sees each machine connected now, by machine id.
     pub presence: std::collections::HashMap<String, bool>,
     /// Unix seconds.
@@ -10508,6 +10513,9 @@ pub struct AppMachinesViewIssue {
     pub text: String,
     /// Its fix, when there is one here.
     pub action: Option<AppMachinesViewIssueAction>,
+    /// Lines under the sentence, as they are (the service's last log
+    /// lines); empty for most issues.
+    pub detail: Vec<String>,
 }
 
 /// What the relay says of one of the account's machines (the SDK's

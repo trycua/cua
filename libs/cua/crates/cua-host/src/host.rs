@@ -268,6 +268,10 @@ pub struct SetupOptions {
     /// signed in on is not listed as a new, unconfirmed computer. `None`
     /// (not enrolled, or a pairing code) leaves the relay to flag it.
     pub device_session: Option<String>,
+    /// This device's id (`dev_…`), when it has a key. Published in the
+    /// machine's relay meta ([`META_DEVICE_ID`]) so every client pairs this
+    /// machine with this device by id, not by guessing from names.
+    pub device_id: Option<String>,
 }
 
 /// A relay in static-token mode ([`SetupOptions::static_relay`]).
@@ -301,6 +305,7 @@ impl SetupOptions {
             download_first: false,
             dedicated: false,
             device_session: None,
+            device_id: None,
         }
     }
 
@@ -331,6 +336,7 @@ impl SetupOptions {
             download_first: false,
             dedicated: false,
             device_session: None,
+            device_id: None,
         }
     }
 }
@@ -599,6 +605,10 @@ pub struct HostConfig {
     /// the service, so it and the `cua daemon` it starts use the same home.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cua_home: Option<String>,
+    /// The device id published in the relay meta ([`META_DEVICE_ID`]), kept
+    /// so a later registration of this machine says it again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub device_id: Option<String>,
 }
 
 impl HostConfig {
@@ -756,6 +766,13 @@ pub const META_CLOUD: &str = "cua.host.cloud";
 /// machine without it is told to update, and its Spaces are not faked.
 pub const META_PHONE_FEED: &str = "cua.host.phone";
 
+/// The relay machine meta key with the id of the device this machine runs
+/// on (`dev_…`), as of its last setup. The relay keeps no link between a
+/// machine and the device the account enrolled on the same computer, so
+/// clients paired them by guessing from names; two devices with one name
+/// (a device is named after its hostname) paired wrongly or not at all.
+pub const META_DEVICE_ID: &str = "cua.host.device";
+
 /// `CUA_HOST_CLOUD`, when it names a cloud (lowercase letters and digits).
 fn host_cloud() -> Option<String> {
     cloud_word(std::env::var("CUA_HOST_CLOUD").ok())
@@ -786,7 +803,10 @@ fn arch() -> &'static str {
 }
 
 /// The meta a host registers with.
-fn host_meta(provide_spaces: bool) -> std::collections::BTreeMap<String, String> {
+fn host_meta(
+    provide_spaces: bool,
+    device_id: Option<&str>,
+) -> std::collections::BTreeMap<String, String> {
     let mut meta = std::collections::BTreeMap::from([(
         META_PROVIDES_SPACES.to_string(),
         if provide_spaces { "on" } else { "off" }.to_string(),
@@ -799,6 +819,9 @@ fn host_meta(provide_spaces: bool) -> std::collections::BTreeMap<String, String>
     }
     if let Some(cloud) = host_cloud() {
         meta.insert(META_CLOUD.to_string(), cloud);
+    }
+    if let Some(id) = device_id.map(str::trim).filter(|d| d.starts_with("dev_")) {
+        meta.insert(META_DEVICE_ID.to_string(), id.to_string());
     }
     meta
 }
@@ -908,6 +931,30 @@ pub struct HostStatus {
     /// (`com.trycua.spacesd.host`) is still there (loaded or its plist).
     #[serde(default)]
     pub legacy_service: bool,
+    /// The last lines of the service's log, while it is set up but not
+    /// running: why it stopped (CUA-3746). Empty otherwise.
+    #[serde(default)]
+    pub service_log: Vec<String>,
+}
+
+/// How many of the service log's last lines `status` reports.
+const SERVICE_LOG_LINES: usize = 6;
+
+/// The last [`SERVICE_LOG_LINES`] non-empty lines of the service log at `log`.
+pub(crate) fn log_lines(log: &Path) -> Vec<String> {
+    let Ok(text) = std::fs::read_to_string(log) else {
+        return vec![];
+    };
+    let mut lines: Vec<String> = text
+        .lines()
+        .rev()
+        .map(str::trim_end)
+        .filter(|l| !l.trim().is_empty())
+        .take(SERVICE_LOG_LINES)
+        .map(|l| l.chars().take(240).collect())
+        .collect();
+    lines.reverse();
+    lines
 }
 
 /// Files under `<home>/host`.
@@ -1626,6 +1673,7 @@ impl Host {
             usd_per_hour: host_usd_per_hour(),
             credential_store: setup_env(CREDENTIAL_STORE_ENV),
             cua_home: setup_env("CUA_HOME"),
+            device_id: opts.device_id.clone(),
             ..Default::default()
         };
         if opts.download_first && helper_launcher.is_none() {
@@ -1655,7 +1703,7 @@ impl Host {
                             name: name.clone(),
                             allow: opts.allow.clone(),
                             host: None,
-                            meta: host_meta(provide_spaces),
+                            meta: host_meta(provide_spaces, opts.device_id.as_deref()),
                         },
                     )
                     .await?;
@@ -2264,6 +2312,9 @@ impl Host {
             status.owner_email = p.owner_email.clone();
         }
         status.paused_signed_out = config.paused_signed_out;
+        if !status.service.running && !config.paused_signed_out {
+            status.service_log = log_lines(&self.paths.log());
+        }
         if cfg!(target_os = "macos") || self.helper.is_some() {
             status.helper_available = self.helper_app().is_some();
             status.legacy_service = self.legacy().found().present();
@@ -2654,7 +2705,7 @@ impl Host {
             name: config.name.clone(),
             allow: vec![],
             host: None,
-            meta: host_meta(config.provide_spaces),
+            meta: host_meta(config.provide_spaces, config.device_id.as_deref()),
         };
         // This account's earlier registration of this computer, if any (the
         // token says whose it is: its subject, else its email). Another
@@ -3697,7 +3748,10 @@ mod tests {
         assert_eq!(super::cloud_word(Some("aws; rm".into())), None);
         assert_eq!(super::cloud_word(Some(String::new())), None);
         assert_eq!(super::cloud_word(None), None);
-        let meta = super::host_meta(true);
+        let meta = super::host_meta(true, Some("dev_abc"));
+        assert_eq!(meta[super::META_DEVICE_ID], "dev_abc");
+        assert!(!super::host_meta(true, Some("not-a-device")).contains_key(super::META_DEVICE_ID));
+        assert!(!super::host_meta(true, None).contains_key(super::META_DEVICE_ID));
         assert_eq!(meta[super::META_PROVIDES_SPACES], "on");
         #[cfg(target_os = "macos")]
         assert_eq!(meta[super::META_OS], "macos");
@@ -3707,6 +3761,19 @@ mod tests {
         assert_eq!(meta[super::META_ARCH], "arm64");
         #[cfg(target_arch = "x86_64")]
         assert_eq!(meta[super::META_ARCH], "amd64");
+    }
+
+    #[test]
+    fn the_last_lines_of_the_log_are_kept_without_blanks() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("host.log");
+        assert!(super::log_lines(&log).is_empty());
+        let text: String = (1..=10).map(|i| format!("line {i}\n\n")).collect();
+        std::fs::write(&log, text).unwrap();
+        let got = super::log_lines(&log);
+        assert_eq!(got.len(), 6);
+        assert_eq!(got.first().map(String::as_str), Some("line 5"));
+        assert_eq!(got.last().map(String::as_str), Some("line 10"));
     }
 
     #[test]

@@ -3051,6 +3051,7 @@ pub async fn run_host_to(
                 && let Ok(device) = crate::devices_cmd::device_auth(url)
             {
                 opts.device_session = device.try_session().await;
+                opts.device_id = device.device_id().ok().flatten();
             }
             let s = host
                 .setup_staged(opts, tokens)

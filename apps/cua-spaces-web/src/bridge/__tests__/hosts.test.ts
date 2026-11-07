@@ -1095,6 +1095,39 @@ describe("webkit adapter", () => {
     expect(rows[1]).toMatchObject({ lastSeen: 1791044974, detail: "macOS · Enrolled" });
   });
 
+  it("pairs a machine with the device it published by id, even when two devices share its name (CUA-3746)", async () => {
+    const name = "Francesco\u2019s MacBook Pro";
+    const desktop = { id: "relay:m1", name, os: "macos", status: "running", detail: "", lastUsedAt: 1, provider: "relay", sdk: null, power: null };
+    const answer = (withMachine: boolean) =>
+      webkitHost((req) =>
+        req.method === "spaces.list"
+          ? ok({ loaded: true, selectedId: null, spaces: withMachine ? [{ space: desktop, deleting: false }] : [] })
+          : ok({
+              devices: {
+                rows: [
+                  { id: "dev_a", name, platform: "macOS", current: false, lastSeen: 1791044974 },
+                  { id: "dev_b", name, platform: "macOS", current: false, lastSeen: 1791044000 },
+                ],
+              },
+              signedIn: true,
+              deviceIds: { m1: "dev_b" },
+              presence: { m1: true },
+              deviceStates: { dev_a: "enrolled", dev_b: "enrolled" },
+            }),
+      ).win;
+    // Removed and not added back yet: its two devices are rows of their own.
+    const gone = mergeMachineRows(await createWebkitAdapter(answer(false)).call("machines.list", {}));
+    expect(gone.filter((r) => r.device).map((r) => r.id)).toEqual(["dev_a", "dev_b"]);
+    // Added again: it takes dev_b, the device it named, and dev_a stays its own row.
+    const rows = mergeMachineRows(await createWebkitAdapter(answer(true)).call("machines.list", {}));
+    expect(rows.map((r) => [r.id, Boolean(r.device)])).toEqual([
+      ["this-mac", false],
+      ["m1", false],
+      ["dev_a", true],
+    ]);
+    expect(rows[1]).toMatchObject({ lastSeen: 1791044000 });
+  });
+
   it("lists a machine that refused the list's connect because its owner stopped sharing it as online and not sharing", async () => {
     const refused = (name: string, error: string) => ({
       id: `relay:${name}`,

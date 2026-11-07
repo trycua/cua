@@ -255,6 +255,7 @@ function machineRowsOf(input: MachinesInput): MachineRow[] {
         ...(m.current ? { current: true } : {}),
         ...(m.presence != null ? { presence: m.presence } : {}),
         ...(m.hostname ? { hostname: m.hostname } : {}),
+        ...(m.deviceId ? { deviceId: m.deviceId } : {}),
       }),
     ),
     ...input.devices.map(

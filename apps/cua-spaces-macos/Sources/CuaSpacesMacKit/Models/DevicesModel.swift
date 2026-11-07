@@ -155,10 +155,10 @@ public final class FixtureDevices: DevicesRunning, @unchecked Sendable {
             machines: [
                 RelayMachine(id: "m1", spaceId: "relay:m1", name: "studio-mac", ownerId: "me",
                              ownerEmail: nil, role: "owner", online: true, sharing: true, version: "0.5.0",
-                             url: "", allow: [], clients: [], confirmed: true, team: nil, providesSpaces: true),
+                             url: "", allow: [], clients: [], confirmed: true, team: nil, providesSpaces: true, deviceId: nil),
                 RelayMachine(id: "m2", spaceId: "relay:m2", name: "build-box", ownerId: "me",
                              ownerEmail: nil, role: "owner", online: false, sharing: true, version: "0.5.0",
-                             url: "", allow: [], clients: [], confirmed: false, team: nil, providesSpaces: nil),
+                             url: "", allow: [], clients: [], confirmed: false, team: nil, providesSpaces: nil, deviceId: nil),
             ])
     }
 
@@ -520,6 +520,14 @@ public final class DevicesModel {
     /// machine id, at the last read.
     public var relayOnline: [String: Bool] {
         Dictionary((snapshot?.machines ?? []).map { ($0.id, $0.online) }, uniquingKeysWith: { a, _ in a })
+    }
+
+    /// The device each of the account's machines published as the one it
+    /// runs on (relay meta `cua.host.device`), by machine id: the stable
+    /// link the Machines page pairs a machine and its device by.
+    public var machineDeviceIds: [String: String] {
+        Dictionary((snapshot?.machines ?? []).compactMap { m in m.deviceId.map { (m.id, $0) } },
+                   uniquingKeysWith: { a, _ in a })
     }
 
     /// Each device's state (`enrolled`, `pending`, `expired`, `revoked`), by id.

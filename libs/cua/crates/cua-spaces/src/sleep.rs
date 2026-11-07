@@ -37,20 +37,15 @@ pub const MIN_IDLE: Duration = Duration::from_secs(10);
 pub const MAX_IDLE: Duration = Duration::from_secs(7 * 24 * 3600);
 
 /// A Space's sleep setting.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Sleep {
     /// Never put to sleep ("Keep running").
+    #[default]
     Never,
     /// Put to sleep when nothing needs it.
     Auto,
     /// Put to sleep after this long without anything needing it.
     After(Duration),
-}
-
-impl Default for Sleep {
-    fn default() -> Self {
-        Sleep::Never
-    }
 }
 
 impl Sleep {

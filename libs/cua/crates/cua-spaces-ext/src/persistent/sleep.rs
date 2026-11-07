@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: FSL-1.1-MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Sleep for agent Spaces that put themselves to sleep.
 //!
 //! A Space whose sleep setting is not `never` ([`cua_spaces::sleep`]) is

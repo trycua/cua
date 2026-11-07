@@ -124,6 +124,7 @@ export function Bubble({ entry, mine, showAuthor, quote, onReply, onOpenAttachme
 /** What an agent is doing now: its words so far while it streams, or one quiet working line. */
 export function LiveRow({ agent, stage, text, children = [] }: { agent: string; stage: string; text: string; children?: LiveChild[] }) {
   const { c, reduceMotion } = useTheme();
+  const router = useRouter();
   const Wrap = reduceMotion ? View : Animated.View;
   return (
     <Wrap {...(reduceMotion ? {} : { entering: FadeIn.duration(180) })} style={{ paddingHorizontal: 12, marginTop: 10 }} accessibilityLiveRegion="polite">
@@ -138,13 +139,13 @@ export function LiveRow({ agent, stage, text, children = [] }: { agent: string; 
         </View>
       ) : null}
       {children.map((k) => (
-        <View key={k.id} style={{ flexDirection: "row", gap: 8, marginTop: 6, marginLeft: 26 }} testID={`live-child-${k.id}`} accessible accessibilityLabel={`Subagent running: ${k.title}`}>
+        <Pressable key={k.id} disabled={!k.space} onPress={() => k.space && router.push({ pathname: "/space/[id]", params: { id: k.space.page } })} style={{ flexDirection: "row", gap: 8, marginTop: 6, marginLeft: 26 }} testID={`live-child-${k.id}`} accessible accessibilityRole={k.space ? "link" : "text"} accessibilityLabel={k.space ? `Making ${k.title}: ${k.step ?? "Starting"}` : `Subagent running: ${k.title}`}>
           <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: c.success, marginTop: 6 }} />
           <View style={{ flex: 1 }}>
-            <Text variant="footnote" numberOfLines={1}>{k.title}</Text>
-            <Text variant="caption" color="muted" numberOfLines={1}>{`${k.step ?? "Starting"}${k.steps > 0 ? `, ${k.steps === 1 ? "1 step" : `${k.steps} steps`}` : ""}`}</Text>
+            <Text variant="footnote" numberOfLines={1}>{k.space ? `${k.space.os ? `${k.space.os} ` : ""}${k.title}` : k.title}</Text>
+            <Text variant="caption" color="muted" numberOfLines={1}>{`${k.step ?? "Starting"}${k.space?.percent != null ? `, ${k.space.percent}%` : ""}${!k.space && k.steps > 0 ? `, ${k.steps === 1 ? "1 step" : `${k.steps} steps`}` : ""}`}</Text>
           </View>
-        </View>
+        </Pressable>
       ))}
     </Wrap>
   );

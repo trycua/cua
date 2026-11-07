@@ -126,31 +126,51 @@ export function ChildSpaceRow({ item }: { item: Extract<ThreadItem, { type: "chi
   );
 }
 
-/** The subagents an agent has running now, under its working line. */
+/**
+ * What an agent has running now, under its working line: its subagents and the Spaces it is making (OS logo,
+ * name, plain step, and a link to the page that exists from the first moment).
+ */
 export function LiveChildren({ children }: { children: readonly LiveChild[] }) {
   if (!children.length) return null;
   return (
     <ul data-live-children="" className="mt-1 ml-10 space-y-0.5">
-      {children.map((c) => (
-        <li key={c.id} data-live-child={c.id} className="flex min-w-0 items-start gap-2.5">
-          <span className="mt-[5px] flex size-3.5 shrink-0 items-center justify-center">
-            <ChildMark state="running" />
-          </span>
-          <span className="min-w-0 flex-1">
-            <span className="block truncate text-[13px]">{c.title}</span>
-            <span className="block truncate text-[12px] text-muted-foreground">
-              {c.step ?? "Starting"}
-              {c.steps > 0 ? `, ${stepsText(c.steps)}` : ""}
-              {c.sinceMs ? (
-                <>
-                  {", "}
-                  <WorkingFor label="Running" sinceMs={c.sinceMs} />
-                </>
-              ) : null}
+      {children.map((c) => {
+        const body = (
+          <>
+            <span className="mt-[5px] flex size-3.5 shrink-0 items-center justify-center">
+              <ChildMark state="running" />
             </span>
-          </span>
-        </li>
-      ))}
+            <span className="min-w-0 flex-1">
+              <span className="flex min-w-0 items-center gap-1.5 text-[13px]">
+                {c.space ? <OsIcon os={OS_KEY(c.space.os)} className="size-3.5 shrink-0 text-muted-foreground" /> : null}
+                <span className="truncate">{c.title}</span>
+              </span>
+              <span className="block truncate text-[12px] text-muted-foreground">
+                {c.step || "Starting"}
+                {c.space?.percent != null ? `, ${c.space.percent}%` : ""}
+                {!c.space && c.steps > 0 ? `, ${stepsText(c.steps)}` : ""}
+                {c.sinceMs ? (
+                  <>
+                    {", "}
+                    <WorkingFor label="" sinceMs={c.sinceMs} />
+                  </>
+                ) : null}
+              </span>
+            </span>
+          </>
+        );
+        return (
+          <li key={c.id} data-live-child={c.id} data-live-child-space={c.space ? "" : undefined}>
+            {c.space ? (
+              <Link to="/spaces/$spaceId" params={{ spaceId: c.space.page }} className="flex min-w-0 items-start gap-2.5 rounded-lg hover:bg-muted/40" aria-label={`Open ${c.title}`}>
+                {body}
+              </Link>
+            ) : (
+              <div className="flex min-w-0 items-start gap-2.5">{body}</div>
+            )}
+          </li>
+        );
+      })}
     </ul>
   );
 }

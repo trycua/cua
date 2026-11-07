@@ -11398,6 +11398,28 @@
                         },
                         "sinceMs": {
                           "type": "number"
+                        },
+                        "space": {
+                          "type": "object",
+                          "properties": {
+                            "os": {
+                              "type": "string"
+                            },
+                            "page": {
+                              "type": "string"
+                            },
+                            "percent": {
+                              "type": [
+                                "number",
+                                "null"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "os",
+                            "page",
+                            "percent"
+                          ]
                         }
                       },
                       "required": [

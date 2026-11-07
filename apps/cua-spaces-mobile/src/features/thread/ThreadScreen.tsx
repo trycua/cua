@@ -75,7 +75,7 @@ export function ThreadScreen({ spaceId, onBack, onFullStream, hideHeaderStream, 
   const seen = useRef(0);
 
   const nameOf = useCallback((handle: string) => thread.members.find((m) => m.name === handle)?.identity?.displayName ?? handle, [thread.members]);
-  const rows = useMemo(() => buildRows({ items: thread.items, me: thread.me, live: thread.live, pending: thread.pending, tools, now: Date.now(), agentName: nameOf }), [thread.items, thread.me, thread.live, thread.pending, tools, nameOf]);
+  const rows = useMemo(() => buildRows({ items: thread.items, me: thread.me, live: thread.live, pending: thread.pending, tools, now: Date.now(), agentName: nameOf, members: new Set(thread.members.map((m) => m.name.toLowerCase())) }), [thread.items, thread.me, thread.live, thread.pending, tools, nameOf, thread.members]);
 
   // Opening lands on the newest entry. Rows of different heights (a card) are measured after the first draw, so the
   // end is asked for again while the list settles, until the reader scrolls by hand.
@@ -188,8 +188,6 @@ export function ThreadScreen({ spaceId, onBack, onFullStream, hideHeaderStream, 
           </View>
         );
       }
-      case "creator":
-        return <View style={{ marginLeft: 12, marginTop: 10 }}><AuthorLine author={item.entry.author} tsMs={item.entry.tsMs} /></View>;
       case "message":
         return <Bubble entry={item.entry} mine={item.mine} showAuthor={item.showAuthor} quote={item.quote} onReply={(e) => setReplyTo({ seq: e.seq, author: e.author.name, text: e.text })} onOpenAttachment={(n) => Alert.alert(n, "Files open in Cua Spaces on the computer that has them. Opening files on this phone is not available yet.")} />;
     }

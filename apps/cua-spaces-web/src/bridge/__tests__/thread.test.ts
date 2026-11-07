@@ -466,77 +466,46 @@ describe("every agent message and the child agents in the thread", () => {
     const read = entry({ author: GRACE, text: "hi" });
     const child = entry({ author: SYSTEM, kind: "system", text: "claude made the computer safari", child: { kind: "child_space", space: "local:safari", name: "safari", os: "macOS", agent: "claude" } });
     const items = foldThread([read, child], { readSeq: read.seq });
-    // Not the person's message: the row sits under its creator's header, never floating under theirs.
-    expect(items.map((i) => i.type)).toEqual(["message", "message", "child_space"]);
+    expect(items.map((i) => i.type)).toEqual(["message", "child_space"]);
   });
 
-  describe("a created Space's row sits under its creator", () => {
+  describe("a created Space's row hangs under its agent, with no header of its own", () => {
     const CLAUDE = { kind: "agent" as const, id: "agent:claude", name: "claude" };
     const row = (key: string, over: object = {}) =>
       entry({ author: SYSTEM, kind: "system", text: "t", child: { kind: "child_space", space: `local:${key}`, key: `${key}:1`, name: key, os: "Linux", agent: "claude", state: "creating", ...over } as never });
-    const shape = (items: ReturnType<typeof foldThread>) => items.map((i) => (i.type === "message" ? `${i.entry.author.name}${i.entry.text ? ":" + i.entry.text : ":header"}` : i.type));
+    const shape = (items: ReturnType<typeof foldThread>) => items.map((i) => (i.type === "message" ? `${i.entry.author.name}:${i.entry.text}` : i.type));
 
-    it("follows the agent's own text without a second header", () => {
+    it("a Space still being made is not a thread item (the agent's live row carries it)", () => {
+      seq = 0;
+      const ask = entry({ author: GRACE, text: "make one" });
+      expect(shape(foldThread([ask, row("a"), row("a", { phase: "Starting it" })], { readSeq: 9999 }))).toEqual(["Grace:make one"]);
+    });
+
+    it("its outcome is one row after the agent's text, with no extra identity", () => {
       seq = 0;
       const ask = entry({ author: GRACE, text: "make one" });
       const said = entry({ author: CLAUDE, text: "On it." });
-      expect(shape(foldThread([ask, said, row("a")], { readSeq: 9999 }))).toEqual(["Grace:make one", "claude:On it.", "child_space"]);
+      const items = foldThread([ask, said, row("a"), row("a", { state: "ready" })], { readSeq: 9999 });
+      expect(shape(items)).toEqual(["Grace:make one", "claude:On it.", "child_space"]);
+      expect(items.filter((i) => i.type === "message" && i.entry.text === "")).toHaveLength(0);
     });
 
-    it("brings the agent's header with the row when it has not spoken yet", () => {
+    it("never invents an identity: rows of claude, claude-2, codex, hermes and a person add no author of their own", () => {
       seq = 0;
-      const ask = entry({ author: GRACE, text: "make one" });
-      const items = foldThread([ask, row("a")], { readSeq: 9999 });
-      expect(shape(items)).toEqual(["Grace:make one", "claude:header", "child_space"]);
-      const header = items[1]!;
-      expect(header.type === "message" && header.entry.author).toMatchObject({ kind: "agent", id: "agent:claude" });
+      const notes = ["claude", "claude-2", "codex", "hermes"].flatMap((a) => [row(a, { agent: a, state: "ready" })]);
+      const person = row("p", { agent: "", by: { id: "acct_ada", name: "Ada" }, state: "ready" });
+      const items = foldThread([...notes, person], { readSeq: 9999 });
+      expect(items.every((i) => i.type === "child_space")).toBe(true);
+      expect(items).toHaveLength(5);
     });
 
-    it("groups several creates of one agent under one header, in order", () => {
+    it("several creates of one agent are one row each, in the order they started", () => {
       seq = 0;
       const ask = entry({ author: GRACE, text: "make two" });
-      const items = foldThread([ask, row("a"), row("b"), row("a", { state: "ready" })], { readSeq: 9999 });
-      expect(shape(items)).toEqual(["Grace:make one".replace("one", "two"), "claude:header", "child_space", "child_space"]);
-      expect(items.filter((i) => i.type === "child_space").map((i) => (i.type === "child_space" ? [i.space.name, i.space.state] : []))).toEqual([["a", "ready"], ["b", "creating"]]);
+      const items = foldThread([ask, row("a"), row("b"), row("b", { state: "ready" }), row("a", { state: "failed", error: "No disk" })], { readSeq: 9999 });
+      expect(items.filter((i) => i.type === "child_space").map((i) => (i.type === "child_space" ? [i.space.name, i.space.state] : []))).toEqual([["b", "ready"], ["a", "failed"]]);
+      expect(shape(items)).toEqual(["Grace:make two", "child_space", "child_space"]);
     });
-
-    it("starts a new header after the agent's later text, and for another agent", () => {
-      seq = 0;
-      const items = foldThread([row("a"), entry({ author: CLAUDE, text: "Made it." }), row("b", { agent: "hermes" })], { readSeq: 9999 });
-      expect(shape(items)).toEqual(["claude:header", "child_space", "claude:Made it.", "hermes:header", "child_space"]);
-    });
-
-    it("sits under the person's header when a person made it", () => {
-      seq = 0;
-      const items = foldThread([row("p", { agent: "", by: { id: "acct_ada", name: "Ada" } }), row("q", { agent: "", by: { id: "acct_ada", name: "Ada" } })], { readSeq: 9999 });
-      expect(shape(items)).toEqual(["Ada:header", "child_space", "child_space"]);
-      const h = items[0]!;
-      expect(h.type === "message" && h.entry.author.kind).toBe("person");
-    });
-
-    it("stands alone when nobody is recorded as the creator", () => {
-      seq = 0;
-      expect(shape(foldThread([row("z", { agent: "" })], { readSeq: 9999 }))).toEqual(["child_space"]);
-    });
-  });
-
-  it("folds the steps of one Space create into one row, in the order it started, then its outcome", () => {
-    seq = 0;
-    const note = (key: string, over: object) =>
-      entry({ author: SYSTEM, kind: "system", text: "t", child: { kind: "child_space", space: `local:${key.split(":")[0]}`, key, name: key.split(":")[0]!, os: "macOS", agent: "claude", ...over } as never });
-    const items = foldThread(
-      [
-        note("mac:1", { state: "creating", phase: "Cloning the disk for the macOS Space", startedMs: 1000 }),
-        note("lin:2", { state: "creating", phase: "Starting it", startedMs: 2000, os: "Linux" }),
-        note("mac:1", { state: "creating", phase: "Starting it", startedMs: 1000 }),
-        note("lin:2", { state: "ready", phase: "Ready", startedMs: 2000, endedMs: 9000, os: "Linux" }),
-        note("mac:1", { state: "failed", error: "Its network setup did not come up", startedMs: 1000, endedMs: 5000 }),
-      ],
-      { readSeq: 0 },
-    );
-    const rows = items.filter((i) => i.type === "child_space");
-    expect(rows).toHaveLength(2);
-    expect(rows.map((r) => (r.type === "child_space" ? [r.space.name, r.space.state] : []))).toEqual([["mac", "failed"], ["lin", "ready"]]);
   });
 
   it("reads a create's state, step and reason from the daemon's JSON, and an old note as made", () => {
@@ -545,6 +514,14 @@ describe("every agent message and the child agents in the thread", () => {
     const old = threadEntryFromTool({ seq: 6, id: "z", ts_ms: 1, author: { kind: "system", id: "system:dispatcher", name: "Cua" }, kind: "system", text: "t", event: { kind: "child_space", space: "local:a", name: "a", os: "Linux", agent: "claude" } });
     expect(old?.child).toMatchObject({ kind: "child_space", space: "local:a" });
     expect((old?.child as { state?: string }).state).toBeUndefined();
+  });
+
+  it("reads a Space the agent is making as a live child under its live row", () => {
+    const live = threadLiveFromTool({ key: "k", agents: [{ agent: "claude", stage: "using Terminal", children: [{ id: "space:a:5", title: "a", kind: "child_space", os: "Linux", step: "Starting it", steps: 0, percent: 40, space: "pending:agent-a-5", since_ms: 5 }, { id: "t1", title: "Map", steps: 3, step: "Ran ls" }] }] });
+    expect(live.agents[0]!.children).toEqual([
+      { id: "space:a:5", title: "a", steps: 0, step: "Starting it", sinceMs: 5, space: { os: "Linux", page: "pending:agent-a-5", percent: 40 } },
+      { id: "t1", title: "Map", steps: 3, step: "Ran ls" },
+    ]);
   });
 
   it("reads the subagent and child notes and the live children from the daemon's JSON", () => {

@@ -931,7 +931,7 @@ impl Persistent {
             .map(|e| e.text.clone())
             .unwrap_or_else(|| task.text.clone());
         let framed = format!(
-            "[thread #{} from {}] {text}\n\n(Everything you write between tool calls is posted to this thread as you write it, one message for each stretch, in order; nothing you wrote is replaced or removed. So talk to the person like a colleague: before a long job say in one short sentence what you will do, then do it, then say how it went. Never repeat something you already posted. Do not call thread_reply for plain text; use it only to attach files or to mark the task failed. To ask the person before something that needs their OK, call thread_post with an approval (action and details): that puts a card in front of them, and asking in plain words does not; then end your turn, because their answer arrives as a new message to you. Starting up, installing and \"working for Ns\" are shown by the app itself, so do not narrate them. To make another computer from here, run `cua spaces create IMAGE --name NAME` (it becomes this Space's child; `cua sb exec NAME -- COMMAND` runs things in it and `cua spaces delete --force NAME` removes it); if that is refused, say what the refusal says.)",
+            "[thread #{} from {}] {text}\n\n(Everything you write between tool calls is posted to this thread as you write it, one message for each stretch, in order; nothing you wrote is replaced or removed. So talk to the person like a colleague: before a long job say in one short sentence what you will do, then do it, then say how it went. Never repeat something you already posted. Do not call thread_reply for plain text; use it only to attach files or to mark the task failed. To ask the person before something that needs their OK, call thread_post with an approval (action and details): that puts a card in front of them, and asking in plain words does not; then end your turn, because their answer arrives as a new message to you. Starting up, installing and \"working for Ns\" are shown by the app itself, so do not narrate them. To make another computer from here, run `cua spaces create IMAGE --name NAME` (it becomes this Space's child; its output says whether it is running; `cua sb exec NAME -- COMMAND` runs things in it and `cua spaces delete --force NAME` removes it). Say a computer is stopped only after you checked its state with `cua spaces ls` after it had a few seconds to start; if it is not running, start it with `cua spaces start NAME` first. If a command is refused, say what the refusal says.)",
             task.seq, task.author.name
         );
         // The member's standing instructions go in front of the first message
@@ -1415,6 +1415,18 @@ impl Persistent {
                             .collect()
                     })
                     .unwrap_or_default();
+                // The Spaces it is making now hang under the same live row, like a subagent.
+                let mut running = running;
+                for e in cua_spaces::child_creates::of(self.spaces.home_dir(), &rec.space)
+                    .into_iter()
+                    .filter(|e| e.state == cua_spaces::child_creates::State::Creating)
+                {
+                    running.push(json!({
+                        "id": format!("space:{}:{}", e.key, e.started_ms), "title": e.name, "state": "running",
+                        "kind": "child_space", "os": e.os, "step": e.phase, "steps": 0, "percent": e.percent,
+                        "space": format!("pending:agent-{}-{}", e.key, e.started_ms), "since_ms": e.started_ms,
+                    }));
+                }
                 if !running.is_empty() {
                     row["children"] = json!(running);
                 }
@@ -1432,6 +1444,11 @@ impl Persistent {
                     r["text"].as_str().map_or(0, str::len)
                         + 7919 * r["children"].as_array().map_or(0, |c| c.len())
                         + r["children"][0]["steps"].as_u64().unwrap_or(0) as usize
+                        + r["children"].as_array().map_or(0, |c| c
+                            .iter()
+                            .map(|k| k["step"].as_str().map_or(0, str::len)
+                                + k["percent"].as_u64().unwrap_or(0) as usize)
+                            .sum::<usize>())
                 )
             })
             .collect::<Vec<_>>()

@@ -801,6 +801,11 @@ impl SpaceService for Scoped {
                 return Err(for_the_agent(e));
             }
         };
+        let mut resp = resp;
+        if let Some(s) = resp.get_mut().space.as_mut() {
+            // The result says how the Space is now (running or not), read now, not left to the registry's last word.
+            (s.power, s.power_state) = self.spaces().power_of(&s.id);
+        }
         if let Some(s) = &resp.get_ref().space {
             tracked.ready(&s.id);
             self.audit("spawn", &s.id, &name);
@@ -851,7 +856,15 @@ impl SpaceService for Scoped {
                 Err(e) => tracked.failed(e.message()),
                 _ => {}
             }
-            let item = item.map_err(for_the_agent);
+            let mut item = item.map_err(for_the_agent);
+            if let Ok(pb::CreateSpaceStreamResponse {
+                event: Some(pb::create_space_stream_response::Event::Result(r)),
+            }) = &mut item
+                && let Some(s) = r.space.as_mut()
+            {
+                // The result says how the Space is now, read now.
+                (s.power, s.power_state) = me.spaces().power_of(&s.id);
+            }
             if let Ok(pb::CreateSpaceStreamResponse {
                 event: Some(pb::create_space_stream_response::Event::Result(r)),
             }) = &item

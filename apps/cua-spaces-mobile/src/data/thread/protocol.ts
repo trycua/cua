@@ -135,6 +135,8 @@ export interface LiveChild {
   title: string;
   steps: number;
   step: string | null;
+  /** A Space the agent is making (not a subagent): its OS, the page it opens and how far it is. */
+  space?: { os: string; page: string; percent: number | null };
 }
 
 export interface ThreadEntry {
@@ -813,7 +815,7 @@ export function threadLiveFromTool(v: unknown): ThreadLive {
     const children = (Array.isArray(r?.children) ? r.children : []).flatMap((c): LiveChild[] => {
       const o = obj(c);
       const id = str(o?.id);
-      return o && id ? [{ id, title: str(o.title) || "Subagent", steps: num(o.steps) ?? 0, step: str(o.step) || null }] : [];
+      return o && id ? [{ id, title: str(o.title) || (o.kind === "child_space" ? "Space" : "Subagent"), steps: num(o.steps) ?? 0, step: str(o.step) || null, ...(o.kind === "child_space" ? { space: { os: str(o.os), page: str(o.space), percent: num(o.percent) } } : {}) }] : [];
     });
     return agent && stage ? [{ agent, stage, ...(sinceMs ? { sinceMs } : {}), ...(text ? { text } : {}), ...(children.length ? { children } : {}) }] : [];
   });

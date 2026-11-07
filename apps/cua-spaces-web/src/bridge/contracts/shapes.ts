@@ -1171,7 +1171,7 @@ const JoinCodeRowShape = obj<JoinCodeRow>()({
 });
 const ThreadPageShape = obj<ThreadPage>()({
   entries: list(ThreadEntryShape),
-  live: obj<ThreadLive>()({ key: str, agents: list(obj<LiveAgent>()({ agent: str, stage: str, sinceMs: opt(num), text: opt(str), children: opt(list(obj<LiveChild>()({ id: str, title: str, steps: num, step: nullable(str), sinceMs: opt(num) }))) })) }),
+  live: obj<ThreadLive>()({ key: str, agents: list(obj<LiveAgent>()({ agent: str, stage: str, sinceMs: opt(num), text: opt(str), children: opt(list(obj<LiveChild>()({ id: str, title: str, steps: num, step: nullable(str), sinceMs: opt(num), space: opt(object({ os: str, page: str, percent: nullable(num) })) }))) })) }),
   cursor: num,
   caughtUp: bool,
   unread: num,

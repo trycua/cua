@@ -355,6 +355,14 @@ pub struct VmState {
     /// copy of this file.
     #[serde(default)]
     pub mem_base: Option<MemBase>,
+    /// A warm standby (QEMU): a VM booted from this checkpoint's disk and kept
+    /// paused, so a fork of the checkpoint skips the boot. Hidden from lists;
+    /// the next fork of the checkpoint takes it.
+    #[serde(default)]
+    pub standby_of: Option<String>,
+    /// The standby finished booting and is paused (only then can it be taken).
+    #[serde(default)]
+    pub standby_ready: bool,
 }
 
 /// A memory file, and the inode it had, so a file replaced or deleted
@@ -2766,7 +2774,182 @@ impl MicroVmRuntime {
             last_start: None,
             pool_member: false,
             mem_base: None,
+            standby_of: None,
+            standby_ready: false,
             created_at: host::now_secs(),
+        }
+    }
+
+    /// How many warm standbys the host keeps (`CUA_MICROVM_STANDBY`, default 2,
+    /// 0 turns them off). Only QEMU on Windows has them: elsewhere a fork
+    /// restores memory and is already fast.
+    fn standby_limit(&self) -> usize {
+        if self.cfg.vmm != Vmm::Qemu {
+            return 0;
+        }
+        std::env::var("CUA_MICROVM_STANDBY")
+            .ok()
+            .and_then(|v| v.trim().parse().ok())
+            .unwrap_or(2)
+    }
+
+    /// The standbys of this host (every state, ready or not).
+    fn standbys(&self) -> Vec<VmState> {
+        self.all_states()
+            .into_iter()
+            .filter(|s| s.standby_of.is_some())
+            .collect()
+    }
+
+    /// Removes the standbys nobody can use: those of a deleted checkpoint,
+    /// those that never finished booting (the process that built one died),
+    /// and those idle past `CUA_MICROVM_STANDBY_TTL_MIN` (default 30 minutes).
+    async fn reap_standbys(&self) {
+        let ttl = std::env::var("CUA_MICROVM_STANDBY_TTL_MIN")
+            .ok()
+            .and_then(|v| v.trim().parse::<u64>().ok())
+            .unwrap_or(30)
+            * 60;
+        let now = host::now_secs();
+        for s in self.standbys() {
+            let ckpt = s.standby_of.clone().unwrap_or_default();
+            let age = now.saturating_sub(s.created_at);
+            let dead = !self.checkpoint_dir(&ckpt).join("meta.json").is_file()
+                || (!s.standby_ready && age > 180)
+                || (s.standby_ready && (age > ttl || !self.running(&s)));
+            if dead {
+                let _ = Runtime::delete(self, &s.name).await;
+            }
+        }
+    }
+
+    /// Boots one standby of `checkpoint` and leaves it paused. Best effort: a
+    /// host short of memory or CPU, or a checkpoint that already has one (or
+    /// is at the limit), makes none.
+    ///
+    /// `demand`: a fork of the checkpoint asked for it (it is in use): it may
+    /// replace the oldest standby of another checkpoint when the host is at the
+    /// limit, and the checkpoint may have as many as the limit. Made when a
+    /// checkpoint is saved, one fills a free slot only.
+    pub async fn make_standby(&self, checkpoint: &str, demand: bool) -> Result<()> {
+        let limit = self.standby_limit();
+        if limit == 0 {
+            return Ok(());
+        }
+        self.reap_standbys().await;
+        let ckpt = self.checkpoint_dir(checkpoint);
+        let Some(meta) = self.read_meta(&ckpt).filter(|m| !m.memory) else {
+            return Ok(());
+        };
+        let mut have = self.standbys();
+        let own = have
+            .iter()
+            .filter(|s| s.standby_of.as_deref() == Some(checkpoint))
+            .count();
+        if own >= if demand { limit } else { 1 } {
+            return Ok(());
+        }
+        if have.len() >= limit {
+            // Full: a fork's demand replaces the oldest ready standby of another
+            // checkpoint; a new checkpoint waits for a free slot.
+            let oldest = have
+                .iter()
+                .filter(|s| s.standby_ready && s.standby_of.as_deref() != Some(checkpoint))
+                .min_by_key(|s| s.created_at)
+                .map(|s| s.name.clone());
+            match oldest {
+                Some(n) if demand => {
+                    let _ = Runtime::delete(self, &n).await;
+                    have.retain(|s| s.name != n);
+                }
+                _ => return Ok(()),
+            }
+            if have.len() >= limit {
+                return Ok(());
+            }
+        }
+        // Not when the host is short of memory: a standby holds the guest's
+        // pages for as long as it waits.
+        #[cfg(windows)]
+        if let Some(m) = crate::density::host_memory() {
+            let need = meta.memory_mb + m.total_mb * 15 / 100;
+            if m.available_mb < need {
+                return Ok(());
+            }
+        }
+        let name = format!("sb-{}", random_hex(4));
+        let mut st = self.new_state(&name, &meta);
+        st.standby_of = Some(checkpoint.to_string());
+        let dir = self.dir(&name);
+        let built = async {
+            std::fs::create_dir_all(&dir)?;
+            self.copy_scratch(&ckpt.join("scratch.ext4"), &dir.join("scratch.ext4"))
+                .await?;
+            self.save(&st)?;
+            let _vcpus = self.reserve_vcpus(st.cpus)?;
+            self.boot(&mut st, false, Duration::from_secs(90)).await?;
+            self.ctl(&st.name).pause().await?;
+            st.paused = true;
+            st.standby_ready = true;
+            self.save(&st)
+        }
+        .await;
+        if let Err(e) = built {
+            self.kill(&mut st);
+            let _ = Runtime::delete(self, &name).await;
+            return Err(e);
+        }
+        Ok(())
+    }
+
+    /// Starts making a standby of `checkpoint` in the background (its own
+    /// runtime over the same files; the standby is taken only once marked
+    /// ready, which is the last thing written).
+    fn spawn_standby(&self, checkpoint: &str, demand: bool) {
+        let limit = self.standby_limit();
+        if limit == 0 {
+            return;
+        }
+        // As many as are missing, built at once (a standby takes about as long
+        // as a cold boot, so a burst of forks is served only by what is ready).
+        let want = if demand { limit } else { 1 };
+        let have = self
+            .standbys()
+            .iter()
+            .filter(|s| s.standby_of.as_deref() == Some(checkpoint))
+            .count();
+        let Ok(h) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        for i in 0..want.saturating_sub(have) {
+            let cfg = self.cfg.clone();
+            let name = checkpoint.to_string();
+            h.spawn(async move {
+                // Built one after another in the check, so each sees the room
+                // the earlier ones left.
+                tokio::time::sleep(Duration::from_millis(50 * i as u64)).await;
+                let _ = MicroVmRuntime::new(cfg).make_standby(&name, demand).await;
+            });
+        }
+    }
+
+    /// Gives a ready standby of `checkpoint` the name `new_name` (the claim of a
+    /// pool member: its files get a second name, it resumes). `None` when
+    /// there is none, or the claim failed.
+    async fn take_standby(&self, checkpoint: &str, new_name: &str) -> Option<()> {
+        let mut s = self.standbys().into_iter().find(|s| {
+            s.standby_of.as_deref() == Some(checkpoint) && s.standby_ready && self.running(s)
+        })?;
+        s.pool_member = true;
+        s.standby_of = None;
+        s.standby_ready = false;
+        self.save(&s).ok()?;
+        match Runtime::claim(self, &s.name, new_name, &ClaimIdentity::default()).await {
+            Ok(_) => Some(()),
+            Err(_) => {
+                let _ = Runtime::delete(self, &s.name).await;
+                None
+            }
         }
     }
 
@@ -2955,6 +3138,18 @@ impl Runtime for MicroVmRuntime {
                     st.paused = false;
                     self.save(&st)?;
                 }
+                // A fork that took a standby is already running: the token the
+                // Space starts with reaches it now.
+                if let Some(t) = TOKEN_VARS.iter().find_map(|k| spec.env.get(*k))
+                    && st.token.as_deref() != Some(t.as_str())
+                {
+                    st.token = Some(t.clone());
+                    let id = self.identity(&st);
+                    self.agent(&st.name)
+                        .request(&Request::Identity(id), Duration::from_secs(10))
+                        .await?;
+                    self.save(&st)?;
+                }
                 return Ok(self.instance(&st));
             }
             // Ports and probes asked for now apply from this boot on.
@@ -3034,6 +3229,8 @@ impl Runtime for MicroVmRuntime {
             last_start: None,
             pool_member: false,
             mem_base: None,
+            standby_of: None,
+            standby_ready: false,
             created_at: host::now_secs(),
         };
         let _vcpus = self.reserve_vcpus(st.cpus)?;
@@ -3229,6 +3426,15 @@ impl Runtime for MicroVmRuntime {
             if ckpt.join("meta.json").is_file() {
                 let meta: SnapshotMeta =
                     serde_json::from_slice(&std::fs::read(ckpt.join("meta.json"))?)?;
+                if !meta.memory && self.standby_limit() > 0 {
+                    // A standby of this checkpoint (booted from its disk and
+                    // paused) becomes the fork: it is running when `start` looks.
+                    let taken = self.take_standby(source, new_name).await.is_some();
+                    self.spawn_standby(source, true);
+                    if taken {
+                        return Ok(());
+                    }
+                }
                 let mut st = self.new_state(new_name, &meta);
                 std::fs::create_dir_all(&new_dir)?;
                 if meta.memory {
@@ -3458,6 +3664,7 @@ impl Runtime for MicroVmRuntime {
             )?;
             std::fs::rename(&partial, &target)?;
         }
+        self.spawn_standby(checkpoint, false);
         Ok(CheckpointInfo::now(
             checkpoint,
             self.cfg.vmm.backend(),
@@ -3479,6 +3686,7 @@ impl Runtime for MicroVmRuntime {
         // Running forks keep the memory file they mapped (or, under
         // cua-vz, the memory they restored).
         std::fs::remove_dir_all(d)?;
+        self.reap_standbys().await;
         Ok(())
     }
 
@@ -3490,7 +3698,7 @@ impl Runtime for MicroVmRuntime {
         Ok(self
             .all_states()
             .into_iter()
-            .filter(|s| s.kind == EntryKind::Instance)
+            .filter(|s| s.kind == EntryKind::Instance && s.standby_of.is_none())
             .map(|s| InstanceSummary {
                 status: self.status_of(&s),
                 name: s.name,
@@ -4182,6 +4390,54 @@ mod tests {
         ));
         assert!(rt.load("member").is_ok());
         assert!(matches!(rt.load("space"), Err(VmmError::NotFound(_))));
+    }
+
+    /// A standby of a checkpoint is hidden from lists, is not a pool member
+    /// (the daemon's pools never see it), and is removed with its checkpoint or
+    /// when it never finished booting.
+    #[tokio::test]
+    async fn standbys_are_hidden_and_reaped_with_their_checkpoint() {
+        let d = tempfile::tempdir().unwrap();
+        let rt = MicroVmRuntime::new(MicroVmConfig {
+            root: d.path().to_path_buf(),
+            vmm: Vmm::Qemu,
+            ..Default::default()
+        });
+        let meta = SnapshotMeta {
+            name: "ck".into(),
+            source: None,
+            image: "img".into(),
+            base: "abc".into(),
+            base_format: BaseFormat::Ext4Dax,
+            cpus: 1,
+            memory_mb: 512,
+            disk_gb: 1,
+            ports: vec![],
+            boot: BootConfig::default(),
+            probes: vec![],
+            restrict_network: false,
+            egress: None,
+            network: None,
+            memory: false,
+            created_at: 0,
+            pinned: false,
+        };
+        let mut sb = rt.new_state("sb-1", &meta);
+        sb.standby_of = Some("ck".into());
+        rt.save(&sb).unwrap();
+        rt.save(&rt.new_state("plain", &meta)).unwrap();
+        let names: Vec<String> = Runtime::list(&rt)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|i| i.name)
+            .collect();
+        assert_eq!(names, vec!["plain".to_string()]);
+        assert!(!rt.load("sb-1").unwrap().pool_member);
+        // Its checkpoint is gone: reaped; the plain Space stays.
+        rt.reap_standbys().await;
+        assert!(matches!(rt.load("sb-1"), Err(VmmError::NotFound(_))));
+        assert!(rt.load("plain").is_ok());
     }
 
     #[test]

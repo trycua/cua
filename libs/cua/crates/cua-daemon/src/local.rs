@@ -1034,8 +1034,7 @@ impl VmmLocal {
                         // The image of a kept-warm request moved: creates keep
                         // the one they were served until a warm member of the
                         // new one is ready, so none waits on its pull.
-                        let kept = key.0 == warm_pools_image()
-                            && cua_vmm::experiments::enabled(cua_vmm::experiments::Gate::WarmPools);
+                        let kept = key.0 == warm_pools_image();
                         let next = match hold_refresh(&served, fresh, kept) {
                             Refresh::Serve(r) => r,
                             Refresh::Hold { next } => {

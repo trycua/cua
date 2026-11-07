@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.41.5](https://github.com/trycua/cua/compare/cua-driver-rs-v0.41.4...cua-driver-rs-v0.41.5) (2026-11-07)
+
+
+### Bug Fixes
+
+* **cua-driver:** stop cutting off non-ASCII text typed into GTK3 and Qt fields ([#6829](https://github.com/trycua/cua/issues/6829)) ([6957956](https://github.com/trycua/cua/commit/69579562351a7b8c047fce4be06de0872eb4c8ba))
+
 ## [0.41.4](https://github.com/trycua/cua/compare/cua-driver-rs-v0.41.3...cua-driver-rs-v0.41.4) (2026-11-07)
 
 

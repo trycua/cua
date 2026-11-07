@@ -82,6 +82,13 @@ export class DevicesModel {
     return out;
   }
 
+  /** The device each of the account's machines published as the one it runs on (relay meta `cua.host.device`), by machine id. */
+  get machineDeviceIds(): Record<string, string> {
+    const out: Record<string, string> = {};
+    for (const m of this.snapshot?.machines ?? []) if (m.deviceId && !(m.id in out)) out[m.id] = m.deviceId;
+    return out;
+  }
+
   /** Each device's state (`enrolled`, `pending`, `expired`, `revoked`), by id. */
   get deviceStates(): Record<string, string> {
     const out: Record<string, string> = {};

@@ -734,7 +734,18 @@ function MachineIssues({ machine: m, hidePermissions, onFail }: { machine: Machi
             ) : (
               <TriangleAlertIcon aria-label="Warning" className="size-3.5 shrink-0 text-warning" />
             )}
-            <span className="min-w-0 flex-1 text-[13px]">{i.text}</span>
+            <span className="min-w-0 flex-1 text-[13px]">
+              {i.text}
+              {i.detail?.length ? (
+                <span className="mt-1 block font-mono text-[11px] leading-4 text-muted-foreground select-text" data-machine-issue-detail={i.id}>
+                  {i.detail.map((line, k) => (
+                    <span key={k} className="block break-all">
+                      {line}
+                    </span>
+                  ))}
+                </span>
+              ) : null}
+            </span>
             {i.action ? (
               <Button size="sm" variant="outline" className="shrink-0" disabled={host.busy || (i.action.appUpdate && update.installing)} onClick={() => act(i)} data-machine-issue-action={i.id}>
                 {i.action.label}

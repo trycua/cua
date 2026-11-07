@@ -219,6 +219,10 @@ export function toMachineRows(spaces: WkSpaces, machines: WkMachines | null, os:
     const row = byId.get(id);
     if (row && hostname) row.hostname = hostname;
   }
+  for (const [id, deviceId] of Object.entries(machines?.deviceIds ?? {})) {
+    const row = byId.get(id);
+    if (row && deviceId) row.deviceId = deviceId;
+  }
   for (const [id, connected] of Object.entries(machines?.presence ?? {})) {
     const row = byId.get(id);
     if (row && !row.current) row.presence = connected;

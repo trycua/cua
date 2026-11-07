@@ -8,9 +8,12 @@
 //! A Mac set up with `cua host setup` is a relay machine ("gamma-4 Mac
 //! Studio", its id a machine id) and, once the app signs in there, also an
 //! enrolled device ("gamma-4.example.com", `dev_…`). The relay keeps no
-//! link between the two, so [`merge`] matches them:
+//! link between the two except the one the machine publishes itself (its
+//! device id in relay meta, `cua.host.device`), so [`merge`] matches them:
 //!
-//! 1. the same id;
+//! 1. the same id; then the device id the machine published (`device_id`),
+//!    which pairs it with that device alone and keeps it out of the
+//!    guesses below;
 //! 2. this device and this machine;
 //! 3. the hostname the machine's cua-spacesd reported equals the device's
 //!    name (devices are named after their hostname);
@@ -67,6 +70,13 @@ pub struct MachineIn {
     /// The machine this app runs on.
     #[serde(default)]
     pub current: bool,
+    /// The id of the device it runs on, as the machine published it in its
+    /// relay meta (`cua.host.device`). A machine that says it pairs with
+    /// that device and no other, whatever either is named (CUA-3746: two
+    /// devices named "Francesco's MacBook Pro" were paired by guessing).
+    /// Machines from before this meta have none and are paired by name.
+    #[serde(default)]
+    pub device_id: Option<String>,
 }
 
 /// One of the account's devices.
@@ -228,6 +238,23 @@ pub fn merge(input: &MachinesInput) -> Vec<MachineOut> {
         machine_of[d] = Some(m);
         taken[m] = true;
     }
+    // 1b. The device id the machine published: the stable link. A machine
+    // that has one is paired by it alone; the guesses below are only for
+    // machines that don't.
+    for (m, mach) in input.machines.iter().enumerate() {
+        let Some(id) = mach.device_id.as_deref().filter(|d| !d.is_empty()) else {
+            continue;
+        };
+        if taken[m] {
+            continue;
+        }
+        if let Some(d) = input.devices.iter().position(|dev| dev.id == id)
+            && machine_of[d].is_none()
+        {
+            machine_of[d] = Some(m);
+        }
+        taken[m] = true;
+    }
     // 3. The hostname it reported is the device's name.
     pair_unique(input, &mut machine_of, &mut taken, |m, d| {
         m.hostname
@@ -318,6 +345,10 @@ pub struct MachinesPageInput {
     /// The hostname each machine's cua-spacesd reported, by machine id.
     #[serde(default)]
     pub hostnames: std::collections::HashMap<String, String>,
+    /// The device each relay machine published as the one it runs on
+    /// (relay meta `cua.host.device`), by machine id.
+    #[serde(default)]
+    pub device_ids: std::collections::HashMap<String, String>,
     /// Whether the relay sees each machine connected now, by machine id.
     #[serde(default)]
     pub presence: std::collections::HashMap<String, bool>,
@@ -337,6 +368,7 @@ impl Default for MachinesPageInput {
             spaces: vec![],
             devices: vec![],
             hostnames: HashMap::new(),
+            device_ids: HashMap::new(),
             presence: HashMap::new(),
             now: 0,
         }
@@ -573,6 +605,9 @@ pub fn page_rows(input: &MachinesPageInput) -> Vec<MachinePageRow> {
         if let Some(h) = input.hostnames.get(&m.id).filter(|h| !h.is_empty()) {
             m.hostname = Some(h.clone());
         }
+        if let Some(d) = input.device_ids.get(&m.id).filter(|d| !d.is_empty()) {
+            m.device_id = Some(d.clone());
+        }
         if !m.current {
             m.presence = input.presence.get(&m.id).copied();
         }
@@ -771,6 +806,90 @@ mod tests {
         ));
         assert_eq!(rows.len(), 3);
         assert_eq!(rows[0].device, None);
+    }
+
+    fn linked(mut m: MachineIn, device: &str) -> MachineIn {
+        m.device_id = Some(device.into());
+        m
+    }
+
+    /// CUA-3746: two devices named alike (a device is named after its
+    /// hostname) are told apart by the id the machine published.
+    #[test]
+    fn two_devices_with_one_name_pair_by_the_machines_device_id() {
+        let name = "Francesco\u{2019}s MacBook Pro";
+        let devices = vec![device("dev_a", name), device("dev_b", name)];
+        // Names alone pair neither (each name matches both devices).
+        let guessed = merge(&input(vec![relay("m1", name, true)], devices.clone()));
+        assert_eq!(guessed.len(), 3);
+        assert!(guessed[0].device.is_none());
+        // With the link the machine takes exactly its own device; the other
+        // is a device of its own.
+        let rows = merge(&input(vec![linked(relay("m1", name, true), "dev_b")], devices));
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].device.as_deref(), Some("dev_b"));
+        assert_eq!(rows[1].id, "dev_a");
+        assert!(rows[1].device_only);
+    }
+
+    /// CUA-3746: remove and add again. While the machine row is gone its
+    /// devices are rows of their own; once it is back (its id survives the
+    /// removal, and so does the device it names) it takes its own device
+    /// back, never the other one with the same name.
+    #[test]
+    fn remove_and_add_again_keeps_one_row_per_computer() {
+        let name = "Francesco\u{2019}s MacBook Pro";
+        let devices = vec![device("dev_a", name), device("dev_b", name)];
+        let removed = merge(&input(vec![], devices.clone()));
+        assert_eq!(removed.len(), 2);
+        assert!(removed.iter().all(|r| r.device_only));
+        let added = merge(&input(vec![linked(relay("m1", name, true), "dev_a")], devices.clone()));
+        assert_eq!(added.len(), 2);
+        assert_eq!(added[0].id, "m1");
+        assert_eq!(added[0].device.as_deref(), Some("dev_a"));
+        assert_eq!(added[1].id, "dev_b");
+        // Renamed in between: still its own device.
+        let renamed = merge(&input(vec![linked(relay("m1", "Studio", true), "dev_a")], devices));
+        assert_eq!(renamed[0].device.as_deref(), Some("dev_a"));
+        assert_eq!(renamed.len(), 2);
+    }
+
+    /// A machine whose published device is not in the list (revoked, or not
+    /// read) does not take another device by name.
+    #[test]
+    fn a_linked_machine_never_guesses_another_device() {
+        let rows = merge(&input(
+            vec![linked(relay("m1", "box", true), "dev_gone")],
+            vec![device("dev_x", "box")],
+        ));
+        assert_eq!(rows.len(), 2);
+        assert!(rows[0].device.is_none());
+        assert!(rows[1].device_only);
+        // Without the link the old guess still pairs them.
+        let guessed = merge(&input(vec![relay("m1", "box", true)], vec![device("dev_x", "box")]));
+        assert_eq!(guessed.len(), 1);
+    }
+
+    #[test]
+    fn page_rows_read_the_device_id_by_machine_id() {
+        let name = "Mac";
+        let mut page = MachinesPageInput {
+            devices: vec![device("dev_a", name), device("dev_b", name)],
+            spaces: vec![],
+            ..Default::default()
+        };
+        page.spaces.push(
+            serde_json::from_value(serde_json::json!({
+                "id": "relay:m1", "name": name, "os": "macos", "status": "running",
+                "provider": "relay", "sdk": {"features": [], "spacesdVersion": "", "reachable": true}
+            }))
+            .unwrap(),
+        );
+        page.device_ids.insert("m1".into(), "dev_b".into());
+        let rows = page_rows(&page);
+        let m1 = rows.iter().find(|r| r.id == "m1").unwrap();
+        assert_eq!(m1.device.as_deref(), Some("dev_b"));
+        assert_eq!(rows.iter().filter(|r| r.device_only).count(), 1);
     }
 
     #[test]

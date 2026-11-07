@@ -65,7 +65,7 @@ pub use helper_migration::{ServiceMigration, VerifyTiming};
 pub use host::SetupStage;
 pub use host::{
     DirectHosting, Host, HostConfig, HostMode, HostPaths, HostPolicy, HostSettingsChange,
-    HostStatus, META_ARCH, META_CLOUD, META_OS, META_PHONE_FEED, META_PROVIDES_SPACES,
+    HostStatus, META_ARCH, META_CLOUD, META_DEVICE_ID, META_OS, META_PHONE_FEED, META_PROVIDES_SPACES,
     PendingRemoval, PermissionHint, RELAY_HICCUP_GRACE, RemovalAccount, SetupOptions,
     ShareEdgeJoin, SpacesDaemon, StaticRelay, default_provide_spaces, local_network_hint,
     permission_hints,

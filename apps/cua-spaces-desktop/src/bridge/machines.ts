@@ -71,6 +71,8 @@ export function machinesState(model: AppModel) {
     host: hostStatus(model),
     // So the page lists a machine and its enrolled device once.
     hostnames: relayHostnames(model),
+    // The device each machine published as the one it runs on: pairs it with its device by id.
+    deviceIds: devices.machineDeviceIds,
     // Who the relay sees connected now.
     presence: devices.relayOnline,
     deviceStates: devices.deviceStates,

@@ -454,6 +454,7 @@ pub fn app_host_state(status: cua_sdk::HostStatus) -> AppHostState {
         sharing: status.sharing,
         service_installed: status.service_installed,
         service_running: status.service_running,
+        service_log: status.service_log,
         service_kind: status.service_kind,
         online: status.online,
         clients: status

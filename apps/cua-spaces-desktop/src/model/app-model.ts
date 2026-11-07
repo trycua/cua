@@ -331,6 +331,7 @@ export class AppModel {
       spaces: this.spaces,
       devices,
       hostnames: new Map(Object.entries(this.relayHostnames)),
+      deviceIds: new Map(Object.entries(this.devices.machineDeviceIds)),
       presence: new Map(Object.entries(this.devices.relayOnline)),
       now: BigInt(Math.floor(Date.now() / 1000)),
     };

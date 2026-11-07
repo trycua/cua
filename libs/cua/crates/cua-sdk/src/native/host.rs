@@ -98,6 +98,10 @@ pub struct RelayMachine {
     /// It creates Spaces for its owner's devices, when it said so at
     /// registration (`None` from a host or relay that predates it).
     pub provides_spaces: Option<bool>,
+    /// The id of the device (`dev_…`) it runs on, as it published it at
+    /// registration: the stable link between this machine and the account's
+    /// device on the same computer (`None` from a host that predates it).
+    pub device_id: Option<String>,
 }
 
 impl From<cua_host::Machine> for RelayMachine {
@@ -121,6 +125,11 @@ impl From<cua_host::Machine> for RelayMachine {
                 .get(cua_host::META_PROVIDES_SPACES)
                 .map(|v| v == "on"),
             team: m.team.filter(|t| !t.trim().is_empty()),
+            device_id: m
+                .meta
+                .get(cua_host::META_DEVICE_ID)
+                .map(|d| d.trim().to_string())
+                .filter(|d| d.starts_with("dev_")),
         }
     }
 }
@@ -312,13 +321,21 @@ impl Relay {
 /// This device's session on the relay at `url`, when it is enrolled there
 /// (`None` otherwise: the relay then decides what it trusts).
 async fn own_device_session(url: &str) -> Option<String> {
+    own_device_auth(url)?.try_session().await
+}
+
+/// This device's key on the relay at `url`.
+fn own_device_auth(url: &str) -> Option<cua_host::DeviceAuth> {
     let session = Arc::new(cua_auth::Session::from_env());
     let store = session.store().clone();
     let tokens = Arc::new(SessionTokens(session));
-    cua_host::DeviceAuth::new(url, tokens, Arc::new(store), cua_host::device_name())
-        .ok()?
-        .try_session()
-        .await
+    cua_host::DeviceAuth::new(url, tokens, Arc::new(store), cua_host::device_name()).ok()
+}
+
+/// This device's id (`dev_…`), when it has a key: published in the machine's
+/// relay meta so clients pair the machine with it by id.
+fn own_device_id(url: &str) -> Option<String> {
+    own_device_auth(url)?.device_id().ok().flatten()
 }
 
 #[uniffi::export]
@@ -621,6 +638,10 @@ pub struct HostStatus {
     /// macOS: the old hand-written LaunchAgent is still there.
     #[uniffi(default = false)]
     pub legacy_service: bool,
+    /// The last lines of the service's log while it is set up but not
+    /// running (why it stopped).
+    #[uniffi(default = [])]
+    pub service_log: Vec<String>,
 }
 
 /// What [`Host::migrate_service`] did.
@@ -730,6 +751,7 @@ impl From<cua_host::HostStatus> for HostStatus {
             owner_email: s.owner_email,
             helper_available: s.helper_available,
             legacy_service: s.legacy_service,
+            service_log: s.service_log,
         }
     }
 }
@@ -855,6 +877,7 @@ impl Host {
                         (&opts.mode, account_token.as_ref())
                     {
                         opts.device_session = own_device_session(url).await;
+                        opts.device_id = own_device_id(url);
                     }
                     let host = cua_host::Host::new(home);
                     let staged = match account_token {
@@ -1529,7 +1552,18 @@ mod tests {
         let r = RelayMachine::from(m.clone());
         assert_eq!((r.team, r.provides_spaces), (None, Some(false)));
         m.meta.clear();
-        assert_eq!(RelayMachine::from(m).provides_spaces, None);
+        assert_eq!(RelayMachine::from(m.clone()).provides_spaces, None);
+        // The device it runs on, as it published it (CUA-3746).
+        assert_eq!(RelayMachine::from(m.clone()).device_id, None);
+        m.meta
+            .insert(cua_host::META_DEVICE_ID.into(), " dev_abc ".into());
+        assert_eq!(
+            RelayMachine::from(m.clone()).device_id.as_deref(),
+            Some("dev_abc")
+        );
+        m.meta
+            .insert(cua_host::META_DEVICE_ID.into(), "garbage".into());
+        assert_eq!(RelayMachine::from(m).device_id, None);
     }
 
     #[test]

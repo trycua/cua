@@ -146,6 +146,10 @@ export interface MachineRow extends SpaceHost {
   /** The hostname the machine's cua-spacesd reported, when the app
    * reached it (matches the device named after it). */
   hostname?: string;
+  /** The device (`dev_…`) the machine published as the one it runs on
+   * (relay meta `cua.host.device`): it is paired with that device by id,
+   * whatever either is named. Absent for a machine from before it. */
+  deviceId?: string;
   /** The relay sees the machine connected now; null or absent when the
    * host does not know. */
   presence?: boolean | null;
@@ -287,6 +291,8 @@ export interface MachinesViewIssue {
   /** One plain sentence. */
   text: string;
   action?: MachinesViewIssueAction | null;
+  /** Lines under the sentence, as they are (the service's last log lines). */
+  detail?: string[];
 }
 
 /** One machine's row and page (`machines_view::MachinesViewMachine`). */

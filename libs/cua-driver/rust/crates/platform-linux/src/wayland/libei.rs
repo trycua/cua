@@ -1366,18 +1366,25 @@ impl EisState {
             }
             return Ok((vec![TextStep::Utf8(text.into_owned())], Duration::ZERO));
         }
-        let keys = self
-            .keymap
-            .as_ref()
-            .ok_or_else(|| refused("the compositor announced no keyboard layout"))
-            .and_then(|map| plan_keys(&text, map, keyboard_now(self.keyboard, desktop, map)?));
         let ei_text = self.device_with_interface("ei_text").is_some();
-        if !ei_text || desktop.x11_app_may_have_focus || (text.contains('\n') && keys.is_ok()) {
-            let steps = keys?
-                .chunks(KEYS_PER_STEP)
-                .map(|keys| TextStep::Keys(keys.to_vec()))
-                .collect();
-            return Ok((steps, Duration::ZERO));
+        let keys_only = !ei_text || desktop.x11_app_may_have_focus;
+        if keys_only || text.contains('\n') {
+            // Return is a key too, so a line break needs a keyboard state keys can trust.
+            let (map, keyboard) = match &self.keymap {
+                Some(map) => (map, keyboard_now(self.keyboard, desktop, map)?),
+                None => return Err(refused("the compositor announced no keyboard layout")),
+            };
+            match plan_keys(&text, map, keyboard) {
+                Ok(keys) => {
+                    let steps = keys
+                        .chunks(KEYS_PER_STEP)
+                        .map(|keys| TextStep::Keys(keys.to_vec()))
+                        .collect();
+                    return Ok((steps, Duration::ZERO));
+                }
+                Err(refusal) if keys_only => return Err(refusal),
+                Err(_) => {}
+            }
         }
         Ok((text_parts(&text), PART_SETTLE))
     }
@@ -1652,14 +1659,17 @@ struct KeyboardState {
 /// The keyboard's state right now: what EIS last said or, when it has said
 /// nothing, what the compositor said when asked. A keymap with several layouts and
 /// no word on which is active is refused, since any guess can type wrong letters.
-/// So is a keyboard with no word on its modifier keys, since a held Shift turns
-/// `a` into `A` and `1` into `!`.
+/// So is a held or latched modifier key, or no word on them, since a held Shift
+/// turns `a` into `A`, `1` into `!` and Return into Shift+Return.
 fn keyboard_now(
     reported: Option<KeyboardState>,
     desktop: DesktopFacts,
     map: &xkb::Keymap,
 ) -> anyhow::Result<KeyboardState> {
     if let Some(keyboard) = reported {
+        if keyboard.depressed | keyboard.latched != 0 {
+            return Err(refused(MODIFIER_HELD));
+        }
         return Ok(keyboard);
     }
     let group = match desktop.active_layout {
@@ -1748,14 +1758,12 @@ fn typed_key(
 
 /// Resolve every character before any key is sent, so a string the keymap cannot
 /// produce right now is refused whole instead of arriving wrong or short.
+/// `keyboard` holds no modifier key: [`keyboard_now`] refuses one that does.
 fn plan_keys(
     text: &str,
     map: &xkb::Keymap,
     keyboard: KeyboardState,
 ) -> anyhow::Result<Vec<TypedKey>> {
-    if keyboard.depressed | keyboard.latched != 0 {
-        return Err(refused(MODIFIER_HELD));
-    }
     let chords = modifier_chords(map, keyboard.group);
     let mut known = HashMap::new();
     let mut plan = Vec::with_capacity(text.len());
@@ -2529,6 +2537,23 @@ mod typing_route_tests {
              set_value on the element, or clipboard_write and then hotkey ctrl+v; nothing was typed"
         );
         assert_eq!(events, [tap(A), tap(48)].concat());
+    }
+
+    #[test]
+    fn a_held_modifier_refuses_a_line_break_on_the_ei_text_route() {
+        let (result, events) = typed_with(
+            KeyboardState {
+                depressed: SHIFT_MASK,
+                ..KeyboardState::default()
+            },
+            "🙂\nb",
+            false,
+        );
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            format!("foreground_unavailable: {MODIFIER_HELD}; nothing was typed")
+        );
+        assert_eq!(events, []);
     }
 
     #[test]

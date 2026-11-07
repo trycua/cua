@@ -72,6 +72,23 @@ fn capture(driver: &mut McpDriver, pid: u32, window: &Value) -> [u8; 4] {
     image.get_pixel(image.width() / 2, image.height() / 2).0
 }
 
+/// Save the operator's KWin switch in the test driver's own home. The driver
+/// reads it on every call, as `cua-driver kwin-capture on|off` leaves it.
+fn set_kwin_capture(driver: &McpDriver, value: &str) {
+    let dir = driver
+        .state_root()
+        .expect("isolated driver home")
+        .join(".cua-driver");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("kwin-window-capture"), value).unwrap();
+}
+
+/// A capture that returned the tree with the typed soft refusal, no pixels.
+fn capture_unproven(response: &cua_driver_testkit::ToolResponse) -> bool {
+    !response.is_error()
+        && response.structured()["screenshot_error"]["code"] == "surface_identity_unproven"
+}
+
 /// A refusal with exactly this code: some routes report it as a structured
 /// field, others as the prefix of a generic tool failure.
 fn refused_with(response: &cua_driver_testkit::ToolResponse, code: &str) -> bool {
@@ -89,6 +106,7 @@ fn same_pid_same_title_windows_capture_exact_surfaces_without_a_helper() {
         &[("CUA_DRIVER_RS_ENABLE_WAYLAND", "1")],
     )
     .expect("exact-candidate Driver");
+    set_kwin_capture(&driver, "on");
     let python = std::env::var("CUA_KWIN_FIXTURE_PYTHON").unwrap_or_else(|_| "python3".into());
     let mut child = spawn_in_job(
         Command::new(python)
@@ -289,7 +307,7 @@ fn same_pid_same_title_windows_capture_exact_surfaces_without_a_helper() {
     assert_eq!(
         response.text(),
         format!(
-            "foreground_unavailable: KWin window {} no longer exists or belongs to another process",
+            "foreground_unavailable: window {} no longer exists or belongs to another process",
             covered["window_id"]
         )
     );
@@ -314,11 +332,7 @@ fn same_pid_same_title_windows_capture_exact_surfaces_without_a_helper() {
     let closed = driver.call("get_window_state", json!({
         "pid": pid, "window_id": windows[first]["window_id"], "include_accessibility_tree": false,
     }));
-    assert!(
-        closed.is_error() && closed.text().ends_with("KWin window no longer exists"),
-        "{}",
-        closed.text()
-    );
+    assert!(capture_unproven(&closed), "{}", closed.text());
     let remaining = driver.call("list_windows", json!({"pid": pid}));
     assert_eq!(
         remaining.structured()["windows"].as_array().unwrap().len(),
@@ -344,6 +358,18 @@ fn same_pid_same_title_windows_capture_exact_surfaces_without_a_helper() {
         std::thread::sleep(Duration::from_millis(100));
     };
     assert_eq!(resized["window_id"], windows[1 - first]["window_id"]);
+    assert_eq!(capture(&mut driver, pid, &resized), [0, 0, 255, 255]);
+    // Off from the very next call, and back on, with no restart: off is the
+    // driver without this adapter, so the listed window can't be captured.
+    set_kwin_capture(&driver, "off");
+    let off = driver.call(
+        "get_window_state",
+        json!({
+            "pid": pid, "window_id": resized["window_id"], "include_accessibility_tree": false,
+        }),
+    );
+    assert!(capture_unproven(&off), "{}", off.text());
+    set_kwin_capture(&driver, "on");
     assert_eq!(capture(&mut driver, pid, &resized), [0, 0, 255, 255]);
     writeln!(input, "minimize-second").unwrap();
     let deadline = Instant::now() + Duration::from_secs(5);

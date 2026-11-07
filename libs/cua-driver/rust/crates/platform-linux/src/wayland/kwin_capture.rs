@@ -275,13 +275,19 @@ fn desktop_may_be_kde(desktop: Option<&str>) -> bool {
     })
 }
 
+/// A KWin handle the adapter may act on: listed by it, and still switched on.
+/// Once switched off, its handles are unknown ids, as on any other route.
 pub(crate) fn knows_window(window_id: u64) -> bool {
+    listed(window_id) && super::kwin_access::allowed()
+}
+
+fn listed(window_id: u64) -> bool {
     ids()
         .lock()
         .is_ok_and(|ids| ids.uuid_for(window_id).is_some())
 }
 
-fn run<T: Send + 'static>(
+pub(super) fn run<T: Send + 'static>(
     work: impl std::future::Future<Output = anyhow::Result<T>> + Send + 'static,
 ) -> anyhow::Result<T> {
     // Window inspection also calls this from Tokio tasks; a separate thread avoids a nested runtime.
@@ -481,7 +487,7 @@ pub fn activate(window_id: u64, pid: Option<u32>) -> anyhow::Result<()> {
         list_windows()?
             .iter()
             .any(|window| window.xid == window_id && pid.is_none_or(|pid| window.pid == Some(pid))),
-        "foreground_unavailable: KWin window {window_id} no longer exists or belongs to another process"
+        "foreground_unavailable: window {window_id} no longer exists or belongs to another process"
     );
     let plasma = Plasma::connect(Connection::connect_to_env()?)
         .context("foreground_unavailable: KWin window management protocol unavailable")?;
@@ -788,17 +794,17 @@ mod tests {
     }
 
     #[test]
-    fn raw_input_at_a_kwin_handle_is_refused_without_touching_the_window() {
+    fn raw_input_at_a_kwin_handle_gets_the_refusal_any_compositor_gives() {
         // Global input after activating would reach whatever holds focus when it
-        // lands. This connects to nothing: the refusal is not about reachability.
+        // lands, so a KWin handle is refused like one with no activation adapter.
         let window = ids().lock().unwrap().id_for("raw-input-refusal").unwrap();
+        assert!(listed(window));
         assert_eq!(
-            crate::wayland::activate_window_for_input_target(window, Some(1))
-                .unwrap_err()
-                .to_string(),
+            super::super::no_input_activation(window).to_string(),
             format!(
-                "foreground_unavailable: KWin input is focus-bound, so window {window} cannot be \
-                 targeted: focus could move before the input lands; no global input was sent"
+                "foreground_unavailable: this Wayland compositor does not expose a verified, \
+                 target-addressable activation adapter for window {window}; refusing global \
+                 input because it could affect the wrong application"
             )
         );
     }

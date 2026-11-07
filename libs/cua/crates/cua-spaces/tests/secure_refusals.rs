@@ -1,13 +1,13 @@
-//! What Secure Spaces refuses, with the exact words, and that the refusals
-//! only apply while the experiment is on. One test, because the experiment
-//! switch is process-wide.
+//! What the secure default refuses, with the exact words, and that the refusals of the new
+//! settings apply only while the operator override `CUA_SECURE_DEFAULT=0` is not set. One test,
+//! because the held mode is process-wide.
 
 use cua_spaces::Error;
 use cua_spaces::network::{
     NetworkPreset, NetworkSettings, parse_network, refuse_exit_by_agent, require_secure_spaces,
     with_via,
 };
-use cua_vmm::experiments::{Gate, set_enabled};
+use cua_vmm::network::{Mode, hold_mode, secure_default_off_message};
 
 fn message(e: Error) -> String {
     e.to_string()
@@ -16,7 +16,7 @@ fn message(e: Error) -> String {
 }
 
 #[test]
-fn the_refusals_say_what_to_do_and_apply_only_when_the_experiment_is_on() {
+fn the_refusals_say_what_to_do_and_apply_unless_the_operator_turned_the_secure_default_off() {
     // An agent may not choose this computer or a proxy as a Space's exit.
     let current = NetworkSettings::internet();
     for word in ["this-computer", "socks5://proxy.example:1080"] {
@@ -36,9 +36,9 @@ fn the_refusals_say_what_to_do_and_apply_only_when_the_experiment_is_on() {
     let space = with_via(NetworkSettings::internet(), "space:gateway").unwrap();
     assert!(refuse_exit_by_agent(&space, Some(&current)).is_ok());
 
-    // Without the experiment, the new settings are refused with how to turn it on.
-    set_enabled(Gate::SecureSpaces, Some(false));
-    let off = Gate::SecureSpaces.off_message();
+    // Under the operator override, the new settings are refused and say so.
+    let held = hold_mode(Mode::Legacy);
+    let off = secure_default_off_message();
     let by_name = parse_network("internet", &["pypi.org".into()], &[]).unwrap();
     for (what, settings) in [
         ("a name rule", by_name),
@@ -54,11 +54,11 @@ fn the_refusals_say_what_to_do_and_apply_only_when_the_experiment_is_on() {
     // The old lists and `none` still work.
     assert!(require_secure_spaces(Some(&NetworkSettings::internet())).is_ok());
     assert!(require_secure_spaces(Some(&NetworkSettings::none())).is_ok());
-    // The hotspot call keeps its old shape without the experiment.
+    // The hotspot call keeps its old shape under the override.
     assert!(cua_spaces::hotspot::require_confirmed(None).is_ok());
 
-    // With it, the same are accepted, and a hotspot start needs the user's yes.
-    set_enabled(Gate::SecureSpaces, Some(true));
+    // By default, the same are accepted, and a hotspot start needs the user's yes.
+    drop(held);
     let lan = NetworkSettings::preset(NetworkPreset::Lan);
     assert!(require_secure_spaces(Some(&lan)).is_ok());
     let e = cua_spaces::hotspot::require_confirmed(None).unwrap_err();
@@ -70,5 +70,4 @@ fn the_refusals_say_what_to_do_and_apply_only_when_the_experiment_is_on() {
     );
     assert!(cua_spaces::hotspot::require_confirmed(Some(false)).is_err());
     assert!(cua_spaces::hotspot::require_confirmed(Some(true)).is_ok());
-    set_enabled(Gate::SecureSpaces, None);
 }

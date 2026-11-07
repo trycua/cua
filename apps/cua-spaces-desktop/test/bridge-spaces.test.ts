@@ -376,32 +376,18 @@ describe.skipIf(!built)("a Space's detail, files, sharing and clouds on the app 
       expect(calls).toEqual([]);
     });
 
-    it("lights the hotspot for Spaces that exit through this computer, only while Secure Spaces is on", async () => {
+    it("lights the hotspot for Spaces that exit through this computer", async () => {
       const feed = { setSpaces: () => {}, setShown: () => {}, setKeyvault: () => {}, setPinned: () => {}, setActivity: () => {} };
       const settle = () => new Promise((r) => setTimeout(r, 0));
       backend.exitsNow = ["local:aurora"];
-      // Off (the default): the backend is not even asked.
       const asked = backend.exitsThroughThisMachine.bind(backend);
       let reads = 0;
       backend.exitsThroughThisMachine = async () => (reads++, asked());
       feedNotch(feed, model)();
       await settle();
-      expect(reads).toBe(0);
-      expect(model.activity.hotspot).toBe(false);
-      // On: the hotspot shows, and its Spaces are kept.
-      model.settings = { ...model.settings, experiments: { ...model.settings.experiments, secureSpaces: true } };
-      model.saveSettings();
-      feedNotch(feed, model)();
-      await settle();
       expect(reads).toBe(1);
       expect(model.activity.hotspot).toBe(true);
       expect(model.activity.exitSpaces).toEqual(["local:aurora"]);
-      // Off again: it goes out.
-      model.settings = { ...model.settings, experiments: { ...model.settings.experiments, secureSpaces: false } };
-      model.saveSettings();
-      feedNotch(feed, model)();
-      await settle();
-      expect(model.activity.hotspot).toBe(false);
     });
 
     it("gives a tile the store's thumbnail, no older than the open interval", async () => {

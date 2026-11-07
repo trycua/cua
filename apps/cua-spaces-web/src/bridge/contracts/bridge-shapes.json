@@ -2299,13 +2299,7 @@
         "cuaVolume": {
           "type": "boolean"
         },
-        "secureSpaces": {
-          "type": "boolean"
-        },
         "childSpaces": {
-          "type": "boolean"
-        },
-        "askFirst": {
           "type": "boolean"
         },
         "ciRunners": {

@@ -194,9 +194,7 @@ async function checkStorage(page: Page, checkpoints: ParityCheckpoint[]): Promis
 /** Advanced keeps Labs: a switch for every experiment, on or off. Sharing, Your cloud and the New UI have no switch. */
 const LABS: Record<string, { label?: string; note: string }> = {
   "experiment:cua_volume": { note: "Memory and files your agents share across every Space." },
-  "experiment:secure_spaces": { note: "A Space reaches the internet and nothing else on your network unless you open it." },
   "experiment:child_spaces": { note: "A Space can make Spaces of its own, inside a budget you set." },
-  "experiment:ask_first": { note: "An agent asks you on a card before anything leaves its Space, such as a push to GitHub." },
   "experiment:ci_runners": { note: "Run GitHub Actions jobs in a fresh Space each, on this computer. Adds CI Runners to the sidebar." },
   "experiment:tcp_shares": { note: "Share a game server or another TCP service in a Space at a public address." },
   "experiment:mobile": { note: "Your computers answer the Cua Spaces phone app: start a task, follow the thread and review changes." },

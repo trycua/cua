@@ -48159,6 +48159,14 @@ data class SpaceWindow (
      * Why not.
      */
     var `limitation`: kotlin.String
+    ,
+    /**
+     * Where the picture comes from when another Space shows this window
+     * here (`stream_space_window`); `None` for the Space's own windows.
+     * Open it like any window: [`Space::open_stream`] with its `window_id`
+     * streams it straight from the origin when you may reach it.
+     */
+    var `origin`: SpaceWindowOrigin? = null
 
 ){
 
@@ -48186,6 +48194,7 @@ public object FfiConverterTypeSpaceWindow: FfiConverterRustBuffer<SpaceWindow> {
             FfiConverterBoolean.read(buf),
             FfiConverterBoolean.read(buf),
             FfiConverterString.read(buf),
+            FfiConverterOptionalTypeSpaceWindowOrigin.read(buf),
         )
     }
 
@@ -48200,7 +48209,8 @@ public object FfiConverterTypeSpaceWindow: FfiConverterRustBuffer<SpaceWindow> {
             FfiConverterBoolean.allocationSize(value.`onScreen`) +
             FfiConverterBoolean.allocationSize(value.`focused`) +
             FfiConverterBoolean.allocationSize(value.`available`) +
-            FfiConverterString.allocationSize(value.`limitation`)
+            FfiConverterString.allocationSize(value.`limitation`) +
+            FfiConverterOptionalTypeSpaceWindowOrigin.allocationSize(value.`origin`)
     )
 
     override fun write(value: SpaceWindow, buf: ByteBuffer) {
@@ -48215,6 +48225,70 @@ public object FfiConverterTypeSpaceWindow: FfiConverterRustBuffer<SpaceWindow> {
             FfiConverterBoolean.write(value.`focused`, buf)
             FfiConverterBoolean.write(value.`available`, buf)
             FfiConverterString.write(value.`limitation`, buf)
+            FfiConverterOptionalTypeSpaceWindowOrigin.write(value.`origin`, buf)
+    }
+}
+
+
+
+/**
+ * The Space a window row's picture comes from ([`SpaceWindow::origin`]).
+ */
+data class SpaceWindowOrigin (
+    /**
+     * The origin Space (canonical id).
+     */
+    var `spaceId`: kotlin.String
+    ,
+    /**
+     * Its name.
+     */
+    var `name`: kotlin.String
+    ,
+    /**
+     * Its OS (`macos`, `linux`, `windows`, or empty).
+     */
+    var `os`: kotlin.String
+    ,
+    /**
+     * The window's handle in the origin.
+     */
+    var `windowId`: kotlin.String
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeSpaceWindowOrigin: FfiConverterRustBuffer<SpaceWindowOrigin> {
+    override fun read(buf: ByteBuffer): SpaceWindowOrigin {
+        return SpaceWindowOrigin(
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: SpaceWindowOrigin) = (
+            FfiConverterString.allocationSize(value.`spaceId`) +
+            FfiConverterString.allocationSize(value.`name`) +
+            FfiConverterString.allocationSize(value.`os`) +
+            FfiConverterString.allocationSize(value.`windowId`)
+    )
+
+    override fun write(value: SpaceWindowOrigin, buf: ByteBuffer) {
+            FfiConverterString.write(value.`spaceId`, buf)
+            FfiConverterString.write(value.`name`, buf)
+            FfiConverterString.write(value.`os`, buf)
+            FfiConverterString.write(value.`windowId`, buf)
     }
 }
 
@@ -54294,6 +54368,38 @@ public object FfiConverterOptionalTypeSpaceSharing: FfiConverterRustBuffer<Space
         } else {
             buf.put(1)
             FfiConverterTypeSpaceSharing.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterOptionalTypeSpaceWindowOrigin: FfiConverterRustBuffer<SpaceWindowOrigin?> {
+    override fun read(buf: ByteBuffer): SpaceWindowOrigin? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterTypeSpaceWindowOrigin.read(buf)
+    }
+
+    override fun allocationSize(value: SpaceWindowOrigin?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterTypeSpaceWindowOrigin.allocationSize(value)
+        }
+    }
+
+    override fun write(value: SpaceWindowOrigin?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterTypeSpaceWindowOrigin.write(value, buf)
         }
     }
 }

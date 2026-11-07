@@ -43612,6 +43612,13 @@ public struct SpaceWindow: Equatable, Hashable {
      * Why not.
      */
     public var limitation: String
+    /**
+     * Where the picture comes from when another Space shows this window
+     * here (`stream_space_window`); `None` for the Space's own windows.
+     * Open it like any window: [`Space::open_stream`] with its `window_id`
+     * streams it straight from the origin when you may reach it.
+     */
+    public var origin: SpaceWindowOrigin?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -43648,7 +43655,13 @@ public struct SpaceWindow: Equatable, Hashable {
          */available: Bool,
         /**
          * Why not.
-         */limitation: String) {
+         */limitation: String,
+        /**
+         * Where the picture comes from when another Space shows this window
+         * here (`stream_space_window`); `None` for the Space's own windows.
+         * Open it like any window: [`Space::open_stream`] with its `window_id`
+         * streams it straight from the origin when you may reach it.
+         */origin: SpaceWindowOrigin? = nil) {
         self.windowId = windowId
         self.epoch = epoch
         self.title = title
@@ -43660,6 +43673,7 @@ public struct SpaceWindow: Equatable, Hashable {
         self.focused = focused
         self.available = available
         self.limitation = limitation
+        self.origin = origin
     }
 
 
@@ -43688,7 +43702,8 @@ public struct FfiConverterTypeSpaceWindow: FfiConverterRustBuffer {
                 onScreen: FfiConverterBool.read(from: &buf),
                 focused: FfiConverterBool.read(from: &buf),
                 available: FfiConverterBool.read(from: &buf),
-                limitation: FfiConverterString.read(from: &buf)
+                limitation: FfiConverterString.read(from: &buf),
+                origin: FfiConverterOptionTypeSpaceWindowOrigin.read(from: &buf)
         )
     }
 
@@ -43704,6 +43719,7 @@ public struct FfiConverterTypeSpaceWindow: FfiConverterRustBuffer {
         FfiConverterBool.write(value.focused, into: &buf)
         FfiConverterBool.write(value.available, into: &buf)
         FfiConverterString.write(value.limitation, into: &buf)
+        FfiConverterOptionTypeSpaceWindowOrigin.write(value.origin, into: &buf)
     }
 }
 
@@ -43720,6 +43736,95 @@ public func FfiConverterTypeSpaceWindow_lift(_ buf: RustBuffer) throws -> SpaceW
 #endif
 public func FfiConverterTypeSpaceWindow_lower(_ value: SpaceWindow) -> RustBuffer {
     return FfiConverterTypeSpaceWindow.lower(value)
+}
+
+
+/**
+ * The Space a window row's picture comes from ([`SpaceWindow::origin`]).
+ */
+public struct SpaceWindowOrigin: Equatable, Hashable {
+    /**
+     * The origin Space (canonical id).
+     */
+    public var spaceId: String
+    /**
+     * Its name.
+     */
+    public var name: String
+    /**
+     * Its OS (`macos`, `linux`, `windows`, or empty).
+     */
+    public var os: String
+    /**
+     * The window's handle in the origin.
+     */
+    public var windowId: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The origin Space (canonical id).
+         */spaceId: String,
+        /**
+         * Its name.
+         */name: String,
+        /**
+         * Its OS (`macos`, `linux`, `windows`, or empty).
+         */os: String,
+        /**
+         * The window's handle in the origin.
+         */windowId: String) {
+        self.spaceId = spaceId
+        self.name = name
+        self.os = os
+        self.windowId = windowId
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension SpaceWindowOrigin: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSpaceWindowOrigin: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SpaceWindowOrigin {
+        return
+            try SpaceWindowOrigin(
+                spaceId: FfiConverterString.read(from: &buf),
+                name: FfiConverterString.read(from: &buf),
+                os: FfiConverterString.read(from: &buf),
+                windowId: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: SpaceWindowOrigin, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.spaceId, into: &buf)
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterString.write(value.os, into: &buf)
+        FfiConverterString.write(value.windowId, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSpaceWindowOrigin_lift(_ buf: RustBuffer) throws -> SpaceWindowOrigin {
+    return try FfiConverterTypeSpaceWindowOrigin.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSpaceWindowOrigin_lower(_ value: SpaceWindowOrigin) -> RustBuffer {
+    return FfiConverterTypeSpaceWindowOrigin.lower(value)
 }
 
 
@@ -50511,6 +50616,30 @@ fileprivate struct FfiConverterOptionTypeSpaceSharing: FfiConverterRustBuffer {
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeSpaceSharing.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeSpaceWindowOrigin: FfiConverterRustBuffer {
+    typealias SwiftType = SpaceWindowOrigin?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeSpaceWindowOrigin.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeSpaceWindowOrigin.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }

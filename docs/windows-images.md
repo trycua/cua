@@ -191,7 +191,7 @@ the real Cua Spaces Local app:
   36 s and 40 s, the second while the first was running).
 * In the guest, through cua-spacesd: `cua sb screenshot`, `cua sb exec` (cmd.exe), `cua do click/type/key`
   (Notepad opened from the Start menu and typed into), and the stream and window list in the app.
-* Cancelling a create (`cua spaces cancel`, the app's Cancel) stops the install VM and its TPM within seconds
+* Cancelling a create (`cua spaces cancel`, the call the app's Cancel makes) stops the install VM and its TPM within seconds
   and releases the build lock.
 * `--runtime auto`: ARM64 Windows on Apple silicon runs QEMU with HVF (`auto::select` unit test; the real
   runs). x64 Windows there is refused in plain words with the way out, in the New Space dialog, `cua sb

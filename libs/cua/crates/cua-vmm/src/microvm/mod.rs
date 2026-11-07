@@ -49,6 +49,7 @@
 pub mod agent;
 pub mod assets;
 pub mod fcapi;
+pub mod qmp;
 pub mod rootfs;
 pub mod vz;
 pub mod whpx;
@@ -155,7 +156,8 @@ impl Vmm {
 enum Ctl {
     Fc(FcApi),
     Vz(VzApi),
-    Qemu,
+    /// QEMU: its QMP socket (`stop` and `cont` pause and resume the CPUs).
+    Qemu(PathBuf),
 }
 
 impl Ctl {
@@ -163,7 +165,9 @@ impl Ctl {
         match self {
             Ctl::Fc(a) => a.pause().await,
             Ctl::Vz(a) => a.pause().await,
-            Ctl::Qemu => Err(qemu_unsupported("pause")),
+            Ctl::Qemu(p) => qmp::command(p, "stop", json!({}), Duration::from_secs(20))
+                .await
+                .map(drop),
         }
     }
 
@@ -171,12 +175,17 @@ impl Ctl {
         match self {
             Ctl::Fc(a) => a.resume().await,
             Ctl::Vz(a) => a.resume().await,
-            Ctl::Qemu => Err(qemu_unsupported("resume")),
+            Ctl::Qemu(p) => qmp::command(p, "cont", json!({}), Duration::from_secs(20))
+                .await
+                .map(drop),
         }
     }
 }
 
-/// What a QEMU microVM (Windows) does not do.
+/// What a QEMU microVM (Windows) does not do: save memory. QEMU's WHPX
+/// accelerator blocks migration ("missing dirty memory tracking support"), so
+/// there is no snapshot of a running VM's memory, and so no warm start, warm
+/// pool or memory fork; a checkpoint is the disk, and a fork boots from it.
 fn qemu_unsupported(op: &'static str) -> VmmError {
     VmmError::Unsupported {
         backend: "microvm (QEMU on Windows)",
@@ -322,6 +331,9 @@ pub struct VmState {
     pub agent_port: Option<u16>,
     #[serde(default)]
     pub agent_key: Option<String>,
+    /// QEMU (Windows): the VM's QMP socket (`unix:`), under its run directory.
+    #[serde(default)]
+    pub qmp_sock: Option<PathBuf>,
     /// A snapshot directory the next start restores (a fork).
     #[serde(default)]
     pub restore_from: Option<PathBuf>,
@@ -592,6 +604,8 @@ struct QemuLaunch<'a> {
     agent_key: &'a str,
     /// No network at all (published ports still work).
     no_network: bool,
+    /// The QMP socket QEMU listens on.
+    qmp_sock: &'a Path,
 }
 
 /// QEMU's arguments for one microVM: `q35` on WHPX (hardware acceleration
@@ -644,7 +658,12 @@ fn qemu_args(l: &QemuLaunch<'_>) -> Vec<String> {
         a("-device"),
         a("virtio-blk-pci,drive=base"),
         a("-drive"),
-        format!("id=scratch,file={},format=raw,if=none", l.scratch.display()),
+        // A qcow2 image backed by the shared template: a new VM's disk is a few
+        // hundred KiB, and a checkpoint or fork is a copy of what changed.
+        format!(
+            "id=scratch,file={},format=qcow2,if=none",
+            l.scratch.display()
+        ),
         a("-device"),
         a("virtio-blk-pci,drive=scratch"),
         a("-netdev"),
@@ -653,6 +672,8 @@ fn qemu_args(l: &QemuLaunch<'_>) -> Vec<String> {
         a("virtio-net-pci,netdev=n0"),
         a("-device"),
         a("virtio-rng-pci"),
+        a("-qmp"),
+        format!("unix:{},server=on,wait=off", l.qmp_sock.display()),
     ]
 }
 
@@ -985,6 +1006,30 @@ impl MicroVmRuntime {
         let Ok(rd) = std::fs::read_dir(self.instances()) else {
             return vec![];
         };
+        if self.cfg.vmm == Vmm::Qemu {
+            // Retired pool members' directories (a claim moved their files by
+            // hard link): removed once their VM no longer holds them.
+            for e in std::fs::read_dir(self.instances())
+                .into_iter()
+                .flatten()
+                .flatten()
+            {
+                let dir = e.path();
+                if dir.join("retired").is_file() {
+                    // Everything but the marker first: a file still open stays,
+                    // and the marker with it, for the next look.
+                    let mut gone = true;
+                    for f in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
+                        if f.file_name() != "retired" && std::fs::remove_file(f.path()).is_err() {
+                            gone = false;
+                        }
+                    }
+                    if gone {
+                        let _ = std::fs::remove_dir_all(&dir);
+                    }
+                }
+            }
+        }
         let mut v: Vec<VmState> = rd
             .flatten()
             .filter_map(|e| self.load(&e.file_name().to_string_lossy()).ok())
@@ -1086,7 +1131,12 @@ impl MicroVmRuntime {
         match self.cfg.vmm {
             Vmm::Firecracker => Ctl::Fc(self.api(name)),
             Vmm::Vz => Ctl::Vz(self.vz_api(name)),
-            Vmm::Qemu => Ctl::Qemu,
+            Vmm::Qemu => Ctl::Qemu(
+                self.load(name)
+                    .ok()
+                    .and_then(|s| s.qmp_sock)
+                    .unwrap_or_default(),
+            ),
         }
     }
 
@@ -1319,6 +1369,141 @@ impl MicroVmRuntime {
         Ok(p)
     }
 
+    /// The shared, read-only 1 GiB formatted ext4 every QEMU microVM's scratch
+    /// disk is backed by (written once, sparse).
+    async fn qemu_template(&self) -> Result<PathBuf> {
+        let t = self.cfg.root.join("templates").join("scratch-1g.raw");
+        if t.is_file() {
+            return Ok(t);
+        }
+        let lock = self.lock_for("tmpl:qemu");
+        let _g = lock.lock().await;
+        if !t.is_file() {
+            std::fs::create_dir_all(t.parent().unwrap_or(&self.cfg.root))?;
+            let to = t.clone();
+            tokio::task::spawn_blocking(move || {
+                rootfs::expand_template(rootfs::SCRATCH_TEMPLATE, &to, 1 << 30)
+            })
+            .await
+            .map_err(|e| VmmError::other(e.to_string()))??;
+        }
+        Ok(t)
+    }
+
+    /// A scratch disk for a QEMU microVM: a qcow2 image of `gib` GiB over
+    /// [`Self::qemu_template`] (the guest init grows its ext4 to the size).
+    async fn fresh_scratch_qcow2(&self, dest: &Path, gib: u32) -> Result<()> {
+        let tmpl = self.qemu_template().await?;
+        let img = whpx::qemu_img_bin().ok_or_else(whpx::qemu_missing)?;
+        let partial = dest.with_extension("partial");
+        let _ = std::fs::remove_file(&partial);
+        let out = tokio::process::Command::new(img)
+            .args(["create", "-q", "-f", "qcow2", "-b"])
+            .arg(&tmpl)
+            .args(["-F", "raw"])
+            .arg(&partial)
+            .arg(format!("{}G", gib.max(1)))
+            .stdin(std::process::Stdio::null())
+            .output()
+            .await?;
+        if !out.status.success() {
+            return Err(VmmError::Command {
+                cmd: "qemu-img create".into(),
+                code: out.status.code(),
+                stderr: String::from_utf8_lossy(&out.stderr).trim().to_string(),
+            });
+        }
+        std::fs::rename(&partial, dest)?;
+        Ok(())
+    }
+
+    /// Copies a VM's scratch disk: a plain copy of the qcow2 file for QEMU (it
+    /// holds only what the VM changed, over the shared template), a sparse
+    /// copy of the ext4 image otherwise.
+    async fn copy_scratch(&self, from: &Path, to: &Path) -> Result<()> {
+        if self.cfg.vmm == Vmm::Qemu {
+            let partial = to.with_extension("partial");
+            tokio::fs::copy(from, &partial).await?;
+            tokio::fs::rename(&partial, to).await?;
+            return Ok(());
+        }
+        rootfs::copy_sparse(from, to).await
+    }
+
+    /// A disk-only snapshot of running QEMU VM `st` into `target` (its
+    /// scratch disk and `meta.json`, `memory` false: a fork boots it cold).
+    /// The guest flushes, the CPUs stop while `qemu-img convert` writes what
+    /// the disk holds over the template, and they run again.
+    async fn snapshot_to_qemu(&self, st: &VmState, target: &Path, meta_name: &str) -> Result<()> {
+        let img = whpx::qemu_img_bin().ok_or_else(whpx::qemu_missing)?;
+        let tmpl = self.qemu_template().await?;
+        let agent = self.agent(&st.name);
+        let ctl = self.ctl(&st.name);
+        let partial = target.with_extension(format!("partial-{}", random_hex(4)));
+        let _ = std::fs::remove_dir_all(&partial);
+        std::fs::create_dir_all(&partial)?;
+        let started = std::time::Instant::now();
+        if !st.paused {
+            let _ = agent.request(&Request::Sync, Duration::from_secs(20)).await;
+        }
+        let t_sync = started.elapsed();
+        let was_paused = st.paused;
+        if !was_paused {
+            ctl.pause().await?;
+        }
+        let snap = async {
+            // `-U`: QEMU holds the image open; stopped CPUs mean flushed and quiet.
+            let out = tokio::process::Command::new(&img)
+                .args(["convert", "-q", "-U", "-f", "qcow2", "-O", "qcow2", "-B"])
+                .arg(&tmpl)
+                .args(["-F", "raw"])
+                .arg(self.dir(&st.name).join("scratch.ext4"))
+                .arg(partial.join("scratch.ext4"))
+                .stdin(std::process::Stdio::null())
+                .output()
+                .await?;
+            if !out.status.success() {
+                return Err(VmmError::Command {
+                    cmd: "qemu-img convert".into(),
+                    code: out.status.code(),
+                    stderr: String::from_utf8_lossy(&out.stderr).trim().to_string(),
+                });
+            }
+            Ok::<_, VmmError>(())
+        }
+        .await;
+        let t_paused = started.elapsed();
+        if !was_paused {
+            ctl.resume().await?;
+        }
+        if let Err(e) = snap {
+            let _ = std::fs::remove_dir_all(&partial);
+            return Err(e);
+        }
+        tracing::info!(
+            name = st.name,
+            sync_ms = t_sync.as_millis() as u64,
+            paused_ms = (t_paused - t_sync).as_millis() as u64,
+            "microVM disk snapshot"
+        );
+        std::fs::write(
+            partial.join("meta.json"),
+            serde_json::to_vec_pretty(&self.meta_of(st, meta_name, false))?,
+        )?;
+        if target.join("meta.json").is_file() {
+            let _ = std::fs::remove_dir_all(&partial);
+            return Ok(());
+        }
+        let _ = std::fs::remove_dir_all(target);
+        if let Err(e) = std::fs::rename(&partial, target) {
+            let _ = std::fs::remove_dir_all(&partial);
+            if !target.join("meta.json").is_file() {
+                return Err(e.into());
+            }
+        }
+        Ok(())
+    }
+
     /// What a QEMU microVM needs first: WHPX, QEMU and its version (before
     /// anything downloads), each with what to do about it.
     fn check_whpx(&self) -> Result<()> {
@@ -1326,14 +1511,17 @@ impl MicroVmRuntime {
         if let Some(why) = whpx::unsupported_reason(&w) {
             return Err(VmmError::other(why));
         }
-        let qemu = whpx::qemu_bin().ok_or_else(whpx::qemu_missing)?;
-        let _ = qemu;
+        whpx::qemu_bin().ok_or_else(whpx::qemu_missing)?;
+        whpx::qemu_img_bin().ok_or_else(whpx::qemu_missing)?;
         Ok(())
     }
 
     /// A fresh scratch disk at `dest` (a sparse copy of a formatted
     /// template).
     async fn fresh_scratch(&self, dest: &Path, gib: u32) -> Result<()> {
+        if self.cfg.vmm == Vmm::Qemu {
+            return self.fresh_scratch_qcow2(dest, gib).await;
+        }
         if self.cfg.vmm != Vmm::Firecracker {
             // No mkfs.ext4 here: a small formatted ext4 in a file of the
             // asked size, which the guest init grows at boot.
@@ -1387,6 +1575,11 @@ impl MicroVmRuntime {
             .ok_or_else(|| VmmError::other("no free loopback port"))?;
         st.host_ports = st.ports.iter().copied().zip(host_ports).collect();
         let key = random_hex(16);
+        // A short socket path (a Unix socket path holds 107 bytes): the run directory.
+        let sock_id = random_hex(4);
+        let run = self.run_dir(&sock_id);
+        std::fs::create_dir_all(&run)?;
+        let qmp_sock = run.join("q.sock");
         let args = qemu_args(&QemuLaunch {
             name: &st.name,
             cpus: st.cpus,
@@ -1400,6 +1593,7 @@ impl MicroVmRuntime {
             agent_host_port: agent_port,
             agent_key: &key,
             no_network: st.restrict_network,
+            qmp_sock: &qmp_sock,
         });
         let log = std::fs::OpenOptions::new()
             .create(true)
@@ -1421,6 +1615,8 @@ impl MicroVmRuntime {
         st.pasta_pid = None;
         st.agent_port = Some(agent_port);
         st.agent_key = Some(key);
+        st.qmp_sock = Some(qmp_sock);
+        st.sock_id = Some(sock_id);
         st.paused = false;
         // Reap it whenever it exits (the VM outlives this handle).
         tokio::spawn(async move {
@@ -2554,6 +2750,7 @@ impl MicroVmRuntime {
             sock_id: None,
             agent_port: None,
             agent_key: None,
+            qmp_sock: None,
             paused: false,
             restore_from: None,
             source: Some(meta.name.clone()),
@@ -2821,6 +3018,7 @@ impl Runtime for MicroVmRuntime {
             sock_id: None,
             agent_port: None,
             agent_key: None,
+            qmp_sock: None,
             paused: false,
             restore_from: None,
             source: Some(reference),
@@ -2953,9 +3151,25 @@ impl Runtime for MicroVmRuntime {
             if self.dir(new_name).exists() {
                 return Err(VmmError::AlreadyExists(new_name.into()));
             }
-            // The VMM's working directory, sockets and console move with
-            // the directory: it keeps running under its new name.
-            std::fs::rename(self.dir(member), self.dir(new_name))?;
+            if self.cfg.vmm == Vmm::Qemu {
+                // Windows refuses to rename a directory whose files QEMU holds open:
+                // the VM's files get a second name in the new directory (hard
+                // links), and the member's directory is retired (cleaned once
+                // the VM is gone).
+                let (from, to) = (self.dir(member), self.dir(new_name));
+                std::fs::create_dir_all(&to)?;
+                for f in ["scratch.ext4", "console.log", "qemu.log"] {
+                    if from.join(f).exists() {
+                        std::fs::hard_link(from.join(f), to.join(f))?;
+                    }
+                }
+                let _ = std::fs::remove_file(from.join("state.json"));
+                let _ = std::fs::write(from.join("retired"), b"claimed");
+            } else {
+                // The VMM's working directory, sockets and console move with
+                // the directory: it keeps running under its new name.
+                std::fs::rename(self.dir(member), self.dir(new_name))?;
+            }
             st.name = new_name.to_string();
             if let Some(b) = &mut st.mem_base
                 && let Ok(rest) = b.path.strip_prefix(self.dir(member))
@@ -3012,7 +3226,7 @@ impl Runtime for MicroVmRuntime {
                 if meta.memory {
                     st.restore_from = Some(ckpt.clone());
                 } else {
-                    rootfs::copy_sparse(&ckpt.join("scratch.ext4"), &new_dir.join("scratch.ext4"))
+                    self.copy_scratch(&ckpt.join("scratch.ext4"), &new_dir.join("scratch.ext4"))
                         .await?;
                 }
                 return self.save(&st);
@@ -3029,6 +3243,16 @@ impl Runtime for MicroVmRuntime {
                         .await?;
                     self.save(&st)
                 }
+                EntryKind::Instance if self.running(&src) && self.cfg.vmm == Vmm::Qemu => {
+                    // No memory to save under WHPX: the fork gets the disk and boots.
+                    std::fs::create_dir_all(&new_dir)?;
+                    let snap = new_dir.join("snap");
+                    self.snapshot_to_qemu(&src, &snap, source).await?;
+                    std::fs::rename(snap.join("scratch.ext4"), new_dir.join("scratch.ext4"))?;
+                    let _ = std::fs::remove_dir_all(&snap);
+                    let st = self.new_state(new_name, &self.meta_of(&src, source, false));
+                    self.save(&st)
+                }
                 EntryKind::Instance if self.running(&src) => {
                     std::fs::create_dir_all(&new_dir)?;
                     let snap = new_dir.join("snap");
@@ -3043,7 +3267,7 @@ impl Runtime for MicroVmRuntime {
                 }
                 EntryKind::Instance => {
                     std::fs::create_dir_all(&new_dir)?;
-                    rootfs::copy_sparse(
+                    self.copy_scratch(
                         &self.dir(source).join("scratch.ext4"),
                         &new_dir.join("scratch.ext4"),
                     )
@@ -3206,14 +3430,16 @@ impl Runtime for MicroVmRuntime {
         if st.kind != EntryKind::Instance {
             return Err(VmmError::invalid(format!("{name} is a base, not a VM")));
         }
-        if self.running(&st) {
+        if self.running(&st) && self.cfg.vmm == Vmm::Qemu {
+            self.snapshot_to_qemu(&st, &target, checkpoint).await?;
+        } else if self.running(&st) {
             let mut st = st;
             st.mem_base = self.snapshot_to(&st, &target, checkpoint).await?;
             self.save(&st)?;
         } else {
             let partial = target.with_extension("partial");
             std::fs::create_dir_all(&partial)?;
-            rootfs::copy_sparse(
+            self.copy_scratch(
                 &self.dir(name).join("scratch.ext4"),
                 &partial.join("scratch.ext4"),
             )
@@ -3274,9 +3500,30 @@ impl Runtime for MicroVmRuntime {
         let lock = self.lock_for(name);
         let _g = lock.lock().await;
         let mut st = self.load(name)?;
+        // The pid is gone from `st` once killed: wait for the process itself, then
+        // remove the directory (Windows refuses while the VMM holds its files open).
+        let pid = st.fc_pid;
         self.kill(&mut st);
-        let _ = self.wait_exit(&st, Duration::from_secs(5)).await;
-        std::fs::remove_dir_all(self.dir(name))?;
+        if let Some(p) = pid {
+            let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+            while host::pid_alive(p) && tokio::time::Instant::now() < deadline {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        }
+        let dir = self.dir(name);
+        let mut tries = 0;
+        loop {
+            match std::fs::remove_dir_all(&dir) {
+                Ok(()) => break,
+                Err(e) if cfg!(windows) && tries < 40 && dir.exists() => {
+                    tries += 1;
+                    let _ = e;
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => break,
+                Err(e) => return Err(e.into()),
+            }
+        }
         Ok(())
     }
 
@@ -3589,6 +3836,7 @@ mod tests {
             agent_host_port: 41001,
             agent_key: "kkk",
             no_network: false,
+            qmp_sock: Path::new("q.sock"),
         });
         let line = args.join(" ");
         assert!(line.contains("-accel whpx"), "{line}");
@@ -3608,6 +3856,7 @@ mod tests {
         assert!(line.contains("cua.key=kkk") && line.contains("cua.agent=tcp:3212"));
         let none = qemu_args(&QemuLaunch {
             no_network: true,
+            qmp_sock: Path::new("q.sock"),
             ..QemuLaunch {
                 name: "a",
                 cpus: 1,
@@ -3621,6 +3870,7 @@ mod tests {
                 agent_host_port: 1,
                 agent_key: "k",
                 no_network: false,
+                qmp_sock: Path::new("q.sock"),
             }
         });
         assert!(none.join(" ").contains("restrict=on"));

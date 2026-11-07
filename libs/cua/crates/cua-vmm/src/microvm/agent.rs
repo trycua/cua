@@ -128,8 +128,15 @@ impl Agent {
     /// after it mounts the root), polling every few milliseconds.
     pub async fn wait(&self, timeout: Duration, alive: impl Fn() -> bool) -> Result<Reply> {
         let deadline = tokio::time::Instant::now() + timeout;
+        // A TCP link goes through the VM's user-mode network, which holds a
+        // connection to a guest that is not listening yet until it times out (seconds):
+        // ask again soon, so the first answer is not up to 2 s late.
+        let attempt = match self.link {
+            Link::Tcp { .. } => Duration::from_millis(250),
+            Link::Vsock(_) => Duration::from_secs(2),
+        };
         loop {
-            let last = match self.request(&Request::Ping, Duration::from_secs(2)).await {
+            let last = match self.request(&Request::Ping, attempt).await {
                 Ok(r) => return Ok(r),
                 Err(e) => e.to_string(),
             };

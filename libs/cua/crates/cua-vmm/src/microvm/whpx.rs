@@ -122,6 +122,14 @@ pub fn qemu_bin() -> Option<PathBuf> {
     host::which(NAME).or_else(|| host::which("qemu-system-x86_64"))
 }
 
+/// `qemu-img` next to the QEMU in use (the installer ships both): it makes and
+/// copies the VMs' qcow2 scratch disks.
+pub fn qemu_img_bin() -> Option<PathBuf> {
+    let dir = qemu_bin()?.parent()?.to_path_buf();
+    let p = dir.join("qemu-img.exe");
+    p.is_file().then_some(p).or_else(|| host::which("qemu-img"))
+}
+
 /// `qemu-system-x86_64 --version`'s first line's major version.
 pub fn qemu_major(version_line: &str) -> Option<u32> {
     version_line

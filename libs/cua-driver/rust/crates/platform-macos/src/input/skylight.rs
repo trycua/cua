@@ -253,7 +253,7 @@ const KEY_RECORD_SETTLE: std::time::Duration = std::time::Duration::from_millis(
 /// Returns `true` when every record was posted. Whether the app acted on them
 /// is for the caller to confirm.
 pub fn post_window_key_records(pid: pid_t, current: Option<u32>, target: u32) -> bool {
-    crate::window_change_detector::end_tail();
+    crate::focus_arbiter::end_detached();
     let Some(post) = post_event_record_to_fn() else {
         return false;
     };
@@ -985,7 +985,7 @@ pub fn activate_without_raise_with(
     target_wid: u32,
     defocus_front: bool,
 ) -> bool {
-    crate::window_change_detector::end_tail();
+    crate::focus_arbiter::end_detached();
     let post_fn = match post_event_record_to_fn() {
         Some(f) => f,
         None => return false,
@@ -1162,7 +1162,7 @@ pub fn front_process_matches(target_pid: libc::pid_t, target_wid: u32) -> Option
 /// Returns `true` only when the target PSN resolved and WindowServer accepted
 /// `SLPSSetFrontProcessWithOptions`.
 pub fn set_front_process_persistently(target_pid: libc::pid_t, target_wid: u32) -> bool {
-    crate::window_change_detector::note_intentional_activation();
+    crate::focus_arbiter::note_intentional();
     let Some(set_front) = set_front_process_fn() else {
         return false;
     };
@@ -1196,6 +1196,18 @@ fn make_key_window_record(window_id: u32, event_kind: u8) -> [u8; 0xF8] {
 /// make-key records for the requested WindowServer id, then let the caller
 /// raise the matching AX window. No other application window is addressed.
 pub fn make_exact_window_key(target_pid: libc::pid_t, target_wid: u32) -> bool {
+    crate::focus_arbiter::note_intentional();
+    exact_window_key(target_pid, target_wid)
+}
+
+/// Give the user's window `wid` of `pid` key and front back after a target
+/// took it, by the same sequence as [`make_exact_window_key`]. Not a driver
+/// activation: the watcher that undoes the target's change keeps running.
+pub fn return_key_to(pid: libc::pid_t, wid: u32) -> bool {
+    exact_window_key(pid, wid)
+}
+
+fn exact_window_key(target_pid: libc::pid_t, target_wid: u32) -> bool {
     let Some(set_front) = set_front_process_fn() else {
         return false;
     };
@@ -1255,10 +1267,9 @@ pub fn foreground_turn_active() -> bool {
 }
 
 fn foreground_turn() -> ForegroundTurn {
-    // An intentional activation ends the previous action's detached window
-    // watch, whose wildcard lease would otherwise revert it.
-    crate::window_change_detector::end_tail();
-    crate::window_change_detector::note_intentional_activation();
+    // Watchers armed before this, including the previous action's detached
+    // window watch, no longer undo an activation.
+    crate::focus_arbiter::note_intentional();
     if HOLDS_FOREGROUND_LOCK.with(std::cell::Cell::get) {
         return ForegroundTurn { _guard: None };
     }

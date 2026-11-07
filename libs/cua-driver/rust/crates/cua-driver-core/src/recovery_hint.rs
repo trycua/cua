@@ -936,8 +936,9 @@ fn effect_hint(c: &Ctx, effect: &str) -> Option<RecoveryHint> {
              control or menu instead."
         }
         ("type_text" | "type_text_chars", _) => {
-            "The text was delivered but not read back. Read the field before typing again, or it may be \
-             duplicated."
+            "Reobserve/verify the intended postcondition. Seeing the expected text confirms the earlier \
+             write. If the effect is still absent or ambiguous, keep the prior action outcome unknown; do \
+             not replay automatically."
         }
         ("press_key" | "hotkey", _) => {
             "The key was sent but its effect is not confirmed. Read what changed before sending it again."

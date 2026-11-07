@@ -364,6 +364,7 @@ if [[ "${SUITE}" == native || "${SUITE}" == all ]]; then
     harness_appkit_foreground_press_key_chord_carries_its_modifiers \
     harness_appkit_modified_click_preserves_selection \
     harness_appkit_type_text_background \
+    text_outcomes::harness_appkit_text_outcomes_match_independent_state \
     harness_appkit_scroll_foreground \
     harness_appkit_scroll_background \
     harness_appkit_counter \

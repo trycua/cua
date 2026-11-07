@@ -517,3 +517,40 @@ EOF
     fi
     return 0
 }
+
+# KWin grants window management and exact window capture only to an executable
+# named by a desktop entry. It resolves the entry's executable when it checks,
+# so naming the stable `packages/current` path keeps the grant across updates
+# and rollbacks. Machines without KWin get no entry. Never blocks the install.
+cua_driver_write_kwin_desktop_entry() {
+    local executable="$1"
+    command -v kwin_wayland >/dev/null 2>&1 || return 0
+    case "$executable" in
+        /*) ;;
+        *)
+            printf '==> skipped KWin desktop entry: %s is not an absolute path\n' "$executable"
+            return 0
+            ;;
+    esac
+    case "$executable" in
+        *[\"\`\$\\%]*|*$'\n'*)
+            printf '==> skipped KWin desktop entry: an Exec line cannot carry %s\n' "$executable"
+            return 0
+            ;;
+    esac
+    local applications="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
+    local entry="$applications/ai.cua.driver.release.desktop"
+    mkdir -p "$applications" || return 1
+    printf '%s\n' \
+        '[Desktop Entry]' \
+        'Type=Application' \
+        'Name=Cua Driver' \
+        "Exec=\"$executable\" serve" \
+        'NoDisplay=true' \
+        'X-KDE-Wayland-Interfaces=org_kde_plasma_window_management' \
+        'X-KDE-DBUS-Restricted-Interfaces=org.kde.KWin.ScreenShot2' \
+        > "$entry.tmp.$$" || return 1
+    mv -f "$entry.tmp.$$" "$entry" || { rm -f "$entry.tmp.$$"; return 1; }
+    kbuildsycoca6 >/dev/null 2>&1 || true
+    printf '==> wrote KWin desktop entry %s\n' "$entry"
+}

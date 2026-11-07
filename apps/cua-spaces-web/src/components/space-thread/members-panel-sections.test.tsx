@@ -133,3 +133,31 @@ describe("Child Spaces section heading", () => {
     expect(useSpaceLayoutStore.getState().folded.children).toBe(true);
   });
 });
+
+describe("<MembersPanel> stream rows", () => {
+  const shown = {
+    id: "xs:1a2b",
+    kind: "window",
+    label: "Start Page",
+    help: "Start Page in safari-child",
+    actions: [],
+    icon: { kind: "app", appName: "Safari", appId: "", pid: 7 },
+    origin: { spaceId: "local:safari-child", name: "safari-child", osIcon: "os-macos" },
+  } as unknown as StreamRow;
+  const own = { id: "w1", kind: "window", label: "Terminal", help: "Terminal", actions: [], icon: { kind: "app", appName: "xterm", appId: "", pid: 1 } } as unknown as StreamRow;
+
+  it("says which Space a shown window lives in: its OS mark, the app and the Space's name", () => {
+    render(<MembersPanel roster={roster} facts={[]} onMore={() => {}} windows={[shown, own]} desktop={desktop} onStream={() => {}} folded={false} onFold={() => {}} />);
+    const row = document.querySelector(`[data-stream-window="xs:1a2b"]`)!;
+    expect(row.textContent).toContain("Safari");
+    expect(row.querySelector("[data-stream-origin]")?.textContent).toBe("safari-child");
+    // The OS mark stands where the app's initial would.
+    expect(row.querySelector("svg")).not.toBeNull();
+    expect(row.textContent).not.toContain("S" + "Safari");
+    // A Space's own window carries no origin: its title, as before.
+    const mine = document.querySelector(`[data-stream-window="w1"]`)!;
+    expect(mine.querySelector("[data-stream-origin]")).toBeNull();
+    expect(mine.textContent).toContain("Terminal");
+  });
+});
+

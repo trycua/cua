@@ -62,3 +62,25 @@ describe("VideoSlotReporter after a layout change", () => {
     expect(posted.at(-1)).toEqual({ type: "surfaces", update: [], remove: [expect.any(String)] });
   });
 });
+
+describe("VideoSlotReporter for one window", () => {
+  // The native host streams the Space's desktop unless the slot says which window: a window another Space
+  // shows here (`xs:…`) used to be selected in the list while the desktop stayed on screen.
+  it("tells the host which window the slot shows, and nothing for a desktop slot", () => {
+    const posted: StreamSurfaceMessage[] = [];
+    const reporter = new VideoSlotReporter({ postMessage: (m) => posted.push(m) });
+    const desktop = document.createElement("div");
+    const window1 = document.createElement("div");
+    document.body.append(desktop, window1);
+    box(desktop, { x: 0, y: 0, width: 400, height: 300 });
+    box(window1, { x: 0, y: 320, width: 400, height: 300 });
+    const stopDesktop = reporter.register(desktop, { spaceId: "home", tier: "full", interactive: true, radius: 8 }, () => {});
+    const stopWindow = reporter.register(window1, { spaceId: "home", tier: "full", interactive: true, radius: 8, windowId: "xs:1a2b" }, () => {});
+    const updates = posted.flatMap((m) => (m.type === "surfaces" ? m.update : []));
+    expect(updates.find((u) => u.rect.y === 0)).not.toHaveProperty("windowId");
+    expect(updates.find((u) => u.rect.y === 320)?.windowId).toBe("xs:1a2b");
+    stopDesktop();
+    stopWindow();
+  });
+});
+

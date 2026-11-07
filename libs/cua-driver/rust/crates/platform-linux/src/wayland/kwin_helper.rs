@@ -312,25 +312,25 @@ fn parse_first_u32(raw: &str) -> Option<u32> {
         .ok()
 }
 
-fn current_uid() -> u32 {
+pub(super) fn current_uid() -> u32 {
     std::fs::metadata(format!("/proc/{}", std::process::id()))
         .map(|meta| meta.uid())
         .unwrap_or(u32::MAX)
 }
 
 fn is_trusted_kwin(pid: u32, helper_owner: &str) -> bool {
-    let comm = std::fs::read_to_string(format!("/proc/{pid}/comm")).ok();
-    if comm.as_deref().map(str::trim) != Some("kwin_wayland") {
-        return false;
-    }
-
     let Some(owner_raw) = dbus_call("GetNameOwner", &[KWIN_DEST.to_owned()]) else {
         return false;
     };
-    let Some(kwin_owner) = parse_quoted_string(&owner_raw) else {
-        return false;
-    };
-    if kwin_owner != helper_owner {
+    parse_quoted_string(&owner_raw).as_deref() == Some(helper_owner) && is_trusted_kwin_process(pid)
+}
+
+pub(super) fn is_trusted_kwin_process(pid: u32) -> bool {
+    let comm = std::fs::read_to_string(format!("/proc/{pid}/comm")).ok();
+    if !matches!(
+        comm.as_deref().map(str::trim),
+        Some("kwin_wayland" | ".kwin_wayland-w")
+    ) {
         return false;
     }
 
@@ -338,9 +338,11 @@ fn is_trusted_kwin(pid: u32, helper_owner: &str) -> bool {
     match executable {
         Some(path) => {
             let metadata = std::fs::metadata(&path).ok();
-            path.file_name().and_then(|name| name.to_str()) == Some("kwin_wayland")
-                && metadata
-                    .is_some_and(|meta| meta.uid() == 0 && meta.permissions().mode() & 0o022 == 0)
+            matches!(
+                path.file_name().and_then(|name| name.to_str()),
+                Some("kwin_wayland" | ".kwin_wayland-wrapped")
+            ) && metadata
+                .is_some_and(|meta| meta.uid() == 0 && meta.permissions().mode() & 0o022 == 0)
         }
         None => true,
     }

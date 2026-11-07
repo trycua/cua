@@ -34,13 +34,12 @@ jobs:
         working-directory: libs/cua-driver/rust
         run: |
           xvfb-run -a --server-args="-screen 0 1280x800x24" cargo test -p platform-linux --test type_text_bench_x11 -- --ignored --nocapture --test-threads=1 2>&1 | tail -30
-      - name: New tests
-        if: matrix.which == 'after'
+      - name: Detail
         working-directory: libs/cua-driver/rust
         run: |
-          cargo test -p platform-linux --lib type_pacing 2>&1 | tail -15
-          cargo test -p cua-driver-core --lib type_pacing 2>&1 | tail -15
-          xvfb-run -a --server-args="-screen 0 1280x800x24" cargo test -p platform-linux --test key_input_x11 -- --ignored --nocapture --test-threads=1 text 2>&1 | tail -40
+          for t in text_delivers_distinct_unmapped_keysyms_on_both_paths xtest_text_batches_deliver_every_key_in_order; do
+            xvfb-run -a --server-args="-screen 0 1280x800x24" cargo test -p platform-linux --test key_input_x11 -- --ignored --nocapture --test-threads=1 $t 2>&1 | grep -v "Warning:\|xkbcomp\|Errors from" | tail -25 || true
+          done
   windows:
     runs-on: windows-latest
     timeout-minutes: 60

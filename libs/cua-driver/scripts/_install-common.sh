@@ -8,6 +8,11 @@
 #   stop_cua_driver_daemons          ↔  Stop-CuaDriverDaemons
 #   show_cua_driver_daemon_survivors ↔  Show-CuaDriverDaemonSurvivors
 #
+# Linux-only, no PowerShell counterpart:
+#
+#   cua_driver_write_kwin_desktop_entry — the desktop entry KWin requires before it
+#                                       grants window capture
+#
 # macOS-only, no PowerShell counterpart:
 #
 #   cua_driver_release_processes      — every process of the current user that
@@ -516,4 +521,70 @@ EOF
         printf 'Their files were left in place (delete them when you no longer need them): %s\n' "$on_disk"
     fi
     return 0
+}
+
+# KWin grants window management and exact window capture only to an executable
+# named by a desktop entry. It resolves the entry's executable when it checks,
+# so naming the stable `packages/current` path keeps the grant across updates
+# and rollbacks. Machines without KWin get no entry; re-running install.sh after
+# KWin is installed writes it. Never blocks the install.
+#
+# One entry name serves every install, so it follows the CLI: the entry records
+# the CLI link it was written for, and an install keeps someone else's entry only
+# while that install exists and its CLI link still points at it.
+cua_driver_write_kwin_desktop_entry() {
+    local executable="$1" cli="$2"
+    command -v kwin_wayland >/dev/null 2>&1 || return 0
+    case "$executable" in
+        /*) ;;
+        *)
+            printf '==> skipped KWin desktop entry: %s is not an absolute path\n' "$executable"
+            return 0
+            ;;
+    esac
+    case "$executable" in
+        *[\"\`\$\\%]*|*$'\n'*)
+            printf '==> skipped KWin desktop entry: an Exec line cannot carry %s\n' "$executable"
+            return 0
+            ;;
+    esac
+    case "$cli" in
+        /*) ;;
+        *) cli="$PWD/$cli" ;;
+    esac
+    case "$cli" in
+        *$'\n'*)
+            printf '==> skipped KWin desktop entry: a desktop entry cannot carry %s\n' "$cli"
+            return 0
+            ;;
+    esac
+    local applications="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
+    local entry="$applications/ai.cua.driver.release.desktop"
+    if [[ -f "$entry" ]]; then
+        local granted granted_cli
+        granted=$(sed -n 's/^Exec="\(.*\)" serve$/\1/p' "$entry")
+        granted_cli=$(sed -n 's/^X-Cua-Cli=//p' "$entry")
+        if [[ -n "$granted" && "$granted" != "$executable" && -x "$granted" \
+            && -n "$granted_cli" && "$granted_cli" -ef "$granted" ]]; then
+            printf '==> kept KWin desktop entry: it grants %s\n' "$granted"
+            return 0
+        fi
+    fi
+    mkdir -p "$applications" || return 1
+    if ! printf '%s\n' \
+        '[Desktop Entry]' \
+        'Type=Application' \
+        'Name=Cua Driver' \
+        "Exec=\"$executable\" serve" \
+        'NoDisplay=true' \
+        'X-KDE-Wayland-Interfaces=org_kde_plasma_window_management,org_kde_kwin_keystate' \
+        'X-KDE-DBUS-Restricted-Interfaces=org.kde.KWin.ScreenShot2' \
+        "X-Cua-Cli=$cli" \
+        > "$entry.tmp.$$" \
+        || ! mv -f "$entry.tmp.$$" "$entry"; then
+        rm -f "$entry.tmp.$$"
+        return 1
+    fi
+    printf '==> wrote KWin desktop entry %s\n' "$entry"
+    printf '==> KWin lets this driver capture windows with no prompt. uninstall.sh removes the entry.\n'
 }

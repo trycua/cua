@@ -154,8 +154,11 @@ class Fixture:
         shim.write_text(COSIGN_SHIM)
         shim.chmod(0o755)
 
-    def install(self, version: str, *args: str) -> subprocess.CompletedProcess[str]:
+    def install(
+        self, version: str, *args: str, env: dict[str, str] | None = None
+    ) -> subprocess.CompletedProcess[str]:
         env = {
+            **(env or {}),
             "PATH": f"{self.shims}:/usr/bin:/bin",
             "HOME": str(self.home),
             "FAKE_RELEASES": str(self.releases),
@@ -192,6 +195,61 @@ def test_a_verified_release_installs(fixture: Fixture) -> None:
     assert f"verified {name} against SHA256SUMS" in result.stdout
     assert f"verified the Sigstore signature of {name}" in result.stdout
     assert fixture.installed()
+
+
+@linux_only
+def test_a_release_install_writes_the_kwin_desktop_entry(fixture: Fixture) -> None:
+    # The real helper, with the stub after it so the daemon cleanup stays stubbed.
+    common = (SCRIPTS / "_install-common.sh").read_text() + COMMON_STUB
+    (fixture.scripts / "_install-common.sh").write_text(common)
+    kwin = fixture.shims / "kwin_wayland"
+    kwin.write_text("#!/bin/sh\nexit 0\n")
+    kwin.chmod(0o755)
+    fixture.with_cosign()
+    fixture.publish("0.31.0")
+    result = fixture.install("0.31.0")
+    assert result.returncode == 0, result.stderr + result.stdout
+    entry = fixture.home / ".local/share/applications/ai.cua.driver.release.desktop"
+    current = fixture.home / ".cua-driver/packages/current/cua-driver"
+    assert f'Exec="{current}" serve' in entry.read_text().splitlines()
+
+
+def kwin_fixture(fixture: Fixture, *, kwin: bool = True) -> Path:
+    common = (SCRIPTS / "_install-common.sh").read_text() + COMMON_STUB
+    (fixture.scripts / "_install-common.sh").write_text(common)
+    if kwin:
+        shim = fixture.shims / "kwin_wayland"
+        shim.write_text("#!/bin/sh\nexit 0\n")
+        shim.chmod(0o755)
+    fixture.with_cosign()
+    fixture.publish("0.31.0")
+    return fixture.home / ".local/share/applications/ai.cua.driver.release.desktop"
+
+
+@linux_only
+def test_a_second_install_that_takes_the_cli_takes_the_kwin_entry(fixture: Fixture) -> None:
+    entry = kwin_fixture(fixture)
+    assert fixture.install("0.31.0").returncode == 0
+    other = fixture.root / "other-home"
+    result = fixture.install("0.31.0", env={"CUA_DRIVER_RS_HOME": str(other)})
+    assert result.returncode == 0, result.stderr + result.stdout
+    current = other / "packages/current/cua-driver"
+    assert (fixture.bin / "cua-driver").resolve() == current.resolve()
+    assert f'Exec="{current}" serve' in entry.read_text().splitlines()
+
+
+@linux_only
+def test_rerunning_the_install_after_kwin_appears_writes_the_kwin_entry(fixture: Fixture) -> None:
+    entry = kwin_fixture(fixture, kwin=False)
+    assert fixture.install("0.31.0").returncode == 0
+    assert not entry.exists()
+    kwin = fixture.shims / "kwin_wayland"
+    kwin.write_text("#!/bin/sh\nexit 0\n")
+    kwin.chmod(0o755)
+    result = fixture.install("0.31.0")
+    assert result.returncode == 0, result.stderr + result.stdout
+    current = fixture.home / ".cua-driver/packages/current/cua-driver"
+    assert f'Exec="{current}" serve' in entry.read_text().splitlines()
 
 
 @linux_only

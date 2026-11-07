@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.41.2](https://github.com/trycua/cua/compare/cua-driver-rs-v0.41.1...cua-driver-rs-v0.41.2) (2026-11-07)
+
+
+### Bug Fixes
+
+* **cua-driver:** finalize the previous recording when a new one starts ([#6794](https://github.com/trycua/cua/issues/6794)) ([5e2cb47](https://github.com/trycua/cua/commit/5e2cb4714749e123de5f23300ef27183642df4b0))
+
+## [0.41.1](https://github.com/trycua/cua/compare/cua-driver-rs-v0.41.0...cua-driver-rs-v0.41.1) (2026-11-07)
+
+
+### Bug Fixes
+
+* **cua-driver:** keep a session's last use on its lifecycle record ([#6773](https://github.com/trycua/cua/issues/6773)) ([94e3d18](https://github.com/trycua/cua/commit/94e3d186262431c30cdf0891231eeee55909398e))
+* **cua-driver:** restore the Windows foreground only after typed input drained ([#6779](https://github.com/trycua/cua/issues/6779)) ([886c9ce](https://github.com/trycua/cua/commit/886c9ce30e02a337f2047d11ac8618cca4001a19))
+
 ## [0.41.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.40.6...cua-driver-rs-v0.41.0) (2026-11-06)
 
 

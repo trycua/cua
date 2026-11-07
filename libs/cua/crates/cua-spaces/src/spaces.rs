@@ -36,7 +36,7 @@ pub struct SpaceCreate {
     pub kind: Kind,
     /// Which engine (`Auto`: the safest one for the kind).
     pub runtime: Runtime,
-    /// Name. Default `space-<hex>`.
+    /// Name. Default a friendly `adjective-animal` (`brave-otter`).
     pub name: Option<String>,
     /// vCPUs. Local default 2.
     pub cpus: Option<u32>,
@@ -218,7 +218,7 @@ pub(crate) struct LocalProvision {
     pub kind: Kind,
     /// Which engine.
     pub runtime: Runtime,
-    /// Instance name. Default `space-<hex>`.
+    /// Instance name. Default a friendly `adjective-animal`.
     pub name: Option<String>,
     /// vCPUs. Default 2.
     pub cpus: Option<u32>,
@@ -597,14 +597,15 @@ pub(crate) fn random_suffix() -> String {
     format!("{:010x}", rand::random::<u64>() & 0xff_ffff_ffff)
 }
 
-/// A name in the form [`SpaceCreate::name`] defaults to (`space-` and ten
-/// lowercase hex digits): one the SDK, or an app on its behalf, generated.
+/// A name in the form [`SpaceCreate::name`] defaults to (`adjective-animal`,
+/// or the older `space-` and ten lowercase hex digits): one the SDK, or an app on its behalf, generated.
 /// A create under such a name cleans up after a failed start, as one with
 /// no name does.
 pub fn is_generated_name(name: &str) -> bool {
-    name.strip_prefix("space-").is_some_and(|hex| {
-        hex.len() == 10 && hex.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
-    })
+    cua_spaces_contract::names::is_pet_name(name)
+        || name.strip_prefix("space-").is_some_and(|hex| {
+            hex.len() == 10 && hex.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+        })
 }
 
 pub(crate) struct Inner {
@@ -742,6 +743,18 @@ impl Spaces {
     }
 
     // ------------------------------------------------------------ registry
+
+    /// A friendly name (`brave-otter`) that no registered Space has
+    /// ([`cua_spaces_contract::names::pet_name`]): the default of a create without one.
+    pub fn fresh_name(&self) -> String {
+        let taken: std::collections::HashSet<String> = self
+            .inner
+            .registry
+            .list()
+            .map(|v| v.into_iter().map(|s| s.name).collect())
+            .unwrap_or_default();
+        cua_spaces_contract::names::pet_name(|n| taken.contains(n))
+    }
 
     /// Every registered Space, plus the relay machines of the last
     /// [`Spaces::relay_machines`] listing (see [`Spaces::list_all`]).
@@ -2571,7 +2584,7 @@ impl Spaces {
                     .name
                     .clone()
                     .filter(|n| !n.trim().is_empty())
-                    .unwrap_or_else(|| format!("space-{}", random_suffix())),
+                    .unwrap_or_else(|| self.fresh_name()),
             );
             opts.name = Some(name.clone());
             name
@@ -2973,11 +2986,7 @@ impl Spaces {
         {
             return Ok(SpaceCreated::Ready { info, reused: true });
         }
-        let name = sanitize_label(
-            &opts
-                .name
-                .unwrap_or_else(|| format!("space-{}", random_suffix())),
-        );
+        let name = sanitize_label(&opts.name.unwrap_or_else(|| self.fresh_name()));
         let local = LocalProvision {
             image: opts.image,
             kind: opts.kind,
@@ -3022,12 +3031,7 @@ impl Spaces {
                 "no local runtime passed to SpacesBuilder; using the sandbox manager's"
             );
         }
-        let name = sanitize_label(
-            &opts
-                .name
-                .clone()
-                .unwrap_or_else(|| format!("space-{}", random_suffix())),
-        );
+        let name = sanitize_label(&opts.name.clone().unwrap_or_else(|| self.fresh_name()));
         let expect_env = expects_spacesd(opts.image.as_deref(), opts.spacesd);
         // An alias (`linux`, `macos:26`, `macos:26-slim`) names a canonical
         // image, as it does for a cloud or host Space; the local runtime
@@ -4554,8 +4558,9 @@ mod tests {
 
     #[test]
     fn generated_names_are_the_sdks_own_form() {
-        let name = format!("space-{}", random_suffix());
+        let name = cua_spaces_contract::names::pet_name(|_| false);
         assert!(is_generated_name(&name), "{name}");
+        assert!(is_generated_name(&format!("space-{}", random_suffix())));
         assert!(is_generated_name("space-000000002a"));
         for other in [
             "space-2a",

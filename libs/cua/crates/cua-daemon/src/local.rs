@@ -579,6 +579,9 @@ pub struct VmmLocal {
     /// host and refreshed in the background, so a create never waits on a
     /// registry for a tag it resolved before.
     resolved: Arc<std::sync::Mutex<HashMap<ResolveKey, (std::time::Instant, Resolved)>>>,
+    /// A newer image of a kept-warm request than the one creates are served
+    /// ([`hold_refresh`]), until a warm member of it is ready.
+    pending: Arc<std::sync::Mutex<HashMap<ResolveKey, Resolved>>>,
 }
 
 /// What an image placement is resolved for: image, OS, kind, runtime.
@@ -587,6 +590,29 @@ type ResolveKey = (String, String, String, String);
 /// How old a cached placement may be before a create refreshes it (in the
 /// background; the create uses the cached one).
 const RESOLVE_REFRESH: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// What a refreshed placement does to the one creates are served.
+#[derive(Debug, PartialEq)]
+pub(crate) enum Refresh {
+    /// Creates are served this one from now on.
+    Serve(Resolved),
+    /// Creates keep the current one; `next` is made ready first.
+    Hold { next: Resolved },
+}
+
+/// A request whose shape is kept warm must not move to a newer image
+/// (another digest) until a warm member of it is ready: a create would
+/// otherwise miss the pool and pull the image itself.
+pub(crate) fn hold_refresh(current: &Resolved, fresh: Resolved, kept_warm: bool) -> Refresh {
+    if kept_warm && fresh.placement.image != current.placement.image {
+        Refresh::Hold { next: fresh }
+    } else {
+        Refresh::Serve(fresh)
+    }
+}
+
+/// The source of the pool entry that makes the next image ready.
+const NEXT_SOURCE: &str = "warm-pools-next";
 
 /// The container engine [`VmmLocal`] uses.
 #[derive(Clone)]
@@ -631,6 +657,7 @@ impl VmmLocal {
             pool: std::sync::OnceLock::new(),
             named_state: Default::default(),
             resolved: Default::default(),
+            pending: Default::default(),
         }
     }
 
@@ -774,6 +801,9 @@ impl VmmLocal {
         match self.keep_warm_space(pool).await {
             Ok(()) => {
                 sources.insert(crate::pool::WARM_SOURCE.to_string());
+                if !self.pending.lock().unwrap().is_empty() {
+                    sources.insert(NEXT_SOURCE.to_string());
+                }
             }
             Err(e) => tracing::warn!("warm-pools: {e}"),
         }
@@ -802,7 +832,8 @@ impl VmmLocal {
         pool.retain_explicit(|src| {
             !(src.starts_with("warm:")
                 || src.starts_with("pool:")
-                || src == crate::pool::WARM_SOURCE)
+                || src == crate::pool::WARM_SOURCE
+                || src == NEXT_SOURCE)
                 || sources.contains(src)
         });
     }
@@ -852,7 +883,75 @@ impl VmmLocal {
         pool.set_prepare_first(&key, first);
         pool.note_request(&p.spec, p.backend, spacesd, requested_words(&spec));
         tracing::debug!(shape = %key, "warm-pools: keeping one Linux Space ready");
+        self.make_next_ready(pool, &spec, &image).await;
         Ok(())
+    }
+
+    /// The image of the kept-warm request moved: pulls it and prepares a
+    /// member of it in the background, beside the one creates are served,
+    /// and serves creates the new image once that member is ready. The old
+    /// member stays claimable meanwhile, so no create pulls an image.
+    async fn make_next_ready(
+        &self,
+        pool: &crate::pool::WarmPool,
+        spec: &LocalStartSpec,
+        image: &str,
+    ) {
+        let keys: Vec<ResolveKey> = self
+            .pending
+            .lock()
+            .unwrap()
+            .keys()
+            .filter(|k| k.0 == image.trim())
+            .cloned()
+            .collect();
+        for key in keys {
+            let Some(next) = self.pending.lock().unwrap().get(&key).cloned() else {
+                continue;
+            };
+            let outcome = async {
+                let p = self
+                    .prepare_with(spec, Some(next.clone()))
+                    .await
+                    .map_err(|e| e.to_string())?;
+                let spacesd = p.image.as_ref().and_then(|i| i.spacesd) == Some(true);
+                let (harnesses, first) = warm_pools_ordered();
+                let k = pool
+                    .set_explicit_prepared(
+                        NEXT_SOURCE,
+                        &p.spec,
+                        p.backend,
+                        spacesd,
+                        p.rt,
+                        1,
+                        Some(1),
+                        None,
+                        Some(WARM_POOLS_IDLE),
+                        Some(harnesses),
+                    )
+                    .ok_or_else(|| "this shape does not pool".to_string())?;
+                pool.set_prepare_first(&k, first);
+                Ok::<String, String>(k)
+            }
+            .await;
+            match outcome {
+                Ok(k) if pool.shape_status(&k).is_some_and(|(ready, _, _)| ready > 0) => {
+                    tracing::info!(shape = %k, "warm-pools: the new image has a warm Space; creates use it");
+                    self.resolved
+                        .lock()
+                        .unwrap()
+                        .insert(key.clone(), (std::time::Instant::now(), next));
+                    self.pending.lock().unwrap().remove(&key);
+                }
+                Ok(k) => {
+                    tracing::debug!(shape = %k, "warm-pools: the new image is being made ready")
+                }
+                Err(e) => {
+                    tracing::warn!("warm-pools: cannot prepare the new image: {e}");
+                    self.pending.lock().unwrap().remove(&key);
+                }
+            }
+        }
     }
 
     /// Keeps `min` (at most `max`) members of `spec`'s shape for explicit
@@ -924,15 +1023,30 @@ impl VmmLocal {
         if let Some((at, r)) = cached {
             if at.elapsed() >= RESOLVE_REFRESH {
                 let cache = self.resolved.clone();
+                let pending = self.pending.clone();
                 let (image, os, runtime) = (image.to_string(), os.to_string(), runtime.clone());
+                let served = r.clone();
                 tokio::spawn(async move {
-                    if let Ok(r) = resolve_placement_for(&image, &os, kind, &runtime, None).await
-                        && r.image.is_some()
+                    if let Ok(fresh) =
+                        resolve_placement_for(&image, &os, kind, &runtime, None).await
+                        && fresh.image.is_some()
                     {
+                        // The image of a kept-warm request moved: creates keep
+                        // the one they were served until a warm member of the
+                        // new one is ready, so none waits on its pull.
+                        let kept = key.0 == warm_pools_image()
+                            && cua_vmm::experiments::enabled(cua_vmm::experiments::Gate::WarmPools);
+                        let next = match hold_refresh(&served, fresh, kept) {
+                            Refresh::Serve(r) => r,
+                            Refresh::Hold { next } => {
+                                pending.lock().unwrap().insert(key.clone(), next);
+                                served
+                            }
+                        };
                         cache
                             .lock()
                             .unwrap()
-                            .insert(key, (std::time::Instant::now(), r));
+                            .insert(key, (std::time::Instant::now(), next));
                     }
                 });
             }
@@ -1939,6 +2053,17 @@ impl VmmLocal {
     /// Resolves `spec` (image placement, backend, runtime) into the
     /// [`StartSpec`] its backend starts.
     async fn prepare(&self, spec: &LocalStartSpec) -> RuntimeResult<Prepared> {
+        self.prepare_with(spec, None).await
+    }
+
+    /// [`Self::prepare`], with the placement given (`Some`) instead of read
+    /// from the registry or the cache: how the next image is made ready
+    /// before creates are served it.
+    async fn prepare_with(
+        &self,
+        spec: &LocalStartSpec,
+        forced: Option<Resolved>,
+    ) -> RuntimeResult<Prepared> {
         use cua_sandbox_core::placement::{Kind, PlacementError, Runtime};
         let kind = spec
             .kind
@@ -1954,34 +2079,38 @@ impl VmmLocal {
             .transpose()
             .map_err(RuntimeError::InvalidPlacement)?
             .unwrap_or_default();
-        let mut r = self
-            .resolve_cached(
-                &spec.image,
-                &spec.os,
-                kind,
-                &runtime,
-                spec.registry_credentials.as_ref(),
-            )
-            .await
-            .map_err(|e| match e {
-                Error::Unsupported(m) => RuntimeError::UnsupportedImage(m),
-                Error::InvalidPlacement {
-                    message,
-                    axis,
-                    valid,
-                } => RuntimeError::InvalidPlacement(PlacementError {
-                    axis: match axis.as_str() {
-                        "on" => cua_sandbox_core::placement::Axis::On,
-                        "kind" => cua_sandbox_core::placement::Axis::Kind,
-                        "runtime" => cua_sandbox_core::placement::Axis::Runtime,
-                        _ => cua_sandbox_core::placement::Axis::Image,
-                    },
-                    given: spec.image.clone(),
-                    message,
-                    valid,
-                }),
-                other => RuntimeError::Other(other.to_string()),
-            })?;
+        let resolved = match forced {
+            Some(r) => Ok(r),
+            None => {
+                self.resolve_cached(
+                    &spec.image,
+                    &spec.os,
+                    kind,
+                    &runtime,
+                    spec.registry_credentials.as_ref(),
+                )
+                .await
+            }
+        };
+        let mut r = resolved.map_err(|e| match e {
+            Error::Unsupported(m) => RuntimeError::UnsupportedImage(m),
+            Error::InvalidPlacement {
+                message,
+                axis,
+                valid,
+            } => RuntimeError::InvalidPlacement(PlacementError {
+                axis: match axis.as_str() {
+                    "on" => cua_sandbox_core::placement::Axis::On,
+                    "kind" => cua_sandbox_core::placement::Axis::Kind,
+                    "runtime" => cua_sandbox_core::placement::Axis::Runtime,
+                    _ => cua_sandbox_core::placement::Axis::Image,
+                },
+                given: spec.image.clone(),
+                message,
+                valid,
+            }),
+            other => RuntimeError::Other(other.to_string()),
+        })?;
         if missing_fallback_allowed(
             kind,
             &runtime,
@@ -3638,6 +3767,36 @@ fn claim_delivers_token(backend: BackendKind) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    fn resolved(reference: &str) -> Resolved {
+        Resolved {
+            placement: Placement {
+                backend: BackendKind::Container,
+                image: ImageSource::oci(reference),
+            },
+            arch: None,
+            image: None,
+        }
+    }
+
+    /// A moved image of a kept-warm request is held until a warm member of
+    /// it is ready, so a create never pulls; anything else follows at once.
+    #[test]
+    fn a_moved_image_of_a_kept_warm_request_is_held_until_ready() {
+        let old = resolved("ghcr.io/trycua/linux@sha256:aaa");
+        let new = resolved("ghcr.io/trycua/linux@sha256:bbb");
+        assert_eq!(
+            hold_refresh(&old, new.clone(), true),
+            Refresh::Hold { next: new.clone() }
+        );
+        assert_eq!(hold_refresh(&old, new.clone(), false), Refresh::Serve(new));
+        // The same digest again changes nothing.
+        assert_eq!(
+            hold_refresh(&old, old.clone(), true),
+            Refresh::Serve(old.clone())
+        );
+    }
     #[test]
     fn members_are_prepared_where_the_conformance_table_says() {
         use crate::pool::PoolHost as _;
@@ -4005,8 +4164,6 @@ mod tests {
             )
         );
     }
-
-    use super::*;
 
     #[test]
     fn missing_fallback_requires_auto_linux_source() {

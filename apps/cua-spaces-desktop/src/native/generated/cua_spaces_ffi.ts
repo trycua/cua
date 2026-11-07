@@ -38306,7 +38306,7 @@ const FfiConverterTypeAppRefreshReport = (() => {
 
 export type AppRelayAllowanceNotice = {
     /**
-     * On Free: "You're using 2 of 2 live sessions on the free plan. ..."
+     * On Free: "You have 2 of 2 computers in use at once on the free plan. ..."
      */
     text: string,
     /**
@@ -38467,11 +38467,11 @@ export type AppRelayUsage = {
      */
     team?: AppRelayUsageTeam,
     /**
-     * Live sessions now.
+     * Computers in use now.
      */
     liveSessions: number,
     /**
-     * Live sessions allowed at once (none: no limit).
+     * Computers in use allowed at once (none: no limit).
      */
     liveSessionsLimit?: number,
     /**
@@ -38574,7 +38574,7 @@ export type AppRelayUsageView = {
      */
     label: string,
     /**
-     * "Live sessions 1 of 2 · Relay hours 6.5 of 20 this month", then the
+     * "Computers in use 1 of 2 · Relay hours 6.5 of 20 this month", then the
      * team pool when there is one.
      */
     line: string,

@@ -1089,7 +1089,7 @@ const PLAN_SURFACE: Prop = p(
 const LIMIT_KIND: Prop = p(
     "kind",
     Kind::Enum(LIMIT_KINDS),
-    "Which cap: live sessions, remote hours, team computers, team seats, other; none when the link was not opened from a limit.",
+    "Which cap: computers in use at once, remote hours, team computers, team seats, other; none when the link was not opened from a limit.",
 );
 const PLAN: Prop = p(
     "plan",
@@ -1609,7 +1609,7 @@ pub const EVENTS: &[EventSpec] = &[
             p(
                 "phase",
                 Kind::Enum(DURABLE_PHASES),
-                "What happened: started, restarted, failed_over (a drive ran on another machine than the one before), exhausted (out of attempts), ended, space_recreated (a durable Space was placed again on another machine) or refused (a lease or epoch was refused).",
+                "What happened: started, restarted, failed_over (a drive ran on another machine than the one before), exhausted (out of attempts), ended, space_recreated (a durable Space was placed again on another computer) or refused (a lease or epoch was refused).",
             ),
             AGENT_HARNESS,
             p(

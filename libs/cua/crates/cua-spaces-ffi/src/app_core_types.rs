@@ -11030,9 +11030,9 @@ pub struct AppRelayUsage {
     pub plan: String,
     /// The team whose allowance is pooled.
     pub team: Option<AppRelayUsageTeam>,
-    /// Live sessions now.
+    /// Computers in use now.
     pub live_sessions: u32,
-    /// Live sessions allowed at once (none: no limit).
+    /// Computers in use allowed at once (none: no limit).
     pub live_sessions_limit: Option<u32>,
     /// Relay hours used this month (the team's, when pooled).
     pub hours_used: f64,
@@ -11052,7 +11052,7 @@ pub struct AppRelayUsage {
 pub type AppRelayAllowanceNotice = core::relay_usage::RelayAllowanceNotice;
 #[uniffi::remote(Record)]
 pub struct AppRelayAllowanceNotice {
-    /// On Free: "You're using 2 of 2 live sessions on the free plan. ..."
+    /// On Free: "You have 2 of 2 computers in use at once on the free plan. ..."
     pub text: String,
     /// [`UPGRADE`].
     pub upgrade: String,
@@ -11107,7 +11107,7 @@ pub type AppRelayUsageView = core::relay_usage::RelayUsageView;
 pub struct AppRelayUsageView {
     /// [`ROW_LABEL`].
     pub label: String,
-    /// "Live sessions 1 of 2 · Relay hours 6.5 of 20 this month", then the
+    /// "Computers in use 1 of 2 · Relay hours 6.5 of 20 this month", then the
     /// team pool when there is one.
     pub line: String,
     /// "Free plan" (empty when the relay names none).

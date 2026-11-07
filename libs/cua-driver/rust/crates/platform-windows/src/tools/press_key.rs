@@ -95,7 +95,7 @@ impl Tool for PressKeyTool {
                     "scope": "desktop", "path": "SendInput", "key": key_display,
                     "effect": "unverifiable"
                 })),
-                Ok(Err(error)) => ToolResult::error(error.to_string()),
+                Ok(Err(error)) => crate::typing_turn::foreground_input_error(error),
                 Err(error) => ToolResult::error(format!("desktop key task failed: {error}")),
             };
         }
@@ -312,7 +312,7 @@ impl Tool for PressKeyTool {
                 Ok(Ok(())) => ToolResult::text(format!(
                     "✅ Sent {key_display} via SendInput on pid {raw_pid} (delivery_mode:foreground)."
                 )),
-                Ok(Err(e)) => ToolResult::error(e.to_string()),
+                Ok(Err(e)) => crate::typing_turn::foreground_input_error(e),
                 Err(e)     => ToolResult::error(format!("Task error: {e}")),
             };
         }

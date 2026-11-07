@@ -961,13 +961,19 @@ pub fn frontmost_pid() -> Option<i32> {
     crate::input::skylight::front_process_pid()
 }
 
-/// Re-activate the app with `pid` via
-/// `NSRunningApplication.runningApplicationWithProcessIdentifier(pid)?.activateWithOptions([])`.
-/// Returns `true` if the app was found and activate was attempted.
-/// Used as the belt-and-braces step in `LaunchAppTool` when the target
-/// has self-activated despite the focus-steal observer.
+/// Activate the app with `pid` at the driver's request (see
+/// [`crate::focus_arbiter::note_intentional`]). Returns `true` if the app was
+/// found and activate was attempted.
 pub fn activate_pid(pid: i32) -> bool {
-    crate::window_change_detector::end_tail();
+    crate::focus_arbiter::note_intentional();
+    reactivate_app(pid)
+}
+
+/// Put the user's app `pid` back in front after a target took it. Not a
+/// driver activation: the watcher that undoes the target's change keeps
+/// running. Best effort: macOS may refuse an activation requested by a
+/// background process.
+pub fn reactivate_app(pid: i32) -> bool {
     use objc2_app_kit::{NSApplicationActivationOptions, NSRunningApplication};
     unsafe {
         match NSRunningApplication::runningApplicationWithProcessIdentifier(pid) {

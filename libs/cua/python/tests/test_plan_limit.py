@@ -2,7 +2,8 @@
 
 import cua
 
-SENTENCE = "You're using 5 of 5 live sessions on Pro. Close one or upgrade to Teams."
+SENTENCE = "You have 5 of 5 computers in use at once on Pro. Close one or upgrade to Teams."
+OLD_SENTENCE = "You're using 5 of 5 live sessions on Pro. Close one or upgrade to Teams."
 
 
 def test_a_sessions_refusal_carries_its_numbers_and_the_upgrade_link():
@@ -15,6 +16,14 @@ def test_a_sessions_refusal_carries_its_numbers_and_the_upgrade_link():
     assert (refusal.kind, refusal.plan, refusal.used, refusal.limit) == ("sessions", "pro", 5, 5)
     assert refusal.upgrade_url == "https://app.cua.ai/buy/teams?from=plan_limit"
     assert refusal.status == 429
+
+
+def test_the_old_live_sessions_sentence_still_reads():
+    error = cua.CuaError.Http(f"{OLD_SENTENCE} Upgrade: https://app.cua.ai/buy/teams?from=plan_limit")
+    refusal = error.plan_limit
+    assert isinstance(refusal, cua.PlanLimitError)
+    assert str(refusal) == OLD_SENTENCE
+    assert (refusal.kind, refusal.plan, refusal.used, refusal.limit) == ("sessions", "pro", 5, 5)
 
 
 def test_remote_hours_on_the_free_plan_without_a_link():

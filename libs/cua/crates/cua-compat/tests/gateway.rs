@@ -1021,7 +1021,7 @@ async fn start_warmed_makes_the_first_create_before_it_returns() {
     }
 }
 
-/// An account at its live-session limit gets E2B's rate-limit error (HTTP
+/// An account at its computers-in-use limit gets E2B's rate-limit error (HTTP
 /// 429, which the SDKs raise as RateLimitException), with the plan-limit
 /// sentence and its upgrade path verbatim.
 #[tokio::test]
@@ -1029,7 +1029,8 @@ async fn the_live_session_limit_is_a_429_with_its_sentence() {
     let dir = tempfile::tempdir().unwrap();
     let backend = Arc::new(MockBackend::new());
     *backend.create_fails.lock().await = Some(cua_compat::backend::BackendError::RateLimited(
-        "You're using 2 of 2 live sessions on the free plan. Close one or upgrade to Pro.".into(),
+        "You have 2 of 2 computers in use at once on the free plan. Close one or upgrade to Pro."
+            .into(),
     ));
     let mut o = GatewayOptions::new(Provider::E2b);
     o.listen = "127.0.0.1:0".parse().unwrap();
@@ -1048,7 +1049,7 @@ async fn the_live_session_limit_is_a_429_with_its_sentence() {
         let v: Value = r.json().await.unwrap();
         assert_eq!(
             v["message"],
-            "You're using 2 of 2 live sessions on the free plan. Close one or upgrade to Pro."
+            "You have 2 of 2 computers in use at once on the free plan. Close one or upgrade to Pro."
         );
     }
 }

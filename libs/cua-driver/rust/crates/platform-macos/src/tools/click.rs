@@ -237,6 +237,7 @@ fn background_pixel_restore_pid(
 /// different app here; the wildcard suppression lease handles genuine side
 /// effects.
 pub(super) async fn restore_user_focus_after_background_pixel(
+    undo: crate::focus_arbiter::UndoWatch,
     pid: i32,
     prior_front: Option<i32>,
     prior_key_wid: Option<u32>,
@@ -252,8 +253,10 @@ pub(super) async fn restore_user_focus_after_background_pixel(
         prior_front,
         pid,
         apps::frontmost_pid(),
-    ) {
-        let _ = apps::activate_pid(previous_pid);
+    )
+    .filter(|_| undo.decide() == crate::focus_arbiter::Decision::Undo)
+    {
+        let _ = apps::reactivate_app(previous_pid);
         wait_until_frontmost(previous_pid, std::time::Duration::from_millis(300)).await;
         true
     } else {
@@ -1356,6 +1359,7 @@ impl ClickTool {
             // or a Safari link that activates a new tab — same side-effect
             // shape as the AX path, so we wrap identically.
             let prior_front = apps::frontmost_pid();
+            let undo = crate::focus_arbiter::UndoWatch::arm();
             let snapshot = match activation_policy {
                 PixelActivationPolicy::SuppressTarget => {
                     WindowChangeDetector::snapshot(prior_front)
@@ -1528,6 +1532,7 @@ impl ClickTool {
 
             if activation_policy == PixelActivationPolicy::AllowTargetWithoutRaise {
                 restore_user_focus_after_background_pixel(
+                    undo,
                     pid,
                     prior_front,
                     prior_key_wid,

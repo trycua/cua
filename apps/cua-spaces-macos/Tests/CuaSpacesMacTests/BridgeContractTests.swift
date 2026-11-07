@@ -499,7 +499,7 @@ struct BridgeContractTests {
         let open = AppOpenWindow(windowId: 41, appId: "", appName: "Slack", windowTitle: "general", supported: true,
                                  bundlePath: "/Applications/Slack.app")
         let remote = AppRemoteWindow(id: "w-1", appName: "Firefox", title: "Mozilla Firefox", visible: true, appId: "firefox",
-                                     targetEpoch: 3, widthPx: 1280, heightPx: nil, pid: nil)
+                                     targetEpoch: 3, widthPx: 1280, heightPx: nil, pid: nil, origin: nil)
         let png = WebUIBridge.dataURL(Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A]))
         return try [
             ("teleport.catalog", [BridgeValue.encode(entry)]),

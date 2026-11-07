@@ -1948,6 +1948,66 @@ async fn cancelled_prepare_aborts_the_exact_pending_setup() {
     stalled_server.abort();
 }
 
+struct DecliningProtectedProvider;
+
+#[async_trait]
+impl crate::consent::ProtectedConsentProvider for DecliningProtectedProvider {
+    fn provider_id(&self) -> &'static str {
+        "test.browser-declining-provider"
+    }
+
+    async fn request_consent(
+        &self,
+        request: &crate::consent::ConsentRequest,
+    ) -> Result<crate::consent::ProviderDecision, String> {
+        Ok(crate::consent::ProviderDecision {
+            action: crate::consent::ConsentAction::Decline,
+            request_digest: request.request_digest.clone(),
+        })
+    }
+}
+
+#[tokio::test]
+async fn declined_consent_rolls_back_pending_setup_before_refusing() {
+    let setup_aborted = Arc::new(AtomicBool::new(false));
+    let engine = BrowserEngine::new_with_protected_consent_provider(
+        Arc::new(FixturePlatform {
+            endpoint_state: None,
+            ws_url: "ws://127.0.0.1:9/devtools/browser".to_owned(),
+            trusted_input_limited: false,
+            managed_endpoint_visible: false,
+            process_role: BrowserProcessRole::StandaloneConsumer,
+            managed_discovery_invoked: Arc::new(AtomicBool::new(false)),
+            existing_endpoint_visible: Arc::new(AtomicBool::new(false)),
+            setup_invoked: Arc::new(AtomicBool::new(false)),
+            setup_aborted: setup_aborted.clone(),
+            stall_consent: false,
+            focus: Default::default(),
+        }),
+        Some(Arc::new(DecliningProtectedProvider)),
+    );
+    let refused = BrowserPrepareTool::new(engine)
+        .invoke(json!({
+            "pid": 1,
+            "window_id": 7,
+            "session": SESSION,
+            "strategy": { "kind": "existing_profile" }
+        }))
+        .await;
+    assert_eq!(
+        structured(&refused)["refusal"]["code"],
+        "browser_consent_required",
+        "{}",
+        structured(&refused)
+    );
+    // Checked before yielding: a rollback left to the Drop backstop would
+    // only be spawned, not finished, when the refusal returns.
+    assert!(
+        setup_aborted.load(Ordering::SeqCst),
+        "declined consent must roll back the pending setup before refusing"
+    );
+}
+
 async fn snapshot(f: &Fixture, target_id: &str, tab_id: &str) -> Value {
     let tool = GetBrowserStateTool::new(f.engine.clone());
     let result = tool

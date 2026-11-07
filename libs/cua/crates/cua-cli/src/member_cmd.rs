@@ -3,8 +3,8 @@
 //!
 //! `cua join` redeems a join code on this computer's daemon (it needs the
 //! user's Cua sign-in) and keeps the member key it gets in the credential
-//! store (the OS keychain on signed builds), under
-//! `space-member.<member id>`. It is never printed and never written to an
+//! store (the OS keychain on signed builds), under a store-safe name derived
+//! from the member id. It is never printed and never written to an
 //! MCP config: `<cua home>/members.json` keeps only which memberships
 //! exist (Space, handle, ids). Every later call carries the key and, when
 //! this computer has a device key, a fresh signature by it; the daemon
@@ -158,7 +158,14 @@ fn save_memberships(all: &[Membership]) -> Result<(), CuaError> {
 }
 
 fn secret_name(member_id: &str) -> String {
-    format!("space-member.{member_id}")
+    // Named secrets accept only lowercase ASCII letters and hyphens. Encode
+    // both nibbles of every byte so punctuation and case never alias another ID.
+    let mut name = String::from("space-member-");
+    for byte in member_id.bytes() {
+        name.push(char::from(b'a' + (byte >> 4)));
+        name.push(char::from(b'a' + (byte & 0x0f)));
+    }
+    name
 }
 
 fn store() -> cua_auth::Store {
@@ -736,6 +743,42 @@ pub async fn revoke_device_members(device: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn member_credentials_round_trip_without_overwriting_each_other() {
+        let _env = crate::util::test_env::isolated();
+        let home = tempfile::tempdir().unwrap();
+        for store in [
+            cua_auth::Store::File(home.path().join("credentials.json")),
+            cua_auth::Store::TestKeychain(home.path().join("vault")),
+        ] {
+            // The first ID is the shape returned by thread_join_redeem.
+            // The others must not alias it by dropping punctuation or case.
+            let ids = [
+                "mem_652cf79a39be44a7",
+                "mem-652cf79a39be44a7",
+                "MEM_652cf79a39be44a7",
+            ];
+            for (i, id) in ids.iter().enumerate() {
+                store
+                    .save_secret(&secret_name(id), &[i as u8, 0xff])
+                    .unwrap();
+            }
+            for (i, id) in ids.iter().enumerate() {
+                assert_eq!(
+                    store.load_secret(&secret_name(id)).unwrap(),
+                    Some(vec![i as u8, 0xff]),
+                );
+            }
+            assert!(store.clear_secret(&secret_name(ids[0])).unwrap());
+            assert_eq!(store.load_secret(&secret_name(ids[0])).unwrap(), None);
+            assert!(!store.clear_secret(&secret_name(ids[0])).unwrap());
+            assert_eq!(
+                store.load_secret(&secret_name(ids[1])).unwrap(),
+                Some(vec![1, 0xff]),
+            );
+        }
+    }
 
     #[test]
     fn mcp_lines_follow_each_harness() {

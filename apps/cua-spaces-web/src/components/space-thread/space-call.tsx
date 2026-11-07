@@ -147,7 +147,7 @@ export function SpaceCall({
   // Clicking the already-selected stream hides the stream view (thread only); again shows it.
   // An agent's home starts with the desktop folded away (the chat is the page); a choice is kept per Space.
   const isHome = Boolean(useChildren()?.node(spaceId)?.home);
-  const [streamHidden, setStreamHidden] = useStreamHidden(spaceId, isHome);
+  const [streamHidden, setStreamHidden, showStreamNow] = useStreamHidden(spaceId, isHome);
   // The first window that shows up in a home's Stream list opens by itself (once, never over the person's choice).
   useAutoOpenFirstStream({
     spaceId,
@@ -156,7 +156,7 @@ export function SpaceCall({
     windows,
     chosen: () => hasStreamChoice(spaceId),
     onOpen: (row) => {
-      setStreamHidden(false);
+      showStreamNow();
       onSelect?.(row);
     },
   });

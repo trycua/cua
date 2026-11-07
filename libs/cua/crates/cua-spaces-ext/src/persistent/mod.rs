@@ -534,6 +534,9 @@ pub struct Persistent {
     /// Errors of the per-agent passes that ran on their own tasks (detached),
     /// handed to the next pass's report.
     detached_errors: Arc<std::sync::Mutex<Vec<String>>>,
+    /// The power state last seen of each child Space, by `<parent space>\n<child id>`
+    /// (`track_child_power`).
+    child_power: Arc<std::sync::Mutex<HashMap<String, String>>>,
 }
 
 /// What each working session has said so far this turn, by `<space>/<name>#<session>`; shared by every
@@ -606,6 +609,7 @@ impl Persistent {
             admins,
             detach_dispatch: false,
             detached_errors: Arc::default(),
+            child_power: Arc::default(),
         }
     }
 
@@ -1992,6 +1996,13 @@ impl Persistent {
         self.tick_watched(&mut report).await;
         self.tick_watched_jobs(&mut report).await;
         self.tick_mirror(&mut report).await;
+        for rec in records.iter().filter(|r| !r.paused) {
+            if let Err(e) = self.track_child_power(rec) {
+                report
+                    .errors
+                    .push(format!("{} child spaces: {e}", rec.name));
+            }
+        }
         report
     }
 
@@ -2459,6 +2470,147 @@ impl Persistent {
         for (key, started) in failed_now {
             cua_spaces::child_creates::hide(self.spaces.home_dir(), &key, started);
         }
+        Ok(())
+    }
+
+    /// Tells the thread when a child Space of the member's Space stops, sleeps, wakes, dies, is deleted
+    /// or is about to end, once per change. The first sight of a child records its state without a note.
+    /// Nothing here depends on the kind of Space or its runtime: it reads the power state the registry keeps.
+    fn track_child_power(&self, rec: &AgentRecord) -> Result<()> {
+        let kids = self.spaces.children(&rec.space).unwrap_or_default();
+        let prefix = format!("{}\n", rec.space);
+        let known: Vec<String> = {
+            let map = self.child_power.lock().unwrap_or_else(|p| p.into_inner());
+            map.keys()
+                .filter_map(|k| k.strip_prefix(prefix.as_str()).map(str::to_string))
+                .collect()
+        };
+        if kids.is_empty() && known.is_empty() {
+            return Ok(());
+        }
+        let infos = self.spaces.list()?;
+        let store = self.thread_store(&rec.space);
+        let last = store.last_seq()?;
+        let recent = store.read(last.saturating_sub(RECENT * 2), RECENT as usize * 2 + 1)?;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let mut drafts = vec![];
+        let mut seen: Vec<String> = vec![];
+        for id in kids.iter().chain(known.iter()) {
+            if seen.contains(id) {
+                continue;
+            }
+            seen.push(id.clone());
+            let map_key = format!("{prefix}{id}");
+            let info = infos.iter().find(|i| &i.id == id);
+            let prior = self
+                .child_power
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .get(&map_key)
+                .cloned()
+                .or_else(|| {
+                    recent.iter().rev().find_map(|e| {
+                        let ev = e.event.as_ref()?;
+                        (ev["kind"] == "child_power" && ev["space"] == id.as_str())
+                            .then(|| ev["state"].as_str().map(str::to_string))
+                            .flatten()
+                    })
+                });
+            let Some(info) = info else {
+                // Gone from the registry: deleted (by anyone, or reaped with its parent or lifetime).
+                if prior.is_some_and(|p| p != "deleted") {
+                    let name = id.rsplit(':').next().unwrap_or(id).to_string();
+                    drafts.push(events::draft(&events::AgentEvent {
+                        kind: events::Kind::ChildSpaceDeleted,
+                        agent: rec.name.clone(),
+                        text: format!("The computer {name} was deleted"),
+                        guidance: None,
+                        payload: json!({"space": id, "name": name, "agent": rec.handle(), "state": "deleted"}),
+                        task_seq: None,
+                        client_id: Some(format!("cpow:{id}:deleted:{now}")),
+                        from: "child_space",
+                    }));
+                }
+                self.child_power
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .remove(&map_key);
+                continue;
+            };
+            let name = if info.display_name.is_empty() {
+                info.name.clone()
+            } else {
+                info.display_name.clone()
+            };
+            let state = if info.power_state.is_empty() {
+                "running".to_string()
+            } else {
+                info.power_state.clone()
+            };
+            self.child_power
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .insert(map_key, state.clone());
+            if let Some(kind) = events::power_change(prior.as_deref(), &state, &info.stop_reason) {
+                let text = match kind {
+                    events::Kind::ChildSpaceWoke => format!("{name} is running again"),
+                    events::Kind::ChildSpaceDied => format!(
+                        "@{} the computer {name} stopped on its own: {}. Start it again if you still need it.",
+                        rec.name, info.stop_reason
+                    ),
+                    _ if state == "suspended" => format!("{name} went to sleep"),
+                    _ => format!("{name} was stopped"),
+                };
+                drafts.push(events::draft(&events::AgentEvent {
+                    kind,
+                    agent: rec.name.clone(),
+                    text,
+                    guidance: None,
+                    payload: json!({
+                        "space": id, "name": name, "agent": rec.handle(), "state": state,
+                        "reason": info.stop_reason,
+                    }),
+                    task_seq: None,
+                    client_id: Some(format!("cpow:{id}:{state}:{now}")),
+                    from: "child_space",
+                }));
+            }
+            // The grace warning: a lifetime that runs out within two minutes, said once per end time.
+            if state == "running" && info.expires_at_unix > now && info.expires_at_unix - now <= 120
+            {
+                let key = format!("cend:{id}:{}", info.expires_at_unix);
+                if !recent
+                    .iter()
+                    .any(|e| e.client_id.as_deref() == Some(key.as_str()))
+                {
+                    let what = if info.on_expire == "suspend" {
+                        "go to sleep"
+                    } else {
+                        "be deleted"
+                    };
+                    drafts.push(events::draft(&events::AgentEvent {
+                        kind: events::Kind::ChildSpaceEnding,
+                        agent: rec.name.clone(),
+                        text: format!(
+                            "{name} will {what} in about {} seconds. Save its work if you need it.",
+                            info.expires_at_unix - now
+                        ),
+                        guidance: None,
+                        payload: json!({
+                            "space": id, "name": name, "agent": rec.handle(), "state": "ending",
+                            "ends_at": info.expires_at_unix, "on_expire": info.on_expire,
+                        }),
+                        task_seq: None,
+                        client_id: Some(key),
+                        from: "child_space",
+                    }));
+                }
+            }
+        }
+        store.append_many(drafts)?;
         Ok(())
     }
 

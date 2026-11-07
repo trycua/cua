@@ -56,6 +56,16 @@ pub enum Kind {
     ChildSpaceReady,
     /// It could not be made.
     ChildSpaceFailed,
+    /// A child Space was stopped or put to sleep (suspended) on purpose.
+    ChildSpaceStopped,
+    /// A child Space stopped without being asked to (out of memory, killed, exited).
+    ChildSpaceDied,
+    /// A stopped or sleeping child Space runs again.
+    ChildSpaceWoke,
+    /// A child Space was deleted (by anyone, or because its lifetime or parent ended).
+    ChildSpaceDeleted,
+    /// A child Space is about to end or sleep (its lifetime runs out within the grace).
+    ChildSpaceEnding,
     /// A job the agent started has finished or failed.
     JobFinished,
     /// A subagent started.
@@ -65,13 +75,18 @@ pub enum Kind {
 }
 
 /// Every kind (a test keeps this complete).
-pub const ALL: [Kind; 9] = [
+pub const ALL: [Kind; 14] = [
     Kind::ApprovalAllowed,
     Kind::ApprovalDenied,
     Kind::ApprovalExpired,
     Kind::ChildSpaceCreating,
     Kind::ChildSpaceReady,
     Kind::ChildSpaceFailed,
+    Kind::ChildSpaceStopped,
+    Kind::ChildSpaceDied,
+    Kind::ChildSpaceWoke,
+    Kind::ChildSpaceDeleted,
+    Kind::ChildSpaceEnding,
     Kind::JobFinished,
     Kind::SubagentStarted,
     Kind::SubagentEnded,
@@ -87,6 +102,11 @@ impl Kind {
             Kind::ChildSpaceCreating | Kind::ChildSpaceReady | Kind::ChildSpaceFailed => {
                 "child_space"
             }
+            Kind::ChildSpaceStopped
+            | Kind::ChildSpaceDied
+            | Kind::ChildSpaceWoke
+            | Kind::ChildSpaceDeleted
+            | Kind::ChildSpaceEnding => "child_power",
             Kind::JobFinished => "job_finished",
             Kind::SubagentStarted | Kind::SubagentEnded => "subagent",
         }
@@ -101,6 +121,11 @@ impl Kind {
             Kind::ChildSpaceCreating
             | Kind::ChildSpaceReady
             | Kind::ChildSpaceFailed
+            | Kind::ChildSpaceStopped
+            | Kind::ChildSpaceDied
+            | Kind::ChildSpaceWoke
+            | Kind::ChildSpaceDeleted
+            | Kind::ChildSpaceEnding
             | Kind::JobFinished
             | Kind::SubagentStarted
             | Kind::SubagentEnded => Audience::Both,
@@ -115,11 +140,17 @@ impl Kind {
             Kind::ApprovalAllowed
             | Kind::ApprovalDenied
             | Kind::ApprovalExpired
-            | Kind::JobFinished => true,
+            | Kind::JobFinished
+            // A Space that died under the agent: it has to know now, not at its next turn.
+            | Kind::ChildSpaceDied => true,
             // The agent that asked for the Space is inside the call; the others inform what it reads next.
             Kind::ChildSpaceCreating
             | Kind::ChildSpaceReady
             | Kind::ChildSpaceFailed
+            | Kind::ChildSpaceStopped
+            | Kind::ChildSpaceWoke
+            | Kind::ChildSpaceDeleted
+            | Kind::ChildSpaceEnding
             | Kind::SubagentStarted
             | Kind::SubagentEnded => false,
         }
@@ -179,6 +210,20 @@ pub fn draft(ev: &AgentEvent) -> Draft {
     d
 }
 
+/// The kind of event a child Space's power change is, or `None` for no change or a first sight (which
+/// is recorded without a note). `reason` is why it stopped without being asked, empty otherwise.
+pub fn power_change(prior: Option<&str>, state: &str, reason: &str) -> Option<Kind> {
+    let prior = prior?;
+    if prior == state {
+        return None;
+    }
+    Some(match state {
+        "running" => Kind::ChildSpaceWoke,
+        _ if !reason.is_empty() => Kind::ChildSpaceDied,
+        _ => Kind::ChildSpaceStopped,
+    })
+}
+
 /// Posts `ev` to the thread: the one way system events reach people and agents.
 pub fn post_agent_event(store: &ThreadStore, ev: &AgentEvent) -> Result<ThreadEntry> {
     store.append(draft(ev))
@@ -210,9 +255,14 @@ mod tests {
                 Kind::ChildSpaceCreating => 3,
                 Kind::ChildSpaceReady => 4,
                 Kind::ChildSpaceFailed => 5,
-                Kind::JobFinished => 6,
-                Kind::SubagentStarted => 7,
-                Kind::SubagentEnded => 8,
+                Kind::ChildSpaceStopped => 6,
+                Kind::ChildSpaceDied => 7,
+                Kind::ChildSpaceWoke => 8,
+                Kind::ChildSpaceDeleted => 9,
+                Kind::ChildSpaceEnding => 10,
+                Kind::JobFinished => 11,
+                Kind::SubagentStarted => 12,
+                Kind::SubagentEnded => 13,
             }
         }
         let mut seen = vec![false; ALL.len()];
@@ -221,6 +271,29 @@ mod tests {
             let _ = (k.audience(), k.wakes(), k.name());
         }
         assert!(seen.iter().all(|s| *s), "ALL lists every kind exactly once");
+    }
+
+    #[test]
+    fn power_changes_are_told_once_and_a_first_sight_is_silent() {
+        assert_eq!(power_change(None, "stopped", ""), None);
+        assert_eq!(power_change(Some("running"), "running", ""), None);
+        assert_eq!(
+            power_change(Some("running"), "stopped", ""),
+            Some(Kind::ChildSpaceStopped)
+        );
+        assert_eq!(
+            power_change(Some("running"), "suspended", ""),
+            Some(Kind::ChildSpaceStopped)
+        );
+        assert_eq!(
+            power_change(Some("running"), "stopped", "out of memory"),
+            Some(Kind::ChildSpaceDied)
+        );
+        assert_eq!(
+            power_change(Some("suspended"), "running", ""),
+            Some(Kind::ChildSpaceWoke)
+        );
+        assert!(Kind::ChildSpaceDied.wakes() && !Kind::ChildSpaceStopped.wakes());
     }
 
     #[test]

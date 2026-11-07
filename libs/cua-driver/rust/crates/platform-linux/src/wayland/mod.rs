@@ -1410,8 +1410,8 @@ fn crop_png_to_rect(
 /// Display-level capture dispatcher. Cascade:
 /// 1. Opt-in GNOME compositor helper. If available, capture failure is
 ///    terminal rather than cascading into GNOME's portal implementation.
-/// 2. KWin's ScreenShot2, when KWin lets this executable call it. It runs before
-///    the portal, so a Deny saved in the portal doesn't apply to it.
+/// 2. KWin's ScreenShot2, only while `cua-driver kwin-capture` is on. A Deny
+///    saved in the portal keeps it off unless the operator overrode it.
 /// 3. Native Wayland on wlroots: zwlr_screencopy_manager_v1 (fast, zero
 ///    consent).
 /// 4. ext-image-copy-capture-v1 on supported compositors.
@@ -1443,13 +1443,13 @@ pub fn screenshot_display_dispatch() -> anyhow::Result<Vec<u8>> {
         ) {
             return result;
         }
-        // Tier 2: KWin answers directly when it lets this executable call
-        // ScreenShot2: every output, no portal request to wait on.
-        if kwin_capture::may_be_session() {
-            match kwin_capture::capture_workspace() {
-                Ok(bytes) => return Ok(bytes),
-                Err(e) => tracing::debug!("KWin workspace capture unavailable: {e:#}"),
-            }
+        // Tier 2: every output from KWin, with no portal request to wait on.
+        if let Some(bytes) = kwin_workspace_capture(
+            kwin_capture::may_be_session(),
+            kwin_access::allowed,
+            kwin_capture::capture_workspace,
+        ) {
+            return Ok(bytes);
         }
         // Tier 3: native wlroots screencopy (fast, zero consent).
         match screenshot_bytes() {
@@ -1543,6 +1543,23 @@ fn checked_shell_helper_capture(
 ) -> Option<anyhow::Result<Vec<u8>>> {
     available
         .then(|| capture().ok_or_else(|| anyhow::anyhow!("GNOME compositor helper capture failed")))
+}
+
+/// The KWin tier. It never runs past the operator's switch, which also keeps a
+/// saved portal Deny: ScreenShot2 doesn't ask the portal, so skipping the switch
+/// would capture a desktop the user refused. A failure falls through to the
+/// tiers below.
+fn kwin_workspace_capture(
+    may_be_kwin: bool,
+    allowed: impl FnOnce() -> bool,
+    capture: impl FnOnce() -> anyhow::Result<Vec<u8>>,
+) -> Option<Vec<u8>> {
+    if !may_be_kwin || !allowed() {
+        return None;
+    }
+    capture()
+        .inspect_err(|e| tracing::debug!("KWin workspace capture unavailable: {e:#}"))
+        .ok()
 }
 
 /// The cascade tail: the portal tier, then the X11 root window. A portal

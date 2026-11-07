@@ -10,7 +10,7 @@
  *
  * | Operation | Daemon tool | SwiftUI / Electron host | Tauri |
  * |---|---|---|---|
- * | `agents.recentThreads {limit?}` | `agent_threads` | the tool's JSON as-is | unsupported |
+ * | `agents.recentThreads {limit?, agents?}` | `agent_threads` | the tool's JSON as-is | unsupported |
  * | `agents.threadHistory {agent, id, limit?}` | `agent_thread_read` | the tool's JSON as-is | unsupported |
  *
  * The hosts stay thin (`AGENT_THREADS_TOOLS` is the argument mapping, which
@@ -59,7 +59,11 @@ export interface PastThread {
 }
 
 export interface AgentThreadsOps {
-  "agents.recentThreads": { args: { limit?: number }; result: RecentThread[] };
+  /**
+   * `agents`: only these agents' chats (harness or setup ids: `claude-code`, `codex`, `openai-codex`, `hermes`), read by
+   * the daemon so every host lists the same; none: all three.
+   */
+  "agents.recentThreads": { args: { limit?: number; agents?: string[] }; result: RecentThread[] };
   "agents.threadHistory": { args: { agent: ThreadAgent; id: string; limit?: number }; result: PastThread };
 }
 
@@ -78,7 +82,7 @@ export const AGENT_THREADS_COVERAGE = {
 export const AGENT_THREADS_TOOLS = {
   "agents.recentThreads": {
     tool: "agent_threads",
-    args: (a: AgentThreadsOps["agents.recentThreads"]["args"]) => (a.limit ? { limit: a.limit } : {}),
+    args: (a: AgentThreadsOps["agents.recentThreads"]["args"]) => ({ ...(a.limit ? { limit: a.limit } : {}), ...(a.agents?.length ? { agents: [...a.agents] } : {}) }),
   },
   "agents.threadHistory": {
     tool: "agent_thread_read",
@@ -98,7 +102,8 @@ const rec = (v: unknown): Record<string, unknown> => (v && typeof v === "object"
 const str = (v: unknown): string => (typeof v === "string" ? v : "");
 const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
 
-function agentOf(v: unknown): ThreadAgent | null {
+/** A harness or setup id (`codex`) as the chats' agent id; null for an agent whose chats aren't read. */
+export function agentOf(v: unknown): ThreadAgent | null {
   const s = str(v);
   if (s === "codex") return "openai-codex";
   return (THREAD_AGENTS as readonly string[]).includes(s) ? (s as ThreadAgent) : null;
@@ -117,6 +122,13 @@ function threadFromTool(v: unknown): RecentThread | null {
     lastActiveMs: num(t.last_active_ms),
     resume: Array.isArray(t.resume) ? t.resume.filter((x): x is string => typeof x === "string") : [],
   };
+}
+
+/** Only `agents`' chats (all when none are named): a daemon from before `agents` lists every agent's. */
+export function onlyAgents(rows: RecentThread[], agents?: readonly string[]): RecentThread[] {
+  if (!agents?.length) return rows;
+  const want = new Set(agents.map(agentOf).filter((a): a is ThreadAgent => a !== null));
+  return rows.filter((t) => want.has(t.agent));
 }
 
 /** `agent_threads`' answer; rows it can't read are left out. */
@@ -161,7 +173,7 @@ export function webkitAgentThreadsOps(request: Request) {
     }
   };
   return {
-    "agents.recentThreads": async (a: AgentThreadsOps["agents.recentThreads"]["args"]) => recentThreadsFromTool(await call("agents.recentThreads", a)),
+    "agents.recentThreads": async (a: AgentThreadsOps["agents.recentThreads"]["args"]) => onlyAgents(recentThreadsFromTool(await call("agents.recentThreads", a)), a.agents),
     "agents.threadHistory": async (a: AgentThreadsOps["agents.threadHistory"]["args"]) => pastThreadFromTool(await call("agents.threadHistory", a), a),
   };
 }

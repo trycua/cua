@@ -24,7 +24,7 @@ import { extraName, spokenName } from "@/bridge/space-names";
 import { AddComputerSheet } from "@/components/add-computer-sheet";
 import { AppPermissionList, type PermissionsView } from "@/components/app-permissions";
 import { AppMarkImage } from "@/components/agents/harness-mark";
-import { agoLabel, useRecentThreads } from "@/components/ask-first/pick-up";
+import { agoLabel, PICK_UP_LIMIT, recentThreads, useRecentThreads } from "@/components/ask-first/pick-up";
 import { CuaLogo } from "@/components/cua-logo";
 import { Switch } from "@/components/ui/switch";
 import { permissionsStepView, type PermissionsStepView } from "@/lib/app-permissions";
@@ -537,19 +537,32 @@ export function AgentScreen({ view, onPick, onContinue, onLater, onInstall, busy
 /**
  * "Pick up where you left off" (CUA-3319): 2 to 4 of the person's recent chats with their agents on
  * this computer, each with **Continue in Cua**, which opens it in a new Home task with what was said
- * so far. Nothing runs until they send. Hidden when there are none. Only each chat's title, folder
- * and time are read here; its messages are read when it is picked.
+ * so far. Nothing runs until they send. Only the chats of `agents` (the agent picked in setup) are
+ * listed; all three agents' when none are named. While they are read, two quiet grey rows hold the
+ * place; hidden when there are none. Only each chat's title, folder and time are read here; its
+ * messages are read when it is picked.
  */
-export function PickUpWhereYouLeftOff({ onContinue, place = thisComputerText(), className }: { onContinue: (task: AskTask) => void; place?: string; className?: string }) {
-  const threads = useRecentThreads();
-  if (!threads?.length) return null;
+export function PickUpWhereYouLeftOff({ onContinue, agents, place = thisComputerText(), className }: { onContinue: (task: AskTask) => void; agents?: readonly string[]; place?: string; className?: string }) {
+  const threads = useRecentThreads(PICK_UP_LIMIT, agents);
+  if (threads && !threads.length) return null;
   return (
-    <section aria-labelledby="pick-up-heading" className={cn("w-full", className)} data-pick-up="">
+    <section aria-labelledby="pick-up-heading" aria-busy={threads ? undefined : true} className={cn("w-full", className)} data-pick-up="" data-pick-up-loading={threads ? undefined : ""}>
       <h2 id="pick-up-heading" className="text-[15px] font-semibold text-white">
         Pick up where you left off
       </h2>
       <ul className={cn(CARD, "mt-2.5 max-w-[600px]")}>
-        {threads.map((t) => {
+        {threads === null
+          ? [0, 1].map((i) => (
+              <li key={i} aria-hidden className="flex items-center gap-3 px-3 py-2.5" data-pick-up-placeholder="">
+                <span className="size-7 shrink-0 rounded-full bg-white/[0.06]" />
+                <span className="min-w-0 flex-1 space-y-1.5 py-0.5">
+                  <span className="block h-3.5 w-[55%] rounded-full bg-white/[0.08]" />
+                  <span className="block h-3 w-[35%] rounded-full bg-white/[0.05]" />
+                </span>
+              </li>
+            ))
+          : null}
+        {(threads ?? []).map((t) => {
           const folder = folderLabel(t.cwd);
           const when = agoLabel(t.lastActiveMs);
           return (
@@ -597,8 +610,8 @@ export function ReadyScreen({ view, agent, onDone, onContinueChat, onCopied, pla
           {copied ? "Copied" : view.copy}
         </button>
       </div>
-      {/* The person's own recent chats on this computer (CUA-3319), hidden when there are none. */}
-      {onContinueChat ? <PickUpWhereYouLeftOff className="mt-[min(28px,3vh)]" place={place} onContinue={onContinueChat} /> : null}
+      {/* The person's own recent chats with the agent they picked (CUA-3319), hidden when there are none. */}
+      {onContinueChat ? <PickUpWhereYouLeftOff className="mt-[min(28px,3vh)]" agents={[agent]} place={place} onContinue={onContinueChat} /> : null}
       <Actions>
         <button type="button" className={WHITE_BUTTON} onClick={onDone} data-onboarding-primary="">
           {view.done}
@@ -894,14 +907,25 @@ export function NewFirstRun() {
     if (!agents.length) return void agentsLater();
     setConnecting(true);
     setConnectError(null);
+    // Ready's "Pick up where you left off": the picked agents' chats are read while Cua connects, so the list is
+    // there when the screen shows (CUA-3319).
+    void recentThreads(adapter, agents, PICK_UP_LIMIT);
+    const started = performance.now();
     try {
-      // The same connect as Settings and the old first run: Cua's tools in each agent's settings, and their sign-ins kept.
-      const viaConnect = await adapter.call("agents.connect", { agents, signIn: true }).then(
-        () => true,
-        () => false,
-      );
-      const rows = viaConnect ? await adapter.call("agents.setup", {}) : await adapter.call("agents.configure", { agents });
-      const failed = agents.map((id) => rows.find((r) => r.agent === id) ?? { agent: id, name: agentInfo(id).name, configured: false, detail: null }).filter((r) => !r.configured);
+      // Only Cua's tools in each agent's settings wait here: they are all the Ready screen needs, and take well under a
+      // second. Copying an agent's sign-in can run Claude Code to refresh a sign-in that ran out (seconds, up to 30),
+      // so it runs after, below.
+      const results = await adapter.call("agents.connect", { agents, signIn: false }).catch(() => null);
+      // A host without Connect, or an answer missing an agent: the agents' rows say.
+      const missing = results ? agents.filter((id) => !results.some((r) => r.agent === id)) : agents;
+      const rows = missing.length ? (results ? await adapter.call("agents.setup", {}) : await adapter.call("agents.configure", { agents })) : [];
+      const failed = agents
+        .map((id) => {
+          const r = results?.find((x) => x.agent === id);
+          if (r) return { agent: id, name: agentInfo(id).name, configured: Boolean(r.tools_ok), detail: r.tools_line ?? null };
+          return rows.find((x) => x.agent === id) ?? { agent: id, name: agentInfo(id).name, configured: false, detail: null };
+        })
+        .filter((r) => !r.configured);
       if (failed.length) {
         const one = failed.length === 1 ? failed[0]! : null;
         setConnectError(
@@ -911,9 +935,15 @@ export function NewFirstRun() {
         );
         return;
       }
+      console.info(`first run: ${agents.join(", ")} connected in ${Math.round(performance.now() - started)} ms`);
       // Ready's line to try uses the first one that has a command to type.
       const primary = agents.find((id) => agentInfo(id).command) ?? agents[0]!;
       save({ agent: primary, connected: agents, screen: "ready" });
+      // The same connect as Settings, now with the sign-ins kept for runs in your Spaces. Nothing on Ready waits on it.
+      void adapter.call("agents.connect", { agents, signIn: true }).then(
+        () => console.info(`first run: sign-ins kept in ${Math.round(performance.now() - started)} ms`),
+        (e: unknown) => console.warn("first run: keeping the sign-ins failed", e),
+      );
     } catch (e) {
       setConnectError(e instanceof Error ? e.message : String(e));
     } finally {

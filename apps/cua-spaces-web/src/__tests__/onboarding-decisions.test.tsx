@@ -94,8 +94,8 @@ describe("Ready screen chat pickup (A, CUA-3319)", () => {
     writeFirstRun({ newRun: { ...NEW_RUN_EMPTY, screen: "ready", agent: "codex", reached: 3 } });
     await mountApp("/onboarding", { failsCreates: false, listsGhost: false, demo: { signedIn: true, onboarded: false, noSpaces: true } });
     await waitFor(() => expect(heading()).toBe("Codex can now use this Mac"), { timeout: 15_000 });
-    // Listed straight away: nothing to press first, and no Labs flag in the way.
-    await waitFor(() => expect(all("[data-new-run=ready] [data-pick-up-row]").length).toBe(3));
+    // Listed straight away: nothing to press first, and no Labs flag in the way. Only Codex's chats: Codex was picked.
+    await waitFor(() => expect(all("[data-new-run=ready] [data-pick-up-row]").map((r) => r.dataset.pickUpRow)).toEqual(["openai-codex"]));
     expect(screen.queryByRole("button", { name: /show my recent chats/i })).toBeNull();
     cleanup();
     resetFirstRunCache();
@@ -108,7 +108,7 @@ describe("Ready screen chat pickup (A, CUA-3319)", () => {
     expect(q("[data-new-run-command]")).not.toBeNull();
   });
 
-  it.skipIf(!wasmBuilt)("keeps the titles on this computer: nothing caches, sends or posts them, and the continued chat stays private", { timeout: 60_000 }, async () => {
+  it.skipIf(!wasmBuilt)("keeps the titles on this computer: nothing stores, sends or posts them, and the continued chat stays private", { timeout: 60_000 }, async () => {
     const calls: Calls = [];
     writeFirstRun({ newRun: { ...NEW_RUN_EMPTY, screen: "ready", agent: "codex", reached: 3 } });
     const { router } = await mountApp("/onboarding", {
@@ -117,11 +117,11 @@ describe("Ready screen chat pickup (A, CUA-3319)", () => {
       demo: { signedIn: true, onboarded: false, noSpaces: true },
       intercept: (op, args) => (calls.push({ op, args }), undefined),
     });
-    await waitFor(() => expect(all("[data-pick-up-row]").length).toBe(3), { timeout: 15_000 });
+    await waitFor(() => expect(all("[data-pick-up-row]").length).toBe(1), { timeout: 15_000 });
     // Listed, not kept: no title in this device's storage before one is picked.
     const stored = () => Object.keys(localStorage).map((k) => localStorage.getItem(k) ?? "").join("\n");
     for (const t of TITLES) expect(stored()).not.toContain(t);
-    fireEvent.click(all("[data-pick-up-continue]")[1]!);
+    fireEvent.click(all("[data-pick-up-continue]")[0]!);
     await waitFor(() => expect(router.state.location.pathname).toMatch(/^\/home\/.+/), { timeout: 15_000 });
     await new Promise((r) => setTimeout(r, 300));
     // The picked chat is the only one this device remembers (its own Home task); the others are not kept.

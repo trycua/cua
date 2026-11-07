@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
+import { Link } from "@tanstack/react-router";
 import { ArrowDownCircleIcon, EllipsisIcon, LoaderCircleIcon, PictureInPicture2Icon, PowerIcon, UserPlusIcon } from "lucide-react";
 import type { ReactNode } from "react";
 
@@ -32,6 +33,8 @@ export interface SpaceHeaderProps {
   os: SpaceOs;
   title: string;
   place: ReactNode;
+  /** The Space it is a child of: "Child of <parent>", linking to it. */
+  childOf?: { id: string; name: string } | null;
   power?: HeaderPower;
   /** The desktop into its floating window. */
   pip?: HeaderAction & { id: string; active: boolean };
@@ -86,6 +89,14 @@ export function SpaceHeader(p: SpaceHeaderProps) {
           <h1 data-detail-title className="truncate text-[20px] leading-tight font-semibold tracking-[-0.01em]">
             {p.title}
           </h1>
+          {p.childOf ? (
+            <p data-child-of={p.childOf.id} className="mt-0.5 text-xs text-muted-foreground">
+              Child of{" "}
+              <Link to="/spaces/$spaceId" params={{ spaceId: p.childOf.id }} className="cursor-default font-medium text-foreground outline-none hover:underline focus-visible:underline">
+                {p.childOf.name}
+              </Link>
+            </p>
+          ) : null}
           <div className="[&>p]:mt-0.5">{p.place}</div>
         </div>
         <div className="flex shrink-0 items-center gap-1.5">

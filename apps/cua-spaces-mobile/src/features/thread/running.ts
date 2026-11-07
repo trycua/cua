@@ -6,3 +6,9 @@ export function runningFor(since: number, now: number): string {
   const s = Math.max(0, Math.floor((now - since) / 1000));
   return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, "0")}s`;
 }
+
+/** The page a child row opens: the Space once it exists, else its being-made row (what the host lists while it is made). */
+export function childPageId(space: { space: string; key?: string; state?: string }): string {
+  if (space.state === "ready" || !space.key) return space.space;
+  return `pending:agent-${space.key.replace(/:(\d+)$/, "-$1")}`;
+}

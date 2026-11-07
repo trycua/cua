@@ -71,6 +71,11 @@ pub struct Children {
 impl Children {
     /// Opens the state in `home`.
     pub fn open(home: &Path) -> std::io::Result<Self> {
+        // A create the last daemon was making when it stopped will never finish: its row says so.
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_millis() as u64);
+        cua_spaces::child_creates::fail_orphans(home, now);
         Ok(Self {
             authority: capability::Authority::open(home)?,
             budget: budget::Ledger::open(home),

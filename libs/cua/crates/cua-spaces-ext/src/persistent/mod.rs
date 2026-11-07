@@ -2337,10 +2337,9 @@ impl Persistent {
         let Some(task) = rec.task.as_ref().map(|t| t.seq) else {
             return Ok(());
         };
-        let Ok(kids) = self.spaces.children(&rec.space) else {
-            return Ok(());
-        };
-        if kids.is_empty() {
+        let kids = self.spaces.children(&rec.space).unwrap_or_default();
+        let asked = cua_spaces::child_creates::of(self.spaces.home_dir(), &rec.space);
+        if kids.is_empty() && asked.is_empty() {
             return Ok(());
         }
         let store = self.thread_store(&rec.space);
@@ -2348,7 +2347,68 @@ impl Persistent {
         let recent = store.read(last.saturating_sub(RECENT * 2), RECENT as usize * 2 + 1)?;
         let infos = self.spaces.list()?;
         let mut drafts = vec![];
+        // The creates the host ran for this agent: one note per step and per outcome (keyed, so a
+        // pass never repeats one), which the clients fold into one row each.
+        for e in &asked {
+            let base = format!("childc:{}:{}", e.key, e.started_ms);
+            let state = match e.state {
+                cua_spaces::child_creates::State::Creating => "creating",
+                cua_spaces::child_creates::State::Ready => "ready",
+                cua_spaces::child_creates::State::Failed => "failed",
+            };
+            let key = match e.state {
+                cua_spaces::child_creates::State::Creating => format!("{base}:p:{}", e.phase),
+                _ => format!("{base}:{state}"),
+            };
+            if recent
+                .iter()
+                .any(|r| r.client_id.as_deref() == Some(key.as_str()))
+            {
+                continue;
+            }
+            let os = &e.os;
+            let text = match e.state {
+                cua_spaces::child_creates::State::Creating => {
+                    format!("Creating the {} Space {}", os, e.name).replace("  ", " ")
+                }
+                cua_spaces::child_creates::State::Ready => format!("{} is ready", e.name),
+                cua_spaces::child_creates::State::Failed => format!(
+                    "Couldn't create the {} Space {}: {}. {} was told.",
+                    os,
+                    e.name,
+                    e.error.trim_end_matches('.').to_lowercase(),
+                    rec.name
+                )
+                .replace("  ", " "),
+            };
+            let space = if e.space.is_empty() {
+                format!("local:{}", e.key)
+            } else {
+                e.space.clone()
+            };
+            let mut d = Draft::event(
+                "child_space",
+                text,
+                json!({
+                    "kind": "child_space", "space": space, "key": format!("{}:{}", e.key, e.started_ms),
+                    "name": e.name, "os": os, "agent": rec.handle(), "state": state,
+                    "phase": e.phase, "percent": e.percent, "error": e.error,
+                    "started_ms": e.started_ms, "ended_ms": e.ended_ms,
+                }),
+            );
+            d.task_seq = Some(task);
+            d.client_id = Some(key);
+            drafts.push(d);
+        }
+        let covered: std::collections::HashSet<&str> = asked
+            .iter()
+            .map(|e| e.space.as_str())
+            .filter(|s| !s.is_empty())
+            .collect();
         for id in kids {
+            if covered.contains(id.as_str()) {
+                continue;
+            }
             let key = format!("child:{id}");
             if recent
                 .iter()

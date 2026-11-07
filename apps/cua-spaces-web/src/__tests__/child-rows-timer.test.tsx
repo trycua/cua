@@ -4,7 +4,7 @@
 import { act, cleanup, render } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { SubagentRow } from "@/components/space-thread/child-rows";
+import { SubagentRow, childPageId } from "@/components/space-thread/child-rows";
 
 afterEach(() => {
   cleanup();
@@ -34,5 +34,14 @@ describe("a running subagent row", () => {
     expect(container.querySelector("[data-live-elapsed]")).toBeNull();
     expect(container.textContent).toContain("Done");
     expect(container.textContent).toContain("1m 05s");
+  });
+});
+
+describe("the page a child Space row opens", () => {
+  it("is the being-made page until the Space exists, then the Space", () => {
+    expect(childPageId({ space: "local:mac", key: "mac:500", state: "creating" })).toBe("pending:agent-mac-500");
+    expect(childPageId({ space: "local:mac", key: "mac:500", state: "failed" })).toBe("pending:agent-mac-500");
+    expect(childPageId({ space: "local:mac", key: "mac:500", state: "ready" })).toBe("local:mac");
+    expect(childPageId({ space: "local:old" })).toBe("local:old");
   });
 });

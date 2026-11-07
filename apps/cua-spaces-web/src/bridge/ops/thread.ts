@@ -108,11 +108,25 @@ export type ChildNote =
     }
   | {
       kind: "child_space";
-      /** The child Space's id (the page opens it). */
+      /** The child Space's id (the page opens it, also while it is being made). */
       space: string;
+      /** One create: the notes of a Space being made fold into one row. Absent on a note from before. */
+      key?: string;
       name: string;
       os: string;
+      /** The agent member that made it (a handle). */
       agent: string;
+      /** The person that made it, when a person did (the row then sits under their header). */
+      by?: { id: string; name: string } | null;
+      /** Where the create is. Absent on a note from before: it is made. */
+      state?: "creating" | "ready" | "failed";
+      /** The step in plain words ("Cloning the disk for the macOS Space"). */
+      phase?: string;
+      percent?: number | null;
+      /** Why it failed, in plain words. */
+      error?: string;
+      startedMs?: number | null;
+      endedMs?: number | null;
     };
 
 /** A subagent that runs now, on the agent's live row. */
@@ -123,6 +137,8 @@ export interface LiveChild {
   /** Its latest step as a short row. */
   step: string | null;
   sinceMs?: number;
+  /** A Space the agent is making (not a subagent): its OS, the page it opens and how far it is. */
+  space?: { os: string; page: string; percent: number | null };
 }
 
 export type ThreadEntryKind = "message" | "task_update" | "approval" | "answer" | "system" | "join_request";
@@ -663,7 +679,19 @@ function childNote(v: unknown): ChildNote | null {
       endedMs: num(e.ended_ms),
     };
   }
-  if (e.kind === "child_space" && str(e.space)) return { kind: "child_space", space: str(e.space), name: str(e.name) || str(e.space), os: str(e.os), agent: str(e.agent) };
+  if (e.kind === "child_space" && str(e.space)) {
+    const state = e.state === "creating" || e.state === "ready" || e.state === "failed" ? e.state : undefined;
+    return {
+      kind: "child_space",
+      space: str(e.space),
+      name: str(e.name) || str(e.space),
+      os: str(e.os),
+      agent: str(e.agent),
+      ...(obj(e.by) && str(obj(e.by)!.id) ? { by: { id: str(obj(e.by)!.id), name: str(obj(e.by)!.name) || str(obj(e.by)!.id) } } : {}),
+      ...(str(e.key) ? { key: str(e.key) } : {}),
+      ...(state ? { state, phase: str(e.phase), percent: num(e.percent), error: str(e.error), startedMs: num(e.started_ms), endedMs: num(e.ended_ms) } : {}),
+    };
+  }
   return null;
 }
 
@@ -871,7 +899,7 @@ export function threadLiveFromTool(v: unknown): ThreadLive {
     const children = (Array.isArray(r?.children) ? r.children : []).flatMap((c): LiveChild[] => {
       const o = obj(c);
       const id = str(o?.id);
-      return o && id ? [{ id, title: str(o.title) || "Subagent", steps: num(o.steps) ?? 0, step: str(o.step) || null, ...(typeof o.since_ms === "number" ? { sinceMs: o.since_ms } : {}) }] : [];
+      return o && id ? [{ id, title: str(o.title) || (o.kind === "child_space" ? "Space" : "Subagent"), steps: num(o.steps) ?? 0, step: str(o.step) || null, ...(typeof o.since_ms === "number" ? { sinceMs: o.since_ms } : {}), ...(o.kind === "child_space" ? { space: { os: str(o.os), page: str(o.space), percent: num(o.percent) } } : {}) }] : [];
     });
     return agent && stage ? [{ agent, stage, ...(sinceMs ? { sinceMs } : {}), ...(text ? { text } : {}), ...(children.length ? { children } : {}) }] : [];
   });

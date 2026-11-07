@@ -311,6 +311,7 @@ const SpaceRowShape = ref(
     error: opt(str),
     host: opt(str),
     hostName: opt(str),
+    parent: opt(str),
     power: opt(str),
     powerState: opt(str),
     stopReason: opt(str),
@@ -1127,7 +1128,21 @@ const ThreadEntryShape = ref(
       nullable(
         union(
           object({ kind: oneOf("subagent"), id: str, agent: str, title: str, state: oneOf("running", "done", "failed"), steps: num, result: nullable(str), startedMs: nullable(num), endedMs: nullable(num) }),
-          object({ kind: oneOf("child_space"), space: str, name: str, os: str, agent: str }),
+          object({
+            kind: oneOf("child_space"),
+            space: str,
+            key: opt(str),
+            name: str,
+            os: str,
+            agent: str,
+            by: opt(nullable(object({ id: str, name: str }))),
+            state: opt(oneOf("creating", "ready", "failed")),
+            phase: opt(str),
+            percent: opt(nullable(num)),
+            error: opt(str),
+            startedMs: opt(nullable(num)),
+            endedMs: opt(nullable(num)),
+          }),
         ),
       ),
     ),
@@ -1156,7 +1171,7 @@ const JoinCodeRowShape = obj<JoinCodeRow>()({
 });
 const ThreadPageShape = obj<ThreadPage>()({
   entries: list(ThreadEntryShape),
-  live: obj<ThreadLive>()({ key: str, agents: list(obj<LiveAgent>()({ agent: str, stage: str, sinceMs: opt(num), text: opt(str), children: opt(list(obj<LiveChild>()({ id: str, title: str, steps: num, step: nullable(str), sinceMs: opt(num) }))) })) }),
+  live: obj<ThreadLive>()({ key: str, agents: list(obj<LiveAgent>()({ agent: str, stage: str, sinceMs: opt(num), text: opt(str), children: opt(list(obj<LiveChild>()({ id: str, title: str, steps: num, step: nullable(str), sinceMs: opt(num), space: opt(object({ os: str, page: str, percent: nullable(num) })) }))) })) }),
   cursor: num,
   caughtUp: bool,
   unread: num,
@@ -1863,6 +1878,7 @@ const WkSpaceShape = ref(
     arch: optNull(str),
     host: optNull(str),
     hostName: optNull(str),
+    parent: optNull(str),
     power: optNull(object({ control: str, off: bool, turningOn: optNull(bool), error: optNull(str), stopReason: optNull(str) })),
     cloud: optNull(str),
     cloudPlace: optNull(str),

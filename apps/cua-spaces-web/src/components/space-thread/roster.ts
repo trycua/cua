@@ -39,6 +39,12 @@ export interface RosterAgent {
 }
 
 /** How an author shows in the thread. */
+/** What an agent-looking item no member stands behind is attributed to: Cua's own system author (drawn by `authorView` like every other Cua entry). */
+export const SYSTEM_BOT = { kind: "system" as const, id: "system:children", name: "Cua" };
+
+/** An agent author that no member of the Space (and no identity kept on the post) stands behind. */
+export const isUnresolvedAgent = (a: Pick<RosterAuthor, "kind" | "agent" | "identity">): boolean => a.kind === "agent" && !a.agent && !a.identity;
+
 export interface RosterAuthor {
   label: string;
   kind: "person" | "agent" | "system";

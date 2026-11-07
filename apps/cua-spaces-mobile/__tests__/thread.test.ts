@@ -75,6 +75,43 @@ describe("every agent message and the child agents", () => {
     expect((items[2] as { sub: { state: string } }).sub.state).toBe("done");
   });
 
+  it("folds the notes of one Space create into one row with its latest state and reads the daemon's JSON", () => {
+    const k = (seq: number, state: string, extra: object = {}) => note(seq, { kind: "child_space", space: "local:mac", key: "mac:1", name: "mac", os: "macOS", agent: "claude", state, ...extra });
+    const items = foldThread([task, k(2, "creating", { phase: "Starting it" }), k(3, "failed", { error: "Its network setup did not come up" })], { me: ME.id });
+    const rows = items.filter((i) => i.type === "child_space");
+    expect(rows).toHaveLength(1);
+    expect((rows[0] as { space: { state: string; error: string } }).space).toMatchObject({ state: "failed", error: "Its network setup did not come up" });
+    const e = threadPageFromTool({ entries: [{ seq: 9, id: "x", ts_ms: 1, author: { kind: "system", id: "system:dispatcher", name: "Cua" }, kind: "system", text: "t", event: { kind: "child_space", space: "local:mac", key: "mac:1", name: "mac", os: "macOS", agent: "claude", state: "creating", phase: "Starting it", percent: 40, started_ms: 5 } }], cursor: 9, caught_up: true, unread: 0, role: "owner" }).entries[0]!;
+    expect(e.child).toMatchObject({ kind: "child_space", state: "creating", phase: "Starting it", percent: 40, startedMs: 5, key: "mac:1" });
+  });
+
+  describe("a created Space's row hangs under its agent, with no header of its own", () => {
+    const kid = (seq: number, key: string, extra: object = {}) =>
+      note(seq, { kind: "child_space", space: `local:${key}`, key: `${key}:1`, name: key, os: "Linux", agent: "claude", state: "creating", ...extra });
+    const shape = (items: ReturnType<typeof foldThread>) => items.map((i) => (i.type === "message" ? `${i.entry.author.name}${i.entry.text ? ":" + i.entry.text : ":header"}` : i.type));
+
+    it("shows nothing for a Space still being made, and one row for its outcome after the agent's text", () => {
+      expect(shape(foldThread([task, said(2, "On it."), kid(3, "a")], { me: ME.id }))).toEqual(["task", "Claude Code:On it."]);
+      expect(shape(foldThread([task, said(2, "On it."), kid(3, "a"), kid(4, "a", { state: "ready" })], { me: ME.id }))).toEqual(["task", "Claude Code:On it.", "child_space"]);
+    });
+
+    it("never invents an identity for the agents that made them", () => {
+      const items = foldThread(["claude", "claude-2", "codex", "hermes"].map((a, i) => kid(2 + i, a, { agent: a, state: "ready" })), { me: ME.id });
+      expect(items.every((i) => i.type === "child_space")).toBe(true);
+    });
+
+    it("several creates are one row each in the order they started, and no creator header appears", () => {
+      const items = foldThread([task, kid(2, "a"), kid(3, "b"), kid(4, "b", { state: "ready" }), kid(5, "a", { state: "failed", error: "No disk" })], { me: ME.id });
+      expect(shape(items)).toEqual(["task", "child_space", "child_space"]);
+      expect(items.filter((i) => i.type === "child_space").map((i) => (i as { space: { name: string } }).space.name)).toEqual(["b", "a"]);
+    });
+  });
+
+  it("reads a Space the agent is making as a live child", () => {
+    const p = threadPageFromTool({ entries: [], cursor: 1, caught_up: true, unread: 0, role: "owner", live: { key: "k", agents: [{ agent: "@claude", stage: "using Terminal", children: [{ id: "space:a:5", title: "a", kind: "child_space", os: "Linux", step: "Starting it", steps: 0, percent: 40, space: "pending:agent-a-5" }] }] } });
+    expect(p.live.agents[0]!.children).toEqual([{ id: "space:a:5", title: "a", steps: 0, step: "Starting it", space: { os: "Linux", page: "pending:agent-a-5", percent: 40 } }]);
+  });
+
   it("reads the live children from the daemon", () => {
     const p = threadPageFromTool({ entries: [], cursor: 1, caught_up: true, unread: 0, role: "owner", live: { key: "k", agents: [{ agent: "@claude", stage: "thinking", children: [{ id: "t1", title: "Map", steps: 1, step: "Ran ls" }] }] } });
     expect(p.live.agents[0]!.children).toEqual([{ id: "t1", title: "Map", steps: 1, step: "Ran ls" }]);

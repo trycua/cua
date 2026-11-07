@@ -55,6 +55,16 @@ struct DevicesTests {
         #expect(m.relayOnline["m2"] == true)
     }
 
+    /// CUA-3746: a machine that published its device id is paired with that
+    /// device by id (the Machines page's input), not by guessing from names.
+    @Test func aMachinesPublishedDeviceIdIsHandedToThePage() async {
+        let fixture = FixtureDevices(snapshot: FixtureDevices.sample(now: Self.now))
+        fixture.current.machines[0].deviceId = "dev_studio"
+        let m = model(fixture)
+        await m.refresh()
+        #expect(m.machineDeviceIds == ["m1": "dev_studio"], "machines without the id have none")
+    }
+
     @Test func aDeviceAskingIsAnnouncedOnceAndOpensTheSheet() async {
         let m = model()
         var announced: [String] = []

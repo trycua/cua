@@ -13292,7 +13292,7 @@ class RelayMachine:
     """
     A machine of the account's relay directory (`relay:<id>`).
 """
-    def __init__(self, *, id:str, space_id:str, name:str, owner_id:str, owner_email:typing.Optional[str], role:str, online:bool, sharing:bool, version:str, url:str, allow:typing.List[str], clients:typing.List[RelayClientInfo], confirmed:bool, team:typing.Optional[str], provides_spaces:typing.Optional[bool]):
+    def __init__(self, *, id:str, space_id:str, name:str, owner_id:str, owner_email:typing.Optional[str], role:str, online:bool, sharing:bool, version:str, url:str, allow:typing.List[str], clients:typing.List[RelayClientInfo], confirmed:bool, team:typing.Optional[str], provides_spaces:typing.Optional[bool], device_id:typing.Optional[str]):
         self.id = id
         self.space_id = space_id
         self.name = name
@@ -13308,12 +13308,13 @@ class RelayMachine:
         self.confirmed = confirmed
         self.team = team
         self.provides_spaces = provides_spaces
+        self.device_id = device_id
 
 
 
 
     def __str__(self):
-        return "RelayMachine(id={}, space_id={}, name={}, owner_id={}, owner_email={}, role={}, online={}, sharing={}, version={}, url={}, allow={}, clients={}, confirmed={}, team={}, provides_spaces={})".format(self.id, self.space_id, self.name, self.owner_id, self.owner_email, self.role, self.online, self.sharing, self.version, self.url, self.allow, self.clients, self.confirmed, self.team, self.provides_spaces)
+        return "RelayMachine(id={}, space_id={}, name={}, owner_id={}, owner_email={}, role={}, online={}, sharing={}, version={}, url={}, allow={}, clients={}, confirmed={}, team={}, provides_spaces={}, device_id={})".format(self.id, self.space_id, self.name, self.owner_id, self.owner_email, self.role, self.online, self.sharing, self.version, self.url, self.allow, self.clients, self.confirmed, self.team, self.provides_spaces, self.device_id)
     def __eq__(self, other):
         if self.id != other.id:
             return False
@@ -13345,6 +13346,8 @@ class RelayMachine:
             return False
         if self.provides_spaces != other.provides_spaces:
             return False
+        if self.device_id != other.device_id:
+            return False
         return True
 
 class _UniffiFfiConverterTypeRelayMachine(_UniffiConverterRustBuffer):
@@ -13366,6 +13369,7 @@ class _UniffiFfiConverterTypeRelayMachine(_UniffiConverterRustBuffer):
             confirmed=_UniffiFfiConverterBoolean.read(buf),
             team=_UniffiFfiConverterOptionalString.read(buf),
             provides_spaces=_UniffiFfiConverterOptionalBoolean.read(buf),
+            device_id=_UniffiFfiConverterOptionalString.read(buf),
         )
 
     @staticmethod
@@ -13385,6 +13389,7 @@ class _UniffiFfiConverterTypeRelayMachine(_UniffiConverterRustBuffer):
         _UniffiFfiConverterBoolean.check_lower(value.confirmed)
         _UniffiFfiConverterOptionalString.check_lower(value.team)
         _UniffiFfiConverterOptionalBoolean.check_lower(value.provides_spaces)
+        _UniffiFfiConverterOptionalString.check_lower(value.device_id)
 
     @staticmethod
     def write(value, buf):
@@ -13403,6 +13408,7 @@ class _UniffiFfiConverterTypeRelayMachine(_UniffiConverterRustBuffer):
         _UniffiFfiConverterBoolean.write(value.confirmed, buf)
         _UniffiFfiConverterOptionalString.write(value.team, buf)
         _UniffiFfiConverterOptionalBoolean.write(value.provides_spaces, buf)
+        _UniffiFfiConverterOptionalString.write(value.device_id, buf)
 
 class _UniffiFfiConverterSequenceTypeRelayMachine(_UniffiConverterRustBuffer):
     @classmethod
@@ -17970,7 +17976,7 @@ class HostStatus:
     """
     Host status.
 """
-    def __init__(self, *, configured:bool, mode:typing.Optional[str], relay_url:typing.Optional[str], direct_url:typing.Optional[str], env_token_path:typing.Optional[str], machine_id:typing.Optional[str], name:typing.Optional[str], sharing:bool, service_installed:bool, service_running:bool, service_kind:str, online:typing.Optional[bool], clients:typing.List[RelayClientInfo], allow:typing.List[str], permissions:typing.List[HostPermission], error:typing.Optional[str], recent_access:typing.List[HostAccessRecord] = _DEFAULT, access_log_error:typing.Optional[str] = _DEFAULT, share_desktop:bool = True, provide_spaces:bool = False, max_spaces:int = 0, max_macos_vms:int = 0, max_memory_gb:int = 0, max_disk_gb:int = 0, max_run_minutes:int = 0, used_memory_gb:int = 0, used_disk_gb:int = 0, total_memory_gb:int = 0, total_disk_gb:int = 0, provided_spaces:typing.List[HostProvidedSpace] = _DEFAULT, spaces_audit:typing.List[HostSpacesAuditRecord] = _DEFAULT, spaces_audit_error:typing.Optional[str] = _DEFAULT, paused_signed_out:bool = False, owner:typing.Optional[str] = _DEFAULT, owner_email:typing.Optional[str] = _DEFAULT, helper_available:bool = False, legacy_service:bool = False):
+    def __init__(self, *, configured:bool, mode:typing.Optional[str], relay_url:typing.Optional[str], direct_url:typing.Optional[str], env_token_path:typing.Optional[str], machine_id:typing.Optional[str], name:typing.Optional[str], sharing:bool, service_installed:bool, service_running:bool, service_kind:str, online:typing.Optional[bool], clients:typing.List[RelayClientInfo], allow:typing.List[str], permissions:typing.List[HostPermission], error:typing.Optional[str], recent_access:typing.List[HostAccessRecord] = _DEFAULT, access_log_error:typing.Optional[str] = _DEFAULT, share_desktop:bool = True, provide_spaces:bool = False, max_spaces:int = 0, max_macos_vms:int = 0, max_memory_gb:int = 0, max_disk_gb:int = 0, max_run_minutes:int = 0, used_memory_gb:int = 0, used_disk_gb:int = 0, total_memory_gb:int = 0, total_disk_gb:int = 0, provided_spaces:typing.List[HostProvidedSpace] = _DEFAULT, spaces_audit:typing.List[HostSpacesAuditRecord] = _DEFAULT, spaces_audit_error:typing.Optional[str] = _DEFAULT, paused_signed_out:bool = False, owner:typing.Optional[str] = _DEFAULT, owner_email:typing.Optional[str] = _DEFAULT, helper_available:bool = False, legacy_service:bool = False, service_log:typing.List[str] = _DEFAULT):
         self.configured = configured
         self.mode = mode
         self.relay_url = relay_url
@@ -18029,12 +18035,16 @@ class HostStatus:
             self.owner_email = owner_email
         self.helper_available = helper_available
         self.legacy_service = legacy_service
+        if service_log is _DEFAULT:
+            self.service_log = []
+        else:
+            self.service_log = service_log
 
 
 
 
     def __str__(self):
-        return "HostStatus(configured={}, mode={}, relay_url={}, direct_url={}, env_token_path={}, machine_id={}, name={}, sharing={}, service_installed={}, service_running={}, service_kind={}, online={}, clients={}, allow={}, permissions={}, error={}, recent_access={}, access_log_error={}, share_desktop={}, provide_spaces={}, max_spaces={}, max_macos_vms={}, max_memory_gb={}, max_disk_gb={}, max_run_minutes={}, used_memory_gb={}, used_disk_gb={}, total_memory_gb={}, total_disk_gb={}, provided_spaces={}, spaces_audit={}, spaces_audit_error={}, paused_signed_out={}, owner={}, owner_email={}, helper_available={}, legacy_service={})".format(self.configured, self.mode, self.relay_url, self.direct_url, self.env_token_path, self.machine_id, self.name, self.sharing, self.service_installed, self.service_running, self.service_kind, self.online, self.clients, self.allow, self.permissions, self.error, self.recent_access, self.access_log_error, self.share_desktop, self.provide_spaces, self.max_spaces, self.max_macos_vms, self.max_memory_gb, self.max_disk_gb, self.max_run_minutes, self.used_memory_gb, self.used_disk_gb, self.total_memory_gb, self.total_disk_gb, self.provided_spaces, self.spaces_audit, self.spaces_audit_error, self.paused_signed_out, self.owner, self.owner_email, self.helper_available, self.legacy_service)
+        return "HostStatus(configured={}, mode={}, relay_url={}, direct_url={}, env_token_path={}, machine_id={}, name={}, sharing={}, service_installed={}, service_running={}, service_kind={}, online={}, clients={}, allow={}, permissions={}, error={}, recent_access={}, access_log_error={}, share_desktop={}, provide_spaces={}, max_spaces={}, max_macos_vms={}, max_memory_gb={}, max_disk_gb={}, max_run_minutes={}, used_memory_gb={}, used_disk_gb={}, total_memory_gb={}, total_disk_gb={}, provided_spaces={}, spaces_audit={}, spaces_audit_error={}, paused_signed_out={}, owner={}, owner_email={}, helper_available={}, legacy_service={}, service_log={})".format(self.configured, self.mode, self.relay_url, self.direct_url, self.env_token_path, self.machine_id, self.name, self.sharing, self.service_installed, self.service_running, self.service_kind, self.online, self.clients, self.allow, self.permissions, self.error, self.recent_access, self.access_log_error, self.share_desktop, self.provide_spaces, self.max_spaces, self.max_macos_vms, self.max_memory_gb, self.max_disk_gb, self.max_run_minutes, self.used_memory_gb, self.used_disk_gb, self.total_memory_gb, self.total_disk_gb, self.provided_spaces, self.spaces_audit, self.spaces_audit_error, self.paused_signed_out, self.owner, self.owner_email, self.helper_available, self.legacy_service, self.service_log)
     def __eq__(self, other):
         if self.configured != other.configured:
             return False
@@ -18110,6 +18120,8 @@ class HostStatus:
             return False
         if self.legacy_service != other.legacy_service:
             return False
+        if self.service_log != other.service_log:
+            return False
         return True
 
 class _UniffiFfiConverterTypeHostStatus(_UniffiConverterRustBuffer):
@@ -18153,6 +18165,7 @@ class _UniffiFfiConverterTypeHostStatus(_UniffiConverterRustBuffer):
             owner_email=_UniffiFfiConverterOptionalString.read(buf),
             helper_available=_UniffiFfiConverterBoolean.read(buf),
             legacy_service=_UniffiFfiConverterBoolean.read(buf),
+            service_log=_UniffiFfiConverterSequenceString.read(buf),
         )
 
     @staticmethod
@@ -18194,6 +18207,7 @@ class _UniffiFfiConverterTypeHostStatus(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalString.check_lower(value.owner_email)
         _UniffiFfiConverterBoolean.check_lower(value.helper_available)
         _UniffiFfiConverterBoolean.check_lower(value.legacy_service)
+        _UniffiFfiConverterSequenceString.check_lower(value.service_log)
 
     @staticmethod
     def write(value, buf):
@@ -18234,6 +18248,7 @@ class _UniffiFfiConverterTypeHostStatus(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalString.write(value.owner_email, buf)
         _UniffiFfiConverterBoolean.write(value.helper_available, buf)
         _UniffiFfiConverterBoolean.write(value.legacy_service, buf)
+        _UniffiFfiConverterSequenceString.write(value.service_log, buf)
 
 @dataclass
 class HttpHeader:

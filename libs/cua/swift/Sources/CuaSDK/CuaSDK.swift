@@ -30065,6 +30065,11 @@ public struct HostStatus: Equatable, Hashable {
      * macOS: the old hand-written LaunchAgent is still there.
      */
     public var legacyService: Bool
+    /**
+     * The last lines of the service's log while it is set up but not
+     * running (why it stopped).
+     */
+    public var serviceLog: [String]
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -30176,7 +30181,11 @@ public struct HostStatus: Equatable, Hashable {
          */helperAvailable: Bool = false,
         /**
          * macOS: the old hand-written LaunchAgent is still there.
-         */legacyService: Bool = false) {
+         */legacyService: Bool = false,
+        /**
+         * The last lines of the service's log while it is set up but not
+         * running (why it stopped).
+         */serviceLog: [String] = []) {
         self.configured = configured
         self.mode = mode
         self.relayUrl = relayUrl
@@ -30214,6 +30223,7 @@ public struct HostStatus: Equatable, Hashable {
         self.ownerEmail = ownerEmail
         self.helperAvailable = helperAvailable
         self.legacyService = legacyService
+        self.serviceLog = serviceLog
     }
 
 
@@ -30268,7 +30278,8 @@ public struct FfiConverterTypeHostStatus: FfiConverterRustBuffer {
                 owner: FfiConverterOptionString.read(from: &buf),
                 ownerEmail: FfiConverterOptionString.read(from: &buf),
                 helperAvailable: FfiConverterBool.read(from: &buf),
-                legacyService: FfiConverterBool.read(from: &buf)
+                legacyService: FfiConverterBool.read(from: &buf),
+                serviceLog: FfiConverterSequenceString.read(from: &buf)
         )
     }
 
@@ -30310,6 +30321,7 @@ public struct FfiConverterTypeHostStatus: FfiConverterRustBuffer {
         FfiConverterOptionString.write(value.ownerEmail, into: &buf)
         FfiConverterBool.write(value.helperAvailable, into: &buf)
         FfiConverterBool.write(value.legacyService, into: &buf)
+        FfiConverterSequenceString.write(value.serviceLog, into: &buf)
     }
 }
 
@@ -34880,6 +34892,12 @@ public struct RelayMachine: Equatable, Hashable {
      * registration (`None` from a host or relay that predates it).
      */
     public var providesSpaces: Bool?
+    /**
+     * The id of the device (`dev_…`) it runs on, as it published it at
+     * registration: the stable link between this machine and the account's
+     * device on the same computer (`None` from a host that predates it).
+     */
+    public var deviceId: String?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -34933,7 +34951,12 @@ public struct RelayMachine: Equatable, Hashable {
         /**
          * It creates Spaces for its owner's devices, when it said so at
          * registration (`None` from a host or relay that predates it).
-         */providesSpaces: Bool?) {
+         */providesSpaces: Bool?,
+        /**
+         * The id of the device (`dev_…`) it runs on, as it published it at
+         * registration: the stable link between this machine and the account's
+         * device on the same computer (`None` from a host that predates it).
+         */deviceId: String?) {
         self.id = id
         self.spaceId = spaceId
         self.name = name
@@ -34949,6 +34972,7 @@ public struct RelayMachine: Equatable, Hashable {
         self.confirmed = confirmed
         self.team = team
         self.providesSpaces = providesSpaces
+        self.deviceId = deviceId
     }
 
 
@@ -34981,7 +35005,8 @@ public struct FfiConverterTypeRelayMachine: FfiConverterRustBuffer {
                 clients: FfiConverterSequenceTypeRelayClientInfo.read(from: &buf),
                 confirmed: FfiConverterBool.read(from: &buf),
                 team: FfiConverterOptionString.read(from: &buf),
-                providesSpaces: FfiConverterOptionBool.read(from: &buf)
+                providesSpaces: FfiConverterOptionBool.read(from: &buf),
+                deviceId: FfiConverterOptionString.read(from: &buf)
         )
     }
 
@@ -35001,6 +35026,7 @@ public struct FfiConverterTypeRelayMachine: FfiConverterRustBuffer {
         FfiConverterBool.write(value.confirmed, into: &buf)
         FfiConverterOptionString.write(value.team, into: &buf)
         FfiConverterOptionBool.write(value.providesSpaces, into: &buf)
+        FfiConverterOptionString.write(value.deviceId, into: &buf)
     }
 }
 

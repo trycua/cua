@@ -856,15 +856,16 @@ impl Persistent {
             // What people read is the plain statement, addressed with a real @mention; what the agent is
             // told to do about it rides in a field the thread does not print.
             let (visible, guidance) = expired_text(&rec.name, &what);
-            let mut tell = Draft::new(Author::system("approval"), EntryKind::Message, visible);
-            tell.event = Some(json!({"kind": "agent_note", "note": guidance}));
-            tell.audience = Some("agent".into());
-            tell.mentions = vec![rec.name.clone()];
-            tell.task = Some(TaskTo {
-                to: rec.name.clone(),
-                session: None,
+            let tell = crate::thread::events::draft(&crate::thread::events::AgentEvent {
+                kind: crate::thread::events::Kind::ApprovalExpired,
+                agent: rec.name.clone(),
+                text: visible,
+                guidance: Some(guidance),
+                payload: json!({"approval": seq}),
+                task_seq: None,
+                client_id: Some(format!("expired-tell:{seq}")),
+                from: "approval",
             });
-            tell.client_id = Some(format!("expired-tell:{seq}"));
             store.append_many(vec![ans, tell])?;
         }
         Ok(())
@@ -962,11 +963,9 @@ impl Persistent {
             .map(|e| e.text.clone())
             .unwrap_or_else(|| task.text.clone());
         // Guidance only the agent gets (an outcome notice's "what to do now"): the thread does not print it.
-        let text = match posted.as_ref().and_then(|e| e.event.as_ref()) {
-            Some(ev) if ev["kind"] == "agent_note" => {
-                format!("{text}\n\n{}", ev["note"].as_str().unwrap_or_default())
-            }
-            _ => text,
+        let text = match posted.as_ref().and_then(crate::thread::events::guidance_of) {
+            Some(g) => format!("{text}\n\n{g}"),
+            None => text,
         };
         let framed = format!(
             "[thread #{} from {}] {text}\n\n(Everything you write between tool calls is posted to this thread as you write it, one message for each stretch, in order; nothing you wrote is replaced or removed. So talk to the person like a colleague: before a long job say in one short sentence what you will do, then do it, then say how it went. Never repeat something you already posted. Do not call thread_reply for plain text; use it only to attach files or to mark the task failed. To ask the person before something that needs their OK, call thread_post with an approval (action and details): that puts a card in front of them, and asking in plain words does not; then end your turn, because their answer arrives as a new message to you. Starting up, installing and \"working for Ns\" are shown by the app itself, so do not narrate them. To make another computer from here, run `cua spaces create IMAGE --name NAME` (it becomes this Space's child; its output says whether it is running; `cua sb exec NAME -- COMMAND` runs things in it and `cua spaces delete --force NAME` removes it). Say a computer is stopped only after you checked its state with `cua spaces ls` after it had a few seconds to start; if it is not running, start it with `cua spaces start NAME` first. If a command is refused, say what the refusal says.)",
@@ -2187,15 +2186,23 @@ impl Thread {
             a.details.trim().to_string()
         };
         let (text, guidance) = outcome_text(&agent, who, approve, &what, note);
-        let mut d = Draft::new(Author::system("approval"), EntryKind::Message, text);
-        d.event = Some(json!({"kind": "agent_note", "note": guidance}));
-        d.audience = Some("agent".into());
-        d.mentions = vec![agent.clone()];
-        d.task = Some(TaskTo {
-            to: agent,
-            session: None,
-        });
-        self.store.append(d)?;
+        crate::thread::events::post_agent_event(
+            &self.store,
+            &crate::thread::events::AgentEvent {
+                kind: if approve {
+                    crate::thread::events::Kind::ApprovalAllowed
+                } else {
+                    crate::thread::events::Kind::ApprovalDenied
+                },
+                agent,
+                text,
+                guidance: Some(guidance),
+                payload: json!({"approval": ap, "approve": approve}),
+                task_seq: None,
+                client_id: None,
+                from: "approval",
+            },
+        )?;
         Ok(())
     }
 

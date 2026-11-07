@@ -26,8 +26,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use super::{AGENT_TICK_BUDGET, Persistent, TickReport, locked_json, read_json};
+use crate::thread::Draft;
 use crate::thread::policy::Right;
-use crate::thread::{Author, Draft, EntryKind, TaskTo};
 use cua_spaces::extension::Caller;
 use cua_spaces::space_jobs::{self, JobStatus};
 use cua_spaces::{Error, Result};
@@ -224,13 +224,19 @@ impl Persistent {
         let store = self.thread_store(&w.space);
         let woke = match &w.agent {
             Some(agent) if self.get(agent).is_ok() => {
-                let mut d = Draft::new(Author::system("jobs"), EntryKind::Message, text.clone());
-                d.mentions = vec![agent.clone()];
-                d.task = Some(TaskTo {
-                    to: agent.clone(),
-                    session: None,
-                });
-                store.append(d)?;
+                crate::thread::events::post_agent_event(
+                    &store,
+                    &crate::thread::events::AgentEvent {
+                        kind: crate::thread::events::Kind::JobFinished,
+                        agent: agent.clone(),
+                        text: text.clone(),
+                        guidance: None,
+                        payload: serde_json::json!({"job": w.job}),
+                        task_seq: None,
+                        client_id: None,
+                        from: "jobs",
+                    },
+                )?;
                 true
             }
             _ => {

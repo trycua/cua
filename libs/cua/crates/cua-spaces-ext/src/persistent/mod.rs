@@ -51,6 +51,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use crate::thread::events;
 use crate::thread::{Author, Draft, EntryKind, check_text};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -2386,19 +2387,25 @@ impl Persistent {
             } else {
                 e.space.clone()
             };
-            let mut d = Draft::event(
-                "child_space",
+            drafts.push(events::draft(&events::AgentEvent {
+                kind: match e.state {
+                    cua_spaces::child_creates::State::Creating => events::Kind::ChildSpaceCreating,
+                    cua_spaces::child_creates::State::Ready => events::Kind::ChildSpaceReady,
+                    cua_spaces::child_creates::State::Failed => events::Kind::ChildSpaceFailed,
+                },
+                agent: rec.name.clone(),
                 text,
-                json!({
-                    "kind": "child_space", "space": space, "key": format!("{}:{}", e.key, e.started_ms),
+                guidance: None,
+                payload: json!({
+                    "space": space, "key": format!("{}:{}", e.key, e.started_ms),
                     "name": e.name, "os": os, "agent": rec.handle(), "state": state,
                     "phase": e.phase, "percent": e.percent, "error": e.error,
                     "started_ms": e.started_ms, "ended_ms": e.ended_ms,
                 }),
-            );
-            d.task_seq = Some(task);
-            d.client_id = Some(key);
-            drafts.push(d);
+                task_seq: Some(task),
+                client_id: Some(key),
+                from: "child_space",
+            }));
         }
         // A create that failed is reported on this thread (below) and then left no placeholder: there is no
         // Try again for it, so a row in the Spaces list would only be a zombie.
@@ -2437,14 +2444,16 @@ impl Persistent {
                 "linux" => "Linux",
                 _ => "",
             };
-            let mut d = Draft::event(
-                "child_space",
-                format!("{} made the computer {name}", rec.name),
-                json!({"kind": "child_space", "space": id, "name": name, "os": os, "agent": rec.handle()}),
-            );
-            d.task_seq = Some(task);
-            d.client_id = Some(key);
-            drafts.push(d);
+            drafts.push(events::draft(&events::AgentEvent {
+                kind: events::Kind::ChildSpaceReady,
+                agent: rec.name.clone(),
+                text: format!("{} made the computer {name}", rec.name),
+                guidance: None,
+                payload: json!({"space": id, "name": name, "os": os, "agent": rec.handle()}),
+                task_seq: Some(task),
+                client_id: Some(key),
+                from: "child_space",
+            }));
         }
         store.append_many(drafts)?;
         for (key, started) in failed_now {
@@ -2557,11 +2566,16 @@ impl Persistent {
                     _ => format!("{}'s subagent failed: {title}", rec.name),
                 };
                 let result = s.result.as_deref().filter(|r| check_text(r).is_ok());
-                let mut d = Draft::event(
-                    "subagent",
+                let d = events::draft(&events::AgentEvent {
+                    kind: if state == "running" {
+                        events::Kind::SubagentStarted
+                    } else {
+                        events::Kind::SubagentEnded
+                    },
+                    agent: rec.name.clone(),
                     text,
-                    json!({
-                        "kind": "subagent",
+                    guidance: None,
+                    payload: json!({
                         "id": s.id,
                         "agent": rec.handle(),
                         "title": title,
@@ -2571,9 +2585,10 @@ impl Persistent {
                         "started_ms": s.started_ms,
                         "ended_ms": s.ended_ms,
                     }),
-                );
-                d.task_seq = reply_to;
-                d.client_id = Some(id);
+                    task_seq: reply_to,
+                    client_id: Some(id),
+                    from: "subagent",
+                });
                 drafts.push(d);
             }
         }

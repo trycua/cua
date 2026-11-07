@@ -253,9 +253,9 @@ async fn an_allowed_request_wakes_the_agent_to_go_on() {
     assert_eq!(w[0]["mentions"], json!(["ada"]));
     assert!(w[0]["reply_to"].is_null(), "{:?}", w[0]);
     assert!(!t.contains("Go ahead") && !t.contains("Tell the"), "{t}");
-    assert_eq!(w[0]["event"]["kind"], "agent_note");
+    assert_eq!(w[0]["event"]["kind"], "approval_allowed");
     assert!(
-        w[0]["event"]["note"]
+        w[0]["event"]["agent_note"]
             .as_str()
             .unwrap()
             .contains("Go ahead now")
@@ -282,7 +282,7 @@ async fn a_declined_request_tells_the_agent_no_and_not_to_retry() {
     );
     assert_eq!(w[0]["mentions"], json!(["ada"]));
     assert!(
-        w[0]["event"]["note"]
+        w[0]["event"]["agent_note"]
             .as_str()
             .unwrap()
             .contains("do not look for a way around it")
@@ -423,10 +423,59 @@ async fn a_request_nobody_answers_in_time_is_closed_and_the_agent_is_told() {
     assert_eq!(t[0]["mentions"], json!(["ada"]));
     assert!(t[0]["reply_to"].is_null());
     assert!(
-        t[0]["event"]["note"]
+        t[0]["event"]["agent_note"]
             .as_str()
             .unwrap()
             .contains("Tell the person plainly")
     );
     unsafe { std::env::remove_var("CUA_APPROVAL_TTL_SECS") };
+}
+
+/// Every kind of system event, posted through the one helper to a real thread with a real idle agent: the
+/// entry carries the audience the kind chose, a kind that wakes becomes a task the idle agent is handed as a new
+/// turn (with the agent-only guidance appended), and one that does not neither tasks nor wakes it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn every_kind_of_system_event_reaches_the_thread_with_its_audience_and_wakes_an_idle_agent_if_it_should()
+ {
+    use cua_spaces_ext::thread::events::{ALL, AgentEvent, post_agent_event};
+    for kind in ALL {
+        let mut fx = setup().await;
+        let p = member(&mut fx, 1).await;
+        let store = p.thread_store(&fx.space);
+        let text = format!("@ada the {} event", kind.name());
+        let entry = post_agent_event(
+            &store,
+            &AgentEvent {
+                kind,
+                agent: "ada".into(),
+                text: text.clone(),
+                guidance: Some("GUIDE-ME".into()),
+                payload: json!({"x": 1}),
+                task_seq: None,
+                client_id: Some(format!("k:{kind:?}")),
+                from: "test",
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            entry.audience.as_deref(),
+            kind.audience().field(),
+            "{kind:?}"
+        );
+        assert_eq!(entry.event.as_ref().unwrap()["kind"], kind.name());
+        Box::pin(p.tick()).await;
+        Box::pin(p.tick()).await;
+        let got = inbox(&fx, 1);
+        if kind.wakes() {
+            assert!(entry.task.is_some(), "{kind:?}");
+            assert!(
+                got.iter()
+                    .any(|t| t.contains(&text) && t.contains("GUIDE-ME")),
+                "{kind:?}: the idle agent was not woken: {got:?}"
+            );
+        } else {
+            assert!(entry.task.is_none(), "{kind:?}");
+            assert!(got.iter().all(|t| !t.contains(&text)), "{kind:?}: {got:?}");
+        }
+    }
 }

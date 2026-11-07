@@ -22,6 +22,7 @@
 //! the Cua Volume's secret scanner before anything is written.
 
 pub mod claims;
+pub mod events;
 pub mod grants;
 pub mod mirror;
 pub mod policy;

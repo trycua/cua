@@ -108,6 +108,8 @@ export interface RemoteWindow {
   heightPx?: number;
   /** Owning process (the SDK's app icon lookup), when reported. */
   pid?: number;
+  /** The Space the picture comes from, when another Space shows this window here. */
+  origin?: { spaceId: string; name: string; os: string };
 }
 
 /** One app with open windows, for the picker's app-filter row. */

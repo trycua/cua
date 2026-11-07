@@ -11,11 +11,9 @@ final class FloatingDropPanel: NSPanel {
     private let sizingView: NSHostingView<AnyView>
     private let initialPanelWidth: CGFloat = 420
 
-    /// System Settings has a leading sidebar. Matching the trailing content
-    /// area width keeps the floating panel visually aligned with the pane that
-    /// the user is actively interacting with.
-    private let sidebarWidth: CGFloat = 230
-    private let screenInset: CGFloat = 12
+    /// The panel lines up with System Settings' content area, right of its
+    /// sidebar (`PanelPlacement.sidebarWidth`).
+    private let screenInset: CGFloat = PanelPlacement.screenInset
     private let minimumPanelHeight: CGFloat = 96
     private let sizingHeightLimit: CGFloat = 4096
 
@@ -219,6 +217,9 @@ final class FloatingDropPanel: NSPanel {
             return
         }
 
+        // Refits run every second (`PermissionFlowController.refit`): nothing
+        // to do when the panel is already in place and showing.
+        if isVisible, alphaValue > 0.99, frame.equalTo(target) { return }
         stopLaunchAnimation()
         let sizeChanged = abs(frame.width - target.width) > 0.5 || abs(frame.height - target.height) > 0.5
         setFrame(target, display: sizeChanged)
@@ -228,50 +229,25 @@ final class FloatingDropPanel: NSPanel {
         orderFrontRegardless()
     }
 
-    /// Calculates the final panel frame relative to the System Settings window.
-    /// The panel aligns to the trailing content area, stays underneath the
-    /// window, and is clamped to the visible frame of the matching screen.
+    /// Calculates the final panel frame relative to the System Settings window,
+    /// from the live window frame and the screens as they are now, every time
+    /// (`PanelPlacement`). The panel aligns to the trailing content area, stays
+    /// underneath the window, and is clamped to the part of the screen the Dock
+    /// and menu bar leave free on System Settings' Space: when this app is full
+    /// screen, `visibleFrame` describes its own Space instead (CUA-3551).
     private func targetFrame(for settingsFrame: CGRect) -> CGRect {
-        let screenFrame = NSScreen.screens
-            .first(where: { $0.frame.intersects(settingsFrame) })?
-            .visibleFrame ?? settingsFrame
-
-        // The helper panel is anchored to the trailing content area of System
-        // Settings rather than the full window width because the leading
-        // sidebar is not the user's active target.
-        let contentMinX = settingsFrame.minX + sidebarWidth
-        let availableContentWidth = max(240, settingsFrame.width - sidebarWidth)
-        let width = min(availableContentWidth, screenFrame.width - (screenInset * 2))
-        let height = measuredPanelHeight(for: width)
-
-        // This is the place to tune visual attachment if the panel feels too
-        // far from the bottom edge of System Settings.
-        //
-        // Current behavior:
-        //   y = settingsFrame.minY - height
-        // means "place the panel immediately below the tracked window frame".
-        //
-        // If the tracked frame still includes some visual framing/shadow, the
-        // panel will look separated by that amount. A manual tweak such as:
-        //
-        //   y = settingsFrame.minY - height + 28
-        //
-        // is effectively saying "treat the bottom 28pt as non-visual spacing
-        // and pull the panel upward".
-        //
-        // This is usually a better place for that adjustment than
-        // SettingsWindowTracker.appKitScreenFrame(...), because the intent here
-        // is clearly visual alignment of the floating panel, not coordinate
-        // conversion of the tracked window.
-        var origin = CGPoint(
-            x: contentMinX,
-            y: settingsFrame.minY - height
-        )
-
-        origin.x = max(screenFrame.minX + screenInset, min(origin.x, screenFrame.maxX - width - screenInset))
-        origin.y = max(screenFrame.minY + screenInset, min(origin.y, screenFrame.maxY - height - screenInset))
-
-        return CGRect(origin: origin, size: CGSize(width: width, height: height))
+        let screens = NSScreen.screens.map { PanelScreen(frame: $0.frame, visibleFrame: $0.visibleFrame) }
+        guard let screen = PanelPlacement.screen(for: settingsFrame, among: screens),
+              let nsScreen = NSScreen.screens.first(where: { $0.frame == screen.frame }) else {
+            return PanelPlacement.dockedFrame(settingsFrame: settingsFrame, usable: settingsFrame,
+                                              height: measuredPanelHeight(for:))
+        }
+        let hostIsFullScreen = NSApp.windows.contains { $0.isVisible && $0.styleMask.contains(.fullScreen) }
+        let menuBarHeight = max(NSStatusBar.system.thickness, nsScreen.safeAreaInsets.top)
+        let usable = PanelPlacement.usableArea(screen: screen, settingsFrame: settingsFrame,
+                                               hostIsFullScreen: hostIsFullScreen, menuBarHeight: menuBarHeight)
+        return PanelPlacement.dockedFrame(settingsFrame: settingsFrame, usable: usable,
+                                          height: measuredPanelHeight(for:))
     }
 
     /// Builds the starting frame for the launch animation around the source UI

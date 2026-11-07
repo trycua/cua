@@ -52,6 +52,16 @@ public final class PermissionFlowController: ObservableObject {
         }
     }
 
+    /// Cua Spaces addition (CUA-3551): docks the panel again under System
+    /// Settings as it is now, from its live window frame and the screens'
+    /// current Dock and menu bar. Cheap when nothing moved; skipped while the
+    /// app's tile is being dragged (the panel is see-through then).
+    public func refit() {
+        guard let panel, isDraggingApp == false, isAwaitingSettingsWindow == false,
+              let frame = tracker.currentFrame else { return }
+        panel.snap(to: frame)
+    }
+
     private let configuration: PermissionFlowConfiguration
     private let tracker = SettingsWindowTracker()
 
@@ -69,6 +79,7 @@ public final class PermissionFlowController: ObservableObject {
         updateFrontmostAppState()
         bindTrackerCallbacks()
         observeFrontmostApplication()
+        observeSpacesAndScreens()
     }
 
     /// Opens the requested privacy pane and starts the floating guidance flow.
@@ -222,6 +233,20 @@ public final class PermissionFlowController: ObservableObject {
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
                 self?.updateFrontmostAppState()
+            }
+            .store(in: &cancellables)
+    }
+
+    /// A switch of Space (out of a full-screen app to System Settings'
+    /// desktop) or a change of screens, Dock or menu bar moves the area the
+    /// panel may use: dock it again then.
+    private func observeSpacesAndScreens() {
+        NSWorkspace.shared.notificationCenter
+            .publisher(for: NSWorkspace.activeSpaceDidChangeNotification)
+            .merge(with: NotificationCenter.default.publisher(for: NSApplication.didChangeScreenParametersNotification))
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                self?.refit()
             }
             .store(in: &cancellables)
     }

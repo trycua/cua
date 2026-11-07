@@ -4,7 +4,7 @@
 /**
  * The sidebar's account area (CUA-2204): one line, the avatar's initial
  * and the name (or email), that opens a menu with Settings, Plan (with the
- * plan's word) and Sign out; and, on Free only, a calm "Run more Spaces
+ * plan's word) and Sign out; and, on Free only, a calm "Use more computers
  * at once with Pro" banner right above it. The menu's items and the
  * banner's rule are the core's (`account.menu`, `upsell.proBanner`): the
  * banner has Upgrade and no way to close it, and a paid plan never sees it.

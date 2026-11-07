@@ -61,6 +61,14 @@ describe("the daemon's files", () => {
     expect(await executablePath(process.pid)).toMatch(/node|Electron/i);
     expect(await executablePath(0)).toBeNull();
   });
+
+  it("has no path, instead of rejecting, when the process cannot be inspected (CUA-SPACES-DESKTOP-5)", async () => {
+    const throwing = (() => {
+      throw new Error("spawn failed");
+    }) as unknown as typeof import("node:child_process").execFile;
+    expect(await executablePath(1234, "win32", throwing)).toBeNull();
+    expect(await executablePath(1234, "darwin", throwing)).toBeNull();
+  });
 });
 
 describe.skipIf(!posix)("the supervisor", () => {

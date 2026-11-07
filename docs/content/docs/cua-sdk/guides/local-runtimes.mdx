@@ -206,6 +206,43 @@ stops when none of its Spaces runs:
   is not enough it refuses with `HostCapacity`, naming the processes that
   hold the most descriptors. Fix it by stopping Spaces or VMs you do not use.
 
+## The Linux runtime on Windows
+
+A PC with no container engine runs Linux Spaces in a WSL 2 distribution that
+cua imports and starts itself. Nothing is installed first: not Docker Desktop,
+not a `docker` CLI. The first Linux Space downloads a pinned Alpine rootfs
+(4 MB, SHA-256 checked) and Alpine's Docker packages (about 90 MB), and
+shows that as the create's progress. After that the runtime starts in a few
+seconds.
+
+- **Its own distribution.** `cua-runtime-<tag>`, where `<tag>` identifies the
+  cua home, with its disk under `<cua home>\runtimes\linux\wsl`. A released
+  Cua Spaces and Cua Spaces Local (each its own cua home) have separate
+  distributions and pipes. cua never starts, stops or changes any other
+  distribution (your Ubuntu, `docker-desktop`) and never touches Docker
+  Desktop. The distribution cannot see your Windows drives and has no Windows
+  interop, so a container engine running as root in it cannot reach your
+  files; for the same reason a Space cannot mount a Windows folder yet.
+- **A pipe, not a port.** Windows reaches Docker at the named pipe
+  `\\.\pipe\cua-engine-<tag>`, served by the cua daemon for your user only.
+  Docker is not published on a TCP port.
+- **Starts on demand, stops when idle.** A hidden `wsl.exe` keeps Docker
+  running; the runtime stops about two minutes after the last Linux Space
+  (`CUA_RUNTIME_LINUX_IDLE_SECS`), like the Mac's. Its memory and processors
+  are WSL's: set them in `%UserProfile%\.wslconfig` (`[wsl2]`), which cua
+  never edits.
+- **When WSL 2 cannot run.** `cua runtime doctor` and the New Space page say
+  what to turn on: the Windows features *Windows Subsystem for Linux* and
+  *Virtual Machine Platform* (`wsl --install --no-distribution` in an
+  administrator PowerShell, then restart), or virtualization in the firmware.
+- **Settings.** `runtime.linux` picks the engine as on a Mac: `auto` uses a
+  working Docker engine on the PC (Docker Desktop, say) and the built-in one
+  otherwise, `builtin` always the built-in one, `system` only the PC's own.
+  Remove host setup deletes the distribution and its disk.
+- **Today.** Spaces run under `runc` (the Mac's runtime adds gVisor), and
+  the distribution shares WSL's VM with your other distributions, so its
+  Docker networks use `10.230.0.0/24` and `10.231.0.0/16`.
+
 ## Your own cloud
 
 Sandboxes and Spaces can run in a cloud account you own: `--on aws` (EC2),

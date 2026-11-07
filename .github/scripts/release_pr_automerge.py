@@ -3,8 +3,10 @@
 
 Every release-please PR (branch release-please--branches--*, opened by the release
 App from this repository) gets `gh pr merge --auto --squash`. It then merges only
-when the required checks (ci-gate and the rest of the ruleset) are green. The `hold`
-label stops it: a held PR has auto-merge switched off, and ci-gate fails while the
+when the required checks (ci-gate and the rest of the ruleset) are green. The
+`release-hold` label (or the older `hold`) is the only hold it respects. Switching off
+auto-merge by hand is NOT a hold: the next run (on every PR update, and every 30 minutes)
+turns it back on, which is how #6749 (cua-spaces 0.22.0) merged while held. The label stops it: a held PR has auto-merge switched off, and ci-gate fails while the
 label is on (ci-gate.yml), so a hold also wins a race with this script.
 
     release_pr_automerge.py --repo trycua/cua                # all open release PRs
@@ -39,7 +41,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import workflow_alerts  # noqa: E402
 
 BRANCH_PREFIX = "release-please--branches--"
-HOLD_LABEL = "hold"
+# `release-hold` is the documented label; `hold` is the older name and still works.
+# Keep this list in step with the label check in ci-gate.yml.
+HOLD_LABELS = ("release-hold", "hold")
 GATE_CHECK = "ci-gate"
 ALERTNAME = "ReleasePRStuck"
 
@@ -55,7 +59,7 @@ def is_release_pr(pr: dict, repo: str) -> bool:
 
 
 def on_hold(pr: dict) -> bool:
-    return any(label.get("name") == HOLD_LABEL for label in pr.get("labels", []))
+    return any(label.get("name") in HOLD_LABELS for label in pr.get("labels", []))
 
 
 def parse_time(text: str) -> dt.datetime:

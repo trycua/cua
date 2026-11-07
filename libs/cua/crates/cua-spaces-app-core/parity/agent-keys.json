@@ -1,6 +1,6 @@
 {
   "name": "agent-keys",
-  "about": "Settings, Connections: the provider keys agents in your Spaces get. Anthropic and OpenAI always have a row (Not set until a key is saved; then its last four characters, when it was added, Replace and Remove); any other key has a row by its variable name. A build that can't keep keys, or a daemon that can't be read, says why instead of offering the buttons. Then the add or replace sheet for each kind of key (a new Other key asks for the variable and refuses names a shell or loader reads), the question before removing a key, and which variable names can hold a key.",
+  "about": "Settings, Connections: the provider keys agents in your Spaces get. Anthropic and OpenAI always have a row (Not set until a key is saved; then its last four characters, when it was added, Replace and Remove); any other key has a row by its variable name. A build that can't keep keys, or a daemon that can't be read, says why instead of offering the buttons; a Local development build that keeps keys in an unencrypted file warns about it and keeps the buttons. Then the add or replace sheet for each kind of key (a new Other key asks for the variable and refuses names a shell or loader reads), the question before removing a key, and which variable names can hold a key.",
   "sections": [
     { "step": "nothing saved", "input": { "keys": [] } },
     {
@@ -22,6 +22,13 @@
       "input": {
         "keys": [],
         "unavailable": "this build of cua keeps credentials in a file, and agent keys are only kept in the Keychain (a Cua-signed build of Cua Spaces does). Set the key for the Cua daemon instead"
+      }
+    },
+    {
+      "step": "a development build keeps keys in an unencrypted file",
+      "input": {
+        "keys": [{ "provider": "anthropic", "env": "ANTHROPIC_API_KEY", "last4": "0000", "addedMs": 1790000000000 }],
+        "warning": "Keychain not available in this development build: keys are stored unencrypted in ~/.cua-local/agent-keys. Do not use real production secrets"
       }
     },
     { "step": "the daemon can't be read", "input": { "keys": [], "error": "The Cua daemon isn't running." } }

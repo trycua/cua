@@ -163,6 +163,7 @@ impl Tool for RightClickTool {
                                 return crate::interaction::with_x11_foreground(
                                     xid,
                                     crate::input::ForegroundOptions::pointer(),
+                                    crate::interaction::RestoreMode::LeaveFocused,
                                     || {
                                         let (sx, sy) =
                                             window_local_to_screen(xid, lxi as f64, lyi as f64)?;
@@ -284,6 +285,7 @@ impl Tool for RightClickTool {
                     return crate::interaction::with_x11_foreground(
                         xid,
                         crate::input::ForegroundOptions::pointer(),
+                        crate::interaction::RestoreMode::LeaveFocused,
                         || {
                             // Real XTest right-click at the screen point (synthetic
                             // XSendEvent is dropped by GTK/Qt; MPX needs /dev/uinput).

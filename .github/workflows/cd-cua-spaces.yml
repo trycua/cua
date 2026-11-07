@@ -2552,8 +2552,13 @@ jobs:
             --clobber --repo "$GITHUB_REPOSITORY"
 
   # CUA-3128: a stable release must never ship without cua.ai following it.
-  # Waits up to 15 minutes for the download page, the three download links
-  # and the in-app updater feeds to serve this version; fails loudly if not.
+  # The download page's HTML carries the version from trycua/cloud's release
+  # snapshot, which only changes when that repo's snapshot PR merges and the
+  # site redeploys. So this first sends `cua-spaces-released` to trycua/cloud
+  # (else the snapshot waits for its half-hourly cron), then waits up to 40
+  # minutes (PR checks, auto-merge, deploy) for the download page, the three
+  # download links and the in-app updater feeds to serve this version; fails
+  # loudly if not. The 15-minute wait it replaces failed for 0.21.0 and 0.21.1.
   # A feed for a platform a patch release skipped keeps its previous version.
   site-follows-release:
     name: cua.ai serves the new release
@@ -2564,7 +2569,7 @@ jobs:
       && github.repository == 'trycua/cua'
       && needs.electron-plan.outputs.prerelease != 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 50
     permissions:
       contents: read
     defaults:
@@ -2572,6 +2577,25 @@ jobs:
         working-directory: .
     steps:
       - uses: actions/checkout@v4
+      - name: Mint a token to dispatch on trycua/cloud
+        id: app-token
+        continue-on-error: true
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          owner: trycua
+          repositories: cloud
+          permission-contents: write
+      - name: Ask trycua/cloud to refresh its release snapshot now
+        # Best effort: without it the snapshot still follows on its cron.
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          VERSION: ${{ needs.electron-plan.outputs.version }}
+        run: |
+          gh api repos/trycua/cloud/dispatches -f event_type=cua-spaces-released \
+            -F "client_payload[version]=$VERSION"
       - name: Check cua.ai/download, the download links and the updater feeds
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -2586,4 +2610,4 @@ jobs:
           [ "$WINDOWS" = true ] && feeds+=(electron-win)
           [ "$LINUX" = true ] && feeds+=(electron-linux)
           python3 .github/scripts/check_spaces_site_follows_release.py \
-            --version "$VERSION" --timeout 900 --feeds "$(IFS=,; echo "${feeds[*]}")"
+            --version "$VERSION" --timeout 2400 --feeds "$(IFS=,; echo "${feeds[*]}")"

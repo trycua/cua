@@ -79,6 +79,7 @@ let kExitButtonAID = "btn-exit"
 let kMenuItemTitle = "Harness Test Item"
 let kSecondaryWindowTitle = "CuaTestHarness AppKit Secondary"
 let kSheetWindowTitle = "CuaTestHarness AppKit Sheet"
+let kSheetInputAID = "txt-sheet"
 let kFloatingWindowTitle = "CuaTestHarness AppKit Floating"
 let kTaskStateEnv = "CUA_APPKIT_TASK_STATE"
 let kTaskStateSchema = "cua.appkit_task_state_v1"
@@ -870,14 +871,28 @@ final class BringToFrontMatrixWindows {
         secondary.contentView = NSTextField(labelWithString: "bring_to_front secondary ordinary window")
         secondary.orderFront(nil)
 
-        if mode == "sheet" {
+        if mode == "sheet" || mode == "sheet-input" {
             let candidate = NSWindow(
                 contentRect: NSRect(x: 0, y: 0, width: 360, height: 160),
                 styleMask: [.titled], backing: .buffered, defer: false)
             candidate.title = kSheetWindowTitle
             candidate.contentView = NSTextField(labelWithString: "modal sheet blocks parent key status")
+            // An editable field, like Finder's Go to Folder path, for keys
+            // addressed to the sheet or to its parent window.
+            var field: NSTextField?
+            if mode == "sheet-input" {
+                let input = NSTextField(frame: NSRect(x: 20, y: 60, width: 320, height: 24))
+                input.setAccessibilityIdentifier(kSheetInputAID)
+                let content = NSView(frame: NSRect(x: 0, y: 0, width: 360, height: 160))
+                content.addSubview(input)
+                candidate.contentView = content
+                field = input
+            }
             sheet = candidate
             parent.beginSheet(candidate)
+            if let field {
+                candidate.makeFirstResponder(field)
+            }
         } else if mode == "floating" {
             let candidate = NSPanel(
                 contentRect: NSRect(x: 180, y: 180, width: 320, height: 140),

@@ -6785,6 +6785,10 @@ pub struct AppAgentKeysInput {
     pub keys: Vec<AppAgentKeyInput>,
     /// Why this machine can't keep keys (the daemon's words), when it can't.
     pub unavailable: Option<String>,
+    /// Keys can be saved but only in an unencrypted file (a Local
+    /// development build without the Keychain): the daemon's warning, shown
+    /// in the notice while the buttons stay on.
+    pub warning: Option<String>,
     /// The keys could not be read (no daemon, a refused Keychain).
     pub error: Option<String>,
 }

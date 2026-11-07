@@ -16,6 +16,7 @@
 //! are derived from.
 
 pub mod inputs;
+pub mod names;
 
 use serde::Serialize;
 

@@ -162,7 +162,7 @@ export interface WhereView {
     modelFirst: boolean;
     picked: boolean;
     /** Signed out: Add (opens 1b). Adding failed: Try again. */
-    action: { id: "add" | "retry-add"; label: string } | null;
+    action: { id: "add" | "retry-add" | "use-code"; label: string } | null;
   };
   /** Signed in: the account's other computers (empty: `emptyLine`). Signed out: null, and `signInLine` shows instead. */
   others: ComputerRow[] | null;
@@ -184,6 +184,10 @@ export interface WhereInput {
   thisState: "adding" | "added" | "failed" | "signed-out";
   addedInRun: boolean;
   addError: string | null;
+  /** The add failed because the account wants proof it's the owner adding
+   * this computer (`needsProof`): its button is "Use a code from another
+   * computer", not Try again. */
+  addNeedsProof?: boolean;
   model: string | null;
   machines: Pick<Machine, "id" | "name" | "os" | "online" | "lastSeen" | "current" | "device" | "notSharing">[] | null;
   picks: string[];
@@ -273,7 +277,9 @@ export function whereView(input: WhereInput): WhereView {
     input.thisState === "adding"
       ? "Adding to your account…"
       : input.thisState === "failed"
-        ? `Couldn't add it to your account.${input.addError ? ` ${input.addError}` : ""}`
+        ? input.addNeedsProof && input.addError
+          ? `Confirm it's you. ${input.addError}`
+          : `Couldn't add it to your account.${input.addError ? ` ${input.addError}` : ""}`
         : input.addedInRun
           ? "Added to your account just now"
           : "In your account";
@@ -287,7 +293,12 @@ export function whereView(input: WhereInput): WhereView {
       model: input.model,
       modelFirst: false,
       picked: thisPicked,
-      action: input.thisState === "failed" ? { id: "retry-add", label: "Try again" } : null,
+      action:
+        input.thisState !== "failed"
+          ? null
+          : input.addNeedsProof
+            ? { id: "use-code", label: "Use a code from another computer" }
+            : { id: "retry-add", label: "Try again" },
     },
     others,
     offlineFold: offlineFold(others),

@@ -658,6 +658,22 @@ struct WebUIHostTests {
         }
     }
 
+    @Test func aRefusedNewComputerCarriesItsKindAndCodeToThePage() throws {
+        let f = HostSetupFailure.presenting(
+            "relay: add computers from a computer you already added, or with a pairing code [code: new_computer_needs_proof]")
+        let e = try #require(WebUIBridge.reply(id: "1", error: WebUIBridge.hostFailure(f))["error"] as? [String: Any])
+        #expect(e["kind"] as? String == "needsProof")
+        #expect(e["refusalCode"] as? String == "new_computer_needs_proof")
+        #expect(e["title"] as? String == "Confirm it\u{2019}s you")
+        #expect(e["actionLabel"] as? String == "Use a code from another computer")
+        // Any other failure says its kind, and no code it does not have.
+        let other = try #require(
+            WebUIBridge.reply(id: "2", error: WebUIBridge.hostFailure(HostSetupFailure.presenting("boom")))["error"]
+                as? [String: Any])
+        #expect(other["kind"] as? String == "other")
+        #expect(other["refusalCode"] == nil)
+    }
+
     @Test func aFailedButtonIsWordedWithTheRawErrorAsDetails() async throws {
         let host = FixtureHost()
         let (bridge, _) = bridge(host: host)

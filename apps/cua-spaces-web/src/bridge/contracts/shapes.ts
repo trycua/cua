@@ -671,6 +671,7 @@ const AgentKeysShape = ref(
     providers: list(object({ id: str, label: str, env: str })),
     available: bool,
     unavailable: nullable(str),
+    insecure: optNull(str),
   }),
 );
 

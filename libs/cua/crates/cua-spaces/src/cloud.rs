@@ -126,7 +126,7 @@ impl Spaces {
                 .clone()
                 .filter(|n| !n.trim().is_empty())
                 .map(|n| crate::spaces::sanitize_label(&n))
-                .unwrap_or_else(|| format!("space-{}", crate::spaces::random_suffix())),
+                .unwrap_or_else(|| self.fresh_name()),
         );
         if opts.kind != Kind::Auto {
             create.kind = opts.kind;

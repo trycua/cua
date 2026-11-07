@@ -5,6 +5,7 @@ import { app, BrowserWindow, ipcMain, screen, shell, type BrowserWindowConstruct
 import { existsSync, writeFileSync } from "node:fs";
 import * as path from "node:path";
 import { captureRoutes } from "./capture";
+import { channel } from "./channel";
 import { opensOutside } from "./external-url";
 import { windowIconPath } from "./icon";
 import { APP_ORIGIN } from "./protocol";
@@ -228,7 +229,9 @@ export function appWindow(options: BrowserWindowConstructorOptions): BrowserWind
  * itself): the saved bounds are neither used nor overwritten. */
 export function createMainWindow({ demo = false, remember = true }: { demo?: boolean; remember?: boolean } = {}): BrowserWindow {
   const bounds = hidden() ? { ...DEFAULT_SIZE, width: 1440, height: 900 } : remember ? restoredBounds() : { ...DEFAULT_SIZE };
-  const win = appWindow({ ...bounds, title: "Cua Spaces" });
+  const win = appWindow({ ...bounds, title: channel.appName });
+  // The page's own <title> is "Cua Spaces": Cua Spaces Local keeps its name, so the two apps differ in the taskbar and Alt+Tab.
+  if (channel.isLocal) win.on("page-title-updated", (event) => event.preventDefault());
 
   // performance.now() counts from process start.
   win.once("ready-to-show", () => {

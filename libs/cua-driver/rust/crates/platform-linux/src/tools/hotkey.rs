@@ -441,6 +441,7 @@ impl Tool for HotkeyTool {
                     return crate::interaction::with_x11_foreground(
                         xid,
                         crate::input::ForegroundOptions::keyboard(),
+                        crate::interaction::RestoreMode::LeaveFocused,
                         || crate::input::send_key_xtest(&key, &m),
                     )
                     .map(|((), report)| KeyRoute::Foreground(report));

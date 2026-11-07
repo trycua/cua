@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.12.4](https://github.com/trycua/cua/compare/cua-spacesd-v0.12.3...cua-spacesd-v0.12.4) (2026-11-07)
+
+
+### Bug Fixes
+
+* **cua-driver:** keep a session's last use on its lifecycle record ([#6773](https://github.com/trycua/cua/issues/6773)) ([94e3d18](https://github.com/trycua/cua/commit/94e3d186262431c30cdf0891231eeee55909398e))
+
+## [0.12.3](https://github.com/trycua/cua/compare/cua-spacesd-v0.12.2...cua-spacesd-v0.12.3) (2026-11-06)
+
+
+### Bug Fixes
+
+* **cua-driver:** admit any native Wayland app to Hyprland background input ([#6706](https://github.com/trycua/cua/issues/6706)) ([895aec7](https://github.com/trycua/cua/commit/895aec7e51b0409b2b22c958920d52c22b0d2b03))
+* **spaces:** explain a refused new computer and offer a code from another computer ([#6710](https://github.com/trycua/cua/issues/6710)) ([327f41c](https://github.com/trycua/cua/commit/327f41c89be3e8209a4bfc3b5785cb423f97de9c))
+
 ## [0.12.2](https://github.com/trycua/cua/compare/cua-spacesd-v0.12.1...cua-spacesd-v0.12.2) (2026-11-06)
 
 

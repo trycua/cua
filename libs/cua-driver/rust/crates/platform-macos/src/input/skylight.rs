@@ -69,7 +69,7 @@ pub enum KeyPrime {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct KeyFocus {
     /// The app's `AXFocusedWindow`.
-    pub window: Option<u32>,
+    pub window: Option<crate::ax::exact_target::AxWindowId>,
     /// The window holding the app's `AXFocusedUIElement`.
     pub element_window: Option<u32>,
 }
@@ -82,7 +82,7 @@ impl KeyFocus {
     /// reporting a modeless dialog's field as focused after its document
     /// window has become key and is receiving the keys.
     fn routes_to(self, target: u32) -> bool {
-        self.window == Some(target)
+        self.window.is_some_and(|window| window.is(target))
     }
 
     /// `target` is key with nothing left to prime. A focused window without
@@ -127,7 +127,8 @@ pub fn prime_exact_window_key(
          window is {:?}, its focused element is in window {:?}), so no keys were sent: they \
          could have gone to another window of the same app. Close the other window, or use \
          delivery_mode:\"foreground\"",
-        now.window, now.element_window
+        now.window.map(|window| window.own),
+        now.element_window
     ))
 }
 
@@ -297,7 +298,7 @@ fn await_key_focus(pid: pid_t, target: u32, budget: std::time::Duration) {
 /// hands key back. `Err` when it cannot be confirmed.
 pub fn enter_exact_window_key(pid: pid_t, target_wid: u32) -> Result<WindowKeyScope, String> {
     let before = key_focus_of_pid(pid);
-    let previous = before.window;
+    let previous = before.window.map(|window| window.own);
     let order_before = app_window_order(pid);
     let primed = prime_exact_window_key(
         target_wid,
@@ -1368,7 +1369,7 @@ const ACTIVATION_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_
 fn await_window_focused(pid: libc::pid_t, window_id: u32) -> bool {
     let deadline = std::time::Instant::now() + ACTIVATION_WAIT_TIMEOUT;
     loop {
-        if crate::ax::bindings::focused_window_id_of_pid(pid) == Some(window_id) {
+        if crate::ax::bindings::focused_window_id_of_pid(pid).is_some_and(|w| w.is(window_id)) {
             return true;
         }
         if std::time::Instant::now() >= deadline {
@@ -1385,8 +1386,9 @@ fn await_window_focused(pid: libc::pid_t, window_id: u32) -> bool {
 /// is proven.
 fn focus_failure_hint(pid: libc::pid_t, target_wid: u32) -> String {
     let target = crate::windows::window_info_by_id(target_wid);
-    let focused =
-        crate::ax::bindings::focused_window_id_of_pid(pid).filter(|focused| *focused != target_wid);
+    let focused = crate::ax::bindings::focused_window_id_of_pid(pid)
+        .filter(|focused| !focused.is(target_wid))
+        .map(|focused| focused.own);
     focus_failure_hint_from(
         target.as_ref().map(|window| {
             window.is_on_screen && window.bounds.width >= 2.0 && window.bounds.height >= 2.0
@@ -1494,12 +1496,12 @@ fn preserves_exact_existing_focus(
     previous_process_known: bool,
     previous_psn: [u8; 8],
     target_psn: [u8; 8],
-    focused_window_id: Option<u32>,
+    focused_window_id: Option<crate::ax::exact_target::AxWindowId>,
     target_window_id: u32,
 ) -> bool {
     previous_process_known
         && previous_psn == target_psn
-        && focused_window_id == Some(target_window_id)
+        && focused_window_id.is_some_and(|focused| focused.is(target_window_id))
 }
 
 #[cfg(test)]
@@ -1509,6 +1511,7 @@ mod tests {
         preserves_exact_existing_focus, reset_windowserver_connection_invalid_for_test,
         windowserver_connection_invalid, WINDOWSERVER_INVALID_CONNECTION,
     };
+    use crate::ax::exact_target::AxWindowId;
 
     #[test]
     fn a_1002_post_status_is_remembered_and_other_failures_are_not() {
@@ -1580,7 +1583,22 @@ mod tests {
     #[test]
     fn exact_existing_focus_avoids_reactivation() {
         let psn = [1, 2, 3, 4, 5, 6, 7, 8];
-        assert!(preserves_exact_existing_focus(true, psn, psn, Some(42), 42));
+        assert!(preserves_exact_existing_focus(
+            true,
+            psn,
+            psn,
+            Some(AxWindowId::window(42)),
+            42
+        ));
+    }
+
+    #[test]
+    fn a_focused_sheet_avoids_reactivation_for_the_sheet_and_its_window() {
+        let psn = [1, 2, 3, 4, 5, 6, 7, 8];
+        let sheet = Some(AxWindowId { own: 43, root: 42 });
+        assert!(preserves_exact_existing_focus(true, psn, psn, sheet, 42));
+        assert!(preserves_exact_existing_focus(true, psn, psn, sheet, 43));
+        assert!(!preserves_exact_existing_focus(true, psn, psn, sheet, 41));
     }
 
     #[test]
@@ -1591,21 +1609,21 @@ mod tests {
             false,
             target,
             target,
-            Some(42),
+            Some(AxWindowId::window(42)),
             42
         ));
         assert!(!preserves_exact_existing_focus(
             true,
             other,
             target,
-            Some(42),
+            Some(AxWindowId::window(42)),
             42
         ));
         assert!(!preserves_exact_existing_focus(
             true,
             target,
             target,
-            Some(41),
+            Some(AxWindowId::window(41)),
             42
         ));
         assert!(!preserves_exact_existing_focus(
@@ -1617,13 +1635,46 @@ mod tests {
 #[cfg(test)]
 mod key_prime_tests {
     use super::{prime_exact_window_key, restore_target, KeyFocus, KeyPrime};
+    use crate::ax::exact_target::AxWindowId;
     use std::cell::Cell;
 
     fn at(window: Option<u32>, element_window: Option<u32>) -> KeyFocus {
         KeyFocus {
-            window,
+            window: window.map(AxWindowId::window),
             element_window,
         }
+    }
+
+    /// Sheet 15304 attached to window 167 is the app's focused window.
+    fn sheet_focused() -> KeyFocus {
+        KeyFocus {
+            window: Some(AxWindowId {
+                own: 15304,
+                root: 167,
+            }),
+            element_window: Some(15304),
+        }
+    }
+
+    /// Keys addressed to the window go to its open sheet, and keys addressed
+    /// to the sheet itself are confirmed by the same focus read.
+    #[test]
+    fn a_focused_sheet_is_key_for_the_sheet_and_its_window() {
+        for target in [167, 15304] {
+            let r =
+                prime_exact_window_key(target, sheet_focused, || panic!("record"), || panic!("ax"));
+            assert_eq!(r, Ok(KeyPrime::AlreadyKey), "target {target}");
+        }
+        // A sibling window of the app is still refused.
+        let r = prime_exact_window_key(200, sheet_focused, || true, || true);
+        assert!(r.unwrap_err().contains("no keys were sent"));
+    }
+
+    /// The parent window focused does not prove keys reach its sheet.
+    #[test]
+    fn a_focused_parent_does_not_confirm_its_sheet() {
+        let r = prime_exact_window_key(15304, || at(Some(167), Some(167)), || true, || true);
+        assert!(r.unwrap_err().contains("no keys were sent"));
     }
 
     #[test]

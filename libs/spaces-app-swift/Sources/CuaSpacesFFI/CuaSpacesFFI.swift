@@ -4753,6 +4753,12 @@ public struct AppAgentKeysInput: Equatable, Hashable {
      */
     public var unavailable: String?
     /**
+     * Keys can be saved but only in an unencrypted file (a Local
+     * development build without the Keychain): the daemon's warning, shown
+     * in the notice while the buttons stay on.
+     */
+    public var warning: String?
+    /**
      * The keys could not be read (no daemon, a refused Keychain).
      */
     public var error: String?
@@ -4767,10 +4773,16 @@ public struct AppAgentKeysInput: Equatable, Hashable {
          * Why this machine can't keep keys (the daemon's words), when it can't.
          */unavailable: String?,
         /**
+         * Keys can be saved but only in an unencrypted file (a Local
+         * development build without the Keychain): the daemon's warning, shown
+         * in the notice while the buttons stay on.
+         */warning: String?,
+        /**
          * The keys could not be read (no daemon, a refused Keychain).
          */error: String?) {
         self.keys = keys
         self.unavailable = unavailable
+        self.warning = warning
         self.error = error
     }
 
@@ -4792,6 +4804,7 @@ public struct FfiConverterTypeAppAgentKeysInput: FfiConverterRustBuffer {
             try AppAgentKeysInput(
                 keys: FfiConverterSequenceTypeAppAgentKeyInput.read(from: &buf),
                 unavailable: FfiConverterOptionString.read(from: &buf),
+                warning: FfiConverterOptionString.read(from: &buf),
                 error: FfiConverterOptionString.read(from: &buf)
         )
     }
@@ -4799,6 +4812,7 @@ public struct FfiConverterTypeAppAgentKeysInput: FfiConverterRustBuffer {
     public static func write(_ value: AppAgentKeysInput, into buf: inout [UInt8]) {
         FfiConverterSequenceTypeAppAgentKeyInput.write(value.keys, into: &buf)
         FfiConverterOptionString.write(value.unavailable, into: &buf)
+        FfiConverterOptionString.write(value.warning, into: &buf)
         FfiConverterOptionString.write(value.error, into: &buf)
     }
 }

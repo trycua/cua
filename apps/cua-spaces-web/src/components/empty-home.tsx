@@ -18,6 +18,7 @@ import { CliHintLine, useCliName } from "@/components/cli-hint";
 import { useFirstRunStep } from "@/components/first-run-guide";
 import { OsIcon } from "@/components/os-icon";
 import { createAliasCommand } from "@/lib/cli-commands";
+import { thisComputerLabel } from "@/lib/host-labels";
 
 /** The first of the core's figures ("About 4 minutes" of "About 4 minutes · 1.0–2.0 GB of disk"): one muted detail, no dot-chain. */
 export const firstFigure = (detail: string) => detail.split(" \u00b7 ")[0]!.trim();
@@ -43,7 +44,7 @@ export function EmptyHome({ home, unread = false }: { home: EmptyHomeView; unrea
       </h2>
       {unread ? null : (
         <>
-          <p className="mt-1.5 text-[13px] text-muted-foreground">A separate computer on This Mac, for you and your agents.</p>
+          <p className="mt-1.5 text-[13px] text-muted-foreground">A separate computer on {thisComputerLabel()}, for you and your agents.</p>
           <div className="mt-6 flex flex-wrap justify-center gap-3">
             {home.tiles.map((tile) => (
               <SystemButton key={tile.os} tile={tile} onStart={start} />

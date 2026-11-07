@@ -2,14 +2,13 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 // The new Home and the Spaces tree name the computer they run on after its
-// system: "This Mac", "This PC" on Windows, "This machine" on Linux.
+// system: "This Mac", "This PC" on Windows, "This computer" on Linux.
 
 import { afterEach, describe, expect, it } from "vitest";
 
 import { whereFooter } from "@/components/ask-first/ask-box";
 import type { Machine, Space } from "@/bridge";
 
-import { fallbackSentence } from "./default-where";
 import { startErrorView, thisMacConfirmText } from "./ask-first";
 import { buildSpacesTree } from "./spaces-tree";
 
@@ -28,7 +27,7 @@ const spaces: Space[] = [{ id: "this-mac", name: "This Mac", os: "macos", status
 const WORDS = [
   ["darwin", "This Mac", "this Mac"],
   ["win32", "This PC", "this PC"],
-  ["linux", "This machine", "this machine"],
+  ["linux", "This computer", "this computer"],
 ] as const;
 
 describe.each(WORDS)("on %s", (platform, label, text) => {
@@ -36,12 +35,6 @@ describe.each(WORDS)("on %s", (platform, label, text) => {
     runOn(platform);
     const t = buildSpacesTree({ spaces, machines: [here], defaultSpace: null });
     expect(t.roots[0]!.name).toBe(label);
-  });
-
-  it("names it in the line under Home's box", () => {
-    runOn(platform);
-    expect(fallbackSentence({ defaultName: "Studio", problem: "offline", usedName: null, othersOnline: false })).toContain(`This runs on ${label}.`);
-    expect(fallbackSentence({ defaultName: "Studio", problem: "offline", usedName: "Dell", othersOnline: true })).toContain(`it runs on ${label}.`);
   });
 
   it("names it in the picker footer, the confirmation and the start errors", () => {

@@ -9,6 +9,7 @@ import { pointerChange, pointerSettings, POINTER_STYLES, useBridge, useDriver, u
 import { useAppPermissions } from "@/bridge/app-permissions";
 import { AppMarkImage } from "@/components/agents/harness-mark";
 import { AppPermissionList } from "@/components/app-permissions";
+import { BackLink } from "@/components/back-link";
 import { CuaKey } from "@/components/cua-key";
 import { OsIcon } from "@/components/os-icon";
 import { EmptyState, Page } from "@/components/page";
@@ -19,10 +20,11 @@ import { Select } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { toast, toastError } from "@/components/ui/toast";
 import { driverUsesAppPermissions, repairOutcome } from "@/lib/app-permissions";
+import { thisComputerLabel, thisComputerText } from "@/lib/host-labels";
+import { THIS_COMPUTER } from "@/lib/machines";
 import { cn } from "@/lib/utils";
 import { driverLine, markFor, stateText, testText, versionText } from "./copy";
 import { PointerPreview } from "./pointer-preview";
-import { thisComputerLabel, thisComputerText } from "@/lib/host-labels";
 
 /**
  * The Cua Driver page (CUA-2706, design A): what it is in one line, its
@@ -37,6 +39,7 @@ export function DriverPage({ machine }: { machine: string | null }) {
   if (!driver.available || !driver.status) {
     return (
       <Page className="max-w-3xl">
+        {machine ? <BackLink /> : <BackLink computerId={THIS_COMPUTER} label={thisComputerLabel()} />}
         <EmptyState icon={<MousePointer2Icon />} title="Cua Driver isn't on this computer yet">
           It comes with Cua Spaces for Mac.
         </EmptyState>
@@ -53,6 +56,7 @@ function DriverBody({ driver, status }: { driver: DriverHook; status: DriverStat
   return (
     <Page className="max-w-5xl">
       <div data-driver-page={status.machineId} />
+      <BackLink computerId={status.thisMachine ? THIS_COMPUTER : status.machineId} label={status.thisMachine ? thisComputerLabel() : status.machineName} />
       <Hero driver={driver} status={status} settings={settings} />
       {status.thisMachine && status.canPause ? <AllowSection driver={driver} status={status} /> : null}
       <div className="grid gap-x-6 [@media(min-width:900px)]:grid-cols-2">
@@ -290,8 +294,8 @@ function Computers({ current }: { current: string }) {
             return (
               <Link
                 key={m.machineId}
-                to="/driver"
-                search={m.thisMachine ? {} : { machine: m.machineId }}
+                to="/spaces/computer/$computerId/driver"
+                params={{ computerId: m.thisMachine ? THIS_COMPUTER : m.machineId }}
                 className={cn(plainRowClass(m.machineId === current))}
                 data-driver-computer={m.machineId}
               >

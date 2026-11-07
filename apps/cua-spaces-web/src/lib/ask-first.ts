@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 /**
- * The "Ask first" Home's tasks (CUA-2346, behind `spaces_ask_first_home`):
+ * Home's tasks (CUA-2346):
  * one job asked for on Home, the computer made for it, and the coding
  * agent's run on that computer.
  *
@@ -397,13 +397,13 @@ export function startErrorView(raw: string, agent: string): StartErrorView {
   if (e.includes("isn't shared"))
     return {
       title: `${thisComputerLabel()} isn't set up for tasks yet`,
-      body: `Turn on sharing for ${thisComputerText()} on the Machines page, then try again. Or pick another machine.`,
+      body: `Turn on sharing for ${thisComputerText()} on its page in Computers, then try again. Or pick another computer.`,
       action: "set-up-host",
       retry: true,
     };
   // A task from before this Mac was turned into its own Space id: trying again now works.
   if (e.includes(`"${THIS_MAC_ID}"`))
-    return { title: `Couldn't start on ${thisComputerText()}`, body: `Try again to start it on ${thisComputerText()}, or pick another machine.`, action: "retry", retry: true };
+    return { title: `Couldn't start on ${thisComputerText()}`, body: `Try again to start it on ${thisComputerText()}, or pick another computer.`, action: "retry", retry: true };
   if (/cloud has ended/.test(e))
     return { title: "That computer is no longer available", body: `Cua Cloud has ended. Pick a computer on ${thisComputerText()} instead.`, action: "change-computer", retry: false };
   if (/more than one|ambiguous/.test(e))
@@ -416,7 +416,7 @@ export function startErrorView(raw: string, agent: string): StartErrorView {
     return { title: "Couldn't reach that computer", body: "Check it's on, then try again. Or pick another one.", action: "retry", retry: true };
   if (/disk|space left|no room|memory|quota|limit/.test(e))
     return { title: `${thisComputerLabel()} doesn't have room for a new computer`, body: "Free some disk space or turn off a computer you're not using, then try again.", action: "retry", retry: true };
-  return { title: `${agent} couldn't start`, body: "Something went wrong. Try again, or pick another machine.", action: "retry", retry: true };
+  return { title: `${agent} couldn't start`, body: "Something went wrong. Try again, or pick another computer.", action: "retry", retry: true };
 }
 
 /** Where a task stands, in the words Home and the thread use. */

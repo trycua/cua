@@ -941,7 +941,7 @@
         "busy": false,
         "detail": {
           "access": [
-            "This machine |  | Revoke | - | -"
+            "This computer |  | Revoke | - | -"
           ],
           "accessEmpty": "This agent cannot use your machines.",
           "allowThisMachine": null,
@@ -987,7 +987,7 @@
         "busy": true,
         "detail": {
           "access": [
-            "This machine |  | Revoke | - | -"
+            "This computer |  | Revoke | - | -"
           ],
           "accessEmpty": "This agent cannot use your machines.",
           "allowThisMachine": null,

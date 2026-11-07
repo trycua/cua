@@ -15,8 +15,6 @@ import { cn } from "@/lib/utils";
 
 import { AgentPicker, type AccountActions } from "./agent-picker";
 import { RepoChip } from "./repo-chip";
-import { TreeWherePicker, whereNode, type TreeWhere } from "./tree-where";
-import { TreeIcon } from "@/components/spaces/tree-parts";
 import { thisComputerLabel, thisComputerText } from "@/lib/host-labels";
 import { thisMacChipText, type ThisMacReadiness } from "@/lib/this-mac-target";
 
@@ -141,7 +139,6 @@ export function AskBox({
   onSubmit,
   compact,
   autoFocus,
-  tree = null,
 }: {
   text: string;
   onText: (t: string) => void;
@@ -182,11 +179,8 @@ export function AskBox({
   onSubmit: () => void;
   compact?: boolean;
   autoFocus?: boolean;
-  /** Spaces as a tree (Labs): the tree picker, starting on your default Space. */
-  tree?: TreeWhere | null;
 }) {
   const ref = useRef<HTMLTextAreaElement>(null);
-  const treeNode = tree ? whereNode(tree.tree, where) : undefined;
   useEffect(() => {
     if (autoFocus) ref.current?.focus();
   }, [autoFocus]);
@@ -234,12 +228,9 @@ export function AskBox({
               kinds={kinds}
               spaces={spaces}
               computers={computers}
-              tree={tree}
               trigger={
-                <button type="button" className={whereButton} data-picker="where" aria-label={`Where it runs: ${treeNode?.name ?? label.title}${needsSetUp ? `, ${chip.note}` : ""}`}>
-                  {treeNode ? (
-                    <TreeIcon node={treeNode} />
-                  ) : where.kind === "new" ? (
+                <button type="button" className={whereButton} data-picker="where" aria-label={`Where it runs: ${label.title}${needsSetUp ? `, ${chip.note}` : ""}`}>
+                  {where.kind === "new" ? (
                     <OsIcon os={where.os} className="size-3.5" />
                   ) : where.kind === "this-mac" ? (
                     <LaptopIcon className="size-3.5" />
@@ -247,13 +238,8 @@ export function AskBox({
                     <MonitorIcon className="size-3.5" />
                   )}
                   <span className="max-w-64 truncate" data-ask-where="">
-                    {treeNode?.name ?? label.title}
-                    {treeNode ? null : label.detail ? <span className="ml-1.5 text-muted-foreground">{label.detail}</span> : null}
-                    {treeNode?.isDefault ? (
-                      <span className="ml-2 text-[13px] text-muted-foreground" data-ask-where-default="">
-                        Default
-                      </span>
-                    ) : null}
+                    {label.title}
+                    {label.detail ? <span className="ml-1.5 text-muted-foreground">{label.detail}</span> : null}
                     {needsSetUp ? (
                       <span className="ml-1.5 text-muted-foreground" data-ask-where-note="">
                         {chip.note}
@@ -334,7 +320,6 @@ export function WherePicker({
   trigger,
   open,
   onOpenChange,
-  tree = null,
 }: {
   where: TaskWhere | null;
   onWhere: (w: TaskWhere) => void;
@@ -351,10 +336,7 @@ export function WherePicker({
   trigger: ReactElement;
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
-  /** Spaces as a tree (Labs): the tree in place of this list. */
-  tree?: TreeWhere | null;
 }) {
-  if (tree) return <TreeWherePicker tw={tree} where={where} onWhere={onWhere} kinds={kinds} trigger={trigger} open={open} onOpenChange={onOpenChange} />;
   const newRows = kinds.map((k) => (
     <PickerRow
       key={k.os}

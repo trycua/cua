@@ -1,6 +1,6 @@
 # Cua Spaces web UI
 
-The Cua Spaces screens (Spaces, Machines, Agents, Keyvault, Settings,
+The Cua Spaces screens (Computers, Agents, Keyvault, Settings,
 onboarding) as one web app. The browser, the Electron shell and the SwiftUI
 host all run it. Screens get their data from `src/bridge`, which picks the
 host and loads the app core as wasm. See [src/bridge/README.md](src/bridge/README.md).

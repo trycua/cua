@@ -7351,7 +7351,7 @@ public struct AppChecklistRow: Equatable, Hashable {
      */
     public var step: AppChecklistStep
     /**
-     * "Add a machine".
+     * "Add a computer".
      */
     public var title: String
     /**
@@ -7378,7 +7378,7 @@ public struct AppChecklistRow: Equatable, Hashable {
          * The step.
          */step: AppChecklistStep,
         /**
-         * "Add a machine".
+         * "Add a computer".
          */title: String,
         /**
          * One line under the title.
@@ -13579,7 +13579,7 @@ public struct AppDevicesInput: Equatable, Hashable {
      */
     public var machineNames: [String: String]
     /**
-     * The account's relay machines, for the "New machine" confirm badge
+     * The account's relay machines, for the "New computer" confirm badge
      * (S5). Empty on a relay that predates it, or when this device cannot
      * list them, same as `machine_names`.
      */
@@ -13607,7 +13607,7 @@ public struct AppDevicesInput: Equatable, Hashable {
          * Machine ids to display names.
          */machineNames: [String: String],
         /**
-         * The account's relay machines, for the "New machine" confirm badge
+         * The account's relay machines, for the "New computer" confirm badge
          * (S5). Empty on a relay that predates it, or when this device cannot
          * list them, same as `machine_names`.
          */machines: [AppMachineInput]) {
@@ -19157,7 +19157,7 @@ public func FfiConverterTypeAppHostFormState_lower(_ value: AppHostFormState) ->
 
 public struct AppHostFormView: Equatable, Hashable {
     /**
-     * "Set up this machine".
+     * "Set up this computer".
      */
     public var title: String
     /**
@@ -19205,7 +19205,7 @@ public struct AppHostFormView: Equatable, Hashable {
     // declare one manually.
     public init(
         /**
-         * "Set up this machine".
+         * "Set up this computer".
          */title: String,
         /**
          * One line: what setting up does.
@@ -19665,7 +19665,7 @@ public func FfiConverterTypeAppHostLoad_lower(_ value: AppHostLoad) -> RustBuffe
 
 public struct AppHostPanelView: Equatable, Hashable {
     /**
-     * "This machine".
+     * "This computer".
      */
     public var title: String
     /**
@@ -19804,7 +19804,7 @@ public struct AppHostPanelView: Equatable, Hashable {
     // declare one manually.
     public init(
         /**
-         * "This machine".
+         * "This computer".
          */title: String,
         /**
          * One line: how it is shared, or that it is not.
@@ -22208,7 +22208,7 @@ public struct AppListView: Equatable, Hashable {
     public var empty: Bool
     /**
      * One quiet line where the Spaces go while the list is not complete
-     * ("Reaching 6 machines…"), below what is known so far.
+     * ("Reaching 6 computers…"), below what is known so far.
      */
     public var reachingLine: String?
 
@@ -22222,7 +22222,7 @@ public struct AppListView: Equatable, Hashable {
          */empty: Bool,
         /**
          * One quiet line where the Spaces go while the list is not complete
-         * ("Reaching 6 machines…"), below what is known so far.
+         * ("Reaching 6 computers…"), below what is known so far.
          */reachingLine: String?) {
         self.empty = empty
         self.reachingLine = reachingLine
@@ -23349,7 +23349,7 @@ public func FfiConverterTypeAppMachinesPageInput_lower(_ value: AppMachinesPageI
 
 public struct AppMachinesView: Equatable, Hashable {
     /**
-     * "3 machines, 2 online".
+     * "3 computers, 2 online".
      */
     public var summary: String
     /**
@@ -23374,7 +23374,7 @@ public struct AppMachinesView: Equatable, Hashable {
     // declare one manually.
     public init(
         /**
-         * "3 machines, 2 online".
+         * "3 computers, 2 online".
          */summary: String,
         /**
          * The list's groups (only those with machines).
@@ -23795,7 +23795,7 @@ public struct AppMachinesViewGroup: Equatable, Hashable {
      */
     public var id: String
     /**
-     * "Your machines", "Offline for 30+ days (2)", "Team machines".
+     * "Your computers", "Offline for 30+ days (2)", "Team computers".
      */
     public var title: String
     /**
@@ -23818,7 +23818,7 @@ public struct AppMachinesViewGroup: Equatable, Hashable {
          * `yours`, `old` or `team`.
          */id: String,
         /**
-         * "Your machines", "Offline for 30+ days (2)", "Team machines".
+         * "Your computers", "Offline for 30+ days (2)", "Team computers".
          */title: String,
         /**
          * Collapsed until opened (the old machines).
@@ -24376,7 +24376,7 @@ public struct AppMachinesViewMachine: Equatable, Hashable {
      */
     public var togglesNote: String?
     /**
-     * "Spaces on this machine".
+     * "Spaces on this computer".
      */
     public var spacesTitle: String
     /**
@@ -24474,7 +24474,7 @@ public struct AppMachinesViewMachine: Equatable, Hashable {
          * Under read-only switches: where they change.
          */togglesNote: String?,
         /**
-         * "Spaces on this machine".
+         * "Spaces on this computer".
          */spacesTitle: String,
         /**
          * The Spaces on it.
@@ -24919,7 +24919,7 @@ public func FfiConverterTypeAppMachinesViewRemove_lower(_ value: AppMachinesView
 
 public struct AppMachinesViewRemoveAll: Equatable, Hashable {
     /**
-     * "Remove old machines".
+     * "Remove old computers".
      */
     public var label: String
     /**
@@ -24935,7 +24935,7 @@ public struct AppMachinesViewRemoveAll: Equatable, Hashable {
     // declare one manually.
     public init(
         /**
-         * "Remove old machines".
+         * "Remove old computers".
          */label: String,
         /**
          * Asked first.
@@ -25183,7 +25183,7 @@ public struct AppMachinesViewToggle: Equatable, Hashable {
      */
     public var id: String
     /**
-     * "Let other machines create Spaces here", "Let other machines control
+     * "Let other computers create Spaces here", "Let other computers control
      * this desktop".
      */
     public var label: String
@@ -25220,7 +25220,7 @@ public struct AppMachinesViewToggle: Equatable, Hashable {
          * `spaces` or `desktop`.
          */id: String,
         /**
-         * "Let other machines create Spaces here", "Let other machines control
+         * "Let other computers create Spaces here", "Let other computers control
          * this desktop".
          */label: String,
         /**

@@ -3,7 +3,7 @@
 
 // Settings' five tabs on the real routes and the wasm core: Account, General,
 // Connections, Advanced, About. The old addresses (Agents, Experiments) still
-// land on the right tab, the old Trusted machines tab lands on Machines, and
+// land on the right tab, the old Trusted machines tab lands on This Mac's page, and
 // what moved is where the audit put it.
 
 import { act, cleanup, fireEvent, waitFor } from "@testing-library/react";
@@ -61,9 +61,9 @@ describe.skipIf(!wasmBuilt)("Settings tabs (real routes, wasm core)", () => {
     await waitFor(() => expect(document.querySelector("[data-connector-detail=hermes]")).not.toBeNull());
   });
 
-  it("sends the old Trusted machines address to the Machines tab", async () => {
+  it("sends the old Trusted machines address to This Mac's page under Computers", async () => {
     const { router } = await mountApp("/settings/devices", host);
-    await waitFor(() => expect(router.state.location.pathname).toBe("/machines"));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/spaces/computer/this-mac"));
     expect(document.querySelector('[data-settings-tab]')).toBeNull();
   });
 
@@ -77,12 +77,12 @@ describe.skipIf(!wasmBuilt)("Settings tabs (real routes, wasm core)", () => {
     expect(text).not.toMatch(/Keyboard shortcuts|Shared links|Storage|Runtimes|Keyvault|AI agents|Welcome/);
   });
 
-  it("puts the Agent menu below Coding apps, then On another machine and the Providers, and Terminal is not on this tab", async () => {
+  it("puts the Agent menu below Coding apps, then On another computer and the Providers, and Terminal is not on this tab", async () => {
     await mountApp("/settings/connections", { ...host, demo: { cli: "missing" } });
     await waitFor(() => expect(document.querySelector("[data-connectors-providers]")).not.toBeNull(), { timeout: 8000 });
     const t = tab("connections")!;
     const headings = [...t.querySelectorAll("h2")].map((h) => h.textContent);
-    expect(headings).toEqual(["Coding apps", "Agent menu", "On another machine", "Providers"]);
+    expect(headings).toEqual(["Coding apps", "Agent menu", "On another computer", "Providers"]);
     // The providers are the last section on the page.
     const sections = [...t.querySelectorAll("[data-connectors-apps], [data-connectors-other-machine-group], [data-connectors-providers]")].map((e) => e.getAttributeNames().find((n) => n.startsWith("data-connectors-")));
     expect(sections).toEqual(["data-connectors-apps", "data-connectors-other-machine-group", "data-connectors-providers"]);

@@ -52,7 +52,7 @@ description: "Your computers, unattended access on this computer, teams and your
 | [`cua team remove-machine`](#cua-team-remove-machine) | Take a computer off the team. |
 | [`cua team audit`](#cua-team-audit) | The team's audit log. |
 | [`cua team delete`](#cua-team-delete) | Delete a team (owner; cancel its subscription first). |
-| [`cua usage`](#cua-usage) | Your remote use this month: live sessions, remote hours, and your plan. |
+| [`cua usage`](#cua-usage) | Your remote use this month: computers in use at once, remote hours, and your plan. |
 
 Every command also accepts the [global options](/cua-cli/reference/cli#global-options).
 
@@ -836,7 +836,7 @@ cua team delete AIGIS --yes
 
 ## `cua usage`
 
-Your remote use this month: live sessions, remote hours, and your plan. Remote hours are time spent using your computers from somewhere else; using a computer from itself is free.
+Your remote use this month: computers in use at once, remote hours, and your plan. Remote hours are time spent using your computers from somewhere else; using a computer from itself is free.
 
 ```text output
 cua usage [OPTIONS]

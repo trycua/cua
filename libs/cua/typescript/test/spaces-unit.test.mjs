@@ -574,7 +574,7 @@ test("the control file lives under CUA_HOME, like the Rust core", async () => {
 // -- plan limit --------------------------------------------------------------
 
 test("the relay's plan-limit refusal is a PlanLimitError with its numbers and the upgrade link", () => {
-  const sentence = "You're using 5 of 5 live sessions on Pro. Close one or upgrade to Teams."
+  const sentence = "You have 5 of 5 computers in use at once on Pro. Close one or upgrade to Teams."
   const native = Object.assign(new Error(`${sentence} Upgrade: https://app.cua.ai/buy/teams?from=plan_limit`), { tag: "Http" })
   const error = toSpacesError(native)
   assert.ok(error instanceof PlanLimitError)
@@ -587,6 +587,19 @@ test("the relay's plan-limit refusal is a PlanLimitError with its numbers and th
   assert.equal(error.status, 429)
   assert.equal(error.upgradeUrl, "https://app.cua.ai/buy/teams?from=plan_limit")
   assert.equal(error.cause, native)
+})
+
+test("the old live-sessions sentence from an older relay still reads", () => {
+  const old = "You're using 5 of 5 live sessions on Pro. Close one or upgrade to Teams."
+  const p = parsePlanLimit(`relay: ${old} Upgrade: https://app.cua.ai/buy/teams?from=plan_limit`)
+  assert.deepEqual(p, {
+    kind: "sessions",
+    plan: "pro",
+    used: 5,
+    limit: 5,
+    upgradeUrl: "https://app.cua.ai/buy/teams?from=plan_limit",
+    message: old,
+  })
 })
 
 test("remote hours on the free plan, with no link", () => {

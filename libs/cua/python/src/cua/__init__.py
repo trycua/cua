@@ -102,9 +102,9 @@ from ._plan_limit import parse_plan_limit as _parse_plan_limit  # noqa: E402
 
 
 class PlanLimitError(_CuaError.Http):  # type: ignore[name-defined,misc]
-    """The relay refused a new live session because the plan is at its cap.
+    """The relay refused a new computer in use because the plan is at its cap.
 
-    ``str(error)`` is the plain sentence. Live sessions are never cut, and
+    ``str(error)`` is the plain sentence. Computers already in use are never cut, and
     retrying gets the same answer: close one, or send the person to
     ``upgrade_url``.
     """

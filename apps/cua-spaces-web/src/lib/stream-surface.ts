@@ -34,6 +34,11 @@
  * never sees a ticket or a frame.
  */
 
+/** The page's panes moved (a split dragged, a dock changed): the reporter
+ * measures every slot at once, in the same frame, so the host's layer never
+ * trails the pane by a frame. Dispatched on `window` after the layout commits. */
+export const LAYOUT_CHANGE_EVENT = "cua:layout-change";
+
 export interface SurfaceRect {
   x: number;
   y: number;

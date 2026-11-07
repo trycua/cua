@@ -10,6 +10,9 @@ import { Select } from "@/components/ui/select";
 import { toast } from "@/components/ui/toast";
 import { Tooltip } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+import { useSpaceLayoutStore } from "@/stores/space-layout";
+
+import { SectionHeading } from "./section-heading";
 
 import { MemberAvatar } from "./avatar";
 import { FailureDetails } from "./failure-note";
@@ -74,6 +77,7 @@ export function MembersPanel({
   folded: boolean;
   onFold: (folded: boolean) => void;
 }) {
+  const shut = useSpaceLayoutStore((st) => st.folded);
   if (folded) {
     return (
       <aside data-members-panel="folded" className="flex w-12 shrink-0 flex-col items-center gap-2.5 bg-chrome py-3">
@@ -97,8 +101,10 @@ export function MembersPanel({
   }
   return (
     <aside data-members-panel="" className="flex w-72 shrink-0 flex-col bg-chrome">
-      <div className="flex h-10 items-center justify-between pr-2 pl-5">
-        <h2 className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">In this Space</h2>
+      <div className="flex h-8 items-center justify-between pr-2 hover:bg-accent">
+        <SectionHeading id="people" folded={shut.people} bodyId="section-people" inRow>
+          In this Space
+        </SectionHeading>
         <span className="flex items-center">
           {onAddAgent ? (
             <Tooltip content="Add an agent" side="left">
@@ -107,7 +113,7 @@ export function MembersPanel({
                 aria-label="Add an agent"
                 data-add-agent-open=""
                 onClick={onAddAgent}
-                className="inline-flex size-7 cursor-default items-center justify-center rounded-lg text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60"
+                className="inline-flex size-7 cursor-default items-center justify-center rounded-lg text-muted-foreground outline-none hover:bg-background hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60"
               >
                 <PlusIcon className="size-4" />
               </button>
@@ -116,7 +122,8 @@ export function MembersPanel({
           <FoldButton folded={false} onFold={onFold} />
         </span>
       </div>
-      <ul className="min-h-0 flex-1 overflow-y-auto px-3 pb-3" data-members="">
+      {shut.people ? null : (
+      <ul id="section-people" className="min-h-0 flex-1 overflow-y-auto px-3 pb-3" data-members="">
         {roster.people.map((p) => (
           <ProfileRow key={p.id} person={p}>
             <Row member={p.id} mark={<MemberAvatar kind="person" name={p.label} size={24} presence={presence?.[p.id] ?? null} />} label={p.label} caption={p.me ? "You" : null} />
@@ -142,11 +149,16 @@ export function MembersPanel({
           </ProfileRow>
         ))}
       </ul>
+      )}
       {childSpaces}
       {windows.length || desktop ? (
-        <section className="px-3 pt-2 pb-2" data-call-stream="">
-          <h2 className="mb-1 px-2 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Stream</h2>
-          <ul>
+        <section className={cn("px-3", !shut.stream && "pb-2")} data-call-stream="">
+          <SectionHeading id="stream" folded={shut.stream} bodyId="section-stream" className={cn("-mx-3", !shut.stream && "mb-1")}>
+            Stream
+          </SectionHeading>
+          {shut.stream ? null : (
+          <>
+          <ul id="section-stream">
             {[...(desktop ? [desktop] : []), ...railStreams(windows, selected ?? null)].map((w) => {
               const pip = w.actions.find((a) => a.id === "pip");
               const isDesktop = w.kind === "desktop";
@@ -164,7 +176,7 @@ export function MembersPanel({
                     title={toggles ? (streamHidden ? "Show stream" : "Hide stream") : w.help}
                     onClick={() => (toggles ? onToggleStream!() : onSelect ? onSelect(w) : onStream(w))}
                     className={cn(
-                      "flex h-8 w-full cursor-default items-center gap-2.5 rounded-lg pr-8 pl-2 text-left text-[13px] outline-none hover:bg-accent focus-visible:bg-accent",
+                      "flex h-8 w-full cursor-default items-center gap-2.5 rounded-lg pr-2 pl-2 text-left text-[13px] outline-none hover:bg-accent focus-visible:bg-accent",
                       current && "bg-accent font-medium",
                     )}
                   >
@@ -183,8 +195,8 @@ export function MembersPanel({
                         aria-label={pip.active ? pip.help : `Open ${name} in its own window`}
                         onClick={() => onStream(w)}
                         className={cn(
-                          "absolute top-1 right-1 inline-flex size-6 cursor-default items-center justify-center rounded-lg text-muted-foreground outline-none hover:bg-background hover:text-foreground focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring/60",
-                          pip.active ? "text-brand-strong opacity-100" : "opacity-0 group-hover/stream:opacity-100",
+                          "absolute top-1 right-1 inline-flex size-6 cursor-default items-center justify-center rounded-lg bg-accent text-muted-foreground outline-none hover:bg-background hover:text-foreground focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring/60",
+                          pip.active ? "bg-chrome text-brand-strong opacity-100 group-hover/stream:bg-accent" : "opacity-0 group-hover/stream:opacity-100",
                         )}
                       >
                         <PictureInPicture2Icon className="size-3.5" />
@@ -205,10 +217,16 @@ export function MembersPanel({
               Show all {windows.length}
             </button>
           ) : null}
+          </>
+          )}
         </section>
       ) : null}
-      <section className="px-3 pt-2 pb-3" data-call-details="">
-        <h2 className="mb-1 px-2 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Details</h2>
+      <section className={cn("px-3", !shut.details && "pb-3")} data-call-details="">
+        <SectionHeading id="details" folded={shut.details} bodyId="section-details" className={cn("-mx-3", !shut.details && "mb-1")}>
+          Details
+        </SectionHeading>
+        {shut.details ? null : (
+        <div id="section-details">
         {facts.map((f) => (
           <div key={f.label} data-rail-fact={f.label} className="flex h-8 items-center justify-between gap-4 px-2 text-[13px]">
             <span className="shrink-0 text-muted-foreground">{f.label}</span>
@@ -227,6 +245,8 @@ export function MembersPanel({
           More
           <ChevronRightIcon className="size-3.5" />
         </button>
+        </div>
+        )}
       </section>
     </aside>
   );
@@ -451,7 +471,7 @@ function FoldButton({ folded, onFold }: { folded: boolean; onFold: (folded: bool
         aria-label={label}
         data-members-fold=""
         onClick={() => onFold(!folded)}
-        className="inline-flex size-7 cursor-default items-center justify-center rounded-lg text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60"
+        className="inline-flex size-7 cursor-default items-center justify-center rounded-lg text-muted-foreground outline-none hover:bg-background hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60"
       >
         {folded ? <PanelRightOpenIcon className="size-4" /> : <PanelRightCloseIcon className="size-4" />}
       </button>

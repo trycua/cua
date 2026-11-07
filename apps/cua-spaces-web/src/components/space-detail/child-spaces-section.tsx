@@ -4,7 +4,7 @@
 /**
  * A Space's child Spaces, in its side panel: each with its OS logo, name and where it is (running,
  * being made with its progress, failed with why), a row menu (open, stop or start, delete), how many of its
- * tree's budget they use, and "Delete all child Spaces" with one confirmation that names what goes.
+ * tree's budget they use. Deleting is per child, from its row menu, with a confirmation that names what goes.
  * Nothing shows for a Space without children.
  */
 
@@ -18,9 +18,12 @@ import { OsIcon } from "@/components/os-icon";
 import { StateLabel } from "@/components/state-dot";
 import { ConfirmDialog } from "@/components/ui/alert-dialog";
 import { Menu } from "@/components/ui/menu";
+import { SectionHeading } from "@/components/space-thread/section-heading";
 import { toastError } from "@/components/ui/toast";
 import { plural } from "@/lib/plural";
+import { cn } from "@/lib/utils";
 import { parentIdOf } from "@/lib/space-tree";
+import { useSpaceLayoutStore } from "@/stores/space-layout";
 import { createError, spaceState } from "@/lib/spaces";
 
 /** The Spaces made under `parentId`, in the order the list has them. */
@@ -71,24 +74,20 @@ export function ChildSpacesSection({ spaceId, spaceName }: { spaceId: string; sp
   const kids = useMemo(() => childrenOfSpace(all, spaceId, tree), [all, spaceId, tree]);
   const total = useMemo(() => descendantCount(all, spaceId, tree), [all, spaceId, tree]);
   const [confirm, setConfirm] = useState<"all" | string | null>(null);
+  const folded = useSpaceLayoutStore((st) => st.folded.children);
   if (!kids.length) return null;
   const budget = tree?.budget(spaceId) ?? null;
   const one = confirm && confirm !== "all" ? kids.find((k) => k.id === confirm) : null;
   const text = confirm === "all" ? deleteAllText(spaceName, kids, total) : one ? deleteAllText(spaceName, [one], 1 + descendantCount(all, one.id, tree)) : null;
   const remove = (ids: string[]) => void deleteSpaces(ids).catch(toastError("Couldn't delete the child Spaces"));
   return (
-    <section className="px-3 pt-2 pb-2" data-child-spaces="">
-      <div className="mb-1 flex items-center justify-between px-2">
-        <h2 className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Child Spaces</h2>
-        <button
-          type="button"
-          data-child-delete-all=""
-          onClick={() => setConfirm("all")}
-          className="cursor-default text-[11px] text-muted-foreground outline-none hover:text-foreground focus-visible:underline"
-        >
-          Delete all
-        </button>
+    <section className={cn("px-3", !folded && "pb-2")} data-child-spaces="">
+      <div className={cn("-mx-3 flex h-8 items-center hover:bg-accent", !folded && "mb-1")}>
+        <SectionHeading id="children" folded={folded} bodyId="section-children" inRow>
+          Child Spaces
+        </SectionHeading>
       </div>
+      <div id="section-children" hidden={folded}>
       <ul>
         {kids.map((k) => {
           const state = spaceState(k);
@@ -99,7 +98,7 @@ export function ChildSpacesSection({ spaceId, spaceName }: { spaceId: string; sp
               <Link
                 to="/spaces/$spaceId"
                 params={{ spaceId: k.id }}
-                className="flex min-h-8 w-full cursor-default items-center gap-2.5 rounded-lg py-1 pr-8 pl-2 text-left text-[13px] outline-none hover:bg-accent focus-visible:bg-accent"
+                className="flex min-h-8 w-full cursor-default items-center gap-2.5 rounded-lg py-1 pr-2 pl-2 text-left text-[13px] outline-none hover:bg-accent focus-visible:bg-accent"
               >
                 <OsIcon os={k.os} className="size-3.5 shrink-0 text-muted-foreground" />
                 <span className="min-w-0 flex-1">
@@ -111,7 +110,7 @@ export function ChildSpacesSection({ spaceId, spaceName }: { spaceId: string; sp
                 <StateLabel state={state} space={k} className="shrink-0" />
               </Link>
               {!busy ? (
-                <span className="absolute top-1 right-1 opacity-0 group-focus-within/child:opacity-100 group-hover/child:opacity-100">
+                <span className="absolute top-1 right-1 rounded-lg bg-accent opacity-0 group-focus-within/child:opacity-100 group-hover/child:opacity-100">
                   <Menu
                     label={k.name}
                     trigger={
@@ -137,6 +136,7 @@ export function ChildSpacesSection({ spaceId, spaceName }: { spaceId: string; sp
           {budget.spaces} of {budget.maxSpaces} Spaces in this tree&rsquo;s budget
         </p>
       ) : null}
+      </div>
       {text ? (
         <ConfirmDialog
           open

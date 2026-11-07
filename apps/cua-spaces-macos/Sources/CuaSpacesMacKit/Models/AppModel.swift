@@ -1280,7 +1280,7 @@ public final class AppModel {
                           provider: args.on == "local" ? .local : .relay,
                           now: Self.nowMs(),
                           image: args.image, kind: args.kind, hostArch: Self.hostArch, gpu: args.gpu != nil,
-                          host: machine, hostName: machine.flatMap(machineName(of:))))
+                          host: machine, hostName: machine.flatMap(machineName(of:)), parent: nil))
         // The detail shows the live desktop inline: selecting the new Space
         // opens it (`plan.openDesktop`), starting with its progress.
         if open { select(pendingId) }

@@ -90,6 +90,7 @@ pub fn app_agent_creates_actions(state: AppCreatesState, now_ms: i64) -> Vec<App
                 space: e.space,
                 error: e.error,
                 started_ms: e.started_ms,
+                parent: e.parent,
             })
             .collect();
     core::spaces::creating::agent_actions(&state, &creates, now_ms)

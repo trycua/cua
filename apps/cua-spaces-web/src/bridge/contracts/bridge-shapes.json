@@ -5973,6 +5973,9 @@
         "hostName": {
           "type": "string"
         },
+        "parent": {
+          "type": "string"
+        },
         "power": {
           "type": "string"
         },
@@ -8474,6 +8477,12 @@
           ]
         },
         "hostName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "parent": {
           "type": [
             "string",
             "null"

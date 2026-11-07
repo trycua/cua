@@ -261,6 +261,7 @@ pub fn row_to_space(row: &SpaceRow, now: i64) -> Space {
         cloud_delete: text(&row.cloud).and(text(&row.cloud_delete)),
         access: Some(access),
         hidden: row.hidden,
+        parent: row.parent.clone(),
     }
 }
 
@@ -642,6 +643,7 @@ mod tests {
     fn row() -> SpaceRow {
         SpaceRow {
             hidden: false,
+            parent: None,
             id: "space://direct/10.0.0.5:3211".into(),
             name: "brave-otter".into(),
             display_name: None,
@@ -911,6 +913,7 @@ mod tests {
     fn mru_puts_the_most_recent_first() {
         let mk = |id: &str, t: i64| Space {
             hidden: false,
+            parent: None,
             id: id.into(),
             name: id.into(),
             os: SpaceOs::Linux,

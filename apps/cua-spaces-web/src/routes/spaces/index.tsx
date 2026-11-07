@@ -13,7 +13,9 @@ import { ComputerWarnings } from "@/components/resources/computer-resources";
 import { useListedSpaces } from "@/components/spaces/listed";
 import { desktopOf, hasHideButton, hasMenu, type SpaceItem } from "@/components/spaces/model";
 import { BulkConfirmDialog, useBulkRemove } from "@/components/spaces/bulk-remove";
+import { useChildren } from "@/components/children/use-children";
 import { SpaceList } from "@/components/spaces/space-list";
+import { childCounts, parentIdOf, topLevel } from "@/lib/space-tree";
 import { SpaceContextMenu, SpaceMoreMenu, type MenuActions } from "@/components/spaces/space-menu";
 import { SelectAllBox, SelectBox, SelectionBar, stoppedDeletable, useSelection } from "@/components/spaces/selection";
 import { SpaceTile, TILE_CELL } from "@/components/spaces/space-tile";
@@ -128,6 +130,16 @@ function SpacesGridPage() {
   const selection = useSelection(shown, Boolean(bulk.view));
   clearPicked.current = selection.clear;
   const picked = shown.filter((it) => selection.has(it.space.id));
+  // A child is under its parent (in the list, and in the parent's page), not a tile of its own; its parent's tile says how many.
+  const childTree = useChildren();
+  const gridShown = useMemo(() => topLevel(shown, childTree), [shown, childTree]);
+  const kidCounts = useMemo(() => childCounts(shown, childTree), [shown, childTree]);
+  const noteFor = (it: SpaceItem): string | undefined => {
+    const n = kidCounts.get(it.space.id);
+    if (n) return `${n} child Space${n === 1 ? "" : "s"}`;
+    const p = parentIdOf(it.space, childTree);
+    return p && !present.has(p) ? "parent removed" : undefined;
+  };
   const power = (list: readonly SpaceItem[], on: boolean) => {
     for (const it of list) void (on ? startSpace : stopSpace)(it.space.id).catch(toastError(`Couldn't turn ${on ? "on" : "off"} ${it.space.name}`));
   };
@@ -249,6 +261,7 @@ function SpacesGridPage() {
               {elsewhereTiles.length ? <ul className="mb-6 grid grid-cols-[repeat(auto-fill,minmax(232px,1fr))] gap-x-5 gap-y-7">{elsewhereTiles}</ul> : null}
               <SpaceList
                 items={shown}
+                known={present}
                 sort={sort}
                 onSort={(s) => setSearch({ sort: s === "used" ? undefined : s })}
                 now={now}
@@ -272,10 +285,10 @@ function SpacesGridPage() {
               <WindowedGrid
                 ref={grid}
                 picking={selection.ids.size > 0}
-                count={elsewhereTiles.length + shown.length}
+                count={elsewhereTiles.length + gridShown.length}
                 renderAt={(i) => {
                   if (i < elsewhereTiles.length) return elsewhereTiles[i];
-                  const it = shown[i - elsewhereTiles.length]!;
+                  const it = gridShown[i - elsewhereTiles.length]!;
                   return (
                     <GridTile
                       key={it.space.id}
@@ -283,6 +296,7 @@ function SpacesGridPage() {
                       selected={selection.has(it.space.id)}
                       busy={bulk.running.has(it.space.id)}
                       accessKey={keyvault.signedIn.has(it.space.id) ? keyvault.accessKey(it.space.id) : undefined}
+                      note={noteFor(it)}
                       live={live}
                     />
                   );
@@ -315,12 +329,14 @@ const GridTile = memo(function GridTile({
   selected,
   busy,
   accessKey,
+  note,
   live,
 }: {
   item: SpaceItem;
   selected: boolean;
   busy: boolean;
   accessKey: string | null | undefined;
+  note?: string;
   live: RefObject<GridLive>;
 }) {
   const actions = useMemo<MenuActions>(
@@ -339,6 +355,7 @@ const GridTile = memo(function GridTile({
         <SpaceTile
           item={item}
           accessKey={accessKey}
+          note={note}
           selected={selected}
           busy={busy}
           onClick={(e) => live.current.selection.onClick(item, e)}

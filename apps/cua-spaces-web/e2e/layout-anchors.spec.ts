@@ -60,10 +60,6 @@ for (const [width, height] of SIZES) {
   test.describe(`${width}x${height}`, () => {
     test("first run: the logo, headline, step dots and primary button stay put on every step", async ({ page }) => {
       await page.setViewportSize({ width, height });
-      await page.addInitScript(() => {
-        localStorage.setItem("cua.flag.spaces_new_onboarding", "1");
-        localStorage.setItem("cua.flag.spaces_ask_first_home", "1");
-      });
       // signin-wait: the browser never confirms, so the sign-in step stays to be measured.
       await page.goto("/onboarding?bridge=demo&demo=fresh,signin-wait&parity");
       const root = page.locator("[data-new-first-run]");

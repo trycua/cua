@@ -531,7 +531,7 @@ pub struct AppListView {
     /// not empty yet (an app update restarting the daemon must not show it).
     pub empty: bool,
     /// One quiet line where the Spaces go while the list is not complete
-    /// ("Reaching 6 machines…"), below what is known so far.
+    /// ("Reaching 6 computers…"), below what is known so far.
     pub reaching_line: Option<String>,
 }
 
@@ -7729,7 +7729,7 @@ pub struct AppHostSpacesAudit {
     pub detail: String,
 }
 
-/// The host's state as the "This machine" page reads it (the cua SDK's
+/// The host's state as the "This computer" page reads it (the cua SDK's
 /// `HostStatus`, flattened).
 pub type AppHostState = core::host::HostState;
 #[uniffi::remote(Record)]
@@ -7806,7 +7806,7 @@ pub struct AppHostState {
     pub account: Option<AppHostAccount>,
 }
 
-/// The account signed in to Cua in the app, as far as "This machine"
+/// The account signed in to Cua in the app, as far as "This computer"
 /// needs it.
 pub type AppHostAccount = core::host::HostAccount;
 #[uniffi::remote(Record)]
@@ -7832,7 +7832,7 @@ pub enum AppHostAccountStep {
     Resume,
 }
 
-/// What a "This machine" button does.
+/// What a "This computer" button does.
 pub type AppHostActionId = core::host::HostActionId;
 #[uniffi::remote(Enum)]
 pub enum AppHostActionId {
@@ -7927,7 +7927,7 @@ pub struct AppHostConfirm {
     pub cancel_label: String,
 }
 
-/// A "This machine" button.
+/// A "This computer" button.
 pub type AppHostAction = core::host::HostAction;
 #[uniffi::remote(Record)]
 pub struct AppHostAction {
@@ -7982,11 +7982,11 @@ pub struct AppHostSetupChoice {
     pub button_label: String,
 }
 
-/// The "This machine" page.
+/// The "This computer" page.
 pub type AppHostPanelView = core::host::HostPanelView;
 #[uniffi::remote(Record)]
 pub struct AppHostPanelView {
-    /// "This machine".
+    /// "This computer".
     pub title: String,
     /// One line: how it is shared, or that it is not.
     pub summary: String,
@@ -8167,7 +8167,7 @@ pub struct AppHostFormField {
 pub type AppHostFormView = core::host::HostFormView;
 #[uniffi::remote(Record)]
 pub struct AppHostFormView {
-    /// "Set up this machine".
+    /// "Set up this computer".
     pub title: String,
     /// One line: what setting up does.
     pub lede: String,
@@ -8437,7 +8437,7 @@ pub struct AppDevicesInput {
     pub enforce_after: Option<u64>,
     /// Machine ids to display names.
     pub machine_names: std::collections::HashMap<String, String>,
-    /// The account's relay machines, for the "New machine" confirm badge
+    /// The account's relay machines, for the "New computer" confirm badge
     /// (S5). Empty on a relay that predates it, or when this device cannot
     /// list them, same as `machine_names`.
     pub machines: Vec<AppMachineInput>,
@@ -10574,7 +10574,7 @@ pub type AppMachinesViewToggle = core::machines_view::MachinesViewToggle;
 pub struct AppMachinesViewToggle {
     /// `spaces` or `desktop`.
     pub id: String,
-    /// "Let other machines create Spaces here", "Let other machines control
+    /// "Let other computers create Spaces here", "Let other computers control
     /// this desktop".
     pub label: String,
     /// One line under it.
@@ -10608,7 +10608,7 @@ pub struct AppMachinesViewSpace {
     pub running: bool,
 }
 
-/// A machine's own desktop, listed first under "Spaces on this machine"
+/// A machine's own desktop, listed first under "Spaces on this computer"
 /// when it shares it, as any Space row (its name, system, status), with a
 /// quiet "Desktop" label. It is not one of the Spaces counted (the sidebar
 /// and the machine's line leave it out).
@@ -10735,7 +10735,7 @@ pub struct AppMachinesViewMachine {
     pub toggles: Vec<AppMachinesViewToggle>,
     /// Under read-only switches: where they change.
     pub toggles_note: Option<String>,
-    /// "Spaces on this machine".
+    /// "Spaces on this computer".
     pub spaces_title: String,
     /// The Spaces on it.
     pub spaces: Vec<AppMachinesViewSpace>,
@@ -10753,11 +10753,11 @@ pub struct AppMachinesViewMachine {
     pub remove: Option<AppMachinesViewRemove>,
 }
 
-/// "Remove old machines": every machine of the group that can go.
+/// "Remove old computers": every machine of the group that can go.
 pub type AppMachinesViewRemoveAll = core::machines_view::MachinesViewRemoveAll;
 #[uniffi::remote(Record)]
 pub struct AppMachinesViewRemoveAll {
-    /// "Remove old machines".
+    /// "Remove old computers".
     pub label: String,
     /// Asked first.
     pub confirm: AppHostConfirm,
@@ -10771,7 +10771,7 @@ pub type AppMachinesViewGroup = core::machines_view::MachinesViewGroup;
 pub struct AppMachinesViewGroup {
     /// `yours`, `old` or `team`.
     pub id: String,
-    /// "Your machines", "Offline for 30+ days (2)", "Team machines".
+    /// "Your computers", "Offline for 30+ days (2)", "Team computers".
     pub title: String,
     /// Collapsed until opened (the old machines).
     pub collapsed: bool,
@@ -10785,7 +10785,7 @@ pub struct AppMachinesViewGroup {
 pub type AppMachinesView = core::machines_view::MachinesView;
 #[uniffi::remote(Record)]
 pub struct AppMachinesView {
-    /// "3 machines, 2 online".
+    /// "3 computers, 2 online".
     pub summary: String,
     /// The list's groups (only those with machines).
     pub groups: Vec<AppMachinesViewGroup>,
@@ -10900,7 +10900,7 @@ pub type AppChecklistRow = core::checklist::ChecklistRow;
 pub struct AppChecklistRow {
     /// The step.
     pub step: AppChecklistStep,
-    /// "Add a machine".
+    /// "Add a computer".
     pub title: String,
     /// One line under the title.
     pub detail: String,

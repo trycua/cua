@@ -80,7 +80,7 @@ export function ConnectorsRedesign({ focusApp }: { focusApp?: string }) {
         footer={
           // Connect edits the coding apps of this machine only: it says which, and what it leaves alone.
           <span data-connectors-machine="">
-            On {hereName}.{others.length > 0 ? ` Not touched: ${others.join(", ")}. An agent on one of those machines needs its own setup (see On another machine).` : ""}
+            On {hereName}.{others.length > 0 ? ` Not touched: ${others.join(", ")}. An agent on one of those computers needs its own setup (see On another computer).` : ""}
           </span>
         }
       >
@@ -126,10 +126,10 @@ export function ConnectorsRedesign({ focusApp }: { focusApp?: string }) {
         </SettingsGroup>
       ) : null}
 
-      <SettingsGroup title="On another machine" data-connectors-other-machine-group="">
+      <SettingsGroup title="On another computer" data-connectors-other-machine-group="">
         <GroupedRow>
           <div className="min-w-0 flex-1">
-            <div className="text-[13px]">An agent on another machine</div>
+            <div className="text-[13px]">An agent on another computer</div>
             <div className="text-xs text-muted-foreground">Use {hereName} from an agent that runs somewhere else.</div>
           </div>
           <Button size="sm" variant="outline" aria-expanded={otherOpen} onClick={() => setOtherOpen(!otherOpen)} data-connectors-other-toggle="">

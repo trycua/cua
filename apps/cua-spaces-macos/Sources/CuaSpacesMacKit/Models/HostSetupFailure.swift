@@ -201,7 +201,7 @@ public struct HostSetupFailure: Equatable, Sendable {
         case .needsProof:
             return ("Confirm it\u{2019}s you",
                     "To add this Mac to your account, enter a code from a computer you already added. "
-                        + "On that computer, open Cua Spaces, go to Machines and click Add machine.")
+                        + "On that computer, open Cua Spaces, go to Computers and click Add a computer.")
         case .other:
             return ("Couldn\u{2019}t set up this Mac for access",
                     "Something went wrong. Try again, or open Details to see what happened.")

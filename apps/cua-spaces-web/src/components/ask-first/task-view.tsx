@@ -24,8 +24,8 @@ import { StateDot, taskRun } from "./home";
 import { useWherePick } from "./this-mac-confirm";
 import { useStartTask } from "./use-start-task";
 import { useWhereOptions } from "./where-options";
-import { useTreeWhere } from "./tree-where";
 import { hostOs, thisComputerLabel, thisComputerText } from "@/lib/host-labels";
+import { THIS_COMPUTER } from "@/lib/machines";
 
 /** What the agent is told when the person hands the computer back. */
 /** How long a sent reply may take to show in the run before the thread trusts the run's status again (ms). */
@@ -304,7 +304,6 @@ export function StartFailed({ error, name, agent, host, onRetry }: { error: stri
     if (outcome === "connected") onRetry();
   };
   const { kinds, spaces } = useWhereOptions();
-  const tree = useTreeWhere();
   const [open, setOpen] = useState(false);
   const pick = useWherePick(name);
   return (
@@ -316,8 +315,8 @@ export function StartFailed({ error, name, agent, host, onRetry }: { error: stri
         <p>{card?.body ?? view.body}</p>
         <div className="mt-3 flex flex-wrap items-center gap-2">
           {view.action === "set-up-host" ? (
-            <Button className="h-10 px-4" render={<Link to="/machines" />}>
-              Open Machines
+            <Button className="h-10 px-4" render={<Link to="/spaces/computer/$computerId" params={{ computerId: THIS_COMPUTER }} />}>
+              Open {thisComputerLabel()}
             </Button>
           ) : null}
           {view.action === "add-key" ? (
@@ -338,7 +337,6 @@ export function StartFailed({ error, name, agent, host, onRetry }: { error: stri
             onOpenChange={setOpen}
             kinds={kinds}
             spaces={spaces}
-            tree={tree}
             trigger={
               <Button variant={view.action === "change-computer" ? "default" : "outline"} className="h-10 px-4" data-ask-change-computer="">
                 Change computer <ChevronDownIcon />

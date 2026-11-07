@@ -114,7 +114,7 @@ describe.skipIf(!wasmBuilt)("New Space (wasm core)", () => {
     await waitFor(() => expect(hooks.wizard.view?.step).toBe(0));
     // With machines of yours, Auto comes first; This Mac stays the default.
     expect(hooks.wizard.view!.placements.find((p) => p.id === "local")).toMatchObject({ label: "This Mac", selected: true });
-    // Your machines follow This Mac; the offline one can't be chosen.
+    // Your computers follow This Mac; the offline one can't be chosen.
     await waitFor(() => expect(hooks.wizard.view!.placements.map((p) => [p.id, p.enabled])).toContainEqual(["host:studio-pc", false]));
 
     act(() => hooks.wizard.send({ type: "choose-os", os: "macos" }));

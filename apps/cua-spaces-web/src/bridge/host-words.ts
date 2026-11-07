@@ -4,7 +4,7 @@
 /**
  * The app core words the computer it runs on as "this Mac" wherever it has no
  * system to go by. On a PC or a Linux machine the page says what the host
- * actually is ("This PC", "This machine") at the one place the core's answers
+ * actually is ("This PC", "This computer") at the one place the core's answers
  * enter the page, from the system the shell reports ({@link hostOs}).
  *
  * Display only: nothing is written back, so a stored name keeps its text and
@@ -19,7 +19,7 @@ import { hostOs, THIS_MACHINE, type HostOs } from "./host-os";
 /** Copy that is about macOS itself: left as the core wrote it. */
 const MAC_ONLY = /macOS|Lume|Keychain|Finder|Xcode|Intel|Touch ID|Apple/;
 
-const LOWER: Record<HostOs, string> = { macos: "this Mac", windows: "this PC", linux: "this machine" };
+const LOWER: Record<HostOs, string> = { macos: "this Mac", windows: "this PC", linux: "this computer" };
 const YOUR: Record<HostOs, string> = { macos: "your Mac", windows: "your PC", linux: "your computer" };
 
 /** One string in the words of `os`. */

@@ -18,8 +18,8 @@ describe("host words: this computer in the words of its own system", () => {
     expect(hostWords(lines[2]!, "windows")).toBe("Connect Claude Code on your PC");
   });
 
-  it("says This machine on Linux (the app's convention)", () => {
-    expect(hostWords(lines[0]!, "linux")).toBe("This machine is almost out of space.");
+  it("says This computer on Linux (the app's convention)", () => {
+    expect(hostWords(lines[0]!, "linux")).toBe("This computer is almost out of space.");
     expect(hostWords(lines[2]!, "linux")).toBe("Connect Claude Code on your computer");
   });
 
@@ -50,7 +50,7 @@ describe("host words through the real core", () => {
     };
     expect(ask("MacIntel")).toBe("This Mac is almost out of space. Delete old Spaces or snapshots.");
     expect(ask("Win32")).toBe("This PC is almost out of space. Delete old Spaces or snapshots.");
-    expect(ask("Linux x86_64")).toBe("This machine is almost out of space. Delete old Spaces or snapshots.");
+    expect(ask("Linux x86_64")).toBe("This computer is almost out of space. Delete old Spaces or snapshots.");
     vi.restoreAllMocks();
   });
 });

@@ -139,7 +139,7 @@ struct DevicesTests {
             "(ids in `cua devices ls`)"
         await m.approve()
         #expect(m.approvalView?.error == "The code expired.")
-        #expect(m.approvalView?.approveLabel == "Add machine")
+        #expect(m.approvalView?.approveLabel == "Add computer")
         #expect(m.approvalView?.canApprove == true)
         fixture.failApprove = nil
         await m.approve()

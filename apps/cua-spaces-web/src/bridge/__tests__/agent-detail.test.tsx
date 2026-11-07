@@ -179,7 +179,7 @@ describe.skipIf(!wasmBuilt)("useAgentDetail with the core", () => {
   it("revokes and allows this machine, and shows the agent's audit", async () => {
     const got = mount(await testCore());
     await waitFor(() => expect(got.d?.view?.access.length).toBe(1));
-    expect(got.d!.view!.access[0]).toMatchObject({ text: "This machine", actionLabel: "Revoke" });
+    expect(got.d!.view!.access[0]).toMatchObject({ text: "This computer", actionLabel: "Revoke" });
     expect(got.d!.view!.allowThisMachineLabel ?? null).toBeNull();
     // Ada's own lines only (Claw's refusal and Atlas's use are not hers).
     expect(got.d!.view!.audit.map((l) => l.text)).toEqual(["Used relay:this-mac", "Allowed relay:this-mac"]);
@@ -193,7 +193,7 @@ describe.skipIf(!wasmBuilt)("useAgentDetail with the core", () => {
     expect(got.d!.view!.audit[0]!.text).toBe("Revoked relay:this-mac");
 
     act(() => got.d!.act({ type: "allow-computer", machine: got.d!.thisMachine! }));
-    await waitFor(() => expect(got.d!.view!.access.map((l) => l.text)).toEqual(["This machine"]));
+    await waitFor(() => expect(got.d!.view!.access.map((l) => l.text)).toEqual(["This computer"]));
   });
 
   it("says why a change failed", async () => {

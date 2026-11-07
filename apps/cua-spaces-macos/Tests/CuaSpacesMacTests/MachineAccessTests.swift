@@ -122,7 +122,7 @@ enum MachinesFixture {
 }
 
 
-/// Your machines from this Mac: listed while it is signed in but not
+/// Your computers from this Mac: listed while it is signed in but not
 /// enrolled (Connect greyed out under why, with the one action), and a
 /// machine that does not share its desktop shows why instead of Stream,
 /// Agents and Teleport.

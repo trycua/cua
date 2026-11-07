@@ -9,17 +9,16 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { setFlagOverride } from "@/bridge";
 import { wasmBuilt } from "@/bridge/__tests__/testCore";
 import type { AgentSetupRow } from "@/bridge/contracts/agents";
-import { readFirstRun, resetFirstRunCache } from "@/bridge/first-run";
+import { readFirstRun, resetFirstRunCache, writeFirstRun as writeFirstRunForTest } from "@/bridge/first-run";
 import { resetSavedOnboardingCache } from "@/bridge/onboarding";
-import { AgentScreen, NextScreen, PermissionsScreen, ReadyScreen, SignInScreen, StepDots, WhereScreen } from "@/components/first-run-new/first-run-new";
+import { AgentScreen, CliPanel, NextScreen, PermissionsScreen, ReadyScreen, SignInScreen, StepDots, WelcomeScreen, WhereScreen } from "@/components/first-run-new/first-run-new";
 import { placeKeys } from "@/components/first-run-new/float-keys";
 import { resetConnectedAppsState } from "@/hooks/use-connected-apps";
 import type { AppPermissions } from "@/bridge/app-permissions";
 import { permissionsStepView } from "@/lib/app-permissions";
-import { afterWhere, agentView, chosenAgent, dotFor, dotStep, nextView, reachedAfter, readyView, signInView, stepDots, togglePick, whereView, type WhereInput } from "@/lib/first-run-new";
+import { afterWhere, agentView, chosenAgent, dotFor, dotStep, nextView, reachedAfter, readyView, signInView, stepDots, togglePick, welcomeUsage, whereView, type WhereInput } from "@/lib/first-run-new";
 import { getDriver, resetPrepare } from "@/lib/prepare/store";
 import { mountApp, stubBrowserApis } from "./app-harness";
 
@@ -91,7 +90,7 @@ describe("screen 2, signed in", () => {
 
   it("when the account wants proof, asks to confirm it's you with a code from another computer", () => {
     const onAddThis = vi.fn();
-    const message = "To add this Mac to your account, enter a code from a computer you already added. On that computer, open Cua Spaces, go to Machines and click Add machine.";
+    const message = "To add this Mac to your account, enter a code from a computer you already added. On that computer, open Cua Spaces, go to Computers and click Add a computer.";
     drawWhere({ ...base, thisState: "failed", addError: message, addNeedsProof: true }, { onAddThis });
     expect(document.querySelector("[data-new-run-this-status]")!.textContent).toBe(`Confirm it's you. ${message}`);
     expect(document.querySelector("[data-new-run-add-this=retry-add]")).toBeNull();
@@ -390,6 +389,70 @@ describe("screen 6, next steps", () => {
   it("has no apps row away from a Mac", () => {
     expect(nextView({ os: "windows" }).rows.map((r) => r.id)).toEqual(["invite", "add-computer"]);
   });
+
+  it("adds Use Cua from Terminal as the last row, only where this app can install the command", () => {
+    expect(nextView({ os: "macos", cli: true }).rows.map((r) => r.id)).toEqual(["invite", "add-computer", "apps", "cli"]);
+    expect(nextView({ os: "linux", cli: true }).rows.map((r) => r.id)).toEqual(["invite", "add-computer", "cli"]);
+    expect(nextView({ os: "windows", cli: false }).rows.map((r) => r.id)).toEqual(["invite", "add-computer"]);
+    const row = nextView({ os: "windows", cli: true }).rows.at(-1)!;
+    expect(row.title).toBe("Use Cua from Terminal");
+    for (const word of ["CLI", "PATH", "binary", "shell"]) expect(`${row.title} ${row.sub}`).not.toContain(word);
+  });
+
+  it("opens the Terminal row in place: Install where the command is missing, the line to try once it's there", () => {
+    const onRow = vi.fn();
+    const onInstall = vi.fn();
+    const missing = { status: "Installs the cua command in ~/.local/bin.", installed: false, busy: false, tryCommand: null, error: null, primary: { id: "install", label: "Install" } };
+    const { rerender } = render(<NextScreen view={nextView({ os: "linux", cli: true })} onRow={onRow} onDone={noop} cli={<CliPanel view={missing} onInstall={onInstall} />} />);
+    fireEvent.click(document.querySelector("[data-new-run-next-row=cli]")!);
+    expect(onRow).toHaveBeenCalledWith("cli");
+    expect(document.querySelector("[data-new-run-cli]")!.getAttribute("data-new-run-cli")).toBe("missing");
+    fireEvent.click(document.querySelector("[data-new-run-cli-install]")!);
+    expect(onInstall).toHaveBeenCalledTimes(1);
+    const done = { ...missing, status: "Installed in ~/.local/bin.", installed: true, tryCommand: "cua spaces list", primary: null };
+    rerender(<NextScreen view={nextView({ os: "linux", cli: true })} onRow={onRow} onDone={noop} cli={<CliPanel view={done} onInstall={onInstall} />} />);
+    expect(document.querySelector("[data-new-run-cli-install]")).toBeNull();
+    expect(document.querySelector("[data-new-run-cli-try]")!.textContent).toBe("cua spaces list");
+  });
+});
+
+describe("screen 1, usage data", () => {
+  const core = {
+    notice: "Cua collects usage data, like which features you use and when something goes wrong. Never your files, what you type or your screen.",
+    noticeLinkLabel: "What is collected",
+    noticeLinkUrl: "https://cua.ai/docs/cua-sdk/concepts/telemetry",
+    usage: { label: "Share usage data to help improve Cua", on: true, enabled: true, help: null },
+  };
+
+  it("says what is collected, with a one-tap off and the link, on the first screen", () => {
+    const onUsage = vi.fn();
+    const onLink = vi.fn();
+    render(<WelcomeScreen onAdd={noop} usage={welcomeUsage(core)} onUsage={onUsage} onUsageLink={onLink} />);
+    const line = document.querySelector<HTMLElement>("[data-new-run-usage]")!;
+    expect(line.getAttribute("data-new-run-usage")).toBe("on");
+    expect(line.textContent).toContain("Share usage data to help improve Cua");
+    expect(line.textContent).toContain("Never your files, what you type or your screen.");
+    const sw = screen.getByRole("switch", { name: "Share usage data to help improve Cua" });
+    fireEvent.click(sw);
+    expect(onUsage).toHaveBeenCalledWith(false);
+    fireEvent.click(document.querySelector("[data-new-run-usage-link]")!);
+    expect(onLink).toHaveBeenCalledTimes(1);
+  });
+
+  it("can't be changed when the environment decides, and says who", () => {
+    render(<WelcomeScreen onAdd={noop} usage={welcomeUsage({ ...core, usage: { ...core.usage, on: false, enabled: false, help: "Set by DO_NOT_TRACK" } })} />);
+    const sw = screen.getByRole("switch", { name: "Share usage data to help improve Cua" });
+    expect(sw.getAttribute("aria-checked")).toBe("false");
+    expect(sw.hasAttribute("disabled") || sw.getAttribute("aria-disabled") === "true" || sw.hasAttribute("data-disabled")).toBe(true);
+    expect(document.body.textContent).toContain("Set by DO_NOT_TRACK");
+  });
+
+  it("is left out when the core has no notice to show", () => {
+    expect(welcomeUsage(null)).toBeNull();
+    expect(welcomeUsage({ ...core, notice: null })).toBeNull();
+    render(<WelcomeScreen onAdd={noop} usage={null} />);
+    expect(document.querySelector("[data-new-run-usage]")).toBeNull();
+  });
 });
 
 describe("the step dots", () => {
@@ -460,12 +523,8 @@ beforeEach(() => {
   resetFirstRunCache();
   resetConnectedAppsState();
   resetPrepare();
-  setFlagOverride("spaces_ask_first_home", true);
-  setFlagOverride("spaces_new_onboarding", true);
 });
 afterEach(() => {
-  setFlagOverride("spaces_ask_first_home", null);
-  setFlagOverride("spaces_new_onboarding", null);
   resetPrepare();
 });
 
@@ -509,6 +568,63 @@ describe.skipIf(!wasmBuilt)("the new first run on its route", () => {
     await waitFor(() => expect(router.state.location.pathname).toBe("/home"));
   });
 
+  it("screen 1 shows the usage line from the core; turning it off is saved before the run moves on", { timeout: 60_000 }, async () => {
+    const calls: Calls = [];
+    await mountApp("/onboarding", {
+      failsCreates: false,
+      listsGhost: false,
+      demo: { signedIn: false, onboarded: false, noSpaces: true },
+      intercept: (op, args) => (calls.push({ op, args }), undefined),
+    });
+    await waitFor(() => expect(heading()).toBe("Bring all your computers under one account"));
+    const line = await waitFor(() => {
+      const el = document.querySelector<HTMLElement>("[data-new-run-usage]");
+      if (!el) throw new Error("no usage line");
+      return el;
+    });
+    expect(line.textContent).toContain("Share usage data to help improve Cua");
+    expect(line.textContent).toContain("What is collected");
+    fireEvent.click(screen.getByRole("switch", { name: "Share usage data to help improve Cua" }));
+    await waitFor(() => expect(calls.find((c) => c.op === "settings.set")?.args).toEqual({ key: "telemetry", value: false }));
+    // Still on screen 1: nothing moved on.
+    expect(heading()).toBe("Bring all your computers under one account");
+  });
+
+  it("the last screen has no Terminal row when the command is already on this computer", { timeout: 60_000 }, async () => {
+    writeFirstRunForTest({ newRun: { screen: "next", reached: 3 } });
+    await mountApp("/onboarding", { failsCreates: false, listsGhost: false, demo: { signedIn: true, onboarded: false, noSpaces: true } });
+    await waitFor(() => expect(heading()).toBe("Now bring the rest in"));
+    await new Promise((r) => setTimeout(r, 300));
+    expect(document.querySelector("[data-new-run-next-row=cli]")).toBeNull();
+  });
+
+  it("the last screen offers Use Cua from Terminal where the app carries the command, and Install installs it", { timeout: 60_000 }, async () => {
+    const calls: Calls = [];
+    writeFirstRunForTest({ newRun: { screen: "next", reached: 3 } });
+    await mountApp("/onboarding", {
+      failsCreates: false,
+      listsGhost: false,
+      demo: { signedIn: true, onboarded: false, noSpaces: true, cli: "missing" },
+      intercept: (op, args) => (calls.push({ op, args }), undefined),
+    });
+    await waitFor(() => expect(heading()).toBe("Now bring the rest in"));
+    const row = await waitFor(() => {
+      const el = document.querySelector<HTMLElement>("[data-new-run-next-row=cli]");
+      if (!el) throw new Error("no Terminal row");
+      return el;
+    });
+    expect(row.textContent).toContain("Use Cua from Terminal");
+    fireEvent.click(row);
+    const install = await waitFor(() => {
+      const el = document.querySelector<HTMLElement>("[data-new-run-cli-install]");
+      if (!el) throw new Error("no Install");
+      return el;
+    });
+    fireEvent.click(install);
+    await waitFor(() => expect(calls.some((c) => c.op === "cli.install")).toBe(true));
+    await waitFor(() => expect(document.querySelector("[data-new-run-cli]")?.getAttribute("data-new-run-cli")).toBe("installed"), { timeout: 15_000 });
+  });
+
   it("signed in: Add this computer opens the sign-in, then this Mac was added just now and the account's computers are listed", { timeout: 60_000 }, async () => {
     const calls: Calls = [];
     await mountApp("/onboarding", {
@@ -547,6 +663,15 @@ describe.skipIf(!wasmBuilt)("the new first run on its route", () => {
     expect((document.querySelector("[data-new-run-separate]") as HTMLElement).dataset.disabled).toBe("");
     expect(document.body.textContent).not.toMatch(/local runtime:|exit status/i);
     expect(screen.getByRole("button", { name: "Continue" }).hasAttribute("disabled")).toBe(false);
+  });
+
+  it("Skip for now after screen 2 leaves setup for Home, as finishing does", { timeout: 60_000 }, async () => {
+    writeFirstRunForTest({ newRun: { screen: "agent", reached: 2 } });
+    const { router } = await mountApp("/onboarding", { failsCreates: false, listsGhost: false, demo: { signedIn: true, onboarded: false, noSpaces: true } });
+    await waitFor(() => expect(document.querySelector("[data-new-run=agent]")).not.toBeNull(), { timeout: 15_000 });
+    click("[data-onboarding-later]");
+    await waitFor(() => expect(router.state.location.pathname).toBe("/home"));
+    expect(readFirstRun().finishedLater).toBe(true);
   });
 
   it("the step dots go back to screen 1 and forward again to screen 2, but never past the sign-in", { timeout: 60_000 }, async () => {

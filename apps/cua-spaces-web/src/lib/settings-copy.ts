@@ -7,7 +7,7 @@
 
 /** Launch at login, General. */
 export const LAUNCH_LABEL = "Start Cua Spaces when you sign in";
-export const LAUNCH_HELP = "Keeps your machines reachable after a restart.";
+export const LAUNCH_HELP = "Keeps your computers reachable after a restart.";
 
 /** The core's "Last check: 2 minutes ago" as "Last checked 2 minutes ago" (About). */
 export const lastChecked = (line: string) => line.replace(/^Last check:\s*/, "Last checked ");

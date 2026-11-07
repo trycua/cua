@@ -408,7 +408,7 @@ public enum AppEnvironment {
     /// The Settings page a `settings-*` start view names.
     static func settingsRoute(_ view: String) -> MainUIRoute {
         switch view {
-        case "settings-devices": return .path("/machines")
+        case "settings-devices": return .thisMac
         case "settings-about": return .path("/settings/about")
         case "settings-experiments": return .path("/settings/experiments")
         default: return .settings
@@ -489,16 +489,20 @@ public enum AppEnvironment {
                 // only; the settings file is not written).
                 if env["CUA_SPACES_START_VIEW"] == "settings-storage" { model.settings.experiments.cuaVolume = true }
                 MainUIRouter(model: model).openSettings(Self.settingsRoute(env["CUA_SPACES_START_VIEW"] ?? "settings"))
-            case "device-approval", "device-enroll", "device-enroll-code":
-                // The web Devices page has the enroll and approval sheets.
+            case "device-approval":
+                // Computers lists the ones waiting to be added at the top.
                 await model.devices.refresh()
-                web(.path("/machines"))
+                web(.home)
+            case "device-enroll", "device-enroll-code":
+                // This Mac's page has the enroll sheet.
+                await model.devices.refresh()
+                web(.thisMac)
             case "space":
                 model.select("local:aurora")
                 web(.space("local:aurora"))
             case "this-machine", "host-setup", "host-configured":
                 model.select("this-mac")
-                web(.machines)
+                web(.thisMac)
             case "notch", "notch-open":
                 // Closed first, then open once after 1.5 s, so a capture
                 // sees the spring.

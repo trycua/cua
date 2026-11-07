@@ -7,7 +7,6 @@
 import { act, cleanup, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { setFlagOverride } from "@/bridge";
 import { wasmBuilt } from "@/bridge/__tests__/testCore";
 import { forgetHome, rememberHome, resetHomes } from "@/lib/agent-home/home-space";
 import { mountApp, stubBrowserApis } from "./app-harness";
@@ -16,13 +15,12 @@ stubBrowserApis();
 beforeEach(() => {
   localStorage.clear();
   resetHomes();
-  setFlagOverride("spaces_ask_first_home", true);
 });
 afterEach(cleanup);
 
-const spaceIds = () => [...document.querySelectorAll<HTMLElement>("[data-space-id]")].map((e) => e.getAttribute("data-space-id")!);
+const spaceIds = () => [...document.querySelectorAll<HTMLElement>('[data-tree-kind="space"][data-space-id]')].map((e) => e.getAttribute("data-space-id")!);
 
-describe.skipIf(!wasmBuilt)("the Home tag in the Spaces list", () => {
+describe.skipIf(!wasmBuilt)("the Home tag in the list of your computers", () => {
   it("shows beside the agent's home Space and nowhere else, and goes when the home is forgotten", async () => {
     await mountApp("/spaces", { failsCreates: false, listsGhost: false });
     const ids = await waitFor(() => {

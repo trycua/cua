@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 /**
- * The new first run (Labs, "Try the new setup"; CUA-3318, storyboard CUA-3193), phase 1: what each
+ * The first run (CUA-3318, storyboard CUA-3193), phase 1: what each
  * screen says and which choices it offers, from what the app knows. Pure, so every state is tested
  * without a host. The page (`components/first-run-new`) draws it.
  *
@@ -46,9 +46,9 @@ export interface NewRunSaved {
 
 export const NEW_RUN_EMPTY: NewRunSaved = { screen: "welcome", picks: ["this"], agent: null, addedInRun: false, separatePendingId: null, reached: 0 };
 
-/** "this Mac", "this PC", "this machine" (the app's THIS_MACHINE). */
+/** "this Mac", "this PC", "this computer" (the app's THIS_MACHINE). */
 export function placeName(os: string): string {
-  return os === "macos" ? "this Mac" : os === "windows" ? "this PC" : "this machine";
+  return os === "macos" ? "this Mac" : os === "windows" ? "this PC" : "this computer";
 }
 
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
@@ -60,9 +60,30 @@ export function listNames(names: string[]): string {
 
 /* ---- 1 ---------------------------------------------------------------------------------- */
 
+/**
+ * The usage-data line on screen 1 (CUA-3551, option B): what is collected and a one-tap off, shown before anything
+ * is sent. The hosts hold every usage event until the run leaves this screen, and drop them when it's turned off.
+ * Built from the core's Welcome view (`onboarding.view`), so the words match Settings, Privacy.
+ */
+export interface WelcomeUsage {
+  notice: string;
+  label: string;
+  linkLabel: string;
+  linkUrl: string;
+  on: boolean;
+  /** False when the environment decides (Do Not Track, an environment variable, CI); `help` says which. */
+  enabled: boolean;
+  help: string | null;
+}
+
+export function welcomeUsage(view: { notice?: string | null; noticeLinkLabel?: string | null; noticeLinkUrl?: string | null; usage?: { label: string; on: boolean; enabled: boolean; help?: string | null } | null } | null): WelcomeUsage | null {
+  if (!view?.usage || !view.notice || !view.noticeLinkLabel || !view.noticeLinkUrl) return null;
+  return { notice: view.notice, label: view.usage.label, linkLabel: view.noticeLinkLabel, linkUrl: view.noticeLinkUrl, on: view.usage.on, enabled: view.usage.enabled, help: view.usage.help ?? null };
+}
+
 export const WELCOME = {
   title: "Bring all your computers under one account",
-  line: "Sign in on each Mac, PC or Linux machine you own. Then you, your team and your coding agents can use any of them from here.",
+  line: "Sign in on each Mac, PC or Linux computer you own. Then you, your team and your coding agents can use any of them from here.",
   primary: "Add this computer",
   skip: "Skip for now",
 } as const;
@@ -432,11 +453,15 @@ export function readyView(input: { os: string; agent: string; computers: string[
 export interface NextView {
   title: string;
   line: string;
-  rows: { id: "invite" | "add-computer" | "apps"; title: string; sub: string }[];
+  rows: { id: "invite" | "add-computer" | "apps" | "cli"; title: string; sub: string }[];
   done: string;
 }
 
-export function nextView(input: { os: string }): NextView {
+/**
+ * Screen 6. `cli`: this app carries the `cua` command and can install it (the host answered `cli.plan`); the row
+ * is for people who type commands, so it costs nobody else a step (CUA-3551, option B).
+ */
+export function nextView(input: { os: string; cli?: boolean }): NextView {
   const place = placeName(input.os);
   const apps = input.os === "macos";
   return {
@@ -448,6 +473,7 @@ export function nextView(input: { os: string }): NextView {
       { id: "invite", title: "Invite a teammate", sub: "They can use these computers and agents too." },
       { id: "add-computer", title: "Add another computer", sub: "Install Cua Spaces on it and sign in." },
       ...(apps ? [{ id: "apps" as const, title: `Let agents use apps on ${place}`, sub: "They can see the screen and use the mouse and keyboard, after you allow it." }] : []),
+      ...(input.cli ? [{ id: "cli" as const, title: "Use Cua from Terminal", sub: "If you type commands, add the cua command to this computer." }] : []),
     ],
     done: "Done",
   };

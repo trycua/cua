@@ -8,7 +8,6 @@ export type KeybindingCommand =
   | "commandPalette.toggle"
   | "sidebar.toggle"
   | "nav.spaces"
-  | "nav.machines"
   | "nav.agents"
   | "nav.keyvault"
   | "nav.settings"

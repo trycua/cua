@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 /**
- * The new first run (Labs, "Try the new setup"; CUA-3318), phase 1 of the approved storyboard
+ * The first run (CUA-3318), phase 1 of the approved storyboard
  * (CUA-3193): drawn on the spaces.cua.ai hero (its starfield, keys, Outfit title, white button and
  * the Cua lockup). The words and choices are `lib/first-run-new.ts`; this file reads the app's state
  * (sign-in, the account's computers, this computer's agents and whether it can make a separate
@@ -10,22 +10,23 @@
  */
 
 import { useNavigate } from "@tanstack/react-router";
-import { CheckIcon, ChevronRightIcon, CopyIcon, LoaderCircleIcon, MonitorIcon, PlusIcon, ShieldIcon, UserPlusIcon } from "lucide-react";
+import { CheckIcon, ChevronRightIcon, CopyIcon, LoaderCircleIcon, MonitorIcon, PlusIcon, ShieldIcon, TerminalIcon, UserPlusIcon } from "lucide-react";
 import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 
-import { folderLabel, isNeedsProof, newPendingId, useMachines, useSession, useSettings, useSpaces, type SignInPhase } from "@/bridge";
+import { cliMissing, firstRunCliView, folderLabel, isNeedsProof, newPendingId, useCliInstall, useMachines, useSession, useSettings, useSpaces, type SignInPhase } from "@/bridge";
 import { BridgeContext } from "@/bridge/BridgeProvider";
 import { useAppPermissions } from "@/bridge/app-permissions";
 import { readFirstRun, useFirstRunSaved, writeFirstRun } from "@/bridge/first-run";
 import { hostOs } from "@/bridge/host-os";
 import { useFirstSpaceOffers } from "@/bridge/new-space-hooks";
-import { readSavedOnboarding, writeSavedOnboarding } from "@/bridge/onboarding";
+import { onboardingInitial, onboardingTelemetry, onboardingView, readSavedOnboarding, writeSavedOnboarding } from "@/bridge/onboarding";
 import { extraName, spokenName } from "@/bridge/space-names";
 import { AddComputerSheet } from "@/components/add-computer-sheet";
 import { AppPermissionList, type PermissionsView } from "@/components/app-permissions";
 import { AppMarkImage } from "@/components/agents/harness-mark";
 import { agoLabel, useRecentThreads } from "@/components/ask-first/pick-up";
 import { CuaLogo } from "@/components/cua-logo";
+import { Switch } from "@/components/ui/switch";
 import { permissionsStepView, type PermissionsStepView } from "@/lib/app-permissions";
 import { addImportedTask, type AskTask } from "@/lib/ask-first";
 import {
@@ -43,6 +44,7 @@ import {
   stepDots,
   togglePick,
   WELCOME,
+  welcomeUsage,
   whereView,
   type AgentView,
   type ComputerRow,
@@ -51,6 +53,7 @@ import {
   type ReadyView,
   type SignInView,
   type StepDot,
+  type WelcomeUsage,
   type WhereView,
 } from "@/lib/first-run-new";
 import { spaceState } from "@/lib/spaces";
@@ -249,11 +252,27 @@ export function StepDots({ dots, onGo }: { dots: StepDot[]; onGo: (i: number, vi
 
 /* ---- The screens (drawn from their views, so tests draw every state) --------------------- */
 
-export function WelcomeScreen({ onAdd }: { onAdd: () => void }) {
+export function WelcomeScreen({ onAdd, usage, onUsage, onUsageLink }: { onAdd: () => void; usage?: WelcomeUsage | null; onUsage?: (on: boolean) => void; onUsageLink?: () => void }) {
   return (
     <div data-new-run="welcome">
       <Title>{WELCOME.title}</Title>
       <Line>{WELCOME.line}</Line>
+      {usage ? (
+        // Before anything is sent: the hosts hold every usage event until the run leaves this screen.
+        <div className={cn("mt-6 flex max-w-[520px] items-start gap-3 text-[13px] leading-[19px] font-medium", GREY)} data-new-run-usage={usage.on ? "on" : "off"}>
+          <Switch className="mt-px shrink-0" checked={usage.on} disabled={!usage.enabled} onCheckedChange={(on) => onUsage?.(on)} aria-label={usage.label} data-new-run-usage-switch="" />
+          <span className="min-w-0">
+            <span className="block text-white">{usage.label}</span>
+            <span className="block" data-new-run-usage-notice="">
+              {usage.notice}{" "}
+              <button type="button" className="underline underline-offset-2 hover:text-white" onClick={onUsageLink} data-new-run-usage-link="">
+                {usage.linkLabel}
+              </button>
+            </span>
+            {usage.help ? <span className="block">{usage.help}</span> : null}
+          </span>
+        </div>
+      ) : null}
       <Actions>
         <button type="button" className={WHITE_BUTTON} onClick={onAdd} data-onboarding-primary="">
           {WELCOME.primary}
@@ -576,8 +595,8 @@ export function ReadyScreen({ view, agent, onDone, onContinueChat, place }: { vi
   );
 }
 
-export function NextScreen({ view, onRow, onDone, apps }: { view: NextView; onRow: (id: NextView["rows"][number]["id"]) => void; onDone: () => void; apps?: ReactNode }) {
-  const ICON = { invite: UserPlusIcon, "add-computer": MonitorIcon, apps: ShieldIcon } as const;
+export function NextScreen({ view, onRow, onDone, apps, cli }: { view: NextView; onRow: (id: NextView["rows"][number]["id"]) => void; onDone: () => void; apps?: ReactNode; cli?: ReactNode }) {
+  const ICON = { invite: UserPlusIcon, "add-computer": MonitorIcon, apps: ShieldIcon, cli: TerminalIcon } as const;
   return (
     <div data-new-run="next">
       <Title>{view.title}</Title>
@@ -598,7 +617,7 @@ export function NextScreen({ view, onRow, onDone, apps }: { view: NextView; onRo
                 </span>
                 <ChevronRightIcon className={cn("size-4 shrink-0", GREY)} />
               </button>
-              {r.id === "apps" ? apps : null}
+              {r.id === "apps" ? apps : r.id === "cli" ? cli : null}
             </div>
           );
         })}
@@ -608,6 +627,27 @@ export function NextScreen({ view, onRow, onDone, apps }: { view: NextView; onRo
           {view.done}
         </button>
       </Actions>
+    </div>
+  );
+}
+
+/** Screen 6's "Use Cua from Terminal", opened: where the command goes and Install, or the line to try once it's there. */
+export function CliPanel({ view, onInstall }: { view: { status: string; installed: boolean; busy: boolean; tryCommand: string | null; error: string | null; primary: { id: string; label: string } | null }; onInstall: () => void }) {
+  const install = view.primary?.id === "install" ? view.primary : null;
+  return (
+    // design-ok: the same inset hairline as the apps row's panel above it, drawn from the spaces.cua.ai hero (storyboard CUA-3193)
+    <div className={cn("mx-3 mb-2 border-t border-white/[0.14] pt-2 pl-7 text-[13.5px] leading-[19px] font-medium", GREY)} data-new-run-cli={view.installed ? "installed" : "missing"}>
+      <p>{view.status}</p>
+      {view.error ? <p className="mt-1 text-white">{view.error}</p> : null}
+      {install ? (
+        <button type="button" className={cn(GLASS_CHIP, "mt-2 h-8 px-3.5 text-[13.5px]")} disabled={view.busy} onClick={onInstall} data-new-run-cli-install="">
+          {view.busy ? "Installing…" : install.label}
+        </button>
+      ) : view.tryCommand ? (
+        <code className="mt-2 block font-mono text-[12.5px] text-white select-text" data-new-run-cli-try="">
+          {view.tryCommand}
+        </code>
+      ) : null}
     </div>
   );
 }
@@ -632,6 +672,27 @@ export function PermissionsScreen({ view, perms, onContinue }: { view: Permissio
 
 /** The daemon's refusal on a Mac that can't run virtual computers (`cua_create_failure::preflight::MAC_UNSUPPORTED`). */
 const CANT_RUN = /can['\u2019]t run (Spaces itself|virtual computers)/i;
+
+/**
+ * The usage data's name for each screen (`schema::FIRST_RUN_STEPS`), so the onboarding funnel keeps its steps:
+ * Ready and Next end the run and are counted by its finish, not as a step.
+ */
+const FUNNEL_STEP: Partial<Record<NewRunScreenName, string>> = {
+  welcome: "welcome",
+  signin: "sign_in",
+  where: "create_space",
+  permissions: "permissions",
+  agent: "connect_agent",
+};
+
+/** Usage events never get in the way of the run. */
+function track(send: () => void): void {
+  try {
+    send();
+  } catch {
+    // An older core that reads the state differently: no event.
+  }
+}
 
 /** The new first run's whole page. */
 export function NewFirstRun() {
@@ -669,8 +730,40 @@ export function NewFirstRun() {
   // "Use a code from another computer": the sheet opens on "Enter a code".
   const [addEnter, setAddEnter] = useState(false);
   const [appsOpen, setAppsOpen] = useState(false);
+  const [cliOpen, setCliOpen] = useState(false);
   const mainRef = useRef<HTMLElement>(null);
   useFadeUnder(mainRef, s.screen);
+
+  // The onboarding funnel (`cua_onboarding_*`): the run starts once, then each screen counts when it shows.
+  const core = ctx?.core ?? null;
+  const telemetry = settings.data?.telemetry ?? null;
+  const funnelState = (c: NonNullable<typeof core>) => ({
+    ...onboardingInitial(c, session.data?.identity ?? null),
+    step: s.screen === "welcome" || s.screen === "signin" ? ("welcome" as const) : ("agents" as const),
+    runCounted: true,
+    telemetry: telemetry ? onboardingTelemetry(telemetry) : null,
+  });
+  // Screen 1's usage line, in the core's words (the same as Settings, Privacy).
+  const usage = s.screen === "welcome" && core && telemetry ? welcomeUsage(onboardingView(core, { ...onboardingInitial(core, null), step: "welcome", telemetry: onboardingTelemetry(telemetry) })) : null;
+  // Screen 6's "Use Cua from Terminal": only where this app carries the command and it isn't on this computer yet
+  // (or was installed from the row just now), as the old first run's step was.
+  const cli = useCliInstall(s.screen === "next");
+  const cliName = settings.data?.cli?.name ?? null;
+  const cliView = core && (cliMissing(cli.state) || cli.state.installed) ? firstRunCliView(core, { cli: cli.state, cliName }) : null;
+  const runStarted = useRef(false);
+  useEffect(() => {
+    if (runStarted.current || !store || !core || !telemetry) return;
+    runStarted.current = true;
+    track(() => store.trackOnboarding({ ...onboardingInitial(core, null), telemetry: onboardingTelemetry(telemetry) }, { type: "start" }));
+  }, [store, core, telemetry]);
+  useEffect(() => {
+    const step = FUNNEL_STEP[s.screen];
+    if (store && step) track(() => store.trackFirstRunStep(step, "step_viewed"));
+  }, [store, s.screen]);
+  const funnel = (action: string, detail = "none") => {
+    const step = FUNNEL_STEP[s.screen];
+    if (store && step) track(() => store.trackFirstRunStep(step, action, detail));
+  };
 
   // A new screen: focus moves to its title, so a screen reader reads it. Moved with the arrow keys on the
   // step dots, focus stays on the dots instead.
@@ -871,24 +964,33 @@ export function NewFirstRun() {
   const open = (url: string) => void session.openExternal(url).catch(() => {});
 
   const leave = () => {
+    funnel("step_skipped", "step");
+    if (store && core) track(() => store.trackOnboardingSkipped(funnelState(core)));
     session.cancelSignIn();
     writeSavedOnboarding({ ...readSavedOnboarding(), skipped: true });
     writeFirstRun({ finishedLater: true });
-    void navigate({ to: "/spaces" });
+    // Home is where the app opens (CUA-3551), so leaving setup early lands there too.
+    void navigate({ to: "/home" });
   };
   const skip = () => {
     if (s.screen === "welcome" || s.screen === "signin") {
+      funnel("step_skipped", "step");
       session.cancelSignIn();
       go("where");
     } else leave();
   };
+  const finished = () => {
+    if (store && core) track(() => store.trackOnboardingFinished(funnelState(core)));
+  };
   const finish = async () => {
+    finished();
     await session.completeOnboarding(thisState === "added" && signedIn ? "host" : "client").catch(() => {});
     writeFirstRun({ finishedLater: false, todosClosed: false });
     await navigate({ to: "/home" });
   };
   // Continue in Cua (CUA-3319): setup is done and the picked chat opens as a Home task. Nothing runs until the person sends.
   const continueChat = async (task: AskTask) => {
+    finished();
     await session.completeOnboarding(thisState === "added" && signedIn ? "host" : "client").catch(() => {});
     writeFirstRun({ finishedLater: false, todosClosed: false });
     await navigate({ to: "/home/$taskId", params: { taskId: task.id } });
@@ -914,7 +1016,7 @@ export function NewFirstRun() {
   let body: ReactNode = null;
   switch (s.screen) {
     case "welcome":
-      body = <WelcomeScreen onAdd={startSignIn} />;
+      body = <WelcomeScreen onAdd={startSignIn} usage={usage} onUsage={(on) => void settings.updateSetting("telemetry", on).catch(() => {})} onUsageLink={() => usage && open(usage.linkUrl)} />;
       break;
     case "signin":
       body = (
@@ -976,12 +1078,14 @@ export function NewFirstRun() {
     case "next": {
       body = (
         <NextScreen
-          view={nextView({ os })}
+          view={nextView({ os, cli: Boolean(cliView) })}
           onRow={(id) => {
             if (id === "invite") open(`${accountUrl}/team`);
             else if (id === "add-computer") setAddOpen(true);
+            else if (id === "cli") setCliOpen((o) => !o);
             else setAppsOpen((o) => !o);
           }}
+          cli={cliOpen && cliView ? <CliPanel view={cliView} onInstall={() => void cli.install()} /> : null}
           onDone={() => void finish()}
           apps={
             // design-ok: the first run is drawn from the spaces.cua.ai hero (storyboard CUA-3193), not the app's pages

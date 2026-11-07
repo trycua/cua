@@ -57,6 +57,12 @@ pub(crate) fn reap(shared: &Arc<Shared>) {
         return;
     };
     let home = shared.runtime.spaces().home_dir().to_path_buf();
+    // A failed create's placeholder whose parent is gone has nothing to show or retry.
+    let present: std::collections::BTreeSet<String> = seen.iter().map(|s| s.id.clone()).collect();
+    let dropped = cua_spaces::child_creates::retain_parents(&home, &present);
+    if dropped > 0 {
+        tracing::info!(dropped, "dropped create records whose parent Space is gone");
+    }
     let mut memory = Memory::load(&home);
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

@@ -218,6 +218,23 @@ pub fn update(
     let _ = save(home, &all);
 }
 
+/// Drops the records whose asking Space is gone (`present` holds every Space the registry lists): nothing can use
+/// them, and the apps must not draw a placeholder for a parent that no longer exists. A create still going is kept.
+/// Returns how many were dropped.
+pub fn retain_parents(home: &Path, present: &std::collections::BTreeSet<String>) -> usize {
+    let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let mut all = load(home);
+    let before = all.len();
+    all.retain(|e| {
+        e.state == State::Creating || e.parent.is_empty() || present.contains(&e.parent)
+    });
+    let dropped = before - all.len();
+    if dropped > 0 {
+        let _ = save(home, &all);
+    }
+    dropped
+}
+
 /// Every create the apps show as a row (the ones nobody removed from the list), oldest first.
 pub fn visible(home: &Path) -> Vec<Entry> {
     load(home).into_iter().filter(|e| !e.hidden).collect()
@@ -322,6 +339,26 @@ mod tests {
         hide(d.path(), "a", 7);
         assert!(visible(d.path()).is_empty());
         assert_eq!(of(d.path(), "p").len(), 1);
+    }
+
+    #[test]
+    fn records_of_a_removed_parent_are_dropped_and_nothing_else_is() {
+        let d = tempfile::tempdir().unwrap();
+        update(d.path(), "local:gone", "a", "a", "", 1, |e| {
+            e.state = State::Failed
+        });
+        update(d.path(), "local:gone", "b", "b", "", 2, |_| {});
+        update(d.path(), "local:here", "c", "c", "", 3, |e| {
+            e.state = State::Failed
+        });
+        let present: std::collections::BTreeSet<String> = ["local:here".to_string()].into();
+        assert_eq!(
+            retain_parents(d.path(), &present),
+            1,
+            "the failed one goes; one still being made stays"
+        );
+        let keys: Vec<_> = visible(d.path()).into_iter().map(|e| e.key).collect();
+        assert_eq!(keys, ["b", "c"]);
     }
 
     #[test]

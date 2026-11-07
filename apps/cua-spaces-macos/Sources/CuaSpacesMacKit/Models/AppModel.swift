@@ -1561,10 +1561,22 @@ public final class AppModel {
                 sendCreate(.deleteDone(id: space.id))
                 await refresh(fresh: true)
             } catch {
+                if Self.alreadyGone(LiveSpacesBackend.words(error)) {
+                    // Already gone: that is what was asked for.
+                    sendCreate(.deleteDone(id: space.id))
+                    await refresh(fresh: true)
+                    return
+                }
                 sendCreate(.deleteFail(id: space.id))
                 show(error: appDeleteFailedText(name: space.name, error: LiveSpacesBackend.words(error)))
             }
         }
+    }
+
+    /// Whether a delete's error says the Space is not there any more.
+    static func alreadyGone(_ error: String?) -> Bool {
+        guard let e = error?.lowercased() else { return false }
+        return e.contains("not found") || e.contains("no such space")
     }
 
     /// Bulk delete or leave (after the page's confirmation): every row says
@@ -1583,6 +1595,17 @@ public final class AppModel {
             }
             if isDeleting(id) {
                 results[id] = SpaceBulkResult(id: id, ok: false, error: "\(space.name) is already going.")
+                continue
+            }
+            // A placeholder of a create that never became a Space: Delete stops a create still going and
+            // otherwise only drops the row (there is nothing on disk to delete).
+            if appCreatesIsPending(id: id) {
+                if creates.pending.contains(where: { $0.id == id && $0.error == nil && $0.spaceId == nil }) {
+                    cancelCreate(id)
+                } else {
+                    dismissPending(id)
+                }
+                results[id] = SpaceBulkResult(id: id, ok: true)
                 continue
             }
             todo.append(space)
@@ -1605,7 +1628,9 @@ public final class AppModel {
                 }
             }
             for _ in 0..<min(3, queue.count) { next() }
-            for await r in group {
+            for await found in group {
+                // A Space the person asked to delete that is already gone is deleted.
+                let r = !found.ok && !leave && Self.alreadyGone(found.error) ? SpaceBulkResult(id: found.id, ok: true) : found
                 results[r.id] = r
                 sendCreate(r.ok ? .deleteDone(id: r.id) : .deleteFail(id: r.id))
                 onResult?(r)
@@ -1630,6 +1655,16 @@ public final class AppModel {
         await refresh(fresh: true)
     }
 
+    /// The longest a start or stop may take before it counts as failed.
+    static let powerBudgetSeconds: Double = 180
+
+    /// Whether the registry shows the Space on (`on`) or off, as asked.
+    func powerMatches(_ id: String, on: Bool) -> Bool {
+        guard let space = spaces.first(where: { $0.id == id }) else { return true }
+        guard let power = space.power else { return true }
+        return power.off != on
+    }
+
     /// The power button next to Delete: turns the Space off (`on` false:
     /// suspended or stopped, as its provider can) or back on. The row and
     /// the detail say Suspending (and the like) at once and the button
@@ -1643,14 +1678,30 @@ public final class AppModel {
             usage[space.id] = nil
             notch.thumbnails[space.id] = nil
         }
+        let backend = backend
+        let id = space.id
         Task {
-            do {
-                try await backend.setPower(id: space.id, on: on)
-                sendCreate(.powerDone(id: space.id))
+            // A start or stop never spins forever: the call has a bound, and once it returns the registry must
+            // show the Space as asked within a minute, else the row says so and offers the button again.
+            let r = await withTimeout(seconds: Self.powerBudgetSeconds) { try await backend.setPower(id: id, on: on) }
+            switch r {
+            case .failure(let error):
+                let why = error is TimeoutError
+                    ? (on ? "It didn't turn on in time. Try again." : "It didn't turn off in time. Try again.")
+                    : LiveSpacesBackend.words(error)
+                devices.noteRefusal(why)
+                sendCreate(.powerFail(id: id, error: why))
+            case .success:
+                sendCreate(.powerDone(id: id))
                 await refresh(fresh: true)
-            } catch {
-                devices.noteRefusal(LiveSpacesBackend.words(error))
-                sendCreate(.powerFail(id: space.id, error: LiveSpacesBackend.words(error)))
+                for _ in 0..<30 {
+                    if powerMatches(id, on: on) { return }
+                    try? await Task.sleep(nanoseconds: 2_000_000_000)
+                    await refresh(fresh: true)
+                }
+                if !powerMatches(id, on: on) {
+                    sendCreate(.powerFail(id: id, error: on ? "It didn't turn on. Try again." : "It didn't turn off. Try again."))
+                }
             }
         }
     }

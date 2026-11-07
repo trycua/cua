@@ -2400,6 +2400,13 @@ impl Persistent {
             d.client_id = Some(key);
             drafts.push(d);
         }
+        // A create that failed is reported on this thread (below) and then left no placeholder: there is no
+        // Try again for it, so a row in the Spaces list would only be a zombie.
+        let failed_now: Vec<(String, u64)> = asked
+            .iter()
+            .filter(|e| e.state == cua_spaces::child_creates::State::Failed)
+            .map(|e| (e.key.clone(), e.started_ms))
+            .collect();
         let covered: std::collections::HashSet<&str> = asked
             .iter()
             .map(|e| e.space.as_str())
@@ -2440,6 +2447,9 @@ impl Persistent {
             drafts.push(d);
         }
         store.append_many(drafts)?;
+        for (key, started) in failed_now {
+            cua_spaces::child_creates::hide(self.spaces.home_dir(), &key, started);
+        }
         Ok(())
     }
 

@@ -785,6 +785,50 @@ mod tests {
         );
     }
 
+    /// Median of 50 lookups, enumeration against single-window description.
+    #[test]
+    #[ignore = "timing; reads the live WindowServer"]
+    fn single_window_lookup_timing() {
+        fn median_us(mut f: impl FnMut()) -> u128 {
+            let mut runs: Vec<u128> = (0..50)
+                .map(|_| {
+                    let start = std::time::Instant::now();
+                    f();
+                    start.elapsed().as_micros()
+                })
+                .collect();
+            runs.sort_unstable();
+            runs[runs.len() / 2]
+        }
+        let windows = all_windows();
+        let target = windows
+            .iter()
+            .find(|w| w.is_on_screen)
+            .expect("a visible window")
+            .window_id;
+        let old_info = median_us(|| {
+            let _ = all_windows_any_layer()
+                .into_iter()
+                .find(|w| w.window_id == target);
+        });
+        let new_info = median_us(|| {
+            let _ = describe_window(target);
+        });
+        let old_space = median_us(|| {
+            let _ = all_windows()
+                .into_iter()
+                .find(|w| w.window_id == target)
+                .map(|w| w.on_current_space);
+        });
+        let new_space = median_us(|| {
+            let _ = window_on_current_space_by_id(target);
+        });
+        eprintln!(
+            "windows={} window_info_by_id old={}us new(describe_window)={}us; window_on_current_space_by_id old={}us new={}us",
+            windows.len(), old_info, new_info, old_space, new_space
+        );
+    }
+
     #[test]
     fn bounds_numbers_preserve_finite_values_and_default_non_finite_or_missing_values() {
         use core_foundation::{

@@ -348,7 +348,7 @@ pub enum SpacesCmd {
     /// Registered Spaces and your computers on the relay.
     #[command(
         visible_alias = "list",
-        after_help = "CPU, MEMORY and DISK ON THIS MAC show what each Space was given and what it
+        after_help = "CPU, MEMORY and the DISK column (on this computer) show what each Space was given and what it
 uses now (the numbers the Cua Spaces app shows); for another of your
 computers they show what it last reported. Numbers only: no file names.
 
@@ -5529,7 +5529,14 @@ mod tests {
         assert!(text.contains("lab-box") && text.contains("relay"), "{text}");
         // The new columns, and this machine's own row shows this Mac.
         assert!(text.starts_with("ID "), "{text}");
-        for column in ["CPU", "MEMORY", "DISK ON THIS MAC"] {
+        for column in [
+            "CPU",
+            "MEMORY",
+            &format!(
+                "DISK ON {}",
+                cua_spaces::resources::words::Host::current().this_upper()
+            ),
+        ] {
             assert!(text.lines().next().unwrap().contains(column), "{text}");
         }
         let row = text.lines().find(|l| l.contains("lab-box")).unwrap();

@@ -551,6 +551,7 @@ pub async fn doctor() -> DoctorReport {
     let managed_status = managed_status(
         crate::managed::LinuxSource::current(),
         container_status.ready,
+        wsl_probe().await,
     );
     if !container_status.ready && managed_status.provisionable {
         container_status
@@ -814,41 +815,108 @@ fn note_kvm_with(
 /// The built-in Linux runtime ([`crate::managed`]) for `doctor`: ready
 /// while its VM runs; else used (set up or booted on demand) when the
 /// `runtime.linux` setting picks it here.
-fn managed_status(source: crate::managed::LinuxSource, engine_ready: bool) -> BackendStatus {
-    use crate::managed::{self, LinuxSource};
+fn managed_status(
+    source: crate::managed::LinuxSource,
+    engine_ready: bool,
+    wsl: Option<crate::managed::wsl::Probe>,
+) -> BackendStatus {
+    use crate::managed::{self, LinuxSource, wsl::Probe};
     let mb = managed::first_use_download() >> 20;
+    if let Some(Probe::Unavailable(why)) = &wsl
+        && source.allows_builtin()
+        && !engine_ready
+    {
+        // Windows without a usable WSL 2: say what to turn on (never
+        // "install Docker").
+        return BackendStatus {
+            backend: BackendKind::Managed,
+            ready: false,
+            provisionable: false,
+            detail: why.clone(),
+            missing: vec!["WSL 2".into()],
+            provisioning: vec![],
+        };
+    }
     let picked = source.allows_builtin()
         && (source == LinuxSource::Builtin || managed::exists() || !engine_ready);
+    // Windows: the runtime's disk and downloads go under the cua home; say
+    // so now, not midway, when that drive has no room for them.
+    if picked
+        && cfg!(windows)
+        && !managed::exists()
+        && let Err(e) = crate::disk::ensure_space(
+            &nearest_existing(&managed::root()),
+            managed::wsl::SETUP_DISK_BYTES,
+            "set up the built-in Linux runtime",
+        )
+    {
+        return BackendStatus {
+            backend: BackendKind::Managed,
+            ready: false,
+            provisionable: false,
+            detail: e.to_string(),
+            missing: vec!["disk space".into()],
+            provisioning: vec![],
+        };
+    }
     let running = picked && managed::running();
     BackendStatus {
         backend: BackendKind::Managed,
         ready: running,
         provisionable: picked && !running,
         detail: if !managed::supported() {
-            "the built-in Linux runtime runs on macOS".into()
+            "the built-in Linux runtime runs on macOS and Windows".into()
         } else if source == LinuxSource::System {
             "Linux Spaces are set to use this Mac's own container engine".into()
+        } else if running && cfg!(windows) {
+            "built-in Linux runtime running (WSL 2, runc)".into()
         } else if running {
             "built-in Linux runtime running (gVisor)".into()
         } else if picked && managed::exists() {
             "built-in Linux runtime, started on demand".into()
+        } else if picked && cfg!(windows) {
+            format!("{}, about {mb} MB", managed::STATUS_WINDOWS)
         } else if picked {
             format!("{}, about {mb} MB", managed::STATUS)
         } else {
             "not used: this Mac's own container engine runs Linux Spaces".into()
         },
         missing: vec![],
-        provisioning: if picked && !running && !managed::exists() {
+        provisioning: if picked && !running && !managed::exists() && cfg!(windows) {
+            vec![
+                format!("download the built-in Linux runtime (about {mb} MB)"),
+                "import it as a WSL 2 distribution of cua's own and install Docker in it".into(),
+                "start Docker".into(),
+            ]
+        } else if picked && !running && !managed::exists() {
             vec![
                 format!("download the built-in Linux runtime (about {mb} MB)"),
                 "boot its VM".into(),
             ]
+        } else if picked && !running && cfg!(windows) {
+            vec!["start its WSL 2 distribution and Docker".into()]
         } else if picked && !running {
             vec!["boot its VM".into()]
         } else {
             vec![]
         },
     }
+}
+
+/// `path`, or its nearest ancestor that exists (a volume to ask about).
+fn nearest_existing(path: &std::path::Path) -> std::path::PathBuf {
+    path.ancestors()
+        .find(|p| p.exists())
+        .unwrap_or(path)
+        .to_path_buf()
+}
+
+/// What WSL 2 gives the built-in Linux runtime on Windows (`None` elsewhere).
+async fn wsl_probe() -> Option<crate::managed::wsl::Probe> {
+    if !cfg!(windows) {
+        return None;
+    }
+    Some(crate::managed::wsl::probe(&crate::managed::wsl::WslExe).await)
 }
 
 /// Choose a backend for `req` given a [`doctor`] report.
@@ -990,6 +1058,74 @@ fn lume_builtin_allowed() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The disk-space source is process-wide: tests that read or fake it take turns.
+    #[cfg(windows)]
+    static DISK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// A drive without room for the runtime's disk says so before setup
+    /// starts (a fake free-space source; no disk is filled).
+    #[cfg(windows)]
+    #[test]
+    fn windows_without_disk_room_says_how_much_is_needed() {
+        use crate::disk::{Space, SpaceProbe, set_probe};
+        use crate::managed::{LinuxSource, wsl::Probe};
+        let _disk = DISK.lock().unwrap_or_else(|e| e.into_inner());
+        struct Low;
+        impl SpaceProbe for Low {
+            fn space(&self, _: &std::path::Path) -> std::io::Result<Space> {
+                Ok(Space {
+                    available: 1 << 30,
+                    total: 100 << 30,
+                })
+            }
+        }
+        set_probe(Some(std::sync::Arc::new(Low)));
+        let s = managed_status(
+            LinuxSource::Builtin,
+            false,
+            Some(Probe::Available { distro: false }),
+        );
+        set_probe(None);
+        assert!(!s.provisionable && !s.ready, "{s:?}");
+        assert!(s.detail.contains("not enough disk space"), "{}", s.detail);
+        assert_eq!(s.missing, vec!["disk space".to_string()]);
+    }
+
+    /// A PC whose WSL 2 cannot run says what to turn on, and is not offered
+    /// as a runtime that sets itself up.
+    #[cfg(windows)]
+    #[test]
+    fn windows_without_wsl_says_what_to_turn_on() {
+        let _disk = DISK.lock().unwrap_or_else(|e| e.into_inner());
+        use crate::managed::{LinuxSource, wsl::Probe};
+        let why = "virtualization is turned off";
+        let s = managed_status(
+            LinuxSource::Auto,
+            false,
+            Some(Probe::Unavailable(why.into())),
+        );
+        assert!(!s.ready && !s.provisionable);
+        assert_eq!(s.detail, why);
+        assert_eq!(s.missing, vec!["WSL 2".to_string()]);
+        let ok = managed_status(
+            LinuxSource::Auto,
+            false,
+            Some(Probe::Available { distro: false }),
+        );
+        assert!(ok.provisionable, "{ok:?}");
+        assert!(
+            ok.provisioning.iter().any(|p| p.contains("WSL 2")),
+            "{ok:?}"
+        );
+        // A working engine of the PC's own is used as it is.
+        let sys = managed_status(
+            LinuxSource::Auto,
+            true,
+            Some(Probe::Unavailable(why.into())),
+        );
+        assert!(sys.missing.is_empty());
+    }
 
     fn report(
         qemu_ready: bool,

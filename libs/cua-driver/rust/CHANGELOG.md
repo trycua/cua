@@ -1,5 +1,44 @@
 # Changelog
 
+## [0.41.3](https://github.com/trycua/cua/compare/cua-driver-rs-v0.41.2...cua-driver-rs-v0.41.3) (2026-11-07)
+
+
+### Bug Fixes
+
+* **cua-driver:** admit per-pid state-capture workers in one critical section ([#6807](https://github.com/trycua/cua/issues/6807)) ([59c2fa6](https://github.com/trycua/cua/commit/59c2fa67f96bc76e05d1bf9f550f5cfc45519a1e))
+* **cua-driver:** commit or roll back browser setup explicitly ([#6808](https://github.com/trycua/cua/issues/6808)) ([169a6c6](https://github.com/trycua/cua/commit/169a6c6c5ffdfb8d5d9a3f58d392240de9590708))
+* **cua-driver:** hold every tool route on runtime admission while permissions are pending ([#6802](https://github.com/trycua/cua/issues/6802)) ([62806db](https://github.com/trycua/cua/commit/62806db62d1886787f7b4133d64d33b641fc26f1))
+* **cua-driver:** one macOS focus arbiter decides every activation undo ([#6803](https://github.com/trycua/cua/issues/6803)) ([14ae717](https://github.com/trycua/cua/commit/14ae717630ae3fb12eed3be3da0755d1fbb04f0e))
+* **cua-driver:** report a timed-out capture worker to the next caller ([#6809](https://github.com/trycua/cua/issues/6809)) ([85f9187](https://github.com/trycua/cua/commit/85f9187d0c04c9cc82ff805eb0c753714e069c31))
+
+## [0.41.2](https://github.com/trycua/cua/compare/cua-driver-rs-v0.41.1...cua-driver-rs-v0.41.2) (2026-11-07)
+
+
+### Bug Fixes
+
+* **cua-driver:** finalize the previous recording when a new one starts ([#6794](https://github.com/trycua/cua/issues/6794)) ([5e2cb47](https://github.com/trycua/cua/commit/5e2cb4714749e123de5f23300ef27183642df4b0))
+
+## [0.41.1](https://github.com/trycua/cua/compare/cua-driver-rs-v0.41.0...cua-driver-rs-v0.41.1) (2026-11-07)
+
+
+### Bug Fixes
+
+* **cua-driver:** keep a session's last use on its lifecycle record ([#6773](https://github.com/trycua/cua/issues/6773)) ([94e3d18](https://github.com/trycua/cua/commit/94e3d186262431c30cdf0891231eeee55909398e))
+* **cua-driver:** restore the Windows foreground only after typed input drained ([#6779](https://github.com/trycua/cua/issues/6779)) ([886c9ce](https://github.com/trycua/cua/commit/886c9ce30e02a337f2047d11ac8618cca4001a19))
+
+## [0.41.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.40.6...cua-driver-rs-v0.41.0) (2026-11-06)
+
+
+### Features
+
+* **cua-driver:** add cua-driver test to check a new install end to end (CUA-3660) ([#6765](https://github.com/trycua/cua/issues/6765)) ([afffae2](https://github.com/trycua/cua/commit/afffae21a76a7ffb56e5c536cdfa2e062d58caa8))
+
+
+### Bug Fixes
+
+* **cua-driver:** keep a macOS sheet's own id for focus and snapshot scope ([#6758](https://github.com/trycua/cua/issues/6758)) ([ab1d654](https://github.com/trycua/cua/commit/ab1d654a953df77a80583498f5515c2ddae16b4c))
+* **cua-driver:** restore the prior X11 foreground after foreground type_text ([#6768](https://github.com/trycua/cua/issues/6768)) ([0358eb2](https://github.com/trycua/cua/commit/0358eb27237ae9a27d3b375268cf129d7926980f))
+
 ## [0.40.6](https://github.com/trycua/cua/compare/cua-driver-rs-v0.40.5...cua-driver-rs-v0.40.6) (2026-11-06)
 
 

@@ -90,7 +90,7 @@ jobs:
     name: Plan
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    # Includes up to 90 minutes waiting for main's Spaces CI to finish.
+    # Includes up to 90 minutes waiting for main's Spaces CI to finish (not with ignore_ci).
     timeout-minutes: 100
     permissions:
       contents: read
@@ -125,9 +125,13 @@ jobs:
             skip=true; why="nothing changed since the last nightly"
           fi
           ci=skipped
-          if [ "$skip" = false ]; then
+          if [ "$skip" = false ] && [ "$IGNORE_CI" = true ]; then
+            # The person asked to ignore main's CI: do not wait for it either
+            # (the wait is up to 90 minutes while main's CI is still running).
+            ci=ignored
+          elif [ "$skip" = false ]; then
             ci="$(python3 -I .github/scripts/spaces_nightly_gate.py "$GITHUB_REPOSITORY" "$GITHUB_SHA" --wait-minutes 90)"
-            if [ "$ci" != green ] && [ "$IGNORE_CI" != true ]; then
+            if [ "$ci" != green ]; then
               skip=true; why="main's Spaces CI is $ci at ${GITHUB_SHA:0:7}"
             fi
           fi

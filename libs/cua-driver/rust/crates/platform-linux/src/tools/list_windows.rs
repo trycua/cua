@@ -43,6 +43,7 @@ impl Tool for ListWindowsTool {
             tokio::task::spawn_blocking(move || crate::wayland::list_windows_dispatch(filter_pid))
                 .await
                 .unwrap_or_default();
+        let none_listed = windows.is_empty();
         // Exited applications can remain visible in AT-SPI/X11 as zombies;
         // never return those stale targets to callers.
         windows.retain(|window| window.pid.is_none_or(crate::proc_fs::is_process_live));
@@ -74,6 +75,14 @@ impl Tool for ListWindowsTool {
                     format!(" app={}", w.app_name)
                 }
             ));
+        }
+        // Only in the text: a structured field would change the cross-platform
+        // output record and its generated bindings.
+        if let (true, Some(note)) = (
+            none_listed,
+            filter_pid.and_then(crate::atspi::unlisted_window_note),
+        ) {
+            lines.push(note);
         }
         let structured =
             json!({ "windows": windows.iter().map(window_record_json).collect::<Vec<_>>() });

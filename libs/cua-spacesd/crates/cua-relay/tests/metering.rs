@@ -194,7 +194,7 @@ async fn past_the_allowance_the_session_continues_with_an_upgrade_prompt() {
     assert_eq!(v["hours_limit"], 20);
     assert_eq!(v["soft_limit_reached"], false);
 
-    // Two held streams on two machines: two live sessions, one over.
+    // Two held streams on two machines: two computers in use, one over.
     let held: Vec<_> = ids
         .iter()
         .map(|id| gate.send(http.get(format!("{base}/m/{id}/slow")).bearer_auth(&ada)))
@@ -440,7 +440,10 @@ async fn a_long_grpc_stream_is_refused_past_an_enforced_cap_and_short_calls_neve
     assert_eq!(r.headers()["x-cua-relay-error"], "plan_limit_sessions");
     assert_eq!(r.headers()["x-cua-relay-limit"], "1");
     let message = r.headers()["grpc-message"].to_str().unwrap().to_owned();
-    assert!(message.contains("live%20sessions") || message.contains("live sessions"));
+    assert!(
+        message.contains("computers%20in%20use%20at%20once")
+            || message.contains("computers in use at once")
+    );
     // Watches hold sessions too.
     let r = call(&ids[1], "WindowsService/WatchWindows").await;
     assert_eq!(r.headers()["grpc-status"], "8");

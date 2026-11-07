@@ -8,9 +8,11 @@ import { setErrorAction } from "@/components/ui/toast";
 
 /**
  * Puts Upgrade on the toast of a failed action when the failure is the
- * relay refusing a new live session over the plan's cap ("You're using 5 of
- * 5 live sessions on Pro. Close one or upgrade to Teams."). The sentence is
- * the error's own; the button opens the plan's page on the account app.
+ * relay refusing a new computer in use over the plan's cap ("You have 5 of
+ * 5 computers in use at once on Pro. Close one or upgrade to Teams.", or the
+ * older "You're using 5 of 5 live sessions on Pro." from an older relay; the
+ * core reads both). The sentence is the error's own; the button opens the
+ * plan's page on the account app.
  * Renders nothing.
  *
  * Usage data (CUA-1881): the refusal shown is `cua_plan_limit_shown` and

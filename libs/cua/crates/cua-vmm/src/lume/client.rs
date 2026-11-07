@@ -514,9 +514,9 @@ impl LumeClient {
                 status: 400,
                 message: format!(
                     "this Lume does not take a network gateway ({}). The secure network default \
-                     for macOS Spaces needs a Lume built from this repository \
-                     (libs/lume/scripts/install-local.sh); CUA_SECURE_DEFAULT=0 runs on Apple's \
-                     NAT as before",
+                     for macOS Spaces needs Lume 0.7.0 or newer (cua installs it itself unless \
+                     runtime.lume is set to this Mac's own Lume: update that one, or set it back \
+                     to auto); CUA_SECURE_DEFAULT=0 runs on Apple's NAT as before",
                     text.trim()
                 ),
             });

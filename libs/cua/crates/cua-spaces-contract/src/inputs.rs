@@ -173,7 +173,7 @@ pub struct CreateSpace {
     /// else fails with `invalid_placement`, listing the valid values.
     #[serde(default)]
     pub runtime: Option<String>,
-    /// Name. Default: a generated `space-<hex>`.
+    /// Name. Default: a generated friendly name such as `brave-otter`.
     #[serde(default)]
     pub name: Option<String>,
     /// Return a reachable registered Space in the same location that has

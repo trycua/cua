@@ -711,6 +711,58 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn envelope_legacy_and_typed_calls_wait_for_the_permission_gate() {
+        let _guard = crate::test_runtime_lock().lock().await;
+        let (driver, sdk, calls) = crate::probe_sdk().await;
+        let service = Service::for_sdk(sdk.clone()).unwrap();
+        let (mut client, task) = start(sdk.clone(), service);
+        let mut binding = client.open().await;
+        let legacy = json!({"name": "get_screen_size", "arguments": {}});
+        let typed = |id: &str| {
+            let mut envelope = envelope(id);
+            envelope["operation"] = json!("call");
+            envelope["name"] = json!("get_screen_size");
+            envelope
+        };
+
+        driver.set_awaiting_permissions(true);
+        client.send(2, "tools/call", legacy.clone()).await;
+        let pending = client.receive().await;
+        assert_eq!(
+            pending["result"]["structuredContent"]["refusal"]["code"], "permissions_pending",
+            "{pending}"
+        );
+        binding["envelope"] = typed("typed-pending");
+        client
+            .send(3, &format!("{PREFIX}exchange"), binding.clone())
+            .await;
+        let pending = client.receive().await;
+        assert_eq!(
+            pending["result"]["result"]["structuredContent"]["refusal"]["code"],
+            "permissions_pending",
+            "{pending}"
+        );
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            0,
+            "no tool may run while pending"
+        );
+
+        driver.set_awaiting_permissions(false);
+        client.send(4, "tools/call", legacy).await;
+        client.receive().await;
+        binding["envelope"] = typed("typed-open");
+        client.send(5, &format!("{PREFIX}exchange"), binding).await;
+        let open = client.receive().await;
+        assert_eq!(open["result"]["ok"], true, "{open}");
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+
+        client.write.shutdown().await.unwrap();
+        task.await.unwrap().unwrap();
+        sdk.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
     async fn requests_before_initialize_are_refused_without_dispatch() {
         let _guard = crate::test_runtime_lock().lock().await;
         let sdk = sdk().await;

@@ -694,6 +694,7 @@ impl Tool for DragTool {
                     crate::interaction::with_x11_foreground(
                         xid,
                         crate::input::ForegroundOptions::pointer(),
+                        crate::interaction::RestoreMode::LeaveFocused,
                         || {
                             crate::input::send_drag_xtest_desktop_with_modifiers(
                                 screen_from_x.round() as i32,

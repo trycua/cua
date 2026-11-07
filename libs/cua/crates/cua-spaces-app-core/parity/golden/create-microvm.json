@@ -478,7 +478,7 @@
         "cpusText": "2 cores",
         "disk": null,
         "fields": [
-          "name: Name [space-000000002a]",
+          "name: Name [dapper-mole]",
           "open-when-ready: Open when ready"
         ],
         "gpu": null,
@@ -580,12 +580,12 @@
           "image": "ghcr.io/trycua/linux:24.04",
           "kind": "microvm",
           "memoryMb": 4096,
-          "name": "space-000000002a",
+          "name": "dapper-mole",
           "on": "local",
           "runtime": "containerization",
           "spacesd": true
         },
-        "creating": "Creating space-000000002a. It appears in the list when it is ready.",
+        "creating": "Creating dapper-mole. It appears in the list when it is ready.",
         "failed": "Could not create the Space: Apple's container services did not start",
         "openDesktop": true,
         "summary": [
@@ -597,7 +597,7 @@
           "Runtime: Apple Containerization microVM on this Mac",
           "Resources: 2 cores, 4 GB memory",
           "Disk: About 3–7 GB ?2.9–6.9 GB initially; grows with use",
-          "Name: space-000000002a",
+          "Name: dapper-mole",
           "When ready: Open the desktop"
         ]
       }

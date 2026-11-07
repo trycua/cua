@@ -1164,6 +1164,13 @@ pub(super) fn is_browser_pid(pid: i32) -> bool {
     crate::browser::browser_js::BrowserJs::supports(&bundle_id) || is_chromium_identity(&bundle_id)
 }
 
+/// Whether `pid` runs a Chromium renderer: a Chrome-family browser or an
+/// Electron app.
+pub(super) fn is_chromium_embedder(pid: i32) -> bool {
+    let bundle_id = apps::bundle_id_for_pid(pid).unwrap_or_default();
+    is_chromium_identity(&bundle_id) || crate::browser::electron_js::ElectronJs::is_electron(pid)
+}
+
 pub(crate) fn is_chromium_identity(bundle_id: &str) -> bool {
     bundle_id
         .to_ascii_lowercase()

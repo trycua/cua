@@ -3,14 +3,15 @@
 
 /**
  * Cua Spaces' two permissions, Screen Recording and Accessibility, with
- * Allow and their live status (`useAppPermissions`). One component for every
+ * Allow and their live status (`useAppPermissions`): On with a check, a
+ * spinner while the switch is waited for, or what System Settings shows. One component for every
  * place that shows them: the first run's permissions step and next steps
  * (`hero`, drawn on the spaces.cua.ai hero) and the Cua Driver page and
  * This Mac (`settings`, the app's grouped rows). Cua Driver uses these same
  * grants, so there is no second app to allow.
  */
 
-import { CheckIcon } from "lucide-react";
+import { CheckIcon, LoaderCircleIcon } from "lucide-react";
 import type { ReactNode } from "react";
 
 import type { AppPermissionsState } from "@/bridge/app-permissions";
@@ -18,8 +19,27 @@ import { CARD, GLASS_CHIP, GREY } from "@/components/first-run-new/hero";
 import { Button } from "@/components/ui/button";
 import { GroupedSection, SettingRow } from "@/components/ui/grouped";
 import { toastError } from "@/components/ui/toast";
-import { allowHint, permissionWords } from "@/lib/app-permissions";
+import { allowHint, permissionState, permissionStatus, permissionWords } from "@/lib/app-permissions";
+import type { DriverPermission } from "@/bridge/ops/driver";
 import { cn } from "@/lib/utils";
+
+/** What every permission list needs from `useAppPermissions`; `waiting` is optional for callers that draw a fixed state. */
+export type PermissionsView = Pick<AppPermissionsState, "data" | "allow"> & { waiting?: boolean };
+
+/**
+ * One row's live status beside Allow: a check and "On" once granted, a spinner while the switch is being waited for
+ * (after Allow, and after the app reopens), else what System Settings shows. Plain text, no badge.
+ */
+export function PermissionStatus({ permission, waiting, className }: { permission: Pick<DriverPermission, "granted" | "state">; waiting: boolean; className?: string }) {
+  const status = permissionStatus(permission, waiting);
+  if (!status) return null;
+  return (
+    <span className={cn("flex shrink-0 items-center gap-1", className)} role="status" aria-live="polite" data-permission-status={status.checking ? "checking" : permissionState(permission)}>
+      {status.done ? <CheckIcon aria-hidden className="size-3.5" strokeWidth={2.6} /> : status.checking ? <LoaderCircleIcon aria-hidden className="size-3.5 animate-spin" /> : null}
+      {status.label}
+    </span>
+  );
+}
 
 export function AppPermissionList({
   perms,
@@ -29,7 +49,7 @@ export function AppPermissionList({
   inset,
   className,
 }: {
-  perms: Pick<AppPermissionsState, "data" | "allow">;
+  perms: PermissionsView;
   variant: "hero" | "settings";
   /** The settings section's heading. */
   title?: string;
@@ -55,7 +75,7 @@ export function AppPermissionList({
               data-granted={p.granted ? "" : undefined}
               label={words.title}
               help={`${words.sub}.`}
-              value={p.granted ? "On" : "Missing"}
+              value={permissionStatus(p, Boolean(perms.waiting))?.label ?? "Missing"}
               control={
                 p.granted || !p.settingsUrl ? undefined : (
                   <Button variant="outline" size="sm" onClick={() => allow(p.id)}>
@@ -81,11 +101,8 @@ export function AppPermissionList({
                 <span className="block text-[15px] leading-5 font-medium text-white">{words.title}</span>
                 <span className={cn("block text-[13.5px] leading-[19px] font-medium", GREY)}>{words.sub}</span>
               </span>
-              {p.granted ? (
-                <span className="flex items-center gap-1 pr-1 text-[13.5px] font-medium text-white" role="status">
-                  <CheckIcon aria-hidden className="size-3.5" strokeWidth={2.6} /> Allowed
-                </span>
-              ) : p.settingsUrl ? (
+              <PermissionStatus permission={p} waiting={Boolean(perms.waiting)} className={cn("pr-1 text-[13.5px] font-medium", p.granted ? "text-white" : GREY)} />
+              {!p.granted && p.settingsUrl ? (
                 <button type="button" className={cn(GLASS_CHIP, "h-[30px] shrink-0 px-3.5 text-[13.5px]")} onClick={() => allow(p.id)}>
                   Allow
                 </button>
@@ -94,7 +111,7 @@ export function AppPermissionList({
           );
         })}
       </div>
-      <p className={cn(inset ? "mt-1 px-3 pb-1" : "mt-3 px-1", "max-w-[480px] text-[13.5px] leading-[19px] font-medium", GREY)}>{footer ?? allowHint(data.appName)}</p>
+      <p className={cn(inset ? "mt-1 px-3 pb-1" : "mt-3 px-1", "max-w-[480px] text-[13.5px] leading-[19px] font-medium", GREY)}>{footer ?? allowHint(data.appName, data.permissions.every((p) => p.granted))}</p>
     </div>
   );
 }

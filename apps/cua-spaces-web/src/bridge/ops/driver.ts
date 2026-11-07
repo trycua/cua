@@ -52,6 +52,11 @@ export interface DriverPermission {
   /** `screen` (Screen Recording) or `accessibility`. */
   id: "screen" | "accessibility";
   granted: boolean;
+  /**
+   * Where the switch stands in System Settings: `on`; `off` (the app is in the list, switched off); `absent` (not in
+   * the list yet); `unknown` (macOS doesn't say). Absent from older hosts.
+   */
+  state?: "on" | "off" | "absent" | "unknown" | null;
   /** The System Settings pane (`x-apple.systempreferences:`); `host.openSettings` guides it. */
   settingsUrl: string | null;
 }

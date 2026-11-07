@@ -107,7 +107,7 @@ const RecentThreadShape = ref(
   obj<RecentThread>()({ agent: oneOf("claude-code", "openai-codex", "hermes"), id: str, title: str, cwd: nullable(str), lastActiveMs: num, resume: strings }),
 );
 const DriverLiveTestShape = ref("DriverLiveTest", obj<DriverLiveTest>()({ passed: bool, atMs: num, failure: nullable(str), tookMs: optNull(num) }));
-const DriverPermissionShape = ref("DriverPermission", obj<DriverPermission>()({ id: oneOf("screen", "accessibility"), granted: bool, settingsUrl: nullable(str) }));
+const DriverPermissionShape = ref("DriverPermission", obj<DriverPermission>()({ id: oneOf("screen", "accessibility"), granted: bool, state: optNull(oneOf("on", "off", "absent", "unknown")), settingsUrl: nullable(str) }));
 const DriverStatusShape = ref(
   "DriverStatus",
   obj<DriverStatus>()({

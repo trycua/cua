@@ -5749,6 +5749,40 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn live_perception_client_retries_after_lock_contention() {
+        use cua_driver_core::perception_client::PerceptionClientHandle;
+
+        let temp = TempDir::new().unwrap();
+        let root = temp.path().join("extensions");
+        let store = ExtensionStore::new(root.clone());
+        let runtime_name = if cfg!(target_os = "windows") {
+            "onnxruntime.dll"
+        } else if cfg!(target_os = "macos") {
+            "libonnxruntime.dylib"
+        } else {
+            "libonnxruntime.so"
+        };
+        let archive = perception_fixture_archive(temp.path(), "1.0.0", runtime_name);
+        store
+            .install_archive(registry_entry(PERCEPTION_ID).unwrap(), &archive)
+            .unwrap();
+        let handle =
+            PerceptionClientHandle::live(std::sync::Arc::new(InstalledPerceptionResolver {
+                root: Some(root),
+            }));
+
+        // Another command holds the lock and exits without changing anything
+        // the fingerprint observes.
+        let lock = store.lock(PERCEPTION_ID).unwrap();
+        assert!(!handle.current().await.is_available());
+        drop(lock);
+        assert!(
+            handle.current().await.is_available(),
+            "a busy lock must not leave the running Driver unavailable"
+        );
+    }
+
     #[test]
     fn absent_perception_extension_has_no_worker_config() {
         let temp = TempDir::new().unwrap();

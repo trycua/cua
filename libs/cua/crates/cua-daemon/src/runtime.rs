@@ -1526,6 +1526,16 @@ impl Runtime {
         Ok(())
     }
 
+    /// Repairs the local sandboxes that lost their network gateway and drops
+    /// the connections the restarted ones had ([`Sandboxes::mend_local`]).
+    pub async fn mend_local(&self) {
+        for name in self.inner.sandboxes.mend_local().await {
+            if let Ok(key) = self.key(&name).await {
+                self.refresh_handle(&key).await;
+            }
+        }
+    }
+
     /// A sandbox that booted again may listen on new host ports (a microVM
     /// picks them on every boot): point its cached handle and env connection
     /// at the endpoints its record now holds.

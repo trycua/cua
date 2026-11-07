@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! macOS [`PointerShapeBackend`]: what cursor the guest would show at a point.
 //!
 //! - **Hit-test ("ax")**: the frontmost layer-0 window containing the point

@@ -4,17 +4,14 @@
 import { useEffect, useRef } from "react";
 
 import { firstMessage, newPendingId, useBridge, useFirstSpaceOffers, useSpaces } from "@/bridge";
-import { useNewOnboarding } from "@/bridge/flags";
 import { useSummonIn } from "@/components/ask-first/use-summon-in";
 import { setPrepareSink } from "@/components/space-thread/queued";
 import { updateAskTask } from "@/lib/ask-first";
 import { spaceState } from "@/lib/spaces";
 
-import { useInstalledAgents } from "@/components/ask-first/use-installed-agents";
-
 import { localPrepareStorage, PrepareDriver, type PrepareEnv } from "./driver";
 import { homeCreateRequest } from "./home-request";
-import { getDriver, markResumed, resumedThisLoad, setDriver, usePrepare } from "./store";
+import { getDriver, setDriver } from "./store";
 
 /** The coding app the first Space is for when it is on this computer: the first installed one otherwise. */
 export const DEFAULT_HARNESS = "claude-code";
@@ -30,11 +27,10 @@ const POLL_MS = 800;
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 /**
- * Mounted once at the root: starts preparing at launch (while the person is in
- * onboarding), carries on after a quit, and keeps the driver's view of the host
- * current. It runs only with the new setup on (Settings, Advanced, Labs), which
- * also turns on the "Ask first" Home. The Space it prepares is a fresh Linux
- * Space, the one Home's first Linux job goes to, with the coding agent in it.
+ * Mounted once at the root: keeps the driver's view of the host current. It does not tick or follow the connection: nothing it holds can carry on by itself. It never
+ * starts, resumes or repairs a home by itself: the app makes no Space a person did
+ * not choose (not after the first run, not on an update, not when a home was removed).
+ * A Linux Space is made only when the person picks "New computer" for a job.
  */
 export function PrepareRoot(): null {
   const { core, data: host } = useBridge();
@@ -43,10 +39,6 @@ export function PrepareRoot(): null {
   const { offers, known } = useFirstSpaceOffers();
   const latestOffers = useRef(offers);
   latestOffers.current = offers;
-  const on = useNewOnboarding();
-  // Only an agent found on this computer is prepared: one Cua only wrote files for has no sign-in to bring.
-  const installed = useInstalledAgents();
-  const harness = installed === null ? null : installed.has(DEFAULT_HARNESS) ? DEFAULT_HARNESS : (installed.values().next().value ?? null);
   const { summonInput, summonIn, canSummon } = useSummonIn();
   const latestSpaces = useRef(spaces);
   latestSpaces.current = spaces;
@@ -129,24 +121,7 @@ export function PrepareRoot(): null {
   }, [core]);
 
   // The offers must be read first: before that there is no image to make the home from.
-  const ready = Boolean(core && host && spaces && on && known);
-
-  // Start at launch; a saved record resumes once.
-  const driverNow = usePrepare().driver;
-  useEffect(() => {
-    const d = driverNow;
-    if (!ready || !d) return;
-    if (d.state?.wanted) {
-      // A saved record resumes once per page load, however often the layout mounts.
-      if (!resumedThisLoad()) {
-        markResumed();
-        d.resume();
-      }
-    } else if (harness) {
-      markResumed();
-      d.start(harness);
-    }
-  }, [ready, driverNow, harness]);
+  const ready = Boolean(core && host && spaces && known);
 
   // The home's composer sends here while it is being made: kept, then delivered once.
   useEffect(() => {
@@ -173,29 +148,6 @@ export function PrepareRoot(): null {
       d.progress({ phase: e.progress.phase, detail: e.progress.detail, bytesDone: e.progress.bytesDone, bytesTotal: e.progress.bytesTotal, bytesPerSecond: e.progress.bytesPerSecond });
     });
   }, [ready, host]);
-
-  // The connection: the browser says when it goes and comes back.
-  useEffect(() => {
-    if (!ready) return;
-    const on = () => getDriver()?.online(true);
-    const off = () => getDriver()?.online(false);
-    globalThis.addEventListener?.("online", on);
-    globalThis.addEventListener?.("offline", off);
-    return () => {
-      globalThis.removeEventListener?.("online", on);
-      globalThis.removeEventListener?.("offline", off);
-    };
-  }, [ready]);
-
-  // The list changed: a home that was removed is made again. A second a tick while it is waiting.
-  useEffect(() => {
-    if (ready) getDriver()?.checkHome();
-  }, [ready, spaces]);
-  useEffect(() => {
-    if (!ready) return;
-    const t = setInterval(() => getDriver()?.tick(), 1_000);
-    return () => clearInterval(t);
-  }, [ready]);
 
   return null;
 }

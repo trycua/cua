@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Cross-platform PNG / JPEG / crosshair / resize helpers.
 //!
 //! These functions are pure consumers of the [`image`] crate with no
@@ -54,7 +57,7 @@ pub fn png_bytes_to_jpeg(png_bytes: &[u8], quality: u8) -> Result<Vec<u8>> {
 /// Default JPEG quality for a screenshot requested as `jpeg`.
 pub const DEFAULT_JPEG_QUALITY: u8 = 85;
 
-/// Highest accepted JPEG quality, matching the `screenshot` tool's `quality`.
+/// Highest accepted JPEG quality.
 pub const MAX_JPEG_QUALITY: u8 = 95;
 
 /// How a screenshot is encoded for the caller.

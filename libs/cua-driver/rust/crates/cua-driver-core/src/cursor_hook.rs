@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Cursor hook — a per-process callback fired whenever the agent cursor moves
 //! or a press happens, so an embedder (for example a remote-desktop host) can
 //! observe where every cursor is without polling or driving the overlay itself.

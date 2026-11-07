@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Raw JSON-RPC transport — lockstep send/recv with **no** auto-initialize.
 //!
 //! [`crate::McpDriver`] auto-`initialize`s on spawn and only exposes

@@ -374,7 +374,7 @@ jobs:
           mkdir -p "$PERCEPTION_DIR"
           cd "$PERCEPTION_DIR"
           for asset in "${stem}.catalog.json" "${stem}.tar.gz" SHA256SUMS; do
-            curl --fail --silent --show-error --location --retry 3 -o "$asset" "$base/$asset"
+            curl --fail --silent --show-error --location --retry 5 --retry-delay 2 --retry-all-errors --connect-timeout 20 -o "$asset" "$base/$asset"
           done
           grep -E " \*?(${stem}\.catalog\.json|${stem}\.tar\.gz)$" SHA256SUMS | sha256sum --check --strict
           echo "${PERCEPTION_ARCHIVE_SHA256}  ${stem}.tar.gz" | sha256sum --check --strict

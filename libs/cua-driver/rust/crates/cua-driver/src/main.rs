@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 #![recursion_limit = "256"]
 
 //! cua-driver-rs — cross-platform background computer-use automation daemon.
@@ -38,6 +41,7 @@ mod release_channel;
 mod release_source;
 mod responsibility;
 mod sdk_adapter;
+mod selftest;
 mod serve;
 mod skills;
 mod stop;
@@ -658,8 +662,8 @@ fn main() {
             // Honour the compat flag forwarded by the MCP proxy
             // (launch_daemon_and_wait passes `serve
             // --claude-code-computer-use-compat`). The Serve arm is the daemon
-            // the proxy talks to, so without this the proxy path always served
-            // the full screenshot tool regardless of the client's request.
+            // the proxy talks to. The flag is currently surface-neutral but
+            // remains forwarded for compatibility with existing launch configs.
             let driver = match build_driver(
                 cursor_cfg.clone(),
                 claude_code_compat,
@@ -708,6 +712,7 @@ fn main() {
             // already active.  Honors --no-permissions-gate and
             // CUA_DRIVER_RS_PERMISSIONS_GATE=0 for CI / headless.
             //
+            let slow_opts = gate_opts.after_timeout();
             let gate_result = platform_macos::permissions::run_if_needed_with_observer(
                 gate_opts,
                 |progress, context| match progress {
@@ -726,9 +731,9 @@ fn main() {
                     }
                 },
             );
-            if gate_result.is_ok() {
-                serve::set_permission_gate_pending(false);
-            }
+            serve::settle_permission_gate(gate_result.is_ok(), move || {
+                platform_macos::permissions::gate::wait_for_grants(&slow_opts)
+            });
             let gate_context = platform_macos::permissions::gate::telemetry_context();
             if gate_context.engaged {
                 telemetry::capture_permissions_gate_completed(
@@ -746,8 +751,8 @@ fn main() {
             if let Err(e) = gate_result {
                 eprintln!("[cua-driver] permissions gate: {e}");
                 eprintln!(
-                    "[cua-driver] desktop tool calls remain gated; grant Accessibility and \
-                     Screen Recording permissions, then restart the daemon."
+                    "[cua-driver] desktop tool calls remain gated until Accessibility and \
+                     Screen Recording are granted; still checking in the background."
                 );
             }
 
@@ -841,6 +846,9 @@ fn main() {
         }
         cli::Command::Diagnose => {
             cli::run_diagnose_cmd();
+        }
+        cli::Command::Test { json } => {
+            std::process::exit(selftest::run_cmd(json));
         }
         cli::Command::Permissions { subcommand, json } => {
             cli::run_permissions_cmd(&subcommand, json);
@@ -1046,9 +1054,9 @@ fn main() -> anyhow::Result<()> {
             // before any blocking work so the banner can land on stderr.
             version_check::maybe_announce_update();
             // The Rust permissions gate is macOS-only (TCC concept).
-            // On Windows / Linux the flag is silently accepted for
-            // CLI uniformity and ignored. The Claude-Code compat screenshot
-            // surface is accepted on every platform for CLI uniformity.
+            // On Windows / Linux the flag is accepted for CLI uniformity and
+            // ignored. The legacy Claude Code compatibility flag is accepted on
+            // every platform and has no current tool-surface effect.
             let _ = (no_permissions_gate, no_automation_prompts);
             // Serve mode needs the cursor overlay just like MCP mode.
             let cursor_cfg = cursor_overlay::CursorConfig::from_args();
@@ -1151,6 +1159,9 @@ fn main() -> anyhow::Result<()> {
         cli::Command::Diagnose => {
             cli::run_diagnose_cmd();
             Ok(())
+        }
+        cli::Command::Test { json } => {
+            std::process::exit(selftest::run_cmd(json));
         }
         cli::Command::Permissions { subcommand, json } => {
             cli::run_permissions_cmd(&subcommand, json);

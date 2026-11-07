@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Optional Windows check against a live LibreOffice Writer instance.
 //!
 //! This is the only coverage of the MSAA fallback that `platform-windows`

@@ -190,12 +190,11 @@ speaks it as is:
   the sheet's create (`AppModel.runCreate`; the notch shows it too), with
   `spaces.createProgress` events until it answers with the Space (or
   `cancelled`). The app's own New Space items (⌘N, the menu bar, a machine's
-  "New Space on…") send `spaces.newRequested {on}`, which opens the wizard;
-  the native sheet is the fallback while New UI is off. The app's
-  Settings items (⌘,, the menu bar item, the notch; New UI on or off) send
+  "New Space on…") send `spaces.newRequested {on}`, which opens the wizard.
+  The app's Settings items (⌘,, the menu bar item, the notch) send
   `settings.openRequested` while the window is open, or open it at
   `/settings`, and the page goes to Settings (also with no focus in its web
-  view). The Mac app has no native Settings window. While New UI is on, the notch and the menu bar item send
+  view). The Mac app has no native Settings window. The notch and the menu bar item send
   `route.openRequested {path}` (a Space's tile `/spaces/<id>`, with
   `?dropped=[names]` for a drop on it; the list `/spaces`; Settings
   `/settings`), and the page goes there.
@@ -218,7 +217,8 @@ speaks it as is:
   which `AppModel.choose` already handles. While the row is missing or
   disabled (login item not read yet, or not found) the value is `null`.
 - The update channel: `settings.get` sends `updateChannel` (`stable` or
-  `beta`, `UpdatesModel.channel`; null when the build has no updater, and
+  `nightly`, `UpdatesModel.channel`; the adapter reads an older host's `beta`
+  as `nightly`; null when the build has no updater, and
   the row stays hidden), and `settings.choose {row: "update-channel",
   option}` goes to `model.updates.choose(channel:)`.
 - `machines.list` carries `host` (the same record as `host.status`), which

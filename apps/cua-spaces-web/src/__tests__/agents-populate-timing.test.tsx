@@ -11,6 +11,7 @@
 import { cleanup } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import { wasmBuilt } from "@/bridge/__tests__/testCore";
 import { mountApp, stubBrowserApis } from "./app-harness";
 
 afterEach(cleanup);
@@ -64,7 +65,7 @@ async function visit(label: string): Promise<Record<string, number | null>> {
   }
 }
 
-describe("the Agents page on a busy account", () => {
+describe.skipIf(!wasmBuilt)("the Agents page on a busy account", () => {
   it("shows rows as their Spaces answer, not when the slowest one does", async () => {
     const t = await visit("cold");
     expect(t["codex row"], "first row").toBeDefined();

@@ -2202,6 +2202,12 @@ pub mod frame {
                     .map(|o| format!("{}{}", str_of(&o["label"]), if o["active"] == true { "*" } else { "" }))
                     .collect::<Vec<_>>().join(" | ")),
                 "help": u["channelHelp"],
+                "note": u["channelNote"],
+                "download": if u["downloadUrl"].is_string() {
+                    json!(format!("{} -> {}", str_of(&u["downloadLabel"]), str_of(&u["downloadUrl"])))
+                } else {
+                    Value::Null
+                },
                 "check": format!("{} {}", str_of(&u["checkLabel"]), if u["checkEnabled"] == true { "on" } else { "off" }),
                 "lastCheck": u["lastCheck"],
                 "sparkleChannels": channels,
@@ -5076,9 +5082,8 @@ fn run_your_cloud(f: &Value, h: &dyn Host) -> Result<Value, String> {
 /// Settings, Experiments: the tab and what every switch decides, after
 /// each change (`changes`: a row's choice). Each frame has the tab, the
 /// events the change sends, Settings (Storage only with Cua Volume), the
-/// first run's pages and its Done page, a Space's buttons (Share only with
-/// Sharing) and New Space's Run on menu and links (clouds only with Your
-/// cloud).
+/// first run's pages and its Done page, a Space's buttons and New Space's
+/// Run on menu and links.
 fn run_experiments(f: &Value, h: &dyn Host) -> Result<Value, String> {
     let storage_state = c(h, "storage.initial", json!({}))?;
     let storage = c(
@@ -5153,11 +5158,7 @@ fn experiments_frame(
         }
     }
     let done = c(h, "onboarding.view", json!({ "state": st }))?;
-    let detail = c(
-        h,
-        "sidebar.detail",
-        json!({ "space": space, "experiments": x }),
-    )?;
+    let detail = c(h, "sidebar.detail", json!({ "space": space }))?;
     let chrome = c(h, "window.chrome", json!({ "input": { "experiments": x } }))?;
     let mut menu_input = f["menu"].clone();
     menu_input["experiments"] = x.clone();
@@ -5190,7 +5191,7 @@ fn experiments_frame(
 }
 
 /// New Space's Run on menu: This Mac, your machines (offline and at a limit
-/// say why) and, with the Your cloud experiment, your clouds. A step may
+/// say why) and your clouds. A step may
 /// patch the wizard's env (`env`: the experiments, the hosts) before its
 /// action; each frame is the wizard and the create's `on`.
 fn run_placement_picker(f: &Value, h: &dyn Host) -> Result<Value, String> {
@@ -5742,6 +5743,128 @@ fn run_connectors(f: &Value, h: &dyn Host) -> Result<Value, String> {
             "groups": groups,
             "default": line(&[&v["default"]["provider"], &v["default"]["model"]]),
             "connect": line(&[&v["connectLabel"], &v["empty"]]),
+        }));
+    }
+    for step in f["agents"].as_array().into_iter().flatten() {
+        let v = c(h, "connectors.agents", json!({ "input": step["input"] }))?;
+        let groups: Vec<String> = v["groups"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|g| {
+                let accounts: Vec<String> = g["accounts"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .map(|a| {
+                        let models: Vec<String> = a["models"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .map(|m| line(&[&m["id"], &m["fast"], &m["default"]]))
+                            .collect();
+                        format!(
+                            "{} :: {}",
+                            line(&[
+                                &a["provider"],
+                                &a["env"],
+                                &a["slot"],
+                                &a["line"],
+                                &a["via"],
+                                &a["selected"],
+                                &a["defaultModel"]
+                            ]),
+                            models.join(" / ")
+                        )
+                    })
+                    .collect();
+                format!(
+                    "{} :: {}",
+                    line(&[
+                        &g["harness"],
+                        &g["app"],
+                        &g["label"],
+                        &g["state"],
+                        &g["signInLabel"]
+                    ]),
+                    accounts.join(" // ")
+                )
+            })
+            .collect();
+        frames.push(json!({
+            "agents": step["step"],
+            "groups": groups,
+            "default": line(&[&v["default"]["harness"], &v["default"]["env"], &v["default"]["slot"], &v["default"]["model"]]),
+            "empty": v["empty"],
+        }));
+    }
+    // Which coding apps the agent menu shows (`agentMenu.*`, Settings, Connections): what the menu lists,
+    // the rows of the switches and the result of each switch in turn.
+    for step in f["agentMenu"].as_array().into_iter().flatten() {
+        let menu = step.get("menu").cloned().unwrap_or(json!({}));
+        let view = c(
+            h,
+            "connectors.agents",
+            json!({ "input": step["input"], "menu": menu }),
+        )?;
+        let menu_apps: Vec<String> = view["groups"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|g| line(&[&g["app"], &g["state"]]))
+            .collect();
+        let rows = c(
+            h,
+            "agentMenu.view",
+            json!({ "input": step["input"], "menu": menu }),
+        )?;
+        let row_lines: Vec<String> = rows["rows"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|r| {
+                line(&[
+                    &r["app"],
+                    &r["label"],
+                    &r["shown"],
+                    &r["status"],
+                    &r["locked"],
+                ])
+            })
+            .collect();
+        let mut current = menu.clone();
+        let mut choices: Vec<String> = vec![];
+        for ch in step["choose"].as_array().into_iter().flatten() {
+            let r = c(
+                h,
+                "agentMenu.choose",
+                json!({ "input": step["input"], "menu": current, "app": ch["app"], "on": ch["on"] }),
+            )?;
+            choices.push(format!(
+                "{} {} :: shown {} / hidden {} :: {}",
+                ch["app"].as_str().unwrap_or(""),
+                if ch["on"].as_bool().unwrap_or(false) {
+                    "on"
+                } else {
+                    "off"
+                },
+                r["prefs"]["shown"],
+                r["prefs"]["hidden"],
+                line(&[&r["refused"]])
+            ));
+            current = r["prefs"].clone();
+        }
+        frames.push(json!({
+            "agentMenu": step["step"],
+            "menu": menu_apps,
+            "default": line(&[&view["default"]["harness"], &view["default"]["env"], &view["default"]["slot"], &view["default"]["model"]]),
+            "title": rows["title"],
+            "switch": rows["switchLabel"],
+            "help": rows["help"],
+            "rows": row_lines,
+            "lastNote": rows["lastNote"],
+            "choices": choices,
+            "synced": c(h, "agentMenu.sync", json!({ "input": step["input"], "menu": menu }))?,
         }));
     }
     for os in ["macos", "linux"] {

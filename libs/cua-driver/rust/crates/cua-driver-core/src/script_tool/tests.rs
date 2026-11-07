@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! `run_script` against fake driver tools: results, errors, limits and
 //! sandbox-escape attempts.
 

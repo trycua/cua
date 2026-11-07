@@ -13,7 +13,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { wasmBuilt } from "@/bridge/__tests__/testCore";
 import { resetConnectedAppsState } from "@/hooks/use-connected-apps";
-import { resetConnectState } from "@/hooks/use-connectors";
+import { connectFailureLine, resetConnectState } from "@/hooks/use-connectors";
 import { mountApp, stubBrowserApis } from "./app-harness";
 
 stubBrowserApis();
@@ -185,6 +185,19 @@ describe.skipIf(!wasmBuilt)("Settings, Connections", () => {
     const signIns = calls.filter((c) => c.op === "agents.connect").map((c) => c.args as { agents: string[]; signIn: boolean });
     expect(signIns.every((a) => !(a.agents.includes("codex") && a.signIn))).toBe(true);
     expect(calls.some((c) => c.op === "agents.signInStart" && (c.args as { agent: string }).agent === "codex")).toBe(true);
+  });
+
+  it("a sign-in that can't start says why, in the words the host gave", async () => {
+    const calls: { op: string; args: unknown }[] = [];
+    const h = { ...host(calls), intercept: (op: string) => {
+      if (op === "agents.signInStart") throw new Error("Codex isn't installed on This Mac.");
+      return undefined;
+    } };
+    await mountApp("/settings/connections", h);
+    await disconnect("openai");
+    await waitFor(() => expect(q("[data-connector-app=codex]")!.dataset.state).toBe("not-connected"));
+    await click(q("[data-connector-app=codex] [data-connector-connect]")!);
+    await waitFor(() => expect(connectFailureLine("codex")).toBe("Codex isn't installed on This Mac."));
   });
 
   it("a key exported in your shell can be used; only its name is read first", async () => {

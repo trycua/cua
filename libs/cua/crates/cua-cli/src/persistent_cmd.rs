@@ -247,7 +247,9 @@ pub async fn run(
                 hint_line(out, "No agents. Add one with `cua agent add`.");
             } else {
                 for a in all {
-                    let state = if a.paused {
+                    let state = if a.space_state == "gone" {
+                        "gone"
+                    } else if a.paused {
                         "paused"
                     } else if a.run_id.is_some() {
                         "running"

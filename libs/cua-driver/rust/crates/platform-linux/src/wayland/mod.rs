@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Native-Wayland backend.
 //!
 //! Used when the experimental backend is enabled under a Wayland compositor.
@@ -2651,6 +2654,7 @@ pub fn drag(
 }
 
 /// Drag through desktop-absolute points without activating a named toplevel.
+#[allow(clippy::too_many_arguments)]
 pub fn drag_desktop(
     space: &DesktopInputSpace,
     from_x: i32,

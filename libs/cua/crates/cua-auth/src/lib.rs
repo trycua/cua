@@ -144,6 +144,15 @@ pub const UNREACHABLE: &str = "could not reach the sign-in service";
 /// (`access_denied`).
 pub const LOGIN_DECLINED: &str = "sign-in was declined in the browser";
 
+/// How an error starts when a started sign-in was stopped before it
+/// finished ([`LoginCanceller::cancel`]): another attempt finished first, or
+/// the caller stopped waiting. Its loopback listener is closed by then.
+pub const LOGIN_STOPPED: &str = "sign-in was stopped before it finished";
+
+fn stopped() -> Error {
+    Error::Timeout(format!("{LOGIN_STOPPED}; start it again"))
+}
+
 /// A request that failed before any answer: [`UNREACHABLE`] for transport
 /// failures, the error's own words otherwise.
 fn net_err(e: reqwest::Error) -> Error {
@@ -394,26 +403,39 @@ pub fn signed_by_cua() -> bool {
     })
 }
 
+/// Whether the default store is the OS vault, from the `CUA_CREDENTIAL_STORE`
+/// setting, the channel and whether this build is signed by Cua. Never on the
+/// Local channel (not even when the setting asks for it): see
+/// `CuaChannel::uses_login_keychain`.
+fn wants_vault(setting: &str, channel: cua_home::channel::CuaChannel, signed: bool) -> bool {
+    if !channel.uses_login_keychain() {
+        return false;
+    }
+    match setting {
+        "file" => false,
+        "keychain" | "keyring" => cfg!(any(target_os = "macos", target_os = "windows")),
+        _ => cfg!(target_os = "windows") || (cfg!(target_os = "macos") && signed),
+    }
+}
+
 impl Store {
     /// `CUA_CREDENTIAL_STORE` (`file` | `keychain`) or the default: the OS
     /// vault on Windows and for Cua-signed macOS builds, else the file.
     pub fn from_env() -> Self {
-        let file = || Store::File(cua_home().join("credentials.json"));
         let setting = std::env::var("CUA_CREDENTIAL_STORE").unwrap_or_default();
         if let Some(dir) = setting.strip_prefix("test-keychain:") {
             return Store::TestKeychain(PathBuf::from(dir));
         }
-        match setting.as_str() {
-            "file" => file(),
+        let channel = cua_home::channel::CuaChannel::current();
+        #[cfg(target_os = "macos")]
+        let signed = signed_by_cua();
+        #[cfg(not(target_os = "macos"))]
+        let signed = false;
+        if wants_vault(&setting, channel, signed) {
             #[cfg(any(target_os = "macos", target_os = "windows"))]
-            "keychain" | "keyring" => Store::Keyring,
-            #[cfg(target_os = "macos")]
-            _ if signed_by_cua() => Store::Keyring,
-            #[cfg(target_os = "windows")]
-            _ => Store::Keyring,
-            #[cfg(not(target_os = "windows"))]
-            _ => file(),
+            return Store::Keyring;
         }
+        Store::File(cua_home().join("credentials.json"))
     }
 
     /// `keychain` (the OS credential vault, or its test stand-in) or `file`.
@@ -851,6 +873,7 @@ impl Store {
             std::env::var("CUA_CREDENTIAL_STORE").ok().as_deref(),
             cua_home::is_test_process(),
             cua_home::is_under_real_home(path),
+            cua_home::channel::CuaChannel::current(),
         ) && cfg!(target_os = "macos")
     }
 
@@ -876,9 +899,12 @@ impl Store {
     /// build (see [`Store::reads_vault_fallback`]). A refusal (the user
     /// denied the keychain prompt) reads as nothing.
     fn read_vault_fallback(&self, name: &str) -> Option<String> {
-        if !self.reads_vault_fallback() {
-            return None;
-        }
+        vault_fallback_when(self.reads_vault_fallback(), || {
+            self.read_vault_fallback_now(name)
+        })
+    }
+
+    fn read_vault_fallback_now(&self, name: &str) -> Option<String> {
         #[cfg(target_os = "macos")]
         {
             // A signed build that has not run since the service was renamed
@@ -1627,11 +1653,20 @@ fn vault_fallback_applies(
     setting: Option<&str>,
     test_process: bool,
     under_real_home: bool,
+    channel: cua_home::channel::CuaChannel,
 ) -> bool {
-    !test_process
+    // The Local channel never reads the login Keychain (see `wants_vault`).
+    channel.uses_login_keychain()
+        && !test_process
         && under_real_home
         && setting.is_none_or(|s| s.trim().is_empty())
         && path == default_path
+}
+
+/// `read` (the vault) only when the fallback `applies`; else nothing, and the
+/// vault is never touched.
+fn vault_fallback_when(applies: bool, read: impl FnOnce() -> Option<String>) -> Option<String> {
+    if applies { read() } else { None }
 }
 
 fn read_optional(path: &Path) -> Result<Option<String>> {
@@ -1913,6 +1948,49 @@ pub struct PendingLogin {
     oidc: Oidc,
     token_endpoint: String,
     pending: Pending,
+    cancel: LoginCanceller,
+}
+
+/// Stops a started sign-in from anywhere ([`PendingLogin::canceller`]): a
+/// browser sign-in closes its loopback listener at once (no stale listener
+/// keeps the port or signs in later), a device-code sign-in stops polling.
+/// The wait then ends with an error that starts with [`LOGIN_STOPPED`].
+#[derive(Clone, Debug, Default)]
+pub struct LoginCanceller(Arc<LoginCancel>);
+
+#[derive(Debug, Default)]
+struct LoginCancel {
+    stopped: std::sync::atomic::AtomicBool,
+    notify: tokio::sync::Notify,
+}
+
+impl LoginCanceller {
+    /// Stops the sign-in (once; later calls do nothing).
+    pub fn cancel(&self) {
+        self.0
+            .stopped
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        self.0.notify.notify_waiters();
+    }
+
+    /// Whether [`cancel`](Self::cancel) was called.
+    pub fn is_cancelled(&self) -> bool {
+        self.0.stopped.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// Resolves once cancelled (at once when it already was).
+    async fn cancelled(&self) {
+        loop {
+            let notified = self.0.notify.notified();
+            tokio::pin!(notified);
+            // Registered before the check, so a cancel in between is seen.
+            let _ = notified.as_mut().enable();
+            if self.is_cancelled() {
+                return;
+            }
+            notified.await;
+        }
+    }
 }
 
 fn b64url(bytes: &[u8]) -> String {
@@ -2014,6 +2092,7 @@ async fn begin_pkce(oidc: &Oidc, d: &Discovery) -> Result<PendingLogin, String> 
             state,
             redirect,
         },
+        cancel: LoginCanceller::default(),
     })
 }
 
@@ -2060,13 +2139,44 @@ async fn begin_device(oidc: &Oidc, d: &Discovery) -> Result<PendingLogin> {
             interval: v["interval"].as_u64().unwrap_or(5).max(1),
             expires_in: v["expires_in"].as_u64().unwrap_or(600).clamp(1, 3600),
         },
+        cancel: LoginCanceller::default(),
     })
 }
 
 impl PendingLogin {
+    /// Stops this sign-in from another task (see [`LoginCanceller`]).
+    pub fn canceller(&self) -> LoginCanceller {
+        self.cancel.clone()
+    }
+
     /// Waits for the user to finish and returns the tokens (not yet saved).
+    /// Callers that keep the session use [`Session::finish_login`], which
+    /// saves it before the browser page says "You're signed in".
     pub async fn complete(self) -> Result<Credentials> {
-        match self.pending {
+        self.complete_with(|_| Ok(())).await
+    }
+
+    /// Waits for the user to finish, then runs `save` on the tokens before
+    /// the browser's page is answered: the page says "You're signed in" only
+    /// once the session is kept, and "couldn't save" when `save` fails (a
+    /// locked keychain, a denied prompt), never success for a sign-in the
+    /// app then reports as failed. `save`'s error is returned as is.
+    pub async fn complete_with<F>(self, save: F) -> Result<Credentials>
+    where
+        F: FnOnce(&Credentials) -> Result<()>,
+    {
+        let PendingLogin {
+            oidc,
+            token_endpoint,
+            pending,
+            cancel,
+            return_to,
+            ..
+        } = self;
+        if cancel.is_cancelled() {
+            return Err(stopped());
+        }
+        match pending {
             Pending::Pkce {
                 listener,
                 verifier,
@@ -2077,27 +2187,32 @@ impl PendingLogin {
                     .ok()
                     .and_then(|s| s.parse::<u64>().ok())
                     .unwrap_or(600);
-                let to = self.return_to.as_ref();
-                let (code, mut browser) = tokio::time::timeout(
-                    Duration::from_secs(secs),
-                    await_callback(&listener, &state, to),
-                )
-                .await
-                .map_err(|_| {
+                let to = return_to.as_ref();
+                // Stopped while waiting: the listener closes on return.
+                let waited = tokio::select! {
+                    biased;
+                    () = cancel.cancelled() => return Err(stopped()),
+                    w = tokio::time::timeout(
+                        Duration::from_secs(secs),
+                        await_callback(&listener, &state, to),
+                    ) => w,
+                };
+                let (code, mut browser) = waited.map_err(|_| {
                     Error::Timeout(
                         "browser sign-in was not completed in time; try `cua auth login --remote`"
                             .into(),
                     )
                 })??;
-                let exchanged = self
-                    .oidc
+                // The code is here: nothing else may answer on this port.
+                drop(listener);
+                let exchanged = oidc
                     .form(
-                        &self.token_endpoint,
+                        &token_endpoint,
                         &[
                             ("grant_type", "authorization_code"),
                             ("code", &code),
                             ("redirect_uri", &redirect),
-                            ("client_id", &self.oidc.client_id),
+                            ("client_id", &oidc.client_id),
                             ("code_verifier", &verifier),
                         ],
                     )
@@ -2114,13 +2229,16 @@ impl PendingLogin {
                     )),
                     Err(e) => Err(e),
                 };
-                let (status, outcome) = match &creds {
+                let exchanged_ok = creds.is_ok();
+                let kept = creds.and_then(|c| save(&c).map(|()| c));
+                let (status, outcome) = match &kept {
                     Ok(c) => ("200 OK", Outcome::SignedIn(c.identity().email)),
+                    Err(_) if exchanged_ok => ("500 Internal Server Error", Outcome::NotSaved),
                     Err(_) if invalid_grant => ("400 Bad Request", Outcome::Expired),
                     Err(_) => ("502 Bad Gateway", Outcome::Failed),
                 };
                 respond_page(&mut browser, status, &outcome, to).await;
-                creds
+                kept
             }
             Pending::Device {
                 device_code,
@@ -2139,19 +2257,25 @@ impl PendingLogin {
                 // is the error then, never a silent "expired".
                 let mut last: Option<Error> = None;
                 for _ in 0..(expires_in / interval + 20) {
-                    let polled = self
-                        .oidc
+                    if cancel.is_cancelled() {
+                        return Err(stopped());
+                    }
+                    let polled = oidc
                         .form(
-                            &self.token_endpoint,
+                            &token_endpoint,
                             &[
                                 ("grant_type", DEVICE_GRANT),
                                 ("device_code", &device_code),
-                                ("client_id", &self.oidc.client_id),
+                                ("client_id", &oidc.client_id),
                             ],
                         )
                         .await;
                     match polled {
-                        Ok((200, v)) => return Credentials::from_token_response(&v),
+                        Ok((200, v)) => {
+                            let c = Credentials::from_token_response(&v)?;
+                            save(&c)?;
+                            return Ok(c);
+                        }
                         Ok((status, v)) => match v["error"].as_str() {
                             Some("authorization_pending") => last = None,
                             Some("slow_down") => {
@@ -2187,7 +2311,11 @@ impl PendingLogin {
                     if tokio::time::Instant::now() >= deadline {
                         break;
                     }
-                    tokio::time::sleep(unit * interval as u32).await;
+                    tokio::select! {
+                        biased;
+                        () = cancel.cancelled() => return Err(stopped()),
+                        () = tokio::time::sleep(unit * interval as u32) => {}
+                    }
                 }
                 Err(last.unwrap_or_else(|| {
                     Error::Timeout("device authorization expired before it was completed".into())
@@ -2395,6 +2523,17 @@ impl Session {
     /// Stores freshly issued credentials.
     pub async fn install(&self, c: Credentials) -> Result<Identity> {
         self.store.save(&c)?;
+        let id = c.identity();
+        *self.cached.lock().await = Some(c);
+        Ok(id)
+    }
+
+    /// Waits for `login`, stores the session, and returns who signed in.
+    /// The session is saved before the browser's page is answered, so a
+    /// store that refuses the write (a locked keychain, a denied prompt)
+    /// shows as "couldn't save" there too, never as "You're signed in".
+    pub async fn finish_login(&self, login: PendingLogin) -> Result<Identity> {
+        let c = login.complete_with(|c| self.store.save(c)).await?;
         let id = c.identity();
         *self.cached.lock().await = Some(c);
         Ok(id)
@@ -2966,21 +3105,68 @@ mod tests {
     #[test]
     fn only_the_default_file_store_outside_tests_reads_the_vault() {
         let d = Path::new("/h/.cua/credentials.json");
-        assert!(vault_fallback_applies(d, d, None, false, true));
-        assert!(vault_fallback_applies(d, d, Some(" "), false, true));
-        assert!(!vault_fallback_applies(d, d, Some("file"), false, true));
-        assert!(!vault_fallback_applies(d, d, None, true, true));
+        use cua_home::channel::CuaChannel::{Local, Stable};
+        assert!(vault_fallback_applies(d, d, None, false, true, Stable));
+        assert!(vault_fallback_applies(d, d, Some(" "), false, true, Stable));
+        assert!(!vault_fallback_applies(
+            d,
+            d,
+            Some("file"),
+            false,
+            true,
+            Stable
+        ));
+        assert!(!vault_fallback_applies(d, d, None, true, true, Stable));
         // A temporary CUA_HOME (a test harness, a sandbox) never does.
-        assert!(!vault_fallback_applies(d, d, None, false, false));
+        assert!(!vault_fallback_applies(d, d, None, false, false, Stable));
         assert!(!vault_fallback_applies(
             Path::new("/elsewhere/credentials.json"),
             d,
             None,
             false,
-            true
+            true,
+            Stable
         ));
+        // The Local channel never reads the login Keychain, whatever else holds.
+        assert!(!vault_fallback_applies(d, d, None, false, true, Local));
         // This test process never does.
         assert!(!Store::File(cua_home().join("credentials.json")).reads_vault_fallback());
+    }
+
+    #[test]
+    fn local_never_touches_the_vault_and_stable_still_does() {
+        use cua_home::channel::CuaChannel::{Local, Stable};
+        // The Local store is the file whatever is asked, signed or not.
+        for setting in ["", "file", "keychain", "keyring"] {
+            for signed in [false, true] {
+                assert!(!wants_vault(setting, Local, signed), "{setting} {signed}");
+            }
+        }
+        // Stable is unchanged: an explicit vault, Cua-signed macOS, Windows.
+        assert!(!wants_vault("file", Stable, true));
+        assert_eq!(
+            wants_vault("keychain", Stable, false),
+            cfg!(any(target_os = "macos", target_os = "windows"))
+        );
+        assert_eq!(
+            wants_vault("", Stable, true),
+            cfg!(any(target_os = "macos", target_os = "windows"))
+        );
+        assert_eq!(wants_vault("", Stable, false), cfg!(target_os = "windows"));
+        // The vault's copy is not read when the fallback does not apply (Local),
+        // and is when it does (Stable's unsigned default store).
+        let d = Path::new("/h/.cua/credentials.json");
+        let touched = std::cell::Cell::new(false);
+        let read = || {
+            touched.set(true);
+            Some("secret".to_string())
+        };
+        let local = vault_fallback_applies(d, d, None, false, true, Local);
+        assert_eq!(vault_fallback_when(local, read), None);
+        assert!(!touched.get(), "the Local channel touched the vault");
+        let stable = vault_fallback_applies(d, d, None, false, true, Stable);
+        assert_eq!(vault_fallback_when(stable, read).as_deref(), Some("secret"));
+        assert!(touched.get());
     }
 
     #[test]

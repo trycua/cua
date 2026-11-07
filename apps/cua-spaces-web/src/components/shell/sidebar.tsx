@@ -26,6 +26,7 @@ import { SidebarUpdateButton } from "./update-indicator";
 import { SidebarTip } from "@/components/tips";
 import { useMachinesAccount } from "@/components/machines/account-parts";
 import { AccountLine, ProBanner } from "./account-area";
+import { useSpacesTreeData } from "@/components/spaces/use-spaces-tree";
 
 export function Sidebar() {
   const width = useUiStore((s) => s.sidebarWidth);
@@ -41,7 +42,11 @@ export function Sidebar() {
   const spacesCount = spaces && listStatus.loaded ? counted.length : undefined;
   // Machines waiting to be added show beside the item, so they are seen from every page.
   const { pending } = useMachinesAccount();
-  const counts: Partial<Record<string, number>> = { "/spaces": spacesCount, "/machines": machines?.length };
+  // Spaces as a tree (Labs): one Spaces item counting your computers and the Spaces on them, as the Spaces page lists
+  // them. The tree itself is only on the Spaces page, so the sidebar stays short.
+  const { tree } = useSpacesTreeData();
+  const treeCount = tree && listStatus.loaded ? tree.computers + tree.spaces : undefined;
+  const counts: Partial<Record<string, number>> = { "/spaces": tree ? treeCount : spacesCount, "/machines": machines?.length };
   const navItems = useNavItems();
   const unread = notifications.data?.unread ?? 0;
 

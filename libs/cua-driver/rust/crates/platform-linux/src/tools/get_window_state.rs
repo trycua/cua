@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use async_trait::async_trait;
 use cua_driver_core::{
     protocol::ToolResult,
@@ -444,16 +447,14 @@ impl Tool for GetWindowStateTool {
         });
         // Optional caps — when omitted, the AT-SPI walker uses its built-in
         // defaults (#22865).
-        let max_elements = Some(
-            view.max_elements(
-                &args,
-                LINUX_DEFAULT_MAX_ELEMENTS,
-                display_only
-                    || args
-                        .get("_observation_only")
-                        .and_then(|value| value.as_bool())
-                        == Some(true),
-            ),
+        let max_elements = view.max_elements(
+            &args,
+            LINUX_DEFAULT_MAX_ELEMENTS,
+            display_only
+                || args
+                    .get("_observation_only")
+                    .and_then(|value| value.as_bool())
+                    == Some(true),
         );
         let max_depth = args
             .get("max_depth")
@@ -548,7 +549,7 @@ impl Tool for GetWindowStateTool {
                     pid,
                     xid,
                     query_for_walk.as_deref(),
-                    max_elements,
+                    Some(max_elements),
                     max_depth,
                     walk_timeout,
                 ))
@@ -1056,7 +1057,7 @@ impl Tool for GetWindowStateTool {
                             window_id: xid,
                             key: cua_driver_core::window_state_view::ViewKey {
                                 query: query.clone(),
-                                max_elements: max_elements.unwrap_or(LINUX_DEFAULT_MAX_ELEMENTS),
+                                max_elements,
                                 max_depth,
                             },
                             focus_probe: None,

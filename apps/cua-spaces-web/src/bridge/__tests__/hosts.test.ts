@@ -549,7 +549,8 @@ describe("webkit adapter", () => {
   it("reads launch at login and the update channel when the host sends them, and sets them by row", async () => {
     const { win, sent } = webkitHost(() => ok(settingsWithLogin));
     const a = createWebkitAdapter(win);
-    expect((await a.call("settings.get", {})).values).toMatchObject({ launchAtLogin: true, updateChannel: "beta" });
+    // A host from before Nightly says `beta`: that is Nightly now.
+    expect((await a.call("settings.get", {})).values).toMatchObject({ launchAtLogin: true, updateChannel: "nightly" });
     await a.call("settings.set", { key: "launchAtLogin", value: false });
     await a.call("settings.set", { key: "updateChannel", value: "stable" });
     expect(sent.filter((r) => r.method === "settings.choose").map((r) => r.args)).toEqual([

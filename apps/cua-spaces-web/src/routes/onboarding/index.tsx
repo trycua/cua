@@ -5,11 +5,14 @@ import { createFileRoute, redirect, useNavigate } from "@tanstack/react-router";
 import { ArrowLeftIcon, CheckIcon, CopyIcon, ExternalLinkIcon } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 
-import { useAgentKeys, useBridge, useFirstRun, useSpaces, type FirstRunArt, type FirstRunCredential, type FirstRunExtraView, type FirstRunHook, type FirstRunRow, type FirstRunView } from "@/bridge";
+import { useAgentKeys, useBridge, useDriver, useFirstRun, useNewOnboarding, useSpaces, type FirstRunArt, type FirstRunCredential, type FirstRunExtraView, type FirstRunHook, type FirstRunRow, type FirstRunView } from "@/bridge";
+import { useAppPermissions } from "@/bridge/app-permissions";
 import { readSavedOnboarding, writeSavedOnboarding } from "@/bridge/onboarding";
 import { AddAgentSheet } from "@/components/add-agent/add-agent-sheet";
+import { AppPermissionList } from "@/components/app-permissions";
 import { APP_MARKS, AppMarkImage } from "@/components/agents/harness-mark";
 import { CuaLogo } from "@/components/cua-logo";
+import { NewFirstRun } from "@/components/first-run-new/first-run-new";
 import { OsIcon } from "@/components/os-icon";
 import { Button } from "@/components/ui/button";
 import { Segmented } from "@/components/ui/segmented";
@@ -20,6 +23,7 @@ import { Snippet } from "@/components/settings/snippet";
 import { KeySheet } from "@/components/agents/key-sheet";
 import { setConnectedAppsState, useConnectedAppsState } from "@/hooks/use-connected-apps";
 import { BY_HAND, failureText, getItUrl } from "@/lib/connected-apps";
+import { driverReadiness, readinessLede } from "@/lib/app-permissions";
 import { cn } from "@/lib/utils";
 import { usePrepare } from "@/lib/prepare/store";
 
@@ -41,8 +45,13 @@ export const Route = createFileRoute("/onboarding/")({
     if (search.fresh) writeSavedOnboarding(null);
     else if (search.due && readSavedOnboarding().skipped) throw redirect({ to: "/spaces" });
   },
-  component: OnboardingPage,
+  component: OnboardingRoute,
 });
+
+/** With the new setup on (Settings, Advanced, Labs), the new first run (CUA-3318); otherwise the first run every install has. */
+function OnboardingRoute() {
+  return useNewOnboarding() ? <NewFirstRun /> : <OnboardingPage />;
+}
 
 /**
  * The first run, the same on macOS, Windows and Linux: Welcome, Pick your
@@ -322,6 +331,14 @@ function Connect({ fr, view }: { fr: FirstRunHook; view: FirstRunView }) {
   const none = rows.length === 0 && !looking;
   const pending = rows.filter((a) => !a.connected);
   const ready = rows.filter((a) => a.connected);
+  // "Ready" waits for a Cua Driver that runs, with both permissions on (it uses Cua Spaces' own).
+  const everyAppConnected = rows.length > 0 && pending.length === 0;
+  const perms = useAppPermissions(everyAppConnected);
+  const driver = useDriver();
+  const [repairing, setRepairing] = useState(false);
+  // Until both have answered, nothing is "Ready" yet: no green check that flips back to "Almost ready".
+  const checking = perms.loading || driver.loading;
+  const readiness = !everyAppConnected ? "ready" : checking ? "starting" : driverReadiness({ permissions: perms, driver: driver.available ? driver.status : null });
   const working = busy || rows.some((a) => a.note === "Connecting\u2026");
   const failed = tried && !working ? pending : [];
   const why = (agent: string, name: string) =>
@@ -417,9 +434,22 @@ function Connect({ fr, view }: { fr: FirstRunHook; view: FirstRunView }) {
   }
 
   const all = pending.length === 0;
+  const waiting = all && readiness !== "ready";
+  const repair = async () => {
+    setRepairing(true);
+    try {
+      await driver.setup();
+    } catch (e) {
+      toast("Couldn\u2019t repair Cua Driver", { description: e instanceof Error ? e.message : undefined, type: "error" });
+    } finally {
+      setRepairing(false);
+    }
+  };
   // Up to three names read well in a heading; more are "your 5 coding apps" and the rows name them.
   const phrase = (list: { name: string }[]) => (list.length <= 3 ? listNames(list.map((a) => a.name)) : `your ${list.length} coding apps`);
-  const title = all
+  const title = waiting
+    ? "Almost ready."
+    : all
     ? sentence(`${phrase(rows)} can use Cua.`)
     : failed.length
       ? `${ready.length ? sentence(`${phrase(ready)} can use Cua.`) + " " : ""}${sentence(`${phrase(failed)} ${failed.length === 1 ? "needs" : "need"} a hand.`)}`
@@ -427,10 +457,12 @@ function Connect({ fr, view }: { fr: FirstRunHook; view: FirstRunView }) {
 
   return (
     <Step id="connect" onBack={fr.back}>
-      <div data-first-run-connect-state={all ? "done" : failed.length ? "failed" : "ask"}>
+      <div data-first-run-connect-state={waiting ? `waiting-${readiness}` : all ? "done" : failed.length ? "failed" : "ask"}>
         <Heading>{title}</Heading>
         <Lede>
-          {all
+          {waiting
+            ? `${sentence(`${phrase(rows)} ${rows.length === 1 ? "is" : "are"} connected.`)} ${readinessLede(readiness as Exclude<typeof readiness, "ready">, perms.data?.appName ?? "Cua Spaces", driver.status?.lastError ?? null)}`
+            : all
             ? "If one of them is open, restart it first. Then try this:"
             : failed.length
               ? failed.length === 1
@@ -438,7 +470,13 @@ function Connect({ fr, view }: { fr: FirstRunHook; view: FirstRunView }) {
                 : `Cua couldn\u2019t change their settings, so ${listNames(failed.map((a) => a.name))} can\u2019t use Cua yet.`
               : "Then you can ask them for things like \u201cReproduce this bug on a fresh Windows machine.\u201d They create the Space, work in it and tell you what they found."}
         </Lede>
-        {all ? (
+        {waiting && readiness === "permissions" ? <AppPermissionList perms={perms} variant="settings" title="Allow Cua Driver" className="mt-6" /> : null}
+        {waiting && readiness === "driver" ? (
+          <Button variant="outline" size="sm" disabled={repairing} className="mt-6" onClick={() => void repair()} data-first-run-driver-repair="">
+            {repairing ? "Repairing…" : "Repair"}
+          </Button>
+        ) : null}
+        {all && !waiting ? (
           <div className="mt-6 flex items-start gap-3 rounded-2xl border border-foreground/15 px-5 py-4" data-first-run-prompt="">
             <p className="min-w-0 flex-1 text-[15px] leading-relaxed select-text">{FIRST_PROMPT}</p>
             <button type="button" aria-label="Copy the prompt" onClick={copy} className="mt-0.5 text-muted-foreground hover:text-foreground">
@@ -456,7 +494,11 @@ function Connect({ fr, view }: { fr: FirstRunHook; view: FirstRunView }) {
                   <div className="text-[14px]">{a.name}</div>
                   {bad ? <div className="text-[13px] text-destructive">{why(a.agent, a.name)}</div> : null}
                 </div>
-                {a.connected ? (
+                {a.connected && waiting ? (
+                  <span className="shrink-0 text-[13px] text-muted-foreground" data-first-run-connected-waiting="">
+                    Connected
+                  </span>
+                ) : a.connected ? (
                   <span className="flex shrink-0 items-center gap-1 text-[13px] text-[#1f9d55] dark:text-[#4ade80]">
                     <CheckIcon className="size-3.5" /> Ready
                   </span>
@@ -475,8 +517,8 @@ function Connect({ fr, view }: { fr: FirstRunHook; view: FirstRunView }) {
         <div className={ACTION_ROW}>
           {all || failed.length ? (
             <>
-              <Primary label="Continue" onClick={() => void fr.act(c.primary.id)} />
-              {all ? <Secondary label={copied ? "Copied" : "Copy the prompt"} onClick={copy} /> : <Secondary label="Add it by hand" onClick={() => setByHand(!byHand)} />}
+              <Primary label={waiting ? "Later" : "Continue"} onClick={() => void fr.act(c.primary.id)} />
+              {all && !waiting ? <Secondary label={copied ? "Copied" : "Copy the prompt"} onClick={copy} /> : <Secondary label="Add it by hand" onClick={() => setByHand(!byHand)} />}
             </>
           ) : (
             <>
@@ -508,7 +550,9 @@ function Connect({ fr, view }: { fr: FirstRunHook; view: FirstRunView }) {
           </div>
         ) : null}
         <p className="mt-4 max-w-[460px] text-[13px] text-muted-foreground" data-first-run-consent="">
-          {all
+          {waiting
+            ? "Cua Driver uses the permissions you give Cua Spaces. You can also do this later on the Cua Driver page."
+            : all
             ? "Cua added itself to each app\u2019s settings and left everything else alone."
             : failed.length
               ? `${listNames(ready.map((a) => a.name))} ${ready.length === 1 ? "is" : "are"} done. ${listNames(failed.map((a) => a.name))} can wait: Settings has the same button.`

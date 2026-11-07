@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Read-only transport for the canonical, compiled-in Cua Driver skill pack.
 //!
 //! Implements SEP-2640 at d6b31a03504c15677d49b922b6b6ace0ef65728d.
@@ -311,7 +314,7 @@ mod tests {
         let yaml = source.split("---").nth(1).unwrap();
         let expected: Value = serde_yaml_ng::from_str(yaml).unwrap();
         assert_eq!(pack().entry["frontmatter"], expected);
-        assert!(expected["version"].is_string());
+        assert!(expected["metadata"]["version"].is_string());
         assert_eq!(
             expected["metadata"]["openclaw"]["envVars"][0]["required"],
             false

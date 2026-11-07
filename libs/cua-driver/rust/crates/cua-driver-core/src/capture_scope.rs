@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Per-session capture/action scope policy.
 //!
 //! The policy is keyed exclusively by the public, caller-declared `session`

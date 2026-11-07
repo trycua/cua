@@ -127,3 +127,16 @@ def test_cache_saves_never_write_pull_request_scope_but_keep_dispatches() -> Non
         )
         == 1
     )
+
+
+def test_shared_leg_keeps_its_own_sccache_family() -> None:
+    """Same invariant as the Linux matrix: the shared leg saves its own entry."""
+    workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+    families = {
+        name: step["with"].get("shared-key")
+        for name, job in workflow["jobs"].items()
+        for step in job.get("steps", [])
+        if step.get("uses") == "./.github/actions/rust-cache"
+    }
+    assert families["shared"] == "cua-driver-e2e-shared"
+    assert list(families.values()).count("cua-driver-e2e-shared") == 1

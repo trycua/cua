@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Keep the display awake while an agent is working.
 //!
 //! On macOS 14 and later the screen saver and display sleep put the login

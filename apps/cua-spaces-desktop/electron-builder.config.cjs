@@ -46,7 +46,10 @@
 // repository (<owner>/<repo>) updates from that repository. GitHub's own
 // provider cannot serve this monorepo: it wants semver tags and reads the
 // repository-wide latest release. An X.Y.Z-suffix version is channel `beta`
-// (beta*.yml), anything else `latest`.
+// (beta*.yml), anything else `latest`. A nightly (X.Y.Z-nightly.YYYYMMDD.N,
+// nightly-cua-spaces.yml) is channel `nightly` (nightly*.yml) on the rolling
+// `cua-spaces-nightly` prerelease instead, so its feed never sits beside the
+// stable one.
 // The CI (cd-cua-spaces.yml) uploads the feed files with their URLs made
 // absolute (scripts/feed-urls.mjs); scripts pass `--publish never`.
 //
@@ -90,7 +93,9 @@ const buildVersion = `${semver[1]}.${semver[2]}.${semver[3]}.${buildNumber}`;
 
 const repository = env.GITHUB_REPOSITORY || "trycua/cua";
 if (!/^[\w.-]+\/[\w.-]+$/.test(repository)) throw new Error(`GITHUB_REPOSITORY must be owner/repo, got ${repository}`);
-const feedUrl = `https://github.com/${repository}/releases/download/cua-spaces-latest`;
+const nightly = /^nightly(\.|$)/.test(semver[4] || "");
+const feedUrl = `https://github.com/${repository}/releases/download/${nightly ? "cua-spaces-nightly" : "cua-spaces-latest"}`;
+const feedChannel = nightly ? "nightly" : prerelease ? "beta" : "latest";
 
 // The Swift app's Info.plist strings this app must carry as well.
 const swiftPlist = fs.readFileSync(path.join(__dirname, "../cua-spaces-macos/Support/Info.plist"), "utf8");
@@ -332,5 +337,5 @@ module.exports = {
   },
 
   // Feed for electron-updater (written to app-update.yml); see the header.
-  publish: [{ provider: "generic", url: feedUrl, channel: prerelease ? "beta" : "latest" }],
+  publish: [{ provider: "generic", url: feedUrl, channel: feedChannel }],
 };

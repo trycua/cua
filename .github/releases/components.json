@@ -79,7 +79,7 @@
         {
           "kind": "regex",
           "path": "libs/cua-driver/rust/Skills/cua-driver/SKILL.md",
-          "pattern": "(?m)^(version: )\\d+\\.\\d+\\.\\d+( # x-release-please-version)$",
+          "pattern": "(?m)^(  version: )\\d+\\.\\d+\\.\\d+( # x-release-please-version)$",
           "replacement": "\\g<1>{version}\\g<2>",
           "expectedMatches": 1
         }

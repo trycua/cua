@@ -61,6 +61,8 @@ int main(int argc, char** argv) {
         {"us", "", "", true, "canonical us"},
         {"us", "", "compose:caps,shift:both_capslock_cancel", true, "Omarchy default options"},
         {"us", "", "caps:escape", true, "Caps Lock remap"},
+        {"us", "altgr-intl", "", true, "AltGr international variant"},
+        {"us", "intl", "", false, "International variant with dead keys"},
         {"de", "", "", false, "German layout"},
         {"us", "dvorak", "", false, "Dvorak variant"},
         {"us", "", "altwin:swap_alt_win", false, "Alt/Super swap"},

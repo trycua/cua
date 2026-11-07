@@ -75,6 +75,12 @@ int main() {
     check(chord(german.get(), 3, 1, {}) == Reason::unsupported_layout, "German shifted punctuation accepted");
     check(chord(nullptr, 30, 0, {}) == Reason::keyboard_state, "missing physical map accepted");
 
+    // The up-front check skips these two keys, so each press must still refuse.
+    auto altgr = map("us", "altgr-intl", "");
+    check(altgr != nullptr, "AltGr international keymap unavailable");
+    check(chord(altgr.get(), 86, 0, {}) == Reason::unsupported_layout, "ISO key accepted as US <");
+    check(chord(altgr.get(), 100, 0, {}) == Reason::unsupported_layout, "AltGr accepted as Right Alt");
+
     for (auto* physical : {agent.get(), stock.get(), nocaps.get()}) {
         const auto numlock = foreground_numlock_mask(physical);
         for (const auto locked : {0u, numlock}) {

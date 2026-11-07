@@ -2460,42 +2460,50 @@ impl ExtensionStore {
         let versions_handle = ensure_private_subdirectory(&extension_handle, "versions")?;
         let staging_parent = self.root.join(".staging");
         let staging_parent_handle = ensure_private_subdirectory(&lock.root, ".staging")?;
+        sweep_orphaned_staging(&staging_parent_handle, entry.id);
         let staging = staging_parent.join(unique_name(entry.id));
         let staging_name = staging.file_name().expect("generated staging name");
         create_private_subdirectory(&staging_parent_handle, staging_name)?;
-        let staging_handle = staging_parent_handle.open_dir_nofollow(staging_name)?;
-        let inspected = match inspect_archive(&source.archive, entry, &staging_handle) {
-            Ok(inspected) => inspected,
+        let prepared = (|| -> Result<_> {
+            let staging_handle = staging_parent_handle.open_dir_nofollow(staging_name)?;
+            let inspected = inspect_archive(&source.archive, entry, &staging_handle)?;
+            let version = Version::parse(&inspected.manifest.version)
+                .context("manifest version is not valid semantic versioning")?;
+            if let Some(active) = &active {
+                let current = Version::parse(&active.version)?;
+                if version < current {
+                    bail!("update version {version} must be newer than active version {current}");
+                }
+            }
+            validate_source_metadata(&inspected, source)?;
+            let version_text = version.to_string();
+            let existing = match versions_handle.open_dir_nofollow(&version_text) {
+                Ok(existing) => {
+                    verify_cap_directory_permissions_portable(&existing)?;
+                    Some(existing)
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+                Err(error) => {
+                    return Err(error).with_context(|| {
+                        format!(
+                            "inspect existing extension version {}",
+                            versions.join(&version_text).display()
+                        )
+                    })
+                }
+            };
+            Ok((staging_handle, inspected, version_text, existing))
+        })();
+        let (staging_handle, inspected, version_text, existing) = match prepared {
+            Ok(prepared) => prepared,
             Err(error) => {
-                drop(staging_handle);
                 remove_cap_subdirectory(&staging_parent_handle, staging_name)?;
                 return Err(error);
             }
         };
-        let version = match Version::parse(&inspected.manifest.version)
-            .context("manifest version is not valid semantic versioning")
-        {
-            Ok(version) => version,
-            Err(error) => {
-                drop(staging_handle);
-                remove_cap_subdirectory(&staging_parent_handle, staging_name)?;
-                return Err(error);
-            }
-        };
-        let version_text = version.to_string();
-        if let Some(active) = &active {
-            let current = Version::parse(&active.version)?;
-            if version < current {
-                drop(staging_handle);
-                remove_cap_subdirectory(&staging_parent_handle, staging_name)?;
-                bail!("update version {version} must be newer than active version {current}");
-            }
-        }
-        validate_source_metadata(&inspected, source)?;
         let destination = versions.join(&version_text);
-        match versions_handle.open_dir_nofollow(&version_text) {
-            Ok(existing) => {
-                verify_cap_directory_permissions_portable(&existing)?;
+        match existing {
+            Some(existing) => {
                 let verified =
                     verify_installed_version_at(&existing, entry, Some(&inspected.manifest_bytes));
                 drop(staging_handle);
@@ -2513,7 +2521,7 @@ impl ExtensionStore {
                 )?;
                 cleanup?;
             }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            None => {
                 let mut placed = false;
                 let staged = (|| -> Result<()> {
                     // Record and fully verify the staged version before any
@@ -2577,14 +2585,6 @@ impl ExtensionStore {
                     }
                 }
                 staged?;
-            }
-            Err(error) => {
-                return Err(error).with_context(|| {
-                    format!(
-                        "inspect existing extension version {}",
-                        destination.display()
-                    )
-                })
             }
         }
 
@@ -4035,6 +4035,40 @@ fn verify_private_cap_file_permissions(file: &cap_std::fs::File, path: &str) -> 
 #[cfg(all(not(unix), not(windows)))]
 fn verify_private_cap_file_permissions(_file: &cap_std::fs::File, _path: &str) -> Result<()> {
     Ok(())
+}
+
+/// Removes `<id>-<pid>-<counter>` staging directories (see `unique_name`) left
+/// by a dead installer. The caller holds the extension lock, so no live
+/// installer of `id` owns a directory from another process.
+fn sweep_orphaned_staging(parent: &Dir, id: &str) {
+    let digits = |text: &str| !text.is_empty() && text.bytes().all(|byte| byte.is_ascii_digit());
+    let children = match parent.entries() {
+        Ok(children) => children,
+        Err(error) => {
+            tracing::warn!("could not list extension staging: {error}");
+            return;
+        }
+    };
+    for child in children {
+        let name = match child {
+            Ok(child) => child.file_name(),
+            Err(error) => {
+                tracing::warn!("could not list extension staging: {error}");
+                continue;
+            }
+        };
+        let orphaned = name
+            .to_str()
+            .and_then(|name| name.strip_prefix(id)?.strip_prefix('-')?.split_once('-'))
+            .is_some_and(|(pid, counter)| {
+                digits(pid) && digits(counter) && pid != std::process::id().to_string()
+            });
+        if orphaned {
+            if let Err(error) = remove_cap_subdirectory(parent, &name) {
+                tracing::warn!("could not remove orphaned extension staging {name:?}: {error:#}");
+            }
+        }
+    }
 }
 
 fn remove_cap_subdirectory(parent: &Dir, name: &std::ffi::OsStr) -> Result<()> {
@@ -6345,7 +6379,12 @@ mod tests {
         let entry = registry_entry("cua-perception").unwrap();
         let staging = store.root.join(".staging");
         let mut planted = Vec::new();
-        for name in ["cua-perception-99999-0", "other-99999-0", "cua-perception-x"] {
+        for name in [
+            "cua-perception-99999-0",
+            "other-99999-0",
+            "cua-perception-x",
+            "cua-perception-+1-0",
+        ] {
             let directory = staging.join(name);
             fs::create_dir_all(&directory).unwrap();
             fs::write(directory.join("payload"), b"partial").unwrap();
@@ -6372,7 +6411,10 @@ mod tests {
             .map(|child| child.unwrap().file_name().into_string().unwrap())
             .collect();
         left.sort();
-        assert_eq!(left, ["cua-perception-x", "other-99999-0"]);
+        assert_eq!(
+            left,
+            ["cua-perception-+1-0", "cua-perception-x", "other-99999-0"]
+        );
     }
 
     #[cfg(unix)]
@@ -6409,7 +6451,10 @@ mod tests {
         let installed = store.versions_dir(entry.id).join("1.0.0");
         fs::set_permissions(&installed, fs::Permissions::from_mode(0o755)).unwrap();
         assert!(store.install_archive(entry, &archive).is_err());
-        assert!(staging_is_empty(&store), "unsafe existing version leaked staging");
+        assert!(
+            staging_is_empty(&store),
+            "unsafe existing version leaked staging"
+        );
     }
 
     #[test]

@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.41.4](https://github.com/trycua/cua/compare/cua-driver-rs-v0.41.3...cua-driver-rs-v0.41.4) (2026-11-07)
+
+
+### Bug Fixes
+
+* **cua-driver:** accept RPC_E_CHANGED_MODE when UIA walks initialise COM ([#6812](https://github.com/trycua/cua/issues/6812)) ([56d7f12](https://github.com/trycua/cua/commit/56d7f12f273e3383e30db30e90a20fb8ec8dade8))
+* **cua-driver:** drop needless return in selftest permissions fallback ([#6813](https://github.com/trycua/cua/issues/6813)) ([440c3bf](https://github.com/trycua/cua/commit/440c3bf10cabaf67b4f65058ae3939785bada44d))
+* **cua-driver:** find a pid's window on Wayland and name NO_AT_BRIDGE when it hides one ([#6822](https://github.com/trycua/cua/issues/6822)) ([83a60bd](https://github.com/trycua/cua/commit/83a60bd1dd9165f822f89a2ec6a8847832ac0a10))
+* **cua-driver:** use KWin's logical desktop frame for capture and input ([#6821](https://github.com/trycua/cua/issues/6821)) ([17ec649](https://github.com/trycua/cua/commit/17ec6492109166ebe7f7b38b02b333648c98d3eb))
+
 ## [0.41.3](https://github.com/trycua/cua/compare/cua-driver-rs-v0.41.2...cua-driver-rs-v0.41.3) (2026-11-07)
 
 

@@ -100,17 +100,15 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: .\scripts\ci\windows\setup-ffmpeg.ps1
+      - name: Install apt packages
+        uses: ./.github/actions/apt-install
+        if: runner.os == 'Linux'
+        with:
+          packages: xvfb dbus-x11 at-spi2-core openbox picom libgtk-3-dev clang pkg-config libdbus-1-dev libpipewire-0.3-dev libspa-0.2-dev libei-dev libx11-dev libxi-dev libxtst-dev libxext-dev libssl-dev libxdo-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev ffmpeg
       - name: Install Linux desktop dependencies
         if: runner.os == 'Linux'
         shell: bash
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            xvfb dbus-x11 at-spi2-core openbox picom libgtk-3-dev clang pkg-config \
-            libdbus-1-dev libpipewire-0.3-dev libspa-0.2-dev libei-dev \
-            libx11-dev libxi-dev libxtst-dev libxext-dev libssl-dev \
-            libxdo-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev \
-            librsvg2-dev ffmpeg
           google-chrome --version
           chrome_payload="$(readlink -f "$(command -v google-chrome)")"
           if [[ "$chrome_payload" != /opt/google/chrome/google-chrome ]]; then

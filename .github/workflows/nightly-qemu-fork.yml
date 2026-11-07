@@ -96,11 +96,13 @@ jobs:
       - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5
         with:
           go-version: "1.24"
+      - name: Install apt packages
+        uses: ./.github/actions/apt-install
+        with:
+          packages: qemu-utils qemu-system-x86 ovmf genisoimage
       - name: Install QEMU, firmware and crane
         run: |
           set -euo pipefail
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq --no-install-recommends qemu-utils qemu-system-x86 ovmf genisoimage
           sudo chmod 666 /dev/kvm
           go install github.com/google/go-containerregistry/cmd/crane@v0.20.6
           echo "$(go env GOPATH)/bin" >>"$GITHUB_PATH"

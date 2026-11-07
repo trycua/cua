@@ -173,11 +173,13 @@ jobs:
       - name: Runner facts
         run: |
           nproc; free -h; df -h / /mnt 2>/dev/null || df -h /; ls -la /dev/kvm || true
+      - name: Install apt packages
+        uses: ./.github/actions/apt-install
+        with:
+          packages: qemu-utils qemu-system-x86 ovmf
       - name: Host tools (QEMU, OVMF, crane, oras, grpcurl)
         run: |
           set -euo pipefail
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq --no-install-recommends qemu-utils qemu-system-x86 ovmf
           sudo chmod 666 /dev/kvm
           go install github.com/google/go-containerregistry/cmd/crane@v0.20.6
           go install github.com/fullstorydev/grpcurl/cmd/grpcurl@v1.9.3
@@ -260,11 +262,13 @@ jobs:
         run: |
           sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost /usr/local/.ghcup || true
           df -h /
+      - name: Install apt packages
+        uses: ./.github/actions/apt-install
+        with:
+          packages: qemu-utils qemu-system-x86 ovmf
       - name: Install QEMU, OVMF, crane and grpcurl
         run: |
           set -euo pipefail
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq --no-install-recommends qemu-utils qemu-system-x86 ovmf
           sudo chmod 666 /dev/kvm
           go install github.com/google/go-containerregistry/cmd/crane@v0.20.6
           go install github.com/fullstorydev/grpcurl/cmd/grpcurl@v1.9.3

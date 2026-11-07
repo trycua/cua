@@ -116,11 +116,12 @@ jobs:
         with:
           workspaces: libs/cua
           shared-key: libs-cua-vmm
+      - name: Install apt packages
+        uses: ./.github/actions/apt-install
+        with:
+          packages: qemu-utils qemu-system-x86 ovmf genisoimage
       - name: QEMU, firmware and image tooling
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq --no-install-recommends \
-            qemu-utils qemu-system-x86 ovmf genisoimage
           # Installing QEMU puts /dev/kvm back to root:kvm 0660 (udev).
           sudo chmod 666 /dev/kvm
       - name: Build the Linux reference disk (with a freshly built cua-spacesd)

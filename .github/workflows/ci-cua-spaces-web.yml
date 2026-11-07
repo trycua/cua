@@ -173,13 +173,17 @@ jobs:
         if: matrix.host == 'browser'
         working-directory: apps/cua-spaces-web
         run: pnpm perf --shift
+      - name: Install apt packages
+        uses: ./.github/actions/apt-install
+        if: matrix.host == 'electron'
+        with:
+          packages: xvfb libnss3 libgbm1 libasound2t64
       - name: Parity flows and the bridge on the Electron shell (demo mode)
         if: matrix.host == 'electron'
         working-directory: apps/cua-spaces-web
         env:
           FLAKY_RESULTS_OUT: ${{ runner.temp }}/flaky-playwright/parity.json
         run: |
-          sudo apt-get update && sudo apt-get install -y --no-install-recommends xvfb libnss3 libgbm1 libasound2t64
           "$GITHUB_WORKSPACE/.github/scripts/flaky/flaky.sh" run --suite spaces-web-parity-electron --format playwright --results "$FLAKY_RESULTS_OUT" -- xvfb-run -a pnpm parity:electron
       - uses: ./.github/actions/flaky-upload
         if: always()

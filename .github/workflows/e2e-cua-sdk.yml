@@ -285,11 +285,14 @@ jobs:
       # An image without cua-spacesd gets the static musl build injected, so
       # the suite tests this tree's daemon (same build as ci-cua-oci-spacesd).
       # The shards point CUA_SPACESD_STATIC at this file in their checkout.
+      - name: Install apt packages
+        uses: ./.github/actions/apt-install
+        with:
+          packages: musl-tools
       - name: Build the static cua-spacesd
         working-directory: libs/cua-spacesd
         run: |
           set -euo pipefail
-          sudo apt-get update -qq && sudo apt-get install -y -qq musl-tools
           cargo build --locked --profile static --target x86_64-unknown-linux-musl -p cua-spacesd --bin cua-spacesd
           bash packaging/release/check-static-binary.sh target/x86_64-unknown-linux-musl/static/cua-spacesd
           chmod +x target/x86_64-unknown-linux-musl/static/cua-spacesd

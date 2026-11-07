@@ -1637,6 +1637,10 @@ jobs:
             --report-issue \
             --output release-metadata/release-manifest.json
 
+      - name: Install apt packages
+        uses: ./.github/actions/apt-install
+        with:
+          packages: librsvg2-bin
       - name: Render release body and announcement draft
         run: |
           python3 release-control/.github/scripts/release_attribution.py render \
@@ -1648,8 +1652,6 @@ jobs:
             --footer .github/release-notes/cua-driver-rs.md
           cp release-metadata/release-manifest.json release-upload/
           if [ -f release-metadata/release-card.svg ]; then
-            sudo apt-get update
-            sudo apt-get install -y --no-install-recommends librsvg2-bin
             rsvg-convert release-metadata/release-card.svg \
               --output release-metadata/release-card.png
             cp release-metadata/release-card.png release-upload/

@@ -923,6 +923,9 @@ pub fn preflight_issue(
 /// on /Users/me/.lume (...)") in plain words, with its numbers when present.
 fn disk_text(raw: &str) -> String {
     let fix = "Free up space on this Mac (or run `cua cache prune` in Terminal), then try again.";
+    if raw.to_ascii_lowercase().contains("failed to send write") {
+        return format!("The container engine ran out of room while saving the image. {fix}");
+    }
     let numbers = (|| {
         let rest = &raw[raw.find("it needs about ")? + "it needs about ".len()..];
         let (need, rest) = rest.split_once(" and cua keeps ")?;
@@ -1030,6 +1033,8 @@ pub fn failure_cause(raw: &str, phase: Option<&str>, gpu: bool) -> Option<Failur
         || l.contains("insufficient disk")
         || l.contains("insufficient_disk")
         || l.contains("no space left on device")
+        // The engine could not write the pulled layers: its disk is full.
+        || (l.contains("failed to send write") && l.contains("eof"))
     {
         return Some(FailureCause::Disk);
     }
@@ -3800,6 +3805,18 @@ mod tests {
             )
             .starts_with("This Mac is already running two macOS VMs")
         );
+    }
+
+    #[test]
+    fn an_engine_that_cannot_write_the_pulled_image_is_a_full_disk_in_plain_words() {
+        let raw = "Container engine: pull ghcr.io/trycua/linux@sha256:374d: Docker responded with status code 500: failed to copy: failed to send write: EOF";
+        assert_eq!(failure_cause(raw, None, false), Some(FailureCause::Disk));
+        let t = failure_text(raw, None, None, false);
+        assert!(
+            t.contains("ran out of room while saving the image") && t.contains("try again"),
+            "{t}"
+        );
+        assert!(!t.contains("sha256") && !t.contains("500"), "{t}");
     }
 
     #[test]

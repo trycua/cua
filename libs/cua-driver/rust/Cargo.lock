@@ -1406,7 +1406,7 @@ dependencies = [
 
 [[package]]
 name = "cua-telemetry"
-version = "0.12.0"
+version = "0.12.1"
 dependencies = [
  "hex",
  "rand 0.9.5",

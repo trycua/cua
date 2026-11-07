@@ -223,8 +223,8 @@ export const ThreadItemView = memo(function Item({
       return <ChildSpaceRow item={item} />;
     case "message":
       // One row, in order. A person's reply quotes the message it answers only when that is not the one right above it;
-      // an AI message never shows the quote line (what it answers is clear from the thread).
-      return <Message entry={item.entry} {...m} quote={item.entry.author.kind !== "agent" && item.quote && item.quote.seq !== above ? item.quote : null} task={item.taskText !== null ? { text: item.taskText, onRetry } : undefined} />;
+      // an AI or Cua message never shows the quote line (what it answers is clear from the thread).
+      return <Message entry={item.entry} {...m} quote={shownQuote(item.entry.author.kind, item.quote, above)} task={item.taskText !== null ? { text: item.taskText, onRetry } : undefined} />;
     case "task":
       // How the task is going is told by the chat: the live row, the agent's reply or its failure message. No chip here.
       return (
@@ -238,6 +238,11 @@ export const ThreadItemView = memo(function Item({
       return <Approval item={item} roster={roster} onAnswer={onAnswer} onOpenAttachment={onOpenAttachment} onRemoveAgent={onRemoveAgent} label={label} />;
   }
 });
+
+/** The reply quote a message shows: only a person's, and only when what it answers is not right above it. An AI or Cua message never shows one. */
+export function shownQuote<Q extends { seq: number }>(authorKind: string, quote: Q | null, above: number | null): Q | null {
+  return authorKind === "person" && quote && quote.seq !== above ? quote : null;
+}
 
 /** "Runs on Ada's keys" under a task someone else gave an agent that uses the owner's provider keys. */
 function keysLine(entry: ThreadEntry, roster: Roster): string | null {

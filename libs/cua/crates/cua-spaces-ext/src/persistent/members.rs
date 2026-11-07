@@ -822,13 +822,12 @@ impl Persistent {
                 client_id: Some(format!("expired:{seq}")),
             });
             ans.client_id = Some(format!("expired:{seq}"));
-            let mut tell = Draft::new(
-                Author::system("approval"),
-                EntryKind::Message,
-                expired_text(&rec.name, &what),
-            );
+            // What people read is the plain statement, addressed with a real @mention; what the agent is
+            // told to do about it rides in a field the thread does not print.
+            let (visible, guidance) = expired_text(&rec.name, &what);
+            let mut tell = Draft::new(Author::system("approval"), EntryKind::Message, visible);
+            tell.event = Some(json!({"kind": "agent_note", "note": guidance}));
             tell.mentions = vec![rec.name.clone()];
-            tell.reply_to = Some(*seq);
             tell.task = Some(TaskTo {
                 to: rec.name.clone(),
                 session: None,
@@ -930,6 +929,13 @@ impl Persistent {
             .as_ref()
             .map(|e| e.text.clone())
             .unwrap_or_else(|| task.text.clone());
+        // Guidance only the agent gets (an outcome notice's "what to do now"): the thread does not print it.
+        let text = match posted.as_ref().and_then(|e| e.event.as_ref()) {
+            Some(ev) if ev["kind"] == "agent_note" => {
+                format!("{text}\n\n{}", ev["note"].as_str().unwrap_or_default())
+            }
+            _ => text,
+        };
         let framed = format!(
             "[thread #{} from {}] {text}\n\n(Everything you write between tool calls is posted to this thread as you write it, one message for each stretch, in order; nothing you wrote is replaced or removed. So talk to the person like a colleague: before a long job say in one short sentence what you will do, then do it, then say how it went. Never repeat something you already posted. Do not call thread_reply for plain text; use it only to attach files or to mark the task failed. To ask the person before something that needs their OK, call thread_post with an approval (action and details): that puts a card in front of them, and asking in plain words does not; then end your turn, because their answer arrives as a new message to you. Starting up, installing and \"working for Ns\" are shown by the app itself, so do not narrate them. To make another computer from here, run `cua spaces create IMAGE --name NAME` (it becomes this Space's child; its output says whether it is running; `cua sb exec NAME -- COMMAND` runs things in it and `cua spaces delete --force NAME` removes it). Say a computer is stopped only after you checked its state with `cua spaces ls` after it had a few seconds to start; if it is not running, start it with `cua spaces start NAME` first. If a command is refused, say what the refusal says.)",
             task.seq, task.author.name
@@ -2138,10 +2144,10 @@ impl Thread {
         } else {
             a.details.trim().to_string()
         };
-        let text = outcome_text(&agent, who, approve, &what, note);
+        let (text, guidance) = outcome_text(&agent, who, approve, &what, note);
         let mut d = Draft::new(Author::system("approval"), EntryKind::Message, text);
+        d.event = Some(json!({"kind": "agent_note", "note": guidance}));
         d.mentions = vec![agent.clone()];
-        d.reply_to = Some(ap);
         d.task = Some(TaskTo {
             to: agent,
             session: None,
@@ -2874,10 +2880,13 @@ pub(crate) fn approval_ttl() -> std::time::Duration {
         )
 }
 
-/// What an agent is told when nobody answered its request in time.
-pub(crate) fn expired_text(agent: &str, what: &str) -> String {
-    format!(
-        "Nobody answered your request in time: {what}. Nothing was done. Tell the person plainly what you could not do, {agent}, and ask again only if it still matters."
+/// The thread entry for a request nobody answered in time (a plain statement that @mentions the agent) and what the
+/// agent alone is told to do about it.
+pub(crate) fn expired_text(agent: &str, what: &str) -> (String, String) {
+    (
+        format!("@{agent} Nobody answered your request in time: {what}. Nothing was done."),
+        "Tell the person plainly what you could not do, and ask again only if it still matters."
+            .into(),
     )
 }
 
@@ -2889,7 +2898,7 @@ pub(crate) fn outcome_text(
     approve: bool,
     what: &str,
     note: &str,
-) -> String {
+) -> (String, String) {
     let note = note.trim();
     let extra = if note.is_empty() {
         String::new()
@@ -2897,12 +2906,14 @@ pub(crate) fn outcome_text(
         format!(" They said: {note}")
     };
     if approve {
-        format!(
-            "{who} allowed your request: {what}.{extra} Go ahead now. Tell the thread what happened when it is done or if it fails, in your own words."
+        (
+            format!("@{agent} {who} allowed your request: {what}.{extra}"),
+            "Go ahead now. Tell the thread what happened when it is done or if it fails, in your own words.".into(),
         )
     } else {
-        format!(
-            "{who} said no to your request: {what}.{extra} Do not try it again and do not look for a way around it, {agent}. Tell the thread what you will do instead, or stop."
+        (
+            format!("@{agent} {who} said no to your request: {what}.{extra}"),
+            "Do not try it again and do not look for a way around it. Tell the thread what you will do instead, or stop.".into(),
         )
     }
 }
@@ -3101,18 +3112,21 @@ mod outcome_tests {
 
     #[test]
     fn the_agent_hears_yes_and_no_plainly() {
-        let y = outcome_text("claude", "Ada", true, "create a macOS Space", "");
-        assert!(
-            y.starts_with("Ada allowed your request: create a macOS Space."),
-            "{y}"
+        let (y, ynote) = outcome_text("claude", "Ada", true, "create a macOS Space", "");
+        assert_eq!(y, "@claude Ada allowed your request: create a macOS Space.");
+        assert!(ynote.contains("Go ahead now"));
+        let (n, nnote) = outcome_text("claude", "Ada", false, "create a macOS Space", "too big");
+        assert_eq!(
+            n,
+            "@claude Ada said no to your request: create a macOS Space. They said: too big"
         );
-        assert!(y.contains("Go ahead now"));
-        let n = outcome_text("claude", "Ada", false, "create a macOS Space", "too big");
-        assert!(
-            n.contains("said no")
-                && n.contains("They said: too big")
-                && n.contains("Do not try it again"),
-            "{n}"
-        );
+        assert!(nnote.contains("Do not try it again"), "{nnote}");
+        // The visible text carries no instruction for the agent.
+        for t in [&y, &n] {
+            assert!(
+                !t.contains("Go ahead") && !t.contains("Do not try") && !t.contains("Tell the"),
+                "{t}"
+            );
+        }
     }
 }

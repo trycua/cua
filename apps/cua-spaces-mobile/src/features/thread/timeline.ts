@@ -104,7 +104,7 @@ export function buildRows(opts: { items: ThreadItem[]; me: string | null; live: 
     const showAuthor = !mine && (!lastWasMessage || lastAuthor !== e.author.id || e.tsMs - lastTs > GROUP_MS);
     // A reply names what it answers only when that message is not right above it.
     const prevSeq = rows.length && rows[rows.length - 1]!.type === "message" ? (rows[rows.length - 1] as { entry: ThreadEntry }).entry.seq : null;
-    const quote = it.type === "message" && e.author.kind !== "agent" && it.quote && it.quote.seq !== prevSeq ? { author: it.quote.author.name, text: it.quote.text } : null;
+    const quote = it.type === "message" && e.author.kind === "person" && it.quote && it.quote.seq !== prevSeq ? { author: it.quote.author.name, text: it.quote.text } : null;
     rows.push({ type: "message", key: it.key, entry: e, mine, showAuthor, quote });
     lastWasMessage = true;
     lastAuthor = e.author.id;

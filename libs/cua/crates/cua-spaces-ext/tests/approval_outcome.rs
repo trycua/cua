@@ -245,10 +245,21 @@ async fn an_allowed_request_wakes_the_agent_to_go_on() {
     assert_eq!(w.len(), 1, "{all:?}");
     let t = w[0]["text"].as_str().unwrap();
     assert!(
-        t.contains("allowed your request: Create a macOS child Space named macos-child"),
+        t.starts_with("@ada ")
+            && t.contains("allowed your request: Create a macOS child Space named macos-child."),
         "{t}"
     );
-    assert!(t.contains("Go ahead now"), "{t}");
+    // A real mention, routed (the task is for ada); no quote-reply link; no instruction in what people read.
+    assert_eq!(w[0]["mentions"], json!(["ada"]));
+    assert!(w[0]["reply_to"].is_null(), "{:?}", w[0]);
+    assert!(!t.contains("Go ahead") && !t.contains("Tell the"), "{t}");
+    assert_eq!(w[0]["event"]["kind"], "agent_note");
+    assert!(
+        w[0]["event"]["note"]
+            .as_str()
+            .unwrap()
+            .contains("Go ahead now")
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -260,12 +271,21 @@ async fn a_declined_request_tells_the_agent_no_and_not_to_retry() {
     assert_eq!(w.len(), 1, "{all:?}");
     let t = w[0]["text"].as_str().unwrap();
     assert!(
-        t.contains("said no to your request") && t.contains("They said: not now"),
+        t.starts_with("@ada ")
+            && t.contains("said no to your request")
+            && t.contains("They said: not now"),
         "{t}"
     );
     assert!(
-        t.contains("Do not try it again") && t.contains("do not look for a way around it"),
+        !t.contains("Do not try it again") && w[0]["reply_to"].is_null(),
         "{t}"
+    );
+    assert_eq!(w[0]["mentions"], json!(["ada"]));
+    assert!(
+        w[0]["event"]["note"]
+            .as_str()
+            .unwrap()
+            .contains("do not look for a way around it")
     );
 }
 
@@ -392,10 +412,21 @@ async fn a_request_nobody_answers_in_time_is_closed_and_the_agent_is_told() {
     let text = t[0]["text"].as_str().unwrap();
     assert!(
         text.starts_with(
-            "Nobody answered your request in time: Create a macOS child Space named macos-child."
+            "@ada Nobody answered your request in time: Create a macOS child Space named macos-child."
         ),
         "{text}"
     );
-    assert!(text.contains("Nothing was done"));
+    assert!(
+        text.ends_with("Nothing was done.") && !text.contains("Tell the person"),
+        "{text}"
+    );
+    assert_eq!(t[0]["mentions"], json!(["ada"]));
+    assert!(t[0]["reply_to"].is_null());
+    assert!(
+        t[0]["event"]["note"]
+            .as_str()
+            .unwrap()
+            .contains("Tell the person plainly")
+    );
     unsafe { std::env::remove_var("CUA_APPROVAL_TTL_SECS") };
 }

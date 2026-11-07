@@ -296,18 +296,37 @@ class QMPTransport(Transport):
             )
 
     async def _drag(
-        self, start_x: int, start_y: int, end_x: int, end_y: int, button: str = "left", **_: Any
+        self,
+        path: Optional[List[List[int]]] = None,
+        button: str = "left",
+        *,
+        start_x: Optional[int] = None,
+        start_y: Optional[int] = None,
+        end_x: Optional[int] = None,
+        end_y: Optional[int] = None,
+        **_: Any,
     ) -> None:
-        await self._mouse_down(start_x, start_y, button)
+        """Press at the first point, move through the others, release at the last.
+
+        ``Mouse.drag`` sends ``path=[[x, y], ...]``; the older
+        ``start_x/start_y/end_x/end_y`` form is still accepted.
+        """
+        if path is None:
+            if None in (start_x, start_y, end_x, end_y):
+                raise TypeError("drag needs a path, or start_x, start_y, end_x and end_y")
+            path = [[start_x, start_y], [end_x, end_y]]
+        points = [(int(p[0]), int(p[1])) for p in path]
+        if len(points) < 2:
+            raise ValueError("a drag path needs at least two points")
+        await self._mouse_down(points[0][0], points[0][1], button)
         await asyncio.sleep(0.05)
-        # Interpolate a few intermediate points for smoother drag
+        # Interpolate a few intermediate points per segment for a smoother drag
         steps = 10
-        for i in range(1, steps + 1):
-            ix = start_x + (end_x - start_x) * i // steps
-            iy = start_y + (end_y - start_y) * i // steps
-            await self._mouse_move(ix, iy)
-            await asyncio.sleep(0.01)
-        await self._mouse_up(end_x, end_y, button)
+        for (x0, y0), (x1, y1) in zip(points, points[1:]):
+            for i in range(1, steps + 1):
+                await self._mouse_move(x0 + (x1 - x0) * i // steps, y0 + (y1 - y0) * i // steps)
+                await asyncio.sleep(0.01)
+        await self._mouse_up(points[-1][0], points[-1][1], button)
 
     # ── Keyboard actions ──────────────────────────────────────────────────
 

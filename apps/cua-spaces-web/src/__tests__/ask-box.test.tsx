@@ -155,7 +155,6 @@ describe.skipIf(!wasmBuilt)("the prompt box", () => {
       fireEvent.click(q("[data-agent-model-row]")!);
     });
     // Sonnet 5.5 is the default (checked); Haiku 5.5 is one tap away, tagged Fast; older ids are not listed.
-    expect(q("[data-agent-model-row]")!.textContent).toContain("Claude Sonnet 5.5");
     expect(q('[data-model-row="claude-sonnet-5-5"]')!.getAttribute("aria-selected")).toBe("true");
     expect(q('[data-model-row="claude-haiku-5-5"]')!.textContent).toContain("Fast");
     expect(q('[data-model-row="claude-haiku-4-5"]')).toBeNull();

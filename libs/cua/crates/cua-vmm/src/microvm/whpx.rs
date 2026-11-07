@@ -57,7 +57,7 @@ pub fn status() -> Whpx {
         }
         type GetCapability =
             unsafe extern "system" fn(u32, *mut core::ffi::c_void, u32, *mut u32) -> i32;
-        let f = unsafe { GetProcAddress(dll, b"WHvGetCapability\0".as_ptr()) };
+        let f = unsafe { GetProcAddress(dll, c"WHvGetCapability".as_ptr().cast()) };
         let Some(f) = f else {
             return Whpx::FeatureOff;
         };

@@ -681,20 +681,24 @@ fn qemu_args(l: &QemuLaunch<'_>) -> Vec<String> {
 /// default (a Mac has no point to enforce rules yet) unless the user chose
 /// No protection; else only when asked (`network=none`).
 fn vz_no_network(st: &VmState) -> Result<bool> {
+    no_network_for(BackendKind::Vz, st)
+}
+
+/// [`vz_no_network`] for the runtime `kind` that cannot enforce rules itself
+/// (a Mac's `vz`, a Windows microVM, which is `firecracker`).
+fn no_network_for(kind: BackendKind, st: &VmState) -> Result<bool> {
     let settings = st.network.clone().unwrap_or_else(|| {
         crate::network::NetworkSettings::migrate(
             &st.egress.clone().unwrap_or_default(),
             st.restrict_network,
         )
     });
-    Ok(
-        match crate::network::gate(BackendKind::Vz, &st.name, &settings)? {
-            Some(crate::network::NetworkPlan::Open { .. }) => false,
-            Some(_) => true,
-            // Enforced by the gateway; "none" still starts without a NIC.
-            None => st.restrict_network || settings.preset == crate::network::NetworkPreset::None,
-        },
-    )
+    Ok(match crate::network::gate(kind, &st.name, &settings)? {
+        Some(crate::network::NetworkPlan::Open { .. }) => false,
+        Some(_) => true,
+        // Enforced by the gateway; "none" still starts without a NIC.
+        None => st.restrict_network || settings.preset == crate::network::NetworkPreset::None,
+    })
 }
 
 /// The rules a macOS microVM's network gateway enforces: its settings
@@ -2125,7 +2129,11 @@ impl MicroVmRuntime {
                     st.restrict_network,
                 ));
             }
-            st.restrict_network = vz_no_network(st)?;
+            st.restrict_network = if self.cfg.vmm == Vmm::Qemu {
+                no_network_for(BackendKind::Firecracker, st)?
+            } else {
+                vz_no_network(st)?
+            };
         }
         if let Some(snap) = st.restore_from.clone() {
             self.restore(st, &snap, timeout, "restore").await?;
@@ -3893,15 +3901,26 @@ mod tests {
     }
 
     #[test]
-    fn a_qemu_microvm_does_not_pause() {
+    fn a_qemu_microvm_pauses_over_qmp_and_has_no_memory_snapshots() {
         assert_eq!(Vmm::Qemu.backend(), BackendKind::Firecracker);
         assert_eq!(Vmm::Qemu.accel(), "whpx");
+        // Pausing talks to the VM's QMP socket: a VM without one says so.
         let e = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
             .build()
             .unwrap()
-            .block_on(Ctl::Qemu.pause())
+            .block_on(Ctl::Qemu(PathBuf::from("no-such.sock")).pause())
             .unwrap_err();
-        assert!(e.to_string().contains("QEMU"), "{e}");
+        assert!(
+            e.to_string().contains("qmp") || e.to_string().contains("QMP"),
+            "{e}"
+        );
+        // Memory cannot be saved under WHPX: restoring is refused by name.
+        assert!(
+            qemu_unsupported("restoring a snapshot")
+                .to_string()
+                .contains("QEMU")
+        );
     }
 
     #[test]

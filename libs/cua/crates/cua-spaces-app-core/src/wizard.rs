@@ -1253,6 +1253,16 @@ fn microvm_block_of(probe: &LocalProbe<'_>, os: SpaceOs) -> MicrovmBlock {
         SpaceOs::Macos => "needs macOS 26".into(),
         // Firecracker and the kernel install on the first create; only what
         // the host must have itself blocks a microVM here.
+        // On Windows the microVM is QEMU on the Windows Hypervisor Platform: the
+        // doctor says which piece is missing (the feature, QEMU, the guest init).
+        SpaceOs::Linux if cfg!(windows) => {
+            let fc = detail("firecracker");
+            if fc.is_empty() {
+                "needs the Windows Hypervisor Platform: see cua runtime doctor".into()
+            } else {
+                fc
+            }
+        }
         SpaceOs::Linux => {
             let fc = detail("firecracker");
             if fc.is_empty() || fc.contains("/dev/kvm") {
@@ -1261,16 +1271,6 @@ fn microvm_block_of(probe: &LocalProbe<'_>, os: SpaceOs) -> MicrovmBlock {
                 "needs passt: sudo apt-get install passt".into()
             } else {
                 "needs the microVM tools: see cua runtime doctor".into()
-            }
-        }
-        // QEMU on the Windows Hypervisor Platform: the doctor says which
-        // piece is missing (the Windows feature, QEMU, the guest init).
-        SpaceOs::Windows => {
-            let fc = detail("firecracker");
-            if fc.is_empty() {
-                "needs the Windows Hypervisor Platform: see cua runtime doctor".into()
-            } else {
-                fc
             }
         }
         _ => "needs a Mac or Linux with KVM".into(),
@@ -6235,7 +6235,34 @@ mod tests {
 
     /// Where no microVM runtime is ready, MicroVM is greyed out with no
     /// words in New Space (Settings, Advanced, Runtimes says why), and
+    /// On a Windows host the Linux microVM's blocker is the doctor's own words
+    /// (QEMU, the Windows feature, the guest init).
+    #[cfg(windows)]
+    #[test]
+    fn microvm_on_windows_says_what_is_missing() {
+        let e = mac_env(
+            &["docker"],
+            &[(
+                "firecracker",
+                "microVMs need the Windows feature Windows Hypervisor Platform",
+            )],
+        );
+        assert_eq!(
+            local_microvm_status(&e, SpaceOs::Linux),
+            MicrovmStatus::Blocked(
+                "MicroVMs need the Windows feature Windows Hypervisor Platform.".to_string()
+            )
+        );
+        assert_eq!(
+            local_microvm_status(&mac_env(&["docker"], &[]), SpaceOs::Linux),
+            MicrovmStatus::Blocked(
+                "Needs the Windows Hypervisor Platform: see cua runtime doctor.".to_string()
+            )
+        );
+    }
+
     /// choosing it does nothing.
+    #[cfg(not(windows))]
     #[test]
     fn microvm_is_greyed_out_and_settings_says_why() {
         let cases: [(WizardEnv, SpaceOs, &str); 7] = [

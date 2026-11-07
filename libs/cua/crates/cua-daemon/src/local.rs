@@ -1903,7 +1903,15 @@ fn host_memory() -> Option<crate::pool::Memory> {
             available_mb: total * level / 100,
         })
     }
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    #[cfg(windows)]
+    {
+        // `GlobalMemoryStatusEx`, through the runtimes' own reading.
+        cua_vmm::density::host_memory().map(|m| crate::pool::Memory {
+            total_mb: m.total_mb,
+            available_mb: m.available_mb,
+        })
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
     {
         None
     }

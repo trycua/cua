@@ -823,6 +823,8 @@ impl Runtime {
             Runtime::Runc => "runc".into(),
             Runtime::Qemu => "QEMU".into(),
             Runtime::Lume => "Lume".into(),
+            // On a PC the Linux microVM runtime is QEMU on the Windows Hypervisor Platform.
+            Runtime::Firecracker if cfg!(windows) => "QEMU (Windows Hypervisor Platform)".into(),
             Runtime::Firecracker => "Firecracker".into(),
             Runtime::Vz => "Virtualization.framework".into(),
             Runtime::Containerization => "Apple Containerization".into(),

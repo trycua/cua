@@ -1,12 +1,14 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use std::collections::HashMap;
 use std::os::fd::AsFd;
-use std::os::unix::fs::MetadataExt;
 use std::sync::{Mutex, OnceLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{ensure, Context};
 use tokio::io::AsyncReadExt;
-use wayland_client::{protocol::{wl_callback, wl_registry}, Connection, Dispatch, Proxy, QueueHandle};
+use wayland_client::{protocol::{wl_callback, wl_registry}, Connection, Dispatch, EventQueue, Proxy, QueueHandle};
 use wayland_protocols_plasma::plasma_window_management::client::org_kde_plasma_window_management::{
     self as management, OrgKdePlasmaWindowManagement,
 };
@@ -131,79 +133,92 @@ impl Dispatch<OrgKdePlasmaStackingOrder, ()> for Windows {
     }
 }
 
-fn window_snapshot(connection: Connection) -> anyhow::Result<(Vec<String>, Vec<String>)> {
-    let mut queue = connection.new_event_queue::<Windows>();
-    connection.display().get_registry(&queue.handle(), ());
-    let mut state = Windows::default();
-    let deadline = std::time::Instant::now() + TIMEOUT;
-    connection.display().sync(&queue.handle(), ());
-    super::hyprland_capture::dispatch_until(
-        &mut queue,
-        &mut state,
-        deadline,
-        "KWin registry",
-        |state| state.roundtrips == 1,
-    )?;
-    ensure!(
-        state.manager.is_some(),
-        "KWin window management protocol unavailable"
-    );
-    if let Some(manager) = state
-        .manager
-        .as_ref()
-        .filter(|manager| manager.version() >= 17)
-    {
-        manager.get_stacking_order(&queue.handle(), ());
+/// A Plasma window-management connection, past its registry roundtrip.
+struct Plasma {
+    connection: Connection,
+    queue: EventQueue<Windows>,
+    state: Windows,
+    manager: OrgKdePlasmaWindowManagement,
+    deadline: Instant,
+}
+
+impl Plasma {
+    fn connect(connection: Connection) -> anyhow::Result<Self> {
+        let mut queue = connection.new_event_queue::<Windows>();
+        connection.display().get_registry(&queue.handle(), ());
+        connection.display().sync(&queue.handle(), ());
+        let mut state = Windows::default();
+        let deadline = Instant::now() + TIMEOUT;
+        super::hyprland_capture::dispatch_until(
+            &mut queue,
+            &mut state,
+            deadline,
+            "KWin registry",
+            |state| state.roundtrips == 1,
+        )?;
+        let manager = state
+            .manager
+            .clone()
+            .context("KWin window management protocol unavailable")?;
+        Ok(Self {
+            connection,
+            queue,
+            state,
+            manager,
+            deadline,
+        })
     }
-    connection.display().sync(&queue.handle(), ());
-    super::hyprland_capture::dispatch_until(
-        &mut queue,
-        &mut state,
-        deadline,
-        "KWin windows",
-        |state| state.roundtrips == 2 && state.stacking_complete,
-    )?;
-    state.uuids.sort();
-    state.uuids.dedup();
-    Ok((state.uuids, state.stacking))
+
+    /// One more server roundtrip, then until `done` holds.
+    fn roundtrip(&mut self, what: &str, done: impl Fn(&Windows) -> bool) -> anyhow::Result<()> {
+        self.connection.display().sync(&self.queue.handle(), ());
+        let target = self.state.roundtrips + 1;
+        super::hyprland_capture::dispatch_until(
+            &mut self.queue,
+            &mut self.state,
+            self.deadline,
+            what,
+            |state| state.roundtrips == target && done(state),
+        )
+    }
+}
+
+fn window_snapshot(connection: Connection) -> anyhow::Result<(Vec<String>, Vec<String>)> {
+    let mut plasma = Plasma::connect(connection)?;
+    if plasma.manager.version() >= 17 {
+        plasma
+            .manager
+            .get_stacking_order(&plasma.queue.handle(), ());
+    }
+    plasma.roundtrip("KWin windows", |state| state.stacking_complete)?;
+    let Windows {
+        mut uuids,
+        stacking,
+        ..
+    } = plasma.state;
+    uuids.sort();
+    uuids.dedup();
+    Ok((uuids, stacking))
 }
 
 /// The owning process of each window, as Plasma window management announces it.
 /// `getWindowInfo` only started reporting a pid in later KWin releases.
 fn window_pids(connection: Connection, uuids: &[String]) -> anyhow::Result<HashMap<String, u32>> {
-    let mut queue = connection.new_event_queue::<Windows>();
-    connection.display().get_registry(&queue.handle(), ());
-    let mut state = Windows::default();
-    let deadline = std::time::Instant::now() + TIMEOUT;
-    connection.display().sync(&queue.handle(), ());
-    super::hyprland_capture::dispatch_until(
-        &mut queue,
-        &mut state,
-        deadline,
-        "KWin registry",
-        |state| state.roundtrips == 1,
-    )?;
-    let manager = state
-        .manager
-        .clone()
-        .context("KWin window management protocol unavailable")?;
+    let mut plasma = Plasma::connect(connection)?;
     let windows: Vec<OrgKdePlasmaWindow> = uuids
         .iter()
-        .map(|uuid| manager.get_window_by_uuid(uuid.clone(), &queue.handle(), uuid.clone()))
+        .map(|uuid| {
+            plasma
+                .manager
+                .get_window_by_uuid(uuid.clone(), &plasma.queue.handle(), uuid.clone())
+        })
         .collect();
-    connection.display().sync(&queue.handle(), ());
-    super::hyprland_capture::dispatch_until(
-        &mut queue,
-        &mut state,
-        deadline,
-        "KWin window owners",
-        |state| state.roundtrips == 2,
-    )?;
+    plasma.roundtrip("KWin window owners", |_| true)?;
     for window in windows {
         window.destroy();
     }
-    let _ = connection.flush();
-    Ok(state.pids)
+    let _ = plasma.connection.flush();
+    Ok(plasma.state.pids)
 }
 
 /// The window's owner: KWin's own answer when it gives one, else the announced pid.
@@ -244,7 +259,23 @@ fn ids() -> &'static Mutex<WindowIds> {
     IDS.get_or_init(|| Mutex::new(WindowIds::default()))
 }
 
-pub(super) fn knows_window(window_id: u64) -> bool {
+/// Whether this session could be KWin, so other compositors skip its probes.
+/// A daemon started without a desktop name still probes: an unset name says
+/// nothing, and skipping would lose the exact-window route on a real KWin.
+pub(crate) fn may_be_session() -> bool {
+    desktop_may_be_kde(std::env::var("XDG_CURRENT_DESKTOP").ok().as_deref())
+}
+
+fn desktop_may_be_kde(desktop: Option<&str>) -> bool {
+    desktop.is_none_or(|desktop| {
+        desktop.trim().is_empty()
+            || desktop
+                .split(':')
+                .any(|name| name.trim().eq_ignore_ascii_case("kde"))
+    })
+}
+
+pub(crate) fn knows_window(window_id: u64) -> bool {
     ids()
         .lock()
         .is_ok_and(|ids| ids.uuid_for(window_id).is_some())
@@ -275,9 +306,9 @@ async fn owner(connection: &zbus::Connection) -> anyhow::Result<String> {
         .get_connection_unix_process_id(owner.clone().into())
         .await?;
     let uid = dbus.get_connection_unix_user(owner.clone().into()).await?;
-    let our_uid = std::fs::metadata(format!("/proc/{}", std::process::id()))?.uid();
     ensure!(
-        uid == our_uid && super::kwin_helper::is_trusted_kwin_process(pid),
+        uid == super::kwin_helper::current_uid()
+            && super::kwin_helper::is_trusted_kwin_process(pid),
         "KWin D-Bus owner is not the trusted session compositor"
     );
     Ok(owner.to_string())
@@ -293,6 +324,11 @@ async fn info(
         .call("getWindowInfo", &(uuid,))
         .await
         .context("KWin window lookup failed")
+}
+
+/// KWin writes a UUID with or without braces depending on the call.
+fn same_uuid(left: &str, right: &str) -> bool {
+    left.trim_matches(['{', '}']) == right.trim_matches(['{', '}'])
 }
 
 fn number(properties: &Properties, name: &str) -> anyhow::Result<u32> {
@@ -382,8 +418,7 @@ pub fn list_windows() -> anyhow::Result<Vec<WindowInfo>> {
                 continue;
             }
             ensure!(
-                text(&properties, "uuid")?.trim_matches(['{', '}'])
-                    == uuid.trim_matches(['{', '}']),
+                same_uuid(text(&properties, "uuid")?, &uuid),
                 "KWin window identity mismatch"
             );
             let width = coordinate(&properties, "width")?;
@@ -448,44 +483,24 @@ pub fn activate(window_id: u64, pid: Option<u32>) -> anyhow::Result<()> {
             .any(|window| window.xid == window_id && pid.is_none_or(|pid| window.pid == Some(pid))),
         "foreground_unavailable: KWin window {window_id} no longer exists or belongs to another process"
     );
-    let connection = Connection::connect_to_env()?;
-    let mut queue = connection.new_event_queue::<Windows>();
-    connection.display().get_registry(&queue.handle(), ());
-    let mut state = Windows::default();
-    let deadline = std::time::Instant::now() + TIMEOUT;
-    connection.display().sync(&queue.handle(), ());
-    super::hyprland_capture::dispatch_until(
-        &mut queue,
-        &mut state,
-        deadline,
-        "KWin registry",
-        |state| state.roundtrips == 1,
-    )?;
-    let manager = state
-        .manager
-        .clone()
+    let mut plasma = Plasma::connect(Connection::connect_to_env()?)
         .context("foreground_unavailable: KWin window management protocol unavailable")?;
-    let window = manager.get_window_by_uuid(uuid.clone(), &queue.handle(), uuid);
-    connection.display().sync(&queue.handle(), ());
-    super::hyprland_capture::dispatch_until(
-        &mut queue,
-        &mut state,
-        deadline,
-        "KWin window state",
-        |state| state.roundtrips == 2,
-    )?;
+    let window = plasma
+        .manager
+        .get_window_by_uuid(uuid.clone(), &plasma.queue.handle(), uuid);
+    plasma.roundtrip("KWin window state", |_| true)?;
     let active = management::State::Active as u32;
     window.set_state(active, active);
-    connection.flush()?;
+    plasma.connection.flush()?;
     let confirmed = super::hyprland_capture::dispatch_until(
-        &mut queue,
-        &mut state,
-        std::time::Instant::now() + Duration::from_secs(1),
+        &mut plasma.queue,
+        &mut plasma.state,
+        Instant::now() + Duration::from_secs(1),
         "KWin activation",
         |state| is_active(state.target_state),
     );
     window.destroy();
-    let _ = connection.flush();
+    let _ = plasma.connection.flush();
     confirmed.context("foreground_unavailable: KWin did not confirm the window became active")
 }
 
@@ -509,7 +524,7 @@ pub fn capture(window_id: u64, pid: Option<u32>) -> anyhow::Result<Vec<u8>> {
             "KWin screenshot service has a different owner"
         );
         ensure!(
-            text(&before, "uuid")?.trim_matches(['{', '}']) == uuid.trim_matches(['{', '}']),
+            same_uuid(text(&before, "uuid")?, &uuid),
             "KWin window identity mismatch"
         );
         let actual_pid = owning_pid(&before, announced)?;
@@ -543,7 +558,7 @@ pub fn capture(window_id: u64, pid: Option<u32>) -> anyhow::Result<Vec<u8>> {
             "KWin screenshot is not raw image data"
         );
         ensure!(
-            text(&result, "windowId")?.trim_matches(['{', '}']) == uuid.trim_matches(['{', '}']),
+            same_uuid(text(&result, "windowId")?, &uuid),
             "KWin screenshot window identity mismatch"
         );
         let png = read_image(&result, &mut reader).await?;
@@ -552,12 +567,35 @@ pub fn capture(window_id: u64, pid: Option<u32>) -> anyhow::Result<Vec<u8>> {
             owning_pid(&after, announced)? == actual_pid,
             "KWin window changed during capture"
         );
-        to_window_frame(
-            png,
-            coordinate(&before, "width")?.round() as u32,
-            coordinate(&before, "height")?.round() as u32,
-        )
+        let (width, height) = logical_size(
+            (number(&result, "width")?, number(&result, "height")?),
+            coordinate(&result, "scale")?,
+            (
+                coordinate(&after, "width")?.round() as u32,
+                coordinate(&after, "height")?.round() as u32,
+            ),
+        )?;
+        to_window_frame(png, width, height)
     })
+}
+
+/// The logical size of an image KWin captured: its pixels over KWin's scale for
+/// it. A fractional scale can round that a pixel off the frame KWin reports, so
+/// the frame wins within a pixel. Further off, the window was resized around the
+/// capture and the image knows its own size: the frame would stretch it.
+fn logical_size(pixels: (u32, u32), scale: f64, frame: (u32, u32)) -> anyhow::Result<(u32, u32)> {
+    ensure!(scale > 0.0, "KWin returned invalid scale");
+    let size = (
+        (f64::from(pixels.0) / scale).round() as u32,
+        (f64::from(pixels.1) / scale).round() as u32,
+    );
+    Ok(
+        if size.0.abs_diff(frame.0) <= 1 && size.1.abs_diff(frame.1) <= 1 {
+            frame
+        } else {
+            size
+        },
+    )
 }
 
 /// KWin renders a window at its output's scale even when asked for logical
@@ -650,7 +688,7 @@ fn decode(
 }
 
 #[cfg(test)]
-mod activation_tests {
+mod tests {
     use super::*;
 
     #[test]
@@ -667,7 +705,10 @@ mod activation_tests {
         );
         // Already in the frame: the same bytes, no needless recompression.
         assert_eq!(to_window_frame(png.clone(), 1000, 900).unwrap(), png);
-        assert!(to_window_frame(png, 0, 0).is_err());
+        assert_eq!(
+            to_window_frame(png, 0, 0).unwrap_err().to_string(),
+            "KWin window has no size"
+        );
     }
 
     #[test]
@@ -675,7 +716,10 @@ mod activation_tests {
         // KWin 6.6 answers getWindowInfo without a pid field.
         let without: Properties = [("caption".to_string(), OwnedValue::from(1i32))].into();
         assert_eq!(owning_pid(&without, Some(42)).unwrap(), 42);
-        assert!(owning_pid(&without, None).is_err());
+        assert_eq!(
+            owning_pid(&without, None).unwrap_err().to_string(),
+            "KWin omitted pid"
+        );
 
         // A newer KWin's own answer wins over the announcement.
         let with: Properties = [("pid".to_string(), OwnedValue::from(7i32))].into();
@@ -693,11 +737,61 @@ mod activation_tests {
             active | management::State::Maximized as u32
         )));
     }
-}
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+    #[test]
+    fn a_capture_keeps_its_own_size_when_the_window_was_resized_around_it() {
+        // Scale 1.25, 800x720 window: the physical image lands on its frame.
+        assert_eq!(
+            logical_size((1000, 900), 1.25, (800, 720)).unwrap(),
+            (800, 720)
+        );
+        // Rounding at a fractional scale leaves it a pixel off: the frame wins.
+        assert_eq!(
+            logical_size((1002, 900), 1.25, (801, 720)).unwrap(),
+            (801, 720)
+        );
+        // Resized to 600x400 after the image was taken: not stretched to fit.
+        assert_eq!(
+            logical_size((1000, 900), 1.25, (600, 400)).unwrap(),
+            (800, 720)
+        );
+        assert_eq!(
+            logical_size((800, 720), 1.0, (600, 400)).unwrap(),
+            (800, 720)
+        );
+        assert_eq!(
+            logical_size((800, 720), 0.0, (800, 720))
+                .unwrap_err()
+                .to_string(),
+            "KWin returned invalid scale"
+        );
+    }
+
+    #[test]
+    fn only_a_session_that_could_be_kde_gets_the_kwin_probes() {
+        for desktop in [None, Some(""), Some("KDE"), Some("kde"), Some("ubuntu:KDE")] {
+            assert!(desktop_may_be_kde(desktop), "{desktop:?}");
+        }
+        for desktop in ["sway", "wlroots", "GNOME", "ubuntu:GNOME", "niri", "COSMIC"] {
+            assert!(!desktop_may_be_kde(Some(desktop)), "{desktop}");
+        }
+    }
+
+    #[test]
+    fn raw_input_at_a_kwin_handle_is_refused_without_touching_the_window() {
+        // Global input after activating would reach whatever holds focus when it
+        // lands. This connects to nothing: the refusal is not about reachability.
+        let window = ids().lock().unwrap().id_for("raw-input-refusal").unwrap();
+        assert_eq!(
+            crate::wayland::activate_window_for_input_target(window, Some(1))
+                .unwrap_err()
+                .to_string(),
+            format!(
+                "foreground_unavailable: KWin input is focus-bound, so window {window} cannot be \
+                 targeted: focus could move before the input lands; no global input was sent"
+            )
+        );
+    }
 
     #[test]
     fn uuid_protocol_versions_preserve_compositor_stacking() {

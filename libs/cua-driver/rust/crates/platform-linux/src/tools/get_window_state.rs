@@ -45,6 +45,43 @@ fn megapixel_long_edge_cap(w: u32, h: u32, max_pixels: u64) -> Option<u32> {
     Some(edge)
 }
 
+/// The window a pid-only call means: on KWin the pid's topmost window, then its
+/// open popup menu, then X11's choice. A KWin handle is not an X11 id, so X11's
+/// focus read can't choose among them, and an X11 popup id would be refused as
+/// not belonging to the pid: popups are only read back on an X11 session.
+fn pid_only_window(
+    kwin: impl FnOnce() -> Option<u64>,
+    popup: impl FnOnce() -> Option<u64>,
+    x11: impl FnOnce() -> Option<u64>,
+) -> Option<u64> {
+    kwin().or_else(popup).or_else(x11)
+}
+
+/// The pid's topmost window when the KWin adapter listed it. Other compositors,
+/// and a KWin that doesn't let this executable enumerate, keep the existing choice.
+fn kwin_topmost_window(pid: u32) -> Option<u64> {
+    if !crate::wayland::is_wayland() || !crate::wayland::kwin_capture::may_be_session() {
+        return None;
+    }
+    super::impl_::pid_fallback_window_resolver()(i64::from(pid))
+        .filter(|window| crate::wayland::kwin_capture::knows_window(*window))
+}
+
+#[cfg(test)]
+mod pid_only_window_tests {
+    use super::pid_only_window;
+
+    #[test]
+    fn kwin_answers_first_and_every_other_compositor_keeps_its_choice() {
+        let unreached = || -> Option<u64> { panic!("KWin already answered") };
+        assert_eq!(pid_only_window(|| Some(1), unreached, unreached), Some(1));
+        // Sway, GNOME and the rest: no KWin answer, so the popup, then X11, as before.
+        assert_eq!(pid_only_window(|| None, || Some(2), || Some(3)), Some(2));
+        assert_eq!(pid_only_window(|| None, || None, || Some(3)), Some(3));
+        assert_eq!(pid_only_window(|| None, || None, || None), None);
+    }
+}
+
 #[cfg(test)]
 mod megapixel_cap_tests {
     use super::{megapixel_long_edge_cap, WINDOW_SCREENSHOT_MAX_PIXELS};
@@ -343,30 +380,32 @@ impl Tool for GetWindowStateTool {
             Ok(v) => v,
             Err(e) => return e,
         };
-        // `window_id` omitted: the open popup menu of this pid when one is
-        // mapped (a context menu the caller wants to read), else the pid's
-        // focused / dialog / active / largest window.
+        // `window_id` omitted: on KWin the pid's topmost window, else the open
+        // popup menu of this pid when one is mapped (a context menu the caller
+        // wants to read), else its focused / dialog / active / largest window.
         let xid = match args.opt_u64("window_id") {
             Some(v) => v,
             None => {
                 let chosen = tokio::task::spawn_blocking(move || {
-                    if crate::wayland::is_wayland() {
-                        return super::impl_::pid_fallback_window_resolver()(i64::from(pid));
-                    }
-                    if let Some(popup) = crate::input::mapped_popup_windows()
-                        .into_iter()
-                        .rev()
-                        .find(|p| p.pid == Some(pid))
-                    {
-                        return Some(popup.window);
-                    }
-                    let windows = crate::x11::list_windows(Some(pid));
-                    let candidates: Vec<u64> = windows.iter().map(|w| w.xid).collect();
-                    crate::x11::pick_pid_window(
-                        &windows,
-                        crate::x11::focused_window_among(&candidates),
-                        crate::x11::transient_for,
-                        crate::x11::active_window(),
+                    pid_only_window(
+                        || kwin_topmost_window(pid),
+                        || {
+                            crate::input::mapped_popup_windows()
+                                .into_iter()
+                                .rev()
+                                .find(|p| p.pid == Some(pid))
+                                .map(|p| p.window)
+                        },
+                        || {
+                            let windows = crate::x11::list_windows(Some(pid));
+                            let candidates: Vec<u64> = windows.iter().map(|w| w.xid).collect();
+                            crate::x11::pick_pid_window(
+                                &windows,
+                                crate::x11::focused_window_among(&candidates),
+                                crate::x11::transient_for,
+                                crate::x11::active_window(),
+                            )
+                        },
                     )
                 })
                 .await

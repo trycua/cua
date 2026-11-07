@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 #![cfg(target_os = "linux")]
 
 use std::io::Write;
@@ -18,6 +21,11 @@ for color in [(1, 0, 0), (0, 0, 1)]:
     window.set_default_size(320, 200)
     panel = Gtk.EventBox()
     panel.override_background_color(Gtk.StateFlags.NORMAL, Gdk.RGBA(*color, 1))
+    text = Gtk.TextView()
+    text.get_buffer().set_text('no semantic action')
+    text.set_halign(Gtk.Align.START)
+    text.set_valign(Gtk.Align.START)
+    panel.add(text)
     window.add(panel)
     window.show_all()
     window.fullscreen()
@@ -64,6 +72,14 @@ fn capture(driver: &mut McpDriver, pid: u32, window: &Value) -> [u8; 4] {
     image.get_pixel(image.width() / 2, image.height() / 2).0
 }
 
+/// A refusal with exactly this code: some routes report it as a structured
+/// field, others as the prefix of a generic tool failure.
+fn refused_with(response: &cua_driver_testkit::ToolResponse, code: &str) -> bool {
+    response.is_error()
+        && (response.structured()["code"] == code
+            || response.text().starts_with(&format!("{code}:")))
+}
+
 #[test]
 #[ignore = "requires native KWin Wayland and Python with GTK3; temporarily opens two fullscreen fixtures"]
 fn same_pid_same_title_windows_capture_exact_surfaces_without_a_helper() {
@@ -90,10 +106,11 @@ fn same_pid_same_title_windows_capture_exact_surfaces_without_a_helper() {
         let windows = response.structured()["windows"]
             .as_array()
             .expect("window list");
+        // KWin announces a new window before it enters the stacking order.
         if windows.len() == 2
             && windows
                 .iter()
-                .all(|w| w["width"].as_u64().unwrap_or(0) > 320)
+                .all(|w| w["width"].as_u64().unwrap_or(0) > 320 && w["z_index"].is_u64())
         {
             break windows.clone();
         }
@@ -183,6 +200,115 @@ fn same_pid_same_title_windows_capture_exact_surfaces_without_a_helper() {
         "{}",
         wrong_owner.text()
     );
+    let covered = &windows[1 - first];
+    let z_index = |driver: &mut McpDriver| {
+        let response = driver.call("list_windows", json!({"pid": pid}));
+        response.structured()["windows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|window| window["window_id"] == covered["window_id"])
+            .unwrap()["z_index"]
+            .clone()
+    };
+    let covered_z = z_index(&mut driver);
+    // KWin input is focus-bound. Every raw route refuses, and none raises the window.
+    let point = json!({"x": 100, "y": 100});
+    for (tool, mut request) in [
+        ("press_key", json!({"key": "a"})),
+        ("type_text", json!({"text": "a"})),
+        ("type_text_chars", json!({"text": "a"})),
+        ("hotkey", json!({"keys": ["ctrl", "a"]})),
+        ("click", point.clone()),
+        ("right_click", point.clone()),
+        ("double_click", point.clone()),
+        (
+            "scroll",
+            json!({"x": 100, "y": 100, "direction": "down", "amount": 1}),
+        ),
+        (
+            "drag",
+            json!({"from_x": 100, "from_y": 100, "to_x": 120, "to_y": 120}),
+        ),
+    ] {
+        request["pid"] = json!(pid);
+        request["window_id"] = covered["window_id"].clone();
+        request["delivery_mode"] = json!("foreground");
+        let response = driver.call(tool, request);
+        assert!(
+            refused_with(&response, "foreground_unavailable"),
+            "{tool}: {}",
+            response.text()
+        );
+        assert_eq!(z_index(&mut driver), covered_z, "{tool} raised the window");
+    }
+    // An element with no semantic action has no pointer fallback on this handle.
+    let state = driver.call(
+        "get_window_state",
+        json!({"pid": pid, "window_id": covered["window_id"], "include_screenshot": false}),
+    );
+    let snapshot = state.structured()["snapshot_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let tree = state.structured()["tree_markdown"].as_str().unwrap();
+    let row = tree
+        .lines()
+        .find(|line| line.contains("no semantic action"))
+        .and_then(|line| line.split_once('[')?.1.split_once(']'))
+        .and_then(|(index, _)| index.parse::<u32>().ok())
+        .unwrap_or_else(|| panic!("no text row in {tree}"));
+    for (delivery, code) in [
+        ("background", "background_unavailable"),
+        ("foreground", "foreground_unavailable"),
+    ] {
+        let response = driver.call(
+            "click",
+            json!({
+                "pid": pid, "window_id": covered["window_id"], "delivery_mode": delivery,
+                "element_token": format!("{snapshot}:{row}"),
+            }),
+        );
+        assert!(
+            refused_with(&response, code),
+            "{delivery}: {}",
+            response.text()
+        );
+        assert_eq!(
+            z_index(&mut driver),
+            covered_z,
+            "{delivery} semantic fallback raised the window"
+        );
+    }
+    // bring_to_front is the one call that changes focus, and only for the real owner.
+    let response = driver.call(
+        "bring_to_front",
+        json!({"pid": std::process::id(), "window_id": covered["window_id"]}),
+    );
+    assert!(response.is_error(), "{}", response.text());
+    assert_eq!(
+        response.text(),
+        format!(
+            "foreground_unavailable: KWin window {} no longer exists or belongs to another process",
+            covered["window_id"]
+        )
+    );
+    assert_eq!(
+        z_index(&mut driver),
+        covered_z,
+        "wrong owner raised the window"
+    );
+    let response = driver.call(
+        "bring_to_front",
+        json!({"pid": pid, "window_id": covered["window_id"]}),
+    );
+    assert!(!response.is_error(), "{}", response.text());
+    assert!(
+        z_index(&mut driver).as_u64().unwrap() > covered_z.as_u64().unwrap(),
+        "bring_to_front did not raise the window"
+    );
+    writeln!(input, "raise-first").unwrap();
+    std::thread::sleep(Duration::from_millis(300));
     writeln!(input, "close-first").unwrap();
     std::thread::sleep(Duration::from_millis(300));
     let closed = driver.call("get_window_state", json!({

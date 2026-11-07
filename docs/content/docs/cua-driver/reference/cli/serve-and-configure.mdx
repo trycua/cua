@@ -31,8 +31,8 @@ description: "Serve MCP and call tools from the shell; run the daemon; grant per
 | [`cua-driver autostart status`](#cua-driver-autostart-status) | Print whether autostart is registered and running. |
 | [`cua-driver autostart kick`](#cua-driver-autostart-kick) | Start the autostart entry now without re-logging. |
 | [`cua-driver permissions`](#cua-driver-permissions) | Inspect or raise macOS TCC permission grants (macOS only). |
-| [`cua-driver permissions status`](#cua-driver-permissions-status) | Report Accessibility and Screen Recording status through a running daemon (read-only, no prompt). |
-| [`cua-driver permissions grant`](#cua-driver-permissions-grant) | Launch CuaDriver through LaunchServices so the permission prompts are attributed to the app. |
+| [`cua-driver permissions status`](#cua-driver-permissions-status) | Show whether Cua Driver can use your mouse and keyboard (Accessibility) and see your screen (Screen Recording), read-only and without prompts. |
+| [`cua-driver permissions grant`](#cua-driver-permissions-grant) | Walk through the Accessibility and Screen Recording switches one at a time, then confirm with a test screenshot. |
 | [`cua-driver doctor`](#cua-driver-doctor) | Run platform-aware diagnostic probes. |
 | [`cua-driver diagnose`](#cua-driver-diagnose) | Print a pasteable install-layout and permission-attribution report. |
 | [`cua-driver test`](#cua-driver-test) | Check that Cua Driver works on this computer. |
@@ -501,7 +501,7 @@ cua-driver permissions
 
 ### `cua-driver permissions status`
 
-Report Accessibility and Screen Recording status through a running daemon (read-only, no prompt). The default subcommand.
+Show whether Cua Driver can use your mouse and keyboard (Accessibility) and see your screen (Screen Recording), read-only and without prompts. The default subcommand.
 
 ```text output
 cua-driver permissions status [OPTIONS]
@@ -520,7 +520,7 @@ cua-driver permissions status --json
 
 ### `cua-driver permissions grant`
 
-Launch CuaDriver through LaunchServices so the permission prompts are attributed to the app.
+Walk through the Accessibility and Screen Recording switches one at a time, then confirm with a test screenshot.
 
 ```text output
 cua-driver permissions grant

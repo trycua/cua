@@ -3827,9 +3827,13 @@ pub fn send_type_text_xtest(text: &str) -> Result<()> {
 
 /// [`send_type_text_xtest`] with the `delay_ms` contract in `pacing`.
 pub fn send_type_text_xtest_paced(text: &str, pacing: TypePacing) -> Result<()> {
+    let (conn, _) = connect_x11_for_input()?;
+    type_text_xtest(&conn, text, pacing)
+}
+
+fn type_text_xtest(conn: &RustConnection, text: &str, pacing: TypePacing) -> Result<()> {
     use x11rb::protocol::xtest::ConnectionExt as _;
     let sent = std::cell::Cell::new(0usize);
-    let (conn, _) = connect_x11_for_input()?;
     let mapping = conn.get_keyboard_mapping(8, 248)?.reply()?;
     // Shift keycode (modifier index 0) for shifted characters.
     let modmap = conn.get_modifier_mapping()?.reply()?;
@@ -3839,7 +3843,8 @@ pub fn send_type_text_xtest_paced(text: &str, pacing: TypePacing) -> Result<()> 
         .get(..kpm)
         .and_then(|s| s.iter().copied().find(|&k| k != 0))
         .unwrap_or(50);
-    let client = RefCell::new(TextClient::new(&conn, None));
+    let caps_lock = CapsLockOff::engage(conn, modmap.keycodes.get(kpm..2 * kpm).unwrap_or(&[]))?;
+    let client = RefCell::new(TextClient::new(conn, None));
     type_text_in_spare_batches(
         text,
         &mapping,
@@ -3868,11 +3873,50 @@ pub fn send_type_text_xtest_paced(text: &str, pacing: TypePacing) -> Result<()> 
         },
         || client.borrow_mut().release(),
     )?;
+    drop(caps_lock);
     // Round-trip so the server delivers the final character's key events before
     // this short-lived connection drops (see send_key_xtest — keyboard XTEST
     // events queued on a connection that closes immediately can be lost).
     let _ = conn.get_input_focus()?.reply();
     Ok(())
+}
+
+struct CapsLockOff<'a> {
+    conn: &'a RustConnection,
+    keycode: u8,
+}
+
+impl<'a> CapsLockOff<'a> {
+    fn engage(conn: &'a RustConnection, lock_keycodes: &[u8]) -> Result<Option<Self>> {
+        let root = conn.setup().roots[0].root;
+        if !conn
+            .query_pointer(root)?
+            .reply()?
+            .mask
+            .contains(KeyButMask::LOCK)
+        {
+            return Ok(None);
+        }
+        let Some(keycode) = lock_keycodes.iter().copied().find(|&k| k != 0) else {
+            return Ok(None);
+        };
+        admitted(|| Self::tap(conn, keycode))?;
+        Ok(Some(Self { conn, keycode }))
+    }
+
+    fn tap(conn: &RustConnection, keycode: u8) -> Result<(), x11rb::errors::ConnectionError> {
+        use x11rb::protocol::xtest::ConnectionExt as _;
+        for kind in [KEY_PRESS_EVENT, KEY_RELEASE_EVENT] {
+            conn.xtest_fake_input(kind, keycode, 0, x11rb::NONE, 0, 0, 0)?;
+        }
+        conn.flush()
+    }
+}
+
+impl Drop for CapsLockOff<'_> {
+    fn drop(&mut self) {
+        let _ = Self::tap(self.conn, self.keycode);
+    }
 }
 
 /// Press a named key (with optional modifiers) into whatever window holds X
@@ -4653,6 +4697,101 @@ mod own_dialog_tests {
         }
         assert_eq!(activations, 0);
         unsafe { x11::xlib::XCloseDisplay(display) };
+    }
+}
+
+#[cfg(test)]
+mod caps_lock_tests {
+    use super::*;
+    use std::io::{BufRead, BufReader};
+    use std::process::{Command, Stdio};
+    use x11rb::protocol::xtest::ConnectionExt as _;
+    use x11rb::protocol::Event;
+
+    struct Server(std::process::Child);
+    impl Drop for Server {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+
+    fn locked(conn: &RustConnection, root: Window) -> bool {
+        let mask = conn.query_pointer(root).unwrap().reply().unwrap().mask;
+        mask.contains(KeyButMask::LOCK)
+    }
+
+    #[test]
+    fn xtest_typing_keeps_case_under_caps_lock() {
+        let mut server = Server(
+            Command::new("Xvfb")
+                .args(["-displayfd", "1", "-nolisten", "tcp"])
+                .stdout(Stdio::piped())
+                .spawn()
+                .expect("install xvfb to run caps lock tests"),
+        );
+        let mut number = String::new();
+        BufReader::new(server.0.stdout.take().unwrap())
+            .read_line(&mut number)
+            .unwrap();
+        let (conn, screen) = RustConnection::connect(Some(&format!(":{}", number.trim()))).unwrap();
+        let root = conn.setup().roots[screen].root;
+        let win = conn.generate_id().unwrap();
+        conn.create_window(
+            0,
+            win,
+            root,
+            0,
+            0,
+            50,
+            50,
+            0,
+            WindowClass::INPUT_OUTPUT,
+            0,
+            &CreateWindowAux::new().event_mask(EventMask::KEY_PRESS),
+        )
+        .unwrap();
+        conn.map_window(win).unwrap();
+        conn.set_input_focus(InputFocus::PARENT, win, 0u32).unwrap();
+        let modmap = conn.get_modifier_mapping().unwrap().reply().unwrap();
+        let kpm = modmap.keycodes_per_modifier() as usize;
+        let lock = modmap.keycodes[kpm..2 * kpm]
+            .iter()
+            .copied()
+            .find(|&k| k != 0)
+            .unwrap();
+        for kind in [KEY_PRESS_EVENT, KEY_RELEASE_EVENT] {
+            conn.xtest_fake_input(kind, lock, 0, x11rb::NONE, 0, 0, 0)
+                .unwrap();
+        }
+        conn.get_input_focus().unwrap().reply().unwrap();
+        assert!(locked(&conn, root));
+
+        type_text_xtest(&conn, "Hello é", TypePacing::default()).unwrap();
+
+        let mapping = conn.get_keyboard_mapping(8, 248).unwrap().reply().unwrap();
+        let per = mapping.keysyms_per_keycode as usize;
+        let mut typed = String::new();
+        while let Some(event) = conn.poll_for_event().unwrap() {
+            let Event::KeyPress(press) = event else {
+                continue;
+            };
+            if press.detail == lock {
+                continue;
+            }
+            assert!(!press.state.contains(KeyButMask::LOCK));
+            let syms = &mapping.keysyms[(press.detail as usize - 8) * per..];
+            let alphabetic = char::from_u32(syms[0]).is_some_and(|c| c.is_ascii_lowercase());
+            let shifted = press.state.contains(KeyButMask::SHIFT)
+                ^ (alphabetic && press.state.contains(KeyButMask::LOCK));
+            if let Some(c) =
+                char::from_u32(syms[usize::from(shifted)]).filter(char::is_ascii_graphic)
+            {
+                typed.push(c);
+            }
+        }
+        assert_eq!(typed, "Hello");
+        assert!(locked(&conn, root));
     }
 }
 

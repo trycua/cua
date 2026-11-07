@@ -8,6 +8,11 @@
 #   stop_cua_driver_daemons          ↔  Stop-CuaDriverDaemons
 #   show_cua_driver_daemon_survivors ↔  Show-CuaDriverDaemonSurvivors
 #
+# Linux-only, no PowerShell counterpart:
+#
+#   cua_driver_write_kwin_desktop_entry — the desktop entry KWin requires before it
+#                                       grants window capture
+#
 # macOS-only, no PowerShell counterpart:
 #
 #   cua_driver_release_processes      — every process of the current user that
@@ -540,8 +545,18 @@ cua_driver_write_kwin_desktop_entry() {
     esac
     local applications="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
     local entry="$applications/ai.cua.driver.release.desktop"
+    # One name, so a second install (a throwaway CUA_DRIVER_RS_HOME) must not
+    # take the grant from an install that still exists.
+    if [[ -f "$entry" ]]; then
+        local granted
+        granted=$(sed -n 's/^Exec="\(.*\)" serve$/\1/p' "$entry")
+        if [[ -n "$granted" && "$granted" != "$executable" && -x "$granted" ]]; then
+            printf '==> kept KWin desktop entry: it grants %s\n' "$granted"
+            return 0
+        fi
+    fi
     mkdir -p "$applications" || return 1
-    printf '%s\n' \
+    if ! printf '%s\n' \
         '[Desktop Entry]' \
         'Type=Application' \
         'Name=Cua Driver' \
@@ -549,8 +564,11 @@ cua_driver_write_kwin_desktop_entry() {
         'NoDisplay=true' \
         'X-KDE-Wayland-Interfaces=org_kde_plasma_window_management' \
         'X-KDE-DBUS-Restricted-Interfaces=org.kde.KWin.ScreenShot2' \
-        > "$entry.tmp.$$" || return 1
-    mv -f "$entry.tmp.$$" "$entry" || { rm -f "$entry.tmp.$$"; return 1; }
-    kbuildsycoca6 >/dev/null 2>&1 || true
+        > "$entry.tmp.$$" \
+        || ! mv -f "$entry.tmp.$$" "$entry"; then
+        rm -f "$entry.tmp.$$"
+        return 1
+    fi
     printf '==> wrote KWin desktop entry %s\n' "$entry"
+    printf '==> KWin lets this driver capture windows with no prompt. uninstall.sh removes the entry.\n'
 }

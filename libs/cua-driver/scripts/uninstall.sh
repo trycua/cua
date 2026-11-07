@@ -985,7 +985,6 @@ if [[ "$USE_RUST_BACKEND" == "1" ]]; then
     if [[ -f "$KWIN_DESKTOP_ENTRY" ]] \
         && grep -Fqx "Exec=\"$PACKAGES_DIR/current/cua-driver\" serve" "$KWIN_DESKTOP_ENTRY"; then
         rm -f "$KWIN_DESKTOP_ENTRY"
-        kbuildsycoca6 >/dev/null 2>&1 || true
         log "removed $KWIN_DESKTOP_ENTRY"
     fi
 

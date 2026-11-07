@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.41.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.40.6...cua-driver-rs-v0.41.0) (2026-11-06)
+
+
+### Features
+
+* **cua-driver:** add cua-driver test to check a new install end to end (CUA-3660) ([#6765](https://github.com/trycua/cua/issues/6765)) ([afffae2](https://github.com/trycua/cua/commit/afffae21a76a7ffb56e5c536cdfa2e062d58caa8))
+
+
+### Bug Fixes
+
+* **cua-driver:** keep a macOS sheet's own id for focus and snapshot scope ([#6758](https://github.com/trycua/cua/issues/6758)) ([ab1d654](https://github.com/trycua/cua/commit/ab1d654a953df77a80583498f5515c2ddae16b4c))
+* **cua-driver:** restore the prior X11 foreground after foreground type_text ([#6768](https://github.com/trycua/cua/issues/6768)) ([0358eb2](https://github.com/trycua/cua/commit/0358eb27237ae9a27d3b375268cf129d7926980f))
+
 ## [0.40.6](https://github.com/trycua/cua/compare/cua-driver-rs-v0.40.5...cua-driver-rs-v0.40.6) (2026-11-06)
 
 

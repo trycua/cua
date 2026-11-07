@@ -25,13 +25,16 @@ use futures_util::{SinkExt, StreamExt};
 use serde_json::Value;
 use tokio::net::TcpStream;
 use tokio::sync::{mpsc, oneshot, Mutex};
-use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::tungstenite::{protocol::WebSocketConfig, Message};
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
 type WsStream = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
 const CALL_TIMEOUT: Duration = Duration::from_secs(20);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+// Chromium sends each CDP response as one frame. Allow that frame to use the
+// existing 64 MiB message budget instead of tungstenite's smaller 16 MiB default.
+const MAX_CDP_MESSAGE_SIZE: usize = 64 * 1024 * 1024;
 
 /// Connection-scoped command policy. Grant-owned personal-profile sockets
 /// always use the reviewed set below; callers cannot opt out or relax it.
@@ -278,10 +281,17 @@ impl Drop for CdpConnection {
 impl CdpConnection {
     pub async fn connect(ws_url: &str) -> anyhow::Result<Self> {
         validate_loopback_ws_url(ws_url).map_err(|e| anyhow::anyhow!(e))?;
-        let (ws, _resp) =
-            tokio::time::timeout(CONNECT_TIMEOUT, tokio_tungstenite::connect_async(ws_url))
-                .await
-                .map_err(|_| anyhow::anyhow!("CDP connect to {ws_url} timed out"))??;
+        let config = WebSocketConfig {
+            max_frame_size: Some(MAX_CDP_MESSAGE_SIZE),
+            max_message_size: Some(MAX_CDP_MESSAGE_SIZE),
+            ..Default::default()
+        };
+        let (ws, _resp) = tokio::time::timeout(
+            CONNECT_TIMEOUT,
+            tokio_tungstenite::connect_async_with_config(ws_url, Some(config), false),
+        )
+        .await
+        .map_err(|_| anyhow::anyhow!("CDP connect to {ws_url} timed out"))??;
         let (write, read) = ws.split();
         let demux = Arc::new(Demux {
             pending: StdMutex::new(HashMap::new()),
@@ -1459,6 +1469,85 @@ mod tests {
         assert_ne!(a["for_id"], b["for_id"]);
         assert_eq!(a["for_id"], 1, "first call gets the id-1 payload");
         assert_eq!(b["for_id"], 2, "second call gets the id-2 payload");
+    }
+
+    #[tokio::test]
+    async fn oversized_cdp_frame_is_rejected_before_reading_its_payload() {
+        use tokio::io::AsyncWriteExt;
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut ws = tokio_tungstenite::accept_async(stream).await.unwrap();
+            let _ = ws.next().await;
+            // Advertise a frame above the bound, without allocating or sending
+            // its payload. The reader must reject the header, not await 64 MiB.
+            let mut header = vec![0x81, 127];
+            header.extend_from_slice(&((64_u64 * 1024 * 1024) + 1).to_be_bytes());
+            ws.get_mut().write_all(&header).await.unwrap();
+            let _ = ws.next().await;
+        });
+        let conn = CdpConnection::connect(&format!("ws://127.0.0.1:{port}/devtools/browser/limit"))
+            .await
+            .unwrap();
+        let error = tokio::time::timeout(
+            Duration::from_secs(5),
+            conn.call(None, "DOM.getDocument", json!({})),
+        )
+        .await
+        .expect("an oversized header must not wait for its payload")
+        .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "CDP socket closed during DOM.getDocument"
+        );
+        assert!(conn.is_closed());
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn fragmented_cdp_message_keeps_the_aggregate_size_bound() {
+        use tokio_tungstenite::tungstenite::protocol::frame::{
+            coding::{Data, OpCode},
+            Frame,
+        };
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut ws = tokio_tungstenite::accept_async(stream).await.unwrap();
+            let _ = ws.next().await;
+            // Each frame fits, but the complete message exceeds 64 MiB.
+            for (opcode, size, final_frame) in [
+                (Data::Text, 32 * 1024 * 1024, false),
+                (Data::Continue, 32 * 1024 * 1024 + 1, true),
+            ] {
+                let frame = Frame::message(vec![b' '; size], OpCode::Data(opcode), final_frame);
+                if ws.send(Message::Frame(frame)).await.is_err() {
+                    return;
+                }
+            }
+            // Keep the peer open: EOF must not substitute for size rejection.
+            let _ = ws.next().await;
+        });
+        let conn = CdpConnection::connect(&format!("ws://127.0.0.1:{port}/devtools/browser/limit"))
+            .await
+            .unwrap();
+        let error = tokio::time::timeout(
+            Duration::from_secs(5),
+            conn.call(None, "DOM.getDocument", json!({})),
+        )
+        .await
+        .expect("an oversized fragmented message must be rejected")
+        .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "CDP socket closed during DOM.getDocument"
+        );
+        assert!(conn.is_closed());
+        server.abort();
     }
 
     #[tokio::test]

@@ -327,7 +327,7 @@ impl Drop for SelfActivationGuard {
 }
 
 fn watch_self_activation(pid: i32, front: i32, stop: &std::sync::atomic::AtomicBool) {
-    use crate::focus_arbiter::UndoWatch;
+    use crate::focus_arbiter::{Decision, UndoWatch};
     use std::sync::atomic::Ordering;
     use std::time::Instant;
     // Read before anything happens: after a key loss the user's app may
@@ -357,9 +357,8 @@ fn watch_self_activation(pid: i32, front: i32, stop: &std::sync::atomic::AtomicB
         if calm {
             let front_now = crate::input::skylight::front_process_pid();
             if front_now == Some(pid) {
-                // revert_now asks the arbiter; the rekey hands back only the
-                // user's own window, as before.
-                if !rekey() {
+                // Not when the user switched to Chrome themselves.
+                if undo.decide() == Decision::Undo && !rekey() {
                     crate::key_focus_guard::revert_now(pid, front, &undo);
                 }
                 last_rekey = Instant::now();

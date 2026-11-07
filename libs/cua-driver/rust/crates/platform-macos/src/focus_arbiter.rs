@@ -24,7 +24,7 @@
 //! `skylight::return_key_to`) does not, so an undo never cancels the watcher
 //! that made it, or another watcher armed for the same action.
 
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::focus_steal::SuppressionLease;
@@ -116,7 +116,9 @@ pub struct UndoWatch(Arc<WatchState>);
 #[derive(Debug)]
 struct WatchState {
     armed: Epoch,
-    left: AtomicBool,
+    /// Set by the first Leave. A lock, so two watchers of one action that
+    /// decide at once cannot see Undo after the other saw Leave.
+    left: Mutex<bool>,
 }
 
 impl UndoWatch {
@@ -127,7 +129,7 @@ impl UndoWatch {
     fn armed_at(armed: Epoch) -> Self {
         Self(Arc::new(WatchState {
             armed,
-            left: AtomicBool::new(false),
+            left: Mutex::new(false),
         }))
     }
 
@@ -137,7 +139,14 @@ impl UndoWatch {
 
     /// Whether this watch has left a change alone.
     pub fn has_left(&self) -> bool {
-        self.0.left.load(Ordering::SeqCst)
+        *self.left()
+    }
+
+    fn left(&self) -> std::sync::MutexGuard<'_, bool> {
+        self.0
+            .left
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     /// Whether the activation just observed may be undone. Call it only when
@@ -147,11 +156,11 @@ impl UndoWatch {
     }
 
     fn decide_with(&self, now: Epoch, user_switched: impl FnOnce() -> bool) -> Decision {
-        let undo = !self.0.left.load(Ordering::SeqCst) && self.0.armed == now && !user_switched();
-        if undo {
+        let mut left = self.left();
+        if !*left && self.0.armed == now && !user_switched() {
             Decision::Undo
         } else {
-            self.0.left.store(true, Ordering::SeqCst);
+            *left = true;
             Decision::Leave
         }
     }

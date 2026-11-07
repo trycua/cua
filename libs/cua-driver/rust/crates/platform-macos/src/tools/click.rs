@@ -8,8 +8,8 @@
 //! * **AX path** (`element_token`): performs AXAction on the cached
 //!   element. Fires via AX RPC — the target app never needs to be frontmost.
 //!   Extra behaviors vs. the naive dispatch:
-//!   - AXTextField / AXTextArea inside web content (AXWebArea): 800 ms post-click delay
-//!     for DOM focus settle. Native text inputs return without it.
+//!   - AXTextField / AXTextArea inside web content (AXWebArea): wait for DOM focus
+//!     (event driven, capped at 800 ms by `CUA_DRIVER_WEBKIT_SETTLE_MS`). Native text inputs return without it.
 //!   - AXPopUpButton: appends the list of available options and redirects to set_value.
 //!   - Advertised-action warning if the element didn't list the requested action.
 //!
@@ -879,6 +879,7 @@ impl ClickTool {
             // and stomp default for a non-default session).
             let ck = cursor_key.clone();
             let selection_modifiers = modifiers.clone();
+            let settle_guard = element_guard.clone();
             let result = focus_guard::with_focus_suppressed(
                 if foreground { None } else { Some(pid) },
                 prior_front,
@@ -953,13 +954,15 @@ impl ClickTool {
                     ),
                     fronted,
                 ))) => {
-                    // For text inputs, wait 800ms for WebKit DOM focus to settle
-                    // before returning — matches the Swift reference behaviour.
-                    // The window watch above already used part of it.
+                    // For text inputs in web content, wait for the page to move
+                    // DOM focus onto the field. The wait ends as soon as AX
+                    // reports the field focused and stable, and is capped by
+                    // `CUA_DRIVER_WEBKIT_SETTLE_MS` (default 800, the old fixed
+                    // wait). The window watch above already used part of it.
                     if needs_webkit_delay {
-                        let settle = std::time::Duration::from_millis(800)
+                        let cap = cua_driver_core::input_pacing::webkit_settle_cap()
                             .saturating_sub(acted_at.elapsed());
-                        tokio::time::sleep(settle).await;
+                        wait_for_web_focus(settle_guard, cap).await;
                     }
                     msg.push_str(&changes.result_suffix());
                     // AX dispatch went through, but AXPerformAction returning
@@ -1623,8 +1626,33 @@ fn prime_key_window_for_background_press(pid: i32, window_id: u32, action: &str)
     }
 }
 
+/// Wait, off the async executor, until `element` reports `AXFocused` on two
+/// reads a few milliseconds apart, or `cap` runs out. Replaces a fixed sleep:
+/// a page that moves focus in a few ms returns in a few ms, and one that never
+/// does costs no more than the cap.
+async fn wait_for_web_focus(
+    element: crate::ax::snapshot::RetainedElement,
+    cap: std::time::Duration,
+) {
+    if cap.is_zero() {
+        return;
+    }
+    let _ = tokio::task::spawn_blocking(move || {
+        let start = std::time::Instant::now();
+        cua_driver_core::input_pacing::wait_until_stable(
+            cap,
+            std::time::Duration::from_millis(4),
+            std::time::Duration::from_millis(8),
+            || unsafe { copy_bool_attr(element.as_ptr() as AXUIElementRef, "AXFocused") } == Some(true),
+            || start.elapsed(),
+            std::thread::sleep,
+        )
+    })
+    .await;
+}
+
 /// Whether an AX press on a text input must wait for the page to move DOM
-/// focus (800 ms). Only text inputs inside web content (an `AXWebArea`
+/// focus (until AX reports focus, capped at 800 ms). Only text inputs inside web content (an `AXWebArea`
 /// ancestor) have a DOM focus to settle; waiting on a native field only
 /// delays the result. `ancestor_roles` is read only for a text input pressed
 /// with `AXPress`.

@@ -20671,6 +20671,10 @@ public struct AppHostState: Equatable, Hashable {
      */
     public var serviceRunning: Bool
     /**
+     * The service log's last lines while it is set up but not running.
+     */
+    public var serviceLog: [String]
+    /**
      * `launchd`, `systemd`, `windows-task`, `process`.
      */
     public var serviceKind: String
@@ -20799,6 +20803,9 @@ public struct AppHostState: Equatable, Hashable {
          * Service running.
          */serviceRunning: Bool,
         /**
+         * The service log's last lines while it is set up but not running.
+         */serviceLog: [String],
+        /**
          * `launchd`, `systemd`, `windows-task`, `process`.
          */serviceKind: String,
         /**
@@ -20881,6 +20888,7 @@ public struct AppHostState: Equatable, Hashable {
         self.sharing = sharing
         self.serviceInstalled = serviceInstalled
         self.serviceRunning = serviceRunning
+        self.serviceLog = serviceLog
         self.serviceKind = serviceKind
         self.online = online
         self.clients = clients
@@ -20932,6 +20940,7 @@ public struct FfiConverterTypeAppHostState: FfiConverterRustBuffer {
                 sharing: FfiConverterBool.read(from: &buf),
                 serviceInstalled: FfiConverterBool.read(from: &buf),
                 serviceRunning: FfiConverterBool.read(from: &buf),
+                serviceLog: FfiConverterSequenceString.read(from: &buf),
                 serviceKind: FfiConverterString.read(from: &buf),
                 online: FfiConverterOptionBool.read(from: &buf),
                 clients: FfiConverterSequenceTypeAppHostClient.read(from: &buf),
@@ -20969,6 +20978,7 @@ public struct FfiConverterTypeAppHostState: FfiConverterRustBuffer {
         FfiConverterBool.write(value.sharing, into: &buf)
         FfiConverterBool.write(value.serviceInstalled, into: &buf)
         FfiConverterBool.write(value.serviceRunning, into: &buf)
+        FfiConverterSequenceString.write(value.serviceLog, into: &buf)
         FfiConverterString.write(value.serviceKind, into: &buf)
         FfiConverterOptionBool.write(value.online, into: &buf)
         FfiConverterSequenceTypeAppHostClient.write(value.clients, into: &buf)
@@ -23259,6 +23269,11 @@ public struct AppMachinesPageInput: Equatable, Hashable {
      */
     public var hostnames: [String: String]
     /**
+     * The device each relay machine published as the one it runs on
+     * (relay meta `cua.host.device`), by machine id.
+     */
+    public var deviceIds: [String: String]
+    /**
      * Whether the relay sees each machine connected now, by machine id.
      */
     public var presence: [String: Bool]
@@ -23283,6 +23298,10 @@ public struct AppMachinesPageInput: Equatable, Hashable {
          * The hostname each machine's cua-spacesd reported, by machine id.
          */hostnames: [String: String],
         /**
+         * The device each relay machine published as the one it runs on
+         * (relay meta `cua.host.device`), by machine id.
+         */deviceIds: [String: String],
+        /**
          * Whether the relay sees each machine connected now, by machine id.
          */presence: [String: Bool],
         /**
@@ -23292,6 +23311,7 @@ public struct AppMachinesPageInput: Equatable, Hashable {
         self.spaces = spaces
         self.devices = devices
         self.hostnames = hostnames
+        self.deviceIds = deviceIds
         self.presence = presence
         self.now = now
     }
@@ -23316,6 +23336,7 @@ public struct FfiConverterTypeAppMachinesPageInput: FfiConverterRustBuffer {
                 spaces: FfiConverterSequenceTypeAppSpace.read(from: &buf),
                 devices: FfiConverterSequenceTypeAppDeviceIn.read(from: &buf),
                 hostnames: FfiConverterDictionaryStringString.read(from: &buf),
+                deviceIds: FfiConverterDictionaryStringString.read(from: &buf),
                 presence: FfiConverterDictionaryStringBool.read(from: &buf),
                 now: FfiConverterUInt64.read(from: &buf)
         )
@@ -23326,6 +23347,7 @@ public struct FfiConverterTypeAppMachinesPageInput: FfiConverterRustBuffer {
         FfiConverterSequenceTypeAppSpace.write(value.spaces, into: &buf)
         FfiConverterSequenceTypeAppDeviceIn.write(value.devices, into: &buf)
         FfiConverterDictionaryStringString.write(value.hostnames, into: &buf)
+        FfiConverterDictionaryStringString.write(value.deviceIds, into: &buf)
         FfiConverterDictionaryStringBool.write(value.presence, into: &buf)
         FfiConverterUInt64.write(value.now, into: &buf)
     }
@@ -24135,6 +24157,11 @@ public struct AppMachinesViewIssue: Equatable, Hashable {
      * Its fix, when there is one here.
      */
     public var action: AppMachinesViewIssueAction?
+    /**
+     * Lines under the sentence, as they are (the service's last log
+     * lines); empty for most issues.
+     */
+    public var detail: [String]
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -24151,11 +24178,16 @@ public struct AppMachinesViewIssue: Equatable, Hashable {
          */text: String,
         /**
          * Its fix, when there is one here.
-         */action: AppMachinesViewIssueAction?) {
+         */action: AppMachinesViewIssueAction?,
+        /**
+         * Lines under the sentence, as they are (the service's last log
+         * lines); empty for most issues.
+         */detail: [String]) {
         self.id = id
         self.level = level
         self.text = text
         self.action = action
+        self.detail = detail
     }
 
 
@@ -24177,7 +24209,8 @@ public struct FfiConverterTypeAppMachinesViewIssue: FfiConverterRustBuffer {
                 id: FfiConverterString.read(from: &buf),
                 level: FfiConverterString.read(from: &buf),
                 text: FfiConverterString.read(from: &buf),
-                action: FfiConverterOptionTypeAppMachinesViewIssueAction.read(from: &buf)
+                action: FfiConverterOptionTypeAppMachinesViewIssueAction.read(from: &buf),
+                detail: FfiConverterSequenceString.read(from: &buf)
         )
     }
 
@@ -24186,6 +24219,7 @@ public struct FfiConverterTypeAppMachinesViewIssue: FfiConverterRustBuffer {
         FfiConverterString.write(value.level, into: &buf)
         FfiConverterString.write(value.text, into: &buf)
         FfiConverterOptionTypeAppMachinesViewIssueAction.write(value.action, into: &buf)
+        FfiConverterSequenceString.write(value.detail, into: &buf)
     }
 }
 

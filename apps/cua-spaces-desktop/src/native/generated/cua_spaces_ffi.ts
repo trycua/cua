@@ -28200,6 +28200,10 @@ export type AppHostState = {
      */
     serviceRunning: boolean,
     /**
+     * The service log's last lines while it is set up but not running.
+     */
+    serviceLog: Array<string>,
+    /**
      * `launchd`, `systemd`, `windows-task`, `process`.
      */
     serviceKind: string,
@@ -28330,6 +28334,7 @@ const FfiConverterTypeAppHostState = (() => {
                 sharing: FfiConverterBool.read(from),
                 serviceInstalled: FfiConverterBool.read(from),
                 serviceRunning: FfiConverterBool.read(from),
+                serviceLog: FfiConverterSequenceString.read(from),
                 serviceKind: FfiConverterString.read(from),
                 online: FfiConverterOptionalBoolean.read(from),
                 clients: FfiConverterSequenceTypeAppHostClient.read(from),
@@ -28366,6 +28371,7 @@ const FfiConverterTypeAppHostState = (() => {
             FfiConverterBool.write(value.sharing, into);
             FfiConverterBool.write(value.serviceInstalled, into);
             FfiConverterBool.write(value.serviceRunning, into);
+            FfiConverterSequenceString.write(value.serviceLog, into);
             FfiConverterString.write(value.serviceKind, into);
             FfiConverterOptionalBoolean.write(value.online, into);
             FfiConverterSequenceTypeAppHostClient.write(value.clients, into);
@@ -28401,6 +28407,7 @@ const FfiConverterTypeAppHostState = (() => {
              FfiConverterBool.allocationSize(value.sharing) +
              FfiConverterBool.allocationSize(value.serviceInstalled) +
              FfiConverterBool.allocationSize(value.serviceRunning) +
+             FfiConverterSequenceString.allocationSize(value.serviceLog) +
              FfiConverterString.allocationSize(value.serviceKind) +
              FfiConverterOptionalBoolean.allocationSize(value.online) +
              FfiConverterSequenceTypeAppHostClient.allocationSize(value.clients) +
@@ -29771,6 +29778,11 @@ export type AppMachinesPageInput = {
      */
     hostnames: Map<string, string>,
     /**
+     * The device each relay machine published as the one it runs on
+     * (relay meta `cua.host.device`), by machine id.
+     */
+    deviceIds: Map<string, string>,
+    /**
      * Whether the relay sees each machine connected now, by machine id.
      */
     presence: Map<string, boolean>,
@@ -29805,6 +29817,7 @@ const FfiConverterTypeAppMachinesPageInput = (() => {
                 spaces: FfiConverterSequenceTypeAppSpace.read(from),
                 devices: FfiConverterSequenceTypeAppDeviceIn.read(from),
                 hostnames: FfiConverterMapStringString.read(from),
+                deviceIds: FfiConverterMapStringString.read(from),
                 presence: FfiConverterMapStringBoolean.read(from),
                 now: FfiConverterUInt64.read(from)
             };
@@ -29814,6 +29827,7 @@ const FfiConverterTypeAppMachinesPageInput = (() => {
             FfiConverterSequenceTypeAppSpace.write(value.spaces, into);
             FfiConverterSequenceTypeAppDeviceIn.write(value.devices, into);
             FfiConverterMapStringString.write(value.hostnames, into);
+            FfiConverterMapStringString.write(value.deviceIds, into);
             FfiConverterMapStringBoolean.write(value.presence, into);
             FfiConverterUInt64.write(value.now, into);
         }
@@ -29822,6 +29836,7 @@ const FfiConverterTypeAppMachinesPageInput = (() => {
              FfiConverterSequenceTypeAppSpace.allocationSize(value.spaces) +
              FfiConverterSequenceTypeAppDeviceIn.allocationSize(value.devices) +
              FfiConverterMapStringString.allocationSize(value.hostnames) +
+             FfiConverterMapStringString.allocationSize(value.deviceIds) +
              FfiConverterMapStringBoolean.allocationSize(value.presence) +
              FfiConverterUInt64.allocationSize(value.now);
 
@@ -30185,7 +30200,12 @@ export type AppMachinesViewIssue = {
     /**
      * Its fix, when there is one here.
      */
-    action?: AppMachinesViewIssueAction
+    action?: AppMachinesViewIssueAction,
+    /**
+     * Lines under the sentence, as they are (the service's last log
+     * lines); empty for most issues.
+     */
+    detail: Array<string>
 }
 
 /**
@@ -30212,7 +30232,8 @@ const FfiConverterTypeAppMachinesViewIssue = (() => {
                 id: FfiConverterString.read(from),
                 level: FfiConverterString.read(from),
                 text: FfiConverterString.read(from),
-                action: FfiConverterOptionalTypeAppMachinesViewIssueAction.read(from)
+                action: FfiConverterOptionalTypeAppMachinesViewIssueAction.read(from),
+                detail: FfiConverterSequenceString.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -30220,12 +30241,14 @@ const FfiConverterTypeAppMachinesViewIssue = (() => {
             FfiConverterString.write(value.level, into);
             FfiConverterString.write(value.text, into);
             FfiConverterOptionalTypeAppMachinesViewIssueAction.write(value.action, into);
+            FfiConverterSequenceString.write(value.detail, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterString.allocationSize(value.id) +
              FfiConverterString.allocationSize(value.level) +
              FfiConverterString.allocationSize(value.text) +
-             FfiConverterOptionalTypeAppMachinesViewIssueAction.allocationSize(value.action);
+             FfiConverterOptionalTypeAppMachinesViewIssueAction.allocationSize(value.action) +
+             FfiConverterSequenceString.allocationSize(value.detail);
 
         }
     };

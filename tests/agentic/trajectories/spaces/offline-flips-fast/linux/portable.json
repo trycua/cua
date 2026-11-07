@@ -1,0 +1,404 @@
+{
+  "turns": [
+    {
+      "turn": "turn-00001",
+      "tool": "click",
+      "at": "2026-11-06T00:11:23.797Z",
+      "args": {
+        "element_token": "s00000001:20",
+        "pid": 71756,
+        "window_id": 46137348
+      },
+      "recorded_error": false,
+      "pids": {
+        "71756": "cua-spaces"
+      },
+      "windows": {
+        "46137348": "Cua Spaces"
+      },
+      "tokens": {
+        "s00000001:20": {
+          "row": "push button \"Skip for now\" [actions=[press,showContextMenu]]",
+          "pid": 71756,
+          "window_id": 46137348
+        }
+      }
+    },
+    {
+      "turn": "turn-00002",
+      "tool": "click",
+      "at": "2026-11-06T00:11:27.885Z",
+      "args": {
+        "element_token": "s00000002:18"
+      },
+      "recorded_error": false,
+      "pids": {
+        "71756": "cua-spaces"
+      },
+      "windows": {
+        "46137348": "Cua Spaces"
+      },
+      "tokens": {
+        "s00000002:18": {
+          "row": "link \"Machines 10 waiting to be added 70\" [actions=[jump,showContextMenu]]",
+          "pid": 71756,
+          "window_id": 46137348
+        }
+      }
+    },
+    {
+      "turn": "turn-00003",
+      "tool": "click",
+      "at": "2026-11-06T00:11:35.048Z",
+      "args": {
+        "element_token": "s00000003:41",
+        "pid": 71756,
+        "window_id": 46137348
+      },
+      "recorded_error": true,
+      "pids": {
+        "71756": "cua-spaces"
+      },
+      "windows": {
+        "46137348": "Cua Spaces"
+      },
+      "tokens": {
+        "s00000003:41": {
+          "row": "entry \"Search machines\" [actions=[activate,showContextMenu]]",
+          "pid": 71756,
+          "window_id": 46137348
+        }
+      }
+    },
+    {
+      "turn": "turn-00004",
+      "tool": "click",
+      "at": "2026-11-06T00:11:40.255Z",
+      "args": {
+        "pid": 71756,
+        "window_id": 46137348,
+        "x": 400,
+        "y": 200
+      },
+      "recorded_error": true,
+      "pids": {
+        "71756": "cua-spaces"
+      },
+      "windows": {
+        "46137348": "Cua Spaces"
+      },
+      "tokens": {}
+    },
+    {
+      "turn": "turn-00005",
+      "tool": "click",
+      "at": "2026-11-06T00:11:43.379Z",
+      "args": {
+        "delivery_mode": "foreground",
+        "pid": 71756,
+        "window_id": 46137348,
+        "x": 400,
+        "y": 200
+      },
+      "recorded_error": false,
+      "pids": {
+        "71756": "cua-spaces"
+      },
+      "windows": {
+        "46137348": "Cua Spaces"
+      },
+      "tokens": {}
+    },
+    {
+      "turn": "turn-00006",
+      "tool": "click",
+      "at": "2026-11-06T00:11:52.688Z",
+      "args": {
+        "delivery_mode": "foreground",
+        "element_token": "s00000005:41",
+        "pid": 71756,
+        "window_id": 46137348
+      },
+      "recorded_error": false,
+      "pids": {
+        "71756": "cua-spaces"
+      },
+      "windows": {
+        "46137348": "Cua Spaces"
+      },
+      "tokens": {
+        "s00000005:41": {
+          "row": "entry \"Search machines\" [actions=[activate,showContextMenu]]",
+          "pid": 71756,
+          "window_id": 46137348
+        }
+      }
+    },
+    {
+      "turn": "turn-00007",
+      "tool": "type_text",
+      "at": "2026-11-06T00:11:55.926Z",
+      "args": {
+        "delivery_mode": "foreground",
+        "pid": 71756,
+        "text": "{{host.2.name}}",
+        "window_id": 46137348
+      },
+      "recorded_error": false,
+      "pids": {
+        "71756": "cua-spaces"
+      },
+      "windows": {
+        "46137348": "Cua Spaces"
+      },
+      "tokens": {}
+    },
+    {
+      "turn": "turn-00008",
+      "tool": "click",
+      "at": "2026-11-06T00:12:03.555Z",
+      "args": {
+        "delivery_mode": "foreground",
+        "element_token": "s00000007:90"
+      },
+      "recorded_error": true,
+      "pids": {
+        "71756": "cua-spaces"
+      },
+      "windows": {
+        "46137348": "Cua Spaces"
+      },
+      "tokens": {
+        "s00000007:90": {
+          "row": "list item \"{{host.2.name}} Desktop shared Linux\" [actions=[select,showContextMenu]]",
+          "pid": 71756,
+          "window_id": 46137348
+        }
+      }
+    },
+    {
+      "turn": "turn-00009",
+      "tool": "click",
+      "at": "2026-11-06T00:12:10.859Z",
+      "args": {
+        "delivery_mode": "foreground",
+        "pid": 71756,
+        "window_id": 46137348,
+        "x": 420,
+        "y": 165
+      },
+      "recorded_error": false,
+      "pids": {
+        "71756": "cua-spaces"
+      },
+      "windows": {
+        "46137348": "Cua Spaces"
+      },
+      "tokens": {}
+    },
+    {
+      "turn": "turn-00010",
+      "tool": "type_text",
+      "at": "2026-11-06T00:12:14.143Z",
+      "args": {
+        "delivery_mode": "foreground",
+        "pid": 71756,
+        "text": "{{host.2.name}}",
+        "window_id": 46137348
+      },
+      "recorded_error": false,
+      "pids": {
+        "71756": "cua-spaces"
+      },
+      "windows": {
+        "46137348": "Cua Spaces"
+      },
+      "tokens": {}
+    },
+    {
+      "turn": "turn-00011",
+      "tool": "scroll",
+      "at": "2026-11-06T00:12:22.163Z",
+      "args": {
+        "amount": 15,
+        "direction": "down",
+        "pid": 71756,
+        "window_id": 46137348,
+        "x": 420,
+        "y": 500
+      },
+      "recorded_error": true,
+      "pids": {
+        "71756": "cua-spaces"
+      },
+      "windows": {
+        "46137348": "Cua Spaces"
+      },
+      "tokens": {}
+    },
+    {
+      "turn": "turn-00012",
+      "tool": "scroll",
+      "at": "2026-11-06T00:12:28.288Z",
+      "args": {
+        "amount": 15,
+        "delivery_mode": "foreground",
+        "direction": "down",
+        "pid": 71756,
+        "window_id": 46137348,
+        "x": 420,
+        "y": 500
+      },
+      "recorded_error": false,
+      "pids": {
+        "71756": "cua-spaces"
+      },
+      "windows": {
+        "46137348": "Cua Spaces"
+      },
+      "tokens": {}
+    },
+    {
+      "turn": "turn-00013",
+      "tool": "click",
+      "at": "2026-11-06T00:12:36.407Z",
+      "args": {
+        "delivery_mode": "foreground",
+        "pid": 72965,
+        "window_id": 65011720,
+        "x": 272,
+        "y": 161
+      },
+      "recorded_error": true,
+      "pids": {
+        "72965": "Gcr-prompter"
+      },
+      "windows": {
+        "65011720": ""
+      },
+      "tokens": {}
+    },
+    {
+      "turn": "turn-00014",
+      "tool": "click",
+      "at": "2026-11-06T00:12:40.838Z",
+      "args": {
+        "delivery_mode": "foreground",
+        "element_token": "s0000000b:3"
+      },
+      "recorded_error": false,
+      "pids": {
+        "72965": "Gcr-prompter"
+      },
+      "windows": {
+        "65011720": ""
+      },
+      "tokens": {
+        "s0000000b:3": {
+          "row": "push button \"Cancel\" [actions=[click]]",
+          "pid": 72965,
+          "window_id": 65011720
+        }
+      }
+    },
+    {
+      "turn": "turn-00015",
+      "tool": "click",
+      "at": "2026-11-06T00:12:46.066Z",
+      "args": {
+        "delivery_mode": "foreground",
+        "pid": 71756,
+        "window_id": 46137348,
+        "x": 420,
+        "y": 165
+      },
+      "recorded_error": false,
+      "pids": {
+        "71756": "cua-spaces"
+      },
+      "windows": {
+        "46137348": "Cua Spaces"
+      },
+      "tokens": {}
+    },
+    {
+      "turn": "turn-00016",
+      "tool": "type_text",
+      "at": "2026-11-06T00:12:48.574Z",
+      "args": {
+        "delivery_mode": "foreground",
+        "pid": 71756,
+        "text": "{{host.2.name}}",
+        "window_id": 46137348
+      },
+      "recorded_error": false,
+      "pids": {
+        "71756": "cua-spaces"
+      },
+      "windows": {
+        "46137348": "Cua Spaces"
+      },
+      "tokens": {}
+    },
+    {
+      "turn": "turn-00017",
+      "tool": "click",
+      "at": "2026-11-06T00:12:54.465Z",
+      "args": {
+        "delivery_mode": "foreground",
+        "pid": 71756,
+        "window_id": 46137348,
+        "x": 380,
+        "y": 276
+      },
+      "recorded_error": false,
+      "pids": {
+        "71756": "cua-spaces"
+      },
+      "windows": {
+        "46137348": "Cua Spaces"
+      },
+      "tokens": {}
+    },
+    {
+      "turn": "turn-00018",
+      "tool": "type_text",
+      "at": "2026-11-06T00:12:58.596Z",
+      "args": {
+        "delivery_mode": "foreground",
+        "pid": 71673,
+        "text": "cua-e2e-power off",
+        "window_id": 48234499
+      },
+      "recorded_error": false,
+      "pids": {
+        "71673": "Xfce4-terminal"
+      },
+      "windows": {
+        "48234499": "Second computer"
+      },
+      "tokens": {}
+    },
+    {
+      "turn": "turn-00019",
+      "tool": "press_key",
+      "at": "2026-11-06T00:12:59.699Z",
+      "args": {
+        "delivery_mode": "foreground",
+        "key": "enter",
+        "pid": 71673,
+        "window_id": 48234499
+      },
+      "recorded_error": false,
+      "pids": {
+        "71673": "Xfce4-terminal"
+      },
+      "windows": {
+        "48234499": "Second computer"
+      },
+      "tokens": {}
+    }
+  ],
+  "replayable": true,
+  "not_replayable_because": ""
+}

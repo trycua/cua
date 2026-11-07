@@ -1,0 +1,14 @@
+#!/usr/bin/env python3
+"""bin/agentic-e2e: prompt tests (tests/agentic). `bin/agentic-e2e --help`.
+
+Design: docs/rfcs/prompt-tests.md."""
+
+import os
+import sys
+
+HERE = os.path.dirname(os.path.realpath(__file__))
+sys.path.insert(0, os.path.join(HERE, "..", "tests", "agentic"))
+
+from runner.__main__ import main  # noqa: E402
+
+sys.exit(main())

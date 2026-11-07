@@ -1,0 +1,62 @@
+# Prompt tests: the one place the model and the run defaults are pinned.
+# Change the model here only; every lane (nightly, release, local) reads it.
+
+# The agent model: the latest Sonnet. Pinned by exact id, never an alias, so a
+# model release never changes a nightly result on its own.
+model: claude-sonnet-5-5
+# Thinking effort for the agent run (low | medium | high).
+effort: medium
+# The agent harness: Claude Code in headless mode, pinned. CI installs exactly
+# this version (npm), so a harness release never changes a result on its own.
+agent_cli: "@anthropic-ai/claude-code@2.1.318"
+
+# Optional, report-only review of the recorded run by a model. Never decides
+# the verdict; off unless `bin/agentic-e2e run --review` is passed.
+review_model: claude-sonnet-5-5
+
+# Only the staging environment is ever touched. The runner refuses any other.
+environment: staging
+endpoints:
+  CUA_OIDC_ISSUER: https://auth.staging.cua.ai/realms/cua-staging
+  CUA_RELAY_URL: https://relay.staging.cua.ai
+  CUA_SPACES_API_URL: https://api.staging.cua.ai
+  CUA_ACCOUNT_APP_URL: https://app.staging.cua.ai
+
+# Defaults a test can override in its own `budget`.
+budget:
+  steps: 60
+  minutes: 15
+
+# Where builds come from when --build is not given: the rolling nightly.
+default_build: release:cua-spaces-nightly
+
+# Dialog titles watched in every run, so a report can say what appeared even
+# when a test has no `no_dialogs` check.
+watched_dialogs:
+  - Windows Security Alert
+  - Windows Defender Firewall
+  - Windows protected your PC
+  - Microsoft Defender SmartScreen
+  - User Account Control
+  - wants to access
+  - would like to receive keystrokes
+  - would like to record this computer's screen
+  - Choose password for new keyring
+  - Unlock Keyring
+  - Authentication Required
+
+# PR mode (v2): a pull request replays only the tests of the areas its
+# changed files touch. `bin/agentic-e2e select --changed FILE` prints them.
+areas:
+  spaces:
+    - apps/cua-spaces-desktop/**
+    - apps/cua-spaces-web/**
+    - libs/cua/crates/cua-host/**
+    - libs/cua/crates/cua-mesh/**
+    - libs/cua/crates/cua-spaces-app-core/**
+    - libs/cua/crates/cua-spaces-ffi/**
+    - libs/cua/crates/cua-cli/**
+    - libs/cua/crates/cua-auth/**
+    - libs/cua-spacesd/**
+    - tests/agentic/spaces/**
+    - tests/agentic/runner/**

@@ -1,0 +1,31 @@
+{
+  "action_truth": {
+    "actual_delivery": "foreground",
+    "attempts": [],
+    "delivered_count": null,
+    "detail": null,
+    "effect": "confirmed",
+    "escalation": null,
+    "evidence": [
+      {
+        "detail": "focus_after=elsewhere; closed: window 65011720",
+        "kind": "window_change"
+      }
+    ],
+    "fallbacks": [],
+    "refusal": null,
+    "requested_delivery": "foreground",
+    "route": "global_input",
+    "transport": "linux_x_test"
+  },
+  "arguments": {
+    "delivery_mode": "foreground",
+    "element_token": "s0000000b:3"
+  },
+  "result_error": false,
+  "result_summary": "Clicked element [3] (pid 72965) with a real pointer click (delivery_mode=foreground, focus_after=elsewhere); closed: window 65011720. [window_point=(1233, 642) screen_point=(1233, 642)]",
+  "t_ms_from_session_start": 82502,
+  "t_start_ms_from_session_start": 81396,
+  "timestamp": "2026-11-06T00:12:40.838Z",
+  "tool": "click"
+}

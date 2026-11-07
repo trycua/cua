@@ -752,12 +752,11 @@ impl Spaces {
     ) -> Result<NetworkSettings> {
         let current = crate::network::settings_of(self.inner.registry.meta(key).as_ref());
         // Choosing an exit needs the secure default.
-        if settings.via.is_some() && settings.via != current.via {
-            if Mode::from_env() == Mode::Legacy {
-                return Err(Error::invalid(
-                    cua_vmm::network::secure_default_off_message(),
-                ));
-            }
+        if settings.via.is_some() && settings.via != current.via && Mode::from_env() == Mode::Legacy
+        {
+            return Err(Error::invalid(
+                cua_vmm::network::secure_default_off_message(),
+            ));
         }
         let Some(cua_vmm::network::EgressVia::Space(name)) = &settings.via else {
             return Ok(settings.clone());

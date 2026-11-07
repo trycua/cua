@@ -23,8 +23,8 @@ import PackageDescription
 // framework that scripts/build-app.sh embeds in Contents/Frameworks and
 // scripts/build-release.sh signs from the inside out.
 //
-// PermissionFlow (MIT, 2.11.4, vendored in Vendor/PermissionFlow with one
-// addition, see its README) is the guide to Screen Recording and
+// PermissionFlow (MIT, 2.11.4, vendored in Vendor/PermissionFlow with two
+// additions, see its README) is the guide to Screen Recording and
 // Accessibility in System Settings: it opens the pane and docks a panel
 // under it that says what to do there (PermissionGuide.swift).
 // Its strings ship as a SwiftPM resource bundle, which build-app.sh copies

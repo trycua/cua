@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.42.2](https://github.com/trycua/cua/compare/cua-driver-rs-v0.42.1...cua-driver-rs-v0.42.2) (2026-11-07)
+
+
+### Bug Fixes
+
+* **spaces:** every agent message is appended to the thread, child Spaces work from inside a Space, and child agents show in the chat ([#6733](https://github.com/trycua/cua/issues/6733)) ([515371a](https://github.com/trycua/cua/commit/515371a48a616aea3bba5f0ea13e0863c8a26041))
+
 ## [0.42.1](https://github.com/trycua/cua/compare/cua-driver-rs-v0.42.0...cua-driver-rs-v0.42.1) (2026-11-07)
 
 

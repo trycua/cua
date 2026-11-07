@@ -539,7 +539,10 @@ mod tests {
         let i = issues(&THIS, None, Some(&host));
         assert_eq!(i[0].detail, ["port 3621 in use", "exiting"]);
         // Other issues carry none.
-        let h = health(vec![check("machine.disk", "fail", &[("free_gb", "3")])], "0.4.1");
+        let h = health(
+            vec![check("machine.disk", "fail", &[("free_gb", "3")])],
+            "0.4.1",
+        );
         assert!(issues(&OTHER, Some(&h), None)[0].detail.is_empty());
     }
 

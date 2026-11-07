@@ -825,7 +825,10 @@ mod tests {
         assert!(guessed[0].device.is_none());
         // With the link the machine takes exactly its own device; the other
         // is a device of its own.
-        let rows = merge(&input(vec![linked(relay("m1", name, true), "dev_b")], devices));
+        let rows = merge(&input(
+            vec![linked(relay("m1", name, true), "dev_b")],
+            devices,
+        ));
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].device.as_deref(), Some("dev_b"));
         assert_eq!(rows[1].id, "dev_a");
@@ -843,13 +846,19 @@ mod tests {
         let removed = merge(&input(vec![], devices.clone()));
         assert_eq!(removed.len(), 2);
         assert!(removed.iter().all(|r| r.device_only));
-        let added = merge(&input(vec![linked(relay("m1", name, true), "dev_a")], devices.clone()));
+        let added = merge(&input(
+            vec![linked(relay("m1", name, true), "dev_a")],
+            devices.clone(),
+        ));
         assert_eq!(added.len(), 2);
         assert_eq!(added[0].id, "m1");
         assert_eq!(added[0].device.as_deref(), Some("dev_a"));
         assert_eq!(added[1].id, "dev_b");
         // Renamed in between: still its own device.
-        let renamed = merge(&input(vec![linked(relay("m1", "Studio", true), "dev_a")], devices));
+        let renamed = merge(&input(
+            vec![linked(relay("m1", "Studio", true), "dev_a")],
+            devices,
+        ));
         assert_eq!(renamed[0].device.as_deref(), Some("dev_a"));
         assert_eq!(renamed.len(), 2);
     }
@@ -866,7 +875,10 @@ mod tests {
         assert!(rows[0].device.is_none());
         assert!(rows[1].device_only);
         // Without the link the old guess still pairs them.
-        let guessed = merge(&input(vec![relay("m1", "box", true)], vec![device("dev_x", "box")]));
+        let guessed = merge(&input(
+            vec![relay("m1", "box", true)],
+            vec![device("dev_x", "box")],
+        ));
         assert_eq!(guessed.len(), 1);
     }
 

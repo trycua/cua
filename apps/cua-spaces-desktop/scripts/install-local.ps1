@@ -336,18 +336,18 @@ try {
     $liveState = Get-InstallState $InstallDir
     if ($liveState -eq 'local') {
         Write-Step 'stopping the running Cua Spaces Local (only processes from its folder)'
-        $stopped = Stop-ProcessesUnder $InstallDir
+        $stopped = Stop-LocalInstall $InstallDir
         if ($stopped -gt 0) { Write-Host "  stopped $stopped process(es)" }
     }
     Remove-Item -LiteralPath $OldDir -Recurse -Force -ErrorAction SilentlyContinue
     if (Test-Path -LiteralPath $InstallDir) {
-        Move-Item -LiteralPath $InstallDir -Destination $OldDir
+        Move-Folder $InstallDir $OldDir $InstallDir
         $rollback = $OldDir
     }
     try {
-        Move-Item -LiteralPath $StageDir -Destination $InstallDir
+        Move-Folder $StageDir $InstallDir $null
     } catch {
-        if ($rollback) { Move-Item -LiteralPath $OldDir -Destination $InstallDir -ErrorAction SilentlyContinue }
+        if ($rollback) { try { Move-Folder $OldDir $InstallDir $null } catch { } }
         throw
     }
 

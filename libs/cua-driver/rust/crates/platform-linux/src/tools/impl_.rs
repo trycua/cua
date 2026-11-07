@@ -76,7 +76,7 @@ fn window_target_candidates_for_pid(
         .collect()
 }
 
-fn pid_window_target_candidates(pid: i64) -> Vec<WindowTargetCandidate> {
+pub(crate) fn pid_window_target_candidates(pid: i64) -> Vec<WindowTargetCandidate> {
     let Ok(pid) = u32::try_from(pid) else {
         return Vec::new();
     };
@@ -138,16 +138,15 @@ pub(crate) fn pid_fallback_window_resolver(
         if crate::wayland::is_wayland() && crate::wayland::niri::is_session() {
             return crate::wayland::niri::window_in_use(pid);
         }
+        if crate::wayland::is_wayland() && crate::wayland::hyprland::is_session() {
+            return crate::wayland::hyprland::window_in_use(pid);
+        }
         let windows: Vec<crate::x11::WindowInfo> = crate::wayland::list_windows_dispatch(Some(pid))
             .into_iter()
             .filter(|w| w.pid == Some(pid))
             .collect();
         if crate::wayland::is_wayland() {
-            return windows
-                .into_iter()
-                .filter(|w| w.is_on_screen)
-                .max_by_key(|w| w.z_index.unwrap_or(0))
-                .map(|w| w.xid);
+            return topmost_on_screen_window(&windows);
         }
         let ids: Vec<u64> = windows.iter().map(|w| w.xid).collect();
         crate::x11::pick_pid_window(
@@ -157,6 +156,20 @@ pub(crate) fn pid_fallback_window_resolver(
             crate::x11::active_window(),
         )
     })
+}
+
+/// The only on-screen window, else the highest stacking position. Without one,
+/// several on-screen windows stay unresolved: list order is not stacking.
+fn topmost_on_screen_window(windows: &[crate::x11::WindowInfo]) -> Option<u64> {
+    let on_screen: Vec<_> = windows.iter().filter(|w| w.is_on_screen).collect();
+    if let [only] = on_screen.as_slice() {
+        return Some(only.xid);
+    }
+    on_screen
+        .iter()
+        .filter_map(|w| Some((w.z_index?, w.xid)))
+        .max()
+        .map(|(_, xid)| xid)
 }
 
 #[cfg(test)]
@@ -244,6 +257,29 @@ mod pid_window_resolver_tests {
             crate::x11::pick_pid_window(&windows, Some(42), |_| None, None),
             Some(1)
         );
+    }
+
+    #[test]
+    fn wayland_fallback_needs_a_stacking_position_to_choose_among_on_screen_windows() {
+        let hidden = win(3, Some(9), false, 800, 600);
+        assert_eq!(
+            topmost_on_screen_window(&[win(1, None, true, 800, 600), hidden.clone()]),
+            Some(1)
+        );
+        assert_eq!(
+            topmost_on_screen_window(&[win(1, None, true, 800, 600), win(2, None, true, 800, 600)]),
+            None
+        );
+        assert_eq!(
+            topmost_on_screen_window(&[
+                win(1, Some(4), true, 800, 600),
+                win(2, Some(2), true, 800, 600),
+                win(4, None, true, 800, 600),
+                hidden.clone()
+            ]),
+            Some(1)
+        );
+        assert_eq!(topmost_on_screen_window(&[hidden]), None);
     }
 
     #[test]

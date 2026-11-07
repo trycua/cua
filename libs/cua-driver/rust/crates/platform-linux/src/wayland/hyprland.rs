@@ -838,6 +838,21 @@ fn native_attestation(windows: &[Window], address: u64, pid: u32) -> bool {
             .is_some_and(|w| w.pid == pid && w.xwayland == Some(false))
 }
 
+/// The pid's visible window it focused most recently. Hyprland reports no
+/// stacking order, so focus history is the only attested "in use" signal.
+pub fn window_in_use(pid: u32) -> Option<u64> {
+    pick_window_in_use(&list_windows().ok()?, pid)
+}
+
+fn pick_window_in_use(windows: &[Window], pid: u32) -> Option<u64> {
+    windows
+        .iter()
+        // -1: never focused, so no evidence it is the one in use.
+        .filter(|w| w.pid == pid && w.visible && w.focus_order >= 0)
+        .min_by_key(|w| w.focus_order)
+        .map(|w| w.address)
+}
+
 /// The legacy PID-only bounds caller has no window identity: allow only a
 /// single mapped client. Explicit IDs never fall back to this function.
 pub fn window_for_pid(pid: u32) -> Option<Window> {
@@ -927,6 +942,26 @@ mod tests {
             hidden: false,
             focus_order: 0,
         }
+    }
+
+    #[test]
+    fn window_in_use_is_the_pid_s_most_recently_focused_visible_window() {
+        let ranked = |address, pid, focus_order, visible| Window {
+            focus_order,
+            visible,
+            ..window(address, pid)
+        };
+        let windows = [
+            ranked(0x10, 42, 3, true),
+            ranked(0x20, 42, 1, true),
+            ranked(0x30, 42, 0, false),
+            ranked(0x40, 43, 0, true),
+            ranked(0x50, 42, -1, true),
+        ];
+        assert_eq!(pick_window_in_use(&windows, 42), Some(0x20));
+        assert_eq!(pick_window_in_use(&windows[..1], 42), Some(0x10));
+        assert_eq!(pick_window_in_use(&windows[4..], 42), None);
+        assert_eq!(pick_window_in_use(&windows, 44), None);
     }
 
     #[test]

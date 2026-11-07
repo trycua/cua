@@ -459,10 +459,16 @@ impl Scoped {
         args[key] = Value::String(child.id);
         // A window it shows goes into the Stream section of the Space that
         // asks, never another Space's or the person's desktop.
-        if name == "stream_space_window" {
-            args["into"] = Value::String(self.space.clone());
-        }
+        pin_stream_target(name, args, &self.space);
         Ok(())
+    }
+}
+
+/// A Space shows a child's window only in its own Stream section: whatever
+/// `into` the agent passed (another Space, `desktop`) is replaced.
+fn pin_stream_target(name: &str, args: &mut Value, caller: &str) {
+    if name == "stream_space_window" {
+        args["into"] = Value::String(caller.to_string());
     }
 }
 
@@ -1256,5 +1262,38 @@ impl cua_proto::daemon::v1::share_service_server::ShareService for Scoped {
         _: Request<pb::RemoveShareEdgeRequest>,
     ) -> R<pb::RemoveShareEdgeResponse> {
         Err(refused("share settings are the owner's"))
+    }
+}
+
+#[cfg(test)]
+mod stream_scope_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn a_child_window_can_only_be_shown_in_the_callers_own_space() {
+        for asked in [json!("desktop"), json!("local:other"), Value::Null] {
+            let mut args = json!({"space": "local:kid", "app_name": "Safari", "into": asked});
+            pin_stream_target("stream_space_window", &mut args, "local:me");
+            assert_eq!(args["into"], "local:me");
+        }
+        // Other tools are left alone.
+        let mut args = json!({"space": "local:kid"});
+        pin_stream_target("space_bash", &mut args, "local:me");
+        assert!(args.get("into").is_none());
+    }
+
+    #[test]
+    fn the_tools_for_driving_and_showing_a_child_are_all_scoped() {
+        for tool in [
+            "call_tool",
+            "list_tools",
+            "space_bash",
+            "list_space_windows",
+            "stream_space_window",
+        ] {
+            assert_eq!(Scoped::tool_target(tool), Some("space"), "{tool}");
+        }
+        assert_eq!(Scoped::tool_target("stream_endpoint"), None);
     }
 }

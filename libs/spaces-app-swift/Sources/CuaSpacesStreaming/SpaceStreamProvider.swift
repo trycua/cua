@@ -117,6 +117,9 @@ extension StreamWindow {
                   surfaceSize: window.pixelSize,
                   scaleFactor: window.scaleFactor,
                   appID: window.appID,
-                  processID: UInt32(clamping: max(0, window.processID ?? 0)))
+                  processID: UInt32(clamping: max(0, window.processID ?? 0)),
+                  origin: window.origin.map {
+                      StreamWindowOrigin(spaceID: $0.spaceID, name: $0.name, os: $0.os)
+                  })
     }
 }

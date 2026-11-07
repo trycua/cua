@@ -1322,6 +1322,8 @@ impl Spaces {
     /// Forgets a Space (registry entry and stored token). The sandbox is not
     /// touched.
     pub async fn remove(&self, space: &str) -> Result<SpaceInfo> {
+        #[cfg(feature = "spaces-stream")]
+        self.drop_stream_entries(space);
         let id = self.resolve(space)?;
         let info = self.info(&id).ok();
         let _ = crate::lifetimes::forget(self.home_dir(), &id.to_string());

@@ -409,6 +409,108 @@ impl Roster {
     }
 }
 
+/// Presence of a window streamed straight from another Space: the viewer
+/// joins the origin's presence channel *and* the Space that lists the window
+/// (the parent's), publishes its cursor to both, and reads both rosters
+/// through one [`MergedRoster`], so everyone shows once, as if the stream
+/// had come through the parent.
+#[derive(Clone)]
+pub struct FanoutSender {
+    senders: Vec<CursorSender>,
+}
+
+impl FanoutSender {
+    /// Publishes to every sender; the first is the one that carries the
+    /// stream (the origin's).
+    pub fn new(senders: Vec<CursorSender>) -> Self {
+        FanoutSender { senders }
+    }
+
+    /// Publishes `cursor` on every channel. Fails only when all of them do.
+    pub async fn update(&self, cursor: &Cursor) -> Result<()> {
+        let mut last = None;
+        let mut ok = false;
+        for s in &self.senders {
+            match s.update(cursor).await {
+                Ok(()) => ok = true,
+                Err(e) => last = Some(e),
+            }
+        }
+        match (ok, last) {
+            (false, Some(e)) => Err(e),
+            _ => Ok(()),
+        }
+    }
+}
+
+/// Several channels' rosters as one: a viewer present on more than one
+/// (same principal id) is one participant, with the cursor of the channel
+/// that moved it last.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct MergedRoster {
+    channels: Vec<Roster>,
+}
+
+impl MergedRoster {
+    /// A merge of these rosters (the stream's channel first).
+    pub fn new(channels: Vec<Roster>) -> Self {
+        MergedRoster { channels }
+    }
+
+    /// Folds one event into channel `channel`. Returns whether it changed
+    /// anything.
+    pub fn apply(&mut self, channel: usize, e: &PresenceEvent) -> bool {
+        self.channels
+            .get_mut(channel)
+            .is_some_and(|r| r.apply(e))
+    }
+
+    /// Everyone but the caller, once each: a participant on two channels
+    /// keeps the cursor with the newest sample.
+    pub fn others(&self) -> Vec<(Participant, Option<Cursor>)> {
+        let me: Vec<&str> = self
+            .channels
+            .iter()
+            .filter_map(|r| r.get(&r.me).map(|(p, _)| p.principal_id.as_str()))
+            .collect();
+        let mut out: Vec<(Participant, Option<Cursor>)> = Vec::new();
+        for r in &self.channels {
+            for (p, c) in r.others() {
+                if me.contains(&p.principal_id.as_str()) {
+                    continue;
+                }
+                match out.iter_mut().find(|(q, _)| q.principal_id == p.principal_id) {
+                    Some((_, have)) => {
+                        let newer = match (have.as_ref(), c) {
+                            (None, Some(_)) => true,
+                            (Some(a), Some(b)) => b.at_ms > a.at_ms,
+                            _ => false,
+                        };
+                        if newer {
+                            *have = c.clone();
+                        }
+                    }
+                    None => out.push((p.clone(), c.clone())),
+                }
+            }
+        }
+        out
+    }
+
+    /// The avatars to show: one per principal, the caller included.
+    pub fn avatars(&self) -> Vec<Participant> {
+        let mut out: Vec<Participant> = Vec::new();
+        for r in &self.channels {
+            for (p, _) in &r.entries {
+                if !out.iter().any(|q| q.principal_id == p.principal_id) {
+                    out.push(p.clone());
+                }
+            }
+        }
+        out
+    }
+}
+
 /// Shortest interval between two cursor sends (30 Hz, newest wins).
 pub const SEND_INTERVAL: Duration = Duration::from_millis(33);
 /// Roster heartbeat interval the SDK asks for.
@@ -1099,5 +1201,69 @@ mod color_of_tests {
             reason: String::new(),
         });
         assert_eq!(r.color_of("koala"), stable);
+    }
+}
+
+#[cfg(test)]
+mod merged_tests {
+    use super::*;
+
+    fn who(pid: &str, principal: &str) -> Participant {
+        Participant {
+            participant_id: pid.into(),
+            principal_id: principal.into(),
+            display_name: principal.into(),
+            color: "#fff".into(),
+            kind: "human".into(),
+        }
+    }
+
+    fn roster(me: (&str, &str), others: &[(&str, &str)]) -> Roster {
+        let mut r = Roster {
+            me: me.0.into(),
+            entries: vec![(who(me.0, me.1), None)],
+        };
+        for (pid, principal) in others {
+            r.entries.push((who(pid, principal), None));
+        }
+        r
+    }
+
+    fn at(ms: f64) -> Cursor {
+        let mut c = Cursor::at(0.5, 0.5);
+        c.at_ms = ms;
+        c
+    }
+
+    #[test]
+    fn a_viewer_on_both_channels_is_one_avatar_and_one_cursor() {
+        // Me and one other viewer are present on the origin and the parent.
+        let origin = roster(("o-me", "me"), &[("o-bob", "bob")]);
+        let parent = roster(("p-me", "me"), &[("p-bob", "bob"), ("p-agent", "agent")]);
+        let mut m = MergedRoster::new(vec![origin, parent]);
+        let avatars = m.avatars();
+        let names: Vec<_> = avatars.iter().map(|p| p.principal_id.as_str()).collect();
+        assert_eq!(names, ["me", "bob", "agent"]);
+        // Bob moves on both channels; the newest sample wins and only one
+        // cursor is drawn.
+        m.apply(0, &PresenceEvent::CursorMoved { participant_id: "o-bob".into(), cursor: at(100.0) });
+        m.apply(1, &PresenceEvent::CursorMoved { participant_id: "p-bob".into(), cursor: at(160.0) });
+        let others = m.others();
+        assert_eq!(others.len(), 2);
+        let bob = others.iter().find(|(p, _)| p.principal_id == "bob").unwrap();
+        assert_eq!(bob.1.as_ref().unwrap().at_ms, 160.0);
+        // The caller never appears among the cursors, whichever channel.
+        assert!(others.iter().all(|(p, _)| p.principal_id != "me"));
+    }
+
+    #[test]
+    fn leaving_one_channel_keeps_the_viewer_while_the_other_has_them() {
+        let origin = roster(("o-me", "me"), &[("o-bob", "bob")]);
+        let parent = roster(("p-me", "me"), &[("p-bob", "bob")]);
+        let mut m = MergedRoster::new(vec![origin, parent]);
+        assert!(m.apply(0, &PresenceEvent::Left { participant_id: "o-bob".into(), reason: Default::default() }));
+        assert_eq!(m.others().len(), 1);
+        m.apply(1, &PresenceEvent::Left { participant_id: "p-bob".into(), reason: Default::default() });
+        assert!(m.others().is_empty());
     }
 }

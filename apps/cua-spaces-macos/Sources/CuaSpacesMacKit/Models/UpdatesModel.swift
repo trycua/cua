@@ -92,6 +92,7 @@ public final class SparkleUpdater: NSObject, UpdaterDriving, SPUUpdaterDelegate 
         super.init()
         updater = SPUUpdater(hostBundle: bundle, applicationBundle: bundle, userDriver: driver, delegate: self)
         driver.onChange = { [weak self] in self?.onChange?() }
+        driver.resumeSilentUpdate = { [weak self] in self?.updater.checkForUpdates() }
         driver.onEvent = { [weak self] event in self?.onUpdateEvent?(event) }
         let changed: @Sendable () -> Void = { [weak self] in
             DispatchQueue.main.async { self?.onChange?() }
@@ -181,18 +182,19 @@ public final class SparkleUpdater: NSObject, UpdaterDriving, SPUUpdaterDelegate 
     }
     public nonisolated func updaterDidNotFindUpdate(_ updater: SPUUpdater) { tell("not_found") }
 
+    /// What `willInstallUpdateOnQuit` returns: false leaves Sparkle in charge,
+    /// so the update installs when the app quits (CUA-3065). Sparkle then ends
+    /// its session and the install block it passed is dead, so "Restart to
+    /// update" resumes the update through a check instead (`installNow`).
+    static let handlesQuitInstallItself = false
+
     /// The silent path (`automaticallyDownloadsUpdates`): the update is
-    /// downloaded and the page offers "Restart to update" through
-    /// `immediateInstallHandler`. Returning false leaves Sparkle in charge of
-    /// the install, so the update is also applied when the app quits. Returning
-    /// true would promise that the app installs it, and only the click does:
-    /// users who never click (the app lives in the menu bar and notch) stayed
-    /// on the old version for ever (CUA-3065).
+    /// downloaded and the page offers "Restart to update".
     public nonisolated func updater(_ updater: SPUUpdater, willInstallUpdateOnQuit item: SUAppcastItem,
                                     immediateInstallationBlock immediateInstallHandler: @escaping () -> Void) -> Bool {
         let version = item.displayVersionString
-        MainActor.assumeIsolated { driver.silentlyDownloaded(version: version, install: immediateInstallHandler) }
-        return false
+        MainActor.assumeIsolated { driver.silentlyDownloaded(version: version) }
+        return Self.handlesQuitInstallItself
     }
 
     /// A cycle that ended with nothing to show clears a pending "checking".

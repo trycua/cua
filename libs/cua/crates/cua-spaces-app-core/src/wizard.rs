@@ -1901,17 +1901,15 @@ pub struct ResourceEdit {
     pub text: String,
 }
 
-/// The name an unnamed Space gets: `space-` and ten hex digits, the form
-/// the SDK gives one it names itself (`cua_spaces::Spaces::create`). The
-/// wizard picks it when it opens, shows it, and creates the Space with it.
+/// The name an unnamed Space gets: a friendly `adjective-animal`
+/// (`cua_spaces_contract::names`), the form the SDK gives one it names
+/// itself. The wizard picks it when it opens, shows it, and creates the
+/// Space with it.
 pub fn generated_space_name(seed: Option<u64>) -> String {
-    let n = seed.unwrap_or_else(|| {
-        use std::hash::{BuildHasher, Hasher};
-        std::collections::hash_map::RandomState::new()
-            .build_hasher()
-            .finish()
-    });
-    format!("space-{:010x}", n & 0xff_ffff_ffff)
+    match seed {
+        Some(s) => cua_spaces_contract::names::pet_name_seeded(s, |_| false),
+        None => cua_spaces_contract::names::pet_name(|_| false),
+    }
 }
 
 /// An input to the wizard.
@@ -7099,10 +7097,10 @@ mod tests {
     fn an_unnamed_space_shows_and_gets_its_generated_name() {
         let e = env();
         let s = initial(&e);
-        assert_eq!(s.generated_name, "space-000000002a");
-        assert_eq!(generated_space_name(Some(u64::MAX)), "space-ffffffffff");
+        assert_eq!(s.generated_name, generated_space_name(Some(42)));
+        assert!(cua_spaces_contract::names::is_pet_name(&s.generated_name));
         let other = generated_space_name(None);
-        assert!(other.starts_with("space-") && other.len() == 16 && valid_space_name(&other));
+        assert!(cua_spaces_contract::names::is_pet_name(&other) && valid_space_name(&other));
         let mut s = s;
         for _ in 0..2 {
             s = reduce(&s, &WizardAction::Next, &e);
@@ -7113,22 +7111,19 @@ mod tests {
             .iter()
             .find(|f| f.id == "name")
             .and_then(|f| f.placeholder.clone());
-        assert_eq!(placeholder.as_deref(), Some("space-000000002a"));
-        assert_eq!(v.space_name, "space-000000002a");
+        assert_eq!(placeholder.as_deref(), Some("dapper-mole"));
+        assert_eq!(v.space_name, "dapper-mole");
         let name_row = |v: &WizardView| {
             v.summary
                 .iter()
                 .find(|f| f.label == "Name")
                 .map(|f| f.value.clone())
         };
-        assert_eq!(name_row(&v).as_deref(), Some("space-000000002a"));
-        assert_eq!(
-            create_args(&v.plan).name.as_deref(),
-            Some("space-000000002a")
-        );
+        assert_eq!(name_row(&v).as_deref(), Some("dapper-mole"));
+        assert_eq!(create_args(&v.plan).name.as_deref(), Some("dapper-mole"));
         assert_eq!(
             creating_text(&v.plan),
-            "Creating space-000000002a. It appears in the list when it is ready."
+            "Creating dapper-mole. It appears in the list when it is ready."
         );
         let named = view(
             &reduce(

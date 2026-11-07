@@ -169,6 +169,18 @@ def test_publish_draft_keeps_the_body_and_never_takes_latest():
     assert not release_notes.publish_draft(FakeApi([]), "trycua/cua", "agent-v0.9.1", asset_dir=None, prerelease=False)
 
 
+def test_publish_draft_adopts_an_untagged_release_please_draft():
+    draft = {"id": 5, "tag_name": "untagged-abc", "name": "cua-spacesd: v0.12.5", "draft": True, "body": "rp"}
+    other = {"id": 6, "tag_name": "untagged-def", "name": "cua-spacesd: v0.12.4", "draft": True}
+    api = FakeApi([other, draft])
+    assert release_notes.publish_draft(api, "trycua/cua", "cua-spacesd-v0.12.5", asset_dir=None, prerelease=False)
+    assert api.patches == [(
+        "repos/trycua/cua/releases/5",
+        {"draft": False, "prerelease": False, "make_latest": "false", "tag_name": "cua-spacesd-v0.12.5"},
+    )]
+    assert not release_notes.publish_draft(FakeApi([other]), "trycua/cua", "cua-spacesd-v0.12.5", asset_dir=None, prerelease=False)
+
+
 def test_version_check_catches_a_package_file_that_drifted(tmp_path):
     (tmp_path / "libs/cua-bench").mkdir(parents=True)
     (tmp_path / "libs/cua-bench/pyproject.toml").write_text('[project]\nname = "cua-bench"\nversion = "0.3.3"\n')

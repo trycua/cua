@@ -111,7 +111,7 @@ pub fn prompt(
         "machine" if kind == "free" => Some(UpsellPrompt {
             surface: "machine".into(),
             text: format!(
-                "Two computers now. Free includes {} live sessions and {} remote hours a month. Pro makes it {PRO_SESSIONS} and {PRO_HOURS}, for $18 a month.",
+                "Two computers now. Free includes {} computers in use at once and {} remote hours a month. Pro makes it {PRO_SESSIONS} and {PRO_HOURS}, for $18 a month.",
                 usage.live_sessions_limit.unwrap_or(2),
                 hours(usage.hours_limit.unwrap_or(20.0)),
             ),
@@ -207,7 +207,7 @@ pub fn card(reason: &str, usage: &RelayUsage, account_app: &str) -> Option<Upsel
         ("hours", "free") => (
             "You've used this month's remote hours".to_owned(),
             format!(
-                "Free includes {} remote hours a month. Your Spaces keep working. Pro gives you {PRO_HOURS} hours and {PRO_SESSIONS} live sessions.",
+                "Free includes {} remote hours a month. Your Spaces keep working. Pro gives you {PRO_HOURS} hours and {PRO_SESSIONS} computers in use at once.",
                 hours(usage.hours_limit.unwrap_or(20.0)),
             ),
             "$18 a month".to_owned(),
@@ -221,17 +221,17 @@ pub fn card(reason: &str, usage: &RelayUsage, account_app: &str) -> Option<Upsel
         ),
         ("sessions", "free") => (
             format!(
-                "You're using {} of {} live sessions",
+                "You have {} of {} computers in use at once",
                 usage.live_sessions,
                 usage.live_sessions_limit.unwrap_or(2),
             ),
-            format!("Close one to start another, or get Pro: {PRO_SESSIONS} live sessions at once and {PRO_HOURS} remote hours a month."),
+            format!("Close one to start another, or get Pro: {PRO_SESSIONS} computers in use at once and {PRO_HOURS} remote hours a month."),
             "$18 a month".to_owned(),
             to("Upgrade to Pro", BUY_PRO_PATH, &from),
         ),
         ("sessions", "pro") => (
             format!(
-                "You're using {} of {} live sessions",
+                "You have {} of {} computers in use at once",
                 usage.live_sessions,
                 usage.live_sessions_limit.unwrap_or(PRO_SESSIONS),
             ),
@@ -241,7 +241,7 @@ pub fn card(reason: &str, usage: &RelayUsage, account_app: &str) -> Option<Upsel
         ),
         ("hours" | "sessions", "teams") => (
             "Your team has used its remote allowance".to_owned(),
-            "Your Spaces keep working. Each seat adds to the team's hours and live sessions.".to_owned(),
+            "Your Spaces keep working. Each seat adds to the team's hours and computers in use at once.".to_owned(),
             TEAMS_PRICE.to_owned(),
             to("Add seats", "/billing", &from),
         ),
@@ -316,7 +316,7 @@ mod tests {
         let p = prompt("machine", &usage("free"), APP, &state()).unwrap();
         assert_eq!(
             p.text,
-            "Two computers now. Free includes 2 live sessions and 20 remote hours a month. Pro makes it 5 and 200, for $18 a month."
+            "Two computers now. Free includes 2 computers in use at once and 20 remote hours a month. Pro makes it 5 and 200, for $18 a month."
         );
         assert_eq!(p.cta.label, "Get Pro");
         assert_eq!(p.cta.url, "https://app.cua.ai/buy/pro?from=app_machine");
@@ -392,7 +392,7 @@ mod tests {
         assert_eq!(c.title, "You've used this month's remote hours");
         assert_eq!(
             c.body,
-            "Free includes 20 remote hours a month. Your Spaces keep working. Pro gives you 200 hours and 5 live sessions."
+            "Free includes 20 remote hours a month. Your Spaces keep working. Pro gives you 200 hours and 5 computers in use at once."
         );
         assert_eq!(c.price, "$18 a month");
         assert_eq!(c.cta.url, "https://app.cua.ai/buy/pro?from=app_card_hours");
@@ -400,7 +400,7 @@ mod tests {
 
         u.live_sessions = 2;
         let s = card("sessions", &u, APP).unwrap();
-        assert_eq!(s.title, "You're using 2 of 2 live sessions");
+        assert_eq!(s.title, "You have 2 of 2 computers in use at once");
         assert_eq!(s.cta.label, "Upgrade to Pro");
 
         let t = card("invite", &u, APP).unwrap();

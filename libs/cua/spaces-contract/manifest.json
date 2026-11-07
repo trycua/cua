@@ -541,7 +541,7 @@
             "type": "object"
           },
           "name": {
-            "description": "Name. Default: a generated `space-<hex>`.",
+            "description": "Name. Default: a generated friendly name such as `brave-otter`.",
             "type": "string"
           },
           "network": {

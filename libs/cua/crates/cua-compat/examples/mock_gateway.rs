@@ -30,7 +30,7 @@ async fn main() {
                 let (guest, addr) = spec.split_once('=').expect("--port GUEST=HOST:PORT");
                 ports.push((guest.parse::<u16>().expect("guest port"), addr.to_string()));
             }
-            // Every create answers the live-session limit (for SDK repros).
+            // Every create answers the computers-in-use limit (for SDK repros).
             "--plan-limit" => plan_limit = true,
             other => panic!("unknown argument {other}"),
         }
@@ -41,7 +41,7 @@ async fn main() {
     }
     if plan_limit {
         *backend.create_fails.lock().await = Some(cua_compat::backend::BackendError::RateLimited(
-            "You're using 2 of 2 live sessions on the free plan. Close one or upgrade to Pro."
+            "You have 2 of 2 computers in use at once on the free plan. Close one or upgrade to Pro."
                 .into(),
         ));
     }

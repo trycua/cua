@@ -4,7 +4,7 @@
   "aliases": [
     "cua-desktop-linux"
   ],
-  "description": "Default recommended Spaces image: Ubuntu 24.04, XFCE on Xvfb :1, AT-SPI, headless PipeWire audio, Chromium, cua-spacesd (with the HTML5 viewer at /viewer), conformance fixtures. Tiers: slim (that, and nothing else), full (the default: slim plus developer tooling and Firefox) and docker (slim plus the Docker engine, a VM disk).",
+  "description": "Default recommended Spaces image: Ubuntu 24.04, XFCE on Xvfb :1, AT-SPI, headless PipeWire audio, Chromium, cua-spacesd (with the HTML5 viewer at /viewer), conformance fixtures. Tiers: slim (that, plus the cua CLI so an agent in a Space can make child Spaces), full (the default: slim plus developer tooling and Firefox) and docker (slim plus the Docker engine, a VM disk).",
   "repository": "ghcr.io/trycua/linux",
   "platforms": [
     "linux/amd64",
@@ -176,11 +176,11 @@
       "audio.desktop",
       "audio.uplink",
       "audio.opus",
-      "process.exec_ledger"
+      "process.exec_ledger",
+      "spawn"
     ],
     "features_optional": [
       "hotspot",
-      "spawn",
       "exit",
       "host_ports",
       "process.services",
@@ -318,8 +318,18 @@
   "default_tier": "full",
   "tiers": {
     "slim": {
-      "description": "The minimum for cua-spacesd doctor --strict with every feature: the desktop, audio, Chromium, cua-spacesd, the fixtures. No Firefox, no developer tooling.",
-      "claims": {}
+      "description": "The minimum for cua-spacesd doctor --strict with every feature: the desktop, audio, Chromium, cua-spacesd, the fixtures, and the cua CLI (a spawn-capable cua-spacesd plus `cua spaces create|ls|delete` reach the Space's own spawn channel, so an agent in the Space can make child Spaces). No Firefox, no developer tooling.",
+      "claims": {
+        "tools": {
+          "cua": {
+            "argv": [
+              "cua",
+              "--version"
+            ],
+            "expect": "^cua [0-9]"
+          }
+        }
+      }
     },
     "docker": {
       "from": "slim",

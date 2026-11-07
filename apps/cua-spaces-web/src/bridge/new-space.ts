@@ -53,8 +53,9 @@ export function nameSeed(): number {
 }
 export const wizardInitial = (core: CoreClient, env: WizardEnv) =>
   core.call<WizardState>("wizard.initial", { env: env.nameSeed == null ? { ...env, nameSeed: nameSeed() } : env });
-export const wizardReduce = (core: CoreClient, state: WizardState, action: WizardAction, env: WizardEnv) =>
-  core.call<WizardState>("wizard.reduce", { state, action, env });
+/** Advances the wizard; `os` is the system the app runs on, which decides whether Continue is allowed. */
+export const wizardReduce = (core: CoreClient, state: WizardState, action: WizardAction, env: WizardEnv, os: HostOs = hostOs()) =>
+  core.call<WizardState>("wizard.reduce", { state, action, env, hostOs: os });
 /** The wizard as drawn, in the words of the system the app runs on (`hostOs`). */
 export const wizardView = (core: CoreClient, state: WizardState, env: WizardEnv, os: HostOs = hostOs()) =>
   core.call<WizardView>("wizard.view", { state, env, hostOs: os });

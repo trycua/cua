@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use async_trait::async_trait;
 use cua_driver_core::{
     protocol::{Content, ToolResult},
@@ -331,7 +334,7 @@ impl Tool for GetWindowStateTool {
                 .and_then(|value| value.as_bool())
                 == Some(true);
         // Optional caps — when omitted, fall back to the defaults baked into
-        // the AX walker (#22865). minimum:1 keyed in the schema, but defend
+        // the AX walker. minimum:1 is keyed in the schema, but defend
         // against 0 here as well so a misbehaving client can't disable the
         // walk entirely.
         let max_elements = view.max_elements(
@@ -708,7 +711,7 @@ impl Tool for GetWindowStateTool {
             "elements": elements_json,
             "_note": "Prefer `elements` — `tree_markdown` will continue to work \
                 but new fields will only be added to the structured side. \
-                Issue #22865: use `max_elements` / `max_depth` to bound the \
+                Use `max_elements` / `max_depth` to bound the \
                 AX walk on apps with very large trees."
         });
         if query.is_some() {
@@ -1852,6 +1855,26 @@ mod tests {
         assert_eq!(entry["max"], 8.0);
         assert_eq!(entry["enabled"], true);
         assert_eq!(entry["selected"], false);
+    }
+
+    #[test]
+    fn elements_publish_a_disabled_control() {
+        let mut nodes = vec![node(
+            Some(0),
+            "AXCheckBox",
+            Some("Reset"),
+            1,
+            None,
+            Some([10.0, 20.0, 16.0, 16.0]),
+            vec!["AXPress".into()],
+        )];
+        nodes[0].enabled = Some(false);
+        let elements = build_elements_array_with_token(&nodes, Some(3));
+        assert_eq!(elements.len(), 1);
+        assert_eq!(elements[0]["label"], "Reset");
+        assert_eq!(elements[0]["enabled"], false);
+        assert_eq!(elements[0]["element_token"], "s00000003:0");
+        assert!(elements[0]["frame"].is_object());
     }
 
     #[test]

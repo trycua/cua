@@ -326,6 +326,10 @@ actor FakeSpacesBackend: SpacesTransport {
         case "network_show":
             return .object(["settings": .object(["preset": "internet"]), "enforcement": "enforced"])
 
+        case "network_log":
+            return .array([.object(["reason": "platform:metadata", "dst": "169.254.169.254:80",
+                                    "proto": "tcp", "count": 2, "last_unix": 1])])
+
         case "network_set":
             return .object(["applied": "now",
                             "network": .object(["settings": .object(["preset": arguments["network"] ?? "internet"])])])

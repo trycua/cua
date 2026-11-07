@@ -35,6 +35,14 @@ const SEVERAL = (now: () => number): AgentKeyInfo[] => [
   { provider: "custom", env: "CUSTOM_ENDPOINT_API_KEY", last4: "", addedMs: now() - DAY, fields: { base_url: "http://192.168.1.20:1234/v1", model: "qwen3-coder", wire: "openai-chat" } },
 ];
 
+/** `?demo=accounts`: three Claude sign-ins and one ChatGPT sign-in, and nothing for Hermes or OpenCode. */
+export const demoAccountKeys = (now: () => number): AgentKeyInfo[] => [
+  { provider: "other", env: "CLAUDE_CODE_OAUTH_TOKEN", last4: "", addedMs: now() - 9 * DAY, label: "Signed in as ada@example.com (Claude Max)" },
+  { provider: "other", env: "CLAUDE_CODE_OAUTH_TOKEN", slot: "kwork", last4: "", addedMs: now() - 5 * DAY, label: "work Max" },
+  { provider: "other", env: "CLAUDE_CODE_OAUTH_TOKEN", slot: "kside", last4: "", addedMs: now() - 2 * DAY, label: "side project Max" },
+  { provider: "other", env: "CODEX_AUTH_JSON", last4: "", addedMs: now() - 3 * DAY, label: "Signed in with ChatGPT" },
+];
+
 export const demoKeyStore = (now: () => number, rejected: string[] = [], claude?: "signed-in" | "expired" | "none", keys?: "none" | "several", chatgpt?: boolean): DemoKeyStore => ({
   keys: [
     ...(keys === "none" ? [] : keys === "several" ? SEVERAL(now) : [{ provider: "openai", env: "OPENAI_API_KEY", last4: "3f9a", addedMs: now() - 6 * DAY }]),
@@ -59,7 +67,7 @@ export function demoAgentKeysHandlers({
   stepMs: number;
   now: () => number;
   store?: DemoKeyStore;
-}): DemoHandlers<"agentKeys.list" | "agentKeys.check" | "agentKeys.set" | "agentKeys.remove" | "agentKeys.use" | "agentKeys.shell" | "agentKeys.fromShell"> {
+}): DemoHandlers<"agentKeys.list" | "agentKeys.check" | "agentKeys.set" | "agentKeys.remove" | "agentKeys.use" | "agentKeys.rename" | "agentKeys.shell" | "agentKeys.fromShell"> {
   const keys = () => store.keys;
   const report = (): AgentKeysReport => ({ keys: keys().map((k) => ({ ...k })), ...(Object.keys(store.uses).length ? { uses: { ...store.uses } } : {}), providers: PROVIDERS, available: true, unavailable: null });
   return {
@@ -91,6 +99,15 @@ export function demoAgentKeysHandlers({
       ].sort((a, b) => a.env.localeCompare(b.env) || (a.slot ?? "").localeCompare(b.slot ?? ""));
       return report();
     },
+    "agentKeys.rename": async ({ env, slot, label }) => {
+      await wait(stepMs / 2);
+      const name = label.trim();
+      if (!name || name.length > 40 || /[\u0000-\u001f]/.test(name)) throw new HostError("a key's name must be one line of at most 40 characters");
+      const k = keys().find((x) => x.env === env && (x.slot ?? undefined) === (slot ?? undefined));
+      if (!k) throw new HostError("that key isn't saved");
+      store.keys = keys().map((x) => (x === k ? { ...x, label: name } : x));
+      return report();
+    },
     // The demo's shell exports an Anthropic key (`?demo=…` none needed): Use it saves a copy.
     "agentKeys.shell": async () => {
       await wait(stepMs);
@@ -117,14 +134,16 @@ export function demoAgentKeysHandlers({
     // Which credential an app uses: one that is saved and that the app can read (the demo knows the apps that take any provider).
     "agentKeys.use": async ({ app, env, slot }) => {
       await wait(stepMs / 2);
-      if (!["hermes", "opencode", "goose", "pi", "openclaw"].includes(app)) throw new HostError(`${app} reads one fixed sign-in; there is nothing to choose`);
+      const anyProvider = ["hermes", "opencode", "goose", "pi", "openclaw"].includes(app);
+      if (!anyProvider && !["claude-code", "codex", "openai-codex"].includes(app)) throw new HostError(`${app} reads one fixed sign-in; there is nothing to choose`);
       if (!env) {
         delete store.uses[app];
         return report();
       }
       const k = keys().find((x) => x.env === env && (x.slot ?? undefined) === (slot ?? undefined) && !x.expired);
-      if (!k || env === "CLAUDE_CODE_OAUTH_TOKEN" || env === "CODEX_AUTH_JSON") throw new HostError("that key isn't saved, or has stopped working");
-      store.uses[app] = { provider: k.provider, env: k.env, ...(k.slot ? { slot: k.slot } : {}) };
+      const reads: Record<string, string[]> = { "claude-code": ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY"], codex: ["CODEX_AUTH_JSON", "OPENAI_API_KEY"], "openai-codex": ["CODEX_AUTH_JSON", "OPENAI_API_KEY"] };
+      if (!k || (anyProvider ? env === "CLAUDE_CODE_OAUTH_TOKEN" || env === "CODEX_AUTH_JSON" : !reads[app]!.includes(env))) throw new HostError("that key isn't saved, or has stopped working");
+      store.uses[app === "openai-codex" ? "codex" : app] = { provider: k.provider, env: k.env, ...(k.slot ? { slot: k.slot } : {}) };
       return report();
     },
   };

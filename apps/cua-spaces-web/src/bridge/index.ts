@@ -98,6 +98,7 @@ export {
   type OpName,
   type SettingKey,
   type SettingsValues,
+  type AgentMenuPrefs,
   type UpdateChannel,
 } from "./protocol";
 
@@ -146,7 +147,7 @@ export { useWindowDropTarget } from "./window-drop";
 export { useSpaceFiles, parseDropped, dropSendingText, dropSentText, sendFiles, splitDrop, type DropStatus, type SpaceFilesHook } from "./space-files";
 export { agentRunLines, useDesktopCover, useSpaceDetail, type AgentRunLine, type DetailFor, type DetailReadings, type PipOutcome, type SpaceDetailHook } from "./space-detail";
 export type * from "./ops/space-detail";
-export { useThisMachine, type HostFailure, type HostFormView as HostSetupFormView, type ThisMachineHook } from "./this-machine";
+export { isNeedsProof, useThisMachine, type HostFailure, type HostFormView as HostSetupFormView, type ThisMachineHook } from "./this-machine";
 export type { HostFormAction, HostSetupRequest } from "./ops/host-setup";
 export type { TelemetrySignal } from "./ops/telemetry";
 export { useStartup, type StartupHook } from "./startup";
@@ -180,8 +181,38 @@ export {
   type RelayUsage,
   type RelayUsageView,
 } from "./relay-usage";
+export {
+  resolveDefaultSpace,
+  useSpacesDefault,
+  type DefaultCandidate,
+  type DefaultSpace,
+  type DefaultSpaceReason,
+  type DefaultSpaceStep,
+  type SpacesDefaultHook,
+  type SpacesSettings,
+  type SpacesSettingsInput,
+} from "./spaces-settings";
 
 export { dataWords, linkEnds, needsRelaySetup, useLinks, useShareSettings, type LinksHook, type ShareSettingsHook } from "./links";
+export {
+  pointerChange,
+  pointerSettings,
+  sinceText,
+  useDriver,
+  useDriverMachines,
+  DRIVER_POLL_MS,
+  POINTER_STYLES,
+  type DriverActivity,
+  type DriverApp,
+  type DriverConfig,
+  type DriverHook,
+  type DriverLiveTest,
+  type DriverMachine,
+  type DriverPermission,
+  type DriverStatus,
+  type DriverUpdate,
+  type PointerSettings,
+} from "./driver";
 export { chatKey, mergeChats, useAgentChats, useAgentDm, type AgentChat, type AgentChats, type AgentChatSpace, type AgentDm, type ChatAttempt, type ChatNeed, type ChatTone, type DmItem } from "./agents-dm";
 export { foldThread, readSeqFrom, useSpaceThread, type SpaceThread, type SpaceThreadStatus, type ThreadAnswer, type ThreadItem, type ThreadQuote } from "./thread";
 export {
@@ -211,6 +242,7 @@ export {
   type ThreadPage,
   type ThreadRole,
 } from "./ops/thread";
+export { folderLabel, resumeContext, THREAD_AGENTS, type PastMessage, type PastThread, type RecentThread, type ThreadAgent } from "./ops/agent-threads";
 export type { LinkAccess, LinkCreate, ShareLanding, ShareLink, ShareSettings } from "./ops/links";
 export {
   useResources,
@@ -247,7 +279,7 @@ export {
   type UpsellPrompt,
   type UpsellSurface,
 } from "./upsell";
-export { flagOn, newOnboardingOn, setFlagOverride, setRemoteFlags, useFlag, useNewOnboarding, type FlagName } from "./flags";
+export { flagOn, newOnboardingOn, setFlagOverride, useFlag, useNewOnboarding, useSpacesTree, type FlagName } from "./flags";
 export type { CreateReport, ReportPart, ReportSend } from "./diagnostic-report";
 export {
   FIRST_RUN_POLL_MS,

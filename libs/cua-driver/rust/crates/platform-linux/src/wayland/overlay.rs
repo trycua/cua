@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Native-Wayland agent-cursor overlay via `zwlr_layer_shell_v1`.
 //!
 //! Replaces the X11-only `overlay.rs` render loop on wlroots compositors

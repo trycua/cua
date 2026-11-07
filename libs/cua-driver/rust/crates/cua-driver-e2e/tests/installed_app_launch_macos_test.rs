@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! macOS real-app launch/focus checks.
 //!
 //! These are Rust ports of the old Python focus-steal parity coverage for

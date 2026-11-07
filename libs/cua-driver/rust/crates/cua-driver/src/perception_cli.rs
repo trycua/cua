@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use std::io::{Cursor, Read};
 use std::path::{Component, Path, PathBuf};
 use std::time::Instant;

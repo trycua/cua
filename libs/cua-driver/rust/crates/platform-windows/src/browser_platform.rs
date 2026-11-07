@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Windows identity and endpoint evidence for the first-class browser tools.
 
 use std::collections::HashMap;

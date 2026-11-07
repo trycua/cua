@@ -5,7 +5,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { MonitorIcon, PlusIcon, SearchIcon } from "lucide-react";
 import { memo, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 
-import { emptyHome, listView, spaceDiskBytes, useBridge, useResources, useFirstSpaceOffers, useMachines, useNewSpaceWizard, useSpaceAccess, useSpaces, type Space } from "@/bridge";
+import { emptyHome, listView, useSpacesTree, spaceDiskBytes, useBridge, useResources, useFirstSpaceOffers, useMachines, useNewSpaceWizard, useSpaceAccess, useSpaces, type Space } from "@/bridge";
 import { EmptyHome } from "@/components/empty-home";
 import { useFirstSpaceMilestones } from "@/components/first-run-guide";
 import { EmptyState, Page, PageHeader } from "@/components/page";
@@ -20,6 +20,7 @@ import { SpaceTile, TILE_CELL } from "@/components/spaces/space-tile";
 import { CreatingElsewhereTile } from "@/components/spaces/creating-elsewhere-tile";
 import { WindowedGrid, type WindowedGridHandle } from "@/components/spaces/windowed-grid";
 import { SpacesToolbar } from "@/components/spaces/spaces-toolbar";
+import { SpacesTreePage } from "@/components/spaces/spaces-tree-page";
 import { PageTip, useTipsLoaded } from "@/components/tips";
 import { useNewSpace } from "@/hooks/use-new-space";
 import { useQuiet } from "@/hooks/use-quiet";
@@ -41,7 +42,12 @@ export const Route = createFileRoute("/spaces/")({
   validateSearch: (s: Record<string, unknown>): SpacesSearch => validateSpacesSearch(s),
 });
 
+/** Spaces as a tree (Labs) draws its own page; off, the grid as it is. */
 function SpacesPage() {
+  return useSpacesTree() ? <SpacesTreePage /> : <SpacesGridPage />;
+}
+
+function SpacesGridPage() {
   const search = Route.useSearch();
   const navigate = Route.useNavigate();
   const setSearch = (next: Partial<Record<keyof SpacesSearch, string | undefined>>) =>

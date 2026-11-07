@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Acting `browser_prepare` implementation for driver-owned Chromium profiles.
 
 use std::fs::{self, OpenOptions};
@@ -300,6 +303,9 @@ struct PreparedProfile {
 pub(crate) struct ManagedBrowser {
     child: Box<dyn IsolatedBrowserProcess>,
     owned_pid: i64,
+    /// The launched process instance; `None` when it could not be attested,
+    /// which never proves ownership.
+    fingerprint: Option<super::types::ProcessFingerprint>,
     profile: PathBuf,
     delete_profile: bool,
     marker: ProfileMarker,
@@ -786,18 +792,52 @@ fn spawned_runtime_pid(ownership: &EndpointOwnershipProof) -> i64 {
 }
 
 impl BrowserEngine {
-    pub(crate) fn is_driver_owned_pid_for_session(&self, session: &str, pid: i64) -> bool {
-        self.managed_browsers.lock().unwrap().iter().any(|browser| {
-            browser.owned_pid == pid && browser.owner_sessions.iter().any(|owner| owner == session)
-        })
+    /// Whether `pid` is a browser this engine launched for `session` and is
+    /// still the same process instance. A pid alone is not proof: it can be
+    /// reused once the launched browser exits.
+    pub(crate) async fn is_driver_owned_pid_for_session(&self, session: &str, pid: i64) -> bool {
+        let launched = self
+            .managed_browsers
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|browser| {
+                browser.owned_pid == pid
+                    && browser.owner_sessions.iter().any(|owner| owner == session)
+            })
+            .and_then(|browser| browser.fingerprint.clone());
+        let Some(launched) = launched else {
+            return false;
+        };
+        self.platform
+            .process_fingerprint(pid)
+            .await
+            .is_ok_and(|current| launched.matches(&current))
     }
 
     pub(crate) fn cleanup_prepared_session(&self, session: &str) {
-        self.protected_resource_ownership.remove_session(session);
-        self.managed_browsers
-            .lock()
-            .unwrap()
-            .retain(|browser| !browser.owner_sessions.iter().any(|owner| owner == session));
+        // The store is shared with the registry, which owns the session's
+        // other launch records. Drop only the browsers reaped here, so none
+        // of their pids outlives its process.
+        let reaped = {
+            let mut browsers = self.managed_browsers.lock().unwrap();
+            let (reaped, kept) = std::mem::take(&mut *browsers)
+                .into_iter()
+                .partition::<Vec<_>, _>(|browser| {
+                    browser.owner_sessions.iter().any(|owner| owner == session)
+                });
+            *browsers = kept;
+            reaped
+        };
+        for browser in &reaped {
+            let Some(fingerprint) = &browser.fingerprint else {
+                continue;
+            };
+            for owner in &browser.owner_sessions {
+                self.protected_resource_ownership
+                    .remove_process(owner, fingerprint);
+            }
+        }
     }
 
     pub(crate) async fn prepare_browser(
@@ -897,7 +937,8 @@ impl BrowserEngine {
                 owner_sessions.push(transport_session);
             }
         }
-        if let Ok(fingerprint) = self.platform.process_fingerprint(prepared_pid).await {
+        let fingerprint = self.platform.process_fingerprint(prepared_pid).await.ok();
+        if let Some(fingerprint) = &fingerprint {
             for owner in &owner_sessions {
                 self.protected_resource_ownership
                     .mark_driver_owned_process(owner, fingerprint.clone());
@@ -906,6 +947,7 @@ impl BrowserEngine {
         self.managed_browsers.lock().unwrap().push(ManagedBrowser {
             child,
             owned_pid: prepared_pid,
+            fingerprint,
             profile: prepared_profile.path,
             delete_profile: prepared_profile.delete_on_cleanup,
             marker: prepared_profile.marker,

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! ElectronJS: detect Electron apps and evaluate JS via CDP inspector.
 
 use std::collections::HashSet;

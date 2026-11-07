@@ -1164,7 +1164,9 @@ mod instance_lock_tests {
         assert_eq!(held.pid, Some(std::process::id()));
         assert!(held.to_string().contains("cua daemon stop"), "{held}");
         drop(first);
-        InstanceLock::acquire(&path, Duration::ZERO).unwrap();
+        // A child another test spawns in this window holds a copy of the
+        // locked descriptor until its exec closes it, so wait like a daemon.
+        InstanceLock::acquire(&path, Duration::from_secs(5)).unwrap();
     }
 
     /// A daemon waiting for the lock gets it when the old one exits within

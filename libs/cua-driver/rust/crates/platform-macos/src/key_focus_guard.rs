@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Keep the user's key window while a background target opens a menu.
 //!
 //! When an app that is not active opens a menu (a popup button, a `<select>`,

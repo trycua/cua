@@ -99,7 +99,14 @@ permissions:
   contents: read
 
 jobs:
+  quick:
+    name: quick
+    if: github.event_name == 'pull_request'
+    uses: ./.github/workflows/ci-quick.yml
+
   macos-uninstall:
+    needs: quick
+    if: ${{ !failure() && !cancelled() }}
     name: macOS uninstall regressions
     runs-on: macos-26
     timeout-minutes: 10
@@ -125,6 +132,8 @@ jobs:
         run: /bin/bash libs/cua-driver/scripts/tests/uninstall-history-purge-test.sh
 
   windows-uninstall:
+    needs: quick
+    if: ${{ !failure() && !cancelled() }}
     runs-on: windows-latest
     timeout-minutes: 5
     permissions:
@@ -141,6 +150,8 @@ jobs:
         run: '& ./libs/cua-driver/scripts/tests/install-common-windows-regression.ps1'
 
   test:
+    needs: quick
+    if: ${{ !failure() && !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
 

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Evidence-bearing native GTK3 harness catalog for Linux.
 //!
 //! GTK exposes accessibility through ATK -> AT-SPI. The Linux snapshot has no
@@ -579,6 +582,137 @@ fn harness_gtk3_invoke_menu_live_path() {
     );
 }
 
+/// Send `tool` while another client's drag holds the slider and the desktop
+/// lane, and require that its effect lands only after the drag releases
+/// (#6638). The fixture records an effect that arrives while its slider
+/// button is still held.
+fn assert_waits_for_desktop_lane(
+    pid: u32,
+    window_id: u64,
+    driver: &mut McpDriver,
+    tool: &str,
+    args: impl FnOnce(&ToolResponse) -> serde_json::Value,
+    expected: &str,
+) -> Observation {
+    let mut peer = driver
+        .spawn_peer_unrecorded()
+        .expect("start a second client on the same daemon");
+    // Screenshot pixels are bound to the client that captured them.
+    let peer_state = snapshot(&mut peer, pid, window_id);
+    let (x, y, width, height) = element_rect(&mut peer, pid, window_id, &peer_state, "sld-value");
+    let (drag, response) = std::thread::scope(|scope| {
+        let drag = scope.spawn(move || {
+            peer.call(
+                "drag",
+                serde_json::json!({
+                    "pid": pid as i64, "window_id": window_id,
+                    "from_x": x + width * 0.05, "from_y": y + height / 2.0,
+                    "to_x": x + width * 0.90, "to_y": y + height / 2.0,
+                    "duration_ms": 3000, "steps": 60, "delivery_mode": "foreground"
+                }),
+            )
+        });
+        // A read-only snapshot never waits for the lane, so the slider moving
+        // proves the drag holds it now.
+        let (state, slider) = loop {
+            let state = snapshot(driver, pid, window_id);
+            if let Some(slider) =
+                state_number(state.tree_text(), "slider_value=").filter(|value| *value > 0)
+            {
+                break (state, slider);
+            }
+            assert!(
+                !drag.is_finished(),
+                "the peer's drag never moved the slider"
+            );
+            std::thread::sleep(Duration::from_millis(50));
+        };
+        // Over half of the drag (1.5 s) is left, so the call reaches the
+        // daemon while the drag holds the lane unless this thread stalls.
+        assert!(
+            slider < 45 && !drag.is_finished(),
+            "too little of the drag was left to send {tool} under it (slider_value={slider})"
+        );
+        let response = driver.call(tool, args(&state));
+        (drag.join().expect("drag thread"), response)
+    });
+    assert!(!drag.is_error(), "peer drag failed: {}", drag.text());
+    assert!(!response.is_error(), "{tool} failed: {}", response.text());
+    let state = wait_for_state(driver, pid, window_id, expected);
+    // Without exactly one observed press and release the marker below could
+    // not see an overlap.
+    assert!(
+        state.contains("slider_presses=1 slider_releases=1 "),
+        "the fixture did not observe the drag's press and release: {state}"
+    );
+    assert!(
+        state.contains("effect_during_drag=none"),
+        "{tool} took effect while the drag held the slider: it ran beside the drag instead of waiting for the desktop lane"
+    );
+    assert!(
+        state_number(&state, "slider_value=").is_some_and(|value| value >= 80),
+        "the drag did not reach its end: {state}"
+    );
+    Observation::delivered_with_fixture_state(Vec::new())
+}
+
+#[test]
+#[ignore]
+fn harness_gtk3_invoke_menu_waits_for_desktop_lane() {
+    run_case(
+        native_foreground_case(
+            "gtk3",
+            "invoke_menu_desktop_lane",
+            Targeting::Ax,
+            DriverRoute::LinuxAtSpiAction,
+        ),
+        |pid, window_id, driver| {
+            assert_waits_for_desktop_lane(
+                pid,
+                window_id,
+                driver,
+                "invoke_menu",
+                |_| {
+                    serde_json::json!({
+                        "pid": pid, "window_id": window_id,
+                        "path": ["Window", "Arrange", "Left"]
+                    })
+                },
+                "menu_action=window_arrange_left",
+            )
+        },
+    );
+}
+
+#[test]
+#[ignore]
+fn harness_gtk3_type_text_chars_waits_for_desktop_lane() {
+    run_case(
+        native_foreground_case(
+            "gtk3",
+            "type_text_chars_desktop_lane",
+            Targeting::Ax,
+            DriverRoute::LinuxAtSpiValue,
+        ),
+        |pid, window_id, driver| {
+            assert_waits_for_desktop_lane(
+                pid,
+                window_id,
+                driver,
+                "type_text_chars",
+                |state| {
+                    serde_json::json!({
+                        "pid": pid, "window_id": window_id,
+                        "element_token": element_token(state, "txt-input"),
+                        "text": "lane-chars", "delivery_mode": "foreground"
+                    })
+                },
+                "mirror=lane-chars",
+            )
+        },
+    );
+}
+
 #[derive(Clone, Copy, Debug)]
 enum Operation {
     AxClick {
@@ -1068,8 +1202,16 @@ fn invoke_operation(
     false
 }
 
+/// Hyprland's agent seats (the Cua plugin's isolated input) take background
+/// pointer and key input for any native Wayland client that binds them, the
+/// GTK3 fixture included.
+fn hyprland_agent_seats() -> bool {
+    DisplayServer::current() == DisplayServer::Wayland
+        && platform_linux::wayland::hyprland_input::enabled()
+}
+
 fn row_expects_refusal(row: CatalogRow) -> bool {
-    if row.delivery != Delivery::Background {
+    if row.delivery != Delivery::Background || hyprland_agent_seats() {
         return false;
     }
     // X11 promotes a plain left click on an accessible GTK control to the
@@ -1129,6 +1271,8 @@ fn run_catalog_row(row: CatalogRow) {
         ) && row.delivery == Delivery::Background
         {
             DriverRoute::LinuxAtSpiAction
+        } else if row.delivery == Delivery::Background && hyprland_agent_seats() {
+            DriverRoute::LinuxHyprlandIsolatedInput
         } else if std::env::var_os("CUA_INJECT_SOCKET").is_some() {
             DriverRoute::LinuxCuaCompositorInject
         } else {

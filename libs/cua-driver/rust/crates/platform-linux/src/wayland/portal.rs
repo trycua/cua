@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Shared xdg-desktop-portal connection helpers.
 //!
 //! ashpd's convenience constructors cache their first session-bus connection

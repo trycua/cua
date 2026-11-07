@@ -375,7 +375,7 @@ describe("Add a machine: for a team", () => {
     const opened: unknown[] = [];
     const { adapter } = host({}, {
       "teams.list": teams(acme),
-      "sharing.share": () => Promise.reject(new Error("Team machines need the Teams plan. https://app.cua.ai/buy/teams")),
+      "sharing.share": () => Promise.reject(new Error("Admin roles need the Teams plan. https://app.cua.ai/buy/teams")),
       "session.openExternal": (args) => {
         opened.push(args.url);
         return Promise.resolve(undefined);
@@ -384,7 +384,7 @@ describe("Add a machine: for a team", () => {
     await mount(adapter);
     await waitFor(() => expect(document.querySelector('[data-pairing-team="failed"]')).toBeTruthy(), { timeout: 3000 });
     const text = document.querySelector("[data-pairing-added]")?.textContent ?? "";
-    expect(text).toContain("Added: Office PC. It isn't on Acme yet. Team machines need the Teams plan.");
+    expect(text).toContain("Added: Office PC. It isn't on Acme yet. Admin roles need the Teams plan.");
     expect(text).not.toContain("https://");
     fireEvent.click(document.querySelector("[data-pairing-upgrade]")!);
     await waitFor(() => expect(opened).toEqual(["https://app.cua.ai/buy/teams"]));

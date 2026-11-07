@@ -28,6 +28,8 @@ dev-remotes = []
 [dependencies]
 cua-spaces = { path = "../cua-spaces" }
 cua-spaces-contract = { path = "../cua-spaces-contract" }
+# The coding agents' own recent chats on this computer (`agent_threads`).
+cua-agent-threads = { path = "../cua-agent-threads" }
 # The account's machines and the way to reach them (the replicated Volume).
 cua-mesh.workspace = true
 cua-cluster.workspace = true

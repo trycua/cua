@@ -63,9 +63,24 @@ const STREAMS = ["desktop_stream", "window_stream", "audio.desktop", "relay_atta
 /** `minutesAgo` → RFC 3339, relative to `now`. */
 const at = (now: number, minutesAgo: number) => new Date(now - minutesAgo * 60_000).toISOString();
 
-/** The Linux box sharing its own desktop over the relay (`?demo=desktops`): a row of its own, no host above it. */
+/** The Mac mini and the Linux box sharing their own desktops over the relay (`?demo=desktops`): rows of their own, no
+ * host above them. Without these the demo's computers have nowhere to run a task, so Home can't start on one made the
+ * default. */
 export function demoDesktopRows(now: number): SpaceRow[] {
   return [
+    {
+      id: "relay:mac-mini",
+      name: "Mac mini",
+      provider: "relay",
+      spacesdVersion: "0.6.0",
+      features: [...STREAMS, "host_spaces"],
+      addedAt: at(now, 900),
+      os: "macos",
+      osName: "macOS",
+      osPrettyName: "macOS Tahoe 26.0",
+      arch: "arm64",
+      reachable: true,
+    },
     {
       id: "relay:linux-box",
       name: "Linux box",

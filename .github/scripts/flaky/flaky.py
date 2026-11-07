@@ -12,9 +12,11 @@ wraps the runner and reads its result file:
             not expired, the job passes with a warning.
   validate  check .github/flaky/quarantine.json; exit 1 on an invalid or
             expired entry.
-  file-issues
-            open or update one GitHub issue per flaky test (label `flaky`)
-            from the JSON artifacts that `run` (or `detect`) wrote.
+  record     write the flaky results of one run to the job summary. It never
+            comments or opens issues.
+  digest    weekly: open or update ONE issue, "Flaky tests this week", with a
+            retry count per test or job from the last 7 days of `flaky-*`
+            artifacts.
   gate-check
             for ci-gate: read the failed jobs of one workflow run on stdin
             ("<job id>\t<job name>" lines) and print `all` when every one
@@ -22,7 +24,7 @@ wraps the runner and reads its result file:
             ci-gate then reruns the failed jobs once; a quarantined job that
             fails again is reported and does not fail the gate.
   detect    for the nightly flake scan: find jobs that failed and then passed
-            on a rerun of the same commit, and write `file-issues` reports.
+            on a rerun of the same commit, and write reports for `record` and `digest`.
 
 Quarantine entries (.github/flaky/quarantine.json) name either a `test` (a
 test id, matched inside a job by `run`) or a `job` (a check name glob, with an
@@ -41,13 +43,14 @@ import argparse
 import datetime as dt
 import fnmatch
 import glob
-import hashlib
+import io
 import json
 import os
 import re
 import subprocess
 import sys
 import xml.etree.ElementTree as ET
+import zipfile
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
 
@@ -315,6 +318,7 @@ def cmd_run(args: argparse.Namespace) -> int:
 
     write_summary(args.suite, results, flaky, quarantined, real, live)
     write_artifact(args.suite, flaky, quarantined)
+    record_timings(args.suite, args.format, paths, lines)
 
     if code == 0:
         return 0
@@ -348,6 +352,29 @@ def write_summary(suite: str, results: Results, flaky: Results, quarantined: Res
         out += [f"| `{cell(t)}` | {cell(r['message'])} |" for t, r in sorted(real.items())]
     with open(path, "a") as fh:
         fh.write("\n".join(out) + "\n")
+
+
+def record_timings(suite: str, fmt: str, paths: List[str], lines: List[str]) -> None:
+    """Per-file test times (timings.py). Measurement only: never changes the verdict."""
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import timings
+
+        if fmt == "junit":
+            files = timings.junit_files(paths)
+        elif fmt == "log":
+            files = timings.swift_log_suites(lines)
+        elif fmt == "vitest":
+            files = []
+            for path in paths:
+                side = Path(path + ".timings.json")
+                if side.is_file():
+                    files += json.loads(side.read_text())
+        else:
+            return
+        timings.write(suite, files)
+    except Exception as exc:  # noqa: BLE001
+        print(f"::warning title=Test timings::{suite}: {exc}")
 
 
 def write_artifact(suite: str, flaky: Results, quarantined: Results) -> None:
@@ -395,71 +422,99 @@ def gh(*args: str, check: bool = True) -> str:
     return done.stdout
 
 
-def flaky_key(test_id: str) -> str:
-    return hashlib.sha1(test_id.encode()).hexdigest()[:12]
+def load_reports(directory: str) -> List[dict]:
+    return [json.loads(Path(p).read_text()) for p in sorted(glob.glob(f"{directory}/**/*.json", recursive=True))]
 
 
-def cmd_file_issues(args: argparse.Namespace) -> int:
-    repo = os.environ["GITHUB_REPOSITORY"]
-    server = os.environ.get("GITHUB_SERVER_URL", "https://github.com")
-    reports = [json.loads(Path(p).read_text()) for p in sorted(glob.glob(f"{args.dir}/**/*.json", recursive=True))]
-    items: Dict[str, List[Tuple[dict, dict]]] = {}
-    for report in reports:
-        for row in report.get("flaky", []):
-            items.setdefault(row["id"], []).append((report, row))
-    if not items:
+def cmd_record(args: argparse.Namespace) -> int:
+    """Write the flaky results of one run to the job summary. Never comments or opens issues:
+    `digest` turns the artifacts into one weekly issue."""
+    rows = [(r, row) for r in load_reports(args.dir) for row in r.get("flaky", [])]
+    if not rows:
         print("no flaky tests reported")
         return 0
+    lines = ["### Passed only on retry", "", "| Test or job | Suite | Run |", "|---|---|---|"]
+    for report, row in rows:
+        lines.append(f"| `{cell(clean(row['id'], 200))}` | {cell(clean(report['suite'], 80))} | {report['run_id']} (attempt {report['run_attempt']}) |")
+    text = "\n".join(lines) + "\n"
+    print(text)
+    summary = os.environ.get("GITHUB_STEP_SUMMARY")
+    if summary:
+        with open(summary, "a") as fh:
+            fh.write(text)
+    return 0
+
+
+DIGEST_TITLE = "Flaky tests this week"
+DIGEST_MARKER = "<!-- flaky-digest -->"
+
+
+def build_digest(reports: List[dict], since: str) -> str:
+    """Retry count per test or job: one per distinct (run, attempt) it passed only on retry in."""
+    seen: Dict[str, set] = {}
+    for report in reports:
+        for row in report.get("flaky", []):
+            seen.setdefault(row["id"], set()).add((report.get("run_id"), report.get("run_attempt")))
+    ranked = sorted(seen.items(), key=lambda kv: (-len(kv[1]), kv[0]))
+    lines = [DIGEST_MARKER, f"Tests and jobs that passed only on retry since {since} (UTC). "
+             "Updated weekly. Fix the cause, or quarantine in `.github/flaky/quarantine.json` "
+             "with an owner, an issue and an expiry date.", ""]
+    if not ranked:
+        lines.append("None this week.")
+    else:
+        lines += ["| Retries | Test or job |", "|---|---|"]
+        lines += [f"| {len(runs)} | `{cell(clean(test_id, 200))}` |" for test_id, runs in ranked]
+    return "\n".join(lines) + "\n"
+
+
+def list_flaky_artifacts(repo: str, since: dt.datetime) -> List[dict]:
+    found, page = [], 1
+    while page <= 30:
+        data = json.loads(gh("api", f"repos/{repo}/actions/artifacts?per_page=100&page={page}"))
+        batch = data.get("artifacts", [])
+        for art in batch:
+            created = dt.datetime.fromisoformat(art["created_at"].replace("Z", "+00:00"))
+            if created >= since and not art.get("expired") and art["name"].startswith("flaky-"):
+                found.append(art)
+        if len(batch) < 100 or (batch and dt.datetime.fromisoformat(batch[-1]["created_at"].replace("Z", "+00:00")) < since):
+            break
+        page += 1
+    return found
+
+
+def fetch_artifact_reports(repo: str, art: dict) -> List[dict]:
+    done = subprocess.run(["gh", "api", f"repos/{repo}/actions/artifacts/{art['id']}/zip"], capture_output=True)
+    if done.returncode != 0:
+        return []
+    out = []
+    with zipfile.ZipFile(io.BytesIO(done.stdout)) as z:
+        for name in z.namelist():
+            if name.endswith(".json"):
+                try:
+                    out.append(json.loads(z.read(name)))
+                except ValueError:
+                    pass
+    return out
+
+
+def cmd_digest(args: argparse.Namespace, list_artifacts=list_flaky_artifacts, fetch=fetch_artifact_reports) -> int:
+    """Open or update ONE issue, "Flaky tests this week", from the last 7 days of flaky-* artifacts."""
+    repo = os.environ["GITHUB_REPOSITORY"]
+    since = dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=args.days)
+    reports = [r for art in list_artifacts(repo, since) for r in fetch(repo, art)]
+    body = build_digest(reports, since.strftime("%Y-%m-%d"))
+    print(body)
     if args.dry_run:
-        for test_id in items:
-            print(f"would file: Flaky test: {clean(test_id, 120)}")
         return 0
     gh("label", "create", "flaky", "--repo", repo, "--color", "FBCA04", "--description", "Test that passed only on retry", check=False)
-    existing = json.loads(gh("issue", "list", "--repo", repo, "--label", "flaky", "--state", "all", "--limit", "1000",
-                             "--json", "number,body,state") or "[]")
-    by_key = {}
-    for issue in existing:
-        m = re.search(r"<!-- flaky-key:(\w+) -->", issue.get("body") or "")
-        if m:
-            by_key[m.group(1)] = issue
-    for test_id, occurrences in items.items():
-        key = flaky_key(test_id)
-        report, row = occurrences[0]
-        run_url = f"{server}/{repo}/actions/runs/{report['run_id']}"
-        entry = [
-            f"Passed only on retry in `{clean(report['suite'], 80)}`.",
-            "",
-            f"- Run: {run_url} (attempt {report['run_attempt']}, workflow {clean(report['workflow'], 80)}, job {clean(report['job'], 80)})",
-            f"- Commit: `{report['sha'][:12]}`" + (f", PR #{report['pr']}" if report.get("pr") else f", ref `{clean(report['ref'], 80)}`"),
-            "",
-            "```",
-            clean(row.get("message", "") or "(no message)", 1200).replace("```", "'''"),
-            "```",
-        ]
-        issue = by_key.get(key)
-        if issue is None:
-            body = "\n".join([
-                f"`{clean(test_id, 300)}` passes only on retry in CI. Fix the cause, or quarantine it in "
-                "`.github/flaky/quarantine.json` with an owner, this issue and an expiry date.",
-                "",
-                "Failure history is in the comments below, one per CI run.",
-                "",
-                f"<!-- flaky-key:{key} -->",
-            ])
-            url = gh("issue", "create", "--repo", repo, "--label", "flaky",
-                     "--title", f"Flaky {'job' if report.get('kind') == 'job' else 'test'}: {clean(test_id, 200)}", "--body", body).strip()
-            number = url.rsplit("/", 1)[-1]
-            print(f"opened {url}")
-        else:
-            number = str(issue["number"])
-            have = gh("issue", "view", number, "--repo", repo, "--json", "comments", "--jq", ".comments[].body")
-            if f"/actions/runs/{report['run_id']}" in have:
-                print(f"#{number}: run {report['run_id']} already recorded")
-                continue
-            if issue["state"] == "CLOSED":
-                gh("issue", "reopen", number, "--repo", repo)
-        gh("issue", "comment", number, "--repo", repo, "--body", "\n".join(entry))
-        print(f"#{number}: recorded {run_url}")
+    existing = json.loads(gh("issue", "list", "--repo", repo, "--label", "flaky", "--state", "open", "--limit", "200",
+                             "--json", "number,title,body") or "[]")
+    issue = next((i for i in existing if DIGEST_MARKER in (i.get("body") or "")), None)
+    if issue:
+        gh("issue", "edit", str(issue["number"]), "--repo", repo, "--body", body)
+        print(f"updated #{issue['number']}")
+    else:
+        print(gh("issue", "create", "--repo", repo, "--label", "flaky", "--title", DIGEST_TITLE, "--body", body).strip())
     return 0
 
 
@@ -580,9 +635,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     run.add_argument("command", nargs=argparse.REMAINDER)
     validate = sub.add_parser("validate")
     validate.add_argument("--today")
-    issues = sub.add_parser("file-issues")
-    issues.add_argument("--dir", required=True)
-    issues.add_argument("--dry-run", action="store_true")
+    record = sub.add_parser("record")
+    record.add_argument("--dir", required=True)
+    digest = sub.add_parser("digest")
+    digest.add_argument("--days", type=int, default=7)
+    digest.add_argument("--dry-run", action="store_true")
     gate = sub.add_parser("gate-check")
     gate.add_argument("--workflow", required=True)
     gate.add_argument("--quarantine", help="quarantine file (ci-gate passes the base commit's copy)")
@@ -592,7 +649,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     detect.add_argument("--since-hours", type=int, default=26)
     detect.add_argument("--max-pages", type=int, default=200)
     args = parser.parse_args(argv)
-    return {"run": cmd_run, "validate": cmd_validate, "file-issues": cmd_file_issues,
+    return {"run": cmd_run, "validate": cmd_validate, "record": cmd_record, "digest": cmd_digest,
             "gate-check": cmd_gate_check, "detect": cmd_detect}[args.cmd](args)
 
 

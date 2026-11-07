@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.22.3](https://github.com/trycua/cua/compare/cua-spaces-v0.22.2...cua-spaces-v0.22.3) (2026-11-07)
+
+
+### Bug Fixes
+
+* **spaces:** Home's apps row opens again after a relaunch and shows each switch live (CUA-3551) ([#6872](https://github.com/trycua/cua/issues/6872)) ([26858cd](https://github.com/trycua/cua/commit/26858cd5050728f64aaa1ef78a9bf3a248fdccc8))
+
 ## [0.22.2](https://github.com/trycua/cua/compare/cua-spaces-v0.22.1...cua-spaces-v0.22.2) (2026-11-07)
 
 

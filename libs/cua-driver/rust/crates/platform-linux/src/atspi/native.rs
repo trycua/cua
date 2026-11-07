@@ -59,6 +59,13 @@ fn remaining_budget() -> Duration {
         .unwrap_or(CALL_TIMEOUT)
 }
 
+/// Run `work` with at least `floor` of budget, for a lookup whose answer the
+/// next step needs even after the operation's deadline passed.
+async fn with_budget_floor<T>(floor: Duration, work: impl std::future::Future<Output = T>) -> T {
+    let deadline = tokio::time::Instant::now() + remaining_budget().max(floor);
+    OP_DEADLINE.scope(deadline, work).await
+}
+
 /// True once the current operation's deadline has passed (never for callers
 /// that did not set one).
 fn deadline_passed() -> bool {
@@ -165,6 +172,10 @@ pub(crate) const INPUT_QUERY_BUDGET: Duration = Duration::from_millis(1500);
 /// snapshot answers it. Larger than [`INPUT_QUERY_BUDGET`] because the caller
 /// named a specific element and a miss is an error, not a fallback.
 pub(crate) const INDEX_RESOLVE_BUDGET: Duration = Duration::from_secs(6);
+/// Floor for the toolkit lookup in front of an EditableText write. A walk can
+/// spend the whole budget and the write still goes out, so the lookup can't be
+/// skipped then. Stays well inside the 500 ms backstop of [`bounded_for`].
+const EDITABLE_TOOLKIT_FLOOR: Duration = Duration::from_millis(250);
 
 /// Emit a one-line diagnostic to stderr when `CUA_ATSPI_DEBUG` is set. The
 /// driver's stderr is surfaced in the test logs, so this is how we see what the
@@ -2943,7 +2954,7 @@ async fn write_through_editable_proxies(
         Ok(tp) => tp.caret_offset().await.unwrap_or(0),
         Err(_) => 0,
     };
-    let len = editable_insert_length(toolkit_of(acc).await.as_deref(), text);
+    let len = editable_insert_length_for(acc, text).await;
 
     if et.insert_text(off, text, len).await.unwrap_or(false) {
         return Ok(true);
@@ -2954,12 +2965,22 @@ async fn write_through_editable_proxies(
     Ok(false)
 }
 
+/// `length` for writing `text` into `acc`, from the toolkit behind it.
+async fn editable_insert_length_for(acc: &AccessibleProxy<'_>, text: &str) -> i32 {
+    let toolkit = with_budget_floor(EDITABLE_TOOLKIT_FLOOR, toolkit_of(acc)).await;
+    editable_insert_length(toolkit.as_deref(), text)
+}
+
 /// `length` for `EditableText.InsertText`. The unit depends on the toolkit. Qt
 /// resizes the string to exactly `length` UTF-16 units, so a shorter count drops
 /// the tail and a longer one appends uninitialized memory. GTK and the others
 /// read bytes, the unit the string travels in.
+///
+/// An unknown toolkit gets the UTF-16 count: the write goes out either way, and
+/// that count is never above the byte count, so it can't over-read in Qt and at
+/// worst cuts the text short elsewhere.
 fn editable_insert_length(toolkit: Option<&str>, text: &str) -> i32 {
-    let length = if toolkit.is_some_and(|name| name.trim().eq_ignore_ascii_case("qt")) {
+    let length = if toolkit.is_none_or(|name| name.trim().eq_ignore_ascii_case("qt")) {
         text.encode_utf16().count()
     } else {
         text.len()
@@ -4148,16 +4169,9 @@ async fn decoration_frame_origin(
 }
 
 async fn toolkit_measures_from_frame(app: &AccessibleProxy<'_>) -> bool {
-    let Some(Ok(proxies)) = call(app.proxies()).await else {
-        return false;
-    };
-    let Some(Ok(application)) = call(proxies.application()).await else {
-        return false;
-    };
-    let Some(Ok(name)) = call(application.toolkit_name()).await else {
-        return false;
-    };
-    is_frame_coordinate_toolkit(&name)
+    toolkit_of(app)
+        .await
+        .is_some_and(|name| is_frame_coordinate_toolkit(&name))
 }
 
 /// VCL (LibreOffice) measures `Window` coordinates from the WM frame, title
@@ -5440,7 +5454,7 @@ async fn set_value_on(
             Ok(tp) => tp.caret_offset().await.unwrap_or(0),
             Err(_) => 0,
         };
-        let len = editable_insert_length(toolkit_of(acc).await.as_deref(), value);
+        let len = editable_insert_length_for(acc, value).await;
         if et.insert_text(off, value, len).await.unwrap_or(false) {
             commit_editable_write(&proxies).await;
             return Ok(());
@@ -8763,7 +8777,27 @@ mod token_scope_tests {
 
 #[cfg(test)]
 mod editable_insert_length_tests {
-    use super::editable_insert_length;
+    use super::{call, editable_insert_length, with_budget_floor, OP_DEADLINE};
+    use std::time::Duration;
+
+    #[tokio::test]
+    async fn a_budget_floor_runs_a_lookup_after_the_deadline_and_still_bounds_it() {
+        let spent = tokio::time::Instant::now();
+        OP_DEADLINE
+            .scope(spent, async {
+                assert_eq!(call(async { "answer" }).await, None);
+                let floor = Duration::from_millis(20);
+                assert_eq!(
+                    with_budget_floor(floor, call(async { "answer" })).await,
+                    Some("answer")
+                );
+                assert_eq!(
+                    with_budget_floor(floor, call(std::future::pending::<()>())).await,
+                    None
+                );
+            })
+            .await;
+    }
 
     #[test]
     fn qt_gets_utf16_units_because_it_resizes_the_string_to_exactly_that() {
@@ -8774,8 +8808,19 @@ mod editable_insert_length_tests {
 
     #[test]
     fn every_other_toolkit_gets_bytes() {
-        for toolkit in [Some("GTK"), Some("gail"), Some("Chromium"), None] {
-            assert_eq!(editable_insert_length(toolkit, "ñ🙂ab"), 8, "{toolkit:?}");
+        for toolkit in ["GTK", "gail", "Chromium"] {
+            assert_eq!(
+                editable_insert_length(Some(toolkit), "ñ🙂ab"),
+                8,
+                "{toolkit}"
+            );
         }
+    }
+
+    #[test]
+    fn an_unknown_toolkit_gets_the_count_that_cannot_over_read() {
+        // The write still goes out when the lookup misses. Bytes would make Qt
+        // append uninitialized memory, UTF-16 units at worst cut the text short.
+        assert_eq!(editable_insert_length(None, "ñ🙂ab"), 5);
     }
 }

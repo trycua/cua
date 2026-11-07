@@ -110,7 +110,7 @@ describe.skipIf(!wasmBuilt)("About, Reset & Show", () => {
     expect(readFirstRun().step).toBe("welcome");
     // The welcome's first page is on screen.
     await waitFor(() => expect(document.querySelector("[data-new-first-run]")?.getAttribute("data-step")).toBe("welcome"));
-    expect(document.body.textContent).toContain("Bring all your computers under one account");
+    expect(document.body.textContent).toContain("Combine your existing computers into one supercomputer.");
     await act(async () => {});
     expect(readFirstRun().step).toBe("welcome");
   });

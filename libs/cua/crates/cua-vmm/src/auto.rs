@@ -337,6 +337,12 @@ impl QemuPackageManager {
     }
 }
 
+/// Lume runs macOS VMs on an Apple silicon Mac that is not itself a virtual
+/// machine: Apple's framework has no nested virtualization there.
+fn lume_host_supported(os: HostOs, arch: Arch, mac_is_vm: bool) -> bool {
+    os == HostOs::Macos && arch == Arch::Aarch64 && !mac_is_vm
+}
+
 /// Inspect the host. Read-only: never installs or starts anything.
 pub async fn doctor() -> DoctorReport {
     let host_os = HostOs::current();
@@ -419,8 +425,11 @@ pub async fn doctor() -> DoctorReport {
     note_kvm(&mut qemu_status, host_os, &kvm);
 
     // Lume.
+    // Apple silicon cannot nest macOS VMs: a Mac that is itself a virtual
+    // machine (`kern.hv_vmm_present`, so `kern.hv_support` is 0) cannot run Lume.
+    let mac_is_vm = host::mac_virtualization_supported() == Some(false);
     let mut lume = LumeReport {
-        supported_host: host_os == HostOs::Macos && host_arch == Arch::Aarch64,
+        supported_host: lume_host_supported(host_os, host_arch, mac_is_vm),
         binary: lume_binary(),
         url: crate::local_network::lume_base(),
         ..Default::default()
@@ -448,7 +457,9 @@ pub async fn doctor() -> DoctorReport {
         provisionable: lume.supported_host
             && !lume.serving
             && (lume.binary.is_some() || builtin_ok),
-        detail: if !lume.supported_host {
+        detail: if mac_is_vm && host_os == HostOs::Macos {
+            "Lume cannot run inside a virtual Mac (no nested virtualization)".into()
+        } else if !lume.supported_host {
             "Lume needs a macOS Apple Silicon host".into()
         } else if lume.serving {
             format!("lume serve answering at {}", lume.url)
@@ -1289,6 +1300,14 @@ mod tests {
     }
 
     /// The report `cua runtime doctor --json` prints round-trips.
+    #[test]
+    fn lume_needs_a_real_apple_silicon_mac_not_a_virtual_one() {
+        assert!(lume_host_supported(HostOs::Macos, Arch::Aarch64, false));
+        assert!(!lume_host_supported(HostOs::Macos, Arch::Aarch64, true));
+        assert!(!lume_host_supported(HostOs::Macos, Arch::X86_64, false));
+        assert!(!lume_host_supported(HostOs::Linux, Arch::Aarch64, false));
+    }
+
     #[test]
     fn doctor_report_serialises() {
         let r = report(true, false, true, false, HostOs::Macos);

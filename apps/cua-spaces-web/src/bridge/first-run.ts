@@ -14,7 +14,7 @@ import { BridgeContext } from "./BridgeProvider";
 import type { CoreClient } from "./core";
 import type { CliInstallPlan, FirstRunCli, FirstRunCliView, FirstRunInput, FirstRunStep } from "./contracts/first-run";
 import { extraName, spokenName } from "./space-names";
-import type { NewRunSaved } from "../lib/first-run-new";
+import type { NewRunSaved, RestOffer } from "../lib/first-run-new";
 
 export { extraName, spokenName };
 
@@ -60,6 +60,13 @@ export interface FirstRunSaved {
   advanced?: boolean;
   /** The first run's progress (`lib/first-run-new.ts`). Kept here so Reset & Show forgets it too. */
   newRun?: Partial<NewRunSaved>;
+  /**
+   * Home's "Now bring the rest in" (CUA-3150, idea C): `waiting` from the end of setup until the first job is done,
+   * `shown` from then until "Not now" (`dismissed`, never again). Absent: setup didn't finish here, so it isn't offered.
+   */
+  restOffer?: RestOffer | null;
+  /** When setup ended: agent runs started from then on count as the first job. */
+  restSinceMs?: number | null;
 }
 
 const KEY = "cua-spaces:first-run";

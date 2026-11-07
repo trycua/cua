@@ -38,8 +38,8 @@ const heading = () => document.querySelector("[data-onboarding-heading]")?.textC
 
 async function throughOnboarding(hold?: Promise<void>, calls: { op: string }[] = []) {
   const { router } = await mountApp("/onboarding", { failsCreates: false, listsGhost: false, hold, intercept: (op) => (calls.push({ op }), undefined), demo: { signedIn: false, onboarded: false, noSpaces: true, keys: "several" } });
-  // The new first run (CUA-3318): Skip for now, this computer, the agent found here, Ready, next steps.
-  await waitFor(() => expect(heading()).toBe("Bring all your computers under one account"));
+  // The new first run (CUA-3318): Skip for now, this computer, the agent found here, Ready, then Home.
+  await waitFor(() => expect(heading()).toBe("Combine your existing computers into one supercomputer."));
   click("[data-onboarding-later]");
   await waitFor(() => expect(heading()).toBe("Pick where your agents work"));
   click("[data-onboarding-primary]");
@@ -51,10 +51,9 @@ async function throughOnboarding(hold?: Promise<void>, calls: { op: string }[] =
   if (several) click("[data-new-run-agent=claude-code]");
   click("[data-onboarding-primary]");
   await waitFor(() => expect(document.querySelector("[data-new-run=ready]")).not.toBeNull(), { timeout: 15_000 });
-  click("[data-onboarding-primary]");
-  await waitFor(() => expect(heading()).toBe("Now bring the rest in"));
   // Nothing is made while the first run shows.
   expect(getDriver()?.state?.wanted ?? false).toBe(false);
+  // Ready is the last screen: Done ends setup (the rest is asked for on Home after the first job, CUA-3150).
   click("[data-onboarding-primary]");
   return router;
 }
@@ -82,5 +81,7 @@ describe.skipIf(!wasmBuilt)("where the first run ends", () => {
     expect(document.querySelector("[data-prepare-line]")).toBeNull();
     expect(document.querySelector("[data-home-spaces]")?.textContent ?? "").not.toContain("home-claude-code");
     expect(document.body.textContent).not.toContain("home-claude-code");
+    // No job has run yet, so Home doesn't ask for the rest of setup.
+    expect(document.querySelector("[data-bring-rest]")).toBeNull();
   });
 });

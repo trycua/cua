@@ -6,23 +6,27 @@
  * screen says and which choices it offers, from what the app knows. Pure, so every state is tested
  * without a host. The page (`components/first-run-new`) draws it.
  *
- * 1 Bring all your computers under one account: Add this computer (sign in) or Skip for now.
+ * 1 Combine your existing computers into one supercomputer. Add this computer (sign in) or Skip for now.
  * 1b Finish signing in in your browser: Try again, Use a code instead; "Sign-in didn't finish".
  * 2 Pick where your agents work: this Mac, the account's other computers (offline ones can't be
  *   picked), Add another computer you own, and a separate computer on this Mac.
  * 2b On a Mac: let Cua Spaces see and use apps (Screen Recording and Accessibility, which Cua Driver
  *   uses too), each with Allow, or Later. `lib/app-permissions.ts` has its words.
  * 3 The coding agent found on this Mac, or Install Claude Code / Install Codex instead.
- * 4 Ready: "<agent> can now use <computers>", one line to try in their own terminal.
- * 6 Next steps: invite a teammate, add another computer, let agents use apps on this Mac.
+ * 4 Ready: "<agent> can now use <computers>", one line to try in their own terminal. Done ends setup on Home.
+ *
+ * The rest (invite a teammate, add another computer, let agents use apps on this Mac, Cua from Terminal) is
+ * asked for on Home once the first job is done, not during setup (CUA-3150, idea C): `bringRestView`.
  */
 
 import type { Machine, SignInPhase } from "@/bridge";
 import { relativeTime } from "@/lib/utils";
 
+/** `next`: an older run's last screen, saved before the rest moved to Home; such a run finishes on Home. */
 export type NewRunScreen = "welcome" | "signin" | "where" | "permissions" | "agent" | "ready" | "next";
 
-export const NEW_RUN_SCREENS: NewRunScreen[] = ["welcome", "signin", "where", "permissions", "agent", "ready", "next"];
+/** The screens setup shows, in order. */
+export const NEW_RUN_SCREENS: NewRunScreen[] = ["welcome", "signin", "where", "permissions", "agent", "ready"];
 
 /** The screen after 2: the permissions step on a Mac, else the coding agent. */
 export function afterWhere(os: string): NewRunScreen {
@@ -82,8 +86,9 @@ export function welcomeUsage(view: { notice?: string | null; noticeLinkLabel?: s
 }
 
 export const WELCOME = {
-  title: "Bring all your computers under one account",
-  line: "Sign in on each Mac, PC or Linux computer you own. Then you, your team and your coding agents can use any of them from here.",
+  title: "Combine your existing computers into one supercomputer.",
+  // The headline picked on 7 Nov 2026 (CUA-3753), then the one-liner and what to do here (CUA-3150).
+  line: "Your computers, shared by your team and its agents. Sign in on each Mac, PC or Linux computer you own, then use any of them from here.",
   primary: "Add this computer",
   skip: "Skip for now",
 } as const;
@@ -194,7 +199,11 @@ export interface WhereView {
   signInLine: { link: string; rest: string } | null;
   /** Signed in only: it needs an account. */
   addAnother: { title: string; sub: string } | null;
-  separate: { title: string; sub: string; disabled: boolean; state: "offer" | "checking" | "explain" | "making" | "ready" | "failed"; action: string | null };
+  /**
+   * A separate computer on this one. Null where this computer can't make one (CUA-3150, idea D: offer only what
+   * it can run), unless the person already asked and the create was refused: then the one sentence says why.
+   */
+  separate: { title: string; sub: string; disabled: boolean; state: "offer" | "checking" | "explain" | "making" | "ready" | "failed"; action: string | null } | null;
   continueEnabled: boolean;
 }
 
@@ -214,6 +223,8 @@ export interface WhereInput {
   picks: string[];
   /** Whether this computer can make a separate computer: null while still checking. */
   canMakeSeparate: boolean | null;
+  /** The person asked for one and this computer refused the create (it can't run virtual computers). */
+  separateRefused?: boolean;
   /** Why not, in the host's words (used where the frame's sentence doesn't fit: not a Mac). */
   separateBlocked: string | null;
   separate: { phase: "none" | "explain" | "making" | "ready" | "failed"; name: string | null; error: string | null };
@@ -255,6 +266,8 @@ export function whereView(input: WhereInput): WhereView {
   const thisPicked = input.picks.includes("this");
   const separate = (() => {
     const title = `Or make a separate computer on ${place}`;
+    // Known before anyone asks (the host's runtimes, its architecture, its room): not offered at all.
+    if (input.canMakeSeparate === false && !input.separateRefused) return null;
     if (input.canMakeSeparate === false) {
       const sub =
         input.os === "macos"
@@ -431,13 +444,20 @@ export interface ReadyView {
   done: string;
 }
 
-/** `computers`: the picked computers' names, this computer first as `this` (written "this Mac"). */
-export function readyView(input: { os: string; agent: string; computers: string[] }): ReadyView {
+/**
+ * `computers`: the picked computers' names, this computer first as `this` (written "this Mac"). `canMakeSeparate`:
+ * false where this computer can't make a separate computer, so the line to try never asks for one (CUA-3150, idea D).
+ */
+export function readyView(input: { os: string; agent: string; computers: string[]; canMakeSeparate?: boolean | null }): ReadyView {
   const place = placeName(input.os);
   const a = agentInfo(input.agent);
   const names = input.computers.map((c) => (c === "this" ? place : c));
   const elsewhere = input.computers.find((c) => c !== "this");
-  const task = elsewhere ? `Build this branch on ${elsewhere}` : `Make a separate Linux computer on ${place} and run this repo's tests in it`;
+  const task = elsewhere
+    ? `Build this branch on ${elsewhere}`
+    : input.canMakeSeparate === false
+      ? `Run this repo's tests on ${place} and tell me what fails`
+      : `Make a separate Linux computer on ${place} and run this repo's tests in it`;
   const command = a.command ? `${a.command} "${task}"` : task;
   return {
     title: `${a.name} can now use ${listNames(names)}`,
@@ -448,38 +468,62 @@ export function readyView(input: { os: string; agent: string; computers: string[
   };
 }
 
-/* ---- 6 ---------------------------------------------------------------------------------- */
+/* ---- After the first job: the rest, on Home ------------------------------------------------ */
 
-export interface NextView {
+export interface BringRestView {
   title: string;
   line: string;
   rows: { id: "invite" | "add-computer" | "apps" | "cli"; title: string; sub: string }[];
-  done: string;
+  dismiss: string;
 }
 
 /**
- * Screen 6. `cli`: this app carries the `cua` command and can install it (the host answered `cli.plan`); the row
- * is for people who type commands, so it costs nobody else a step (CUA-3551, option B).
+ * The extra setup, asked for on Home only once the first job is done (CUA-3150, idea C), never during setup.
+ * `apps`: this computer has permissions to give (a Mac). `cli`: this app carries the `cua` command and it isn't on
+ * this computer yet (the host answered `cli.plan`); the row is for people who type commands, so it costs nobody
+ * else a step (CUA-3551, option B).
  */
-export function nextView(input: { os: string; cli?: boolean }): NextView {
+export function bringRestView(input: { os: string; apps?: boolean; cli?: boolean }): BringRestView {
   const place = placeName(input.os);
-  const apps = input.os === "macos";
+  const apps = input.apps ?? input.os === "macos";
   return {
     title: "Now bring the rest in",
     line: apps
-      ? `When you're ready, add your team and your other computers, and let agents use apps on ${place}.`
-      : "When you're ready, add your team and your other computers.",
+      ? `Your first job is done. When you're ready, add your team and your other computers, and let agents use apps on ${place}.`
+      : "Your first job is done. When you're ready, add your team and your other computers.",
     rows: [
       { id: "invite", title: "Invite a teammate", sub: "They can use these computers and agents too." },
       { id: "add-computer", title: "Add another computer", sub: "Install Cua Spaces on it and sign in." },
       ...(apps ? [{ id: "apps" as const, title: `Let agents use apps on ${place}`, sub: "They can see the screen and use the mouse and keyboard, after you allow it." }] : []),
       ...(input.cli ? [{ id: "cli" as const, title: "Use Cua from Terminal", sub: "If you type commands, add the cua command to this computer." }] : []),
     ],
-    done: "Done",
+    dismiss: "Not now",
   };
 }
 
-/** Which progress dot is lit (screens 1 to 3 have dots; 4 and 6 none). */
+/** Where the offer stands: `waiting` from the end of setup until the first job is done, `shown` from then until "Not now". */
+export type RestOffer = "waiting" | "shown" | "dismissed";
+
+/** A job's end as Home can see it: one of its tasks, or an agent run in one of your Spaces. */
+export interface JobSignals {
+  /** Home's tasks (they only start after setup): how each stands (`taskState`, or null when its run isn't read). */
+  tasks: { state: string | null; ending: string | null }[];
+  /** Agent runs in your running Spaces: when each started, and its status. */
+  runs: { startedMs: number | null; status: string | null }[];
+}
+
+/**
+ * The first job is done: a Home task that finished (done, or its computer kept or thrown away; a chat continued
+ * from the Ready screen is one too), or an agent run started since setup ended (`sinceMs`) that finished its turn (`idle`, waiting for the next message). A run that stopped
+ * with an error doesn't count: the offer waits for a job that worked.
+ */
+export function firstJobDone(signals: JobSignals, sinceMs: number): boolean {
+  const taskDone = signals.tasks.some((t) => t.ending === "kept" || t.ending === "thrown" || t.state === "done" || t.state === "kept" || t.state === "thrown");
+  const runDone = signals.runs.some((r) => r.status === "idle" && r.startedMs !== null && r.startedMs >= sinceMs);
+  return taskDone || runDone;
+}
+
+/** Which progress dot is lit (screens 1 to 3 have dots; Ready none). */
 export function dotFor(screen: NewRunScreen): number | null {
   return screen === "welcome" || screen === "signin" ? 0 : screen === "where" || screen === "permissions" ? 1 : screen === "agent" ? 2 : null;
 }
@@ -490,7 +534,7 @@ export const DOT_SCREENS = ["welcome", "where", "agent"] as const satisfies read
 /** Each step's name, read out with its dot ("Step 2 of 3: Pick where your agents work"). */
 export const DOT_NAMES = [WELCOME.title, "Pick where your agents work", "Pick your coding agent"] as const;
 
-/** How far a run has got, once it's on `screen`: Ready and Next steps count as past the last dot. */
+/** How far a run has got, once it's on `screen`: Ready counts as past the last dot. */
 export function reachedAfter(reached: number, screen: NewRunScreen): number {
   return Math.max(reached, dotFor(screen) ?? DOT_SCREENS.length - 1);
 }

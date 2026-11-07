@@ -160,8 +160,9 @@ impl Drop for VmGuard {
         }
         let (rt, name) = (self.rt.clone(), self.name.clone());
         if let Ok(h) = tokio::runtime::Handle::try_current() {
+            // Delete stops the VM at once (no ACPI shutdown to wait for: what it
+            // holds is thrown away) and removes its files.
             h.spawn(async move {
-                let _ = rt.stop(&name).await;
                 let _ = rt.delete(&name).await;
             });
         }
@@ -274,7 +275,8 @@ impl Installer for QemuInstaller {
             }
             if std::time::Instant::now() > deadline {
                 keys.0.abort();
-                let _ = rt.stop(&name).await;
+                let _ = rt.delete(&name).await;
+                vm.armed = false;
                 return Err(ImageError::Build {
                     step: "windows install".into(),
                     detail: format!(

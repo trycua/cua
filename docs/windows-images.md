@@ -124,8 +124,11 @@ message (`cua_vmm::qemu::windows_emulation_message`). Why WSL2 on a Windows PC: 
 Windows under WHPX hangs in OVMF's flash on current builds. Dogfooding
 (`fix/winlike-windows-builder-whpx`) found the rest, all built in: stage files on the WSL ext4
 disk, not `/mnt` (9p stalls); boot the install media first (a blank disk first leaves OVMF in the
-EFI shell); press Enter to catch "Press any key to boot from CD" (on a Mac: every 0.3 s for the
-first 25 s after power-on, then stop, so no Enter reaches Setup's own window).
+EFI shell); press Enter to catch "Press any key to boot from CD". On a Mac and on Linux the installer
+reads the VM's screen and presses Enter only while the prompt is showing (black with text in the top
+rows), and stops when it is gone: a blind timer reached Setup's own window, whose focused button is
+Cancel, twice ("Are you sure you want to quit?" stalled the install). The WSL2 driver has no screen
+access and presses for the first 14 s only.
 
 **ARM64 Windows on a Mac** runs `qemu-system-aarch64 -accel hvf -cpu host` on the `virt` machine with
 edk2 firmware (the one Homebrew's QEMU ships; Microsoft's Secure Boot key pair is used when present,

@@ -150,7 +150,7 @@ pub fn detect_iso(dirs: &[PathBuf], arch: WindowsArch) -> Option<PathBuf> {
             }
         }
     }
-    found.sort_by(|a, b| b.0.cmp(&a.0));
+    found.sort_by_key(|f| std::cmp::Reverse(f.0));
     found.into_iter().next().map(|(_, p)| p)
 }
 

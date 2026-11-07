@@ -322,6 +322,22 @@ fn newer_peer(theirs: &str, local: &str, update: Option<(&str, bool)>) -> Machin
     }
 }
 
+/// The row's one line when its dot is red: why, in a few words. `None`
+/// unless an issue fails (a warning keeps the row's usual line).
+pub fn short_reason(issues: &[MachinesViewIssue]) -> Option<String> {
+    let fail = issues.iter().find(|i| i.level == "fail")?;
+    Some(
+        match fail.id.as_str() {
+            "machine.local_network" => "Needs Local Network",
+            "machine.disk" => "Low disk space",
+            id if id.starts_with("machine.permissions.") => "Needs a permission",
+            "unchecked" => "Couldn\u{2019}t check it",
+            _ => "Needs attention",
+        }
+        .to_string(),
+    )
+}
+
 /// `fail` when any issue fails, `warn` when any warns, else empty (a note
 /// does not count): the tint of the row's dot.
 pub fn health_level(issues: &[MachinesViewIssue]) -> String {

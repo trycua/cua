@@ -115,7 +115,7 @@
           "space xm-before-linux · Ubuntu 24.04.5 LTS · Running -> relay:studio/xm",
           "New Space here on host:studio",
           "details: OS: macOS 26.5.2; Connection: via Cua relay; Service: Running",
-          "Remove from account -> studio (disabled: It’s online. Remove it on that Mac, or here once it’s offline.)"
+          "Remove from account -> studio"
         ],
         [
           "Cua BYOC tests — Offline (rename: machine)",
@@ -135,7 +135,7 @@
           "spaces: No Spaces yet.",
           "New Space here on host:b695 (disabled: It isn’t sharing.)",
           "details: OS: macOS; Connection: via Cua relay; Service: Not sharing",
-          "Remove from account -> b695 (disabled: It’s online. Remove it on that Mac, or here once it’s offline.)"
+          "Remove from account -> b695"
         ],
         [
           "Ana's laptop — Signed in, not sharing (rename: device)",
@@ -241,7 +241,7 @@
         {
           "group": "Your machines",
           "rows": [
-            "● Ada's MacBook Pro [This Mac] — Desktop and 2 Spaces [fail]",
+            "● Ada's MacBook Pro [This Mac] — Needs Local Network [fail]",
             "● cua's Mac Studio — Desktop and 1 Space [warn]",
             "○ Cua BYOC tests — Offline",
             "○ Adas-MacBook-Pro-2.local — Not sharing",
@@ -285,7 +285,7 @@
           "space xm-before-linux · Ubuntu 24.04.5 LTS · Running -> relay:studio/xm",
           "New Space here on host:studio",
           "details: OS: macOS 26.5.2; Connection: via Cua relay; Service: Running",
-          "Remove from account -> studio (disabled: It’s online. Remove it on that Mac, or here once it’s offline.)"
+          "Remove from account -> studio"
         ],
         [
           "Cua BYOC tests — Offline (rename: machine)",
@@ -305,7 +305,7 @@
           "spaces: No Spaces yet.",
           "New Space here on host:b695 (disabled: It isn’t sharing.)",
           "details: OS: macOS; Connection: via Cua relay; Service: Not sharing",
-          "Remove from account -> b695 (disabled: It’s online. Remove it on that Mac, or here once it’s offline.)"
+          "Remove from account -> b695"
         ],
         [
           "Ana's laptop — Signed in, not sharing (rename: device)",
@@ -341,7 +341,7 @@
         {
           "group": "Your machines",
           "rows": [
-            "● Ada's MacBook Pro [This Mac] — Desktop and 2 Spaces [fail]",
+            "● Ada's MacBook Pro [This Mac] — Needs Local Network [fail]",
             "● cua's Mac Studio — Desktop and 1 Space [warn]",
             "○ Cua BYOC tests — Offline",
             "○ Adas-MacBook-Pro-2.local — Not sharing",
@@ -385,7 +385,7 @@
           "space xm-before-linux · Ubuntu 24.04.5 LTS · Running -> relay:studio/xm",
           "New Space here on host:studio",
           "details: OS: macOS 26.5.2; Connection: via Cua relay; Service: Running",
-          "Remove from account -> studio (disabled: It’s online. Remove it on that Mac, or here once it’s offline.)"
+          "Remove from account -> studio"
         ],
         [
           "Cua BYOC tests — Offline (rename: machine)",
@@ -405,7 +405,7 @@
           "spaces: No Spaces yet.",
           "New Space here on host:b695 (disabled: It isn’t sharing.)",
           "details: OS: macOS; Connection: via Cua relay; Service: Not sharing",
-          "Remove from account -> b695 (disabled: It’s online. Remove it on that Mac, or here once it’s offline.)"
+          "Remove from account -> b695"
         ],
         [
           "Ana's laptop — Signed in, not sharing (rename: device)",
@@ -441,7 +441,7 @@
         {
           "group": "Your machines",
           "rows": [
-            "● Ada's MacBook Pro [This Mac] — Desktop and 2 Spaces [fail]",
+            "● Ada's MacBook Pro [This Mac] — Needs Local Network [fail]",
             "● cua's Mac Studio — Desktop and 1 Space [warn]",
             "○ Cua BYOC tests — Offline",
             "○ Adas-MacBook-Pro-2.local — Not sharing",
@@ -485,7 +485,7 @@
           "space xm-before-linux · Ubuntu 24.04.5 LTS · Running -> relay:studio/xm",
           "New Space here on host:studio",
           "details: OS: macOS 26.5.2; Connection: via Cua relay; Service: Running",
-          "Remove from account -> studio (disabled: It’s online. Remove it on that Mac, or here once it’s offline.)"
+          "Remove from account -> studio"
         ],
         [
           "Cua BYOC tests — Offline (rename: machine)",
@@ -505,7 +505,7 @@
           "spaces: No Spaces yet.",
           "New Space here on host:b695 (disabled: It isn’t sharing.)",
           "details: OS: macOS; Connection: via Cua relay; Service: Not sharing",
-          "Remove from account -> b695 (disabled: It’s online. Remove it on that Mac, or here once it’s offline.)"
+          "Remove from account -> b695"
         ],
         [
           "Ana's laptop — Signed in, not sharing (rename: device)",
@@ -587,7 +587,7 @@
         {
           "group": "Your machines",
           "rows": [
-            "● Ada's MacBook Pro [This Mac] — Desktop and 2 Spaces [fail]",
+            "● Ada's MacBook Pro [This Mac] — Needs Local Network [fail]",
             "● cua's Mac Studio — Desktop and 1 Space [warn]",
             "○ Cua BYOC tests — Offline",
             "○ Adas-MacBook-Pro-2.local — Not sharing",
@@ -631,7 +631,7 @@
           "space xm-before-linux · Ubuntu 24.04.5 LTS · Running -> relay:studio/xm",
           "New Space here on host:studio",
           "details: OS: macOS 26.5.2; Connection: via Cua relay; Service: Running",
-          "Remove from account -> studio (disabled: It’s online. Remove it on that Mac, or here once it’s offline.)"
+          "Remove from account -> studio"
         ],
         [
           "Cua BYOC tests — Offline (rename: machine)",
@@ -651,7 +651,7 @@
           "spaces: No Spaces yet.",
           "New Space here on host:b695 (disabled: It isn’t sharing.)",
           "details: OS: macOS; Connection: via Cua relay; Service: Not sharing",
-          "Remove from account -> b695 (disabled: It’s online. Remove it on that Mac, or here once it’s offline.)"
+          "Remove from account -> b695"
         ],
         [
           "Ana's laptop — Signed in, not sharing (rename: device)",
@@ -734,7 +734,7 @@
         {
           "group": "Your machines",
           "rows": [
-            "● Ada's MacBook Pro [This Mac] — Desktop and 2 Spaces [fail]",
+            "● Ada's MacBook Pro [This Mac] — Needs Local Network [fail]",
             "● cua's Mac Studio — Desktop and 1 Space [warn]",
             "○ Cua BYOC tests — Offline",
             "○ Adas-MacBook-Pro-2.local — Not sharing",
@@ -778,7 +778,7 @@
           "space xm-before-linux · Ubuntu 24.04.5 LTS · Running -> relay:studio/xm",
           "New Space here on host:studio",
           "details: OS: macOS 26.5.2; Connection: via Cua relay; Service: Running",
-          "Remove from account -> studio (disabled: It’s online. Remove it on that Mac, or here once it’s offline.)"
+          "Remove from account -> studio"
         ],
         [
           "Cua BYOC tests — Offline (rename: machine)",
@@ -798,7 +798,7 @@
           "spaces: No Spaces yet.",
           "New Space here on host:b695 (disabled: It isn’t sharing.)",
           "details: OS: macOS; Connection: via Cua relay; Service: Not sharing",
-          "Remove from account -> b695 (disabled: It’s online. Remove it on that Mac, or here once it’s offline.)"
+          "Remove from account -> b695"
         ],
         [
           "Ana's laptop — Signed in, not sharing (rename: device)",
@@ -858,7 +858,7 @@
           "spaces: No other Spaces yet.",
           "New Space here on host:solo",
           "details: OS: macOS; Connection: via Cua relay; Service: Running",
-          "Remove from account -> solo (disabled: It’s online. Remove it on that Mac, or here once it’s offline.)"
+          "Remove from account -> solo"
         ],
         [
           "both — Online (rename: machine)",
@@ -870,7 +870,7 @@
           "space two · Linux · Suspended -> relay:both/space-2",
           "New Space here on host:both",
           "details: OS: macOS; Connection: via Cua relay; Service: Running",
-          "Remove from account -> both (disabled: It’s online. Remove it on that Mac, or here once it’s offline.)"
+          "Remove from account -> both"
         ],
         [
           "spaces — Online (rename: machine)",
@@ -880,7 +880,7 @@
           "space box · Linux · Running -> relay:spaces/space-1",
           "New Space here on host:spaces",
           "details: OS: macOS; Connection: via Cua relay; Service: Running",
-          "Remove from account -> spaces (disabled: It’s online. Remove it on that Mac, or here once it’s offline.)"
+          "Remove from account -> spaces"
         ]
       ],
       "summary": "4 machines, 4 online",

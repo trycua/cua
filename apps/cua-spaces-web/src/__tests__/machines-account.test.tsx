@@ -104,6 +104,21 @@ describe.skipIf(!wasmBuilt)("one list of machines (real routes, wasm core)", () 
     await waitFor(() => expect(sentFor(calls, "devices.confirmMachine")).toEqual([{ id: "m3" }]));
   });
 
+  it("a machine that registered without proof is listed once, under Waiting, not also with the machines (CUA-3746)", async () => {
+    const base = host([], withUnknown);
+    await mountApp("/machines", {
+      ...base,
+      answer: (op, out) => {
+        const rows = base.answer?.(op, out) ?? out;
+        // The relay also lists it with the machines, online.
+        return op === "machines.list" ? [...(rows as MachineRow[]), { id: "m3", name: "unknown-box", via: "relay", online: true, os: "macos", limits: [] }] : rows;
+      },
+    });
+    await waitFor(() => expect(names()).toContain("unknown-box"));
+    expect(document.querySelectorAll('[data-machine-id="m3"]')).toHaveLength(0);
+    expect(document.querySelectorAll('[data-pending-machine="m3"]')).toHaveLength(1);
+  });
+
   it("Not me on a machine that registered without proof asks first, then removes it from the account", async () => {
     const calls: Calls = [];
     await mountApp("/machines", host(calls, withUnknown));

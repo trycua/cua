@@ -100,10 +100,12 @@ describe.skipIf(!wasmBuilt)("the Machines page (real routes, wasm core)", () => 
     select("studio");
     const detail = await detailOf("Studio");
     expect(detail.querySelector("[data-machine-status]")?.textContent).toContain("Not sharing");
-    // Online, so the relay would only take it back: Remove says where.
+    // Online, and still removable: the confirmation says it is disconnected (CUA-3746).
     const remove = detail.querySelector<HTMLButtonElement>('[data-machine-remove="studio"]')!;
-    expect(remove.disabled).toBe(true);
-    expect(remove.parentElement?.getAttribute("title")).toMatch(/Remove it on that Mac/);
+    expect(remove.disabled).toBe(false);
+    fireEvent.click(remove);
+    expect((await screen.findByRole("alertdialog")).textContent).toMatch(/is online/);
+    fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Cancel" }));
     expect(detail.querySelector<HTMLButtonElement>("[data-machine-new-space]")!.disabled).toBe(true);
   });
 

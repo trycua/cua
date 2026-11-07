@@ -59,9 +59,13 @@ export const Route = createFileRoute("/machines/")({
 
 const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
-/** The view without the sign-ins that are waiting to be added (they are the top group). */
+/** The view without what is waiting to be added (it is the top group, once):
+ * a sign-in's device, and a machine that registered without proof it was
+ * you, which the relay also lists with the machines (CUA-3746). */
 function withoutPending(view: MachinesView, pending: readonly PendingMachine[]): MachinesView {
-  const waiting = new Set(pending.flatMap((p) => (p.kind === "sign-in" && p.device ? [p.device] : [])));
+  const waiting = new Set(
+    pending.flatMap((p) => [...(p.kind === "sign-in" && p.device ? [p.device] : []), ...(p.kind === "machine" && p.machine ? [p.machine] : [])]),
+  );
   if (waiting.size === 0) return view;
   return {
     ...view,

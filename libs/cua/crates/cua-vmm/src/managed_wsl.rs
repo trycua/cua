@@ -5,15 +5,15 @@
 //! # How it works
 //!
 //! * **A distribution of cua's own.** `cua-runtime-<tag>`, imported
-//!   (`wsl --import`) from a pinned, SHA-256 checked Alpine minirootfs
-//!   ([`rootfs_pin`], about 4 MB) into `<cua home>/runtimes/linux/wsl`. `<tag>` is
+//!   (`wsl --import`) from a pinned, SHA-256 checked Ubuntu base rootfs
+//!   ([`rootfs_pin`], about 30 MB) into `<cua home>/runtimes/linux/wsl`. `<tag>` is
 //!   a digest of the cua home, so each home (a released Cua Spaces, Cua Spaces
 //!   Local, a test home) has its own distribution, pipe and disk, and none can
 //!   see another's. An existing distribution (the user's Ubuntu,
 //!   `docker-desktop`) is never read, started, stopped or changed: cua only
 //!   ever names its own.
 //! * **Docker inside it.** One-time setup installs Docker Engine, `socat` and
-//!   `iptables` from Alpine's package repository ([`PACKAGES`]) and a
+//!   `iptables` from Ubuntu's package archive ([`PACKAGES`]) and a
 //!   `wsl.conf` that turns off the distribution's access to the user's
 //!   Windows drives and Windows interop: a container engine running as root
 //!   in it cannot reach the user's files. Its bridge networks use
@@ -50,11 +50,15 @@ use super::Pin;
 use crate::error::{Result, VmmError};
 use crate::host;
 
-/// The Alpine release of the pinned rootfs.
-pub const ALPINE_VERSION: &str = "3.24.4";
+/// The Ubuntu release of the pinned rootfs. Ubuntu, not Alpine: cua's engine
+/// helper (checkpoints, egress rules) runs in a privileged container that
+/// bind-mounts the engine's `/usr` and starts `/usr/bin/sleep`, and calls
+/// `/usr/sbin/chroot`, so the engine's Linux must have Ubuntu's merged-`/usr`
+/// layout and GNU userland, as the Mac's runtime (Colima's Ubuntu) does.
+pub const BASE_VERSION: &str = "24.04.5";
 
-/// What the one-time setup installs, from Alpine's repository.
-pub const PACKAGES: &str = "docker socat iptables ca-certificates";
+/// What the one-time setup installs, from Ubuntu's archive.
+pub const PACKAGES: &str = "docker.io iptables nftables socat ca-certificates";
 
 /// Docker's default bridge, away from WSL's own `172.x` subnets.
 pub const BRIDGE_CIDR: &str = "10.230.0.1/24";
@@ -65,21 +69,21 @@ pub const ADDRESS_POOL: &str = "10.231.0.0/16";
 pub const GUEST_SOCKET: &str = "/run/cua/docker.sock";
 
 /// Bumped when the one-time setup changes: an older distribution is set up again.
-pub const SETUP_VERSION: u32 = 1;
+pub const SETUP_VERSION: u32 = 2;
 
-/// The pinned Alpine minirootfs for this PC's architecture.
+/// The pinned Ubuntu base rootfs for this PC's architecture.
 pub fn rootfs_pin() -> Pin {
     if cfg!(target_arch = "aarch64") {
         Pin {
-            url: "https://dl-cdn.alpinelinux.org/alpine/v3.24/releases/aarch64/alpine-minirootfs-3.24.4-aarch64.tar.gz",
-            sha256: "4b14c18f7e90a063b61462ea1462a5732c154bf6adad594974fe6487cd98a8de",
-            size: 4_029_843,
+            url: "https://cdimage.ubuntu.com/ubuntu-base/releases/24.04/release/ubuntu-base-24.04.5-base-arm64.tar.gz",
+            sha256: "a91d5a93010193712d346d761372b7c9db6dfcf093893161c64ca107f05914f2",
+            size: 29_936_675,
         }
     } else {
         Pin {
-            url: "https://dl-cdn.alpinelinux.org/alpine/v3.24/releases/x86_64/alpine-minirootfs-3.24.4-x86_64.tar.gz",
-            sha256: "cdaa38cb8de3537967ee5b6c9b6cd00cc962da2b018e6eea48696bb274923012",
-            size: 3_704_088,
+            url: "https://cdimage.ubuntu.com/ubuntu-base/releases/24.04/release/ubuntu-base-24.04.5-base-amd64.tar.gz",
+            sha256: "e77b6f10c2590cef872b33ee9f635a0e3fd1f57fb074c0e52b5c7f56147a0c86",
+            size: 30_028_293,
         }
     }
 }
@@ -89,9 +93,9 @@ pub fn rootfs_pin() -> Pin {
 /// packages. The guard keeps `CUA_DISK_MIN_FREE` (5 GiB) free on top.
 pub const SETUP_DISK_BYTES: u64 = 2 << 30;
 
-/// What the first Linux Space downloads: the rootfs and about 90 MB of packages.
+/// What the first Linux Space downloads: the rootfs and about 120 MB of packages.
 pub fn first_use_download() -> u64 {
-    rootfs_pin().size + (90 << 20)
+    rootfs_pin().size + (120 << 20)
 }
 
 /// Eight hex digits of the cua home's digest: what tells homes apart.
@@ -404,9 +408,23 @@ pub fn configure_script() -> String {
 /// Run in the distribution, as root, after it restarted with its configuration.
 pub fn install_script() -> String {
     format!(
-        "set -e\napk add --no-cache {PACKAGES}\ndocker --version >/dev/null\nprintf 'cua-runtime setup {SETUP_VERSION}\\n' > /etc/cua-runtime\n"
+        "set -e\n\
+         printf '#!/bin/sh\\nexit 101\\n' > /usr/sbin/policy-rc.d\n\
+         chmod +x /usr/sbin/policy-rc.d\n\
+         export DEBIAN_FRONTEND=noninteractive\n\
+         apt-get update\n\
+         apt-get install -y --no-install-recommends {PACKAGES}\n\
+         {HELPER_CHECK}\n\
+         docker --version >/dev/null\n\
+         printf 'cua-runtime setup {SETUP_VERSION}\\n' > /etc/cua-runtime\n"
     )
 }
+
+/// What the engine helper needs of the engine's Linux (`container::snapshot`
+/// bind-mounts `/usr`, starts `/usr/bin/sleep` and runs `/usr/sbin/chroot`;
+/// `container::egress` runs `nsenter` and `nft` in it):
+/// setup fails with a clear message instead of every later create doing so.
+pub const HELPER_CHECK: &str = "test -x /usr/bin/sleep && test -x /usr/sbin/chroot && command -v nft >/dev/null && command -v nsenter >/dev/null || { echo 'the runtime image lacks /usr/bin/sleep, /usr/sbin/chroot, nft or nsenter (merged /usr layout)' >&2; exit 1; }";
 
 /// The program that is the engine: Docker's daemon on [`GUEST_SOCKET`].
 pub const DOCKERD_SCRIPT: &str = "mkdir -p /run/cua && exec dockerd --host=unix:///run/cua/docker.sock --pidfile=/run/cua/dockerd.pid >>/var/log/dockerd.log 2>&1";
@@ -593,33 +611,41 @@ pub fn stop_serving() {
 static SERVING: std::sync::Mutex<Option<tokio::task::JoinHandle<()>>> = std::sync::Mutex::new(None);
 
 /// A daemon that restarted finds this home's engine still running (its
-/// `wsl.exe` outlives it) and serves the pipe again, at most every 5 s.
+/// `wsl.exe` outlives it) and serves the pipe again. Never blocks the caller
+/// (a wedged WSL service must not wedge the daemon): the look runs in the
+/// background, one at a time, at most every 15 s, and is given 10 s.
 pub fn reattach() {
     #[cfg(windows)]
     {
+        use std::sync::atomic::{AtomicBool, Ordering::SeqCst};
+        static BUSY: AtomicBool = AtomicBool::new(false);
         static LAST: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
+        if !provisioned() {
+            return;
+        }
+        let Ok(rt) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
         {
             let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
-            if last.is_some_and(|t| t.elapsed() < std::time::Duration::from_secs(5)) {
+            if last.is_some_and(|t| t.elapsed() < std::time::Duration::from_secs(15)) {
+                return;
+            }
+            if BUSY.swap(true, SeqCst) {
                 return;
             }
             *last = Some(std::time::Instant::now());
         }
-        if !provisioned() || tokio::runtime::Handle::try_current().is_err() {
-            return;
-        }
-        use std::os::windows::process::CommandExt as _;
-        let Ok(o) = std::process::Command::new("wsl.exe")
-            .args(["-l", "--running", "-q"])
-            .env("WSL_UTF8", "1")
-            .creation_flags(CREATE_NO_WINDOW)
-            .output()
-        else {
-            return;
-        };
-        if decode(&o.stdout).lines().any(|l| l.trim() == distro()) {
-            let _ = serve_pipe();
-        }
+        rt.spawn(async {
+            let look =
+                tokio::time::timeout(std::time::Duration::from_secs(10), list(&WslExe, true)).await;
+            if let Ok(Ok(names)) = look
+                && names.iter().any(|n| *n == distro())
+            {
+                let _ = serve_pipe();
+            }
+            BUSY.store(false, SeqCst);
+        });
     }
 }
 
@@ -795,7 +821,7 @@ mod tests {
         let p = rootfs_pin();
         assert_eq!(p.sha256.len(), 64);
         assert!(p.url.starts_with("https://"));
-        assert!(p.url.contains(ALPINE_VERSION));
+        assert!(p.url.contains(BASE_VERSION));
     }
 
     #[test]
@@ -864,7 +890,7 @@ mod tests {
     async fn a_failed_install_unregisters_only_what_it_imported() {
         let tmp = tempfile::tempdir().unwrap();
         let w = Fake::new(vec![(
-            "apk add",
+            "apt-get install",
             out(1, "", "fetch failed: network unreachable"),
         )]);
         let rootfs = tmp.path().join("r.tar.gz");
@@ -899,8 +925,32 @@ mod tests {
         let at = |needle: &str| calls.iter().position(|c| c.contains(needle)).unwrap();
         assert!(at("--import") < at("wsl.conf"));
         assert!(at("wsl.conf") < at("--terminate"));
-        assert!(at("--terminate") < at("apk add"));
+        assert!(at("--terminate") < at("apt-get install"));
         assert!(marker_in(tmp.path()).exists());
+    }
+
+    /// The engine helper (`container::snapshot`) bind-mounts the engine's `/usr` and
+    /// starts `/usr/bin/sleep`: an Alpine engine had no such file and every
+    /// Space that needed the helper failed with "stat /usr/bin/sleep".
+    #[test]
+    fn the_engine_linux_has_what_the_helper_runs() {
+        let s = install_script();
+        assert!(s.contains(HELPER_CHECK), "{s}");
+        assert!(
+            HELPER_CHECK.contains("/usr/bin/sleep") && HELPER_CHECK.contains("/usr/sbin/chroot")
+        );
+        // Debian's package scripts must not try to start services in a distribution without init.
+        assert!(s.contains("policy-rc.d") && s.contains("exit 101"));
+        assert!(s.contains("apt-get install -y --no-install-recommends docker.io"));
+        assert!(
+            rootfs_pin().url.contains("ubuntu-base"),
+            "an Ubuntu rootfs, like the Mac's runtime"
+        );
+        let helper = include_str!("container/snapshot.rs");
+        assert!(
+            helper.contains("/usr/bin/sleep"),
+            "the helper's entrypoint this check is for"
+        );
     }
 
     #[test]

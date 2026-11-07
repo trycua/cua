@@ -148,15 +148,48 @@ fn unique_actionable(
     }
 }
 
-fn omnibox_reads_setup_url(nodes: &[AXNode], descriptor: &BrowserSetupDescriptor) -> bool {
-    nodes.iter().any(|node| {
-        node.role == "AXTextField"
-            && field_equals(node, "Address and search bar")
+/// The address fields holding the exact setup URL. Chrome names the field
+/// "Address and search bar", but a localized Chrome names it in the UI
+/// language ("地址和搜索栏"), so an unlabelled field counts only when it is the
+/// window's one native pressable text field, the field [`unique_omnibox`]
+/// presses. A find bar or other native field open beside it leaves only a
+/// labelled field, or none.
+fn setup_url_omniboxes<'a>(
+    nodes: &'a [AXNode],
+    descriptor: &BrowserSetupDescriptor,
+) -> Vec<(usize, &'a AXNode)> {
+    let native_field = |node: &AXNode| node.role == "AXTextField" && !node.in_web_content;
+    let pressable = distinct_elements(
+        nodes
+            .iter()
+            .enumerate()
+            .filter(|(_, node)| native_field(node) && has_action(node, "AXPress")),
+        is_same_element,
+    );
+    let sole_field = match pressable.as_slice() {
+        [(index, _)] => Some(*index),
+        _ => None,
+    };
+    distinct_elements(
+        nodes
+            .iter()
+            .enumerate()
+            .filter(|(_, node)| native_field(node)),
+        is_same_element,
+    )
+    .into_iter()
+    .filter(|(index, node)| {
+        (sole_field == Some(*index) || field_equals(node, "Address and search bar"))
             && node
                 .value
                 .as_deref()
                 .is_some_and(|value| value.trim().eq_ignore_ascii_case(descriptor.setup_url))
     })
+    .collect()
+}
+
+fn omnibox_reads_setup_url(nodes: &[AXNode], descriptor: &BrowserSetupDescriptor) -> bool {
+    !setup_url_omniboxes(nodes, descriptor).is_empty()
 }
 
 fn initial_setup_tree(
@@ -188,18 +221,7 @@ fn setup_page_proven(nodes: &[AXNode], descriptor: &BrowserSetupDescriptor) -> b
 }
 
 fn native_setup_page_proven(nodes: &[AXNode], descriptor: &BrowserSetupDescriptor) -> bool {
-    let exact_urls = distinct_elements(
-        nodes.iter().enumerate().filter(|(_, node)| {
-            node.role == "AXTextField"
-                && field_equals(node, "Address and search bar")
-                && node
-                    .value
-                    .as_deref()
-                    .is_some_and(|value| value.trim().eq_ignore_ascii_case(descriptor.setup_url))
-        }),
-        is_same_element,
-    )
-    .len();
+    let exact_urls = setup_url_omniboxes(nodes, descriptor).len();
     let exact_selected_tabs = distinct_elements(
         nodes.iter().enumerate().filter(|(_, node)| {
             node.role == "AXRadioButton"
@@ -226,16 +248,10 @@ fn native_setup_page_committed(
     if !native_setup_page_proven(nodes, descriptor) {
         return false;
     }
-    let exact_omnibox = nodes.iter().find(|node| {
-        node.role == "AXTextField"
-            && node.element_index.is_some()
-            && field_equals(node, "Address and search bar")
-            && node
-                .value
-                .as_deref()
-                .is_some_and(|value| value.trim().eq_ignore_ascii_case(descriptor.setup_url))
-    });
-    let Some(exact_omnibox) = exact_omnibox else {
+    let exact_omnibox = setup_url_omniboxes(nodes, descriptor)
+        .into_iter()
+        .find(|(_, node)| node.element_index.is_some());
+    let Some((_, exact_omnibox)) = exact_omnibox else {
         return false;
     };
     let focused = unsafe { focused_element_of_pid(pid) };
@@ -273,15 +289,37 @@ fn unique_omnibox(
     nodes: &[AXNode],
     descriptor: &BrowserSetupDescriptor,
 ) -> Result<usize, BrowserRefusal> {
-    unique_actionable(nodes, "AXTextField", "Address and search bar", "AXPress")?.ok_or_else(|| {
-        BrowserRefusal::new(
+    if let Some(element) =
+        unique_actionable(nodes, "AXTextField", "Address and search bar", "AXPress")?
+    {
+        return Ok(element);
+    }
+    // A localized Chrome names the field in the UI language ("地址和搜索栏"):
+    // fall back to the window's one native pressable text field. Page fields
+    // are web content; any other count refuses.
+    let native_fields = distinct_elements(
+        nodes.iter().enumerate().filter(|(_, node)| {
+            node.role == "AXTextField" && !node.in_web_content && has_action(node, "AXPress")
+        }),
+        is_same_element,
+    );
+    match native_fields.as_slice() {
+        [(_, node)] => Ok(node.element_ptr),
+        [] => Err(BrowserRefusal::new(
             BrowserRefusalCode::BrowserWrongTargetRefused,
             format!(
                 "the approved {} window has no exact address-and-search field",
                 descriptor.product_name
             ),
-        )
-    })
+        )),
+        _ => Err(BrowserRefusal::new(
+            BrowserRefusalCode::BrowserWrongTargetRefused,
+            format!(
+                "the approved {} window exposed multiple native address fields",
+                descriptor.product_name
+            ),
+        )),
+    }
 }
 
 fn is_exact_setup_suggestion(value: &str, setup_url: &str) -> bool {
@@ -308,18 +346,7 @@ fn exact_omnibox_suggestion(
     nodes: &[AXNode],
     descriptor: &BrowserSetupDescriptor,
 ) -> Result<Option<usize>, BrowserRefusal> {
-    let omniboxes = distinct_elements(
-        nodes.iter().enumerate().filter(|(_, node)| {
-            node.role == "AXTextField"
-                && field_equals(node, "Address and search bar")
-                && node
-                    .value
-                    .as_deref()
-                    .is_some_and(|value| value.trim().eq_ignore_ascii_case(descriptor.setup_url))
-        }),
-        is_same_element,
-    )
-    .len();
+    let omniboxes = setup_url_omniboxes(nodes, descriptor).len();
     match omniboxes {
         0 => return Ok(None),
         1 => {}
@@ -383,11 +410,81 @@ fn exact_omnibox_suggestion(
     }
 }
 
+fn same_span(left: f64, right: f64) -> bool {
+    (left - right).abs() < 1.0
+}
+
+/// A localized Chrome names the new-tab control in the UI language
+/// ("新标签页"), so when no exact English label matches, identify it by
+/// structure: the one native pressable `AXButton` that is not inside a tab and
+/// spans exactly the tab strip's row (the top and height of the topmost row of
+/// native tabs). Tabbed bubbles such as Translate's sit below the toolbar, so
+/// their tabs never form that row. Window buttons and each tab's close button
+/// are shorter than the strip, and the close buttons sit inside their tab.
+/// Horizontal position is not used: Chrome overlaps the control with the last
+/// tab. `Ok(None)` means no candidate; more than one refuses.
+fn structural_new_tab_button(
+    nodes: &[AXNode],
+    same_element: impl Fn(usize, usize) -> bool,
+) -> Result<Option<usize>, BrowserRefusal> {
+    let is_tab = |node: &AXNode| node.role == "AXRadioButton" && !node.in_web_content;
+    let tab_frames = nodes
+        .iter()
+        .filter(|node| is_tab(node))
+        .filter_map(|node| node.frame)
+        .collect::<Vec<_>>();
+    let Some(top) = tab_frames
+        .iter()
+        .map(|frame| frame[1])
+        .min_by(f64::total_cmp)
+    else {
+        return Ok(None);
+    };
+    let row = tab_frames
+        .iter()
+        .filter(|frame| same_span(frame[1], top))
+        .collect::<Vec<_>>();
+    let strip = *row[0];
+    if row.iter().any(|frame| !same_span(frame[3], strip[3])) {
+        return Ok(None);
+    }
+    let inside_tab = |node: &AXNode| {
+        node.parent_element_index.is_some_and(|parent| {
+            nodes
+                .iter()
+                .any(|candidate| candidate.element_index == Some(parent) && is_tab(candidate))
+        })
+    };
+    let matches = distinct_elements(
+        nodes.iter().enumerate().filter(|(_, node)| {
+            node.role == "AXButton"
+                && !node.in_web_content
+                && has_action(node, "AXPress")
+                && !inside_tab(node)
+                && node.frame.is_some_and(|frame| {
+                    frame[2] > 0.0 && same_span(frame[1], strip[1]) && same_span(frame[3], strip[3])
+                })
+        }),
+        same_element,
+    );
+    match matches.as_slice() {
+        [] => Ok(None),
+        [(_, node)] => Ok(Some(node.element_ptr)),
+        _ => Err(BrowserRefusal::new(
+            BrowserRefusalCode::BrowserWrongTargetRefused,
+            "multiple native buttons span the tab strip row",
+        )),
+    }
+}
+
 fn new_tab_button(
     nodes: &[AXNode],
     descriptor: &BrowserSetupDescriptor,
 ) -> Result<usize, BrowserRefusal> {
-    unique_actionable(nodes, "AXButton", "New Tab", "AXPress")?.ok_or_else(|| {
+    if let Some(element) = unique_actionable(nodes, "AXButton", "New Tab", "AXPress")? {
+        return Ok(element);
+    }
+    structural_new_tab_button(nodes, is_same_element)?.ok_or_else(|| {
         BrowserRefusal::new(
             BrowserRefusalCode::BrowserWrongTargetRefused,
             format!(
@@ -461,20 +558,27 @@ fn select_new_tab_close_button(
         .skip(tab_index + 1)
         .find(|(_, node)| node.depth <= tab.depth)
         .map_or(after.len(), |(index, _)| index);
-    let close_buttons = distinct_elements(
+    let tab_buttons = || {
         after[tab_index + 1..end]
             .iter()
             .enumerate()
-            .filter(|(_, node)| {
-                node.role == "AXButton"
-                    && descriptor
-                        .tab_close_labels
-                        .iter()
-                        .any(|label| field_equals(node, label))
-                    && has_action(node, "AXPress")
-            }),
-        same_element,
+            .filter(|(_, node)| node.role == "AXButton" && has_action(node, "AXPress"))
+    };
+    let mut close_buttons = distinct_elements(
+        tab_buttons().filter(|(_, node)| {
+            descriptor
+                .tab_close_labels
+                .iter()
+                .any(|label| field_equals(node, label))
+        }),
+        &same_element,
     );
+    if close_buttons.is_empty() {
+        // A localized Chrome names the control in the UI language ("关闭").
+        // The tab was proven new above, and a fresh tab holds one pressable
+        // button, its close control; any other count refuses.
+        close_buttons = distinct_elements(tab_buttons(), &same_element);
+    }
     match close_buttons.as_slice() {
         [(_, node)] => Ok(Some(node.element_ptr)),
         [] => Err(BrowserRefusal::new(
@@ -870,21 +974,11 @@ fn exact_pixel_setup_checkbox(
             ),
         ));
     };
-    let omnibox_frames = distinct_elements(
-        nodes.iter().enumerate().filter(|(_, node)| {
-            node.role == "AXTextField"
-                && node.element_index.is_some()
-                && field_equals(node, "Address and search bar")
-                && node
-                    .value
-                    .as_deref()
-                    .is_some_and(|value| value.trim().eq_ignore_ascii_case(descriptor.setup_url))
-        }),
-        is_same_element,
-    )
-    .iter()
-    .filter_map(|(_, node)| node.frame)
-    .collect::<Vec<_>>();
+    let omnibox_frames = setup_url_omniboxes(nodes, descriptor)
+        .iter()
+        .filter(|(_, node)| node.element_index.is_some())
+        .filter_map(|(_, node)| node.frame)
+        .collect::<Vec<_>>();
     let [omnibox_frame] = omnibox_frames.as_slice() else {
         return Err(BrowserRefusal::new(
             BrowserRefusalCode::BrowserWrongTargetRefused,
@@ -2137,6 +2231,265 @@ mod tests {
             new_tab_button(&nodes, chrome()).unwrap_err().code,
             BrowserRefusalCode::BrowserWrongTargetRefused
         );
+    }
+
+    /// Native tab strip of a zh-Hans Chrome 156 window, as walked on macOS
+    /// 26.6.2: window buttons, tab search, two tabs with their close buttons,
+    /// and the new-tab control overlapping the last tab by 6pt.
+    fn localized_tab_strip() -> Vec<AXNode> {
+        let strip = |role: &str, index: usize, parent: Option<usize>, frame: [f64; 4]| {
+            let mut node = tree_node(role, None, 100 + index, 1);
+            node.element_index = Some(index);
+            node.parent_element_index = parent;
+            node.frame = Some(frame);
+            node
+        };
+        let mut nodes = vec![
+            strip("AXWindow", 0, None, [0.0, 33.0, 1512.0, 886.0]),
+            strip("AXPopUpButton", 1, Some(0), [92.0, 39.0, 28.0, 28.0]),
+            strip("AXRadioButton", 2, Some(0), [114.0, 33.0, 163.0, 41.0]),
+            strip("AXButton", 3, Some(2), [235.0, 39.0, 28.0, 28.0]),
+            strip("AXRadioButton", 4, Some(0), [259.0, 33.0, 163.0, 41.0]),
+            strip("AXButton", 5, Some(4), [380.0, 39.0, 28.0, 28.0]),
+            strip("AXButton", 6, Some(0), [416.0, 33.0, 28.0, 41.0]),
+            strip("AXButton", 7, Some(0), [12.0, 45.5, 16.0, 16.0]),
+        ];
+        nodes[6].title = Some("新标签页".to_owned());
+        nodes
+    }
+
+    #[test]
+    fn new_tab_button_selects_the_localized_control_spanning_the_tab_strip() {
+        let mut nodes = localized_tab_strip();
+        let mut page_button = tree_node("AXButton", Some("新标签页"), 200, 4);
+        page_button.frame = Some([600.0, 33.0, 28.0, 41.0]);
+        page_button.in_web_content = true;
+        nodes.push(page_button);
+        assert_eq!(new_tab_button(&nodes, chrome()).unwrap(), 106);
+
+        nodes[6].title = Some("New Tab".to_owned());
+        assert_eq!(new_tab_button(&nodes, chrome()).unwrap(), 106);
+    }
+
+    #[test]
+    fn structural_new_tab_button_requires_every_condition() {
+        let same = |left: usize, right: usize| left == right;
+        let decoy = |change: &dyn Fn(&mut AXNode)| {
+            let mut nodes = localized_tab_strip();
+            let mut extra = nodes[6].clone();
+            extra.element_index = Some(8);
+            extra.element_ptr = 108;
+            extra.frame = Some([460.0, 33.0, 28.0, 41.0]);
+            change(&mut extra);
+            nodes.push(extra);
+            structural_new_tab_button(&nodes, same)
+        };
+        // Sanity: an unchanged decoy makes the row ambiguous.
+        assert!(decoy(&|_| {}).is_err());
+        assert_eq!(
+            decoy(&|node| node.parent_element_index = Some(4)).unwrap(),
+            Some(106)
+        );
+        assert_eq!(
+            decoy(&|node| node.in_web_content = true).unwrap(),
+            Some(106)
+        );
+        assert_eq!(
+            decoy(&|node| node.actions = vec!["AXShowMenu".to_owned()]).unwrap(),
+            Some(106)
+        );
+        assert_eq!(
+            decoy(&|node| node.frame = Some([460.0, 33.0, 0.0, 41.0])).unwrap(),
+            Some(106)
+        );
+        assert_eq!(
+            decoy(&|node| node.frame = Some([460.0, 39.0, 28.0, 41.0])).unwrap(),
+            Some(106)
+        );
+        assert_eq!(
+            decoy(&|node| node.frame = Some([460.0, 33.0, 28.0, 28.0])).unwrap(),
+            Some(106)
+        );
+        assert_eq!(
+            decoy(&|node| node.role = "AXPopUpButton".to_owned()).unwrap(),
+            Some(106)
+        );
+    }
+
+    #[test]
+    fn structural_new_tab_button_refuses_ambiguity_and_a_split_tab_row() {
+        let same = |left: usize, right: usize| left == right;
+        let mut nodes = localized_tab_strip();
+        let mut extra = tree_node("AXButton", Some("标签页分组"), 110, 1);
+        extra.parent_element_index = Some(0);
+        extra.frame = Some([450.0, 33.0, 60.0, 41.0]);
+        nodes.push(extra);
+        let error = structural_new_tab_button(&nodes, same).unwrap_err();
+        assert_eq!(error.code, BrowserRefusalCode::BrowserWrongTargetRefused);
+
+        // Tabs of the topmost row with different heights refuse.
+        let mut nodes = localized_tab_strip();
+        nodes[4].frame = Some([259.0, 33.0, 163.0, 30.0]);
+        assert_eq!(structural_new_tab_button(&nodes, same).unwrap(), None);
+        nodes.retain(|node| node.role != "AXRadioButton");
+        assert_eq!(structural_new_tab_button(&nodes, same).unwrap(), None);
+    }
+
+    #[test]
+    fn structural_new_tab_button_ignores_a_tabbed_bubble_below_the_strip() {
+        // Chrome in zh-Hans offers to translate an English page in a bubble
+        // whose language tabs are native AXRadioButtons under the toolbar.
+        let mut bubble = Vec::new();
+        for (index, x) in [(8, 1160.0), (9, 1250.0)] {
+            let mut tab = tree_node("AXRadioButton", Some("英语"), 100 + index, 3);
+            tab.element_index = Some(index);
+            tab.parent_element_index = Some(0);
+            tab.frame = Some([x, 118.0, 80.0, 30.0]);
+            bubble.push(tab);
+        }
+        let mut close = tree_node("AXButton", Some("关闭"), 110, 3);
+        close.element_index = Some(10);
+        close.parent_element_index = Some(0);
+        close.frame = Some([1400.0, 118.0, 28.0, 30.0]);
+        bubble.push(close);
+        let same = |left: usize, right: usize| left == right;
+        // The bubble may come before or after the tab strip in the walk.
+        let mut after_strip = localized_tab_strip();
+        after_strip.extend(bubble.iter().cloned());
+        assert_eq!(
+            structural_new_tab_button(&after_strip, same).unwrap(),
+            Some(106)
+        );
+        let mut before_strip = localized_tab_strip();
+        before_strip.splice(1..1, bubble);
+        assert_eq!(
+            structural_new_tab_button(&before_strip, same).unwrap(),
+            Some(106)
+        );
+    }
+
+    #[test]
+    fn new_tab_cleanup_selects_the_one_localized_button_inside_the_new_tab() {
+        let before = vec![
+            tree_node("AXRadioButton", Some("首页"), 10, 2),
+            tree_node("AXButton", Some("关闭"), 11, 3),
+        ];
+        let mut after = before.clone();
+        after.push(tree_node("AXRadioButton", Some("新标签页"), 20, 2));
+        after.push(tree_node("AXButton", Some("关闭"), 21, 3));
+        after.push(tree_node("AXButton", Some("新标签页"), 30, 1));
+
+        assert_eq!(
+            select_new_tab_close_button(&before, &after, |left, right| left == right, chrome())
+                .unwrap(),
+            Some(21)
+        );
+
+        let refused = |after: &[AXNode]| {
+            select_new_tab_close_button(&before, after, |left, right| left == right, chrome())
+                .unwrap_err()
+                .code
+                == BrowserRefusalCode::BrowserWrongTargetRefused
+        };
+        let mut both = after.clone();
+        both.insert(4, tree_node("AXButton", Some("静音"), 22, 3));
+        assert!(refused(&both));
+    }
+
+    #[test]
+    fn a_find_bar_holding_the_setup_url_is_not_the_address_field() {
+        let url = chrome().setup_url;
+        let mut omnibox = node("AXTextField", Some("地址和搜索栏"), Some(url), &["AXPress"]);
+        omnibox.element_ptr = 0;
+        omnibox.element_index = None;
+        assert!(omnibox_reads_setup_url(&[omnibox.clone()], chrome()));
+
+        // Real address field elsewhere, find bar holding the setup URL.
+        let mut address = omnibox.clone();
+        address.value = Some("https://example.com/".to_owned());
+        let mut find_bar = omnibox.clone();
+        find_bar.title = Some("查找".to_owned());
+        assert!(!omnibox_reads_setup_url(
+            &[address.clone(), find_bar.clone()],
+            chrome()
+        ));
+        assert!(!native_setup_page_proven(
+            &[address.clone(), find_bar.clone()],
+            chrome()
+        ));
+
+        address.title = Some("Address and search bar".to_owned());
+        find_bar.title = Some("Find".to_owned());
+        assert!(!omnibox_reads_setup_url(&[address, find_bar], chrome()));
+    }
+
+    #[test]
+    fn a_hidden_unpressable_native_field_leaves_the_localized_address_field() {
+        // zh-Hans Chrome 156 on chrome://inspect also exposes an unnamed,
+        // empty native text field that cannot be pressed.
+        // Distinct real elements, because distinct_elements compares them
+        // with CFEqual.
+        let field = ApplicationElement::new(std::process::id() as i32);
+        let other = ApplicationElement::new(std::process::id() as i32 + 1);
+        let url = chrome().setup_url;
+        let mut omnibox = node(
+            "AXTextField",
+            Some("地址和搜索栏"),
+            Some(url),
+            &["AXPress", "AXShowMenu"],
+        );
+        omnibox.element_ptr = field.0 as usize;
+        let mut hidden = node("AXTextField", None, None, &["AXShowMenu", "AXConfirm"]);
+        hidden.element_ptr = other.0 as usize;
+        let mut tab = tree_node(
+            "AXRadioButton",
+            Some(chrome().page_titles[0]),
+            other.0 as usize,
+            1,
+        );
+        tab.selected = Some(true);
+        assert!(omnibox_reads_setup_url(
+            &[omnibox.clone(), hidden.clone()],
+            chrome()
+        ));
+        assert!(native_setup_page_proven(&[omnibox, hidden, tab], chrome()));
+    }
+
+    #[test]
+    fn localized_omnibox_is_the_one_native_text_field() {
+        let mut omnibox = node(
+            "AXTextField",
+            Some("地址和搜索栏"),
+            Some("x.com/home"),
+            &["AXPress", "AXShowMenu"],
+        );
+        omnibox.element_ptr = 30;
+        let mut page_field = node("AXTextField", Some("搜索"), None, &["AXPress"]);
+        page_field.element_ptr = 31;
+        page_field.in_web_content = true;
+        assert_eq!(
+            unique_omnibox(&[omnibox.clone(), page_field], chrome()).unwrap(),
+            30
+        );
+
+        // Two distinct native fields refuse; real elements, because
+        // distinct_elements compares them with CFEqual.
+        let first = ApplicationElement::new(std::process::id() as i32);
+        let distinct = ApplicationElement::new(std::process::id() as i32 + 1);
+        let fields = [first.0, distinct.0].map(|element| {
+            let mut field = omnibox.clone();
+            field.element_ptr = element as usize;
+            field
+        });
+        assert_eq!(
+            unique_omnibox(&fields, chrome()).unwrap_err().code,
+            BrowserRefusalCode::BrowserWrongTargetRefused
+        );
+
+        omnibox.value = Some(chrome().setup_url.to_owned());
+        assert!(omnibox_reads_setup_url(&[omnibox.clone()], chrome()));
+        omnibox.in_web_content = true;
+        assert!(!omnibox_reads_setup_url(&[omnibox], chrome()));
     }
 
     #[test]

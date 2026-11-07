@@ -93,7 +93,7 @@ export function SpacesTreePage({ search = {}, onSearchDone }: { search?: Compute
   const navigate = useNavigate();
   const newSpace = useNewSpace();
   const collapsed = useCollapsed();
-  const { pending, account } = useMachinesAccount();
+  const { pending, account, devices } = useMachinesAccount();
   const pendingActions = usePendingActions();
   const asked = search.add === true || search.join !== undefined;
   const [adding, setAddingState] = useState(asked);
@@ -120,7 +120,9 @@ export function SpacesTreePage({ search = {}, onSearchDone }: { search?: Compute
   // The core decides: the empty list only for a complete list with nothing on it. A daemon still starting (an app update)
   // or computers still answering show what is known and one quiet line instead.
   const listed = listView(core, listStatus, spaces.length);
-  if (!tree || !loaded)
+  // The "Waiting for you" section sits above the list, so hold the page until the account answered: a late
+  // answer would push the whole list down (layout shift, CUA-1951).
+  if (!tree || !loaded || devices.isLoading)
     return (
       <Page>
         <div aria-busy="true" aria-label="Loading your computers">

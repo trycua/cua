@@ -67,7 +67,7 @@ export const savedStreamHidden = (spaceId: string, hiddenByDefault = false): boo
 /** The person has shown or folded this Space's stream (a default is not a choice). */
 export const hasStreamChoice = (spaceId: string): boolean => read(hiddenKey(spaceId)) !== null;
 
-export function useStreamHidden(spaceId: string, hiddenByDefault = false): [boolean, (hidden: boolean) => void] {
+export function useStreamHidden(spaceId: string, hiddenByDefault = false): [boolean, (hidden: boolean) => void, () => void] {
   const [state, setState] = useState<{ spaceId: string; hidden: boolean | null }>(() => ({ spaceId, hidden: null }));
   // Until the person chooses, the default decides (it may change once the Space is known to be a home).
   const hidden = state.spaceId === spaceId && state.hidden !== null ? state.hidden : savedStreamHidden(spaceId, hiddenByDefault);
@@ -78,5 +78,8 @@ export function useStreamHidden(spaceId: string, hiddenByDefault = false): [bool
     },
     [spaceId],
   );
-  return [hidden, set];
+  // Shows the stream for this visit only: the Space's saved choice (or its default, folded for a home) stands next time,
+  // so an app an agent opens does not turn a home's folded desktop into a choice the person never made.
+  const showNow = useCallback(() => setState({ spaceId, hidden: false }), [spaceId]);
+  return [hidden, set, showNow];
 }

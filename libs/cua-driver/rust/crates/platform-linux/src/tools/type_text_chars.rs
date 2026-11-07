@@ -85,7 +85,11 @@ impl Tool for TypeTextCharsTool {
                 };
                 match chosen {
                     Some(w) => w.xid,
-                    None => return ToolResult::error(crate::atspi::no_windows_error(pid)),
+                    None => {
+                        return ToolResult::error(format!(
+                            "No windows found for pid {pid}. Provide window_id."
+                        ))
+                    }
                 }
             }
         };

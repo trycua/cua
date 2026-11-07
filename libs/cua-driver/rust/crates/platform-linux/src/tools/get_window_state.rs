@@ -357,21 +357,21 @@ impl Tool for GetWindowStateTool {
                     {
                         return Some(popup.window);
                     }
-                    let windows = crate::x11::list_windows(Some(pid));
-                    let candidates: Vec<u64> = windows.iter().map(|w| w.xid).collect();
-                    crate::x11::pick_pid_window(
-                        &windows,
-                        crate::x11::focused_window_among(&candidates),
-                        crate::x11::transient_for,
-                        crate::x11::active_window(),
-                    )
+                    super::impl_::pid_fallback_window_resolver()(i64::from(pid))
                 })
                 .await
                 .ok()
                 .flatten();
                 match chosen {
                     Some(v) => v,
-                    None => return ToolResult::error(crate::atspi::no_windows_error(pid)),
+                    None => {
+                        let message = tokio::task::spawn_blocking(move || {
+                            crate::atspi::no_windows_error(pid)
+                        })
+                        .await
+                        .unwrap_or_else(|error| format!("Task error: {error}"));
+                        return ToolResult::error(message);
+                    }
                 }
             }
         };

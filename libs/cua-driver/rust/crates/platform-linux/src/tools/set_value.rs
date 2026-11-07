@@ -202,7 +202,13 @@ impl Tool for SetValueTool {
                     x11_pixel_click_no_focus_steal(&cursor_id, win, lx as i32, ly as i32, 1, 1)?;
                     std::thread::sleep(std::time::Duration::from_millis(80));
                     background_virtual_key(&cursor_id, pid, win, "a", &["ctrl"])?;
-                    background_virtual_text(&cursor_id, pid, win, &value_for_keys)?;
+                    background_virtual_text(
+                        &cursor_id,
+                        pid,
+                        win,
+                        &value_for_keys,
+                        crate::input::TypePacing::default(),
+                    )?;
                     background_virtual_key(&cursor_id, pid, win, "Tab", &[])?;
                     Ok(())
                 })?;

@@ -13,7 +13,9 @@ def test_canonical_certification_is_fail_closed_and_complete() -> None:
     certification = workflow.split("\n  certify:\n", 1)[1]
 
     # Manual dispatches and stable-tag release-gate calls both certify.
-    assert "if: success() && inputs.lane == 'all'" in certification
+    assert "!failure() && !cancelled() && inputs.lane == 'all'" in certification
+    for job in ("source", "shared", "native", "capture", "installer"):
+        assert f"needs.{job}.result == 'success'" in certification
     assert "needs: [source, shared, native, capture, installer]" in certification
     assert 'schema "cua-driver/e2e-certification/v1"' in certification
     assert 'platform "linux"' in certification
@@ -45,7 +47,7 @@ class VerifySkillTests(unittest.TestCase):
         self.assertIn("          - verify", workflow)
         job = workflow.split("\n  verify-skill:\n")[1].split("\n  shared:\n")[0]
         for setting in (
-            "if: inputs.lane == '' || inputs.lane == 'verify'",
+            "if: ${{ !failure() && !cancelled() && (inputs.lane == '' || inputs.lane == 'verify') }}",
             "timeout-minutes: 25",
             'CUA_E2E_RETRY_ONCE: "0"',
             "key: e2e-shared",
@@ -321,3 +323,16 @@ def test_cache_saves_never_write_pull_request_scope_but_keep_dispatches() -> Non
         )
         == 4
     )
+
+
+def test_shared_leg_keeps_its_own_sccache_family() -> None:
+    """The release driver and Tauri units of the shared leg live in their own entry.
+
+    In the default libs-cua-driver-rust family the day's entry is saved first by
+    debug-only unit jobs; the shared leg then gets an exact hit, never saves, and
+    rebuilds its release units on every run.
+    """
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    shared = workflow.split("\n  shared:\n", 1)[1].split("\n  native:\n", 1)[0]
+    assert "shared-key: cua-driver-e2e-shared" in shared
+    assert workflow.count("shared-key: cua-driver-e2e-shared") == 1

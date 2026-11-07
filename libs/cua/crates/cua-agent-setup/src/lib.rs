@@ -18,6 +18,7 @@
 pub mod claude_login;
 pub mod config;
 pub mod connection;
+pub mod driver;
 mod edit;
 mod fsutil;
 pub mod registry;
@@ -175,6 +176,10 @@ pub struct HostEnv {
     /// (`~/.cua` or `~/.cua-local`), so Local never replaces Stable's.
     pub channel: CuaChannel,
 }
+
+/// How long [`AgentSetup::sign_in`] waits to see the agent's own login stop
+/// at once with an error.
+const SIGN_IN_EARLY_WAIT: std::time::Duration = std::time::Duration::from_secs(3);
 
 const VARS: &[&str] = &[
     "XDG_CONFIG_HOME",
@@ -438,21 +443,13 @@ impl McpServer {
         }
     }
 
-    /// `cua-driver mcp`, with `cua-driver` resolved to an absolute path on
-    /// `env`'s PATH, else in `~/.local/bin` (where cua-driver's installer
-    /// puts it; GUI apps often run without the user's shell PATH), else the
-    /// bare name.
+    /// `cua-driver mcp`, with `cua-driver` resolved to an absolute path
+    /// ([`driver::locate`]: `env`'s PATH, `~/.local/bin` where cua-driver's
+    /// installer links it, then `CuaDriver.app`; GUI apps often run without
+    /// the user's shell PATH), else the bare name, which
+    /// [`AgentSetup::setup_cua_driver`] refuses to write.
     pub fn driver_for(env: &HostEnv) -> Self {
-        let bin = if env.os == Os::Windows {
-            "cua-driver.exe"
-        } else {
-            "cua-driver"
-        };
-        let cmd = env
-            .which("cua-driver")
-            .or_else(|| {
-                Some(env.home.join(".local").join("bin").join(bin)).filter(|p| is_executable(p))
-            })
+        let cmd = driver::locate(env)
             .map(|p| p.display().to_string())
             .unwrap_or_else(|| "cua-driver".into());
         McpServer::driver(cmd)
@@ -725,16 +722,18 @@ impl AgentSetup {
             .collect()
     }
 
-    /// Starts `agent`'s own sign-in on this computer (`codex login`: the
-    /// browser opens, and the agent keeps the sign-in in its own file). It
-    /// returns once the command is running; [`AgentSetup::detect`] reports
-    /// `signed_in` when it is done. cua never reads or copies the sign-in,
-    /// so every computer signs in on its own. A sign-in already waiting for
-    /// the browser is not started twice.
+    /// Starts `agent`'s own sign-in on this computer (`codex login` and
+    /// `claude auth login` open the browser; Hermes asks which provider, so
+    /// it runs in Terminal). It returns once the command is running;
+    /// [`AgentSetup::detect`] reports `signed_in` when it is done. cua never
+    /// reads or copies the sign-in, so every computer signs in on its own.
+    /// A sign-in already waiting is not started twice. A command that fails
+    /// to start, or stops with an error within a few seconds, is an error
+    /// in plain words (its own last line included), never silence.
     pub fn sign_in(&self, agent: &str) -> Result<()> {
         let a = registry::find(agent)
             .ok_or_else(|| Error::InvalidArgument(format!("unknown agent {agent:?}")))?;
-        let login = a.login.ok_or_else(|| {
+        let login = signin::login_command(a.id).ok_or_else(|| {
             Error::InvalidArgument(format!("{} has no sign-in cua can start", a.name))
         })?;
         if !self.env.run_agent_clis {
@@ -755,6 +754,9 @@ impl AgentSetup {
             return Ok(());
         }
         let program = cmd_shim_target(&bin).unwrap_or_else(|| bin.clone());
+        if login.terminal {
+            return self.sign_in_in_terminal(a.name, &program, login.args);
+        }
         let mut cmd = std::process::Command::new(&program);
         #[cfg(windows)]
         {
@@ -770,10 +772,69 @@ impl AgentSetup {
         let mut child = cmd
             .args(login.args)
             .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
             .spawn()
             .map_err(|e| Error::io(&bin, e))?;
+        // What it prints, kept (the last lines) so a failure can say why.
+        let tail = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+        for pipe in [
+            child
+                .stdout
+                .take()
+                .map(|p| Box::new(p) as Box<dyn std::io::Read + Send>),
+            child
+                .stderr
+                .take()
+                .map(|p| Box::new(p) as Box<dyn std::io::Read + Send>),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            let tail = tail.clone();
+            std::thread::spawn(move || {
+                use std::io::Read as _;
+                let mut pipe = pipe;
+                let mut buf = [0u8; 1024];
+                while let Ok(n) = pipe.read(&mut buf) {
+                    if n == 0 {
+                        break;
+                    }
+                    let mut t = tail.lock().unwrap_or_else(|e| e.into_inner());
+                    t.push_str(&String::from_utf8_lossy(&buf[..n]));
+                    if t.len() > 4096 {
+                        let cut = t.len() - 4096;
+                        let cut = (cut..t.len()).find(|i| t.is_char_boundary(*i)).unwrap_or(0);
+                        t.drain(..cut);
+                    }
+                }
+            });
+        }
+        // A login that is going to fail usually does so at once (no browser,
+        // an old version, a refused flag): wait briefly so the person hears it.
+        let early = std::time::Instant::now() + SIGN_IN_EARLY_WAIT;
+        let status = loop {
+            match child.try_wait() {
+                Ok(Some(s)) => break Some(s),
+                Ok(None) if std::time::Instant::now() < early => {
+                    std::thread::sleep(std::time::Duration::from_millis(25))
+                }
+                _ => break None,
+            }
+        };
+        if let Some(s) = status {
+            // Let the readers finish what the process printed.
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            if !s.success() {
+                let said = tail.lock().unwrap_or_else(|e| e.into_inner()).clone();
+                return Err(Error::InvalidArgument(signin::sign_in_failure(
+                    a.name,
+                    s.code(),
+                    &said,
+                )));
+            }
+            return Ok(());
+        }
         waiting.push(a.id);
         let id = a.id;
         // Reaped in the background: the sign-in waits for the browser.
@@ -785,6 +846,47 @@ impl AgentSetup {
                 .retain(|w| *w != id);
         });
         Ok(())
+    }
+
+    /// Runs `program args` in Terminal (macOS), where the agent asks its own
+    /// questions.
+    fn sign_in_in_terminal(&self, name: &str, program: &Path, args: &[&str]) -> Result<()> {
+        if self.env.os != Os::MacOs {
+            return Err(Error::InvalidArgument(format!(
+                "{name} signs in by asking questions: open a terminal and run `{} {}`.",
+                program
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("hermes"),
+                args.join(" ")
+            )));
+        }
+        let osascript = self
+            .env
+            .which("osascript")
+            .unwrap_or_else(|| PathBuf::from("/usr/bin/osascript"));
+        let quote = |s: &str| format!("'{}'", s.replace('\'', "'\\''"));
+        let line = std::iter::once(quote(&program.display().to_string()))
+            .chain(args.iter().map(|a| quote(a)))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let script = format!(
+            "tell application \"Terminal\"\nactivate\ndo script \"{}\"\nend tell",
+            line.replace('\\', "\\\\").replace('"', "\\\"")
+        );
+        let out = std::process::Command::new(&osascript)
+            .args(["-e", &script])
+            .stdin(std::process::Stdio::null())
+            .output()
+            .map_err(|e| Error::io(&osascript, e))?;
+        if out.status.success() {
+            return Ok(());
+        }
+        Err(Error::InvalidArgument(signin::sign_in_failure(
+            "Terminal",
+            out.status.code(),
+            &String::from_utf8_lossy(&out.stderr),
+        )))
     }
 
     /// Alias of [`AgentSetup::detect`].
@@ -1496,15 +1598,51 @@ impl AgentSetup {
             out.extend(self.install_skills(agents, &[DRIVER_SKILL.to_string()], force)?);
         }
         if parts.mcp {
-            let with_mcp: Vec<String> = self
-                .specs(agents)?
-                .iter()
-                .filter(|a| a.mcp.is_some())
-                .map(|a| a.id.to_string())
-                .collect();
-            out.extend(self.configure_mcp(&with_mcp, server)?);
+            // Only a cua-driver that runs and answers MCP is written, by
+            // absolute path: a bare or missing command would leave every
+            // agent with a server that fails to start (ENOENT).
+            let checked = driver::resolve(&self.env, &server.command)
+                .ok_or_else(|| "cua-driver isn't installed".to_string())
+                .and_then(|p| driver::check(&p).map(|_| p));
+            match checked {
+                Ok(path) => {
+                    let server = McpServer {
+                        command: path.display().to_string(),
+                        ..server.clone()
+                    };
+                    let with_mcp: Vec<String> = self
+                        .specs(agents)?
+                        .iter()
+                        .filter(|a| a.mcp.is_some())
+                        .map(|a| a.id.to_string())
+                        .collect();
+                    out.extend(self.configure_mcp(&with_mcp, &server)?);
+                }
+                Err(why) => out.extend(self.driver_unavailable(agents, &why)?),
+            }
         }
         Ok(out)
+    }
+
+    /// One failed `cua-driver` MCP row per agent in `agents` that supports
+    /// MCP, saying `why`; no config is touched.
+    pub fn driver_unavailable(&self, agents: &[String], why: &str) -> Result<Vec<Outcome>> {
+        Ok(self
+            .specs(agents)?
+            .iter()
+            .filter_map(|a| {
+                let m = a.mcp.as_ref()?;
+                Some(Outcome {
+                    agents: vec![a.id.into()],
+                    target: Target::Mcp,
+                    item: DRIVER_MCP_SERVER_NAME.into(),
+                    path: self.mcp_file(m),
+                    change: Change::Failed,
+                    detail: why.to_string(),
+                    backup: None,
+                })
+            })
+            .collect())
     }
 
     /// Refreshes every skill folder cua installed to this build's content

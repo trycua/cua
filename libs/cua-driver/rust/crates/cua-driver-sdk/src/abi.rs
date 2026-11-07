@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Stable C ABI below the public typed SDK.
 //!
 //! The exported functions in this module are deliberately smaller and more

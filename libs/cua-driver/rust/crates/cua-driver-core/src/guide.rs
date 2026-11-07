@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! `get_guide`: read-only, on-demand sections of the compiled-in skill pack.
 //!
 //! Most MCP clients hand the model only the server instructions and the tool

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Persistent session-bus transport for synchronous compositor helpers.
 //! A separate runtime also serves callers already inside Tokio without nested block_on.
 use std::sync::{mpsc, OnceLock};

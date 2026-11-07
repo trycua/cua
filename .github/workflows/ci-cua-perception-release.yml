@@ -63,7 +63,14 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  quick:
+    name: quick
+    if: github.event_name == 'pull_request'
+    uses: ./.github/workflows/ci-quick.yml
+
   crate:
+    needs: quick
+    if: ${{ !failure() && !cancelled() }}
     name: crate (${{ matrix.target }})
     strategy:
       fail-fast: false
@@ -92,6 +99,8 @@ jobs:
         run: cargo test --locked -p cua-perception
 
   contract:
+    needs: quick
+    if: ${{ !failure() && !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:

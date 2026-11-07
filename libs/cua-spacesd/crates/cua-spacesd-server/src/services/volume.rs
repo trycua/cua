@@ -116,6 +116,29 @@ fn which(name: &str) -> Option<PathBuf> {
     })
 }
 
+/// Runs blocking filesystem work off the async workers.
+///
+/// A path under `/volume` is served by this very process (the FUSE helper
+/// dials the volume listener this runtime runs), so a `stat` or `mkdir` on it
+/// from a worker waits for a task only that worker could run. With one
+/// worker (a 1 vCPU Space) that is a deadlock: cua-spacesd keeps accepting
+/// connections and never answers one. Everything that can touch the mount
+/// goes through here.
+async fn off_runtime<T: Send + 'static>(
+    work: impl FnOnce() -> T + Send + 'static,
+) -> Result<T, String> {
+    tokio::task::spawn_blocking(work)
+        .await
+        .map_err(|e| format!("blocking filesystem call: {e}"))
+}
+
+/// [`default_mount_path`] on a blocking thread (it stats `/volume`).
+pub async fn default_mount_path_async() -> PathBuf {
+    off_runtime(default_mount_path)
+        .await
+        .unwrap_or_else(|_| PathBuf::from("/volume"))
+}
+
 /// Where the volume mounts by default.
 pub fn default_mount_path() -> PathBuf {
     if cfg!(windows) {
@@ -510,7 +533,11 @@ async fn mount(session: &Arc<Session>) -> Result<(), String> {
         *session.windows.lock().expect("windows") = Some(m);
         return Ok(());
     }
-    std::fs::create_dir_all(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let dir = path.clone();
+    off_runtime(move || {
+        std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))
+    })
+    .await??;
     let p = path.to_string_lossy().to_string();
     match session.backend {
         "nfs" => {
@@ -625,7 +652,8 @@ async fn unmount(session: &Arc<Session>, client_attached: bool) {
     }
     // A home-folder mount point goes away with the mount; /volume stays.
     if path != Path::new("/volume") {
-        let _ = std::fs::remove_dir(path);
+        let dir = path.clone();
+        let _ = off_runtime(move || std::fs::remove_dir(dir)).await;
     }
 }
 
@@ -706,7 +734,7 @@ impl VolumeService for VolumeServiceImpl {
         let backend = backend()
             .map_err(|reason| status(Code::FailedPrecondition, ErrorReason::Unspecified, reason))?;
         let mut mount_path = if body.mount_path.is_empty() {
-            default_mount_path()
+            default_mount_path_async().await
         } else {
             PathBuf::from(&body.mount_path)
         };
@@ -948,6 +976,29 @@ fn running_as_root() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A filesystem call that waits on a task of this runtime (a `stat` of
+    /// `/volume`, whose FUSE server is a task of this process) must not hold
+    /// the runtime's only worker: with one worker it would wait forever.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+    async fn blocking_mount_work_leaves_the_only_worker_free() {
+        let (tx, rx) = std::sync::mpsc::channel::<()>();
+        // Answers the "filesystem call" from a task of the same runtime.
+        let server = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            tx.send(()).unwrap();
+        });
+        let stat = off_runtime(move || rx.recv_timeout(Duration::from_secs(10)).is_ok())
+            .await
+            .unwrap();
+        server.await.unwrap();
+        assert!(stat, "the call was answered by the runtime's own task");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+    async fn the_default_mount_path_is_the_blocking_one() {
+        assert_eq!(default_mount_path_async().await, default_mount_path());
+    }
 
     #[test]
     fn a_listed_mount_is_found_without_stat() {

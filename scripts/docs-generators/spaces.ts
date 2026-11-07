@@ -243,7 +243,10 @@ function toolSection(tool: Tool, manifest: Manifest): string[] {
     ['Metering', tool.metering],
     [
       'Approval',
-      `permission \`spaces:${tool.name}\`${tool.annotations.read_only ? ', in `spaces:readonly`' : ''}; ${effect(tool.annotations)}`,
+      // A person's tool (cua_spaces_contract::PERSON_ONLY_TOOLS: "Only for a person" in its instructions) is no MCP permission.
+      tool.instructions.startsWith('Only for a person')
+        ? `none: for a person only, never served over MCP; ${effect(tool.annotations)}`
+        : `permission \`spaces:${tool.name}\`${tool.annotations.read_only ? ', in `spaces:readonly`' : ''}; ${effect(tool.annotations)}`,
     ],
   ];
   if (tool.requires.length) facts.push(['Requires (spacesd)', tool.requires.map((r) => codeCell(r)).join(', ')]);

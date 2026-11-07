@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use async_trait::async_trait;
 use cua_driver_contract::TypeTextInput;
 use cua_driver_core::{
@@ -762,9 +765,13 @@ impl Tool for TypeTextTool {
                     return Ok(("pty", None));
                 }
                 if foreground {
-                    crate::interaction::with_x11_foreground(xid, crate::input::ForegroundOptions::pointer(), || {
-                        crate::input::send_type_text_xtest(&text_t)
-                    }).map(|(value, _report)| value)?;
+                    crate::interaction::with_x11_foreground(
+                        xid,
+                        crate::input::ForegroundOptions::pointer(),
+                        crate::interaction::RestoreMode::RestorePrevious,
+                        || crate::input::send_type_text_xtest(&text_t),
+                    )
+                    .map(|(value, _report)| value)?;
                     return Ok(("key_events_fg", None));
                 }
                 // Background: real key events through the XI2 virtual master
@@ -804,6 +811,7 @@ impl Tool for TypeTextTool {
                     crate::interaction::with_x11_foreground(
                         xid,
                         crate::input::ForegroundOptions::keyboard(),
+                        crate::interaction::RestoreMode::RestorePrevious,
                         || {
                             if let Some(element) = &element {
                                 if !crate::atspi::focus_token(pid, element)? {
@@ -927,6 +935,7 @@ impl Tool for TypeTextTool {
                     crate::interaction::with_x11_foreground(
                         xid,
                         crate::input::ForegroundOptions::pointer(),
+                        crate::interaction::RestoreMode::RestorePrevious,
                         || crate::input::send_type_text_xtest(&text_f),
                     )
                     .map(|(value, _report)| value)
@@ -1031,9 +1040,13 @@ impl Tool for TypeTextTool {
                 return Ok(("key_events", None));
             }
             if delivery.is_foreground() {
-                crate::interaction::with_x11_foreground(xid, crate::input::ForegroundOptions::pointer(), || {
-                    crate::input::send_type_text_xtest(&text)
-                }).map(|(value, _report)| value)?;
+                crate::interaction::with_x11_foreground(
+                    xid,
+                    crate::input::ForegroundOptions::pointer(),
+                    crate::interaction::RestoreMode::RestorePrevious,
+                    || crate::input::send_type_text_xtest(&text),
+                )
+                .map(|(value, _report)| value)?;
                 return Ok(("key_events_fg", None));
             }
             // No a11y editable, no pty: real key events through the XI2 virtual

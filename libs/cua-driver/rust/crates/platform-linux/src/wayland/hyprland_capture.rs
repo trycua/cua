@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Wayland-native capture for Hyprland.
 //!
 //! Identified per-window capture using wayland-client (no grim subprocess).

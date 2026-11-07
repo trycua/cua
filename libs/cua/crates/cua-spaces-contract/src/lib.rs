@@ -16,6 +16,7 @@
 //! are derived from.
 
 pub mod inputs;
+pub mod names;
 
 use serde::Serialize;
 
@@ -786,7 +787,7 @@ pub fn tools() -> Vec<Tool> {
         .with::<i::RemoveSpace>(),
         Spec {
             category: Category::Lifecycle,
-            result: "JSON: an array of Spaces (`id`, `name`, `provider`, `spacesd_version`, `features`, `os`, `services`, `added_at`, for a Space one of your computers provides `host` and `host_name`, for a Space that can be turned off and on `power` (`suspend` or `stop`) and `power_state`, and for a Space in your cloud `cloud`, `cloud_place` and `cloud_delete`, and for a relay computer the relay cannot reach now `status` (`offline` or `not sharing`)), each with `phase`: `ready`, or `offline` for a relay computer the relay cannot reach now (a computer that is off or stopped sharing, or a Space that is gone and left its record; `relay_unregister_space` removes it).",
+            result: "JSON: an array of Spaces (`id`, `name`, `provider`, `spacesd_version`, `features`, `os`, `services`, `added_at`, for a Space one of your computers provides `host` and `host_name`, for a Space that can be turned off and on `power` (`suspend` or `stop`) and `power_state`, and for a Space in your cloud `cloud`, `cloud_place` and `cloud_delete`, and for a relay computer the relay cannot reach now `status` (`offline` or `not sharing`)), `parent` (a Space one of your computers provides: that computer's Space id, `relay:<computer>`; null for a computer or any other Space) and `default` (true for the Space the account chose as its default, false for every other; false for all when signed out or the relay does not answer), each with `phase`: `ready`, or `offline` for a relay computer the relay cannot reach now (a computer that is off or stopped sharing, or a Space that is gone and left its record; `relay_unregister_space` removes it).",
             errors: &["relay", "unauthenticated"],
             instructions: "Every registered Space (cloud, local, direct and relay) with its id (local:<name>, cloud:<name>, direct:<host:port>, relay:<computer-id>), provider, spacesd version (empty without one) and supported features as of the last handshake. The signed-in account's computers on the relay are listed too: those are the names `create_space` accepts as on=\"host:<computer>\". A Space a computer provides carries `host` (that computer's id) and `host_name`; group them under it when you show them. A Space in your cloud carries `cloud` (the provider: aws, gcp, modal), `cloud_place` (account and region, to show with it) and `cloud_delete` (where delete_space can delete it: here, host:<computer>, or elsewhere). A durable Space (create_space durable=true) carries `durable` (its name, by which it is found wherever it runs now).",
             capabilities: &["space.discover"],
@@ -1200,6 +1201,28 @@ pub fn tools() -> Vec<Tool> {
             ..Spec::new("agent_capabilities", "Report what the agent harnesses support.")
         }
         .with::<i::AgentCapabilities>(),
+        Spec {
+            category: Category::Agents,
+            result: "JSON: `threads`, newest first, each `agent` (harness id), `id`, `title` (the chat's name, or its first prompt cut to 80 characters), `cwd` (its folder, or null), `last_active_ms` and `resume` (the agent's own command that continues it in a terminal, as argv).",
+            errors: &["permission_denied"],
+            instructions: "Only for a person, never for an agent: no MCP server lists or runs it, and the daemon answers only this computer's own user (never a relay caller or a Space's agent). Reads the coding agents' own stores on this computer read-only (Claude Code's projects folder, Codex's sessions, Hermes's state.db) and returns only each chat's title, folder and time; nothing is kept or sent anywhere. A store that is missing or unreadable adds nothing.",
+            capabilities: &["agent.threads.read"],
+            sdk_symbol: "spaces.callTool(\"agent_threads\")",
+            rust_symbol: "cua_agent_threads::recent",
+            ..Spec::new("agent_threads", "List the recent Claude Code, Codex and Hermes chats on this computer. For a person only.")
+        }
+        .with::<i::AgentThreads>(),
+        Spec {
+            category: Category::Agents,
+            result: "JSON: `thread` (as in `agent_threads`), `messages` (oldest first, each `key`, `role` (`person` or `agent`), `text` (cut to 8 KiB), `ts_ms`, and `cut` when cut) and `earlier_omitted` (older messages left out).",
+            errors: &["permission_denied", "not_found", "invalid_argument"],
+            instructions: "Only for a person, never for an agent: no MCP server lists or runs it, and the daemon answers only this computer's own user. Reads one chat from the agent's own store, read-only: what the person typed and the agent's replies, without tool calls, tool output, thinking or the agent's own injected instructions. Call it once the person picked the chat; continue it with agent_start's `resume_session`.",
+            capabilities: &["agent.threads.read"],
+            sdk_symbol: "spaces.callTool(\"agent_thread_read\")",
+            rust_symbol: "cua_agent_threads::history",
+            ..Spec::new("agent_thread_read", "Read one of the recent Claude Code, Codex or Hermes chats on this computer. For a person only.")
+        }
+        .with::<i::AgentThreadRead>(),
         // --- Persistent agents ----------------------------------------------------
         Spec {
             category: Category::PersistentAgents,
@@ -1988,7 +2011,7 @@ pub fn tools() -> Vec<Tool> {
             category: Category::Sharing,
             result: "JSON: `space` and `unregistered` (false when it was not on the relay).",
             errors: &["relay", "unauthenticated", "permission_denied", "invalid_argument"],
-            instructions: "Takes the Space off the relay: its driver leaves and its computer is removed, with every share. A `relay:<computer>` id removes that computer's record from the relay directory, which only its owner may do: a Space that registered itself (also after it was deleted), or a computer that is no longer connected. A host that is connected now is taken off with `cua host remove` on that computer instead.",
+            instructions: "Takes the Space off the relay: its driver leaves and its computer is removed, with every share. A `relay:<computer>` id removes that computer's record from the relay directory, which only its owner may do: a Space that registered itself (also after it was deleted), or a computer that is no longer connected. A host that is connected now is taken off with `cua host remove` on that computer instead. Removing one of your computers keeps the Spaces it provides on your account, detached (hidden, and refused until the computer registers again with the same id, which brings them back unchanged); `delete_spaces: true` deletes them too, files first (through the computer while it answers), then their records.",
             capabilities: &["space.relay"],
             host_requires: &[host::RELAY_ACCOUNT],
             annotations: Annotations::mutating_idempotent(),
@@ -1996,7 +2019,7 @@ pub fn tools() -> Vec<Tool> {
             rust_symbol: "Spaces::relay_unregister",
             ..Spec::new("relay_unregister_space", "Take a Space off the relay.")
         }
-        .with::<i::SpaceOnly>(),
+        .with::<i::RelayUnregisterSpace>(),
         // --- your cloud ------------------------------------------------------
         Spec {
             category: Category::Cloud,
@@ -2259,7 +2282,7 @@ pub fn canonical(name: &str) -> &str {
 /// Tools only a person may call: no MCP server lists or runs them for an
 /// agent (the apps, the CLI and the SDK call them through the daemon).
 /// Their capabilities are never granted to an agent.
-pub const PERSON_ONLY_TOOLS: &[&str] = &["cloud_approve"];
+pub const PERSON_ONLY_TOOLS: &[&str] = &["cloud_approve", "agent_threads", "agent_thread_read"];
 
 /// Whether `name` is a tool only a person may call ([`PERSON_ONLY_TOOLS`]).
 pub fn person_only(name: &str) -> bool {
@@ -2366,7 +2389,7 @@ mod tests {
 
     #[test]
     fn advertises_every_tool() {
-        assert_eq!(tools().len(), 119);
+        assert_eq!(tools().len(), 121);
     }
 
     #[test]
@@ -2423,7 +2446,6 @@ mod tests {
             let t = tool(name).unwrap_or_else(|| panic!("{name} is not a contract tool"));
             assert!(person_only(name));
             assert!(t.instructions.contains("Only for a person"), "{name}");
-            assert!(!t.annotations.read_only, "{name}");
         }
         assert!(!person_only("cloud_connect"));
     }

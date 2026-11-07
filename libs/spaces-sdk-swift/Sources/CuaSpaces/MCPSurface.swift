@@ -571,6 +571,14 @@ extension Space {
         try await connection.object("network_show", ["space": .string(id.rawValue)])
     }
 
+    /// What the Space tried to reach and its network blocked, most recent
+    /// first (`network_log`). Each entry carries `reason`, `dst` and `count`,
+    /// and `proto` and `last_unix` when known.
+    public func networkLog() async throws -> [[String: JSONValue]] {
+        try await connection.array("network_log", ["space": .string(id.rawValue)])
+            .compactMap { $0.objectValue }
+    }
+
     /// Tightens the Space's network to `internet`, `none` or `custom` with
     /// `allow` / `deny` lists (`network_set`). Opening more is refused: the
     /// user does that.

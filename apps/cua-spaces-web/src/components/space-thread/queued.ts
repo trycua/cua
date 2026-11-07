@@ -52,6 +52,17 @@ export function resolveQueue(pendingId: string, spaceId: string): void {
   useQueue.setState((s) => ({ resolved: { ...s.resolved, [pendingId]: spaceId } }));
 }
 
+/**
+ * Drops what `pendingId` shows without sending it: the message was posted by another path (a home's briefed
+ * first message), so it is in the thread for real now.
+ */
+export function dropQueue(pendingId: string): void {
+  useQueue.setState((s) => {
+    const { [pendingId]: _gone, ...rest } = s.byPending;
+    return { byPending: rest };
+  });
+}
+
 /** Sends the queue of `pendingId` in order; each message leaves it once posted. Safe to call twice. */
 export async function flushQueue(pendingId: string, send: (text: string) => Promise<void>): Promise<void> {
   for (;;) {

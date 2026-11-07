@@ -63,7 +63,7 @@ from ._native import Cua, CuaConfig
 from ._native import Sandbox as SandboxHandle
 from ._native import cua_sdk_version
 
-__version__ = "0.10.1"  # x-release-please-version
+__version__ = "0.12.1"  # x-release-please-version
 
 # Usage telemetry (anonymous, content-free; https://cua.ai/docs/cua-sdk/concepts/telemetry)
 # attributes events to this binding; `cua.telemetry` has the switches. It
@@ -102,9 +102,9 @@ from ._plan_limit import parse_plan_limit as _parse_plan_limit  # noqa: E402
 
 
 class PlanLimitError(_CuaError.Http):  # type: ignore[name-defined,misc]
-    """The relay refused a new live session because the plan is at its cap.
+    """The relay refused a new computer in use because the plan is at its cap.
 
-    ``str(error)`` is the plain sentence. Live sessions are never cut, and
+    ``str(error)`` is the plain sentence. Computers already in use are never cut, and
     retrying gets the same answer: close one, or send the person to
     ``upgrade_url``.
     """

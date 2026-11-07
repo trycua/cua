@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use cua_driver_testkit::IsolatedStateRoot;
 
 use cua_driver_sdk::{
@@ -286,6 +289,7 @@ async fn embedded_service_binds_authority_to_the_original_host_connection() {
         inherit_stderr: true,
         // No overlay window on the developer's display.
         no_overlay: true,
+        capture_stderr: false,
     })
     .unwrap();
     let connection = host.clone().start().await.unwrap();

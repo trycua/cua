@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use async_trait::async_trait;
 use cua_driver_contract::ScrollInput;
 use cua_driver_core::{
@@ -798,6 +801,7 @@ impl Tool for ScrollTool {
                     crate::interaction::with_x11_foreground(
                         xid,
                         crate::input::ForegroundOptions::pointer(),
+                        crate::interaction::RestoreMode::LeaveFocused,
                         || {
                             crate::input::send_click_xtest_desktop(
                                 point.0 as i32,

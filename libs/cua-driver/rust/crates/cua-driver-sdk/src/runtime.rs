@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Private platform-runtime composition behind the public SDK boundary.
 //!
 //! This is deliberately not a second public interface. Both imported SDK
@@ -8,6 +11,7 @@ use crate::{DriverActivityEvent, DriverActivityKind, DriverActivityObserver};
 use cua_driver_core::{
     authorization::PermissionMode,
     protocol::ToolResult as CoreToolResult,
+    recording::StopBy,
     session_authorization::{
         AuthenticatedActionConnection, DelegatedSessionRequest, EffectiveAuthorizationContext,
         SessionAuthorizationError, SessionAuthorizationRegistry, SessionModeCeiling,
@@ -243,7 +247,7 @@ impl DriverRuntime {
             &self.compatibility_context.runtime_scope_key(),
         );
         let recording = self.registry.recording.clone();
-        let _ = tokio::task::spawn_blocking(move || recording.stop_owner(None)).await;
+        let _ = tokio::task::spawn_blocking(move || recording.stop(StopBy::Anyone)).await;
     }
 
     fn stop_lifecycle_maintenance(&self) {
@@ -397,7 +401,8 @@ impl DriverRuntime {
             // `end_session` is a lifecycle boundary: do not report completion
             // until any recording owned by the session has finalized.
             let recording = self.registry.recording.clone();
-            let _ = tokio::task::spawn_blocking(move || recording.stop_owner(Some(&session))).await;
+            let _ =
+                tokio::task::spawn_blocking(move || recording.stop(StopBy::Owner(&session))).await;
         }
         Some(result)
     }
@@ -471,7 +476,7 @@ impl Drop for DriverRuntime {
         // another generation.
         if was_running {
             let recording = self.registry.recording.clone();
-            let _ = recording.stop_owner(None);
+            let _ = recording.stop(StopBy::Anyone);
         }
     }
 }
@@ -539,9 +544,15 @@ fn spawn_lifecycle_maintenance(runtime: &Arc<DriverRuntime>) -> LifecycleMainten
             );
         }
         let idle = now_unix_secs().saturating_sub(runtime.last_activity.load(Ordering::Relaxed));
-        if idle >= recording_ttl && runtime.registry.recording.current_state().enabled {
+        if idle < recording_ttl {
+            continue;
+        }
+        if let Some(generation) = runtime.registry.recording.current_state().generation {
             tracing::warn!("recording idle {idle}s ≥ {recording_ttl}s TTL; auto-stopping");
-            let _ = runtime.registry.recording.stop_owner(None);
+            let _ = runtime
+                .registry
+                .recording
+                .stop(StopBy::Generation(generation));
         }
     });
     LifecycleMaintenance { shutdown, thread }
@@ -560,7 +571,6 @@ pub(crate) fn tool_inventory(options: RuntimeOptions) -> Value {
 fn build_registry(options: &RuntimeOptions) -> ToolRegistry {
     #[cfg(target_os = "macos")]
     let mut registry = {
-        configure_macos_runtime();
         platform_macos::register_tools_with_cursor_and_provider(
             options.authorization_host.clone(),
             options.cursor.clone(),
@@ -572,7 +582,6 @@ fn build_registry(options: &RuntimeOptions) -> ToolRegistry {
 
     #[cfg(target_os = "windows")]
     let mut registry = {
-        configure_windows_runtime();
         platform_windows::register_tools_with_cursor_and_provider(
             options.authorization_host.clone(),
             options.cursor.clone(),
@@ -621,60 +630,12 @@ fn build_registry(options: &RuntimeOptions) -> ToolRegistry {
                 return Ok(());
             };
             recording
-                .stop_owner(Some(session))
+                .stop(StopBy::Owner(session))
                 .map_err(|error| error.to_string())
         },
     );
     registry.retain_session_end_hook(recording_session_end);
     registry
-}
-
-#[cfg(target_os = "macos")]
-fn configure_macos_runtime() {
-    cua_driver_core::recording::set_screenshot_fn(|window_id, pid| {
-        if let Some(window_id) = window_id {
-            platform_macos::capture::screenshot_window_bytes(window_id as u32).ok()
-        } else if let Some(pid) = pid {
-            platform_macos::windows::resolve_main_window_id(pid as i32)
-                .ok()
-                .and_then(|window_id| {
-                    platform_macos::capture::screenshot_window_bytes(window_id).ok()
-                })
-        } else {
-            platform_macos::capture::screenshot_display_bytes().ok()
-        }
-    });
-    cua_driver_core::recording::set_click_marker_fn(|png_bytes, x, y| {
-        platform_macos::capture::crosshair_png_bytes(png_bytes, x, y).ok()
-    });
-    cua_driver_core::recording::set_budgeted_ax_snapshot_fn(|window_id, pid, budget| {
-        platform_macos::recording_hooks::app_state_json_for(window_id, pid, budget)
-    });
-    cua_driver_core::recording::set_element_bounds_fn(|window_id, pid, index| {
-        platform_macos::recording_hooks::element_window_local_xy(window_id, pid, index)
-    });
-    cua_driver_core::video::set_video_backend_factory(Box::new(
-        platform_macos::video_sckit::SckitVideoBackendFactory,
-    ));
-}
-
-#[cfg(target_os = "windows")]
-fn configure_windows_runtime() {
-    cua_driver_core::recording::set_classified_screenshot_fn(|window_id, pid| {
-        platform_windows::recording_hooks::screenshot_for_recording(window_id, pid)
-    });
-    cua_driver_core::recording::set_click_marker_fn(|png_bytes, x, y| {
-        platform_windows::capture::crosshair_png_bytes(png_bytes, x, y).ok()
-    });
-    cua_driver_core::recording::set_budgeted_ax_snapshot_fn(|window_id, pid, budget| {
-        platform_windows::recording_hooks::app_state_json_for(window_id, pid, budget)
-    });
-    cua_driver_core::recording::set_element_bounds_fn(|window_id, pid, index| {
-        platform_windows::recording_hooks::element_window_local_xy(window_id, pid, index)
-    });
-    cua_driver_core::video::set_video_backend_factory(Box::new(
-        cua_driver_core::video_ffmpeg::FfmpegVideoBackendFactory,
-    ));
 }
 
 #[cfg(all(target_os = "linux", not(target_env = "musl")))]
@@ -688,27 +649,6 @@ fn configure_linux_runtime(prepare_desktop_environment: bool) {
                 tracing::warn!("could not activate the persistent AT-SPI listener: {error}");
             }
         }
-    }
-    cua_driver_core::recording::set_screenshot_fn(|window_id, pid| {
-        platform_linux::recording_hooks::screenshot_for_recording(window_id, pid)
-    });
-    cua_driver_core::recording::set_click_marker_fn(|png_bytes, x, y| {
-        platform_linux::capture::crosshair_png_bytes(png_bytes, x, y).ok()
-    });
-    cua_driver_core::recording::set_budgeted_ax_snapshot_fn(|window_id, pid, budget| {
-        platform_linux::recording_hooks::app_state_json_for(window_id, pid, budget)
-    });
-    cua_driver_core::recording::set_element_bounds_fn(|window_id, pid, index| {
-        platform_linux::recording_hooks::element_window_local_xy(window_id, pid, index)
-    });
-    if platform_linux::wayland::is_wayland() {
-        cua_driver_core::video::set_video_backend_factory(Box::new(
-            platform_linux::video_wayland::WaylandVideoBackendFactory,
-        ));
-    } else {
-        cua_driver_core::video::set_video_backend_factory(Box::new(
-            cua_driver_core::video_ffmpeg::FfmpegVideoBackendFactory,
-        ));
     }
 }
 

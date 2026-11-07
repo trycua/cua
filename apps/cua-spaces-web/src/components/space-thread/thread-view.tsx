@@ -12,6 +12,8 @@ import { Inlines } from "@/components/markdown";
 import { Button } from "@/components/ui/button";
 import { parseInline } from "@/lib/markdown";
 import { mentionSegments } from "@/lib/mentions";
+import { abilityOfAction } from "@/lib/agent-home/prompt";
+import { askText } from "@/lib/agent-home/requests";
 import { cn, isMacPlatform } from "@/lib/utils";
 
 import { AgentTile, MemberAvatar } from "./avatar";
@@ -470,7 +472,10 @@ function Approval({
   const { core } = useBridge();
   const card = useMemo(() => (entry.approval?.card ? exportCardView(core, entry.approval.card) : null), [core, entry.approval?.card]);
   const exportAsk = !card && entry.approval ? exportAskText(entry.approval.action, entry.approval.details) : null;
-  const ask = card ? { title: card.repo, detail: "", allow: card.allow } : exportAsk;
+  // An agent asking for an ability (see Spaces, use a machine) says it in plain words, on this same card.
+  const ability = !card && !exportAsk && entry.approval ? abilityOfAction(entry.approval.action) : null;
+  const abilityAsk = ability ? askText({ seq: entry.seq, ability, detail: (entry.approval?.details ?? "").trim(), tsMs: entry.tsMs }, null) : null;
+  const ask = card ? { title: card.repo, detail: "", allow: card.allow } : (exportAsk ?? abilityAsk);
   const press = (approve: boolean) => {
     setBusy(approve);
     setError(null);

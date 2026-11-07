@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Session-scoped target / tab / page-ref capability store.
 //!
 //! Browser target ids (`bt-<uuid>`), tab ids (`tab-<uuid>`) and page refs

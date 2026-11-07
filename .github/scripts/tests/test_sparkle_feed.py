@@ -20,6 +20,16 @@ def feed(*items):
 
 
 class SparkleFeed(unittest.TestCase):
+
+    def test_nightly_appcast_holds_only_nightlies(self):
+        ok = feed(("0.21.0-nightly.20261105+55e1f5d", "0.20.0.202611050731", "nightly"))
+        self.assertEqual(sf.nightly_violations(ok), [])
+        self.assertIsNone(sf.stable_version(ok))
+        stray = feed(("0.21.0-nightly.20261105+55e1f5d", "0.20.0.202611050731", "nightly"), ("0.20.0", "0.20.0.130", None))
+        self.assertEqual(sf.nightly_violations(stray), ["0.20.0 is not a nightly"])
+        untagged = feed(("0.21.0-nightly.20261105+55e1f5d", "0.20.0.202611050731", None))
+        self.assertTrue(sf.nightly_violations(untagged))
+
     def test_beta_on_top_is_not_stable(self):
         # The 3 Nov 2026 feed: 0.20.0-beta.1 (beta) is the first item.
         f = feed(("0.20.0-beta.1", "0.20.0.129", "beta"), ("0.19.4", "0.19.4.128", None), ("0.19.3", "0.19.3.127", None))

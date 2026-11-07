@@ -35,7 +35,12 @@ jobs:
     runs-on: ubuntu-latest
     if: |
       github.event_name == 'workflow_dispatch' ||
-      github.event.workflow_run.conclusion == 'success'
+      github.event.workflow_run.conclusion == 'success' ||
+      github.event.workflow_run.conclusion == 'failure'
+    # A failed post-publish bookkeeping job (installer bump PR) marks the CD run
+    # failed even though the release is published. The published-release check
+    # below still gates every publish, so a failed run with no published
+    # release stays a no-op.
     outputs:
       version: ${{ steps.version.outputs.version }}
       tag: ${{ steps.version.outputs.tag }}
@@ -271,7 +276,8 @@ jobs:
           TAG: ${{ needs.get-version.outputs.tag }}
         run: |
           mkdir -p "$RUNNER_TEMP/cua-driver-assets" "$RUNNER_TEMP/cua-driver-native"
-          gh release download "$TAG" --dir "$RUNNER_TEMP/cua-driver-assets" \
+          . "$GITHUB_WORKSPACE/.github/scripts/retry.sh"
+          retry gh release download "$TAG" --dir "$RUNNER_TEMP/cua-driver-assets" \
             --pattern '*-darwin-universal-binary.tar.gz' \
             --pattern '*-linux-x86_64-binary.tar.gz' \
             --pattern '*-linux-arm64-binary.tar.gz' \

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use async_trait::async_trait;
 use cua_driver_contract::HotkeyInput;
 use cua_driver_core::{
@@ -434,6 +437,7 @@ impl Tool for HotkeyTool {
                     return crate::interaction::with_x11_foreground(
                         xid,
                         crate::input::ForegroundOptions::keyboard(),
+                        crate::interaction::RestoreMode::LeaveFocused,
                         || crate::input::send_key_xtest(&key, &m),
                     )
                     .map(|((), report)| KeyRoute::Foreground(report));

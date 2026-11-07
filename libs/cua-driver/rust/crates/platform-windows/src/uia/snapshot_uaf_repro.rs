@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Regression guard for the UIA element-cache use-after-free fixed in
 //! d95b89a1 (retain-under-lock / `RetainedElement`).
 //!

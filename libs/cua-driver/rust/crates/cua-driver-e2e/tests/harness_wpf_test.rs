@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Integration test against the CuaTestHarness.Wpf .NET 8 app.
 //!
 //! Pairs of test apps live under `libs/cua-driver/tests/fixtures/`. They

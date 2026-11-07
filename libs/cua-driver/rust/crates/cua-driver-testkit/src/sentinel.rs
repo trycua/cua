@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Full-desktop foreground sentinel used by background E2E cells.
 
 use std::fs;

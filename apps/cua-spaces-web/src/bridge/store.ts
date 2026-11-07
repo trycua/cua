@@ -413,9 +413,10 @@ export class BridgeStore {
   }
 
   /** Removes a machine from the account (`machines.remove`), then lists
-   * the Spaces and machines again. */
-  async removeMachine(machine: string | null, device: string | null): Promise<void> {
-    await this.adapter.call("machines.remove", { machine, device });
+   * the Spaces and machines again. `deleteSpaces`: the relay forgets the
+   * Spaces made on it too (else they are detached). */
+  async removeMachine(machine: string | null, device: string | null, deleteSpaces = false): Promise<void> {
+    await this.adapter.call("machines.remove", deleteSpaces ? { machine, device, deleteSpaces } : { machine, device });
     await this.refresh("spaces");
     await this.refresh("machines");
   }

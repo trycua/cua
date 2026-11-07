@@ -882,14 +882,17 @@ export function demoThreadHandlers({
       }
       return agentMemberFromTool(memberJson(m));
     },
-    "thread.agentAdd": async ({ spaceId, name, harness }) => {
+    "thread.agentAdd": async ({ spaceId, name, harness, standby }) => {
       if (role === "guest") throw denied(GUEST);
       const t = thread(spaceId);
       const handle = name.trim().toLowerCase();
       if (!/^[a-z0-9][a-z0-9._-]{0,62}$/.test(handle)) throw new HostError("Use 1 to 63 lowercase letters, digits, dots, dashes or underscores.", "invalid_argument");
-      if (t.members.some((m) => m.name === handle)) throw new HostError(`@${handle} is taken here. Pick another name.`, "invalid_argument");
+      // Adding the member of the same harness again is the same member (the daemon does the same).
+      const existing = t.members.find((m) => m.name === handle);
+      if (existing && existing.harness === harness) return agentMemberFromTool(memberJson(existing));
+      if (existing) throw new HostError(`@${handle} is taken here. Pick another name.`, "invalid_argument");
       await wait(stepMs);
-      const member: DemoMember = { name: handle, harness, status: "asleep", activity: null, sessions: 1, rights: { ...DEFAULT_AGENT_RIGHTS }, identity: startedIdentity(handle, harness) };
+      const member: DemoMember = { name: handle, harness, status: standby ? "idle" : "asleep", activity: null, sessions: 1, rights: { ...DEFAULT_AGENT_RIGHTS }, identity: startedIdentity(handle, harness) };
       join(spaceId, member);
       return agentMemberFromTool(memberJson(member));
     },

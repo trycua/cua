@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Common `parse_visual_regions` tool implementation.
 
 use std::sync::Arc;

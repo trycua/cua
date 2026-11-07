@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Why a guard refused, in the wire vocabulary of the design note.
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

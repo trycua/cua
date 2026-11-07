@@ -279,4 +279,23 @@ mod tests {
         assert_eq!(g.as_bytes()[14], b'4');
         assert_ne!(g, guid());
     }
+
+    /// The real service, link and checksum only (nothing is downloaded). Run by
+    /// hand from a network Microsoft does not limit:
+    /// `cargo test -p cua-image --lib live_microsoft -- --ignored --nocapture`.
+    #[tokio::test]
+    #[ignore = "needs the internet and a network Microsoft does not limit"]
+    async fn live_microsoft_gives_a_link_and_a_checksum_for_windows_11_arm64() {
+        match resolve(&super::super::iso::HttpFetcher, "windows11arm64").await {
+            Ok(m) => {
+                println!("{} {} {:?}", m.product, m.url, m.sha256);
+                assert!(m.url.contains("prss.microsoft.com"), "{}", m.url);
+                assert!(m.sha256.is_some());
+            }
+            Err(e) => {
+                println!("{e}");
+                assert!(e.to_string().contains(LIMITED), "{e}");
+            }
+        }
+    }
 }

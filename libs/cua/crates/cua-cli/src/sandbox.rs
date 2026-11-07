@@ -1846,6 +1846,30 @@ fn in_a_space(e: CuaError) -> CuaError {
     e
 }
 
+/// Whether this command creates a Windows or macOS computer here: one that
+/// only a long-running runtime (the cua daemon) can keep.
+pub fn creates_vm_here(cmd: &SandboxCmd) -> bool {
+    let SandboxCmd::Create(a) = cmd else {
+        return false;
+    };
+    let Some(image) = a.image.as_deref().or(a.image_flag.as_deref()) else {
+        return false;
+    };
+    if !matches!(a.on, None | Some(On::Local)) {
+        return false;
+    }
+    let Ok((resolved, os)) = resolve_image(image, a.tier.as_deref()) else {
+        return false;
+    };
+    let os = os.or_else(|| cua_image::catalog::catalog_os(&resolved));
+    matches!(os.as_deref(), Some("windows" | "macos"))
+}
+
+/// The refusal for a Windows or macOS computer in a runtime that ends with
+/// this command (`--embedded`): it would be stopped the moment the command
+/// returns.
+pub const EMBEDDED_VM_REFUSED: &str = "A Windows or macOS computer stops when this command ends if no cua daemon holds it. Leave out --embedded: the cua daemon starts by itself and keeps it running.";
+
 async fn create(
     cua: &Arc<Cua>,
     a: CreateArgs,
@@ -1894,6 +1918,17 @@ async fn create(
         }
         if let Some(image) = image {
             let (resolved, os) = resolve_image(&image, a.tier.as_deref())?;
+            if cua.embedded_runtime().is_some()
+                && on == On::Local
+                && matches!(
+                    os.clone()
+                        .or_else(|| cua_image::catalog::catalog_os(&resolved))
+                        .as_deref(),
+                    Some("windows" | "macos")
+                )
+            {
+                return Err(CuaError::InvalidArgument(EMBEDDED_VM_REFUSED.into()));
+            }
             windows_build_note(&resolved, a.iso.as_deref(), a.iso_sha256.as_deref())?;
             o.image = resolved;
             o.os = os;

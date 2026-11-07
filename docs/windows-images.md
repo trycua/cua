@@ -56,6 +56,13 @@ see "ISO resolution". You can still pass your own with `--iso`.
 
 If nothing works the error says to download the ISO yourself and pass `--iso`.
 
+An ISO of your own is installed as Windows 11 (or 10) Pro with Microsoft's generic key,
+unless its file name says `eval` (evaluation media carries its own key); without a key Setup
+would wait at "Product key". Server ISOs pick their edition by name.
+
+A Windows or macOS computer needs the cua daemon to outlive the command: `cua sb create
+windows:11` starts the daemon when none runs, and `--embedded` is refused in plain words.
+
 ### Licence
 
 An ARM64 Windows 11 build installs **Windows 11 Pro from Microsoft's consumer media, unactivated**

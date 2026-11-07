@@ -274,6 +274,46 @@ pub async fn ensure_base(
     ensure_base_with(layout, req, fetcher, installer, &cua_vmm::disk::SystemProbe).await
 }
 
+/// What the answer file installs from `isop`: whether it is evaluation media
+/// (it carries its own key) and the edition to pick by name.
+///
+/// Downloaded media is known from the table. An ISO of the person's own is not,
+/// and Setup stops at the "Product key" page when a retail ISO gets no key, so a
+/// client ISO whose file name does not say "eval" is taken to be retail
+/// multi-edition media: Pro, with the generic key (it activates nothing).
+/// Server ISOs name their edition from the table either way.
+fn install_edition(
+    v: &WindowsVersion,
+    arch: WindowsArch,
+    isop: &iso::ResolvedIso,
+    asked: Option<&str>,
+) -> (bool, Option<String>) {
+    use super::table::Media;
+    let pro = || {
+        let family = if v.name.starts_with("Windows 10") {
+            "Windows 10"
+        } else {
+            "Windows 11"
+        };
+        format!("{family} Pro")
+    };
+    let (evaluation, retail) = if isop.origin == iso::IsoOrigin::User {
+        let eval = isop
+            .path
+            .file_name()
+            .is_some_and(|n| n.to_string_lossy().to_ascii_lowercase().contains("eval"));
+        (eval, !eval && !v.server)
+    } else {
+        let media = v.media(arch);
+        (
+            media == Media::Evaluation,
+            matches!(media, Media::Consumer(_)),
+        )
+    };
+    let edition = asked.map(str::to_string).or_else(|| retail.then(pro));
+    (evaluation, edition)
+}
+
 /// [`ensure_base`] against an explicit free-space source.
 pub async fn ensure_base_with(
     layout: &Layout,
@@ -310,19 +350,7 @@ pub async fn ensure_base_with(
         &mut |_| {},
     )
     .await?;
-    use super::table::Media;
-    let media = if isop.origin == iso::IsoOrigin::User {
-        Media::None
-    } else {
-        v.media(arch)
-    };
-    let evaluation_media = media == Media::Evaluation;
-    // Consumer media holds many editions: install Pro (the answer file gives
-    // it the generic Pro key, which activates nothing).
-    let edition = req
-        .edition
-        .clone()
-        .or_else(|| matches!(media, Media::Consumer(_)).then(|| "Windows 11 Pro".to_string()));
+    let (evaluation_media, edition) = install_edition(v, arch, &isop, req.edition.as_deref());
     progress("Preparing the unattended install", 0.46);
     let work = dir.join("work");
     std::fs::create_dir_all(&work)?;
@@ -467,6 +495,54 @@ pub fn local_build_target(reference: &str) -> Option<&'static WindowsVersion> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn resolved(path: &str, origin: iso::IsoOrigin) -> iso::ResolvedIso {
+        iso::ResolvedIso {
+            path: path.into(),
+            origin,
+        }
+    }
+
+    fn answer_file(v: &WindowsVersion, arch: WindowsArch, r: &iso::ResolvedIso) -> String {
+        let (evaluation_media, edition) = install_edition(v, arch, r, None);
+        unattend::autounattend_xml(&UnattendOptions {
+            version: v,
+            arch,
+            account: "User",
+            edition: edition.as_deref(),
+            evaluation_media,
+            virtio: true,
+            spacesd_version: "0.0.0",
+        })
+    }
+
+    /// Setup stalls at "Product key" when a retail ISO of the person's own gets
+    /// no key: it installs Pro with the generic key; evaluation media and Server
+    /// keep their own.
+    #[test]
+    fn a_user_iso_installs_pro_with_the_generic_key_unless_it_is_evaluation_media() {
+        let w11 = super::super::table::lookup("11").unwrap();
+        let retail = resolved(
+            "/Downloads/Windows11_Client_arm64_en-us_26300_9457.iso",
+            iso::IsoOrigin::User,
+        );
+        let x = answer_file(w11, WindowsArch::Arm64, &retail);
+        assert!(x.contains("<Key>/IMAGE/NAME</Key><Value>Windows 11 Pro</Value>"));
+        assert!(x.contains("<ProductKey><Key>VK7JG-NPHTM-C97JM-9MPGT-3V66T</Key>"));
+        let eval = resolved(
+            "/x/26100.1.240331-1435.ge_release_CLIENTENTERPRISEEVAL_x64.iso",
+            iso::IsoOrigin::User,
+        );
+        let x = answer_file(w11, WindowsArch::Amd64, &eval);
+        assert!(!x.contains("ProductKey") && x.contains("/IMAGE/INDEX"));
+        let server = super::super::table::lookup("2022").unwrap();
+        let x = answer_file(server, WindowsArch::Amd64, &retail);
+        assert!(!x.contains("ProductKey"));
+        // Downloaded consumer media is unchanged.
+        let dl = resolved("/cache/w11.iso", iso::IsoOrigin::Downloaded);
+        let x = answer_file(w11, WindowsArch::Arm64, &dl);
+        assert!(x.contains("Windows 11 Pro") && x.contains("VK7JG"));
+    }
     use std::sync::Mutex;
 
     struct NoNet;

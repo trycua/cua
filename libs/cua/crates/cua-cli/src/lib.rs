@@ -2105,6 +2105,18 @@ async fn run_sdk(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
     {
         daemon_start(&cli, false, None, "127.0.0.1:0", &mut std::io::stderr()).await?;
     }
+    // A Windows or macOS computer outlives the command only in the daemon:
+    // start one when none runs (`--embedded` is refused by the create itself).
+    if let Command::Sandbox(cmd) = &cli.command
+        && sandbox::creates_vm_here(cmd)
+        && !cli.embedded
+        && cli.daemon.is_none()
+        && cua_daemon::client::live_address().is_none()
+    {
+        cua_daemon::client::ensure_daemon()
+            .await
+            .map_err(|e| CuaError::Internal(format!("the cua daemon: {e}")))?;
+    }
     let cua = open(&cli, needs_session).await?;
     match cli.command {
         Command::Sandbox(cmd) => return sandbox::run(&cua, *cmd, json, out).await,
@@ -3622,6 +3634,41 @@ mod tests {
         assert!(!is_advanced_help(&args(&["help"])));
         assert!(ADVANCED_HELP.contains("--relay <URL>"));
         assert!(ADVANCED_HELP.contains("--direct <IP:PORT>"));
+    }
+
+    /// A Windows or macOS computer needs the daemon to outlive the command: a
+    /// plain create starts one, and `--embedded` is refused in plain words.
+    #[tokio::test]
+    async fn a_windows_vm_is_kept_by_the_daemon_and_refused_when_embedded() {
+        let cmd = |args: &[&str]| {
+            let mut v = vec!["cua", "sb", "create"];
+            v.extend_from_slice(args);
+            match Cli::try_parse_from(v).unwrap().command {
+                Command::Sandbox(c) => *c,
+                _ => unreachable!(),
+            }
+        };
+        assert!(sandbox::creates_vm_here(&cmd(&["windows:11"])));
+        assert!(sandbox::creates_vm_here(&cmd(&["macos"])));
+        assert!(!sandbox::creates_vm_here(&cmd(&["linux"])));
+        assert!(!sandbox::creates_vm_here(&cmd(&[
+            "windows:11",
+            "--on",
+            "direct:1.2.3.4:3211"
+        ])));
+        let dir = tempfile::tempdir().unwrap();
+        let cua = Arc::new(
+            Cua::embedded(CuaConfig {
+                state_dir: Some(dir.path().join("sandboxes").display().to_string()),
+                ..Default::default()
+            })
+            .unwrap(),
+        );
+        let mut out = Vec::new();
+        let e = sandbox::run(&cua, cmd(&["windows:11", "--name", "w"]), false, &mut out)
+            .await
+            .unwrap_err();
+        assert!(e.to_string().contains("Leave out --embedded"), "{e}");
     }
 
     /// The Spaces app's launch check (`cua auth keychain`) records no usage

@@ -20,6 +20,7 @@
  *
  *   { type: "surfaces", update: SurfaceState[], remove: string[] }
  *   { type: "focus", surfaceId: string | null }    // give keys to a viewer, or take them back
+ *   { type: "prewarm", spaceId: string }           // intent to open a Space (stream-intent.ts)
  *
  * Host → page (`cua:event`):
  *
@@ -66,7 +67,9 @@ export interface SurfaceState {
 
 export type StreamSurfaceMessage =
   | { type: "surfaces"; update: SurfaceState[]; remove: string[] }
-  | { type: "focus"; surfaceId: string | null };
+  | { type: "focus"; surfaceId: string | null }
+  /** The pointer is heading for a Space (its tile, row or link): the host opens its viewer stream now. */
+  | { type: "prewarm"; spaceId: string };
 
 export type SurfacePhase = "connecting" | "live" | "failed";
 

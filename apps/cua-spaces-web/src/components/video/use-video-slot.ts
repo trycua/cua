@@ -35,6 +35,18 @@ export function resetVideoSlotLoader(): void {
   loading = null;
 }
 
+/** The page's side of the `stream.open` span: `performance` marks from the slot
+ * mounting to the first live frame (`stream.open:<space>` measure; times only). */
+function markStream(spaceId: string, hop: "slot" | "live"): void {
+  if (typeof performance === "undefined" || typeof performance.mark !== "function") return;
+  try {
+    performance.mark(`stream.${hop}:${spaceId}`);
+    if (hop === "live") performance.measure(`stream.open:${spaceId}`, `stream.slot:${spaceId}`, `stream.live:${spaceId}`);
+  } catch {
+    // A missing start mark (the slot mounted before this page loaded): no measure.
+  }
+}
+
 const CONNECTING: SlotStatus = { phase: "connecting", focused: false };
 
 /** The host draws live video in the page at all (native slots, or the
@@ -76,6 +88,7 @@ export function useVideoSlot(
     const el = ref.current;
     if (!on || !el || !slots) return;
     setStatus(CONNECTING);
+    markStream(spaceId, "slot");
     const stop = slots.register(el, { spaceId, tier, interactive, radius, inset, os, windowId, epoch }, setStatus);
     setId(slots.idOf(el));
     return () => {
@@ -87,6 +100,10 @@ export function useVideoSlot(
       setStatus(CONNECTING);
     };
   }, [ref, on, slots, spaceId, tier, interactive, radius, inset, os, windowId, epoch, attempt]);
+
+  useEffect(() => {
+    if (status.phase === "live") markStream(spaceId, "live");
+  }, [status.phase, spaceId]);
 
   // The shell has no video for this page (no cua, sample data): the plain fallback, as in a browser.
   if (!on || status.reason === NO_VIDEO_HERE) return null;

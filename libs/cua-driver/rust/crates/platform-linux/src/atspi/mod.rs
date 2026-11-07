@@ -1161,6 +1161,22 @@ mod bridge_disabled_reason_tests {
                 .stderr(Stdio::null())
                 .spawn()
                 .expect("spawn sleep");
+            // `spawn` can return before the kernel has finished the child's exec,
+            // and until then its environ doesn't hold what it was given.
+            let expected = format!("NO_AT_BRIDGE={value}").into_bytes();
+            let environ = format!("/proc/{}/environ", child.id());
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            while !std::fs::read(&environ)
+                .unwrap_or_default()
+                .split(|&byte| byte == 0)
+                .any(|entry| entry == expected.as_slice())
+            {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "sleep never finished exec"
+                );
+                std::thread::yield_now();
+            }
             Self(child)
         }
     }

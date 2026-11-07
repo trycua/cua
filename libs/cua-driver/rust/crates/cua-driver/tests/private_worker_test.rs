@@ -254,6 +254,8 @@ async fn dropping_the_host_closes_and_terminates_the_private_worker() {
     let state = IsolatedStateRoot::new().unwrap();
     let driver = cua_driver_sdk::CuaDriver::create_private_worker(worker_options(&state)).unwrap();
     let pid = driver.metadata().await.unwrap().pid;
+    #[cfg(not(unix))]
+    let _ = pid;
     drop(driver);
 
     #[cfg(unix)]

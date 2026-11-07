@@ -2,10 +2,13 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 import * as Clipboard from "expo-clipboard";
+import { useRouter } from "expo-router";
+import { useState } from "react";
 import { Pressable, View } from "react-native";
 import Animated, { FadeIn } from "react-native-reanimated";
 
 import type { OutboxRow } from "../../core/phone";
+import type { ChildNote, LiveChild } from "../../data/thread/protocol";
 import type { ThreadEntry } from "../../data/types";
 import { useTheme } from "../../theme/theme";
 import { Avatar } from "../../ui/Avatar";
@@ -118,7 +121,7 @@ export function Bubble({ entry, mine, showAuthor, quote, onReply, onOpenAttachme
 }
 
 /** What an agent is doing now: its words so far while it streams, or one quiet working line. */
-export function LiveRow({ agent, stage, text }: { agent: string; stage: string; text: string }) {
+export function LiveRow({ agent, stage, text, children = [] }: { agent: string; stage: string; text: string; children?: LiveChild[] }) {
   const { c, reduceMotion } = useTheme();
   const Wrap = reduceMotion ? View : Animated.View;
   return (
@@ -133,6 +136,15 @@ export function LiveRow({ agent, stage, text }: { agent: string; stage: string; 
           <Markdown text={text} color={c.foreground} />
         </View>
       ) : null}
+      {children.map((k) => (
+        <View key={k.id} style={{ flexDirection: "row", gap: 8, marginTop: 6, marginLeft: 26 }} testID={`live-child-${k.id}`} accessible accessibilityLabel={`Subagent running: ${k.title}`}>
+          <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: c.success, marginTop: 6 }} />
+          <View style={{ flex: 1 }}>
+            <Text variant="footnote" numberOfLines={1}>{k.title}</Text>
+            <Text variant="caption" color="muted" numberOfLines={1}>{`${k.step ?? "Starting"}${k.steps > 0 ? `, ${k.steps === 1 ? "1 step" : `${k.steps} steps`}` : ""}`}</Text>
+          </View>
+        </View>
+      ))}
     </Wrap>
   );
 }
@@ -154,6 +166,48 @@ export function PendingRow({ row, onRetry, onDiscard }: { row: OutboxRow; onRetr
         {row.canRetry ? <Pressable onPress={onRetry} accessibilityRole="button" accessibilityLabel={`${row.retryLabel} sending`} hitSlop={8}><Text variant="caption" weight="600" color="brand">{row.retryLabel}</Text></Pressable> : null}
         {row.canDiscard ? <Pressable onPress={onDiscard} accessibilityRole="button" accessibilityLabel={`${row.discardLabel} this message`} hitSlop={8}><Text variant="caption" color="muted">{row.discardLabel}</Text></Pressable> : null}
       </View>
+    </View>
+  );
+}
+
+/** A subagent the agent started: its task, whether it runs, is done or failed, its steps, and (tap) what it handed back. */
+export function SubagentRow({ sub }: { sub: Extract<ChildNote, { kind: "subagent" }> }) {
+  const { c } = useTheme();
+  const [open, setOpen] = useState(false);
+  const word = sub.state === "running" ? "Running" : sub.state === "done" ? "Done" : "Failed";
+  const color = sub.state === "failed" ? c.destructive : sub.state === "done" ? c.mutedForeground : c.success;
+  const steps = sub.steps > 0 ? (sub.steps === 1 ? "1 step" : `${sub.steps} steps`) : null;
+  return (
+    <Pressable
+      onPress={() => sub.result && setOpen((o) => !o)}
+      disabled={!sub.result}
+      style={{ marginLeft: 38, marginRight: 16, marginTop: 6, flexDirection: "row", gap: 8 }}
+      testID={`subagent-${sub.id}`}
+      accessibilityRole={sub.result ? "button" : "text"}
+      accessibilityLabel={`Subagent ${word.toLowerCase()}: ${sub.title}`}
+    >
+      <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: color, marginTop: 6 }} />
+      <View style={{ flex: 1 }}>
+        <Text variant="footnote" numberOfLines={open ? undefined : 2}>{sub.title}</Text>
+        <View style={{ flexDirection: "row", gap: 10 }}>
+          <Text variant="caption" color="muted">{word}</Text>
+          {steps ? <Text variant="caption" color="muted">{steps}</Text> : null}
+        </View>
+        {open && sub.result ? <Text variant="caption" color="muted" style={{ marginTop: 4 }}>{sub.result}</Text> : null}
+      </View>
+    </Pressable>
+  );
+}
+
+/** A child Space the agent made, with a way to open it. */
+export function ChildSpaceRow({ space }: { space: Extract<ChildNote, { kind: "child_space" }> }) {
+  const router = useRouter();
+  return (
+    <View style={{ marginLeft: 38, marginRight: 16, marginTop: 6, flexDirection: "row", alignItems: "center", gap: 12 }} testID={`child-space-${space.space}`}>
+      <Text variant="footnote" style={{ flex: 1 }} numberOfLines={1}>{`Made a ${space.os || "new"} computer ${space.name}`}</Text>
+      <Pressable onPress={() => router.push({ pathname: "/space/[id]", params: { id: space.space } })} accessibilityRole="link" accessibilityLabel={`Open ${space.name}`} hitSlop={10}>
+        <Text variant="footnote" color="success" weight="600">Open</Text>
+      </Pressable>
     </View>
   );
 }

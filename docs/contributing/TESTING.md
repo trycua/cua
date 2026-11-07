@@ -89,7 +89,7 @@ Run from `libs/cua-spacesd`:
 
 ```bash
 cargo test --workspace --locked
-scripts/ci/linux-core-tests.sh   # Linux container: large transfers, long streams
+scripts/ci/linux-core-tests.sh   # Linux container: large transfers, long streams (shards: core, hosted, teleport)
 scripts/ci/relay-e2e.sh          # driver with no published ports behind cua-relay
 ```
 

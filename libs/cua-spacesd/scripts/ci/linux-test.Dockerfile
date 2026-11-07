@@ -8,3 +8,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxdamage-dev libudev-dev libssl-dev python3 curl procps \
  && rm -rf /var/lib/apt/lists/*
 RUN rustup component add rustfmt clippy
+# cargo-nextest: the CI profile (.github/flaky/nextest.toml) retries a failed test once.
+RUN case "$(uname -m)" in aarch64) t=linux-arm ;; *) t=linux ;; esac \
+ && curl -LsSf "https://get.nexte.st/latest/$t" | tar zxf - -C /usr/local/cargo/bin

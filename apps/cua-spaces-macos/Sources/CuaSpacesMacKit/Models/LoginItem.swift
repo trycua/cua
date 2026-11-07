@@ -126,23 +126,28 @@ public enum HelperService {
     /// channel (`CuaChannel` other than `stable`) without a usable home: it
     /// must never fall back to the released app's file, so it runs nothing.
     public static func specPath(info: [String: Any]?, home: String) -> String? {
-        let base: String
+        homeDirectory(info: info, home: home).map { ($0 as NSString).appendingPathComponent("helper/service.json") }
+    }
+
+    /// The Cua home this bundle runs in: `CuaHome` (`~/...` or absolute),
+    /// else `~/.cua`. `nil` for a bundle that names another channel
+    /// (`CuaChannel` other than `stable`) without a usable home.
+    public static func homeDirectory(info: [String: Any]?, home: String) -> String? {
         if let stampedHome = stamped(info, "CuaHome") {
             if stampedHome == "~" {
-                base = home
+                return home
             } else if stampedHome.hasPrefix("~/") {
-                base = home + "/" + String(stampedHome.dropFirst(2))
+                return home + "/" + String(stampedHome.dropFirst(2))
             } else if stampedHome.hasPrefix("/") {
-                base = stampedHome
+                return stampedHome
             } else {
                 return nil
             }
         } else if let channel = stamped(info, "CuaChannel"), channel.lowercased() != "stable" {
             return nil
         } else {
-            base = home + "/" + defaultHome
+            return home + "/" + defaultHome
         }
-        return (base as NSString).appendingPathComponent("helper/service.json")
     }
 
     /// Where the host service's executable lives, relative to the app's

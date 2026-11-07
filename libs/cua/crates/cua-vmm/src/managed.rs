@@ -954,8 +954,8 @@ async fn ensure_windows() -> Result<String> {
             wsl::unregister(&w, &name).await;
         }
         let file = root().join("downloads").join(format!(
-            "alpine-minirootfs-{}-{}.tar.gz",
-            wsl::ALPINE_VERSION,
+            "ubuntu-base-{}-{}.tar.gz",
+            wsl::BASE_VERSION,
             &pin.sha256[..8]
         ));
         std::fs::create_dir_all(file.parent().expect("has a parent"))?;

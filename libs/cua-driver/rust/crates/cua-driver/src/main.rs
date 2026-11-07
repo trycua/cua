@@ -25,6 +25,7 @@ mod broken_pipe;
 mod bundle;
 mod check_update_tool;
 mod cli;
+mod connect;
 mod doctor;
 mod driver_service_http;
 #[cfg(any(target_os = "macos", all(test, unix)))]
@@ -558,6 +559,16 @@ fn main() {
     if let Some(code) = platform_macos::permissions::gate::run_permission_probe_if_requested() {
         std::process::exit(code);
     }
+    // macOS's "Quit & Reopen" after the Screen Recording switch restarts the
+    // app with no arguments. Mid-guide, come back as the same service so the
+    // guide can show that it finished.
+    if let Some(args) = platform_macos::permissions::guide::resume_serve_args() {
+        use std::os::unix::process::CommandExt as _;
+        if let Ok(exe) = std::env::current_exe() {
+            let error = std::process::Command::new(exe).args(&args).exec();
+            eprintln!("cua-driver: could not reopen after the permission guide: {error}");
+        }
+    }
     // The packaged uninstaller needs a truly offline, pre-telemetry purge
     // path while this exact signed executable still exists on disk.
     if let Some(code) = history_runtime::run_offline_purge_if_requested() {
@@ -620,6 +631,13 @@ fn main() {
         }
         cli::Command::McpConfig { client, no_skills } => {
             cli::run_mcp_config(client.as_deref(), no_skills);
+        }
+        cli::Command::Connect {
+            clients,
+            dry_run,
+            json,
+        } => {
+            connect::run_connect(&clients, dry_run, json);
         }
         cli::Command::Manifest { pretty } => {
             // Surface 8: machine-readable CLI manifest. Read-only — no
@@ -1050,6 +1068,14 @@ fn main() -> anyhow::Result<()> {
         }
         cli::Command::McpConfig { client, no_skills } => {
             cli::run_mcp_config(client.as_deref(), no_skills);
+            Ok(())
+        }
+        cli::Command::Connect {
+            clients,
+            dry_run,
+            json,
+        } => {
+            connect::run_connect(&clients, dry_run, json);
             Ok(())
         }
         cli::Command::Manifest { pretty } => {

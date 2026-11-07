@@ -1069,10 +1069,9 @@ jobs:
           cache: npm
           cache-dependency-path: libs/cua-driver/examples/jev-use/package-lock.json
       - name: Install Linux desktop dependencies
-        working-directory: ${{ github.workspace }}
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
+        uses: ./.github/actions/apt-install
+        with:
+          packages: >-
             xvfb dbus-x11 at-spi2-core openbox picom python3-gi gir1.2-gtk-3.0
       - name: Install the released Driver with the canonical installer
         working-directory: ${{ github.workspace }}

@@ -1410,13 +1410,15 @@ fn crop_png_to_rect(
 /// Display-level capture dispatcher. Cascade:
 /// 1. Opt-in GNOME compositor helper. If available, capture failure is
 ///    terminal rather than cascading into GNOME's portal implementation.
-/// 2. Native Wayland on wlroots: zwlr_screencopy_manager_v1 (fast, zero
+/// 2. KWin's ScreenShot2, when KWin lets this executable call it. It runs before
+///    the portal, so a Deny saved in the portal doesn't apply to it.
+/// 3. Native Wayland on wlroots: zwlr_screencopy_manager_v1 (fast, zero
 ///    consent).
-/// 3. ext-image-copy-capture-v1 on supported compositors.
-/// 4. xdg-desktop-portal Screenshot via ashpd. Triggers a consent prompt on
-///    first use per session. A refusal from the portal is terminal; the
-///    request has a 30-second deadline, after which the cascade continues.
-/// 5. X11: existing root-window path.
+/// 4. ext-image-copy-capture-v1 on supported compositors.
+/// 5. xdg-desktop-portal Screenshot via ashpd. Asks once and saves the answer. A
+///    refusal from the portal is terminal; the request has a 30-second deadline,
+///    after which the cascade continues.
+/// 6. X11: existing root-window path.
 pub fn screenshot_display_dispatch() -> anyhow::Result<Vec<u8>> {
     if niri::is_session() {
         return niri_display_capture().map(|capture| capture.png);
@@ -1441,7 +1443,15 @@ pub fn screenshot_display_dispatch() -> anyhow::Result<Vec<u8>> {
         ) {
             return result;
         }
-        // Tier 2: native wlroots screencopy (fast, zero consent).
+        // Tier 2: KWin answers directly when it lets this executable call
+        // ScreenShot2: every output, no portal request to wait on.
+        if kwin_capture::may_be_session() {
+            match kwin_capture::capture_workspace() {
+                Ok(bytes) => return Ok(bytes),
+                Err(e) => tracing::debug!("KWin workspace capture unavailable: {e:#}"),
+            }
+        }
+        // Tier 3: native wlroots screencopy (fast, zero consent).
         match screenshot_bytes() {
             Ok(bytes) => return orient_display_png(bytes),
             Err(e) => {
@@ -1450,7 +1460,7 @@ pub fn screenshot_display_dispatch() -> anyhow::Result<Vec<u8>> {
                 );
             }
         }
-        // Tier 3: ext-image-copy-capture-v1 (sway 1.10+, labwc 0.8+,
+        // Tier 4: ext-image-copy-capture-v1 (sway 1.10+, labwc 0.8+,
         // hyprland, KDE 6.2+, GNOME 47+).
         match ext_screencopy::screenshot_via_ext_copy() {
             Ok(bytes) => return orient_display_png(bytes),
@@ -1460,7 +1470,7 @@ pub fn screenshot_display_dispatch() -> anyhow::Result<Vec<u8>> {
                 );
             }
         }
-        // Tier 4: xdg-desktop-portal (GNOME, KDE, COSMIC fallback), then X11.
+        // Tier 5: xdg-desktop-portal (GNOME, KDE, COSMIC fallback), then X11.
         return portal_or_x11(
             portal_screenshot::screenshot_via_portal,
             crate::capture::screenshot_display_bytes_x11,

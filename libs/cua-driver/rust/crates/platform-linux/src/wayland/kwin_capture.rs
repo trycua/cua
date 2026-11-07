@@ -548,31 +548,19 @@ pub fn capture(window_id: u64, pid: Option<u32>) -> anyhow::Result<Vec<u8>> {
             pid.is_none_or(|pid| pid == actual_pid),
             "KWin window PID mismatch"
         );
-        let (reader, writer) = std::os::unix::net::UnixStream::pair()?;
-        reader.set_nonblocking(true)?;
-        let mut reader = tokio::net::UnixStream::from_std(reader)?;
-        let options: HashMap<&str, zbus::zvariant::Value<'_>> = [
-            ("include-decoration", true.into()),
-            ("include-shadow", false.into()),
-            ("include-cursor", false.into()),
-            ("native-resolution", false.into()),
-        ]
-        .into();
-        let proxy = zbus::Proxy::new(
+        let (result, mut reader) = request_image(
             &connection,
-            owner.as_str(),
-            "/org/kde/KWin/ScreenShot2",
-            SCREENSHOT,
+            &owner,
+            Some(&uuid),
+            [
+                ("include-decoration", true.into()),
+                ("include-shadow", false.into()),
+                ("include-cursor", false.into()),
+                ("native-resolution", false.into()),
+            ]
+            .into(),
         )
         .await?;
-        let result: Properties = proxy
-            .call("CaptureWindow", &(&uuid, options, Fd::from(writer.as_fd())))
-            .await?;
-        drop(writer);
-        ensure!(
-            text(&result, "type")? == "raw",
-            "KWin screenshot is not raw image data"
-        );
         ensure!(
             same_uuid(text(&result, "windowId")?, &uuid),
             "KWin screenshot window identity mismatch"
@@ -644,6 +632,61 @@ async fn read_image(
     let mut pixels = vec![0; size];
     reader.read_exact(&mut pixels).await?;
     decode(width, height, stride, format, &pixels)
+}
+
+/// The whole desktop, every output included, in logical pixels. KWin answers
+/// directly, so unlike the portal this has no request to lose and no prompt, and
+/// a Deny saved in the portal doesn't apply. KWin 6.7 and older refuse an
+/// executable without the ScreenShot2 grant; KWin 6.8 has no such check.
+pub fn capture_workspace() -> anyhow::Result<Vec<u8>> {
+    run(async move {
+        let connection = zbus::Connection::session().await?;
+        let owner = owner(&connection).await?;
+        let (result, mut reader) = request_image(
+            &connection,
+            &owner,
+            None,
+            [
+                ("include-cursor", false.into()),
+                // The action frame is logical. Asking for it here avoids encoding
+                // a full-size image only to decode and shrink it afterwards.
+                ("native-resolution", false.into()),
+            ]
+            .into(),
+        )
+        .await?;
+        read_image(&result, &mut reader).await
+    })
+}
+
+/// Ask ScreenShot2 for one window, or the workspace with no `window`. The image
+/// comes back on the returned pipe, described by the returned properties.
+async fn request_image(
+    connection: &zbus::Connection,
+    owner: &str,
+    window: Option<&str>,
+    options: HashMap<&str, zbus::zvariant::Value<'_>>,
+) -> anyhow::Result<(Properties, tokio::net::UnixStream)> {
+    let (reader, writer) = std::os::unix::net::UnixStream::pair()?;
+    reader.set_nonblocking(true)?;
+    let reader = tokio::net::UnixStream::from_std(reader)?;
+    let proxy =
+        zbus::Proxy::new(connection, owner, "/org/kde/KWin/ScreenShot2", SCREENSHOT).await?;
+    let pipe = Fd::from(writer.as_fd());
+    let result: Properties = match window {
+        Some(window) => {
+            proxy
+                .call("CaptureWindow", &(window, options, pipe))
+                .await?
+        }
+        None => proxy.call("CaptureWorkspace", &(options, pipe)).await?,
+    };
+    drop(writer);
+    ensure!(
+        text(&result, "type")? == "raw",
+        "KWin screenshot is not raw image data"
+    );
+    Ok((result, reader))
 }
 
 fn image_size(width: u32, height: u32, stride: u32, format: u32) -> anyhow::Result<usize> {

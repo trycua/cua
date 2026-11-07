@@ -439,7 +439,7 @@ impl Scoped {
     fn tool_target(name: &str) -> Option<&'static str> {
         Some(match name {
             "stop_space" | "start_space" | "space_bash" | "space_write" | "upload" | "download"
-            | "list_tools" | "call_tool" | "list_space_windows" => "space",
+            | "list_tools" | "call_tool" | "list_space_windows" | "stream_space_window" => "space",
             _ => return None,
         })
     }
@@ -457,6 +457,11 @@ impl Scoped {
             .to_owned();
         let child = self.resolve(&q)?;
         args[key] = Value::String(child.id);
+        // A window it shows goes into the Stream section of the Space that
+        // asks, never another Space's or the person's desktop.
+        if name == "stream_space_window" {
+            args["into"] = Value::String(self.space.clone());
+        }
         Ok(())
     }
 }
@@ -904,6 +909,21 @@ impl SpaceService for Scoped {
     }
 
     async fn list_orphans(&self, _: Request<pb::ListOrphansRequest>) -> R<pb::ListOrphansResponse> {
+        deny()
+    }
+
+    async fn list_stream_windows(
+        &self,
+        _: Request<pb::ListStreamWindowsRequest>,
+    ) -> R<pb::ListStreamWindowsResponse> {
+        // Watching is the person's; an agent shows a window with `stream_space_window`.
+        deny()
+    }
+
+    async fn open_stream_entry(
+        &self,
+        _: Request<pb::OpenStreamEntryRequest>,
+    ) -> R<pb::OpenStreamEntryResponse> {
         deny()
     }
 

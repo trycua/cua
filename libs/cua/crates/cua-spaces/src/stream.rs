@@ -37,7 +37,7 @@ pub enum StreamTarget {
 }
 
 /// A window target as listed.
-#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct WindowTarget {
     /// Window handle (`WindowRef.id`).
     pub window_id: String,
@@ -60,8 +60,12 @@ pub struct WindowTarget {
     /// Streamable right now.
     pub available: bool,
     /// Why not, when not.
-    #[serde(skip_serializing_if = "String::is_empty")]
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub limitation: String,
+    /// Where the picture comes from when the window lives in another Space
+    /// ([`crate::stream_registry`]); absent on a Space's own windows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<crate::stream_registry::StreamOrigin>,
 }
 
 /// A window narrower or shorter than this (logical points) is a strip, a
@@ -358,6 +362,7 @@ impl Space {
                     focused: w.focused,
                     available,
                     limitation,
+                    origin: None,
                 }
             })
             .filter(|w| {
@@ -852,6 +857,7 @@ mod streamable_tests {
             focused: false,
             available: on_screen,
             limitation: String::new(),
+            origin: None,
         }
     }
 

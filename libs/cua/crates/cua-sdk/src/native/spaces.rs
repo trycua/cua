@@ -1891,6 +1891,27 @@ pub struct SpaceWindow {
     /// Why not.
     #[serde(default)]
     pub limitation: String,
+    /// Where the picture comes from when another Space shows this window
+    /// here (`stream_space_window`); `None` for the Space's own windows.
+    /// Open it like any window: [`Space::open_stream`] with its `window_id`
+    /// streams it straight from the origin when you may reach it.
+    #[serde(default)]
+    #[uniffi(default = None)]
+    pub origin: Option<SpaceWindowOrigin>,
+}
+
+/// The Space a window row's picture comes from ([`SpaceWindow::origin`]).
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record, Deserialize)]
+pub struct SpaceWindowOrigin {
+    /// The origin Space (canonical id).
+    pub space_id: String,
+    /// Its name.
+    pub name: String,
+    /// Its OS (`macos`, `linux`, `windows`, or empty).
+    #[serde(default)]
+    pub os: String,
+    /// The window's handle in the origin.
+    pub window_id: String,
 }
 
 /// Processor, memory and storage use ([`Space::usage`]). A size is the
@@ -2007,6 +2028,17 @@ pub struct SpaceStreamOptions {
     /// without activating the target) or `allow_activation`.
     #[uniffi(default = None)]
     pub policy: Option<String>,
+}
+
+struct StreamTicketJson {
+    space: String,
+    media_session_id: String,
+    ws_url: String,
+    ticket: String,
+    ticket_expires_at: Option<String>,
+    codec: String,
+    wire_version: u32,
+    frame_size: [u32; 2],
 }
 
 /// A minted media session.
@@ -3250,6 +3282,190 @@ impl Host {
                 .map(Into::into)
                 .ok_or_else(|| CuaError::Internal("no space returned".into())),
         }
+    }
+
+    /// The windows other Spaces show in `space` (empty on any failure: the
+    /// Space's own list is still right).
+    async fn stream_windows(&self, space: &str) -> Vec<SpaceWindow> {
+        match self {
+            Host::Embedded(s) => via_json(&s.stream_windows(space).await).unwrap_or_default(),
+            Host::Daemon(d) => d
+                .spaces()
+                .list_stream_windows(dpb::ListStreamWindowsRequest {
+                    space: space.into(),
+                })
+                .await
+                .map(|r| {
+                    r.into_inner()
+                        .windows
+                        .into_iter()
+                        .map(|w| {
+                            let o = w.origin.unwrap_or_default();
+                            SpaceWindow {
+                                window_id: w.window_id,
+                                epoch: 0,
+                                title: w.title,
+                                app_name: w.app_name,
+                                app_id: w.app_id,
+                                pid: w.pid,
+                                bounds: vec![0.0, 0.0, 1280.0, 800.0],
+                                on_screen: true,
+                                focused: false,
+                                available: true,
+                                limitation: String::new(),
+                                origin: Some(SpaceWindowOrigin {
+                                    space_id: o.space_id,
+                                    name: o.name,
+                                    os: o.os,
+                                    window_id: o.window_id,
+                                }),
+                            }
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
+        }
+    }
+
+    /// The origin Space and window handle behind a registry entry's handle.
+    async fn entry_origin(&self, window_id: &str) -> Result<(String, String)> {
+        match self {
+            Host::Embedded(s) => {
+                let d = s.resolve_stream_entry(window_id).await?;
+                Ok((d.entry.origin_space, d.entry.window_id))
+            }
+            Host::Daemon(d) => {
+                let r = d
+                    .spaces()
+                    .open_stream_entry(dpb::OpenStreamEntryRequest {
+                        window_id: window_id.into(),
+                        ..Default::default()
+                    })
+                    .await
+                    .map_err(daemon_err)?
+                    .into_inner();
+                Ok((r.origin_space, r.origin_window_id))
+            }
+        }
+    }
+
+    /// Opens a registry entry's window ([`Space::open_stream`]).
+    async fn open_entry_stream(
+        &self,
+        window_id: &str,
+        options: &SpaceStreamOptions,
+    ) -> Result<SpaceStreamTicket> {
+        let (route, origin, origin_window, ticket) = match self {
+            Host::Embedded(s) => {
+                let d = s.resolve_stream_entry(window_id).await?;
+                let t = if d.route == cua_spaces::stream_registry::Route::Proxied {
+                    Some(
+                        s.open_stream_entry(window_id, stream_options(options)?)
+                            .await?
+                            .ticket,
+                    )
+                    .flatten()
+                } else {
+                    None
+                };
+                (
+                    if t.is_some() { "proxied" } else { "direct" }.to_string(),
+                    d.entry.origin_space,
+                    d.entry.window_id,
+                    t,
+                )
+            }
+            Host::Daemon(d) => {
+                let r = d
+                    .spaces()
+                    .open_stream_entry(dpb::OpenStreamEntryRequest {
+                        window_id: window_id.into(),
+                        max_fps: options.max_fps,
+                        ticket_ttl_seconds: 0,
+                        mint: false,
+                    })
+                    .await
+                    .map_err(daemon_err)?
+                    .into_inner();
+                let t = (!r.ticket_json.is_empty())
+                    .then(|| serde_json::from_str::<Value>(&r.ticket_json).ok())
+                    .flatten();
+                let t = t.map(|t| StreamTicketJson {
+                    space: t["space"].as_str().unwrap_or_default().into(),
+                    media_session_id: t["media_session_id"].as_str().unwrap_or_default().into(),
+                    ws_url: t["ws_url"].as_str().unwrap_or_default().into(),
+                    ticket: t["ticket"].as_str().unwrap_or_default().into(),
+                    ticket_expires_at: t["ticket_expires_at"].as_str().map(Into::into),
+                    codec: t["codec"].as_str().unwrap_or_default().into(),
+                    wire_version: t["wire_version"].as_u64().unwrap_or(2) as u32,
+                    frame_size: [
+                        t["frame_size"][0].as_u64().unwrap_or(0) as u32,
+                        t["frame_size"][1].as_u64().unwrap_or(0) as u32,
+                    ],
+                });
+                return match t {
+                    Some(t) => Ok(SpaceStreamTicket {
+                        space: t.space,
+                        media_session_id: t.media_session_id,
+                        ws_url: t.ws_url,
+                        ticket: t.ticket,
+                        ticket_expires_at: t.ticket_expires_at,
+                        codec: t.codec,
+                        wire_version: t.wire_version,
+                        width: t.frame_size[0],
+                        height: t.frame_size[1],
+                        needs_headers: true,
+                    }),
+                    None => self.open_direct(&r.origin_space, &r.origin_window_id, options).await,
+                };
+            }
+        };
+        let _ = route;
+        match ticket {
+            Some(t) => Ok(SpaceStreamTicket {
+                space: t.space,
+                media_session_id: t.media_session_id,
+                ws_url: t.ws_url,
+                ticket: t.ticket,
+                ticket_expires_at: t.ticket_expires_at,
+                codec: t.codec,
+                wire_version: t.wire_version,
+                width: t.frame_size[0],
+                height: t.frame_size[1],
+                needs_headers: t.needs_gateway_headers,
+            }),
+            None => self.open_direct(&origin, &origin_window, options).await,
+        }
+    }
+
+    /// A ticket of the origin Space, minted with this viewer's own handle on
+    /// it: the stream goes straight to the origin.
+    async fn open_direct(
+        &self,
+        origin: &str,
+        window_id: &str,
+        options: &SpaceStreamOptions,
+    ) -> Result<SpaceStreamTicket> {
+        let daemon = matches!(self, Host::Daemon(_));
+        let (_, handle) = self.connect(origin).await?;
+        let t = handle
+            .open_stream(
+                cua_spaces::stream::StreamTarget::Window(window_id.into()),
+                stream_options(options)?,
+            )
+            .await?;
+        Ok(SpaceStreamTicket {
+            space: t.space,
+            media_session_id: t.media_session_id,
+            ws_url: t.ws_url,
+            ticket: t.ticket,
+            ticket_expires_at: t.ticket_expires_at,
+            codec: t.codec,
+            wire_version: t.wire_version,
+            width: t.frame_size[0],
+            height: t.frame_size[1],
+            needs_headers: t.needs_gateway_headers || daemon,
+        })
     }
 
     async fn connect(&self, space: &str) -> Result<(SpaceInfo, cua_spaces::Space)> {
@@ -5840,7 +6056,24 @@ impl Space {
     /// Streamable windows, optionally of one app.
     pub async fn windows(&self, app: Option<String>) -> Result<Vec<SpaceWindow>> {
         let s = self.inner.clone();
-        run(async move { via_json(&s.windows(app.as_deref()).await?) }).await
+        let host = self.host.clone();
+        run(async move {
+            let mut rows: Vec<SpaceWindow> = via_json(&s.windows(app.as_deref()).await?)?;
+            // The windows other Spaces show here.
+            let wanted = app.as_deref().map(str::to_lowercase);
+            rows.extend(
+                host.stream_windows(&s.id().to_string())
+                    .await
+                    .into_iter()
+                    .filter(|w| {
+                        wanted
+                            .as_deref()
+                            .is_none_or(|a| w.app_name.to_lowercase().contains(a))
+                    }),
+            );
+            Ok(rows)
+        })
+        .await
     }
 
     /// A small JPEG preview of one of the Space's windows (`window_id` and
@@ -5927,7 +6160,19 @@ impl Space {
     pub async fn open_stream(&self, options: SpaceStreamOptions) -> Result<SpaceStreamTicket> {
         let s = self.inner.clone();
         let daemon = matches!(self.host, Host::Daemon(_));
+        let host = self.host.clone();
         run(async move {
+            // A window another Space shows here: the route is decided now.
+            // The viewer who may reach the origin connects straight to it
+            // (a ticket of the origin, scoped to that window); the others are
+            // served by the runtime that holds it.
+            if let Some(w) = options
+                .window_id
+                .as_deref()
+                .filter(|w| cua_spaces::stream_registry::entry_of_window_id(w).is_some())
+            {
+                return host.open_entry_stream(w, &options).await;
+            }
             let target = stream_target(&s, &options).await?;
             let t = s.open_stream(target, stream_options(&options)?).await?;
             Ok(SpaceStreamTicket {
@@ -5965,7 +6210,19 @@ impl Space {
         audio: Option<Arc<dyn AudioSink>>,
     ) -> Result<Arc<super::MediaSession>> {
         let s = self.inner.clone();
-        let headers = run(async move { Ok(s.websocket_headers().await?) }).await?;
+        let host = self.host.clone();
+        let own = s.id().to_string();
+        let ticket_space = ticket.space.clone();
+        // A ticket of another Space (a window it shows here, streamed
+        // straight from its origin) attaches with that Space's credentials.
+        let headers = run(async move {
+            if ticket_space != own && !ticket_space.is_empty() {
+                let (_, origin) = host.connect(&ticket_space).await?;
+                return Ok(origin.websocket_headers().await?);
+            }
+            Ok(s.websocket_headers().await?)
+        })
+        .await?;
         super::MediaSession::attach_url_as(
             ticket.ws_url,
             headers,
@@ -5989,7 +6246,27 @@ impl Space {
         audio: Option<Arc<dyn AudioSink>>,
     ) -> Result<Arc<SpaceStreamSession>> {
         let s = self.inner.clone();
+        let host = self.host.clone();
         run(async move {
+            // A window another Space shows here streams from its origin.
+            let (s, options) = match options
+                .window_id
+                .as_deref()
+                .filter(|w| cua_spaces::stream_registry::entry_of_window_id(w).is_some())
+            {
+                Some(w) => {
+                    let (origin, window) = host.entry_origin(w).await?;
+                    let (_, handle) = host.connect(&origin).await?;
+                    (
+                        handle,
+                        SpaceStreamOptions {
+                            window_id: Some(window),
+                            ..options
+                        },
+                    )
+                }
+                None => (s, options),
+            };
             let target = stream_target(&s, &options).await?;
             let frames: Arc<dyn cua_spaces::stream::FrameSink> = Arc::new(FrameAdapter(frames));
             let audio =

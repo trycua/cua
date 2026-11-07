@@ -4986,7 +4986,7 @@ mod tests {
         })
         .await
         .unwrap();
-        let calls = calls.lock().unwrap();
+        let calls = calls.into_inner().unwrap();
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].0, "winget");
         assert!(calls[0].1.contains(&WINDOWS_QEMU_WINGET_ID.to_string()));

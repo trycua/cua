@@ -145,8 +145,8 @@ or Hyper-V there.
 ## Trying it
 
 ```sh
-cua sb create windows:11 --kind vm            # ISO downloaded, built once (about 10 minutes on an M-series Mac), cached
-cua sb create windows:11 --kind vm --iso ~/Win11_ARM64.iso   # your own ISO instead
+cua sb create windows:11                      # ISO downloaded, built once (about 15 minutes on an M-series Mac, the download included), cached
+cua sb create windows:11 --iso ~/Win11_ARM64.iso   # your own ISO instead
 cua sb create windows:2025 --name srv         # x64 hosts
 cua sb create windows:11 --kind vm --runtime qemu --cpu 4 --memory 8GB
 ```
@@ -178,29 +178,43 @@ optional: Windows 11 on Apple silicon needs no manual step.
 
 ## What is verified, and what is not
 
-Verified on a Mac (Apple silicon, macOS 26, QEMU 10.2, HVF), from a home with nothing in it:
+Verified on a Mac (Apple silicon, macOS 26.6, QEMU 10.2, HVF; a 12-core Mac Studio), from the CLI and in
+the real Cua Spaces Local app:
 
-* `cua sb create windows:11 --kind vm` downloads the ARM64 ISO from Microsoft (8.5 GB, the SHA-256 on
-  Microsoft's page matched), installs Windows 11 unattended, installs cua-spacesd, seals the disk, and
-  creates the Space: about 10 minutes in all on a 12-core Mac Studio (the download included).
-* A second `create` is a copy-on-write clone: cua-spacesd answers about 30 seconds after the command starts.
-* In the guest: `cua sb screenshot`, `cua sb exec` (cmd.exe), `cua do type/click/key` through cua-spacesd
-  (Notepad opened and typed into), and the Space listed like any other.
-* Cancelling a create stops the install VM; an interrupted ISO download resumes.
-* `--runtime auto`: ARM64 Windows on Apple silicon selects QEMU with HVF (unit test and the real run);
-  x64 Windows there is refused in words with the way out.
+* Nothing to Windows 11 Space, unattended: the ARM64 ISO is downloaded from Microsoft (8.5 GB, the
+  SHA-256 on Microsoft's page matched; 7 minutes), Windows 11 installs, cua-spacesd installs, the disk is
+  sealed and the Space boots to a desktop. With the ISO cached that is 8 to 9 minutes (app, New Space,
+  Windows 11, Create Space: "Downloading Windows (first time only)" with bytes and time left, then
+  "Installing Windows (first time only)" with a bar that moves, then "Booting Windows", then Running with the
+  desktop streaming in the Space page).
+* A second Space is a copy-on-write clone: cua-spacesd answers 36 to 40 seconds after Create (CLI 36 s, app
+  36 s and 40 s, the second while the first was running).
+* In the guest, through cua-spacesd: `cua sb screenshot`, `cua sb exec` (cmd.exe), `cua do click/type/key`
+  (Notepad opened from the Start menu and typed into), and the stream and window list in the app.
+* Cancelling a create (`cua spaces cancel`, the app's Cancel) stops the install VM and its TPM within seconds
+  and releases the build lock.
+* `--runtime auto`: ARM64 Windows on Apple silicon runs QEMU with HVF (`auto::select` unit test; the real
+  runs). x64 Windows there is refused in plain words with the way out, in the New Space dialog, `cua sb
+  create` and `cua spaces create` (the real CLI answers were read).
+* Microsoft limits how many download links one network gets in a short time ("Sentinel marked this request
+  as rejected"); the create then fails with that cause in words and `--iso` as the way out. It happened
+  after about eight link requests in a day of testing.
 
 Not verified:
 
+* An interrupted ISO download resuming (unit tested with a fake server; a real retry was blocked by the
+  rate limit above).
 * Windows 10, Server 2019 and Server 2025 builds (x64): no x64 host was available for a real install; the
-  answer file, ISO resolution and runtime selection are unit tested. The Evaluation Center scraping of
-  the x64 media was not run against the live pages.
+  answer file, ISO resolution and runtime selection are unit tested. The Evaluation Center scraping of the
+  x64 media was not run against the live pages.
 * The Windows PC path (WSL2 with KVM, WHPX): unit tested only. The install driver now waits for the guest to
-  power itself off (as on the Mac), which no Windows PC has run.
-* The ARM64 Windows build of cua-spacesd: no release carries one yet. The guest tries the native asset
-  first and falls back to the x64 build, which Windows 11 on ARM runs under its own emulation; that is what
-  was verified.
-* The display is `ramfb` at 800x600 on ARM64. virtio-win has an ARM64 `viogpudo`, which would allow a
-  larger desktop; not done.
+  power itself off (as on the Mac) and presses Enter for the first 14 s only; no Windows PC has run it.
+* The ARM64 Windows build of cua-spacesd: no release carries one yet. The guest tries the native asset first
+  and falls back to the x64 build, which Windows 11 on ARM runs under its own emulation; that is what was
+  verified.
+* The display is `ramfb` at 800x600 on ARM64. virtio-win has an ARM64 `viogpudo`, which would allow a larger
+  desktop; not done.
+* No ISO-path field in the New Space dialog (`isoPath` needs the create request, the SDK options and the
+  bindings changed): `cua sb create windows:11 --iso <path>` registers one. Windows 11 on a Mac needs none.
 * Not done from the dogfooding list: `sb screenshot` stale frames, long-log disk usage in Spaces (guest disk
   guard only), exec 120 s ceiling (documented `--timeout 0`).

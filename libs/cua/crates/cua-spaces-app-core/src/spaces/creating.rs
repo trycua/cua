@@ -2385,7 +2385,9 @@ mod tests {
         let mut last = 0;
         let mut now = 2_000;
         // ISO bytes from 0.01 to 0.40, drivers to 0.45, then the install to 0.96.
-        let fractions = [0.01, 0.1, 0.25, 0.40, 0.45, 0.46, 0.47, 0.55, 0.7, 0.9, 0.96];
+        let fractions = [
+            0.01, 0.1, 0.25, 0.40, 0.45, 0.46, 0.47, 0.55, 0.7, 0.9, 0.96,
+        ];
         let mut seen = Vec::new();
         for f in fractions {
             now += 20_000;

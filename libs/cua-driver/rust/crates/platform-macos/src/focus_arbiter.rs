@@ -6,11 +6,13 @@
 //! Several watchers put the user's app back in front: the activation
 //! observer ([`crate::focus_steal`]), the key-focus guard's revert and order
 //! watch ([`crate::key_focus_guard`]), launch_app's late-activation watchdog
-//! and the browser attach watcher. Each takes an [`Epoch`] when it is armed
-//! and asks [`decide`] before it undoes anything. It must leave the change
+//! and the browser attach watcher. Each action arms one [`UndoWatch`] and
+//! asks [`UndoWatch::decide`] before it undoes anything. It must leave the change
 //! alone when the driver itself has made an app frontmost since then
 //! ([`note_intentional`]), or when the user just pressed a mouse button or
-//! a modifier key and may have switched apps themselves.
+//! a modifier key and may have switched apps themselves. A watch that left a
+//! change alone stays that way, so a later check does not undo the user's
+//! switch once the input is a second old.
 //!
 //! The arbiter also holds the one lease an action leaves armed after its
 //! result returns (the window-change detector's detached watch). A driver
@@ -22,8 +24,8 @@
 //! `skylight::return_key_to`) does not, so an undo never cancels the watcher
 //! that made it, or another watcher armed for the same action.
 
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 
 use crate::focus_steal::SuppressionLease;
 
@@ -106,16 +108,52 @@ pub enum Decision {
     Leave,
 }
 
-/// Whether a watcher armed at `armed` may undo an activation now.
-pub fn decide(armed: Epoch) -> Decision {
-    decide_with(armed, Epoch::now(), user_switched_recently)
+/// One action's right to undo activations, shared by all its leases and
+/// loops.
+#[derive(Clone, Debug)]
+pub struct UndoWatch(Arc<WatchState>);
+
+#[derive(Debug)]
+struct WatchState {
+    armed: Epoch,
+    left: AtomicBool,
 }
 
-fn decide_with(armed: Epoch, now: Epoch, user_switched: impl FnOnce() -> bool) -> Decision {
-    if armed == now && !user_switched() {
-        Decision::Undo
-    } else {
-        Decision::Leave
+impl UndoWatch {
+    pub fn arm() -> Self {
+        Self::armed_at(Epoch::now())
+    }
+
+    fn armed_at(armed: Epoch) -> Self {
+        Self(Arc::new(WatchState {
+            armed,
+            left: AtomicBool::new(false),
+        }))
+    }
+
+    pub fn epoch(&self) -> Epoch {
+        self.0.armed
+    }
+
+    /// Whether this watch has left a change alone.
+    pub fn has_left(&self) -> bool {
+        self.0.left.load(Ordering::SeqCst)
+    }
+
+    /// Whether the activation just observed may be undone. Call it only when
+    /// there is one to undo: a `Leave` is final for this watch.
+    pub fn decide(&self) -> Decision {
+        self.decide_with(Epoch::now(), user_switched_recently)
+    }
+
+    fn decide_with(&self, now: Epoch, user_switched: impl FnOnce() -> bool) -> Decision {
+        let undo = !self.0.left.load(Ordering::SeqCst) && self.0.armed == now && !user_switched();
+        if undo {
+            Decision::Undo
+        } else {
+            self.0.left.store(true, Ordering::SeqCst);
+            Decision::Leave
+        }
     }
 }
 
@@ -150,10 +188,26 @@ mod tests {
     #[test]
     fn an_undo_needs_its_own_epoch_and_no_user_input() {
         let armed = Epoch::now();
-        assert_eq!(decide_with(armed, armed, || false), Decision::Undo);
+        let watch = UndoWatch::armed_at(armed);
+        assert_eq!(watch.decide_with(armed, || false), Decision::Undo);
+        assert_eq!(watch.decide_with(armed, || false), Decision::Undo);
         // The driver activated an app since the watcher was armed.
-        assert_eq!(decide_with(armed, armed.next(), || false), Decision::Leave);
+        let watch = UndoWatch::armed_at(armed);
+        assert_eq!(watch.decide_with(armed.next(), || false), Decision::Leave);
         // The user clicked or held a modifier just now.
-        assert_eq!(decide_with(armed, armed, || true), Decision::Leave);
+        let watch = UndoWatch::armed_at(armed);
+        assert_eq!(watch.decide_with(armed, || true), Decision::Leave);
+    }
+
+    /// The user switched to the target while one lease watched; a later check
+    /// by another lease or loop of the same action, after the input is old,
+    /// must not undo that switch.
+    #[test]
+    fn a_left_change_stays_left_for_the_whole_action() {
+        let armed = Epoch::now();
+        let watch = UndoWatch::armed_at(armed);
+        let loop_after = watch.clone();
+        assert_eq!(watch.decide_with(armed, || true), Decision::Leave);
+        assert_eq!(loop_after.decide_with(armed, || false), Decision::Leave);
     }
 }

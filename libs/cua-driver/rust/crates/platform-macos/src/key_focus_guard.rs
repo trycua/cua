@@ -47,7 +47,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-use crate::focus_arbiter::{self, Decision, Epoch};
+use crate::focus_arbiter::{Decision, Epoch, UndoWatch};
 use crate::input::skylight;
 
 /// How long a guarded target's tap hides the driver's own theft after an id
@@ -155,19 +155,19 @@ fn target_self_activated(front_process: Option<i32>, target: i32, front: i32) ->
 /// directly; `NSWorkspace` only learns of the activation once the daemon's run
 /// loop processes the notice, which took about a second in Bench v2 CDB-G04.
 /// Revert `target`'s self-activation right now, giving `front` its key
-/// window back, if [`focus_arbiter::decide`] allows it for a watcher armed
-/// at `armed` (see [`revert_self_activation`]).
-pub fn revert_now(target: i32, front: i32, armed: Epoch) -> bool {
-    revert_self_activation(target, front, armed)
+/// window back, if `watch` allows it (see [`revert_self_activation`]).
+pub fn revert_now(target: i32, front: i32, watch: &UndoWatch) -> bool {
+    revert_self_activation(target, front, watch)
 }
 
-fn revert_self_activation(target: i32, front: i32, armed: Epoch) -> bool {
+fn revert_self_activation(target: i32, front: i32, watch: &UndoWatch) -> bool {
     if !target_self_activated(skylight::front_process_pid(), target, front) {
         return false;
     }
-    // The driver activated an app since `armed`, or the user may have switched
-    // to the target themselves (a click on its window, or Cmd-Tab).
-    if focus_arbiter::decide(armed) == Decision::Leave {
+    // The driver activated an app since `watch` was armed, or the user may
+    // have switched to the target themselves (a click on its window, or
+    // Cmd-Tab).
+    if watch.decide() == Decision::Leave {
         return false;
     }
     let started = Instant::now();
@@ -207,28 +207,28 @@ const ORDER_POLL: Duration = Duration::from_millis(20);
 const MAX_RESTORES_PER_WATCH: u32 = 3;
 
 /// One target's watch after a guarded action.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct Watch {
     until: Instant,
     front: i32,
     /// Also restore the window order (off when the user had put the target
     /// above their window before the action).
     order: bool,
-    /// When the watch was armed, for [`focus_arbiter::decide`].
-    epoch: Epoch,
+    /// The action's right to undo the target's changes.
+    undo: UndoWatch,
 }
 
 /// Keep restoring the user's window above `target`, and undoing the target's
 /// self-activation, for a short while after the action. One watcher per
 /// target; a later action extends it.
-fn watch_order_after_action(target: i32, front: i32, order: bool, epoch: Epoch) {
+fn watch_order_after_action(target: i32, front: i32, order: bool, undo: UndoWatch) {
     static WATCHING: OnceLock<Mutex<HashMap<i32, Watch>>> = OnceLock::new();
     let watching = WATCHING.get_or_init(|| Mutex::new(HashMap::new()));
     let watch = Watch {
         until: Instant::now() + ORDER_WATCH,
         front,
         order,
-        epoch,
+        undo,
     };
     {
         let mut map = watching
@@ -254,16 +254,16 @@ fn watch_order_after_action(target: i32, front: i32, order: bool, epoch: Epoch) 
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner)
                     .get(&target)
-                    .copied();
+                    .cloned();
                 let Some(current) = current else { return };
                 if reverts < MAX_RESTORES_PER_WATCH
-                    && revert_self_activation(target, current.front, current.epoch)
+                    && revert_self_activation(target, current.front, &current.undo)
                 {
                     reverts += 1;
                 }
                 if current.order
                     && restores < MAX_RESTORES_PER_WATCH
-                    && current.epoch.is_current()
+                    && current.undo.epoch().is_current()
                     && restore_front_if_raised(target, current.front)
                 {
                     restores += 1;
@@ -407,18 +407,18 @@ pub struct Lease {
     /// A target window already sat above the user's window when the action
     /// started (the user arranged it so); then nothing is restored.
     above_before: bool,
-    /// When armed. If the driver activated an app itself since, the target's
-    /// activation is not reverted ([`focus_arbiter::decide`]).
-    epoch: Epoch,
+    /// The action's right to undo. If the driver activated an app itself
+    /// since, or the user switched, the target's activation is not reverted.
+    undo: UndoWatch,
 }
 
 impl Drop for Lease {
     fn drop(&mut self) {
-        revert_self_activation(self.pid, self.front, self.epoch);
-        if !self.above_before && self.epoch.is_current() {
+        revert_self_activation(self.pid, self.front, &self.undo);
+        if !self.above_before && self.undo.epoch().is_current() {
             restore_front_if_raised(self.pid, self.front);
         }
-        watch_order_after_action(self.pid, self.front, !self.above_before, self.epoch);
+        watch_order_after_action(self.pid, self.front, !self.above_before, self.undo.clone());
         let mut st = lock();
         if let Some((leases, until, _)) = st.guarded.get_mut(&self.pid) {
             *leases = leases.saturating_sub(1);
@@ -452,9 +452,10 @@ pub fn protect(target_pid: i32) -> Option<Lease> {
     }
     // Register first, so an idle teardown cannot remove the tap right after
     // ensure_tap.
+    let undo = UndoWatch::arm();
     {
         let mut st = lock();
-        let epoch = Epoch::now();
+        let epoch = undo.epoch();
         let entry = st
             .guarded
             .entry(target_pid)
@@ -467,7 +468,7 @@ pub fn protect(target_pid: i32) -> Option<Lease> {
         pid: target_pid,
         front,
         above_before: target_above_front(target_pid, front),
-        epoch: Epoch::now(),
+        undo,
     };
     // Do not touch key focus here. This runs before every background action
     // while the user may be typing, and any key event that reaches

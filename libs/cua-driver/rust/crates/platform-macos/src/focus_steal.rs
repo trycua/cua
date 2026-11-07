@@ -69,7 +69,7 @@ use objc2_app_kit::{
 use objc2_foundation::NSOperationQueue;
 use uuid::Uuid;
 
-use crate::focus_arbiter::{self, Decision, Epoch};
+use crate::focus_arbiter::{Decision, UndoWatch};
 
 /// Per-entry deadline. After this much wall-clock time the dispatcher's
 /// observer (and the janitor) treats the entry as leaked and prunes it
@@ -105,9 +105,9 @@ struct Entry {
     /// Monotonic deadline. After this, the entry is pruned without
     /// firing.
     deadline: Instant,
-    /// When the entry was armed. A driver activation since then is never
-    /// undone ([`focus_arbiter::decide`]).
-    armed: Epoch,
+    /// The action's right to undo; a driver activation since it was armed,
+    /// or a user switch, is never undone ([`UndoWatch::decide`]).
+    watch: UndoWatch,
     /// Provenance for tracing — e.g. `"LaunchAppTool.pre"`.
     #[allow(dead_code)]
     origin: &'static str,
@@ -148,21 +148,22 @@ impl FocusStealPreventer {
         restore_to: i32,
         origin: &'static str,
     ) -> SuppressionLease {
-        Self::begin_suppression_since(target_pid, restore_to, origin, Epoch::now())
+        Self::begin_suppression_for(target_pid, restore_to, origin, UndoWatch::arm())
     }
 
-    /// [`Self::begin_suppression`] for an action that started at `armed`: a
-    /// driver activation since then is not undone.
-    pub fn begin_suppression_since(
+    /// [`Self::begin_suppression`] under an action's existing `watch`, so a
+    /// driver activation since the action began, or a user switch another of
+    /// its watchers saw, is not undone.
+    pub fn begin_suppression_for(
         target_pid: Option<i32>,
         restore_to: i32,
         origin: &'static str,
-        armed: Epoch,
+        watch: UndoWatch,
     ) -> SuppressionLease {
         let shared = Self::shared();
         let handle = shared
             .dispatcher
-            .add_entry(target_pid, None, restore_to, origin, armed);
+            .add_entry(target_pid, None, restore_to, origin, watch);
         SuppressionLease {
             handle,
             dispatcher: Arc::clone(&shared.dispatcher),
@@ -181,10 +182,13 @@ impl FocusStealPreventer {
         origin: &'static str,
     ) -> SuppressionLease {
         let shared = Self::shared();
-        let handle =
-            shared
-                .dispatcher
-                .add_entry(None, Some(allowed_pid), restore_to, origin, Epoch::now());
+        let handle = shared.dispatcher.add_entry(
+            None,
+            Some(allowed_pid),
+            restore_to,
+            origin,
+            UndoWatch::arm(),
+        );
         SuppressionLease {
             handle,
             dispatcher: Arc::clone(&shared.dispatcher),
@@ -294,7 +298,7 @@ impl Dispatcher {
         restore_to: i32,
         origin: &'static str,
     ) -> SuppressionHandle {
-        self.add_entry(target_pid, None, restore_to, origin, Epoch::now())
+        self.add_entry(target_pid, None, restore_to, origin, UndoWatch::arm())
     }
 
     /// Add a wildcard entry that ignores one intentional target activation.
@@ -305,7 +309,13 @@ impl Dispatcher {
         restore_to: i32,
         origin: &'static str,
     ) -> SuppressionHandle {
-        self.add_entry(None, Some(allowed_pid), restore_to, origin, Epoch::now())
+        self.add_entry(
+            None,
+            Some(allowed_pid),
+            restore_to,
+            origin,
+            UndoWatch::arm(),
+        )
     }
 
     fn add_entry(
@@ -314,7 +324,7 @@ impl Dispatcher {
         allowed_pid: Option<i32>,
         restore_to: i32,
         origin: &'static str,
-        armed: Epoch,
+        watch: UndoWatch,
     ) -> SuppressionHandle {
         let id = Uuid::new_v4();
         let entry = Entry {
@@ -322,7 +332,7 @@ impl Dispatcher {
             allowed_pid,
             restore_to,
             deadline: Instant::now() + ENTRY_DEADLINE,
-            armed,
+            watch,
             origin,
         };
         {
@@ -352,9 +362,13 @@ impl Dispatcher {
 
     /// Snapshot the entries (cloned to a small Vec) — used by tests
     /// and the activation handler to evaluate matches without holding
-    /// the lock across the restore call. Only entries `may_undo` allows
-    /// for their arming epoch match.
-    fn snapshot_matches(&self, activated_pid: i32, may_undo: impl Fn(Epoch) -> bool) -> Vec<i32> {
+    /// the lock across the restore call. A matching entry restores only when
+    /// `may_undo` allows it for the entry's watch.
+    fn snapshot_matches(
+        &self,
+        activated_pid: i32,
+        may_undo: impl Fn(&UndoWatch) -> bool,
+    ) -> Vec<i32> {
         let mut guard = self.entries.lock().unwrap();
         // Reap expired entries first — keeps the dispatcher honest even
         // if the janitor hasn't ticked yet.
@@ -363,16 +377,17 @@ impl Dispatcher {
         guard
             .values()
             .filter(|e| {
-                if e.allowed_pid == Some(activated_pid) || !may_undo(e.armed) {
+                if e.allowed_pid == Some(activated_pid) {
                     return false;
                 }
-                match e.target_pid {
+                let matched = match e.target_pid {
                     Some(p) => p == activated_pid,
                     // Wildcard: match any activation except the restore_to
                     // pid (don't fight ourselves when we re-activate the
                     // prior frontmost).
                     None => activated_pid != e.restore_to,
-                }
+                };
+                matched && may_undo(&e.watch)
             })
             .map(|e| e.restore_to)
             .collect()
@@ -542,9 +557,8 @@ fn handle_activation(dispatcher: &Arc<Dispatcher>, note: &objc2_foundation::NSNo
         pid as i32
     };
 
-    let restore_pids = dispatcher.snapshot_matches(activated_pid, |armed| {
-        focus_arbiter::decide(armed) == Decision::Undo
-    });
+    let restore_pids =
+        dispatcher.snapshot_matches(activated_pid, |watch| watch.decide() == Decision::Undo);
     for pid in restore_pids {
         restore_focus(pid);
     }
@@ -572,7 +586,7 @@ mod tests {
     use std::sync::Arc;
 
     /// Every entry may undo; the epoch rule has its own test.
-    const ANY: fn(Epoch) -> bool = |_| true;
+    const ANY: fn(&UndoWatch) -> bool = |_| true;
 
     /// An entry armed before a driver activation never restores: the
     /// activation is the driver's own (bring_to_front, foreground delivery).
@@ -580,9 +594,11 @@ mod tests {
     fn an_entry_armed_before_a_driver_activation_does_not_restore() {
         let d = Arc::new(Dispatcher::new());
         let _h = d.add(Some(42), 7, "test.epoch");
-        let armed = Epoch::now();
-        assert_eq!(d.snapshot_matches(42, |e| e == armed), vec![7]);
-        assert!(d.snapshot_matches(42, |e| e == armed.next()).is_empty());
+        let armed = crate::focus_arbiter::Epoch::now();
+        assert_eq!(d.snapshot_matches(42, |w| w.epoch() == armed), vec![7]);
+        assert!(d
+            .snapshot_matches(42, |w| w.epoch() == armed.next())
+            .is_empty());
     }
 
     /// Dispatcher::add returns a handle, the entry is reachable by
@@ -681,7 +697,7 @@ mod tests {
                     allowed_pid: None,
                     restore_to: 7,
                     deadline: Instant::now() - Duration::from_secs(1),
-                    armed: Epoch::now(),
+                    watch: UndoWatch::arm(),
                     origin: "test.leak",
                 },
             );

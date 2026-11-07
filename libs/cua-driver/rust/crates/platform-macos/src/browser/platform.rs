@@ -327,7 +327,7 @@ impl Drop for SelfActivationGuard {
 }
 
 fn watch_self_activation(pid: i32, front: i32, stop: &std::sync::atomic::AtomicBool) {
-    use crate::focus_arbiter::{self, Decision, Epoch};
+    use crate::focus_arbiter::UndoWatch;
     use std::sync::atomic::Ordering;
     use std::time::Instant;
     // Read before anything happens: after a key loss the user's app may
@@ -340,23 +340,27 @@ fn watch_self_activation(pid: i32, front: i32, stop: &std::sync::atomic::AtomicB
     let mut last_rekey = Instant::now();
     let mut last_order_check = Instant::now();
     // The watch outlives single driver activations: after each one it holds
-    // off briefly, then re-arms.
-    let mut armed = Epoch::now();
+    // off briefly, then re-arms. After the user switched to Chrome it re-arms
+    // once they leave it.
+    let mut undo = UndoWatch::arm();
     let mut quiet_until = Instant::now();
     while !stop.load(Ordering::SeqCst) {
-        if !armed.is_current() {
-            armed = Epoch::now();
+        if !undo.epoch().is_current() {
+            undo = UndoWatch::arm();
             quiet_until = Instant::now() + Duration::from_millis(400);
+        } else if undo.has_left() && crate::input::skylight::front_process_pid() != Some(pid) {
+            undo = UndoWatch::arm();
         }
         let calm = !crate::input::skylight::foreground_turn_active()
             && !super::setup_ui::BACKGROUND_KEY_TURN.load(Ordering::SeqCst)
-            && Instant::now() >= quiet_until
-            && focus_arbiter::decide(armed) == Decision::Undo;
+            && Instant::now() >= quiet_until;
         if calm {
             let front_now = crate::input::skylight::front_process_pid();
             if front_now == Some(pid) {
+                // revert_now asks the arbiter; the rekey hands back only the
+                // user's own window, as before.
                 if !rekey() {
-                    crate::key_focus_guard::revert_now(pid, front, armed);
+                    crate::key_focus_guard::revert_now(pid, front, &undo);
                 }
                 last_rekey = Instant::now();
             } else if front_now == Some(front) {

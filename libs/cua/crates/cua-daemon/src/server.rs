@@ -535,6 +535,21 @@ pub async fn start(runtime: Runtime, config: ServerConfig) -> Result<DaemonHandl
             }
         });
     }
+    // A macOS Space whose network gateway ended under a running VM (the
+    // gateway was stopped by something that stopped the whole app bundle)
+    // has no network and no agent: restarted behind a new gateway, and the
+    // connections to it dropped.
+    {
+        let rt = runtime.clone();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(Duration::from_secs(10));
+            tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            loop {
+                tick.tick().await;
+                rt.mend_local().await;
+            }
+        });
+    }
     // The elastic pool's scale-in: idle cloud hosts this home added go at
     // their billing boundary, the least-used one is cordoned when the
     // others have room (`CUA_ELASTIC_RECONCILE_SECS`, default 30; 0: off).

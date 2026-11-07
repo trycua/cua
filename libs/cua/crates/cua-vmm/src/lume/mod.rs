@@ -312,6 +312,10 @@ pub struct LumeRuntime {
     /// One restart of a VM whose gateway ended at a time
     /// ([`LumeRuntime::mend_gateway`]).
     mending: tokio::sync::Mutex<()>,
+    /// VMs restarted behind a new gateway whose callers have not been told
+    /// yet ([`Runtime::mend`] says so once): their open connections are
+    /// stale whoever noticed first.
+    mended: std::sync::Mutex<std::collections::BTreeSet<String>>,
 }
 
 /// Configured `lume serve` URL -> the one this process moved to because an
@@ -596,6 +600,7 @@ impl LumeRuntime {
             accepted: Default::default(),
             old_lume: Default::default(),
             mending: Default::default(),
+            mended: Default::default(),
         }
     }
 
@@ -671,6 +676,10 @@ impl LumeRuntime {
         );
         self.stop_vm(name).await?;
         self.resume(name).await?;
+        self.mended
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(name.to_string());
         self.client
             .get(name)
             .await?
@@ -3160,6 +3169,35 @@ impl Runtime for LumeRuntime {
         // connection beside the VM's other files. On Apple's NAT nothing is
         // counted.
         Ok(crate::netgw::read_events(&self.cfg.root.join(name)))
+    }
+
+    async fn mend(&self, name: &str) -> Result<Option<Instance>> {
+        // Restarted by whoever noticed first (an endpoints read): tell the
+        // daemon once, so it drops what it holds for the old run.
+        let was_mended = self
+            .mended
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(name);
+        if was_mended && let Some(vm) = self.client.get(name).await.ok().flatten() {
+            return Ok(Some(self.instance_gw(&vm, None, &self.load_ports(name))));
+        }
+        // Cheap first: only a protected VM whose gateway process is gone
+        // (files on this Mac) is worth asking Lume about.
+        if self.kept_network(name).is_none()
+            || self.load_gateway(name).is_none()
+            || crate::netgw::gateway_running(&self.cfg.root.join(name))
+        {
+            return Ok(None);
+        }
+        let Some(vm) = self.client.get(name).await.ok().flatten() else {
+            return Ok(None);
+        };
+        if !self.gateway_lost(name, &vm) {
+            return Ok(None);
+        }
+        let vm = self.mend_gateway(name, vm).await?;
+        Ok(Some(self.instance_gw(&vm, None, &self.load_ports(name))))
     }
 
     async fn endpoints(&self, name: &str) -> Result<Endpoints> {

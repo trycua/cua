@@ -90,6 +90,21 @@ describe("<MembersPanel> sections", () => {
     expect(toggle("people").closest("div")!.className).toContain("hover:bg-accent");
   });
 
+  it("stacks folded headings tight and never reserves a column for a hover-only button", () => {
+    panel();
+    fireEvent.click(toggle("stream"));
+    fireEvent.click(toggle("details"));
+    // A folded section adds no margin or padding under its heading.
+    for (const sel of ["[data-call-stream]", "[data-call-details]"]) {
+      const sec = document.querySelector<HTMLElement>(sel)!;
+      expect(sec.className.split(" ")).not.toContain("pb-2");
+      expect(sec.className.split(" ")).not.toContain("pb-3");
+      expect(sec.querySelector("h2")!.className.split(" ")).not.toContain("mb-1");
+    }
+    // The first heading row has the same height as the others (h-8).
+    expect(document.querySelector("[data-members-panel] > div")!.className).toContain("h-8");
+  });
+
   it("remembers what is folded", () => {
     panel();
     fireEvent.click(toggle("details"));

@@ -39,21 +39,6 @@ import { queuedItems, useQueued } from "./queued";
 import { ThreadView } from "./thread-view";
 
 
-/** The thread's top edge while the desktop is folded away: one quiet bar that says so and opens it. */
-function DesktopBar({ onShow }: { onShow: () => void }) {
-  return (
-    <button
-      type="button"
-      data-desktop-bar=""
-      onClick={onShow}
-      className="flex h-8 w-full shrink-0 cursor-pointer items-center justify-between px-5 text-left text-[13px] text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:bg-accent focus-visible:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:ring-inset"
-    >
-      <span className="font-medium">Desktop</span>
-      <span className="text-xs">Hidden. Click to show</span>
-    </button>
-  );
-}
-
 /** Why `@everyone` is off for someone who can't give tasks. */
 const EVERYONE_REASON = "Only people who can give tasks can message everyone";
 
@@ -159,7 +144,6 @@ export function SpaceCall({
   // An agent's home starts with the desktop folded away (the chat is the page); a choice is kept per Space.
   const isHome = Boolean(useChildren()?.node(spaceId)?.home);
   const [streamHidden, setStreamHidden] = useStreamHidden(spaceId, isHome);
-  const desktopBar = streamHidden ? <DesktopBar onShow={() => setStreamHidden(false)} /> : null;
   // ⌘⇧T (Ctrl+Shift+T): thread view and back.
   useEffect(() => {
     if (!onLayout) return;
@@ -350,7 +334,6 @@ export function SpaceCall({
           // Thread view: the thread is the main area; the desktop shrinks
           // into a floating mini-player over it, never over the composer.
           <div data-thread-layout="" className="flex min-h-0 min-w-0 flex-1 flex-col">
-            {desktopBar}
             <div className="relative flex min-h-0 flex-1 flex-col">
               {threadView(reserve)}
               {streamHidden ? null : (
@@ -364,7 +347,6 @@ export function SpaceCall({
         ) : streamHidden ? (
           // The stream is hidden: not drawn, so its connection is released; the thread and the composer take the room.
           <div data-thread-only="" className="flex min-h-0 min-w-0 flex-1 flex-col">
-            {desktopBar}
             {threadView(0)}
             {composer}
           </div>

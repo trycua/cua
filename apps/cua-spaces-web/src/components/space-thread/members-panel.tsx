@@ -101,7 +101,7 @@ export function MembersPanel({
   }
   return (
     <aside data-members-panel="" className="flex w-72 shrink-0 flex-col bg-chrome">
-      <div className="flex h-10 items-center justify-between pr-2 hover:bg-accent">
+      <div className="flex h-8 items-center justify-between pr-2 hover:bg-accent">
         <SectionHeading id="people" folded={shut.people} bodyId="section-people" inRow>
           In this Space
         </SectionHeading>
@@ -152,8 +152,8 @@ export function MembersPanel({
       )}
       {childSpaces}
       {windows.length || desktop ? (
-        <section className="px-3 pt-1 pb-2" data-call-stream="">
-          <SectionHeading id="stream" folded={shut.stream} bodyId="section-stream" className="-mx-3 mb-1">
+        <section className={cn("px-3", !shut.stream && "pb-2")} data-call-stream="">
+          <SectionHeading id="stream" folded={shut.stream} bodyId="section-stream" className={cn("-mx-3", !shut.stream && "mb-1")}>
             Stream
           </SectionHeading>
           {shut.stream ? null : (
@@ -176,7 +176,7 @@ export function MembersPanel({
                     title={toggles ? (streamHidden ? "Show stream" : "Hide stream") : w.help}
                     onClick={() => (toggles ? onToggleStream!() : onSelect ? onSelect(w) : onStream(w))}
                     className={cn(
-                      "flex h-8 w-full cursor-default items-center gap-2.5 rounded-lg pr-8 pl-2 text-left text-[13px] outline-none hover:bg-accent focus-visible:bg-accent",
+                      "flex h-8 w-full cursor-default items-center gap-2.5 rounded-lg pr-2 pl-2 text-left text-[13px] outline-none hover:bg-accent focus-visible:bg-accent",
                       current && "bg-accent font-medium",
                     )}
                   >
@@ -195,8 +195,8 @@ export function MembersPanel({
                         aria-label={pip.active ? pip.help : `Open ${name} in its own window`}
                         onClick={() => onStream(w)}
                         className={cn(
-                          "absolute top-1 right-1 inline-flex size-6 cursor-default items-center justify-center rounded-lg text-muted-foreground outline-none hover:bg-background hover:text-foreground focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring/60",
-                          pip.active ? "text-brand-strong opacity-100" : "opacity-0 group-hover/stream:opacity-100",
+                          "absolute top-1 right-1 inline-flex size-6 cursor-default items-center justify-center rounded-lg bg-accent text-muted-foreground outline-none hover:bg-background hover:text-foreground focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring/60",
+                          pip.active ? "bg-chrome text-brand-strong opacity-100 group-hover/stream:bg-accent" : "opacity-0 group-hover/stream:opacity-100",
                         )}
                       >
                         <PictureInPicture2Icon className="size-3.5" />
@@ -221,8 +221,8 @@ export function MembersPanel({
           )}
         </section>
       ) : null}
-      <section className="px-3 pt-1 pb-3" data-call-details="">
-        <SectionHeading id="details" folded={shut.details} bodyId="section-details" className="-mx-3 mb-1">
+      <section className={cn("px-3", !shut.details && "pb-3")} data-call-details="">
+        <SectionHeading id="details" folded={shut.details} bodyId="section-details" className={cn("-mx-3", !shut.details && "mb-1")}>
           Details
         </SectionHeading>
         {shut.details ? null : (

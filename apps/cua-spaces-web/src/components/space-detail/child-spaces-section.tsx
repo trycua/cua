@@ -4,7 +4,7 @@
 /**
  * A Space's child Spaces, in its side panel: each with its OS logo, name and where it is (running,
  * being made with its progress, failed with why), a row menu (open, stop or start, delete), how many of its
- * tree's budget they use, and "Delete all child Spaces" with one confirmation that names what goes.
+ * tree's budget they use. Deleting is per child, from its row menu, with a confirmation that names what goes.
  * Nothing shows for a Space without children.
  */
 
@@ -21,6 +21,7 @@ import { Menu } from "@/components/ui/menu";
 import { SectionHeading } from "@/components/space-thread/section-heading";
 import { toastError } from "@/components/ui/toast";
 import { plural } from "@/lib/plural";
+import { cn } from "@/lib/utils";
 import { parentIdOf } from "@/lib/space-tree";
 import { useSpaceLayoutStore } from "@/stores/space-layout";
 import { createError, spaceState } from "@/lib/spaces";
@@ -80,19 +81,11 @@ export function ChildSpacesSection({ spaceId, spaceName }: { spaceId: string; sp
   const text = confirm === "all" ? deleteAllText(spaceName, kids, total) : one ? deleteAllText(spaceName, [one], 1 + descendantCount(all, one.id, tree)) : null;
   const remove = (ids: string[]) => void deleteSpaces(ids).catch(toastError("Couldn't delete the child Spaces"));
   return (
-    <section className="px-3 pt-1 pb-2" data-child-spaces="">
-      <div className="-mx-3 mb-1 flex h-8 items-center hover:bg-accent">
+    <section className={cn("px-3", !folded && "pb-2")} data-child-spaces="">
+      <div className={cn("-mx-3 flex h-8 items-center hover:bg-accent", !folded && "mb-1")}>
         <SectionHeading id="children" folded={folded} bodyId="section-children" inRow>
           Child Spaces
         </SectionHeading>
-        <button
-          type="button"
-          data-child-delete-all=""
-          onClick={() => setConfirm("all")}
-          className="mr-5 cursor-pointer text-[11px] text-muted-foreground outline-none hover:text-foreground focus-visible:underline"
-        >
-          Delete all
-        </button>
       </div>
       <div id="section-children" hidden={folded}>
       <ul>
@@ -105,7 +98,7 @@ export function ChildSpacesSection({ spaceId, spaceName }: { spaceId: string; sp
               <Link
                 to="/spaces/$spaceId"
                 params={{ spaceId: k.id }}
-                className="flex min-h-8 w-full cursor-default items-center gap-2.5 rounded-lg py-1 pr-8 pl-2 text-left text-[13px] outline-none hover:bg-accent focus-visible:bg-accent"
+                className="flex min-h-8 w-full cursor-default items-center gap-2.5 rounded-lg py-1 pr-2 pl-2 text-left text-[13px] outline-none hover:bg-accent focus-visible:bg-accent"
               >
                 <OsIcon os={k.os} className="size-3.5 shrink-0 text-muted-foreground" />
                 <span className="min-w-0 flex-1">
@@ -117,7 +110,7 @@ export function ChildSpacesSection({ spaceId, spaceName }: { spaceId: string; sp
                 <StateLabel state={state} space={k} className="shrink-0" />
               </Link>
               {!busy ? (
-                <span className="absolute top-1 right-1 opacity-0 group-focus-within/child:opacity-100 group-hover/child:opacity-100">
+                <span className="absolute top-1 right-1 rounded-lg bg-accent opacity-0 group-focus-within/child:opacity-100 group-hover/child:opacity-100">
                   <Menu
                     label={k.name}
                     trigger={

@@ -208,6 +208,35 @@ def apply(api: Any, repository: str, tag: str, body: str, *, attempts: int = 20,
     return True
 
 
+def untagged_draft(api: Any, repository: str, tag: str) -> dict[str, Any] | None:
+    """The Release Please draft GitHub lists as `untagged-...` for `tag`, if any.
+
+    Release Please titles it `<component>: v<version>`. When its tag does not
+    exist yet, GitHub reports a placeholder `untagged-<hash>` tag, so a lookup
+    by tag misses it and the CD workflow would create a second release for the
+    tag, leaving this draft behind for good.
+    """
+    component, sep, version = tag.rpartition("-v")
+    if not sep or not component:
+        return None
+    title = f"{component}: v{version}"
+    matches: list[dict[str, Any]] = []
+    for page in range(1, 11):
+        releases = list(api.get(f"repos/{repository}/releases?per_page=100&page={page}"))
+        matches.extend(
+            release
+            for release in releases
+            if release.get("draft")
+            and str(release.get("tag_name") or "").startswith("untagged-")
+            and release.get("name") == title
+        )
+        if len(releases) < 100:
+            break
+    if len(matches) > 1:
+        raise ReleaseError(f"expected one untagged draft for {tag}, found {[m.get('id') for m in matches]}")
+    return matches[0] if matches else None
+
+
 def publish_draft(
     api: Any,
     repository: str,
@@ -223,17 +252,19 @@ def publish_draft(
     and never makes a monorepo component the repository-wide Latest release.
     """
     matches = releases_by_tag(api, repository, tag)
-    if not matches:
-        return False
     if len(matches) > 1:
         raise ReleaseError(f"expected one GitHub release for {tag}, found {[m.get('id') for m in matches]}")
-    release = matches[0]
+    release = matches[0] if matches else untagged_draft(api, repository, tag)
+    if release is None:
+        return False
     if asset_dir is not None and asset_dir.is_dir() and any(p.is_file() for p in asset_dir.iterdir()):
         upload_assets(api, repository, release, asset_dir)
     if release.get("draft"):
         fields: dict[str, Any] = {"draft": False, "prerelease": prerelease, "make_latest": "false"}
         if name:
             fields["name"] = name
+        if str(release.get("tag_name") or "").startswith("untagged-"):
+            fields["tag_name"] = tag
         api.patch(f"repos/{repository}/releases/{release['id']}", fields)
         print(f"published the Release Please draft for {tag}")
     else:

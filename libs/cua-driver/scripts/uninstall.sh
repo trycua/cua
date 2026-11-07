@@ -24,7 +24,7 @@
 #     - ~/.local/bin/cua-driver symlink (only when it resolves to a
 #       cua-driver path — a Swift-driver symlink is left in place)
 #     - versioned packages/current symlink under ~/.cua-driver/
-#     - KWin desktop entry ai.cua.driver.release.desktop (only when it names
+#     - KWin desktop entry ai.cua.driver.desktop (only when it names
 #       this install)
 #     - telemetry id, preference, and registration markers are preserved by
 #       default so a reinstall remains the same pseudonymous installation
@@ -980,12 +980,15 @@ if [[ "$USE_RUST_BACKEND" == "1" ]]; then
     fi
 
     # --- KWin desktop entry ---
-    # Only the entry this install wrote: its Exec line must name this install.
-    KWIN_DESKTOP_ENTRY="${XDG_DATA_HOME:-$HOME/.local/share}/applications/ai.cua.driver.release.desktop"
-    if [[ -f "$KWIN_DESKTOP_ENTRY" ]] \
-        && grep -Fqx "Exec=\"$PACKAGES_DIR/current/cua-driver\" serve" "$KWIN_DESKTOP_ENTRY"; then
-        rm -f "$KWIN_DESKTOP_ENTRY"
-        log "removed $KWIN_DESKTOP_ENTRY"
+    # `cua-driver kwin-capture on` writes it. Only an entry naming this install goes.
+    KWIN_DESKTOP_ENTRY="${XDG_DATA_HOME:-$HOME/.local/share}/applications/ai.cua.driver.desktop"
+    if [[ -f "$KWIN_DESKTOP_ENTRY" ]]; then
+        case "$(sed -n 's/^Exec="\(.*\)" serve$/\1/p' "$KWIN_DESKTOP_ENTRY")" in
+            "$PACKAGES_DIR"/current/cua-driver|"$PACKAGES_DIR"/releases/*/cua-driver)
+                rm -f "$KWIN_DESKTOP_ENTRY"
+                log "removed $KWIN_DESKTOP_ENTRY"
+                ;;
+        esac
     fi
 
     release_supervisor remove

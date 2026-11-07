@@ -1597,7 +1597,7 @@ fn libei_recovery<T>(
                 tracing::info!(
                     "wlroots virtual-pointer unavailable ({e}); falling back to libei/portal"
                 );
-                return fallback();
+                fallback()
             }
             #[cfg(not(feature = "portal-input"))]
             {
@@ -2913,14 +2913,14 @@ fn chord_into(window: Option<u64>, keys: &[String]) -> anyhow::Result<()> {
             let stderr = other.map(|o| String::from_utf8_lossy(&o.stderr).into_owned());
             #[cfg(feature = "portal-input")]
             {
-                return with_wtype_libei_fallback(
+                with_wtype_libei_fallback(
                     || {
                         libei::wait_keyboard_ready()?;
                         window.map_or(Ok(()), activate_window_for_input)?;
                         libei_hotkey(&mods, &final_key)
                     },
                     stderr,
-                );
+                )
             }
             #[cfg(not(feature = "portal-input"))]
             {

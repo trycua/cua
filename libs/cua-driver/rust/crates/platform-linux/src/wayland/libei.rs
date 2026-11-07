@@ -803,36 +803,34 @@ impl EisState {
     fn dispatch_eis_event(&mut self, event: reis::ei::Event) {
         use reis::ei::Event;
         match event {
-            Event::Handshake(handshake, ev) => {
-                if let reis::ei::handshake::Event::HandshakeVersion { .. } = ev {
-                    handshake.handshake_version(1);
-                    handshake.name("cua-driver");
-                    handshake.context_type(reis::ei::handshake::ContextType::Sender);
-                    // Advertise the interface set + versions that reis 0.7's own
-                    // EIS client examples use against real compositors. The
-                    // previous list advertised ei_device v2 and omitted
-                    // ei_pingpong, which Mutter rejects — it closes the EIS
-                    // connection immediately after our handshake `finish()`
-                    // (observed: one Handshake event, then read() errors). reis's
-                    // handshaker also requires ei_pingpong / ei_callback /
-                    // ei_connection. See reis 0.7 examples/type-text.rs.
-                    for (iface, ver) in [
-                        ("ei_callback", 1u32),
-                        ("ei_connection", 1),
-                        ("ei_pingpong", 1),
-                        ("ei_seat", 1),
-                        ("ei_device", 1),
-                        ("ei_pointer", 1),
-                        ("ei_pointer_absolute", 1),
-                        ("ei_button", 1),
-                        ("ei_scroll", 1),
-                        ("ei_keyboard", 1),
-                        ("ei_text", 1),
-                    ] {
-                        handshake.interface_version(iface, ver);
-                    }
-                    handshake.finish();
+            Event::Handshake(handshake, reis::ei::handshake::Event::HandshakeVersion { .. }) => {
+                handshake.handshake_version(1);
+                handshake.name("cua-driver");
+                handshake.context_type(reis::ei::handshake::ContextType::Sender);
+                // Advertise the interface set + versions that reis 0.7's own
+                // EIS client examples use against real compositors. The
+                // previous list advertised ei_device v2 and omitted
+                // ei_pingpong, which Mutter rejects — it closes the EIS
+                // connection immediately after our handshake `finish()`
+                // (observed: one Handshake event, then read() errors). reis's
+                // handshaker also requires ei_pingpong / ei_callback /
+                // ei_connection. See reis 0.7 examples/type-text.rs.
+                for (iface, ver) in [
+                    ("ei_callback", 1u32),
+                    ("ei_connection", 1),
+                    ("ei_pingpong", 1),
+                    ("ei_seat", 1),
+                    ("ei_device", 1),
+                    ("ei_pointer", 1),
+                    ("ei_pointer_absolute", 1),
+                    ("ei_button", 1),
+                    ("ei_scroll", 1),
+                    ("ei_keyboard", 1),
+                    ("ei_text", 1),
+                ] {
+                    handshake.interface_version(iface, ver);
                 }
+                handshake.finish();
             }
             Event::Callback(callback, reis::ei::callback::Event::Done { .. }) => {
                 if let Some(job) = self.text_job.as_mut() {
@@ -1007,7 +1005,9 @@ impl EisState {
             None => String::from_utf8_lossy(&buf).into_owned(),
         };
         self.keymap = xkb::Keymap::new_from_string(
-            &xkb::Context::new(xkb::CONTEXT_NO_DEFAULT_INCLUDES | xkb::CONTEXT_NO_ENVIRONMENT_NAMES),
+            &xkb::Context::new(
+                xkb::CONTEXT_NO_DEFAULT_INCLUDES | xkb::CONTEXT_NO_ENVIRONMENT_NAMES,
+            ),
             text,
             xkb::KEYMAP_FORMAT_TEXT_V1,
             xkb::KEYMAP_COMPILE_NO_FLAGS,
@@ -1150,7 +1150,7 @@ impl EisState {
                 // Bound the interpolation: run_command executes synchronously in
                 // the worker loop, so a huge step count would block EIS event
                 // processing (incl. Ping) and balloon the unflushed request queue.
-                let n = (*steps).max(1).min(500);
+                let n = (*steps).clamp(1, 500);
                 let delay = drag_step_delay(*duration_ms, n);
                 for s in 1..=n {
                     let t = s as f32 / n as f32;
@@ -1359,9 +1359,7 @@ impl EisState {
             .keymap
             .as_ref()
             .ok_or_else(|| refused("the compositor announced no keyboard layout"))
-            .and_then(|map| {
-                plan_on_any(&text, map, &keyboard_now(self.keyboard, desktop, map)?)
-            });
+            .and_then(|map| plan_on_any(&text, map, &keyboard_now(self.keyboard, desktop, map)?));
         let ei_text = self.device_with_interface("ei_text").is_some();
         if !ei_text || desktop.x11_app_may_have_focus || (text.contains('\n') && keys.is_ok()) {
             let steps = keys?
@@ -1517,7 +1515,7 @@ fn device_interface<T: reis::Interface>(
 }
 
 fn drag_step_delay(duration_ms: u64, steps: u32) -> std::time::Duration {
-    let frames = u64::from(steps.max(1).min(500));
+    let frames = u64::from(steps.clamp(1, 500));
     std::time::Duration::from_micros(
         duration_ms
             .min(10_000)
@@ -1878,7 +1876,9 @@ pub(super) mod local_eis {
     pub(in crate::wayland::libei) enum Control {
         Modifiers(KeyboardState),
         /// Pause or resume the `ei_text` device.
-        TextDevice { resumed: bool },
+        TextDevice {
+            resumed: bool,
+        },
         /// Pause every device once the next text arrives.
         PauseOnText,
         /// Resume every device.
@@ -2142,7 +2142,10 @@ pub(super) mod local_eis {
         static FIXTURE: OnceLock<Fixture> = OnceLock::new();
         FIXTURE.get_or_init(|| {
             let local = LocalEis::start(None);
-            assert!(TX.set(local.tx.clone()).is_ok(), "real libei worker already started");
+            assert!(
+                TX.set(local.tx.clone()).is_ok(),
+                "real libei worker already started"
+            );
             wait_keyboard_ready().unwrap();
             local.control(Control::Modifiers(KeyboardState::default()));
             Fixture {
@@ -2388,7 +2391,10 @@ mod typing_route_tests {
     fn a_modifier_is_pressed_around_its_key_and_released_after_it() {
         let (result, events) = typed("Ya", true);
         result.unwrap();
-        assert_eq!(events, [held(LEFT_SHIFT, Y).to_vec(), tap(A).to_vec()].concat());
+        assert_eq!(
+            events,
+            [held(LEFT_SHIFT, Y).to_vec(), tap(A).to_vec()].concat()
+        );
 
         // `@` is AltGr+Q in `de`.
         let (result, events) = typed_with(
@@ -2413,7 +2419,12 @@ mod typing_route_tests {
         result.unwrap();
         assert_eq!(
             events,
-            [held(LEFT_SHIFT, A).to_vec(), tap(A).to_vec(), tap(2).to_vec()].concat()
+            [
+                held(LEFT_SHIFT, A).to_vec(),
+                tap(A).to_vec(),
+                tap(2).to_vec()
+            ]
+            .concat()
         );
     }
 
@@ -2646,7 +2657,10 @@ mod typing_route_tests {
                 .unwrap();
             reply_rx.recv().unwrap()
         });
-        assert_eq!(result.unwrap_err().to_string(), refused(NOT_READY).to_string());
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            refused(NOT_READY).to_string()
+        );
         assert_eq!(events, []);
     }
 
@@ -2670,7 +2684,10 @@ mod typing_route_tests {
             "type_text stopped: the libei worker stopped moving, so part of the text may have \
              gone out and no more of it will. Read the field before retrying"
         );
-        assert_eq!(events, [Emitted::Text("🙂".into()), Emitted::Text("x".into())]);
+        assert_eq!(
+            events,
+            [Emitted::Text("🙂".into()), Emitted::Text("x".into())]
+        );
     }
 
     #[test]
@@ -2858,7 +2875,9 @@ mod key_plan_tests {
 
     fn keymap() -> xkb::Keymap {
         xkb::Keymap::new_from_string(
-            &xkb::Context::new(xkb::CONTEXT_NO_DEFAULT_INCLUDES | xkb::CONTEXT_NO_ENVIRONMENT_NAMES),
+            &xkb::Context::new(
+                xkb::CONTEXT_NO_DEFAULT_INCLUDES | xkb::CONTEXT_NO_ENVIRONMENT_NAMES,
+            ),
             KEYMAP.to_string(),
             xkb::KEYMAP_FORMAT_TEXT_V1,
             xkb::KEYMAP_COMPILE_NO_FLAGS,
@@ -2924,9 +2943,12 @@ mod key_plan_tests {
     #[test]
     fn a_key_is_never_offered_behind_a_command_modifier() {
         let find = |c: char| {
-            find_key(&keymap(), 0, xkb::utf32_to_keysym(u32::from(c)), |_, mask| {
-                Some((mask.count_ones(), mask))
-            })
+            find_key(
+                &keymap(),
+                0,
+                xkb::utf32_to_keysym(u32::from(c)),
+                |_, mask| Some((mask.count_ones(), mask)),
+            )
         };
         assert_eq!(find('÷'), None);
         assert_eq!(find('a'), Some((30, 0)));

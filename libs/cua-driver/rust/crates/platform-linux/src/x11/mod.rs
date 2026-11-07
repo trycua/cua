@@ -32,12 +32,7 @@ pub struct WindowInfo {
 
 /// The windows in property `name` of `root`, at most `max`. An absent property
 /// is an empty list. `None` means the server gave no answer.
-fn root_windows(
-    conn: &RustConnection,
-    root: Window,
-    name: &[u8],
-    max: u32,
-) -> Option<Vec<Window>> {
+fn root_windows(conn: &RustConnection, root: Window, name: &[u8], max: u32) -> Option<Vec<Window>> {
     let atom = conn.intern_atom(true, name).ok()?.reply().ok()?.atom;
     if atom == 0 {
         return Some(Vec::new());

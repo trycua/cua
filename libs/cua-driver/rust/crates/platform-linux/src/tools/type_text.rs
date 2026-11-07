@@ -21,8 +21,9 @@ use super::impl_::{
     isolated_hyprland_refusal, isolated_hyprland_result, isolated_hyprland_task_error,
     named_session_cursor_key, position_named_session_keyboard_cursor, prove_token_element,
     resolve_cursor_key, spawn_blocking_bounded, spawn_isolated_hyprland, stale_observed_element,
-    text_typing_budget, unavailable_chromium_background, unavailable_wayland_focused_input_background,
-    unavailable_webkit_keyboard_background, values_agree, KeyRoute, ToolState,
+    text_typing_budget, unavailable_chromium_background,
+    unavailable_wayland_focused_input_background, unavailable_webkit_keyboard_background,
+    values_agree, KeyRoute, ToolState,
 };
 
 /// Structured payload for a `type_text` response. Keeps the legacy
@@ -265,18 +266,15 @@ impl Tool for TypeTextTool {
                 .await;
             let wayland = crate::wayland::wayland_input_enabled();
             let path = if wayland { "wayland_focused" } else { "xtest" };
-            let result = spawn_blocking_bounded(
-                "desktop type_text",
-                text_typing_budget(&text),
-                move || {
+            let result =
+                spawn_blocking_bounded("desktop type_text", text_typing_budget(&text), move || {
                     if wayland {
                         crate::wayland::type_text_focused(&text)
                     } else {
                         crate::input::send_type_text_xtest(&text)
                     }
-                },
-            )
-            .await;
+                })
+                .await;
             return match result {
                 Ok(Ok(())) => ToolResult::text("Typed text into the focused desktop application.")
                     .with_structured(
@@ -617,10 +615,8 @@ impl Tool for TypeTextTool {
             if let Some(element) = token.clone() {
                 let idx = element.index;
                 let text_w = text.clone();
-                let result = spawn_blocking_bounded(
-                    "type_text",
-                    text_typing_budget(&text_w),
-                    move || {
+                let result =
+                    spawn_blocking_bounded("type_text", text_typing_budget(&text_w), move || {
                         crate::interaction::with_target_foreground(
                             pid,
                             xid,
@@ -634,9 +630,8 @@ impl Tool for TypeTextTool {
                                 crate::wayland::type_text_focused(&text_w)
                             },
                         )
-                    },
-                )
-                .await;
+                    })
+                    .await;
                 return match result {
                     Ok(Ok(())) => ToolResult::text(format!(
                         "Typed {text_len} character(s) (via Wayland virtual-keyboard)."
@@ -701,10 +696,8 @@ impl Tool for TypeTextTool {
             }
             let text_w = text.clone();
             let element = token.clone();
-            let result = spawn_blocking_bounded(
-                "type_text",
-                text_typing_budget(&text_w),
-                move || {
+            let result =
+                spawn_blocking_bounded("type_text", text_typing_budget(&text_w), move || {
                     crate::interaction::with_target_foreground(
                         pid,
                         xid,
@@ -721,9 +714,8 @@ impl Tool for TypeTextTool {
                             crate::wayland::type_text_focused(&text_w)
                         },
                     )
-                },
-            )
-            .await;
+                })
+                .await;
             return match result {
                 Ok(Ok(())) => ToolResult::text(format!(
                     "Typed {text_len} character(s) (via Wayland virtual-keyboard)."
@@ -983,10 +975,8 @@ impl Tool for TypeTextTool {
         // expose the widget tree, type via AT-SPI, then send FocusOut.
         // This doesn't change the X11 active window, so the test's focus check passes.
         let text_clone2 = text.clone();
-        let qt5_result = spawn_blocking_bounded(
-            "Qt5 type_text",
-            text_typing_budget(&text),
-            move || {
+        let qt5_result =
+            spawn_blocking_bounded("Qt5 type_text", text_typing_budget(&text), move || {
                 if !is_qt5_process(pid) {
                     anyhow::bail!("not a Qt5 process; synthetic-FocusIn bridge workaround skipped");
                 }
@@ -1001,9 +991,8 @@ impl Tool for TypeTextTool {
                 crate::input::send_focus_out(xid)?;
 
                 result
-            },
-        )
-        .await;
+            })
+            .await;
 
         match qt5_result {
             Ok(Ok(())) => {

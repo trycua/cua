@@ -180,6 +180,7 @@ pub(in crate::wayland) fn find_key<T>(
 /// left out, so typing never moves the user's keyboard state, and so are the
 /// modifiers apps read as commands. Keys on the main typing block go first, and
 /// each modifier takes one key.
+#[cfg(feature = "portal-input")]
 pub(in crate::wayland) fn modifier_chords(map: &xkb::Keymap, group: u32) -> Vec<Vec<u32>> {
     /// More than any real layout has: Shift, AltGr and a level 5 key.
     const MOST_MODIFIER_KEYS: usize = 5;

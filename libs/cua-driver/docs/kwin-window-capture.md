@@ -41,10 +41,10 @@ cua-driver kwin-capture status
 
 The command saves `on`, `off` or `override-portal-deny` in
 `~/.cua-driver/kwin-window-capture`. Any other content, or no file, is off. The driver reads it on every call, so no restart
-of the driver or of KWin is needed. Off applies from the next call. On applies
-from the next call on KWin 6.8 and newer, and within a few seconds on older
-releases, once KWin rereads its desktop-entry cache; calls in between behave as
-with it off. `set_config` cannot change it, so a model
+of the driver or of KWin is needed. Off applies from the next call. On
+returns once KWin grants a fresh connection, waiting up to five seconds on 6.7
+and older while KWin rereads its desktop-entry cache, so it applies from the next
+call too. `set_config` cannot change it, so a model
 can't turn it on for itself. While it is off, the driver behaves as it does
 without this adapter: window capture on KWin returns `surface_identity_unproven`
 and `bring_to_front` returns `foreground_unavailable`. Window ids listed while
@@ -68,7 +68,8 @@ What KWin itself checks depends on the release:
 KWin 6.8 removed both checks ([0ea31ae7](https://invent.kde.org/plasma/kwin/-/commit/0ea31ae72eb052cb9c9cc508318fc3f0f329ed53)).
 For 6.7 and older, `kwin-capture on` writes
 `~/.local/share/applications/ai.cua.driver.desktop` (under `XDG_DATA_HOME` when
-set) with the running executable's canonical path and:
+set) naming the running executable, through `packages/current` for a release
+install, and:
 
 ```ini
 X-KDE-Wayland-Interfaces=org_kde_plasma_window_management,org_kde_kwin_keystate
@@ -77,8 +78,9 @@ X-KDE-DBUS-Restricted-Interfaces=org.kde.KWin.ScreenShot2
 
 then runs `kbuildsycoca6` so KWin sees it. `kwin-capture off` removes it. KWin
 matches the entry's `Exec` to the client's executable and looks it up for each
-new Wayland connection; the adapter opens a new one on every call. After an
-upgrade moves the executable, `kwin-capture status` says the entry names
+new Wayland connection; the adapter opens a new one on every call. KWin resolves
+that link when it checks, so a release update keeps the grant. If the
+executable moves some other way, `kwin-capture status` says the entry names
 another executable; run `kwin-capture on` again. Separate the Wayland
 interfaces with commas: KWin 6.3.6 doesn't honor a semicolon list.
 `org_kde_kwin_keystate` isn't for capture. It tells desktop typing whether Caps

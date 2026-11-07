@@ -1472,7 +1472,7 @@
    "abstract": "Turn exact KWin window capture and activation on or off (Linux).",
    "arguments": [],
    "default_subcommand": "status",
-   "discussion": "Off by default on every KWin release. The setting is read on every call, so no restart is needed; on KWin 6.7 and older, on applies once KWin rereads its desktop-entry cache. Only this command changes it; set_config cannot.",
+   "discussion": "Off by default on every KWin release. The setting is read on every call, so no restart is needed; on waits until KWin grants it, up to five seconds on KWin 6.7 and older. Only this command changes it; set_config cannot.",
    "examples": [
     {
      "command": "cua-driver kwin-capture",

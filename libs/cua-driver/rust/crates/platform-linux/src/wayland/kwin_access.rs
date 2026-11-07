@@ -133,12 +133,43 @@ pub fn save(setting: Setting) -> anyhow::Result<()> {
             _ => {}
         }
     } else {
-        let exe = std::env::current_exe()?.canonicalize()?;
-        replace(&entry, &desktop_entry(&exe)?)?;
+        replace(&entry, &desktop_entry(&entry_exe()?)?)?;
         replace(&saved, setting.as_str())?;
     }
     refresh_service_cache();
+    if setting != Setting::Off && super::kwin_capture::may_be_session() {
+        wait_until_kwin_lists_windows();
+    }
     Ok(())
+}
+
+/// KWin rereads its desktop-entry cache on its own schedule after
+/// `kbuildsycoca6` exits, so `on` returns once a fresh connection is granted.
+fn wait_until_kwin_lists_windows() {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while super::kwin_capture::list_windows().is_err() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+/// The executable the entry names. A release install's `packages/current` link
+/// is named instead of the versioned release it points at, so the grant
+/// survives updates: KWin resolves `Exec` when it checks.
+fn entry_exe() -> std::io::Result<PathBuf> {
+    std::env::current_exe()?.canonicalize().map(stable_exe)
+}
+
+fn stable_exe(exe: PathBuf) -> PathBuf {
+    let current = exe
+        .parent()
+        .and_then(Path::parent)
+        .filter(|releases| releases.file_name().is_some_and(|name| name == "releases"))
+        .and_then(Path::parent)
+        .zip(exe.file_name())
+        .map(|(packages, name)| packages.join("current").join(name));
+    current
+        .filter(|current| current.canonicalize().is_ok_and(|target| target == exe))
+        .unwrap_or(exe)
 }
 
 /// Write through a sibling file and rename, so a reader never sees half of it.
@@ -161,7 +192,7 @@ pub fn report() -> String {
     let denied = setting == Setting::On && portal_denies_screenshots();
     let entry = desktop_entry_path().filter(|path| path.exists());
     let current = entry.as_deref().is_some_and(|path| {
-        let exe = std::env::current_exe().and_then(|exe| exe.canonicalize());
+        let exe = entry_exe();
         let text = std::fs::read_to_string(path);
         matches!((exe, text), (Ok(exe), Ok(text)) if desktop_entry(&exe).is_ok_and(|entry| entry == text))
     });
@@ -269,5 +300,26 @@ mod tests {
         // KWin compares the raw path, so a character Exec would escape can't be written.
         assert!(desktop_entry(Path::new("/opt/$x/cua-driver")).is_err());
         assert!(desktop_entry(Path::new("/opt/100%/cua-driver")).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_release_install_names_the_current_link_so_updates_keep_the_grant() {
+        let root = std::env::temp_dir().join(format!("kwin-access-{}", std::process::id()));
+        std::fs::create_dir_all(root.join("packages/releases/1.0.0-x86_64")).unwrap();
+        let packages = root.canonicalize().unwrap().join("packages");
+        let exe = packages.join("releases/1.0.0-x86_64/cua-driver");
+        std::fs::write(&exe, "").unwrap();
+        // No current link yet, or one pointing at another release: the binary itself.
+        assert_eq!(stable_exe(exe.clone()), exe);
+        std::os::unix::fs::symlink("releases/0.9.0-x86_64", packages.join("current")).unwrap();
+        assert_eq!(stable_exe(exe.clone()), exe);
+        std::fs::remove_file(packages.join("current")).unwrap();
+        std::os::unix::fs::symlink("releases/1.0.0-x86_64", packages.join("current")).unwrap();
+        assert_eq!(stable_exe(exe.clone()), packages.join("current/cua-driver"));
+        // A binary outside a release layout is named as is.
+        let system = PathBuf::from("/usr/bin/cua-driver");
+        assert_eq!(stable_exe(system.clone()), system);
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

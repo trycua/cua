@@ -943,6 +943,7 @@ public final class AppModel {
             let now = Int64(Date().timeIntervalSince1970 * 1000)
             registrySpaces = appRowsToSpaces(rows: list.rows, nowMs: now)
             creates = appCreatesSettle(state: creates, spaces: registrySpaces)
+            reconcileAgentCreates()
             recompose()
             loaded = true
             listIncomplete = list.incomplete
@@ -1279,7 +1280,7 @@ public final class AppModel {
                           provider: args.on == "local" ? .local : .relay,
                           now: Self.nowMs(),
                           image: args.image, kind: args.kind, hostArch: Self.hostArch, gpu: args.gpu != nil,
-                          host: machine, hostName: machine.flatMap(machineName(of:))))
+                          host: machine, hostName: machine.flatMap(machineName(of:)), parent: nil))
         // The detail shows the live desktop inline: selecting the new Space
         // opens it (`plan.openDesktop`), starting with its progress.
         if open { select(pendingId) }
@@ -1484,6 +1485,22 @@ public final class AppModel {
         }
     }
 
+    /// The Spaces agents asked this computer to make show as the same pending rows a New Space made
+    /// here has (its page with progress, Cancel, Try again, Remove): the daemon records each create
+    /// and the core turns the record into row actions, the same for every poll.
+    func reconcileAgentCreates() {
+        let now = Int64(Date().timeIntervalSince1970 * 1000)
+        for action in appAgentCreatesActions(state: creates, nowMs: now) {
+            creates = appCreatesReduce(state: creates, action: action)
+        }
+    }
+
+    /// The row goes; for an agent's create, its record is hidden too so the next poll does not draw it again.
+    func dismissPending(_ id: String) {
+        sendCreate(.dismiss(id: id))
+        if appAgentCreateIsAgents(id: id) { appAgentCreateRemove(pendingId: id) }
+    }
+
     /// Cancel on a Space still being created: the row shows Cancelling
     /// until the SDK stopped the create and removed what it made, then goes;
     /// a cancel that fails says why on the row.
@@ -1493,7 +1510,10 @@ public final class AppModel {
         sendCreate(.cancelStart(id: pendingId))
         Task {
             do {
-                try await backend.cancelCreate(createId: pendingId)
+                // An agent's create is cancelled by the name it is made under.
+                let createId = appAgentCreateIsAgents(id: pendingId)
+                    ? (creates.pending.first { $0.id == pendingId }?.name ?? pendingId) : pendingId
+                try await backend.cancelCreate(createId: createId)
                 sendCreate(.cancelDone(id: pendingId))
             } catch {
                 sendCreate(.cancelFail(id: pendingId, error: LiveSpacesBackend.words(error)))
@@ -1521,7 +1541,12 @@ public final class AppModel {
         confirmDeleteId = nil
         // A failed create is only removed from the list.
         if appCreatesIsPending(id: space.id) {
-            sendCreate(.dismiss(id: space.id))
+            // A create still going is stopped (and what it made removed); a failed one only leaves the list.
+            if creates.pending.contains(where: { $0.id == space.id && $0.error == nil && $0.spaceId == nil }) {
+                cancelCreate(space.id)
+            } else {
+                dismissPending(space.id)
+            }
             return
         }
         guard !isDeleting(space.id) else { return }

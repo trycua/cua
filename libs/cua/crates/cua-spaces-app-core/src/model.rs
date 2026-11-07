@@ -284,6 +284,10 @@ pub struct Space {
     /// SDK and `cua spaces ls` still return it, marked.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub hidden: bool,
+    /// The Space it is a child of (its id): the Spaces page nests it under that Space. Absent for a
+    /// top-level Space.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent: Option<String>,
 }
 
 /// Whose a Space is, as the Spaces page groups it.
@@ -601,6 +605,9 @@ pub struct SpaceRow {
     /// A relay Space: who owns it and who else has it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sharing: Option<SpaceSharingFacts>,
+    /// The Space it is a child of (its id), as the daemon records the tree; absent for a top-level Space.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent: Option<String>,
 }
 
 /// `arm64` or `amd64` for any spelling of a CPU architecture (`aarch64`,

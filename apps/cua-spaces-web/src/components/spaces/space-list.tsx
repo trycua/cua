@@ -15,13 +15,13 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { ArrowDownIcon, ArrowUpIcon, ChevronRightIcon, EyeOffIcon, LoaderCircleIcon } from "lucide-react";
 import { useState, type MouseEvent, type ReactNode, type RefObject } from "react";
 
-import type { ChildrenPreview } from "@/bridge/contracts/children";
 import { useChildren } from "@/components/children/use-children";
 import { OsIcon } from "@/components/os-icon";
 import { StateLabel } from "@/components/state-dot";
 import { DesktopTag, HomeTag, PinnedMark } from "@/components/spaces/space-tile";
 import { useWindowedRows } from "@/hooks/use-windowed-rows";
 import { lastUsedText, sizeCell, type SpacesSort } from "@/lib/spaces-page";
+import { nestRows } from "@/lib/space-tree";
 import { WINDOW_FROM } from "@/lib/windowing";
 import { cn } from "@/lib/utils";
 
@@ -47,54 +47,25 @@ export interface SpaceListProps {
   more?: (item: SpaceItem) => ReactNode;
   /** A machine's desktop row: Hide, in place of the "⋯", on hover. */
   hide?: (item: SpaceItem) => void;
+  /** Every Space's id, so a parent that is only filtered out is not taken for a removed one. */
+  known?: ReadonlySet<string>;
 }
 
 /** A list row's height (`h-10`), and nothing between rows. */
 const ROW_PITCH = 40;
 
-/** One row to draw: its depth under a listed parent, and its disclosure. */
-interface Shown {
-  item: SpaceItem;
-  depth: number;
-  /** Children listed under it (0: no disclosure). */
-  kids: number;
-}
-
-/** `items` with each Space's listed children after it (in `items`' order),
- * only under the expanded ones. */
-export function nestChildren(items: SpaceItem[], tree: ChildrenPreview | null, open: ReadonlySet<string>): Shown[] {
-  if (!tree) return items.map((item) => ({ item, depth: 0, kids: 0 }));
-  const listed = new Set(items.map((i) => i.space.id));
-  const parentOf = (id: string) => {
-    const p = tree.node(id)?.parent;
-    return p && listed.has(p) ? p : undefined;
-  };
-  const under = new Map<string, SpaceItem[]>();
-  for (const i of items) {
-    const p = parentOf(i.space.id);
-    if (p) under.set(p, [...(under.get(p) ?? []), i]);
-  }
-  const out: Shown[] = [];
-  const walk = (i: SpaceItem, depth: number) => {
-    const kids = under.get(i.space.id) ?? [];
-    out.push({ item: i, depth, kids: kids.length });
-    if (open.has(i.space.id) && depth < 8) for (const k of kids) walk(k, depth + 1);
-  };
-  for (const i of items) if (!parentOf(i.space.id)) walk(i, 0);
-  return out;
-}
-
-export function SpaceList({ items, sort, onSort, now, selection, menu, more, hide }: SpaceListProps) {
+export function SpaceList({ items, sort, onSort, now, selection, menu, more, hide, known }: SpaceListProps) {
   const tree = useChildren();
-  const [open, setOpen] = useState<ReadonlySet<string>>(() => new Set());
+  // Children show under their parent; a person folds a parent to hide what is under it.
+  const [closed, setClosed] = useState<ReadonlySet<string>>(() => new Set());
   const toggle = (id: string) =>
-    setOpen((o) => {
+    setClosed((o) => {
       const next = new Set(o);
       if (next.has(id)) next.delete(id);
       else next.add(id);
       return next;
     });
-  const rows = nestChildren(items, tree, open);
+  const rows = nestRows(items, tree, closed, known);
   // A long list draws only the rows on screen (`lib/windowing.ts`).
   const windowed = useWindowedRows({ enabled: rows.length >= WINDOW_FROM, rows: rows.length, perRow: 1, gap: 0, estimatePitch: () => ROW_PITCH });
   const { start: from, end: to } = windowed.window;
@@ -125,8 +96,8 @@ export function SpaceList({ items, sort, onSort, now, selection, menu, more, hid
         <span />
       </div>
       <div role="rowgroup" ref={windowed.ref as RefObject<HTMLDivElement>} style={windowed.style}>
-        {rows.slice(from, to).map(({ item, depth, kids }) => {
-          const nest = { depth, kids, open: open.has(item.space.id), toggle: () => toggle(item.space.id) };
+        {rows.slice(from, to).map(({ item, depth, kids, below, orphan }) => {
+          const nest = { depth, kids, below, orphan, open: !closed.has(item.space.id), toggle: () => toggle(item.space.id) };
           const row = <ListRow key={item.space.id} item={item} cols={cols} now={now} selection={selection} more={hasMenu(item) ? more?.(item) : undefined} hide={hasHideButton(item) ? () => hide?.(item) : undefined} nest={nest} />;
           return menu ? <div key={item.space.id}>{menu(item, row)}</div> : row;
         })}
@@ -150,7 +121,7 @@ function ListRow({
   selection: SpaceListProps["selection"];
   more?: ReactNode;
   hide?: () => void;
-  nest?: { depth: number; kids: number; open: boolean; toggle: () => void };
+  nest?: { depth: number; kids: number; below: number; orphan: boolean; open: boolean; toggle: () => void };
 }) {
   const { space, state, access } = item;
   const navigate = useNavigate();
@@ -179,7 +150,7 @@ function ListRow({
         {nest && nest.kids > 0 ? (
           <button
             type="button"
-            aria-label={nest.open ? "Hide its Spaces" : `Show its ${nest.kids} Space${nest.kids === 1 ? "" : "s"}`}
+            aria-label={nest.open ? "Hide its child Spaces" : `Show its ${nest.below} child Space${nest.below === 1 ? "" : "s"}`}
             aria-expanded={nest.open}
             data-children-toggle={space.id}
             onClick={(e) => {
@@ -205,6 +176,16 @@ function ListRow({
         >
           {space.name}
         </Link>
+        {nest?.orphan ? (
+          <span data-parent-removed="" className="shrink-0 text-[11px] text-muted-foreground">
+            parent removed
+          </span>
+        ) : null}
+        {nest && !nest.open && nest.below > 0 ? (
+          <span data-children-count="" className="shrink-0 text-[11px] text-muted-foreground">
+            {nest.below} child Space{nest.below === 1 ? "" : "s"}
+          </span>
+        ) : null}
         <PinnedMark id={space.id} />
         {item.desktop ? <DesktopTag /> : null}
         <HomeTag spaceId={item.space.id} />

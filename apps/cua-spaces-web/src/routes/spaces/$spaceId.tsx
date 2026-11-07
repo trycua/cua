@@ -9,6 +9,9 @@ import { hostResources, parseDropped, runCreateFix, spaceResources, useBridge, u
 import { DiagnosticReportDialog } from "@/components/diagnostic-report-dialog";
 import { OsIcon } from "@/components/os-icon";
 import { EmptyState, Page } from "@/components/page";
+import { useChildren } from "@/components/children/use-children";
+import { parentIdOf } from "@/lib/space-tree";
+import { ChildSpacesSection, childrenEffect, childrenOfSpace, descendantCount } from "@/components/space-detail/child-spaces-section";
 import { AgentsSection } from "@/components/space-detail/agents-section";
 import { DropWell } from "@/components/space-detail/drop-well";
 import { FactList } from "@/components/space-detail/facts";
@@ -86,6 +89,14 @@ function SpaceDetailPage() {
   const { data: session, openExternal } = useSession();
   const { core } = useBridge();
   const space = spaces?.find((s) => s.id === spaceId);
+  // A child Space belongs to its parent's tree: Back goes to the parent's page, and the header says whose child it is.
+  const tree = useChildren();
+  const parentId = space ? parentIdOf(space, tree) : undefined;
+  const parentSpace = parentId ? spaces?.find((s) => s.id === parentId) : undefined;
+  const parentRef = parentSpace ? { id: parentSpace.id, name: parentSpace.name } : null;
+  // What stopping or deleting this Space does to the Spaces made under it, said in the confirm.
+  const myKids = space ? childrenOfSpace(spaces ?? [], space.id, tree) : [];
+  const myTotal = space ? descendantCount(spaces ?? [], space.id, tree) : 0;
   // Apps and files dropped on this Space's notch tile: the same as a drop on the well (an app opens Teleport at it), once.
   const files = useSpaceFiles(space ?? { id: spaceId, name: spaceId });
   const droppedOnce = useRef<string[] | null>(null);
@@ -319,7 +330,7 @@ function SpaceDetailPage() {
       ) : (
         <StateLabel state={state} space={space} />
       )}
-      <ParentLine spaceId={space.id} />
+      {parentRef ? null : <ParentLine spaceId={space.id} />}
     </p>
   );
   const osMark = (
@@ -407,9 +418,9 @@ function SpaceDetailPage() {
         onOpenChange={(o) => !o && setConfirm(null)}
         title={`${turnOff} ${space.name}?`}
         description={
-          space.power?.control === "suspend"
+          (space.power?.control === "suspend"
             ? "It's suspended in memory and picks up where it left off when you start it again."
-            : "It shuts down. Anything unsaved inside it is lost."
+            : "It shuts down. Anything unsaved inside it is lost.") + childrenEffect("stop", myKids, myTotal)
         }
         confirmLabel={turnOff}
         destructive={space.power?.control !== "suspend"}
@@ -419,7 +430,7 @@ function SpaceDetailPage() {
         open={confirm === "delete"}
         onOpenChange={(o) => !o && setConfirm(null)}
         title={detail.confirm.title}
-        description={detail.confirm.message}
+        description={detail.confirm.message + childrenEffect("delete", myKids, myTotal)}
         confirmLabel={detail.confirm.confirmLabel}
         cancelLabel={detail.confirm.cancelLabel}
         disabledReason={detail.confirm.confirmEnabled ? null : (detail.confirm.disabledReason ?? null)}
@@ -466,7 +477,7 @@ function SpaceDetailPage() {
           identity={session?.signedIn ? (session.account.identity ?? null) : null}
           facts={detail.facts}
           more={sections}
-          header={<SpaceHeader back={<BackLink inline />} os={space.os} title={detail.title} place={place} />}
+          header={<SpaceHeader back={<BackLink inline parent={parentRef} />} os={space.os} title={detail.title} place={place} childOf={parentRef} />}
         />
         {dialogs}
       </>
@@ -481,7 +492,8 @@ function SpaceDetailPage() {
           identity={session?.signedIn ? (session.account.identity ?? null) : null}
           header={
             <SpaceHeader
-              back={<BackLink inline />}
+              back={<BackLink inline parent={parentRef} />}
+              childOf={parentRef}
               os={space.os}
               title={detail.title}
               place={place}
@@ -529,8 +541,10 @@ function SpaceDetailPage() {
           creating={creating}
           facts={detail.facts}
           detailsExtra={<NetworkRow spaceId={space.id} />}
+          childSpaces={<ChildSpacesSection spaceId={space.id} spaceName={space.name} />}
           more={sections}
           windows={creating ? [] : (stream?.rows.filter((r) => r.kind === "window") ?? [])}
+          streamReady={!creating && Boolean(stream)}
           desktop={creating ? null : (desktopRow ?? null)}
           selected={shownRow?.id ?? null}
           onSelect={(row) => setShown(row.kind === "window" ? { spaceId: space.id, row: row.id } : null)}
@@ -635,16 +649,17 @@ function MachineSpaces({ note, listSpaces, spaces, action }: { note: string; lis
   );
 }
 
-function BackLink({ inline }: { inline?: boolean }) {
+function BackLink({ inline, parent }: { inline?: boolean; parent?: { id: string; name: string } | null }) {
   return (
     <Link
-      to="/spaces"
+      {...(parent ? { to: "/spaces/$spaceId" as const, params: { spaceId: parent.id } } : { to: "/spaces" as const })}
+      data-back-to={parent ? parent.id : "spaces"}
       className={cn(
         "-ml-1 inline-flex h-6 shrink-0 items-center gap-0.5 rounded-md pr-1.5 text-xs text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60",
         inline ? "mr-1" : "mb-4",
       )}
     >
-      <ChevronLeftIcon className="size-3.5" /> Spaces
+      <ChevronLeftIcon className="size-3.5" /> {parent ? parent.name : "Spaces"}
     </Link>
   );
 }

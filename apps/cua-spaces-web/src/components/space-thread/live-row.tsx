@@ -18,6 +18,7 @@ import { useEffect, useRef } from "react";
 import type { LiveAgent } from "@/bridge";
 
 import { MemberAvatar } from "./avatar";
+import { LiveChildren } from "./child-rows";
 import type { Roster } from "./roster";
 import { ThreadText } from "./thread-view";
 
@@ -45,19 +46,28 @@ function Dots() {
 }
 
 /** "Working for 1m 05s", ticking once a second by writing its text directly (no render per tick). */
-export function WorkingFor({ sinceMs, now = Date.now }: { sinceMs: number | undefined; now?: () => number }) {
+export function WorkingFor({
+  sinceMs,
+  now = Date.now,
+  label = "Working for",
+}: {
+  sinceMs: number | undefined;
+  now?: () => number;
+  /** The words before the time ("Working for 12s", "Running 12s" for a subagent). */
+  label?: string;
+}) {
   const ref = useRef<HTMLSpanElement | null>(null);
   // Without the daemon's clock, from when this row first showed.
   const from = useRef(sinceMs ?? now());
   useEffect(() => {
     const start = sinceMs ?? from.current;
     const write = () => {
-      if (ref.current) ref.current.textContent = `Working for ${elapsedText(now() - start)}`;
+      if (ref.current) ref.current.textContent = `${label} ${elapsedText(now() - start)}`;
     };
     write();
     const t = setInterval(write, 1000);
     return () => clearInterval(t);
-  }, [sinceMs, now]);
+  }, [sinceMs, now, label]);
   return <span ref={ref} data-live-elapsed="" className="tabular-nums" />;
 }
 
@@ -90,6 +100,7 @@ export function LiveRows({ live, roster }: { live: readonly LiveAgent[]; roster:
                 <Dots /> <WorkingFor sinceMs={a.sinceMs} />
               </p>
             </div>
+            <LiveChildren children={a.children ?? []} />
           </div>
         );
       })}

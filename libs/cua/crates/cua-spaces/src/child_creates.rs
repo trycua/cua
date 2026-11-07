@@ -51,6 +51,9 @@ pub struct Entry {
     /// The step in plain words ("Cloning the disk"); empty before the first.
     #[serde(default)]
     pub phase: String,
+    /// The step as the SDK names it (`pulling`, `booting`, ...), for apps that word it themselves.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub code: String,
     /// How far through the step, 0 to 100, when it is known.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub percent: Option<u8>,
@@ -63,6 +66,9 @@ pub struct Entry {
     pub started_ms: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ended_ms: Option<u64>,
+    /// The person removed its row from the list (Remove from list): apps do not draw it again.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub hidden: bool,
 }
 
 fn path(home: &Path) -> PathBuf {
@@ -172,11 +178,13 @@ pub fn update(
                 os: os.into(),
                 state: State::Creating,
                 phase: String::new(),
+                code: String::new(),
                 percent: None,
                 space: String::new(),
                 error: String::new(),
                 started_ms: now_ms,
                 ended_ms: None,
+                hidden: false,
             });
             all.len() - 1
         }
@@ -194,6 +202,24 @@ pub fn update(
                 true
             }
         });
+    }
+    let _ = save(home, &all);
+}
+
+/// Every create the apps show as a row (the ones nobody removed from the list), oldest first.
+pub fn visible(home: &Path) -> Vec<Entry> {
+    load(home).into_iter().filter(|e| !e.hidden).collect()
+}
+
+/// Hides the finished create `key` that started at `started_ms` (the person removed its row).
+pub fn hide(home: &Path, key: &str, started_ms: u64) {
+    let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let mut all = load(home);
+    for e in all
+        .iter_mut()
+        .filter(|e| e.key == key && e.started_ms == started_ms)
+    {
+        e.hidden = true;
     }
     let _ = save(home, &all);
 }
@@ -274,6 +300,16 @@ mod tests {
         let e = &of(d.path(), "p")[0];
         assert_eq!(e.state, State::Failed);
         assert!(e.error.contains("restarted"));
+    }
+
+    #[test]
+    fn a_removed_row_is_not_shown_again_but_the_thread_still_has_it() {
+        let d = tempfile::tempdir().unwrap();
+        update(d.path(), "p", "a", "a", "", 7, |e| e.state = State::Failed);
+        assert_eq!(visible(d.path()).len(), 1);
+        hide(d.path(), "a", 7);
+        assert!(visible(d.path()).is_empty());
+        assert_eq!(of(d.path(), "p").len(), 1);
     }
 
     #[test]

@@ -788,7 +788,59 @@ impl Persistent {
         }
     }
 
+    /// An agent's own request nobody answered for [`approval_ttl`] is closed as not allowed, with a
+    /// note in the thread, and the agent is told so it can report what it could not do. Its turn
+    /// ended while it waited, so nothing else would wake it.
+    fn expire_approvals(&self, rec: &AgentRecord, store: &ThreadStore) -> Result<()> {
+        let fold = store.fold()?;
+        let now = cua_volume::now_ms();
+        let ttl = approval_ttl().as_millis() as u64;
+        for (seq, answered) in &fold.approvals {
+            if *answered || fold.join_requests.contains_key(seq) {
+                continue;
+            }
+            let Some(e) = store.get(*seq)? else { continue };
+            if e.author.agent_name() != Some(rec.name.as_str())
+                || crate::thread::grants::kind(&e) == "push"
+                || now.saturating_sub(e.ts_ms) < ttl
+            {
+                continue;
+            }
+            let Some(a) = &e.approval else { continue };
+            let what = if a.details.trim().is_empty() {
+                a.action.clone()
+            } else {
+                a.details.trim().to_string()
+            };
+            let mut ans = Draft::new(Author::system("approval"), EntryKind::Answer, String::new());
+            ans.reply_to = Some(*seq);
+            ans.answer = Some(Answer {
+                approval: *seq,
+                approve: false,
+                note: "No one answered in time, so nothing was done".into(),
+                scope: None,
+                client_id: Some(format!("expired:{seq}")),
+            });
+            ans.client_id = Some(format!("expired:{seq}"));
+            let mut tell = Draft::new(
+                Author::system("approval"),
+                EntryKind::Message,
+                expired_text(&rec.name, &what),
+            );
+            tell.mentions = vec![rec.name.clone()];
+            tell.reply_to = Some(*seq);
+            tell.task = Some(TaskTo {
+                to: rec.name.clone(),
+                session: None,
+            });
+            tell.client_id = Some(format!("expired-tell:{seq}"));
+            store.append_many(vec![ans, tell])?;
+        }
+        Ok(())
+    }
+
     async fn dispatch_member(&self, rec: &AgentRecord, store: &ThreadStore) -> Result<Vec<u64>> {
+        self.expire_approvals(rec, store)?;
         // A claim nobody renewed (its session is gone or unreachable): the
         // task goes back to the queue, and the session lets go of it.
         let requeued = store.requeue_expired(&rec.name, &[], !rec.paused)?;
@@ -2792,6 +2844,24 @@ pub(crate) enum Delivered {
 /// row already showed it.
 pub(crate) fn start_note(restart: bool, agent: &str, task_text: &str) -> Option<String> {
     restart.then(|| restarted_text(agent, task_text))
+}
+
+/// How long an agent's request may wait for a person's answer.
+pub(crate) fn approval_ttl() -> std::time::Duration {
+    std::env::var("CUA_APPROVAL_TTL_SECS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .map_or(
+            std::time::Duration::from_secs(30 * 60),
+            std::time::Duration::from_secs,
+        )
+}
+
+/// What an agent is told when nobody answered its request in time.
+pub(crate) fn expired_text(agent: &str, what: &str) -> String {
+    format!(
+        "Nobody answered your request in time: {what}. Nothing was done. Tell the person plainly what you could not do, {agent}, and ask again only if it still matters."
+    )
 }
 
 /// What an agent is told when the person answered its request: allowed means go on, declined means

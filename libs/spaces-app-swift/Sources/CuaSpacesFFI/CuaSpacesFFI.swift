@@ -78144,6 +78144,31 @@ fileprivate struct FfiConverterSequenceTypeAppChecklistStep: FfiConverterRustBuf
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeAppCreateAction: FfiConverterRustBuffer {
+    typealias SwiftType = [AppCreateAction]
+
+    public static func write(_ value: [AppCreateAction], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeAppCreateAction.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [AppCreateAction] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [AppCreateAction]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeAppCreateAction.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeAppDeviceAction: FfiConverterRustBuffer {
     typealias SwiftType = [AppDeviceAction]
 
@@ -78637,6 +78662,38 @@ public func appAckShareRemovals(accountToken: String)async throws   {
             liftFunc: { $0 },
             errorHandler: FfiConverterTypeCuaError_lift
         )
+}
+/**
+ * Whether the pending row `id` is a create an agent asked for (Cancel and Remove act on the host's record).
+ */
+public func appAgentCreateIsAgents(id: String) -> Bool  {
+    return try!  FfiConverterBool.lift(try! rustCall() {
+    uniffi_cua_spaces_ffi_fn_func_app_agent_create_is_agents(
+        FfiConverterString.lower(id),$0
+    )
+})
+}
+/**
+ * The person removed an agent's failed create from the list: it is not drawn again.
+ */
+public func appAgentCreateRemove(pendingId: String)  {try! rustCall() {
+    uniffi_cua_spaces_ffi_fn_func_app_agent_create_remove(
+        FfiConverterString.lower(pendingId),$0
+    )
+}
+}
+/**
+ * The actions that make the pending rows show the Spaces agents asked this
+ * computer to make (read from this computer's cua home, which the daemon writes):
+ * run each through `app_creates_reduce` on every list refresh.
+ */
+public func appAgentCreatesActions(state: AppCreatesState, nowMs: Int64) -> [AppCreateAction]  {
+    return try!  FfiConverterSequenceTypeAppCreateAction.lift(try! rustCall() {
+    uniffi_cua_spaces_ffi_fn_func_app_agent_creates_actions(
+        FfiConverterTypeAppCreatesState_lower(state),
+        FfiConverterInt64.lower(nowMs),$0
+    )
+})
 }
 /**
  * The add or replace sheet.
@@ -82340,6 +82397,15 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_func_app_ack_share_removals() != 16071) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_spaces_ffi_checksum_func_app_agent_create_is_agents() != 22242) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_spaces_ffi_checksum_func_app_agent_create_remove() != 26467) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_spaces_ffi_checksum_func_app_agent_creates_actions() != 65187) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_func_app_agent_key_form() != 42778) {

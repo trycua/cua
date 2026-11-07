@@ -67,6 +67,50 @@ pub fn app_creates_reduce(state: AppCreatesState, action: AppCreateAction) -> Ap
     core::spaces::creating::reduce(&state, &action)
 }
 
+/// The actions that make the pending rows show the Spaces agents asked this
+/// computer to make (read from this computer's cua home, which the daemon writes):
+/// run each through `app_creates_reduce` on every list refresh.
+#[uniffi::export]
+pub fn app_agent_creates_actions(state: AppCreatesState, now_ms: i64) -> Vec<AppCreateAction> {
+    let creates: Vec<core::spaces::creating::AgentCreate> =
+        cua_spaces::child_creates::visible(&cua_home::cua_home())
+            .into_iter()
+            .map(|e| core::spaces::creating::AgentCreate {
+                key: e.key,
+                name: e.name,
+                os: e.os,
+                state: match e.state {
+                    cua_spaces::child_creates::State::Creating => "creating",
+                    cua_spaces::child_creates::State::Ready => "ready",
+                    cua_spaces::child_creates::State::Failed => "failed",
+                }
+                .into(),
+                phase: e.code,
+                percent: e.percent,
+                space: e.space,
+                error: e.error,
+                started_ms: e.started_ms,
+            })
+            .collect();
+    core::spaces::creating::agent_actions(&state, &creates, now_ms)
+}
+
+/// The person removed an agent's failed create from the list: it is not drawn again.
+#[uniffi::export]
+pub fn app_agent_create_remove(pending_id: String) {
+    for e in cua_spaces::child_creates::visible(&cua_home::cua_home()) {
+        if core::spaces::creating::agent_pending_id(&e.key, e.started_ms) == pending_id {
+            cua_spaces::child_creates::hide(&cua_home::cua_home(), &e.key, e.started_ms);
+        }
+    }
+}
+
+/// Whether the pending row `id` is a create an agent asked for (Cancel and Remove act on the host's record).
+#[uniffi::export]
+pub fn app_agent_create_is_agents(id: String) -> bool {
+    core::spaces::creating::is_agent_pending(&id)
+}
+
 /// The registry's Spaces plus a row per Space being created.
 #[uniffi::export]
 pub fn app_creates_compose(spaces: Vec<AppSpace>, state: AppCreatesState) -> Vec<AppSpace> {

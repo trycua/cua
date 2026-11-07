@@ -4,7 +4,7 @@
 import * as Clipboard from "expo-clipboard";
 import { useRouter } from "expo-router";
 import { useEffect, useState } from "react";
-import { runningFor } from "./running";
+import { childPageId, runningFor } from "./running";
 import { Pressable, View } from "react-native";
 import Animated, { FadeIn } from "react-native-reanimated";
 
@@ -234,7 +234,7 @@ export function ChildSpaceRow({ space }: { space: Extract<ChildNote, { kind: "ch
         : `Ready${took ? ` in ${took}` : ""}`;
   return (
     <Pressable
-      onPress={() => router.push({ pathname: "/space/[id]", params: { id: space.space } })}
+      onPress={() => router.push({ pathname: "/space/[id]", params: { id: childPageId(space) } })}
       style={{ marginLeft: 38, marginRight: 16, marginTop: 6, flexDirection: "row", gap: 8 }}
       testID={`child-space-${space.space}`}
       accessibilityRole="link"

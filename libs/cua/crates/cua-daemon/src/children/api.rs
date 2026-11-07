@@ -514,6 +514,7 @@ impl Tracked {
             if !words.is_empty() {
                 e.phase = words;
             }
+            e.code = p.phase.clone();
             e.percent = p.fraction.map(|f| (f.clamp(0.0, 1.0) * 100.0) as u8);
             if !p.space.is_empty() {
                 e.space = p.space.clone();

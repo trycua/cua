@@ -79,6 +79,12 @@ const OS_KEY = (os: string) => (os === "macOS" ? "macos" : os === "Windows" ? "w
  * Space (its OS logo and name), a muted line for where it is ("Cloning the disk", "Ready in 1m 04s",
  * "Failed: ..."). The whole row opens the child's page, which exists from the moment the create starts.
  */
+/** The page a child row opens: the Space once it exists, else its being-made row (the same page a New Space has). */
+export function childPageId(space: { space: string; key?: string; state?: string }): string {
+  if (space.state === "ready" || !space.key) return space.space;
+  return `pending:agent-${space.key.replace(/:(\d+)$/, "-$1")}`;
+}
+
 export function ChildSpaceRow({ item }: { item: Extract<ThreadItem, { type: "child_space" }> }) {
   const { space } = item;
   const state = space.state ?? "ready";
@@ -104,7 +110,7 @@ export function ChildSpaceRow({ item }: { item: Extract<ThreadItem, { type: "chi
     );
   return (
     <div data-child-space={space.space} data-child-space-state={state} className="ml-10 py-1">
-      <Link to="/spaces/$spaceId" params={{ spaceId: space.space }} className="flex min-w-0 items-start gap-2.5 rounded-lg hover:bg-muted/40" aria-label={`Open ${space.name}`}>
+      <Link to="/spaces/$spaceId" params={{ spaceId: childPageId(space) }} className="flex min-w-0 items-start gap-2.5 rounded-lg hover:bg-muted/40" aria-label={`Open ${space.name}`}>
         <span className="mt-[5px] flex size-3.5 shrink-0 items-center justify-center">
           <ChildMark state={mark} />
         </span>

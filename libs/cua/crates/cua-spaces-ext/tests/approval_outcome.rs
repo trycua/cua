@@ -360,3 +360,42 @@ async fn a_space_the_host_makes_shows_its_steps_then_ready_or_the_plain_failure_
         .collect();
     assert_eq!(mac_keys.len(), 1);
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_request_nobody_answers_in_time_is_closed_and_the_agent_is_told() {
+    // SAFETY: set before any tick of this test runs; the other tests here have no open request.
+    unsafe { std::env::set_var("CUA_APPROVAL_TTL_SECS", "0") };
+    let mut fx = setup().await;
+    let p = member(&mut fx, 1).await;
+    let out = bridge_call(
+        &fx,
+        &p,
+        1,
+        "thread_post",
+        json!({"text": "May I?", "approval": {"action": "ability:spaces.create", "details": "Create a macOS child Space named macos-child"}}),
+    )
+    .await;
+    let posted: Value =
+        serde_json::from_str(out["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
+    let seq = posted["entry"]["seq"].as_u64().unwrap();
+    Box::pin(p.tick()).await;
+    Box::pin(p.tick()).await;
+    let all = entries(&fx).await;
+    let closed: Vec<_> = all
+        .iter()
+        .filter(|e| e["kind"] == "answer" && e["answer"]["approval"] == seq)
+        .collect();
+    assert_eq!(closed.len(), 1, "closed once, not per tick: {all:?}");
+    assert_eq!(closed[0]["answer"]["approve"], false);
+    let t = woke(&all);
+    assert_eq!(t.len(), 1, "{all:?}");
+    let text = t[0]["text"].as_str().unwrap();
+    assert!(
+        text.starts_with(
+            "Nobody answered your request in time: Create a macOS child Space named macos-child."
+        ),
+        "{text}"
+    );
+    assert!(text.contains("Nothing was done"));
+    unsafe { std::env::remove_var("CUA_APPROVAL_TTL_SECS") };
+}

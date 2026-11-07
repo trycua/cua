@@ -30,7 +30,7 @@ fn background_window_sources_delegate_without_space_queries_or_refiltering() {
     assert!(rows.contains(".filter_map(describe_window)"));
     for body in [gate, rows] {
         assert!(!body.contains("windows("));
-        assert!(!body.contains("space"));
+        assert!(!body.to_lowercase().contains("space"));
     }
 
     let detector = include_str!("../../platform-macos/src/window_change_detector.rs");

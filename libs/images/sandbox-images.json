@@ -67,7 +67,7 @@
       "distro": { "id": "ubuntu", "name": "Ubuntu 24.04" },
       "tier": "slim",
       "variant": "container",
-      "summary": "The minimal Linux desktop: cua-spacesd and Chromium, no dev tooling. What CI and benchmarks run.",
+      "summary": "The minimal Linux desktop: cua-spacesd, the cua CLI and Chromium, no dev tooling. What CI and benchmarks run, and the home of an agent that makes child Spaces.",
       "spacesd": true,
       "digest": "sha256:3bb6e503da0a90dd38cd88d664308f45f7af4661fe89f81e758c3927b6efb156",
       "sizes": {
@@ -93,7 +93,7 @@
       "distro": { "id": "ubuntu", "name": "Ubuntu 24.04" },
       "tier": "slim",
       "variant": "vm",
-      "summary": "The minimal Linux desktop as a full VM.",
+      "summary": "The minimal Linux desktop, with the cua CLI, as a full VM.",
       "spacesd": true,
       "digest": "sha256:3bdeff2c03f2d345c404a7e8090142f80ad8d3ccf56fe345ac095dd3e42046c4",
       "sizes": {
@@ -331,36 +331,6 @@
       "local": "qemu",
       "cloud": "kubevirt",
       "published": true
-    },
-    {
-      "ref": "ghcr.io/trycua/agent-home:24.04",
-      "group": "distro",
-      "os": "linux",
-      "name": "Agent home",
-      "distro": { "id": "ubuntu", "name": "Ubuntu 24.04" },
-      "variant": "container",
-      "summary": "The slim Linux image plus the cua CLI: a home an agent makes child Spaces from.",
-      "spacesd": true,
-      "browsers": ["chromium"],
-      "arch": ["amd64", "arm64"],
-      "local": "container",
-      "cloud": "gvisor",
-      "published": false
-    },
-    {
-      "ref": "ghcr.io/trycua/agent-home:24.04-disk",
-      "group": "distro",
-      "os": "linux",
-      "name": "Agent home VM",
-      "distro": { "id": "ubuntu", "name": "Ubuntu 24.04" },
-      "variant": "vm",
-      "summary": "The same agent home as a full VM.",
-      "spacesd": true,
-      "browsers": ["chromium"],
-      "arch": ["amd64", "arm64"],
-      "local": "qemu",
-      "cloud": "kubevirt",
-      "published": false
     },
     {
       "ref": "ghcr.io/trycua/bench-web:1.0",

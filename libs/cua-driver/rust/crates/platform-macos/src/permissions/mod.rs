@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! macOS TCC permission checks + first-launch CLI gate.
 //!
 //! Two layers:

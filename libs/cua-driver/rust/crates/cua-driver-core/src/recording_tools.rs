@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Platform-independent recording / replay tools.
 //!
 //! Registered on all platforms via `ToolRegistry::register_recording_tools()`.
@@ -20,7 +23,7 @@ use serde_json::{json, Value};
 
 use crate::{
     protocol::ToolResult,
-    recording::{RecordingSession, RecordingState},
+    recording::{RecordingSession, RecordingState, StopBy},
     tool::{Tool, ToolDef, ToolRegistry},
 };
 
@@ -78,6 +81,9 @@ impl Tool for StartRecordingTool {
                 state walk; their state is classified `not_applicable` / \
                 `action_refused_before_dispatch`. Pass `include_accessibility_tree: \
                 false` to record screenshots and actions without state.\n\n\
+                Pass `redact_values` with any secret the session will type (for \
+                example a password): each occurrence in a turn's text files is \
+                replaced with `[redacted]`, and such turns are not replayed.\n\n\
                 Turn folders are named `turn-00001/`, `turn-00002/`, etc.  Turn \
                 numbering restarts at 1 each time recording is (re-)started.\n\n\
                 **Video is off by default.** Pass `record_video: true` to also \
@@ -149,6 +155,18 @@ impl Tool for StartRecordingTool {
                             click markers and action.json are still recorded and state \
                             is classified `state_capture_disabled`."
                     },
+                    "redact_values": {
+                        "type": "array",
+                        "items": { "type": "string", "minLength": 1 },
+                        "minItems": 1,
+                        "maxItems": REDACT_VALUES_MAX,
+                        "description": "Secret values, such as passwords or tokens, that must \
+                            never be written to the recording. Every occurrence in a turn's \
+                            action.json and state files is replaced with `[redacted]`, and the \
+                            turn is marked `redacted: true` so replay_trajectory skips it. \
+                            The values are held in memory only, never written, and cleared \
+                            when recording stops. Screenshots and video are not altered."
+                    },
                     "session": {
                         "type": "string",
                         "description": "For multi-call work, prefer a short public session label \
@@ -183,11 +201,17 @@ impl Tool for StartRecordingTool {
             }
         });
 
-        match self.session.start_with_state_budget(
+        let redactions = match parse_redact_values(args.get("redact_values")) {
+            Ok(redactions) => redactions,
+            Err(message) => return ToolResult::error(message),
+        };
+
+        match self.session.start_with_redactions(
             output_dir.as_deref().unwrap(),
             record_video,
             owner.as_deref(),
             state_budget,
+            redactions,
         ) {
             Ok(()) => {
                 let state = self.session.current_state();
@@ -265,10 +289,9 @@ impl Tool for StopRecordingTool {
     }
 
     async fn invoke(&self, _args: Value) -> ToolResult {
-        // Manual stop is unconditional — `None` requester tears down whatever
-        // recording is active. Session-scoped teardown is driven by the
-        // registry-owned session-end hook, which calls `stop_owner(sid)`.
-        match self.session.stop_owner(None) {
+        // Manual stop tears down whatever recording is live. Session-scoped
+        // teardown is the registry-owned session-end hook's `StopBy::Owner`.
+        match self.session.stop(StopBy::Anyone) {
             Ok(()) => {
                 let state = self.session.current_state();
                 let video_note = state
@@ -572,6 +595,36 @@ fn recording_state_json(state: &RecordingState) -> Value {
     })
 }
 
+/// Upper bound on `start_recording`'s `redact_values` list.
+const REDACT_VALUES_MAX: usize = 64;
+
+/// Never echoes a value back: error messages name only the position.
+fn parse_redact_values(value: Option<&Value>) -> Result<crate::recording::Redactions, String> {
+    let Some(value) = value.filter(|value| !value.is_null()) else {
+        return Ok(crate::recording::Redactions::default());
+    };
+    let items = value
+        .as_array()
+        .ok_or_else(|| "`redact_values` must be an array of strings.".to_owned())?;
+    if items.len() > REDACT_VALUES_MAX {
+        return Err(format!(
+            "`redact_values` accepts at most {REDACT_VALUES_MAX} values."
+        ));
+    }
+    let mut values = Vec::with_capacity(items.len());
+    for (index, item) in items.iter().enumerate() {
+        match item.as_str() {
+            Some(text) if !text.is_empty() => values.push(text.to_owned()),
+            _ => {
+                return Err(format!(
+                    "`redact_values[{index}]` must be a non-empty string."
+                ))
+            }
+        }
+    }
+    Ok(crate::recording::Redactions::new(values))
+}
+
 fn parse_action_json(path: &std::path::Path) -> anyhow::Result<(String, Value)> {
     if !path.exists() {
         anyhow::bail!("Missing action.json");
@@ -583,6 +636,14 @@ fn parse_action_json(path: &std::path::Path) -> anyhow::Result<(String, Value)> 
         .and_then(|v| v.as_str())
         .ok_or_else(|| anyhow::anyhow!("action.json missing 'tool' string field"))?
         .to_owned();
+    // A turn whose arguments lost a secret value would replay the placeholder
+    // (for example typing "[redacted]"), so it is refused instead.
+    if obj.get("redacted").and_then(Value::as_bool) == Some(true) {
+        anyhow::bail!(
+            "turn arguments were redacted when recorded (start_recording redact_values); \
+             it cannot be replayed as recorded"
+        );
+    }
     let tool_args = obj
         .get("arguments")
         .cloned()
@@ -715,7 +776,60 @@ mod tests {
                 expected,
                 "{args}"
             );
-            session.stop_owner(None).unwrap();
+            session.stop(StopBy::Anyone).unwrap();
+        }
+    }
+
+    #[test]
+    fn replay_refuses_redacted_turns() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("action.json");
+        std::fs::write(
+            &path,
+            r#"{"tool":"type_text","arguments":{"text":"[redacted]"},"redacted":true}"#,
+        )
+        .unwrap();
+        let error = parse_action_json(&path).unwrap_err().to_string();
+        assert!(error.contains("redacted"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn start_recording_validates_redact_values_without_echoing_them() {
+        let session = Arc::new(RecordingSession::new());
+        let tool = StartRecordingTool::new(session.clone());
+        let schema = &tool.def().input_schema["properties"]["redact_values"];
+        assert_eq!(schema["type"], "array");
+        let directory = tempfile::tempdir().unwrap();
+        let dir = directory.path().to_str().unwrap();
+
+        for bad in [
+            json!("hunter2-Secret"),
+            json!(["hunter2-Secret", ""]),
+            json!([7]),
+        ] {
+            let result = tool
+                .invoke(json!({"output_dir": dir, "redact_values": bad}))
+                .await;
+            assert_eq!(result.is_error, Some(true), "{bad}");
+            let text = serde_json::to_string(&result.content).unwrap();
+            assert!(!text.contains("hunter2-Secret"), "{text}");
+            assert!(!session.current_state().enabled);
+        }
+
+        let result = tool
+            .invoke(json!({"output_dir": dir, "redact_values": ["hunter2-Secret"]}))
+            .await;
+        assert_ne!(result.is_error, Some(true));
+        let text = serde_json::to_string(&result.content).unwrap()
+            + &serde_json::to_string(&result.structured_content).unwrap_or_default();
+        assert!(!text.contains("hunter2-Secret"), "{text}");
+        session.stop(StopBy::Anyone).unwrap();
+        for entry in std::fs::read_dir(directory.path()).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_file() {
+                let bytes = std::fs::read_to_string(&path).unwrap_or_default();
+                assert!(!bytes.contains("hunter2-Secret"), "{}", path.display());
+            }
         }
     }
 }

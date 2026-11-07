@@ -10,6 +10,7 @@ import { OtherMachineBlock, useThisAndOthers } from "@/components/agents/other-m
 import { HarnessMark } from "@/components/agents/harness-mark";
 import { KeySheet } from "@/components/agents/key-sheet";
 import { SettingsGroup, SettingsRow } from "@/components/settings-group";
+import { AgentMenuGroup } from "@/components/settings/connections/agent-menu-group";
 import { ConfirmDialog } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogDescription, DialogPopup, DialogTitle } from "@/components/ui/dialog";
@@ -116,6 +117,7 @@ export function ConnectorsRedesign({ focusApp }: { focusApp?: string }) {
           {all ? "Show fewer" : "Show all"} {all ? <ChevronUpIcon className="size-3.5" /> : <ChevronDownIcon className="size-3.5" />}
         </GroupedAction>
       </SettingsGroup>
+      <AgentMenuGroup c={c} />
       {all ? (
         <SettingsGroup title="Background computer use">
           <Suspense fallback={<div className="h-48" />}>

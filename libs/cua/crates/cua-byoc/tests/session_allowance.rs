@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-//! Spaces in your own cloud count against your plan's live sessions (a
+//! Spaces in your own cloud count against your plan's computers in use at once (a
 //! Space on a pool host is reached through the relay). A Free-plan account
 //! with no session left asks for a Space in its cloud: it is refused with
 //! the plan's numbers and the upgrade path, and no cloud machine is bought.
@@ -115,7 +115,7 @@ async fn a_free_plan_with_no_session_left_buys_no_cloud_machine() {
     assert_eq!(e.tag(), "limit_exceeded", "{e}");
     let m = e.to_string();
     assert!(
-        m.contains("Your plan allows 2 live sessions (2 in use)"),
+        m.contains("Your plan allows 2 computers in use at once (2 in use now)"),
         "{m}"
     );
     assert!(m.contains("needs 1"), "{m}");

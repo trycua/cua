@@ -15,7 +15,7 @@ import { MainWindow } from "./MainWindow";
 import { createFakeCloudBridge, type CloudBridge } from '../../native/cloud';
 
 /** A Space created unnamed: the name the wizard generated and showed. */
-const GENERATED = /space-[0-9a-f]{10}/;
+const GENERATED = /(?<![\w-])[a-z]{3,}-[a-z]{3,}(?![\w-])/;
 
 const ROWS: SpaceRow[] = [
   { id: "relay:aurora", name: "aurora", provider: "relay", spacesdVersion: "0.4.0", features: [], os: "linux", reachable: true },
@@ -110,7 +110,7 @@ describe("MainWindow", () => {
         on: "local",
         kind: "vm",
         runtime: "auto",
-        name: expect.stringMatching(/^space-[0-9a-f]{10}$/),
+        name: expect.stringMatching(/^[a-z]+-[a-z]+$/),
         cpus: 2,
         memoryMb: 4096,
         spacesd: true,
@@ -130,19 +130,15 @@ describe("MainWindow", () => {
     expect(within(dialog).queryByRole("combobox", { name: "Run on" })).toBeNull();
   });
 
-  it("runs on this Mac, offers no cloud with Your cloud turned off, never Cua Cloud", async () => {
-    window.localStorage.setItem("cua.settings.experiments", JSON.stringify({ yourCloud: false }));
+  it("runs on this Mac, offers a cloud to add, never Cua Cloud", async () => {
     setup();
     fireEvent.click(await screen.findByRole("button", { name: "New Space" }));
     const dialog = await screen.findByRole("dialog", { name: "New Space" });
-    expect(within(within(dialog).getByRole("combobox", { name: "Run on" })).getAllByRole("option").map((o) => o.textContent)).toEqual(["This Mac"]);
-    expect(within(dialog).queryByRole("option", { name: /Add your cloud account/ })).toBeNull();
+    expect(within(within(dialog).getByRole("combobox", { name: "Run on" })).getAllByRole("option").map((o) => o.textContent)).toEqual(["This Mac", "Add your cloud account…"]);
     expect(within(dialog).queryByText(/Cua Cloud/)).toBeNull();
-    window.localStorage.removeItem("cua.settings.experiments");
   });
 
   it("connects a cloud from the wizard, tests it, then creates there", async () => {
-    // Your cloud is on by default (Settings, Experiments).
     const cloud = createFakeCloudBridge();
     const { createSpace } = setup({}, true, cloud);
     fireEvent.click(await screen.findByRole("button", { name: "New Space" }));

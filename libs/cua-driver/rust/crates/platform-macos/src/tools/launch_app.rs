@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use async_trait::async_trait;
 use cua_driver_core::{
     protocol::ToolResult,
@@ -92,6 +95,7 @@ impl Tool for LaunchAppTool {
         crate::window_change_detector::note_intentional_activation();
         let bundle_id = args.opt_str("bundle_id");
         let name = args.opt_str("name");
+        let mut located = None;
         let mut response_bundle_id = bundle_id.clone();
         let response_requested_name = name.clone();
         let urls: Vec<String> = args
@@ -138,22 +142,19 @@ impl Tool for LaunchAppTool {
                     serde_json::json!({ "bundle_id": bid }),
                 );
             }
-        } else if let Some(ref n) = name {
-            let Some(locator) = crate::apps::locate_by_name(n) else {
-                return structured_launch_error(
-                    "APP_NOT_INSTALLED",
-                    format!("No installed macOS app found for name '{n}'."),
-                    serde_json::json!({ "name": n }),
-                );
+        } else if let Some(n) = name.as_deref() {
+            let locator = match crate::apps::locate_by_name(n) {
+                Ok(locator) => locator,
+                Err(miss) => return name_miss_refusal(n, &miss),
             };
-            let (_, resolved_bundle_id) = locator.app_ref_and_bundle_id();
-            response_bundle_id = resolved_bundle_id.clone();
-            if resolved_bundle_id
+            response_bundle_id = locator.bundle_id();
+            if response_bundle_id
                 .as_deref()
                 .is_some_and(is_cua_driver_bundle_id)
             {
                 return protected_host_launch_refusal();
             }
+            located = Some(locator);
         }
         if let Some(err) = preflight_file_urls(&urls) {
             return err;
@@ -247,16 +248,16 @@ impl Tool for LaunchAppTool {
                     )?
                 }
             } else {
-                let n = name.as_deref().unwrap();
+                let located = located.expect("a name resolves before launch");
                 if urls.is_empty()
                     && additional_arguments.is_empty()
                     && env.is_empty()
                     && !creates_new_instance
                 {
-                    crate::apps::launch_app_by_name(n)?
+                    crate::apps::launch_located(located)?
                 } else {
-                    crate::apps::launch_with_urls_by_name(
-                        n,
+                    crate::apps::launch_with_urls_located(
+                        located,
                         &urls,
                         &additional_arguments,
                         &env,
@@ -535,6 +536,20 @@ fn rank_launch_windows(windows: &mut [crate::windows::WindowInfo]) {
     windows.sort_by_key(|window| std::cmp::Reverse(!window.title.trim().is_empty()));
 }
 
+/// A name that resolves to no app is `APP_NOT_INSTALLED`, one that fits
+/// several equally well `APP_NAME_AMBIGUOUS`; both carry the closest names.
+fn name_miss_refusal(name: &str, miss: &cua_driver_core::app_names::NameMiss) -> ToolResult {
+    structured_launch_error(
+        if miss.ambiguous {
+            "APP_NAME_AMBIGUOUS"
+        } else {
+            "APP_NOT_INSTALLED"
+        },
+        crate::apps::name_miss_message(name, miss),
+        serde_json::json!({ "name": name, "suggestions": miss.suggestions }),
+    )
+}
+
 fn structured_launch_error(code: &str, message: String, details: serde_json::Value) -> ToolResult {
     let mut payload = serde_json::json!({
         "error": code,
@@ -717,12 +732,43 @@ fn hex_value(byte: u8) -> Option<u8> {
 #[cfg(test)]
 mod tests {
     use super::{
-        is_cua_driver_bundle_id, local_file_target, normalize_launch_url, preflight_file_urls,
-        rank_launch_windows, response_identity, structured_launch_failure, LaunchAppTool,
+        is_cua_driver_bundle_id, local_file_target, name_miss_refusal, normalize_launch_url,
+        preflight_file_urls, rank_launch_windows, response_identity, structured_launch_failure,
+        LaunchAppTool,
     };
+    use cua_driver_core::app_names::NameMiss;
     use cua_driver_core::tool::Tool;
     use serde_json::json;
     use std::path::PathBuf;
+
+    #[test]
+    fn a_name_two_apps_answer_to_is_refused_with_both() {
+        let result = name_miss_refusal(
+            "Adobe InDesign",
+            &NameMiss {
+                ambiguous: true,
+                suggestions: vec!["Adobe InDesign 2025".into(), "Adobe InDesign 2026".into()],
+            },
+        );
+        assert_eq!(result.is_error, Some(true));
+        let structured = result.structured_content.expect("structured error");
+        assert_eq!(structured["error"], "APP_NAME_AMBIGUOUS");
+        assert_eq!(
+            structured["suggestions"],
+            json!(["Adobe InDesign 2025", "Adobe InDesign 2026"])
+        );
+
+        let result = name_miss_refusal(
+            "note",
+            &NameMiss {
+                ambiguous: false,
+                suggestions: vec!["Keynote".into()],
+            },
+        );
+        let structured = result.structured_content.expect("structured error");
+        assert_eq!(structured["error"], "APP_NOT_INSTALLED");
+        assert_eq!(structured["suggestions"], json!(["Keynote"]));
+    }
 
     fn window(window_id: u32, title: &str, width: f64, height: f64) -> crate::windows::WindowInfo {
         crate::windows::WindowInfo {

@@ -29,7 +29,14 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  quick:
+    name: quick
+    if: github.event_name == 'pull_request'
+    uses: ./.github/workflows/ci-quick.yml
+
   resolve:
+    needs: quick
+    if: ${{ !failure() && !cancelled() }}
     name: Find a run with live artifacts
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -55,6 +62,7 @@ jobs:
   windows:
     name: Windows x64 install, launch, uninstall
     needs: resolve
+    if: ${{ !failure() && !cancelled() && needs.resolve.result == 'success' }}
     runs-on: windows-latest
     env:
       RUN_ID: ${{ needs.resolve.outputs.run_id }}
@@ -148,6 +156,7 @@ jobs:
   linux:
     name: Linux x64 deb and AppImage
     needs: resolve
+    if: ${{ !failure() && !cancelled() && needs.resolve.result == 'success' }}
     runs-on: ubuntu-latest
     env:
       RUN_ID: ${{ needs.resolve.outputs.run_id }}
@@ -225,3 +234,20 @@ jobs:
           name: gh-linux
           path: out
           if-no-files-found: warn
+
+  # A smoke run where the real test jobs were skipped must not pass green.
+  verify:
+    name: Smoke jobs ran
+    needs: [resolve, windows, linux]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - env:
+          RESULTS: ${{ needs.resolve.result }} ${{ needs.windows.result }} ${{ needs.linux.result }}
+        run: |
+          echo "resolve windows linux: $RESULTS"
+          if [ "$RESULTS" != "success success success" ]; then
+            echo "::error::the install smoke did not fully run: $RESULTS"
+            exit 1
+          fi

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! get_accessibility_tree — lightweight desktop snapshot: running apps + visible windows.
 //!
 //! This is the fast, no-TCC-grant discovery tool. For the full per-window AX subtree

@@ -1674,7 +1674,7 @@
         "cpusText": "4 cores",
         "disk": null,
         "fields": [
-          "name: Name [space-000000002a]",
+          "name: Name [dapper-mole]",
           "open-when-ready: Open when ready"
         ],
         "gpu": null,
@@ -1727,7 +1727,7 @@
         "cpusText": "4 cores",
         "disk": null,
         "fields": [
-          "name: Name [space-000000002a] !Lowercase letters, digits and dashes",
+          "name: Name [dapper-mole] !Lowercase letters, digits and dashes",
           "open-when-ready: Open when ready"
         ],
         "gpu": null,
@@ -1780,7 +1780,7 @@
         "cpusText": "4 cores",
         "disk": null,
         "fields": [
-          "name: Name [space-000000002a] !Lowercase letters, digits and dashes",
+          "name: Name [dapper-mole] !Lowercase letters, digits and dashes",
           "open-when-ready: Open when ready"
         ],
         "gpu": null,
@@ -1833,7 +1833,7 @@
         "cpusText": "4 cores",
         "disk": null,
         "fields": [
-          "name: Name [space-000000002a]",
+          "name: Name [dapper-mole]",
           "open-when-ready: Open when ready"
         ],
         "gpu": null,
@@ -1886,7 +1886,7 @@
         "cpusText": "4 cores",
         "disk": null,
         "fields": [
-          "name: Name [space-000000002a]",
+          "name: Name [dapper-mole]",
           "open-when-ready: Open when ready"
         ],
         "gpu": null,
@@ -1989,7 +1989,7 @@
         "cpusText": "4 cores",
         "disk": null,
         "fields": [
-          "name: Name [space-000000002a]",
+          "name: Name [dapper-mole]",
           "open-when-ready: Open when ready"
         ],
         "gpu": null,

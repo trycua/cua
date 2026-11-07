@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 /// One announced ei_device::Region — a single monitor's pixel rectangle
 /// inside the seat's logical coordinate space. Multi-monitor sessions
 /// announce one Region per output; we route each absolute (x, y) to the

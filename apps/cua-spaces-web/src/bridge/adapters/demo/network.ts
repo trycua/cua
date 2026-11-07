@@ -46,6 +46,20 @@ export function demoNetworkSpaceRows(now: number): SpaceRow[] {
   ];
 }
 
+/** The agent's Home Space and the two Spaces it made for "test acme/app" (`?demo=agent-home`, CUA-2630). */
+export function demoAgentHomeRows(now: number): SpaceRow[] {
+  const mac: SpaceRow = {
+    ...linux("local:acme-app-build", "acme-app-build", now, 2),
+    os: "macos",
+    osName: "macOS",
+    osPrettyName: "macOS Tahoe 26.0",
+    image: "macos-tahoe",
+    kind: "vm",
+    power: "suspend",
+  };
+  return [{ ...linux("local:agent-home-demo", "Home", now, 6), image: "linux-slim" }, linux("local:acme-app-db", "acme-app-db", now, 3), mac];
+}
+
 const internet = (extra: Partial<SpaceNetwork> = {}): SpaceNetwork => ({ preset: "internet", allow: [], deny: [], enforced: true, ...extra });
 
 const MEMBERS = ["research-swarm", "swarm-worker-1", "swarm-worker-2"];
@@ -130,14 +144,14 @@ export function createDemoNetwork({ now, flags }: { now: () => number; flags: Se
       const s = security.get(spaceId);
       if (!s) return;
       const self = spaceNameOf(spaceId);
-      security.set(spaceId, { ...s, network: { ...network, inheritedFrom: undefined }, topology: demoTopology(self, network.via, false, network.preset === "localhost", remote) });
+      security.set(spaceId, { ...s, network: { ...network, inheritedFrom: undefined }, topology: demoTopology(self, network.via, false, (network.preset === "localhost" || network.preset === "localhost+lan"), remote) });
       // Children follow a parent's change (its exit too).
       for (const [id, child] of security) {
         if (child.parent?.id === spaceId) {
           security.set(id, {
             ...child,
             network: { ...network, inheritedFrom: s.parent ? undefined : self },
-            topology: demoTopology(spaceNameOf(id), network.via, false, network.preset === "localhost", remote),
+            topology: demoTopology(spaceNameOf(id), network.via, false, (network.preset === "localhost" || network.preset === "localhost+lan"), remote),
           });
         }
       }

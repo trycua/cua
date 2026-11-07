@@ -122,9 +122,7 @@ Started, ⌘⇧Space and the app's notifications (a Space that came up: its page
 a machine asking to be added: Machines; an agent: Agents). A Space's
 desktop opens in its own native window (video stays native).
 
-There is no native main window and no switch back: the "Use classic UI"
-setting is gone. An install that had it on (`AppSettings.new_ui` false) opens
-the web UI like every other one (`settings::resolve_new_ui` is always on).
+There is no native main window and no switch back.
 
 - Release: `scripts/build-app.sh` copies the web build (`apps/cua-spaces-web/dist`,
   or `CUA_WEBUI_DIST`) to `Contents/Resources/WebUI`, served at
@@ -389,6 +387,18 @@ the app is signed ad hoc and macOS asks for Screen Recording and Accessibility
 again after every rebuild; the script says so, and clears the stale rows for the
 Local bundle id only. `--require-stable-signing` stops instead of signing ad hoc.
 
+The certificate lives in a Keychain the script owns,
+`~/Library/Keychains/cua-spaces-local-signing.keychain-db`, with an empty password
+(it only signs development builds of Cua Spaces Local on this Mac), so a locked
+login Keychain, SSH or a VM does not stop it and nothing is asked to unlock it. The
+script writes nothing to your login Keychain and leaves the search list alone; it
+keeps using a stable local certificate that is already in the login Keychain, or the
+`cua-driver-signing` Keychain of Cua Driver's local install, so permissions already
+granted survive. `CUA_LOCAL_SIGNING_OWN_KEYCHAIN=0` turns the owned Keychain off. When
+nothing works the app is signed ad hoc and the script says why in one line, with the
+command to run (`--setup-signing` for the one-time trust prompt, or
+`security unlock-keychain ...` when an SSH session left the Keychain locked).
+
 On a new Keychain the certificate is created but codesign cannot use it until
 macOS trusts it for code signing, its Keychain is in your search list and
 codesign may use its key. The script checks that with a real signing. When it
@@ -538,8 +548,17 @@ the menu bar icon's up-arrow badge and Settings read the one `UpdatesModel`
 install" or "Restart to update" under it. Usage telemetry records `found`,
 `not_found`, `downloaded`, `installed` and `failed`.
 
-Channels: an `X.Y.Z-suffix` release is a `beta` item, which only apps set to
-"Update to: Beta" (`AppSettings.updateChannel`) are offered.
+Channels (Settings, Advanced, Updates; `AppSettings.updateChannel`): Stable
+reads `SUFeedURL`, the appcast on the rolling `cua-spaces-latest` release.
+Nightly reads the nightly appcast on the rolling `cua-spaces-nightly` release
+(`feedURLString(for:)`, built by `nightly-cua-spaces.yml` from main every
+night) and installs only its `nightly` items. There are no betas any more:
+the settings file still stores Nightly as `beta`, so a release from before
+Nightly reads the file instead of starting over, and every build reads `beta`
+as Nightly. A prerelease's first launch starts on Nightly. Back on Stable, a
+nightly build stays until the next stable release passes it; Settings offers
+"Download Stable" to go back now. About shows a nightly's build day
+("Version 0.21.0-nightly.20261105.42+55e1f5d, built 5 Nov 2026").
 
 After an update, the first launch (the settings file's `lastSeenVersion`
 changed) runs the bundled `cua agents update` (skill folders and MCP entries
@@ -548,6 +567,10 @@ running daemon when its executable is inside this bundle, with one notice
 only if either failed.
 
 ### Release versions
+
+There are no betas: pre-release builds are the Nightly channel
+(`nightly-cua-spaces.yml`, its own `cua-spaces-nightly` release and feeds;
+see [docs/contributing/releasing-cua-spaces.md](../../docs/contributing/releasing-cua-spaces.md)).
 
 Release Please drives the `cua-spaces` component from this directory: a
 releasable conventional commit (`fix:`, `feat:`) that touches

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Supplemental native Hyprland foreground safety regression.
 //!
 //! Requires the exact-candidate Driver/plugin, GTK3/PyGObject, hyprctl, and a

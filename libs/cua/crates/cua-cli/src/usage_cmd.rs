@@ -68,7 +68,7 @@ fn print(u: &RelayUsage, out: &mut dyn Write) {
     line(
         out,
         format!(
-            "Live sessions: {}",
+            "Computers in use: {}",
             of(
                 u.live_sessions.to_string(),
                 u.live_sessions_limit.map(|l| l.to_string())
@@ -164,7 +164,7 @@ fn print(u: &RelayUsage, out: &mut dyn Write) {
         line(
             out,
             format!(
-                "Your Spaces keep working. New live sessions wait until there is room.{upgrade}"
+                "Your Spaces keep working. Connecting to more computers waits until there is room.{upgrade}"
             ),
         );
     }
@@ -218,7 +218,7 @@ mod tests {
         relay.set_usage(Some(usage.clone()));
         let t = text(&relay, false).await;
         assert!(t.contains("Plan: free (2026-10)"), "{t}");
-        assert!(t.contains("Live sessions: 1 of 2"), "{t}");
+        assert!(t.contains("Computers in use: 1 of 2"), "{t}");
         assert!(t.contains("Remote hours: 6.5 of 20 this month"), "{t}");
         assert!(!t.contains("Team pool") && !t.contains("reached"), "{t}");
 
@@ -255,7 +255,7 @@ mod tests {
         })));
         let t = text(&relay, false).await;
         assert!(
-            t.contains("You're using 5 of 5 live sessions on Pro. Close one or upgrade to Teams. Upgrade: https://app.cua.ai/buy/teams"),
+            t.contains("You have 5 of 5 computers in use at once on Pro. Close one or upgrade to Teams. Upgrade: https://app.cua.ai/buy/teams"),
             "{t}"
         );
         assert!(!t.contains("remote hours this month on"), "{t}");
@@ -264,11 +264,12 @@ mod tests {
     #[test]
     fn a_refused_session_error_carries_the_sentence_and_the_upgrade_link() {
         let e = crate::host::host_err(cua_host::Error::PlanLimit(
-            "You're using 5 of 5 live sessions on Pro. Close one or upgrade to Teams.".into(),
+            "You have 5 of 5 computers in use at once on Pro. Close one or upgrade to Teams."
+                .into(),
         ));
         let m = e.to_string();
         assert!(
-            m.contains("You're using 5 of 5 live sessions on Pro. Close one or upgrade to Teams. Upgrade: https://"),
+            m.contains("You have 5 of 5 computers in use at once on Pro. Close one or upgrade to Teams. Upgrade: https://"),
             "{m}"
         );
         // The link says the CLI showed it.

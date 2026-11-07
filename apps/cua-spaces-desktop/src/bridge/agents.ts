@@ -80,6 +80,10 @@ export function agentsMethods({ model }: BridgeContext): Handlers {
         branch: optionalString(args, "branch"),
         model: optionalString(args, "model"),
         envFromHost: env,
+        // A continued chat (CUA-3319): the agent's own session, in its own folder.
+        cwd: optionalString(args, "cwd"),
+        resumeSession: optionalString(args, "resumeSession"),
+        resumeContext: optionalString(args, "resumeContext"),
       });
     },
     "agents.message": async (args) => {

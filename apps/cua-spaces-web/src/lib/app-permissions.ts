@@ -1,0 +1,127 @@
+// SPDX-License-Identifier: FSL-1.1-MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
+/**
+ * The words for Cua Spaces' two permissions, the same wherever they show
+ * (the first run's step, its next steps, the Cua Driver page, This Mac).
+ * Each names the app System Settings lists ("Cua Spaces Local" for the
+ * Local build, which has its own grants), so nobody turns on the wrong one.
+ */
+
+import type { DriverPermission } from "@/bridge/ops/driver";
+
+export interface PermissionWords {
+  title: string;
+  sub: string;
+}
+
+export function permissionWords(id: DriverPermission["id"], appName: string): PermissionWords {
+  return id === "screen"
+    ? { title: "See the screen", sub: `Screen Recording, given to ${appName}` }
+    : { title: "Use the mouse and keyboard", sub: `Accessibility, given to ${appName}` };
+}
+
+/** What Allow does, under the rows. */
+export function allowHint(appName: string): string {
+  return `Allow opens System Settings. Turn on ${appName} there, then come back.`;
+}
+
+/** Under the Cua Driver page's rows: one set of permissions, no second app. */
+export function driverUsesAppPermissions(appName: string): string {
+  return `Cua Driver uses the permissions you give ${appName}. It never asks for its own.`;
+}
+
+/** The first run's permissions step. */
+export interface PermissionsStepView {
+  title: string;
+  line: string;
+  /** Under the rows. */
+  note: string;
+  /** The button: Continue once both are on, else Later (the step never blocks the run). */
+  primary: { label: "Continue" | "Later"; white: boolean };
+}
+
+export function permissionsStepView(input: { appName: string; allGranted: boolean }): PermissionsStepView {
+  return {
+    title: `Let ${input.appName} see and use apps`,
+    line: `This lets your agents work in the apps on this Mac, in the background. Cua Driver uses these same permissions, so there's no second app to allow.`,
+    note: input.allGranted ? "Both are on." : `${allowHint(input.appName)} You can also do this later on the Cua Driver page.`,
+    primary: input.allGranted ? { label: "Continue", white: true } : { label: "Later", white: false },
+  };
+}
+
+/** What the first run's "Ready" waits for: Cua Driver running, with both permissions. */
+export type DriverReadiness = "ready" | "permissions" | "starting" | "driver";
+
+/**
+ * Whether the coding apps can really use Cua Driver yet. A host with no
+ * permissions to give or no driver (Windows, Linux, an older app) has
+ * nothing to wait for. A driver the person paused is their choice.
+ */
+export function driverReadiness(input: { permissions: { available: boolean; allGranted: boolean }; driver: { state: string } | null }): DriverReadiness {
+  if (!input.driver || !input.permissions.available) return "ready";
+  if (!input.permissions.allGranted) return "permissions";
+  switch (input.driver.state) {
+    case "ready":
+    case "paused":
+      return "ready";
+    case "starting":
+      return "starting";
+    // A switch the driver hasn't noticed yet: the host restarts it once both are on.
+    case "needs-permission":
+      return "starting";
+    default:
+      return "driver";
+  }
+}
+
+/** The words under "Almost ready" while something is missing. */
+export function readinessLede(readiness: Exclude<DriverReadiness, "ready">, appName: string, problem: string | null): string {
+  switch (readiness) {
+    case "permissions":
+      return `One more step: turn on two switches for ${appName}, so Cua Driver can see and use apps. Allow opens System Settings.`;
+    case "starting":
+      return "Cua Driver is starting. This takes a few seconds.";
+    case "driver":
+      return `${problem ?? "Cua Driver isn't running."} Repair starts it again.`;
+  }
+}
+
+export interface RepairOutcome {
+  /** `ok`: working. `permission`: a switch is off, so open its guide. `failed`: show why. */
+  kind: "ok" | "permission" | "failed";
+  title: string;
+  /** The plain reason and the one next step. */
+  description?: string;
+  /** The pane to open for `permission`. */
+  settingsUrl?: string | null;
+}
+
+/** What Repair and Set up tell the person once they have run, from the status they leave. */
+export function repairOutcome(after: {
+  state: string;
+  appName?: string | null;
+  permissions: { id: "screen" | "accessibility"; granted: boolean; settingsUrl: string | null }[];
+  lastError: string | null;
+  lastTest: { passed: boolean; failure: string | null } | null;
+}): RepairOutcome {
+  const app = after.appName ?? "Cua Spaces";
+  const missing = after.permissions.find((p) => !p.granted);
+  if (missing) {
+    const words = permissionWords(missing.id, app);
+    return {
+      kind: "permission",
+      title: "One switch is still off",
+      description: `${words.title} is off. In System Settings, turn on ${app}, then come back.`,
+      settingsUrl: missing.settingsUrl,
+    };
+  }
+  if (after.state === "ready" && (!after.lastTest || after.lastTest.passed)) {
+    return { kind: "ok", title: "Cua Driver is ready", description: "Start a new Claude Code or Codex session to use it." };
+  }
+  if (after.state === "paused") {
+    return { kind: "failed", title: "Cua Driver is off", description: "Agents can't use apps on this Mac. Turn on Let agents use apps, then Repair." };
+  }
+  const reason = after.lastError ?? after.lastTest?.failure ?? "Cua Driver isn't answering.";
+  return { kind: "failed", title: "Cua Driver still isn't working", description: `${reason.replace(/\.$/, "")}. Quit and reopen ${app}, then try Repair again.` };
+}

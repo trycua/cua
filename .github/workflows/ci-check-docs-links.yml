@@ -156,13 +156,17 @@ jobs:
       - name: Skip links to paths not released to trycua/cua yet
         run: scripts/ci/lychee-ignore-unreleased.sh >> .lycheeignore
 
+      # 500 and 502-504 are accepted: a transient upstream error (ai.google.dev
+      # returned 500 after lychee's retries) says nothing about the link. 4xx,
+      # 501, 505+ (including Cloudflare's 52x origin-down codes) and connection
+      # failures still fail the check.
       - name: Check external links
         uses: lycheeverse/lychee-action@e7477775783ea5526144ba13e8db5eec57747ce8 # v2
         with:
           args: >-
             --verbose
             --no-progress
-            --accept 100..=399
+            --accept 100..=399,500,502..=504
             --scheme https
             --scheme http
             --root-dir ${{ github.workspace }}/docs/content/docs

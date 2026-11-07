@@ -38,10 +38,12 @@ import Testing
         "thread_join_code_cancel", "thread_join_code_create", "thread_join_code_list",
         "thread_join_redeem", "thread_post", "thread_read", "thread_reply",
         "thread_settings",
+        // Person-only, and the contract's SDK symbol for both is `callTool`.
+        "agent_threads", "agent_thread_read",
     ]
 
     @Test func testTheContractIsCompleteTools() {
-        XCTAssertEqual(Self.advertisedTools.count, 118)
+        XCTAssertEqual(Self.advertisedTools.count, 121)
         // The Python server's `local_rcdp` is gone; `stream_endpoint` mints a
         // media ticket for any provider, and `send_file` is new.
         XCTAssertFalse(Self.advertisedTools.contains("local_rcdp"))
@@ -106,6 +108,8 @@ import Testing
         // --- The Space's network ---------------------------------------------
         let net = try await space.network()                     // network_show
         XCTAssertEqual(net["settings"]?.objectValue?["preset"]?.stringValue, "internet")
+        let blocked = try await space.networkLog()              // network_log
+        XCTAssertEqual(blocked.first?["reason"]?.stringValue, "platform:metadata")
         let tightened = try await space.setNetwork("none")      // network_set
         XCTAssertEqual(tightened["applied"]?.stringValue, "now")
 

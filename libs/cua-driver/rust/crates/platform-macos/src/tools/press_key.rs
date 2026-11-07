@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use async_trait::async_trait;
 use core_foundation::base::CFRelease;
 use cua_driver_contract::PressKeyInput;
@@ -471,7 +474,11 @@ impl Tool for PressKeyTool {
                                                 pid, target,
                                             )
                                         },
-                                        || crate::input::keyboard::press_key_bare_global(&key, &m),
+                                        || {
+                                            crate::input::keyboard::press_key_bare_global(
+                                                pid, &key, &m,
+                                            )
+                                        },
                                     )
                                 },
                             )

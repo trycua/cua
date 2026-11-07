@@ -62,7 +62,7 @@
 #               every logon (Windows-native equivalent of macOS LaunchAgent).
 #               The task runs with LogonType=Interactive so it lands in
 #               Session 1+ with an attached desktop — required for the
-#               GUI tools (click, type_text, screenshot, get_window_state)
+#               GUI tools (click, type_text, get_window_state, get_desktop_state)
 #               to function. Default off; the post-install message prints
 #               the registration command so you can opt in later. Safe to
 #               re-run: existing task is replaced.
@@ -149,7 +149,7 @@ $ThemeBinaryName = "cua-cursor-theme.exe"
 # where the baked line hasn't been updated yet.
 #
 # ~~~ BAKED_VERSION: auto-updated after release publication — do not edit ~~~
-$Script:CuaDriverRsBakedVersion = "0.38.0" # published-installer-version
+$Script:CuaDriverRsBakedVersion = "0.41.0" # published-installer-version
 # ~~~ END_BAKED_VERSION ~~~
 #
 # Withdrawn releases (for example, a release published without valid
@@ -1398,11 +1398,23 @@ function Assert-ReleaseZipIntegrity([string]$zipPath, [string]$version) {
         $cosign = Get-Command cosign -ErrorAction SilentlyContinue
         if ($cosign) {
             $identity = "https://github.com/$Repo/.github/workflows/cd-rust-cua-driver.yml@refs/tags/$tag"
-            & $cosign verify-blob --bundle $bundlePath `
-                --certificate-identity $identity `
-                --certificate-oidc-issuer $CosignOidcIssuer $zipPath *> $null
-            if ($LASTEXITCODE -ne 0) {
-                Write-ErrorStep "the Sigstore signature of $zipName did not verify for $tag; refusing to install it."
+            $prevEAP = $ErrorActionPreference
+            $ErrorActionPreference = 'Continue'
+            $verified = $false
+            $why = ''
+            try {
+                & $cosign verify-blob --bundle $bundlePath `
+                    --certificate-identity $identity `
+                    --certificate-oidc-issuer $CosignOidcIssuer $zipPath 2>&1 | Out-Null
+                $verified = $LASTEXITCODE -eq 0
+            } catch {
+                # A cosign that cannot start throws instead of setting $LASTEXITCODE.
+                $why = ' (cosign could not start)'
+            } finally {
+                $ErrorActionPreference = $prevEAP
+            }
+            if (-not $verified) {
+                Write-ErrorStep "the Sigstore signature of $zipName did not verify for $tag$why; refusing to install it."
                 exit 1
             }
             Write-Step "verified the Sigstore signature of $zipName"

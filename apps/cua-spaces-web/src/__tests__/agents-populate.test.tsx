@@ -9,6 +9,7 @@
 import { act, cleanup, fireEvent, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import { wasmBuilt } from "@/bridge/__tests__/testCore";
 import { mountApp, stubBrowserApis } from "./app-harness";
 
 afterEach(cleanup);
@@ -31,7 +32,7 @@ const found = (s: string, timeout = 5000) =>
     { timeout },
   );
 
-describe("the Agents page while Spaces are slow", () => {
+describe.skipIf(!wasmBuilt)("the Agents page while Spaces are slow", () => {
   it("draws the Spaces that answered and says it is still checking the one that has not", async () => {
     const t0 = Date.now();
     await mountApp("/agents", {

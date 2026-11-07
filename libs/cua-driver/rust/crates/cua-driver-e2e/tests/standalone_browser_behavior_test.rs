@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Optional standalone Chrome/Edge browser-tool E2E coverage.
 //!
 //! These rows use real installed browsers with a fresh driver-owned profile.

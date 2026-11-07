@@ -19,15 +19,7 @@ CONFIG = json.loads((ROOT / "release-please-config.json").read_text())
 MANIFEST = json.loads((ROOT / ".release-please-manifest.json").read_text())
 WORKFLOWS = ROOT / ".github/workflows"
 ENROLLED = {
-    "libs/python/agent": "agent",
-    "libs/python/core": "core",
     "libs/cua-bench": "bench",
-    "libs/python/bench-ui": "bench-ui",
-    "libs/python/som": "som",
-    "libs/python/cua-sandbox-apps": "sandbox-apps",
-    "libs/typescript/core": "npm-core",
-    "libs/typescript/playground": "npm-playground",
-    "libs/cuabot": "cuabot",
 }
 
 
@@ -44,12 +36,7 @@ def components() -> dict[str, str]:
         ("cua-spaces-v0.8.0", "cua-spaces", ["apps/cua-spaces-macos"], []),
         ("cua-spacesd-v0.5.4", "cua-spacesd", ["libs/cua-spacesd"], None),
         ("sandbox-v0.9.1", "sandbox", ["libs/python/cua-sandbox"], []),
-        ("sandbox-apps-v0.1.3", "sandbox-apps", ["libs/python/cua-sandbox-apps"], []),
         ("bench-v0.3.1", "bench", ["libs/cua-bench"], []),
-        ("bench-ui-v0.7.2", "bench-ui", ["libs/python/bench-ui"], []),
-        ("core-v0.3.3", "core", ["libs/python/core"], []),
-        ("npm-core-v0.1.7", "npm-core", ["libs/typescript/core"], []),
-        ("cuabot-v1.0.17", "cuabot", ["libs/cuabot"], None),
     ],
 )
 def test_stable_tags_resolve_to_exactly_their_release_please_package(tag, component, paths, excludes):
@@ -183,18 +170,17 @@ def test_publish_draft_keeps_the_body_and_never_takes_latest():
 
 
 def test_version_check_catches_a_package_file_that_drifted(tmp_path):
-    (tmp_path / "libs/python/core").mkdir(parents=True)
-    (tmp_path / "libs/python/core/pyproject.toml").write_text('[project]\nname = "cua-core"\nversion = "0.3.3"\n')
-    (tmp_path / "uv.lock").write_text('[[package]]\nname = "cua-core"\nversion = "0.3.2"\n')
-    package = CONFIG["packages"]["libs/python/core"]
+    (tmp_path / "libs/cua-bench").mkdir(parents=True)
+    (tmp_path / "libs/cua-bench/pyproject.toml").write_text('[project]\nname = "cua-bench"\nversion = "0.3.3"\n')
+    (tmp_path / "libs/cua-bench/uv.lock").write_text('[[package]]\nname = "cua-bench"\nversion = "0.3.2"\n')
+    package = CONFIG["packages"]["libs/cua-bench"]
     values = {
-        extra["path"]: validate_release_versions.extra_file_version(tmp_path, "libs/python/core", extra)
+        extra["path"]: validate_release_versions.extra_file_version(tmp_path, "libs/cua-bench", extra)
         for extra in package["extra-files"]
-        if not extra["path"].startswith("/libs/")
     }
-    assert values == {"pyproject.toml": "0.3.3", "/uv.lock": "0.3.2"}
+    assert values == {"pyproject.toml": "0.3.3", "uv.lock": "0.3.2"}
     with pytest.raises(validate_release_versions.VersionError, match="mismatched"):
-        validate_release_versions.require_equal("core", "0.3.3", values)
+        validate_release_versions.require_equal("bench", "0.3.3", values)
 
 
 def test_legacy_baselines_are_exactly_the_enrolled_packages_last_legacy_tags():
@@ -223,9 +209,9 @@ def test_only_a_legacy_baseline_relaxes_the_changelog_citation_check(monkeypatch
 
     original = release_notes.release_attribution.changelog_references_change
     monkeypatch.setattr(release_notes, "_build", fake_build)
-    for previous in ("sandbox-apps-v0.1.2", "sandbox-apps-v0.1.3"):
+    for previous in ("bench-v0.3.0", "bench-v0.3.1"):
         monkeypatch.setattr(release_notes.release_attribution, "find_previous_tag", lambda *_a, p=previous: p)
-        release_notes.render(repo_root=ROOT, repository="trycua/cua", tag="sandbox-apps-v0.1.4",
+        release_notes.render(repo_root=ROOT, repository="trycua/cua", tag="bench-v0.3.2",
                              sha="a" * 40, out_dir=tmp_path, ref=None, github=object())
         assert release_notes.release_attribution.changelog_references_change is original
-    assert seen == {"sandbox-apps-v0.1.2": True, "sandbox-apps-v0.1.3": False}
+    assert seen == {"bench-v0.3.0": True, "bench-v0.3.1": False}

@@ -382,7 +382,7 @@ def test_cua_sdk_subset_names_are_real_jobs_with_the_pull_request_legs():
     assert len(names) == len(set(names))
     assert '--stamp-job "reuse PR results"' in command
     assert wf["jobs"]["reuse"]["name"] == "reuse PR results"
-    assert set(names) <= job_names(wf, expand_os=("ubuntu-latest", "windows-latest"))
+    assert set(names) <= job_names(wf, expand_os=("ubuntu-latest", "macos-26", "windows-latest"))
 
 
 def literals(expr):
@@ -391,7 +391,7 @@ def literals(expr):
 
 MATRIX_JOBS = {
     # job id: legs a pull request runs and which of them are in the reused subset
-    "rust-lint": ["ubuntu-latest", "windows-latest"],
+    "rust-lint": ["ubuntu-latest", "macos-26", "windows-latest"],
     "spaces-e2e": ["ubuntu-latest"],
     "bindings": ["ubuntu-latest"],
     "python": ["ubuntu-latest"],
@@ -406,7 +406,12 @@ def test_cua_sdk_matrix_on_main_is_the_full_matrix_minus_the_pull_request_legs(j
     assert "reuse" in (job["needs"] if isinstance(job["needs"], list) else [job["needs"]])
     main_only, full, pr = literals(job["strategy"]["matrix"]["os"])
     assert pr == MATRIX_JOBS[job_id]
-    assert main_only == [leg for leg in full if leg not in pr]
+    expected_main_only = [leg for leg in full if leg not in pr]
+    if job_id == "rust-lint":
+        # Pull requests now run every lint leg, so nothing is left for main; a matrix
+        # cannot be empty, so main keeps the macOS leg as its backstop.
+        expected_main_only = ["macos-26"]
+    assert main_only == expected_main_only
     # Every dropped leg is one the subset covers, and none is dropped when it is not.
     subset = re.search(r'--subset "pr_subset=([^"]+)"', reuse_run_command(wf)).group(1).split("|")
     prefix = job["name"].split("(")[0].replace("${{ matrix.os }}", "").strip()
@@ -429,6 +434,37 @@ def test_cua_sdk_rust_linux_leg_is_sharded_behind_the_reused_check_name():
     job = wf["jobs"]["rust"]
     assert literals(job["strategy"]["matrix"]["os"]) == [["macos-26", "windows-latest"]]
     assert "ci:full" in job["if"]
+
+
+def test_cua_sdk_rust_tests_are_built_once_and_run_from_the_archive():
+    wf = load("ci-cua-sdk.yml")
+    build, shards = wf["jobs"]["rust-linux-build"], wf["jobs"]["rust-linux"]
+    assert build["needs"] == "reuse" and shards["needs"] == ["reuse", "rust-linux-build"]
+    # Same conditions: the build runs exactly when the shards do.
+    assert build["if"] == shards["if"]
+    build_text, shard_text = str(build["steps"]), str(shards["steps"])
+    assert "cargo nextest archive" in build_text and "rust-linux-tests" in build_text
+    assert "cargo nextest run" in shard_text and "--archive-file" in shard_text and "--workspace-remap" in shard_text
+    # Integration tests bake CARGO_BIN_EXE_* and CARGO_TARGET_TMPDIR in at compile time: the archive must be
+    # unpacked into the build's target directory and target/tmp must exist, or every cua-cli test fails to spawn.
+    assert "--extract-to ." in shard_text and "--extract-overwrite" in shard_text and "mkdir -p target/tmp" in shard_text
+    # The shards never compile the nextest packages again: they only restore the cache.
+    assert "cargo nextest run --locked" not in shard_text
+    assert any(s.get("with", {}).get("save-if") == "false" for s in shards["steps"] if "rust-cache" in str(s.get("uses", "")))
+    assert not any("save-if" in s.get("with", {}) for s in build["steps"] if "rust-cache" in str(s.get("uses", "")))
+
+
+def test_cua_sdk_pool_model_checks_leave_pull_requests_but_run_on_main_and_nightly():
+    text = (ROOT / ".github/workflows/ci-cua-sdk.yml").read_text()
+    wf = load("ci-cua-sdk.yml")
+    assert "schedule" in (wf.get("on") or wf[True])
+    run = next(s["run"] for s in wf["jobs"]["rust-linux"]["steps"] if "cargo nextest run" in s.get("run", ""))
+    # Excluded only on pull requests without `ci:full`; main, the nightly schedule and `ci:full` run them.
+    assert "github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'ci:full')" in run
+    for name in ("pool_protocol_is_safe", "mutation_no_epoch_check_breaks_single_writer", "finding_stale_holder_cancels_current_attempt"):
+        assert f"test(={name})" in run
+        assert f"fn {name}()" in (ROOT / "libs/cua/crates/cua-spaces-cluster/tests/pool_model.rs").read_text()
+    assert "pool_model" in text
 
 
 def test_cua_sdk_jobs_in_the_subset_skip_only_when_it_is_reused():

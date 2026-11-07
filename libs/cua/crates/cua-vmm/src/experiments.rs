@@ -39,6 +39,10 @@ pub enum Gate {
     /// Windows on KVM: Windows Spaces from a Mac coordinator on a Cua-managed
     /// AWS x86 pool host with nested KVM.
     WindowsKvm,
+    /// Warm pools: one prepared Linux Space is kept ready on this computer
+    /// (its coding apps already installed), so the next Create from Home
+    /// claims it instead of making one.
+    WarmPools,
 }
 
 impl Gate {
@@ -51,6 +55,7 @@ impl Gate {
         Gate::TcpShares,
         Gate::Mobile,
         Gate::WindowsKvm,
+        Gate::WarmPools,
     ];
 
     /// The stable name (`secure-spaces`): the file name, the CLI word.
@@ -63,6 +68,7 @@ impl Gate {
             Gate::TcpShares => "tcp-shares",
             Gate::Mobile => "mobile",
             Gate::WindowsKvm => "windows-kvm",
+            Gate::WarmPools => "warm-pools",
         }
     }
 
@@ -76,6 +82,7 @@ impl Gate {
             Gate::TcpShares => "tcp_shares",
             Gate::Mobile => "mobile",
             Gate::WindowsKvm => "windows_kvm",
+            Gate::WarmPools => "warm_pools",
         }
     }
 
@@ -95,6 +102,7 @@ impl Gate {
             Gate::TcpShares => "Public TCP shares",
             Gate::Mobile => "Phone app",
             Gate::WindowsKvm => "Windows on KVM",
+            Gate::WarmPools => "Warm start",
         }
     }
 
@@ -121,6 +129,9 @@ impl Gate {
             }
             Gate::WindowsKvm => {
                 "Windows Spaces from a Mac run on a Cua-managed cloud host with nested virtualization."
+            }
+            Gate::WarmPools => {
+                "Keep one Linux Space ready on this computer, with its coding apps installed, so the next Create from Home starts at once."
             }
         }
     }
@@ -321,5 +332,8 @@ mod tests {
         assert_eq!(Gate::parse("nope"), None);
         assert_eq!(Gate::parse("Mobile"), Some(Gate::Mobile));
         assert_eq!(Gate::Mobile.id(), "mobile");
+        assert_eq!(Gate::parse("warm_pools"), Some(Gate::WarmPools));
+        assert_eq!(Gate::WarmPools.name(), "warm-pools");
+        assert_eq!(Gate::WarmPools.id(), "warm_pools");
     }
 }

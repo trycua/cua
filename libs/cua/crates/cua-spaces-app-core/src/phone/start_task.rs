@@ -632,6 +632,7 @@ mod tests {
                     handle: "claude".into(),
                     harness: "claude-code".into(),
                     label: "Claude Code".into(),
+                    ..Default::default()
                 }],
             }],
             choice: Choice::default(),

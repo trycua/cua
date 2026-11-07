@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Speed curves: how far along the path the cursor is at each moment.
 
 use std::f64::consts::PI;

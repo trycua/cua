@@ -18,6 +18,8 @@
 //   erroring_toggles — opt-in (CUA_APPKIT_ERRORING_TOGGLES=1): two checkboxes
 //                    whose accessibility press raises, so AppKit answers AXPress
 //                    with an AX error; one toggles before raising (#3835)
+//   disabled_control — opt-in (CUA_APPKIT_DISABLED_CONTROL=1): a disabled
+//                    checkbox (disabled_checked=) for enablement reads (#3949)
 //   context_menu   — NSButton + NSMenu (Cut/Copy/Paste → menu_action=)
 //   popup_select   — NSPopUpButton (Design/Research/Finance → popup_value=)
 //   scroll_target  — NSScrollView with a tall body and offset label
@@ -60,6 +62,9 @@ let kErroringTogglesEnv = "CUA_APPKIT_ERRORING_TOGGLES"
 let kActsThenErrorsAID = "chk-acts-then-errors"
 let kErrorsOnlyAID = "chk-errors-only"
 let kErroringTogglesStateAID = "lbl-erroring-toggles"
+let kDisabledControlEnv = "CUA_APPKIT_DISABLED_CONTROL"
+let kDisabledCheckboxAID = "chk-disabled"
+let kDisabledStateAID = "lbl-disabled-state"
 let kSelectionStateAID = "lbl-selection-state"
 let kContextButtonAID = "btn-context"
 let kMenuActionAID = "lbl-menu-action"
@@ -74,6 +79,7 @@ let kExitButtonAID = "btn-exit"
 let kMenuItemTitle = "Harness Test Item"
 let kSecondaryWindowTitle = "CuaTestHarness AppKit Secondary"
 let kSheetWindowTitle = "CuaTestHarness AppKit Sheet"
+let kSheetInputAID = "txt-sheet"
 let kFloatingWindowTitle = "CuaTestHarness AppKit Floating"
 let kTaskStateEnv = "CUA_APPKIT_TASK_STATE"
 let kTaskStateSchema = "cua.appkit_task_state_v1"
@@ -139,6 +145,8 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate, NSTableViewD
     let actsThenErrors = RaisingCheckbox(checkboxWithTitle: "Acts then errors", target: nil, action: nil)
     let errorsOnly = RaisingCheckbox(checkboxWithTitle: "Errors only", target: nil, action: nil)
     let erroringTogglesLabel = NSTextField(labelWithString: "")
+    let disabledCheckbox = NSButton(checkboxWithTitle: "Unavailable option", target: nil, action: nil)
+    let disabledStateLabel = NSTextField(labelWithString: "")
     let selectionItems = ["alpha", "beta", "gamma"]
     let selectionTable = NSTableView()
     let selectionStateLabel = NSTextField(labelWithString: "selection=none")
@@ -426,6 +434,9 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate, NSTableViewD
         if ProcessInfo.processInfo.environment[kErroringTogglesEnv] == "1" {
             addErroringToggles(to: content)
         }
+        if ProcessInfo.processInfo.environment[kDisabledControlEnv] == "1" {
+            addDisabledControl(to: content)
+        }
 
         // No outer scroll-view wrap: the content is sized to fit the window
         // so the only scrollable surface is the inner scroll_target NSScrollView.
@@ -518,6 +529,31 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate, NSTableViewD
     private func recordErroringToggles() {
         erroringTogglesLabel.stringValue =
             "acts_then_errors=\(actsThenErrors.state == .on) errors_only=\(errorsOnly.state == .on)"
+    }
+
+    /// Opt-in disabled checkbox (#3949), appended below Exit like the other
+    /// opt-in controls. The label records the box's state, which must never
+    /// change: a disabled control reads as present but cannot be pressed.
+    private func addDisabledControl(to content: NSStackView) {
+        content.addArrangedSubview(sectionLabel("disabled_control"))
+        disabledCheckbox.setAccessibilityIdentifier(kDisabledCheckboxAID)
+        disabledCheckbox.state = .off
+        disabledCheckbox.target = self
+        disabledCheckbox.action = #selector(onDisabledCheckbox)
+        disabledCheckbox.isEnabled = false
+        disabledStateLabel.setAccessibilityIdentifier(kDisabledStateAID)
+        disabledStateLabel.font = NSFont.monospacedSystemFont(ofSize: 14, weight: .regular)
+        let row = NSStackView()
+        row.orientation = .horizontal
+        row.spacing = 12
+        row.addArrangedSubview(disabledCheckbox)
+        row.addArrangedSubview(disabledStateLabel)
+        content.addArrangedSubview(row)
+        onDisabledCheckbox()
+    }
+
+    @objc private func onDisabledCheckbox() {
+        disabledStateLabel.stringValue = "disabled_checked=\(disabledCheckbox.state == .on)"
     }
 
     /// Benign distractor controls for density mode (#4312): a grid of buttons,
@@ -835,14 +871,28 @@ final class BringToFrontMatrixWindows {
         secondary.contentView = NSTextField(labelWithString: "bring_to_front secondary ordinary window")
         secondary.orderFront(nil)
 
-        if mode == "sheet" {
+        if mode == "sheet" || mode == "sheet-input" {
             let candidate = NSWindow(
                 contentRect: NSRect(x: 0, y: 0, width: 360, height: 160),
                 styleMask: [.titled], backing: .buffered, defer: false)
             candidate.title = kSheetWindowTitle
             candidate.contentView = NSTextField(labelWithString: "modal sheet blocks parent key status")
+            // An editable field, like Finder's Go to Folder path, for keys
+            // addressed to the sheet or to its parent window.
+            var field: NSTextField?
+            if mode == "sheet-input" {
+                let input = NSTextField(frame: NSRect(x: 20, y: 60, width: 320, height: 24))
+                input.setAccessibilityIdentifier(kSheetInputAID)
+                let content = NSView(frame: NSRect(x: 0, y: 0, width: 360, height: 160))
+                content.addSubview(input)
+                candidate.contentView = content
+                field = input
+            }
             sheet = candidate
             parent.beginSheet(candidate)
+            if let field {
+                candidate.makeFirstResponder(field)
+            }
         } else if mode == "floating" {
             let candidate = NSPanel(
                 contentRect: NSRect(x: 180, y: 180, width: 320, height: 140),

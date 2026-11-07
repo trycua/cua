@@ -103,7 +103,7 @@ export const CLI_GROUPS: CliGroup[] = [
     slug: 'computers-and-teams',
     title: 'Computers and teams',
     summary: 'Your computers, unattended access on this computer, teams and your remote use this month',
-    commands: ['machines', 'host', 'devices', 'team', 'usage'],
+    commands: ['host', 'devices', 'team', 'usage'],
   },
   {
     slug: 'sharing-and-networks',

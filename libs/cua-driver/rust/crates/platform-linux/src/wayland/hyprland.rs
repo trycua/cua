@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Read-only Hyprland identity and geometry, adapted from #3052.
 //!
 //! Native IDs are full compositor addresses, never title matches or truncated
@@ -1352,7 +1355,8 @@ mod tests {
     }
 
     // (output mode, scale, logical frame). 1.6666666 is the #4219 laptop.
-    const SCALED_OUTPUTS: [((u32, u32), f64, (u32, u32)); 5] = [
+    type Size = (u32, u32);
+    const SCALED_OUTPUTS: [(Size, f64, Size); 5] = [
         ((1920, 1080), 1.0, (1920, 1080)),
         ((2560, 1600), 1.25, (2048, 1280)),
         ((2880, 1800), 1.5, (1920, 1200)),

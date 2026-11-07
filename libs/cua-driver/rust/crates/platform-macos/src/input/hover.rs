@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Background hover routes that leave the user's real pointer alone.
 //!
 //! AppKit derives hover (tracking areas, tooltips) from the real pointer.

@@ -38,9 +38,11 @@ import { Dialog, DialogPopup, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { toast } from "@/components/ui/toast";
+import { useMachinesLive } from "@/hooks/use-machines-live";
 import { useNewSpace } from "@/hooks/use-new-space";
 import { showDesktop } from "@/lib/hidden-desktops";
 import { machineOs, selectedMachine } from "@/lib/machines";
+import { withRelayStatus } from "@/lib/machines-relay-status";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/machines/")({
@@ -91,8 +93,10 @@ function MachinesPage() {
   const { data: machines = [], isLoading, error, view: fullView, checkHealth, remove } = useMachines();
   const { account, pending, now } = useMachinesAccount();
   const actions = usePendingActions();
+  // The list re-reads every 30 s, and a computer the relay calls offline shows offline (and can be removed) at once, as in the tree.
+  const { relayOnline } = useMachinesLive(true);
   // A machine waiting to be added is in the top group, not in the list below.
-  const view = useMemo(() => (fullView ? withoutPending(fullView, pending) : fullView), [fullView, pending]);
+  const view = useMemo(() => (fullView ? withRelayStatus(withoutPending(fullView, pending), machines, relayOnline) : fullView), [fullView, pending, machines, relayOnline]);
   // Each machine's issues come from its own daemon: asked on opening the
   // page and every minute while it stays open.
   useEffect(() => {
@@ -106,9 +110,17 @@ function MachinesPage() {
   const { add, join, relay } = Route.useSearch();
   const navigate = Route.useNavigate();
   const [adding, setAddingState] = useState(add === true || join !== undefined);
+  // "Use a code from another computer" (This Mac's setup refused for want of
+  // proof): the sheet opens on "Enter a code".
+  const [enterCode, setEnterCode] = useState(false);
   const setAdding = (open: boolean) => {
     setAddingState(open);
+    if (!open) setEnterCode(false);
     if (!open && (add || join)) void navigate({ search: {}, replace: true });
+  };
+  const openEnterCode = () => {
+    setEnterCode(true);
+    setAddingState(true);
   };
   useEffect(() => {
     if (add || join) setAddingState(true);
@@ -178,14 +190,14 @@ function MachinesPage() {
             ) : pendingPage ? (
               <PendingDetail key={pendingPage.id} machine={pendingPage} now={now} busy={actions.busy === pendingPage.id} onAdd={() => actions.add(pendingPage)} onNotMe={() => actions.notMe(pendingPage)} />
             ) : selected ? (
-              <MachineDetail key={selected.id} machine={selected} row={row(selected.id)} onRemoved={() => setSelectedId(null)} />
+              <MachineDetail key={selected.id} machine={selected} row={row(selected.id)} onRemoved={() => setSelectedId(null)} onUseCode={openEnterCode} />
             ) : null}
           </div>
         </div>
       )}
       <EnrollSheet />
       {actions.notMeDialog((machine) => remove(machine, null))}
-      <AddComputerSheet open={adding} onOpenChange={setAdding} initialView={join !== undefined ? "enter" : "pick"} initialCode={join ?? ""} initialRelay={relay ?? null} />
+      <AddComputerSheet open={adding} onOpenChange={setAdding} initialView={join !== undefined || enterCode ? "enter" : "pick"} initialCode={join ?? ""} initialRelay={relay ?? null} />
     </Page>
   );
 }
@@ -445,7 +457,7 @@ function MachineRow({
       hidden={hidden}
       aria-selected={selected}
       data-machine-id={m.id}
-      data-online={(row?.online ?? m.online) ? "true" : "false"}
+      data-online={m.online ? "true" : "false"}
       data-not-sharing={row?.notSharing ? "true" : undefined}
       onClick={onSelect}
       onKeyDown={(e) => {
@@ -460,6 +472,7 @@ function MachineRow({
       )}
     >
       <StatusDot online={m.online} health={m.health} />
+      <span className="sr-only">{m.online ? "Online" : "Offline"}</span>
       <span className="min-w-0 flex-1">
         <span className="flex items-center gap-1.5">
           <span className="truncate text-[13px] font-medium">{m.name}</span>
@@ -476,7 +489,7 @@ function MachineRow({
 
 /* ---- A machine's page --------------------------------------------------------------- */
 
-function MachineDetail({ machine: m, row, onRemoved }: { machine: MachinesViewMachine; row: Machine | undefined; onRemoved: () => void }) {
+function MachineDetail({ machine: m, row, onRemoved, onUseCode }: { machine: MachinesViewMachine; row: Machine | undefined; onRemoved: () => void; onUseCode?: () => void }) {
   const { data: session } = useSession();
   const { account, now, devices } = useMachinesAccount();
   const host = useThisMachine(session?.identity ?? null);
@@ -521,7 +534,7 @@ function MachineDetail({ machine: m, row, onRemoved }: { machine: MachinesViewMa
   if (m.current && host.formView) {
   return (
       <section aria-label={`${m.name} details`} className="min-w-0">
-        <ThisMachineExtras panel={row?.panel ?? null} progress={row?.hostProgress} />
+        <ThisMachineExtras panel={row?.panel ?? null} progress={row?.hostProgress} onUseCode={onUseCode} />
       </section>
     );
   }
@@ -591,7 +604,7 @@ function MachineDetail({ machine: m, row, onRemoved }: { machine: MachinesViewMa
         ) : null}
       </div>
 
-      {m.current ? <ThisMachineExtras panel={row?.panel ?? null} progress={row?.hostProgress} part="alerts" /> : null}
+      {m.current ? <ThisMachineExtras panel={row?.panel ?? null} progress={row?.hostProgress} part="alerts" onUseCode={onUseCode} /> : null}
 
       {m.spacesTitle ? (
         <>

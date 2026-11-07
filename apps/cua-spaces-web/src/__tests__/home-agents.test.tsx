@@ -14,8 +14,8 @@ import { wasmBuilt } from "@/bridge/__tests__/testCore";
 import { resetWakeNotes } from "@/components/space-thread/summon";
 import { resetConnectedAppsState } from "@/hooks/use-connected-apps";
 import { resetConnectState } from "@/hooks/use-connectors";
-import { addAskTask, resetAskTasks } from "@/lib/ask-first";
-import { mountApp, stubBrowserApis } from "./app-harness";
+import { addAskTask, askTasks, resetAskTasks } from "@/lib/ask-first";
+import { mountApp, pickNewLinux, stubBrowserApis } from "./app-harness";
 
 stubBrowserApis();
 beforeEach(() => {
@@ -43,8 +43,24 @@ const found = (s: string, timeout = 8000) =>
     { timeout },
   );
 
+/** Types `text` in the Space's composer and sends it. */
+async function compose(text: string) {
+  const box = await waitFor(() => {
+    const el = q("[data-composer]") as HTMLTextAreaElement | null;
+    expect(el?.disabled).toBe(false);
+    return el!;
+  });
+  fireEvent.change(box, { target: { value: text, selectionStart: text.length } });
+  await act(async () => {
+    fireEvent.keyDown(box, { key: "Enter" });
+    await new Promise((r) => setTimeout(r, 20));
+  });
+}
+
 async function start(job: string) {
-  fireEvent.change(await screen.findByLabelText("What do you want to do?"), { target: { value: job } });
+  await screen.findByLabelText("What should it do?");
+  await pickNewLinux();
+  fireEvent.change(screen.getByLabelText("What should it do?"), { target: { value: job } });
   await act(async () => {
     fireEvent.click(screen.getByRole("button", { name: "Start" }));
   });
@@ -61,14 +77,32 @@ describe.skipIf(!wasmBuilt)("Your agents and the Agents page: one list", () => {
     const onAgents = await found("[data-chat-run][data-chat-tone='creating']");
     expect(onAgents.textContent).toContain("fix the build");
     expect(onAgents.querySelector("[data-chat-line]")?.textContent).toMatch(/^Waiting for .+ to be ready$/);
-    const total = qa("[data-agent-list] [data-chat]").length;
-    // …and Home counts the same list.
+    // The list fills in as the host answers: wait for it to be whole (the demo's other agents and this run).
+    await waitFor(() => expect(qa("[data-agent-list] [data-chat]").length).toBeGreaterThan(1));
+    // …and Home counts the same list: its count is the Agents page's own, once both have settled.
     await act(async () => void router.navigate({ to: "/home" }));
-    expect((await found("[data-home-see-all='/agents']")).textContent?.trim()).toBe(`See all ${total}`);
+    await waitFor(async () => {
+      const shown = q("[data-home-see-all='/agents']")?.textContent?.trim();
+      expect(shown).toMatch(/^See all \d+$/);
+      await act(async () => void router.navigate({ to: "/agents" }));
+      const total = await waitFor(() => {
+        const n = qa("[data-agent-list] [data-chat]").length;
+        expect(n).toBeGreaterThan(1);
+        return n;
+      });
+      await act(async () => void router.navigate({ to: "/home" }));
+      expect(shown).toBe(`See all ${total}`);
+    }, { timeout: 15000 });
     await act(async () => void router.navigate({ to: "/agents" }));
     release();
 
-    // Ready, and Claude Code isn't connected: both say so, with Connect.
+    // Ready. Claude Code isn't connected (the box could not pick it: no model of Anthropic's is connected),
+    // so a message to it from the Space's composer says so: both lists say so, with Connect.
+    await waitFor(() => expect(askTasks()[0]!.spaceId).toBeTruthy(), { timeout: 15000 });
+    await act(async () => void router.navigate({ to: "/spaces/$spaceId", params: { spaceId: askTasks()[0]!.spaceId! } }));
+    await compose("@claude fix the build");
+    await found("[data-call-layout] [data-wake-note=claude]", 15000);
+    await act(async () => void router.navigate({ to: "/agents" }));
     const nc = await found("[data-chat-run][data-chat-tone='not-connected']", 15000);
     expect(nc.querySelector("[data-chat-line]")?.textContent).toBe("Claude Code isn't connected yet");
     expect(nc.querySelector("[data-chat-action='connect']")).not.toBeNull();
@@ -92,7 +126,7 @@ describe.skipIf(!wasmBuilt)("Your agents and the Agents page: one list", () => {
     fireEvent.click(await found("a[href='/home']"));
     await found("[data-home-agents]");
     await found("[data-home-spaces]");
-    const order = qa("[data-ask-first-home] section, [data-ask-first-home] [aria-label='What do you want to do?']").map((el) => el.getAttribute("data-home-agents") !== null ? "agents" : el.getAttribute("data-home-spaces") !== null ? "spaces" : "composer");
+    const order = qa("[data-ask-first-home] section, [data-ask-first-home] [aria-label='What should it do?']").map((el) => el.getAttribute("data-home-agents") !== null ? "agents" : el.getAttribute("data-home-spaces") !== null ? "spaces" : "composer");
     expect(order.indexOf("composer")).toBeLessThan(order.indexOf("agents"));
     expect(order.indexOf("agents")).toBeLessThan(order.indexOf("spaces"));
     expect(q("[data-home-see-all='/agents']")?.textContent?.trim()).toMatch(/^See all \d+$/);
@@ -100,9 +134,9 @@ describe.skipIf(!wasmBuilt)("Your agents and the Agents page: one list", () => {
     expect(q("[data-home-spaces] h2")?.textContent).not.toMatch(/\bon\b/);
     // The Spaces page's tiles.
     expect(qa("[data-home-spaces] [data-space-id]").length).toBeGreaterThan(0);
-    // The composer: the agent as the thread's mention, where as a Space.
-    expect(q("[data-ask-mention]")?.textContent).toBe("@claude");
-    expect(q("[data-ask-where]")?.textContent).toBe("New SpaceLinux on This Mac");
+    // The composer: the agent and its account (the demo has an OpenAI key saved), and This Mac, already in the account.
+    expect(q("[data-ask-agent]")?.textContent).toBe("OpenAI Codex");
+    await waitFor(() => expect(q("[data-ask-where]")?.textContent).toBe("This Mac"));
   });
 
   it("a task whose Space is gone leaves nothing to list: Home is the welcome, not a bare box", async () => {

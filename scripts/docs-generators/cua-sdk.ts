@@ -605,9 +605,9 @@ export const PAGES: PageSpec[] = [
     title: 'Relay registration',
     description: 'Register a Space with the relay so other devices reach it, and unregister it.',
     intro:
-      '`Spaces.relay_register` makes a Space reachable from your other devices through the relay; `Spaces.relay_unregister` stops that.',
+      '`Spaces.relay_register` makes a Space reachable from your other devices through the relay; `Spaces.relay_unregister` stops that. `Spaces.relay_unregister_computer` takes one of your computers off the relay: its Spaces stay on it, detached, unless `delete_spaces` deletes them first.',
     items: ['SpaceRelayRegistration'],
-    members: [{ object: 'Spaces', title: 'Relay registration', methods: ['relay_register', 'relay_unregister'] }],
+    members: [{ object: 'Spaces', title: 'Relay registration', methods: ['relay_register', 'relay_unregister', 'relay_unregister_computer'] }],
   },
   {
     slug: 'spaces/elastic',
@@ -915,6 +915,15 @@ export const PAGES: PageSpec[] = [
     intro:
       '`auth.devices(relay_url, name)` returns this device on the relay, its key in the session\'s credential store (shared with the `cua` CLI and daemon). A device lists and reaches the account\'s machines once enrolled: right after a fresh sign-in (a sign-in through `Auth.begin_login` re-registers a device that already has a key), or by a one-time code approved from an enrolled device (`cua devices approve`). A new key of the same machine replaces its old record. Enrollment lasts 30 days, then one approval or a fresh sign-in re-verifies it. Nothing here prompts; gate `approve` behind presence in your UI.',
     items: ['Devices', 'DevicesSnapshot', 'RelayDevice', 'RelayAuditEvent', 'DeviceEnrollment'],
+  },
+  {
+    slug: 'spaces/default-space',
+    title: 'Default Space',
+    description: "The account's default Space, the order to try when it is offline, and where a new task runs now.",
+    intro:
+      'The relay keeps one default Space per account: where a new task runs unless you pick another. `Devices.spaces_settings` reads it, `set_spaces_settings` replaces it, and `resolve_default_space` says where a task goes now: the default when it is online, else the next online computer in `fallback` (while `fallback_on`), else this computer. A new computer is never made. `cua spaces default` is the same from the CLI.',
+    members: [{ object: 'Devices', title: 'Default Space', methods: ['spaces_settings', 'set_spaces_settings', 'resolve_default_space'] }],
+    items: ['SpacesSettings', 'DefaultSpace', 'DefaultSpaceStep'],
   },
   {
     slug: 'spaces/machine-health',

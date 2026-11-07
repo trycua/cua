@@ -1392,6 +1392,18 @@ pub struct AppStreamRowAction {
     pub active: bool,
 }
 
+/// The Space a window row comes from.
+pub type AppStreamRowOrigin = core::spaces::stream::StreamRowOrigin;
+#[uniffi::remote(Record)]
+pub struct AppStreamRowOrigin {
+    /// The origin Space's id.
+    pub space_id: String,
+    /// Its name.
+    pub name: String,
+    /// Its OS mark (`os-macos`, ...): the core's artwork (`notch.osIconSvg`).
+    pub os_icon: String,
+}
+
 /// One row of the Stream section: one line.
 pub type AppStreamRow = core::spaces::stream::StreamRow;
 #[uniffi::remote(Record)]
@@ -1408,6 +1420,10 @@ pub struct AppStreamRow {
     pub resolution: Option<String>,
     /// The icon.
     pub icon: AppStreamRowIcon,
+    /// For a window another Space shows here: the Space it lives in, drawn
+    /// as its OS mark and name beside the label. Absent on a Space's own
+    /// rows (older shells ignore it).
+    pub origin: Option<AppStreamRowOrigin>,
     /// Icon buttons, in order.
     pub actions: Vec<AppStreamRowAction>,
 }
@@ -2268,6 +2284,18 @@ pub struct AppOpenApp {
     pub supported: bool,
 }
 
+/// Where a shown window lives.
+pub type AppRemoteWindowOrigin = core::teleport::windows::RemoteWindowOrigin;
+#[uniffi::remote(Record)]
+pub struct AppRemoteWindowOrigin {
+    /// The origin Space's id.
+    pub space_id: String,
+    /// Its name.
+    pub name: String,
+    /// Its OS (`macos`, `linux`, `windows`), when known.
+    pub os: String,
+}
+
 /// One of a Space's windows.
 pub type AppRemoteWindow = core::teleport::windows::RemoteWindow;
 #[uniffi::remote(Record)]
@@ -2291,6 +2319,9 @@ pub struct AppRemoteWindow {
     /// The owning process (what the SDK's `Space.app_icon` looks a macOS
     /// app up by), when the window list reports one.
     pub pid: Option<u32>,
+    /// The Space the picture comes from, when another Space shows this
+    /// window here (`stream_space_window`); absent on a Space's own windows.
+    pub origin: Option<AppRemoteWindowOrigin>,
 }
 
 /// One app's remote windows.

@@ -92,7 +92,8 @@ describe("SpaceWindowList (the Stream section)", () => {
       origin: { spaceId: "local:mac-child", name: "mac-child", os: "macos" },
     };
     renderList(fakeTeleport({ listRemoteWindows: async () => [...remoteWindows, shown] }));
-    const row = rowOf(await screen.findByText("Apple"));
+    await screen.findByText("Apple");
+    const row = rowOf("Apple");
     expect(within(row).getByTestId("ssr-origin")).toHaveTextContent("mac-child");
     expect(row.querySelector('[data-os-icon="os-macos"]')).not.toBeNull();
     // A Space's own rows say nothing about an origin.

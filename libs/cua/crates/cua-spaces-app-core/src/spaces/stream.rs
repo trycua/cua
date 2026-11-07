@@ -21,7 +21,7 @@ use super::sidebar::detail_copy;
 use crate::model::SpaceOs;
 use crate::notch::os_icon;
 use crate::teleport::windows::{
-    RemoteWindow, RemoteWindowOrigin, filter_remote_windows, is_screen_target, resolution_text,
+    RemoteWindow, filter_remote_windows, is_screen_target, resolution_text,
 };
 use serde::{Deserialize, Serialize};
 
@@ -357,6 +357,7 @@ pub fn pip_click(open: &[String], row: &str) -> PipCommand {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::teleport::windows::RemoteWindowOrigin;
 
     #[test]
     fn pip_panels_track_opens_closes_and_resyncs() {

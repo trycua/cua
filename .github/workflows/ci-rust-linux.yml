@@ -171,9 +171,9 @@ jobs:
             echo "::error::cua-driver resolves atspi-connection with its p2p feature; see the atspi-connection entry in crates/platform-linux/Cargo.toml"
             exit 1
           fi
-      - name: Clippy platform-linux (all targets)
+      - name: Clippy the Cua Driver workspace (all targets)
         working-directory: libs/cua-driver/rust
-        run: cargo clippy --locked -p platform-linux --all-targets -- -D warnings
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
       - name: Run Linux Rust tests
         working-directory: libs/cua-driver/rust
         env:

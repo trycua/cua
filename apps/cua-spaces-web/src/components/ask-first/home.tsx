@@ -135,7 +135,7 @@ export function AskFirstHome() {
   // Home lists agents and Spaces, not tasks: with neither (a first run,
   // or tasks whose Spaces are gone), Home is the welcome again.
   const attempts = useAgentAttempts();
-  const { chats } = useAgentChats(attempts);
+  const { chats, drawing: chatsDrawing } = useAgentChats(attempts);
   // The home being prepared since launch, and the agent waiting in it, are not "yours" yet: until a job
   // is asked for, the welcome and its suggestions stay.
   const prepared = (id: string) => Boolean(prep.state?.wanted && (id === prep.state.homeSpaceId || id === prep.state.pendingId));
@@ -149,7 +149,7 @@ export function AskFirstHome() {
     const t = setTimeout(() => setWaited(true), 500);
     return () => clearTimeout(t);
   }, []);
-  const settled = waited || (spaces !== undefined && machineRows !== undefined && chats !== null);
+  const settled = waited || (spaces !== undefined && machineRows !== undefined && chats !== null && chatsDrawing === 0);
 
   return (
     <div className="h-full scroll-y-stable" data-ask-first-home="" aria-busy={!settled}>

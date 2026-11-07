@@ -198,6 +198,8 @@ export interface AgentChats {
   me: string | null;
   /** Spaces still to answer in this pass (the list draws what is known meanwhile). */
   loading: number;
+  /** `loading` as of the last redraw: 0 means the list on the page holds every answer that has come (1 before the first pass is drawn). */
+  drawing: number;
   /** Read again now (after adding or removing an agent). */
   refresh(): void;
 }
@@ -237,7 +239,14 @@ export function useAgentChats(attempts: readonly ChatAttempt[] = []): AgentChats
   reads.current ??= new Map(Object.entries(loadLastKnown()));
   const [version, setVersion] = useState(0);
   const [settled, setSettled] = useState(false);
-  const [pending, setPending] = useState(0);
+  const [pending, setPendingState] = useState(0);
+  // Spaces still to answer as of the last time the answers were drawn (`AgentChats.drawing`); 1 until the first pass has been drawn.
+  const pendingNow = useRef(0);
+  const [drawing, setDrawing] = useState(1);
+  const setPending = useCallback((next: number | ((n: number) => number)) => {
+    pendingNow.current = typeof next === "function" ? next(pendingNow.current) : next;
+    setPendingState(pendingNow.current);
+  }, []);
   const [round, setRound] = useState(0);
   // The home warming for Home's box is no agent's place until a person wrote into it.
   const warming = useHiddenSpaceIds(core);
@@ -262,6 +271,7 @@ export function useAgentChats(attempts: readonly ChatAttempt[] = []): AgentChats
         if (!alive) return;
         saveLastKnown(reads.current!);
         setVersion((v) => v + 1);
+        setDrawing(pendingNow.current);
       }, FLUSH_MS);
     };
     const readOne = async (space: Space) => {
@@ -331,7 +341,7 @@ export function useAgentChats(attempts: readonly ChatAttempt[] = []): AgentChats
   const chats = merged.chats.length === 0 && !settled ? null : merged.chats;
   const withThread = useMemo(() => merged.perSpace.map((p) => p.space), [merged]);
   const me = useMemo(() => [...reads.current!.values()].find((r) => r.me)?.me ?? null, [merged]);
-  return { chats, spaces: withThread, me, loading: pending, refresh: useCallback(() => setRound((r) => r + 1), []) };
+  return { chats, spaces: withThread, me, loading: pending, drawing, refresh: useCallback(() => setRound((r) => r + 1), []) };
 }
 
 /** One DM item, with the Space it came from. */

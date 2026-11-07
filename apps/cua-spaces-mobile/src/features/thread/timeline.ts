@@ -8,6 +8,7 @@ import type { OutboxRow } from "../../core/phone";
 import type { ThreadItem } from "../../data/thread/fold";
 import type { ToolCall, ToolGroup } from "../../data/thread/phone-protocol";
 import type { LiveAgent, ThreadEntry } from "../../data/types";
+import type { ChildNote, LiveChild } from "../../data/thread/protocol";
 import { dayLine } from "../../ui/time";
 
 export type { ToolCall };
@@ -19,7 +20,9 @@ export type Row =
   | { type: "system"; key: string; text: string }
   | { type: "unread"; key: string }
   | { type: "tools"; key: string; calls: ToolCall[] }
-  | { type: "live"; key: string; agent: string; stage: string; text: string }
+  | { type: "live"; key: string; agent: string; stage: string; text: string; children: LiveChild[] }
+  | { type: "subagent"; key: string; sub: Extract<ChildNote, { kind: "subagent" }> }
+  | { type: "child_space"; key: string; space: Extract<ChildNote, { kind: "child_space" }> }
   | { type: "pending"; key: string; row: OutboxRow };
 
 export interface Answered {
@@ -52,7 +55,7 @@ export function authorView(a: { kind: string; id: string; name: string }): Autho
 const GAP_MS = 30 * 60_000;
 const GROUP_MS = 5 * 60_000;
 
-export function buildRows(opts: { items: ThreadItem[]; me: string | null; live: LiveAgent[]; pending: OutboxRow[]; tools: ToolGroup[]; now: number; agentName(handle: string): string }): Row[] {
+export function buildRows(opts: { items: ThreadItem[]; me: string | null; live: LiveAgent[]; pending: OutboxRow[]; tools: ToolGroup[]; now: number; agentName(handle: string): string; /** The names of the Space's agent members (lower case): an agent author outside it is Cua's system author. */ members?: ReadonlySet<string> }): Row[] {
   const rows: Row[] = [];
   let lastTs = 0;
   let lastAuthor = "";
@@ -66,7 +69,7 @@ export function buildRows(opts: { items: ThreadItem[]; me: string | null; live: 
       lastWasMessage = false;
       continue;
     }
-    const e = it.entry;
+    let e = it.entry;
     if (e.tsMs - lastTs > GAP_MS || rows.length === 0) {
       rows.push({ type: "day", key: `d${e.seq}`, text: dayLine(e.tsMs, opts.now) });
       lastWasMessage = false;
@@ -77,24 +80,38 @@ export function buildRows(opts: { items: ThreadItem[]; me: string | null; live: 
       lastWasMessage = false;
       continue;
     }
+    if (it.type === "subagent") {
+      rows.push({ type: "subagent", key: it.key, sub: it.sub });
+      lastWasMessage = false;
+      continue;
+    }
+    if (it.type === "child_space") {
+      rows.push({ type: "child_space", key: it.key, space: it.space });
+      lastWasMessage = false;
+      continue;
+    }
     if (it.type === "approval" || it.type === "join_request") {
       rows.push({ type: "approval", key: it.key, entry: e, answered: it.answer ? { approve: it.answer.approve, by: it.answer.by.name, tsMs: it.answer.tsMs, scope: it.answer.scope } : null });
       lastWasMessage = false;
       lastAuthor = "";
       continue;
     }
+    // An agent-looking author no member stands behind is Cua's own system author, drawn like every Cua entry.
+    if (opts.members && e.author.kind === "agent" && !opts.members.has(e.author.name.toLowerCase().replace(/^@/, ""))) {
+      e = { ...e, author: { kind: "system", id: "system:children", name: "Cua" } as never };
+    }
     const mine = !!opts.me && e.author.id === opts.me;
     const showAuthor = !mine && (!lastWasMessage || lastAuthor !== e.author.id || e.tsMs - lastTs > GROUP_MS);
     // A reply names what it answers only when that message is not right above it.
     const prevSeq = rows.length && rows[rows.length - 1]!.type === "message" ? (rows[rows.length - 1] as { entry: ThreadEntry }).entry.seq : null;
-    const quote = it.type === "message" && it.quote && it.quote.seq !== prevSeq ? { author: it.quote.author.name, text: it.quote.text } : null;
+    const quote = it.type === "message" && e.author.kind !== "agent" && it.quote && it.quote.seq !== prevSeq ? { author: it.quote.author.name, text: it.quote.text } : null;
     rows.push({ type: "message", key: it.key, entry: e, mine, showAuthor, quote });
     lastWasMessage = true;
     lastAuthor = e.author.id;
     const calls = toolsAfter.get(e.seq);
     if (calls) rows.push({ type: "tools", key: `tools${e.seq}`, calls });
   }
-  for (const l of opts.live) rows.push({ type: "live", key: `live-${l.agent}`, agent: opts.agentName(l.agent.replace(/^@/, "")), stage: l.stage, text: l.text ?? "" });
+  for (const l of opts.live) rows.push({ type: "live", key: `live-${l.agent}`, agent: opts.agentName(l.agent.replace(/^@/, "")), stage: l.stage, text: l.text ?? "", children: l.children ?? [] });
   // Messages the machine has not taken yet (waiting, sending or failed) close the thread, as the person's own words; an answer to an
   // approval shows on its card instead.
   for (const p of opts.pending) if (p.kind === "post") rows.push({ type: "pending", key: `pending-${p.id}`, row: p });

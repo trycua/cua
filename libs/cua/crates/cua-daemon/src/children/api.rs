@@ -482,6 +482,135 @@ fn pin_stream_target(name: &str, args: &mut Value, caller: &str) {
 
 /// What a create of a child asks of its tree's budget (a child on this
 /// machine costs nothing per hour).
+/// A create refused for a reason the agent can do nothing about, in words it can pass on to the
+/// person: what is missing, and that retrying from inside the Space will not help. The host's own
+/// wording talks to someone at a terminal (`cua cache prune`, a build script); an agent that
+/// repeats it sends the person to commands they do not need.
+/// What the thread shows of one create an agent asked for: recorded in
+/// [`cua_spaces::child_creates`] as it goes, so every client draws the same row.
+struct Tracked {
+    home: std::path::PathBuf,
+    parent: String,
+    key: String,
+    name: String,
+    os: &'static str,
+}
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis() as u64)
+}
+
+impl Tracked {
+    fn start(home: &std::path::Path, parent: &str, child: &pb::CreateSpaceRequest) -> Tracked {
+        let t = Tracked {
+            home: home.to_path_buf(),
+            parent: parent.to_string(),
+            key: child.name.clone(),
+            name: child.name.clone(),
+            os: cua_spaces::child_creates::os_of_image(&child.image),
+        };
+        t.set(|_| {});
+        t
+    }
+
+    fn set(&self, f: impl FnOnce(&mut cua_spaces::child_creates::Entry)) {
+        cua_spaces::child_creates::update(
+            &self.home,
+            &self.parent,
+            &self.key,
+            &self.name,
+            self.os,
+            now_ms(),
+            f,
+        );
+    }
+
+    fn progress(&self, p: &pb::CreateSpaceProgress) {
+        let words = cua_spaces::child_creates::phase_words(&p.phase, self.os);
+        self.set(|e| {
+            if !words.is_empty() {
+                e.phase = words;
+            }
+            e.code = p.phase.clone();
+            e.percent = p.fraction.map(|f| (f.clamp(0.0, 1.0) * 100.0) as u8);
+            if !p.space.is_empty() {
+                e.space = p.space.clone();
+            }
+        });
+    }
+
+    fn ready(&self, id: &str) {
+        self.set(|e| {
+            e.state = cua_spaces::child_creates::State::Ready;
+            e.space = id.to_string();
+            e.phase = "Ready".into();
+            e.percent = None;
+            e.ended_ms = Some(now_ms());
+        });
+    }
+
+    fn failed(&self, why: &str) {
+        let reason = cua_spaces::child_creates::person_reason(why);
+        // A create the person cancelled is not a failure to show on a row.
+        let cancelled = why.to_lowercase().contains("cancel");
+        self.set(|e| {
+            e.hidden = cancelled;
+            e.state = cua_spaces::child_creates::State::Failed;
+            e.error = reason;
+            e.percent = None;
+            e.ended_ms = Some(now_ms());
+        });
+    }
+}
+
+pub(crate) fn for_the_agent(status: Status) -> Status {
+    match agent_words(status.message()) {
+        Some(m) => Status::new(status.code(), m),
+        None => status,
+    }
+}
+
+fn agent_words(msg: &str) -> Option<String> {
+    let l = msg.to_lowercase();
+    if l.contains("probe port") && l.contains("not published") {
+        // The agent repeats what it is told to the person: no port numbers or internals.
+        return Some(
+            "The Space's network setup did not come up, so it was not made. Say that plainly; do not quote ports or internals. Offer to try a Linux Space instead, or to try this one again later."
+                .into(),
+        );
+    }
+    if l.contains("stopped while booting") {
+        return Some(
+            "The Space stopped while starting up, so it was not made. Say that plainly and offer to try again or to use a Linux Space instead."
+                .into(),
+        );
+    }
+    if l.contains("not enough disk space") {
+        let between = |a: &str, b: &str| -> Option<String> {
+            let from = msg.find(a)? + a.len();
+            let rest = &msg[from..];
+            Some(rest[..rest.find(b)?].trim().to_string())
+        };
+        let needed = between("needs about ", " and").unwrap_or_else(|| "more than is free".into());
+        let free = between("but only ", " is available").unwrap_or_else(|| "too little".into());
+        return Some(format!(
+            "There is not enough free disk on the person's computer to make this computer: it needs about {needed} and only {free} is free. \
+             Nothing in this Space can free it. Tell the person to free disk space on their computer (delete computers they no longer use in Cua Spaces, \
+             or empty the Trash) and then try again. A Linux computer needs far less, if that can do the job."
+        ));
+    }
+    if l.contains("cua-netgw") && (l.contains("not installed") || l.contains("ships next to")) {
+        return Some(
+            "This installation of Cua Spaces is missing its network gateway, which a child computer needs so its network stays inside its parent's limits. \
+             That is a problem with the install, not with the request: tell the person to update Cua Spaces. Trying again will not help."
+                .into(),
+        );
+    }
+    None
+}
+
 fn ask_of(r: &pb::CreateSpaceRequest) -> super::budget::Ask {
     super::budget::Ask {
         vcpus: if r.cpus == 0 { 2 } else { r.cpus },
@@ -683,8 +812,21 @@ impl SpaceService for Scoped {
         let _held = super::admit(&self.shared, &claims.root, ask).inspect_err(|e| {
             self.audit("refuse", &name, e.message());
         })?;
-        let resp = self.owner().create_space(Request::new(child)).await?;
+        let tracked = Tracked::start(self.spaces().home_dir(), &self.space, &child);
+        let resp = match self.owner().create_space(Request::new(child)).await {
+            Ok(r) => r,
+            Err(e) => {
+                tracked.failed(e.message());
+                return Err(for_the_agent(e));
+            }
+        };
+        let mut resp = resp;
+        if let Some(s) = resp.get_mut().space.as_mut() {
+            // The result says how the Space is now (running or not), read now, not left to the registry's last word.
+            (s.power, s.power_state) = self.spaces().power_of(&s.id);
+        }
         if let Some(s) = &resp.get_ref().space {
+            tracked.ready(&s.id);
             self.audit("spawn", &s.id, &name);
             self.adopt(&claims, &s.id);
             super::record_cost(&self.shared, &claims.root, &s.id, ask);
@@ -704,22 +846,50 @@ impl SpaceService for Scoped {
         let child = self.child_request(&claims, inner.create.unwrap_or_default())?;
         let ask = priced(self.spaces(), &child, ask_of(&child)).await?;
         let held = super::admit(&self.shared, &claims.root, ask)?;
-        let stream = self
+        let tracked = std::sync::Arc::new(Tracked::start(
+            self.spaces().home_dir(),
+            &self.space,
+            &child,
+        ));
+        let stream = match self
             .owner()
             .create_space_stream(Request::new(pb::CreateSpaceStreamRequest {
                 create: Some(child),
             }))
-            .await?
-            .into_inner();
+            .await
+        {
+            Ok(r) => r.into_inner(),
+            Err(e) => {
+                tracked.failed(e.message());
+                return Err(for_the_agent(e));
+            }
+        };
         let me = self.clone();
         // The reservation lasts as long as the create's stream.
         let adopted = stream.map(move |item| {
             let _ = &held;
+            match &item {
+                Ok(pb::CreateSpaceStreamResponse {
+                    event: Some(pb::create_space_stream_response::Event::Progress(p)),
+                }) => tracked.progress(p),
+                Err(e) => tracked.failed(e.message()),
+                _ => {}
+            }
+            let mut item = item.map_err(for_the_agent);
+            if let Ok(pb::CreateSpaceStreamResponse {
+                event: Some(pb::create_space_stream_response::Event::Result(r)),
+            }) = &mut item
+                && let Some(s) = r.space.as_mut()
+            {
+                // The result says how the Space is now, read now.
+                (s.power, s.power_state) = me.spaces().power_of(&s.id);
+            }
             if let Ok(pb::CreateSpaceStreamResponse {
                 event: Some(pb::create_space_stream_response::Event::Result(r)),
             }) = &item
                 && let Some(s) = &r.space
             {
+                tracked.ready(&s.id);
                 me.adopt(&claims, &s.id);
                 super::record_cost(&me.shared, &claims.root, &s.id, ask);
             }
@@ -1303,5 +1473,52 @@ mod stream_scope_tests {
             assert_eq!(Scoped::tool_target(tool), Some("space"), "{tool}");
         }
         assert_eq!(Scoped::tool_target("stream_endpoint"), None);
+    }
+}
+
+#[cfg(test)]
+mod agent_words_tests {
+    use super::*;
+
+    #[test]
+    fn a_network_or_boot_failure_is_said_without_ports_or_internals() {
+        let a = agent_words("invalid request: probe port 3211 is not published by this sandbox")
+            .unwrap();
+        assert!(
+            !a.contains("3211") && a.contains("network setup did not come up"),
+            "{a}"
+        );
+        let b = agent_words("local runtime: lume VM 'mac1' stopped while booting").unwrap();
+        assert!(
+            !b.to_lowercase().contains("lume") && b.contains("stopped while starting up"),
+            "{b}"
+        );
+    }
+
+    #[test]
+    fn a_full_disk_is_said_for_the_person_not_the_terminal() {
+        let m = "not enough disk space to pull ghcr.io/trycua/macos:26: it needs about 55.0 GiB and cua keeps 5.0 GiB free, but only 24.5 GiB is available on /Users/a/.cua (run `cua cache prune` to free space, or lower CUA_DISK_MIN_FREE)";
+        let w = agent_words(m).unwrap();
+        assert!(
+            w.contains("needs about 55.0 GiB") && w.contains("only 24.5 GiB is free"),
+            "{w}"
+        );
+        assert!(!w.contains("cache prune") && !w.contains("CUA_DISK_MIN_FREE"));
+        assert!(w.contains("Tell the person"));
+    }
+
+    #[test]
+    fn a_missing_gateway_is_an_install_problem() {
+        let w = agent_words("cua-netgw is missing: the network gateway ships next to `cua`; set CUA_NETGW to its path (libs/cua/netgw/build.sh builds it)").unwrap();
+        assert!(w.contains("update Cua Spaces") && !w.contains("build.sh"));
+    }
+
+    #[test]
+    fn other_errors_pass_through() {
+        assert!(agent_words("the budget is spent").is_none());
+        assert_eq!(
+            for_the_agent(Status::resource_exhausted("the budget is spent")).message(),
+            "the budget is spent"
+        );
     }
 }

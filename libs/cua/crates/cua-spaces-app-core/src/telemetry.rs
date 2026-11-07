@@ -1762,6 +1762,7 @@ mod tests {
                 gpu: false,
                 host: None,
                 host_name: None,
+                parent: None,
             },
         );
         let p = &mut st.pending[0];
@@ -1796,6 +1797,7 @@ mod tests {
                     gpu: false,
                     host: None,
                     host_name: None,
+                    parent: None,
                 },
                 1_000,
             );

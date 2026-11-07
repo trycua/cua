@@ -5973,6 +5973,9 @@
         "hostName": {
           "type": "string"
         },
+        "parent": {
+          "type": "string"
+        },
         "power": {
           "type": "string"
         },
@@ -6608,6 +6611,156 @@
             "kind",
             "member",
             "by"
+          ]
+        },
+        "child": {
+          "anyOf": [
+            {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "enum": [
+                        "subagent"
+                      ]
+                    },
+                    "id": {
+                      "type": "string"
+                    },
+                    "agent": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "state": {
+                      "enum": [
+                        "running",
+                        "done",
+                        "failed"
+                      ]
+                    },
+                    "steps": {
+                      "type": "number"
+                    },
+                    "result": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "startedMs": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    },
+                    "endedMs": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "id",
+                    "agent",
+                    "title",
+                    "state",
+                    "steps",
+                    "result",
+                    "startedMs",
+                    "endedMs"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "enum": [
+                        "child_space"
+                      ]
+                    },
+                    "space": {
+                      "type": "string"
+                    },
+                    "key": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "os": {
+                      "type": "string"
+                    },
+                    "agent": {
+                      "type": "string"
+                    },
+                    "by": {
+                      "type": [
+                        "object",
+                        "null"
+                      ],
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "name"
+                      ]
+                    },
+                    "state": {
+                      "enum": [
+                        "creating",
+                        "ready",
+                        "failed"
+                      ]
+                    },
+                    "phase": {
+                      "type": "string"
+                    },
+                    "percent": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "startedMs": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    },
+                    "endedMs": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "space",
+                    "name",
+                    "os",
+                    "agent"
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
           ]
         },
         "joinRequest": {
@@ -8324,6 +8477,12 @@
           ]
         },
         "hostName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "parent": {
           "type": [
             "string",
             "null"
@@ -11216,6 +11375,60 @@
                   },
                   "text": {
                     "type": "string"
+                  },
+                  "children": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "title": {
+                          "type": "string"
+                        },
+                        "steps": {
+                          "type": "number"
+                        },
+                        "step": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "sinceMs": {
+                          "type": "number"
+                        },
+                        "space": {
+                          "type": "object",
+                          "properties": {
+                            "os": {
+                              "type": "string"
+                            },
+                            "page": {
+                              "type": "string"
+                            },
+                            "percent": {
+                              "type": [
+                                "number",
+                                "null"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "os",
+                            "page",
+                            "percent"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "title",
+                        "steps",
+                        "step"
+                      ]
+                    }
                   }
                 },
                 "required": [

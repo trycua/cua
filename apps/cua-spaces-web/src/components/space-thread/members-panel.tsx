@@ -44,8 +44,11 @@ export function MembersPanel({
   folded,
   onFold,
   onAddAgent,
+  childSpaces,
 }: {
   roster: Roster;
+  /** The Space's child Spaces section (absent when it has none). */
+  childSpaces?: ReactNode;
   /** Opens Add an agent (absent for guests). */
   onAddAgent?: () => void;
   presence?: MemberPresence;
@@ -139,6 +142,7 @@ export function MembersPanel({
           </ProfileRow>
         ))}
       </ul>
+      {childSpaces}
       {windows.length || desktop ? (
         <section className="px-3 pt-2 pb-2" data-call-stream="">
           <h2 className="mb-1 px-2 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Stream</h2>

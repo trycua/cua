@@ -82,7 +82,11 @@ enum BridgeValue {
                 unlabeled += 1
             }
             out[key] = encode(child.value)
+            // The core reads a failed create's fix action in kebab case; Swift names the case in camel case.
+            if key == "action", let word = out[key] as? String, let kebab = Self.fixActions[word] { out[key] = kebab }
         }
         return out
     }
+
+    private static let fixActions = ["copyCommand": "copy-command", "openUrl": "open-url"]
 }

@@ -2,10 +2,14 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 import * as Clipboard from "expo-clipboard";
+import { useRouter } from "expo-router";
+import { useEffect, useState } from "react";
+import { childPageId, runningFor } from "./running";
 import { Pressable, View } from "react-native";
 import Animated, { FadeIn } from "react-native-reanimated";
 
 import type { OutboxRow } from "../../core/phone";
+import type { ChildNote, LiveChild } from "../../data/thread/protocol";
 import type { ThreadEntry } from "../../data/types";
 import { useTheme } from "../../theme/theme";
 import { Avatar } from "../../ui/Avatar";
@@ -118,8 +122,9 @@ export function Bubble({ entry, mine, showAuthor, quote, onReply, onOpenAttachme
 }
 
 /** What an agent is doing now: its words so far while it streams, or one quiet working line. */
-export function LiveRow({ agent, stage, text }: { agent: string; stage: string; text: string }) {
+export function LiveRow({ agent, stage, text, children = [] }: { agent: string; stage: string; text: string; children?: LiveChild[] }) {
   const { c, reduceMotion } = useTheme();
+  const router = useRouter();
   const Wrap = reduceMotion ? View : Animated.View;
   return (
     <Wrap {...(reduceMotion ? {} : { entering: FadeIn.duration(180) })} style={{ paddingHorizontal: 12, marginTop: 10 }} accessibilityLiveRegion="polite">
@@ -133,6 +138,15 @@ export function LiveRow({ agent, stage, text }: { agent: string; stage: string; 
           <Markdown text={text} color={c.foreground} />
         </View>
       ) : null}
+      {children.map((k) => (
+        <Pressable key={k.id} disabled={!k.space} onPress={() => k.space && router.push({ pathname: "/space/[id]", params: { id: k.space.page } })} style={{ flexDirection: "row", gap: 8, marginTop: 6, marginLeft: 26 }} testID={`live-child-${k.id}`} accessible accessibilityRole={k.space ? "link" : "text"} accessibilityLabel={k.space ? `Making ${k.title}: ${k.step ?? "Starting"}` : `Subagent running: ${k.title}`}>
+          <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: c.success, marginTop: 6 }} />
+          <View style={{ flex: 1 }}>
+            <Text variant="footnote" numberOfLines={1}>{k.space ? `${k.space.os ? `${k.space.os} ` : ""}${k.title}` : k.title}</Text>
+            <Text variant="caption" color="muted" numberOfLines={1}>{`${k.step ?? "Starting"}${k.space?.percent != null ? `, ${k.space.percent}%` : ""}${!k.space && k.steps > 0 ? `, ${k.steps === 1 ? "1 step" : `${k.steps} steps`}` : ""}`}</Text>
+          </View>
+        </Pressable>
+      ))}
     </Wrap>
   );
 }
@@ -155,5 +169,83 @@ export function PendingRow({ row, onRetry, onDiscard }: { row: OutboxRow; onRetr
         {row.canDiscard ? <Pressable onPress={onDiscard} accessibilityRole="button" accessibilityLabel={`${row.discardLabel} this message`} hitSlop={8}><Text variant="caption" color="muted">{row.discardLabel}</Text></Pressable> : null}
       </View>
     </View>
+  );
+}
+
+/** How long a subagent has run, ticking once a second while it does. */
+function useRunning(since: number | null | undefined, on: boolean): string | null {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!on || !since) return;
+    setNow(Date.now());
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [on, since]);
+  if (!on || !since) return null;
+  return runningFor(since, now);
+}
+
+/** A subagent the agent started: its task, whether it runs, is done or failed, its steps, and (tap) what it handed back. */
+export function SubagentRow({ sub }: { sub: Extract<ChildNote, { kind: "subagent" }> }) {
+  const { c } = useTheme();
+  const [open, setOpen] = useState(false);
+  const word = sub.state === "running" ? "Running" : sub.state === "done" ? "Done" : "Failed";
+  const color = sub.state === "failed" ? c.destructive : sub.state === "done" ? c.mutedForeground : c.success;
+  const steps = sub.steps > 0 ? (sub.steps === 1 ? "1 step" : `${sub.steps} steps`) : null;
+  const running = useRunning(sub.startedMs, sub.state === "running");
+  return (
+    <Pressable
+      onPress={() => sub.result && setOpen((o) => !o)}
+      disabled={!sub.result}
+      style={{ marginLeft: 38, marginRight: 16, marginTop: 6, flexDirection: "row", gap: 8 }}
+      testID={`subagent-${sub.id}`}
+      accessibilityRole={sub.result ? "button" : "text"}
+      accessibilityLabel={`Subagent ${word.toLowerCase()}: ${sub.title}`}
+    >
+      <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: color, marginTop: 6 }} />
+      <View style={{ flex: 1 }}>
+        <Text variant="footnote" numberOfLines={open ? undefined : 2}>{sub.title}</Text>
+        <View style={{ flexDirection: "row", gap: 10 }}>
+          <Text variant="caption" color="muted">{running ? `Running ${running}` : word}</Text>
+          {steps ? <Text variant="caption" color="muted">{steps}</Text> : null}
+        </View>
+        {open && sub.result ? <Text variant="caption" color="muted" style={{ marginTop: 4 }}>{sub.result}</Text> : null}
+      </View>
+    </Pressable>
+  );
+}
+
+/**
+ * A child Space the agent made, drawn as a subagent row: the state's dot, the Space's name, and a muted
+ * line for where it is ("Cloning the disk", "Ready in 1m 05s", "Couldn't make it: ..."). Tapping the row
+ * opens the child's page, which exists from the moment the create starts.
+ */
+export function ChildSpaceRow({ space }: { space: Extract<ChildNote, { kind: "child_space" }> }) {
+  const router = useRouter();
+  const { c } = useTheme();
+  const state = space.state ?? "ready";
+  const color = state === "failed" ? c.destructive : state === "ready" ? c.mutedForeground : c.success;
+  const running = useRunning(space.startedMs, state === "creating");
+  const took = space.startedMs != null && space.endedMs != null ? runningFor(space.startedMs, space.endedMs) : null;
+  const line =
+    state === "creating"
+      ? `${space.phase || "Starting"}${space.percent != null ? `, ${space.percent}%` : ""}${running ? `, ${running}` : ""}`
+      : state === "failed"
+        ? `Couldn't make it: ${space.error || "something went wrong"}`
+        : `Ready${took ? ` in ${took}` : ""}`;
+  return (
+    <Pressable
+      onPress={() => router.push({ pathname: "/space/[id]", params: { id: childPageId(space) } })}
+      style={{ marginLeft: 38, marginRight: 16, marginTop: 6, flexDirection: "row", gap: 8 }}
+      testID={`child-space-${space.space}`}
+      accessibilityRole="link"
+      accessibilityLabel={`Open ${space.name}. ${line}`}
+    >
+      <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: color, marginTop: 6 }} />
+      <View style={{ flex: 1 }}>
+        <Text variant="footnote" numberOfLines={1}>{`${space.os ? `${space.os} ` : ""}${space.name}`}</Text>
+        <Text variant="caption" color="muted" numberOfLines={2}>{line}</Text>
+      </View>
+    </Pressable>
   );
 }

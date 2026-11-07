@@ -80837,7 +80837,7 @@ public func appSettingsInputFromJson(json: String)throws  -> AppSettingsInput  {
 }
 /**
  * Reads the settings file (defaults when missing or damaged). The
- * experiments the daemon enforces (Secure Spaces, Child Spaces, Ask first, CI runners, Public TCP shares, Phone app) are what
+ * experiments the daemon enforces (Child Spaces, CI runners, Public TCP shares, Phone app) are what
  * the cua home keeps, so `cua experiments enable` shows in the app.
  */
 public func appSettingsLoad(path: String) -> AppSettings  {
@@ -82932,7 +82932,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_spaces_ffi_checksum_func_app_settings_input_from_json() != 15437) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_spaces_ffi_checksum_func_app_settings_load() != 56775) {
+    if (uniffi_cua_spaces_ffi_checksum_func_app_settings_load() != 17320) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_func_app_settings_page() != 454) {

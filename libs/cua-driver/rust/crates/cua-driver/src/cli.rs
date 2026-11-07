@@ -173,6 +173,12 @@ pub enum Command {
     Autostart {
         subcommand: String,
     },
+    /// `cua-driver kwin-capture {status|on|off}`: the operator's switch for
+    /// exact KWin window capture and activation (Linux).
+    KwinCapture {
+        subcommand: String,
+        override_portal_deny: bool,
+    },
     /// `cua-driver manifest` — emit a stable JSON description of the CLI
     /// surface (subcommands, args, MCP invocation, version).
     ///
@@ -364,6 +370,7 @@ fn finite_command_name_from_args(args: &[String]) -> Option<&'static str> {
         Some("test") => Some("test"),
         Some("permissions") => Some("permissions"),
         Some("autostart") => Some("autostart"),
+        Some("kwin-capture") => Some("kwin_capture"),
         Some("skills") => Some("skills"),
         Some("extension") => Some("extension"),
         Some("perception") => Some("perception"),
@@ -456,6 +463,12 @@ fn finite_operation_from_args(args: &[String]) -> &'static str {
             "disable" => "disable",
             "status" => "status",
             "kick" => "kick",
+            _ => "other",
+        },
+        Some("kwin-capture") => match subcommand.unwrap_or("status") {
+            "status" => "status",
+            "on" => "on",
+            "off" => "off",
             _ => "other",
         },
         Some("skills") => match subcommand.unwrap_or("status") {
@@ -590,6 +603,13 @@ pub fn parse_command() -> Command {
         println!("  cua-driver autostart disable    Remove the autostart entry. No-op if not registered.");
         println!("  cua-driver autostart status     Print whether the entry is registered + whether the daemon is running.");
         println!("  cua-driver autostart kick       Start the entry now without re-logging.");
+        println!();
+        println!("kwin-capture options (Linux, KDE Plasma Wayland):");
+        println!("  cua-driver kwin-capture status  Show whether exact KWin window capture and activation is on.");
+        println!("  cua-driver kwin-capture on      Turn it on; no restart. On KWin 6.7 and older this also writes");
+        println!("                                  the desktop entry KWin checks. A screenshot Deny saved in the desktop");
+        println!("                                  portal keeps it off; add --override-portal-deny to ignore that.");
+        println!("  cua-driver kwin-capture off     Turn it off from the next call and remove the desktop entry.");
         println!();
         println!("skills options (agent skill-pack management, opt-in):");
         println!("  cua-driver skills install       Fetch the versioned skill pack from GitHub Releases and symlink it");
@@ -1073,6 +1093,19 @@ pub fn parse_command() -> Command {
                 process::exit(64);
             }
             Command::Autostart { subcommand }
+        }
+        Some("kwin-capture") => {
+            let subcommand = pos.next().unwrap_or("status").to_owned();
+            if !matches!(subcommand.as_str(), "status" | "on" | "off") {
+                eprintln!(
+                    "Usage: cua-driver kwin-capture {{status|on [--override-portal-deny]|off}}"
+                );
+                process::exit(64);
+            }
+            Command::KwinCapture {
+                subcommand,
+                override_portal_deny: args.iter().any(|arg| arg == "--override-portal-deny"),
+            }
         }
         Some("skills") => {
             // Skills subcommand. Default is `status` so plain `cua-driver
@@ -2166,6 +2199,12 @@ pub fn build_manifest() -> serde_json::Value {
             { "name": "autostart",
               "description": "Platform-native auto-start so `cua-driver serve` comes up on every logon.",
               "args": [ { "name": "subcommand", "type": "positional-string", "description": "enable | disable | status | kick" } ] },
+            { "name": "kwin-capture",
+              "description": "Turn exact KWin window capture and activation on or off without a restart (Linux).",
+              "args": [
+                  { "name": "subcommand", "type": "positional-string", "description": "status | on | off. Default: status." },
+                  { "name": "--override-portal-deny", "type": "flag", "description": "With on: ignore a screenshot Deny saved in the desktop portal." }
+              ] },
             { "name": "skills",
               "description": "Manage the cua-driver agent skill pack (install / update / uninstall / status / path).",
               "args": [ { "name": "subcommand", "type": "positional-string", "description": "install | update | uninstall | status | path. Default: status." } ] },
@@ -4101,6 +4140,33 @@ fn print_check_update_state(state: crate::version_check::UpdateState, json: bool
     }
 }
 
+/// `cua-driver kwin-capture status|on|off`.
+pub fn run_kwin_capture_cmd(subcommand: &str, override_portal_deny: bool) {
+    #[cfg(target_os = "linux")]
+    {
+        use platform_linux::wayland::kwin_access::{report, save, Setting};
+        let setting = match (subcommand, override_portal_deny) {
+            ("status", _) => None,
+            ("on", false) => Some(Setting::On),
+            ("on", true) => Some(Setting::OverridePortalDeny),
+            _ => Some(Setting::Off),
+        };
+        if let Some(setting) = setting {
+            if let Err(error) = save(setting) {
+                eprintln!("kwin-capture: {error:#}");
+                process::exit(1);
+            }
+        }
+        print!("{}", report());
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (subcommand, override_portal_deny);
+        eprintln!("kwin-capture applies to KDE Plasma on Linux only.");
+        process::exit(1);
+    }
+}
+
 /// Inspect or persist the release channel. Selection never installs by itself;
 /// replacement remains explicit through `cua-driver update --apply`.
 pub fn run_channel_cmd(subcommand: &str, value: Option<&str>, json: bool) {
@@ -4192,6 +4258,7 @@ const HELP_SUBCOMMANDS: &[&str] = &[
     "diagnose",
     "permissions",
     "autostart",
+    "kwin-capture",
     "skills",
     "manifest",
     "extension",
@@ -4357,6 +4424,7 @@ const CLI_DEFAULT_SUBCOMMANDS: &[(&str, &str)] = &[
     ("skills", "status"),
     ("extension", "list"),
     ("channel", "status"),
+    ("kwin-capture", "status"),
 ];
 
 /// The CLI surface without examples; `attach_cli_examples` adds those.
@@ -4708,6 +4776,19 @@ fn cli_docs_literal() -> serde_json::Value {
                 ]
             },
             {
+                "name": "kwin-capture",
+                "abstract": "Turn exact KWin window capture and activation on or off (Linux).",
+                "discussion": "Off by default on every KWin release. The setting is read on every call, so no restart is needed; on KWin 6.7 and older, on applies once KWin rereads its desktop-entry cache. Only this command changes it; set_config cannot.",
+                "arguments": no_args,
+                "options": no_options,
+                "flags": no_flags,
+                "subcommands": [
+                    {"name":"status","abstract":"Show the setting and the desktop entry. The default subcommand.","discussion":"","arguments":[],"options":[],"flags":[],"subcommands":[]},
+                    {"name":"on","abstract":"Turn it on; on KWin 6.7 and older also write the desktop entry KWin checks.","discussion":"A screenshot Deny saved in the desktop portal keeps it off unless --override-portal-deny is given.","arguments":[],"options":[],"flags":[{"name":"override-portal-deny","short_name":null,"help":"Ignore a screenshot Deny saved in the desktop portal.","default_value":false}],"subcommands":[]},
+                    {"name":"off","abstract":"Turn it off and remove the desktop entry.","discussion":"","arguments":[],"options":[],"flags":[],"subcommands":[]}
+                ]
+            },
+            {
                 "name": "skills",
                 "abstract": "Install, update, inspect, or remove the optional agent skill pack.",
                 "discussion": "The install script never touches agent skill directories automatically.",
@@ -4896,6 +4977,10 @@ const CLI_EXAMPLES: &[(&str, &[(&str, &str)])] = &[
     ("autostart disable", &[("cua-driver autostart disable", "Remove the autostart entry")]),
     ("autostart status", &[("cua-driver autostart status", "Check the autostart entry")]),
     ("autostart kick", &[("cua-driver autostart kick", "Start the entry now")]),
+    ("kwin-capture", &[("cua-driver kwin-capture", "Show whether exact KWin window capture is on")]),
+    ("kwin-capture status", &[("cua-driver kwin-capture status", "Show the setting and the desktop entry")]),
+    ("kwin-capture on", &[("cua-driver kwin-capture on", "Turn exact KWin window capture on")]),
+    ("kwin-capture off", &[("cua-driver kwin-capture off", "Turn exact KWin window capture off")]),
     ("skills", &[("cua-driver skills", "Report skill-pack state")]),
     ("skills install", &[
         ("cua-driver skills install", "Install the skill pack and link detected agents"),

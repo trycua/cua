@@ -430,6 +430,7 @@ async fn invoke_daemon_tool(
     req: DaemonRequest,
 ) -> DaemonResponse {
     let observation_transport = daemon_observation_transport(&req);
+    let request_origin = req.observation_origin;
     let direct_client_kind = req.client_kind;
     let raw_name = req.name.as_deref().unwrap_or("").to_owned();
     let tool_name = if raw_name == "type_text_chars" {
@@ -540,7 +541,8 @@ async fn invoke_daemon_tool(
         }
     };
     let result = observe_daemon_result(observation, session_context, result_value);
-    permissions_pending_response(&result).unwrap_or_else(|| DaemonResponse::ok(result))
+    permissions_pending_response(request_origin, &result)
+        .unwrap_or_else(|| DaemonResponse::ok(result))
 }
 
 /// Read the PID stored in `pid_file_path`, if any.
@@ -709,9 +711,16 @@ pub fn settle_permission_gate(
     Some(poll)
 }
 
-/// Legacy socket clients read a pending gate as a retryable transport error
-/// (`EX_TEMPFAIL`), not as a tool result.
-fn permissions_pending_response(result: &serde_json::Value) -> Option<DaemonResponse> {
+/// Direct socket clients read a pending gate as a retryable transport error
+/// (`EX_TEMPFAIL`). The MCP proxy forwards tool results, so it keeps the
+/// structured `permissions_pending` refusal instead.
+fn permissions_pending_response(
+    request_origin: Option<ToolObservationOrigin>,
+    result: &serde_json::Value,
+) -> Option<DaemonResponse> {
+    if request_origin == Some(ToolObservationOrigin::McpProxy) {
+        return None;
+    }
     let refusal = result.pointer("/structuredContent/refusal")?;
     if refusal.get("code")?.as_str()? != "permissions_pending" {
         return None;
@@ -3076,7 +3085,9 @@ mod gate_tests {
 
 #[cfg(test)]
 mod permission_gate_tests {
-    use super::{bind_trusted_connection, run_serve, send_request, DaemonRequest};
+    use super::{
+        bind_trusted_connection, run_serve, send_request, DaemonRequest, ToolObservationOrigin,
+    };
     use std::sync::atomic::Ordering;
 
     fn refusal_code(result: &serde_json::Value) -> Option<&str> {
@@ -3104,7 +3115,7 @@ mod permission_gate_tests {
             }
             tokio::time::sleep(std::time::Duration::from_millis(20)).await;
         }
-        let call = |socket: String| async move {
+        let call = |socket: String, origin: Option<ToolObservationOrigin>| async move {
             tokio::task::spawn_blocking(move || {
                 send_request(
                     &socket,
@@ -3113,7 +3124,7 @@ mod permission_gate_tests {
                         name: Some("get_screen_size".into()),
                         args: Some(serde_json::json!({})),
                         session_id: None,
-                        observation_origin: None,
+                        observation_origin: origin,
                         client_kind: None,
                     },
                 )
@@ -3124,7 +3135,16 @@ mod permission_gate_tests {
         };
 
         driver.set_awaiting_permissions(true);
-        let pending = call(socket.clone()).await;
+        let proxied = call(socket.clone(), Some(ToolObservationOrigin::McpProxy)).await;
+        assert!(
+            proxied.ok,
+            "the MCP proxy forwards the refusal as a tool result"
+        );
+        assert_eq!(
+            proxied.result.as_ref().and_then(refusal_code),
+            Some("permissions_pending")
+        );
+        let pending = call(socket.clone(), None).await;
         assert!(!pending.ok);
         assert_eq!(pending.exit_code, Some(75));
         assert!(pending
@@ -3138,7 +3158,7 @@ mod permission_gate_tests {
         );
 
         driver.set_awaiting_permissions(false);
-        let open = call(socket.clone()).await;
+        let open = call(socket.clone(), None).await;
         assert!(open.ok, "{:?}", open.error);
         assert_eq!(calls.load(Ordering::SeqCst), 1);
 

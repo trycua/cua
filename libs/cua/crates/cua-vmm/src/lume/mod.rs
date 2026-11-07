@@ -74,14 +74,72 @@ pub fn macos_limit_unlisted_message() -> String {
     )
 }
 
-/// Whether `log` (a `lume serve` log) says Apple Virtualization refused to
-/// run VM `name` for the limit on active virtual machines.
-pub fn log_says_vm_limit(log: &str, name: &str) -> bool {
-    let tag = format!("name={name}");
-    log.lines().any(|l| {
-        l.contains("number of virtual machines exceeds the limit")
-            && l.split_whitespace().any(|t| t == tag)
+/// `secs` since the Unix epoch as Lume stamps its log lines
+/// (`2026-11-07T04:07:15Z`, UTC), so stamps compare as text.
+pub fn utc_stamp(secs: u64) -> String {
+    let (days, rem) = ((secs / 86_400) as i64, secs % 86_400);
+    // Days since 1970-01-01 to a civil date (Howard Hinnant's algorithm).
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = yoe + era * 400 + i64::from(month <= 2);
+    format!(
+        "{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}Z",
+        rem / 3_600,
+        rem % 3_600 / 60,
+        rem % 60
+    )
+}
+
+/// The stamp of the log line that holds byte `at` of `log` (the last
+/// `[2026-11-07T04:07:15Z]` before it), if there is one close by.
+fn line_stamp(log: &[u8], at: usize) -> Option<String> {
+    let start = at.saturating_sub(600);
+    let head = &log[start..at];
+    (0..head.len().saturating_sub(22)).rev().find_map(|i| {
+        let w = &head[i..i + 22];
+        let ok = w[0] == b'['
+            && w[21] == b']'
+            && w[5] == b'-'
+            && w[11] == b'T'
+            && w[20] == b'Z'
+            && w[1..5].iter().all(u8::is_ascii_digit);
+        ok.then(|| String::from_utf8_lossy(&w[1..21]).into_owned())
     })
+}
+
+/// Whether `log` (bytes of a `lume serve` log) says, in a line stamped
+/// `since` or later, that Apple Virtualization refused to run VM `name` for
+/// the limit on active virtual machines. Lume's log has lines of many MB
+/// (whole API responses) and several `lume serve` write into one file at
+/// their own offsets, so this looks for the refusal itself, reads a little
+/// around it and trusts its stamp rather than its place in the file.
+pub fn log_says_vm_limit(log: &[u8], name: &str, since: &str) -> bool {
+    const NEEDLE: &[u8] = b"number of virtual machines exceeds the limit";
+    const AROUND: usize = 700;
+    let tag = format!("name={name}");
+    let mut from = 0;
+    while let Some(at) = log[from..]
+        .windows(NEEDLE.len())
+        .position(|w| w == NEEDLE)
+        .map(|p| p + from)
+    {
+        let near = &log[at.saturating_sub(AROUND)..(at + AROUND).min(log.len())];
+        if String::from_utf8_lossy(near)
+            .split_whitespace()
+            .any(|t| t == tag)
+            && line_stamp(log, at).is_some_and(|stamp| stamp.as_str() >= since)
+        {
+            return true;
+        }
+        from = at + NEEDLE.len();
+    }
+    false
 }
 
 /// The host a macOS guest's published ports are dialed on once they are
@@ -863,6 +921,15 @@ impl LumeRuntime {
         let mut last_state = String::new();
         let leases_path = std::path::PathBuf::from(&self.cfg.leases_path);
         let before = lease::read_leases(&leases_path).await;
+        // The boot began just now (the run request went out a moment ago):
+        // a refusal `lume serve` logs from a few seconds before counts.
+        let since = utc_stamp(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0)
+                .saturating_sub(5),
+        );
         let mut missing_since: Option<tokio::time::Instant> = None;
         // Bounded by the deadline; at most ip_timeout / 0.5 s iterations.
         while tokio::time::Instant::now() < deadline {
@@ -898,7 +965,7 @@ impl LumeRuntime {
                         }
                         // The VMs holding the limit may be another Lume's,
                         // which this one does not list: its own log says so.
-                        if self.serve_log_says_vm_limit(name) {
+                        if self.serve_log_says_vm_limit_soon(name, &since).await {
                             return Err(VmmError::HostCapacity(macos_limit_unlisted_message()));
                         }
                         return Err(VmmError::other(format!(
@@ -946,11 +1013,12 @@ impl LumeRuntime {
         })
     }
 
-    fn serve_log_says_vm_limit(&self, name: &str) -> bool {
+    /// Whether `lume serve`'s log says VM `name` was refused for the limit
+    /// on active virtual machines since `since` (a [`utc_stamp`]).
+    fn serve_log_says_vm_limit(&self, name: &str, since: &str) -> bool {
         use std::io::{Read as _, Seek as _, SeekFrom};
-        // Lume's request log is large (every poll of a VM is a line), so
-        // only its end is read: the refusal is the last few seconds of it.
-        const TAIL: u64 = 8 * 1024 * 1024;
+        // The log is large; its recent part is enough.
+        const TAIL: u64 = 96 * 1024 * 1024;
         let Ok(mut f) = std::fs::File::open(self.cfg.root.join("serve.log")) else {
             return false;
         };
@@ -961,7 +1029,20 @@ impl LumeRuntime {
         {
             return false;
         }
-        log_says_vm_limit(&String::from_utf8_lossy(&bytes), name)
+        log_says_vm_limit(&bytes, name, since)
+    }
+
+    /// [`Self::serve_log_says_vm_limit`], looked at again for up to 10
+    /// seconds: Lume writes the refusal to its log a moment after the VM
+    /// has stopped, and cua notices the stop first.
+    async fn serve_log_says_vm_limit_soon(&self, name: &str, since: &str) -> bool {
+        for _ in 0..20 {
+            if self.serve_log_says_vm_limit(name, since) {
+                return true;
+            }
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+        false
     }
 
     fn run_log_tail(&self, name: &str) -> String {
@@ -4063,17 +4144,37 @@ mod tests {
     }
 
     #[test]
+    fn stamps_are_written_the_way_lume_writes_them() {
+        assert_eq!(utc_stamp(0), "1970-01-01T00:00:00Z");
+        assert_eq!(utc_stamp(1_794_024_435), "2026-11-07T04:07:15Z");
+        assert_eq!(utc_stamp(951_782_400), "2000-02-29T00:00:00Z");
+    }
+
+    #[test]
     fn the_vm_limit_is_read_from_lume_serves_own_log() {
-        let log = "[2026-11-07T01:48:13Z] ERROR: Failed in VM.run name=child-safari error=The number of virtual machines exceeds the limit. The maximum supported number of active virtual machines has been reached. errorType=NSError\n";
-        assert!(log_says_vm_limit(log, "child-safari"));
+        let line = |stamp: &str, tail: &str| {
+            format!(
+                "[{stamp}] ERROR: Failed in VM.run error=The number of virtual machines exceeds the limit. The maximum supported number of active virtual machines has been reached. {tail}\n"
+            )
+        };
+        let since = "2026-11-07T04:07:10Z";
+        let log = line(
+            "2026-11-07T04:07:15Z",
+            "name=child-safari errorType=NSError",
+        );
+        assert!(log_says_vm_limit(log.as_bytes(), "child-safari", since));
         // Lume orders the fields as it likes: the name may come last.
-        let last = "ERROR: Failed in VM.run error=The number of virtual machines exceeds the limit. The maximum supported number of active virtual machines has been reached. name=hold-one";
-        assert!(log_says_vm_limit(last, "hold-one"));
-        assert!(!log_says_vm_limit(last, "hold"));
-        assert!(!log_says_vm_limit(log, "other-vm"));
+        let last = line("2026-11-07T04:07:15Z", "errorType=NSError name=hold-one");
+        assert!(log_says_vm_limit(last.as_bytes(), "hold-one", since));
+        assert!(!log_says_vm_limit(last.as_bytes(), "hold", since));
+        assert!(!log_says_vm_limit(log.as_bytes(), "other-vm", since));
+        // An older refusal (an earlier boot of the same name) is not this one.
+        let old = line("2026-11-07T03:00:00Z", "name=child-safari");
+        assert!(!log_says_vm_limit(old.as_bytes(), "child-safari", since));
         assert!(!log_says_vm_limit(
-            "INFO: all fine name=child-safari",
-            "child-safari"
+            b"[2026-11-07T04:07:15Z] INFO: all fine name=child-safari",
+            "child-safari",
+            since
         ));
         let msg = macos_limit_unlisted_message();
         assert!(msg.contains("Apple allows 2"), "{msg}");
@@ -4081,19 +4182,28 @@ mod tests {
     }
 
     #[test]
-    fn the_serve_log_is_read_from_its_end_however_large_it_is() {
+    fn the_serve_log_is_read_wherever_the_refusal_sits_among_huge_lines() {
         let dir = tempfile::tempdir().unwrap();
         let rt = LumeRuntime::new(LumeConfig {
             root: dir.path().to_path_buf(),
             ..LumeConfig::default()
         });
-        let filler = format!("INFO: poll {}\n", "x".repeat(4000));
-        let mut log = filler.repeat(1200);
-        log.push_str("ERROR: Failed in VM.run error=The number of virtual machines exceeds the limit. name=w errorType=NSError\n");
-        log.push_str(&filler.repeat(100));
-        std::fs::write(dir.path().join("serve.log"), log).unwrap();
-        assert!(rt.serve_log_says_vm_limit("w"));
-        assert!(!rt.serve_log_says_vm_limit("z"));
+        // Lume logs whole API responses (single lines of many MB), and more
+        // than one `lume serve` writes into the file at its own offset, so
+        // a refusal can sit far before the end of a file that is longer.
+        let huge = format!(
+            "[2026-11-07T04:07:20Z] INFO: response {}\n",
+            "x".repeat(3 * 1024 * 1024)
+        );
+        let refusal = "[2026-11-07T04:07:15Z] ERROR: Failed in VM.run error=The number of virtual machines exceeds the limit. name=w errorType=NSError\n";
+        std::fs::write(
+            dir.path().join("serve.log"),
+            format!("{refusal}{huge}{huge}{huge}"),
+        )
+        .unwrap();
+        assert!(rt.serve_log_says_vm_limit("w", "2026-11-07T04:07:10Z"));
+        assert!(!rt.serve_log_says_vm_limit("w", "2026-11-07T04:07:16Z"));
+        assert!(!rt.serve_log_says_vm_limit("z", "2026-11-07T04:07:10Z"));
     }
 
     #[test]

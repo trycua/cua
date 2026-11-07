@@ -355,7 +355,7 @@ function ModelPage({ selected, onBack, onPick }: { selected: AgentSelection; onB
     <div data-agent-model-page="">
       <Back onBack={onBack} title="Model" />
       <div role="listbox" aria-label="Models" className="max-h-[320px] overflow-y-auto">
-        {selected.account.models.map((m) => (
+        {selected.account.models.filter((m) => !m.legacy || m.id === selected.model.id).map((m) => (
           <button
             type="button"
             role="option"

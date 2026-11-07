@@ -142,6 +142,8 @@ pub fn person_reason(message: &str) -> String {
         || l.contains("manifest unknown")
     {
         "the image was not found, or it needs a sign-in to download".to_string()
+    } else if l.contains("stopped while booting") {
+        "it stopped while starting up".to_string()
     } else if l.contains("probe port") || l.contains("is not published") {
         "its network setup did not come up".to_string()
     } else if l.contains("not enough disk space") {

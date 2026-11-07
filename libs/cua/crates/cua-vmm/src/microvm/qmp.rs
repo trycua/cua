@@ -7,7 +7,7 @@
 use std::path::Path;
 use std::time::Duration;
 
-use serde_json::{Value, json};
+use serde_json::Value;
 
 use crate::error::{Result, VmmError};
 
@@ -65,6 +65,7 @@ pub async fn command(
 ) -> Result<Value> {
     #[cfg(windows)]
     {
+        use serde_json::json;
         use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
         let fut = async {
             let stream = connect_unix(sock)

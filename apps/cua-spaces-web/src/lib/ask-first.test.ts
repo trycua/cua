@@ -3,8 +3,6 @@
 
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { flagOn, setFlagOverride } from "@/bridge";
-
 import type { Space } from "@/bridge";
 
 import {
@@ -36,16 +34,6 @@ import {
 beforeEach(() => {
   localStorage.clear();
   resetAskTasks();
-});
-
-describe("the spaces_ask_first_home flag", () => {
-  it("is on unless this device turns it off, and an explicit off stays off", () => {
-    expect(flagOn("spaces_ask_first_home")).toBe(true);
-    setFlagOverride("spaces_ask_first_home", false);
-    expect(flagOn("spaces_ask_first_home")).toBe(false);
-    setFlagOverride("spaces_ask_first_home", null);
-    expect(flagOn("spaces_ask_first_home")).toBe(true);
-  });
 });
 
 describe("Ask-first tasks", () => {

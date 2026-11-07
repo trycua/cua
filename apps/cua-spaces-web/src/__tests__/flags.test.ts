@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-// Flags: defaults, device overrides and the build's env default.
+// Flags: defaults, device overrides and the build's env default. The new Home and the new setup are
+// not flags any more: they are always on, and a stored override of either does nothing.
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { flagOn, newOnboardingOn, setFlagOverride } from "@/bridge/flags";
+import { flagOn, setFlagOverride } from "@/bridge/flags";
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -13,34 +14,24 @@ afterEach(() => {
 });
 
 describe("flags", () => {
-  it("are as shipped by default: the new Home and the new setup on, the tree off", () => {
-    vi.stubEnv("VITE_CUA_FLAG_SPACES_ASK_FIRST_HOME", "");
-    vi.stubEnv("VITE_CUA_FLAG_SPACES_NEW_ONBOARDING", "");
-    setFlagOverride("spaces_ask_first_home", null);
-    setFlagOverride("spaces_new_onboarding", null);
-    expect(flagOn("spaces_ask_first_home")).toBe(true);
-    expect(flagOn("spaces_new_onboarding")).toBe(true);
+  it("are as shipped by default: the tree is off", () => {
     expect(flagOn("spaces_tree")).toBe(false);
   });
 
-  it("an explicit off stays off, over the default and the build's env; an override or the env turns one on", () => {
-    vi.stubEnv("VITE_CUA_FLAG_SPACES_ASK_FIRST_HOME", "1");
-    setFlagOverride("spaces_ask_first_home", false);
-    expect(flagOn("spaces_ask_first_home")).toBe(false);
-    // The new setup needs the new Home: off with it.
-    setFlagOverride("spaces_new_onboarding", true);
-    expect(newOnboardingOn()).toBe(false);
-    vi.stubEnv("VITE_CUA_FLAG_SPACES_ASK_FIRST_HOME", "");
-    setFlagOverride("spaces_ask_first_home", true);
-    expect(flagOn("spaces_ask_first_home")).toBe(true);
-    expect(newOnboardingOn()).toBe(true);
-    // Off for this device and still off after "a restart" (the choice is what is stored).
-    setFlagOverride("spaces_new_onboarding", false);
-    expect(newOnboardingOn()).toBe(false);
-    expect(localStorage.getItem("cua.flag.spaces_new_onboarding")).toBe("0");
-    // The tree is still off until turned on.
+  it("an override or the build's env turns the tree on, and an explicit off stays off", () => {
+    vi.stubEnv("VITE_CUA_FLAG_SPACES_TREE", "1");
+    expect(flagOn("spaces_tree")).toBe(true);
+    setFlagOverride("spaces_tree", false);
     expect(flagOn("spaces_tree")).toBe(false);
+    expect(localStorage.getItem("cua.flag.spaces_tree")).toBe("0");
+    vi.stubEnv("VITE_CUA_FLAG_SPACES_TREE", "");
     setFlagOverride("spaces_tree", true);
     expect(flagOn("spaces_tree")).toBe(true);
+  });
+
+  it("the old flags of the new Home and the new setup are gone: a stored override is ignored", () => {
+    localStorage.setItem("cua.flag.spaces_ask_first_home", "0");
+    localStorage.setItem("cua.flag.spaces_new_onboarding", "0");
+    expect(flagOn("spaces_tree")).toBe(false);
   });
 });

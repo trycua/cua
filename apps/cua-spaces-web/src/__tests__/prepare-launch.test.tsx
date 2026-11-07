@@ -8,7 +8,6 @@
 import { act, cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { setFlagOverride } from "@/bridge";
 import { wasmBuilt } from "@/bridge/__tests__/testCore";
 import { resetConnectState } from "@/hooks/use-connectors";
 import { resetAskTasks } from "@/lib/ask-first";
@@ -21,8 +20,6 @@ beforeEach(() => {
   resetAskTasks();
   resetConnectState();
   resetPrepare();
-  setFlagOverride("spaces_ask_first_home", true);
-  setFlagOverride("spaces_new_onboarding", true);
 });
 afterEach(() => {
   cleanup();

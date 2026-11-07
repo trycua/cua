@@ -12,7 +12,6 @@ import { wasmBuilt } from "@/bridge/__tests__/testCore";
 import { readFirstRun, resetFirstRunCache, TEAMMATES_KEY, writeFirstRun } from "@/bridge/first-run";
 import { resetSavedOnboardingCache } from "@/bridge/onboarding";
 import { resetConnectedAppsState, setConnectedAppsState } from "@/hooks/use-connected-apps";
-import { setFlagOverride } from "@/bridge";
 import { mountApp, stubBrowserApis, type TestHost } from "./app-harness";
 
 stubBrowserApis();
@@ -22,9 +21,6 @@ afterEach(() => {
 });
 beforeEach(() => {
   localStorage.clear();
-  // The first run as it was; the new setup (on by default) has its own tests.
-  setFlagOverride("spaces_ask_first_home", false);
-  setFlagOverride("spaces_new_onboarding", false);
   resetSavedOnboardingCache();
   resetFirstRunCache();
   resetConnectedAppsState();
@@ -111,11 +107,10 @@ describe.skipIf(!wasmBuilt)("About, Reset & Show", () => {
     // Only the welcome's keys went; the theme stays.
     expect(localStorage.getItem(TEAMMATES_KEY)).toBeNull();
     expect(localStorage.getItem("cua-spaces:theme")).toBe("dark");
-    expect(readFirstRun().step).toBe("welcome");
-    // The welcome's first page is on screen.
-    await waitFor(() => expect(document.body.textContent).toMatch(/Get started|Welcome/));
+    // The setup's first screen is on screen.
+    await waitFor(() => expect(document.querySelector("[data-new-first-run]")?.getAttribute("data-step")).toBe("welcome"));
     await act(async () => {});
-    expect(readFirstRun().step).toBe("welcome");
+    expect(document.body.textContent).toContain("Bring all your computers under one account");
   });
 
   it("Show, as before, asks nothing and resets nothing", async () => {

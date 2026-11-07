@@ -106,7 +106,7 @@ async fn egress(disk: &Path, restrict: bool) -> Result<(bool, String), String> {
 #[ignore = "boots a 4 GiB QEMU VM twice; set CUA_VMM_TEST_QEMU=1 and run with --ignored"]
 async fn guests_have_egress_by_default_and_none_cuts_it() {
     // A real VM test of the open network: Secure Spaces (on by default) puts a VM behind a gateway.
-    let _open = cua_vmm::experiments::hold(cua_vmm::experiments::Gate::SecureSpaces, false);
+    let _open = cua_vmm::network::hold_mode(cua_vmm::network::Mode::Legacy);
     if std::env::var("CUA_VMM_TEST_QEMU").as_deref() != Ok("1") {
         eprintln!("skipped: set CUA_VMM_TEST_QEMU=1");
         return;

@@ -1,23 +1,17 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-//! Settings, Experiments: one switch per feature. Secure Spaces, Child Spaces, Ask first and
-//! Warm start are on by default (their on state is the default and a stored off stays off);
-//! the others are off until turned on.
+//! Settings, Experiments: one switch per feature, off until turned on. Secure Spaces, Child
+//! Spaces, Ask first and Warm start used to be switches here; they are always on now, and a
+//! stored key of theirs is ignored (and gone after the next save).
 //!
 //! - Cua Volume ([`Experiment::CuaVolume`]): the first run's Volume page
 //!   (and its Done line) and Settings' Storage section;
-//! - Secure Spaces ([`Experiment::SecureSpaces`]) and Child Spaces
-//!   ([`Experiment::ChildSpaces`]) and CI runners ([`Experiment::CiRunners`]): enforced, not only hidden. Their switches
-//!   are also kept in the cua home, where the daemon and `cua experiments`
-//!   read them; the shells load and save them through the app export
+//! - CI runners ([`Experiment::CiRunners`]), Public TCP shares
+//!   ([`Experiment::TcpShares`]) and the Phone app ([`Experiment::Mobile`]): enforced, not
+//!   only hidden. Their switches are also kept in the cua home, where the daemon and
+//!   `cua experiments` read them; the shells load and save them through the app export
 //!   (`app_settings_load` and `app_settings_save`).
-//! - Ask first ([`Experiment::AskFirst`]): enforced the same way. An agent
-//!   asks on a card before something leaves its Space (a push to GitHub),
-//!   and the host acts only after its owner answers.
-//! - Public TCP shares ([`Experiment::TcpShares`]): enforced the same way.
-//! - Warm start ([`Experiment::WarmPools`]): enforced the same way. The cua
-//!   daemon keeps one prepared warm Space ready on this computer.
 //!
 //! Off only hides the entry points. Nothing is undone: a mounted Volume
 //! stays mounted (and keeps syncing), a connected cloud stays connected
@@ -41,17 +35,6 @@ use crate::settings::{
 pub struct Experiments {
     /// Cua Volume in the first run and Settings, Storage.
     pub cua_volume: bool,
-    /// Secure Spaces: a Space reaches the internet and nothing else on the
-    /// network unless it is opened. On unless turned off; the daemon enforces
-    /// it (the switch is kept in the cua home).
-    pub secure_spaces: bool,
-    /// Child Spaces: a Space may make Spaces of its own. On unless turned
-    /// off; the daemon enforces it (the switch is kept in the cua home).
-    pub child_spaces: bool,
-    /// Ask first: an agent asks on a card before something leaves its Space
-    /// (a push to GitHub). On unless turned off; the daemon enforces it (the
-    /// switch is kept in the cua home).
-    pub ask_first: bool,
     /// CI runners: GitHub Actions jobs run in a fresh Space each (`cua ci`
     /// and the CI Runners page). Off unless turned on; the daemon and the
     /// `cua` command enforce it (the switch is kept in the cua home).
@@ -64,26 +47,18 @@ pub struct Experiments {
     /// push events). Off unless turned on; the daemon enforces it (the switch
     /// is kept in the cua home).
     pub mobile: bool,
-    /// Warm pools: one Linux Space kept ready, with its coding apps
-    /// installed, so the next Create from Home starts at once. On unless
-    /// turned off; the daemon enforces it (the switch is kept in the cua home).
-    pub warm_pools: bool,
 }
 
 impl Default for Experiments {
-    /// What a person who never touched a switch has: Secure Spaces, Child Spaces, Ask first and
-    /// Warm start on, the rest off. The daemon's gates ([`cua_spaces::experiments::Gate`]) and
-    /// the web Labs flags say the same; a test in cua-spaces-ffi keeps them from drifting.
+    /// What a person who never touched a switch has: everything off. The daemon's gates
+    /// ([`cua_spaces::experiments::Gate`]) and the web Labs flags list the same experiments; a
+    /// test in cua-spaces-ffi keeps them from drifting.
     fn default() -> Self {
         Experiments {
             cua_volume: false,
-            secure_spaces: true,
-            child_spaces: true,
-            ask_first: true,
             ci_runners: false,
             tcp_shares: false,
             mobile: false,
-            warm_pools: true,
         }
     }
 }
@@ -94,47 +69,31 @@ impl Default for Experiments {
 pub enum Experiment {
     /// Cua Volume.
     CuaVolume,
-    /// Secure Spaces.
-    SecureSpaces,
-    /// Child Spaces.
-    ChildSpaces,
-    /// Ask first.
-    AskFirst,
     /// CI runners.
     CiRunners,
     /// Public TCP shares.
     TcpShares,
     /// Mobile.
     Mobile,
-    /// Warm start.
-    WarmPools,
 }
 
 /// Every experiment, in the order Settings lists them.
-pub const ALL: [Experiment; 8] = [
+pub const ALL: [Experiment; 4] = [
     Experiment::CuaVolume,
-    Experiment::SecureSpaces,
-    Experiment::ChildSpaces,
-    Experiment::AskFirst,
     Experiment::CiRunners,
     Experiment::TcpShares,
     Experiment::Mobile,
-    Experiment::WarmPools,
 ];
 
 impl Experiment {
-    /// The stable id (`cua_volume`, `secure_spaces`, ...): the Settings
+    /// The stable id (`cua_volume`, `ci_runners`, ...): the Settings
     /// row's suffix and the telemetry word.
     pub fn id(self) -> &'static str {
         match self {
             Experiment::CuaVolume => "cua_volume",
-            Experiment::SecureSpaces => "secure_spaces",
-            Experiment::ChildSpaces => "child_spaces",
-            Experiment::AskFirst => "ask_first",
             Experiment::CiRunners => "ci_runners",
             Experiment::TcpShares => "tcp_shares",
             Experiment::Mobile => "mobile",
-            Experiment::WarmPools => "warm_pools",
         }
     }
 
@@ -147,13 +106,9 @@ impl Experiment {
     pub fn title(self) -> &'static str {
         match self {
             Experiment::CuaVolume => "Cua Volume",
-            Experiment::SecureSpaces => "Secure Spaces",
-            Experiment::ChildSpaces => "Child Spaces",
-            Experiment::AskFirst => "Ask first",
             Experiment::CiRunners => "CI runners",
             Experiment::TcpShares => "Public TCP shares",
             Experiment::Mobile => "Phone app",
-            Experiment::WarmPools => "Warm start",
         }
     }
 
@@ -161,15 +116,6 @@ impl Experiment {
     pub fn description(self) -> &'static str {
         match self {
             Experiment::CuaVolume => "Memory and files your agents share across every Space.",
-            Experiment::SecureSpaces => {
-                "A Space reaches the internet and nothing else on your network unless you open it."
-            }
-            Experiment::ChildSpaces => {
-                "A Space can make Spaces of its own, inside a budget you set."
-            }
-            Experiment::AskFirst => {
-                "An agent asks you on a card before anything leaves its Space, such as a push to GitHub."
-            }
             Experiment::CiRunners => {
                 "Run GitHub Actions jobs in a fresh Space each, on this computer."
             }
@@ -178,9 +124,6 @@ impl Experiment {
             }
             Experiment::Mobile => {
                 "Your computers answer the Cua Spaces phone app: start a task, follow the thread, review changes and get alerts."
-            }
-            Experiment::WarmPools => {
-                "Keep one Linux Space ready on this computer, with its coding apps installed, so the next Create from Home starts at once."
             }
         }
     }
@@ -191,13 +134,9 @@ impl Experiments {
     pub fn is_on(&self, e: Experiment) -> bool {
         match e {
             Experiment::CuaVolume => self.cua_volume,
-            Experiment::SecureSpaces => self.secure_spaces,
-            Experiment::ChildSpaces => self.child_spaces,
-            Experiment::AskFirst => self.ask_first,
             Experiment::CiRunners => self.ci_runners,
             Experiment::TcpShares => self.tcp_shares,
             Experiment::Mobile => self.mobile,
-            Experiment::WarmPools => self.warm_pools,
         }
     }
 
@@ -205,13 +144,9 @@ impl Experiments {
     pub fn with(mut self, e: Experiment, on: bool) -> Self {
         match e {
             Experiment::CuaVolume => self.cua_volume = on,
-            Experiment::SecureSpaces => self.secure_spaces = on,
-            Experiment::ChildSpaces => self.child_spaces = on,
-            Experiment::AskFirst => self.ask_first = on,
             Experiment::CiRunners => self.ci_runners = on,
             Experiment::TcpShares => self.tcp_shares = on,
             Experiment::Mobile => self.mobile = on,
-            Experiment::WarmPools => self.warm_pools = on,
         }
         self
     }
@@ -308,8 +243,11 @@ pub fn switches(page: &SettingsPage) -> Vec<&SettingsRow> {
 mod tests {
     use super::*;
 
+    /// The experiments that became always-on features: they have no switch, row or key.
+    const RETIRED: [&str; 4] = ["secure_spaces", "child_spaces", "ask_first", "warm_pools"];
+
     #[test]
-    fn every_experiment_has_a_switch_and_one_line_and_the_defaults_are_as_shipped() {
+    fn every_experiment_has_a_switch_and_one_line_and_all_start_off() {
         let p = page(&Experiments::default());
         assert_eq!(p.title, "Experiments");
         let ids: Vec<&str> = p.sections[0].rows.iter().map(|r| r.id.as_str()).collect();
@@ -318,43 +256,47 @@ mod tests {
             [
                 "experiment:cua_volume",
                 "experiment:cua_volume-note",
-                "experiment:secure_spaces",
-                "experiment:secure_spaces-note",
-                "experiment:child_spaces",
-                "experiment:child_spaces-note",
-                "experiment:ask_first",
-                "experiment:ask_first-note",
                 "experiment:ci_runners",
                 "experiment:ci_runners-note",
                 "experiment:tcp_shares",
                 "experiment:tcp_shares-note",
                 "experiment:mobile",
                 "experiment:mobile-note",
-                "experiment:warm_pools",
-                "experiment:warm_pools-note",
             ]
         );
-        // Secure Spaces, Child Spaces, Ask first and Warm start are on by default; the rest off.
-        let on_by_default = ["secure_spaces", "child_spaces", "ask_first", "warm_pools"];
         for r in switches(&p) {
-            let id = r.id.trim_start_matches("experiment:");
-            let want = if on_by_default.contains(&id) {
-                "on"
-            } else {
-                "off"
-            };
             assert!(
-                r.options.iter().any(|o| o.id == want && o.active),
-                "{} should read {want}",
+                r.options.iter().any(|o| o.id == "off" && o.active),
+                "{} should read off",
                 r.id
             );
             assert!(r.enabled);
         }
-        assert_eq!(Experiments::default().on_ids(), on_by_default);
+        assert!(Experiments::default().on_ids().is_empty());
         for e in ALL {
             assert!(!e.description().contains('\n'));
             assert!(!e.description().contains('\u{2014}'), "no em dashes");
         }
+    }
+
+    #[test]
+    fn the_always_on_features_have_no_switch_row_or_id() {
+        let p = page(&Experiments::all_on());
+        for id in RETIRED {
+            assert!(Experiment::parse(id).is_none(), "{id}");
+            assert!(
+                p.sections[0]
+                    .rows
+                    .iter()
+                    .all(|r| !r.id.contains(id) && !r.id.contains(&id.replace('_', "-"))),
+                "{id}"
+            );
+            assert_eq!(of_row(&format!("experiment:{id}")), None);
+        }
+        // A choice for one of them changes nothing.
+        let x = Experiments::all_off();
+        assert_eq!(choose(&x, "experiment:warm_pools", "on"), x);
+        assert_eq!(choose(&x, "experiment:secure_spaces", "off"), x);
     }
 
     #[test]
@@ -365,45 +307,29 @@ mod tests {
         assert_eq!(choose(&x, "experiment:cua_volume", "off"), off);
         let v = choose(&x, "experiment:mobile", "on");
         assert_eq!(v.on_ids(), ["cua_volume", "mobile"]);
-        // A default-on switch turned off stays off, and is stored as off.
-        let w = choose(&Experiments::default(), "experiment:warm_pools", "off");
-        assert!(!w.warm_pools);
-        assert_eq!(serde_json::to_value(w).unwrap()["warmPools"], false);
         assert_eq!(choose(&x, "notch", "on"), x, "other rows change nothing");
         assert_eq!(choose(&x, "experiment:nope", "on"), x);
         assert_eq!(
             Experiments::all_on().on_ids(),
-            [
-                "cua_volume",
-                "secure_spaces",
-                "child_spaces",
-                "ask_first",
-                "ci_runners",
-                "tcp_shares",
-                "mobile",
-                "warm_pools"
-            ]
+            ["cua_volume", "ci_runners", "tcp_shares", "mobile"]
         );
     }
 
     #[test]
-    fn stored_keys_are_forward_compatible() {
-        // Keys of switches that are gone (an older build's `yourCloud`,
-        // `sharing`, `webUi`) and of future ones are ignored.
+    fn stored_keys_are_forward_compatible_and_retired_ones_are_dropped() {
+        // Keys of switches that are gone (an older build's `yourCloud`, `sharing`, `webUi`,
+        // and the four that are always on now) and of future ones are ignored, whatever they
+        // said, and are not written back.
         let x: Experiments = serde_json::from_str(
-            r#"{"cuaVolume":true,"yourCloud":false,"sharing":false,"webUi":true,"someFutureExperiment":true}"#,
+            r#"{"cuaVolume":true,"yourCloud":false,"sharing":false,"webUi":true,"secureSpaces":false,"childSpaces":false,"askFirst":false,"warmPools":false,"someFutureExperiment":true}"#,
         )
         .unwrap();
         assert!(x.cua_volume);
         let back = serde_json::to_value(x).unwrap();
         assert_eq!(
             back,
-            serde_json::json!({"cuaVolume": true, "secureSpaces": true, "childSpaces": true, "askFirst": true, "ciRunners": false, "tcpShares": false, "mobile": false, "warmPools": true})
+            serde_json::json!({"cuaVolume": true, "ciRunners": false, "tcpShares": false, "mobile": false})
         );
-        // A stored off wins over a default that is on.
-        let off: Experiments =
-            serde_json::from_str(r#"{"askFirst":false,"warmPools":false}"#).unwrap();
-        assert!(!off.ask_first && !off.warm_pools && off.secure_spaces && off.child_spaces);
         assert_eq!(
             serde_json::from_str::<Experiments>("{}").unwrap(),
             Experiments::default()

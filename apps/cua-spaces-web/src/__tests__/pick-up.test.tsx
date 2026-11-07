@@ -9,7 +9,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { BridgeProvider, setFlagOverride, type DataAdapter, type HostStatus } from "@/bridge";
+import { BridgeProvider, type DataAdapter, type HostStatus } from "@/bridge";
 import { createDemoAdapter } from "@/bridge/adapters/demo";
 import { testCore, wasmBuilt } from "@/bridge/__tests__/testCore";
 import { ContinueOn } from "@/components/ask-first/imported-task";
@@ -22,7 +22,6 @@ stubBrowserApis();
 beforeEach(() => {
   localStorage.clear();
   resetAskTasks();
-  setFlagOverride("spaces_ask_first_home", true);
 });
 afterEach(() => cleanup());
 

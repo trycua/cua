@@ -1,5 +1,4 @@
-//! Experiments: switches for behavior, each with a default (most are off until turned on; the
-//! ones that have shipped for everyone are on until turned off).
+//! Experiments: switches for behavior that is off until turned on.
 //!
 //! One switch per experiment, one source of truth in the cua home
 //! (`<home>/experiments/<name>`, `on` or `off`). The CLI (`cua experiments`),
@@ -16,19 +15,9 @@ pub const EXPERIMENTS_ENV: &str = "CUA_EXPERIMENTS";
 /// The folder, in the cua home, that holds the switches.
 pub const EXPERIMENTS_DIR: &str = "experiments";
 
-/// An experiment: a switch for a feature. Each has a default ([`Gate::default_on`]); a stored
-/// `on` or `off` always wins over it.
+/// An experiment: a switch for a feature, off until turned on.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Gate {
-    /// Secure Spaces: a Space reaches the internet only by default, with a
-    /// network preset per Space (`cua network`).
-    SecureSpaces,
-    /// Child Spaces: a Space makes Spaces of its own through a channel only
-    /// it can reach, inside a budget for its tree (`cua spaces children`).
-    ChildSpaces,
-    /// Ask first: what an agent does that leaves its Space (a push to
-    /// GitHub) waits for a card only its owner can answer.
-    AskFirst,
     /// CI runners: GitHub Actions jobs run in a fresh Space each (`cua ci`).
     CiRunners,
     /// Public TCP shares: a raw TCP service in a Space (a game server) at a
@@ -41,61 +30,34 @@ pub enum Gate {
     /// Windows on KVM: Windows Spaces from a Mac coordinator on a Cua-managed
     /// AWS x86 pool host with nested KVM.
     WindowsKvm,
-    /// Warm pools: one prepared Linux Space is kept ready on this computer
-    /// (its coding apps already installed), so the next Create from Home
-    /// claims it instead of making one.
-    WarmPools,
 }
 
 impl Gate {
     /// Every experiment, in the order they are listed.
     pub const ALL: &'static [Gate] = &[
-        Gate::SecureSpaces,
-        Gate::ChildSpaces,
-        Gate::AskFirst,
         Gate::CiRunners,
         Gate::TcpShares,
         Gate::Mobile,
         Gate::WindowsKvm,
-        Gate::WarmPools,
     ];
 
-    /// Whether the gate is on when nobody set it: Secure Spaces, Child Spaces, Ask first and
-    /// Warm start are on for everyone (turning one off writes an explicit `off`); the rest are
-    /// off until turned on. The app's own defaults (`Experiments::default` in cua-spaces-app-core
-    /// and the web Labs flags) must say the same: a test in cua-spaces-app-core reads this.
-    pub fn default_on(self) -> bool {
-        matches!(
-            self,
-            Gate::SecureSpaces | Gate::ChildSpaces | Gate::AskFirst | Gate::WarmPools
-        )
-    }
-
-    /// The stable name (`secure-spaces`): the file name, the CLI word.
+    /// The stable name (`ci-runners`): the file name, the CLI word.
     pub fn name(self) -> &'static str {
         match self {
-            Gate::SecureSpaces => "secure-spaces",
-            Gate::ChildSpaces => "child-spaces",
-            Gate::AskFirst => "ask-first",
             Gate::CiRunners => "ci-runners",
             Gate::TcpShares => "tcp-shares",
             Gate::Mobile => "mobile",
             Gate::WindowsKvm => "windows-kvm",
-            Gate::WarmPools => "warm-pools",
         }
     }
 
-    /// The same name with underscores (`secure_spaces`): the app's id.
+    /// The same name with underscores (`ci_runners`): the app's id.
     pub fn id(self) -> &'static str {
         match self {
-            Gate::SecureSpaces => "secure_spaces",
-            Gate::ChildSpaces => "child_spaces",
-            Gate::AskFirst => "ask_first",
             Gate::CiRunners => "ci_runners",
             Gate::TcpShares => "tcp_shares",
             Gate::Mobile => "mobile",
             Gate::WindowsKvm => "windows_kvm",
-            Gate::WarmPools => "warm_pools",
         }
     }
 
@@ -108,29 +70,16 @@ impl Gate {
     /// The label people see.
     pub fn title(self) -> &'static str {
         match self {
-            Gate::SecureSpaces => "Secure Spaces",
-            Gate::ChildSpaces => "Child Spaces",
-            Gate::AskFirst => "Ask first",
             Gate::CiRunners => "CI runners",
             Gate::TcpShares => "Public TCP shares",
             Gate::Mobile => "Phone app",
             Gate::WindowsKvm => "Windows on KVM",
-            Gate::WarmPools => "Warm start",
         }
     }
 
     /// One line on what it does.
     pub fn summary(self) -> &'static str {
         match self {
-            Gate::SecureSpaces => {
-                "A Space reaches the internet and nothing else on your network unless you open it, with a network setting for each Space."
-            }
-            Gate::ChildSpaces => {
-                "A Space can make Spaces of its own, inside a budget, and keep a command running."
-            }
-            Gate::AskFirst => {
-                "An agent asks you on a card before anything leaves its Space, such as a push to GitHub, and the host does it only after your answer."
-            }
             Gate::CiRunners => {
                 "Run GitHub Actions jobs in a fresh Space each, on your computers, with `cua ci`."
             }
@@ -142,9 +91,6 @@ impl Gate {
             }
             Gate::WindowsKvm => {
                 "Windows Spaces from a Mac run on a Cua-managed cloud host with nested virtualization."
-            }
-            Gate::WarmPools => {
-                "Keep one Linux Space ready on this computer, with its coding apps installed, so the next Create from Home starts at once."
             }
         }
     }
@@ -165,11 +111,7 @@ impl Gate {
 
 /// Process-wide overrides, one per gate: 0 follows the environment and the
 /// file, 1 off, 2 on.
-static GATE_OVERRIDES: [AtomicU8; 8] = [
-    AtomicU8::new(0),
-    AtomicU8::new(0),
-    AtomicU8::new(0),
-    AtomicU8::new(0),
+static GATE_OVERRIDES: [AtomicU8; 4] = [
     AtomicU8::new(0),
     AtomicU8::new(0),
     AtomicU8::new(0),
@@ -198,11 +140,7 @@ pub struct Override {
 }
 
 /// One turn lock per gate (as many as [`GATE_OVERRIDES`]).
-static GATE_TURNS: [std::sync::Mutex<()>; 8] = [
-    std::sync::Mutex::new(()),
-    std::sync::Mutex::new(()),
-    std::sync::Mutex::new(()),
-    std::sync::Mutex::new(()),
+static GATE_TURNS: [std::sync::Mutex<()>; 4] = [
     std::sync::Mutex::new(()),
     std::sync::Mutex::new(()),
     std::sync::Mutex::new(()),
@@ -249,8 +187,7 @@ pub fn env_says(value: Option<&str>, gate: Gate) -> Option<bool> {
 }
 
 /// Whether `gate` is on in this process: the override, else
-/// [`EXPERIMENTS_ENV`], else the switch in `home`, else the gate's default
-/// ([`Gate::default_on`]).
+/// [`EXPERIMENTS_ENV`], else the switch in `home`, else off.
 pub fn enabled_in(home: &std::path::Path, gate: Gate) -> bool {
     match GATE_OVERRIDES[gate.slot()].load(Ordering::Relaxed) {
         1 => return false,
@@ -260,7 +197,7 @@ pub fn enabled_in(home: &std::path::Path, gate: Gate) -> bool {
     if let Some(v) = env_says(std::env::var(EXPERIMENTS_ENV).ok().as_deref(), gate) {
         return v;
     }
-    switch(home, gate).unwrap_or(gate.default_on())
+    switch(home, gate).unwrap_or(false)
 }
 
 /// [`enabled_in`] with the switches in [`crate::cua_home`].
@@ -278,12 +215,29 @@ pub fn switch(home: &std::path::Path, gate: Gate) -> Option<bool> {
     Some(text.trim() == "on")
 }
 
+/// Switches that were experiments once and are now always on (Secure Spaces, Child Spaces, Ask
+/// first, Warm start). A file one of them left in `<home>/experiments` is ignored and removed by
+/// [`forget_retired`]; naming one in [`EXPERIMENTS_ENV`] does nothing.
+pub const RETIRED: &[&str] = &["secure-spaces", "child-spaces", "ask-first", "warm-pools"];
+
+/// Removes the switch files of the [`RETIRED`] experiments from `home`, so a person who once
+/// turned one off keeps nothing of it. Missing files are fine; a test never touches the user's
+/// real home.
+pub fn forget_retired(home: &std::path::Path) {
+    for name in RETIRED {
+        let path = home.join(EXPERIMENTS_DIR).join(name);
+        if path.exists() && cua_home::guard_write(&path).is_ok() {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+}
+
 /// Keeps the switch for `gate` in `home`. Writes only a change: a switch that was never set and
-/// is asked for its default writes nothing, so turning an on-by-default gate off writes an
-/// explicit `off` that stays.
+/// is asked for off (the default) writes nothing. Also clears the files of retired experiments.
 pub fn set_switch(home: &std::path::Path, gate: Gate, on: bool) -> std::io::Result<()> {
+    forget_retired(home);
     let now = switch(home, gate);
-    if now == Some(on) || (now.is_none() && on == gate.default_on()) {
+    if now == Some(on) || (now.is_none() && !on) {
         return Ok(());
     }
     let path = switch_path(home, gate);
@@ -302,58 +256,50 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_gate_that_is_off_by_default_is_off_until_set_and_follows_the_file() {
-        let home = tempfile::tempdir().unwrap();
-        let g = Gate::CiRunners;
-        assert!(!g.default_on());
-        assert_eq!(super::switch(home.path(), g), None);
-        assert!(!super::enabled_in(home.path(), g));
-        // Off and never set: nothing is written.
-        super::set_switch(home.path(), g, false).unwrap();
-        assert!(!home.path().join("experiments/ci-runners").exists());
-        assert_eq!(super::switch(home.path(), g), None);
-        super::set_switch(home.path(), g, true).unwrap();
-        assert_eq!(super::switch(home.path(), g), Some(true));
-        super::set_switch(home.path(), g, false).unwrap();
-        assert_eq!(super::switch(home.path(), g), Some(false));
-    }
-
-    #[test]
-    fn the_shipped_gates_are_on_by_default_and_an_explicit_off_stays() {
-        for g in [
-            Gate::SecureSpaces,
-            Gate::ChildSpaces,
-            Gate::AskFirst,
-            Gate::WarmPools,
-        ] {
+    fn every_gate_is_off_until_set_and_follows_the_file() {
+        for g in Gate::ALL.iter().copied() {
             let home = tempfile::tempdir().unwrap();
-            assert!(g.default_on(), "{g:?}");
-            assert!(
-                super::enabled_in(home.path(), g),
-                "{g:?} is on in a fresh home"
-            );
-            // On and never set: nothing is written.
-            super::set_switch(home.path(), g, true).unwrap();
-            assert!(!home.path().join("experiments").join(g.name()).exists());
-            // Turned off: an explicit off is written, and it survives a restart (a new read).
+            assert_eq!(super::switch(home.path(), g), None);
+            assert!(!super::enabled_in(home.path(), g), "{g:?}");
+            // Off and never set: nothing is written.
             super::set_switch(home.path(), g, false).unwrap();
-            assert_eq!(super::switch(home.path(), g), Some(false));
-            assert!(!super::enabled_in(home.path(), g), "{g:?} stays off");
-            // Turned on again: the switch says on.
+            assert!(!home.path().join("experiments").join(g.name()).exists());
+            assert_eq!(super::switch(home.path(), g), None);
             super::set_switch(home.path(), g, true).unwrap();
             assert_eq!(super::switch(home.path(), g), Some(true));
             assert!(super::enabled_in(home.path(), g));
+            super::set_switch(home.path(), g, false).unwrap();
+            assert_eq!(super::switch(home.path(), g), Some(false));
         }
-        // The others are still off in a fresh home.
+    }
+
+    #[test]
+    fn the_listing_has_no_retired_experiment_and_all_the_others() {
+        let names: Vec<_> = Gate::ALL.iter().map(|g| g.name()).collect();
+        assert_eq!(names, ["ci-runners", "tcp-shares", "mobile", "windows-kvm"]);
+        for retired in super::RETIRED {
+            assert_eq!(Gate::parse(retired), None, "{retired}");
+            assert_eq!(Gate::parse(&retired.replace('-', "_")), None, "{retired}");
+        }
+    }
+
+    #[test]
+    fn a_switch_a_retired_experiment_left_is_ignored_and_removed_on_write() {
         let home = tempfile::tempdir().unwrap();
-        for g in [
-            Gate::CiRunners,
-            Gate::TcpShares,
-            Gate::Mobile,
-            Gate::WindowsKvm,
-        ] {
-            assert!(!super::enabled_in(home.path(), g), "{g:?}");
+        let dir = home.path().join("experiments");
+        std::fs::create_dir_all(&dir).unwrap();
+        for name in super::RETIRED {
+            std::fs::write(dir.join(name), "off\n").unwrap();
         }
+        std::fs::write(dir.join("mobile"), "on\n").unwrap();
+        // Ignored: the other switches read as before.
+        assert!(super::enabled_in(home.path(), Gate::Mobile));
+        // Removed on the next write; the others stay.
+        super::set_switch(home.path(), Gate::CiRunners, true).unwrap();
+        for name in super::RETIRED {
+            assert!(!dir.join(name).exists(), "{name}");
+        }
+        assert!(dir.join("mobile").exists());
     }
 
     #[test]
@@ -373,22 +319,21 @@ mod tests {
 
     #[test]
     fn the_environment_list_names_experiments_on_or_off() {
-        let g = Gate::SecureSpaces;
+        let g = Gate::CiRunners;
         assert_eq!(super::env_says(None, g), None);
-        assert_eq!(super::env_says(Some("child-spaces"), g), None);
-        assert_eq!(super::env_says(Some("secure-spaces"), g), Some(true));
-        assert_eq!(super::env_says(Some("a, Secure_Spaces"), g), Some(true));
+        assert_eq!(super::env_says(Some("mobile"), g), None);
+        assert_eq!(super::env_says(Some("ci-runners"), g), Some(true));
+        assert_eq!(super::env_says(Some("a, CI_Runners"), g), Some(true));
         assert_eq!(
-            super::env_says(Some("secure-spaces -secure-spaces"), g),
+            super::env_says(Some("ci-runners -ci-runners"), g),
             Some(false)
         );
-        assert_eq!(super::env_says(Some("-secure_spaces"), g), Some(false));
-        assert_eq!(Gate::parse("SECURE_SPACES"), Some(g));
+        assert_eq!(super::env_says(Some("-ci_runners"), g), Some(false));
+        assert_eq!(Gate::parse("CI_RUNNERS"), Some(g));
         assert_eq!(Gate::parse("nope"), None);
         assert_eq!(Gate::parse("Mobile"), Some(Gate::Mobile));
         assert_eq!(Gate::Mobile.id(), "mobile");
-        assert_eq!(Gate::parse("warm_pools"), Some(Gate::WarmPools));
-        assert_eq!(Gate::WarmPools.name(), "warm-pools");
-        assert_eq!(Gate::WarmPools.id(), "warm_pools");
+        // A retired experiment named in the environment does nothing.
+        assert_eq!(super::env_says(Some("-secure-spaces"), g), None);
     }
 }

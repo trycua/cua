@@ -4062,15 +4062,6 @@ impl Spaces {
         run(async move {
             match &host {
                 Host::Embedded(s) => {
-                    if options.children == Some(true)
-                        && !cua_spaces::experiments::enabled(
-                            cua_spaces::experiments::Gate::ChildSpaces,
-                        )
-                    {
-                        return Err(CuaError::Unsupported(
-                            cua_spaces::experiments::Gate::ChildSpaces.off_message(),
-                        ));
-                    }
                     let created = s
                         .create(cua_spaces::SpaceCreate {
                             image: options.image,
@@ -4772,15 +4763,6 @@ impl Spaces {
             match &host {
                 Host::Embedded(s) => {
                     let id = s.resolve(&space)?.to_string();
-                    if enabled
-                        && !cua_spaces::experiments::enabled(
-                            cua_spaces::experiments::Gate::ChildSpaces,
-                        )
-                    {
-                        return Err(CuaError::Unsupported(
-                            cua_spaces::experiments::Gate::ChildSpaces.off_message(),
-                        ));
-                    }
                     if enabled && !id.starts_with("local:") {
                         return Err(CuaError::Unsupported(
                             "child Spaces are available for Spaces this computer runs".into(),

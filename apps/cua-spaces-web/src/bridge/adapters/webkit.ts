@@ -633,7 +633,7 @@ export function createWebkitAdapter(
       await request("spaces.setAccess", args);
       return null;
     },
-    // Child Spaces (the Child Spaces experiment), as the host's SDK says them.
+    // Child Spaces, as the host's SDK says them.
     "spaces.tree": () => request<TreeNodeWire[]>("spaces.tree", {}),
     "children.set": async (args) => {
       await request("children.set", args);

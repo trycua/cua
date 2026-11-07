@@ -771,13 +771,11 @@ impl VmmLocal {
                 Err(e) => tracing::warn!(%image, "pool.warm: {e}"),
             }
         }
-        if cua_vmm::experiments::enabled(cua_vmm::experiments::Gate::WarmPools) {
-            match self.keep_warm_space(pool).await {
-                Ok(()) => {
-                    sources.insert(crate::pool::WARM_SOURCE.to_string());
-                }
-                Err(e) => tracing::warn!("warm-pools: {e}"),
+        match self.keep_warm_space(pool).await {
+            Ok(()) => {
+                sources.insert(crate::pool::WARM_SOURCE.to_string());
             }
+            Err(e) => tracing::warn!("warm-pools: {e}"),
         }
         for np in pool.named_pools() {
             let source = format!("pool:{}", np.name);
@@ -809,7 +807,7 @@ impl VmmLocal {
         });
     }
 
-    /// The `warm-pools` experiment: keeps one Linux Space ready, the Space
+    /// Warm start: keeps one Linux Space ready, the Space
     /// the Spaces app's Home makes for a new agent, with the coding apps of
     /// [`warm_pools_harnesses`] installed in it. The shape is a plain local
     /// create of [`warm_pools_image`] (the size a create without one gets),
@@ -1263,9 +1261,8 @@ async fn warm_session(
     result
 }
 
-/// The image of the Linux Space the `warm-pools` experiment keeps ready: the
-/// Linux slim tier, which the Spaces app's Home creates for a new agent while
-/// the experiment is on (the wizard reads the same catalog file).
+/// The image of the Linux Space warm start keeps ready: the Linux slim tier, which the Spaces
+/// app's Home creates for a new agent (the wizard reads the same catalog file).
 pub fn warm_pools_image() -> String {
     cua_image::catalog::entries()
         .iter()
@@ -3660,9 +3657,8 @@ mod tests {
 
     #[test]
     fn the_warm_space_is_the_image_home_creates_and_its_apps_can_be_chosen() {
-        // The Spaces app's Home creates the Linux slim tier for a new agent
-        // while the experiment is on (the wizard's `first_space_offers`); a
-        // different image here would never be claimed.
+        // The Spaces app's Home creates the Linux slim tier for a new agent (the wizard's
+        // `first_space_offers`); a different image here would never be claimed.
         assert_eq!(super::warm_pools_image(), "ghcr.io/trycua/linux:24.04-slim");
         static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
         let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());

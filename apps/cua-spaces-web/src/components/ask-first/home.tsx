@@ -90,7 +90,7 @@ export function AskFirstHome() {
   // This computer once it's in the account, else a new Linux computer, unless you pick; a pick that's no longer
   // offered falls back to it.
   const [pickedWhere, setWhere] = useState<TaskWhere | null>(null);
-  // The first Space being prepared since launch (Labs, the new setup): silent unless it fails.
+  // The first Space being prepared since launch (the setup): silent unless it fails.
   const prep = usePrepare();
   const onPrepareAction = usePrepareAction();
   const [whereOpen, setWhereOpen] = useState(false);

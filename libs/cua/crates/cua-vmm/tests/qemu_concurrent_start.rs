@@ -75,7 +75,7 @@ fn assert_distinct(instances: &[Instance]) {
 #[ignore = "boots QEMU VMs; set CUA_VMM_TEST_QEMU=1 and CUA_VMM_TEST_DISK, run with --ignored"]
 async fn concurrent_starts_and_forks_all_come_up() {
     // A real VM test of the open network: Secure Spaces (on by default) puts a VM behind a gateway.
-    let _open = cua_vmm::experiments::hold(cua_vmm::experiments::Gate::SecureSpaces, false);
+    let _open = cua_vmm::network::hold_mode(cua_vmm::network::Mode::Legacy);
     if std::env::var("CUA_VMM_TEST_QEMU").as_deref() != Ok("1") {
         eprintln!("skipped: set CUA_VMM_TEST_QEMU=1");
         return;

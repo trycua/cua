@@ -3,25 +3,19 @@
 
 // CUA-2644: an agent that runs on another machine (the customer's Hermes on Linux, driving their
 // MacBook). Connect says which machine it set up and which it did not touch, and has an "On another
-// machine" block with the host, the exact commands, the permissions and the reload note. The first
-// run offers "An agent on another machine", which opens the join sheet.
+// machine" block with the host, the exact commands, the permissions and the reload note.
 
 import { createMemoryHistory, createRootRoute, createRouter, RouterProvider } from "@tanstack/react-router";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
-import { BridgeProvider, setFlagOverride } from "@/bridge";
+import { BridgeProvider } from "@/bridge";
 import { createDemoAdapter } from "@/bridge/adapters/demo";
 import { testCore, wasmBuilt } from "@/bridge/__tests__/testCore";
 import { ConnectAgentDialog } from "@/components/agents/connect-dialog";
 import { mountApp, stubBrowserApis } from "./app-harness";
 
 afterEach(cleanup);
-beforeEach(() => {
-  // The first run as it was; the new setup (on by default) has its own tests.
-  setFlagOverride("spaces_ask_first_home", false);
-  setFlagOverride("spaces_new_onboarding", false);
-});
 stubBrowserApis();
 
 const q = (sel: string) => document.querySelector<HTMLElement>(sel);
@@ -97,21 +91,5 @@ describe.skipIf(!wasmBuilt)("an agent on another machine", () => {
     cleanup();
     await mountApp("/settings/connections/claude-code", { failsCreates: false, listsGhost: false });
     await waitFor(() => expect(q("[data-connector-on]")?.textContent).toMatch(/^On \S+/));
-  });
-
-  it("the first run offers An agent on another computer, which opens the join sheet", async () => {
-    await mountApp("/onboarding?demo=fresh", { failsCreates: false, listsGhost: false });
-    const skip = await screen.findByRole("button", { name: "Get started" });
-    fireEvent.click(skip);
-    const skipSignIn = await screen.findByRole("button", { name: "Skip", exact: true } as never).catch(() => null);
-    if (skipSignIn) fireEvent.click(skipSignIn);
-    const row = await waitFor(() => {
-      const r = q("[data-first-run-other-machine]");
-      if (!r) throw new Error("not on the connect step yet");
-      return r;
-    }, { timeout: 8000 });
-    expect(row.textContent).toContain("An agent on another computer");
-    fireEvent.click(q("[data-first-run-other-machine-open]")!);
-    await waitFor(() => expect(q('[data-add-agent="connect"]')).not.toBeNull());
   });
 });

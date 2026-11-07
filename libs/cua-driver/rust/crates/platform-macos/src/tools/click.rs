@@ -971,6 +971,9 @@ impl ClickTool {
                     //     so the press likely did nothing → cross to vision/pixel.
                     //   * unverifiable — dispatched fine, driver just can't confirm;
                     //     the caller verifies via screenshot.
+                    let suspected_noop = suspected_noop
+                        && changes.earlier_new_windows.is_empty()
+                        && changes.new_windows.is_empty();
                     let mut structured = serde_json::json!({
                         "path": if selection_via_pixel {
                             if fronted { "cgevent_fg" } else { "cgevent" }
@@ -988,6 +991,9 @@ impl ClickTool {
                             "unverifiable"
                         },
                     });
+                    if let Some(windows) = changes.opened_windows_json() {
+                        structured["new_windows"] = windows;
+                    }
                     if selection_verified {
                         structured["evidence"] = serde_json::json!([
                             { "kind": "accessibility_readback" }
@@ -1557,17 +1563,21 @@ impl ClickTool {
                     } else {
                         format!("to pid {pid}")
                     };
+                    let mut structured = serde_json::json!({
+                        "path": super::pixel_route::path_label(route),
+                        "verified": false,
+                        "effect": "unverifiable",
+                        "focus_without_raise": focus_without_raise
+                    });
+                    if let Some(windows) = changes.opened_windows_json() {
+                        structured["new_windows"] = windows;
+                    }
                     ToolResult::text(format!(
                         "✅ Posted {button_label} {target} ({}).{}",
                         super::pixel_route::delivery_note(route),
                         changes.result_suffix()
                     ))
-                    .with_structured(serde_json::json!({
-                        "path": super::pixel_route::path_label(route),
-                        "verified": false,
-                        "effect": "unverifiable",
-                        "focus_without_raise": focus_without_raise
-                    }))
+                    .with_structured(structured)
                 }
                 Ok(Err(e)) if route == PixelClickRoute::ForegroundHid => {
                     super::pixel_route::foreground_unavailable(

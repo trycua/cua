@@ -139,6 +139,24 @@ impl Changes {
         }
     }
 
+    /// Identity of windows seen by this result and the previous action's
+    /// detached tail, matching the Linux action result's `new_windows` shape.
+    pub fn opened_windows_json(&self) -> Option<serde_json::Value> {
+        let windows: Vec<_> = self
+            .earlier_new_windows
+            .iter()
+            .chain(&self.new_windows)
+            .map(|window| {
+                serde_json::json!({
+                    "window_id": window.window_id,
+                    "pid": window.pid,
+                    "title": window.title,
+                })
+            })
+            .collect();
+        (!windows.is_empty()).then_some(serde_json::Value::Array(windows))
+    }
+
     /// True when we found evidence that the action triggered a cross-app
     /// side-effect that required (or would have required) a foreground
     /// restore. Matches Swift's `Changes.needsRestore`.
@@ -684,6 +702,35 @@ mod tests {
         let c = Changes::no_change();
         assert_eq!(c.result_suffix(), "");
         assert!(!c.needs_restore());
+    }
+
+    #[test]
+    fn opened_windows_json_includes_detached_and_immediate_identity() {
+        let changes = Changes {
+            earlier_new_windows: vec![WindowEvent {
+                window_id: 101,
+                pid: 1001,
+                app_name: "Earlier".into(),
+                title: "Detached tail".into(),
+            }],
+            new_windows: vec![WindowEvent {
+                window_id: 202,
+                pid: 1002,
+                app_name: "Immediate".into(),
+                title: "Immediate window".into(),
+            }],
+            ..Changes::no_change()
+        };
+        assert_eq!(
+            changes.opened_windows_json(),
+            Some(serde_json::json!([
+                {"window_id": 101, "pid": 1001, "title": "Detached tail"},
+                {"window_id": 202, "pid": 1002, "title": "Immediate window"}
+            ]))
+        );
+        assert_eq!(Changes::no_change().opened_windows_json(), None);
+        assert_eq!(Changes::not_polled().opened_windows_json(), None);
+        assert_eq!(Changes::deferred().opened_windows_json(), None);
     }
 
     #[test]

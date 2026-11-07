@@ -7,6 +7,8 @@
 use std::process::{Command, Stdio};
 
 fn test_socket(directory: &tempfile::TempDir, suffix: &str) -> String {
+    #[cfg(not(unix))]
+    let _ = directory;
     #[cfg(unix)]
     {
         directory

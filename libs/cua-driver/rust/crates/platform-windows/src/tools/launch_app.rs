@@ -831,7 +831,7 @@ impl Tool for LaunchAppTool {
             // with (e.g. "gimp-3.exe" → prefix "gimp" matches "gimp-3.2.exe").
             let basename_for_match = target_file_opt
                 .as_deref()
-                .and_then(|t| t.rsplit(|c: char| c == '\\' || c == '/').next())
+                .and_then(|t| t.rsplit(['\\', '/']).next())
                 .unwrap_or("")
                 .to_owned();
             // Known-slow launchers get an extended retry budget. GIMP 3.x in
@@ -944,7 +944,7 @@ impl Tool for LaunchAppTool {
             // pick up launcher-stub child processes.
             let stub_basename = target_file_opt
                 .as_deref()
-                .and_then(|t| t.rsplit(|c: char| c == '\\' || c == '/').next())
+                .and_then(|t| t.rsplit(['\\', '/']).next())
                 .unwrap_or("")
                 .to_owned();
             // parent_pid is the launched pid family root — used below to

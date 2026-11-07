@@ -611,6 +611,8 @@ fn ensure_private_directory_path(path: &Path) -> Result<Dir> {
 }
 
 fn sync_cap_dir(dir: &Dir) -> Result<()> {
+    #[cfg(not(unix))]
+    let _ = dir;
     #[cfg(unix)]
     {
         let mut options = CapOpenOptions::new();
@@ -3462,14 +3464,14 @@ fn verify_installed_version_for_startup(
     #[cfg(windows)]
     {
         let started = Instant::now();
-        return converge_windows_startup_verification_with(
+        converge_windows_startup_verification_with(
             WINDOWS_ACL_CONVERGENCE_ATTEMPTS,
             WINDOWS_ACL_CONVERGENCE_RETRY_WINDOW,
             || started.elapsed(),
             std::thread::sleep,
             || windows_harden_private_tree(root),
             || verify_installed_version_for_startup_at(root, entry),
-        );
+        )
     }
     #[cfg(not(windows))]
     verify_installed_version_for_startup_at(root, entry)
@@ -6051,6 +6053,7 @@ mod tests {
     }
 
     /// A publisher-verifiable extension archive and its signed catalog.
+    #[cfg(any(unix, feature = "review-trust-root"))]
     fn signed_fixture(
         directory: &Path,
         pair: &ring::signature::Ed25519KeyPair,

@@ -1018,7 +1018,7 @@ struct PrivateDesktop {
 
 impl PrivateDesktop {
     fn create(token: &str, security: &PrivateSecurity) -> Result<Self, VisualParseError> {
-        let name = wide(&format!("cua-perception-{token}"));
+        let name = wide(format!("cua-perception-{token}"));
         let attributes = security.attributes();
         let handle = unsafe {
             CreateDesktopW(

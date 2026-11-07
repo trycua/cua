@@ -1333,6 +1333,16 @@ impl NativeAbiDriver {
         }
     }
 
+    pub(crate) fn permissions_pending_result(&self) -> Option<Value> {
+        let refusal = unsafe {
+            self.raw_handle()
+                .cast::<CuaDriverHandle>()
+                .as_ref()
+                .and_then(|handle| handle.runtime.permissions_pending_refusal())
+        }?;
+        serde_json::to_value(refusal).ok()
+    }
+
     pub(crate) fn is_available(&self) -> bool {
         let mut available = false;
         let mut error = CuaDriverBuffer::empty();

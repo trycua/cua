@@ -429,8 +429,10 @@ async fn invoke_daemon_tool(
     sdk: &std::sync::Arc<crate::sdk_adapter::SdkAdapter>,
     req: DaemonRequest,
 ) -> DaemonResponse {
+    if let Some(refusal) = sdk.permissions_pending_result() {
+        return permissions_pending_response(req.observation_origin, refusal);
+    }
     let observation_transport = daemon_observation_transport(&req);
-    let request_origin = req.observation_origin;
     let direct_client_kind = req.client_kind;
     let raw_name = req.name.as_deref().unwrap_or("").to_owned();
     let tool_name = if raw_name == "type_text_chars" {
@@ -540,9 +542,11 @@ async fn invoke_daemon_tool(
             return DaemonResponse::err(error, 1);
         }
     };
-    let result = observe_daemon_result(observation, session_context, result_value);
-    permissions_pending_response(request_origin, &result)
-        .unwrap_or_else(|| DaemonResponse::ok(result))
+    DaemonResponse::ok(observe_daemon_result(
+        observation,
+        session_context,
+        result_value,
+    ))
 }
 
 /// Read the PID stored in `pid_file_path`, if any.
@@ -711,24 +715,23 @@ pub fn settle_permission_gate(
     Some(poll)
 }
 
-/// Direct socket clients read a pending gate as a retryable transport error
-/// (`EX_TEMPFAIL`). The MCP proxy forwards tool results, so it keeps the
-/// structured `permissions_pending` refusal instead.
+/// A pending gate answers before every other socket refusal (unknown tool,
+/// ended session, authorization). Direct socket clients read it as a
+/// retryable transport error (`EX_TEMPFAIL`). The MCP proxy forwards tool
+/// results, so it gets the structured `permissions_pending` refusal instead.
 fn permissions_pending_response(
     request_origin: Option<ToolObservationOrigin>,
-    result: &serde_json::Value,
-) -> Option<DaemonResponse> {
+    refusal: serde_json::Value,
+) -> DaemonResponse {
     if request_origin == Some(ToolObservationOrigin::McpProxy) {
-        return None;
+        return DaemonResponse::ok(refusal);
     }
-    let refusal = result.pointer("/structuredContent/refusal")?;
-    if refusal.get("code")?.as_str()? != "permissions_pending" {
-        return None;
-    }
-    Some(DaemonResponse::err(
-        refusal.get("message")?.as_str()?.to_owned(),
-        75,
-    ))
+    let message = refusal
+        .pointer("/structuredContent/refusal/message")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("permissions_pending")
+        .to_owned();
+    DaemonResponse::err(message, 75)
 }
 
 fn daemon_metadata_response() -> DaemonResponse {
@@ -3085,17 +3088,21 @@ mod gate_tests {
 
 #[cfg(test)]
 mod permission_gate_tests {
-    use super::{
-        bind_trusted_connection, run_serve, send_request, DaemonRequest, ToolObservationOrigin,
-    };
+    use super::bind_trusted_connection;
     use std::sync::atomic::Ordering;
 
     fn refusal_code(result: &serde_json::Value) -> Option<&str> {
         result.pointer("/structuredContent/refusal/code")?.as_str()
     }
 
+    /// On main the socket checked the gate before anything else, so a pending
+    /// gate answers `permissions_pending` even for an unknown tool, an ended
+    /// session or a call authorization would refuse. Each of those keeps its
+    /// own answer once the gate opens.
+    #[cfg(unix)]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn socket_call_waits_for_the_permission_gate() {
+    async fn socket_permissions_pending_wins_over_every_other_refusal() {
+        use super::{run_serve, send_request, DaemonRequest, ToolObservationOrigin};
         let _guard = crate::test_runtime_lock().lock().await;
         let (driver, sdk, calls) = crate::probe_sdk().await;
         let socket = format!(
@@ -3115,27 +3122,69 @@ mod permission_gate_tests {
             }
             tokio::time::sleep(std::time::Duration::from_millis(20)).await;
         }
-        let call = |socket: String, origin: Option<ToolObservationOrigin>| async move {
-            tokio::task::spawn_blocking(move || {
-                send_request(
-                    &socket,
-                    &DaemonRequest {
-                        method: "call".into(),
-                        name: Some("get_screen_size".into()),
-                        args: Some(serde_json::json!({})),
-                        session_id: None,
-                        observation_origin: origin,
-                        client_kind: None,
-                    },
-                )
-            })
-            .await
-            .unwrap()
-            .expect("daemon response")
+        let send = |request: DaemonRequest| {
+            let socket = socket.clone();
+            async move {
+                tokio::task::spawn_blocking(move || send_request(&socket, &request))
+                    .await
+                    .unwrap()
+                    .expect("daemon response")
+            }
+        };
+        let request =
+            |method: &str, name: Option<&str>, args, session: Option<&str>| DaemonRequest {
+                method: method.into(),
+                name: name.map(str::to_owned),
+                args,
+                session_id: session.map(str::to_owned),
+                observation_origin: None,
+                client_kind: None,
+            };
+        let ended = "pending-ended-session";
+        let probe = |session| {
+            request(
+                "call",
+                Some("get_screen_size"),
+                Some(serde_json::json!({})),
+                session,
+            )
+        };
+        let refusals = || {
+            [
+                (
+                    "unknown tool",
+                    request(
+                        "call",
+                        Some("no_such_tool"),
+                        Some(serde_json::json!({})),
+                        None,
+                    ),
+                ),
+                ("ended session", probe(Some(ended))),
+                (
+                    "failed authorization",
+                    request(
+                        "call",
+                        Some("click"),
+                        Some(serde_json::json!({"pid": std::process::id(), "x": 1, "y": 1})),
+                        None,
+                    ),
+                ),
+            ]
         };
 
+        assert!(send(probe(Some(ended))).await.ok);
+        assert!(
+            send(request("session_end", None, None, Some(ended)))
+                .await
+                .ok
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+
         driver.set_awaiting_permissions(true);
-        let proxied = call(socket.clone(), Some(ToolObservationOrigin::McpProxy)).await;
+        let mut proxied = probe(None);
+        proxied.observation_origin = Some(ToolObservationOrigin::McpProxy);
+        let proxied = send(proxied).await;
         assert!(
             proxied.ok,
             "the MCP proxy forwards the refusal as a tool result"
@@ -3144,34 +3193,52 @@ mod permission_gate_tests {
             proxied.result.as_ref().and_then(refusal_code),
             Some("permissions_pending")
         );
-        let pending = call(socket.clone(), None).await;
-        assert!(!pending.ok);
-        assert_eq!(pending.exit_code, Some(75));
-        assert!(pending
-            .error
-            .as_deref()
-            .is_some_and(|message| message.starts_with("permissions_pending:")));
+        for (label, call) in std::iter::once(("open call", probe(None))).chain(refusals()) {
+            let pending = send(call).await;
+            assert!(!pending.ok, "{label}");
+            assert_eq!(pending.exit_code, Some(75), "{label}: {:?}", pending.error);
+            assert!(
+                pending
+                    .error
+                    .as_deref()
+                    .is_some_and(|message| message.starts_with("permissions_pending:")),
+                "{label}: {:?}",
+                pending.error
+            );
+        }
         assert_eq!(
             calls.load(Ordering::SeqCst),
-            0,
+            1,
             "no tool may run while pending"
         );
 
         driver.set_awaiting_permissions(false);
-        let open = call(socket.clone(), None).await;
+        for ((label, call), (code, text)) in refusals().into_iter().zip([
+            (64, "Unknown tool: no_such_tool"),
+            (1, "has ended"),
+            (1, "own authorization process"),
+        ]) {
+            let refused = send(call).await;
+            assert_eq!(
+                refused.exit_code,
+                Some(code),
+                "{label}: {:?}",
+                refused.error
+            );
+            assert!(
+                refused
+                    .error
+                    .as_deref()
+                    .is_some_and(|message| message.contains(text)),
+                "{label}: {:?}",
+                refused.error
+            );
+        }
+        let open = send(probe(None)).await;
         assert!(open.ok, "{:?}", open.error);
-        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
 
-        let shutdown = DaemonRequest {
-            method: "shutdown".into(),
-            name: None,
-            args: None,
-            session_id: None,
-            observation_origin: None,
-            client_kind: None,
-        };
-        let stop_socket = socket.clone();
-        let _ = tokio::task::spawn_blocking(move || send_request(&stop_socket, &shutdown)).await;
+        let _ = send(request("shutdown", None, None, None)).await;
         let _ = server.await;
         let _ = std::fs::remove_file(&socket);
     }

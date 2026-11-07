@@ -338,6 +338,16 @@ impl CuaDriver {
         }
     }
 
+    /// The raw `permissions_pending` tool result while the permission gate is
+    /// pending, so a host transport can answer it before its own refusals.
+    #[doc(hidden)]
+    pub fn permissions_pending_result(&self) -> Option<Value> {
+        match &self.backend {
+            DriverBackend::Embedded(runtime) => runtime.permissions_pending_result(),
+            _ => None,
+        }
+    }
+
     /// Trusted Rust-host access to the daemon-owned local history controller.
     /// This is intentionally absent from UniFFI and public agent protocols.
     #[doc(hidden)]

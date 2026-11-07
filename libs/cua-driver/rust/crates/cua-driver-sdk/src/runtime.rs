@@ -116,6 +116,9 @@ pub(crate) struct RuntimeSession {
 
 impl RuntimeSession {
     pub(crate) async fn invoke(&self, name: &str, mut args: Value) -> Option<CoreToolResult> {
+        if let Some(refusal) = self.runtime.permissions_pending_refusal() {
+            return Some(refusal);
+        }
         cua_driver_core::tool_args::sanitize_reserved_args(&mut args);
         let Some(arguments) = args.as_object_mut() else {
             return Some(permission_denied_result(
@@ -267,6 +270,13 @@ impl DriverRuntime {
         );
     }
 
+    /// The refusal every tool call gets while the permission gate is pending.
+    /// It answers before any other refusal.
+    pub(crate) fn permissions_pending_refusal(&self) -> Option<CoreToolResult> {
+        (self.admission() == Admission::AwaitingPermissions)
+            .then(|| refusal_result("permissions_pending", PERMISSIONS_PENDING.to_owned()))
+    }
+
     pub(crate) fn runtime_scope_key(&self) -> String {
         self.compatibility_context.runtime_scope_key()
     }
@@ -357,15 +367,11 @@ impl DriverRuntime {
         context: Arc<EffectiveAuthorizationContext>,
         evidence: cua_driver_core::tool::TrustedInvocationEvidence,
     ) -> Option<CoreToolResult> {
-        match self.admission() {
-            Admission::Closed => return None,
-            Admission::AwaitingPermissions => {
-                return Some(refusal_result(
-                    "permissions_pending",
-                    PERMISSIONS_PENDING.to_owned(),
-                ))
-            }
-            Admission::Open => {}
+        if let Some(refusal) = self.permissions_pending_refusal() {
+            return Some(refusal);
+        }
+        if !self.is_running() {
+            return None;
         }
         self.last_activity.store(now_unix_secs(), Ordering::Relaxed);
         let _operation = self.lifecycle.read().await;

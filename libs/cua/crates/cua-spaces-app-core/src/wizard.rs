@@ -1263,6 +1263,16 @@ fn microvm_block_of(probe: &LocalProbe<'_>, os: SpaceOs) -> MicrovmBlock {
                 "needs the microVM tools: see cua runtime doctor".into()
             }
         }
+        // A PC: the microVM is QEMU on the Windows Hypervisor Platform, and the
+        // doctor says which piece is missing (the feature, QEMU, the guest init).
+        SpaceOs::Windows => {
+            let fc = detail("firecracker");
+            if fc.is_empty() {
+                "needs the Windows Hypervisor Platform: see cua runtime doctor".into()
+            } else {
+                fc
+            }
+        }
         _ => "needs a Mac or Linux with KVM".into(),
     })
 }
@@ -2978,9 +2988,14 @@ pub struct WizardView {
 }
 
 fn runtime_word(r: &Runtime, kind: SpaceKind, os: SpaceOs) -> String {
+    // On a PC the microVM runtime is QEMU on the Windows Hypervisor Platform.
+    let label = match (r, os) {
+        (Runtime::Firecracker, SpaceOs::Windows) => "QEMU (Windows Hypervisor Platform)".into(),
+        _ => r.label(),
+    };
     format!(
         "{} {} on {}",
-        r.label(),
+        label,
         match kind {
             SpaceKind::Vm => "virtual machine",
             SpaceKind::Microvm => "microVM",
@@ -6239,7 +6254,7 @@ mod tests {
     /// choosing it does nothing.
     #[test]
     fn microvm_is_greyed_out_and_settings_says_why() {
-        let cases: [(WizardEnv, SpaceOs, &str); 7] = [
+        let cases: [(WizardEnv, SpaceOs, &str); 8] = [
             // A Mac before macOS 26 without cua's monitor.
             (
                 mac_env(
@@ -6297,7 +6312,18 @@ mod tests {
             (
                 mac_env(&["docker"], &[]),
                 SpaceOs::Windows,
-                "Needs a Mac or Linux with KVM.",
+                "Needs the Windows Hypervisor Platform: see cua runtime doctor.",
+            ),
+            (
+                mac_env(
+                    &["docker"],
+                    &[(
+                        "firecracker",
+                        "microVMs need the Windows feature Windows Hypervisor Platform",
+                    )],
+                ),
+                SpaceOs::Windows,
+                "MicroVMs need the Windows feature Windows Hypervisor Platform.",
             ),
             (
                 WizardEnv {

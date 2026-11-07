@@ -2361,6 +2361,49 @@ mod tests {
         );
     }
 
+    /// The bar of a first-time Windows build only moves forward through the
+    /// download and the install, and every report moves it (so the stall watch
+    /// never fails a healthy build).
+    #[test]
+    fn the_windows_build_bar_moves_with_every_report() {
+        let mut s = reduce(
+            &CreatesState::default(),
+            &CreateAction::Start {
+                id: "pending:w".into(),
+                name: String::new(),
+                os: SpaceOs::Windows,
+                provider: SpaceProvider::Local,
+                now: 1_000,
+                image: Some("ghcr.io/trycua/windows:11".into()),
+                kind: Some(SpaceKind::Vm),
+                host_arch: Some("aarch64".into()),
+                gpu: false,
+                host: None,
+                host_name: None,
+            },
+        );
+        let mut last = 0;
+        let mut now = 2_000;
+        // ISO bytes from 0.01 to 0.40, drivers to 0.45, then the install to 0.96.
+        let fractions = [0.01, 0.1, 0.25, 0.40, 0.45, 0.46, 0.47, 0.55, 0.7, 0.9, 0.96];
+        let mut seen = Vec::new();
+        for f in fractions {
+            now += 20_000;
+            s = reduce(&s, &at("pending:w", "pulling", Some(f), now));
+            let p = &s.pending[0];
+            assert!(p.permille >= last, "{f}: {} < {last}", p.permille);
+            last = p.permille;
+            seen.push((f, p.permille));
+        }
+        // The install's fractions span a visible part of the bar.
+        let at_install = seen.iter().find(|(f, _)| *f == 0.47).unwrap().1;
+        let at_end = seen.last().unwrap().1;
+        assert!(at_end > at_install + 100, "{seen:?}");
+        // The create's own phases follow and never go back.
+        s = reduce(&s, &at("pending:w", "creating", None, now + 1_000));
+        assert!(s.pending[0].permille >= at_end, "{seen:?}");
+    }
+
     /// The fraction the app tells "downloading" from "installing" by is the
     /// one the build reports (`cua-image`'s `DOWNLOADS_END`).
     #[test]

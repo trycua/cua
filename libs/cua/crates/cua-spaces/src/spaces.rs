@@ -3070,9 +3070,8 @@ impl Spaces {
         // on this computer carries no metadata the runtime could read it from
         // (on arm64 nothing is sniffed from the partitions), so without this
         // it would boot as a Linux guest: no TPM, the wrong display and disk.
-        if create.os.is_empty()
-            && let Some(os) = cua_image::catalog::catalog_os(&image)
-        {
+        // (`CreateOptions` starts as `linux`, so this does not wait for empty.)
+        if let Some(os) = cua_image::catalog::catalog_os(&image) {
             create.os = os;
         }
         create.cpus = opts.cpus.unwrap_or(crate::local_load::DEFAULT_CPUS);

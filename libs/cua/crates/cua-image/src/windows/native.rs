@@ -250,7 +250,11 @@ impl Installer for QemuInstaller {
             name: name.clone(),
             armed: true,
         };
-        let started = rt.start(&start_spec(plan)).await;
+        // The install VM is the build's, not a Space being created: its own
+        // boot reports (Booting, waiting for services) must not reach the
+        // create's progress, where they would push the bar past the install.
+        let quiet: cua_vmm::progress::Sink = Arc::new(|_: &cua_vmm::progress::Progress| {});
+        let started = cua_vmm::progress::scope(quiet, rt.start(&start_spec(plan))).await;
         // The presses go on after the VM is up: the prompt shows a few
         // seconds after power-on, and a start with no probe returns at once.
         if let Err(e) = started {

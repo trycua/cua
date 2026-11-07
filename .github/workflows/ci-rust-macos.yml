@@ -65,11 +65,16 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5 # 1.97.1
+        with:
+          components: clippy
       - uses: ./.github/actions/rust-cache
         with:
           workspaces: "libs/cua-driver/rust -> target"
           shared-key: macos-unit
           save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Clippy driver workspace (all targets)
+        working-directory: libs/cua-driver/rust
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
       # Run each crate's whole inline suite so new test modules cannot be
       # silently left out by a hand-maintained filter list. Tests that need a
       # logged-in, TCC-authorized desktop are #[ignore] and belong to the Lume

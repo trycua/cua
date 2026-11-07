@@ -64,7 +64,19 @@ impl Tool for GetCursorPositionTool {
         // global cursor position. Fall back to the synthetic registry that
         // records every `motion_absolute` this process emits.
         if crate::wayland::is_wayland() {
-            return match crate::wayland::last_synth_cursor_pos() {
+            // The registry holds layout coordinates; KWin's desktop frame can
+            // start elsewhere, and agents read this in that frame.
+            let layout = tokio::task::spawn_blocking(crate::wayland::kwin_desktop_layout).await;
+            let frame = match layout {
+                Ok(Ok(layout)) => layout.map(|layout| layout.frame),
+                Ok(Err(e)) => {
+                    return ToolResult::error(format!("Could not read the KWin layout: {e:#}"))
+                }
+                Err(e) => return ToolResult::error(format!("Task error: {e}")),
+            };
+            let in_frame =
+                |(x, y): (i32, i32)| frame.as_ref().map_or((x, y), |f| f.from_layout(x, y));
+            return match crate::wayland::last_synth_cursor_pos().map(in_frame) {
                 Some((x, y)) => ToolResult::text(
                     format!("✅ Cursor at ({x}, {y}) (synthetic — last move_cursor in this process)")
                 ).with_structured(json!({

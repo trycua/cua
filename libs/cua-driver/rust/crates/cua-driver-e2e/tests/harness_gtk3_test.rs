@@ -23,7 +23,7 @@ use cua_driver_testkit::e2e::{
 };
 use cua_driver_testkit::observer::TargetWindow;
 use cua_driver_testkit::sentinel::run_with_background_oracles;
-use cua_driver_testkit::{ax, harness_app, Driver, McpDriver, ToolResponse};
+use cua_driver_testkit::{ax, harness_app, spawn_in_job, Driver, McpDriver, ToolResponse};
 
 fn harness_exe() -> std::path::PathBuf {
     if let Ok(path) = std::env::var("HARNESS_GTK3_EXE") {
@@ -1326,6 +1326,81 @@ fn run_catalog_row(row: CatalogRow) {
     });
 }
 
+/// A pid-only read picks the window `list_windows` reports for that pid, on
+/// every session type.
+#[test]
+#[ignore]
+fn harness_gtk3_ax_tree_by_pid() {
+    run_case(
+        native_readonly_case(
+            "gtk3",
+            "ax_tree_by_pid",
+            Targeting::Ax,
+            DriverRoute::AxRead,
+            vec![OracleKind::AxState],
+        ),
+        |pid, _window_id, driver| {
+            let state = driver.call(
+                "get_window_state",
+                serde_json::json!({"pid": pid as i64, "include_screenshot": false}),
+            );
+            assert!(!state.is_error(), "pid-only read failed: {}", state.text());
+            assert!(
+                state.tree_text().contains("btn-increment"),
+                "pid-only read missed the window: {}",
+                state.tree_text()
+            );
+            Observation::delivered(vec![OracleKind::AxState], Evidence::default())
+        },
+    );
+}
+
+/// The advice for a pid with no window stays, and `NO_AT_BRIDGE=1` is named only
+/// on Wayland, the one place it can keep a real window out of the lists.
+#[test]
+#[ignore]
+fn harness_gtk3_no_windows_names_the_bridge_only_on_wayland() {
+    run_case(
+        native_readonly_case(
+            "gtk3",
+            "no_windows_error",
+            Targeting::Ax,
+            DriverRoute::AxRead,
+            vec![OracleKind::AxState],
+        ),
+        |_pid, _window_id, driver| {
+            let windowless = spawn_in_job(Command::new("sleep").arg("30").env("NO_AT_BRIDGE", "1"))
+                .expect("spawn a windowless process");
+            let pid = windowless.id();
+            driver.reaper().push(windowless);
+            let state = driver.call(
+                "get_window_state",
+                serde_json::json!({"pid": pid as i64, "include_screenshot": false}),
+            );
+            let advice = format!("No windows found for pid {pid}. Provide window_id.");
+            assert!(state.is_error(), "expected an error: {}", state.text());
+            assert!(state.text().starts_with(&advice), "{}", state.text());
+
+            let listed = driver.call("list_windows", serde_json::json!({"pid": pid as i64}));
+            let refused = driver.call(
+                "press_key",
+                serde_json::json!({"pid": pid as i64, "key": "a"}),
+            );
+            let refusal = format!("No eligible top-level windows found for pid {pid}.");
+            assert!(refused.text().starts_with(&refusal), "{}", refused.text());
+            for response in [&state, &listed, &refused] {
+                assert_eq!(
+                    response.text().contains("atspi_bridge_disabled"),
+                    DisplayServer::current() == DisplayServer::Wayland,
+                    "{}",
+                    response.text()
+                );
+            }
+            Observation::delivered(vec![OracleKind::AxState], Evidence::default())
+        },
+    );
+}
+
 #[test]
 #[ignore]
 fn harness_gtk3_ax_tree() {
@@ -1591,8 +1666,10 @@ catalog_test!(
         route: DriverRoute::LinuxAtSpiValue,
         operation: Operation::AxTypeText {
             target: "txt-input",
-            text: "ax-typed",
-            expected: "mirror=ax-typed"
+            // GTK3 reads InsertText's length as bytes: send any shorter unit
+            // and this arrives cut short, which ASCII alone can't show.
+            text: "ax-ñ🙂-typed",
+            expected: "mirror=ax-ñ🙂-typed"
         },
     }
 );

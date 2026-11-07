@@ -92,6 +92,39 @@ export interface MemberEvent {
   by: MemberRef | null;
 }
 
+/** A subagent the agent started, or a child Space it made, on a system note. */
+export type ChildNote =
+  | {
+      kind: "subagent";
+      /** The subagent's id: the notes of one subagent fold into one row. */
+      id: string;
+      agent: string;
+      title: string;
+      state: "running" | "done" | "failed";
+      steps: number;
+      result: string | null;
+      startedMs: number | null;
+      endedMs: number | null;
+    }
+  | {
+      kind: "child_space";
+      /** The child Space's id (the page opens it). */
+      space: string;
+      name: string;
+      os: string;
+      agent: string;
+    };
+
+/** A subagent that runs now, on the agent's live row. */
+export interface LiveChild {
+  id: string;
+  title: string;
+  steps: number;
+  /** Its latest step as a short row. */
+  step: string | null;
+  sinceMs?: number;
+}
+
 export type ThreadEntryKind = "message" | "task_update" | "approval" | "answer" | "system" | "join_request";
 
 /** An agent asks to join (CUA-2263): the owner or an admin answers it like an approval. */
@@ -154,6 +187,8 @@ export interface ThreadEntry {
   runsOnKeysOf: { id: string; name: string } | null;
   /** A system note about a member joining, leaving or a refused name (CUA-2262). */
   event: MemberEvent | null;
+  /** A subagent or a child Space the agent started (a system note). */
+  child?: ChildNote | null;
   /** On a `join_request` entry (CUA-2263). */
   joinRequest?: JoinRequest | null;
   /** What the person was looking at in the Space as they posted (`view`): its desktop or a window. */
@@ -185,6 +220,8 @@ export interface LiveAgent {
   sinceMs?: number;
   /** What it has said so far this turn, the whole text each time, while it streams; the reply replaces it. */
   text?: string;
+  /** The subagents it has running now. */
+  children?: LiveChild[];
 }
 
 /** Every agent with a turn on its way, and a key that changes when any stage does. */
@@ -609,6 +646,27 @@ export function memberIdentity(v: unknown): MemberIdentity | null {
 
 const EVENT_KINDS: readonly MemberEvent["kind"][] = ["member_joined", "member_removed", "name_refused", "rate_limited"];
 
+function childNote(v: unknown): ChildNote | null {
+  const e = obj(v);
+  if (!e) return null;
+  if (e.kind === "subagent" && str(e.id)) {
+    const state = e.state === "done" || e.state === "failed" ? e.state : "running";
+    return {
+      kind: "subagent",
+      id: str(e.id),
+      agent: str(e.agent),
+      title: str(e.title) || "Subagent",
+      state,
+      steps: num(e.steps) ?? 0,
+      result: str(e.result) || null,
+      startedMs: num(e.started_ms),
+      endedMs: num(e.ended_ms),
+    };
+  }
+  if (e.kind === "child_space" && str(e.space)) return { kind: "child_space", space: str(e.space), name: str(e.name) || str(e.space), os: str(e.os), agent: str(e.agent) };
+  return null;
+}
+
 function memberEvent(v: unknown): MemberEvent | null {
   const e = obj(v);
   if (!e || !EVENT_KINDS.includes(e.kind as MemberEvent["kind"])) return null;
@@ -663,6 +721,7 @@ export function threadEntryFromTool(v: unknown): ThreadEntry | null {
         : null,
     runsOnKeysOf: keyOwner(e.runs_on_keys_of),
     event: kind === "system" ? memberEvent(e.event) : null,
+    ...(kind === "system" && childNote(e.event) ? { child: childNote(e.event) } : {}),
     ...(kind === "join_request" ? { joinRequest: joinRequest(e) } : {}),
     ...(e.view != null ? { view: threadViewFromTool(e.view) } : {}),
     ...(e.failure != null ? { failure: threadFailure(e.failure) } : {}),
@@ -809,7 +868,12 @@ export function threadLiveFromTool(v: unknown): ThreadLive {
     const stage = str(r?.stage);
     const sinceMs = typeof r?.since_ms === "number" ? r.since_ms : undefined;
     const text = str(r?.text);
-    return agent && stage ? [{ agent, stage, ...(sinceMs ? { sinceMs } : {}), ...(text ? { text } : {}) }] : [];
+    const children = (Array.isArray(r?.children) ? r.children : []).flatMap((c): LiveChild[] => {
+      const o = obj(c);
+      const id = str(o?.id);
+      return o && id ? [{ id, title: str(o.title) || "Subagent", steps: num(o.steps) ?? 0, step: str(o.step) || null, ...(typeof o.since_ms === "number" ? { sinceMs: o.since_ms } : {}) }] : [];
+    });
+    return agent && stage ? [{ agent, stage, ...(sinceMs ? { sinceMs } : {}), ...(text ? { text } : {}), ...(children.length ? { children } : {}) }] : [];
   });
   return { key: str(o.key), agents };
 }

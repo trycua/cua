@@ -64,9 +64,26 @@ runs:
         echo "restored $(find "$DIR" -maxdepth 1 -name '*.deb' | wc -l) package files"
         opts=(-o "Dir::Cache::Archives=$DIR" -o APT::Keep-Downloaded-Packages=true
           -o Acquire::Retries=3)
-        sudo apt-get update
-        # shellcheck disable=SC2086 # the list is split into packages on purpose
-        sudo apt-get install -y --no-install-recommends "${opts[@]}" $PACKAGES
+        # A slow mirror used to hang this step until the job timeout, with
+        # no output saying why. Each attempt is capped at 5 minutes and says
+        # what it was doing; files already downloaded stay in $DIR, so the
+        # next attempt resumes instead of starting over.
+        ok=0
+        for attempt in 1 2 3; do
+          echo "apt-install: attempt $attempt of 3 (limit 300s)"
+          # shellcheck disable=SC2086 # the list is split into packages on purpose
+          if timeout 300 sudo apt-get update \
+            && timeout 300 sudo apt-get install -y --no-install-recommends "${opts[@]}" $PACKAGES; then
+            ok=1
+            break
+          fi
+          echo "::warning::apt-install attempt $attempt failed or timed out after 300s (slow or unreachable Ubuntu mirror); $(find "$DIR" -maxdepth 1 -name '*.deb' | wc -l) package files cached"
+          sleep $((attempt * 10))
+        done
+        if [ "$ok" != 1 ]; then
+          echo "::error::apt-install: no success after 3 attempts; the Ubuntu mirror is slow or unreachable, not a code failure. Re-run the job."
+          exit 1
+        fi
         # Drop files of versions the mirror no longer offers, so the entry
         # does not grow across images.
         sudo apt-get autoclean "${opts[@]}" >/dev/null

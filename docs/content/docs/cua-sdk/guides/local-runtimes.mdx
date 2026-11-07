@@ -111,9 +111,7 @@ sudo apt-get install swtpm         # Debian, Ubuntu
 
 **Secure Boot firmware.** A guest that should see Secure Boot (Microsoft's keys
 enrolled) needs `AAVMF_CODE.secboot.fd` and `AAVMF_VARS.ms.fd`, both in one
-directory. Without that pair cua boots Windows on ARM on the generic edk2
-firmware QEMU ships (Homebrew's too): Windows installs and runs, and the
-unattended `windows:11` build bypasses Setup's Secure Boot and TPM checks. cua looks, in order, at
+directory. Without it cua boots on the generic edk2 firmware QEMU ships. cua looks, in order, at
 `CUA_QEMU_AAVMF_DIR` (when set, nowhere else), `~/.cua/firmware/aavmf`, the
 QEMU prefix's `share/AAVMF`, then `/usr/share/AAVMF`. On Linux:
 
@@ -132,9 +130,7 @@ cp -L usr/share/AAVMF/AAVMF_CODE.secboot.fd usr/share/AAVMF/AAVMF_VARS.ms.fd ~/.
 
 **Network.** Windows 11 on ARM has no inbox virtio-net driver, so a guest you
 install by hand has no network during Setup. Finish OOBE offline, then install
-NetKVM from the virtio-win ISO (`NetKVM\w11\ARM64`). The `windows:11` image
-(`docs/windows-images.md` in the repository) does this for you: its answer file
-loads the driver, and cua downloads virtio-win itself when it builds the image.
+NetKVM from the virtio-win ISO (`NetKVM\w11\ARM64`). The `windows:11` image does this for you.
 
 **Fork and checkpoint** need the VM stopped, so its TPM state is copied
 consistently. A checkpoint with TPM state stays on the host that made it: it is

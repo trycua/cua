@@ -1752,6 +1752,21 @@ fn generated_name() -> String {
 }
 
 /// `sb create` (and `sb launch`, `compat` keeps its output).
+/// Inside a Space, `sandbox create` reaches only the Space's own children: a refusal there says
+/// what to run instead (a Space makes its child computers with `spaces create`, and they are
+/// then used and deleted like any other).
+fn in_a_space(e: CuaError) -> CuaError {
+    if matches!(e, CuaError::Unsupported(_)) && cua_daemon::client::spawn_channel().is_some() {
+        return CuaError::Unsupported(
+            "inside a Space, make a computer with `cua spaces create IMAGE --name NAME` (it \
+             becomes this Space's child), run things in it with `cua sb exec NAME -- COMMAND`, \
+             and delete it with `cua spaces delete --force NAME`"
+                .into(),
+        );
+    }
+    e
+}
+
 async fn create(
     cua: &Arc<Cua>,
     a: CreateArgs,
@@ -1908,7 +1923,7 @@ async fn create(
     {
         eprintln!("{}", util::hint(&kept_message(&info)));
     }
-    let sb = created.map_err(|e| on_backend(e, &label))?;
+    let sb = created.map_err(|e| in_a_space(on_backend(e, &label)))?;
     let i = sb.info();
     if i.location == "direct" {
         save_env_token(&i.name, token.as_deref())?;

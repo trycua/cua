@@ -15,8 +15,8 @@
 export type Dock = "top" | "left" | "right";
 
 /** The side panel's sections that fold. */
-export type SectionId = "people" | "stream" | "details";
-export const SECTIONS: readonly SectionId[] = ["people", "stream", "details"];
+export type SectionId = "people" | "children" | "stream" | "details";
+export const SECTIONS: readonly SectionId[] = ["people", "children", "stream", "details"];
 export type FoldedSections = Record<SectionId, boolean>;
 
 export interface SpaceLayoutPrefs {
@@ -45,7 +45,7 @@ export const DEFAULT_PREFS: SpaceLayoutPrefs = {
   dock: "top",
   vSplit: DEFAULT_V_SPLIT,
   hSplit: DEFAULT_H_SPLIT,
-  folded: { people: false, stream: false, details: false },
+  folded: { people: false, children: false, stream: false, details: false },
 };
 
 /** `fraction` of `extent` for the first pane, kept inside both minimums. */
@@ -111,7 +111,7 @@ export function sanitizePrefs(raw: unknown): SpaceLayoutPrefs {
     dock: isDock(r.dock) ? r.dock : DEFAULT_PREFS.dock,
     vSplit: isFraction(r.vSplit) ? r.vSplit : DEFAULT_V_SPLIT,
     hSplit: isFraction(r.hSplit) ? r.hSplit : DEFAULT_H_SPLIT,
-    folded: { people: f.people === true, stream: f.stream === true, details: f.details === true },
+    folded: { people: f.people === true, children: f.children === true, stream: f.stream === true, details: f.details === true },
   };
 }
 

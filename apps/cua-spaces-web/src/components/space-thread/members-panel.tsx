@@ -9,9 +9,10 @@ import { OsIcon } from "@/components/os-icon";
 import { Select } from "@/components/ui/select";
 import { toast } from "@/components/ui/toast";
 import { Tooltip } from "@/components/ui/tooltip";
-import type { SectionId } from "@/lib/space-layout";
 import { cn } from "@/lib/utils";
 import { useSpaceLayoutStore } from "@/stores/space-layout";
+
+import { SectionHeading } from "./section-heading";
 
 import { MemberAvatar } from "./avatar";
 import { FailureDetails } from "./failure-note";
@@ -24,33 +25,6 @@ import type { Roster, RosterAgent, RosterPerson } from "./roster";
 /** Who is here right now (P2: relay presence and session states). Without
  * it no dot is drawn: P1 never guesses. */
 export type MemberPresence = Record<string, "online">;
-
-/**
- * A section's heading as its disclosure: a quiet chevron and the title in one
- * button (`aria-expanded`) that folds the section's body shut. Remembered per
- * person (`stores/space-layout.ts`).
- */
-function SectionHeading({ id, folded, bodyId, children, className, inRow }: { id: SectionId; folded: boolean; bodyId: string; children: ReactNode; className?: string; /** The heading shares a row with controls: the row takes the hover, the button fills what is left of it. */ inRow?: boolean }) {
-  const toggle = useSpaceLayoutStore((s) => s.toggleSection);
-  return (
-    <h2 className={cn("text-[11px] font-semibold tracking-wide text-muted-foreground uppercase", inRow && "flex-1 self-stretch", className)}>
-      <button
-        type="button"
-        data-section-toggle={id}
-        aria-expanded={!folded}
-        aria-controls={bodyId}
-        onClick={() => toggle(id)}
-        className={cn(
-          // No icon: the whole row is the control, a quiet fill on hover and on keyboard focus, edge to edge.
-          "flex w-full cursor-pointer items-center px-5 text-left uppercase outline-none hover:text-foreground focus-visible:bg-accent focus-visible:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:ring-inset",
-          inRow ? "h-full" : "h-8 hover:bg-accent",
-        )}
-      >
-        {children}
-      </button>
-    </h2>
-  );
-}
 
 /**
  * The right side of the call layout: "In this Space" (people, then agents
@@ -73,8 +47,11 @@ export function MembersPanel({
   folded,
   onFold,
   onAddAgent,
+  childSpaces,
 }: {
   roster: Roster;
+  /** The Space's child Spaces section (absent when it has none). */
+  childSpaces?: ReactNode;
   /** Opens Add an agent (absent for guests). */
   onAddAgent?: () => void;
   presence?: MemberPresence;
@@ -173,6 +150,7 @@ export function MembersPanel({
         ))}
       </ul>
       )}
+      {childSpaces}
       {windows.length || desktop ? (
         <section className="px-3 pt-1 pb-2" data-call-stream="">
           <SectionHeading id="stream" folded={shut.stream} bodyId="section-stream" className="-mx-3 mb-1">

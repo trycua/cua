@@ -1770,18 +1770,18 @@ fn initial_publisher_trust() -> PublisherTrust {
     }
 }
 
+/// A lone backup means a commit stopped between its two renames; it is the
+/// committed trust that `recover_publisher_trust_locked` would restore.
 fn load_publisher_trust_at(root: &Dir) -> Result<PublisherTrust> {
-    let active = private_regular_file_or_missing_at(root, TRUST_NAME)?;
-    let backup = private_regular_file_or_missing_at(root, TRUST_BACKUP_NAME)?;
-    if !active && backup {
-        bail!("publisher trust update is interrupted; run an extension mutation to recover it");
-    }
-    if !active {
+    let name = if private_regular_file_or_missing_at(root, TRUST_NAME)? {
+        TRUST_NAME
+    } else if private_regular_file_or_missing_at(root, TRUST_BACKUP_NAME)? {
+        TRUST_BACKUP_NAME
+    } else {
         return Ok(initial_publisher_trust());
-    }
-    let trust: PublisherTrust =
-        serde_json::from_slice(&read_small_file_at(root, Path::new(TRUST_NAME))?)
-            .context("parse publisher trust state")?;
+    };
+    let trust: PublisherTrust = serde_json::from_slice(&read_small_file_at(root, Path::new(name))?)
+        .context("parse publisher trust state")?;
     validate_publisher_trust(&trust)?;
     Ok(trust)
 }
@@ -2056,14 +2056,6 @@ impl ExtensionStore {
         }
         let root = open_directory_path_nofollow(&self.root)?;
         verify_cap_directory_permissions_portable(&root)?;
-        let active = private_regular_file_or_missing_at(&root, TRUST_NAME)?;
-        let backup = private_regular_file_or_missing_at(&root, TRUST_BACKUP_NAME)?;
-        if !active && backup {
-            bail!("publisher trust update is interrupted; run an extension mutation to recover it");
-        }
-        if !active {
-            return Ok(initial_publisher_trust());
-        }
         load_publisher_trust_at(&root)
     }
 

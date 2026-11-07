@@ -342,6 +342,8 @@ export interface SpaceDetailHook {
   stream: StreamSection | null;
   /** The host can't list windows: the section has its Desktop row only, and no status line. */
   windowsUnsupported: boolean;
+  /** The first read of the Space's windows has come back (before it, the list is empty because nothing is known yet). */
+  windowsLoaded: boolean;
   /** The sections' words (loading, empty, failed). */
   copy: DetailCopy | null;
   /** A row's picture-in-picture button. */
@@ -418,6 +420,7 @@ export function useSpaceDetail(space: Space | undefined, hostArch: string | null
       detail: null,
       stream: null,
       windowsUnsupported: false,
+      windowsLoaded: false,
       copy: null,
       pip: async () => "done",
       query: "",
@@ -438,6 +441,7 @@ export function useSpaceDetail(space: Space | undefined, hostArch: string | null
     query: readings.query,
     setQuery: (q) => (details && space ? details.setQuery(space.id, q) : undefined),
     windowsUnsupported: Boolean(readings.windowsUnsupported),
+    windowsLoaded: readings.windows !== null,
     copy: detailCopy(core),
     pip: (row) => (details ? details.pip(space.id, row) : Promise.resolve("open-window")),
     agents: {

@@ -200,7 +200,7 @@
    "flags": [
     {
      "default_value": false,
-     "help": "Select the Claude Code computer-use compatibility surface (forwarded by `mcp` when it launches the daemon).",
+     "help": "Legacy compatibility flag forwarded by `mcp` when it launches the daemon; no current tool-surface effect.",
      "name": "claude-code-computer-use-compat",
      "short_name": null
     },
@@ -232,6 +232,12 @@
      "default_value": false,
      "help": "Skip the macOS first-launch permissions gate.",
      "name": "no-permissions-gate",
+     "short_name": null
+    },
+    {
+     "default_value": false,
+     "help": "Refuse scripting actions without granted macOS Automation consent.",
+     "name": "no-automation-prompts",
      "short_name": null
     },
     {
@@ -744,7 +750,7 @@
    "options": [],
    "subcommands": [
     {
-     "abstract": "Report Accessibility and Screen Recording status through a running daemon (read-only, no prompt). The default subcommand.",
+     "abstract": "Show whether Cua Driver can use your mouse and keyboard (Accessibility) and see your screen (Screen Recording), read-only and without prompts. The default subcommand.",
      "arguments": [],
      "discussion": "",
      "examples": [
@@ -766,7 +772,7 @@
      "subcommands": []
     },
     {
-     "abstract": "Launch CuaDriver through LaunchServices so the permission prompts are attributed to the app.",
+     "abstract": "Walk through the Accessibility and Screen Recording switches one at a time, then confirm with a test screenshot.",
      "arguments": [],
      "discussion": "",
      "examples": [
@@ -781,6 +787,51 @@
      "subcommands": []
     }
    ]
+  },
+  {
+   "abstract": "Connect Claude Code, Codex and Cursor to Cua Driver: add it to each agent that is installed and install the skill pack.",
+   "arguments": [],
+   "discussion": "Registers one server named cua-driver with each agent found (through the agent's own CLI, or by merging into Cursor's mcp.json without touching other entries) and installs the skill pack. An agent already connected, including under the older Claude Code name cua-computer-use, is left alone, so it is safe to run again. One agent failing does not stop the others; the exit code is non-zero only when an agent was found and none could be connected.",
+   "examples": [
+    {
+     "command": "cua-driver connect",
+     "description": "Connect every agent found on this computer"
+    },
+    {
+     "command": "cua-driver connect --client claude --dry-run",
+     "description": "Show what would change for Claude Code"
+    },
+    {
+     "command": "cua-driver connect --json",
+     "description": "Print the result for each agent as JSON"
+    }
+   ],
+   "flags": [
+    {
+     "default_value": false,
+     "help": "Show what would be connected without changing anything.",
+     "name": "dry-run",
+     "short_name": null
+    },
+    {
+     "default_value": false,
+     "help": "Emit machine-readable output.",
+     "name": "json",
+     "short_name": null
+    }
+   ],
+   "name": "connect",
+   "options": [
+    {
+     "default_value": null,
+     "help": "Connect only this agent (claude, codex or cursor). Repeat for several.",
+     "is_optional": true,
+     "name": "client",
+     "short_name": null,
+     "type": "String"
+    }
+   ],
+   "subcommands": []
   },
   {
    "abstract": "Print client-specific connection guidance (MCP config where supported) and install the skill pack for that agent.",
@@ -1342,6 +1393,32 @@
     }
    ],
    "name": "doctor",
+   "options": [],
+   "subcommands": []
+  },
+  {
+   "abstract": "Check that Cua Driver works on this computer.",
+   "arguments": [],
+   "discussion": "Checks permissions, a screen read, Cua Driver's own pointer, and (macOS) typing in a background TextEdit window that is closed without saving. Exit code is 0 when everything works and 1 when something needs fixing.",
+   "examples": [
+    {
+     "command": "cua-driver test",
+     "description": "Check that Cua Driver works on this computer"
+    },
+    {
+     "command": "cua-driver test --json",
+     "description": "Emit the result as JSON"
+    }
+   ],
+   "flags": [
+    {
+     "default_value": false,
+     "help": "Emit the result as JSON.",
+     "name": "json",
+     "short_name": null
+    }
+   ],
+   "name": "test",
    "options": [],
    "subcommands": []
   },
@@ -2293,5 +2370,5 @@
   }
  ],
  "name": "cua-driver",
- "version": "0.38.0"
+ "version": "0.42.1"
 }

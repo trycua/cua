@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Accessibility-snapshot text helpers.
 //!
 //! `get_window_state` renders the AX/UIA tree as indented text lines like

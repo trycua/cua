@@ -645,3 +645,46 @@ async fn without_sessions_a_member_is_one_session_and_old_shapes_hold() {
     .unwrap_err();
     assert_eq!(e.0, "permission_denied");
 }
+
+fn record(fx: &Fx, name: &str) -> Value {
+    let all: Vec<Value> = serde_json::from_slice(&std::fs::read(agents_json(fx)).unwrap()).unwrap();
+    all.into_iter().find(|r| r["name"] == name).unwrap()
+}
+
+/// `brief` (standing instructions) and `standby` (a run kept ready) are
+/// stored with the member, and adding the member again updates its model,
+/// endpoint and brief while the standby choice stays unless it is given.
+#[tokio::test]
+async fn agent_add_keeps_brief_and_standby_and_updates_them() {
+    let fx = setup().await;
+    let args = json!({"space": fx.space, "name": "ada", "harness": "claude-code",
+                      "model": "small", "brief": "You live in the repo.", "standby": true});
+    call(&fx.mcp, "agent_add", args).await.unwrap();
+    let r = record(&fx, "ada");
+    assert_eq!(r["model"], "small");
+    assert_eq!(r["brief"], "You live in the repo.");
+    assert_eq!(r["policy"]["standby"], true);
+
+    call(
+        &fx.mcp,
+        "agent_add",
+        json!({"space": fx.space, "name": "ada", "harness": "claude-code",
+               "model": "large", "brief": "Ask before you push."}),
+    )
+    .await
+    .unwrap();
+    let r = record(&fx, "ada");
+    assert_eq!(r["model"], "large");
+    assert_eq!(r["brief"], "Ask before you push.");
+    assert_eq!(r["policy"]["standby"], true, "standby stays when not given");
+
+    call(
+        &fx.mcp,
+        "agent_add",
+        json!({"space": fx.space, "name": "ada", "harness": "claude-code", "standby": false}),
+    )
+    .await
+    .unwrap();
+    assert!(record(&fx, "ada")["policy"].get("standby").is_none());
+    assert_eq!(record(&fx, "ada")["brief"], "Ask before you push.");
+}

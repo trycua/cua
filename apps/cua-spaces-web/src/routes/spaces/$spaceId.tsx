@@ -5,7 +5,7 @@ import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { ArrowDownCircleIcon, ChevronLeftIcon, MonitorIcon, PictureInPicture2Icon, PlayIcon, SquareIcon, Trash2Icon, UserPlusIcon } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
-import { hostResources, parseDropped, runCreateFix, spaceResources, useBridge, useResources, useDevices, useExperiments, useMachines, useSession, useShareSheet, useSpaceDetail, useSpaceFiles, useSpaces, useSpaceThread, useTeleport, type CreateReport, type Machine, type ResourcesSnapshot, type Space, type StreamRow, type ThreadView } from "@/bridge";
+import { hostResources, parseDropped, runCreateFix, spaceResources, useBridge, useResources, useDevices, useMachines, useSession, useShareSheet, useSpaceDetail, useSpaceFiles, useSpaces, useSpaceThread, useTeleport, type CreateReport, type Machine, type ResourcesSnapshot, type Space, type StreamRow, type ThreadView } from "@/bridge";
 import { DiagnosticReportDialog } from "@/components/diagnostic-report-dialog";
 import { OsIcon } from "@/components/os-icon";
 import { EmptyState, Page } from "@/components/page";
@@ -23,6 +23,9 @@ import { ThisMacCall } from "@/components/space-detail/this-mac-desktop";
 import { StateLabel } from "@/components/state-dot";
 import { PageTip } from "@/components/tips";
 import { creatingThread } from "@/components/space-thread/queued";
+import { PreparePanel } from "@/components/prepare/prepare-panel";
+import { usePrepare } from "@/lib/prepare/store";
+import { usePrepareAction } from "@/components/prepare/use-prepare-action";
 import { useAskTasks } from "@/lib/ask-first";
 import { ConfirmDialog } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
@@ -34,6 +37,9 @@ import { volumeUnavailableNote } from "@/lib/volume-notes";
 import { canDelete, canPower, createError, isUnsharedDesktop, createProgress, machineName, powerLabel, powerPending, spacePlace, spaceState } from "@/lib/spaces";
 import { useFlag } from "@/bridge/flags";
 import { useSpaceLayout } from "@/components/space-thread/layout-mode";
+import { NetworkSheet } from "@/components/network/network-sheet";
+import { BlockedNotice, ExitDownNotice, NetworkNotice, NetworkRow, ParentLine, RunsOnMachinesRow, SecurityRows, WithClipboardPrompt } from "@/components/network/space-security";
+import { VolumeGrantDialog } from "@/components/network/volume-grant-dialog";
 
 export const Route = createFileRoute("/spaces/$spaceId")({
   component: SpaceDetailPage,
@@ -93,14 +99,11 @@ function SpaceDetailPage() {
   }, [dropped, space?.id]);
   const thisMachine = machines.find((m) => m.current);
   const hostArch = thisMachine?.arch ?? null;
-  // As this device sees it: Share only with Settings, Experiments, Sharing
-  // on (every action where the host has no experiments), and a machine on
-  // the relay greyed out while this device is not enrolled.
-  const exp = useExperiments();
-  const experiments = exp.unsupported ? undefined : (exp.data?.experiments ?? {});
+  // As this device sees it: a machine on the relay greyed out while this
+  // device is not enrolled.
   const access = thisMachine?.accessNotice ?? null;
   const devices = useDevices();
-  const { detail, stream, windowsUnsupported, pip, query, setQuery, agents, copy } = useSpaceDetail(space, hostArch, { experiments, access });
+  const { detail, stream, windowsUnsupported, pip, query, setQuery, agents, copy } = useSpaceDetail(space, hostArch, { access });
   // Call view or thread view, remembered per Space.
   const [layout, setLayout] = useSpaceLayout(space?.id ?? "");
   const volumeError = useSpaceVolumeError(space, space ? spaceState(space) === "running" : false);
@@ -110,6 +113,9 @@ function SpaceDetailPage() {
   const askFirstOn = useFlag("spaces_ask_first_home");
   // Ask first's tasks: a Space being made for one draws as the Space page in its creating state.
   const tasks = useAskTasks();
+  // The first Space being prepared while the person was in onboarding: its page shows what is happening.
+  const prep = usePrepare();
+  const onPrepareAction = usePrepareAction();
   // Open on a creating row: once the create finished and the registry lists
   // the Space, its row (and this id) goes; follow it to the Space's own id.
   // Only a page that showed the row follows: the address of a row that is
@@ -313,6 +319,7 @@ function SpaceDetailPage() {
       ) : (
         <StateLabel state={state} space={space} />
       )}
+      <ParentLine spaceId={space.id} />
     </p>
   );
   const osMark = (
@@ -320,6 +327,8 @@ function SpaceDetailPage() {
       <OsIcon os={space.os} className="size-4.5 text-muted-foreground" />
     </div>
   );
+  const preparing = askFirstOn && space.id.startsWith("pending:") && prep.state?.wanted && prep.state.pendingId === space.id ? prep.view : null;
+  const preparePanel = preparing ? <PreparePanel view={preparing} onRetry={onPrepareAction} /> : null;
   const surface = (className: string, windowId?: string | null, windowName?: string | null, interactive = !viewOnly) => (
     <StreamSurface
       interactive={interactive}
@@ -335,17 +344,19 @@ function SpaceDetailPage() {
       onAccessAction={enroll}
       className={className}
     >
-      {surfaceState(space, pending, turnOn, start, dismiss, retry, openReport, fix) ?? poppedOutState}
+      {preparePanel ?? surfaceState(space, pending, turnOn, start, dismiss, retry, openReport, fix) ?? poppedOutState}
     </StreamSurface>
   );
   // The classic page's sections under the desktop. With the thread they open from Details, More.
   const sections = (
     <>
+      <ExitDownNotice spaceId={space.id} />
       <SpaceResources space={space} spaces={spaces ?? []} snapshot={resources} machines={machines} />
 
       <div className="mt-8 grid items-start gap-x-6 first:mt-0 md:grid-cols-2">
         <div>
-          <FactList title="Details" facts={detail.facts} />
+          <FactList title="Details" facts={detail.facts} extra={<RunsOnMachinesRow spaceId={space.id} />} />
+          <SecurityRows spaceId={space.id} className="mt-6" />
           {volumeError ? (
             <p className="mt-3 px-1 text-[13px] text-muted-foreground" data-volume-note="" title={volumeError}>
               {volumeUnavailableNote(volumeError)}
@@ -416,6 +427,8 @@ function SpaceDetailPage() {
         onConfirm={() => remove()}
         alternative={detail.confirm.removeLabel ? { label: detail.confirm.removeLabel, onClick: () => remove(true) } : null}
       />
+      <NetworkSheet spaceName={(id) => spaces?.find((s) => s.id === id)?.name ?? id} />
+      <VolumeGrantDialog spaceId={space.id} spaceName={space.name} />
       <DiagnosticReportDialog
         open={reportOpen}
         onOpenChange={setReportOpen}
@@ -439,7 +452,7 @@ function SpaceDetailPage() {
   // A create still in progress has no thread yet: its progress shows on the classic page.
   // A Space being made for an Ask-first job: the same page in its creating state (progress on
   // the stage, the job queued in the thread); a failed create keeps the classic page's fixes.
-  const creating = space.id.startsWith("pending:") && askFirstOn && state !== "failed" && tasks.some((t) => t.pendingId === space.id);
+  const creating = space.id.startsWith("pending:") && askFirstOn && (state !== "failed" || (preparing != null && preparing.phase !== "failed")) && (tasks.some((t) => t.pendingId === space.id) || preparing != null);
   const callThread = creating ? creatingThread(space.id) : thread;
   const later = "Available once the Space is ready";
   // This Mac's own desktop row: a Space's page as any other, with the share prompt where the stream would be.
@@ -497,10 +510,16 @@ function SpaceDetailPage() {
           notice={
             <>
               {callTip}
+              <NetworkNotice spaceId={space.id} />
+              <BlockedNotice spaceId={space.id} />
               {detail.powerError ? <p className="px-5 pb-2 text-[13px] text-destructive">{detail.powerError}</p> : null}
             </>
           }
-          stage={surface("h-full", shownRow?.id ?? null, shownView?.app ?? null)}
+          stage={
+            <WithClipboardPrompt spaceId={space.id} spaceName={space.name}>
+              {surface("h-full", shownRow?.id ?? null, shownView?.app ?? null)}
+            </WithClipboardPrompt>
+          }
           layout={layout}
           onLayout={setLayout}
           smallStage={surface("h-full", shownRow?.id ?? null, shownView?.app ?? null, false)}
@@ -509,6 +528,7 @@ function SpaceDetailPage() {
           thread={callThread}
           creating={creating}
           facts={detail.facts}
+          detailsExtra={<NetworkRow spaceId={space.id} />}
           more={sections}
           windows={creating ? [] : (stream?.rows.filter((r) => r.kind === "window") ?? [])}
           desktop={creating ? null : (desktopRow ?? null)}

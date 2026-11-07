@@ -15,6 +15,7 @@ import { Button } from "@/components/ui/button";
 import { toast } from "@/components/ui/toast";
 import { bindingFor } from "@/lib/keybindings";
 import { useListedSpaces } from "@/components/spaces/listed";
+import { useHiddenSpaceIds } from "@/lib/prepare/store";
 import { spaceState } from "@/lib/spaces";
 import { cn } from "@/lib/utils";
 import { SIDEBAR_DEFAULT, useUiStore } from "@/stores/ui";
@@ -25,19 +26,27 @@ import { SidebarUpdateButton } from "./update-indicator";
 import { SidebarTip } from "@/components/tips";
 import { useMachinesAccount } from "@/components/machines/account-parts";
 import { AccountLine, ProBanner } from "./account-area";
+import { useSpacesTreeData } from "@/components/spaces/use-spaces-tree";
 
 export function Sidebar() {
   const width = useUiStore((s) => s.sidebarWidth);
   const { data: spaces, listStatus } = useSpaces();
   const { data: machines } = useMachines();
+  const { core } = useBridge();
   const notifications = useNotifications();
   // No count before the list was read (not "0" while the daemon starts); while computers still answer, the
   // Spaces known so far.
   const { counted } = useListedSpaces(spaces);
+  // The home warming for Home's box is no "Making" item either: Home's own line says how it goes.
+  const warming = useHiddenSpaceIds(core);
   const spacesCount = spaces && listStatus.loaded ? counted.length : undefined;
   // Machines waiting to be added show beside the item, so they are seen from every page.
   const { pending } = useMachinesAccount();
-  const counts: Partial<Record<string, number>> = { "/spaces": spacesCount, "/machines": machines?.length };
+  // Spaces as a tree (Labs): one Spaces item counting your computers and the Spaces on them, as the Spaces page lists
+  // them. The tree itself is only on the Spaces page, so the sidebar stays short.
+  const { tree } = useSpacesTreeData();
+  const treeCount = tree && listStatus.loaded ? tree.computers + tree.spaces : undefined;
+  const counts: Partial<Record<string, number>> = { "/spaces": tree ? treeCount : spacesCount, "/machines": machines?.length };
   const navItems = useNavItems();
   const unread = notifications.data?.unread ?? 0;
 
@@ -89,7 +98,7 @@ export function Sidebar() {
       {/* A spacer, not a wrapper pushed down: what appears at the foot (a tip, the account) grows
           upward without moving anything already drawn (CUA-1951). */}
       <div className="flex-1" />
-      <SidebarCreating spaces={spaces ?? []} />
+      <SidebarCreating spaces={(spaces ?? []).filter((s) => !warming.has(s.id))} />
       <SidebarTip />
       {/* Free only: "Run more Spaces at once with Pro", right above the account line. */}
       <ProBanner />

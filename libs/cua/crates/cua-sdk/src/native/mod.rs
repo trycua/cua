@@ -268,62 +268,11 @@ mod not_found_tests {
     }
 }
 
-/// The open-file limit an SDK process (and the daemon) asks for: it holds a
-/// socket or pipe per Space, client, stream and engine connection, and
-/// macOS starts processes (launchd, a terminal) at a soft limit of 256.
-#[cfg(unix)]
-const WANTED_OPEN_FILES: u64 = 65_536;
-
 /// Raises this process's soft open-file limit toward 65,536, within the
-/// hard limit (and, on macOS, `kern.maxfilesperproc`). Returns the soft
-/// limit before and after, or `None` when nothing changed.
-#[cfg(unix)]
+/// hard limit ([`cua_daemon::fd_guard::raise_open_file_limit`]). Returns the
+/// soft limit before and after, or `None` when nothing changed.
 pub fn raise_open_file_limit() -> Option<(u64, u64)> {
-    let mut lim = libc::rlimit {
-        rlim_cur: 0,
-        rlim_max: 0,
-    };
-    // SAFETY: getrlimit fills the struct it is given.
-    if unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut lim) } != 0 {
-        return None;
-    }
-    let before: u64 = lim.rlim_cur;
-    #[allow(unused_mut)]
-    let mut ceiling = lim.rlim_max.min(WANTED_OPEN_FILES);
-    #[cfg(target_os = "macos")]
-    {
-        // setrlimit refuses more than this on macOS, whatever the hard limit.
-        let mut per_proc: libc::c_int = 0;
-        let mut len = std::mem::size_of::<libc::c_int>();
-        // SAFETY: sysctlbyname writes at most `len` bytes into `per_proc`.
-        let rc = unsafe {
-            libc::sysctlbyname(
-                c"kern.maxfilesperproc".as_ptr(),
-                (&mut per_proc as *mut libc::c_int).cast(),
-                &mut len,
-                std::ptr::null_mut(),
-                0,
-            )
-        };
-        if rc == 0 && per_proc > 0 {
-            ceiling = ceiling.min(per_proc as u64);
-        }
-    }
-    if ceiling <= before {
-        return None;
-    }
-    lim.rlim_cur = ceiling;
-    // SAFETY: setrlimit reads the struct it is given.
-    if unsafe { libc::setrlimit(libc::RLIMIT_NOFILE, &lim) } != 0 {
-        return None;
-    }
-    Some((before, ceiling))
-}
-
-/// Not applicable off Unix.
-#[cfg(not(unix))]
-pub fn raise_open_file_limit() -> Option<(u64, u64)> {
-    None
+    cua_daemon::fd_guard::raise_open_file_limit()
 }
 
 #[cfg(all(test, unix))]

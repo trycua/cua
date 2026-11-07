@@ -53,8 +53,9 @@ export function nameSeed(): number {
 }
 export const wizardInitial = (core: CoreClient, env: WizardEnv) =>
   core.call<WizardState>("wizard.initial", { env: env.nameSeed == null ? { ...env, nameSeed: nameSeed() } : env });
-export const wizardReduce = (core: CoreClient, state: WizardState, action: WizardAction, env: WizardEnv) =>
-  core.call<WizardState>("wizard.reduce", { state, action, env });
+/** Advances the wizard; `os` is the system the app runs on, which decides whether Continue is allowed. */
+export const wizardReduce = (core: CoreClient, state: WizardState, action: WizardAction, env: WizardEnv, os: HostOs = hostOs()) =>
+  core.call<WizardState>("wizard.reduce", { state, action, env, hostOs: os });
 /** The wizard as drawn, in the words of the system the app runs on (`hostOs`). */
 export const wizardView = (core: CoreClient, state: WizardState, env: WizardEnv, os: HostOs = hostOs()) =>
   core.call<WizardView>("wizard.view", { state, env, hostOs: os });
@@ -168,6 +169,50 @@ export interface FirstSpaceOffer {
   blocked: string | null;
   /** The create's arguments: the wizard's plan with its defaults. */
   args: CreateSpaceArgs;
+}
+
+/** What an example needs (`first_prompts::Cap`). */
+export type PromptCap = "linux-space" | "macos-space" | "windows-space" | "kvm" | "fill-in" | "account";
+
+/** One example job card on an empty Home (`first_prompts::Suggestion`). */
+export interface PromptSuggestion {
+  id: string;
+  family: string;
+  title: string;
+  detail: string;
+  os: "linux" | "macos" | "windows";
+  prompt: string;
+  why: string;
+  needs: PromptCap[];
+}
+
+/** One example to copy (`first_prompts::Example`): a whole prompt that needs no repo and no account. */
+export interface PromptExample {
+  id: string;
+  family: string;
+  text: string;
+  /** Why this is useful, one line. */
+  why: string;
+  needs: PromptCap[];
+}
+
+/** The example jobs for this machine (`first_prompts::FirstPrompts`): examples to copy, best fit first, and Home's cards. */
+export interface FirstPrompts {
+  caps: { macos: boolean; windows: boolean; kvm: boolean; macosCached: boolean; windowsCached: boolean };
+  /** Onboarding's one example sentence, from the bug-on-platform entries: a system this machine can run. */
+  lede: string;
+  examples: PromptExample[];
+  suggestions: PromptSuggestion[];
+}
+
+/**
+ * The jobs the app suggests, chosen by the core from what this machine can do now (`firstPrompts.choose`):
+ * always a job that works on every host, and a macOS job only where a macOS Space can be made. No shell
+ * keeps a sentence of its own. Null without the core.
+ */
+export function firstPrompts(core: CoreClient, env: WizardEnv, os: HostOs = hostOs()): FirstPrompts | null {
+  if (core.status !== "ready" || !core.methods.includes("firstPrompts.choose")) return null;
+  return core.call<FirstPrompts>("firstPrompts.choose", { env, hostOs: os });
 }
 
 /** Bytes the way the wizard shows them (binary units labeled GB). */

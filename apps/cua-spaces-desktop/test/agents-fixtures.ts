@@ -87,6 +87,8 @@ export class FakeAgentKeysTools {
   keys: Record<string, unknown>[] = [{ provider: "openai", env: "OPENAI_API_KEY", last4: "3f9a", added_ms: 1_790_000_000_000 }];
   uses: Record<string, Record<string, unknown>> = {};
   available = true;
+  /** A Local development build keeping keys in an unencrypted file: the daemon's warning. */
+  insecure: string | null = null;
 
   run: ToolRunner = async (tool, args) => {
     this.calls.push([tool, args]);
@@ -116,6 +118,12 @@ export class FakeAgentKeysTools {
       case "agent_keys.remove":
         this.keys = this.keys.filter((k) => (typeof args.slot === "string" ? !(k.env === args.env && k.slot === args.slot) : k.env !== args.env));
         break;
+      case "agent_keys.rename": {
+        const k = this.keys.find((x) => x.env === args.env && (typeof args.slot === "string" ? x.slot === args.slot : !x.slot));
+        if (!k) throw new ToolError("that key isn't saved");
+        k.label = String(args.label ?? "");
+        break;
+      }
       case "agent_keys.use": {
         const app = String(args.app ?? "");
         if (typeof args.env === "string") this.uses[app] = { provider: "anthropic", env: args.env, ...(typeof args.slot === "string" ? { slot: args.slot } : {}) };
@@ -127,6 +135,7 @@ export class FakeAgentKeysTools {
     }
     const report: Record<string, unknown> = { keys: this.keys, providers: [], available: this.available, ...(Object.keys(this.uses).length ? { uses: this.uses } : {}) };
     if (!this.available) report.unavailable = "this build keeps credentials in a file";
+    if (this.insecure) report.insecure = this.insecure;
     return report;
   };
 }
@@ -249,5 +258,9 @@ export const AGENT_METHODS = [
   "agents.detail", "agents.readFile", "agents.restoreFile", "agents.addRoutine", "agents.setRoutine", "agents.removeRoutine",
   "agents.allowComputer", "agents.revokeComputer",
   "agents.status", "agents.connect", "agents.disconnect", "agents.signInStart", "agents.signInWait",
-  "agentKeys.list", "agentKeys.check", "agentKeys.set", "agentKeys.remove", "agentKeys.use", "agentKeys.shell", "agentKeys.fromShell",
+  // "Pick up where you left off" (test/agent-threads.test.ts): the daemon's person-only tools agent_threads and agent_thread_history.
+  "agents.recentThreads", "agents.threadHistory",
+  "agentKeys.list", "agentKeys.check", "agentKeys.set", "agentKeys.remove", "agentKeys.use", "agentKeys.rename", "agentKeys.shell", "agentKeys.fromShell",
+  // Settings, Connections, GitHub (test/github.test.ts): answered by the daemon's tools.
+  "github.status", "github.rescan", "github.use", "github.enable",
 ];

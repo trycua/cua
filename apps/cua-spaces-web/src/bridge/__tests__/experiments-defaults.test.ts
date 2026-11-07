@@ -5,10 +5,9 @@ import { describe, expect, it } from "vitest";
 import { readExperiments } from "../ops/volume";
 
 describe("stored experiments", () => {
-  it("reads sharing and your cloud as on unless stored off, and the rest as off", () => {
-    expect(readExperiments(undefined)).toEqual({ cuaVolume: false, yourCloud: true, sharing: true, webUi: false });
-    expect(readExperiments(JSON.stringify({ cuaVolume: true }))).toMatchObject({ cuaVolume: true, sharing: true });
-    expect(readExperiments(JSON.stringify({ sharing: false }))).toMatchObject({ sharing: false });
-    expect(readExperiments(JSON.stringify({ yourCloud: false }))).toMatchObject({ yourCloud: false });
+  it("reads every experiment as off unless stored on, and ignores keys of switches that are gone", () => {
+    expect(readExperiments(undefined)).toEqual({ cuaVolume: false, secureSpaces: false, childSpaces: false, askFirst: false, ciRunners: false, tcpShares: false, mobile: false, warmPools: false });
+    expect(readExperiments(JSON.stringify({ cuaVolume: true }))).toMatchObject({ cuaVolume: true });
+    expect(readExperiments(JSON.stringify({ sharing: false, yourCloud: false, webUi: true }))).toEqual(readExperiments(undefined));
   });
 });

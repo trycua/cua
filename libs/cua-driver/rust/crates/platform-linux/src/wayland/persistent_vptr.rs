@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Persistent virtual-pointer for stateful `mouse_button_down` / `mouse_drag` /
 //! `mouse_button_up`.
 //!

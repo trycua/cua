@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 # Derive the macOS Space with developer tools (the xcode tier) on THIS Mac,
-# from the published full tier and an Xcode that is already here. Nothing it
-# makes is ever pushed: Apple's terms let you run Xcode on your own Mac, in a
-# VM on it, but not hand it to others (see versions.env, check-tag-safety.sh).
+# from the published full tier and an Xcode that is already here. The default
+# way to get the tier is to pull the published ghcr.io/trycua/macos:26-xcode;
+# this is the fallback for when that image is not available, or for a Mac that
+# already has the Xcode it wants and the user prefers to use it. Xcode and the
+# iOS Simulator runtimes are Apple software under Apple's license, for use on
+# Apple-branded hardware: this refuses to run anywhere else.
 #
 #   libs/images/macos/derive-local.sh --base-vm NAME [--name VM] [--xcode PATH]
 #       [--out DIR] [--memory 8GB] [--keep-going-low-disk] [--json]
@@ -37,6 +40,7 @@ FLOOR_GB="${CUA_DEV_IMAGE_FLOOR_GB:-10}"
 # Growth the derive needs beyond Xcode itself: iOS runtime, Metal toolchain,
 # tools, Simulator data and caches while building.
 EXTRA_GB="${CUA_DEV_IMAGE_EXTRA_GB:-18}"
+# shellcheck disable=SC2034 # XCODE is read by find_xcode (files/xcode-source.sh)
 while [ $# -gt 0 ]; do
     case "$1" in
         --base-vm) BASE_VM="$2"; shift 2 ;;
@@ -65,26 +69,8 @@ lume() {
     esac
 }
 guest() { lume ssh -t "${2:-120}" "$VM" "$1" </dev/null; }
-plist() { /usr/libexec/PlistBuddy -c "Print :$2" "$1/Contents/Info.plist" 2>/dev/null; }
-
-# --- the Xcode on this Mac -------------------------------------------------------
-find_xcode() {
-    local c best="" bestv="" v
-    if [ -n "$XCODE" ]; then echo "$XCODE"; return 0; fi
-    if [ -n "${CUA_XCODE_APP:-}" ]; then echo "$CUA_XCODE_APP"; return 0; fi
-    local sel; sel="$(xcode-select -p 2>/dev/null || true)"
-    case "$sel" in */Xcode*.app/Contents/Developer) c="${sel%/Contents/Developer}"; [ -d "$c" ] && { echo "$c"; return 0; } ;; esac
-    for c in /Applications/Xcode*.app; do
-        [ -d "$c" ] || continue
-        v="$(plist "$c" CFBundleShortVersionString || true)"; [ -n "$v" ] || continue
-        if [ -z "$best" ] || [ "$(printf '%s\n%s\n' "$bestv" "$v" | sort -V | tail -1)" = "$v" ]; then best="$c" bestv="$v"; fi
-    done
-    [ -z "$best" ] || { echo "$best"; return 0; }
-    for c in "${CUA_XCODE_CACHE:-$HOME/XcodesCache}"/Xcode*.xip "$HOME"/Downloads/Xcode*.xip; do
-        [ -f "$c" ] && { echo "$c"; return 0; }
-    done
-    return 1
-}
+# shellcheck source=files/xcode-source.sh
+. "$HERE/files/xcode-source.sh"
 if ! SRC="$(find_xcode)"; then
     cat >&2 <<'MSG'
 No Xcode on this Mac. Apple requires a signed-in download, so Cua cannot fetch one for you.
@@ -119,6 +105,8 @@ MSG
     exit 4
 fi
 
+[ "$(uname -s)" = Darwin ] && [ "$(uname -m)" = arm64 ] ||
+    { echo "The macOS Space with developer tools runs only on Apple-branded hardware with Apple silicon." >&2; exit 2; }
 command -v "$LUME_BIN" >/dev/null || { echo "lume is required" >&2; exit 2; }
 
 # --- stage: scripts, pins, tools ----------------------------------------------------------
@@ -129,14 +117,8 @@ cp "$HERE/files/tier-xcode.sh" "$HERE/versions.env" "$SETUP/"
 # shellcheck source=files/fetch.sh
 . "$HERE/files/fetch.sh"
 fetch_xcode_tools
-# The Xcode, as one archive: the guest reads the share over virtiofs, which
-# cannot follow an app bundle's framework links, but a zip keeps them, the
-# signatures and the extended attributes. An .xip goes in as it is.
-case "$SRC" in
-    *.app) log "archiving $(basename "$SRC") for the guest"
-           ditto -c -k --sequesterRsrc --keepParent "$SRC" "$SETUP/xcode/$(basename "$SRC").zip" ;;
-    *) cp -c "$SRC" "$SETUP/xcode/" 2>/dev/null || cp "$SRC" "$SETUP/xcode/" ;;
-esac
+log "packing $(basename "$SRC") for the guest"
+stage_xcode "$SRC" "$SETUP/xcode"
 
 cleanup() {
     lume stop "$VM" >/dev/null 2>&1 || true

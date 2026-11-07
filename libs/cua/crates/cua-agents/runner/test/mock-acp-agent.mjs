@@ -148,6 +148,21 @@ agent
     return {
       sessionId: id,
       modes: { currentModeId: "default", availableModes: [{ id: "default" }, { id: "ask", _meta: { kind: "standard" } }, { id: "full", _meta: { kind: "full_access" } }] },
+      ...(script.models
+        ? {
+            configOptions: [
+              { id: "model", name: "Model", category: "model", type: "select", currentValue: script.models[0], options: script.models.map((m) => ({ value: m, name: m })) },
+            ],
+          }
+        : {}),
+    };
+  })
+  .onRequest("session/set_config_option", (ctx) => {
+    log({ ev: "set_config_option", configId: ctx.params.configId, value: ctx.params.value });
+    return {
+      configOptions: [
+        { id: "model", name: "Model", category: "model", type: "select", currentValue: ctx.params.value, options: (script.models ?? []).map((m) => ({ value: m, name: m })) },
+      ],
     };
   })
   .onRequest("session/set_mode", (ctx) => {

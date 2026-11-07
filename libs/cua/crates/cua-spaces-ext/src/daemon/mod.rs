@@ -212,6 +212,8 @@ async fn refresh_owner(owner: Arc<std::sync::RwLock<crate::thread::Author>>, spa
 pub fn register() {
     crate::stream::register();
     crate::presence_datagrams::register();
+    // Approvals that wait and tasks that end reach the person's phone.
+    crate::push_client::register();
     cua_daemon::extension::register(Arc::new(CuaSpacesDaemon::default()));
 }
 
@@ -290,7 +292,10 @@ fn build_keyvault(
         // A debug daemon serving a test identity never touches the login
         // keychain (passphrase-only vault, file generation anchor).
         && cfg!(any(target_os = "macos", target_os = "windows", target_os = "linux"))
-        && !keyvault::test_identity_active();
+        && !keyvault::test_identity_active()
+        // The Local channel (an ad hoc signed build) never touches the login
+        // keychain: no OS protector, and the generation anchor is a file.
+        && cua_home::channel::CuaChannel::current().uses_login_keychain();
     let presence = test_presence
         .unwrap_or_else(|| Arc::new(keyvault::OsPresence) as Arc<dyn cua_keyvault::UserPresence>);
     match keyvault::Keyvault::new(dir, backend, presence, os_protector) {

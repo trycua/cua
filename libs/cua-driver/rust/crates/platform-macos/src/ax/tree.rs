@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! AX tree walker: produces the treeMarkdown string and element cache.
 //!
 //! Format (matching libs/cua-driver exactly):
@@ -24,7 +27,7 @@ use std::time::Instant;
 ///
 /// Callers can override per-call via `walk_tree`'s `max_depth` parameter to
 /// trade fidelity for context-window budget on AX-heavy apps (Electron,
-/// Obsidian, large web apps — issue #22865).
+/// Obsidian and other large web apps).
 pub const DEFAULT_MAX_DEPTH: usize = 25;
 
 /// Default maximum total nodes visited during a single AX walk. Chromium-family
@@ -34,7 +37,7 @@ pub const DEFAULT_MAX_DEPTH: usize = 25;
 /// with a warning line appended (mirrors Swift reference implementation).
 ///
 /// Callers can override per-call via `walk_tree`'s `max_elements` parameter
-/// (issue #22865).
+/// for large accessibility trees.
 pub const DEFAULT_MAX_ELEMENTS: usize = 2_000;
 
 /// Bound each native AX request. Tokio cannot cancel a blocked
@@ -131,8 +134,8 @@ fn role_supports_value_addressing(role: &str) -> bool {
     )
 }
 
-fn is_addressable(actions_present: bool, value_settable: bool, enabled: Option<bool>) -> bool {
-    (actions_present || value_settable) && enabled != Some(false)
+fn is_addressable(actions_present: bool, value_settable: bool) -> bool {
+    actions_present || value_settable
 }
 
 pub struct TreeWalkResult {
@@ -140,6 +143,8 @@ pub struct TreeWalkResult {
     pub nodes: Vec<AXNode>,
     /// True when the walk was cut short by its node or time budget.
     pub truncated: bool,
+    /// True when nodes past `max_depth` were omitted, independently of budget `truncated`.
+    pub depth_truncated: bool,
     /// Why and where the walk stopped (see [`cua_driver_core::walk_budget`]).
     pub walk: WalkOutcome,
     /// Whether the requested `window_id` actually resolved to an AX surface,
@@ -183,7 +188,7 @@ pub fn walk_tree(pid: i32, window_id: Option<u32>, query: Option<&str>) -> TreeW
 /// the cap) and depth-wise (nodes whose markdown indent would exceed the cap
 /// are omitted). Markdown and the `nodes` vec are truncated identically.
 ///
-/// Issue #22865: caps protect against Electron / Obsidian / large web apps
+/// These caps protect against Electron / Obsidian / large web apps
 /// that produce 10k+ element trees and blow context windows.
 pub fn walk_tree_bounded(
     pid: i32,
@@ -241,6 +246,7 @@ fn walk_tree_with_web_content(
     let mut nodes: Vec<AXNode> = Vec::new();
     let mut lines: Vec<(usize, String)> = Vec::new(); // (depth, line)
     let mut index_counter = 0usize;
+    let mut depth_truncated = false;
     let mut window_scope: Option<WindowScope> = None;
 
     unsafe {
@@ -250,6 +256,7 @@ fn walk_tree_with_web_content(
                 tree_markdown: String::new(),
                 nodes,
                 truncated: false,
+                depth_truncated: false,
                 walk: budget.outcome(),
                 // No application AX element at all, so a requested window
                 // certainly did not resolve.
@@ -276,7 +283,7 @@ fn walk_tree_with_web_content(
             let attempt_started = Instant::now();
             super::enablement::ensure_chromium_ax_enabled(pid, app_elem);
 
-            let top_level = copy_top_level(app_elem, pid, window_id);
+            let mut top_level = copy_top_level(app_elem, pid, window_id);
 
             // Scope: keep non-window children (menu bar) + the target window —
             // but ONLY once the target window has actually been identified. When
@@ -287,7 +294,7 @@ fn walk_tree_with_web_content(
                 let walk = top_level.clone();
                 break (top_level, walk);
             };
-            let decision = scope_top_level(&top_level, pid, wid);
+            let decision = scope_top_level(&mut top_level, pid, wid);
             if matches!(decision.scope, WindowScope::AxUnresolved { .. }) {
                 match launch_wait.step(attempt_started, Instant::now(), || is_still_launching(pid))
                 {
@@ -322,6 +329,7 @@ fn walk_tree_with_web_content(
                 &mut lines,
                 &mut index_counter,
                 &mut budget,
+                &mut depth_truncated,
                 max_depth,
                 include_web_content,
             );
@@ -351,6 +359,7 @@ fn walk_tree_with_web_content(
         tree_markdown,
         nodes,
         truncated: walk.truncated(),
+        depth_truncated,
         walk,
         window_scope,
     }
@@ -393,32 +402,68 @@ unsafe fn copy_top_level(
 }
 
 /// Decide which of `top_level` a walk scoped to `wid` covers.
-unsafe fn scope_top_level(top_level: &[AXUIElementRef], pid: i32, wid: u32) -> ScopeDecision {
-    let candidates: Vec<TopLevelCandidate> = top_level
+///
+/// A sheet's own id is never a top-level window: the sheet hangs off the
+/// window it is attached to. When no window claims `wid`, the matching
+/// attached sheet is appended to `top_level`, so the walk covers that sheet
+/// and not the parent window's own controls.
+unsafe fn scope_top_level(
+    top_level: &mut Vec<AXUIElementRef>,
+    pid: i32,
+    wid: u32,
+) -> ScopeDecision {
+    let mut candidates: Vec<TopLevelCandidate> = top_level
         .iter()
-        .map(|&child| {
-            set_messaging_timeout(child);
-            let role = copy_string_attr(child, "AXRole").unwrap_or_default();
-            let subrole = copy_string_attr(child, "AXSubrole");
-            let identifier = copy_string_attr(child, "AXIdentifier");
-            // Match AX window element → CGWindowID via private SPI.
-            // Only windows carry one, so skip the round-trip elsewhere.
-            let ax_window_id = if role == "AXWindow" {
-                ax_get_window_id(child)
-            } else {
-                None
-            };
-            TopLevelCandidate {
-                role,
-                subrole,
-                identifier,
-                ax_window_id,
-            }
-        })
+        .map(|&child| top_level_candidate(child))
         .collect();
+    if !candidates
+        .iter()
+        .any(|candidate| candidate.ax_window_id == Some(wid))
+    {
+        let windows: Vec<AXUIElementRef> = top_level
+            .iter()
+            .zip(&candidates)
+            .filter(|(_, candidate)| candidate.role == "AXWindow")
+            .map(|(&window, _)| window)
+            .collect();
+        for sheet in windows
+            .into_iter()
+            .flat_map(|window| super::exact_target::attached_sheets(window))
+        {
+            let candidate = top_level_candidate(sheet);
+            if candidate.ax_window_id == Some(wid)
+                && !candidates.iter().any(|c| c.ax_window_id == Some(wid))
+            {
+                top_level.push(sheet);
+                candidates.push(candidate);
+            } else {
+                CFRelease(sheet as CFTypeRef);
+            }
+        }
+    }
     decide_window_scope(&candidates, wid, || {
         crate::windows::resolve_window_owner(pid, wid)
     })
+}
+
+unsafe fn top_level_candidate(child: AXUIElementRef) -> TopLevelCandidate {
+    set_messaging_timeout(child);
+    let role = copy_string_attr(child, "AXRole").unwrap_or_default();
+    let subrole = copy_string_attr(child, "AXSubrole");
+    let identifier = copy_string_attr(child, "AXIdentifier");
+    // Match AX window element → CGWindowID via private SPI. Only windows and
+    // sheets carry one, so skip the round-trip elsewhere.
+    let ax_window_id = if matches!(role.as_str(), "AXWindow" | "AXSheet") {
+        ax_get_window_id(child)
+    } else {
+        None
+    };
+    TopLevelCandidate {
+        role,
+        subrole,
+        identifier,
+        ax_window_id,
+    }
 }
 
 /// Release elements retained by [`copy_top_level`].
@@ -438,10 +483,12 @@ unsafe fn walk_element(
     lines: &mut Vec<(usize, String)>,
     counter: &mut usize,
     budget: &mut WalkBudget,
+    depth_truncated: &mut bool,
     max_depth: usize,
     include_web_content: bool,
 ) {
     if depth > max_depth {
+        *depth_truncated = true;
         return;
     }
     // Node and time budget: a refused node is counted as discovered but not
@@ -477,6 +524,7 @@ unsafe fn walk_element(
                 lines,
                 counter,
                 budget,
+                depth_truncated,
                 max_depth,
                 include_web_content,
             );
@@ -521,16 +569,18 @@ unsafe fn walk_element(
     let value_settable = actions.is_empty()
         && role_supports_value_addressing(&role)
         && is_attribute_settable(element, "AXValue");
-    // A closed submenu can keep its descendants in AXChildren while reporting
-    // those controls disabled. Never assign such a row a live element index:
-    // the same native state also causes dispatch to refuse it, and exposing an
-    // index for it invites agents to retain an unusable menu target.
+    // A disabled control is still indexed and published with `enabled: false`:
+    // enablement is state the caller needs to read (a form's Save button, a
+    // toolbar item in a window that is not key), not a reason to hide the row.
+    // click, right_click, double_click, set_value and type_text re-read
+    // AXEnabled before dispatch and refuse a disabled token target with
+    // `element_disabled` (`tools::refuse_if_disabled`).
     let enabled = if !actions.is_empty() || value_settable {
         copy_bool_attr(element, "AXEnabled")
     } else {
         None
     };
-    let is_actionable = is_addressable(!actions.is_empty(), value_settable, enabled);
+    let is_actionable = is_addressable(!actions.is_empty(), value_settable);
 
     if !is_actionable && !has_content && role != "AXWindow" && role != "AXSheet" {
         let children = copy_children(element);
@@ -544,6 +594,7 @@ unsafe fn walk_element(
                 lines,
                 counter,
                 budget,
+                depth_truncated,
                 max_depth,
                 include_web_content,
             );
@@ -680,6 +731,7 @@ unsafe fn walk_element(
             lines,
             counter,
             budget,
+            depth_truncated,
             max_depth,
             include_web_content,
         );
@@ -752,6 +804,9 @@ fn format_node_line(node: &AXNode) -> String {
         }
         if let Some(h) = &node.help {
             attrs.push(format!("help=\"{}\"", h));
+        }
+        if node.enabled == Some(false) {
+            attrs.push("enabled=false".to_owned());
         }
         let shown: Vec<String> = node
             .actions
@@ -919,11 +974,39 @@ mod tests {
     use std::cell::Cell;
 
     #[test]
+    fn a_disabled_control_row_says_so() {
+        let node = AXNode {
+            element_index: Some(7),
+            role: "AXCheckBox".into(),
+            title: Some("Reset".into()),
+            value: None,
+            description: None,
+            identifier: None,
+            help: None,
+            actions: vec!["AXPress".into()],
+            element_ptr: 0,
+            depth: 2,
+            parent_element_index: None,
+            frame: None,
+            value_state: None,
+            value_description: None,
+            min_value: None,
+            max_value: None,
+            enabled: Some(false),
+            selected: None,
+            in_web_content: false,
+        };
+        assert_eq!(
+            format_node_line(&node),
+            "- [7] AXCheckBox \"Reset\" [enabled=false actions=[press]]"
+        );
+    }
+
+    #[test]
     fn writable_value_controls_are_addressable_without_actions() {
-        assert!(is_addressable(false, true, Some(true)));
-        assert!(is_addressable(true, false, None));
-        assert!(!is_addressable(false, false, Some(true)));
-        assert!(!is_addressable(true, false, Some(false)));
+        assert!(is_addressable(false, true));
+        assert!(is_addressable(true, false));
+        assert!(!is_addressable(false, false));
 
         for role in [
             "AXTextField",

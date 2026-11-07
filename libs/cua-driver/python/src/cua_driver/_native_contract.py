@@ -1537,7 +1537,7 @@ class _UniffiFfiConverterOptionalTypeActionNextCall(_UniffiConverterRustBuffer):
 
 @dataclass
 class ActionResult:
-    def __init__(self, *, effect:ActionEffect, route:ActionRoute, delivery:typing.Optional[ActionDelivery], evidence:typing.Optional[typing.List[ActionEvidence]], escalation:typing.Optional[ActionEscalation], summary:typing.Optional[str], error:typing.Optional[ActionError], hint:typing.Optional[str], next_call:typing.Optional[ActionNextCall]):
+    def __init__(self, *, effect:ActionEffect, route:ActionRoute, delivery:typing.Optional[ActionDelivery], evidence:typing.Optional[typing.List[ActionEvidence]], escalation:typing.Optional[ActionEscalation], summary:typing.Optional[str], error:typing.Optional[ActionError], hint:typing.Optional[str], next_call:typing.Optional[ActionNextCall], fast_path:typing.Optional[str]):
         self.effect = effect
         self.route = route
         self.delivery = delivery
@@ -1547,12 +1547,13 @@ class ActionResult:
         self.error = error
         self.hint = hint
         self.next_call = next_call
+        self.fast_path = fast_path
 
 
 
 
     def __str__(self):
-        return "ActionResult(effect={}, route={}, delivery={}, evidence={}, escalation={}, summary={}, error={}, hint={}, next_call={})".format(self.effect, self.route, self.delivery, self.evidence, self.escalation, self.summary, self.error, self.hint, self.next_call)
+        return "ActionResult(effect={}, route={}, delivery={}, evidence={}, escalation={}, summary={}, error={}, hint={}, next_call={}, fast_path={})".format(self.effect, self.route, self.delivery, self.evidence, self.escalation, self.summary, self.error, self.hint, self.next_call, self.fast_path)
     def __eq__(self, other):
         if self.effect != other.effect:
             return False
@@ -1572,6 +1573,8 @@ class ActionResult:
             return False
         if self.next_call != other.next_call:
             return False
+        if self.fast_path != other.fast_path:
+            return False
         return True
 
 class _UniffiFfiConverterTypeActionResult(_UniffiConverterRustBuffer):
@@ -1587,6 +1590,7 @@ class _UniffiFfiConverterTypeActionResult(_UniffiConverterRustBuffer):
             error=_UniffiFfiConverterOptionalTypeActionError.read(buf),
             hint=_UniffiFfiConverterOptionalString.read(buf),
             next_call=_UniffiFfiConverterOptionalTypeActionNextCall.read(buf),
+            fast_path=_UniffiFfiConverterOptionalString.read(buf),
         )
 
     @staticmethod
@@ -1600,6 +1604,7 @@ class _UniffiFfiConverterTypeActionResult(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalTypeActionError.check_lower(value.error)
         _UniffiFfiConverterOptionalString.check_lower(value.hint)
         _UniffiFfiConverterOptionalTypeActionNextCall.check_lower(value.next_call)
+        _UniffiFfiConverterOptionalString.check_lower(value.fast_path)
 
     @staticmethod
     def write(value, buf):
@@ -1612,6 +1617,7 @@ class _UniffiFfiConverterTypeActionResult(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalTypeActionError.write(value.error, buf)
         _UniffiFfiConverterOptionalString.write(value.hint, buf)
         _UniffiFfiConverterOptionalTypeActionNextCall.write(value.next_call, buf)
+        _UniffiFfiConverterOptionalString.write(value.fast_path, buf)
 
 class _UniffiFfiConverterBoolean:
     @classmethod

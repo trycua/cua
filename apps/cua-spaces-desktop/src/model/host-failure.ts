@@ -9,7 +9,7 @@
 // that runs the host service.
 import type { PresentedFailure } from "../bridge/host";
 
-export type HostFailureKind = "download" | "network" | "throttled" | "guiSession" | "signedOut" | "service" | "other";
+export type HostFailureKind = "download" | "network" | "throttled" | "guiSession" | "signedOut" | "service" | "needsProof" | "other";
 
 export interface HostSetupFailure extends PresentedFailure {
   kind: HostFailureKind;
@@ -18,6 +18,17 @@ export interface HostSetupFailure extends PresentedFailure {
 
 export const RETRY_LABEL = "Retry";
 export const SIGN_IN_LABEL = "Sign In";
+export const USE_CODE_LABEL = "Use a code from another computer";
+
+/** The relay's code for a new computer that came with no proof it is the
+ * owner adding it (`cua_host::NEW_COMPUTER_NEEDS_PROOF`). */
+export const NEW_COMPUTER_NEEDS_PROOF = "new_computer_needs_proof";
+
+/** The relay's code for a refusal, as `cua_host::refusal_code` reads it: the
+ * raw error ends with `[code: <lowercase_word>]`. */
+export function refusalCode(raw: string): string | undefined {
+  return /\s\[code: ([a-z_]+)\]\s*$/.exec(raw)?.[1];
+}
 
 /** What the app calls the computer it runs on, mid-sentence. */
 export function thisComputer(platform: NodeJS.Platform): string {
@@ -42,6 +53,8 @@ export function throttledWait(raw: string): number | null | undefined {
 
 /** Which kind of failure the raw setup error is. */
 export function classify(raw: string): HostFailureKind {
+  // The relay's own code first: it says which refusal it is, whatever the words.
+  if (refusalCode(raw) === NEW_COMPUTER_NEEDS_PROOF) return "needsProof";
   if (throttledWait(raw) !== undefined) return "throttled";
   const s = raw.toLowerCase();
   const any = (needles: string[]) => needles.some((n) => s.includes(n));
@@ -116,6 +129,12 @@ export function failureWords(kind: HostFailureKind, platform: NodeJS.Platform = 
             ? "if it keeps failing, open Cua Spaces as administrator (right-click it, Run as administrator) and set up access once more."
             : `if it keeps failing, restart ${here}.`),
       ];
+    case "needsProof":
+      return [
+        "Confirm it’s you",
+        `To add ${here} to your account, enter a code from a computer you already added. ` +
+          "On that computer, open Cua Spaces, go to Machines and click Add machine.",
+      ];
     case "other":
       return [`Couldn’t set up ${here} for access`, "Something went wrong. Try again, or open Details to see what happened."];
   }
@@ -124,5 +143,6 @@ export function failureWords(kind: HostFailureKind, platform: NodeJS.Platform = 
 /** The failure for a raw error (its kind read from the words, or given: the account refused, whatever its words). */
 export function presentHostFailure(raw: string, platform: NodeJS.Platform = "darwin", kind: HostFailureKind = classify(raw)): HostSetupFailure {
   const [title, message] = failureWords(kind, platform, raw);
-  return { kind, title, message, details: raw, actionLabel: kind === "signedOut" ? SIGN_IN_LABEL : RETRY_LABEL };
+  const actionLabel = kind === "signedOut" ? SIGN_IN_LABEL : kind === "needsProof" ? USE_CODE_LABEL : RETRY_LABEL;
+  return { kind, title, message, details: raw, actionLabel, refusalCode: refusalCode(raw) };
 }

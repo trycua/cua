@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! What the operating system is currently drawing as the pointer.
 //!
 //! This is the *system* cursor — the I-beam over a text field, the resize

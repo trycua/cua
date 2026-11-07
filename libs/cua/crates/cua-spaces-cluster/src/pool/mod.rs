@@ -1258,7 +1258,9 @@ mod tests {
     fn machine(dir: &Path, name: &str, id: &str) -> PoolMachine {
         let jobs = NodeJobs::open(
             NodeConfig {
-                dir: dir.join(id),
+                // `id` may be a direct host's `host:port`, and Windows
+                // refuses `:` in a directory name.
+                dir: dir.join(id.replace(':', "_")),
                 millicpus_total: 2000,
                 memory_total_mb: 4096,
                 jobs_max: 0,

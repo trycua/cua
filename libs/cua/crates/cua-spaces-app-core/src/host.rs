@@ -125,6 +125,7 @@ pub fn this_machine_status(status: Option<&HostSummaryInput>) -> SpaceStatus {
 /// The roster entry for this machine.
 pub fn this_machine_space(status: Option<&HostSummaryInput>, now: i64, os: SpaceOs) -> Space {
     Space {
+        hidden: false,
         id: THIS_MACHINE_ID.into(),
         name: os.this_machine().into(),
         os,

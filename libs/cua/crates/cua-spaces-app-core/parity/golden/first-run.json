@@ -147,7 +147,58 @@
           "Your cloud — Hetzner, AWS, Google Cloud or Modal"
         ],
         "secondary": "not-now:Not now",
-        "status": "[checking] Signing in — Finish signing in to Cua in your browser.",
+        "status": "[checking] Signing in — Finish signing in to Cua in your browser. (sign-in-code:Use a code instead)",
+        "title": "Add your other computers."
+      },
+      "step": "devices"
+    },
+    {
+      "art": "hermes on outline",
+      "case": "09b connect your other devices, signing in with a code",
+      "devices": {
+        "lede": "Sign in to Cua here and on your other computers. Then they can all use this Mac's Spaces.",
+        "note": "Not now keeps Cua on this Mac only. You can sign in later.",
+        "primary": "sign-in:Sign in",
+        "rows": [
+          "Your other computers — Sign in with the same account",
+          "Your cloud — Hetzner, AWS, Google Cloud or Modal"
+        ],
+        "secondary": "not-now:Not now",
+        "status": "[checking] Signing in — Enter the code 4F2-91K on the sign-in page. (reopen-sign-in:Open the page)",
+        "title": "Add your other computers."
+      },
+      "step": "devices"
+    },
+    {
+      "art": "hermes on outline",
+      "case": "09c connect your other devices, the browser never confirmed",
+      "devices": {
+        "lede": "Sign in to Cua here and on your other computers. Then they can all use this Mac's Spaces.",
+        "note": "Not now keeps Cua on this Mac only. You can sign in later.",
+        "primary": "sign-in:Try again",
+        "rows": [
+          "Your other computers — Sign in with the same account",
+          "Your cloud — Hetzner, AWS, Google Cloud or Modal"
+        ],
+        "secondary": "not-now:Not now",
+        "status": "[fix] Sign-in didn't finish — The browser didn't confirm in time. (sign-in-code:Use a code instead)",
+        "title": "Add your other computers."
+      },
+      "step": "devices"
+    },
+    {
+      "art": "hermes on outline",
+      "case": "09d connect your other devices, the sign-in couldn't be saved",
+      "devices": {
+        "lede": "Sign in to Cua here and on your other computers. Then they can all use this Mac's Spaces.",
+        "note": "Not now keeps Cua on this Mac only. You can sign in later.",
+        "primary": "sign-in:Try again",
+        "rows": [
+          "Your other computers — Sign in with the same account",
+          "Your cloud — Hetzner, AWS, Google Cloud or Modal"
+        ],
+        "secondary": "not-now:Not now",
+        "status": "[fix] Sign-in didn't finish — This computer couldn't save the sign-in. Unlock your keychain, then try again.",
         "title": "Add your other computers."
       },
       "step": "devices"
@@ -716,6 +767,27 @@
         "linux linux (1.1 GB download; about 2 min)",
         "macos macos (23 GB download; 10 to 30 min the first time)"
       ],
+      "prompts": {
+        "caps": {
+          "kvm": false,
+          "macos": true,
+          "macosCached": false,
+          "windows": false,
+          "windowsCached": false
+        },
+        "cards": [
+          "tests-linux-macos",
+          "bug-macos",
+          "order-tracking"
+        ],
+        "examples": [
+          "price-compare",
+          "trip-weekend",
+          "two-space-load",
+          "cross-os-prices-macos"
+        ],
+        "lede": "Reproduce this bug on a fresh macOS Space"
+      },
       "setup": {
         "extra": {
           "action": "not-now:Not now",
@@ -742,6 +814,26 @@
       "offers": [
         "linux linux (1.1 GB download; about 2 min)"
       ],
+      "prompts": {
+        "caps": {
+          "kvm": false,
+          "macos": false,
+          "macosCached": false,
+          "windows": false,
+          "windowsCached": false
+        },
+        "cards": [
+          "order-tracking",
+          "server-ui-load",
+          "untrusted-pr"
+        ],
+        "examples": [
+          "price-compare",
+          "trip-weekend",
+          "two-space-load"
+        ],
+        "lede": "Reproduce this bug on a fresh Linux Space"
+      },
       "setup": {
         "extra": {
           "action": "not-now:Not now",
@@ -767,6 +859,26 @@
       "offers": [
         "linux linux (1.2 GB download; about 2 min)"
       ],
+      "prompts": {
+        "caps": {
+          "kvm": false,
+          "macos": false,
+          "macosCached": false,
+          "windows": false,
+          "windowsCached": false
+        },
+        "cards": [
+          "order-tracking",
+          "server-ui-load",
+          "untrusted-pr"
+        ],
+        "examples": [
+          "price-compare",
+          "trip-weekend",
+          "two-space-load"
+        ],
+        "lede": "Reproduce this bug on a fresh Linux Space"
+      },
       "setup": {
         "extra": {
           "action": "not-now:Not now",
@@ -793,6 +905,26 @@
         "linux linux (1.2 GB download; about 2 min)",
         "omarchy linux (1.7 GB download; about 3 min the first time)"
       ],
+      "prompts": {
+        "caps": {
+          "kvm": false,
+          "macos": false,
+          "macosCached": false,
+          "windows": false,
+          "windowsCached": false
+        },
+        "cards": [
+          "order-tracking",
+          "server-ui-load",
+          "untrusted-pr"
+        ],
+        "examples": [
+          "price-compare",
+          "trip-weekend",
+          "two-space-load"
+        ],
+        "lede": "Reproduce this bug on a fresh Linux Space"
+      },
       "setup": {
         "extra": {
           "action": "not-now:Not now",
@@ -820,6 +952,27 @@
         "linux linux (1.2 GB download; about 2 min)",
         "omarchy linux (1.7 GB download; about 3 min the first time)"
       ],
+      "prompts": {
+        "caps": {
+          "kvm": false,
+          "macos": false,
+          "macosCached": false,
+          "windows": true,
+          "windowsCached": false
+        },
+        "cards": [
+          "tests-linux-windows",
+          "bug-windows",
+          "order-tracking"
+        ],
+        "examples": [
+          "price-compare",
+          "trip-weekend",
+          "two-space-load",
+          "cross-os-prices-windows"
+        ],
+        "lede": "Reproduce this bug on a fresh Windows Space"
+      },
       "setup": {
         "extra": {
           "action": "not-now:Not now",
@@ -846,6 +999,26 @@
       "offers": [
         "linux linux (1.1 GB download; about 2 min)"
       ],
+      "prompts": {
+        "caps": {
+          "kvm": false,
+          "macos": false,
+          "macosCached": false,
+          "windows": false,
+          "windowsCached": false
+        },
+        "cards": [
+          "order-tracking",
+          "server-ui-load",
+          "untrusted-pr"
+        ],
+        "examples": [
+          "price-compare",
+          "trip-weekend",
+          "two-space-load"
+        ],
+        "lede": "Reproduce this bug on a fresh Linux Space"
+      },
       "setup": {
         "extra": {
           "action": "not-now:Not now",
@@ -864,6 +1037,142 @@
         "title": "Try a first Space."
       },
       "step": "setup"
+    },
+    {
+      "art": "hermes on outline",
+      "case": "40 ask first: no Try it screen, a Mac kept for Spaces ends on Add your other machines with Open Cua",
+      "devices": {
+        "lede": "Sign in on your other computers to use its Spaces.",
+        "note": null,
+        "primary": "continue:Open Cua",
+        "rows": [
+          "Your other computers — Sign in with the same account",
+          "Your cloud — Hetzner, AWS, Google Cloud or Modal"
+        ],
+        "secondary": "",
+        "status": "[ok] Ready to share — Its Spaces appear on every computer signed in to your account.",
+        "title": "This Mac is in your account."
+      },
+      "step": "devices",
+      "steps": [
+        "welcome",
+        "connect",
+        "devices"
+      ]
+    },
+    {
+      "art": "hermes on outline",
+      "case": "41 ask first: permissions last, all allowed, Open Cua",
+      "permissions": {
+        "lede": "Allow two permissions so your team and agents can see and use this Mac.",
+        "note": "Allow opens System Settings, where you turn on Cua Spaces.",
+        "primary": "continue:Open Cua",
+        "rows": [
+          "[ok] See this Mac's screen — Allowed",
+          "[ok] Use the mouse and keyboard — Allowed"
+        ],
+        "secondary": "",
+        "title": "Share this Mac's screen."
+      },
+      "step": "permissions",
+      "steps": [
+        "welcome",
+        "connect",
+        "devices",
+        "permissions"
+      ]
+    },
+    {
+      "art": "hermes on outline",
+      "case": "42 ask first: not signed in, Not now ends the run",
+      "devices": {
+        "lede": "Sign in to Cua here and on your other computers. Then they can all use this Mac's Spaces.",
+        "note": "Not now keeps Cua on this Mac only. You can sign in later.",
+        "primary": "sign-in:Sign in",
+        "rows": [
+          "Your other computers — Sign in with the same account",
+          "Your cloud — Hetzner, AWS, Google Cloud or Modal"
+        ],
+        "secondary": "not-now:Not now",
+        "status": null,
+        "title": "Add your other computers."
+      },
+      "step": "devices",
+      "steps": [
+        "welcome",
+        "connect",
+        "devices"
+      ]
+    },
+    {
+      "art": "hermes on outline",
+      "case": "43 ask first: a run saved on the Try it screen shows the last screen",
+      "devices": {
+        "lede": "Sign in on your other computers to use its Spaces.",
+        "note": null,
+        "primary": "continue:Open Cua",
+        "rows": [
+          "Your other computers — Sign in with the same account",
+          "Your cloud — Hetzner, AWS, Google Cloud or Modal"
+        ],
+        "secondary": "",
+        "status": "[ok] Ready to share — Its Spaces appear on every computer signed in to your account.",
+        "title": "This Mac is in your account."
+      },
+      "step": "devices",
+      "steps": [
+        "welcome",
+        "connect",
+        "devices"
+      ]
+    },
+    {
+      "art": "hermes on outline",
+      "case": "44 ask first: Pick your agent keeps its action rows, Continue and Skip",
+      "connect": {
+        "agents": [
+          "Hermes connect:Connect",
+          "Claude Code connect:Connect",
+          "OpenAI Codex connect:Connect"
+        ],
+        "alternatives": [],
+        "credentials": null,
+        "error": null,
+        "lede": "Cua found these on this Mac. Connect the ones you want to use with Cua.",
+        "primary": "continue:Continue",
+        "secondary": "",
+        "title": "Pick your agent."
+      },
+      "step": "connect",
+      "steps": [
+        "welcome",
+        "connect",
+        "devices"
+      ]
+    },
+    {
+      "art": "hermes on outline",
+      "case": "45 ask first: Pick your agent after Connect, Continue and Back",
+      "connect": {
+        "agents": [
+          "Hermes [Connected]",
+          "Claude Code connect:Connect",
+          "OpenAI Codex connect:Connect"
+        ],
+        "alternatives": [],
+        "credentials": null,
+        "error": null,
+        "lede": "Cua found these on this Mac. Connect the ones you want to use with Cua.",
+        "primary": "continue:Continue",
+        "secondary": "",
+        "title": "Pick your agent."
+      },
+      "step": "connect",
+      "steps": [
+        "welcome",
+        "connect",
+        "devices"
+      ]
     }
   ]
 }

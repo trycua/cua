@@ -85,6 +85,36 @@ pub trait Runtime: Send + Sync {
         })
     }
 
+    /// Whether [`Runtime::save_prepared`] keeps an image on this backend.
+    fn keeps_prepared(&self) -> bool {
+        false
+    }
+
+    /// Saves the filesystem of the running instance `name` as an image that
+    /// instances start from instead of the one they were made from (what is
+    /// installed in it stays), named `tag`, and returns it. Used by the warm
+    /// pool so a member prepared once is not prepared again: the next one
+    /// boots from this. `None`: this backend has no such image (its members
+    /// are prepared one by one, or not at all).
+    async fn save_prepared(&self, name: &str, tag: &str) -> Result<Option<ImageSource>> {
+        let _ = (name, tag);
+        Ok(None)
+    }
+
+    /// The image [`Runtime::save_prepared`] saved as `tag`, when the backend
+    /// still has it (a daemon that restarted finds what the last one saved).
+    async fn find_prepared(&self, tag: &str) -> Result<Option<ImageSource>> {
+        let _ = tag;
+        Ok(None)
+    }
+
+    /// Deletes an image saved by [`Runtime::save_prepared`] (not an error
+    /// when it is gone).
+    async fn drop_prepared(&self, tag: &str) -> Result<()> {
+        let _ = tag;
+        Ok(())
+    }
+
     /// Create a new stopped instance `new_name` from a stopped base, checkpoint
     /// or instance `source`, copy-on-write where the backend can.
     async fn fork(&self, source: &str, new_name: &str) -> Result<()>;
@@ -207,6 +237,30 @@ pub trait Runtime: Send + Sync {
     async fn egress(&self, name: &str) -> Result<crate::egress::EgressPolicy> {
         let _ = name;
         Ok(Default::default())
+    }
+
+    /// What instance `name` tried to reach and its network rules refused
+    /// ([`crate::egress::NetworkEvent`]), most recent first. Empty where the
+    /// runtime does not count them.
+    async fn network_events(&self, name: &str) -> Result<Vec<crate::egress::NetworkEvent>> {
+        let _ = name;
+        Ok(vec![])
+    }
+
+    /// Replaces instance `name`'s network settings ([`crate::network`]),
+    /// kept with it from now on (they win over a later start spec's). Says
+    /// whether the running guest is under them now or from its next start.
+    /// Runtimes that keep none refuse.
+    async fn set_network(
+        &self,
+        name: &str,
+        settings: &crate::network::NetworkSettings,
+    ) -> Result<crate::network::Applied> {
+        let _ = (name, settings);
+        Err(VmmError::Unsupported {
+            backend: self.kind().as_str(),
+            op: "changing network settings (this runtime keeps none: create the Space again)",
+        })
     }
 }
 

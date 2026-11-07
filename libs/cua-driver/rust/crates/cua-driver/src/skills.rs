@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! `cua-driver skills {install|update|uninstall|status|path}` —
 //! agent skill-pack management.
 //!
@@ -5,7 +8,7 @@
 //! `~/.claude/skills/` (etc.) directories — too invasive for an
 //! `irm | iex` / `curl | sh` one-liner that the user might be running
 //! just to try the binary. Wiring up an agent is the explicit step:
-//! `cua-driver mcp-config --client <agent>` installs the skill pack for
+//! `cua-driver connect` and `cua-driver mcp-config --client <agent>` install the skill pack for
 //! that agent by default (`--no-skills` opts out; see
 //! [`install_for_client`]), and this verb installs it for every detected
 //! agent: fetch the versioned skill pack from a matching GitHub release and
@@ -153,7 +156,7 @@ fn home_dir() -> Result<PathBuf> {
     {
         let userprofile =
             std::env::var("USERPROFILE").map_err(|_| anyhow!("USERPROFILE not set"))?;
-        return Ok(PathBuf::from(userprofile).join(crate::bundle::user_home_subdirectory()));
+        Ok(PathBuf::from(userprofile).join(crate::bundle::user_home_subdirectory()))
     }
     #[cfg(not(windows))]
     {

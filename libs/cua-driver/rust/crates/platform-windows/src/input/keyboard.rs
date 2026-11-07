@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Background keyboard injection via PostMessage.
 //!
 //! WM_CHAR — posts a character code; simpler and more reliable for text entry.
@@ -31,6 +34,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, SetForegroundWindow};
 
+use crate::typing_turn::{restores_previous, ForegroundNotRestored, TypingTurn};
 use crate::win32::{foreground_matches_target_or_owned_window, windows::ForegroundTarget};
 
 // ── XAML / UWP host detection ────────────────────────────────────────────────
@@ -101,7 +105,7 @@ fn owning_exe_basename(hwnd: HWND) -> Option<String> {
     }
     let path = String::from_utf16_lossy(&buf[..len as usize]);
     let name = path
-        .rsplit(|c: char| c == '\\' || c == '/')
+        .rsplit(['\\', '/'])
         .next()
         .unwrap_or(&path)
         .to_ascii_lowercase();
@@ -197,7 +201,7 @@ fn focused_descendant(parent: HWND) -> Option<HWND> {
             depth += 1;
             current = next;
         }
-        if current == parent && best.as_ref().map_or(true, |(d, _)| depth > *d) {
+        if current == parent && best.as_ref().is_none_or(|(d, _)| depth > *d) {
             best = Some((depth, focused));
         }
     }
@@ -298,38 +302,73 @@ pub fn post_type_text_with_delay(hwnd: u64, text: &str, inter_char_ms: u64) -> R
     // race with text-insertion side effects on the focus.
     let h = focused_descendant(h_parent).unwrap_or(h_parent);
 
-    let mut prev_was_cr = false;
-    for ch in text.chars() {
-        match ch {
-            // `\r\n` (Windows-style line ending) → single Enter. The `\r`
-            // does the Enter; the following `\n` is consumed silently.
-            '\n' if prev_was_cr => {
-                prev_was_cr = false;
-            }
-            '\n' | '\r' => {
+    let units = text_units(text);
+    let mut since_barrier = 0usize;
+    for unit in &units {
+        match unit {
+            // The Enter keystroke makes the target's TranslateMessage append a
+            // WM_CHAR(0x0D) to ITS queue when it dispatches the WM_KEYDOWN.
+            // Anything we post before that lands ahead of the Return and the
+            // text is reordered. Wait for the target to pump (twice, because a
+            // sent message can overtake the posted keydown) before moving on.
+            TextUnit::Return => {
                 unsafe {
                     post_enter_keystroke(h)?;
                 }
-                prev_was_cr = ch == '\r';
-                // Extra settle after Enter — paragraph creation in rich
+                wait_for_target_pump(h);
+                // Extra settle after Enter: paragraph creation in rich
                 // editors (VCL Writer, Scintilla, RichEdit) is heavier than
-                // a single-character insert, so the baseline KEY_DELAY_MS +
-                // inter_char_ms is not enough on slower hosts. The extra
-                // 20 ms covers the queue drain without noticeably slowing
-                // multi-line typing.
+                // a single-character insert.
                 sleep(Duration::from_millis(KEY_DELAY_MS + inter_char_ms + 20));
+                since_barrier = 0;
             }
-            _ => {
-                prev_was_cr = false;
-                let code = ch as u32 as usize;
+            // One UTF-16 unit per WM_CHAR. A supplementary scalar (emoji) is a
+            // high then a low surrogate; posting the scalar value in a single
+            // WM_CHAR is truncated by the target and shows up as garbage.
+            TextUnit::Packet(code) => {
                 unsafe {
-                    PostMessageW(h, WM_CHAR, WPARAM(code), LPARAM(1))?;
+                    PostMessageW(h, WM_CHAR, WPARAM(*code as usize), LPARAM(1))?;
                 }
+                since_barrier += 1;
                 sleep(Duration::from_millis(KEY_DELAY_MS + inter_char_ms));
+                // Bound the target's backlog so the read-back after the call
+                // sees a settled field, and so a hung target aborts the call.
+                if since_barrier >= POST_CHUNK_UNITS {
+                    wait_for_target_pump(h);
+                    since_barrier = 0;
+                }
             }
         }
     }
+    wait_for_target_pump(h);
     Ok(())
+}
+
+/// Posted characters between two pump barriers.
+const POST_CHUNK_UNITS: usize = 32;
+
+/// Round-trip `WM_NULL` to `h`'s thread twice. Sent messages are serviced
+/// whenever the target's message loop next retrieves a message, so this
+/// returns once the target has gone around its loop after everything posted
+/// so far. Bounded and best effort: a hung target just times out.
+fn wait_for_target_pump(h: HWND) {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        SendMessageTimeoutW, SMTO_ABORTIFHUNG, SMTO_BLOCK, WM_NULL,
+    };
+    for _ in 0..2 {
+        let mut out = 0usize;
+        let _ = unsafe {
+            SendMessageTimeoutW(
+                h,
+                WM_NULL,
+                WPARAM(0),
+                LPARAM(0),
+                SMTO_ABORTIFHUNG | SMTO_BLOCK,
+                250,
+                Some(&mut out),
+            )
+        };
+    }
 }
 
 /// Press a named key (and optional modifiers) via WM_KEYDOWN/WM_KEYUP.
@@ -477,8 +516,11 @@ pub fn send_key_synthesized_after_focus(
         events.push(key_input(*mvk, true));
     }
 
-    with_confirmed_foreground(target, "key delivery", focus, |_, _| unsafe {
+    with_confirmed_foreground(target, "key delivery", focus, |_, _, turn| unsafe {
         let sent = SendInput(&events, std::mem::size_of::<INPUT>() as i32);
+        if sent > 0 {
+            *turn = TypingTurn::Undrained;
+        }
         if sent as usize != events.len() {
             bail!(
                 "SendInput inserted only {sent} of {} events. Windows blocked the \
@@ -535,11 +577,12 @@ pub fn send_text_synthesized_after_focus(
     }
     let n = units.len();
 
-    with_confirmed_foreground(target, "text delivery", focus, |att, ft| unsafe {
+    with_confirmed_foreground(target, "text delivery", focus, |att, ft, turn| unsafe {
         if let Some(att) = att {
             for (k, unit) in units.iter().enumerate() {
                 let actual = GetForegroundWindow();
                 if !foreground_matches_target_or_owned_window(ft, actual.0 as usize as u64) {
+                    *turn = TypingTurn::Lost;
                     bail!(
                         "foreground_lost: foreground moved to HWND {h:?} after {k} of {n} \
                          text units were read; the remaining {remaining} were not sent. \
@@ -548,7 +591,13 @@ pub fn send_text_synthesized_after_focus(
                         remaining = n - k,
                     );
                 }
-                match att.send_and_await_read(&unit_events(unit), Duration::from_secs(2)) {
+                let read = att.send_and_await_read(&unit_events(unit), Duration::from_secs(2));
+                *turn = match read {
+                    UnitRead::Read => TypingTurn::Drained,
+                    UnitRead::Short(0) => *turn,
+                    UnitRead::Short(_) | UnitRead::Stalled => TypingTurn::Undrained,
+                };
+                match read {
                     UnitRead::Read => {}
                     UnitRead::Short(sent) => bail!(
                         "SendInput inserted only {sent} of 4 key events for text unit {} of {n} \
@@ -561,8 +610,8 @@ pub fn send_text_synthesized_after_focus(
                     UnitRead::Stalled => bail!(
                         "text_delivery_stalled: the target did not read text unit {} of {n} \
                          within 2000 ms; {k} earlier units were read. Unit {} was inserted \
-                         and may still appear, possibly in the previously foreground window. \
-                         Nothing was retried; inspect the target before sending the rest.",
+                         and may still appear in the target. Nothing was retried; inspect \
+                         the target before sending the rest.",
                         k + 1,
                         k + 1
                     ),
@@ -575,6 +624,9 @@ pub fn send_text_synthesized_after_focus(
             events.extend_from_slice(&unit_events(unit)[..2]);
         }
         let sent = SendInput(&events, std::mem::size_of::<INPUT>() as i32);
+        if sent > 0 {
+            *turn = TypingTurn::Undrained;
+        }
         if sent as usize != events.len() {
             bail!(
                 "SendInput inserted only {sent} of {} key events. Windows blocked \
@@ -606,13 +658,14 @@ fn wait_for_exact_foreground(target: HWND, timeout: Duration) -> bool {
 /// same-process window whose owner chain reaches `target`, is foreground.
 /// Foreground and optional child focus are checked against
 /// external Win32/UIA state instead of inferred from API return values or a
-/// fixed settle delay. The prior foreground is restored on every body/focus
-/// result after activation succeeds.
+/// fixed settle delay. The body records in `turn` what it inserted; the prior
+/// foreground is restored only as [`restores_previous`] allows, and a failed
+/// turn that keeps it returns [`ForegroundNotRestored`].
 fn with_confirmed_foreground<T>(
     target: HWND,
     operation: &str,
     focus: impl FnOnce() -> Result<()>,
-    body: impl FnOnce(Option<&InputQueueAttachment>, ForegroundTarget) -> Result<T>,
+    body: impl FnOnce(Option<&InputQueueAttachment>, ForegroundTarget, &mut TypingTurn) -> Result<T>,
 ) -> Result<T> {
     let previous = unsafe { GetForegroundWindow() };
     let _ = unsafe { crate::input::force_foreground_assisted(target) };
@@ -644,7 +697,8 @@ fn with_confirmed_foreground<T>(
     };
 
     let mut attachment: Option<InputQueueAttachment> = None;
-    let result = (|| {
+    let mut turn = TypingTurn::NotSent;
+    let mut result = (|| {
         focus()?;
         let deadline = Instant::now() + Duration::from_millis(250);
         let actual = loop {
@@ -672,19 +726,37 @@ fn with_confirmed_foreground<T>(
         // Attach before inserting anything: attaching resets the shared key
         // state, which must not race with modifiers the body is about to send.
         attachment = InputQueueAttachment::attach(actual);
-        body(attachment.as_ref(), foreground_target)
+        body(attachment.as_ref(), foreground_target, &mut turn)
     })();
 
     // Keep the target foreground until its thread has read every inserted
     // event; restoring earlier hands the unread tail to another window (#4477).
-    match (&result, attachment.as_ref()) {
-        (Ok(_), Some(attachment)) => {
-            attachment.wait_for_drain(Duration::from_secs(2));
-        }
-        (Ok(_), None) => sleep(Duration::from_millis(40)),
-        _ => {}
+    // Paced text already saw each unit read, so it skips the final drain.
+    if result.is_ok() && turn != TypingTurn::Drained {
+        turn = match attachment.as_ref() {
+            Some(attachment) if attachment.wait_for_drain(Duration::from_secs(2)) => {
+                TypingTurn::Drained
+            }
+            Some(_) => {
+                result = Err(anyhow::anyhow!(
+                    "input_delivery_stalled: Windows did not confirm that the target read the \
+                     {operation} input within 2000 ms. It was inserted and may still appear in \
+                     the target. Nothing was retried; inspect the target before repeating it."
+                ));
+                TypingTurn::Undrained
+            }
+            None => {
+                sleep(Duration::from_millis(40));
+                TypingTurn::Settled
+            }
+        };
     }
     drop(attachment);
+    if !restores_previous(turn) {
+        // Marked even when the target was already in front: a caller that
+        // fronted it (browser setup) must not restore its own prior window.
+        return result.map_err(|error| ForegroundNotRestored { error, turn }.into());
+    }
     if !previous.0.is_null() && previous != target {
         let _ = unsafe { SetForegroundWindow(previous) };
     }
@@ -1148,5 +1220,33 @@ mod text_unit_tests {
             let flags = unsafe { input.Anonymous.ki.dwFlags };
             assert_eq!(flags.0 & KEYEVENTF_UNICODE.0, 0);
         }
+    }
+}
+
+#[cfg(test)]
+mod post_text_unit_tests {
+    use super::*;
+
+    fn packets(text: &str) -> Vec<Option<u16>> {
+        text_units(text)
+            .into_iter()
+            .map(|u| match u {
+                TextUnit::Packet(c) => Some(c),
+                TextUnit::Return => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn supplementary_scalar_is_two_surrogate_units() {
+        assert_eq!(packets("\u{1F600}"), vec![Some(0xD83D), Some(0xDE00)]);
+    }
+
+    #[test]
+    fn crlf_is_one_return_and_symbols_survive() {
+        assert_eq!(
+            packets("a\r\nb\n~é"),
+            vec![Some(97), None, Some(98), None, Some(126), Some(0xE9)]
+        );
     }
 }

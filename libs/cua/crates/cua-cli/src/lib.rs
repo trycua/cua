@@ -35,6 +35,12 @@ mod browse;
 mod build_cmd;
 mod cache;
 mod catalog;
+mod ci_app;
+mod ci_cmd;
+mod ci_hosted;
+mod ci_overview;
+mod ci_signin;
+mod ci_targets;
 mod cloud_cmd;
 mod compat_cmd;
 mod computer;
@@ -45,6 +51,7 @@ mod do_cmd;
 mod doctor;
 pub mod drive_cmd;
 mod dump_docs;
+mod experiments_cmd;
 pub mod extension;
 mod host;
 mod image_build;
@@ -53,6 +60,7 @@ mod jobs_cmd;
 pub mod keyvault_cmd;
 mod mcp;
 mod member_cmd;
+mod network_cmd;
 pub mod onboard;
 mod persistent_cmd;
 pub mod prewarm;
@@ -253,6 +261,23 @@ enum Command {
     /// that Spaces fork from in under a second. Works in any directory;
     /// layers already built are reused.
     Build(build_cmd::BuildArgs),
+    /// What a Space can reach on the network, and changing it: `show`,
+    /// `set`, `log`. An experiment: see `cua experiments`.
+    #[command(subcommand)]
+    Network(network_cmd::NetworkCmd),
+    /// Send a Space's internet traffic out through this computer for a
+    /// while: `start`, `stop`, `status`. (`cua network set --via
+    /// this-computer` keeps it.) Part of the Secure Spaces experiment.
+    #[command(subcommand)]
+    Hotspot(network_cmd::HotspotCmd),
+    /// How traffic reaches your other computers: `status` (and `--prefer`).
+    /// Part of the Secure Spaces experiment.
+    #[command(subcommand)]
+    Mesh(network_cmd::MeshCmd),
+    /// Features that are still being built, one switch each: `list`,
+    /// `enable`, `disable`.
+    #[command(subcommand)]
+    Experiments(experiments_cmd::ExperimentsCmd),
     /// Images: local OCI pull/build/push.
     #[command(subcommand, visible_alias = "img")]
     Image(ImageCmd),
@@ -313,8 +338,8 @@ enum Command {
   cua computers
   cua computers --json")]
     Computers,
-    /// Your computers on the relay: remove one that is gone.
-    #[command(subcommand)]
+    /// Now `cua spaces` (kept for one release).
+    #[command(subcommand, hide = true)]
     Machines(host::MachinesCmd),
     /// Unattended access to this computer (setup, status, stop, start, remove).
     #[command(subcommand)]
@@ -360,7 +385,21 @@ enum Command {
   cua team show AIGIS"
     )]
     Team(team_cmd::TeamCmd),
-    /// Your remote use this month: live sessions, remote hours, and your
+    /// Cua CI, GitHub Actions jobs on Cua Spaces: each job runs in a fresh Space
+    /// (a macOS VM or a Linux container or VM) registered with a
+    /// just-in-time runner, then deleted. Connect this computer, then use
+    /// `runs-on: cua`. An experiment: `cua experiments enable ci-runners`.
+    #[command(
+        subcommand,
+        after_help = "Examples:
+  cua ci connect
+  cua ci status
+  cua ci logs
+  cua ci config --budget 50
+  cua ci disconnect"
+    )]
+    Ci(ci_cmd::CiCmd),
+    /// Your remote use this month: computers in use at once, remote hours, and your
     /// plan. Remote hours are time spent using your computers from
     /// somewhere else; using a computer from itself is free.
     #[command(after_help = "Examples:
@@ -1224,6 +1263,14 @@ async fn open(cli: &Cli, with_session: bool) -> Result<Arc<Cua>, CuaError> {
         let _ = TOPOLOGY.set("daemon");
         return Cua::connect(cli.daemon.clone(), cli.daemon_token.clone());
     }
+    // Inside a Space with children on: its spawn channel, where every
+    // Space made is a child of this one.
+    if let Some(cua_daemon::client::DaemonAddress::Url { url, token }) =
+        cua_daemon::client::spawn_channel()
+    {
+        let _ = TOPOLOGY.set("space");
+        return Cua::connect(Some(url), Some(token));
+    }
     // A daemon that is starting is waited for (bounded), never raced with
     // a runtime of this process's own (a `cua volume mount` would mount
     // here, not in the daemon).
@@ -1328,8 +1375,16 @@ async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
             cua_home::experimental::TEAMS_UNAVAILABLE.into(),
         ));
     }
+    // An experiment that is off is refused before any sign-in, daemon or
+    // relay call.
+    if let Some(g) = uses_experiment(&cli.command)
+        && !cua_vmm::experiments::enabled(g)
+    {
+        return Err(CuaError::InvalidArgument(g.off_message()));
+    }
     // Commands that need no SDK handle.
     match &cli.command {
+        Command::Experiments(cmd) => return experiments_cmd::run(cmd, json, out),
         Command::Images(cmd) => {
             return match cmd {
                 ImagesCmd::Ls { all, os, browser } => catalog::print_list(
@@ -1712,6 +1767,27 @@ async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
         }
         _ => {}
     }
+    // `cua spaces rm <computer>`: one of your computers on the relay is
+    // taken off it (its Spaces detached); anything else is a registered
+    // Space, forgotten as before.
+    if let Command::Machines(host::MachinesCmd::Rm { name, yes }) = &cli.command {
+        let (name, yes) = (name.clone(), *yes);
+        eprintln!("`cua machines` is now `cua spaces`.");
+        return remove_computer(cli, &name, false, yes, json, out).await;
+    }
+    let rm = match &cli.command {
+        Command::Spaces(host::SpacesCmd::Rm {
+            space,
+            delete_spaces,
+            yes,
+        }) => Some((space.clone(), *delete_spaces, *yes)),
+        _ => None,
+    };
+    if let Some((space, delete_spaces, yes)) = rm
+        && owns_computer(&space).await
+    {
+        return remove_computer(cli, &space, delete_spaces, yes, json, out).await;
+    }
     match cli.command {
         Command::Run(a) => return jobs_cmd::run(a, json, out).await,
         Command::Jobs(a) => return jobs_cmd::jobs(a, json, out).await,
@@ -1732,6 +1808,7 @@ async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
                         relay: None,
                         label: vec![],
                         no_size: false,
+                        tree: false,
                     }),
                     ..cli
                 };
@@ -1774,6 +1851,35 @@ async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
         Command::Team(cmd) => {
             return team_cmd::run(cmd, &util::cua_home(), json, out).await;
         }
+        // Cua CI: `serve` and `disconnect` drive Spaces (through
+        // the daemon, so job Spaces show in Cua Spaces like any other);
+        // the rest read the pool's files.
+        Command::Ci(mut cmd) => {
+            ci_cmd::preflight(&mut cmd)?;
+            let cua = if ci_cmd::needs_spaces(&cmd) {
+                if !cli.embedded && cli.daemon.is_none() {
+                    cua_daemon::client::ensure_daemon()
+                        .await
+                        .map_err(|e| CuaError::Internal(format!("the cua daemon: {e}")))?;
+                }
+                let rest = Cli {
+                    command: Command::Spaces(host::SpacesCmd::Ls {
+                        relay: None,
+                        label: vec![],
+                        no_size: false,
+                        tree: false,
+                    }),
+                    ..cli
+                };
+                let cua = open(&rest, false).await?;
+                // `on = "auto"` and `host:` Spaces go through the account's relay.
+                host::attach_relay_account(&cua, || host::daemon_relay_account(&util::cua_home()));
+                Some(cua)
+            } else {
+                None
+            };
+            return ci_cmd::run(cmd, cua, json, out).await;
+        }
         Command::Usage { relay } => {
             return usage_cmd::run(relay, &util::cua_home(), json, out).await;
         }
@@ -1794,6 +1900,10 @@ async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
             | host::SpacesCmd::Resize { .. }
             | host::SpacesCmd::Start { .. }
             | host::SpacesCmd::Egress { .. }
+            | host::SpacesCmd::Children { .. }
+            | host::SpacesCmd::Budget { .. }
+            | host::SpacesCmd::Orphans
+            | host::SpacesCmd::Service(..)
             | host::SpacesCmd::Prewarm { .. }
             | host::SpacesCmd::Share { .. }
             | host::SpacesCmd::Unshare { .. }
@@ -1824,6 +1934,7 @@ async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
                     relay: None,
                     label: vec![],
                     no_size: false,
+                    tree: false,
                 }),
                 ..cli
             };
@@ -1855,12 +1966,42 @@ async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
             let res = host::run_spaces_sdk(&cua, cmd, json, out).await;
             res.map_err(host::explain_share_presence_failure)
         }
+        Command::Network(cmd) => {
+            let rest = Cli {
+                command: Command::Spaces(host::SpacesCmd::Ls {
+                    relay: None,
+                    label: vec![],
+                    no_size: false,
+                    tree: false,
+                }),
+                ..cli
+            };
+            let cua = open(&rest, false).await?;
+            return network_cmd::run(&cua, cmd, json, out).await;
+        }
+        Command::Hotspot(cmd) => {
+            let rest = Cli {
+                command: Command::Spaces(host::SpacesCmd::Ls {
+                    relay: None,
+                    label: vec![],
+                    no_size: false,
+                    tree: false,
+                }),
+                ..cli
+            };
+            let cua = open(&rest, false).await?;
+            return network_cmd::run_hotspot(&cua, cmd, json, out).await;
+        }
+        Command::Mesh(cmd) => {
+            return network_cmd::run_mesh(cmd, json, out).await;
+        }
         Command::Build(a) => {
             let rest = Cli {
                 command: Command::Spaces(host::SpacesCmd::Ls {
                     relay: None,
                     label: vec![],
                     no_size: false,
+                    tree: false,
                 }),
                 ..cli
             };
@@ -1879,6 +2020,7 @@ async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
                     relay: None,
                     label: vec![],
                     no_size: false,
+                    tree: false,
                 }),
                 ..cli
             };
@@ -1886,32 +2028,24 @@ async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
             host::attach_relay_account(&cua, || host::daemon_relay_account(&util::cua_home()));
             return cloud_cmd::run(&cua, cmd, json, out).await;
         }
-        Command::Machines(host::MachinesCmd::Rm { name, yes }) => {
-            // Embedded: the row, the lookup and the device all use this
-            // process's relay, never a daemon's.
-            let rest = Cli {
-                command: Command::Spaces(host::SpacesCmd::Ls {
-                    relay: None,
-                    label: vec![],
-                    no_size: false,
-                }),
-                embedded: true,
-                ..cli
-            };
-            let cua = open(&rest, false).await?;
+        Command::Spaces(cmd @ host::SpacesCmd::Default { .. }) => {
+            let tokens: Option<Arc<dyn cua_host::AccountTokens>> =
+                match auth::session_token(&auth::Store::from_env()).await {
+                    Ok(Some(_)) => Some(Arc::new(host::SessionTokens)),
+                    _ => None,
+                };
             let home = util::cua_home();
-            host::attach_relay_account(&cua, || host::daemon_relay_account(&home));
-            let auth = devices_cmd::device_auth(&host::relay_url(None, &home))?;
-            return host::remove_machine(
-                &cua,
-                &auth,
-                &host::SessionTokens,
-                &name,
-                &|q| yes || (util::interactive() && util::confirm(q, false)),
-                json,
-                out,
-            )
-            .await;
+            let device = tokens
+                .as_ref()
+                .and_then(|_| devices_cmd::device_auth(&host::relay_url(None, &home)).ok());
+            return host::run_spaces_default(cmd, &home, tokens, device, json, out).await;
+        }
+        Command::Spaces(host::SpacesCmd::Ls { .. })
+            if cli.daemon.is_none() && cua_daemon::client::spawn_channel().is_some() =>
+        {
+            // Inside a Space: its own children, through its spawn channel.
+            let cua = open(&cli, false).await?;
+            return host::run_children_ls(&cua, json, out).await;
         }
         Command::Spaces(cmd) => {
             // Relay machines only when signed in; the registry either way.
@@ -2271,6 +2405,9 @@ async fn run_sdk(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
         | Command::Host(_)
         | Command::Run(_)
         | Command::Build(_)
+        | Command::Network(_)
+        | Command::Hotspot(_)
+        | Command::Mesh(_)
         | Command::Jobs(_)
         | Command::Computers
         | Command::Machines(_)
@@ -2278,6 +2415,7 @@ async fn run_sdk(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
         | Command::Cloud(_)
         | Command::Devices(_)
         | Command::Team(_)
+        | Command::Ci(_)
         | Command::Usage { .. }
         | Command::Fleet(_)
         | Command::Pools(_)
@@ -2290,9 +2428,67 @@ async fn run_sdk(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
         | Command::Bench(_)
         | Command::Keyvault(_)
         | Command::Images(_)
+        | Command::Experiments(_)
         | Command::DumpDocs { .. } => unreachable!("handled above"),
     }
     Ok(0)
+}
+
+/// Whether `target` is one of your computers on the relay (signed in, one
+/// match, you own it): see [`host::owned_computer`].
+async fn owns_computer(target: &str) -> bool {
+    if auth::session_token(&auth::Store::from_env())
+        .await
+        .ok()
+        .flatten()
+        .is_none()
+    {
+        return false;
+    }
+    let home = util::cua_home();
+    match devices_cmd::device_auth(&host::relay_url(None, &home)) {
+        Ok(a) => host::owned_computer(&a, &host::SessionTokens, target).await,
+        Err(_) => false,
+    }
+}
+
+/// Takes one of your computers off the relay (`cua spaces rm <computer>`):
+/// its Spaces are detached, or with `delete_spaces` deleted too.
+async fn remove_computer(
+    cli: Cli,
+    name: &str,
+    delete_spaces: bool,
+    yes: bool,
+    json: bool,
+    out: &mut dyn Write,
+) -> Result<i32, CuaError> {
+    // Embedded: the row, the lookup and the device all use this process's
+    // relay, never a daemon's.
+    let rest = Cli {
+        command: Command::Spaces(host::SpacesCmd::Ls {
+            relay: None,
+            label: vec![],
+            no_size: false,
+            tree: false,
+        }),
+        embedded: true,
+        ..cli
+    };
+    let cua = open(&rest, false).await?;
+    let home = util::cua_home();
+    host::attach_relay_account(&cua, || host::daemon_relay_account(&home));
+    let auth = devices_cmd::device_auth(&host::relay_url(None, &home))?;
+    host::remove_machine(
+        &cua,
+        &auth,
+        &host::SessionTokens,
+        name,
+        delete_spaces,
+        &|q| yes || (util::interactive() && util::confirm(q, false)),
+        json,
+        out,
+    )
+    .await
 }
 
 /// `cua cloud add aws` (builds with AWS: the `byoc` feature).
@@ -2756,11 +2952,112 @@ fn uses_teams(cmd: &Command) -> bool {
     }
 }
 
+/// The experiment a command belongs to, if any: the commands and flags that
+/// are new with it. They are hidden from help, and refused with how to turn
+/// the experiment on, until it is on.
+fn uses_experiment(cmd: &Command) -> Option<cua_vmm::experiments::Gate> {
+    use cua_vmm::experiments::Gate;
+    match cmd {
+        Command::Network(_) | Command::Hotspot(_) | Command::Mesh(_) => Some(Gate::SecureSpaces),
+        Command::Connections(connections_cmd::ConnectionsCmd::Github { .. }) => {
+            Some(Gate::AskFirst)
+        }
+        Command::Ci(_) => Some(Gate::CiRunners),
+        Command::Spaces(host::SpacesCmd::Create {
+            network,
+            parent,
+            widen,
+            children,
+            ..
+        }) => {
+            if network.is_some() {
+                Some(Gate::SecureSpaces)
+            } else if parent.is_some() || *widen || *children {
+                Some(Gate::ChildSpaces)
+            } else {
+                None
+            }
+        }
+        Command::Spaces(host::SpacesCmd::Set { .. }) => Some(Gate::SecureSpaces),
+        Command::Share(args) if args.uses_tcp_shares() => Some(Gate::TcpShares),
+        Command::Spaces(
+            host::SpacesCmd::Ls { tree: true, .. }
+            | host::SpacesCmd::Delete {
+                keep_children: true,
+                ..
+            }
+            | host::SpacesCmd::Children { .. }
+            | host::SpacesCmd::Budget { .. }
+            | host::SpacesCmd::Orphans
+            | host::SpacesCmd::Service(host::ServiceCmd::Add { .. }),
+        ) => Some(Gate::ChildSpaces),
+        _ => None,
+    }
+}
+
 /// The clap command `cua` parses with. Teams are experimental: without
 /// them, `cua team` and `cua host pair --team` stay out of help (they still
 /// parse, and are refused with a short reason).
 fn cli_command(teams: bool) -> clap::Command {
-    let cmd = Cli::command();
+    cli_command_for(teams, |_| true)
+}
+
+/// [`cli_command`] with the experiments `on` says are on; the commands and
+/// flags of the others stay out of help (they still parse, and are refused
+/// with how to turn the experiment on).
+fn cli_command_for(teams: bool, on: impl Fn(cua_vmm::experiments::Gate) -> bool) -> clap::Command {
+    use cua_vmm::experiments::Gate;
+    let mut cmd = without_teams_if(Cli::command(), teams);
+    if !on(Gate::SecureSpaces) {
+        cmd = cmd
+            .mut_subcommand("network", |c| c.hide(true))
+            .mut_subcommand("hotspot", |c| c.hide(true))
+            .mut_subcommand("mesh", |c| c.hide(true))
+            .mut_subcommand("spaces", |s| {
+                s.mut_subcommand("create", |c| c.mut_arg("network", |a| a.hide(true)))
+                    .mut_subcommand("set", |c| c.hide(true))
+            });
+    }
+    if !on(Gate::AskFirst) {
+        cmd = cmd.mut_subcommand("connections", |c| {
+            c.mut_subcommand("github", |g| g.hide(true))
+        });
+    }
+    if !on(Gate::CiRunners) {
+        cmd = cmd.mut_subcommand("ci", |c| c.hide(true));
+    }
+    if !on(Gate::TcpShares) {
+        cmd = cmd.mut_subcommand("share", |c| {
+            c.mut_arg("tcp", |a| a.hide(true))
+                .mut_arg("service", |a| a.hide(true))
+                .mut_arg("route", |a| a.hide(true))
+                .mut_arg("allow", |a| a.hide(true))
+                .mut_arg("check_host", |a| a.hide(true))
+                .mut_arg("yes", |a| a.hide(true))
+                .mut_subcommand("approve", |c| c.hide(true))
+                .mut_subcommand("deny", |c| c.hide(true))
+                .mut_subcommand("settings", |c| c.hide(true))
+        });
+    }
+    if !on(Gate::ChildSpaces) {
+        cmd = cmd.mut_subcommand("spaces", |s| {
+            s.mut_subcommand("create", |c| {
+                c.mut_arg("parent", |a| a.hide(true))
+                    .mut_arg("widen", |a| a.hide(true))
+                    .mut_arg("children", |a| a.hide(true))
+            })
+            .mut_subcommand("ls", |c| c.mut_arg("tree", |a| a.hide(true)))
+            .mut_subcommand("delete", |c| c.mut_arg("keep_children", |a| a.hide(true)))
+            .mut_subcommand("children", |c| c.hide(true))
+            .mut_subcommand("budget", |c| c.hide(true))
+            .mut_subcommand("orphans", |c| c.hide(true))
+            .mut_subcommand("service", |c| c.hide(true))
+        });
+    }
+    cmd
+}
+
+fn without_teams_if(cmd: clap::Command, teams: bool) -> clap::Command {
     if teams {
         return cmd;
     }
@@ -2940,7 +3237,10 @@ pub fn main() {
     // process (the daemon) uses that channel's and environment's home.
     unsafe { cua_home::env::pin_home() };
     let matches = channel_command(
-        cli_command(cua_home::experimental::teams_enabled()),
+        cli_command_for(
+            cua_home::experimental::teams_enabled(),
+            cua_vmm::experiments::enabled,
+        ),
         channel,
     )
     .get_matches();
@@ -2987,12 +3287,16 @@ pub fn main() {
             ..
         })
     ) && std::env::var("CUA_DAEMON_LOG").as_deref() != Ok("off");
+    // `cua ci serve` shows the pool's events (its service log).
+    let runner_serve = matches!(cli.command, Command::Ci(ci_cmd::CiCmd::Serve { .. }))
+        && std::env::var("CUA_LOG").is_err();
     let filter = || {
-        tracing_subscriber::EnvFilter::try_new(log_filter_spec(
-            std::env::var("CUA_LOG").ok().as_deref(),
-            daemon_log,
-        ))
-        .unwrap_or_else(|_| log_filter_spec(None, daemon_log).into())
+        let mut spec = log_filter_spec(std::env::var("CUA_LOG").ok().as_deref(), daemon_log);
+        if runner_serve {
+            spec.push_str(",cua_ci=info");
+        }
+        tracing_subscriber::EnvFilter::try_new(spec)
+            .unwrap_or_else(|_| log_filter_spec(None, daemon_log).into())
     };
     let file = daemon_log
         .then(|| {
@@ -3119,7 +3423,9 @@ fn runtime_optional_with(
     };
     let linux_ready = r.backends.iter().any(|b| {
         b.ready && matches!(b.backend, B::Qemu | B::Container)
-            || b.backend == B::Managed && r.host.os == HostOs::Macos && (b.ready || b.provisionable)
+            || b.backend == B::Managed
+                && matches!(r.host.os, HostOs::Macos | HostOs::Windows)
+                && (b.ready || b.provisionable)
     });
     let mut optional: Vec<String> = r
         .backends
@@ -3417,6 +3723,74 @@ mod tests {
         (r, String::from_utf8(out).unwrap())
     }
 
+    /// `cua connections github` belongs to the ask-first experiment: left out
+    /// of help and refused with how to turn it on while that is off, there
+    /// once it is on.
+    #[test]
+    fn connections_github_belongs_to_the_ask_first_experiment() {
+        use cua_vmm::experiments::Gate;
+        let visible = |on: bool| {
+            let cmd = cli_command_for(true, |g| g != Gate::AskFirst || on);
+            let connections = cmd
+                .find_subcommand("connections")
+                .expect("connections")
+                .clone();
+            connections
+                .get_subcommands()
+                .find(|c| c.get_name() == "github")
+                .map(|c| !c.is_hide_set())
+        };
+        assert_eq!(visible(false), Some(false), "hidden while it is off");
+        assert_eq!(visible(true), Some(true), "listed once it is on");
+        // It still parses while off, and is refused with how to turn the experiment on.
+        let cli = Cli::try_parse_from(["cua", "connections", "github"]).unwrap();
+        assert_eq!(uses_experiment(&cli.command), Some(Gate::AskFirst));
+        let other = Cli::try_parse_from(["cua", "connections", "list"]).unwrap();
+        assert_eq!(uses_experiment(&other.command), None);
+        assert!(
+            Gate::AskFirst
+                .off_message()
+                .contains("cua experiments enable ask-first")
+        );
+    }
+
+    /// `cua ci` belongs to the ci-runners experiment: left out of help and
+    /// refused with how to turn it on while that is off, there once it is on.
+    #[tokio::test]
+    async fn cua_ci_is_an_experiment_that_is_off_until_turned_on() {
+        use cua_vmm::experiments::Gate;
+        let listed = |on: bool| {
+            let mut cmd = cli_command_for(true, |g| g != Gate::CiRunners || on);
+            cmd.build();
+            cmd.get_subcommands()
+                .find(|c| c.get_name() == "ci")
+                .is_some_and(|c| !c.is_hide_set())
+        };
+        assert!(
+            !listed(false),
+            "hidden from help while the experiment is off"
+        );
+        assert!(listed(true));
+        assert_eq!(
+            uses_experiment(&Command::Ci(ci_cmd::CiCmd::Ls { pool: None })),
+            Some(Gate::CiRunners)
+        );
+        assert_eq!(Gate::parse("ci-runners"), Some(Gate::CiRunners));
+        assert_eq!(Gate::parse("ci_runners"), Some(Gate::CiRunners));
+
+        // Off by default: refused before anything else is done.
+        cua_vmm::experiments::set_enabled(Gate::CiRunners, None);
+        let (r, _) = cli(&["ci", "status"]).await;
+        let err = r.unwrap_err().to_string();
+        assert!(err.contains("cua experiments enable ci-runners"), "{err}");
+        // On: the command runs (nothing is connected in the isolated home).
+        cua_vmm::experiments::set_enabled(Gate::CiRunners, Some(true));
+        let (r, _) = cli(&["ci", "ls"]).await;
+        cua_vmm::experiments::set_enabled(Gate::CiRunners, None);
+        let err = r.err().map(|e| e.to_string()).unwrap_or_default();
+        assert!(!err.contains("experiments enable"), "{err}");
+    }
+
     #[test]
     fn cli_definition_is_consistent() {
         use clap::CommandFactory;
@@ -3491,6 +3865,37 @@ mod tests {
         };
         assert!(name == "old-laptop" && yes);
         assert!(parse(&["machines", "ls"]).is_err());
+        // `cua spaces rm <computer>` and `cua spaces default` take the new flags.
+        let Command::Spaces(host::SpacesCmd::Rm {
+            space,
+            delete_spaces,
+            yes,
+        }) = parse(&["spaces", "rm", "old-laptop", "--delete-spaces", "-y"])
+            .unwrap()
+            .command
+        else {
+            panic!()
+        };
+        assert!(space == "old-laptop" && delete_spaces && yes);
+        let Command::Spaces(host::SpacesCmd::Default {
+            space,
+            fallback,
+            no_fallback,
+            ..
+        }) = parse(&["spaces", "default", "studio", "--fallback", "a,relay:b"])
+            .unwrap()
+            .command
+        else {
+            panic!()
+        };
+        assert_eq!(space.as_deref(), Some("studio"));
+        assert_eq!(fallback, Some(vec!["a".to_string(), "relay:b".to_string()]));
+        assert!(!no_fallback);
+        assert!(parse(&["spaces", "default", "--clear", "studio"]).is_err());
+        assert!(parse(&["spaces", "default", "--no-fallback", "--fallback", "a"]).is_err());
+        // The old name is hidden from help.
+        let help = Cli::command().render_help().to_string();
+        assert!(!help.contains("  machines "), "{help}");
         for sb in ["sb", "sandbox"] {
             let e = parse(&[sb, "runs", "--machines"]).unwrap_err();
             assert_eq!(
@@ -3566,8 +3971,34 @@ mod tests {
         assert!(parse(&["sandbox", "pool", "rm", "agents"]).is_ok());
     }
 
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn spacesd_commands_against_the_mock() {
+    /// Runs the test future `f` builds the way `main` runs a command: on an
+    /// 8 MiB thread blocking on a 2-worker runtime with 8 MiB stacks, so a
+    /// whole command's unoptimized frames fit without `RUST_MIN_STACK`
+    /// (libtest's threads get 2 MiB).
+    fn on_cli_stack<F: Future<Output = ()>>(f: impl FnOnce() -> F + Send + 'static) {
+        const STACK: usize = 8 * 1024 * 1024;
+        std::thread::Builder::new()
+            .stack_size(STACK)
+            .spawn(move || {
+                tokio::runtime::Builder::new_multi_thread()
+                    .worker_threads(2)
+                    .thread_stack_size(STACK)
+                    .enable_all()
+                    .build()
+                    .unwrap()
+                    .block_on(f())
+            })
+            .unwrap()
+            .join()
+            .unwrap_or_else(|e| std::panic::resume_unwind(e));
+    }
+
+    #[test]
+    fn spacesd_commands_against_the_mock() {
+        on_cli_stack(spacesd_commands_against_the_mock_body);
+    }
+
+    async fn spacesd_commands_against_the_mock_body() {
         let env = fixtures::start_env(Some("t"), None).await;
         let dir = tempfile::tempdir().unwrap();
         let (r, out) = cli(&["--embedded", "spacesd", "caps", &env.url, "--token", "t"]).await;

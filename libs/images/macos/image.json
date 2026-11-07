@@ -64,6 +64,10 @@
     ],
     "features_optional": [
       "hotspot",
+      "spawn",
+      "exit",
+      "host_ports",
+      "process.services",
       "relay_attach",
       "h264_hw",
       "audio.desktop",
@@ -240,7 +244,7 @@
     },
     "xcode": {
       "from": "full",
-      "description": "Full plus Xcode (the Mac's own, copied in when the image is built on it), the matching iOS simulator runtime, the Metal toolchain, Rust iOS targets, CocoaPods, XcodeGen, sccache and a warmed Simulator device: the macOS Space with developer tools. Built on each user's Mac and never published (Apple's terms).",
+      "description": "Full plus Xcode 26.6 (selected), its iOS 26.5 simulator runtime, the Metal toolchain, Rust iOS targets, CocoaPods, XcodeGen, sccache and a warmed Simulator device: the macOS Space with developer tools. Xcode and the Simulator runtimes are Apple software under Apple's license, for use on Apple-branded hardware.",
       "claims": {
         "tools": {
           "xcodebuild": {

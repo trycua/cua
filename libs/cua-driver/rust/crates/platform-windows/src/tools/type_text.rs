@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use async_trait::async_trait;
 use cua_driver_contract::TypeTextInput;
 use cua_driver_core::{
@@ -118,7 +121,7 @@ impl Tool for TypeTextTool {
                     "scope": "desktop", "path": "SendInput", "characters": text_len,
                     "effect": "unverifiable"
                 })),
-                Ok(Err(error)) => ToolResult::error(error.to_string()),
+                Ok(Err(error)) => crate::typing_turn::foreground_input_error(error),
                 Err(error) => ToolResult::error(format!("desktop type task failed: {error}")),
             };
         }
@@ -196,7 +199,7 @@ impl Tool for TypeTextTool {
             )),
             _ => None,
         };
-        let _delay_ms = args.u64_or("delay_ms", 30);
+        let _delay_ms = args.u64_or("delay_ms", 30).min(200);
         let hwnd = match hwnd_opt {
             Some(h) => h,
             None => {
@@ -304,7 +307,7 @@ impl Tool for TypeTextTool {
                 let (cx, cy) = match resolve_onscreen_point_with_scroll(
                     &admitted,
                     hwnd,
-                    idx as usize,
+                    idx,
                     cx,
                     cy,
                     "foreground typing",
@@ -312,7 +315,7 @@ impl Tool for TypeTextTool {
                     Ok(point) => point,
                     Err(result) => return result,
                 };
-                Some((idx as usize, (cx, cy)))
+                Some((idx, (cx, cy)))
             } else {
                 None
             };
@@ -342,7 +345,7 @@ impl Tool for TypeTextTool {
                     // foreground IS the escalated rung (mirrors macOS PATH_KEY_EVENTS_FG).
                     "effect": "unverifiable",
                 })),
-                Ok(Err(e)) => ToolResult::error(e.to_string()),
+                Ok(Err(e)) => crate::typing_turn::foreground_input_error(e),
                 Err(e)     => ToolResult::error(format!("Task error: {e}")),
             };
         }
@@ -539,7 +542,8 @@ impl Tool for TypeTextTool {
         // can't confirm (conservative: under-claim rather than false-succeed).
         let text_for_post = text.clone();
         let verify_pid = pid;
-        let verify_idx = elem_idx.map(|i| i as usize);
+        let verify_idx = elem_idx;
+        let delay_ms = _delay_ms;
         let result = tokio::task::spawn_blocking({
             let admitted = admitted.clone();
             move || {
@@ -553,9 +557,32 @@ impl Tool for TypeTextTool {
                     None => read_focused_value_uia(verify_pid),
                 };
                 let before = read(verify_idx);
-                let post_res = crate::input::post_type_text(hwnd, &text_for_post);
+                let mut post_res =
+                    crate::input::post_type_text_with_delay(hwnd, &text_for_post, delay_ms);
                 std::thread::sleep(std::time::Duration::from_millis(40));
-                let after = read(verify_idx);
+                let mut after = read(verify_idx);
+                // Read the field back, wait for it to settle, and retype only
+                // the tail the target dropped. Bounded; never retypes unless a
+                // non-empty strict prefix of the text is proven to be there.
+                for _ in 0..MAX_TAIL_RETRIES {
+                    if post_res.is_err() {
+                        break;
+                    }
+                    let settled = settle_value(|| read(verify_idx), after.clone());
+                    after = settled;
+                    let (Some(b), Some(a)) = (before.as_deref(), after.as_deref()) else {
+                        break;
+                    };
+                    match plan_tail_retry(b, a, &text_for_post) {
+                        TailPlan::Retype(tail) => {
+                            post_res =
+                                crate::input::post_type_text_with_delay(hwnd, &tail, delay_ms);
+                            std::thread::sleep(std::time::Duration::from_millis(40));
+                            after = read(verify_idx);
+                        }
+                        TailPlan::Done => break,
+                    }
+                }
                 let observed = post_message_readback_observed(
                     before.as_deref(),
                     after.as_deref(),
@@ -733,6 +760,95 @@ mod focused_document_result_tests {
         let unknown = normalize(unknown);
         assert_eq!(unknown.route, ActionRoute::Accessibility);
         assert_eq!(unknown.effect, ActionEffect::Unverifiable);
+    }
+}
+
+const MAX_TAIL_RETRIES: usize = 2;
+
+#[derive(Debug, PartialEq, Eq)]
+enum TailPlan {
+    /// Nothing provable to repair (complete, nothing landed, or garbled).
+    Done,
+    /// The target dropped the end of the text; type exactly this tail.
+    Retype(String),
+}
+
+fn normalize_newlines(s: &str) -> String {
+    s.chars().filter(|c| *c != '\r').collect()
+}
+
+/// The text `after` has that `before` did not: strip the common prefix and
+/// suffix of the two values. Newlines are normalized (Edit controls store
+/// Enter as CRLF).
+fn inserted_segment(before: &str, after: &str) -> String {
+    let b: Vec<char> = normalize_newlines(before).chars().collect();
+    let a: Vec<char> = normalize_newlines(after).chars().collect();
+    let p = b.iter().zip(a.iter()).take_while(|(x, y)| x == y).count();
+    let s = b[p..]
+        .iter()
+        .rev()
+        .zip(a[p..].iter().rev())
+        .take_while(|(x, y)| x == y)
+        .count();
+    a[p..a.len() - s].iter().collect()
+}
+
+/// Decide whether a typing diff can be repaired by retyping a tail. Only a
+/// non-empty strict prefix of the requested text counts: an empty insert means
+/// the target ignores WM_CHAR (retrying cannot help), and a non-prefix insert
+/// is reordered or garbled (retyping would make it worse).
+fn plan_tail_retry(before: &str, after: &str, requested: &str) -> TailPlan {
+    let want = normalize_newlines(requested);
+    let got = inserted_segment(before, after);
+    if got.is_empty() || got.len() >= want.len() || !want.starts_with(&got) {
+        return TailPlan::Done;
+    }
+    TailPlan::Retype(want[got.len()..].to_string())
+}
+
+/// Poll `read` until two consecutive reads agree (or ~600 ms pass), so the
+/// diff is taken after the target has drained its queue.
+fn settle_value(read: impl Fn() -> Option<String>, mut last: Option<String>) -> Option<String> {
+    for _ in 0..20 {
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        let now = read();
+        if now == last {
+            return now;
+        }
+        last = now;
+    }
+    last
+}
+
+#[cfg(test)]
+mod tail_retry_tests {
+    use super::*;
+
+    #[test]
+    fn complete_insert_needs_no_retry() {
+        assert_eq!(plan_tail_retry("ab", "abXY\r\nZ", "XY\nZ"), TailPlan::Done);
+    }
+
+    #[test]
+    fn dropped_tail_is_retyped() {
+        assert_eq!(
+            plan_tail_retry("", "hello wo", "hello world!"),
+            TailPlan::Retype("rld!".into())
+        );
+    }
+
+    #[test]
+    fn insert_in_the_middle_is_diffed() {
+        assert_eq!(
+            plan_tail_retry("ad", "abcd", "bcXY"),
+            TailPlan::Retype("XY".into())
+        );
+    }
+
+    #[test]
+    fn nothing_landed_or_garbled_is_not_retyped() {
+        assert_eq!(plan_tail_retry("x", "x", "abc"), TailPlan::Done);
+        assert_eq!(plan_tail_retry("", "acb", "abc"), TailPlan::Done);
     }
 }
 

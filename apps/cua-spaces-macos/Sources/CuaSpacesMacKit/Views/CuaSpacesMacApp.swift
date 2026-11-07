@@ -302,6 +302,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         // The host service still running from before an update: onto this build (CUA-2457).
         HelperService.restartIfStale()
+        // Cua Driver for this Mac's coding agents: its own login item,
+        // registered and started here whatever this Mac shares (CUA-3638).
+        if DriverService.isBundled(), EmbeddedDriver.current() != nil {
+            DispatchQueue.global(qos: .utility).async {
+                if let why = DriverService.start(restart: false) { NSLog("cua-spaces: %@", why) }
+            }
+        }
         start(Self.model)
         // The menu bar's low-disk warning: read now, then every 5 minutes.
         LowDiskMonitor.shared.start()
@@ -433,6 +440,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // fresh from here rather than from the window.
         // Bounded, and it reconnects to the daemon when the list goes stale.
         _ = model.startListPoll()
+        // Spaces exiting through this machine keep the notch's hotspot
+        // indicator on.
+        _ = model.startExitsPoll()
         // ... and the daemon says when it changed, so a Space starting or
         // stopping on another computer shows within a second or two.
         Task { @MainActor in await model.startListWatch() }

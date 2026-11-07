@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Independent Hyprland observations, adapted from contributions in #3052/#3466.
 //! This module never calls driver capture, geometry, or input implementations.
 #![cfg_attr(not(target_os = "linux"), allow(dead_code))]

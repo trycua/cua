@@ -82,3 +82,5 @@ tempfile = "3"
 tokio = { version = "1", features = ["full"] }
 # Reads Local's `config.yaml` back with a real YAML parser (same version as cua-agent-setup).
 serde_yaml_ng = "0.10"
+# Property tests of the network model (fail closed, tree intersection).
+proptest = "1"

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Shared cursor-overlay render state, animation tick, and pixel pipeline.
 //!
 //! Lifts the platform-agnostic render state out of the three per-OS
@@ -1354,8 +1357,8 @@ pub struct FocusRect {
 ///
 /// `origin_x`, `origin_y` are subtracted from the cursor `core.pos` before
 /// drawing — Windows passes the virtual-screen `(virt_x, virt_y)` so the
-/// pixmap is laid out in window-local coordinates.  macOS / Linux pass
-/// `(0.0, 0.0)`.
+/// pixmap is laid out in window-local coordinates; macOS and Linux pass the
+/// origin of the tile they paint.
 ///
 /// `backing_scale` is the destination-pixmap-pixels per logical-point ratio
 /// (e.g. 2.0 on a retina display where the pixmap is sized at physical
@@ -1384,7 +1387,7 @@ pub fn render_frame(
 /// render N owned cursors into one buffer / one NSWindow.
 ///
 /// `origin_x` / `origin_y` are subtracted from `core.pos` before drawing
-/// (Windows passes the virtual-screen origin; macOS / Linux pass `(0.0, 0.0)`).
+/// (Windows passes the virtual-screen origin; macOS and Linux pass their tile's).
 /// Both are in **logical** screen points, just like `core.pos`.
 ///
 /// `backing_scale` is the destination-pixmap-pixels per logical-point ratio.
@@ -1443,8 +1446,8 @@ pub fn paint_cursor(
         let (cr, cg, cb) = (0x5Eu8, 0xC0u8, 0xE8u8);
 
         if let Some(rect) = tiny_skia::Rect::from_xywh(
-            (fx * s) as f32,
-            (fy * s) as f32,
+            ((fx - origin_x) * s) as f32,
+            ((fy - origin_y) * s) as f32,
             (fw * s) as f32,
             (fh * s) as f32,
         ) {

@@ -1752,6 +1752,21 @@ fn generated_name() -> String {
 }
 
 /// `sb create` (and `sb launch`, `compat` keeps its output).
+/// Inside a Space, `sandbox create` reaches only the Space's own children: a refusal there says
+/// what to run instead (a Space makes its child computers with `spaces create`, and they are
+/// then used and deleted like any other).
+fn in_a_space(e: CuaError) -> CuaError {
+    if matches!(e, CuaError::Unsupported(_)) && cua_daemon::client::spawn_channel().is_some() {
+        return CuaError::Unsupported(
+            "inside a Space, make a computer with `cua spaces create IMAGE --name NAME` (it \
+             becomes this Space's child), run things in it with `cua sb exec NAME -- COMMAND`, \
+             and delete it with `cua spaces delete --force NAME`"
+                .into(),
+        );
+    }
+    e
+}
+
 async fn create(
     cua: &Arc<Cua>,
     a: CreateArgs,
@@ -1908,7 +1923,7 @@ async fn create(
     {
         eprintln!("{}", util::hint(&kept_message(&info)));
     }
-    let sb = created.map_err(|e| on_backend(e, &label))?;
+    let sb = created.map_err(|e| in_a_space(on_backend(e, &label)))?;
     let i = sb.info();
     if i.location == "direct" {
         save_env_token(&i.name, token.as_deref())?;
@@ -2847,6 +2862,27 @@ where
     }
 }
 
+/// How long finding and dialing a Space may take in all. Longer than
+/// [`RELAY_START_WAIT`], so a Space that is still starting says so first.
+const SPACE_LOOKUP_DEADLINE: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// `lookup` within `budget`, or a timeout that names the Space: a relay
+/// stream that goes silent fails instead of hanging the command.
+async fn within_lookup_deadline<T>(
+    name: &str,
+    budget: std::time::Duration,
+    lookup: impl std::future::Future<Output = Result<T, CuaError>>,
+) -> Result<T, CuaError> {
+    tokio::time::timeout(budget, lookup)
+        .await
+        .unwrap_or_else(|_| {
+            Err(CuaError::Timeout(format!(
+                "{name} did not answer within {}s; check that it is online: cua spaces ls",
+                budget.as_secs()
+            )))
+        })
+}
+
 /// A spacesd client for a named sandbox or a relay Space. Direct sandboxes
 /// use the remembered token (or `CUA_ENV_TOKEN`). A relay Space opens
 /// through the Spaces API; the sandboxes API does not attach those machines.
@@ -2878,19 +2914,23 @@ pub async fn env_of(cua: &Cua, name: &str) -> Result<Arc<cua_sdk::SpacesdClient>
             crate::host::daemon_relay_account(&crate::util::cua_home())
         });
         let spaces = cua.spaces();
-        // NotFound before dial, and the snapshot has the name space() dials with.
-        spaces.resolve(id.clone()).await?;
-        // Right after `cua spaces start` the machine is listed but its
-        // spacesd is not connected yet: wait for it (bounded), then say so.
-        return wait_while_starting(
-            &id,
-            RELAY_START_WAIT,
-            std::time::Duration::from_millis(500),
-            || async { spaces.space(id.clone()).await?.spacesd() },
-        )
+        return within_lookup_deadline(&id, SPACE_LOOKUP_DEADLINE, async {
+            // NotFound before dial, and the snapshot has the name space() dials with.
+            spaces.resolve(id.clone()).await?;
+            // Right after `cua spaces start` the machine is listed but its
+            // spacesd is not connected yet: wait for it (bounded), then say so.
+            wait_while_starting(
+                &id,
+                RELAY_START_WAIT,
+                std::time::Duration::from_millis(500),
+                || async { spaces.space(id.clone()).await?.spacesd() },
+            )
+            .await
+        })
         .await;
     }
-    if let Some(space) = space_for(cua, name).await? {
+    let space = within_lookup_deadline(name, SPACE_LOOKUP_DEADLINE, space_for(cua, name)).await?;
+    if let Some(space) = space {
         return space.spacesd();
     }
     let sbx = cua.sandboxes();
@@ -2925,6 +2965,9 @@ async fn space_for(cua: &Cua, name: &str) -> Result<Option<Arc<cua_sdk::Space>>,
     } else {
         match cua.sandboxes().get(name.to_string()).await {
             Err(CuaError::NotFound(_)) => None,
+            // Inside a Space, the spawn channel serves Spaces and not the
+            // sandbox API: a child is found among the Space's own children.
+            Err(CuaError::Unsupported(_)) if cua_daemon::client::spawn_channel().is_some() => None,
             _ => return Ok(None),
         }
     };
@@ -3583,11 +3626,18 @@ pub async fn viewer_link(
     files_root: Option<String>,
 ) -> Result<cua_sdk::ViewerLink, CuaError> {
     let sandbox = sandbox_with_token(cua, name).await?;
-    sandbox
+    // The Space's clipboard setting (`cua spaces set --clipboard`), under
+    // Secure Spaces: `off` asks the viewer ticket for no clipboard, and the
+    // page gets the word (`view` only while you're viewing, or `ask`).
+    // Without the experiment the page keeps the clipboard in sync both ways,
+    // as it always did.
+    let clipboard = space_clipboard(cua, name).await;
+    let mut link = sandbox
         .viewer_url(Some(cua_sdk::ViewerOptions {
             ttl_seconds: ttl_secs,
             view_only,
             files_root,
+            clipboard: clipboard.as_deref() != Some("off"),
             ..Default::default()
         }))
         .await
@@ -3596,7 +3646,32 @@ pub async fn viewer_link(
                 "{m}. The viewer needs cua-spacesd in the sandbox; for an image that serves its own display page pass --service NAME"
             )),
             other => other,
-        })
+        })?;
+    match clipboard.as_deref() {
+        Some("ask") => link.url.push_str("&clipboard=ask"),
+        Some("viewing") => link.url.push_str("&clipboard=view"),
+        _ => {}
+    }
+    Ok(link)
+}
+
+/// The clipboard setting of the Space `name` under Secure Spaces (`viewing`,
+/// `ask` or `off`; `viewing` when it cannot be read). `None` without the
+/// experiment: the viewer then syncs as it always did.
+async fn space_clipboard(cua: &Arc<Cua>, name: &str) -> Option<String> {
+    if cua_vmm::network::Mode::from_env() != cua_vmm::network::Mode::Secure {
+        return None;
+    }
+    let local = format!("local:{name}");
+    Some(match cua.spaces().list().await {
+        Ok(all) => all
+            .into_iter()
+            .find(|s| s.id == name || s.id == local || s.name == name)
+            .map(|s| s.clipboard)
+            .filter(|c| matches!(c.as_str(), "ask" | "off"))
+            .unwrap_or_else(|| "viewing".into()),
+        Err(_) => "viewing".into(),
+    })
 }
 
 /// A browser URL for a web service of the sandbox (no credentials): the
@@ -4260,7 +4335,10 @@ mod tests {
             r("python:3.12", Some("slim")),
             Err(CuaError::InvalidArgument(_))
         ));
-        let published = |x: &str| cua_image::catalog::find(x).is_none_or(|e| e.published);
+        // Derived on the user's Mac (the developer tools image) counts as available.
+        let published = |x: &str| {
+            cua_image::catalog::find(x).is_none_or(|e| e.published || e.derived_from.is_some())
+        };
         for (got, want, os) in [
             (
                 r("linux", Some("slim")),
@@ -4337,6 +4415,28 @@ mod tests {
         .await
         .unwrap_err();
         assert!(matches!(e, CuaError::NotFound(_)));
+    }
+
+    #[tokio::test]
+    async fn a_space_lookup_that_never_answers_times_out_with_its_name() {
+        let err = within_lookup_deadline::<()>(
+            "relay:a",
+            std::time::Duration::from_millis(20),
+            std::future::pending(),
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(err, CuaError::Timeout(_)), "{err:?}");
+        assert!(err.to_string().contains("relay:a did not answer"), "{err}");
+        // An answer within the deadline, error or not, passes through.
+        let e =
+            within_lookup_deadline::<()>("relay:a", std::time::Duration::from_secs(30), async {
+                Err(CuaError::NotFound("gone".into()))
+            })
+            .await
+            .unwrap_err();
+        assert!(matches!(e, CuaError::NotFound(_)));
+        assert!(SPACE_LOOKUP_DEADLINE > RELAY_START_WAIT);
     }
 
     #[test]

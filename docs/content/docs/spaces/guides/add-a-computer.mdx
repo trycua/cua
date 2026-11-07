@@ -111,7 +111,9 @@ and rotates the token.
 | Windows | Scheduled task `Cua\SpacesdHost` at logon, in your interactive session | Stay signed in and unlocked. After a restart, sign in once. |
 | Linux | systemd unit `cua-spacesd-host.service` (user unit; system unit as root). Without systemd (a container, or WSL without systemd): a plain process, and setup warns about it. | With systemd, nothing more. A plain process does not come back after a reboot or a crash: turn on systemd and run `cua host setup --runner systemd` again with the same options, or run `cua host start` after each boot. |
 
-`cua host status` shows the runner in use.
+`cua host status` shows the runner in use. Setup waits until your other computers can see this one, and says why if they can't.
+
+Each Cua home has its own service names. A staging setup on the same computer uses `Cua\SpacesdHost-staging` on Windows, `cua-spacesd-host-staging.service` on Linux and `com.trycua.spacesd.host-staging` on macOS, so it never stops or replaces your production host.
 
 On Windows the host runs in your signed-in session, so your computers reach the
 desktop only while it is signed in, unlocked and on screen:
@@ -166,7 +168,12 @@ cua devices audit      # who opened which machine, from which machine, and when
 cua devices revoke dev_0123456789abcdef01234567
 ```
 
-A computer that is gone: `cua machines rm <name>` removes it from your relay directory and revokes its sign-in.
+A computer that is gone: `cua spaces rm <name>` removes it from your relay directory and revokes its sign-in.
+The Spaces it provided stay on your account, hidden, and come back unchanged if the computer is added
+again under the same id. `cua spaces rm <name> --delete-spaces` deletes them instead: they leave your
+account at once, and the computer deletes them, files included, the next time it comes online. If it
+never comes back within 90 days, the request expires; adding the computer again before then doesn't
+bring those Spaces back. (`cua machines rm` still works for one more release and says so.)
 
 In the app, the **Computers** tab holds all of it. A computer that asks to join waits under
 **Waiting for you** with **Add computer** and **Not me** (Add computer asks for Touch ID or your login

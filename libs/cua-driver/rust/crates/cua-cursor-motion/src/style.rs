@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! The built-in styles, timing modes and effect switches.
 
 /// How the agent cursor travels between targets.

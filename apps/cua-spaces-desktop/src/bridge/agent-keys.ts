@@ -53,6 +53,13 @@ export function agentKeysMethods({ model }: BridgeContext): Handlers {
       if (slot) call.slot = slot;
       return model.agents.keys.call("agent_keys.use", call);
     },
+    // A saved key or sign-in gets a name (no `slot`: the first saved for `env`).
+    "agentKeys.rename": (args) => {
+      const call: Record<string, unknown> = { env: string(args, "env"), label: string(args, "label") };
+      const slot = optionalString(args, "slot");
+      if (slot) call.slot = slot;
+      return model.agents.keys.call("agent_keys.rename", call);
+    },
     // Which provider keys your login shell has (names only), and one saved from it (the value never crosses the bridge).
     "agentKeys.shell": () => model.agents.keys.call("agent_keys.shell"),
     "agentKeys.fromShell": (args) => model.agents.keys.call("agent_keys.from_shell", { env: string(args, "env"), ...choices(args) }),

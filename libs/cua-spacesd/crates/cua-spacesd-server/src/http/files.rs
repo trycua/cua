@@ -21,7 +21,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use axum::body::Body;
+use axum::body::{Body, BodyDataStream};
 use axum::extract::State;
 use axum::http::{header, HeaderMap, HeaderValue, Method, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
@@ -270,6 +270,15 @@ pub struct FilesState {
     pub fs: Arc<FsState>,
 }
 
+/// Most of a refused or partly read request body that is read and dropped
+/// before answering, and for how long. Closing with unread bytes in the
+/// socket makes the kernel reset the connection, which can destroy the
+/// response before the client reads it. A longer or slower body can still
+/// be reset. A client waiting on `Expect: 100-continue` has sent no body,
+/// and reading would invite it to, so it is not drained.
+const UNREAD_BODY_DRAIN_BYTES: usize = 8 << 20;
+const UNREAD_BODY_DRAIN_TIME: Duration = Duration::from_secs(5);
+
 /// The `/files` handler (any method).
 pub async fn handle(
     State(state): State<FilesState>,
@@ -278,7 +287,32 @@ pub async fn handle(
     headers: HeaderMap,
     body: Body,
 ) -> Response {
-    let verified = match verify(&state.ctx, &method, &uri) {
+    let mut body = body.into_data_stream();
+    let response = serve(&state, &method, &uri, &headers, &mut body).await;
+    if headers.contains_key(header::EXPECT) {
+        return response;
+    }
+    let drain = async {
+        let mut drained = 0;
+        while drained <= UNREAD_BODY_DRAIN_BYTES {
+            match body.next().await {
+                Some(Ok(chunk)) => drained += chunk.len(),
+                _ => break,
+            }
+        }
+    };
+    let _ = tokio::time::timeout(UNREAD_BODY_DRAIN_TIME, drain).await;
+    response
+}
+
+async fn serve(
+    state: &FilesState,
+    method: &Method,
+    uri: &Uri,
+    headers: &HeaderMap,
+    body: &mut BodyDataStream,
+) -> Response {
+    let verified = match verify(&state.ctx, method, uri) {
         Ok(v) => v,
         Err(Refusal::BadRequest(m)) => return text(StatusCode::BAD_REQUEST, m),
         Err(Refusal::Expired) => return text(StatusCode::FORBIDDEN, "signed URL expired"),
@@ -291,13 +325,13 @@ pub async fn handle(
     // `~` and relative paths cannot reach here: the path was resolved when
     // the URL was minted.
     let path = std::path::PathBuf::from(&verified.path);
-    if method == Method::PUT {
+    if *method == Method::PUT {
         return put(acting, path, &verified, body).await;
     }
-    if method == Method::POST {
-        return post_multipart(acting, path, &verified, &headers, body).await;
+    if *method == Method::POST {
+        return post_multipart(acting, path, &verified, headers, body).await;
     }
-    get(acting, path, &verified, &headers, method == Method::HEAD).await
+    get(acting, path, &verified, headers, *method == Method::HEAD).await
 }
 
 /// Where an upload's bytes go: an atomic writer in this process, or a
@@ -430,13 +464,12 @@ async fn put(
     acting: Acting,
     path: std::path::PathBuf,
     verified: &Verified,
-    body: Body,
+    stream: &mut BodyDataStream,
 ) -> Response {
     let mut sink = match Sink::open(acting, path, verified).await {
         Ok(sink) => sink,
         Err(response) => return *response,
     };
-    let mut stream = body.into_data_stream();
     while let Some(chunk) = stream.next().await {
         let chunk = match chunk {
             Ok(c) => c,
@@ -468,7 +501,7 @@ async fn post_multipart(
     path: std::path::PathBuf,
     verified: &Verified,
     headers: &HeaderMap,
-    body: Body,
+    stream: &mut BodyDataStream,
 ) -> Response {
     let content_type = headers
         .get(header::CONTENT_TYPE)
@@ -488,7 +521,6 @@ async fn post_multipart(
     let mut reader = multipart::FirstFile::new(&boundary);
     let mut sink: Option<Sink> = None;
     let mut acting = Some(acting);
-    let mut stream = body.into_data_stream();
     let mut out = Vec::new();
     let mut done = false;
     while !done {

@@ -35,11 +35,11 @@ CHECKS = {
 
 
 def run_text(job: str) -> str:
-    return "\n".join(step.get("run", "") + "\n" for step in JOBS[job]["steps"])
+    return "\n".join(step.get("run", "") + "\n" for step in JOBS[job].get("steps", []))
 
 
 def uses(job: str) -> list[str]:
-    return [step["uses"] for step in JOBS[job]["steps"] if "uses" in step]
+    return [step["uses"] for step in JOBS[job].get("steps", []) if "uses" in step]
 
 
 def test_every_swift_check_still_runs_in_exactly_one_job():
@@ -56,7 +56,9 @@ def test_the_library_is_compiled_once_and_downloaded_by_the_rest():
     assert [n for n in JOBS if "./.github/actions/spaces-rust-slice" in uses(n)] == ["ffi"]
     for name in SWIFT_JOBS:
         job = JOBS[name]
-        assert job["needs"] == "ffi", name
+        needs = [job["needs"]] if isinstance(job["needs"], str) else job["needs"]
+        # Downloads the library from `ffi`; `changes` (the packaging-path filter) is the only other job it may wait for.
+        assert "ffi" in needs and set(needs) <= {"ffi", "changes"}, name
         download = [s for s in job["steps"] if str(s.get("uses", "")).startswith("actions/download-artifact")]
         assert len(download) == 1 and download[0]["with"]["name"] == ARTIFACT, name
         assert download[0]["with"]["path"] == "libs/cua/target/release", name
@@ -118,7 +120,7 @@ def test_the_slice_action_builds_by_default_and_restores_only_on_request():
     assert action["inputs"]["build"]["default"] == "true"
     steps = action["runs"]["steps"]
     by_id = {s.get("id"): s for s in steps if s.get("id")}
-    assert by_id["cache"]["uses"].startswith("actions/cache@") and by_id["cache"]["if"] == "inputs.build == 'true'"
+    assert by_id["cache"]["uses"].startswith("actions/cache/restore@") and by_id["cache"]["if"] == "inputs.build == 'true'"
     assert by_id["restore"]["uses"].startswith("actions/cache/restore@")
     assert by_id["restore"]["if"] == "inputs.build != 'true'"
     # Nothing compiles unless build is on.
@@ -128,7 +130,9 @@ def test_the_slice_action_builds_by_default_and_restores_only_on_request():
         ):
             assert step["if"].startswith("inputs.build == 'true' &&"), step
     # The producer and the release keep their behaviour: they pass no `build`.
-    for workflow in ("ci-cua-spaces-rust-slice.yml", "cd-cua-spaces.yml", "cd-cua-spaces-build.yml"):
+    # (The main build's consumer stage restores only; its producer is the
+    # ci-cua-spaces-rust-slice.yml stage it calls.)
+    for workflow in ("ci-cua-spaces-rust-slice.yml", "cd-cua-spaces.yml"):
         text = (ROOT / ".github/workflows" / workflow).read_text()
         assert "spaces-rust-slice" in text
         assert 'build: "false"' not in text

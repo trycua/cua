@@ -207,8 +207,8 @@ export interface MachinesHook extends Resource<Machine[]> {
   view: MachinesView | null;
   /** Renames a machine (`machines.rename`). */
   rename(id: string, name: string): Promise<void>;
-  /** Removes a machine from the account (`machines.remove`). */
-  remove(machine: string | null, device: string | null): Promise<void>;
+  /** Removes a machine from the account (`machines.remove`); `deleteSpaces`: the relay forgets the Spaces made on it too. */
+  remove(machine: string | null, device: string | null, deleteSpaces?: boolean): Promise<void>;
   /** Asks the machines for their health (`machines.checkHealth`); their
    * issues show in the next view. Never throws: a check that fails shows
    * on that machine. */
@@ -229,7 +229,7 @@ export function useMachines(): MachinesHook {
     setupGuide,
     view: ctx.store?.machinesView ?? null,
     rename: (id, name) => run((s) => s.renameMachine(id, name)),
-    remove: (machine, device) => run((s) => s.removeMachine(machine, device)),
+    remove: (machine, device, deleteSpaces) => run((s) => s.removeMachine(machine, device, deleteSpaces)),
     // The page asks once on opening, which can be before the store is up
     // (the core still loading): wait for it rather than skip the check
     // until the next minute's.
@@ -354,6 +354,8 @@ export interface SessionHook extends Resource<SessionData> {
   signOut(): Promise<void>;
   /** `launchAtLogin`: Done's checkbox, where the host applies it. */
   completeOnboarding(mode: OnboardingMode, launchAtLogin?: boolean): Promise<void>;
+  /** Forgets the first run (the host's file); `onboarding-reset.ts` clears the page's own. */
+  resetOnboarding(): Promise<void>;
   openExternal(url: string): Promise<void>;
 }
 
@@ -366,6 +368,7 @@ export function useSession(): SessionHook {
     cancelSignIn: () => void run((s) => s.cancelSignIn()),
     signOut: () => run((s) => s.signOut()),
     completeOnboarding: (mode, launchAtLogin) => run((s) => s.completeOnboarding(mode, launchAtLogin)),
+    resetOnboarding: () => run((s) => s.resetOnboarding()),
     openExternal: (url) => run((s) => s.openExternal(url)),
   };
 }

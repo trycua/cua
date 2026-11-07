@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Containment pieces shared by the Unix platforms.
 
 use std::path::Path;

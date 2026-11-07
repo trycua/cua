@@ -26,6 +26,12 @@ describe("noLocalRuntimeReason", () => {
     expect(noLocalRuntimeReason("win32", "container engine at npipe://x is not running")).toMatch(/isn't running/);
   });
 
+  it("on Windows says what the built-in runtime needs when WSL 2 cannot run it, never to install Docker", () => {
+    const why = "the built-in Linux runtime cannot run here: Virtualization is turned off on this PC. Restart into the BIOS/UEFI setup";
+    expect(noLocalRuntimeReason("win32", "container engine: Socket not found: //./pipe/dockerDesktopLinuxEngine", why)).toBe(why);
+    expect(noLocalRuntimeReason("win32", "no Docker-API socket found", "some other detail")).toMatch(/Docker Desktop/);
+  });
+
   it("names the group command when Docker is there but the account may not use it (CUA-1763)", () => {
     expect(noLocalRuntimeReason("linux", "permission denied on unix:///var/run/docker.sock: add yourself")).toContain("usermod -aG docker");
   });

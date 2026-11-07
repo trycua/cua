@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Conservative text insertion for the exact currently focused UIA Document.
 //!
 //! This is a capability probe for no-element foreground typing. It never
@@ -146,7 +149,7 @@ fn try_type_focused_document_append_unbounded(
             .is_ok_and(|selection| selection == SupportedTextSelection_Single);
         let document_matches = unsafe { text_pattern.DocumentRange() }
             .and_then(|range| unsafe { range.GetText(-1) })
-            .is_ok_and(|value| value.to_string() == initial_value);
+            .is_ok_and(|value| value == initial_value);
         if !focused_document_eligible(
             exact_foreground_target(target, Some(target_pid)),
             !initial_read_only.as_bool(),
@@ -173,12 +176,12 @@ fn try_type_focused_document_append_unbounded(
         let Ok(value_before_write) = (unsafe { value_pattern.CurrentValue() }) else {
             return not_applicable("value_unavailable_before_write");
         };
-        if read_only_before_write.as_bool() || value_before_write.to_string() != initial_value {
+        if read_only_before_write.as_bool() || value_before_write != initial_value {
             return not_applicable("value_changed_or_read_only_before_write");
         }
         if !unsafe { text_pattern.DocumentRange() }
             .and_then(|range| unsafe { range.GetText(-1) })
-            .is_ok_and(|value| value.to_string() == initial_value)
+            .is_ok_and(|value| value == initial_value)
         {
             return not_applicable("document_changed_before_write");
         }

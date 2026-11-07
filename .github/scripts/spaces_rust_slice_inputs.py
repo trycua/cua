@@ -309,16 +309,25 @@ def _in_spans(pos: int, spans: list[tuple[int, int]]) -> bool:
     return any(a <= pos < b for a, b in spans)
 
 
-def _resolve_concat(arg: str, crate_dir: Path) -> str | None:
+def _resolve_concat(arg: str, crate_dir: Path, file_dir: Path) -> str | None:
+    """The path a `concat!` names. A macro metavariable (`$p`) in it makes the
+    literal before it a prefix, so the read is that whole directory."""
     parts = []
-    for literal, env in re.findall(r'"([^"]*)"|(env!\s*\(\s*"[A-Z_]+"\s*\))', arg):
+    for literal, env, var in re.findall(
+        r'"([^"]*)"|(env!\s*\(\s*"[A-Z_]+"\s*\))|(\$[A-Za-z_]\w*)', arg
+    ):
+        if var:
+            prefix = "".join(parts)
+            parts = [prefix if prefix.endswith("/") else os.path.dirname(prefix) or "."]
+            break
         if env:
             if "CARGO_MANIFEST_DIR" not in env:
                 return None  # OUT_DIR and the like: not a source file
             parts.append(str(crate_dir))
         else:
             parts.append(literal)
-    return "".join(parts)
+    # Without CARGO_MANIFEST_DIR the path is relative to the including file.
+    return os.path.join(file_dir, "".join(parts))
 
 
 def source_reads(crate_dir: Path) -> set[Path]:
@@ -346,7 +355,7 @@ def source_reads(crate_dir: Path) -> set[Path]:
                 continue
             text = arg.group(1)
             if text.startswith("concat"):
-                resolved = _resolve_concat(text, crate_dir)
+                resolved = _resolve_concat(text, crate_dir, path.parent)
                 if resolved is None:
                     continue
                 reads.add(Path(os.path.normpath(resolved)))

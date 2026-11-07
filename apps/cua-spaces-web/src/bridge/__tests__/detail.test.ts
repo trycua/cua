@@ -207,26 +207,25 @@ describe.skipIf(!wasmBuilt)("a Space's detail as this device sees it (wasm core)
   it("greys out a machine's connection actions while this device is not enrolled, and leaves other Spaces alone", async () => {
     const core = await testCore();
     const [studio, local] = rowsToSpaces(core, [row({}), row({ id: "local:dev", name: "dev", provider: "local", os: "linux" })], 0);
-    const d = spaceDetail(core, studio!, null, null, { sharing: true }, NOTICE);
+    const d = spaceDetail(core, studio!, null, null, NOTICE);
     expect(d.access).toEqual(NOTICE);
     expect(d.canStream).toBe(false);
     expect(d.previewText).toBe(NOTICE.text);
     expect(d.facts.find((f) => f.label === "Status")?.value).toBe("Waiting for approval");
     expect(d.actions.filter((a) => ["teleport", "pip", "share", "open"].includes(a.id)).every((a) => !a.enabled)).toBe(true);
-    expect(spaceDetail(core, local!, null, null, { sharing: true }, NOTICE).access).toBeUndefined();
+    expect(spaceDetail(core, local!, null, null, NOTICE).access).toBeUndefined();
   });
 
-  it("hides Share only while Settings, Experiments, Sharing is turned off", async () => {
+  it("always offers Share", async () => {
     const core = await testCore();
     const [studio] = rowsToSpaces(core, [row({})], 0);
-    expect(spaceDetail(core, studio!, null, null, { sharing: false }).actions.some((a) => a.id === "share")).toBe(false);
-    expect(spaceDetail(core, studio!, null, null, { sharing: true }).actions.some((a) => a.id === "share")).toBe(true);
+    expect(spaceDetail(core, studio!, null, null).actions.some((a) => a.id === "share")).toBe(true);
   });
 
   it("explains a machine that keeps its desktop private, with no button beside the note", async () => {
     const core = await testCore();
     const [studio] = rowsToSpaces(core, [row({ features: ["host_spaces", "files"] })], 0);
-    const d = spaceDetail(core, studio!, null, null, {});
+    const d = spaceDetail(core, studio!, null, null);
     expect(d.desktopNote).toBe("Studio isn\u2019t sharing its desktop. You can still create Spaces on it.");
     expect(d.newSpace).toEqual({ label: "New Space on Studio\u2026", on: "host:studio" });
     expect(d.sections).toEqual([]);
@@ -257,7 +256,8 @@ describe("a Space's drop well", () => {
     const seen: string[] = [];
     await sendFiles(demo, core, "local:design-review", ["/Users/ada/notes.txt"], (s) => seen.push(`${s?.kind}: ${s?.text}`));
     expect(seen[0]).toMatch(/^working: Sending notes\.txt/);
-    expect(seen[1]).toMatch(/^done: notes\.txt .* verified in /);
+    // The core words what landed; without it the bridge names the files.
+    expect(seen[1]).toMatch(wasmBuilt ? /^done: notes\.txt .* verified in / : /^done: notes\.txt$/);
     seen.length = 0;
     await sendFiles(demo, core, "local:agent-sandbox", ["/Users/ada/notes.txt"], (s) => seen.push(s!.kind));
     expect(seen).toEqual(["working", "failed"]);

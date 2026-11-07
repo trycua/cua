@@ -7,13 +7,9 @@ Claude Code can use both Cua products: Cua Driver for the apps on the computer i
 
 ## Cua Driver
 
-Register Cua Driver as an MCP server, then restart Claude Code:
+The Cua Driver install line already connects Claude Code. To connect it later, run `cua-driver connect --client claude`, then restart Claude Code. It adds the `cua-driver` server and installs the agent skill for native skill activation, and running it again changes nothing.
 
-```bash skip="third-party-cli"
-claude mcp add --transport stdio cua-driver -- cua-driver mcp
-```
-
-Use `cua-driver mcp-config --client claude` instead for the computer-use compatibility profile. Both install the agent skill for native skill activation. See [Connect your agent](/cua-driver/guides/connect-your-agent) for the skill, permissions and the other clients.
+`cua-driver mcp-config --client claude` prints the same setup as a command you can run yourself. See [Connect your agent](/cua-driver/guides/connect-your-agent) for the skill, permissions and the other clients.
 
 ## Cua Spaces
 

@@ -119,6 +119,11 @@ impl LinkContext {
         compose_link(&self.machine.url, &self.machine.id, key, access)
     }
 
+    /// The computer's relay id.
+    pub fn machine_id(&self) -> &str {
+        &self.machine.id
+    }
+
     /// A fresh account access token.
     pub async fn access_token(&self) -> Result<String> {
         self.tokens

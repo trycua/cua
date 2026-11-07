@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use std::io::Write;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -176,12 +179,15 @@ fn text(result: &ToolResult) -> String {
 #[tokio::test]
 async fn every_step_but_the_last_is_paced_as_a_batched_step() {
     use crate::step_pacing::StepPacing::{Batched, Single};
+    // Each batch that types uses its own pid: text input admission is a
+    // process-wide per-pid lock, so parallel tests sharing one pid refuse
+    // each other with `input_busy`.
     let harness = Harness::new();
     let result = harness
         .run(json!({"steps": [
-            {"tool": "click", "args": {"pid": 42, "window_id": 7}},
-            {"tool": "type_text", "args": {"pid": 42, "text": "b"}},
-            {"tool": "press_key", "args": {"pid": 42}},
+            {"tool": "click", "args": {"pid": 43, "window_id": 7}},
+            {"tool": "type_text", "args": {"pid": 43, "text": "b"}},
+            {"tool": "press_key", "args": {"pid": 43}},
         ]}))
         .await;
     assert_ne!(result.is_error, Some(true), "{}", text(&result));
@@ -221,9 +227,9 @@ async fn runs_steps_in_order_and_reports_each() {
     let harness = Harness::new();
     let result = harness
         .run(json!({"steps": [
-            {"tool": "set_value", "args": {"pid": 42, "window_id": 7, "text": "a"}},
-            {"tool": "type_text", "args": {"pid": 42, "text": "b"}},
-            {"tool": "press_key", "args": {"pid": 42}},
+            {"tool": "set_value", "args": {"pid": 44, "window_id": 7, "text": "a"}},
+            {"tool": "type_text", "args": {"pid": 44, "text": "b"}},
+            {"tool": "press_key", "args": {"pid": 44}},
         ]}))
         .await;
     assert_ne!(result.is_error, Some(true), "{}", text(&result));
@@ -346,15 +352,15 @@ async fn observation_inherits_the_window_and_stays_bounded() {
     let result = harness
         .run(json!({
             "steps": [
-                {"tool": "click", "args": {"pid": 42, "window_id": 7}},
-                {"tool": "type_text", "args": {"pid": 42, "text": "x"}},
+                {"tool": "click", "args": {"pid": 45, "window_id": 7}},
+                {"tool": "type_text", "args": {"pid": 45, "text": "x"}},
             ],
             "observe": {}
         }))
         .await;
     assert_ne!(result.is_error, Some(true), "{}", text(&result));
     let observed = harness.last("get_window_state");
-    assert_eq!(observed["pid"], 42);
+    assert_eq!(observed["pid"], 45);
     assert_eq!(observed["window_id"], 7);
     assert_eq!(observed["include_screenshot"], false);
     assert_eq!(
@@ -383,10 +389,12 @@ async fn observation_inherits_the_window_and_stays_bounded() {
     );
 }
 
-#[tokio::test]
+// The paused clock moves only when the batch sleeps, so a slow runner cannot
+// push the elapsed time past the upper bound.
+#[tokio::test(start_paused = true)]
 async fn pauses_between_steps_but_not_after_the_last() {
     let harness = Harness::new();
-    let started = std::time::Instant::now();
+    let started = tokio::time::Instant::now();
     harness
         .run(json!({"delay_ms": 120, "steps": [
             {"tool": "click", "args": {"pid": 42}},
@@ -414,6 +422,7 @@ async fn every_step_runs_in_the_batch_session() {
     }
 }
 
+#[cfg(feature = "yaml")]
 #[tokio::test]
 async fn each_step_is_held_to_the_capability_manifest() {
     let harness = Harness::new();
@@ -442,6 +451,7 @@ async fn each_step_is_held_to_the_capability_manifest() {
     assert_eq!(harness.hits("set_value"), 0, "later steps never run");
 }
 
+#[cfg(feature = "yaml")]
 #[tokio::test]
 async fn the_batch_itself_needs_the_manifest_to_allow_it() {
     let harness = Harness::new();
@@ -511,6 +521,7 @@ async fn the_old_name_run_actions_still_runs_but_is_not_listed() {
     assert!(!text(&current).contains("deprecated"), "{}", text(&current));
 }
 
+#[cfg(feature = "yaml")]
 #[tokio::test]
 async fn a_manifest_that_allows_run_actions_allows_run_steps() {
     let harness = Harness::new();

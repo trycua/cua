@@ -31,10 +31,29 @@ pub const SECRET_NAME: &str = "agent-keys";
 /// a provider, a variable name and a slot, kept beside the keys).
 pub const USES_NAME: &str = "agent-uses";
 
-/// The apps that take any provider and so let the person pick which
-/// credential they use (Settings, Connections, the app's page). Claude Code,
-/// Codex, Gemini CLI and Antigravity read one fixed sign-in.
-pub const SWITCHABLE_APPS: &[&str] = &["hermes", "opencode", "goose", "pi", "openclaw"];
+/// The apps that let the person pick which credential they use (Settings, Connections, the app's
+/// page, the prompt box's agent menu): the apps that take any provider, and Claude Code and Codex,
+/// which can hold several sign-ins. Gemini CLI and Antigravity read one fixed sign-in.
+pub const SWITCHABLE_APPS: &[&str] = &[
+    "hermes",
+    "opencode",
+    "goose",
+    "pi",
+    "openclaw",
+    "claude-code",
+    "codex",
+];
+
+/// The id a choice is kept under: the app's setup id (`codex`), whichever of it and its harness id
+/// (`openai-codex`) a caller has.
+fn choice_app(app: &str) -> &str {
+    if app == "openai-codex" { "codex" } else { app }
+}
+
+/// The harness id `app` runs as, for what it can read.
+fn harness_of(app: &str) -> &str {
+    if app == "codex" { "openai-codex" } else { app }
+}
 
 /// The app's settings methods (`SpaceService.CallSpaceTool` names). They are
 /// not contract tools: no MCP server lists or calls them, so an agent can
@@ -45,6 +64,7 @@ pub const APP_METHODS: &[&str] = &[
     "agent_keys.set",
     "agent_keys.remove",
     "agent_keys.use",
+    "agent_keys.rename",
     "agent_keys.shell",
     "agent_keys.from_shell",
 ];
@@ -139,7 +159,7 @@ pub fn shell_names(shell: &std::path::Path) -> Vec<String> {
 
 /// Whether `name` is one of [`APP_METHODS`].
 pub fn is_app_method(name: &str) -> bool {
-    APP_METHODS.contains(&name)
+    APP_METHODS.contains(&name) || super::github_auth::is_app_method(name)
 }
 
 /// A provider with its own row in Settings: the registry's visible providers.
@@ -317,6 +337,10 @@ pub struct KeysReport {
     /// Why not, when they can't.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub unavailable: Option<String>,
+    /// A warning, when keys can be saved but only in an unencrypted file
+    /// (a Local development build without the Keychain).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub insecure: Option<String>,
 }
 
 /// The credential an app was told to use: a variable and which of its saved
@@ -480,6 +504,8 @@ pub enum LoginSync {
 pub struct AgentKeys {
     store: Option<cua_auth::Store>,
     unavailable: Option<String>,
+    // Set when the keys are kept in an unencrypted file ([`AgentKeys::new_for`]).
+    insecure: Option<String>,
     // Serializes read-modify-write; holds the last read.
     cache: Mutex<Option<(Instant, Vec<Stored>)>>,
     // When Claude Code's own sign-in was last re-read ([`AgentKeys::sync_claude_login`]).
@@ -500,6 +526,26 @@ impl std::fmt::Debug for AgentKeys {
 /// app shows it as "Keys can't be saved here: <this>."). A Mac's unsigned
 /// build and Windows with `CUA_CREDENTIAL_STORE=file` have a vault they
 /// could use; Linux has none.
+/// The warning shown while the Local channel keeps keys in a file: where, and
+/// that they are not encrypted.
+fn insecure_notice(credentials: &std::path::Path) -> String {
+    let file = credentials
+        .parent()
+        .map(|d| d.join(SECRET_NAME))
+        .unwrap_or_else(|| std::path::PathBuf::from(SECRET_NAME));
+    let shown = std::env::var_os("HOME")
+        .map(std::path::PathBuf::from)
+        .and_then(|h| {
+            file.strip_prefix(&h)
+                .ok()
+                .map(|r| format!("~/{}", r.display()))
+        })
+        .unwrap_or_else(|| file.display().to_string());
+    format!(
+        "Keychain not available in this development build: keys are stored unencrypted in {shown}. Do not use real production secrets"
+    )
+}
+
 const fn file_store_reason() -> &'static str {
     if cfg!(target_os = "macos") {
         "this build of cua keeps credentials in a file, and agent keys are only kept in the Keychain (a Cua-signed build of Cua Spaces does). Set the key for the Cua daemon instead"
@@ -511,18 +557,36 @@ const fn file_store_reason() -> &'static str {
 }
 
 impl AgentKeys {
-    /// Keys in `store`. A file store can't hold them (see the module docs).
+    /// Keys in `store` for this process's channel. A file store can't hold
+    /// them, except on the Local channel ([`AgentKeys::new_for`]).
     pub fn new(store: cua_auth::Store) -> Self {
-        if store.kind() == "keychain" {
-            Self {
-                store: Some(store),
-                unavailable: None,
-                cache: Mutex::new(None),
-                claude_sync: Mutex::new(None),
-                uses_cache: Mutex::new(None),
-            }
+        Self::new_for(store, cua_home::channel::CuaChannel::current())
+    }
+
+    /// Keys in `store` for `channel`. A file store can't hold them (see the
+    /// module docs) unless `channel` allows the unencrypted development
+    /// store ([`cua_home::channel::CuaChannel::allows_insecure_dev_store`]: Local
+    /// only): then the keys are kept in a 0600 file beside the store's
+    /// credentials, and [`AgentKeys::insecure`] says so.
+    pub fn new_for(store: cua_auth::Store, channel: cua_home::channel::CuaChannel) -> Self {
+        let mut insecure = None;
+        let store = if store.kind() == "keychain" {
+            Some(store)
+        } else if let (true, cua_auth::Store::File(p)) =
+            (channel.allows_insecure_dev_store(), &store)
+        {
+            insecure = Some(insecure_notice(p));
+            Some(store)
         } else {
-            Self::unavailable(file_store_reason())
+            None
+        };
+        Self {
+            unavailable: store.is_none().then(|| file_store_reason().to_string()),
+            store,
+            insecure,
+            cache: Mutex::new(None),
+            claude_sync: Mutex::new(None),
+            uses_cache: Mutex::new(None),
         }
     }
 
@@ -531,15 +595,37 @@ impl AgentKeys {
         Self {
             store: None,
             unavailable: Some(reason.into()),
+            insecure: None,
             cache: Mutex::new(None),
             claude_sync: Mutex::new(None),
             uses_cache: Mutex::new(None),
         }
     }
 
+    /// The warning to show while keys are kept in an unencrypted file (a
+    /// Local development build without the Keychain); `None` otherwise.
+    pub fn insecure(&self) -> Option<&str> {
+        self.insecure.as_deref()
+    }
+
     /// Whether keys can be saved.
     pub fn available(&self) -> bool {
         self.store.is_some()
+    }
+
+    /// A small item kept beside the keys (what a person chose, not a secret).
+    pub(crate) fn aux_load(&self, name: &str) -> Option<Vec<u8>> {
+        self.store.as_ref()?.load_secret(name).ok().flatten()
+    }
+
+    pub(crate) fn aux_save(&self, name: &str, bytes: &[u8]) -> Result<()> {
+        let store = self.store.as_ref().ok_or_else(|| self.refusal())?;
+        store.save_secret(name, bytes).map_err(store_err)
+    }
+
+    pub(crate) fn aux_clear(&self, name: &str) -> Result<()> {
+        let store = self.store.as_ref().ok_or_else(|| self.refusal())?;
+        store.clear_secret(name).map(|_| ()).map_err(store_err)
     }
 
     fn read(&self, guard: &mut Option<(Instant, Vec<Stored>)>, fresh: bool) -> Result<Vec<Stored>> {
@@ -601,6 +687,7 @@ impl AgentKeys {
             providers: providers(),
             available: self.available(),
             unavailable: self.unavailable.clone(),
+            insecure: self.insecure.clone(),
         })
     }
 
@@ -656,13 +743,36 @@ impl AgentKeys {
         // key goes is a sign-in for Claude Code, not an API key: saved as one, so it
         // works for Claude Code and is never offered to another app as a key.
         if provider == "anthropic" && value.trim().contains("sk-ant-oat") {
-            if add {
-                return Err(Error::InvalidArgument(
-                    "a Claude sign-in token is used by Claude Code only; it can't be added as another key".into(),
-                ));
-            }
             let copy = cua_agents::signin::claude_pasted_token(value)
                 .map_err(|r| Error::InvalidArgument(r.line().into()))?;
+            if add && self.store.is_some() {
+                let mut g = self.lock();
+                let mut keys = self.read(&mut g, true)?;
+                // Another Claude sign-in goes beside the first, named, and only Claude Code can use it.
+                if keys.iter().any(|k| k.env == copy.env && k.slot.is_none()) {
+                    let stored = Stored {
+                        slot: Some(format!("k{:x}", now_ms())),
+                        provider: provider_of(&copy.env).into(),
+                        env: copy.env.clone(),
+                        value: validate_value(&copy.value)?.into(),
+                        added_ms: now_ms(),
+                        label: label.map(str::to_string).or(Some(copy.label.clone())),
+                        source: None,
+                        expires_ms: copy.expires_ms,
+                        rejected_ms: None,
+                        origin: copy.origin.clone(),
+                        region: None,
+                        fields: BTreeMap::new(),
+                    };
+                    let info = stored.info();
+                    keys.push(stored);
+                    keys.sort_by(|a, b| {
+                        (&a.env, &a.slot, a.added_ms).cmp(&(&b.env, &b.slot, b.added_ms))
+                    });
+                    self.write(&mut g, keys)?;
+                    return Ok(info);
+                }
+            }
             return self.import(
                 &copy.source,
                 &copy.env,
@@ -735,6 +845,30 @@ impl AgentKeys {
         keys.sort_by(|a, b| (&a.env, &a.slot, a.added_ms).cmp(&(&b.env, &b.slot, b.added_ms)));
         self.write(&mut g, keys)?;
         Ok(info)
+    }
+
+    /// Gives the key `env` (in `slot`, none for the first) a name; whether there was one.
+    pub fn rename(&self, env: &str, slot: Option<&str>, label: &str) -> Result<bool> {
+        let label = label.trim();
+        if label.is_empty() || label.chars().count() > 40 || label.chars().any(|c| c.is_control()) {
+            return Err(Error::InvalidArgument(
+                "a key's name must be one line of at most 40 characters".into(),
+            ));
+        }
+        if self.store.is_none() {
+            return Ok(false);
+        }
+        let mut g = self.lock();
+        let mut keys = self.read(&mut g, true)?;
+        let Some(k) = keys
+            .iter_mut()
+            .find(|k| k.env == env && k.slot.as_deref() == slot)
+        else {
+            return Ok(false);
+        };
+        k.label = Some(label.to_string());
+        self.write(&mut g, keys)?;
+        Ok(true)
     }
 
     /// Removes one key beside the first, named by its `slot`; whether there was one.
@@ -1075,6 +1209,7 @@ impl AgentKeys {
     /// or with `None` to use the first one that works again. The credential must
     /// be saved and one the app can read; nothing is signed out or deleted.
     pub fn set_use(&self, app: &str, choice: Option<(&str, Option<&str>)>) -> Result<()> {
+        let app = choice_app(app);
         if !SWITCHABLE_APPS.contains(&app) {
             return Err(Error::InvalidArgument(format!(
                 "{app} reads one fixed sign-in; there is nothing to choose"
@@ -1098,7 +1233,7 @@ impl AgentKeys {
                             "that key isn't saved, or has stopped working".into(),
                         )
                     })?;
-                if !registry::can_read(app, env) {
+                if !registry::can_read(harness_of(app), env) {
                     return Err(Error::InvalidArgument(format!(
                         "{app} can't use that credential"
                     )));
@@ -1132,6 +1267,7 @@ impl AgentKeys {
 
     /// What `app` was told to use, against what is saved now.
     pub fn chosen(&self, app: &str) -> Chosen {
+        let app = choice_app(app);
         let Some(u) = self.uses().remove(app) else {
             return Chosen::NoChoice;
         };
@@ -1141,7 +1277,7 @@ impl AgentKeys {
             .into_iter()
             .find(|k| k.env == u.env && k.slot == u.slot && k.usable())
         {
-            Some(k) if registry::can_read(app, &k.env) => Chosen::Found {
+            Some(k) if registry::can_read(harness_of(app), &k.env) => Chosen::Found {
                 provider: k.provider,
                 env: k.env,
                 value: k.value,
@@ -1449,7 +1585,7 @@ pub fn mark_rejected_for_run(harness: &str, provider: &str) {
     envs.sort_unstable();
     envs.dedup();
     // An app told to use a key beside the first one: that key is the one refused.
-    if let Some(u) = global().uses().remove(harness)
+    if let Some(u) = global().uses().remove(choice_app(harness))
         && u.provider == provider
         && let Some(slot) = u.slot.as_deref()
     {
@@ -1598,6 +1734,15 @@ struct RemoveArgs {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct RenameArgs {
+    env: String,
+    #[serde(default)]
+    slot: Option<String>,
+    label: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct UseArgs {
     app: String,
     /// Absent: use the first credential that works again.
@@ -1641,6 +1786,12 @@ pub fn app_call(
     let report = |r: Result<KeysReport>| {
         r.and_then(|r| serde_json::to_value(r).map_err(|e| Error::Agent(e.to_string())))
     };
+    if super::github_auth::is_app_method(name) {
+        if !super::github_auth::enabled() {
+            return Some(Err(super::github_auth::off_error()));
+        }
+        return super::github_auth::app_call(super::github_auth::global(), name, args);
+    }
     Some(match name {
         // The check needs the network: `app_tool_async` does it; a synchronous caller gets the list.
         "agent_keys.list" | "agent_keys.check" => {
@@ -1693,6 +1844,18 @@ pub fn app_call(
                         note_connection(&a.env, "remove", "ok");
                     }
                     Ok(removed)
+                })
+                .and_then(|_| keys.report()),
+        ),
+        "agent_keys.rename" => report(
+            serde_json::from_value::<RenameArgs>(args)
+                .map_err(|e| Error::InvalidArgument(format!("agent_keys.rename: {e}")))
+                .and_then(|a| {
+                    if keys.rename(&a.env, a.slot.as_deref(), &a.label)? {
+                        Ok(())
+                    } else {
+                        Err(Error::InvalidArgument("that key isn't saved".into()))
+                    }
                 })
                 .and_then(|_| keys.report()),
         ),
@@ -1755,6 +1918,19 @@ pub async fn app_tool_async(
     name: &str,
     args: serde_json::Value,
 ) -> Option<crate::mcp::ToolOutcome> {
+    if super::github_auth::is_app_method(name) {
+        if !super::github_auth::enabled() {
+            return Some(crate::mcp::ToolOutcome::error(
+                &super::github_auth::off_error(),
+            ));
+        }
+        return super::github_auth::app_call_async(name, args)
+            .await
+            .map(|r| match r {
+                Ok(v) => crate::mcp::ToolOutcome::json(&v),
+                Err(e) => crate::mcp::ToolOutcome::error(&e),
+            });
+    }
     if name != "agent_keys.check" {
         return app_tool(name, args);
     }
@@ -2059,8 +2235,12 @@ mod tests {
     #[test]
     fn a_file_store_keeps_no_keys() {
         let dir = std::env::temp_dir().join(format!("cua-agent-keys-file-{}", std::process::id()));
-        let keys = AgentKeys::new(cua_auth::Store::File(dir.join("credentials.json")));
+        let keys = AgentKeys::new_for(
+            cua_auth::Store::File(dir.join("credentials.json")),
+            cua_home::channel::CuaChannel::Stable,
+        );
         assert!(!keys.available());
+        assert!(keys.insecure().is_none());
         let e = keys.set("anthropic", None, "sk-ant-test-0000").unwrap_err();
         // The refusal names this system's vault, or says there is none (Linux).
         let named = if cfg!(target_os = "macos") {
@@ -2077,6 +2257,76 @@ mod tests {
         assert!(!dir.exists());
         let r = keys.report().unwrap();
         assert!(!r.available && r.unavailable.is_some() && r.keys.is_empty());
+    }
+
+    #[test]
+    fn the_local_channel_keeps_keys_in_a_private_file_and_says_so() {
+        let dir = std::env::temp_dir().join(format!("cua-agent-keys-local-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let keys = AgentKeys::new_for(
+            cua_auth::Store::File(dir.join("credentials.json")),
+            cua_home::channel::CuaChannel::Local,
+        );
+        assert!(keys.available());
+        let warning = keys.insecure().expect("a warning").to_string();
+        assert!(
+            warning.starts_with("Keychain not available in this development build"),
+            "{warning}"
+        );
+        assert!(
+            warning.contains("unencrypted") && warning.contains(SECRET_NAME),
+            "{warning}"
+        );
+        assert!(!warning.contains('\u{b7}'), "{warning}");
+        keys.set("anthropic", None, "sk-ant-test-0000").unwrap();
+        let file = dir.join(SECRET_NAME);
+        assert!(file.exists());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&file).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600);
+        }
+        // A new handle on the same file reads the key back, and the report says why to be careful.
+        let again = AgentKeys::new_for(
+            cua_auth::Store::File(dir.join("credentials.json")),
+            cua_home::channel::CuaChannel::Local,
+        );
+        let r = again.report().unwrap();
+        assert!(r.available && r.unavailable.is_none());
+        assert_eq!(r.insecure.as_deref(), Some(warning.as_str()));
+        assert_eq!(r.keys.len(), 1);
+        assert_eq!(r.keys[0].last4, "0000");
+        assert!(again.remove("ANTHROPIC_API_KEY").unwrap());
+        assert!(!file.exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn only_the_local_channel_can_save_to_a_file_and_the_vault_never_warns() {
+        let dir = std::env::temp_dir().join(format!("cua-agent-keys-chan-{}", std::process::id()));
+        let file = cua_auth::Store::File(dir.join("credentials.json"));
+        for c in cua_home::channel::CuaChannel::ALL {
+            let keys = AgentKeys::new_for(file.clone(), c);
+            assert_eq!(keys.available(), c.allows_insecure_dev_store(), "{c:?}");
+            assert_eq!(
+                keys.insecure().is_some(),
+                c.allows_insecure_dev_store(),
+                "{c:?}"
+            );
+        }
+        let stable = AgentKeys::new_for(file, cua_home::channel::CuaChannel::Stable);
+        assert!(stable.set("anthropic", None, "sk-ant-test-0000").is_err());
+        assert!(!dir.exists());
+        // The vault stand-in is a real vault: no warning on any channel.
+        let vault =
+            std::env::temp_dir().join(format!("cua-agent-keys-vault-{}", std::process::id()));
+        let keys = AgentKeys::new_for(
+            cua_auth::Store::TestKeychain(vault.clone()),
+            cua_home::channel::CuaChannel::Local,
+        );
+        assert!(keys.available() && keys.insecure().is_none());
+        let _ = std::fs::remove_dir_all(&vault);
     }
 
     #[test]
@@ -2644,12 +2894,12 @@ mod tests {
             )
             .is_err()
         );
-        // A Claude sign-in token is never added as another key.
+        // A Claude sign-in token is a sign-in for Claude Code, never another API key.
         let token = format!("sk-ant-oat01-{}", "y".repeat(40));
-        assert!(
-            keys.set_slot("anthropic", None, &token, None, &f, None, true)
-                .is_err()
-        );
+        let saved = keys
+            .set_slot("anthropic", None, &token, None, &f, None, true)
+            .unwrap();
+        assert_eq!(saved.env, "CLAUDE_CODE_OAUTH_TOKEN");
         // The report names both Anthropic keys and carries no value.
         let report = serde_json::to_string(&keys.report().unwrap()).unwrap();
         assert!(report.contains("Work key") && report.contains("bbbb") && report.contains("aaaa"));
@@ -2692,8 +2942,94 @@ mod tests {
         );
         // A fresh handle reads the same store.
         let again = AgentKeys::new(cua_auth::Store::TestKeychain(dir.clone()));
-        assert_eq!(again.list().unwrap().len(), 1);
+        assert_eq!(again.list().unwrap().len(), 2);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn another_claude_sign_in_is_kept_beside_the_first_and_can_be_renamed() {
+        let (keys, _dir) = temp_keys();
+        let f = BTreeMap::new();
+        let first = format!("sk-ant-oat01-{}", "a".repeat(40));
+        let second = format!("sk-ant-oat01-{}", "b".repeat(40));
+        keys.set("anthropic", None, &first).unwrap();
+        let added = keys
+            .set_slot("anthropic", None, &second, None, &f, Some("work Max"), true)
+            .unwrap();
+        assert_eq!(added.env, "CLAUDE_CODE_OAUTH_TOKEN");
+        let slot = added.slot.clone().expect("beside the first");
+        assert_eq!(added.label.as_deref(), Some("work Max"));
+        // Claude Code can be told to use it and then runs with it.
+        keys.set_use(
+            "claude-code",
+            Some(("CLAUDE_CODE_OAUTH_TOKEN", Some(&slot))),
+        )
+        .unwrap();
+        match keys.chosen("claude-code") {
+            Chosen::Found { value, .. } => assert!(value.contains(&"b".repeat(40))),
+            other => panic!("{other:?}"),
+        }
+        // A name is one line, and changes only the key it names.
+        assert!(
+            keys.rename("CLAUDE_CODE_OAUTH_TOKEN", Some(&slot), "")
+                .is_err()
+        );
+        assert!(
+            keys.rename("CLAUDE_CODE_OAUTH_TOKEN", Some(&slot), "side project")
+                .unwrap()
+        );
+        let listed = keys.list().unwrap();
+        let labels: Vec<Option<&str>> = listed.iter().map(|k| k.label.as_deref()).collect();
+        assert!(labels.contains(&Some("side project")), "{labels:?}");
+        assert!(
+            !keys
+                .rename("CLAUDE_CODE_OAUTH_TOKEN", Some("nope"), "x")
+                .unwrap()
+        );
+        assert!(keys.remove_slot("CLAUDE_CODE_OAUTH_TOKEN", &slot).unwrap());
+    }
+
+    #[test]
+    fn claude_code_and_codex_keep_which_account_they_use_under_the_apps_setup_id() {
+        let (keys, _dir) = temp_keys();
+        let f = BTreeMap::new();
+        keys.set("anthropic", None, "sk-ant-api03-first-aaaa")
+            .unwrap();
+        let slot = keys
+            .set_slot(
+                "anthropic",
+                None,
+                "sk-ant-api03-work-bbbb",
+                None,
+                &f,
+                None,
+                true,
+            )
+            .unwrap()
+            .slot
+            .unwrap();
+        keys.set_use("claude-code", Some(("ANTHROPIC_API_KEY", Some(&slot))))
+            .unwrap();
+        assert_eq!(
+            keys.report().unwrap().uses["claude-code"].slot.as_deref(),
+            Some(slot.as_str())
+        );
+        match keys.chosen("claude-code") {
+            Chosen::Found { value, .. } => assert_eq!(value, "sk-ant-api03-work-bbbb"),
+            other => panic!("{other:?}"),
+        }
+        // Codex is kept under its setup id whichever id a caller has, and reads OpenAI only.
+        keys.set("openai", None, "sk-openai-cccc").unwrap();
+        keys.set_use("openai-codex", Some(("OPENAI_API_KEY", None)))
+            .unwrap();
+        assert!(keys.report().unwrap().uses.contains_key("codex"));
+        assert!(matches!(keys.chosen("openai-codex"), Chosen::Found { .. }));
+        assert!(
+            keys.set_use("codex", Some(("ANTHROPIC_API_KEY", None)))
+                .is_err()
+        );
+        // Gemini CLI still reads one fixed sign-in.
+        assert!(keys.set_use("gemini-cli", None).is_err());
     }
 
     #[test]

@@ -131,7 +131,7 @@ describe("Cua Driver in the app", () => {
     });
     mount(spy, () => <DriverPage machine={null} />);
     expect(await screen.findByText("A permission is missing. Allow it below.")).toBeTruthy();
-    await waitFor(() => expect(document.querySelector("[data-app-permission=screen]")?.textContent).toContain("Missing"));
+    await waitFor(() => expect(document.querySelector("[data-app-permission=screen]")?.textContent).toContain("Off"));
     // The app the grant goes to, by name, and that the driver needs no second one.
     expect(document.querySelector("[data-app-permission=screen]")?.textContent).toContain("Screen Recording, given to Cua Spaces");
     expect(document.body.textContent).toContain("Cua Driver uses the permissions you give Cua Spaces. It never asks for its own.");

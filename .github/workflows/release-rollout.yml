@@ -102,10 +102,14 @@ jobs:
           [ "${PIPESTATUS[0]}" = 0 ]
           shopt -s nullglob
           for f in out/*.xml; do xmllint --noout "$f"; done
+          # A prerelease must never reach Stable through a rollout edit (CUA-3131).
+          [ -f out/cua-spaces-appcast.xml ] && python3 .github/scripts/sparkle_feed.py check out/cua-spaces-appcast.xml
+          true
       - name: Upload the feeds
         if: ${{ !inputs.dry_run }}
         run: |
           set -euo pipefail
+          . "$GITHUB_WORKSPACE/.github/scripts/retry.sh"
           shopt -s nullglob
           files=(out/*.yml out/*.xml)
           if [ ${#files[@]} -gt 0 ]; then
@@ -117,7 +121,7 @@ jobs:
           # Read back what is live.
           mkdir -p live
           for f in "${files[@]}"; do
-            gh release download "$TAG" --pattern "$(basename "$f")" --dir live --clobber --repo "$GITHUB_REPOSITORY"
+            retry gh release download "$TAG" --pattern "$(basename "$f")" --dir live --clobber --repo "$GITHUB_REPOSITORY"
             cmp "$f" "live/$(basename "$f")"
           done
           echo "Uploaded: ${files[*]:-nothing}" >> "$GITHUB_STEP_SUMMARY"

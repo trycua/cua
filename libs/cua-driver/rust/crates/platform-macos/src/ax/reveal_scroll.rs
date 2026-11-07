@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Background scroll through accessibility, for surfaces that drop
 //! background wheel events and keystrokes (Electron/Chromium on macOS).
 //!
@@ -182,14 +185,11 @@ pub unsafe fn reveal_scroll(
     while let Some((container, role)) = candidates.next() {
         let outcome = reveal_in(container, &role, window, direction, distance);
         CFRelease(container as CFTypeRef);
-        match outcome {
-            Some(outcome) => {
-                for (rest, _) in candidates {
-                    CFRelease(rest as CFTypeRef);
-                }
-                return Some(outcome);
+        if let Some(outcome) = outcome {
+            for (rest, _) in candidates {
+                CFRelease(rest as CFTypeRef);
             }
-            None => {}
+            return Some(outcome);
         }
     }
     None

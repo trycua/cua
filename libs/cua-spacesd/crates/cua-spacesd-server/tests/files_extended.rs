@@ -547,3 +547,51 @@ async fn metadata_limits_and_namespaces_are_validated() {
     assert!(read_all(&t, &path).await.is_err());
     t.cleanup().await;
 }
+
+#[tokio::test]
+async fn a_refused_upload_is_answered_without_resetting_the_connection() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let t = target().await;
+    let Some(authority) = t.url.strip_prefix("http://") else {
+        return;
+    };
+    let authority = authority.trim_end_matches('/');
+    let tampered = signed_put(&t, &t.path("refused.bin"), false)
+        .await
+        .replace("sig=", "sig=AA");
+    let body = vec![7u8; 1 << 20];
+    // A request whose body the server never reads: the refusal must still
+    // reach the client instead of a connection reset.
+    for _ in 0..5 {
+        let mut stream = tokio::net::TcpStream::connect(authority).await.unwrap();
+        let head = format!(
+            "PUT {tampered} HTTP/1.1\r\nHost: {authority}\r\nConnection: close\r\nContent-Length: {}\r\n\r\n",
+            body.len()
+        );
+        stream.write_all(head.as_bytes()).await.unwrap();
+        stream.write_all(&body).await.unwrap();
+        let mut response = Vec::new();
+        stream.read_to_end(&mut response).await.unwrap();
+        assert!(
+            response.starts_with(b"HTTP/1.1 403"),
+            "{}",
+            String::from_utf8_lossy(&response)
+        );
+    }
+    // A client that waits for `100 Continue` is refused without being asked
+    // for its body.
+    let mut stream = tokio::net::TcpStream::connect(authority).await.unwrap();
+    let head = format!(
+        "PUT {tampered} HTTP/1.1\r\nHost: {authority}\r\nConnection: close\r\nExpect: 100-continue\r\nContent-Length: {}\r\n\r\n",
+        body.len()
+    );
+    stream.write_all(head.as_bytes()).await.unwrap();
+    let mut response = Vec::new();
+    stream.read_to_end(&mut response).await.unwrap();
+    assert!(
+        response.starts_with(b"HTTP/1.1 403"),
+        "{}",
+        String::from_utf8_lossy(&response)
+    );
+    t.cleanup().await;
+}

@@ -43,6 +43,20 @@ pub struct Verdict {
     pub reason: String,
 }
 
+/// The order a sweep deletes in: machines first, then what they used (a
+/// security group), then the parts of a cloud network from the inside out
+/// (subnets, route table, internet gateway), the network last.
+fn delete_rank(resource_type: &str) -> u8 {
+    match resource_type {
+        "instance" | "sandbox" => 0,
+        "subnet" => 2,
+        "route_table" => 3,
+        "internet_gateway" => 4,
+        "vpc" => 5,
+        _ => 1,
+    }
+}
+
 /// The sweeper's decision for `r`, as the cloud shows it with `tags`,
 /// given this home's `records`. Pure, so the rules are tested directly.
 pub fn verdict(
@@ -217,12 +231,18 @@ pub async fn sweep_provider(
     let mut out = Vec::new();
     // Instances and sandboxes first, shared resources after them.
     let mut ordered: Vec<&Resource> = listed.iter().collect();
-    ordered.sort_by_key(|r| !matches!(r.resource_type.as_str(), "instance" | "sandbox"));
+    ordered.sort_by_key(|r| delete_rank(&r.resource_type));
     for r in ordered {
         if r.state == "terminated" {
             continue;
         }
-        let v = verdict(r, &r.tags, &owner, &records, all, instances_left, t);
+        let mut v = verdict(r, &r.tags, &owner, &records, all, instances_left, t);
+        if !v.delete && r.extra.contains_key(model::DEFAULT_VPC) {
+            v.reason.push_str(
+                "; in the account's default VPC: it is replaced on its next replacement, and \
+                 new machines go to Cua's own VPC",
+            );
+        }
         let mut item = CloudSweepItem {
             resource: r.wire(t),
             action: if v.delete {

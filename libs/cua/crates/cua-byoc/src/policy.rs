@@ -30,6 +30,8 @@ mod tests {
     use std::collections::BTreeSet;
 
     const AWS_SOURCE: &str = include_str!("aws.rs");
+    const AWSNET_SOURCE: &str = include_str!("awsnet.rs");
+    const AWS_SHARES_SOURCE: &str = include_str!("aws_shares.rs");
     const GCP_SOURCE: &str = include_str!("gcp.rs");
     const DOCS: &str =
         include_str!("../../../../../docs/content/docs/cua-sdk/guides/your-cloud-safety.mdx");
@@ -122,7 +124,10 @@ mod tests {
     /// Every `ec2.<op>(` and `sts.<op>(` call in `aws.rs` outside its tests,
     /// as `service:Operation`, plus the SSM read the image parameter needs.
     fn used_actions() -> BTreeSet<String> {
-        let src = AWS_SOURCE.split("#[cfg(test)]").next().unwrap();
+        let aws = AWS_SOURCE.split("#[cfg(test)]").next().unwrap();
+        let net = AWSNET_SOURCE.split("#[cfg(test)]").next().unwrap();
+        let shares = AWS_SHARES_SOURCE.split("#[cfg(test)]").next().unwrap();
+        let src = &format!("{aws}\n{net}\n{shares}");
         let b = src.as_bytes();
         let ident = |c: u8| c.is_ascii_alphanumeric() || c == b'_';
         let mut out = BTreeSet::new();
@@ -195,9 +200,14 @@ mod tests {
                 assert!(!a.contains('*'), "{sid}: wildcard action {a}");
             }
         }
+        // IAM counts a managed policy's size without whitespace.
         assert!(
-            aws_policy_json().len() < 6144,
-            "IAM managed policies are limited to 6,144 characters"
+            aws_policy_json()
+                .chars()
+                .filter(|c| !c.is_whitespace())
+                .count()
+                < 6144,
+            "IAM managed policies are limited to 6,144 characters (whitespace not counted)"
         );
     }
 
@@ -211,6 +221,10 @@ mod tests {
             "ec2:DescribeInstances",
             "sts:GetCallerIdentity",
             "ec2:GetConsoleOutput",
+            "ec2:CreateVpc",
+            "ec2:CreateInternetGateway",
+            "ec2:AssociateRouteTable",
+            "ec2:DeleteVpc",
         ] {
             assert!(used.contains(known), "scanner missed {known}: {used:?}");
         }
@@ -249,6 +263,8 @@ mod tests {
             "Disassociate",
             "Reboot",
             "Put",
+            "Allocate",
+            "Release",
         ];
         for s in statements().iter().filter(|s| s["Effect"] == "Allow") {
             let sid = s["Sid"].as_str().unwrap();

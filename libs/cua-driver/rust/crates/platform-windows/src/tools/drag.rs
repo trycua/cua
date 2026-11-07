@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use async_trait::async_trait;
 use cua_driver_contract::{ClickButton, DragInput};
 use cua_driver_core::{
@@ -118,7 +121,7 @@ impl Tool for DragTool {
                     to_y,
                     duration_ms,
                     steps,
-                    &button,
+                    button,
                     &modifier_refs,
                 )
             });

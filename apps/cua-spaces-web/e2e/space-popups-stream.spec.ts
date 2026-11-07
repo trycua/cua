@@ -88,32 +88,35 @@ test("every popup on a Space's page leaves the stream drawn, the same size, with
     await page.waitForTimeout(400);
     const box = (await el.boundingBox())!;
     expect(box, name).not.toBeNull();
-    const now = await viewer(page);
     const over = overlaps(box, before.rect);
     if (over && !modal) {
       await expect
         .poll(async () => ((await viewer(page)).holes ?? []).some((h) => overlaps(h, box)), { message: `${name}: a hole where the popup is`, timeout: 5_000 })
         .toBe(true);
     }
-    const drawn = await viewer(page);
     // A modal dialog hides the video (no hole, nothing drawn over its edge); anything else leaves it drawn.
     await expect.poll(async () => (await viewer(page)).occluded, { message: `${name}: ${modal ? "hidden under a modal dialog" : "not hidden"}`, timeout: 5_000 }).toBe(modal);
+    const drawn = await viewer(page);
     if (modal) expect((await viewer(page)).holes ?? [], `${name}: no hole to leak through`).toEqual([]);
     expect(drawn.visible, `${name}: still visible`).toBe(true);
     expect({ w: drawn.rect.width, h: drawn.rect.height }, `${name}: not resized`).toEqual({ w: before.rect.width, h: before.rect.height });
     expect({ x: drawn.rect.x, y: drawn.rect.y }, `${name}: not moved`).toEqual({ x: before.rect.x, y: before.rect.y });
     expect(drawn.interactive, `${name}: ${modal ? "takes no input under a modal dialog" : "stays interactive"}`).toBe(!modal);
-    void now;
     return over;
   }
 
-  /** The popup is closed: no holes, interactive again, same rect. */
+  /** The popup is closed: no holes, interactive again, same rect. A modal
+   * dialog already reports no holes, so wait for the whole cleared report. */
   async function expectClear(name: string) {
-    await expect.poll(async () => ((await viewer(page)).holes ?? []).length, { message: `${name}: holes gone`, timeout: 5_000 }).toBe(0);
-    const now = await viewer(page);
-    expect(now.interactive, `${name}: interactive again`).toBe(true);
-    expect(now.occluded, name).toBe(false);
-    expect(now.rect, `${name}: same rect`).toEqual(before.rect);
+    await expect
+      .poll(
+        async () => {
+          const now = await viewer(page);
+          return { holes: (now.holes ?? []).length, interactive: now.interactive, occluded: now.occluded, rect: now.rect };
+        },
+        { message: `${name}: holes gone, interactive again, same rect`, timeout: 5_000 },
+      )
+      .toEqual({ holes: 0, interactive: true, occluded: false, rect: before.rect });
   }
 
   // The profile card (a Popover): click a name in "In this Space".

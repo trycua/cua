@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use async_trait::async_trait;
 use core_foundation::base::{CFRelease, CFTypeRef};
 use cua_driver_contract::InvokeMenuInput;
@@ -10,15 +13,7 @@ use cua_driver_core::{
     tool::{Tool, ToolDef},
 };
 use serde_json::Value;
-use std::{
-    ffi::c_void,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        mpsc::{self, SyncSender},
-        Arc,
-    },
-    time::Duration,
-};
+use std::time::Duration;
 
 use crate::ax::bindings::{
     ax_get_window_id, copy_action_names, copy_ax_windows, copy_bool_attr, copy_children,
@@ -415,70 +410,18 @@ fn focus_ax_window(pid: i32, window_id: u32) -> Result<(), String> {
     Ok(())
 }
 
-struct AxWindowFocusRequest {
-    pid: i32,
-    window_id: u32,
-    tx: SyncSender<Result<(), String>>,
-    cancelled: Arc<AtomicBool>,
-}
-
-#[link(name = "System", kind = "framework")]
-extern "C" {
-    static _dispatch_main_q: u8;
-    fn dispatch_async_f(
-        queue: *const c_void,
-        context: *mut c_void,
-        work: unsafe extern "C" fn(*mut c_void),
-    );
-}
-
-unsafe extern "C" fn focus_ax_window_on_main(context: *mut c_void) {
-    let request = unsafe { Box::from_raw(context.cast::<AxWindowFocusRequest>()) };
-    if request.cancelled.load(Ordering::Acquire) {
-        return;
-    }
-    let result = focus_ax_window(request.pid, request.window_id);
-    let _ = request.tx.send(result);
-}
-
 fn focus_ax_window_with_thread_affinity(pid: i32, window_id: u32) -> Result<(), String> {
-    let is_main_thread = objc2_foundation::MainThreadMarker::new().is_some();
-    if pid != std::process::id() as i32 || is_main_thread {
-        return focus_ax_window(pid, window_id);
-    }
-
-    // AX actions against another process execute in that process. An embedded
-    // driver targeting its own window is different: AppKit services AXRaise
-    // in this process, and window ordering is main-thread-only. Queue just the
-    // self-process AX mutation onto AppKit's main queue, then return to the
-    // blocking worker for readiness polling and menu traversal.
-    let (tx, rx) = mpsc::sync_channel(1);
-    let cancelled = Arc::new(AtomicBool::new(false));
-    let request = Box::new(AxWindowFocusRequest {
-        pid,
-        window_id,
-        tx,
-        cancelled: Arc::clone(&cancelled),
-    });
-    unsafe {
-        let main_queue = &raw const _dispatch_main_q as *const c_void;
-        dispatch_async_f(
-            main_queue,
-            Box::into_raw(request).cast::<c_void>(),
-            focus_ax_window_on_main,
-        );
-    }
-    match rx.recv_timeout(MAIN_QUEUE_TIMEOUT) {
-        Ok(result) => result,
-        Err(error) => {
-            // If AppKit never serviced the request, prevent a stale focus
-            // change from firing after this tool call has already failed.
-            cancelled.store(true, Ordering::Release);
-            Err(format!(
-                "invoke_menu: failed waiting for the embedded host window on the AppKit main queue: {error}"
-            ))
-        }
-    }
+    // An embedded driver targeting its own window must raise it on AppKit's
+    // main queue; see `ax::main_thread`. Only the AX mutation moves there; the
+    // blocking worker keeps readiness polling and menu traversal.
+    crate::ax::main_thread::run_ax_mutation(pid, MAIN_QUEUE_TIMEOUT, move || {
+        focus_ax_window(pid, window_id)
+    })
+    .unwrap_or_else(|error| {
+        Err(format!(
+            "invoke_menu: failed waiting for the embedded host window on the AppKit main queue: {error}"
+        ))
+    })
 }
 
 fn focus_exact_window(pid: i32, window_id: u32) -> Result<(), String> {
@@ -506,7 +449,7 @@ fn focus_exact_window(pid: i32, window_id: u32) -> Result<(), String> {
         if exact_window_is_ready(
             live_frontmost_pid(pid, window_id),
             pid,
-            crate::ax::bindings::focused_window_id_of_pid(pid),
+            crate::ax::bindings::focused_window_id_of_pid(pid).map(|window| window.own),
             window_id,
         ) {
             let since = stable_since.get_or_insert(now);
@@ -545,10 +488,15 @@ fn background_unavailable(reason: String) -> ToolResult {
          help: the disabled item ignores its shortcut too. Otherwise use the control in the \
          window."
     );
+    structured_refusal("background_unavailable", message)
+}
+
+fn structured_refusal(code: &str, message: String) -> ToolResult {
     ToolResult::error(message.clone()).with_structured(serde_json::json!({
         "status": "refused",
-        "code": "background_unavailable",
-        "refusal": { "code": "background_unavailable", "message": message }
+        "code": code,
+        "effect": "refused",
+        "refusal": { "code": code, "message": message }
     }))
 }
 
@@ -873,6 +821,9 @@ pub(super) async fn run_in_background(
                     ActionTransport::MacosAppleEvent,
                     "The app's scripting interface reported the document saved",
                 ),
+                Ok(Err(refusal)) if refusal.code == "automation_consent_required" => {
+                    structured_refusal(refusal.code, format!("{preface}{}", refusal.reason))
+                }
                 Ok(Err(refusal)) => background_unavailable(format!(
                     "{preface}{message}, and saving through {app_name}'s scripting interface did not \
                      complete ({}: {}). Nothing was saved",
@@ -975,8 +926,9 @@ impl Tool for InvokeMenuTool {
 
         let outcome = tokio::task::spawn_blocking(move || {
             let prior_frontmost = live_frontmost_app().or_else(crate::apps::frontmost_pid);
-            let prior_frontmost_window =
-                prior_frontmost.and_then(crate::ax::bindings::focused_window_id_of_pid);
+            let prior_frontmost_window = prior_frontmost.and_then(|prior| {
+                crate::ax::bindings::focused_window_id_of_pid(prior).map(|window| window.own)
+            });
             let needs_activation = prior_frontmost != Some(pid);
 
             let result = focus_exact_window(pid, window_id)
@@ -1074,6 +1026,14 @@ mod tests {
         assert!(message.contains("bring_to_front"));
         assert!(message.contains("delivery_mode:\"foreground\""));
         assert!(message.contains("A background hotkey does not help"));
+        let reason = "hotkey cmd+s: Grant TextEdit access in System Settings > Privacy & Security > Automation";
+        let result = structured_refusal("automation_consent_required", reason.into());
+        assert_eq!(result.is_error, Some(true));
+        let data = result.structured_content.unwrap();
+        assert_eq!(data["code"], "automation_consent_required");
+        assert_eq!(data["effect"], "refused");
+        assert_eq!(data["refusal"]["code"], "automation_consent_required");
+        assert_eq!(data["refusal"]["message"], reason);
     }
 
     #[test]

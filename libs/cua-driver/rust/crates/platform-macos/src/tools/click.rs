@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! click tool — matches the Swift reference ClickTool.swift.
 //!
 //! Two addressing modes:
@@ -234,6 +237,7 @@ fn background_pixel_restore_pid(
 /// different app here; the wildcard suppression lease handles genuine side
 /// effects.
 pub(super) async fn restore_user_focus_after_background_pixel(
+    undo: crate::focus_arbiter::UndoWatch,
     pid: i32,
     prior_front: Option<i32>,
     prior_key_wid: Option<u32>,
@@ -249,8 +253,10 @@ pub(super) async fn restore_user_focus_after_background_pixel(
         prior_front,
         pid,
         apps::frontmost_pid(),
-    ) {
-        let _ = apps::activate_pid(previous_pid);
+    )
+    .filter(|_| undo.decide() == crate::focus_arbiter::Decision::Undo)
+    {
+        let _ = apps::reactivate_app(previous_pid);
         wait_until_frontmost(previous_pid, std::time::Duration::from_millis(300)).await;
         true
     } else {
@@ -383,6 +389,17 @@ impl Tool for ClickTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
+        // Fast path (CUA-3102): the guards below leave their check summary
+        // here; it lands in the result under `fast_path`. Off by default.
+        let mut fast_path = None;
+        let mut result = self.invoke_guarded(args, &mut fast_path).await;
+        crate::fast_path_guard::annotate(&mut result, fast_path);
+        result
+    }
+}
+
+impl ClickTool {
+    async fn invoke_guarded(&self, args: Value, fast_path: &mut Option<Value>) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
 
         // ── Window-less screen-absolute branch (scope="desktop") ──────
@@ -614,6 +631,21 @@ impl Tool for ClickTool {
                 None
             };
 
+            // Fast path: check the cached element against what the agent saw.
+            match crate::fast_path_guard::guard_element(
+                "click",
+                pid,
+                wid,
+                &args,
+                element_ptr,
+                button_str == "middle",
+            )
+            .await
+            {
+                crate::fast_path_guard::Outcome::Refuse(refusal) => return refusal,
+                crate::fast_path_guard::Outcome::Proceed { summary, .. } => *fast_path = summary,
+            }
+
             // Surface 5: button=right on the AX path → AXShowMenu (the same surface
             // the dedicated `right_click` tool dispatches). Threads through the
             // identical perform_ax_click code path with the action remapped.
@@ -665,6 +697,17 @@ impl Tool for ClickTool {
             // close, autoscroll, etc.). If we can't resolve a center, error rather
             // than silently degrade to AXPress.
             if button_str == "middle" {
+                if let Some(refusal) = super::refuse_if_disabled(
+                    pid,
+                    wid,
+                    &element_guard,
+                    "middle_click",
+                    delivery_mode.is_foreground(),
+                )
+                .await
+                {
+                    return refusal;
+                }
                 let (cx, cy) = match center {
                     Some(c) => c,
                     None => {
@@ -692,19 +735,40 @@ impl Tool for ClickTool {
 
                 let mods_owned = modifiers.clone();
                 let foreground = delivery_mode.is_foreground();
+                let middle_guard = element_guard.clone();
                 let result = tokio::task::spawn_blocking(move || {
                     let m: Vec<&str> = mods_owned.iter().map(String::as_str).collect();
+                    // Re-read after any activation: the early read skips a
+                    // foreground call into a background app.
+                    let ensure_enabled = || {
+                        crate::input::ax_actions::ensure_ax_action_enabled(
+                            middle_guard.as_ptr(),
+                            "middle_click",
+                        )
+                    };
                     if foreground && !m.is_empty() {
                         crate::input::skylight::with_foreground_hid_activation(
                             pid as libc::pid_t,
                             wid,
                             || {
+                                ensure_enabled()?;
                                 crate::input::mouse::click_at_xy_desktop_with_modifiers_preserving_cursor(
                                     cx, cy, 1, "middle", &m,
                                 )
                             },
                         )
+                    } else if foreground {
+                        crate::input::skylight::with_foreground_assist(
+                            pid as libc::pid_t,
+                            wid,
+                            || {
+                                ensure_enabled()?;
+                                crate::input::mouse::middle_click_at_xy(pid, cx, cy, &m)
+                            },
+                        )
+                        .map(|_| ())
                     } else {
+                        ensure_enabled()?;
                         crate::input::mouse::middle_click_at_xy(pid, cx, cy, &m)
                     }
                 })
@@ -715,7 +779,8 @@ impl Tool for ClickTool {
                          (background CGEvent; not driver-verified — confirm via screenshot)."
                     ))
                     .with_structured(serde_json::json!({ "path": "cgevent", "verified": false, "effect": "unverifiable" })),
-                    Ok(Err(e)) => ToolResult::error(format!("Middle-click failed: {e}")),
+                    Ok(Err(e)) => super::element_disabled_error(pid, wid, &e, foreground)
+                        .unwrap_or_else(|| ToolResult::error(format!("Middle-click failed: {e}"))),
                     Err(e)     => ToolResult::error(format!("Task error: {e}")),
                 };
             }
@@ -939,7 +1004,12 @@ impl Tool for ClickTool {
                     }
                     ToolResult::text(msg).with_structured(structured)
                 }
-                Ok(Err(e)) => ToolResult::error(format!("AX action failed: {e}")),
+                Ok(Err(e)) => match e.downcast_ref::<crate::input::ax_actions::ElementDisabled>() {
+                    Some(disabled) => {
+                        super::element_disabled_result(pid, wid, disabled, foreground)
+                    }
+                    None => ToolResult::error(format!("AX action failed: {e}")),
+                },
                 Err(e) => ToolResult::error(format!("Task error: {e}")),
             }
         } else if let (Some(mut cx), Some(mut cy)) = (x, y) {
@@ -1108,6 +1178,37 @@ impl Tool for ClickTool {
                 None
             };
 
+            // Fast path: window guards, then the AX or pixel check at the
+            // point, before the cursor moves (so hover cannot change the crop).
+            let (screen_x, screen_y, win_local_x, win_local_y) = if let Some(wid) = window_id {
+                match crate::fast_path_guard::guard_pixel(
+                    "click",
+                    pid,
+                    wid,
+                    (win_local_x, win_local_y),
+                    (screen_x, screen_y),
+                    delivery_mode.is_foreground(),
+                )
+                .await
+                {
+                    crate::fast_path_guard::Outcome::Refuse(refusal) => return refusal,
+                    crate::fast_path_guard::Outcome::Proceed { summary, relocate } => {
+                        *fast_path = summary;
+                        match relocate {
+                            Some((dx, dy)) => (
+                                screen_x + dx,
+                                screen_y + dy,
+                                win_local_x + dx,
+                                win_local_y + dy,
+                            ),
+                            None => (screen_x, screen_y, win_local_x, win_local_y),
+                        }
+                    }
+                }
+            } else {
+                (screen_x, screen_y, win_local_x, win_local_y)
+            };
+
             // Pin the overlay above the target window BEFORE animating so
             // the cursor is already sandwiched correctly while it glides in.
             // Both PX deliveries below (AX hit-test and routed events) share
@@ -1126,7 +1227,7 @@ impl Tool for ClickTool {
                 let refusal = tokio::task::spawn_blocking(move || unsafe {
                     let element = element_at_screen_position(pid, screen_x, screen_y)?;
                     let refusal = (crate::ax::exact_target::element_window_id(element)
-                        == Some(select_wid)
+                        .is_some_and(|window| window.is(select_wid))
                         && super::set_value::is_chromium_web_select(pid, select_wid, element))
                     .then(|| {
                         super::set_value::chromium_select_open_refusal(
@@ -1172,7 +1273,9 @@ impl Tool for ClickTool {
                     // Require proven ancestry in the requested window before
                     // acting; otherwise fall through to the routed pixel path
                     // (already gated for this exact window).
-                    if crate::ax::exact_target::element_window_id(element) != Some(hit_test_wid) {
+                    if !crate::ax::exact_target::element_window_id(element)
+                        .is_some_and(|window| window.is(hit_test_wid))
+                    {
                         CFRelease(element as _);
                         return Ok(false);
                     }
@@ -1256,6 +1359,7 @@ impl Tool for ClickTool {
             // or a Safari link that activates a new tab — same side-effect
             // shape as the AX path, so we wrap identically.
             let prior_front = apps::frontmost_pid();
+            let undo = crate::focus_arbiter::UndoWatch::arm();
             let snapshot = match activation_policy {
                 PixelActivationPolicy::SuppressTarget => {
                     WindowChangeDetector::snapshot(prior_front)
@@ -1428,6 +1532,7 @@ impl Tool for ClickTool {
 
             if activation_policy == PixelActivationPolicy::AllowTargetWithoutRaise {
                 restore_user_focus_after_background_pixel(
+                    undo,
                     pid,
                     prior_front,
                     prior_key_wid,

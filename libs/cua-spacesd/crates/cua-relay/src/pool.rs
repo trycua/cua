@@ -807,10 +807,68 @@ pub(crate) fn routes() -> Router<Relay> {
         )
 }
 
-/// The caller: an enrolled device of an account.
+/// What a phone is told when it asks anything of the pool.
+pub const PHONE_NOT_THE_POOL: &str =
+    "a phone is not one of the account's computers: it cannot take part in the pool";
+
+/// Runs before the pool's handlers read a body: a phone is refused whatever it
+/// sends (a malformed body must not get a different answer than a good one).
+pub async fn phone_guard(
+    State(relay): State<Relay>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
+    if let Err(r) = refuse_phone(&relay, request.headers()).await {
+        return r;
+    }
+    next.run(request).await
+}
+
+async fn refuse_phone(relay: &Relay, headers: &HeaderMap) -> Result<(), Response> {
+    // An unauthenticated or unenrolled caller gets the handler's own answer.
+    let Ok(who) = crate::device_api::account(relay, headers).await else {
+        return Ok(());
+    };
+    let Ok(device) = crate::device_api::enrolled(relay, headers, &who) else {
+        return Ok(());
+    };
+    if relay.devices.is_phone(&device) {
+        relay.devices.audit_throttled(
+            &format!("mobile_denied:{device}:pool"),
+            &who.account,
+            crate::devices::AuditEvent::new("mobile_denied")
+                .device(Some(device.as_str()))
+                .detail("pool"),
+        );
+        return Err(error(
+            StatusCode::FORBIDDEN,
+            "mobile_denied",
+            PHONE_NOT_THE_POOL,
+        ));
+    }
+    Ok(())
+}
+
+/// The caller: an enrolled device of an account that is not a phone.
 async fn caller(relay: &Relay, headers: &HeaderMap) -> Result<(Identity, String), Response> {
     let who = crate::device_api::account(relay, headers).await?;
     let device = crate::device_api::enrolled(relay, headers, &who)?;
+    // The pool is how the account's computers coordinate batch work and key each
+    // other; a phone is not one of them (a stolen phone must not hold its lease).
+    if relay.devices.is_phone(&device) {
+        relay.devices.audit_throttled(
+            &format!("mobile_denied:{device}:pool"),
+            &who.account,
+            crate::devices::AuditEvent::new("mobile_denied")
+                .device(Some(device.as_str()))
+                .detail("pool"),
+        );
+        return Err(error(
+            StatusCode::FORBIDDEN,
+            "mobile_denied",
+            PHONE_NOT_THE_POOL,
+        ));
+    }
     Ok((who, device))
 }
 

@@ -55,7 +55,14 @@ jobs:
   # Route once on Linux, then start only the generator rows this change can
   # affect. Unaffected rows previously booted a macOS or Windows runner just to
   # decide to skip.
+  quick:
+    name: quick
+    if: github.event_name == 'pull_request'
+    uses: ./.github/workflows/ci-quick.yml
+
   scope:
+    needs: quick
+    if: ${{ !failure() && !cancelled() }}
     name: Select affected generators
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -120,7 +127,7 @@ jobs:
   native-reference:
     name: Reference / ${{ matrix.library }} / ${{ matrix.platform }}
     needs: scope
-    if: needs.scope.outputs.selected == 'true'
+    if: ${{ !failure() && !cancelled() && needs.scope.result == 'success' && (needs.scope.outputs.selected == 'true') }}
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.scope.outputs.matrix) }}
@@ -130,10 +137,12 @@ jobs:
       run:
         shell: bash
     steps:
-      # The generators read release tags to record the documented version.
+      # The generators read release tags to record the documented version, so
+      # they need history and tags but not every old file's contents.
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          filter: blob:none
           persist-credentials: false
       # The cua SDK generators build cua-sdk, cua-spaces-ffi and cua-bindgen
       # in debug; with the restored cache that fills the hosted runner's disk
@@ -167,11 +176,10 @@ jobs:
           save-if: false
       - name: Install Linux build dependencies
         if: matrix.platform == 'linux' && matrix.library == 'cua-driver'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            clang pkg-config libdbus-1-dev libpipewire-0.3-dev libspa-0.2-dev \
-            libei-dev libxkbcommon-dev libx11-dev libxi-dev libxtst-dev libxext-dev
+        uses: ./.github/actions/apt-install
+        with:
+          packages: >-
+            clang pkg-config libdbus-1-dev libpipewire-0.3-dev libspa-0.2-dev libei-dev libxkbcommon-dev libx11-dev libxi-dev libxtst-dev libxext-dev
       - name: Install protoc (cua SDK generators)
         if: contains(fromJSON('["cua-cli","cua-sdk","cua-rust"]'), matrix.library)
         uses: ./.github/actions/setup-protoc
@@ -190,12 +198,10 @@ jobs:
           key: docs-${{ matrix.library }}
       - name: Install Linux build dependencies (cua SDK)
         if: contains(fromJSON('["cua-cli","cua-sdk","cua-rust"]'), matrix.library)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            build-essential cmake pkg-config libx11-dev libxkbcommon-dev \
-            libwayland-dev libxcb1-dev libx11-xcb-dev libxkbcommon-x11-dev \
-            libxrandr-dev libxi-dev libudev-dev
+        uses: ./.github/actions/apt-install
+        with:
+          packages: >-
+            build-essential cmake pkg-config libx11-dev libxkbcommon-dev libwayland-dev libxcb1-dev libx11-xcb-dev libxkbcommon-x11-dev libxrandr-dev libxi-dev libudev-dev
       - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc # v6
         if: contains(fromJSON('["cua-sdk-python","cua-bench"]'), matrix.library)
       - name: Install the TypeScript SDK's dependencies (typedoc input)

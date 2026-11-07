@@ -23,7 +23,7 @@ pub struct Skill {
     pub source: String,
     /// Front matter `description`.
     pub description: String,
-    /// Front matter `version`, or the cua version.
+    /// Front matter `metadata.version`, or the cua version.
     pub version: String,
     /// Tree hash of the bundled files (same scheme as `fsutil::hash_dir`).
     pub hash: String,
@@ -272,8 +272,8 @@ fn tree_hash(d: &Dir<'_>, files: &[&include_dir::File<'_>]) -> String {
     hex::encode(h.finalize())
 }
 
-/// `name`, `description` (folded `>-` blocks joined) and `version` from
-/// SKILL.md front matter.
+/// `name`, `description` (folded `>-` blocks joined) and `metadata.version`
+/// from SKILL.md front matter.
 pub fn front_matter(md: &str) -> Option<(String, String, Option<String>)> {
     let rest = md
         .strip_prefix("---\n")
@@ -283,15 +283,19 @@ pub fn front_matter(md: &str) -> Option<(String, String, Option<String>)> {
     let mut name = None;
     let mut description = None;
     let mut version = None;
+    let mut in_metadata = false;
     let mut lines = fm.lines().peekable();
     while let Some(l) = lines.next() {
         if l.starts_with(' ') || l.starts_with('\t') {
+            if let Some(v) = l.strip_prefix("  version:").filter(|_| in_metadata) {
+                version = Some(scalar(v));
+            }
             continue;
         }
         let Some((k, v)) = l.split_once(':') else {
             continue;
         };
-        // Drop a trailing YAML comment (`version: 1.2 # x-release-please`).
+        in_metadata = k.trim() == "metadata";
         let v = v.split(" #").next().unwrap_or("").trim();
         let value = if matches!(v, ">-" | ">" | "|" | "|-") {
             let mut parts = Vec::new();
@@ -306,16 +310,22 @@ pub fn front_matter(md: &str) -> Option<(String, String, Option<String>)> {
             parts.retain(|p| !p.is_empty());
             parts.join(" ")
         } else {
-            v.trim_matches('"').trim_matches('\'').to_string()
+            scalar(v)
         };
         match k.trim() {
             "name" => name = Some(value),
             "description" => description = Some(value),
-            "version" => version = Some(value),
             _ => {}
         }
     }
     Some((name?, description?, version.filter(|v| !v.is_empty())))
+}
+
+/// A plain or quoted scalar, without a trailing YAML comment
+/// (`1.2 # x-release-please-version`).
+fn scalar(v: &str) -> String {
+    let v = v.split(" #").next().unwrap_or("").trim();
+    v.trim_matches('"').trim_matches('\'').to_string()
 }
 
 #[cfg(test)]
@@ -346,6 +356,16 @@ mod tests {
             );
             assert!(s.files >= 1);
         }
+        // cua-driver carries its own release version, not the cua one.
+        let driver = bundled().into_iter().find(|s| s.name == "cua-driver");
+        let md = include_str!("../../../skills/cua-driver/SKILL.md");
+        let version = driver.unwrap().version;
+        assert!(
+            md.contains(&format!(
+                "\n  version: {version} # x-release-please-version\n"
+            )),
+            "{version}"
+        );
     }
 
     #[test]
@@ -426,11 +446,14 @@ mod tests {
 
     #[test]
     fn front_matter_handles_folded_descriptions_and_comments() {
-        let md = "---\nname: a\ndescription: >-\n  one\n  two\nversion: 1.2.3 # x-release\nmetadata:\n  k: v\n---\nbody";
+        let md = "---\nname: a\ndescription: >-\n  one\n  two\nmetadata:\n  version: 1.2.3 # x-release\n  k: v\n---\nbody";
         assert_eq!(
             front_matter(md).unwrap(),
             ("a".into(), "one two".into(), Some("1.2.3".into()))
         );
+        // Only `metadata.version` counts, not a top-level or deeper one.
+        let md = "---\nname: a\ndescription: d\nversion: 9.9.9\nmetadata:\n  openclaw:\n    version: 8.8.8\n---\n";
+        assert_eq!(front_matter(md).unwrap().2, None);
         assert!(front_matter("no front matter").is_none());
     }
 }

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use async_trait::async_trait;
 use cua_driver_contract::GetDesktopStateInput;
 use cua_driver_core::{
@@ -70,6 +73,12 @@ impl Tool for GetDesktopStateTool {
             let niri_frame = (crate::wayland::is_wayland() && crate::wayland::niri::is_session())
                 .then(|| crate::wayland::niri::desktop_snapshot().map(|snapshot| snapshot.frame))
                 .transpose()?;
+            // KWin: the logical frame, read before the capture and compared
+            // after it. Its capture is that frame at the largest output scale.
+            let (kwin_frame, kwin_distorted) = match crate::wayland::kwin_desktop_layout()? {
+                Some(layout) => (Some(layout.frame), layout.distorted),
+                None => (None, None),
+            };
             let (native_png, overlay_capture) =
                 cursor_overlay::capture_exclusion::capture_excluding_overlays(
                     &crate::overlay_capture::OverlayExcluder,
@@ -100,6 +109,8 @@ impl Tool for GetDesktopStateTool {
             let hyprland_frame = hyprland_plan.map(|plan| plan.frame);
             let (screen_w, screen_h) = if let Some(frame) = &hyprland_frame {
                 (frame.width, frame.height)
+            } else if let Some(frame) = &kwin_frame {
+                (frame.width, frame.height)
             } else if crate::wayland::is_wayland() {
                 crate::capture_action_frame::desktop_action_dimensions((native_w, native_h))?
             } else {
@@ -107,6 +118,10 @@ impl Tool for GetDesktopStateTool {
             };
             let (png, shot_w, shot_h, scale_factor) =
                 normalize_desktop_capture_for_action_frame(native_png, screen_w, screen_h)?;
+            // One number for one desktop: get_screen_size reports this too.
+            let scale_factor = kwin_frame
+                .as_ref()
+                .map_or(scale_factor, |frame| frame.scale);
             // Opt-in long-edge cap: the full-size capture is the desktop
             // action frame; a capped image is mapped back at dispatch
             // (cua_driver_core::desktop_capture_scale) and by its capture_id.
@@ -153,6 +168,16 @@ impl Tool for GetDesktopStateTool {
                     "the niri output layout changed during get_desktop_state; call it again"
                 );
                 frame.rebase_windows(&mut windows);
+            } else if let Some(frame) = &kwin_frame {
+                // KWin window geometry is in layout coordinates too.
+                anyhow::ensure!(
+                    crate::wayland::kwin_desktop_layout()?
+                        .map(|layout| layout.frame)
+                        .as_ref()
+                        == Some(frame),
+                    "the KWin output layout changed during get_desktop_state; call it again"
+                );
+                frame.rebase_windows(&mut windows);
             }
             let capture_id = crate::capture_action_frame::publish_desktop(
                 &capture_service,
@@ -172,6 +197,7 @@ impl Tool for GetDesktopStateTool {
                 windows,
                 capture_id,
                 overlay_capture,
+                kwin_distorted,
             ))
         })
         .await;
@@ -188,6 +214,7 @@ impl Tool for GetDesktopStateTool {
                 windows,
                 capture_id,
                 overlay_capture,
+                kwin_distorted,
             ))) => {
                 let frame_scale = if shot_w > 0 {
                     f64::from(screen_w) / f64::from(shot_w)
@@ -230,6 +257,15 @@ impl Tool for GetDesktopStateTool {
                     &mut frame_note,
                     &overlay_capture,
                 );
+                if let Some(distorted) = kwin_distorted {
+                    frame_note.push_str(&format!(
+                        "; KWin {} captures rotated output {} distorted: this screenshot does \
+                         not match the screen there, and desktop input there is refused",
+                        distorted.kwin_version,
+                        distorted.outputs.join(", ")
+                    ));
+                    structured["distorted_outputs"] = json!(distorted.outputs);
+                }
                 if let Some(path) = written {
                     structured["screenshot_file_path"] = json!(path);
                     content.push(cua_driver_core::protocol::Content::text(format!(

@@ -16,7 +16,8 @@ export type { DriveMountInput } from "./volume";
 
 /* ---- About (`about::*`) --------------------------------------------------- */
 
-export type UpdateChannelId = "stable" | "beta";
+/** Stable releases, or a build of main every night (Beta is gone: hosts read a saved `beta` as Nightly). */
+export type UpdateChannelId = "stable" | "nightly";
 
 /** `about::AboutInput`: what the host reports about the app and its updater. */
 export interface AboutInput {
@@ -55,6 +56,11 @@ export interface AboutUpdates {
   channelLabel: string;
   channels: SettingsOption[];
   channelHelp: string;
+  /** A prerelease build back on Stable: it stays until the next stable release; null: nothing to say. */
+  channelNote: string | null;
+  /** "Download Stable", the way back right now; null when none is needed. */
+  downloadLabel: string | null;
+  downloadUrl: string | null;
   checkLabel: string;
   checkEnabled: boolean;
   lastCheck: string;

@@ -1,0 +1,25 @@
+name: Install actionlint
+description: >
+  Downloads a pinned actionlint release (retrying on GitHub 5xx and network
+  errors) and puts it on PATH.
+inputs:
+  version:
+    description: actionlint version, without the leading v
+    default: "1.7.12"
+runs:
+  using: composite
+  steps:
+    - name: Download actionlint (retrying)
+      shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+        dir="$RUNNER_TEMP/actionlint-bin"
+        mkdir -p "$dir"
+        curl --fail --silent --show-error --location \
+          --retry 5 --retry-delay 2 --retry-all-errors --connect-timeout 20 \
+          -o "$RUNNER_TEMP/actionlint.tgz" \
+          "https://github.com/rhysd/actionlint/releases/download/v${VERSION}/actionlint_${VERSION}_linux_amd64.tar.gz"
+        tar xzf "$RUNNER_TEMP/actionlint.tgz" -C "$dir" actionlint
+        echo "$dir" >> "$GITHUB_PATH"

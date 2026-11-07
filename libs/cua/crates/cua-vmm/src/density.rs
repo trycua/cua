@@ -404,6 +404,77 @@ pub fn decide(
     pending: &[Pending],
     req: &Request,
 ) -> Result<Admit, Refusal> {
+    decide_inner(cfg, usage, pending, req).map_err(|r| {
+        // A VM that never fits (bigger than everything VMs may use) is not
+        // held back by the others: nothing to stop.
+        if r.0.contains(NEVER_FITS) {
+            r
+        } else {
+            Refusal(format!("{} {}", r.0, holders_note(usage, pending, req)))
+        }
+    })
+}
+
+/// Marks a refusal of a VM bigger than the host's whole VM memory limit.
+const NEVER_FITS: &str = "more than this host's VM memory limit";
+
+/// Opens the sentence that names the VMs holding this host's capacity; its
+/// presence is how a refusal is told from one where none of this runtime's
+/// VMs is running ([`HOLDERS_NONE`]).
+pub const HOLDERS_RUNNING: &str = "Running now:";
+/// Said when no VM of this runtime runs: the host's capacity is held by
+/// other programs, or the limits are set too tight for this machine.
+pub const HOLDERS_NONE: &str = "No Cua VM is running";
+
+/// What to stop or free, for a refusal: the VMs holding capacity, biggest
+/// first, or that none is.
+pub fn holders_note(usage: &Usage, pending: &[Pending], req: &Request) -> String {
+    let mut vms: Vec<(&str, u64, u32)> = usage
+        .vms
+        .iter()
+        .filter(|v| v.name != req.name)
+        .map(|v| {
+            let held = pending
+                .iter()
+                .find(|p| p.name == v.name)
+                .map_or(v.private_mb, |p| p.expected_mb.max(v.private_mb));
+            (v.name.as_str(), held, v.vcpus)
+        })
+        .collect();
+    for p in pending {
+        if p.name != req.name && !vms.iter().any(|(n, _, _)| *n == p.name) {
+            vms.push((p.name.as_str(), p.expected_mb, p.vcpus));
+        }
+    }
+    if vms.is_empty() {
+        return format!(
+            "{HOLDERS_NONE} on this machine, so other programs are using its memory or CPUs: close some, or raise the limits (CUA_VM_MAX_RSS_FRACTION, CUA_VM_MIN_AVAILABLE_MB)."
+        );
+    }
+    vms.sort_by_key(|(_, mb, _)| std::cmp::Reverse(*mb));
+    let shown: Vec<String> = vms
+        .iter()
+        .take(5)
+        .map(|(n, mb, c)| format!("{n} ({}, {c} vCPUs)", gib(*mb)))
+        .collect();
+    let more = vms.len().saturating_sub(5);
+    format!(
+        "{HOLDERS_RUNNING} {}{}. Stop or delete the ones you do not need; `cua sb list` shows them.",
+        shown.join(", "),
+        if more > 0 {
+            format!(" and {more} more")
+        } else {
+            String::new()
+        }
+    )
+}
+
+fn decide_inner(
+    cfg: &DensityConfig,
+    usage: &Usage,
+    pending: &[Pending],
+    req: &Request,
+) -> Result<Admit, Refusal> {
     // A shared RAM file already counted (mapped by a running VM, or reserved
     // by a pending one) costs nothing more.
     let new_shared = match &req.shared_file {
@@ -973,6 +1044,42 @@ mod tests {
             shared_file: None,
             shared_file_mb: 0,
         }
+    }
+
+    #[test]
+    fn a_refusal_names_the_vms_holding_the_host() {
+        let (cfg, mut u) = runner();
+        // Two VMs left running (a failed create's leftover among them) hold
+        // the 6.2 GiB VMs may use: the next 4 GiB VM is refused and the
+        // message names them, biggest first.
+        u.vms = vec![vm("leftover", 3_900, None), vm("mine", 2_000, None)];
+        let e = decide(&cfg, &u, &[], &fresh("next", 4096)).unwrap_err().0;
+        assert!(e.contains("VM memory limit"), "{e}");
+        assert!(e.contains(HOLDERS_RUNNING), "{e}");
+        assert!(
+            e.find("leftover").unwrap() < e.find("mine").unwrap(),
+            "biggest first: {e}"
+        );
+        assert!(!e.contains(HOLDERS_NONE), "{e}");
+    }
+
+    #[test]
+    fn a_refusal_with_no_vm_running_says_other_programs_hold_it() {
+        let (cfg, mut u) = runner();
+        // Nothing of ours runs, yet only 1 GiB of memory is available.
+        u.host = host(7_990, 1_000);
+        let e = decide(&cfg, &u, &[], &fresh("first", 4096)).unwrap_err().0;
+        assert!(e.contains(HOLDERS_NONE), "{e}");
+        assert!(!e.contains(HOLDERS_RUNNING), "{e}");
+    }
+
+    #[test]
+    fn a_vm_that_never_fits_is_not_blamed_on_the_others() {
+        let (cfg, mut u) = runner();
+        u.vms = vec![vm("other", 100, None)];
+        let e = decide(&cfg, &u, &[], &fresh("huge", 20_000)).unwrap_err().0;
+        assert!(e.contains("more than this host's VM memory limit"), "{e}");
+        assert!(!e.contains(HOLDERS_RUNNING), "{e}");
     }
 
     #[test]

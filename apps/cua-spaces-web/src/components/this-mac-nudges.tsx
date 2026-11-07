@@ -7,6 +7,7 @@ import { useAddSpaceWhenReady, useRiskyNudge, useSecondAgentNudge, type Nudge } 
 import { CuaKey } from "@/components/cua-key";
 import { Button } from "@/components/ui/button";
 import { toast } from "@/components/ui/toast";
+import { thisComputerLabel } from "@/lib/host-labels";
 
 /**
  * The two This Mac prompts, in the top-right corner over whatever page is
@@ -22,7 +23,7 @@ export function ThisMacNudges() {
   const started = useCallback((os: "macos" | "linux" | null) => {
     setWantSpace(false);
     if (os) toast(`Making a ${os === "macos" ? "macOS" : "Linux"} Space`, { description: "It shows in Spaces with its progress. You can keep working." });
-    else toast("This Mac can't make a Space right now", { description: "Open New Space to see why." });
+    else toast(`${thisComputerLabel()} can't make a Space right now`, { description: "Open New Space to see why." });
   }, []);
 
   // The risky question waits on an agent: it goes first.

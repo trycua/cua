@@ -119,11 +119,13 @@ async fn capabilities_report_contract_and_limitations() {
             "fs_watch",
             "tunnel.forward",
             "hotspot",
+            "spawn",
             "driver",
             "a11y",
             "desktop_stream",
             "audio.uplink",
             "process.exec_ledger",
+            "process.services",
             "fs.run_as",
             "fs.xattr",
             "files.multipart",
@@ -181,6 +183,8 @@ async fn route_spec_consistency() {
         cua_proto::metadata::MEDIA_WS_PATH,
         cua_proto::metadata::TUNNEL_WS_PATH,
         cua_proto::metadata::HOTSPOT_WS_PATH,
+        cua_proto::metadata::SPAWN_WS_PATH,
+        cua_proto::metadata::HOST_PORTS_WS_PATH,
         cua_proto::metadata::VOLUME_WS_PATH,
         cua_proto::metadata::FILES_PATH,
         cua_proto::metadata::MCP_PATH,
@@ -1840,6 +1844,277 @@ async fn hotspot_egress_goes_through_the_peer() {
         .unwrap()
         .into_inner();
     assert_eq!(status.state, HotspotState::Stopped as i32);
+    t.cleanup().await;
+}
+
+#[tokio::test]
+async fn spawn_channel_reaches_the_host_and_tells_processes_where() {
+    let t = target().await;
+    let c = t.client(TransportPreference::Native).await;
+    let spawn = c
+        .tunnel()
+        .start_spawn(StartSpawnRequest {
+            capability: "cap-for-this-space".into(),
+            space_id: "space-under-test".into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+        .into_inner();
+    assert!(spawn.address.starts_with("http://127.0.0.1:"));
+    // A forged ticket is refused.
+    let bad = t.endpoint().ws_url("/spawn?ticket=v1.bad.sig");
+    assert!(ws_connect(&bad).await.is_err());
+    let (ws, _) = ws_connect(t.endpoint().ws_url(&spawn.ws_path))
+        .await
+        .unwrap();
+    let (sink, source) = ws.split();
+    let source = Box::pin(source.filter_map(|m| async move {
+        match m {
+            Ok(tokio_tungstenite::tungstenite::Message::Binary(b)) => Some(b),
+            _ => None,
+        }
+    }));
+    let sink = Box::pin(sink.with(|b: Vec<u8>| async move {
+        Ok::<_, tokio_tungstenite::tungstenite::Error>(
+            tokio_tungstenite::tungstenite::Message::Binary(b),
+        )
+    }));
+    // The host's end: every connection is a stream to its own API (here a
+    // fixed HTTP answer), never a dial into the network.
+    let opened = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let log = opened.clone();
+    tokio::spawn(cua_spacesd_socks::peer::serve_streams(
+        source,
+        sink,
+        move |host: String, port| {
+            log.lock().unwrap().push(format!("{host}:{port}"));
+            async move {
+                let (ours, theirs) = tokio::io::duplex(4096);
+                tokio::spawn(async move {
+                    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+                    let mut s = theirs;
+                    let mut buf = [0u8; 1024];
+                    let _ = s.read(&mut buf).await;
+                    let _ = s
+                        .write_all(b"HTTP/1.0 200 OK\r\nContent-Length: 8\r\n\r\nspawn-ok")
+                        .await;
+                });
+                Ok::<_, std::io::Error>(ours)
+            }
+        },
+    ));
+    // New processes are told the Space, the listener and the capability.
+    let (code, env) = run_sh(
+        &c,
+        "printf '%s|%s|' \"$CUA_SPACE\" \"$CUA_SPAWN\"; cat \"$CUA_SPAWN_TOKEN_FILE\"",
+    )
+    .await;
+    assert_eq!(code, Some(0));
+    assert_eq!(
+        String::from_utf8_lossy(&env),
+        format!("space-under-test|{}|cap-for-this-space", spawn.address)
+    );
+    let mut body = Vec::new();
+    for _ in 0..20 {
+        let (code, out) = run_sh(&c, &format!("curl -s --max-time 5 {}/", spawn.address)).await;
+        body = out;
+        if code == Some(0) && body == b"spawn-ok" {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+    assert_eq!(body, b"spawn-ok");
+    assert_eq!(opened.lock().unwrap()[0], "spawn:0");
+    let status = c
+        .tunnel()
+        .get_spawn_status(GetSpawnStatusRequest {})
+        .await
+        .unwrap()
+        .into_inner();
+    assert!(status.started && status.attached);
+    c.tunnel()
+        .stop_spawn(StopSpawnRequest {
+            spawn_id: spawn.spawn_id,
+        })
+        .await
+        .unwrap();
+    // Stopped: the capability is gone from the guest and new processes are
+    // not told about a channel.
+    let (_, gone) = run_sh(
+        &c,
+        &format!(
+            "test -e '{}' && echo left; printf '%s' \"$CUA_SPAWN\"",
+            spawn.token_path
+        ),
+    )
+    .await;
+    assert_eq!(gone, b"");
+    let status = c
+        .tunnel()
+        .get_spawn_status(GetSpawnStatusRequest {})
+        .await
+        .unwrap()
+        .into_inner();
+    assert!(!status.started);
+    t.cleanup().await;
+}
+
+#[tokio::test]
+async fn a_service_is_kept_running_logged_checked_and_stopped() {
+    let t = target().await;
+    let c = t.client(TransportPreference::Native).await;
+    let name = format!("svc-{}", std::process::id());
+    let ms = |n: u64| {
+        Some(cua_proto::wkt::Duration {
+            seconds: (n / 1000) as i64,
+            nanos: ((n % 1000) * 1_000_000) as i32,
+        })
+    };
+    let put = c
+        .process()
+        .put_service(PutServiceRequest {
+            spec: Some(ServiceSpec {
+                name: name.clone(),
+                config: Some(ProcessConfig {
+                    command: "sh".into(),
+                    args: vec!["-c".into(), "echo started-once; exit 3".into()],
+                    ..Default::default()
+                }),
+                restart: RestartPolicy::OnFailure as i32,
+                backoff_min: ms(100),
+                backoff_max: ms(200),
+                ..Default::default()
+            }),
+        })
+        .await
+        .unwrap()
+        .into_inner()
+        .service
+        .unwrap();
+    assert_eq!(put.spec.unwrap().name, name);
+    // It fails, so the policy starts it again, and again.
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let status = loop {
+        let list = c
+            .process()
+            .list_services(ListServicesRequest {})
+            .await
+            .unwrap()
+            .into_inner();
+        let s = list
+            .services
+            .into_iter()
+            .find(|s| s.spec.as_ref().is_some_and(|p| p.name == name))
+            .unwrap();
+        if s.restarts >= 2 {
+            break s;
+        }
+        assert!(Instant::now() < deadline, "not restarted: {s:?}");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    };
+    assert_eq!(status.last_end.unwrap().exit_code, Some(3));
+    let logs = c
+        .process()
+        .get_service_logs(GetServiceLogsRequest {
+            name: name.clone(),
+            tail_bytes: 0,
+        })
+        .await
+        .unwrap()
+        .into_inner();
+    let text = String::from_utf8_lossy(&logs.data);
+    assert!(text.matches("started-once").count() >= 2, "{text}");
+    assert!(text.contains("[cua] exited with code 3"), "{text}");
+    // Stopped by a caller: it stays stopped.
+    let stopped = c
+        .process()
+        .control_service(ControlServiceRequest {
+            name: name.clone(),
+            action: ServiceAction::Stop as i32,
+        })
+        .await
+        .unwrap()
+        .into_inner()
+        .service
+        .unwrap();
+    assert_eq!(stopped.state, ServiceState::Stopped as i32);
+    c.process()
+        .delete_service(DeleteServiceRequest { name: name.clone() })
+        .await
+        .unwrap();
+    let e = c
+        .process()
+        .get_service_logs(GetServiceLogsRequest {
+            name: name.clone(),
+            tail_bytes: 0,
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(e.code(), Code::NotFound);
+    t.cleanup().await;
+}
+
+#[tokio::test]
+async fn a_failing_health_check_restarts_a_service() {
+    let t = target().await;
+    let c = t.client(TransportPreference::Native).await;
+    let name = format!("probe-{}", std::process::id());
+    let ms = |n: u64| {
+        Some(cua_proto::wkt::Duration {
+            seconds: (n / 1000) as i64,
+            nanos: ((n % 1000) * 1_000_000) as i32,
+        })
+    };
+    // Port 9 (discard) answers nothing on a guest's loopback.
+    c.process()
+        .put_service(PutServiceRequest {
+            spec: Some(ServiceSpec {
+                name: name.clone(),
+                config: Some(ProcessConfig {
+                    command: "sleep".into(),
+                    args: vec!["600".into()],
+                    ..Default::default()
+                }),
+                backoff_min: ms(100),
+                probe: Some(HealthProbe {
+                    tcp: "127.0.0.1:9".into(),
+                    interval: ms(200),
+                    timeout: ms(200),
+                    failure_threshold: 2,
+                    start_period: ms(0),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+        })
+        .await
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        let s = c
+            .process()
+            .list_services(ListServicesRequest {})
+            .await
+            .unwrap()
+            .into_inner()
+            .services
+            .into_iter()
+            .find(|s| s.spec.as_ref().is_some_and(|p| p.name == name))
+            .unwrap();
+        if s.restarts >= 1 {
+            // The failed check stopped it (the reason is cleared once the new
+            // run starts, so it is not asserted here).
+            assert!(s.last_end.is_some(), "{s:?}");
+            break;
+        }
+        assert!(Instant::now() < deadline, "not restarted: {s:?}");
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    c.process()
+        .delete_service(DeleteServiceRequest { name })
+        .await
+        .unwrap();
     t.cleanup().await;
 }
 

@@ -95,20 +95,51 @@ impl Portmap {
     /// `nfs`. `port` 0 picks one (tests).
     pub async fn start(port: u16, nfs: Ports) -> std::io::Result<Portmap> {
         // A fixed port binds once. Port 0 needs one number free for TCP and
-        // for UDP, and TCP and UDP have separate port spaces (Windows keeps
+        // for UDP, and TCP and UDP have separate port spaces. Windows keeps
         // separate excluded ranges, which refuse the bind with "permission
-        // denied"): when the UDP bind refuses the TCP pick, pick again.
-        let mut picks_left = if port == 0 { 32 } else { 1 };
-        let (tcp, udp, addr) = loop {
+        // denied", and hands out ports in order, so retrying the same way can
+        // land in the same excluded block every time. Alternate which protocol
+        // picks the number, and keep refused picks bound until the end so the
+        // OS cannot hand the same number out again.
+        if port != 0 {
             let tcp = TcpListener::bind(("127.0.0.1", port)).await?;
+            let udp = UdpSocket::bind(("127.0.0.1", port)).await?;
             let addr = tcp.local_addr()?;
-            picks_left -= 1;
-            match UdpSocket::bind(("127.0.0.1", addr.port())).await {
-                Ok(udp) => break (tcp, udp, addr),
-                Err(e) if picks_left == 0 => return Err(e),
-                Err(_) => {}
+            return Ok(Self::serve(tcp, udp, addr, nfs));
+        }
+        let mut refused_tcp = Vec::new();
+        let mut refused_udp = Vec::new();
+        let mut last_err = None;
+        for pick in 0..32 {
+            if pick % 2 == 0 {
+                let tcp = TcpListener::bind(("127.0.0.1", 0)).await?;
+                let addr = tcp.local_addr()?;
+                match UdpSocket::bind(("127.0.0.1", addr.port())).await {
+                    Ok(udp) => return Ok(Self::serve(tcp, udp, addr, nfs)),
+                    Err(e) => {
+                        last_err = Some(e);
+                        refused_tcp.push(tcp);
+                    }
+                }
+            } else {
+                let udp = UdpSocket::bind(("127.0.0.1", 0)).await?;
+                let udp_port = udp.local_addr()?.port();
+                match TcpListener::bind(("127.0.0.1", udp_port)).await {
+                    Ok(tcp) => {
+                        let addr = tcp.local_addr()?;
+                        return Ok(Self::serve(tcp, udp, addr, nfs));
+                    }
+                    Err(e) => {
+                        last_err = Some(e);
+                        refused_udp.push(udp);
+                    }
+                }
             }
-        };
+        }
+        Err(last_err.expect("at least one pick was refused"))
+    }
+
+    fn serve(tcp: TcpListener, udp: UdpSocket, addr: SocketAddr, nfs: Ports) -> Portmap {
         let log = CallLog::default();
         let l = log.clone();
         let tcp_task = tokio::spawn(async move {
@@ -126,11 +157,11 @@ impl Portmap {
                 }
             }
         });
-        Ok(Portmap {
+        Portmap {
             tasks: vec![tcp_task, udp_task],
             addr,
             log,
-        })
+        }
     }
 
     /// Where it listens.

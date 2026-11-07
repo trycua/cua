@@ -23,6 +23,20 @@ service ShareService {
   // Opens the share's link once, as its owner would, and reports what came
   // back, so an agent can confirm the link works before handing it over.
   rpc CheckShare(CheckShareRequest) returns (CheckShareResponse);
+  // Lets a share that waits for the owner go live: a public share an agent
+  // in a Space asked for, or the first share through a share edge in a
+  // cloud (the owner agrees to the edge's cost). Owner only; never on a
+  // Space's spawn channel.
+  rpc ApproveShare(ApproveShareRequest) returns (ApproveShareResponse);
+  // Turns down a waiting share.
+  rpc DenyShare(DenyShareRequest) returns (DenyShareResponse);
+  // Where public TCP shares may land, the daily data cap, the default
+  // allowlist and the approval rule.
+  rpc GetShareSettings(GetShareSettingsRequest) returns (GetShareSettingsResponse);
+  // Changes those settings. Owner only.
+  rpc SetShareSettings(SetShareSettingsRequest) returns (SetShareSettingsResponse);
+  // Removes the share edge from the owner's cloud now (its shares end).
+  rpc RemoveShareEdge(RemoveShareEdgeRequest) returns (RemoveShareEdgeResponse);
 }
 
 // Who may open a share.
@@ -84,6 +98,56 @@ message Share {
   // Plain-words limits of this link worth showing next to it (for example
   // that browsers cannot open it yet). Empty when there are none.
   repeated string notices = 9;
+  // A public TCP share: where people connect (unset for an HTTP link).
+  ShareTcp tcp = 10;
+  // The Space whose agent made the share through its spawn channel; empty
+  // when it was made on this computer. The share ends with that Space.
+  string origin = 11;
+  // Set while the share waits for the owner; it serves nothing until
+  // `ApproveShare`.
+  ShareWaiting waiting = 12;
+}
+
+// Why a share waits for its owner.
+message ShareWaiting {
+  // `approval` (an agent in a Space asked for a public share) or `consent`
+  // (the first share edge in a cloud).
+  string reason = 1;
+  // What to show the owner: who asked, or the consent text with the cost.
+  string text = 2;
+  // The route it would take, in plain words ("Through your AWS account").
+  string route_line = 3;
+}
+
+// Where people reach a public TCP share (a raw TCP service in a Space, such
+// as a game server). An experiment, off unless turned on.
+message ShareTcp {
+  // `host:port` on the relay.
+  string address = 1;
+  // The relay host.
+  string host = 2;
+  // The relay port.
+  uint32 port = 3;
+  // A name people can type instead of the address (an SRV record, for
+  // example `mc-1a2b3c4d.m.cua.sh` for Minecraft). Empty when there is none.
+  string srv_name = 4;
+  // The SRV service (`minecraft`). Empty when there is none.
+  string service = 5;
+  // How people reach it: `host` (the Space's own machine in the owner's
+  // cloud), `edge` (a share edge in the owner's cloud) or `relay` (Cua).
+  string route = 6;
+  // The plain line next to the address ("Through your AWS account",
+  // "Through Cua").
+  string route_line = 7;
+  // The cloud a `host` or `edge` route uses (`aws`). Empty for `relay`.
+  string cloud = 8;
+  // Who may connect (CIDRs). Empty: anyone.
+  repeated string allow = 9;
+  // Minecraft Java connections that did not dial this address are dropped.
+  bool check_host = 10;
+  // The most data this share may move (its part of the daily cap); 0: no
+  // cap.
+  uint64 max_bytes = 11;
 }
 
 // Request for `ShareService.CreateShare`.
@@ -96,6 +160,118 @@ message CreateShareRequest {
   google.protobuf.Duration ttl = 3;
   // Name for lists.
   string name = 4;
+  // Share the Space port as raw TCP at a public address on the relay (a
+  // game server, for example) instead of an HTTP link. Needs a Space port
+  // target and public access; lasts 24 h unless `ttl` says less. An
+  // experiment, off unless turned on.
+  bool tcp = 5;
+  // With `tcp`: the SRV service (`minecraft`), so people can type a name
+  // instead of the port.
+  string service = 6;
+  // With `tcp`: the route, `auto` (or empty), `host`, `edge` or `relay`.
+  // Auto takes the Space's own cloud machine when it has one, else a share
+  // edge in a linked cloud, else Cua's relay, within the share settings.
+  string route = 7;
+  // With `tcp`: who may connect (CIDRs or addresses, at most 32). Empty:
+  // the settings' default allowlist (usually anyone).
+  repeated string allow = 8;
+  // With `tcp`: drop Minecraft Java connections that did not dial this
+  // share's address (needs service `minecraft`).
+  bool check_host = 9;
+  // With `tcp`: the owner agrees now to a share edge the route needs (the
+  // consent card was shown). Without it such a share waits for
+  // `ApproveShare`.
+  bool consent = 10;
+}
+
+// Request for `ShareService.ApproveShare`.
+message ApproveShareRequest {
+  // The waiting share's id.
+  string id = 1;
+  // Also let this share's Space share without asking from now on.
+  bool always = 2;
+}
+
+// Response for `ShareService.ApproveShare`.
+message ApproveShareResponse {
+  // The share, now live, with its address.
+  Share share = 1;
+}
+
+// Request for `ShareService.DenyShare`.
+message DenyShareRequest {
+  // The waiting share's id.
+  string id = 1;
+}
+
+// Response for `ShareService.DenyShare`.
+message DenyShareResponse {}
+
+// Where public TCP shares land.
+enum ShareLanding {
+  // Auto: the Space's own cloud machine, else a share edge, else Cua.
+  SHARE_LANDING_UNSPECIFIED = 0;
+  // Only through the owner's clouds; never Cua's relay.
+  SHARE_LANDING_ONLY_MY_CLOUD = 1;
+  // Cua's relay, unless the Space runs on its own cloud machine.
+  SHARE_LANDING_ALLOW_RELAY = 2;
+}
+
+// The share settings.
+message ShareSettings {
+  // Where public TCP shares land.
+  ShareLanding landing = 1;
+  // Whether Cua's relay may carry public TCP shares at all.
+  bool relay_fallback = 2;
+  // The most data public TCP shares may move in a day, in MiB. 0: no cap.
+  uint64 daily_cap_mib = 3;
+  // The allowlist new shares start with (CIDRs). Empty: anyone.
+  repeated string default_allow = 4;
+  // Ask the owner before a share an agent made goes public.
+  bool approve_agent_shares = 5;
+  // Spaces whose agents may share without asking.
+  repeated string always_allow_spaces = 6;
+  // Clouds the owner agreed may hold a share edge.
+  repeated string edge_consent = 7;
+}
+
+// Request for `ShareService.GetShareSettings`.
+message GetShareSettingsRequest {}
+
+// Response for `ShareService.GetShareSettings`.
+message GetShareSettingsResponse {
+  // The settings.
+  ShareSettings settings = 1;
+  // Data public TCP shares moved today, in bytes.
+  uint64 used_today = 2;
+  // The share edge, when there is one: its cloud, address and the monthly
+  // cost estimate in US dollars.
+  string edge_cloud = 3;
+  // The edge's address.
+  string edge_host = 4;
+  // About what the edge costs a month, in US dollars.
+  double edge_monthly_usd = 5;
+}
+
+// Request for `ShareService.SetShareSettings`.
+message SetShareSettingsRequest {
+  // The new settings (all fields).
+  ShareSettings settings = 1;
+}
+
+// Response for `ShareService.SetShareSettings`.
+message SetShareSettingsResponse {
+  // The settings as saved.
+  ShareSettings settings = 1;
+}
+
+// Request for `ShareService.RemoveShareEdge`.
+message RemoveShareEdgeRequest {}
+
+// Response for `ShareService.RemoveShareEdge`.
+message RemoveShareEdgeResponse {
+  // Shares that ended with it.
+  repeated string stopped = 1;
 }
 
 // Response for `ShareService.CreateShare`.

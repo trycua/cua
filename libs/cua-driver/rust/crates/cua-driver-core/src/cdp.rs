@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Cross-platform CDP (Chrome DevTools Protocol) helper.
 //!
 //! Legacy-compatible `Runtime.evaluate` support for the cross-platform

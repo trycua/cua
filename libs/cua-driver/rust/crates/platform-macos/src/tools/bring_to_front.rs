@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! macOS `bring_to_front`.
 //!
 //! This is the explicit persistent-foreground escape hatch for focus-proxy
@@ -202,7 +205,8 @@ fn observe_exact_window(pid: i32, window_id: u32) -> ExactWindowObservation {
     ExactWindowObservation {
         workspace_frontmost_pid: crate::apps::frontmost_pid(),
         front_process_matches_target: crate::input::skylight::front_process_matches(pid, window_id),
-        focused_window_id: crate::ax::bindings::focused_window_id_of_pid(pid),
+        focused_window_id: crate::ax::bindings::focused_window_id_of_pid(pid)
+            .map(|window| window.own),
         frontmost_ordinary_window_id,
         process_front_window_on_display,
         target_visible_ordinary,
@@ -333,8 +337,7 @@ impl Tool for BringToFrontTool {
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        crate::window_change_detector::end_tail();
-        crate::window_change_detector::note_intentional_activation();
+        crate::focus_arbiter::note_intentional();
         let pid = match args.get("pid").and_then(Value::as_i64) {
             Some(p) => match libc::pid_t::try_from(p) {
                 Ok(pid) => pid,

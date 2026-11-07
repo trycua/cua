@@ -87,6 +87,10 @@ export const FLOW_PLAN: Record<string, FlowPlan> = {
   experiments: { status: "run", screen: "settings/advanced" },
   "placement-picker": { status: "run", screen: "new-space" },
   machines: { status: "run", screen: "machines" },
+  prepare: {
+    status: "skip",
+    reason: "The new setup (Settings, Advanced, Labs) draws prepare.view as is; bridge/prepare-core.ts drives the wasm core and src/__tests__/first-run-parity.test.ts replays the flow",
+  },
   "first-run": {
     status: "skip",
     reason: "The page draws firstRun.view as is; src/__tests__/first-run-parity.test.ts replays this flow on the wasm core and src/__tests__/first-run.test.tsx drives the screen",
@@ -108,6 +112,18 @@ export const FLOW_PLAN: Record<string, FlowPlan> = {
   "pro-banner": {
     status: "skip",
     reason: "The Pro banner and account menu are not drawn yet; bridge/__tests__/spaces-page.test.ts replays this flow through bridge/spaces-page.ts",
+  },
+  "github-connection": {
+    status: "skip",
+    reason: "The Connections, GitHub rows and pages draw githubConnection.view as is (components/settings/connections/github-group.tsx); src/__tests__/github-connection.test.tsx drives them on the wasm core and the core's parity flow replays the view",
+  },
+  "thread-cards": {
+    status: "skip",
+    reason: "The push card and the author tag draw threadCards.exportCard and threadCards.author as is (components/space-thread/export-card.tsx); src/__tests__/cards-toolcalls.test.tsx drives them and the core's parity flow replays the views",
+  },
+  "ci-runners": {
+    status: "skip",
+    reason: "The CI Runners page draws ciRunners.view as is (components/ci); bridge/__tests__/ci-runners.test.ts replays this flow through bridge/ci-runners.ts on the wasm core and src/__tests__/ci-runners-page.test.tsx drives the page",
   },
   checklist: {
     status: "skip",

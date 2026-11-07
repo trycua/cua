@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Tool trait and registry.
 
 use std::collections::{HashMap, HashSet};
@@ -1105,6 +1108,42 @@ pub enum ProtectedResourceOwnership {
     DriverOwned,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProtectedResourceScopeError {
+    pub code: Option<&'static str>,
+    pub message: String,
+}
+
+impl From<String> for ProtectedResourceScopeError {
+    fn from(message: String) -> Self {
+        Self {
+            code: None,
+            message,
+        }
+    }
+}
+
+impl From<&str> for ProtectedResourceScopeError {
+    fn from(message: &str) -> Self {
+        Self::from(message.to_owned())
+    }
+}
+
+impl From<crate::browser::BrowserRefusal> for ProtectedResourceScopeError {
+    fn from(refusal: crate::browser::BrowserRefusal) -> Self {
+        Self {
+            code: Some(refusal.code.as_str()),
+            message: refusal.message,
+        }
+    }
+}
+
+impl std::fmt::Display for ProtectedResourceScopeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
 /// A callable tool handler. Object-safe — uses `Box<dyn Tool>`.
 #[async_trait]
 pub trait Tool: Send + Sync {
@@ -1139,7 +1178,7 @@ pub trait Tool: Send + Sync {
         &self,
         _adapter_id: &str,
         _args: &Value,
-    ) -> Result<Option<Value>, String> {
+    ) -> Result<Option<Value>, ProtectedResourceScopeError> {
         Ok(None)
     }
 
@@ -1150,11 +1189,11 @@ pub trait Tool: Send + Sync {
         adapter_id: &str,
         args: &Value,
         approved_scope: &Value,
-    ) -> Result<(), String> {
+    ) -> Result<(), ProtectedResourceScopeError> {
         match self.protected_resource_scope(adapter_id, args).await? {
             Some(current) if current == *approved_scope => Ok(()),
-            Some(_) => Err("the protected resource identity changed before dispatch".to_owned()),
-            None => Err("the protected resource identity cannot be re-proven".to_owned()),
+            Some(_) => Err("the protected resource identity changed before dispatch".into()),
+            None => Err("the protected resource identity cannot be re-proven".into()),
         }
     }
 
@@ -1317,7 +1356,13 @@ impl ToolRegistry {
         let session_end_hook =
             crate::session::register_scoped_session_end_hook(move |session_id| {
                 crate::agent_cursor::forget_input_origin(session_id);
-                if let Some(ownership) = weak_ownership.upgrade() {
+                // An idle sweep only pauses a session: the same label can be
+                // started again and still owns what it launched. A later
+                // terminal end reruns this hook and drops it.
+                if let Some(ownership) = weak_ownership.upgrade().filter(|_| {
+                    crate::session::session_end_reason(session_id)
+                        != Some(crate::session::SessionEndReason::IdleTimeout)
+                }) {
                     ownership.remove_session(session_id);
                 }
                 if let Some(captures) = weak_captures.upgrade() {
@@ -1860,6 +1905,9 @@ impl ToolRegistry {
         } else {
             Ok(crate::post_action_wait::PostActionWait::Default)
         };
+        let delta_target = (!in_batch && crate::fast_path::wire::returns_delta(tool))
+            .then(|| crate::fast_path::wire::delta_target(&args))
+            .flatten();
         let mut result = match wait {
             Ok(wait) => {
                 crate::post_action_wait::scope(
@@ -1870,6 +1918,21 @@ impl ToolRegistry {
             }
             Err((message, structured)) => ToolResult::error(message).with_structured(structured),
         };
+        // Fast path `on` (CUA-3102): a direct action returns the window's
+        // delta in the same result, so the agent needs no separate re-read.
+        if let Some((pid, window_id)) = delta_target.filter(|_| result.is_error != Some(true)) {
+            let mut read = serde_json::json!({
+                "pid": pid,
+                "window_id": window_id,
+                "since": "latest",
+            });
+            if let Some(session) = session.as_deref() {
+                read["session"] = Value::String(session.to_owned());
+            }
+            let delta =
+                Box::pin(self.invoke_authorized("get_window_state", read, context, evidence)).await;
+            crate::fast_path::wire::attach_delta(&mut result, delta);
+        }
         crate::recovery_hint::annotate(tool, &seed, &mut result);
         crate::batch_nudge::annotate(tool, session.as_deref(), in_batch, &mut result);
         result
@@ -2682,7 +2745,7 @@ impl ToolRegistry {
                 && tool
                     .protected_resource_scope("private_observation", args)
                     .await
-                    .map_err(crate::consent::ConsentError::Provider)?
+                    .map_err(crate::consent::ConsentError::ProtectedScope)?
                     .is_none()
             {
                 return Err(crate::consent::ConsentError::Provider(
@@ -2698,7 +2761,7 @@ impl ToolRegistry {
         let browser_scope = if history_resource.is_none() {
             tool.protected_resource_scope("private_observation", args)
                 .await
-                .map_err(crate::consent::ConsentError::Provider)?
+                .map_err(crate::consent::ConsentError::ProtectedScope)?
         } else {
             None
         };
@@ -3167,7 +3230,7 @@ impl ToolRegistry {
         let mut resource = tool
             .protected_resource_scope(adapter_id, args)
             .await
-            .map_err(|message| protected_scope_refusal(&message))?
+            .map_err(|error| protected_scope_error_refusal(&error))?
             .ok_or_else(|| {
                 protected_scope_refusal(
                     "the concrete tool cannot attest an exact protected resource scope",
@@ -3218,10 +3281,12 @@ impl ToolRegistry {
                 scope.remove("driver_owned");
             }
         }
-        if let Err(message) = tool
+        if let Err(error) = tool
             .validate_protected_resource_scope(adapter_id, args, &validation_scope)
             .await
         {
+            // Any validation error revokes the grant, whatever code it carries:
+            // a CDP timeout here still means the caller must re-bind, not wait.
             if let Some(grant) = self.protected_resource_grants.revoke_resource(
                 context,
                 lifecycle_session,
@@ -3231,8 +3296,8 @@ impl ToolRegistry {
                 self.approval_broker.revoke(&grant).await;
             }
             return Err(protected_refusal(
-                "protected_resource_scope_stale",
-                &message,
+                error.code.unwrap_or("protected_resource_scope_stale"),
+                &error.message,
             ));
         }
         Ok(())
@@ -3517,26 +3582,12 @@ fn canonical_proposed_path(raw: &str) -> Result<String, ToolResult> {
     Ok(canonical.to_string_lossy().into_owned())
 }
 
+/// Tools that drive shared native input or window state. Derived from the
+/// contract's action-result vocabulary so a new native action tool cannot
+/// skip the desktop lane. `bring_to_front` returns its own result shape but
+/// still activates a window.
 fn is_physical_desktop_action(tool: &str) -> bool {
-    matches!(
-        tool,
-        "click"
-            | "double_click"
-            | "right_click"
-            | "scroll"
-            | "drag"
-            | "mouse_drag"
-            | "parallel_mouse_drag"
-            | "move_cursor"
-            | "mouse_button_down"
-            | "mouse_button_up"
-            | "type_text"
-            | "press_key"
-            | "hotkey"
-            | "set_value"
-            | "bring_to_front"
-            | "set_window_frame"
-    )
+    cua_driver_contract::is_desktop_action_result_tool(tool) || tool == "bring_to_front"
 }
 
 fn requires_desktop_coordination(tool: &str, args: &Value, independent_lane: bool) -> bool {
@@ -3768,6 +3819,7 @@ mod runtime_isolation_tests {
         protocol::{Content, ToolResult},
         session_authorization::{SessionAuthorizationRegistry, SessionModeCeiling},
     };
+    #[cfg(feature = "yaml")]
     use std::io::Write;
     use std::sync::{
         atomic::{AtomicUsize, Ordering},
@@ -3801,12 +3853,14 @@ mod runtime_isolation_tests {
             .unwrap()
     }
 
+    #[cfg(feature = "yaml")]
     fn bounded_context(
         manifest_source: &str,
     ) -> Arc<crate::session_authorization::EffectiveAuthorizationContext> {
         manifest_context(PermissionMode::Bounded, manifest_source)
     }
 
+    #[cfg(feature = "yaml")]
     fn manifest_context(
         mode: PermissionMode,
         manifest_source: &str,
@@ -3883,7 +3937,7 @@ mod runtime_isolation_tests {
             &self,
             _adapter_id: &str,
             _args: &serde_json::Value,
-        ) -> Result<Option<serde_json::Value>, String> {
+        ) -> Result<Option<serde_json::Value>, super::ProtectedResourceScopeError> {
             Ok(Some(self.scope.clone()))
         }
 
@@ -3892,14 +3946,14 @@ mod runtime_isolation_tests {
             _adapter_id: &str,
             _args: &serde_json::Value,
             approved_scope: &serde_json::Value,
-        ) -> Result<(), String> {
+        ) -> Result<(), super::ProtectedResourceScopeError> {
             if self.stale_before_dispatch {
-                return Err("synthetic process identity changed".to_owned());
+                return Err("synthetic process identity changed".into());
             }
             if *approved_scope == self.scope {
                 Ok(())
             } else {
-                Err("synthetic scope mismatch".to_owned())
+                Err("synthetic scope mismatch".into())
             }
         }
 
@@ -3936,6 +3990,29 @@ mod runtime_isolation_tests {
                 "window_id": args["window_id"].as_u64().unwrap_or(7),
                 "snapshot_id": "synthetic-snapshot", "elements": []
             }))
+        }
+    }
+
+    struct StringScopeProbe {
+        def: super::ToolDef,
+    }
+
+    #[async_trait::async_trait]
+    impl super::Tool for StringScopeProbe {
+        fn def(&self) -> &super::ToolDef {
+            &self.def
+        }
+
+        async fn protected_resource_scope(
+            &self,
+            _adapter_id: &str,
+            _args: &serde_json::Value,
+        ) -> Result<Option<serde_json::Value>, super::ProtectedResourceScopeError> {
+            Err("synthetic scope lookup failed".into())
+        }
+
+        async fn invoke(&self, _args: serde_json::Value) -> crate::protocol::ToolResult {
+            crate::protocol::ToolResult::text("must not run")
         }
     }
 
@@ -4340,6 +4417,7 @@ mod runtime_isolation_tests {
         assert_eq!(provider.requests.load(Ordering::SeqCst), 1);
     }
 
+    #[cfg(feature = "yaml")]
     #[tokio::test]
     async fn bounded_history_requires_the_matching_operation_resource() {
         for (operations, expected_allowed) in
@@ -4367,6 +4445,53 @@ mod runtime_isolation_tests {
         }
     }
 
+    #[cfg(feature = "yaml")]
+    #[tokio::test]
+    async fn manifest_launch_reaches_the_platform_only_for_launchable_apps() {
+        const MANIFEST: &str = "version: 3\nexpires_after: 1h\nidle_timeout: 30m\nresources:\n  apps:\n    - bundle_id: com.apple.TextEdit\n      launch: true\n    - bundle_id: com.apple.Preview\n      launch: false\nallow:\n  tools: [launch_app]\n";
+        // A loaded manifest narrows every mode, so the launch grant applies to
+        // standard and unrestricted runtimes as well as bounded ones.
+        for mode in [
+            PermissionMode::Bounded,
+            PermissionMode::Standard,
+            PermissionMode::Unrestricted,
+        ] {
+            for (bundle_id, expected_allowed) in [
+                ("com.apple.TextEdit", true),
+                ("com.apple.Preview", false),
+                ("com.apple.calculator", false),
+            ] {
+                let hits = Arc::new(AtomicUsize::new(0));
+                let registry = observation_registry_for("launch_app", None, hits.clone());
+                let context = manifest_context(mode, MANIFEST);
+                let result = registry
+                    .invoke_with_context(
+                        "launch_app",
+                        serde_json::json!({"bundle_id": bundle_id, "session": "review"}),
+                        context,
+                    )
+                    .await;
+                assert_eq!(
+                    hits.load(Ordering::SeqCst),
+                    usize::from(expected_allowed),
+                    "{mode:?} {bundle_id}"
+                );
+                if expected_allowed {
+                    assert_ne!(result.is_error, Some(true));
+                } else {
+                    let structured = result.structured_content.unwrap();
+                    assert_eq!(structured["refusal"]["code"], "permission_denied");
+                    let expected = format!(
+                        "Permission denied: launch_app bundle_id '{bundle_id}' {}",
+                        "is outside the capability manifest"
+                    );
+                    assert_eq!(structured["refusal"]["message"], expected, "{mode:?}");
+                }
+            }
+        }
+    }
+
+    #[cfg(feature = "yaml")]
     #[tokio::test]
     async fn bounded_observation_uses_only_the_manifest_without_a_protected_host() {
         let hits = Arc::new(AtomicUsize::new(0));
@@ -4400,6 +4525,7 @@ resources:
         assert_ne!(result.is_error, Some(true));
     }
 
+    #[cfg(feature = "yaml")]
     #[tokio::test]
     async fn capability_manifest_typed_resources_narrow_standard_and_unrestricted() {
         for mode in [PermissionMode::Standard, PermissionMode::Unrestricted] {
@@ -4463,6 +4589,7 @@ resources:
         }
     }
 
+    #[cfg(feature = "yaml")]
     #[tokio::test]
     async fn capability_manifest_tools_narrow_standard_and_unrestricted() {
         for mode in [PermissionMode::Standard, PermissionMode::Unrestricted] {
@@ -4488,6 +4615,7 @@ allow:
         }
     }
 
+    #[cfg(feature = "yaml")]
     #[tokio::test]
     async fn rejected_typed_resource_does_not_refresh_manifest_idle_lease() {
         let denied_hits = Arc::new(AtomicUsize::new(0));
@@ -4854,6 +4982,7 @@ resources:
         assert_eq!(provider.requests.load(Ordering::SeqCst), 0);
     }
 
+    #[cfg(feature = "yaml")]
     #[tokio::test]
     async fn background_input_rechecks_manifest_before_every_adapter_dispatch() {
         // The adapter may retain a native connection after a successful call.
@@ -5577,6 +5706,7 @@ resources:
         );
     }
 
+    #[cfg(feature = "yaml")]
     #[tokio::test]
     async fn manifest_cannot_widen_standard_foreign_process_termination() {
         let hits = Arc::new(AtomicUsize::new(0));
@@ -5614,6 +5744,7 @@ resources:
         );
     }
 
+    #[cfg(feature = "yaml")]
     #[tokio::test]
     async fn manifest_preserves_standard_owned_process_termination_inside_scope() {
         let hits = Arc::new(AtomicUsize::new(0));
@@ -5703,6 +5834,208 @@ resources:
             .await;
         assert_ne!(result.is_error, Some(true));
         assert_eq!(hits.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn an_idle_ended_session_keeps_its_launches_for_its_own_label_only() {
+        let hits = Arc::new(AtomicUsize::new(0));
+        let mut registry = attested_registry("kill_app", None, hits.clone(), false);
+        let tools = Arc::get_mut(&mut registry).unwrap();
+        tools.register(Box::new(crate::session_tools::StartSessionTool));
+        tools.register(Box::new(crate::session_tools::EndSessionTool));
+        let context = standard_context();
+        let prefix = format!("__cua_runtime_{}:", context.runtime_scope_key());
+        let call = |name: &'static str, session: &'static str| {
+            let registry = registry.clone();
+            let context = context.clone();
+            async move {
+                registry
+                    .invoke_with_context(
+                        name,
+                        serde_json::json!({"pid": 424242, "session": session}),
+                        context,
+                    )
+                    .await
+            }
+        };
+        let refusal_code = |result: &ToolResult| {
+            result
+                .structured_content
+                .as_ref()
+                .and_then(|value| value.pointer("/refusal/code"))
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned)
+        };
+        let launched = || {
+            registry
+                .protected_resource_ownership()
+                .mark_driver_owned_process(
+                    &context.runtime_session_key("run"),
+                    crate::browser::ProcessFingerprint {
+                        pid: 424242,
+                        start_time: Some(7),
+                        executable: Some(fixture_executable()),
+                    },
+                );
+        };
+
+        // launch_app under "run", then the run idles past the sweep and the
+        // client starts "run" again.
+        assert_ne!(call("start_session", "run").await.is_error, Some(true));
+        launched();
+        assert_eq!(
+            crate::session::evict_idle_with_prefix(Duration::ZERO, &prefix).len(),
+            1
+        );
+        assert_ne!(call("start_session", "run").await.is_error, Some(true));
+
+        // Another session still cannot kill the process.
+        assert_ne!(call("start_session", "other").await.is_error, Some(true));
+        assert_eq!(
+            refusal_code(&call("kill_app", "other").await).as_deref(),
+            Some("foreign_process_termination_denied")
+        );
+        assert_eq!(hits.load(Ordering::SeqCst), 0);
+
+        let killed = call("kill_app", "run").await;
+        assert_ne!(killed.is_error, Some(true), "{killed:?}");
+        assert_eq!(hits.load(Ordering::SeqCst), 1);
+
+        // Every terminal end drops the launch records, whether the session
+        // was live or had already idled out: end_session, transport
+        // teardown, and revocation.
+        let run = context.runtime_session_key("run");
+        for terminal in ["end_session", "transport", "revoke"] {
+            for idle_first in [false, true] {
+                launched();
+                if idle_first {
+                    crate::session::evict_idle_with_prefix(Duration::ZERO, &prefix);
+                }
+                match terminal {
+                    "end_session" => {
+                        assert_ne!(call("end_session", "run").await.is_error, Some(true));
+                    }
+                    "transport" => {
+                        assert_eq!(
+                            crate::session::end_sessions_for_owner(
+                                &run,
+                                crate::session::SessionEndReason::ProcessExit
+                            ),
+                            1
+                        );
+                    }
+                    _ => {
+                        assert!(crate::session::revoke_sessions_with_prefix(&prefix) >= 1);
+                    }
+                }
+                assert!(
+                    !registry
+                        .protected_resource_ownership()
+                        .is_driver_owned_pid(&run, 424242),
+                    "{terminal} idle_first={idle_first}"
+                );
+                assert_ne!(call("start_session", "run").await.is_error, Some(true));
+                assert_eq!(
+                    refusal_code(&call("kill_app", "run").await).as_deref(),
+                    Some("foreign_process_termination_denied"),
+                    "{terminal} idle_first={idle_first}"
+                );
+            }
+        }
+        assert_eq!(hits.load(Ordering::SeqCst), 1);
+
+        crate::session::revoke_sessions_with_prefix(&prefix);
+        crate::session::forget_ended_sessions_with_prefix(&prefix);
+    }
+
+    #[tokio::test]
+    async fn ending_an_idled_session_keeps_the_launches_of_its_next_episode() {
+        let hits = Arc::new(AtomicUsize::new(0));
+        let mut registry = attested_registry("kill_app", None, hits.clone(), false);
+        let tools = Arc::get_mut(&mut registry).unwrap();
+        tools.register(Box::new(crate::session_tools::StartSessionTool));
+        tools.register(Box::new(crate::session_tools::EndSessionTool));
+        let context = standard_context();
+        let prefix = format!("__cua_runtime_{}:", context.runtime_scope_key());
+        let run = context.runtime_session_key("revived");
+        let call = |name: &'static str| {
+            let registry = registry.clone();
+            let context = context.clone();
+            async move {
+                registry
+                    .invoke_with_context(
+                        name,
+                        serde_json::json!({"pid": 424242, "session": "revived"}),
+                        context,
+                    )
+                    .await
+            }
+        };
+        let fingerprint = crate::browser::ProcessFingerprint {
+            pid: 424242,
+            start_time: Some(7),
+            executable: Some(fixture_executable()),
+        };
+        assert_ne!(call("start_session").await.is_error, Some(true));
+        registry
+            .protected_resource_ownership()
+            .mark_driver_owned_process(&run, fingerprint.clone());
+        crate::session::evict_idle_with_prefix(Duration::ZERO, &prefix);
+
+        // A revival racing the explicit end lands while its cleanup runs and
+        // records a launch for the next episode if it is admitted.
+        let ownership = Arc::downgrade(&registry.protected_resource_ownership());
+        let observed = run.clone();
+        let raced = Arc::new(std::sync::Mutex::new(None));
+        let raced_in_hook = raced.clone();
+        let _race = crate::session::register_scoped_session_end_hook(move |ended| {
+            if ended != observed
+                || crate::session::session_end_reason(ended)
+                    == Some(crate::session::SessionEndReason::IdleTimeout)
+            {
+                return;
+            }
+            let revived = crate::session::activate_or_revive_session_for_owner(
+                ended,
+                Some("revived"),
+                ended,
+                false,
+                crate::session::SessionTransport::Daemon,
+                crate::session::SessionClientKind::Cli,
+                None,
+            );
+            if revived.is_ok() {
+                if let Some(ownership) = ownership.upgrade() {
+                    ownership.mark_driver_owned_process(ended, fingerprint.clone());
+                }
+            }
+            raced_in_hook.lock().unwrap().replace(revived.is_ok());
+        });
+        assert_ne!(call("end_session").await.is_error, Some(true));
+        assert_eq!(
+            *raced.lock().unwrap(),
+            Some(false),
+            "the end ran its cleanup and refused the revival meanwhile"
+        );
+
+        // The next episode starts after cleanup, and its launch stays.
+        assert_ne!(call("start_session").await.is_error, Some(true));
+        registry
+            .protected_resource_ownership()
+            .mark_driver_owned_process(
+                &run,
+                crate::browser::ProcessFingerprint {
+                    pid: 424242,
+                    start_time: Some(7),
+                    executable: Some(fixture_executable()),
+                },
+            );
+        let killed = call("kill_app").await;
+        assert_ne!(killed.is_error, Some(true), "{killed:?}");
+        assert_eq!(hits.load(Ordering::SeqCst), 1);
+
+        crate::session::revoke_sessions_with_prefix(&prefix);
+        crate::session::forget_ended_sessions_with_prefix(&prefix);
     }
 
     #[tokio::test]
@@ -5855,6 +6188,51 @@ resources:
                 .and_then(serde_json::Value::as_str),
             Some("protected_resource_scope_stale")
         );
+    }
+
+    #[tokio::test]
+    async fn a_plain_string_scope_error_keeps_the_generic_refusal_codes() {
+        for (name, read_only, code) in [
+            ("get_browser_state", true, "authorization_host_failed"),
+            ("browser_click", false, "protected_resource_scope_invalid"),
+        ] {
+            let mut registry = super::ToolRegistry::new_with_protected_consent_provider(Some(
+                Arc::new(AcceptingProvider {
+                    requests: AtomicUsize::new(0),
+                }),
+            ));
+            registry.register(Box::new(StringScopeProbe {
+                def: super::ToolDef {
+                    name: name.to_owned(),
+                    description: "test string scope error".into(),
+                    input_schema: serde_json::json!({"type": "object"}),
+                    read_only,
+                    destructive: false,
+                    idempotent: read_only,
+                    open_world: true,
+                },
+            }));
+            let result = registry
+                .invoke_with_context(
+                    name,
+                    serde_json::json!({
+                        "target_id": "target-1",
+                        "tab_id": "tab-1",
+                        "session": "browser"
+                    }),
+                    standard_context(),
+                )
+                .await;
+            assert_eq!(
+                result
+                    .structured_content
+                    .as_ref()
+                    .and_then(|value| value.pointer("/refusal/code"))
+                    .and_then(serde_json::Value::as_str),
+                Some(code),
+                "{name}"
+            );
+        }
     }
 
     #[tokio::test]
@@ -6368,6 +6746,27 @@ resources:
     }
 
     #[test]
+    fn every_native_action_result_tool_takes_the_desktop_lane() {
+        use super::is_physical_desktop_action;
+        for name in cua_driver_contract::ACTION_RESULT_TOOLS {
+            assert_eq!(
+                is_physical_desktop_action(name),
+                !name.starts_with("browser_"),
+                "{name}"
+            );
+        }
+        assert!(is_physical_desktop_action("bring_to_front"));
+        for name in [
+            "get_window_state",
+            "screenshot",
+            "launch_app",
+            "browser_click",
+        ] {
+            assert!(!is_physical_desktop_action(name), "{name}");
+        }
+    }
+
+    #[test]
     fn independent_input_requires_adapter_attestation_and_an_exact_background_window() {
         use super::requires_desktop_coordination;
         let exact = serde_json::json!({"pid": 10, "window_id": 20, "delivery_mode": "background"});
@@ -6543,6 +6942,9 @@ fn protected_consent_refusal(error: crate::consent::ConsentError) -> ToolResult 
         crate::consent::ConsentError::DigestMismatch => "authorization_scope_mismatch",
         crate::consent::ConsentError::Expired => "authorization_expired",
         crate::consent::ConsentError::Provider(_) => "authorization_host_failed",
+        crate::consent::ConsentError::ProtectedScope(error) => {
+            error.code.unwrap_or("authorization_host_failed")
+        }
         crate::consent::ConsentError::BoundedResource(_) => "bounded_resource_outside_manifest",
     };
     let message = error.to_string();
@@ -6557,6 +6959,13 @@ fn protected_consent_refusal(error: crate::consent::ConsentError) -> ToolResult 
 
 fn protected_scope_refusal(message: &str) -> ToolResult {
     protected_refusal("protected_resource_scope_invalid", message)
+}
+
+fn protected_scope_error_refusal(error: &ProtectedResourceScopeError) -> ToolResult {
+    protected_refusal(
+        error.code.unwrap_or("protected_resource_scope_invalid"),
+        &error.message,
+    )
 }
 
 /// Recovery text for a call on an ended lifecycle episode. A named session is

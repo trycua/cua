@@ -1,17 +1,23 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
+import { exportAskText } from "./export-ask";
+import { ExportCard } from "./export-card";
 import { CheckIcon, FileTextIcon, ImageIcon, ReplyIcon, XIcon } from "lucide-react";
-import { Fragment, memo, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { Fragment, memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
-import { useBridge, type ThreadAttachment, type ThreadEntry, type ThreadItem, type ThreadQuote, type ThreadView } from "@/bridge";
+import { authorView, exportCardView, useBridge, type ThreadAttachment, type ThreadEntry, type ThreadItem, type ThreadQuote, type ThreadView } from "@/bridge";
+import { CuaKey } from "@/components/cua-key";
 import { Inlines } from "@/components/markdown";
 import { Button } from "@/components/ui/button";
 import { parseInline } from "@/lib/markdown";
 import { mentionSegments } from "@/lib/mentions";
+import { abilityOfAction } from "@/lib/agent-home/prompt";
+import { askText } from "@/lib/agent-home/requests";
 import { cn, isMacPlatform } from "@/lib/utils";
 
 import { AgentTile, MemberAvatar } from "./avatar";
+import { ChildSpaceRow, SubagentRow } from "./child-rows";
 import { FailureNote } from "./failure-note";
 import { AgentName, AiTag, holderNames, MemberEventNote } from "./identity";
 import { MentionChip, ProfileTrigger } from "./profile-card";
@@ -164,7 +170,7 @@ export function ThreadView({
 export function aboveSeq(items: readonly ThreadItem[], i: number): number | null {
   for (let j = i - 1; j >= 0; j--) {
     const it = items[j]!;
-    if (it.type === "system" || it.type === "unread") continue;
+    if (it.type === "system" || it.type === "unread" || it.type === "subagent" || it.type === "child_space") continue;
     return it.entry.seq;
   }
   return null;
@@ -211,6 +217,10 @@ export const ThreadItemView = memo(function Item({
           {item.text}
         </p>
       );
+    case "subagent":
+      return <SubagentRow item={item} />;
+    case "child_space":
+      return <ChildSpaceRow item={item} />;
     case "message":
       // One row, in order. A reply quotes the message it answers only when that is not the one right above it.
       return <Message entry={item.entry} {...m} quote={item.quote && item.quote.seq !== above ? item.quote : null} task={item.taskText !== null ? { text: item.taskText, onRetry } : undefined} />;
@@ -244,6 +254,7 @@ function Message({
   label,
   status,
   footnote,
+  hideText,
   quote,
   task,
   surface = "background",
@@ -258,6 +269,8 @@ function Message({
   surface?: "background" | "muted";
   /** Beside the name and time (a task's state, an approval's). */
   status?: ReactNode;
+  /** The host's card says it itself: no text under the name. */
+  hideText?: boolean;
   /** A muted line under the text ("Runs on Ada's keys"). */
   footnote?: string | null;
   /** The message this one replies to, when it is not the one right above. */
@@ -266,9 +279,14 @@ function Message({
   task?: { text: string; onRetry?: (text: string) => Promise<void> };
 }) {
   const who = roster.author(entry.author);
+  // Cua's own entries (the host's cards and notices): the name Cua, one APP tag and the app icon, all from the core.
+  const { core } = useBridge();
+  const app = useMemo(() => (entry.author.kind === "system" ? authorView(core, entry.author) : null), [core, entry.author]);
   // A person's card: the roster's entry for this author (by id, else by name).
   const person = who.kind === "person" ? (roster.people.find((p) => p.id === entry.author.id) ?? roster.people.find((p) => p.label === who.label)) : undefined;
-  const avatar = (
+  const avatar = app?.avatar ? (
+    <CuaKey size={28} label={app.avatarLabel ?? undefined} className="mt-0.5 size-7" />
+  ) : (
     <MemberAvatar
       kind={who.kind === "agent" ? "agent" : "person"}
       name={who.kind === "agent" ? (who.handle ?? who.label) : who.label}
@@ -323,7 +341,16 @@ function Message({
       )}
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
-          {who.kind === "agent" ? <AgentName who={who} roster={roster} onRemove={onRemoveAgent} /> : person ? (
+          {app ? (
+            <>
+              <span className="truncate text-[13px] font-semibold">{app.name}</span>
+              {app.tag ? (
+                <span data-author-tag="" className="shrink-0 text-[10px] leading-4 font-medium tracking-[0.06em] text-muted-foreground uppercase">
+                  {app.tag}
+                </span>
+              ) : null}
+            </>
+          ) : who.kind === "agent" ? <AgentName who={who} roster={roster} onRemove={onRemoveAgent} /> : person ? (
             <ProfileTrigger person={person} className="truncate text-[13px] font-semibold hover:underline" data={{ "data-person-name": person.label }}>
               {who.label}
             </ProfileTrigger>
@@ -337,7 +364,7 @@ function Message({
           {status ? <span className="shrink-0">{status}</span> : null}
         </div>
         {quote ? <ReplyQuote quote={quote} roster={roster} /> : null}
-        {entry.text ? <ThreadText text={entry.text} handles={roster.handles} /> : null}
+        {entry.text && !hideText ? <ThreadText text={entry.text} handles={roster.handles} /> : null}
         {entry.failure ? <FailureNote failure={entry.failure} harness={who.harness ?? ""} taskText={task?.text ?? null} onRetry={task?.onRetry} /> : null}
         {entry.view ? <ViewLine view={entry.view} /> : null}
         {footnote ? (
@@ -445,6 +472,15 @@ function Approval({
   // Only who holds the asking agent's `approve` right answers (the daemon refuses anyone else).
   const asker = entry.author.kind === "agent" ? roster.agents.find((a) => a.id === entry.author.id) : undefined;
   const canAnswer = asker ? asker.youCan.approve : true;
+  // Something leaving the Space (a push to GitHub) is asked by Cua itself: it says what the host measured, is never remembered and is only Push and open or Not now.
+  // The host's measured card (the diffstat, commits and branches), when it sent one: the core words every part of it.
+  const { core } = useBridge();
+  const card = useMemo(() => (entry.approval?.card ? exportCardView(core, entry.approval.card) : null), [core, entry.approval?.card]);
+  const exportAsk = !card && entry.approval ? exportAskText(entry.approval.action, entry.approval.details) : null;
+  // An agent asking for an ability (see Spaces, use a machine) says it in plain words, on this same card.
+  const ability = !card && !exportAsk && entry.approval ? abilityOfAction(entry.approval.action) : null;
+  const abilityAsk = ability ? askText({ seq: entry.seq, ability, detail: (entry.approval?.details ?? "").trim(), tsMs: entry.tsMs }, null) : null;
+  const ask = card ? { title: card.repo, detail: "", allow: card.allow } : (exportAsk ?? abilityAsk);
   const press = (approve: boolean) => {
     setBusy(approve);
     setError(null);
@@ -456,6 +492,28 @@ function Approval({
       },
     );
   };
+  // Answered: the card is one muted line.
+  if (card && answer) {
+    return (
+      <div data-approval={entry.seq} data-approval-state={answer.approve ? "approved" : "denied"} data-approval-collapsed="" className="my-1 flex items-center gap-2 py-1 text-xs text-muted-foreground">
+        {answer.approve ? <CheckIcon className="size-3.5 shrink-0 text-success" /> : <XIcon className="size-3.5 shrink-0 text-destructive" />}
+        <span className="min-w-0 truncate" title={new Date(answer.tsMs).toLocaleString()}>
+          {answer.approve ? card.resultApproved : card.resultDeclined} by {roster.author(answer.by).label}
+        </span>
+      </div>
+    );
+  }
+  // Answered: the card is one muted line.
+  if (card && answer) {
+    return (
+      <div data-approval={entry.seq} data-approval-state={answer.approve ? "approved" : "denied"} data-approval-collapsed="" className="my-1 flex items-center gap-2 py-1 text-xs text-muted-foreground">
+        {answer.approve ? <CheckIcon className="size-3.5 shrink-0 text-success" /> : <XIcon className="size-3.5 shrink-0 text-destructive" />}
+        <span className="min-w-0 truncate" title={new Date(answer.tsMs).toLocaleString()}>
+          {answer.approve ? card.resultApproved : card.resultDeclined} by {roster.author(answer.by).label}
+        </span>
+      </div>
+    );
+  }
   return (
     <div data-approval={entry.seq} data-approval-state={answer ? (answer.approve ? "approved" : "denied") : (entry.approval?.state ?? "open")} className="-mx-3 my-1.5 rounded-lg bg-muted/50 px-3 pb-3">
       <Message
@@ -465,6 +523,7 @@ function Approval({
         onRemoveAgent={onRemoveAgent}
         label={label}
         surface="muted"
+        hideText={!!card}
         status={
           closed ? null : (
             <span className="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground">
@@ -475,10 +534,16 @@ function Approval({
         }
       />
       <div className="ml-10">
-        <p className="text-[13px] font-medium">{entry.approval?.action}</p>
-        {entry.approval?.details ? <p className="mt-0.5 text-xs text-muted-foreground">{entry.approval.details}</p> : null}
+        {card ? (
+          <ExportCard view={card} />
+        ) : (
+          <>
+            <p className="text-[13px] font-medium">{ask ? ask.title : entry.approval?.action}</p>
+            {(ask ? ask.detail : entry.approval?.details) ? <p className="mt-0.5 text-xs text-muted-foreground">{ask ? ask.detail : entry.approval?.details}</p> : null}
+          </>
+        )}
       </div>
-      <div className="mt-2.5 ml-10 flex items-center gap-2">
+      <div data-card-line={card ? "buttons" : undefined} className="mt-2.5 ml-10 flex items-center gap-2">
         {answer ? (
           <p data-approval-answer="" className="flex items-center gap-1.5 text-xs text-muted-foreground">
             {answer.approve ? <CheckIcon className="size-3.5 text-success" /> : <XIcon className="size-3.5 text-destructive" />}
@@ -497,10 +562,10 @@ function Approval({
         ) : (
           <>
             <Button size="sm" disabled={busy !== null} onClick={() => press(true)}>
-              Approve
+              {ask ? ask.allow : "Approve"}
             </Button>
             <Button size="sm" variant="outline" disabled={busy !== null} onClick={() => press(false)}>
-              Deny
+              {card ? card.deny : ask ? "Not now" : "Deny"}
             </Button>
             {error ? <span className="text-xs text-destructive">{error}</span> : null}
           </>

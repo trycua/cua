@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Pure-Rust port of the Swift `Recording/Zoom/` module (zoom math,
 //! action spans, zoom regions). Cross-platform by construction — no OS
 //! deps, just `f64` arithmetic + `Vec`.

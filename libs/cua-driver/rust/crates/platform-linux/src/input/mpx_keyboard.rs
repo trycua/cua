@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Focus-free keyboard delivery on X11 via XInput2 MPX: a second master
 //! keyboard with its own focus, fed by a uinput slave.
 //!
@@ -883,7 +886,7 @@ mod tests {
             .keysyms
             .iter_mut()
             .filter(|sym| **sym == 0)
-            .skip(2)
+            .skip(4)
             .for_each(|sym| *sym = 1);
         let restored = std::cell::Cell::new(0);
         let error = plan_text_with_fallback(&keymap, Some(50), "aé€a", |ch, mapping| {

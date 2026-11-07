@@ -123,19 +123,7 @@ pub fn app_space_detail_live(
     core::spaces::sidebar::detail_live(&space, usage.as_ref(), host_arch.as_deref())
 }
 
-/// [`app_space_detail_live`] without what Settings, Experiments hides (the
-/// Share button while Sharing is off).
-#[uniffi::export]
-pub fn app_space_detail_with(
-    space: AppSpace,
-    usage: Option<AppSpaceUsage>,
-    host_arch: Option<String>,
-    experiments: AppExperiments,
-) -> AppSpaceDetail {
-    core::spaces::sidebar::detail_with(&space, usage.as_ref(), host_arch.as_deref(), &experiments)
-}
-
-/// [`app_space_detail_with`] as this device sees it: `access` (from
+/// [`app_space_detail_live`] as this device sees it: `access` (from
 /// [`app_machine_access_notice`]) greys out Connect on every Space reached
 /// through the relay while this device is not enrolled; one of your
 /// machines that does not share its desktop shows its note in place of the
@@ -145,14 +133,12 @@ pub fn app_space_detail_for(
     space: AppSpace,
     usage: Option<AppSpaceUsage>,
     host_arch: Option<String>,
-    experiments: AppExperiments,
     access: Option<AppMachineAccessNotice>,
 ) -> AppSpaceDetail {
     core::spaces::sidebar::detail_for(
         &space,
         usage.as_ref(),
         host_arch.as_deref(),
-        &experiments,
         access.as_ref(),
     )
 }
@@ -1061,6 +1047,14 @@ pub fn app_about_view(input: AppAboutInput) -> AppAboutView {
 #[uniffi::export]
 pub fn app_about_allowed_channels(channel: AppUpdateChannel) -> Vec<String> {
     core::about::allowed_channels(channel)
+}
+
+/// The appcast a Sparkle updater on `channel` reads, from the app's own
+/// `SUFeedURL` (`stable_feed`): the nightly appcast for Nightly; `None`
+/// keeps `SUFeedURL` (for Nightly: this feed has no nightly next to it).
+#[uniffi::export]
+pub fn app_about_feed_url(channel: AppUpdateChannel, stable_feed: String) -> Option<String> {
+    core::about::feed_url(channel, &stable_feed)
 }
 
 /// What this launch does (refresh after an update; the version to record).
@@ -2169,29 +2163,127 @@ pub fn app_resources_warning(warning: cua_sdk::DiskWarning) -> Option<AppWarning
     core::resources::warning_view(&core_of(&warning))
 }
 
-/// Reads the settings file (defaults when missing or damaged).
+/// Reads the settings file (defaults when missing or damaged). The
+/// experiments the daemon enforces (Secure Spaces, Child Spaces, Ask first, CI runners, Public TCP shares, Phone app) are what
+/// the cua home keeps, so `cua experiments enable` shows in the app.
 #[uniffi::export]
 pub fn app_settings_load(path: String) -> AppSettings {
-    core::settings::load(std::path::Path::new(&path))
+    let mut settings = core::settings::load(std::path::Path::new(&path));
+    settings.experiments = sync_experiments_from_home(settings.experiments, &cua_home::cua_home());
+    settings
 }
 
-/// Writes the settings file.
+/// The experiments the daemon enforces ([`cua_spaces::experiments::Gate`])
+/// of `experiments`, with the switches `home` keeps laid over them: what
+/// `cua experiments enable` set wins over what the app's file remembers.
+fn sync_experiments_from_home(
+    mut experiments: AppExperiments,
+    home: &std::path::Path,
+) -> AppExperiments {
+    use cua_spaces::experiments::{Gate, switch};
+    if let Some(on) = switch(home, Gate::SecureSpaces) {
+        experiments.secure_spaces = on;
+    }
+    if let Some(on) = switch(home, Gate::ChildSpaces) {
+        experiments.child_spaces = on;
+    }
+    if let Some(on) = switch(home, Gate::AskFirst) {
+        experiments.ask_first = on;
+    }
+    if let Some(on) = switch(home, Gate::CiRunners) {
+        experiments.ci_runners = on;
+    }
+    if let Some(on) = switch(home, Gate::TcpShares) {
+        experiments.tcp_shares = on;
+    }
+    if let Some(on) = switch(home, Gate::Mobile) {
+        experiments.mobile = on;
+    }
+    if let Some(on) = switch(home, Gate::WarmPools) {
+        experiments.warm_pools = on;
+    }
+    experiments
+}
+
+/// Keeps the daemon's experiments of `experiments` in `home` (only a change
+/// is written).
+fn sync_experiments_to_home(
+    experiments: &AppExperiments,
+    home: &std::path::Path,
+) -> std::io::Result<()> {
+    use cua_spaces::experiments::{Gate, set_switch};
+    set_switch(home, Gate::SecureSpaces, experiments.secure_spaces)?;
+    set_switch(home, Gate::ChildSpaces, experiments.child_spaces)?;
+    set_switch(home, Gate::AskFirst, experiments.ask_first)?;
+    set_switch(home, Gate::CiRunners, experiments.ci_runners)?;
+    set_switch(home, Gate::TcpShares, experiments.tcp_shares)?;
+    set_switch(home, Gate::Mobile, experiments.mobile)?;
+    set_switch(home, Gate::WarmPools, experiments.warm_pools)
+}
+
+/// Writes the settings file, and keeps the experiments the daemon enforces
+/// where it reads them (the cua home).
 #[uniffi::export]
 pub fn app_settings_save(path: String, settings: AppSettings) -> Result<()> {
     core::settings::save(std::path::Path::new(&path), &settings)
-        .map_err(|e| CuaError::Internal(e.to_string()))
+        .map_err(|e| CuaError::Internal(e.to_string()))?;
+    sync_experiments_to_home(&settings.experiments, &cua_home::cua_home())
+        .map_err(|e| CuaError::Internal(format!("keep the experiment switches: {e}")))
 }
 
-/// The settings with the New UI as a launch of `version` shows it: the
-/// user's choice, else the default for the update channel and version
-/// (again after the channel changes).
-#[uniffi::export]
-pub fn app_settings_resolve_new_ui(settings: AppSettings, version: String) -> AppSettings {
-    core::settings::resolve_new_ui(&settings, &version)
+#[cfg(test)]
+mod experiment_sync_tests {
+    use super::*;
+
+    #[test]
+    fn the_daemon_switches_follow_the_cua_home_both_ways() {
+        let home = tempfile::tempdir().unwrap();
+        // Nothing kept: the app's own file decides.
+        let mine = AppExperiments {
+            child_spaces: true,
+            ci_runners: true,
+            ..Default::default()
+        };
+        assert_eq!(sync_experiments_from_home(mine, home.path()), mine);
+        // What `cua experiments enable` set wins.
+        cua_spaces::experiments::set_switch(
+            home.path(),
+            cua_spaces::experiments::Gate::SecureSpaces,
+            true,
+        )
+        .unwrap();
+        let seen = sync_experiments_from_home(mine, home.path());
+        assert!(seen.secure_spaces && seen.child_spaces && seen.ci_runners);
+        // The app's switches land in the home for the daemon.
+        sync_experiments_to_home(&seen, home.path()).unwrap();
+        assert_eq!(
+            cua_spaces::experiments::switch(
+                home.path(),
+                cua_spaces::experiments::Gate::ChildSpaces
+            ),
+            Some(true)
+        );
+        // Only the daemon's experiments are kept there.
+        let kept: Vec<_> = std::fs::read_dir(home.path().join("experiments"))
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        assert!(
+            kept.iter().all(|n| n == "secure-spaces"
+                || n == "child-spaces"
+                || n == "ask-first"
+                || n == "ci-runners"
+                || n == "tcp-shares"
+                || n == "mobile"
+                || n == "warm-pools"),
+            "{kept:?}"
+        );
+    }
 }
 
 /// The update channel of an install's first launch, from the file's
-/// `channel`: Beta for a prerelease, else unchanged.
+/// `channel`: Nightly for a prerelease, else unchanged.
 #[uniffi::export]
 pub fn app_settings_first_launch_channel(
     channel: AppUpdateChannel,
@@ -3597,7 +3689,7 @@ mod resources_tests {
         assert_eq!(v.this_mac.extra_spaces, rt::words::extra_spaces_use(m));
         assert_eq!(
             v.this_mac.warning.as_ref().map(|w| w.text.as_str()),
-            rt::words::warning(&runtime.warning)
+            rt::words::warning_on(&runtime.warning, rt::words::Host::Mac)
         );
         // A running Space.
         let s = &runtime.spaces[0];

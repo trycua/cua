@@ -16,12 +16,13 @@ use crate::profile_card;
 use crate::spaces::{self, creating, roster, sidebar, stream};
 use crate::teleport::{drag, flow, grid, transfer, windows};
 use crate::{
-    CoreError, about, account, agent_keys, agents, bulk_confirm, checklist, cloud_connect,
-    cloud_page, cloud_sheet, connectors, devices, diagnostics, drive_mount_preview, drive_page,
-    drive_settings, driver_preview, experiments, host, local_network, login_item, machines, notch,
-    notifications, nudges, onboarding, onboarding_preview, palette, paths, persistent, presence,
-    relay_usage, resources, runtimes, settings, share, sign_in, space_menu, summon, telemetry,
-    tips, upsell, window, wizard,
+    CoreError, about, account, agent_keys, agent_menu, agents, bulk_confirm, checklist, ci_runners,
+    cloud_connect, cloud_page, cloud_sheet, connectors, devices, diagnostics, drive_mount_preview,
+    drive_page, drive_settings, driver_preview, experiments, github_connection, host,
+    local_network, login_item, machines, notch, notifications, nudges, onboarding,
+    onboarding_preview, palette, paths, persistent, prepare, presence, relay_usage, resources,
+    runtimes, settings, share, sign_in, space_menu, summon, telemetry, thread_cards, tips, upsell,
+    window, wizard,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -79,6 +80,7 @@ pub const METHODS: &[&str] = &[
     "wizard.view",
     "wizard.createArgs",
     "wizard.firstSpaceOffers",
+    "firstPrompts.choose",
     "wizard.pickerImages",
     "wizard.pickerGroups",
     "wizard.findImage",
@@ -168,6 +170,7 @@ pub const METHODS: &[&str] = &[
     "onboarding.reduce",
     "onboarding.view",
     "onboarding.copy",
+    "onboarding.resetPlan",
     "onboarding.signedInText",
     "onboarding.signInCodeText",
     "signIn.footer",
@@ -201,6 +204,10 @@ pub const METHODS: &[&str] = &[
     "connectors.providerSheet",
     "connectors.providerPicker",
     "connectors.models",
+    "connectors.agents",
+    "agentMenu.view",
+    "agentMenu.choose",
+    "agentMenu.sync",
     "connectors.importSheet",
     "connectors.appDetail",
     "connectors.setupCard",
@@ -330,6 +337,13 @@ pub const METHODS: &[&str] = &[
     "checklist.reduce",
     "checklist.view",
     "checklist.observeFrom",
+    "ciRunners.view",
+    "ciRunners.reduce",
+    "prepare.reduce",
+    "prepare.view",
+    "prepare.metrics",
+    "prepare.hidden",
+    "prepare.listed",
     "palette.keybindings",
     "palette.rank",
     "telemetry.experimentsChanged",
@@ -367,9 +381,37 @@ pub const METHODS: &[&str] = &[
     "spaces.bulkDone",
     "tips.view",
     "tips.reduce",
+    "githubConnection.view",
+    "threadCards.exportCard",
+    "threadCards.author",
     "settings.choose",
     "upsell.proBanner",
     "account.menu",
+    // The phone's views and state machines (`phone`).
+    "startTask.view",
+    "startTask.plan",
+    "startTask.parseRepo",
+    "toolRows.group",
+    "toolRows.label",
+    "outbox.initial",
+    "outbox.reduce",
+    "outbox.view",
+    "outbox.found",
+    "cache.line",
+    "approvals.view",
+    "approvals.result",
+    "sendMode.view",
+    "voice.view",
+    "voice.insert",
+    "push.route",
+    "push.registration",
+    "push.settings",
+    "diff.labels",
+    "diff.changes",
+    "diff.file",
+    "diff.preview",
+    "directory.view",
+    "placement.offered",
 ];
 
 struct Args(Value);
@@ -484,32 +526,20 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
             &a.get::<Option<String>>("query")?.unwrap_or_default(),
             &a.get::<Option<String>>("selectedId")?.unwrap_or_default(),
         )),
-        // With `experiments`, what Settings, Experiments hides is left out;
-        // with `access` (this device is signed in but not enrolled), the
-        // detail as this device sees it (`detail_for`, as the SwiftUI app's
-        // `AppModel.detail`).
+        // The detail as this device sees it (`detail_for`, as the SwiftUI
+        // app's `AppModel.detail`); with `access` (this device is signed in
+        // but not enrolled), the machines on the relay say why they are off.
         "sidebar.detail" => {
             let space = a.get("space")?;
             let usage = a.get::<Option<sidebar::SpaceUsage>>("usage")?;
             let host_arch = a.get::<Option<String>>("hostArch")?;
             let access = a.get::<Option<devices::MachineAccessNotice>>("access")?;
-            out(
-                match (
-                    a.get::<Option<experiments::Experiments>>("experiments")?,
-                    access,
-                ) {
-                    (None, None) => {
-                        sidebar::detail_live(&space, usage.as_ref(), host_arch.as_deref())
-                    }
-                    (x, access) => sidebar::detail_for(
-                        &space,
-                        usage.as_ref(),
-                        host_arch.as_deref(),
-                        &x.unwrap_or_default(),
-                        access.as_ref(),
-                    ),
-                },
-            )
+            out(sidebar::detail_for(
+                &space,
+                usage.as_ref(),
+                host_arch.as_deref(),
+                access.as_ref(),
+            ))
         }
         "sidebar.detailCopy" => out(sidebar::detail_copy()),
         "sidebar.deleteFailedText" => out(sidebar::delete_failed_text(
@@ -555,10 +585,14 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
             a.get::<Option<String>>("keyvault")?.as_deref(),
         )),
         "wizard.initial" => out(wizard::initial(&a.get("env")?)),
-        "wizard.reduce" => out(wizard::reduce(
+        // `hostOs`: the shell's system, which decides whether Continue is
+        // allowed (macOS when absent).
+        "wizard.reduce" => out(wizard::reduce_on(
             &a.get("state")?,
             &a.get("action")?,
             &a.get("env")?,
+            a.get::<Option<SpaceOs>>("hostOs")?
+                .unwrap_or(SpaceOs::Macos),
         )),
         // `hostOs`: the shell's system, for its words (macOS when absent).
         "wizard.view" => out(wizard::view_on(
@@ -569,6 +603,11 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
         )),
         "wizard.createArgs" => out(wizard::create_args(&a.get("plan")?)),
         "wizard.firstSpaceOffers" => out(wizard::first_space_offers(
+            &a.get("env")?,
+            a.get::<Option<SpaceOs>>("hostOs")?
+                .unwrap_or(SpaceOs::Macos),
+        )),
+        "firstPrompts.choose" => out(crate::first_prompts::choose_for(
             &a.get("env")?,
             a.get::<Option<SpaceOs>>("hostOs")?
                 .unwrap_or(SpaceOs::Macos),
@@ -700,6 +739,16 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
             &a.get::<Option<tips::TipsState>>("state")?
                 .unwrap_or_default(),
             &a.get::<tips::TipsEvent>("event")?,
+        )),
+        "githubConnection.view" => out(github_connection::view(
+            &a.get::<Option<github_connection::GithubInput>>("input")?
+                .unwrap_or_default(),
+        )),
+        "threadCards.exportCard" => out(thread_cards::export_card_view(
+            &a.get::<thread_cards::ExportCardInput>("input")?,
+        )),
+        "threadCards.author" => out(thread_cards::author_view(
+            &a.get::<thread_cards::AuthorInput>("author")?,
         )),
         "settings.choose" => out(settings::choose(
             &a.get::<Option<settings::AppSettings>>("settings")?
@@ -939,6 +988,7 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
             !a.get::<Option<bool>>("withoutCli")?.unwrap_or(false),
         )),
         "onboarding.copy" => out(onboarding::copy()),
+        "onboarding.resetPlan" => out(crate::onboarding_reset::plan()),
         "onboarding.signedInText" => out(onboarding::signed_in_text(
             a.get::<Option<String>>("identity")?.as_deref(),
         )),
@@ -1016,6 +1066,28 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
             a.get::<Option<bool>>("expanded")?.unwrap_or(false),
         )),
         "connectors.models" => out(connectors::models_view(&a.get("input")?)),
+        "connectors.agents" => out(connectors::agents_view_with(
+            &a.get("input")?,
+            &a.get::<Option<agent_menu::AgentMenuPrefs>>("menu")?
+                .unwrap_or_default(),
+        )),
+        "agentMenu.view" => out(agent_menu::settings_view(
+            &a.get("input")?,
+            &a.get::<Option<agent_menu::AgentMenuPrefs>>("menu")?
+                .unwrap_or_default(),
+        )),
+        "agentMenu.sync" => out(agent_menu::sync(
+            &a.get("input")?,
+            &a.get::<Option<agent_menu::AgentMenuPrefs>>("menu")?
+                .unwrap_or_default(),
+        )),
+        "agentMenu.choose" => out(agent_menu::choose(
+            &a.get("input")?,
+            &a.get::<Option<agent_menu::AgentMenuPrefs>>("menu")?
+                .unwrap_or_default(),
+            &a.get::<String>("app")?,
+            a.get::<Option<bool>>("on")?.unwrap_or(false),
+        )),
         "connectors.importSheet" => out(connectors::import_sheet_on(
             a.get::<Option<SpaceOs>>("hostOs")?
                 .unwrap_or(SpaceOs::Macos),
@@ -1453,6 +1525,39 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
             &a.get::<Option<checklist::ChecklistSeen>>("seen")?
                 .unwrap_or_default(),
         )),
+        "ciRunners.view" => out(ci_runners::view(
+            &a.get::<Option<ci_runners::Overview>>("overview")?
+                .unwrap_or_default(),
+            &a.get::<Option<ci_runners::State>>("state")?
+                .unwrap_or_default(),
+        )),
+        "ciRunners.reduce" => out(ci_runners::reduce(
+            &a.get::<Option<ci_runners::State>>("state")?
+                .unwrap_or_default(),
+            &a.get::<ci_runners::Action>("action")?,
+        )),
+        "prepare.reduce" => out(prepare::reduce(
+            &a.get::<Option<prepare::State>>("state")?
+                .unwrap_or_default(),
+            &a.get::<prepare::Action>("action")?,
+        )),
+        "prepare.view" => out(prepare::view(
+            &a.get::<Option<prepare::State>>("state")?
+                .unwrap_or_default(),
+        )),
+        "prepare.hidden" => out(prepare::hidden_spaces(
+            &a.get::<Option<prepare::State>>("state")?
+                .unwrap_or_default(),
+        )),
+        "prepare.listed" => out(prepare::listed(
+            &a.get::<Option<prepare::State>>("state")?
+                .unwrap_or_default(),
+            &a.get::<Vec<String>>("ids")?,
+        )),
+        "prepare.metrics" => out(prepare::metrics(
+            &a.get::<Option<prepare::State>>("state")?
+                .unwrap_or_default(),
+        )),
         "palette.keybindings" => out(palette::keybindings()),
         "palette.rank" => out(palette::rank(
             &a.get::<Vec<palette::PaletteEntry>>("entries")?,
@@ -1468,7 +1573,10 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
             &a.get::<Option<experiments::Experiments>>("experiments")?
                 .unwrap_or_default(),
         )),
-        other => Err(CoreError::Invalid(format!("unknown method {other}"))),
+        other => match crate::phone::call(other, &a.0) {
+            Some(r) => r,
+            None => Err(CoreError::Invalid(format!("unknown method {other}"))),
+        },
     }
 }
 
@@ -1899,7 +2007,7 @@ mod tests {
     /// out under the notice; one that keeps its desktop private says so,
     /// and Share follows Settings, Experiments.
     #[test]
-    fn the_detail_follows_access_and_experiments() {
+    fn the_detail_follows_access() {
         let space = |id: &str, features: &[&str]| {
             call_value(
                 "spaces.rowToSpace",
@@ -1928,22 +2036,9 @@ mod tests {
                 .collect()
         };
         let has = |d: &Value, id: &str| ids(d).iter().any(|(a, _)| a == id);
-        // No experiments, no access: every action, as before.
+        // No access: every action.
         let live = call_value("sidebar.detail", json!({ "space": shared })).unwrap();
         assert!(has(&live, "share"));
-        // Sharing off hides Share; on shows it.
-        let off = call_value(
-            "sidebar.detail",
-            json!({ "space": shared, "experiments": { "sharing": false } }),
-        )
-        .unwrap();
-        assert!(!has(&off, "share"));
-        let on = call_value(
-            "sidebar.detail",
-            json!({ "space": shared, "experiments": { "sharing": true } }),
-        )
-        .unwrap();
-        assert!(has(&on, "share") && on.get("access").is_none());
         // Not enrolled: the notice, Status says why, connection actions off.
         let notice = serde_json::to_value(
             devices::machine_access_notice(devices::EnrollmentKind::NeedsEnrollment, None).unwrap(),
@@ -1951,7 +2046,7 @@ mod tests {
         .unwrap();
         let d = call_value(
             "sidebar.detail",
-            json!({ "space": shared, "experiments": { "sharing": true }, "access": notice }),
+            json!({ "space": shared, "access": notice }),
         )
         .unwrap();
         assert_eq!(d["access"], notice);
@@ -1962,21 +2057,10 @@ mod tests {
                 assert!(!enabled, "{id} stays off while not enrolled");
             }
         }
-        // Without experiments, `access` still applies.
-        let d = call_value(
-            "sidebar.detail",
-            json!({ "space": shared, "access": notice }),
-        )
-        .unwrap();
-        assert_eq!(d["access"], notice);
         // A machine that keeps its desktop private: its note, no New Space
         // button word in the note itself, its desktop actions gone.
         let private = space("relay:m1", &["host_spaces", "files"]);
-        let d = call_value(
-            "sidebar.detail",
-            json!({ "space": private, "experiments": {} }),
-        )
-        .unwrap();
+        let d = call_value("sidebar.detail", json!({ "space": private })).unwrap();
         assert_eq!(
             d["desktopNote"],
             json!("Studio isn\u{2019}t sharing its desktop. You can still create Spaces on it.")

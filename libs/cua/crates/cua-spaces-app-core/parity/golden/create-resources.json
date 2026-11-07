@@ -1871,7 +1871,7 @@
         "resourceFacts": [
           "Kind: Virtual machine",
           "Architecture: x64 [exclamationmark.triangle ?Emulated on this Mac’s ARM processor. Performance may be degraded.]",
-          "Disk: 64 GB (download 6.4 GB)",
+          "Disk: 64 GB (download 6.5 GB)",
           "Available: 212 GB on Macintosh HD"
         ],
         "resourcesError": null,
@@ -1929,7 +1929,7 @@
         "resourceFacts": [
           "Kind: Virtual machine",
           "Architecture: x64 [exclamationmark.triangle ?Emulated on this Mac’s ARM processor. Performance may be degraded.]",
-          "Disk: 64 GB (download 6.4 GB)",
+          "Disk: 64 GB (download 6.5 GB)",
           "Available: 212 GB on Macintosh HD"
         ],
         "resourcesError": null,
@@ -1987,7 +1987,7 @@
         "resourceFacts": [
           "Kind: Virtual machine",
           "Architecture: x64 [exclamationmark.triangle ?Emulated on this Mac’s ARM processor. Performance may be degraded.]",
-          "Disk: 64 GB (download 6.4 GB)",
+          "Disk: 64 GB (download 6.5 GB)",
           "Available: 212 GB on Macintosh HD"
         ],
         "resourcesError": null,
@@ -2045,7 +2045,7 @@
         "resourceFacts": [
           "Kind: Virtual machine",
           "Architecture: x64 [exclamationmark.triangle ?Emulated on this Mac’s ARM processor. Performance may be degraded.]",
-          "Disk: 64 GB (download 6.4 GB)",
+          "Disk: 64 GB (download 6.5 GB)",
           "Available: 212 GB on Macintosh HD"
         ],
         "resourcesError": null,
@@ -2348,7 +2348,7 @@
         "cpusText": "4 cores",
         "disk": "200 GB (150-500) [Reset] ~The disk will be resized to 200 GB after downloading. Uses about 33 GB on this Mac at first, up to 200 GB as the Space fills it. ?A VM disk cannot shrink below the image's 150 GB.",
         "fields": [
-          "name: Name [space-000000002a]",
+          "name: Name [dapper-mole]",
           "open-when-ready: Open when ready"
         ],
         "gpu": null,
@@ -2449,12 +2449,12 @@
           "image": "ghcr.io/trycua/macos:26",
           "kind": "vm",
           "memoryMb": 8192,
-          "name": "space-000000002a",
+          "name": "dapper-mole",
           "on": "local",
           "runtime": "auto",
           "spacesd": true
         },
-        "creating": "Creating space-000000002a. It appears in the list when it is ready.",
+        "creating": "Creating dapper-mole. It appears in the list when it is ready.",
         "failed": "Could not create the Space: Not enough disk space for this Space. Free up space on this Mac (or run `cua cache prune` in Terminal), then try again.",
         "openDesktop": true,
         "summary": [
@@ -2465,7 +2465,7 @@
           "Architecture: ARM",
           "Runtime: Lume virtual machine (Apple silicon)",
           "Resources: 4 cores, 8 GB memory, 200 GB disk",
-          "Name: space-000000002a",
+          "Name: dapper-mole",
           "When ready: Open the desktop"
         ]
       }

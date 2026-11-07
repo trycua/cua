@@ -892,19 +892,20 @@ async fn unbuildable_requests_are_refused_with_their_reason_not_accepted() {
     assert_eq!(sb["disk"], 3);
 }
 
-/// An account at its live-session limit gets Daytona's rate-limit error
+/// An account at its computers-in-use limit gets Daytona's rate-limit error
 /// (HTTP 429), with the plan-limit sentence and its upgrade path verbatim.
 #[tokio::test]
 async fn the_live_session_limit_is_a_429_with_its_sentence() {
     let g = start().await;
     *g.mock.create_fails.lock().await = Some(cua_compat::backend::BackendError::RateLimited(
-        "You're using 2 of 2 live sessions on the free plan. Close one or upgrade to Pro.".into(),
+        "You have 2 of 2 computers in use at once on the free plan. Close one or upgrade to Pro."
+            .into(),
     ));
     let (s, b) = g.post("/sandbox", json!({"name": "over"})).await;
     assert_eq!(s, 429, "{b}");
     assert!(
         b.to_string().contains(
-            "You're using 2 of 2 live sessions on the free plan. Close one or upgrade to Pro."
+            "You have 2 of 2 computers in use at once on the free plan. Close one or upgrade to Pro."
         ),
         "{b}"
     );

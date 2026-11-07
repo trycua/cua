@@ -7,9 +7,11 @@ use std::path::Path;
 use std::time::Duration;
 
 use serde_json::{Value, json};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
-use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
+
+type Reader = Box<dyn AsyncRead + Send + Unpin>;
+type Writer = Box<dyn AsyncWrite + Send + Unpin>;
 
 use crate::error::{Result, VmmError};
 
@@ -19,20 +21,72 @@ const UNTHROTTLED: u64 = 1 << 40;
 
 /// One negotiated QMP session.
 pub struct QmpClient {
-    reader: BufReader<OwnedReadHalf>,
-    writer: OwnedWriteHalf,
+    reader: BufReader<Reader>,
+    writer: Writer,
     /// Asynchronous events received while waiting for command replies.
     pub events: Vec<Value>,
 }
 
 impl QmpClient {
-    /// Connect to `addr` (`127.0.0.1:port`) and negotiate capabilities.
+    /// Connect to `addr` (`unix:<path>` for a unix socket, `pipe:<name>`
+    /// for a Windows named pipe, else `127.0.0.1:port`) and negotiate
+    /// capabilities.
     pub async fn connect(addr: &str) -> Result<Self> {
-        let stream = tokio::time::timeout(Duration::from_secs(5), TcpStream::connect(addr))
+        let timed_out = |_| VmmError::Qmp(format!("connect to {addr} timed out"));
+        let failed = |e: std::io::Error| VmmError::Qmp(format!("connect to {addr}: {e}"));
+        #[cfg(windows)]
+        if let Some(name) = addr.strip_prefix("pipe:") {
+            let path = format!(r"\\.\pipe\{name}");
+            let pipe = tokio::time::timeout(Duration::from_secs(5), async {
+                loop {
+                    match tokio::net::windows::named_pipe::ClientOptions::new().open(&path) {
+                        Ok(p) => return Ok(p),
+                        // All instances busy: try again shortly.
+                        Err(e) if e.raw_os_error() == Some(231) => {
+                            tokio::time::sleep(Duration::from_millis(50)).await
+                        }
+                        Err(e) => return Err(e),
+                    }
+                }
+            })
             .await
-            .map_err(|_| VmmError::Qmp(format!("connect to {addr} timed out")))?
-            .map_err(|e| VmmError::Qmp(format!("connect to {addr}: {e}")))?;
-        let (r, w) = stream.into_split();
+            .map_err(timed_out)?
+            .map_err(failed)?;
+            let (r, w) = tokio::io::split(pipe);
+            return Self::negotiate(Box::new(r), Box::new(w)).await;
+        }
+        let (r, w): (Reader, Writer) = match addr.strip_prefix("unix:") {
+            #[cfg(unix)]
+            Some(path) => {
+                let stream = tokio::time::timeout(
+                    Duration::from_secs(5),
+                    tokio::net::UnixStream::connect(path),
+                )
+                .await
+                .map_err(timed_out)?
+                .map_err(failed)?;
+                let (r, w) = stream.into_split();
+                (Box::new(r), Box::new(w))
+            }
+            #[cfg(not(unix))]
+            Some(_) => {
+                return Err(VmmError::Qmp(format!(
+                    "{addr}: unix sockets are for Unix hosts"
+                )));
+            }
+            None => {
+                let stream = tokio::time::timeout(Duration::from_secs(5), TcpStream::connect(addr))
+                    .await
+                    .map_err(timed_out)?
+                    .map_err(failed)?;
+                let (r, w) = stream.into_split();
+                (Box::new(r), Box::new(w))
+            }
+        };
+        Self::negotiate(r, w).await
+    }
+
+    async fn negotiate(r: Reader, w: Writer) -> Result<Self> {
         let mut c = Self {
             reader: BufReader::new(r),
             writer: w,
@@ -335,6 +389,42 @@ mod tests {
         assert_eq!(
             decode_reply(json!({"return": {"status": "running"}})).unwrap()["status"],
             "running"
+        );
+    }
+
+    /// QMP over a unix socket (how a VM's QMP listens on a Unix host).
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn client_connects_over_a_unix_socket() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("qmp.sock");
+        let l = tokio::net::UnixListener::bind(&path).unwrap();
+        tokio::spawn(async move {
+            let (s, _) = l.accept().await.unwrap();
+            let (r, mut w) = s.into_split();
+            let mut r = BufReader::new(r);
+            w.write_all(b"{\"QMP\": {\"version\": {}, \"capabilities\": []}}\n")
+                .await
+                .unwrap();
+            let mut line = String::new();
+            while r.read_line(&mut line).await.unwrap() > 0 {
+                let v: Value = serde_json::from_str(&line).unwrap();
+                let reply = match v["execute"].as_str().unwrap() {
+                    "qmp_capabilities" => json!({"return": {}}),
+                    _ => json!({"return": {"status": "running", "running": true}}),
+                };
+                w.write_all(format!("{reply}\n").as_bytes()).await.unwrap();
+                line.clear();
+            }
+        });
+        let mut c = QmpClient::connect(&format!("unix:{}", path.display()))
+            .await
+            .unwrap();
+        assert_eq!(c.status().await.unwrap(), "running");
+        assert!(
+            QmpClient::connect(&format!("unix:{}", dir.path().join("none").display()))
+                .await
+                .is_err()
         );
     }
 

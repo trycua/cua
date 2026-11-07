@@ -165,7 +165,7 @@ mod routed_tests {
     }
 }
 
-fn read_policy(path: &Path) -> Result<HostPolicy, Status> {
+pub(crate) fn read_policy(path: &Path) -> Result<HostPolicy, Status> {
     let raw = std::fs::read(path).map_err(|e| {
         status(
             Code::FailedPrecondition,
@@ -447,10 +447,12 @@ fn caller_json_of<T>(req: &Request<T>) -> Result<String, Status> {
         (Some(a), true, _) if a.space.is_some() => serde_json::json!({
             "account": a.account, "email": a.email, "name": a.name,
             "role": a.role, "space": a.space, "via": "relay",
+            "device": a.device, "phone": a.phone.is_some(),
         }),
         (Some(a), true, _) => serde_json::json!({
             "account": a.account, "email": a.email, "name": a.name,
             "role": if viewer { "viewer" } else { a.role.as_str() },
+            "device": a.device, "phone": a.phone.is_some(),
             // Who vouched: the relay (an assertion, also over the mesh) or
             // the host's tailnet (`--tailnet`).
             "via": if who.principal.as_ref().is_some_and(|p| p.id.starts_with("tailnet:")) {
@@ -482,7 +484,9 @@ fn caller_json_of<T>(req: &Request<T>) -> Result<String, Status> {
 #[cfg(unix)]
 static STARTING: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
-async fn daemon_channel(daemon: &SpacesDaemon) -> Result<tonic::transport::Channel, Status> {
+pub(crate) async fn daemon_channel(
+    daemon: &SpacesDaemon,
+) -> Result<tonic::transport::Channel, Status> {
     #[cfg(unix)]
     {
         let socket = PathBuf::from(&daemon.socket);
@@ -1033,6 +1037,42 @@ mod tests {
             }
             assert!(forwarded.metadata().contains_key("grpc-timeout"));
         }
+    }
+
+    /// The daemon is told which device made a call and whether it is a phone, so
+    /// what a phone answers is attributed to it and what widens a Space's reach
+    /// is not its to answer.
+    #[test]
+    fn the_caller_the_daemon_gets_names_the_device_and_whether_it_is_a_phone() {
+        let phone = req(CallerIdentity {
+            asserted: true,
+            account: Some(RelayCaller {
+                account: "ada".into(),
+                role: "owner".into(),
+                device: Some("dev_phone_1".into()),
+                phone: Some(crate::auth::PhoneCaller {
+                    device: "dev_phone_1".into(),
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
+        let v: serde_json::Value = serde_json::from_str(&caller_json(&phone).unwrap()).unwrap();
+        assert_eq!(v["device"], "dev_phone_1");
+        assert_eq!(v["phone"], true);
+        let computer = req(CallerIdentity {
+            asserted: true,
+            account: Some(RelayCaller {
+                account: "ada".into(),
+                role: "owner".into(),
+                device: Some("dev_mac_1".into()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
+        let v: serde_json::Value = serde_json::from_str(&caller_json(&computer).unwrap()).unwrap();
+        assert_eq!(v["device"], "dev_mac_1");
+        assert_eq!(v["phone"], false);
     }
 
     #[test]

@@ -28,6 +28,7 @@ import { NEW_SPACE_COVERAGE } from "./ops/new-space";
 import { SHARE_COVERAGE } from "./ops/share";
 import { AGENT_DETAIL_COVERAGE } from "./ops/agent-detail";
 import { AGENT_KEYS_COVERAGE } from "./ops/agent-keys";
+import { GITHUB_COVERAGE } from "./ops/github";
 import { KEYVAULT_MANAGE_COVERAGE } from "./ops/keyvault-manage";
 import { KEYVAULT_SETUP_COVERAGE } from "./ops/keyvault-setup";
 import { TELEPORT_COVERAGE } from "./ops/teleport";
@@ -43,15 +44,19 @@ import { RELAY_USAGE_COVERAGE } from "./ops/relay-usage";
 import { NUDGES_COVERAGE } from "./ops/nudges";
 import { RESOURCES_COVERAGE } from "./ops/resources";
 import { MACHINES_COVERAGE } from "./ops/machines";
+import { SPACES_SETTINGS_COVERAGE } from "./ops/spaces-settings";
 import { CHECKLIST_COVERAGE } from "./ops/checklist";
+import { CI_COVERAGE } from "./ops/ci";
 import { LINKS_COVERAGE } from "./ops/links";
 import { CLI_COVERAGE } from "./ops/cli";
 import { THREAD_COVERAGE } from "./ops/thread";
 import { PRESENCE_COVERAGE } from "./ops/presence";
 import { CLOUD_APPROVE_COVERAGE } from "./ops/cloud-approve";
+import { AGENT_THREADS_COVERAGE } from "./ops/agent-threads";
 import { RUNTIME_FIX_COVERAGE } from "./ops/runtime-fix";
 import { TELEMETRY_COVERAGE } from "./ops/telemetry";
 import { STARTUP_COVERAGE } from "./ops/startup";
+import { DRIVER_COVERAGE } from "./ops/driver";
 
 export interface OpCoverage {
   webkit: { methods: readonly WebkitMethod[]; byDesign?: string };
@@ -85,6 +90,17 @@ export const HOST_COVERAGE = {
     tauri: [],
     unsupported: { tauri: "the Tauri shell is not the shipped app (SwiftUI and Electron are); it has no rename" },
   },
+  "network.get": { webkit: { methods: ["network.get"] }, tauri: [], unsupported: { tauri: "the Tauri shell is not the shipped app (SwiftUI and Electron are); it has no network settings" } },
+  "network.set": { webkit: { methods: ["network.set"] }, tauri: [], unsupported: { tauri: "the Tauri shell is not the shipped app (SwiftUI and Electron are); it has no network settings" } },
+  "network.log": { webkit: { methods: ["network.log"] }, tauri: [], unsupported: { tauri: "the Tauri shell is not the shipped app (SwiftUI and Electron are); it has no network settings" } },
+  "network.ackNotice": { webkit: { methods: ["network.ackNotice"] }, tauri: [], unsupported: { tauri: "the Tauri shell is not the shipped app (SwiftUI and Electron are); it has no network settings" } },
+  "spaces.setAccess": { webkit: { methods: ["spaces.setAccess"] }, tauri: [], unsupported: { tauri: "the Tauri shell is not the shipped app (SwiftUI and Electron are); it has no network settings" } },
+  "spaces.tree": { webkit: { methods: ["spaces.tree"] }, tauri: [], unsupported: { tauri: "the Tauri shell is not the shipped app (SwiftUI and Electron are); it has no child Spaces" } },
+  "children.set": { webkit: { methods: ["children.set"] }, tauri: [], unsupported: { tauri: "the Tauri shell is not the shipped app (SwiftUI and Electron are); it has no child Spaces" } },
+  "budget.get": { webkit: { methods: ["budget.get"] }, tauri: [], unsupported: { tauri: "the Tauri shell is not the shipped app (SwiftUI and Electron are); it has no child Spaces" } },
+  "budget.set": { webkit: { methods: ["budget.set"] }, tauri: [], unsupported: { tauri: "the Tauri shell is not the shipped app (SwiftUI and Electron are); it has no child Spaces" } },
+  "services.list": { webkit: { methods: ["services.list"] }, tauri: [], unsupported: { tauri: "the Tauri shell is not the shipped app (SwiftUI and Electron are); it has no child Spaces" } },
+  "services.control": { webkit: { methods: ["services.control"] }, tauri: [], unsupported: { tauri: "the Tauri shell is not the shipped app (SwiftUI and Electron are); it has no child Spaces" } },
   "machines.list": {
     webkit: { methods: ["spaces.list", "machines.list"] },
     tauri: ["host_status", "list_hosts", "get_environment"],
@@ -126,6 +142,10 @@ export const HOST_COVERAGE = {
     webkit: { methods: ["onboarding.complete"] },
     tauri: ["complete_onboarding"],
   },
+  "session.resetOnboarding": {
+    webkit: { methods: ["onboarding.reset"] },
+    tauri: ["reset_onboarding"],
+  },
   "session.openExternal": {
     webkit: { methods: [], byDesign: "the page opens the link itself (window.open, which WebKit hands to the browser)" },
     tauri: ["open_external"],
@@ -164,6 +184,7 @@ export const HOST_COVERAGE = {
   ...TELEPORT_COVERAGE,
   ...SHARE_COVERAGE,
   ...AGENT_KEYS_COVERAGE,
+  ...GITHUB_COVERAGE,
   ...KEYVAULT_SETUP_COVERAGE,
   ...KEYVAULT_MANAGE_COVERAGE,
   ...VOLUME_COVERAGE,
@@ -210,13 +231,17 @@ export const HOST_COVERAGE = {
   ...NUDGES_COVERAGE,
   ...RESOURCES_COVERAGE,
   ...MACHINES_COVERAGE,
+  ...SPACES_SETTINGS_COVERAGE,
   ...CHECKLIST_COVERAGE,
+  ...CI_COVERAGE,
   ...LINKS_COVERAGE,
   ...CLI_COVERAGE,
   ...THREAD_COVERAGE,
   ...PRESENCE_COVERAGE,
   ...CLOUD_APPROVE_COVERAGE,
+  ...AGENT_THREADS_COVERAGE,
   ...RUNTIME_FIX_COVERAGE,
+  ...DRIVER_COVERAGE,
 } as const satisfies Record<OpName, OpCoverage>;
 
 /**

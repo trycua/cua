@@ -437,6 +437,15 @@ describe.skipIf(!built)("agents", () => {
     expect(ok.env).toBe("GEMINI_API_KEY");
   });
 
+  it("warns that a development build keeps keys unencrypted and keeps the buttons on", async () => {
+    keys.insecure = "Keychain not available in this development build: keys are stored unencrypted in ~/.cua-local/agent-keys. Do not use real production secrets";
+    const { model } = makeBridge();
+    await model.agents.keys.load();
+    expect(model.agents.keys.view.canEdit).toBe(true);
+    expect(model.agents.keys.view.notice).toContain("Keychain not available in this development build");
+    expect(agentKeysInput({ keys: [], available: false, insecure: "x" }, null).warning).toBeUndefined();
+  });
+
   it("says why keys can't be saved", async () => {
     keys.available = false;
     const { model } = makeBridge();

@@ -48,8 +48,14 @@ export const PAGES: Array<{ slug: string; title: string; description: string; ca
   {
     slug: 'spaces',
     title: 'Spaces tools',
-    description: 'Create, run, stream, share and serve from a Space: the Spaces tools with their parameters, results and errors.',
-    categories: ['lifecycle', 'commands-and-files', 'streams-and-display', 'services', 'hotspot', 'sharing', 'cloud'],
+    description: 'Create, run, stream and serve from a Space: the Spaces tools with their parameters, results and errors.',
+    categories: ['lifecycle', 'commands-and-files', 'streams-and-display', 'services'],
+  },
+  {
+    slug: 'sharing-and-clouds',
+    title: 'Sharing, hotspot and cloud tools',
+    description: 'Share a Space, give it this computer\'s network for a while, and link your cloud: the tools with their parameters, results and errors.',
+    categories: ['hotspot', 'sharing', 'cloud'],
   },
   {
     slug: 'agents',
@@ -237,7 +243,10 @@ function toolSection(tool: Tool, manifest: Manifest): string[] {
     ['Metering', tool.metering],
     [
       'Approval',
-      `permission \`spaces:${tool.name}\`${tool.annotations.read_only ? ', in `spaces:readonly`' : ''}; ${effect(tool.annotations)}`,
+      // A person's tool (cua_spaces_contract::PERSON_ONLY_TOOLS: "Only for a person" in its instructions) is no MCP permission.
+      tool.instructions.startsWith('Only for a person')
+        ? `none: for a person only, never served over MCP; ${effect(tool.annotations)}`
+        : `permission \`spaces:${tool.name}\`${tool.annotations.read_only ? ', in `spaces:readonly`' : ''}; ${effect(tool.annotations)}`,
     ],
   ];
   if (tool.requires.length) facts.push(['Requires (spacesd)', tool.requires.map((r) => codeCell(r)).join(', ')]);

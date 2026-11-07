@@ -373,6 +373,51 @@ async fn an_spacesd_space_also_reaches_its_declared_services() {
     spaces.delete(&info.id).await.unwrap();
 }
 
+/// A VM disk image has no reference that says it runs cua-spacesd, and its
+/// cua-spacesd answers some seconds after the VM runs: a create that says
+/// `spacesd: true` returns once it answers.
+#[tokio::test]
+async fn a_disk_image_that_says_it_runs_spacesd_is_waited_for() {
+    let env = MockServer::start(MockAuth::default()).await;
+    let late = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = late.local_addr().unwrap().port();
+    drop(late);
+    let upstream = env.addr;
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_secs(3)).await;
+        let l = tokio::net::TcpListener::bind(("127.0.0.1", port))
+            .await
+            .unwrap();
+        while let Ok((mut down, _)) = l.accept().await {
+            tokio::spawn(async move {
+                let mut up = tokio::net::TcpStream::connect(upstream).await.unwrap();
+                let _ = tokio::io::copy_bidirectional(&mut down, &mut up).await;
+            });
+        }
+    });
+    let rt = Arc::new(PortRuntime::default());
+    rt.ports.lock().unwrap().insert(3211, port);
+    let reg = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    let spaces = local_spaces(&rt, reg.path(), state.path());
+    let info = spaces
+        .create(SpaceCreate {
+            on: Some(On::Local),
+            image: Some("vm:/var/lib/images/linux/disk.img".into()),
+            spacesd: Some(true),
+            name: Some("cua-e2e-disk".into()),
+            timeout: Some(Duration::from_secs(60)),
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+        .ready()
+        .unwrap();
+    assert!(!info.features.is_empty(), "connected to its cua-spacesd");
+    assert!(spaces.space(&info.id).await.unwrap().has_spacesd());
+    spaces.delete(&info.id).await.unwrap();
+}
+
 fn labelled(name: &str, labels: &[(&str, &str)]) -> SpaceCreate {
     SpaceCreate {
         on: Some(On::Local),

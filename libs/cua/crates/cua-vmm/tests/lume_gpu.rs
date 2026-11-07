@@ -71,7 +71,7 @@ async fn fake() -> (LumeRuntime, Arc<Mutex<FakeLume>>, Arc<Pref>) {
 }
 
 fn spec(name: &str) -> StartSpec {
-    StartSpec::new(
+    let mut s = StartSpec::new(
         name,
         ImageSource::Oci {
             reference: REF.into(),
@@ -79,7 +79,12 @@ fn spec(name: &str) -> StartSpec {
     )
     .os(GuestOs::Macos)
     .cpus(2)
-    .memory_mb(4096)
+    .memory_mb(4096);
+    // These tests are about the GPU preference, not the network.
+    s.network = Some(cua_vmm::network::NetworkSettings::preset(
+        cua_vmm::network::NetworkPreset::Unprotected,
+    ));
+    s
 }
 
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
@@ -125,6 +130,9 @@ async fn gpu_acceleration_is_for_macos_guests_only() {
     .os(GuestOs::Linux)
     .cpus(2)
     .memory_mb(4096);
+    s.network = Some(cua_vmm::network::NetworkSettings::preset(
+        cua_vmm::network::NetworkPreset::Unprotected,
+    ));
     s.gpu = Some(cua_vmm::gpu::PARAVIRTUAL.into());
     let err = rt.start(&s).await.unwrap_err();
     assert!(matches!(err, VmmError::Unsupported { .. }), "{err}");

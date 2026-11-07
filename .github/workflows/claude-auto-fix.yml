@@ -34,16 +34,10 @@ jobs:
             let failedWorkflowName = '';
 
             const workflowFileMap = {
-              "CI: Lint Python": "ci-lint-python.yml",
               "CI: Lint TypeScript": "ci-lint-typescript.yml",
               "CI: Test Python": "ci-test-python.yml",
               "CI: Test Scripts": "ci-test-scripts.yml",
-              "CI: cua-agent": "ci-py-agent.yml",
-              "CI: cua-core": "ci-py-core.yml",
-              "CI: cua-som": "ci-py-som.yml",
-              "CI: cua-bench": "ci-py-bench.yml",
-              "CI: cua-bench-ui": "ci-py-bench-ui.yml",
-              "CI: @trycua/core": "ci-ts-core.yml"
+              "CI: cua-bench": "ci-py-bench.yml"
             };
 
             console.log(`Looking for failed runs on branch: ${targetBranch}`);
@@ -170,9 +164,10 @@ jobs:
 
       - name: Install sandbox dependencies
         if: steps.context.outputs.has_failed_run == 'true'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y bubblewrap socat ripgrep
+        uses: ./.github/actions/apt-install
+        with:
+          packages: >-
+            bubblewrap socat ripgrep
 
       - name: Install Claude Code and Sandbox Runtime
         if: steps.context.outputs.has_failed_run == 'true'

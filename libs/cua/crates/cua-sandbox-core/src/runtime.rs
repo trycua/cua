@@ -140,6 +140,15 @@ pub struct LocalStartSpec {
         skip_serializing_if = "cua_vmm::egress::EgressPolicy::is_empty"
     )]
     pub egress: cua_vmm::egress::EgressPolicy,
+    /// The sandbox's network settings ([`cua_vmm::network`]), compiled by
+    /// the runtime. `None`: a caller from before network settings (the
+    /// runtime keeps to `restrict_network` and `egress`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub network: Option<cua_vmm::network::NetworkSettings>,
+    /// The tree it belongs to ([`cua_vmm::StartSpec::tree`]); `None`: its
+    /// own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tree: Option<String>,
     /// A GPU option of the runtime (see [`crate::gpu`]); `None`: no GPU.
     #[serde(default)]
     pub gpu: Option<String>,
@@ -672,6 +681,30 @@ pub trait LocalRuntime: Send + Sync {
     async fn egress(&self, name: &str) -> RuntimeResult<cua_vmm::egress::EgressPolicy> {
         let _ = name;
         Ok(Default::default())
+    }
+
+    /// What instance `name` tried to reach and its rules refused, most
+    /// recent first (empty where the runtime does not count them).
+    async fn network_events(
+        &self,
+        name: &str,
+    ) -> RuntimeResult<Vec<cua_vmm::egress::NetworkEvent>> {
+        let _ = name;
+        Ok(vec![])
+    }
+
+    /// Replaces instance `name`'s network settings ([`cua_vmm::network`]),
+    /// kept with it; says whether they hold now or from its next start.
+    async fn set_network(
+        &self,
+        name: &str,
+        settings: &cua_vmm::network::NetworkSettings,
+    ) -> RuntimeResult<cua_vmm::network::Applied> {
+        let _ = (name, settings);
+        Err(RuntimeError::Unsupported {
+            backend: self.backend(),
+            op: "changing network settings (this runtime keeps none)".into(),
+        })
     }
 
     /// Builds `spec` (image layers on the container image `spec.from`)

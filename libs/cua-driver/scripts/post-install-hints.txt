@@ -1,16 +1,16 @@
 
 Next steps:
 
-  1. Grant permissions (macOS: Accessibility + Screen Recording):
+  1. Connect your agents (Claude Code, Codex and Cursor, if installed):
+       {{BINARY}} connect
+     Other agents (hermes, antigravity, openclaw, opencode, pi, prime-agent,
+     qwen, droid, zcode): {{BINARY}} mcp-config --client <name>
+     Muse Code and GitHub Copilot CLI: see the docs link below.
+
+  2. Grant permissions (macOS: Accessibility + Screen Recording):
        {{BINARY}} permissions grant
      This launches the installed app by its exact path, so every dialog and
      Settings entry names Cua Driver, not your terminal.
-
-  2. Connect your agent:
-       {{BINARY}} mcp-config --client <name>
-     Names: claude, codex, cursor, hermes, antigravity, openclaw, opencode,
-     pi, prime-agent, qwen, droid, zcode. Leave out --client for a generic
-     snippet. Muse Code and GitHub Copilot CLI: see the docs link below.
 
   3. Check it works:
        {{BINARY}} list-tools

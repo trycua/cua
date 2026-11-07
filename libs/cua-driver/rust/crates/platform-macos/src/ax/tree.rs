@@ -64,6 +64,10 @@ pub struct AXNode {
     /// Kept separate from `title` so `_find_calc_button("2")` can find
     /// Calculator buttons where AXTitle="" but AXDescription="2".
     pub description: Option<String>,
+    /// Raw AXPlaceholderValue, kept separate from the value it may also label.
+    pub placeholder: Option<String>,
+    /// Raw AXSubrole, kept separate from the element's role.
+    pub subrole: Option<String>,
     pub identifier: Option<String>,
     pub help: Option<String>,
     pub actions: Vec<String>,
@@ -545,10 +549,12 @@ unsafe fn walk_element(
     let value = copied_value
         .as_ref()
         .and_then(|copied| copied.string_value.clone());
-    // AXPlaceholderValue as fallback for empty text fields.
+    // Preserve the raw placeholder independently of its existing label fallback.
+    let placeholder = copy_string_attr(element, "AXPlaceholderValue");
     let value = value
         .filter(|v| !v.trim().is_empty())
-        .or_else(|| copy_string_attr(element, "AXPlaceholderValue"));
+        .or_else(|| placeholder.clone());
+    let subrole = copy_string_attr(element, "AXSubrole");
     let description = copy_string_attr(element, "AXDescription");
     let identifier = copy_string_attr(element, "AXIdentifier");
     let help = copy_string_attr(element, "AXHelp").filter(|h| !h.trim().is_empty());
@@ -646,6 +652,8 @@ unsafe fn walk_element(
             } else {
                 Some(visible_description.clone())
             },
+            placeholder: placeholder.clone(),
+            subrole: subrole.clone(),
             identifier: identifier.clone(),
             help: help.clone(),
             actions: actions.clone(),
@@ -680,6 +688,8 @@ unsafe fn walk_element(
             } else {
                 Some(visible_description.clone())
             },
+            placeholder,
+            subrole,
             identifier: identifier.clone(),
             help: help.clone(),
             actions: vec![],
@@ -981,6 +991,8 @@ mod tests {
             title: Some("Reset".into()),
             value: None,
             description: None,
+            placeholder: None,
+            subrole: None,
             identifier: None,
             help: None,
             actions: vec!["AXPress".into()],

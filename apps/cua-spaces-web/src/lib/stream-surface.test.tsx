@@ -684,6 +684,28 @@ describe("<StreamSurface> native video", () => {
     expect(container.querySelector("[data-desktop-cover]")).toBeNull();
   });
 
+  // Regression (first run, a browser over the app after sign-in): the host
+  // stops streams while its window is covered, and the page still said "No
+  // picture arrived ... within 20 seconds". Hidden time doesn't count; the
+  // wait starts over when the window shows.
+  it("does not time out while the page is hidden, and waits in full once it shows", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    let state: DocumentVisibilityState = "hidden";
+    vi.spyOn(document, "visibilityState", "get").mockImplementation(() => state);
+    hostDrawsVideo();
+    const { container, queryByText } = mount();
+    await waitFor(() => expect(updates()).not.toHaveLength(0));
+    act(() => void vi.advanceTimersByTime(CONNECT_TIMEOUT_MS * 3));
+    expect(container.querySelector('[data-stream-state="connecting"]')).toBeTruthy();
+    expect(queryByText("Could not connect to the desktop")).toBeNull();
+    state = "visible";
+    act(() => void document.dispatchEvent(new Event("visibilitychange")));
+    act(() => void vi.advanceTimersByTime(CONNECT_TIMEOUT_MS - 1_000));
+    expect(container.querySelector('[data-stream-state="connecting"]')).toBeTruthy();
+    act(() => void vi.advanceTimersByTime(1_000));
+    expect(container.querySelector('[data-stream-state="failed"]')).toBeTruthy();
+  });
+
   // "Connecting…" alone for many seconds reads as hung: after SLOW_CONNECT_MS
   // the cover says, in plain words, that it is still going (and the failure
   // at CONNECT_TIMEOUT_MS still ends it).

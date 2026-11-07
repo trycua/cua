@@ -83,6 +83,20 @@ export const SLOW_CONNECT_HINT = "Still connecting. This is taking longer than u
 /** Why, when it timed out. */
 export const CONNECT_TIMEOUT_REASON = "No picture arrived from the desktop within 20 seconds.";
 
+/** The page can be seen. The host stops every stream while its window is
+ * fully covered or minimized (native-video.md), so no picture can arrive
+ * then: the connect wait counts only visible time. */
+function usePageVisible(): boolean {
+  const read = () => typeof document === "undefined" || document.visibilityState !== "hidden";
+  const [visible, setVisible] = useState(read);
+  useEffect(() => {
+    const changed = () => setVisible(read());
+    document.addEventListener("visibilitychange", changed);
+    return () => document.removeEventListener("visibilitychange", changed);
+  }, []);
+  return visible;
+}
+
 /** True once `waiting` has held for `ms` without a break; a new `key` (another
  * Space, or Try again) starts the wait over. */
 function useTimedOut(waiting: boolean, ms: number, key: string): boolean {
@@ -133,8 +147,11 @@ export function StreamSurface({ spaceId, os, aspectRatio = 16 / 10, canStream, p
   });
   // Still no picture after CONNECT_TIMEOUT_MS: failed, with the reason and
   // Try again (a picture that arrives later still shows).
-  const timedOut = useTimedOut(slot?.phase === "connecting", CONNECT_TIMEOUT_MS, `${spaceId}:${attempt}`);
-  const slow = useTimedOut(slot?.phase === "connecting", SLOW_CONNECT_MS, `${spaceId}:${attempt}`);
+  // A hidden window starts the wait over when it shows again.
+  const visible = usePageVisible();
+  const waiting = slot?.phase === "connecting" && visible;
+  const timedOut = useTimedOut(waiting, CONNECT_TIMEOUT_MS, `${spaceId}:${attempt}`);
+  const slow = useTimedOut(waiting, SLOW_CONNECT_MS, `${spaceId}:${attempt}`);
   const phase: StreamPhase = !slot ? "nosession" : slot.phase === "live" ? "streaming" : slot.phase === "failed" || timedOut ? "failed" : "connecting";
   const cover = useDesktopCover({ canStream, previewText, autoConnect, connectRequested: requested, stream: phase, access });
   const thumbnail = useSpaceThumbnail(spaceId, videoHere && canStream && !replaced && !access);

@@ -663,7 +663,7 @@ function surfaceState(
 ): ReactNode {
   const state = spaceState(space);
   if (state === "failed") {
-    // The same failure twice: its fix replaces a plain Try again.
+    // The same failure twice: its fix replaces a plain Try again (unless the fix is a step to do first).
     const fix = space.progress?.fix;
     return (
       <>
@@ -681,8 +681,11 @@ function surfaceState(
             <Button data-create-fix-button="" onClick={onFix}>
               {fix.label}
             </Button>
-          ) : onRetry ? (
-            <Button onClick={onRetry}>Try again</Button>
+          ) : null}
+          {onRetry && (!fix || fix.keepRetry) ? (
+            <Button variant={fix ? "outline" : "default"} onClick={onRetry}>
+              Try again
+            </Button>
           ) : null}
           <Button variant="outline" onClick={onDismiss}>
             Remove from list

@@ -24,6 +24,8 @@ import gzip
 import hashlib
 import json
 import logging
+import os
+import platform as _plat
 import shutil
 import subprocess
 import tempfile
@@ -227,6 +229,26 @@ def _build_image_wsl2(
             capture_output=True,
         )
 
+    # Files on /mnt/<drive> go through 9p, which stalls the firmware and the installer. Stage everything
+    # QEMU opens on the WSL ext4 disk, and copy the disk image back when the install is done.
+    stage = f"$HOME/cua-build/{work_dir.name}"
+    staged_disk_wsl = None
+    for i, a in enumerate(wsl_cmd):
+        parts = a.split(",")
+        for j, part in enumerate(parts):
+            if part.startswith("file=/mnt/"):
+                src = part[len("file=") :]
+                dst = f"{stage}/{src.rsplit('/', 1)[-1]}"
+                subprocess.run(
+                    ["wsl", "-e", "bash", "-c", f"mkdir -p {stage} && cp -u '{src}' {dst}"],
+                    check=True,
+                    capture_output=True,
+                )
+                parts[j] = f"file={dst}"
+                if src == _win_to_wsl(disk_path):
+                    staged_disk_wsl = (src, dst)
+        wsl_cmd[i] = ",".join(parts)
+
     shell_cmd = " ".join(wsl_cmd)
     logger.info(f"WSL2 QEMU command: {shell_cmd}")
 
@@ -254,13 +276,16 @@ def _build_image_wsl2(
             return False
 
     def _boot_and_monitor():
-        # Phase 1: boot keypresses (fewer needed with KVM — faster boot)
-        for i in range(15):
-            time.sleep(2)
+        # Phase 1: boot keypresses. "Press any key to boot from CD" stays up for only a few seconds, and when it is missed
+        # the firmware falls into the EFI shell (the disk is blank). Press Enter every half second from the start, for a
+        # minute; the installer's own window needs far longer than that to appear, so nothing here can reach its buttons.
+        for i in range(120):
             if _qmp_cmd(
                 b'{"execute":"send-key","arguments":{"keys":[{"type":"qcode","data":"ret"}]}}'
             ):
-                logger.info(f"Sent boot keypress ({i+1}/15)")
+                if i % 20 == 0:
+                    logger.info(f"Sent boot keypress ({i+1}/120)")
+            time.sleep(0.5)
 
         # Phase 2: wait for CUA server (KVM is much faster, ~15-30 min)
         logger.info(f"Waiting for cua-spacesd on port {proc_port}...")
@@ -295,6 +320,12 @@ def _build_image_wsl2(
         stderr = proc.stderr.read().decode() if proc.stderr else ""
         raise RuntimeError(f"QEMU WSL2 install failed (exit {proc.returncode}): {stderr}")
 
+    if staged_disk_wsl:
+        subprocess.run(
+            ["wsl", "-e", "bash", "-c", f"cp '{staged_disk_wsl[1]}' '{staged_disk_wsl[0]}'"],
+            check=True,
+            capture_output=True,
+        )
     logger.info(f"Windows install complete. Disk image: {disk_path}")
     config_path = work_dir / "config.json"
     config_path.write_text(json.dumps(asdict(config), indent=2))
@@ -302,6 +333,43 @@ def _build_image_wsl2(
 
 
 # ── Full build ──────────────────────────────────────────────────────────────
+
+
+def wsl2_kvm_available() -> bool:
+    """True when a WSL2 distribution on this Windows host can open /dev/kvm (nested virtualization)."""
+    if _plat.system() != "Windows" or not shutil.which("wsl"):
+        return False
+    try:
+        r = subprocess.run(
+            ["wsl", "-e", "sh", "-c", "test -r /dev/kvm -a -w /dev/kvm"],
+            capture_output=True,
+            timeout=60,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return r.returncode == 0
+
+
+def apply_windows_accel(cmd: list, environ) -> list:
+    """Add the accelerator to a QEMU command for a Windows host and return the new command.
+
+    There is no default: a Windows install under software emulation takes hours, so it is never chosen
+    silently. CUA_QEMU_ACCEL picks one explicitly: "whpx,kernel-irqchip=off" for hardware acceleration
+    (OVMF's pflash drives hang under WHPX on current QEMU, so this suits legacy BIOS guests), or "tcg"
+    to accept software emulation, which needs the `max` CPU model for Windows 11 25H2 and later
+    (the qemu64 model lacks PrefetchW). build_image prefers WSL2 with KVM, which needs none of this.
+    """
+    accel = environ.get("CUA_QEMU_ACCEL")
+    if not accel:
+        raise RuntimeError(
+            "No hardware acceleration for a Windows image build on this Windows host. Enable WSL2 with "
+            "/dev/kvm (nested virtualization), or set CUA_QEMU_ACCEL=whpx,kernel-irqchip=off for a legacy "
+            "BIOS guest, or CUA_QEMU_ACCEL=tcg to accept hours of software emulation."
+        )
+    out = list(cmd) + ["-accel", accel]
+    if "-cpu" in out:
+        out[out.index("-cpu") + 1] = "host" if accel.startswith("whpx") else "max"
+    return out
 
 
 def build_image(
@@ -341,8 +409,6 @@ def build_image(
     # Step 3: Run QEMU install
     logger.info("Starting unattended Windows install via QEMU...")
     logger.info("This will take 30-60 minutes. Monitor via VNC on port 5900.")
-
-    import platform as _plat
 
     if config.qemu_bin:
         qemu = config.qemu_bin
@@ -399,11 +465,12 @@ def build_image(
         f"if=pflash,format=raw,readonly=on,file={ovmf_code}",
         "-drive",
         f"if=pflash,format=raw,file={efivars}",
-        # Main disk — virtio-blk (bootindex=0 so after reboot it boots from disk)
+        # Main disk — virtio-blk (bootindex=1: the install media is tried first; its "press any key" prompt times out on
+        # later boots, which then fall through to the disk)
         "-drive",
         f"file={disk_path},id=disk0,format=qcow2,if=none",
         "-device",
-        "virtio-blk-pci,drive=disk0,bootindex=0",
+        "virtio-blk-pci,drive=disk0,bootindex=1",
         # AHCI controller for all CDROMs (Q35 built-in IDE only supports 1 unit)
         "-device",
         "ich9-ahci,id=sata",
@@ -411,7 +478,7 @@ def build_image(
         "-drive",
         f"file={win_iso},if=none,media=cdrom,readonly=on,id=cd0",
         "-device",
-        "ide-cd,drive=cd0,bus=sata.0,bootindex=1",
+        "ide-cd,drive=cd0,bus=sata.0,bootindex=0",
         # Unattend ISO (data-only: Autounattend.xml + setup script + startup.nsh)
         "-drive",
         f"file={unattend_iso},if=none,media=cdrom,readonly=on,id=cd1",
@@ -468,7 +535,15 @@ def build_image(
             ]
         )
 
-    # Hardware acceleration
+    # Hardware acceleration: on a Windows host prefer WSL2 with KVM (15 to 30 minutes) over anything else
+    if (
+        not use_wsl2
+        and _plat.system() == "Windows"
+        and "CUA_QEMU_ACCEL" not in os.environ
+        and wsl2_kvm_available()
+    ):
+        logger.info("Using WSL2 with KVM for the install")
+        use_wsl2 = True
     if use_wsl2:
         # WSL2 path: rewrite entire command for WSL2 with KVM
         return _build_image_wsl2(
@@ -479,10 +554,8 @@ def build_image(
             proc_port=18000,
         )
 
-    # WHPX on Windows has MMIO emulation bugs with OVMF pflash drives,
-    # so we use TCG (software emulation) on Windows for UEFI builds.
     if _plat.system() == "Windows":
-        cmd += ["-accel", "tcg"]
+        cmd = apply_windows_accel(cmd, os.environ)
     elif shutil.which("kvm-ok"):
         r = subprocess.run(["kvm-ok"], capture_output=True)
         if r.returncode == 0:

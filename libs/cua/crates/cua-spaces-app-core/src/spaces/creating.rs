@@ -644,6 +644,21 @@ pub fn time_left(secs: f64) -> String {
     }
 }
 
+/// Where the downloads of a first-time Windows build end in its progress
+/// (0 to 1) and the install begins: `cua_image::windows::build::DOWNLOADS_END`
+/// (a test holds the two to one value).
+pub const WINDOWS_INSTALL_FROM: f64 = 0.45;
+
+/// Whether this create builds its Windows image on this Mac (the catalog's
+/// `local_build` images, `windows:11`): the first one takes a download and an
+/// install, not a pull.
+fn builds_windows_here(p: &PendingCreate) -> bool {
+    p.os == SpaceOs::Windows
+        && p.image
+            .as_deref()
+            .is_some_and(crate::wizard::image_builds_locally)
+}
+
 /// The words for a phase: "Starting…", "Downloading image…", ...
 pub fn phase_label(phase: &str) -> &'static str {
     match phase {
@@ -674,6 +689,16 @@ pub fn stage_label(p: &PendingCreate) -> String {
         SpaceOs::Unknown => "",
     };
     match p.phase.as_str() {
+        // A Windows image built on this Mac (Windows 11): the first Space
+        // downloads the ISO, installs Windows unattended and seals the disk;
+        // every later one clones it.
+        "pulling" if builds_windows_here(p) => {
+            if p.fraction.is_some_and(|f| f >= WINDOWS_INSTALL_FROM) {
+                "Installing Windows (first time only)\u{2026}".into()
+            } else {
+                "Downloading Windows (first time only)\u{2026}".into()
+            }
+        }
         // Lume keeps the base image: later macOS Spaces clone it.
         "pulling" if p.os == SpaceOs::Macos => "Downloading macOS (first time only)\u{2026}".into(),
         "creating" if vm => "Preparing the disk\u{2026}".into(),
@@ -876,6 +901,10 @@ pub enum FailureCause {
     /// The image download stopped partway: Lume's pull failed or was
     /// cancelled, or Lume stopped. Another try resumes it.
     PullStopped,
+    /// Microsoft is limiting Windows downloads from this network (the first
+    /// Windows 11 build downloads its ISO): another request now only extends
+    /// the wait, so the app does not retry by itself.
+    WindowsDownloadLimited,
     /// The VM's runtime is not on this machine (QEMU for a Windows or Linux
     /// VM on a PC without it): trying again does not help.
     RuntimeMissing,
@@ -894,9 +923,29 @@ impl FailureCause {
             Self::Gpu => "Unsupported",
             Self::Unauthenticated => "Unauthenticated",
             Self::ServiceTimeout | Self::PullTimeout => "Timeout",
-            Self::PullStopped => "ImagePull",
+            Self::PullStopped | Self::WindowsDownloadLimited => "ImagePull",
             Self::RuntimeMissing => "RuntimeMissing",
         }
+    }
+}
+
+/// Microsoft's per-network limit on Windows downloads, as the build says it
+/// (`cua_image::windows::msdl::LIMITED`), lowercased.
+const WINDOWS_LIMITED: &str = "microsoft is limiting windows downloads";
+
+/// The page the Windows 11 ARM64 disc image is downloaded from by hand.
+pub const WINDOWS_ARM64_PAGE: &str = "https://www.microsoft.com/software-download/windows11arm64";
+
+/// The way out of Microsoft's limit, as the failed Space's one button.
+fn windows_download_fix() -> CreateFix {
+    CreateFix {
+        text: "Download the Windows 11 ARM64 disc image from Microsoft and save it in your \
+               Downloads folder. Then choose Try again: Cua finds it and carries on."
+            .into(),
+        label: "Open Microsoft's download page".into(),
+        action: CreateFixAction::OpenUrl,
+        value: Some(WINDOWS_ARM64_PAGE.into()),
+        keep_retry: true,
     }
 }
 
@@ -908,6 +957,9 @@ const PULL_STOPPED: &str = "the image download stopped before it finished";
 /// failed and `gpu` whether GPU acceleration was asked for, when known.
 pub fn failure_cause(raw: &str, phase: Option<&str>, gpu: bool) -> Option<FailureCause> {
     let l = crate::errors::plain_error(raw).to_ascii_lowercase();
+    if l.contains(WINDOWS_LIMITED) {
+        return Some(FailureCause::WindowsDownloadLimited);
+    }
     if l.contains("not enough disk space")
         || l.contains("insufficient disk")
         || l.contains("insufficient_disk")
@@ -1015,12 +1067,19 @@ pub fn fail_decision(p: &PendingCreate, error: &str, error_variant: &str) -> Fai
     let kind = retry::snake(failure_variant(error, Some(&p.phase), p.gpu, error_variant));
     let plain = crate::errors::plain_error(error);
     let subclass = retry::subclass(&kind, &plain);
-    let retry =
-        if p.attempt == 0 && !p.cancelling && p.space_id.is_none() && !error.trim().is_empty() {
-            retry::decide(&kind, subclass)
-        } else {
-            Retry::Never
-        };
+    // Another request to Microsoft inside its limit only extends it.
+    let limited =
+        failure_cause(error, Some(&p.phase), p.gpu) == Some(FailureCause::WindowsDownloadLimited);
+    let retry = if !limited
+        && p.attempt == 0
+        && !p.cancelling
+        && p.space_id.is_none()
+        && !error.trim().is_empty()
+    {
+        retry::decide(&kind, subclass)
+    } else {
+        Retry::Never
+    };
     FailDecision {
         kind,
         subclass,
@@ -1094,18 +1153,21 @@ pub fn fix_for(kind: &str, p: &PendingCreate) -> Option<CreateFix> {
         label: format!("Copy {command}"),
         action: CreateFixAction::CopyCommand,
         value: Some(command.into()),
+        keep_retry: false,
     };
     let help = |text: String| CreateFix {
         text,
         label: "How to fix it".into(),
         action: CreateFixAction::OpenUrl,
         value: Some(TROUBLESHOOT_URL.into()),
+        keep_retry: false,
     };
     let details = |text: String| CreateFix {
         text,
         label: "See details".into(),
         action: CreateFixAction::Details,
         value: None,
+        keep_retry: false,
     };
     let on = if elsewhere { " on that computer" } else { "" };
     Some(match kind {
@@ -1272,6 +1334,27 @@ pub fn failure_text_on(
                  picks up where it stopped."
             )
         }
+        Some(FailureCause::WindowsDownloadLimited) => {
+            // "... Try again in about 42 minutes, or download ..." names the
+            // time left of the wait.
+            let wait = l
+                .find("try again in ")
+                .map(|at| {
+                    let rest = &plain[at + "try again in ".len()..];
+                    rest.split([',', '.'])
+                        .next()
+                        .unwrap_or("")
+                        .trim()
+                        .to_string()
+                })
+                .filter(|w| !w.is_empty() && w.len() < 30)
+                .unwrap_or_else(|| "about an hour".into());
+            format!(
+                "Microsoft is limiting Windows downloads from your network right now. Try again in \
+                 {wait}, or download the Windows 11 ARM64 disc image yourself and save it in your \
+                 Downloads folder: Cua finds it."
+            )
+        }
         Some(FailureCause::PullTimeout) => "The image download did not finish in the time \
              allowed. Check your internet connection, then try again."
             .into(),
@@ -1398,6 +1481,17 @@ pub fn reduce(state: &CreatesState, action: &CreateAction) -> CreatesState {
                     p.bytes_total = None;
                     p.bytes_per_second = None;
                 }
+                // A Windows image built here: past the downloads the bar is the
+                // install's, and the ISO's byte count no longer applies.
+                if phase == "pulling"
+                    && bytes_done.is_none()
+                    && fraction.is_some_and(|f| f >= WINDOWS_INSTALL_FROM)
+                    && builds_windows_here(p)
+                {
+                    p.bytes_done = None;
+                    p.bytes_total = None;
+                    p.bytes_per_second = None;
+                }
                 if bytes_done.is_some() {
                     p.bytes_done = *bytes_done;
                     p.bytes_total = bytes_total.or(p.bytes_total);
@@ -1504,7 +1598,13 @@ pub fn reduce(state: &CreatesState, action: &CreateAction) -> CreatesState {
                     return next;
                 }
                 // The same failure again: its fix, not a plain Try again.
-                p.fix = (repeats >= 2).then(|| fix_for(&decision.kind, p)).flatten();
+                p.fix = if failure_cause(error, Some(&p.phase), p.gpu)
+                    == Some(FailureCause::WindowsDownloadLimited)
+                {
+                    Some(windows_download_fix())
+                } else {
+                    (repeats >= 2).then(|| fix_for(&decision.kind, p)).flatten()
+                };
                 p.error = Some(if error.trim().is_empty() {
                     "Could not create the Space".into()
                 } else {
@@ -2267,6 +2367,155 @@ mod tests {
             bytes_total: Some(total),
             bytes_per_second: Some(rate),
         }
+    }
+
+    /// A Windows image built on this Mac says "Downloading Windows" while the
+    /// ISO comes down (with its bytes), then "Installing Windows" with no
+    /// stale byte count, then the ordinary clone and boot words.
+    #[test]
+    fn a_windows_image_built_here_downloads_then_installs() {
+        let image = "ghcr.io/trycua/windows:11";
+        let mut s = reduce(
+            &CreatesState::default(),
+            &CreateAction::Start {
+                id: "pending:w".into(),
+                name: String::new(),
+                os: SpaceOs::Windows,
+                provider: SpaceProvider::Local,
+                now: 1_000,
+                image: Some(image.into()),
+                kind: Some(SpaceKind::Vm),
+                host_arch: Some("aarch64".into()),
+                gpu: false,
+                host: None,
+                host_name: None,
+            },
+        );
+        let row = |s: &CreatesState| pending_space(&s.pending[0]).progress.unwrap();
+        s = reduce(&s, &bytes_at("pending:w", 2 << 30, 8 << 30, 1e7, 2_000));
+        assert_eq!(
+            row(&s).label,
+            "Downloading Windows (first time only)\u{2026}"
+        );
+        assert!(row(&s).transfer.is_some());
+        // The install: a fraction past the downloads, no bytes.
+        s = reduce(&s, &at("pending:w", "pulling", Some(0.5), 3_000));
+        let r = row(&s);
+        assert_eq!(r.label, "Installing Windows (first time only)\u{2026}");
+        assert_eq!(r.transfer, None, "the ISO's bytes are not the install's");
+        // Then the Space's own steps.
+        s = reduce(&s, &at("pending:w", "creating", None, 4_000));
+        assert_eq!(row(&s).label, "Preparing the disk\u{2026}");
+        s = reduce(&s, &at("pending:w", "booting", None, 5_000));
+        assert_eq!(row(&s).label, "Booting Windows\u{2026}");
+        // A pulled Windows image (Server 2022) is just a download.
+        let mut pulled = reduce(
+            &CreatesState::default(),
+            &start_image(
+                "pending:p",
+                "ghcr.io/trycua/windows:2022",
+                Some(SpaceKind::Vm),
+            ),
+        );
+        pulled.pending[0].os = SpaceOs::Windows;
+        pulled = reduce(&pulled, &at("pending:p", "pulling", Some(0.9), 2_000));
+        assert_eq!(
+            pending_space(&pulled.pending[0]).progress.unwrap().label,
+            "Downloading image\u{2026}"
+        );
+    }
+
+    #[test]
+    fn microsofts_limit_is_said_in_plain_words_with_its_way_out_and_never_retried() {
+        let raw = "local runtime: build failed at windows iso: Microsoft is limiting Windows downloads from this network (Sentinel marked this request as rejected.) right now. Try again in about 42 minutes, or download the Windows ISO yourself (https://www.microsoft.com/software-download/windows11arm64) and save it in your Downloads folder: Cua finds it. With the command line: cua sb create windows:11 --iso ~/Downloads/<the file>.iso";
+        let text = failure_text(raw, Some("pulling"), Some(SpaceProvider::Local), false);
+        assert_eq!(
+            text,
+            "Microsoft is limiting Windows downloads from your network right now. Try again in about 42 minutes, or download the Windows 11 ARM64 disc image yourself and save it in your Downloads folder: Cua finds it."
+        );
+        assert!(!text.contains("Sentinel") && !text.contains("--iso"));
+        let s = reduce(
+            &CreatesState::default(),
+            &start_image(
+                "pending:w",
+                "ghcr.io/trycua/windows:11",
+                Some(SpaceKind::Vm),
+            ),
+        );
+        let failed = reduce(
+            &s,
+            &CreateAction::Fail {
+                id: "pending:w".into(),
+                error: raw.into(),
+                error_variant: "Runtime".into(),
+                now: Some(5_000),
+            },
+        );
+        let p = &failed.pending[0];
+        assert!(!p.retry_pending && p.attempt == 0, "no automatic retry");
+        let fix = p.fix.as_ref().expect("the way out is on the first failure");
+        assert_eq!(fix.label, "Open Microsoft's download page");
+        assert_eq!(fix.value.as_deref(), Some(WINDOWS_ARM64_PAGE));
+        assert_eq!(fix.action, CreateFixAction::OpenUrl);
+        assert!(fix.keep_retry, "Try again stays beside it");
+    }
+
+    /// The bar of a first-time Windows build only moves forward through the
+    /// download and the install, and every report moves it (so the stall watch
+    /// never fails a healthy build).
+    #[test]
+    fn the_windows_build_bar_moves_with_every_report() {
+        let mut s = reduce(
+            &CreatesState::default(),
+            &CreateAction::Start {
+                id: "pending:w".into(),
+                name: String::new(),
+                os: SpaceOs::Windows,
+                provider: SpaceProvider::Local,
+                now: 1_000,
+                image: Some("ghcr.io/trycua/windows:11".into()),
+                kind: Some(SpaceKind::Vm),
+                host_arch: Some("aarch64".into()),
+                gpu: false,
+                host: None,
+                host_name: None,
+            },
+        );
+        let mut last = 0;
+        let mut now = 2_000;
+        // ISO bytes from 0.01 to 0.40, drivers to 0.45, then the install to 0.96.
+        let fractions = [
+            0.01, 0.1, 0.25, 0.40, 0.45, 0.46, 0.47, 0.55, 0.7, 0.9, 0.96,
+        ];
+        let mut seen = Vec::new();
+        for f in fractions {
+            now += 20_000;
+            s = reduce(&s, &at("pending:w", "pulling", Some(f), now));
+            let p = &s.pending[0];
+            assert!(p.permille >= last, "{f}: {} < {last}", p.permille);
+            last = p.permille;
+            seen.push((f, p.permille));
+        }
+        // The install's fractions span a visible part of the bar.
+        let at_install = seen.iter().find(|(f, _)| *f == 0.47).unwrap().1;
+        let at_end = seen.last().unwrap().1;
+        assert!(at_end > at_install + 100, "{seen:?}");
+        // The create's own phases follow and never go back.
+        s = reduce(&s, &at("pending:w", "creating", None, now + 1_000));
+        assert!(s.pending[0].permille >= at_end, "{seen:?}");
+    }
+
+    /// The fraction the app tells "downloading" from "installing" by is the
+    /// one the build reports (`cua-image`'s `DOWNLOADS_END`).
+    #[test]
+    fn the_install_fraction_is_the_one_the_build_reports() {
+        let build = include_str!("../../../cua-image/src/windows/build.rs");
+        assert!(
+            build.contains(&format!(
+                "pub const DOWNLOADS_END: f64 = {WINDOWS_INSTALL_FROM};"
+            )),
+            "cua-image's DOWNLOADS_END must equal WINDOWS_INSTALL_FROM ({WINDOWS_INSTALL_FROM})"
+        );
     }
 
     /// A create says which step it is on, in the words of its kind of

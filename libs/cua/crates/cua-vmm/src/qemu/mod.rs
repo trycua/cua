@@ -50,6 +50,10 @@ pub struct QemuConfig {
     pub resolver: Option<Arc<dyn DiskResolver>>,
     /// Allow installing QEMU through the host package manager when missing.
     pub allow_install: bool,
+    /// Install swtpm with Homebrew on a Mac when a Windows on ARM guest needs
+    /// its TPM and it is missing (a small package, so Windows 11 needs no
+    /// setup step beyond QEMU). Off by default; the daemon turns it on.
+    pub install_swtpm: bool,
     /// How long `stop` waits for an ACPI shutdown before forcing `quit`.
     pub graceful_stop: Duration,
     /// Allocate a VNC display per instance.
@@ -91,6 +95,7 @@ impl Default for QemuConfig {
             root: host::cua_home().join("vmm").join("qemu"),
             resolver: None,
             allow_install: false,
+            install_swtpm: false,
             graceful_stop: Duration::from_secs(30),
             vnc: true,
             accel: None,
@@ -299,6 +304,73 @@ pub struct QemuState {
     /// creation for Windows on ARM; forks and checkpoints keep it.
     #[serde(default)]
     pub tpm: bool,
+}
+
+/// The switch that accepts software emulation of a Windows guest.
+pub const ALLOW_EMULATION_ENV: &str = "CUA_ALLOW_SOFTWARE_EMULATION";
+
+/// Whether the person accepted software emulation of Windows
+/// ([`ALLOW_EMULATION_ENV`] set to 1, true, yes or on).
+pub fn software_emulation_allowed() -> bool {
+    std::env::var(ALLOW_EMULATION_ENV)
+        .map(|v| {
+            matches!(
+                v.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(false)
+}
+
+/// What a Windows guest that could only run in software emulation (TCG) is
+/// told: why it is not done, and the two ways out. Software emulation takes
+/// hours to install Windows and is too slow to use (an agent's screenshot and
+/// click loop times out), so cua asks first.
+pub fn windows_emulation_message(guest: Arch, host: Arch) -> String {
+    let (own, other) = match (guest, host) {
+        // Never asked with matching architectures; the plain words anyway.
+        (a, b) if a == b => (
+            "matching",
+            "This computer runs this Windows guest, but only in software emulation here",
+        ),
+        (Arch::X86_64, Arch::Aarch64) => (
+            "ARM64",
+            "This Mac runs ARM64 Windows at full speed (and Windows 11 on ARM runs x64 apps), but this image is x64 Windows, which would run in software emulation",
+        ),
+        _ => (
+            "x64",
+            "This computer runs x64 Windows at full speed, but this image is ARM64 Windows, which would run in software emulation",
+        ),
+    };
+    let way = if own == "ARM64" {
+        "Use Windows 11 (windows:11), which is ARM64"
+    } else if own == "matching" {
+        "Use a computer with hardware virtualisation (KVM, HVF or WHPX)"
+    } else {
+        "Use an x64 Windows image (windows:11, windows:2025)"
+    };
+    format!(
+        "{other}: about ten times slower, hours to install, and too slow for an agent to use. {way}, or set {ALLOW_EMULATION_ENV}=1 to accept the slowness"
+    )
+}
+
+/// A Windows guest never runs under software emulation unless the person
+/// asked for it (`QemuConfig::accel`, or [`ALLOW_EMULATION_ENV`]): Windows
+/// under TCG takes hours to install and is too slow to use, so the create
+/// fails with the way out.
+pub(crate) fn refuse_windows_software_emulation(
+    os: GuestOs,
+    accel: &str,
+    asked_for: bool,
+    guest: Arch,
+) -> Result<()> {
+    if os == GuestOs::Windows && accel == "tcg" && !asked_for && !software_emulation_allowed() {
+        return Err(VmmError::invalid(windows_emulation_message(
+            guest,
+            Arch::host(),
+        )));
+    }
+    Ok(())
 }
 
 /// Windows 11 on ARM: the guest that needs Secure Boot firmware and a TPM.
@@ -704,7 +776,23 @@ impl QemuRuntime {
         let fw = (if windows_arm {
             let real = std::fs::canonicalize(&bin).unwrap_or_else(|_| bin.clone());
             let dirs = firmware::windows_arm_dirs(override_dir.as_deref(), &cua_dir, &bin, &real);
-            firmware::find_windows_arm(&dirs, |p| p.is_file())
+            firmware::find_windows_arm(&dirs, |p| p.is_file()).or_else(|| {
+                // No pair with Microsoft's Secure Boot keys (Homebrew's QEMU
+                // ships none): the generic edk2 firmware boots Windows on ARM
+                // as well. The unattended image build bypasses the Secure Boot
+                // and TPM checks of Setup, and an installed Windows does not
+                // insist on Secure Boot. An explicit directory is honoured.
+                if override_dir.is_some() {
+                    return None;
+                }
+                let generic = firmware::find_uefi(arch, &bin);
+                if generic.is_some() {
+                    tracing::info!(
+                        "no Secure Boot firmware pair for Windows on ARM; using the generic UEFI firmware"
+                    );
+                }
+                generic
+            })
         } else {
             firmware::find_uefi(arch, &bin)
         })
@@ -1129,12 +1217,26 @@ impl QemuRuntime {
                         st.name
                     )));
                 }
-                let bin = host::which("swtpm").ok_or_else(|| {
+                let missing = || {
                     VmmError::missing(
                         "swtpm",
                         "install it (macOS: brew install swtpm; Debian/Ubuntu: sudo apt-get install swtpm) and add it to PATH",
                     )
-                })?;
+                };
+                let bin = match host::which("swtpm") {
+                    Some(b) => b,
+                    // Windows on ARM needs a TPM: where cua provisions QEMU it
+                    // provisions swtpm too, so the first Windows Space needs no
+                    // extra step.
+                    None if self.cfg.allow_install
+                        && host::HostOs::current() == host::HostOs::Macos =>
+                    {
+                        install_swtpm_with(host::which("brew"), async |p, a| host::run(p, a).await)
+                            .await?;
+                        host::which("swtpm").ok_or_else(missing)?
+                    }
+                    None => return Err(missing()),
+                };
                 self.stop_tpm(st).await?;
                 std::fs::create_dir_all(&tpm_dir)?;
                 std::fs::set_permissions(&tpm_dir, std::fs::Permissions::from_mode(0o700))?;
@@ -1208,6 +1310,7 @@ impl QemuRuntime {
         } else {
             self.accel_for(st.arch, &host::kvm_usable())?
         };
+        refuse_windows_software_emulation(st.os, &st.accel, self.cfg.accel.is_some(), st.arch)?;
         st.cpus = spec.cpus;
         st.memory_mb = spec.memory_mb;
         st.restrict_network = spec.restrict_network
@@ -2515,10 +2618,54 @@ fn unique_suffix() -> String {
     format!("{nanos:x}")
 }
 
-/// How QEMU gets onto a Windows host: cua does not install it there.
-pub const WINDOWS_QEMU_HINT: &str = "Windows VMs on a Windows PC need QEMU, which Cua does not \
-     install for you. Install QEMU for Windows from https://qemu.weilnetz.de/ and add it to PATH, \
-     or create a Linux Space instead";
+/// How QEMU gets onto a Windows host. Cua installs it with winget when
+/// `allow_install` is set ([`windows_install`]); this is what to do by hand.
+pub const WINDOWS_QEMU_HINT: &str = "Windows VMs on a Windows PC need QEMU. Install it with \
+     `winget install -e --id SoftwareFreedomConservancy.QEMU`, or from https://qemu.weilnetz.de/ \
+     (then add it to PATH), or create a Linux Space instead";
+
+/// The winget package of QEMU for Windows (the QEMU project's own build).
+pub const WINDOWS_QEMU_WINGET_ID: &str = "SoftwareFreedomConservancy.QEMU";
+
+/// Installs QEMU on a Windows host with winget (silent; Windows asks for
+/// administrator approval itself). `winget` is where `which("winget")` found it.
+pub(crate) async fn windows_install(
+    winget: Option<PathBuf>,
+    run: impl AsyncFn(&str, &[&str]) -> Result<String>,
+) -> Result<()> {
+    let winget = winget.ok_or_else(|| VmmError::missing("winget", WINDOWS_QEMU_HINT))?;
+    tracing::info!("installing QEMU with winget");
+    run(
+        &winget.to_string_lossy(),
+        &[
+            "install",
+            "-e",
+            "--id",
+            WINDOWS_QEMU_WINGET_ID,
+            "--silent",
+            "--accept-source-agreements",
+            "--accept-package-agreements",
+        ],
+    )
+    .await?;
+    Ok(())
+}
+
+/// Installs swtpm (the TPM a Windows on ARM guest needs) with Homebrew.
+pub(crate) async fn install_swtpm_with(
+    brew: Option<PathBuf>,
+    run: impl AsyncFn(&str, &[&str]) -> Result<String>,
+) -> Result<()> {
+    let brew = brew.ok_or_else(|| {
+        VmmError::missing(
+            "swtpm",
+            "install Homebrew (https://brew.sh), then `brew install swtpm`",
+        )
+    })?;
+    tracing::info!("installing swtpm with Homebrew");
+    run(&brew.to_string_lossy(), &["install", "swtpm"]).await?;
+    Ok(())
+}
 
 /// What a QEMU VM needs that `which` does not find on an `os` host, as the
 /// error a create returns before pulling its image; `None` when both
@@ -2667,7 +2814,7 @@ async fn install_qemu_with(
             }
         }
         host::HostOs::Windows => {
-            return Err(VmmError::missing("QEMU", WINDOWS_QEMU_HINT));
+            windows_install(host::which("winget"), run).await?;
         }
     }
     Ok(())
@@ -3808,6 +3955,42 @@ mod tests {
     }
 
     #[test]
+    fn a_windows_guest_is_never_silently_emulated() {
+        use super::refuse_windows_software_emulation as refuse;
+        use crate::types::{Arch, GuestOs};
+        let x64 = Arch::X86_64;
+        assert!(refuse(GuestOs::Windows, "tcg", false, x64).is_err());
+        let e = refuse(GuestOs::Windows, "tcg", false, x64)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            e.contains("software emulation")
+                && e.contains("hours")
+                && e.contains(super::ALLOW_EMULATION_ENV),
+            "{e}"
+        );
+        // Hardware acceleration, an explicit request, and other guests pass.
+        assert!(refuse(GuestOs::Windows, "kvm", false, x64).is_ok());
+        assert!(refuse(GuestOs::Windows, "whpx", false, x64).is_ok());
+        assert!(refuse(GuestOs::Windows, "hvf", false, Arch::Aarch64).is_ok());
+        assert!(refuse(GuestOs::Windows, "tcg", true, x64).is_ok());
+        assert!(refuse(GuestOs::Linux, "tcg", false, x64).is_ok());
+    }
+
+    #[test]
+    fn the_emulation_refusal_points_at_the_guest_that_is_fast_here() {
+        use super::windows_emulation_message as msg;
+        use crate::types::Arch;
+        let on_mac = msg(Arch::X86_64, Arch::Aarch64);
+        assert!(
+            on_mac.contains("windows:11") && on_mac.contains("runs x64 apps"),
+            "{on_mac}"
+        );
+        let on_pc = msg(Arch::Aarch64, Arch::X86_64);
+        assert!(on_pc.contains("x64 Windows image"), "{on_pc}");
+    }
+
+    #[test]
     fn the_gateway_sockets_live_in_a_short_folder_of_their_own() {
         use super::gateway_run_dir;
         use std::path::Path;
@@ -4760,6 +4943,59 @@ mod tests {
             .await
             .unwrap_err();
         assert!(err.to_string().contains("DiskResolver"));
+    }
+
+    #[tokio::test]
+    async fn swtpm_is_installed_with_homebrew_or_the_error_says_how() {
+        let calls = std::sync::Mutex::new(Vec::new());
+        install_swtpm_with(
+            Some(PathBuf::from("/opt/homebrew/bin/brew")),
+            async |p, a| {
+                calls.lock().unwrap().push((
+                    p.to_string(),
+                    a.iter().map(|x| x.to_string()).collect::<Vec<_>>(),
+                ));
+                Ok(String::new())
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            calls.lock().unwrap()[0],
+            (
+                "/opt/homebrew/bin/brew".to_string(),
+                vec!["install".to_string(), "swtpm".to_string()]
+            )
+        );
+        let e = install_swtpm_with(None, async |_, _| Ok(String::new()))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("brew install swtpm"), "{e}");
+    }
+
+    #[tokio::test]
+    async fn windows_installs_qemu_with_winget_or_says_how() {
+        let calls = std::sync::Mutex::new(Vec::new());
+        windows_install(Some(PathBuf::from("winget")), async |program, args| {
+            calls.lock().unwrap().push((
+                program.to_string(),
+                args.iter().map(|a| a.to_string()).collect::<Vec<_>>(),
+            ));
+            Ok(String::new())
+        })
+        .await
+        .unwrap();
+        let calls = calls.into_inner().unwrap();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].0, "winget");
+        assert!(calls[0].1.contains(&WINDOWS_QEMU_WINGET_ID.to_string()));
+        assert!(calls[0].1.contains(&"--silent".to_string()));
+        let err = windows_install(None, async |_, _| Ok(String::new()))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("winget"), "{err}");
     }
 
     #[cfg(target_os = "linux")]

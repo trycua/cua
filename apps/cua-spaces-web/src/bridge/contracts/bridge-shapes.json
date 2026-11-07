@@ -1731,6 +1731,9 @@
         },
         "value": {
           "type": "string"
+        },
+        "keepRetry": {
+          "type": "boolean"
         }
       },
       "required": [

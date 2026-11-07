@@ -11706,6 +11706,11 @@ public struct AppCreateFix: Equatable, Hashable {
      * The command to copy or the page to open.
      */
     public var value: String?
+    /**
+     * Keep Try again next to the button: the fix is something to do first
+     * (download a file), after which the same create is tried again.
+     */
+    public var keepRetry: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -11721,11 +11726,16 @@ public struct AppCreateFix: Equatable, Hashable {
          */action: AppCreateFixAction,
         /**
          * The command to copy or the page to open.
-         */value: String?) {
+         */value: String?,
+        /**
+         * Keep Try again next to the button: the fix is something to do first
+         * (download a file), after which the same create is tried again.
+         */keepRetry: Bool) {
         self.text = text
         self.label = label
         self.action = action
         self.value = value
+        self.keepRetry = keepRetry
     }
 
 
@@ -11747,7 +11757,8 @@ public struct FfiConverterTypeAppCreateFix: FfiConverterRustBuffer {
                 text: FfiConverterString.read(from: &buf),
                 label: FfiConverterString.read(from: &buf),
                 action: FfiConverterTypeAppCreateFixAction.read(from: &buf),
-                value: FfiConverterOptionString.read(from: &buf)
+                value: FfiConverterOptionString.read(from: &buf),
+                keepRetry: FfiConverterBool.read(from: &buf)
         )
     }
 
@@ -11756,6 +11767,7 @@ public struct FfiConverterTypeAppCreateFix: FfiConverterRustBuffer {
         FfiConverterString.write(value.label, into: &buf)
         FfiConverterTypeAppCreateFixAction.write(value.action, into: &buf)
         FfiConverterOptionString.write(value.value, into: &buf)
+        FfiConverterBool.write(value.keepRetry, into: &buf)
     }
 }
 
@@ -35399,6 +35411,12 @@ public struct AppSandboxImage: Equatable, Hashable {
      */
     public var published: Bool
     /**
+     * `windows-iso`: nothing is pulled; the image is built on this computer
+     * on first use (an unattended Windows install). Offered in pickers
+     * though not published.
+     */
+    public var localBuild: String?
+    /**
      * The guest's distribution.
      */
     public var distro: AppImageDistro?
@@ -35449,6 +35467,11 @@ public struct AppSandboxImage: Equatable, Hashable {
          * Offered in pickers.
          */published: Bool,
         /**
+         * `windows-iso`: nothing is pulled; the image is built on this computer
+         * on first use (an unattended Windows install). Offered in pickers
+         * though not published.
+         */localBuild: String?,
+        /**
          * The guest's distribution.
          */distro: AppImageDistro?,
         /**
@@ -35470,6 +35493,7 @@ public struct AppSandboxImage: Equatable, Hashable {
         self.local = local
         self.tier = tier
         self.published = published
+        self.localBuild = localBuild
         self.distro = distro
         self.arch = arch
         self.sizes = sizes
@@ -35502,6 +35526,7 @@ public struct FfiConverterTypeAppSandboxImage: FfiConverterRustBuffer {
                 local: FfiConverterOptionTypeAppLocalEngine.read(from: &buf),
                 tier: FfiConverterOptionTypeAppImageTier.read(from: &buf),
                 published: FfiConverterBool.read(from: &buf),
+                localBuild: FfiConverterOptionString.read(from: &buf),
                 distro: FfiConverterOptionTypeAppImageDistro.read(from: &buf),
                 arch: FfiConverterSequenceString.read(from: &buf),
                 sizes: FfiConverterOptionTypeAppImageSizes.read(from: &buf),
@@ -35520,6 +35545,7 @@ public struct FfiConverterTypeAppSandboxImage: FfiConverterRustBuffer {
         FfiConverterOptionTypeAppLocalEngine.write(value.local, into: &buf)
         FfiConverterOptionTypeAppImageTier.write(value.tier, into: &buf)
         FfiConverterBool.write(value.published, into: &buf)
+        FfiConverterOptionString.write(value.localBuild, into: &buf)
         FfiConverterOptionTypeAppImageDistro.write(value.distro, into: &buf)
         FfiConverterSequenceString.write(value.arch, into: &buf)
         FfiConverterOptionTypeAppImageSizes.write(value.sizes, into: &buf)

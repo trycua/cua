@@ -233,7 +233,7 @@ const ComputerResourcesShape = ref(
 
 const CreateFixShape = ref(
   "CreateFix",
-  obj<CreateFix>()({ text: str, label: str, action: oneOf("copy-command", "open-url", "details"), value: opt(str) }),
+  obj<CreateFix>()({ text: str, label: str, action: oneOf("copy-command", "open-url", "details"), value: opt(str), keepRetry: opt(bool) }),
 );
 
 const SpaceProgressShape = ref(

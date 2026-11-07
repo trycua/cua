@@ -3721,7 +3721,12 @@ mod tests {
         assert!(log.exists());
         super::rotate_log(&log, 50);
         assert!(!log.exists());
-        assert_eq!(std::fs::read_to_string(dir.path().join("host.log.1")).unwrap().len(), 100);
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("host.log.1"))
+                .unwrap()
+                .len(),
+            100
+        );
         // Missing log: nothing to do.
         super::rotate_log(&log, 0);
     }

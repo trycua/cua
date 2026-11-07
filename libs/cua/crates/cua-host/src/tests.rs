@@ -203,7 +203,10 @@ async fn relay_setup_registers_writes_policy_and_installs_the_service() {
     host.remove().await.unwrap();
     assert!(relay.machine(&id).is_none());
     assert!(!p.dir.exists());
-    assert_eq!(std::fs::read_to_string(p.log()).unwrap(), "port 3621 in use\n");
+    assert_eq!(
+        std::fs::read_to_string(p.log()).unwrap(),
+        "port 3621 in use\n"
+    );
     assert!(p.machine_id.exists());
     assert!(!host.status().await.unwrap().configured);
     let calls = f.manager.calls.lock().unwrap().clone();

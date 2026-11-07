@@ -869,6 +869,11 @@ async fn windows_microvm_status() -> (BackendStatus, MicroVmReport) {
     } else {
         format!("microVMs are not set up: {}", missing.join(", "))
     };
+    // The VMs' disks are sparse files that grow with use: warn while the drive fills.
+    let detail = match crate::managed::wsl::low_space_note(&nearest_existing(&root)) {
+        Some(note) if ready => format!("{detail}; {note}"),
+        _ => detail,
+    };
     let status = BackendStatus {
         backend: BackendKind::Firecracker,
         ready,

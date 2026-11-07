@@ -777,7 +777,13 @@ fn power_off(grace: Duration) -> ! {
     unsafe {
         libc::kill(-1, libc::SIGKILL);
         libc::sync();
-        libc::reboot(libc::RB_AUTOBOOT);
+        // Firecracker and Virtualization.framework end the VM on a reboot; QEMU under
+        // WHPX hangs on one ("Unexpected VP exit code 4") and ends on an ACPI power-off.
+        libc::reboot(if link().tcp_port.is_some() {
+            libc::RB_POWER_OFF
+        } else {
+            libc::RB_AUTOBOOT
+        });
     }
     loop {
         std::thread::sleep(Duration::from_secs(60));

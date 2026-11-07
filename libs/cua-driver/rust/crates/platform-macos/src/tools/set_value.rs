@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! set_value tool — matches the Swift reference in SetValueTool.swift.
 //!
 //! Two modes, determined by the element's AXRole:
@@ -126,6 +129,11 @@ impl Tool for SetValueTool {
             Ok(lease) => lease,
             Err(refusal_result) => return refusal_result,
         };
+        if let Some(refusal) =
+            super::refuse_if_disabled(pid, window_id, &element_guard, "set_value", false).await
+        {
+            return refusal;
+        }
 
         // A file's name as Finder lists it takes an AXValue write and reads it
         // back, but the file is never renamed. Refuse before anything moves.

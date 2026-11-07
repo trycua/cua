@@ -29,6 +29,7 @@ import { Segmented } from "@/components/ui/segmented";
 import { Select } from "@/components/ui/select";
 import { toast } from "@/components/ui/toast";
 import { cn } from "@/lib/utils";
+import { thisComputerLabel } from "@/lib/host-labels";
 
 const TONE: Record<AgentChat["tone"], string> = {
   you: "bg-warning",
@@ -496,7 +497,7 @@ export function AgentsEmpty({ onStart, onConnect }: { onStart: () => void; onCon
         <p className="mt-1 text-center text-[13px] text-muted-foreground">Add an agent, then message it here.</p>
         <div className="mt-5">
           {(found ?? []).slice(0, 3).map((f) => (
-            <EmptyRow key={f.agent} data={`connect-mac-${f.agent}`} icon={<AppMark agent={f.agent} name={f.name} />} title={`Connect ${f.name}`} detail="On This Mac" onClick={() => connect(f.agent)} />
+            <EmptyRow key={f.agent} data={`connect-mac-${f.agent}`} icon={<AppMark agent={f.agent} name={f.name} />} title={`Connect ${f.name}`} detail={`On ${thisComputerLabel()}`} onClick={() => connect(f.agent)} />
           ))}
           <EmptyRow data="start" icon={<PlayIcon className="size-3.5" />} title="Start one in a Space" detail="Runs inside the Space" onClick={onStart} />
           <EmptyRow data="connect" icon={<LinkIcon className="size-3.5" />} title="Connect your own agent" detail="With a prompt" onClick={onConnect} />
@@ -539,7 +540,7 @@ export function AgentPage({ chat, open, onOpenChange, me, identity }: { chat: Ag
                   <ProvenanceCard identity={s.member.identity} agent={roster.agents[0]} roster={roster} />
                 ) : (
                   <p className="p-3.5 text-[13px]">
-                    @{s.handle} in {s.spaceName}
+                    @{s.member.handle ?? s.handle} in {s.spaceName}
                   </p>
                 )}
               </div>

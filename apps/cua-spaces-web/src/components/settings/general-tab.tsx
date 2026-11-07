@@ -10,13 +10,14 @@ import { chooseSettings, useBridge, useLoginItem, useMachines, useSession, useSe
 import { SettingsGroup, SettingsRow } from "@/components/settings-group";
 import { CliSettingsSection } from "@/components/settings/cli-section";
 import { CoreSettingsRow } from "@/components/settings/core-section";
+import { DefaultSpaceGroup } from "@/components/settings/default-space-group";
 import { RepoCacheGroup } from "@/components/settings/repo-cache-group";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Segmented } from "@/components/ui/segmented";
 import { Switch } from "@/components/ui/switch";
 import { toastError } from "@/components/ui/toast";
-import { globalShortcutLine, showsMacShellSettings, thisComputerLabel } from "@/lib/host-labels";
+import { globalShortcutLine, showsMacShellSettings, thisComputerLabel, thisComputerText } from "@/lib/host-labels";
 import { LAUNCH_HELP, LAUNCH_LABEL } from "@/lib/settings-copy";
 import { acceleratorOf } from "@/lib/shortcut-keys";
 import { useTheme, type ThemePreference } from "@/lib/theme";
@@ -64,6 +65,8 @@ export function GeneralTab() {
 
   return (
     <div data-settings-tab="general">
+      {/* Labs "Spaces as a tree": the default Space and the order to try (nothing while it's off). */}
+      <DefaultSpaceGroup />
       <SettingsGroup
         title="Everyday"
         footer={
@@ -157,7 +160,7 @@ function SharingGroup() {
     void (async () => {
       try {
         if (!panel.configured) {
-          if (next && !(await host.quickSetUp())) throw new Error(host.setupError?.message ?? "Couldn't set this Mac up.");
+          if (next && !(await host.quickSetUp())) throw new Error(host.setupError?.message ?? `Couldn't set ${thisComputerText()} up.`);
           return;
         }
         if (!toggle) return;

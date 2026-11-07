@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! `health_report` — single-call end-to-end driver diagnostics.
 //!
 //! The point of this tool is to let downstream consumers ship one stable

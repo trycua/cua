@@ -6,3 +6,6 @@ release/
 /native/
 # Synthetic H.264 streams (scripts/video/encode.sh).
 /scripts/video/.cache/
+# Cua Spaces Local (scripts/install-local.ps1): the build output and the pinned pnpm it fetches.
+/dist-local/
+/.local-tools/

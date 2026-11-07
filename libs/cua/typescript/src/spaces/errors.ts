@@ -101,13 +101,13 @@ export class SpacesError extends Error {
 export type PlanLimitKind = 'sessions' | 'hours';
 
 /**
- * The relay refused a new live session because the account's plan is at its
+ * The relay refused a new computer in use because the account's plan is at its
  * cap (HTTP 429, `x-cua-relay-error: plan_limit_sessions|plan_limit_hours`).
- * Live sessions are never cut and retrying gets the same answer: close one,
+ * Computers already in use are never cut and retrying gets the same answer: close one,
  * or send the person to {@link PlanLimitError.upgradeUrl}.
  *
- * `message` is the plain sentence, such as "You're using 5 of 5 live sessions
- * on Pro. Close one or upgrade to Teams."
+ * `message` is the plain sentence, such as "You have 5 of 5 computers in use at
+ * once on Pro. Close one or upgrade to Teams."
  */
 export class PlanLimitError extends SpacesError {
   readonly kind: PlanLimitKind;
@@ -134,7 +134,10 @@ export class PlanLimitError extends SpacesError {
   }
 }
 
+// The sessions sentence has two wordings: the current one, and the old "live
+// sessions" one that older relays, daemons and SDKs still send. Both are read.
 const PLAN_LIMIT_FORMS: ReadonlyArray<readonly [string, PlanLimitKind, string]> = [
+  ["You have ", 'sessions', ' computers in use at once on '],
   ["You're using ", 'sessions', ' live sessions on '],
   ["You've used ", 'hours', ' remote hours this month on '],
 ];

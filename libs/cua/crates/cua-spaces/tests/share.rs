@@ -654,10 +654,10 @@ async fn rm_and_relay_unregister_leave_no_stale_relay_record() {
 }
 
 /// Removing a stale record: `rm` of a gone Space's `relay:<machine>` and
-/// `relay_unregister` of a machine that is no longer connected remove it
-/// from the relay directory; a host that is connected now is refused with
-/// the remedy that works (`cua host remove` on it), and a live Space
-/// registration is untouched by `rm`.
+/// `relay_unregister` of a machine that is no longer connected (or listed
+/// as connected but not answering) remove it from the relay directory, and
+/// a live Space registration is untouched by `rm`. A host that answers is
+/// refused with `cua host remove` (covered in `computer_identity.rs`).
 #[tokio::test]
 async fn stale_relay_records_can_be_removed() {
     let (relay, ada, _bob, _homes) = two_accounts().await;
@@ -683,18 +683,13 @@ async fn stale_relay_records_can_be_removed() {
     );
     assert!(relay.machine(live).is_none());
 
-    // A host: connected, it is refused with a remedy that can be carried
-    // out; once that machine is gone, its record is removed.
+    // A host: one that is connected and answers is refused with a remedy
+    // that can be carried out (see `computer_identity.rs`; the fake relay
+    // here has nothing behind the id, so a listed-connected host is a
+    // ghost that can be removed). `rm` and `delete` never remove a host.
     let host = "0123abcd4567ef890123abcd4567ef89";
     register(&relay, host, true).await;
     relay.set_online(host, true, "0.1.0");
-    let e = ada
-        .relay_unregister(&format!("relay:{host}"))
-        .await
-        .unwrap_err();
-    assert_eq!(e.tag(), "invalid_argument", "{e}");
-    assert!(e.to_string().contains("cua host remove"), "{e}");
-    assert!(relay.machine(host).is_some());
     // `rm` and `delete` never remove a host's record.
     ada.remove(&format!("relay:{host}")).await.unwrap();
     relay.set_online(host, false, "");

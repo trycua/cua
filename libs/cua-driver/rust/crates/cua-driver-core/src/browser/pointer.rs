@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Extended browser pointer actions.
 //!
 //! This module deliberately shares the exact-or-refused posture of the
@@ -769,7 +772,7 @@ impl Tool for BrowserPointerTool {
         args: &Value,
     ) -> ProtectedResourceOwnership {
         if adapter_id == "browser_bound_input" {
-            browser_resource_ownership(&self.engine, args)
+            browser_resource_ownership(&self.engine, args).await
         } else {
             ProtectedResourceOwnership::UserOwned
         }

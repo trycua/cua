@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use std::io::Write;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -386,10 +389,12 @@ async fn observation_inherits_the_window_and_stays_bounded() {
     );
 }
 
-#[tokio::test]
+// The paused clock moves only when the batch sleeps, so a slow runner cannot
+// push the elapsed time past the upper bound.
+#[tokio::test(start_paused = true)]
 async fn pauses_between_steps_but_not_after_the_last() {
     let harness = Harness::new();
-    let started = std::time::Instant::now();
+    let started = tokio::time::Instant::now();
     harness
         .run(json!({"delay_ms": 120, "steps": [
             {"tool": "click", "args": {"pid": 42}},
@@ -417,6 +422,7 @@ async fn every_step_runs_in_the_batch_session() {
     }
 }
 
+#[cfg(feature = "yaml")]
 #[tokio::test]
 async fn each_step_is_held_to_the_capability_manifest() {
     let harness = Harness::new();
@@ -445,6 +451,7 @@ async fn each_step_is_held_to_the_capability_manifest() {
     assert_eq!(harness.hits("set_value"), 0, "later steps never run");
 }
 
+#[cfg(feature = "yaml")]
 #[tokio::test]
 async fn the_batch_itself_needs_the_manifest_to_allow_it() {
     let harness = Harness::new();
@@ -514,6 +521,7 @@ async fn the_old_name_run_actions_still_runs_but_is_not_listed() {
     assert!(!text(&current).contains("deprecated"), "{}", text(&current));
 }
 
+#[cfg(feature = "yaml")]
 #[tokio::test]
 async fn a_manifest_that_allows_run_actions_allows_run_steps() {
     let harness = Harness::new();

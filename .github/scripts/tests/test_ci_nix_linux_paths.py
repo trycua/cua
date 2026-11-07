@@ -62,10 +62,28 @@ class TestCiNixLinuxPaths(unittest.TestCase):
         self.push_paths = event_paths(self.workflow, "push")
 
     def workflow_selected(self, changed_paths: tuple[str, ...]) -> bool:
+        """Does a main push of these paths run the workflow (the full list)?"""
+        return any(path_selected(self.push_paths, path) for path in changed_paths)
+
+    def pull_request_selected(self, changed_paths: tuple[str, ...]) -> bool:
         return any(path_selected(self.pull_request_paths, path) for path in changed_paths)
 
-    def test_pull_request_and_main_push_filters_stay_aligned(self) -> None:
-        self.assertEqual(self.pull_request_paths, self.push_paths)
+    def test_pull_requests_run_only_on_nix_paths_and_main_runs_the_full_list(self) -> None:
+        # Driver source changes are built on main and nightly, not on every pull request.
+        self.assertTrue(set(self.pull_request_paths) < set(self.push_paths))
+        for path in ("flake.nix", "flake.lock", "nix/cua-driver/package.nix",
+                     "libs/cua-driver/rust/Cargo.lock", ".github/workflows/ci-nix-linux.yml"):
+            with self.subTest(path=path):
+                self.assertTrue(self.pull_request_selected((path,)))
+        for path in ("libs/cua-driver/rust/crates/cua-driver/src/main.rs",
+                     "libs/cua-driver/rust/crates/platform-linux/src/lib.rs"):
+            with self.subTest(path=path):
+                self.assertFalse(self.pull_request_selected((path,)))
+                self.assertTrue(self.workflow_selected((path,)))
+
+    def test_it_also_runs_every_night_and_reports_a_failure_as_an_issue(self) -> None:
+        self.assertIn("  schedule:\n", self.workflow)
+        self.assertIn("uses: ./.github/actions/nightly-issue", self.workflow)
 
     def test_gallery_only_changes_do_not_select_the_five_job_matrix(self) -> None:
         gallery_only = (

@@ -87,6 +87,7 @@ pub mod list_watch;
 pub mod listing;
 mod local_load;
 pub mod mesh;
+pub use cua_spaces_contract::names;
 pub mod named_volumes;
 pub mod network;
 pub mod operator;

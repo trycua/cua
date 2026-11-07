@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Integration test against the CuaTestHarness.AppKit Swift app.
 //!
 //! Mirror of `harness_wpf_test.rs` for the macOS AppKit hosting pattern.
@@ -31,10 +34,10 @@ use std::time::{Duration, Instant};
 use cua_driver_testkit::ax::{element_index_by_id, element_index_containing, has_id, looks_empty};
 use cua_driver_testkit::e2e::{
     execute_case, native_background_case, native_foreground_case, native_readonly_case,
-    recording_evidence, DriverRoute, Evidence, Observation, OracleKind, RefusalCode, Targeting,
+    recording_evidence, DriverRoute, Evidence, Observation, OracleKind, Targeting,
 };
 use cua_driver_testkit::observer::{NativeObserver, ObserverBackend, TargetWindow};
-use cua_driver_testkit::sentinel::run_with_background_oracles;
+use cua_driver_testkit::sentinel::{run_with_background_oracles, ForegroundSentinel};
 use cua_driver_testkit::{Driver, McpDriver, ToolResponse};
 
 #[path = "support/appkit_snapshot_publication.rs"]
@@ -99,6 +102,18 @@ impl Harness {
             false,
             None,
             &[("CUA_APPKIT_ERRORING_TOGGLES", "1")],
+        )
+        .presented()
+    }
+
+    /// Launch with the opt-in disabled checkbox (`disabled_control` scenario).
+    fn launch_with_disabled_control() -> Self {
+        Self::spawn(
+            None,
+            None,
+            false,
+            None,
+            &[("CUA_APPKIT_DISABLED_CONTROL", "1")],
         )
         .presented()
     }
@@ -1840,6 +1855,191 @@ fn harness_appkit_erroring_toggle_press_counts_only_when_its_value_moved() {
         .unwrap_or_else(|error| panic!("background desktop contract failed: {error}"));
 
         Observation::delivered_with_fixture_state(passed)
+    });
+}
+
+/// A disabled control is published with `enabled: false` and its frame, and a
+/// press on its token is refused without changing it (#3949).
+#[test]
+#[ignore]
+fn harness_appkit_disabled_control_is_published_and_its_press_refused() {
+    let case = native_background_case(
+        "appkit",
+        "disabled_control_press",
+        Targeting::Ax,
+        DriverRoute::MacosAxAction,
+    );
+    let cell_id = case.cell_id.clone();
+    execute_case(case, |evidence| {
+        let mut driver = McpDriver::spawn_macos_daemon_proxy_named(&cell_id)
+            .expect("start installed macOS daemon proxy");
+        *evidence = recording_evidence(driver.recording_dir());
+        let harness = Harness::launch_with_disabled_control();
+        let pid = harness.pid;
+        let (wid, _) = driver
+            .find_window(pid as i64, "CuaTestHarness AppKit")
+            .expect("AppKit main window not found");
+
+        let (_, passed) = run_with_background_oracles(
+            &mut driver,
+            TargetWindow {
+                pid,
+                native_id: wid,
+            },
+            |driver| {
+                let snapshot = snapshot_elements(driver, pid, wid);
+                assert!(
+                    snapshot.tree_text().contains("disabled_checked=false"),
+                    "disabled checkbox did not start off"
+                );
+                let index = element_index_by_id(snapshot.tree_text(), "chk-disabled")
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "the disabled checkbox has no element_index:\n{}",
+                            snapshot.tree_text()
+                        )
+                    });
+                let element = snapshot.structured()["elements"]
+                    .as_array()
+                    .and_then(|elements| {
+                        elements
+                            .iter()
+                            .find(|element| element["element_index"].as_u64() == Some(index))
+                    })
+                    .cloned()
+                    .expect("the disabled checkbox is missing from elements");
+                assert_eq!(element["enabled"], false, "{element}");
+                assert!(
+                    element["frame"]["w"].as_f64().unwrap_or(0.0) > 0.0,
+                    "the disabled checkbox has no frame: {element}"
+                );
+
+                let refused = driver.call(
+                    "click",
+                    serde_json::json!({
+                        "pid": pid as i64,
+                        "window_id": wid,
+                        "element_token": element["element_token"],
+                        "action": "press",
+                        "delivery_mode": "background"
+                    }),
+                );
+                assert!(
+                    refused.is_error(),
+                    "a press on a disabled control was reported as performed: {}",
+                    refused.raw
+                );
+                assert!(
+                    refused.text().contains("AXEnabled=false"),
+                    "{}",
+                    refused.raw
+                );
+                assert_eq!(
+                    refused.structured()["code"],
+                    "element_disabled",
+                    "{}",
+                    refused.raw
+                );
+
+                // Every other token writer refuses the same control the same way.
+                let token = &element["element_token"];
+                let writers = [
+                    ("set_value", serde_json::json!({ "value": "1" })),
+                    ("right_click", serde_json::json!({})),
+                    ("double_click", serde_json::json!({})),
+                    ("click", serde_json::json!({ "button": "middle" })),
+                    ("type_text", serde_json::json!({ "text": "x" })),
+                ];
+                for (tool, mut args) in writers {
+                    args["pid"] = serde_json::json!(pid as i64);
+                    args["window_id"] = serde_json::json!(wid);
+                    args["element_token"] = token.clone();
+                    let refused = driver.call(tool, args);
+                    assert!(
+                        refused.is_error() && refused.structured()["code"] == "element_disabled",
+                        "{tool} on a disabled control was not refused as element_disabled: {}",
+                        refused.raw
+                    );
+                }
+
+                std::thread::sleep(Duration::from_millis(200));
+                let after = snapshot_elements(driver, pid, wid);
+                assert!(
+                    after.tree_text().contains("disabled_checked=false"),
+                    "a refused action changed the disabled checkbox:\n{}",
+                    after.tree_text()
+                );
+            },
+        )
+        .unwrap_or_else(|error| panic!("background desktop contract failed: {error}"));
+
+        Observation::delivered_with_fixture_state(passed)
+    });
+}
+
+/// A foreground call into a background app skips the early `AXEnabled` read so
+/// activation can enable the control, and must read it again before input: a
+/// control that is still disabled is refused, not double-clicked or typed into.
+#[test]
+#[ignore]
+fn harness_appkit_disabled_control_is_refused_in_foreground_from_the_background() {
+    let case = native_foreground_case(
+        "appkit",
+        "disabled_control_foreground",
+        Targeting::Ax,
+        DriverRoute::MacosAxAction,
+    );
+    let cell_id = case.cell_id.clone();
+    execute_case(case, |evidence| {
+        let mut driver = McpDriver::spawn_macos_daemon_proxy_named(&cell_id)
+            .expect("start installed macOS daemon proxy");
+        *evidence = recording_evidence(driver.recording_dir());
+        let harness = Harness::launch_with_disabled_control();
+        let pid = harness.pid;
+        let (wid, _) = driver
+            .find_window(pid as i64, "CuaTestHarness AppKit")
+            .expect("AppKit main window not found");
+        let target = TargetWindow {
+            pid,
+            native_id: wid,
+        };
+        let sentinel = ForegroundSentinel::launch(&mut driver);
+        driver.start_behavior_recording();
+
+        let writers = [
+            ("double_click", serde_json::json!({})),
+            ("click", serde_json::json!({ "button": "middle" })),
+            ("type_text", serde_json::json!({ "text": "x" })),
+        ];
+        for (tool, mut args) in writers {
+            // Each call starts with the harness behind another app, the case
+            // in which the early read is skipped.
+            sentinel
+                .prepare_background_observation(&mut driver, target)
+                .unwrap_or_else(|error| panic!("put the harness in the background: {error}"));
+            let snapshot = snapshot_elements(&mut driver, pid, wid);
+            args["pid"] = serde_json::json!(pid as i64);
+            args["window_id"] = serde_json::json!(wid);
+            args["element_token"] =
+                serde_json::json!(element_token_by_id(&snapshot, "chk-disabled"));
+            args["delivery_mode"] = serde_json::json!("foreground");
+            let refused = driver.call(tool, args);
+            assert!(
+                refused.is_error() && refused.structured()["code"] == "element_disabled",
+                "foreground {tool} on a disabled control in a background app was not \
+                 refused as element_disabled: {}",
+                refused.raw
+            );
+        }
+
+        std::thread::sleep(Duration::from_millis(200));
+        let after = snapshot_elements(&mut driver, pid, wid);
+        assert!(
+            after.tree_text().contains("disabled_checked=false"),
+            "a refused foreground action changed the disabled checkbox:\n{}",
+            after.tree_text()
+        );
+        Observation::delivered_with_fixture_state(Vec::new())
     });
 }
 

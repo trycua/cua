@@ -4,8 +4,7 @@
 /**
  * Settings, Experiments, from the app core (`experiments::*`): one switch
  * per feature still being built, all off by default, and what each hides
- * while off (Cua Volume: the first run's Volume page and Settings, Storage;
- * Your cloud: your clouds in New Space; Sharing: a Space's Share button).
+ * while off (Cua Volume: the first run's Volume page and Settings, Storage).
  * Off only hides: nothing set up is undone. The SwiftUI app draws the same.
  */
 import { core } from "../core";
@@ -15,11 +14,9 @@ import type { SettingsPage, SettingsSection } from "./window";
 /** The switches, as stored (`cua.settings.experiments`). */
 export interface Experiments {
   cuaVolume: boolean;
-  yourCloud: boolean;
-  sharing: boolean;
 }
 
-export const NO_EXPERIMENTS: Experiments = { cuaVolume: false, yourCloud: true, sharing: true };
+export const NO_EXPERIMENTS: Experiments = { cuaVolume: false };
 
 /** The Experiments tab: a switch and one line per experiment. */
 export function experimentsPage(experiments: Experiments): SettingsPage {

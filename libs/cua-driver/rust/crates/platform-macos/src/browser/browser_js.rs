@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! BrowserJS: run JavaScript in Chrome/Brave/Edge/Safari via AppleScript/osascript.
 
 use anyhow::Context;

@@ -250,6 +250,9 @@ public enum PermissionGuide {
     /// `CuaSpacesMac preflight-permissions` in a new process: the guided
     /// panes macOS has granted this app.
     nonisolated static func freshProcessGrants() -> Set<PermissionFlowPane> {
+        // Not running as an app (tests, `swift run`): this process is the
+        // one macOS answers for, and there is no app to start a copy of.
+        guard Bundle.main.bundleURL.pathExtension == "app" else { return parseGrants(preflightReport()) }
         guard let exe = Bundle.main.executableURL else { return [] }
         let p = Process()
         p.executableURL = exe
@@ -384,6 +387,27 @@ public enum PermissionGuide {
         config.activates = true
         NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL, configuration: config)
         NSApp.windows.first { $0.isVisible && $0.canBecomeMain }?.makeKeyAndOrderFront(nil)
+    }
+
+    /// The name System Settings lists this app under: "Cua Spaces", or
+    /// "Cua Spaces Local" for the Local build, which has its own bundle id
+    /// and so its own grants.
+    nonisolated static func appName(info: [String: Any]? = Bundle.main.infoDictionary) -> String {
+        for key in ["CFBundleDisplayName", "CFBundleName"] {
+            if let name = info?[key] as? String, !name.isEmpty { return name }
+        }
+        return "Cua Spaces"
+    }
+
+    /// The two guided permissions as the pages read them (`AppPermission`
+    /// in the web's `ops/driver.ts`): `screen` and `accessibility`, each
+    /// granted or not, with its System Settings pane.
+    nonisolated static func rows(granted: Set<PermissionFlowPane>) -> [[String: Any]] {
+        let panes: [(String, PermissionFlowPane)] = [("screen", .screenRecording), ("accessibility", .accessibility)]
+        return panes.map { id, pane -> [String: Any] in
+            let url: Any = settingsURL(for: pane).map { $0 as Any } ?? NSNull()
+            return ["id": id, "granted": granted.contains(pane), "settingsUrl": url]
+        }
     }
 
     nonisolated static func settingsURL(for pane: PermissionFlowPane) -> String? {

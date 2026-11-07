@@ -267,6 +267,8 @@ pub(crate) mod imp {
                 .map_err(|e| st(e.into()))?,
             parent: opt(r.parent),
             widen: r.widen,
+            // Opting out travels as the `cua.relay=off` label.
+            relay: None,
         })
     }
 

@@ -1,0 +1,12 @@
+{"timestamp":"2026-11-03T10:00:00.000Z","type":"session_meta","payload":{"id":"5f0c1d2e-3a4b-4c5d-8e6f-708192a3b4c5","timestamp":"2026-11-03T10:00:00.000Z","cwd":"/Users/sam/code/bike-shop","originator":"codex_cli_rs","source":"cli","git":{"branch":"main"}}}
+{"timestamp":"2026-11-03T10:00:01.000Z","type":"response_item","payload":{"type":"message","role":"developer","content":[{"type":"input_text","text":"You are Codex."}]}}
+{"timestamp":"2026-11-03T10:00:01.100Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"# AGENTS.md instructions for /Users/sam/code/bike-shop\n\nUse pnpm."}]}}
+{"timestamp":"2026-11-03T10:00:01.200Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<environment_context>\n  <cwd>/Users/sam/code/bike-shop</cwd>\n</environment_context>"}]}}
+{"timestamp":"2026-11-03T10:00:02.000Z","type":"response_item","payload":{"type":"message","id":"u-1","role":"user","content":[{"type":"input_text","text":"Why does checkout double-charge when the coupon is applied twice?"}]}}
+{"timestamp":"2026-11-03T10:00:02.000Z","type":"event_msg","payload":{"type":"user_message","message":"Why does checkout double-charge when the coupon is applied twice?"}}
+{"timestamp":"2026-11-03T10:00:03.000Z","type":"response_item","payload":{"type":"reasoning","summary":[],"encrypted_content":"zzz"}}
+{"timestamp":"2026-11-03T10:00:04.000Z","type":"response_item","payload":{"type":"function_call","name":"shell","arguments":"{}","call_id":"c1"}}
+{"timestamp":"2026-11-03T10:00:05.000Z","type":"response_item","payload":{"type":"function_call_output","call_id":"c1","output":"ok"}}
+{"timestamp":"2026-11-03T10:00:06.000Z","type":"response_item","payload":{"type":"message","id":"a-1","role":"assistant","content":[{"type":"output_text","text":"The coupon handler isn't idempotent."}]}}
+{"timestamp":"2026-11-03T10:00:06.000Z","type":"event_msg","payload":{"type":"agent_message","message":"The coupon handler isn't idempotent."}}
+{"timestamp":"2026-11-03T10:05:00.000Z","type":"world_state","payload":{"full":true}}

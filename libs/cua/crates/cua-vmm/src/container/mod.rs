@@ -54,6 +54,9 @@ pub const BASE_REPO: &str = "cua-vmm/base";
 /// Engine repository of checkpoints and of the intermediate images this
 /// backend commits for port rebinds and forks.
 pub const CKPT_REPO: &str = "cua-vmm/checkpoint";
+/// Engine repository of the filesystems of prepared warm-pool members
+/// ([`Runtime::save_prepared`]): the image a prepared member starts from.
+pub const PREPARED_REPO: &str = "cua-vmm/prepared";
 
 /// On every container, image and volume the SDK creates: `true`. Garbage
 /// collection only ever touches objects that carry it (plus the images the
@@ -101,6 +104,7 @@ pub fn image_kind(repo: &str, tag: &str) -> &'static str {
         CKPT_REPO if tag.ends_with("-rebind") || tag.starts_with("fork-") => "intermediate",
         CKPT_REPO => "checkpoint",
         BASE_REPO => "base",
+        PREPARED_REPO => "prepared",
         _ => "build-image",
     }
 }
@@ -1696,6 +1700,58 @@ impl Runtime for ContainerRuntime {
             BackendKind::Container,
             Some(name.into()),
         ))
+    }
+
+    fn keeps_prepared(&self) -> bool {
+        true
+    }
+
+    async fn save_prepared(&self, name: &str, tag: &str) -> Result<Option<ImageSource>> {
+        validate_name(tag)?;
+        let i = self
+            .inspect(name)
+            .await?
+            .ok_or_else(|| VmmError::NotFound(name.into()))?;
+        // The root filesystem as it is now. gVisor keeps its writes in its
+        // own overlay, which a commit cannot see: the rootfs is streamed out.
+        if Self::isolation_from(&i) == Isolation::Gvisor && Self::status_from(&i) == Status::Running
+        {
+            self.export_import_as(name, PREPARED_REPO, tag, config_changes(i.config.as_ref()))
+                .await?;
+        } else {
+            self.commit(name, PREPARED_REPO, tag, true).await?;
+        }
+        Ok(Some(ImageSource::oci(format!("{PREPARED_REPO}:{tag}"))))
+    }
+
+    async fn find_prepared(&self, tag: &str) -> Result<Option<ImageSource>> {
+        let image = format!("{PREPARED_REPO}:{tag}");
+        Ok(self
+            .docker
+            .inspect_image(&image)
+            .await
+            .ok()
+            .map(|_| ImageSource::oci(image)))
+    }
+
+    async fn drop_prepared(&self, tag: &str) -> Result<()> {
+        let image = format!("{PREPARED_REPO}:{tag}");
+        match self
+            .docker
+            .remove_image(
+                &image,
+                Some(bollard::query_parameters::RemoveImageOptions {
+                    force: true,
+                    ..Default::default()
+                }),
+                None,
+            )
+            .await
+        {
+            Ok(_) => Ok(()),
+            Err(e) if is_not_found(&e) => Ok(()),
+            Err(e) => Err(engine_err(e)),
+        }
     }
 
     async fn delete_checkpoint(&self, checkpoint: &str) -> Result<()> {

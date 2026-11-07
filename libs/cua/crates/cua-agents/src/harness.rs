@@ -72,6 +72,10 @@ pub struct Harness {
     pub sandbox_mcp: bool,
     /// Supported by the SDK: installed, driven and proven live.
     pub ready: bool,
+    /// Environment that lets the agent open a session without a real
+    /// credential (a value no model ever sees): what a warm-up session and a
+    /// measurement of start times run with. Empty: the first of `keys`.
+    pub placeholder: &'static [(&'static str, &'static str)],
     /// What is known not to work, published with its capabilities.
     pub notes: &'static [&'static str],
 }
@@ -97,6 +101,7 @@ pub const HARNESSES: &[Harness] = &[
         skills_agent: Some("claude-code"),
         sandbox_mcp: true,
         ready: true,
+        placeholder: &[("ANTHROPIC_API_KEY", "placeholder-not-a-key")],
         notes: &[],
     },
     Harness {
@@ -117,6 +122,10 @@ pub const HARNESSES: &[Harness] = &[
         skills_agent: Some("codex"),
         sandbox_mcp: true,
         ready: true,
+        placeholder: &[(
+            "CODEX_AUTH_JSON",
+            r#"{"OPENAI_API_KEY":"placeholder-not-a-key"}"#,
+        )],
         notes: &[],
     },
     Harness {
@@ -133,6 +142,7 @@ pub const HARNESSES: &[Harness] = &[
         skills_agent: Some("gemini-cli"),
         sandbox_mcp: true,
         ready: true,
+        placeholder: &[],
         notes: &[
             "Google stopped serving free Gemini CLI accounts on 2026-06-18; use a paid API key",
         ],
@@ -151,6 +161,7 @@ pub const HARNESSES: &[Harness] = &[
         skills_agent: Some("antigravity"),
         sandbox_mcp: true,
         ready: true,
+        placeholder: &[],
         notes: &[
             "runs Google's ACP server (the IDE's agent) headless; there is no interactive terminal CLI",
             "the server is proprietary and about 1 GB; its sha256 is pinned by cua (Google publishes none)",
@@ -173,6 +184,7 @@ pub const HARNESSES: &[Harness] = &[
         skills_agent: Some("opencode"),
         sandbox_mcp: true,
         ready: true,
+        placeholder: &[("OPENAI_API_KEY", "placeholder-not-a-key")],
         notes: &[],
     },
     Harness {
@@ -192,6 +204,7 @@ pub const HARNESSES: &[Harness] = &[
         skills_agent: Some("goose"),
         sandbox_mcp: true,
         ready: true,
+        placeholder: &[],
         notes: &[],
     },
     Harness {
@@ -211,6 +224,7 @@ pub const HARNESSES: &[Harness] = &[
         skills_agent: Some("pi"),
         sandbox_mcp: false,
         ready: true,
+        placeholder: &[],
         notes: &[
             "Pi has no MCP client (by design); MCP servers passed to a run are ignored",
             "driven through the community pi-acp adapter (MIT), not a first-party ACP server",
@@ -238,6 +252,7 @@ pub const HARNESSES: &[Harness] = &[
         skills_agent: None,
         sandbox_mcp: false,
         ready: true,
+        placeholder: &[("OPENROUTER_API_KEY", "placeholder-not-a-key")],
         notes: &[
             "hermes-acp does not take ACP session MCP servers; configure MCP in HERMES_HOME's config.yaml",
             "installed from a pinned commit with uv sync --frozen (Hermes ships no wheel); needs git and Python 3.11 to 3.13 or uv's managed Python",
@@ -261,6 +276,7 @@ pub const HARNESSES: &[Harness] = &[
         skills_agent: Some("openclaw"),
         sandbox_mcp: false,
         ready: true,
+        placeholder: &[],
         notes: &[
             "openclaw acp (bridge mode) refuses per-session MCP servers; configure MCP on the OpenClaw gateway",
             "openclaw acp bridges to a Gateway; the run starts a loopback Gateway for itself",
@@ -285,6 +301,25 @@ impl Harness {
 
 /// Short names people and apps use for a harness, and the id they mean.
 const ALIASES: &[(&str, &str)] = &[("codex", "openai-codex"), ("claude", "claude-code")];
+
+impl Harness {
+    /// The environment a session of this harness opens with when no real
+    /// credential is available (see [`Harness::placeholder`]).
+    pub fn placeholder_env(&self) -> std::collections::BTreeMap<String, String> {
+        if self.placeholder.is_empty() {
+            return self
+                .keys
+                .first()
+                .map(|k| ((*k).to_string(), "placeholder-not-a-key".to_string()))
+                .into_iter()
+                .collect();
+        }
+        self.placeholder
+            .iter()
+            .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
+            .collect()
+    }
+}
 
 /// A harness by id (or by one of its short names: `codex`, `claude`).
 pub fn harness(id: &str) -> Option<&'static Harness> {
@@ -591,7 +626,22 @@ pub fn memory_dir(h: &Harness) -> Option<&'static str> {
 /// state is `<guest home>/.cua/agents/codex-state/<name>`; a home elsewhere
 /// (an explicit `home_dir`) keeps it in its own `.codex-sqlite` sibling.
 pub fn codex_sqlite_dir(home: &str) -> String {
+    codex_sqlite_dir_in(home, "")
+}
+
+/// [`codex_sqlite_dir`] for a run whose directory is `run_dir`
+/// (`<guest home>/.cua/agents/<run>`). A home on a Space's mounted Volume
+/// (`/volume/agents/<name>`, where `volume_for_agent` puts it) names no
+/// guest home of its own; the run directory does.
+pub fn codex_sqlite_dir_in(home: &str, run_dir: &str) -> String {
     let home = home.trim_end_matches('/');
+    if let Some(name) = home.strip_prefix("/volume/agents/")
+        && !name.contains('/')
+        && !name.is_empty()
+        && let Some((guest_home, _)) = run_dir.trim_end_matches('/').rsplit_once("/.cua/agents/")
+    {
+        return format!("{guest_home}/.cua/agents/codex-state/{name}");
+    }
     // `cua-volume` in a Space; on a Mac the Volume is mounted at
     // `~/Cua Volume`.
     for marker in ["/cua-volume/agents/", "/Cua Volume/agents/"] {
@@ -736,7 +786,7 @@ pub fn launch_with_config(
             // config and memories stay on the Volume. `sqlite_home` is a
             // top-level key, so it goes before any table, and it is written on
             // every start with the rest of the generated config.
-            if let Some(dir) = home.map(codex_sqlite_dir) {
+            if let Some(dir) = home.map(|h| codex_sqlite_dir_in(h, run_dir)) {
                 toml.insert_str(0, &format!("sqlite_home = {dir:?}\n\n"));
                 l.prelude.push(format!("mkdir -p {}", crate::quote(&dir)));
                 env(&mut l, "CODEX_SQLITE_HOME", dir);
@@ -1180,6 +1230,26 @@ mod tests {
             codex_sqlite_dir("/Users/ada/Cua Volume/agents/codex"),
             "/Users/ada/.cua/agents/codex-state/codex"
         );
+        // A home on the Space's mounted Volume (`/volume/agents/<name>`) keeps
+        // the state in the guest home the run directory names, never on the
+        // Volume (SQLite cannot map shared memory there).
+        assert_eq!(
+            codex_sqlite_dir_in("/volume/agents/ada", "/home/cua/.cua/agents/run-1"),
+            "/home/cua/.cua/agents/codex-state/ada"
+        );
+        let x = launch_with_home(
+            harness("openai-codex").unwrap(),
+            None,
+            None,
+            "/home/cua/.cua/agents/run-1",
+            "/w",
+            Some("/volume/agents/ada"),
+        )
+        .unwrap();
+        assert!(x.env.contains(&(
+            "CODEX_SQLITE_HOME".to_string(),
+            "/home/cua/.cua/agents/codex-state/ada".to_string()
+        )));
         // Not the home's own `codex/` (CODEX_HOME), which is on the Volume.
         let home = "/home/cua/cua-volume/agents/ada";
         assert!(!codex_sqlite_dir(home).starts_with(home));
@@ -1509,5 +1579,15 @@ mod tests {
         )
         .unwrap();
         assert!(l.files.is_empty());
+    }
+
+    #[test]
+    fn every_ready_harness_has_a_placeholder_to_open_a_session_with() {
+        for h in HARNESSES.iter().filter(|h| h.ready) {
+            let env = h.placeholder_env();
+            assert!(!env.is_empty(), "{}", h.id);
+            // Never a real-looking secret.
+            assert!(env.values().all(|v| v.contains("placeholder")), "{}", h.id);
+        }
     }
 }

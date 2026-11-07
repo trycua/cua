@@ -40,6 +40,10 @@ pub(crate) enum Outcome {
     Stale,
     /// The provider would not exchange the code (it expired or was used).
     Expired,
+    /// Signed in at the provider, but this computer could not keep the
+    /// session (a locked keychain, a denied prompt, a store that refused the
+    /// write): the app shows the same.
+    NotSaved,
     /// Anything else: a provider error, a missing code, a failed exchange.
     Failed,
 }
@@ -111,6 +115,14 @@ pub(crate) fn render(outcome: &Outcome, to: Option<&ReturnTo>) -> String {
                 "<p>It took too long to finish, or the link was already used.</p>\n<p>{retry}</p>"
             ),
         ),
+        Outcome::NotSaved => (
+            "error",
+            "Sign-in not saved - Cua",
+            "Sign-in couldn't be saved",
+            format!(
+                "<p>Your account is fine, but this computer couldn't save the sign-in. If it asks to use your keychain or saved passwords, allow it.</p>\n<p>{retry}</p>"
+            ),
+        ),
         Outcome::Failed => {
             let details = match to {
                 Some(ReturnTo::Terminal) => " The details are in your terminal.".to_string(),
@@ -150,6 +162,7 @@ mod tests {
             Outcome::Cancelled,
             Outcome::Stale,
             Outcome::Expired,
+            Outcome::NotSaved,
             Outcome::Failed,
         ]
     }
@@ -183,6 +196,14 @@ mod tests {
         let p = render(&Outcome::Cancelled, t.as_ref());
         assert!(p.contains("<code>cua auth login</code>") && !p.contains("window.close()"));
         assert!(render(&Outcome::Expired, app.as_ref()).contains("sign in from Cua Spaces"));
+    }
+
+    #[test]
+    fn a_sign_in_that_was_not_saved_never_reads_as_signed_in() {
+        let app = Some(ReturnTo::App("Cua Spaces".into()));
+        let p = render(&Outcome::NotSaved, app.as_ref());
+        assert!(p.contains("couldn't be saved") && p.contains("sign in from Cua Spaces"));
+        assert!(!p.contains("You're signed in") && !p.contains("window.close()"));
     }
 
     #[test]

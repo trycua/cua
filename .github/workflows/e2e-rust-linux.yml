@@ -24,6 +24,11 @@ on:
         required: false
         type: string
         default: ""
+      harness_filter:
+        description: "Comma list of harness hosts for the shared lane (the PR quick lane passes electron); empty runs them all"
+        required: false
+        type: string
+        default: ""
   workflow_dispatch:
     inputs:
       ref:
@@ -44,6 +49,10 @@ on:
           - verify
       cell_filter:
         description: "Optional shared-cell substring for targeted diagnostics"
+        required: false
+        default: ""
+      harness_filter:
+        description: "Comma list of harness hosts for the shared lane (for example electron); empty runs them all"
         required: false
         default: ""
 
@@ -69,7 +78,14 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  quick:
+    name: quick
+    if: github.event_name == 'pull_request'
+    uses: ./.github/workflows/ci-quick.yml
+
   source:
+    needs: quick
+    if: ${{ !failure() && !cancelled() }}
     name: "Resolve exact source"
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -91,7 +107,7 @@ jobs:
           echo "sha=${sha,,}" >> "$GITHUB_OUTPUT"
 
   verify-skill:
-    if: inputs.lane == '' || inputs.lane == 'verify'
+    if: ${{ !failure() && !cancelled() && (inputs.lane == '' || inputs.lane == 'verify') }}
     name: "Linux / verification skill proof"
     needs: source
     runs-on: ubuntu-latest
@@ -138,7 +154,7 @@ jobs:
           retention-days: 14
 
   shared:
-    if: inputs.lane == 'all' || inputs.lane == 'shared'
+    if: ${{ !failure() && !cancelled() && (inputs.lane == 'all' || inputs.lane == 'shared') }}
     name: "Linux / shared Electron + Tauri"
     needs: source
     runs-on: ubuntu-latest
@@ -148,15 +164,19 @@ jobs:
     env:
       CUA_E2E_SOURCE_SHA: ${{ needs.source.outputs.sha }}
       CUA_E2E_CELL_FILTER: ${{ inputs.cell_filter }}
+      CUA_E2E_HARNESS_FILTER: ${{ inputs.harness_filter }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           ref: ${{ needs.source.outputs.sha }}
       - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5 # 1.97.1
+      # Own family: in libs-cua-driver-rust the day's entry is saved first by
+      # debug-only unit jobs, this job then gets an exact hit and never saves,
+      # so its release driver and Tauri units missed on every run.
       - uses: ./.github/actions/rust-cache
         with:
           workspaces: "libs/cua-driver/rust -> target"
-          key: e2e-shared
+          shared-key: cua-driver-e2e-shared
           save-if: ${{ github.event_name != 'pull_request' && needs.source.outputs.sha == github.sha }}
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
@@ -190,7 +210,7 @@ jobs:
           retention-days: 14
 
   native:
-    if: inputs.lane == 'all' || inputs.lane == 'native'
+    if: ${{ !failure() && !cancelled() && (inputs.lane == 'all' || inputs.lane == 'native') }}
     name: "Linux / GTK3 + GTK4 native harnesses"
     needs: source
     runs-on: ubuntu-latest
@@ -240,7 +260,7 @@ jobs:
           retention-days: 14
 
   capture:
-    if: inputs.lane == 'all' || inputs.lane == 'capture'
+    if: ${{ !failure() && !cancelled() && (inputs.lane == 'all' || inputs.lane == 'capture') }}
     name: "Linux / capture and desktop scope"
     needs: source
     runs-on: ubuntu-latest
@@ -290,7 +310,7 @@ jobs:
           retention-days: 14
 
   installer:
-    if: inputs.lane == 'all' || inputs.lane == 'installer'
+    if: ${{ !failure() && !cancelled() && (inputs.lane == 'all' || inputs.lane == 'installer') }}
     name: "Linux / install-local.sh smoke"
     needs: source
     runs-on: ubuntu-latest
@@ -450,7 +470,11 @@ jobs:
     # combined with the lane=='all' check this keeps certification fail-closed
     # against both lane failures and diagnostic-lane dispatches. Manual
     # dispatches and release-gate calls certify the same complete matrix.
-    if: success() && inputs.lane == 'all'
+    if: >-
+      !failure() && !cancelled() && inputs.lane == 'all' &&
+      needs.source.result == 'success' && needs.shared.result == 'success' &&
+      needs.native.result == 'success' && needs.capture.result == 'success' &&
+      needs.installer.result == 'success'
     needs: [source, shared, native, capture, installer]
     name: "Linux / canonical certification"
     runs-on: ubuntu-latest

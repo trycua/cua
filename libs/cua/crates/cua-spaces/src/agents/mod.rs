@@ -583,8 +583,15 @@ pub fn start_options_with(
         skills: a.skills,
         label: a.label.clone(),
         exit_when_idle: a.exit_when_idle.unwrap_or(false),
+        resume_session: a.resume_session.clone().filter(|s| !s.trim().is_empty()),
+        resume_context: a.resume_context.clone(),
         ..Default::default()
     };
+    if opts.resume_session.is_some() && a.home.is_some() {
+        return Err(Error::InvalidArgument(
+            "agent_start: resume_session continues the harness's own session; it can't run as a persistent agent (home)".into(),
+        ));
+    }
     Ok((opts, missing))
 }
 
@@ -826,6 +833,26 @@ mod tests {
         let (opts, _) = start_options_with(&k, &ep).unwrap();
         assert!(opts.env.is_empty());
         assert_eq!(opts.endpoint.unwrap().wire, Some(Wire::Anthropic));
+        // Continuing the harness's own session (CUA-3319), never as a persistent agent.
+        let mut resume = a.clone();
+        resume.resume_session = Some("0b1e5c2a-1111".into());
+        resume.resume_context = Some("earlier".into());
+        resume.cwd = Some("/Users/sam/code/kettle".into());
+        let (opts, _) = start_options_with(&k, &resume).unwrap();
+        assert_eq!(
+            (
+                opts.resume_session.as_deref(),
+                opts.resume_context.as_deref(),
+                opts.cwd.as_deref()
+            ),
+            (
+                Some("0b1e5c2a-1111"),
+                Some("earlier"),
+                Some("/Users/sam/code/kettle")
+            )
+        );
+        resume.home = Some("helper".into());
+        assert!(start_options_with(&k, &resume).is_err());
         // Bad input is refused without quoting any key.
         let mut bad = a.clone();
         bad.wire = Some("smoke-signals".into());
@@ -1235,18 +1262,12 @@ mod tests {
         }
     }
 
-    /// Fixed sign-in apps have nothing to choose, and the Claude token reaches no switchable app
-    /// whatever was chosen.
+    /// An app is never pointed at a credential it can't read, and the Claude token reaches no app that takes
+    /// any provider whatever was chosen.
     #[test]
     fn only_apps_that_take_any_provider_can_be_told_which_key() {
         let (k, dir) = saved(&[("anthropic", None, "sk-ant-api03-first-aaaa")]);
-        for app in [
-            "claude-code",
-            "openai-codex",
-            "codex",
-            "gemini-cli",
-            "google-antigravity",
-        ] {
+        for app in ["openai-codex", "codex", "gemini-cli", "google-antigravity"] {
             assert!(
                 k.set_use(app, Some(("ANTHROPIC_API_KEY", None))).is_err(),
                 "{app}"

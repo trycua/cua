@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! macOS picture-in-picture preview window.
 //!
 //! Floating NSWindow with an NSImageView showing the most recent

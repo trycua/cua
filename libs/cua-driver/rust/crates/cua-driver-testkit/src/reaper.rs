@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Cross-platform child reaping. Kills every spawned child tree on drop:
 //! Windows uses a kill-on-close Job Object, while Unix gives each test-owned
 //! child its own process group and terminates that group explicitly.

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Keep Driver-owned overlay pixels out of Driver-owned desktop captures.
 //!
 //! The agent cursor and its session pill are drawn in a Driver-owned overlay

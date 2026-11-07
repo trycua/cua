@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! How an action is paced when it is one step of a batch.
 //!
 //! A single tool call waits for two things that exist for the person watching

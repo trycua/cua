@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Standalone smoke for the libei input path on platform-linux.
 //!
 //! Drives `wayland::libei::move_absolute` + `click` and prints what happens.

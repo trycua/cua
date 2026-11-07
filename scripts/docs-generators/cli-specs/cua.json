@@ -10367,7 +10367,7 @@
        "aliases": [],
        "default_value": null,
        "env": null,
-       "help": "`internet`, `none`, `localhost:<ports>` (or `localhost:all`), `lan`, `custom`, `custom:none` or `unprotected` (No protection). Left out: the preset it has (to change only `--via`)",
+       "help": "`internet`, `none`, `localhost:<ports>` (or `localhost:all`), `lan`, `localhost+lan:<ports>` (both), `custom`, `custom:none` or `unprotected` (No protection). Left out: the preset it has (to change only `--via`)",
        "hidden": false,
        "is_optional": true,
        "multiple_values": false,
@@ -13700,11 +13700,11 @@
    "usage": "cua computers [OPTIONS]"
   },
   {
-   "abstract": "Your computers on the relay: remove one that is gone",
+   "abstract": "Now `cua spaces` (kept for one release)",
    "aliases": [],
    "arguments": [],
    "flags": [],
-   "hidden": false,
+   "hidden": true,
    "hidden_aliases": [],
    "name": "machines",
    "options": [],
@@ -13712,7 +13712,7 @@
    "subcommands": [
     {
      "abstract": "Remove a computer that is gone: its row leaves your relay directory, then the signed-in device with exactly its name is revoked (never this device; nothing when several match). A computer that is connected now is refused: run `cua host remove` on it",
-     "after_help": "Examples:\n  cua machines rm old-laptop\n  cua machines rm relay:0123abcd4567ef89 --yes --json",
+     "after_help": "Examples:\n  cua spaces rm old-laptop\n  cua spaces rm relay:0123abcd4567ef89 --yes --json",
      "aliases": [],
      "arguments": [
       {
@@ -14639,7 +14639,7 @@
    "subcommands": [
     {
      "abstract": "Registered Spaces and your computers on the relay",
-     "after_help": "CPU, MEMORY and DISK ON THIS MAC show what each Space was given and what it\nuses now (the numbers the Cua Spaces app shows); for another of your\ncomputers they show what it last reported. Numbers only: no file names.\n\nExamples:\n  cua spaces ls\n  cua spaces ls --no-size\n  cua spaces ls --json\n  # Only the Spaces created with these labels\n  cua spaces ls --label team=research --label run=7",
+     "after_help": "CPU, MEMORY and the DISK column (on this computer) show what each Space was given and what it\nuses now (the numbers the Cua Spaces app shows); for another of your\ncomputers they show what it last reported. Numbers only: no file names.\n\nExamples:\n  cua spaces ls\n  cua spaces ls --no-size\n  cua spaces ls --json\n  # Only the Spaces created with these labels\n  cua spaces ls --label team=research --label run=7",
      "aliases": [
       "list"
      ],
@@ -14841,6 +14841,17 @@
        "help": "A fork source (a \"bake\" Space): a local QEMU VM's guest RAM is a shared file, so `cua sb checkpoint` takes milliseconds and forks of its checkpoints share its pages. Other kinds ignore it",
        "hidden": false,
        "name": "forkable",
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": false
+      },
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "Keep it off your cua.ai account. By default a Space running on a computer signed in and sharing is listed there, so your phone and your other computers see and open it (`cua config set relay.spaces off` turns that off for all of them). A child Space follows its parent. Same as `--label cua.relay=off`",
+       "hidden": false,
+       "name": "no-relay",
        "repeatable": false,
        "short_name": null,
        "takes_value": false
@@ -16225,7 +16236,30 @@
        "type": "string"
       }
      ],
-     "flags": [],
+     "flags": [
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "For one of your computers: also delete the Spaces it provides and their files (through the computer while it is reachable). Without it they stay on your account, detached, and come back if the computer is added again",
+       "hidden": false,
+       "name": "delete-spaces",
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": false
+      },
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "Remove a computer without asking",
+       "hidden": false,
+       "name": "yes",
+       "repeatable": false,
+       "short_name": "y",
+       "takes_value": false
+      }
+     ],
      "hidden": false,
      "hidden_aliases": [],
      "name": "rm",
@@ -16233,6 +16267,82 @@
      "subcommand_optional": false,
      "subcommands": [],
      "usage": "cua spaces rm [OPTIONS] <SPACE>"
+    },
+    {
+     "abstract": "Your default Space: where \"my Space\" goes when you do not say. With no argument it prints the Space it resolves to now and the order it tries (online or not); with a Space it sets the default",
+     "after_help": "Examples:\n  cua spaces default\n  cua spaces default studio\n  cua spaces default studio --fallback office-pc,relay:0123abcd4567ef89\n  # Only the default, then this computer\n  cua spaces default --no-fallback\n  # Back to trying every online computer, oldest first\n  cua spaces default --fallback-on\n  cua spaces default --clear",
+     "aliases": [],
+     "arguments": [
+      {
+       "default_value": null,
+       "help": "The Space to make your default: a name or id (as `cua spaces ls` shows)",
+       "hidden": false,
+       "is_optional": true,
+       "name": "SPACE",
+       "possible_values": [],
+       "repeatable": false,
+       "type": "string"
+      }
+     ],
+     "flags": [
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "Have no default",
+       "hidden": false,
+       "name": "clear",
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": false
+      },
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "When the default is offline, use this computer instead of trying the others",
+       "hidden": false,
+       "name": "no-fallback",
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": false
+      },
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "Try the others again when the default is offline (every online computer, oldest first, unless `--fallback` names an order)",
+       "hidden": false,
+       "name": "fallback-on",
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": false
+      }
+     ],
+     "hidden": false,
+     "hidden_aliases": [],
+     "name": "default",
+     "options": [
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "Spaces to try, in this order, when the default is offline (names or ids, comma separated)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "fallback",
+       "possible_values": [],
+       "repeatable": true,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": "SPACES"
+      }
+     ],
+     "subcommand_optional": false,
+     "subcommands": [],
+     "usage": "cua spaces default [OPTIONS] [SPACE]"
     },
     {
      "abstract": "Give a Space a new name; its id stays the same. Lowercase letters, digits and dashes, as at create. A Space you shared, or one of your computers provides, is renamed on the relay too, so your other devices and the people it is shared with see the new name. Only its owner can rename a Space",
@@ -20668,7 +20778,7 @@
    "usage": "cua ci [OPTIONS] <COMMAND>"
   },
   {
-   "abstract": "Your remote use this month: live sessions, remote hours, and your plan. Remote hours are time spent using your computers from somewhere else; using a computer from itself is free",
+   "abstract": "Your remote use this month: computers in use at once, remote hours, and your plan. Remote hours are time spent using your computers from somewhere else; using a computer from itself is free",
    "after_help": "Examples:\n  cua usage\n  cua usage --json",
    "aliases": [],
    "arguments": [],
@@ -23204,5 +23314,5 @@
  ],
  "name": "cua",
  "usage": "cua [OPTIONS] <COMMAND>",
- "version": "0.10.1"
+ "version": "0.12.1"
 }

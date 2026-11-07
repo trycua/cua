@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Window / display screenshot capture for macOS.
 //!
 //! ## Window capture (primary: ScreenCaptureKit)

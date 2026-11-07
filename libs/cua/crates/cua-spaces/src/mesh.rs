@@ -836,14 +836,19 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn a_space_on_a_mesh_the_relay_turned_off_reconnects() {
         let coord = cua_mesh::testing::FakeCoordinator::start(cua_mesh::Mode::Account).await;
-        let dialer = Dialer::start(
-            &coord.url,
-            cua_mesh::static_auth(Vec::new()),
+        // After the relay closes the session the node waits a random
+        // backoff plus up to 10 s of spread before it asks again; the
+        // test only cares what the node learns then, not how long it waits.
+        let mut cfg = cua_mesh::MeshConfig::new(
+            coord.url.clone(),
+            cua_mesh::NodeKind::Client,
             None,
-            Duration::from_secs(10),
-        )
-        .await
-        .unwrap();
+            cua_mesh::static_auth(Vec::new()),
+        );
+        cfg.reconnect_speedup = 1000;
+        let dialer = Dialer::start_with_config(cfg, Duration::from_secs(10))
+            .await
+            .unwrap();
         let clients = MeshClients::default();
         let key = Key::Account(coord.url.clone());
         clients.nodes.lock().await.insert(

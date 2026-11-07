@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! `get_desktop_state` — full-display vision screenshot (macOS).
 //!
 //! Vision-only desktop capture: grabs the ENTIRE main display at native

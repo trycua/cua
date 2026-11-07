@@ -228,9 +228,10 @@ struct Fixtures {
             spacesHome: work.appendingPathComponent("cua").path,
             teleportHome: fx.fields["teleport_host_home"])
         let tools = try await connection.availableTools()
-        // `cloud_approve` is person-only: it is in the contract but never
-        // served as a tool.
-        XCTAssertEqual(Set(tools), Set(SpacesConnection.contractTools).subtracting(["cloud_approve"]))
+        // Person-only tools (`PERSON_ONLY_TOOLS`) are in the contract but
+        // never served as tools.
+        let personOnly: Set<String> = ["cloud_approve", "agent_threads", "agent_thread_read"]
+        XCTAssertEqual(Set(tools), Set(SpacesConnection.contractTools).subtracting(personOnly))
         try await exercise(connection, fx, work: work, keyvault: false)
     }
 

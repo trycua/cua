@@ -89,6 +89,10 @@ RUN set -eu; \
       [ "$attempt" = 3 ] && exit 1; echo "pacman attempt $attempt failed; retrying" >&2; sleep 5; done; \
     if [ "$OMARCHY_PACKAGES" = full ]; then \
       pacman -S --noconfirm --needed $(sed 's/#.*//' /usr/share/omarchy/install/omarchy-base.packages | xargs); fi; \
+    want="$(pacman -Qi cua-hyprland-plugin | awk -F': ' '/^Depends On/{print $2}' | tr -s ' ' '\n' | sed -n 's/^hyprland=//p')"; \
+    have="$(pacman -Q hyprland | cut -d' ' -f2)"; \
+    if [ -n "$want" ] && [ "$want" != "$have" ]; then \
+      echo "ERROR: cua-hyprland-plugin pins hyprland=$want but hyprland $have is installed; the plugin must be rebuilt for the Hyprland build Omarchy ships." >&2; exit 1; fi; \
     pacman -Q omarchy-dev omarchy-settings-dev cua-driver-bin cua-hyprland-plugin hyprland; \
     test -x /usr/bin/cua-driver; test -f /usr/lib/cua/hyprland/cua-hyprland-plugin.so; \
     yes | pacman -Scc >/dev/null; rm -f /tmp/packages.desktop; \

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! A finite CLI command whose reader closes early (`cua-driver ... | head`)
 //! must stop like a normal pipeline stage instead of panicking with
 //! `failed printing to stdout: Broken pipe`.

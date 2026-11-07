@@ -1,3 +1,6 @@
+> [!WARNING]
+> **Deprecated:** `cua-core` is no longer maintained by Cua and will not receive updates or fixes. Its tests, builds and publishing are switched off. Existing releases stay on PyPI, so current installs keep working. For desktop control use [Cua Driver](https://cua.ai/docs/cua-driver/guides/connect-your-agent); for sandboxes use the [`cua` SDK and CLI](https://cua.ai/docs/cua-sdk/quickstart) (`pip install cua`). See [Migrate from deprecated packages](https://cua.ai/docs/cua-sdk/guides/cua-cloud-ended#deprecated-packages).
+
 <div align="center">
 <h1>
   <div class="image-wrapper" style="display: inline-block;">

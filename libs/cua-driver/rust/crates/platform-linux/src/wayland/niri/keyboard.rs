@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Text input on niri through a virtual keyboard that carries niri's own
 //! keymap, so every character goes out on the key the user's layout has it
 //! on. A tool like `wtype` instead numbers the n-th distinct character of a

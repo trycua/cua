@@ -139,7 +139,7 @@ def driver_versions(root: Path) -> tuple[str, dict[str, str]]:
         ),
         "rust/Skills/cua-driver/SKILL.md": read_match(
             base / "rust/Skills/cua-driver/SKILL.md",
-            r"^version:\s*([^\s#]+)",
+            r"^  version:\s*([^\s#]+)",
         ),
     }
     for relative in driver_reference_paths(root):
@@ -315,15 +315,7 @@ def spaces_app_versions(root: Path) -> tuple[str, dict[str, str]]:
 # Packages whose Release Please entry is the whole version contract: the
 # manifest version must equal every extra file Release Please bumps.
 CONFIG_ONLY_PACKAGES = (
-    "libs/python/agent",
-    "libs/python/core",
     "libs/cua-bench",
-    "libs/python/bench-ui",
-    "libs/python/som",
-    "libs/python/cua-sandbox-apps",
-    "libs/typescript/core",
-    "libs/typescript/playground",
-    "libs/cuabot",
 )
 LOCK_ENTRY = re.compile(r"^\$\.package\[\?\(@\.name\.value=='([^']+)'\)\]\.version$")
 

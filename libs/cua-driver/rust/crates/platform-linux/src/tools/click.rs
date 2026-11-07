@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use async_trait::async_trait;
 use cua_driver_contract::ClickButton;
 use cua_driver_core::{
@@ -548,6 +551,7 @@ impl ClickTool {
                         crate::interaction::with_x11_foreground(
                             xid,
                             crate::input::ForegroundOptions::pointer(),
+                            crate::interaction::RestoreMode::LeaveFocused,
                             || {
                                 crate::input::send_click_xtest_desktop_with_modifiers(
                                     sx.round() as i32,
@@ -642,6 +646,7 @@ impl ClickTool {
                         crate::interaction::with_x11_foreground(
                             xid,
                             crate::input::ForegroundOptions::pointer(),
+                            crate::interaction::RestoreMode::LeaveFocused,
                             || crate::atspi::perform_action_observed(&observed_for_ax),
                         )
                     },
@@ -1321,10 +1326,14 @@ impl Tool for ClickTool {
             if let Some(refusal) = unavailable_chromium_background(pid, delivery) {
                 return refusal;
             }
+            if let Some(refusal) = unavailable_wayland_focused_input_background(delivery, true) {
+                return refusal;
+            }
 
             // The AX route was unavailable. Fall back to a real MPX pointer
             // click at the element (no focus steal), then to a target-addressed
-            // X11 event for toolkits that accept it.
+            // X11 event for toolkits that accept it. A native Wayland window has
+            // no X11 id, so it takes the Wayland route the pixel click takes.
             let cursor_id_for_fallback = cursor_id.clone();
             let result = spawn_blocking_bounded(
                 "element click",
@@ -1341,6 +1350,24 @@ impl Tool for ClickTool {
                         );
                     }
                     let (xid2, lx, ly) = checked_element_local_coords(pid, &token, xid_hint)?;
+                    if crate::wayland::wayland_input_enabled() {
+                        if crate::wayland::is_inject_mode() {
+                            crate::wayland::inject_click(pid, xid2, lx, ly, count as u32, button)?;
+                            return Ok(PointerRoute::Wayland);
+                        }
+                        let aimed = crate::wayland::window_local_to_output(
+                            xid2,
+                            lx.round() as i32,
+                            ly.round() as i32,
+                        )?;
+                        crate::interaction::with_target_foreground(
+                            pid,
+                            xid2,
+                            crate::interaction::RestoreMode::RestorePrevious,
+                            || crate::wayland::click_focused(aimed, count as u32, button),
+                        )?;
+                        return Ok(PointerRoute::Wayland);
+                    }
                     // An explicit X11 foreground request needs the real XTest path
                     // even for a plain click. Some native widgets (notably GTK
                     // selectable rows) expose bounds but no AT-SPI Action and
@@ -1352,6 +1379,7 @@ impl Tool for ClickTool {
                         crate::interaction::with_x11_foreground(
                             xid2,
                             crate::input::ForegroundOptions::pointer(),
+                            crate::interaction::RestoreMode::LeaveFocused,
                             || {
                                 crate::input::send_click_xtest_desktop_with_modifiers(
                                     sx.round() as i32,
@@ -1406,6 +1434,10 @@ impl Tool for ClickTool {
                         pid,
                     )
                     .await
+                }
+                // A typed foreground refusal keeps its code at the front.
+                Ok(Err(e)) if crate::input::foreground::error_code(&e).is_some() => {
+                    input_error_result(e)
                 }
                 Ok(Err(e)) => input_error_result(e.context("AT-SPI element click failed")),
                 Err(e) => ToolResult::error(format!("Task error: {e}")),
@@ -1721,6 +1753,7 @@ impl Tool for ClickTool {
                 crate::interaction::with_x11_foreground(
                     xid,
                     crate::input::ForegroundOptions::pointer(),
+                    crate::interaction::RestoreMode::LeaveFocused,
                     || inject(true),
                 )
                 .map(|((path, route, guard), report)| (path, Some(report), route, guard))

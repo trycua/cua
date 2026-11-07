@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Trusted KWin window identity adapter.
 //!
 //! The optional in-process KWin effect exposes stable window tokens, process
@@ -304,7 +307,7 @@ fn parse_first_u32(raw: &str) -> Option<u32> {
         .ok()
 }
 
-fn current_uid() -> u32 {
+pub(super) fn current_uid() -> u32 {
     std::fs::metadata(format!("/proc/{}", std::process::id()))
         .map(|meta| meta.uid())
         .unwrap_or(u32::MAX)

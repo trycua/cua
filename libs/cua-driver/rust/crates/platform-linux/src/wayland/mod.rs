@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Native-Wayland backend.
 //!
 //! Used when the experimental backend is enabled under a Wayland compositor.
@@ -1974,6 +1977,27 @@ fn open_vptr_session_in(
     })
 }
 
+/// KWin's portal/libei input goes to whatever holds focus when it lands, so
+/// activating a KWin handle first wouldn't bind the input to that window.
+fn refuse_kwin_input(window_id: u64) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        !kwin_capture::knows_window(window_id),
+        "foreground_unavailable: KWin input is focus-bound, so window {window_id} cannot be \
+         targeted: focus could move before the input lands; no global input was sent"
+    );
+    Ok(())
+}
+
+/// Bring one exact window forward for its own sake: `bring_to_front`, and a menu
+/// path fired through AT-SPI. No global input follows, so KWin's activation is
+/// safe here where [`activate_window_for_input_target`] refuses it.
+pub fn activate_window(window_id: u64, target_pid: Option<u32>) -> anyhow::Result<()> {
+    if kwin_capture::knows_window(window_id) {
+        return kwin_capture::activate(window_id, target_pid);
+    }
+    activate_window_for_input_target(window_id, target_pid)
+}
+
 /// Focus and raise a specific native Wayland toplevel before focus-bound
 /// keyboard or portal/libei input. wlroots exposes an activation request on its
 /// foreign-toplevel protocol; GNOME uses the bundled compositor helper. Other
@@ -1994,6 +2018,7 @@ pub fn activate_window_for_input_target(
     window_id: u64,
     target_pid: Option<u32>,
 ) -> anyhow::Result<()> {
+    refuse_kwin_input(window_id)?;
     if is_wayland() && hyprland::is_session() {
         // A full compositor address must never enter the generic protocol-id
         // or title-matching route. This observation-only adapter can attest an
@@ -2007,11 +2032,6 @@ pub fn activate_window_for_input_target(
         // A niri id never enters the foreign-toplevel title route: focus the
         // exact window and read the focus back.
         return niri::activate(window_id, target_pid);
-    }
-    if kwin_capture::knows_window(window_id) {
-        // A KWin UUID handle is not a foreign-toplevel or X11 id: activate that
-        // exact window through Plasma window management and read the state back.
-        return kwin_capture::activate(window_id, target_pid);
     }
     if is_inject_mode() {
         let pid = target_pid.ok_or_else(|| {
@@ -2115,6 +2135,8 @@ fn event_time_ms() -> u32 {
 /// real coords. A short delay between iterations gives the compositor time
 /// to discriminate single vs. double clicks.
 pub fn click(window_id: u64, at: AimedPoint, count: u32, button: u8) -> anyhow::Result<()> {
+    // Before the fallback below can ask for portal consent on a doomed call.
+    refuse_kwin_input(window_id)?;
     with_libei_fallback(
         || click_vptr(Some(window_id), at, count, button, None),
         || {
@@ -2471,6 +2493,7 @@ pub fn scroll_at(
     direction: &str,
     amount: u32,
 ) -> anyhow::Result<()> {
+    refuse_kwin_input(window_id)?;
     let direction = direction.to_string();
     with_libei_fallback(
         || scroll_vptr(Some(window_id), point, &direction, amount, None),
@@ -2646,6 +2669,7 @@ pub fn drag(
     duration_ms: u64,
     button: u8,
 ) -> anyhow::Result<()> {
+    refuse_kwin_input(window_id)?;
     let ((from_x, from_y), (to_x, to_y)) = (from.point, to.point);
     with_libei_fallback(
         || drag_vptr(Some(window_id), from, to, steps, button, None),
@@ -2658,6 +2682,7 @@ pub fn drag(
 }
 
 /// Drag through desktop-absolute points without activating a named toplevel.
+#[allow(clippy::too_many_arguments)]
 pub fn drag_desktop(
     space: &DesktopInputSpace,
     from_x: i32,
@@ -4109,9 +4134,11 @@ pub fn list_windows_dispatch(filter_pid: Option<u32>) -> Vec<WindowInfo> {
         if let Some(ws) = shell_helper::list_windows(filter_pid) {
             return listed_windows(ws);
         }
-        match kwin_capture::list_windows() {
-            Ok(ws) => return listed_windows(apply_pid_filter(ws, filter_pid)),
-            Err(error) => tracing::debug!("KWin window enumeration unavailable: {error:#}"),
+        if kwin_capture::may_be_session() {
+            match kwin_capture::list_windows() {
+                Ok(ws) => return listed_windows(apply_pid_filter(ws, filter_pid)),
+                Err(error) => tracing::debug!("KWin window enumeration unavailable: {error:#}"),
+            }
         }
         if let Some(ws) = kwin_helper::list_window_infos() {
             return listed_windows(apply_pid_filter(ws, filter_pid));

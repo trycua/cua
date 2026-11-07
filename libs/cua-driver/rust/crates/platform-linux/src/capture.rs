@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Window screenshot on Linux.
 //!
 //! Strategy (in order of preference) for per-window X11 capture:

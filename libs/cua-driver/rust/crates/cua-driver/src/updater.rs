@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! `cua-driver update --apply` implementation.
 //!
 //! Delegates the actual install work to the canonical installer scripts:

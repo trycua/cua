@@ -14,13 +14,11 @@ on:
       - "libs/cua/**"
       - "libs/cua-spacesd/**"
       - ".github/workflows/ci-openkoalabot-example-tauri.yml"
-  push:
-    branches: [main]
-    paths:
-      - "examples/openkoalabot-example-tauri/**"
-      - "libs/cua/**"
-      - "libs/cua-spacesd/**"
-      - ".github/workflows/ci-openkoalabot-example-tauri.yml"
+  # Not on every push to main: the pull request above already built the same
+  # paths. A breakage from a change that raced in after the PR shows up in the
+  # nightly build.
+  schedule:
+    - cron: "37 5 * * *"
   workflow_dispatch:
 
 permissions:
@@ -43,8 +41,14 @@ env:
   DO_NOT_TRACK: "1"
 
 jobs:
+  quick:
+    name: quick
+    if: github.event_name == 'pull_request'
+    uses: ./.github/workflows/ci-quick.yml
+
   check:
-    if: ${{ !startsWith(github.head_ref, 'release-please--branches--') }}
+    needs: quick
+    if: ${{ !failure() && !cancelled() && (!startsWith(github.head_ref, 'release-please--branches--')) }}
     name: cargo check + core tests + vitest
     runs-on: ubuntu-22.04
     timeout-minutes: 60

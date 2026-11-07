@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! AXPageReader: extract text and query elements from AX tree markdown strings.
 
 pub struct AXPageReader;

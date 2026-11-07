@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Parity check for the `get_cursor_position` MCP tool.
 //!
 //! Drives the live daemon via the named pipe.  Asserts the text response

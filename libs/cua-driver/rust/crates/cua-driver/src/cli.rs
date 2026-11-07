@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! CLI subcommand parsing and execution.
 //!
 //! Subcommand dispatch (mirrors the Swift cua-driver CLI):
@@ -25,11 +28,9 @@ pub enum Command {
         /// Own the runtime in this MCP process. On macOS this is an explicit
         /// TCC-attribution choice; it is mutually exclusive with `--socket`.
         direct: bool,
-        /// `--claude-code-computer-use-compat`: register the compat
-        /// `screenshot` tool (window-scoped, JPEG @ 85%, pid + window_id
-        /// both required) instead of the full-featured one. Used when
-        /// the MCP server is wired up as `cua-computer-use` in Claude
-        /// Code, where this is the documented best-practice install.
+        /// `--claude-code-computer-use-compat`: legacy compatibility flag.
+        /// It currently has no tool-surface effect and remains accepted so
+        /// existing Claude Code launch configurations keep working.
         claude_code_compat: bool,
         /// Repeatable trusted launch grants for residual standard-mode
         /// boundaries, for example `--grant existing-profile`.
@@ -72,8 +73,8 @@ pub enum Command {
         no_automation_prompts: bool,
         /// True when `--claude-code-computer-use-compat` is on argv. The MCP
         /// proxy forwards this flag to a daemon it auto-launches (see
-        /// `launch_daemon_and_wait`) so that daemon registers the requested
-        /// compatibility surface.
+        /// `launch_daemon_and_wait`) so existing launch configurations stay
+        /// stable. It currently has no tool-surface effect.
         claude_code_compat: bool,
         /// Repeatable trusted launch grants.
         grants: Vec<String>,
@@ -141,6 +142,10 @@ pub enum Command {
         fix: bool,
     },
     Diagnose,
+    /// `cua-driver test [--json]` - check a new install end to end.
+    Test {
+        json: bool,
+    },
     /// `cua-driver permissions status|grant [--json]` — report TCC status
     /// (with source attribution + a live capture probe) or raise the
     /// correctly-attributed grant by launching CuaDriver via LaunchServices.
@@ -356,6 +361,7 @@ fn finite_command_name_from_args(args: &[String]) -> Option<&'static str> {
         Some("channel") => Some("channel"),
         Some("doctor") => Some("doctor"),
         Some("diagnose") => Some("diagnose"),
+        Some("test") => Some("test"),
         Some("permissions") => Some("permissions"),
         Some("autostart") => Some("autostart"),
         Some("skills") => Some("skills"),
@@ -667,21 +673,11 @@ pub fn parse_command() -> Command {
         );
         println!("  --socket <path>         Select an explicit daemon socket/pipe endpoint.");
         println!("  --claude-code-computer-use-compat");
-        println!("                          Select the Claude Code computer-use compat surface.");
+        println!("                          Legacy compatibility flag retained for existing launch configs.");
         println!(
-            "                          Now forwarded to the proxy-launched daemon (was a no-op"
+            "                          It currently has no tool-surface effect and does not add a"
         );
-        println!(
-            "                          on the proxy path — the path you actually run — because"
-        );
-        println!("                          the daemon hardcoded compat=false). Note: the compat");
-        println!(
-            "                          screenshot tool itself was removed in #1692, so the flag"
-        );
-        println!(
-            "                          has no tool-surface effect today; the wiring is in place"
-        );
-        println!("                          for any future compat-gated tool.");
+        println!("                          standalone screenshot tool.");
         println!();
         println!("agent cursor overlay (serve only — needs the daemon UI runloop):");
         println!("  The overlay is ON by default: every MCP session automatically gets its own");
@@ -730,6 +726,10 @@ pub fn parse_command() -> Command {
         );
         println!("                                  hardcoded launch argv like _CUA_DRIVER_ARGS = [\"mcp\"].");
         println!("    --pretty / -p                 Pretty-print the JSON.");
+        println!();
+        println!("test options:");
+        println!("  cua-driver test [--json]  Check permissions, screen read, pointer and typing.");
+        println!("                          Exit 0 when Cua Driver works, 1 when something needs fixing.");
         println!();
         println!("doctor options:");
         println!("  --json                  Emit the probe report as JSON for scripting.");
@@ -977,6 +977,9 @@ pub fn parse_command() -> Command {
             Command::Doctor { json, fix }
         }
         Some("diagnose") => Command::Diagnose,
+        Some("test") => Command::Test {
+            json: args.iter().any(|a| a == "--json"),
+        },
         Some("permissions") => {
             let subcommand = pos.next().unwrap_or("status").to_string();
             let json = args.iter().any(|a| a == "--json");
@@ -1477,17 +1480,9 @@ fn launch_daemon_with_state_and_wait(
     // `~/Applications`), LaunchServices may otherwise pick a different copy
     // than the one this CLI belongs to, with different TCC grants.
     let open_args = daemon_launch_arguments(&app_path, socket_path, state, experimental_history);
-    // Thread the Claude-Code compat flag through to the daemon. Without this
-    // the proxy-spawned daemon always called build_macos_registry() (compat
-    // hardcoded false), so `cua-driver mcp --claude-code-computer-use-compat`
-    // SILENTLY DROPPED the flag on the proxy path — the path users actually
-    // run on an installed bundle. Today this is latent: the compat screenshot
-    // tool was removed in #1692, so `register_all(compat)` ignores the flag and
-    // the served surface is identical either way. But the flag was being lost
-    // before reaching the daemon at all, so the moment any compat-gated tool is
-    // re-introduced the proxy path would not honour it. This makes the flag
-    // travel end-to-end. Only honoured on a freshly-launched daemon — a
-    // pre-existing daemon keeps whatever surface it launched with.
+    // `daemon_launch_arguments` keeps forwarding the legacy compatibility flag
+    // so existing launch configurations behave the same across proxy and
+    // in-process paths. It currently has no tool-surface effect.
     let status = Cmd::new("/usr/bin/open")
         // `-n` forces a new instance: CuaDriver.app might already be
         // running from a previous MCP session, and without `-n`, `open
@@ -2008,7 +2003,7 @@ pub fn build_manifest() -> serde_json::Value {
               "args": [
                   { "name": "--socket", "type": "string", "description": "Select an explicit daemon socket or named-pipe endpoint." },
                   { "name": "--direct", "type": "flag", "description": "Own the runtime in the MCP process; on macOS this explicitly accepts host TCC attribution. Mutually exclusive with --socket." },
-                  { "name": "--claude-code-computer-use-compat", "type": "flag", "description": "Select the Claude Code computer-use compat tool surface." },
+                  { "name": "--claude-code-computer-use-compat", "type": "flag", "description": "Legacy compatibility flag with no current tool-surface effect." },
                   { "name": "--embedded", "type": "flag", "description": "Declare embedding-host mode. Without --direct, requires the host's private service through --socket instead of auto-launching the standalone app." },
                   { "name": "--host-bundle-id", "type": "string", "description": "Advisory host bundle id label echoed in check_permissions output." },
                   { "name": "--grant", "type": "repeatable-string", "description": "Pre-authorize a residual standard-mode boundary for a newly launched runtime. Supported value: existing-profile." }
@@ -2026,7 +2021,7 @@ pub fn build_manifest() -> serde_json::Value {
                   { "name": "--approve-session-policy", "type": "flag", "description": "Deprecated alias for --approve-capability-manifest." },
                   { "name": "--no-permissions-gate", "type": "flag", "description": "Skip the macOS TCC first-launch gate." },
                   { "name": "--no-automation-prompts", "type": "flag", "description": "Refuse scripting actions without granted macOS Automation consent." },
-                  { "name": "--claude-code-computer-use-compat", "type": "flag", "description": "Forwarded by the MCP proxy when the client asked for the compat surface." },
+                  { "name": "--claude-code-computer-use-compat", "type": "flag", "description": "Legacy compatibility flag forwarded by the MCP proxy; no current tool-surface effect." },
                   { "name": "--embedded", "type": "flag", "description": "Run embedded inside a host app: inherit the host's TCC grants, never prompt or relaunch. Also CUA_DRIVER_EMBEDDED=1." },
                   { "name": "--host-bundle-id", "type": "string", "description": "Advisory host bundle id label echoed in check_permissions output." }
                   ,{ "name": "--experimental-history", "type": "flag", "description": "Admit the encrypted local Computer History early preview for this daemon launch." }
@@ -2118,6 +2113,11 @@ pub fn build_manifest() -> serde_json::Value {
               "args": [
                   { "name": "--json", "type": "flag", "description": "Machine-readable doctor report." },
                   { "name": "--fix", "type": "flag", "description": "macOS: make LaunchServices forget every other copy of CuaDriver.app (no files are deleted)." }
+              ] },
+            { "name": "test",
+              "description": "Check a new install end to end: permissions, screen read, pointer, and typing in TextEdit (macOS). Exit 0 when it all works.",
+              "args": [
+                  { "name": "--json", "type": "flag", "description": "Machine-readable result." }
               ] },
             { "name": "diagnose",
               "description": "Emit a developer-focused diagnostic dump suitable for bug reports.",
@@ -2678,8 +2678,7 @@ pub fn run_call(
                         }
                         if let Some(sc) = result.get("structuredContent") {
                             // Merge image data into the structured payload so
-                            // `cua-driver call screenshot` over
-                            // the daemon socket still emits
+                            // a daemon-routed image response still emits
                             // `screenshot_png_b64`. Previously this path
                             // dropped the image entirely when no
                             // --screenshot-out-file was given.
@@ -3782,7 +3781,7 @@ pub fn run_permissions_host_request_if_requested() -> Option<i32> {
 }
 
 #[cfg(target_os = "macos")]
-fn request_permissions_via_launchservices(
+pub(crate) fn request_permissions_via_launchservices(
     probe_direct_capture: bool,
 ) -> Result<serde_json::Value, String> {
     use std::fs::OpenOptions;
@@ -4203,6 +4202,7 @@ const HELP_SUBCOMMANDS: &[&str] = &[
     "sessions",
     "history",
     "mcp-config",
+    "test",
 ];
 
 fn cli_docs_json() -> serde_json::Value {
@@ -4450,7 +4450,7 @@ fn cli_docs_literal() -> serde_json::Value {
                     {"name":"experimental-pip-geometry","short_name":null,"help":"Size and optional top-left origin of the experimental preview window: WxH or WxH+X+Y (default 480x360, top-right of the main display).","type":"String","default_value":null,"is_optional":true}
                 ],
                 "flags": [
-                    {"name":"claude-code-computer-use-compat","short_name":null,"help":"Select the Claude Code computer-use compatibility surface (forwarded by `mcp` when it launches the daemon).","default_value":false},
+                    {"name":"claude-code-computer-use-compat","short_name":null,"help":"Legacy compatibility flag forwarded by `mcp` when it launches the daemon; no current tool-surface effect.","default_value":false},
                     {"name":"experimental-pip","short_name":null,"help":"Show a small always-on-top window with the latest post-action screenshot and a one-line label (macOS only).","default_value":false},
                     {"name":"dangerously-bypass-approvals","short_name":null,"help":"Select unrestricted mode and acknowledge its risk.","default_value":false},
                     {"name":"approve-capability-manifest","short_name":null,"help":"Trusted-launcher confirmation that the exact capability manifest was reviewed.","default_value":false},
@@ -4676,6 +4676,15 @@ fn cli_docs_literal() -> serde_json::Value {
                 "subcommands": no_subcommands
             },
             {
+                "name": "test",
+                "abstract": "Check that Cua Driver works on this computer.",
+                "discussion": "Checks permissions, a screen read, Cua Driver's own pointer, and (macOS) typing in a background TextEdit window that is closed without saving. Exit code is 0 when everything works and 1 when something needs fixing.",
+                "arguments": no_args,
+                "options": no_options,
+                "flags": [{"name":"json","short_name":null,"help":"Emit the result as JSON.","default_value":false}],
+                "subcommands": no_subcommands
+            },
+            {
                 "name": "diagnose",
                 "abstract": "Print a pasteable install-layout and permission-attribution report.",
                 "discussion": "",
@@ -4876,6 +4885,10 @@ const CLI_EXAMPLES: &[(&str, &[(&str, &str)])] = &[
         ("cua-driver doctor", "Run the diagnostic probes"),
         ("cua-driver doctor --json", "Emit the probe report as JSON"),
         ("cua-driver doctor --fix", "macOS: make macOS forget extra copies of the app (deletes no files)"),
+    ]),
+    ("test", &[
+        ("cua-driver test", "Check that Cua Driver works on this computer"),
+        ("cua-driver test --json", "Emit the result as JSON"),
     ]),
     ("diagnose", &[("cua-driver diagnose", "Print an install and permission report to paste into an issue")]),
     ("autostart", &[("cua-driver autostart status", "Check the autostart entry")]),

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! MCP JSON-RPC 2.0 protocol types.
 
 use serde::{Deserialize, Serialize};

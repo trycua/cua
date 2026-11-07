@@ -34,8 +34,8 @@ describe.skipIf(!wasmBuilt)("account usage and self-hosting in Settings (real ro
       expect(el).toBeTruthy();
       return el as HTMLElement;
     });
-    expect(usage.textContent).toContain("Time away from this machine");
-    expect(usage.textContent).toContain("away from the machine you're using");
+    expect(usage.textContent).toContain("Time away from this computer");
+    expect(usage.textContent).toContain("away from the computer you're using");
     expect(document.body.textContent).not.toMatch(/relay hours|remote hours/i);
   });
 
@@ -69,6 +69,7 @@ describe.skipIf(!wasmBuilt)("account usage and self-hosting in Settings (real ro
     ["experiment:ci_runners", /CI runners/],
     ["experiment:tcp_shares", /Public TCP shares/],
     ["experiment:mobile", /Phone app/],
+    ["experiment:warm_pools", /Warm start/],
   ] as const;
 
   it("shows a switch in Labs for every experiment, off, with its line, before any is on", async () => {

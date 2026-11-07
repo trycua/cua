@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! `cua-driver skills {install|update|uninstall|status|path}` —
 //! agent skill-pack management.
 //!

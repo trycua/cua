@@ -8,8 +8,11 @@
  * (`?demo=network`).
  */
 
-/** What a Space may reach. `internet` is the default. */
-export type NetworkPreset = "internet" | "none" | "localhost" | "lan" | "custom";
+/**
+ * What a Space may reach. `internet` is the default. `localhost` and `lan` are each
+ * Internet only plus one extra; `localhost+lan` has both.
+ */
+export type NetworkPreset = "internet" | "none" | "localhost" | "lan" | "localhost+lan" | "custom";
 
 export interface SpaceNetwork {
   preset: NetworkPreset;

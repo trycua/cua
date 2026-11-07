@@ -513,9 +513,12 @@ jobs:
           fi
           # Release Please's draft keeps its assets private (downloads 404);
           # publish it now that every asset is attached. Staging builds and
-          # X.Y.Z-suffix versions are prereleases, never latest.
-          FLAGS=(--draft=false)
-          [ "$PRERELEASE" = true ] && FLAGS+=(--prerelease --latest=false)
+          # X.Y.Z-suffix versions are prereleases. No cua-spacesd release is
+          # ever the repository's Latest: that is the Cua Spaces app's
+          # (a stable cua-spacesd release took it from cua-spaces-v0.20.0 on
+          # 5 Nov 2026).
+          FLAGS=(--draft=false --latest=false)
+          [ "$PRERELEASE" = true ] && FLAGS+=(--prerelease)
           if [ "$CANONICAL" != true ] || grep -q UNSIGNED signing/*.txt; then
             label="staging"; [ "$CANONICAL" = true ] && label="test"
             # Name the unsigned platforms: "UNSIGNED: windows-x64".
@@ -531,3 +534,15 @@ jobs:
             FLAGS+=(--title "cua-spacesd $VERSION ($label)" --notes-file notes.md)
           fi
           gh release edit "$TAG" "${FLAGS[@]}" --repo "$GITHUB_REPOSITORY"
+      # Publishing a draft can still hand this component the repo-wide "Latest"
+      # (cua-spacesd 0.12.1 and 0.12.2 did, despite --latest=false). Put it back
+      # on Cua Spaces; the release-latest-guard schedule is the backstop.
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        if: always() && github.repository == 'trycua/cua'
+        with:
+          sparse-checkout: .github/scripts/pin_latest_release.py
+      - name: Keep Latest on Cua Spaces
+        if: always() && github.repository == 'trycua/cua'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 .github/scripts/pin_latest_release.py

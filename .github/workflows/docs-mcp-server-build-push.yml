@@ -57,13 +57,16 @@ jobs:
           TAG=$(echo "${{ matrix.platform }}" | sed 's/\//-/g')
           echo "tag=${TAG}" >> $GITHUB_OUTPUT
 
+      # Never assume the push role on pull_request: the role must not trust PR runs.
       - name: Configure AWS credentials
+        if: github.event_name != 'pull_request'
         uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
         with:
           role-to-assume: arn:aws:iam::296062593712:role/github-actions-ecr-push-cua
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Login to Amazon ECR
+        if: github.event_name != 'pull_request'
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2
 

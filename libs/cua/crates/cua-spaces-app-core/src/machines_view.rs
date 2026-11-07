@@ -532,6 +532,12 @@ fn remote_toggles(sw: &Switches, team: bool) -> Vec<MachinesViewToggle> {
 
 /// The confirmation before a machine leaves the account.
 fn remove_confirm(name: &str, current: bool, device_only: bool) -> HostConfirm {
+    remove_confirm_for(name, current, device_only, false)
+}
+
+/// [`remove_confirm`], saying what removing a machine that is `online`
+/// does: it is disconnected now and needs a new setup to come back.
+fn remove_confirm_for(name: &str, current: bool, device_only: bool, online: bool) -> HostConfirm {
     let message = if current {
         "Everyone connected is disconnected, the host service is uninstalled and \
          this machine leaves your machines. Turning a switch on again sets it up again."
@@ -539,6 +545,12 @@ fn remove_confirm(name: &str, current: bool, device_only: bool) -> HostConfirm {
     } else if device_only {
         format!(
             "{name} will no longer see or reach your machines. Signing in on it again adds it back."
+        )
+    } else if online {
+        format!(
+            "{name} is online. Removing it disconnects it now: it leaves your machines, \
+             and its Spaces are no longer listed here. It needs to be set up again on it \
+             to come back."
         )
     } else {
         format!(
@@ -632,6 +644,19 @@ pub fn view(input: &MachinesViewInput) -> MachinesView {
             row.name.clone()
         };
 
+        let issues = crate::machines_health::issues(
+            &crate::machines_health::Subject {
+                current: row.current,
+                live: row.current || live,
+                os: &row.os,
+                local_version,
+                app_update: Some(input.app_update.as_str())
+                    .filter(|v| !v.is_empty())
+                    .map(|v| (v, input.app_update_ready)),
+            },
+            input.health.iter().find(|h| h.id == row.id),
+            host.filter(|_| row.current),
+        );
         // The row's one line.
         // One short label: no "a · b" chains (the switches show the rest),
         // except a shared desktop's "Desktop and N Spaces".
@@ -643,6 +668,10 @@ pub fn view(input: &MachinesViewInput) -> MachinesView {
             SERVICE_STOPPED.into()
         } else if stopped {
             machines::NOT_SHARING.into()
+        } else if let Some(why) = crate::machines_health::short_reason(&issues) {
+            // A red dot says why on the row, not only in the detail pane
+            // (CUA-3746: "Ready for Spaces" beside a red dot).
+            why
         } else if has_desktop {
             machines::desktop_spaces_label(u32::try_from(on.len()).unwrap_or(u32::MAX))
         } else {
@@ -878,21 +907,19 @@ pub fn view(input: &MachinesViewInput) -> MachinesView {
                 confirm: remove_confirm(&name, false, true),
             })
         } else {
-            // The relay takes a machine off only while it is not
-            // connected: one that is online would register again.
+            // The relay takes a machine off whether or not it is connected
+            // (`DELETE /v1/machines/{id}` checks only the owner). One that
+            // is online is disconnected and cannot register again without
+            // a new setup, so removing it asks first, saying so (CUA-3746:
+            // the button used to be disabled with only a hover tooltip).
             Some(MachinesViewRemove {
                 label: REMOVE_LABEL.into(),
-                enabled: !row.online,
-                help: row.online.then(|| {
-                    format!(
-                        "It\u{2019}s online. Remove it on {}, or here once it\u{2019}s offline.",
-                        that_machine(&row.os)
-                    )
-                }),
+                enabled: true,
+                help: None,
                 host: false,
                 machine: Some(row.id.clone()),
                 device: row.device.clone(),
-                confirm: remove_confirm(&name, false, false),
+                confirm: remove_confirm_for(&name, false, false, row.online),
             })
         };
 
@@ -918,19 +945,6 @@ pub fn view(input: &MachinesViewInput) -> MachinesView {
             .current
             .then(|| input.page.host_os.this_machine().to_string())
             .filter(|b| *b != name);
-        let issues = crate::machines_health::issues(
-            &crate::machines_health::Subject {
-                current: row.current,
-                live: row.current || live,
-                os: &row.os,
-                local_version,
-                app_update: Some(input.app_update.as_str())
-                    .filter(|v| !v.is_empty())
-                    .map(|v| (v, input.app_update_ready)),
-            },
-            input.health.iter().find(|h| h.id == row.id),
-            host.filter(|_| row.current),
-        );
         list.push(MachinesViewMachine {
             id: row.id.clone(),
             name,
@@ -1736,15 +1750,17 @@ mod tests {
             me.confirm.title,
             "Remove \u{201c}Ada's MacBook Pro\u{201d} from your account?"
         );
-        // Another machine leaves the relay while it is offline; online, it
-        // says where to remove it.
+        // Another machine leaves the relay online or off: online, the
+        // confirmation says it is disconnected now (CUA-3746).
         let byoc = by_id(&v, "byoc").remove.clone().unwrap();
         assert!(byoc.enabled && !byoc.host);
         assert_eq!(byoc.machine.as_deref(), Some("byoc"));
         assert_eq!(byoc.device.as_deref(), Some("dev_byoc"));
         let studio = by_id(&v, "studio").remove.clone().unwrap();
-        assert!(!studio.enabled);
-        assert!(studio.help.unwrap().contains("that Mac"));
+        assert!(studio.enabled && studio.help.is_none());
+        assert!(studio.confirm.message.contains("is online"));
+        assert!(studio.confirm.message.contains("set up again"));
+        assert!(!byoc.confirm.message.contains("is online"));
         // Rename saves on the host, the relay machine or the device.
         assert_eq!(
             by_id(&v, "this-mac")
@@ -1760,6 +1776,33 @@ mod tests {
                 .map(|r| r.target.as_str()),
             Some("machine")
         );
+    }
+
+    /// CUA-3746: a red dot says why on the row, not only on its page.
+    #[test]
+    fn a_failed_check_is_the_rows_line() {
+        let mut input = mockup();
+        let before = by_id(&view(&input), "studio").line.clone();
+        assert_ne!(before, "Needs Local Network");
+        input.health = vec![MachinesViewHealth {
+            id: "studio".into(),
+            checks: vec![crate::machines_health::MachinesViewCheck {
+                id: "machine.local_network".into(),
+                status: "fail".into(),
+                message: "Local Network access is off for Cua Spaces".into(),
+                remediation: String::new(),
+                facts: Default::default(),
+            }],
+            cua_version: String::new(),
+            error: None,
+        }];
+        let v = view(&input);
+        let studio = by_id(&v, "studio");
+        assert_eq!(studio.health, "fail");
+        assert_eq!(studio.line, "Needs Local Network");
+        // A warning keeps the usual line.
+        input.health[0].checks[0].status = "warn".into();
+        assert_eq!(by_id(&view(&input), "studio").line, before);
     }
 
     /// CUA-1617's machine: online, its owner stopped sharing it.

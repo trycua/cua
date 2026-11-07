@@ -28,10 +28,37 @@ enabled. Installing the read-only Cua KWin helper or restarting AT-SPI does not
 supply that capability. Only `bring_to_front` checks the window's current PID, and
 it returns `foreground_unavailable` when another process owns the window.
 
-## Permissions
+## Turning it on and off
 
-This adapter gives an executable window capture and window management. What that
-takes depends on the KWin release:
+The adapter is off by default on every KWin release. The person running the
+driver turns it on or off with:
+
+```sh
+cua-driver kwin-capture on
+cua-driver kwin-capture off
+cua-driver kwin-capture status
+```
+
+The command saves `on`, `off` or `override-portal-deny` in
+`~/.cua-driver/kwin-window-capture`. Any other content, or no file, is off. The driver reads it on every call, so no restart
+of the driver or of KWin is needed. Off applies from the next call. On applies
+from the next call on KWin 6.8 and newer, and within a few seconds on older
+releases, once KWin rereads its desktop-entry cache; calls in between behave as
+with it off. `set_config` cannot change it, so a model
+can't turn it on for itself. While it is off, the driver behaves as it does
+without this adapter: window capture on KWin returns `surface_identity_unproven`
+and `bring_to_front` returns `foreground_unavailable`. Window ids listed while
+it was on become unknown ids, so the next call refuses them and the caller lists
+windows again.
+
+A screenshot Deny saved in the desktop portal (`xdg-desktop-portal` permission
+store, table `screenshot`) keeps the adapter off, because `ScreenShot2` doesn't
+consult the portal itself. A permission store that doesn't answer counts as a
+Deny; no store, or no saved answer, doesn't. The driver reuses one answer for up
+to a second, so a Deny saved meanwhile applies within that second. `cua-driver kwin-capture on
+--override-portal-deny` ignores the Deny.
+
+What KWin itself checks depends on the release:
 
 | KWin | `org.kde.KWin.ScreenShot2` | `org_kde_plasma_window_management` |
 | --- | --- | --- |
@@ -39,34 +66,28 @@ takes depends on the KWin release:
 | 6.8 and newer | Any executable of the same user | Any client that isn't sandboxed |
 
 KWin 6.8 removed both checks ([0ea31ae7](https://invent.kde.org/plasma/kwin/-/commit/0ea31ae72eb052cb9c9cc508318fc3f0f329ed53)).
-On 6.8.2, plain `python3` with no desktop entry captured the desktop. So there,
-this adapter works with no install step, and it adds no new reach: any program of
-that user can already make these calls.
-
-## Installation
-
-Enable the existing native Wayland backend with
-`CUA_DRIVER_RS_ENABLE_WAYLAND=1`. On KWin 6.7 and older, the application
-installation must declare:
+For 6.7 and older, `kwin-capture on` writes
+`~/.local/share/applications/ai.cua.driver.desktop` (under `XDG_DATA_HOME` when
+set) with the running executable's canonical path and:
 
 ```ini
 X-KDE-Wayland-Interfaces=org_kde_plasma_window_management,org_kde_kwin_keystate
 X-KDE-DBUS-Restricted-Interfaces=org.kde.KWin.ScreenShot2
 ```
 
-Separate the Wayland interfaces with commas: KWin 6.3.6 doesn't honor a semicolon
-list. `org_kde_kwin_keystate` isn't for capture. It tells desktop typing whether
-Caps Lock is on, and KWin 6.3 to 6.5 offers it only to an entry that lists it.
+then runs `kbuildsycoca6` so KWin sees it. `kwin-capture off` removes it. KWin
+matches the entry's `Exec` to the client's executable and looks it up for each
+new Wayland connection; the adapter opens a new one on every call. After an
+upgrade moves the executable, `kwin-capture status` says the entry names
+another executable; run `kwin-capture on` again. Separate the Wayland
+interfaces with commas: KWin 6.3.6 doesn't honor a semicolon list.
+`org_kde_kwin_keystate` isn't for capture. It tells desktop typing whether Caps
+Lock is on, and KWin 6.3 to 6.5 offers it only to an entry that lists it.
 
-KWin matches the desktop entry's executable to the running process. A source
-binary alone does not acquire these capabilities. The Nix package ships an entry
-with its exact installed executable path. The release installer's entry is tracked
-in [issue #6784](https://github.com/trycua/cua/issues/6784), so check there whether
-your installer writes it. Install through the host's normal packaging and
-permission mechanism; do not disable KWin permission checks. Restrictions vary by
-KWin version and sandbox. The capture interface must return `windowId` metadata;
-older implementations without that identity proof are refused. Native validation
-used KWin 6.3.6, 6.6.6, 6.7.4 and 6.8.2.
+Enable the native Wayland backend with `CUA_DRIVER_RS_ENABLE_WAYLAND=1`. The
+capture interface must return `windowId` metadata; older implementations without
+that identity proof are refused. Native validation used KWin 6.3.6, 6.6.6, 6.7.4
+and 6.8.2.
 
 A session whose `XDG_CURRENT_DESKTOP` names another desktop skips this adapter, so
 other compositors pay nothing for it. An unset name still tries it.
@@ -86,7 +107,7 @@ activate an absent Activity Manager service.
 If Plasma window management is unavailable, discovery retains the existing
 helper/AT-SPI fallbacks. Those fallback IDs are not KWin UUIDs and do not become
 eligible for native KWin capture. A native capture error does not fall back to
-an unrelated desktop crop.
+an unrelated desktop crop: it returns `surface_identity_unproven`.
 
 Captures exclude the pointer and window shadow, include decorations, and use
 logical resolution to match the reported window coordinate frame. KWin can return
@@ -94,12 +115,14 @@ physical pixels even when asked for logical ones, so the image is resized by the
 scale KWin reports for it. A window resized around the capture keeps its own size
 rather than being stretched to the new frame. Native pixel formats are decoded
 with row-stride and premultiplied-alpha handling. Unsupported formats, invalid
-layouts, mismatched owners/UUIDs, closed windows and timeouts are errors.
+layouts, mismatched owners/UUIDs, closed windows and timeouts return
+`surface_identity_unproven`, the same refusal as any window the driver can't
+capture exactly. The driver log at debug level names the cause.
 
 ## Focused native regression
 
 In a disposable KWin Wayland session, with `XDG_CURRENT_DESKTOP` set to `KDE` or
-unset, install the exact candidate binary with its desktop entry and provide Python with GTK3/PyGObject and a working AT-SPI
+unset, install the exact candidate binary, run its `kwin-capture on`, and provide Python with GTK3/PyGObject and a working AT-SPI
 bus. Isolate the session bus, runtime directory and accessibility bus together.
 Start `at-spi-bus-launcher` inside that session rather than forwarding D-Bus
 activation to the host's systemd user manager; verify that `org.a11y.Bus.GetAddress`

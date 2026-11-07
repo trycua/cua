@@ -31,6 +31,8 @@ struct OutputRect {
     height: i32,
     mode_width: i32,
     mode_height: i32,
+    /// Turned by 90 or 270 degrees, flipped or not.
+    quarter_turned: bool,
 }
 
 /// What the compositor reported: whether it is KWin, and its outputs.
@@ -84,23 +86,35 @@ impl Dispatch<wl_output::WlOutput, usize> for Report {
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
-        if let wl_output::Event::Mode {
-            flags,
-            width,
-            height,
-            ..
-        } = event
-        {
-            let current = matches!(
+        let Some((_, _, rect)) = state.outputs.get_mut(*index) else {
+            return;
+        };
+        match event {
+            wl_output::Event::Mode {
                 flags,
-                wayland_client::WEnum::Value(f) if f.contains(wl_output::Mode::Current)
-            );
-            if current {
-                if let Some((_, _, rect)) = state.outputs.get_mut(*index) {
+                width,
+                height,
+                ..
+            } => {
+                let current = matches!(
+                    flags,
+                    wayland_client::WEnum::Value(f) if f.contains(wl_output::Mode::Current)
+                );
+                if current {
                     rect.mode_width = width;
                     rect.mode_height = height;
                 }
             }
+            wl_output::Event::Geometry { transform, .. } => {
+                use wl_output::Transform as Turn;
+                rect.quarter_turned = matches!(
+                    transform,
+                    wayland_client::WEnum::Value(
+                        Turn::_90 | Turn::_270 | Turn::Flipped90 | Turn::Flipped270
+                    )
+                );
+            }
+            _ => {}
         }
     }
 }
@@ -203,11 +217,114 @@ fn output_scale(output: &OutputRect) -> f64 {
     ((physical / logical).sqrt() * 100.0).round() / 100.0
 }
 
-/// KWin's desktop frame. `Ok(None)` when this is not KWin or there is no
+/// The first KWin release known to capture a quarter-turned output correctly.
+/// Measured: 6.3.6 distorts it, even alone at scale 1; 6.6.6 and 6.8.2 do not.
+/// 6.4 and 6.5 were not measured, so they count as distorting: a refused click
+/// is better than one that silently misses.
+const FIRST_UNDISTORTED_RELEASE: (u32, u32) = (6, 6);
+
+/// Outputs whose part of a whole-desktop capture does not match the screen.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct DistortedCapture {
+    pub outputs: Vec<String>,
+    pub kwin_version: String,
+}
+
+impl DistortedCapture {
+    /// Refuse a layout point on one of these outputs: a pixel read off the
+    /// screenshot there is not that point on the screen.
+    pub(crate) fn admit(
+        &self,
+        frame: &DesktopFrame,
+        frame_point: (i32, i32),
+        layout_point: (i32, i32),
+    ) -> anyhow::Result<()> {
+        let (x, y) = layout_point;
+        let on_output = |output: &&FrameOutput| {
+            let (x, y) = (i64::from(x), i64::from(y));
+            x >= i64::from(output.x)
+                && y >= i64::from(output.y)
+                && x < i64::from(output.x) + i64::from(output.width)
+                && y < i64::from(output.y) + i64::from(output.height)
+        };
+        match frame
+            .outputs
+            .iter()
+            .filter(|output| self.outputs.contains(&output.name))
+            .find(on_output)
+        {
+            Some(output) => anyhow::bail!(
+                "desktop point ({}, {}) is on {}, a rotated output that KWin {} captures \
+                 distorted, so the screenshot does not match the screen there; KWin {}.{} \
+                 and later capture it correctly",
+                frame_point.0,
+                frame_point.1,
+                output.name,
+                self.kwin_version,
+                FIRST_UNDISTORTED_RELEASE.0,
+                FIRST_UNDISTORTED_RELEASE.1,
+            ),
+            None => Ok(()),
+        }
+    }
+}
+
+/// KWin's desktop frame and what its capture of that frame gets wrong.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct DesktopLayout {
+    pub frame: DesktopFrame,
+    pub distorted: Option<DistortedCapture>,
+}
+
+/// `major.minor` and the full version from KWin's support report.
+fn reported_version(support: &str) -> Option<((u32, u32), String)> {
+    let (_, rest) = support.split_once("KWin version: ")?;
+    let end = rest
+        .find(|c: char| !c.is_ascii_digit() && c != '.')
+        .unwrap_or(rest.len());
+    let version = &rest[..end];
+    let mut parts = version.split('.').map(str::parse::<u32>);
+    let release = (parts.next()?.ok()?, parts.next()?.ok()?);
+    Some((release, version.to_owned()))
+}
+
+fn distorted_capture(
+    outputs: &[OutputRect],
+    support: impl FnOnce() -> Option<String>,
+) -> Option<DistortedCapture> {
+    let turned: Vec<String> = outputs
+        .iter()
+        .filter(|output| output.quarter_turned)
+        .map(|output| output.name.clone())
+        .collect();
+    if turned.is_empty() {
+        return None;
+    }
+    let reported = support().as_deref().and_then(reported_version);
+    match reported {
+        Some((release, _)) if release >= FIRST_UNDISTORTED_RELEASE => None,
+        Some((_, kwin_version)) => Some(DistortedCapture {
+            outputs: turned,
+            kwin_version,
+        }),
+        None => Some(DistortedCapture {
+            outputs: turned,
+            kwin_version: "of an unknown version".to_owned(),
+        }),
+    }
+}
+
+/// KWin's desktop layout. `Ok(None)` when this is not KWin or there is no
 /// Wayland connection. Once the compositor is known to be KWin, a layout it
 /// cannot report is an error: the physical frame would miss every click.
-pub(crate) fn desktop_frame() -> anyhow::Result<Option<DesktopFrame>> {
-    query()?.map(|outputs| frame_of(&outputs)).transpose()
+pub(crate) fn desktop_layout() -> anyhow::Result<Option<DesktopLayout>> {
+    let Some(outputs) = query()? else {
+        return Ok(None);
+    };
+    Ok(Some(DesktopLayout {
+        frame: frame_of(&outputs)?,
+        distorted: distorted_capture(&outputs, super::kwin_helper::support_information),
+    }))
 }
 
 /// The frame plus the monitor list `get_screen_size` reports, both from one
@@ -287,6 +404,7 @@ mod tests {
             height,
             mode_width: mode.0,
             mode_height: mode.1,
+            quarter_turned: false,
         }
     }
 
@@ -381,6 +499,72 @@ mod tests {
         assert_eq!(output_scale(&output(0, 0, 864, 1536, (1920, 1080))), 1.25);
         assert_eq!(output_scale(&output(0, 0, 2048, 1152, (2560, 1440))), 1.25);
         assert_eq!(output_scale(&output(0, 0, 0, 0, (0, 0))), 1.0);
+    }
+
+    fn turned_output(name: &str, x: i32) -> OutputRect {
+        OutputRect {
+            name: name.into(),
+            quarter_turned: true,
+            ..output(x, 0, 1080, 1920, (1920, 1080))
+        }
+    }
+
+    // gdbus prints the report as a tuple with escaped newlines.
+    fn support(version: &str) -> Option<String> {
+        Some(format!(
+            "('KWin Support Information:\\n\\nVersion\\n=======\\nKWin version: {version}\\nQt Version: 6.8.2\\n',)"
+        ))
+    }
+
+    #[test]
+    fn a_quarter_turned_output_is_distorted_below_the_first_good_release() {
+        let outputs = [
+            turned_output("DP-1", 0),
+            output(1080, 0, 1920, 1080, (1920, 1080)),
+        ];
+        assert_eq!(
+            distorted_capture(&outputs, || support("6.3.6")),
+            Some(DistortedCapture {
+                outputs: vec!["DP-1".into()],
+                kwin_version: "6.3.6".into(),
+            })
+        );
+        assert_eq!(distorted_capture(&outputs, || support("6.6.0")), None);
+        assert_eq!(distorted_capture(&outputs, || support("6.8.2")), None);
+        assert_eq!(distorted_capture(&outputs, || support("7.0")), None);
+    }
+
+    #[test]
+    fn an_unknown_version_with_a_quarter_turned_output_counts_as_distorted() {
+        let distorted = distorted_capture(&[turned_output("DP-1", 0)], || None).unwrap();
+        assert_eq!(distorted.kwin_version, "of an unknown version");
+    }
+
+    #[test]
+    fn no_quarter_turned_output_never_needs_the_version() {
+        let outputs = [output(0, 0, 1920, 1080, (1920, 1080))];
+        let distorted = distorted_capture(&outputs, || unreachable!("no version needed"));
+        assert_eq!(distorted, None);
+    }
+
+    #[test]
+    fn only_a_point_on_a_distorted_output_is_refused() {
+        let outputs = [
+            turned_output("DP-1", 0),
+            output(1080, 0, 1920, 1080, (1920, 1080)),
+        ];
+        let frame = frame_of(&outputs).unwrap();
+        let distorted = distorted_capture(&outputs, || support("6.3.6")).unwrap();
+        assert_eq!(
+            distorted
+                .admit(&frame, (5, 6), (5, 6))
+                .unwrap_err()
+                .to_string(),
+            "desktop point (5, 6) is on DP-1, a rotated output that KWin 6.3.6 captures \
+             distorted, so the screenshot does not match the screen there; KWin 6.6 and later \
+             capture it correctly"
+        );
+        assert!(distorted.admit(&frame, (1080, 0), (1080, 0)).is_ok());
     }
 
     /// What a scripted compositor does on the wire.

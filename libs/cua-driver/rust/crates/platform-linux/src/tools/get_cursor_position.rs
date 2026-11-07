@@ -66,9 +66,9 @@ impl Tool for GetCursorPositionTool {
         if crate::wayland::is_wayland() {
             // The registry holds layout coordinates; KWin's desktop frame can
             // start elsewhere, and agents read this in that frame.
-            let frame = tokio::task::spawn_blocking(crate::wayland::kwin_desktop_frame).await;
-            let frame = match frame {
-                Ok(Ok(frame)) => frame,
+            let layout = tokio::task::spawn_blocking(crate::wayland::kwin_desktop_layout).await;
+            let frame = match layout {
+                Ok(Ok(layout)) => layout.map(|layout| layout.frame),
                 Ok(Err(e)) => {
                     return ToolResult::error(format!("Could not read the KWin layout: {e:#}"))
                 }

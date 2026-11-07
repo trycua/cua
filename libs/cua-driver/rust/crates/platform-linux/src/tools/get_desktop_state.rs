@@ -75,7 +75,10 @@ impl Tool for GetDesktopStateTool {
                 .transpose()?;
             // KWin: the logical frame, read before the capture and compared
             // after it. Its capture is that frame at the largest output scale.
-            let kwin_frame = crate::wayland::kwin_desktop_frame()?;
+            let (kwin_frame, kwin_distorted) = match crate::wayland::kwin_desktop_layout()? {
+                Some(layout) => (Some(layout.frame), layout.distorted),
+                None => (None, None),
+            };
             let (native_png, overlay_capture) =
                 cursor_overlay::capture_exclusion::capture_excluding_overlays(
                     &crate::overlay_capture::OverlayExcluder,
@@ -168,7 +171,10 @@ impl Tool for GetDesktopStateTool {
             } else if let Some(frame) = &kwin_frame {
                 // KWin window geometry is in layout coordinates too.
                 anyhow::ensure!(
-                    crate::wayland::kwin_desktop_frame()?.as_ref() == Some(frame),
+                    crate::wayland::kwin_desktop_layout()?
+                        .map(|layout| layout.frame)
+                        .as_ref()
+                        == Some(frame),
                     "the KWin output layout changed during get_desktop_state; call it again"
                 );
                 frame.rebase_windows(&mut windows);
@@ -191,6 +197,7 @@ impl Tool for GetDesktopStateTool {
                 windows,
                 capture_id,
                 overlay_capture,
+                kwin_distorted,
             ))
         })
         .await;
@@ -207,6 +214,7 @@ impl Tool for GetDesktopStateTool {
                 windows,
                 capture_id,
                 overlay_capture,
+                kwin_distorted,
             ))) => {
                 let frame_scale = if shot_w > 0 {
                     f64::from(screen_w) / f64::from(shot_w)
@@ -249,6 +257,15 @@ impl Tool for GetDesktopStateTool {
                     &mut frame_note,
                     &overlay_capture,
                 );
+                if let Some(distorted) = kwin_distorted {
+                    frame_note.push_str(&format!(
+                        "; KWin {} captures rotated output {} distorted: this screenshot does \
+                         not match the screen there, and desktop input there is refused",
+                        distorted.kwin_version,
+                        distorted.outputs.join(", ")
+                    ));
+                    structured["distorted_outputs"] = json!(distorted.outputs);
+                }
                 if let Some(path) = written {
                     structured["screenshot_file_path"] = json!(path);
                     content.push(cua_driver_core::protocol::Content::text(format!(

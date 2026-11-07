@@ -199,7 +199,32 @@ fn a_screenshot_pixel_lands_on_target_on_every_output() {
     assert_eq!(state["scale_factor"], size["scale_factor"]);
 
     let frame = (origin_x, origin_y);
+    let distorted = state["distorted_outputs"].as_array().cloned();
+    let distorted = distorted.unwrap_or_default();
     for (index, monitor) in monitors.iter().enumerate() {
+        // An output KWin's capture distorts names itself, and refuses input.
+        let corner = (
+            field(monitor, "x") - origin_x,
+            field(monitor, "y") - origin_y,
+        );
+        let name = &reported
+            .iter()
+            .find(|r| {
+                (r["frame_x"].as_i64(), r["frame_y"].as_i64()) == (Some(corner.0), Some(corner.1))
+            })
+            .expect("reported monitor")["name"];
+        if distorted.contains(name) {
+            let refusal = click(&mut driver, corner.0, corner.1);
+            let expected = format!(
+                "desktop point ({}, {}) is on {}, a rotated output that KWin",
+                corner.0,
+                corner.1,
+                name.as_str().expect("monitor name")
+            );
+            assert!(refusal.text().contains(&expected), "{}", refusal.text());
+            continue;
+        }
+
         // Its marker, read off the screenshot.
         let (x, y) = marker_center(&image, MARKER_COLORS[index]);
         let point = (i64::from(x), i64::from(y));
@@ -219,10 +244,6 @@ fn a_screenshot_pixel_lands_on_target_on_every_output() {
         }
 
         // The output's first pixel, which is pixel (0, 0) of a frame it starts.
-        let corner = (
-            field(monitor, "x") - origin_x,
-            field(monitor, "y") - origin_y,
-        );
         if let Some(press) = click_on_output(&mut driver, &lines, frame, corner) {
             assert_eq!(press["monitor"], index, "{press}");
             for axis in ["x", "y"] {

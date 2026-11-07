@@ -1732,23 +1732,35 @@ fn pointer_reaches(origin_x: i32, origin_y: i32, w: u32, h: u32, x: i32, y: i32)
 #[derive(Clone, Debug, Default)]
 pub struct DesktopInputSpace {
     snapshot: Option<hyprland::DesktopSnapshot>,
+    kwin_distorted: Option<kwin_layout::DistortedCapture>,
 }
 
 impl DesktopInputSpace {
     pub fn current() -> anyhow::Result<Self> {
-        let snapshot = if is_wayland() && hyprland::is_session() {
-            Some(hyprland::desktop_snapshot()?)
-        } else if niri::is_session() {
-            Some(niri::desktop_snapshot()?)
-        } else {
-            // KWin input goes through libei, which takes layout coordinates,
-            // so it has no virtual-pointer layout to qualify.
-            kwin_desktop_frame()?.map(|frame| hyprland::DesktopSnapshot {
-                frame,
-                pointer: None,
-            })
+        if is_wayland() && hyprland::is_session() {
+            return Ok(Self {
+                snapshot: Some(hyprland::desktop_snapshot()?),
+                kwin_distorted: None,
+            });
+        }
+        if niri::is_session() {
+            return Ok(Self {
+                snapshot: Some(niri::desktop_snapshot()?),
+                kwin_distorted: None,
+            });
+        }
+        // KWin input goes through libei, which takes layout coordinates, so it
+        // has no virtual-pointer layout to qualify.
+        let Some(layout) = kwin_desktop_layout()? else {
+            return Ok(Self::default());
         };
-        Ok(Self { snapshot })
+        Ok(Self {
+            snapshot: Some(hyprland::DesktopSnapshot {
+                frame: layout.frame,
+                pointer: None,
+            }),
+            kwin_distorted: layout.distorted,
+        })
     }
 
     /// Layout coordinates of a desktop-frame point.
@@ -1772,6 +1784,9 @@ impl DesktopInputSpace {
                 || snapshot.frame.output_contains_layout(layout_x, layout_y),
             "desktop point ({x}, {y}) is not on a powered monitor in the current layout; call get_desktop_state again"
         );
+        if let Some(distorted) = &self.kwin_distorted {
+            distorted.admit(&snapshot.frame, (x, y), (layout_x, layout_y))?;
+        }
         Ok((layout_x, layout_y))
     }
 }
@@ -1837,21 +1852,21 @@ pub(crate) fn compositor_logical_frame() -> Option<anyhow::Result<(u32, u32)>> {
     if hyprland::is_session() {
         return Some(hyprland::screen_size().map(|(width, height, _scale)| (width, height)));
     }
-    kwin_desktop_frame()
+    kwin_desktop_layout()
         .transpose()
-        .map(|frame| frame.map(|frame| (frame.width, frame.height)))
+        .map(|layout| layout.map(|layout| (layout.frame.width, layout.frame.height)))
 }
 
-/// KWin's desktop frame: its pointer input is logical while its screenshots
+/// KWin's desktop layout: its pointer input is logical while its screenshots
 /// are physical, so a screenshot pixel and a pointer coordinate only agree in
 /// this frame. `None` on any other compositor; a KWin that cannot report a
 /// usable layout is an error rather than a silent return to the mismatched
 /// physical frame.
-pub(crate) fn kwin_desktop_frame() -> anyhow::Result<Option<hyprland::DesktopFrame>> {
+pub(crate) fn kwin_desktop_layout() -> anyhow::Result<Option<kwin_layout::DesktopLayout>> {
     if !is_wayland() || hyprland::is_session() || niri::is_session() {
         return Ok(None);
     }
-    kwin_layout::desktop_frame()
+    kwin_layout::desktop_layout()
 }
 
 /// Pointer space for `zwlr_virtual_pointer_v1::motion_absolute`, as

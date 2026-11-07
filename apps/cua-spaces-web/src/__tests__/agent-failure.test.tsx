@@ -93,12 +93,20 @@ describe("an agent that is not connected", () => {
     // A short word, never the raw error.
     expect(caption.textContent).toBe("Not connected");
     expect(row.textContent).not.toMatch(/401|OAuth|authentication/i);
-    const details = q("[data-member-details] [data-failure-details]");
-    expect(details).not.toBeNull();
+    // The list item has no extra Show details row (its height never changes); the card holds the whole error.
+    expect(q("[data-member-details]")).toBeNull();
     await act(async () => {
-      fireEvent.click(details!);
+      fireEvent.click(row.closest<HTMLElement>("[data-profile-trigger]")!);
     });
-    const message = q("[data-member-details] [data-failure-message]")!;
+    const details = await waitFor(() => {
+      const d = q("[data-profile-card='agent'] [data-failure-details]");
+      expect(d).not.toBeNull();
+      return d!;
+    });
+    await act(async () => {
+      fireEvent.click(details);
+    });
+    const message = q("[data-profile-card='agent'] [data-failure-message]")!;
     expect(message.className).toContain("select-text");
     expect(message.textContent!.length).toBeGreaterThan(20);
   });

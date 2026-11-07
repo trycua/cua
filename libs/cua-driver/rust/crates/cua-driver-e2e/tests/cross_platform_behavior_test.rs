@@ -1769,6 +1769,9 @@ fn shared_case_with_native_hyprland(
             ("tauri", "hotkey", _) | ("tauri", "scroll", Targeting::Px) => {
                 vec![RefusalCode::BackgroundUnavailable]
             }
+            ("tauri", "type_text" | "type_submit" | "editor_save", Targeting::Ax) => {
+                vec![RefusalCode::BackgroundUnavailable]
+            }
             ("tauri", "drag", Targeting::Px) => vec![RefusalCode::BackgroundOccluded],
             _ => Vec::new(),
         }

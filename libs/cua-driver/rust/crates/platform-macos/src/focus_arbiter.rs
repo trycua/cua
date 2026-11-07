@@ -152,12 +152,16 @@ impl UndoWatch {
     /// Whether the activation just observed may be undone. Call it only when
     /// there is one to undo: a `Leave` is final for this watch.
     pub fn decide(&self) -> Decision {
-        self.decide_with(Epoch::now(), user_switched_recently)
+        self.decide_with(Epoch::now, user_switched_recently)
     }
 
-    fn decide_with(&self, now: Epoch, user_switched: impl FnOnce() -> bool) -> Decision {
+    fn decide_with(
+        &self,
+        now: impl FnOnce() -> Epoch,
+        user_switched: impl FnOnce() -> bool,
+    ) -> Decision {
         let mut left = self.left();
-        if !*left && self.0.armed == now && !user_switched() {
+        if !*left && self.0.armed == now() && !user_switched() {
             Decision::Undo
         } else {
             *left = true;
@@ -198,14 +202,17 @@ mod tests {
     fn an_undo_needs_its_own_epoch_and_no_user_input() {
         let armed = Epoch::now();
         let watch = UndoWatch::armed_at(armed);
-        assert_eq!(watch.decide_with(armed, || false), Decision::Undo);
-        assert_eq!(watch.decide_with(armed, || false), Decision::Undo);
+        assert_eq!(watch.decide_with(|| armed, || false), Decision::Undo);
+        assert_eq!(watch.decide_with(|| armed, || false), Decision::Undo);
         // The driver activated an app since the watcher was armed.
         let watch = UndoWatch::armed_at(armed);
-        assert_eq!(watch.decide_with(armed.next(), || false), Decision::Leave);
+        assert_eq!(
+            watch.decide_with(|| armed.next(), || false),
+            Decision::Leave
+        );
         // The user clicked or held a modifier just now.
         let watch = UndoWatch::armed_at(armed);
-        assert_eq!(watch.decide_with(armed, || true), Decision::Leave);
+        assert_eq!(watch.decide_with(|| armed, || true), Decision::Leave);
     }
 
     /// The user switched to the target while one lease watched; a later check
@@ -216,7 +223,7 @@ mod tests {
         let armed = Epoch::now();
         let watch = UndoWatch::armed_at(armed);
         let loop_after = watch.clone();
-        assert_eq!(watch.decide_with(armed, || true), Decision::Leave);
-        assert_eq!(loop_after.decide_with(armed, || false), Decision::Leave);
+        assert_eq!(watch.decide_with(|| armed, || true), Decision::Leave);
+        assert_eq!(loop_after.decide_with(|| armed, || false), Decision::Leave);
     }
 }

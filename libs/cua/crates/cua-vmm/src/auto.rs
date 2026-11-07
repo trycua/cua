@@ -860,7 +860,7 @@ fn managed_status(
         };
     }
     let running = picked && managed::running();
-    BackendStatus {
+    let mut status = BackendStatus {
         backend: BackendKind::Managed,
         ready: running,
         provisionable: picked && !running,
@@ -869,9 +869,17 @@ fn managed_status(
         } else if source == LinuxSource::System {
             "Linux Spaces are set to use this Mac's own container engine".into()
         } else if running && cfg!(windows) {
-            "built-in Linux runtime running (WSL 2, runc)".into()
+            format!(
+                "built-in Linux runtime running (WSL 2, runc); {}",
+                crate::egress::BRIDGE_FAMILY_LIMITS
+            )
         } else if running {
             "built-in Linux runtime running (gVisor)".into()
+        } else if picked && managed::exists() && cfg!(windows) {
+            format!(
+                "built-in Linux runtime, started on demand; {}",
+                crate::egress::BRIDGE_FAMILY_LIMITS
+            )
         } else if picked && managed::exists() {
             "built-in Linux runtime, started on demand".into()
         } else if picked && cfg!(windows) {
@@ -900,7 +908,17 @@ fn managed_status(
         } else {
             vec![]
         },
+    };
+    // Windows: the runtime's disk is a sparse VHDX that grows with images and
+    // Spaces. Say so while the drive is filling up, before Docker fails midway.
+    if cfg!(windows)
+        && picked
+        && managed::exists()
+        && let Some(note) = managed::wsl::low_space_note(&nearest_existing(&managed::root()))
+    {
+        status.detail = format!("{}; {note}", status.detail);
     }
+    status
 }
 
 /// `path`, or its nearest ancestor that exists (a volume to ask about).

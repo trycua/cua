@@ -353,9 +353,10 @@ describe("2b, Cua Spaces' permissions (a Mac only)", () => {
     expect(onContinue).toHaveBeenCalled();
   });
 
-  it("shows a grant as Allowed, and Continue once both are on", () => {
+  it("shows a grant as On, and Continue once both are on", () => {
     draw(data(true, false));
-    expect(document.querySelector("[data-app-permission=screen]")!.textContent).toContain("Allowed");
+    expect(document.querySelector("[data-app-permission=screen]")!.textContent).toContain("On");
+    expect(document.querySelector("[data-app-permission=screen] [data-permission-status]")!.getAttribute("data-permission-status")).toBe("on");
     expect(document.querySelector("[data-app-permission=screen] button")).toBeNull();
     expect(screen.getByRole("button", { name: "Later" })).toBeTruthy();
     cleanup();

@@ -21,9 +21,30 @@ export function permissionWords(id: DriverPermission["id"], appName: string): Pe
     : { title: "Use the mouse and keyboard", sub: `Accessibility, given to ${appName}` };
 }
 
-/** What Allow does, under the rows. */
-export function allowHint(appName: string): string {
-  return `Allow opens System Settings. Turn on ${appName} there, then come back.`;
+export type PermissionState = NonNullable<DriverPermission["state"]>;
+
+/** Where one permission stands, from the host's answer (an older host says only granted or not). */
+export function permissionState(p: Pick<DriverPermission, "granted" | "state">): PermissionState {
+  if (p.granted) return "on";
+  return p.state && p.state !== "on" ? p.state : "unknown";
+}
+
+/**
+ * A row's live status, beside Allow: "On" once granted; while the person is in System Settings after Allow (and
+ * after the app reopens for Screen Recording), that it is being checked; otherwise what System Settings shows now.
+ */
+export function permissionStatus(p: Pick<DriverPermission, "granted" | "state">, waiting: boolean): { label: string; done: boolean; checking: boolean } | null {
+  const state = permissionState(p);
+  if (state === "on") return { label: "On", done: true, checking: false };
+  if (waiting) return { label: "Waiting for the switch", done: false, checking: true };
+  if (state === "off") return { label: "Off", done: false, checking: false };
+  if (state === "absent") return { label: "Not in the list yet", done: false, checking: false };
+  return null;
+}
+
+/** What Allow does, under the rows; once both are on, that they are. */
+export function allowHint(appName: string, allGranted = false): string {
+  return allGranted ? "Both are on. Agents can use apps on this Mac." : `Allow opens System Settings. Turn on ${appName} there, then come back.`;
 }
 
 /** Under the Cua Driver page's rows: one set of permissions, no second app. */
@@ -45,7 +66,7 @@ export function permissionsStepView(input: { appName: string; allGranted: boolea
   return {
     title: `Let ${input.appName} see and use apps`,
     line: `This lets your agents work in the apps on this Mac, in the background. Cua Driver uses these same permissions, so there's no second app to allow.`,
-    note: input.allGranted ? "Both are on." : `${allowHint(input.appName)} You can also do this later on the Cua Driver page.`,
+    note: input.allGranted ? "Both are on. Agents can use apps on this Mac." : `${allowHint(input.appName)} You can also do this later on the Cua Driver page.`,
     primary: input.allGranted ? { label: "Continue", white: true } : { label: "Later", white: false },
   };
 }

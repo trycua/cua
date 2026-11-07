@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.42.3](https://github.com/trycua/cua/compare/cua-driver-rs-v0.42.2...cua-driver-rs-v0.42.3) (2026-11-07)
+
+
+### Bug Fixes
+
+* **cua-driver:** leave time for non-ASCII text after a walk in a big app ([#6851](https://github.com/trycua/cua/issues/6851)) ([9f8c7cd](https://github.com/trycua/cua/commit/9f8c7cdfa24c9ed93192f41cabd00d7546eba150))
+* **cua-driver:** say which toolkits read InsertText's length as bytes ([#6848](https://github.com/trycua/cua/issues/6848)) ([781af7d](https://github.com/trycua/cua/commit/781af7d800232ca12d2d6b13fde1864309b1f5e8))
+
 ## [0.42.2](https://github.com/trycua/cua/compare/cua-driver-rs-v0.42.1...cua-driver-rs-v0.42.2) (2026-11-07)
 
 

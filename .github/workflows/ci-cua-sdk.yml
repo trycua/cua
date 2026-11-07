@@ -929,10 +929,12 @@ jobs:
       # XCFramework, hence the cap). Main's runs save it; PRs restore it. In
       # the macOS `libs-cua` family it shared with jobs of other shapes it hit 22%.
       - uses: ./.github/actions/rust-cache
+        id: cache
         with:
           workspaces: libs/cua
           shared-key: cua-sdk-swift
           size: 8G
+          save-always: "true"
       - name: Dev dylib
         run: |
           cargo build --locked --release -p cua-sdk
@@ -959,3 +961,10 @@ jobs:
         run: |
           swift/scripts/build-xcframework.sh
           cd swift && rm -rf .build && CUA_SWIFT_XCFRAMEWORK=build/CuaSDKFFI.xcframework scripts/test.sh
+      # Keep the warm compile even when a test step above fails.
+      - uses: ./.github/actions/rust-cache-save
+        if: ${{ always() && steps.cache.outputs.save == 'true' }}
+        with:
+          key: ${{ steps.cache.outputs.key }}
+          dir: ${{ steps.cache.outputs.dir }}
+          exact-hit: ${{ steps.cache.outputs.exact-hit }}

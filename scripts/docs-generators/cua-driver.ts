@@ -194,7 +194,7 @@ export const CLI_GROUPS: CliGroup[] = [
     commands: [
       'mcp', 'connect', 'mcp-config', 'list-tools', 'describe', 'call', 'manifest', 'dump-docs',
       'serve', 'stop', 'status', 'sessions', 'revoke', 'autostart',
-      'permissions', 'doctor', 'diagnose', 'test',
+      'permissions', 'kwin-capture', 'doctor', 'diagnose', 'test',
       'config', 'telemetry', 'cursor-theme', 'cursor',
       'check-update', 'update', 'channel',
     ],

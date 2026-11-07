@@ -1514,6 +1514,75 @@
    ]
   },
   {
+   "abstract": "Turn exact KWin window capture and activation on or off (Linux).",
+   "arguments": [],
+   "default_subcommand": "status",
+   "discussion": "Off by default on every KWin release. The setting is read on every call, so no restart is needed; on waits up to about five seconds for KWin to grant it on KWin 6.7 and older, then prints the status line either way. Only this command changes it; set_config cannot.",
+   "examples": [
+    {
+     "command": "cua-driver kwin-capture",
+     "description": "Show whether exact KWin window capture is on"
+    }
+   ],
+   "flags": [],
+   "name": "kwin-capture",
+   "options": [],
+   "subcommands": [
+    {
+     "abstract": "Show the setting and the desktop entry. The default subcommand.",
+     "arguments": [],
+     "discussion": "",
+     "examples": [
+      {
+       "command": "cua-driver kwin-capture status",
+       "description": "Show the setting and the desktop entry"
+      }
+     ],
+     "flags": [],
+     "name": "status",
+     "options": [],
+     "subcommands": []
+    },
+    {
+     "abstract": "Turn it on; on KWin 6.7 and older also write the desktop entry KWin checks.",
+     "arguments": [],
+     "discussion": "A screenshot Deny saved in the desktop portal keeps it off unless --override-portal-deny is given.",
+     "examples": [
+      {
+       "command": "cua-driver kwin-capture on",
+       "description": "Turn exact KWin window capture on"
+      }
+     ],
+     "flags": [
+      {
+       "default_value": false,
+       "help": "Ignore a screenshot Deny saved in the desktop portal.",
+       "name": "override-portal-deny",
+       "short_name": null
+      }
+     ],
+     "name": "on",
+     "options": [],
+     "subcommands": []
+    },
+    {
+     "abstract": "Turn it off and remove the desktop entry.",
+     "arguments": [],
+     "discussion": "",
+     "examples": [
+      {
+       "command": "cua-driver kwin-capture off",
+       "description": "Turn exact KWin window capture off"
+      }
+     ],
+     "flags": [],
+     "name": "off",
+     "options": [],
+     "subcommands": []
+    }
+   ]
+  },
+  {
    "abstract": "Install, update, inspect, or remove the optional agent skill pack.",
    "arguments": [],
    "default_subcommand": "status",

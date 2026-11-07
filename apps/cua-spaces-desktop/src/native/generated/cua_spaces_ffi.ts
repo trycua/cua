@@ -40833,8 +40833,8 @@ export type AppSettings = {
      */
     launchAtLogin?: boolean,
     /**
-     * Settings, Experiments: every switch off unless turned on
-     * ([`crate::experiments`]).
+     * Settings, Experiments: each switch has a default
+     * ([`crate::experiments::Experiments::default`]); a stored on or off wins.
      */
     experiments: AppExperiments,
     /**

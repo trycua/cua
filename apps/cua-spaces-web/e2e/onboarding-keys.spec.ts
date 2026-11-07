@@ -9,6 +9,14 @@
 
 import { expect, test } from "./host";
 
+// These cover the first run as it was; the new Home and the new setup (on by default) have their own specs.
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("cua.flag.spaces_new_onboarding", "0");
+    localStorage.setItem("cua.flag.spaces_ask_first_home", "0");
+  });
+});
+
 for (const [width, height] of [[720, 560], [980, 660], [1200, 780]] as const) {
   test(`a ${width} px window shows the keys`, async ({ page }) => {
     await page.setViewportSize({ width, height });

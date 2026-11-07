@@ -107,6 +107,10 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 90
+    env:
+      # This job checks the image, not the network a Space gets. Behind the Secure Spaces default (on) the
+      # guest's apt could not resolve names on this runner, so the sandbox is made on the open network.
+      CUA_EXPERIMENTS: -secure-spaces
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - id: build

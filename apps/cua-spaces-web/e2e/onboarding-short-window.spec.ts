@@ -10,6 +10,14 @@
 
 import { expect, test } from "./host";
 
+// These cover the first run as it was; the new Home and the new setup (on by default) have their own specs.
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("cua.flag.spaces_new_onboarding", "0");
+    localStorage.setItem("cua.flag.spaces_ask_first_home", "0");
+  });
+});
+
 const PAGES: { name: string; need: string[]; go: (page: import("@playwright/test").Page) => Promise<void> }[] = [
   { name: "Welcome", need: ["Get started", "Skip for now"], go: async () => {} },
   {

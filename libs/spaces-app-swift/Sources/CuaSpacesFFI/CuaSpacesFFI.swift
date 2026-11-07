@@ -35844,8 +35844,8 @@ public struct AppSettings: Equatable, Hashable {
      */
     public var launchAtLogin: Bool?
     /**
-     * Settings, Experiments: every switch off unless turned on
-     * ([`crate::experiments`]).
+     * Settings, Experiments: each switch has a default
+     * ([`crate::experiments::Experiments::default`]); a stored on or off wins.
      */
     public var experiments: AppExperiments
     /**
@@ -35944,8 +35944,8 @@ public struct AppSettings: Equatable, Hashable {
          * Settings); `None`: never chosen ([`crate::login_item::launch_plan`]).
          */launchAtLogin: Bool?,
         /**
-         * Settings, Experiments: every switch off unless turned on
-         * ([`crate::experiments`]).
+         * Settings, Experiments: each switch has a default
+         * ([`crate::experiments::Experiments::default`]); a stored on or off wins.
          */experiments: AppExperiments,
         /**
          * Keyvault copies (import ids) the user dismissed from the notch: it no

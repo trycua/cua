@@ -433,7 +433,8 @@ describe("SettingsPanel Experiments", () => {
     });
     expect(telemetry.recordSignals).toHaveBeenCalledWith([
       { type: "experiment", action: "experiment_on", experiment: "cua_volume" },
-      { type: "experiments-on", experiments: ["cua_volume"] },
+      // The ones that are on by default are on too.
+      { type: "experiments-on", experiments: ["cua_volume", "secure_spaces", "child_spaces", "ask_first", "warm_pools"] },
     ]);
   });
 });

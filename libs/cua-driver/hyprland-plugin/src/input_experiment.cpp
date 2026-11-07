@@ -1289,6 +1289,10 @@ struct InputExperiment::Impl {
                 for (auto& p : pointers) {
                     if (p->dead || !p->wl->resource() || !p->focus) continue;
                     if (p->wl->version() >= 5) p->wl->sendAxisSource(WL_POINTER_AXIS_SOURCE_WHEEL);
+                    // Some apps, such as Zed, ignore a wheel scroll that doesn't say how
+                    // many clicks it was. The driver sends 10 units per click.
+                    if (p->wl->version() >= 8) p->wl->sendAxisValue120(static_cast<wl_pointer_axis>(axis), static_cast<int32_t>(std::lround(value * 12)));
+                    else if (p->wl->version() >= 5) p->wl->sendAxisDiscrete(static_cast<wl_pointer_axis>(axis), static_cast<int32_t>(std::lround(value / 10)));
                     p->wl->sendAxis(event_ms(), static_cast<wl_pointer_axis>(axis), wl_fixed_from_double(value));
                     if (p->wl->version() >= 5) p->wl->sendFrame();
                 }
@@ -1358,6 +1362,9 @@ struct InputExperiment::Impl {
             for (const auto& weak : foreground_pointers) {
                 const auto p = weak.lock(); if (!p || !p->good()) throw ForegroundFailure{ForegroundFailureReason::pointer_resources};
                 p->sendAxisSource(WL_POINTER_AXIS_SOURCE_WHEEL);
+                // See the background SCROLL path: some apps need the click count.
+                if (p->version() >= 8) p->sendAxisValue120(static_cast<wl_pointer_axis>(axis), static_cast<int32_t>(std::lround(value * 12)));
+                else if (p->version() >= 5) p->sendAxisDiscrete(static_cast<wl_pointer_axis>(axis), static_cast<int32_t>(std::lround(value / 10)));
                 p->sendAxis(event_ms(), static_cast<wl_pointer_axis>(axis), value); p->sendFrame();
             }
         } else if (command == "DRAG") {

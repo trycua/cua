@@ -9355,6 +9355,17 @@ public protocol SpaceProtocol: AnyObject, Sendable {
     func joinPresence(identity: PresenceIdentity, timeoutMs: UInt64?) async throws  -> SpacePresence
 
     /**
+     * Joins presence for the window being watched. For a window another
+     * Space shows here and the viewer streams straight from its origin
+     * (`window_id` from [`Space::windows`]), this joins the origin's channel
+     * and this Space's, publishes the cursor to both and reads them as one:
+     * one avatar and one cursor per viewer, as if the stream came through
+     * this Space. For any other window, or `None`, it is
+     * [`Space::join_presence`].
+     */
+    func joinPresenceFor(windowId: String?, identity: PresenceIdentity, timeoutMs: UInt64?) async throws  -> SpacePresence
+
+    /**
      * This Space's services.
      */
     func keptServices() async throws  -> [SpaceServiceInfo]
@@ -10129,6 +10140,32 @@ open func joinPresence(identity: PresenceIdentity, timeoutMs: UInt64?)async thro
                 uniffi_cua_sdk_fn_method_space_join_presence(
                     self.uniffiCloneHandle(),
                     FfiConverterTypePresenceIdentity_lower(identity),FfiConverterOptionUInt64.lower(timeoutMs)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_u64,
+            completeFunc: ffi_cua_sdk_rust_future_complete_u64,
+            freeFunc: ffi_cua_sdk_rust_future_free_u64,
+            liftFunc: FfiConverterTypeSpacePresence_lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * Joins presence for the window being watched. For a window another
+     * Space shows here and the viewer streams straight from its origin
+     * (`window_id` from [`Space::windows`]), this joins the origin's channel
+     * and this Space's, publishes the cursor to both and reads them as one:
+     * one avatar and one cursor per viewer, as if the stream came through
+     * this Space. For any other window, or `None`, it is
+     * [`Space::join_presence`].
+     */
+open func joinPresenceFor(windowId: String?, identity: PresenceIdentity, timeoutMs: UInt64?)async throws  -> SpacePresence  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_space_join_presence_for(
+                    self.uniffiCloneHandle(),
+                    FfiConverterOptionString.lower(windowId),FfiConverterTypePresenceIdentity_lower(identity),FfiConverterOptionUInt64.lower(timeoutMs)
                 )
             },
             pollFunc: ffi_cua_sdk_rust_future_poll_u64,
@@ -55343,6 +55380,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_space_join_presence() != 56636) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_space_join_presence_for() != 40031) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_space_kept_services() != 50248) {

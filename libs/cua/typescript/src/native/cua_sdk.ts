@@ -39560,6 +39560,16 @@ export interface SpaceLike {
  */
     joinPresence(identity: PresenceIdentity, timeoutMs: bigint | undefined, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<SpacePresenceLike>;
 /**
+ * Joins presence for the window being watched. For a window another
+ * Space shows here and the viewer streams straight from its origin
+ * (`window_id` from [`Space::windows`]), this joins the origin's channel
+ * and this Space's, publishes the cursor to both and reads them as one:
+ * one avatar and one cursor per viewer, as if the stream came through
+ * this Space. For any other window, or `None`, it is
+ * [`Space::join_presence`].
+ */
+    joinPresenceFor(windowId: string | undefined, identity: PresenceIdentity, timeoutMs: bigint | undefined, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<SpacePresenceLike>;
+/**
  * This Space's services.
  */
     keptServices(asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Array<SpaceServiceInfo>>;
@@ -40604,6 +40614,47 @@ private constructor(pointer: UniffiHandle) {
             /*rustFutureFunc:*/ () => {
                 return nativeModule().uniffi_cua_sdk_fn_method_space_join_presence(
                     uniffiTypeSpaceObjectFactory.clonePointer(this),FfiConverterTypePresenceIdentity.lower(identity, nativeModule().rustbuffer_alloc),FfiConverterOptionalUInt64.lower(timeoutMs, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_cua_sdk_rust_future_poll_u64,
+            /*cancelFunc:*/ nativeModule().ffi_cua_sdk_rust_future_cancel_u64,
+            /*completeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_complete_u64,
+            /*freeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_free_u64,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterTypeSpacePresence.lift.bind(FfiConverterTypeSpacePresence),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
+    }
+
+/**
+ * Joins presence for the window being watched. For a window another
+ * Space shows here and the viewer streams straight from its origin
+ * (`window_id` from [`Space::windows`]), this joins the origin's channel
+ * and this Space's, publishes the cursor to both and reads them as one:
+ * one avatar and one cursor per viewer, as if the stream came through
+ * this Space. For any other window, or `None`, it is
+ * [`Space::join_presence`].
+ */
+    async joinPresenceFor(windowId: string | undefined, identity: PresenceIdentity, timeoutMs: bigint | undefined, asyncOpts_?: { signal: AbortSignal }): Promise<SpacePresenceLike> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_cua_sdk_fn_method_space_join_presence_for(
+                    uniffiTypeSpaceObjectFactory.clonePointer(this),FfiConverterOptionalString.lower(windowId, nativeModule().rustbuffer_alloc),FfiConverterTypePresenceIdentity.lower(identity, nativeModule().rustbuffer_alloc),FfiConverterOptionalUInt64.lower(timeoutMs, nativeModule().rustbuffer_alloc)
                 );
             },
             /*pollFunc:*/ nativeModule().ffi_cua_sdk_rust_future_poll_u64,
@@ -50308,6 +50359,9 @@ function uniffiEnsureInitialized() {
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_space_join_presence() !== 56636) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_space_join_presence");
+    }
+    if (nativeModule().uniffi_cua_sdk_checksum_method_space_join_presence_for() !== 40031) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_space_join_presence_for");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_space_kept_services() !== 50248) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_space_kept_services");

@@ -1091,6 +1091,8 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_space_join_presence() != 56636:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_sdk_checksum_method_space_join_presence_for() != 40031:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_space_kept_services() != 50248:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_space_list_tools() != 19376:
@@ -3878,6 +3880,13 @@ _UniffiLib.uniffi_cua_sdk_fn_method_space_join_presence.argtypes = (
     _UniffiRustBuffer,
 )
 _UniffiLib.uniffi_cua_sdk_fn_method_space_join_presence.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cua_sdk_fn_method_space_join_presence_for.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+    _UniffiRustBuffer,
+    _UniffiRustBuffer,
+)
+_UniffiLib.uniffi_cua_sdk_fn_method_space_join_presence_for.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cua_sdk_fn_method_space_kept_services.argtypes = (
     ctypes.c_uint64,
 )
@@ -6011,6 +6020,9 @@ _UniffiLib.uniffi_cua_sdk_checksum_method_space_info.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_method_space_join_presence.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_space_join_presence.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_sdk_checksum_method_space_join_presence_for.argtypes = (
+)
+_UniffiLib.uniffi_cua_sdk_checksum_method_space_join_presence_for.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_method_space_kept_services.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_space_kept_services.restype = ctypes.c_uint16
@@ -41758,6 +41770,17 @@ class SpaceProtocol(typing.Protocol):
         roster.
 """
         raise NotImplementedError
+    async def join_presence_for(self, window_id: typing.Optional[str],identity: PresenceIdentity,timeout_ms: typing.Optional[int]) -> SpacePresence:
+        """
+        Joins presence for the window being watched. For a window another
+        Space shows here and the viewer streams straight from its origin
+        (`window_id` from [`Space::windows`]), this joins the origin's channel
+        and this Space's, publishes the cursor to both and reads them as one:
+        one avatar and one cursor per viewer, as if the stream came through
+        this Space. For any other window, or `None`, it is
+        [`Space::join_presence`].
+"""
+        raise NotImplementedError
     async def kept_services(self, ) -> typing.List[SpaceServiceInfo]:
         """
         This Space's services.
@@ -42577,6 +42600,38 @@ class Space(SpaceProtocol):
         _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
         return await _uniffi_rust_call_async(
             _UniffiLib.uniffi_cua_sdk_fn_method_space_join_presence(*_uniffi_lowered_args),
+            _UniffiLib.ffi_cua_sdk_rust_future_poll_u64,
+            _UniffiLib.ffi_cua_sdk_rust_future_complete_u64,
+            _UniffiLib.ffi_cua_sdk_rust_future_free_u64,
+            _uniffi_lift_return,
+            _uniffi_error_converter,
+        )
+    async def join_presence_for(self, window_id: typing.Optional[str],identity: PresenceIdentity,timeout_ms: typing.Optional[int]) -> SpacePresence:
+        """
+        Joins presence for the window being watched. For a window another
+        Space shows here and the viewer streams straight from its origin
+        (`window_id` from [`Space::windows`]), this joins the origin's channel
+        and this Space's, publishes the cursor to both and reads them as one:
+        one avatar and one cursor per viewer, as if the stream came through
+        this Space. For any other window, or `None`, it is
+        [`Space::join_presence`].
+"""
+
+        _UniffiFfiConverterOptionalString.check_lower(window_id)
+
+        _UniffiFfiConverterTypePresenceIdentity.check_lower(identity)
+
+        _UniffiFfiConverterOptionalUInt64.check_lower(timeout_ms)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterOptionalString.lower(window_id),
+            _UniffiFfiConverterTypePresenceIdentity.lower(identity),
+            _UniffiFfiConverterOptionalUInt64.lower(timeout_ms),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeSpacePresence.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
+        return await _uniffi_rust_call_async(
+            _UniffiLib.uniffi_cua_sdk_fn_method_space_join_presence_for(*_uniffi_lowered_args),
             _UniffiLib.ffi_cua_sdk_rust_future_poll_u64,
             _UniffiLib.ffi_cua_sdk_rust_future_complete_u64,
             _UniffiLib.ffi_cua_sdk_rust_future_free_u64,

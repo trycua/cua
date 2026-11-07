@@ -1399,6 +1399,8 @@ external fun uniffi_cua_sdk_checksum_method_space_info(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_space_join_presence(
 ): Short
+external fun uniffi_cua_sdk_checksum_method_space_join_presence_for(
+): Short
 external fun uniffi_cua_sdk_checksum_method_space_kept_services(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_space_list_tools(
@@ -2487,6 +2489,8 @@ external fun uniffi_cua_sdk_fn_method_space_id(`ptr`: Long,uniffi_out_err: Uniff
 external fun uniffi_cua_sdk_fn_method_space_info(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus,
 ): RustBuffer.ByValue
 external fun uniffi_cua_sdk_fn_method_space_join_presence(`ptr`: Long,`identity`: RustBuffer.ByValue,`timeoutMs`: RustBuffer.ByValue,
+): Long
+external fun uniffi_cua_sdk_fn_method_space_join_presence_for(`ptr`: Long,`windowId`: RustBuffer.ByValue,`identity`: RustBuffer.ByValue,`timeoutMs`: RustBuffer.ByValue,
 ): Long
 external fun uniffi_cua_sdk_fn_method_space_kept_services(`ptr`: Long,
 ): Long
@@ -4113,6 +4117,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cua_sdk_checksum_method_space_join_presence() != 56636.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cua_sdk_checksum_method_space_join_presence_for() != 40031.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cua_sdk_checksum_method_space_kept_services() != 50248.toShort()) {
@@ -18236,6 +18243,17 @@ public interface SpaceInterface {
     suspend fun `joinPresence`(`identity`: PresenceIdentity, `timeoutMs`: kotlin.ULong?): SpacePresence
 
     /**
+     * Joins presence for the window being watched. For a window another
+     * Space shows here and the viewer streams straight from its origin
+     * (`window_id` from [`Space::windows`]), this joins the origin's channel
+     * and this Space's, publishes the cursor to both and reads them as one:
+     * one avatar and one cursor per viewer, as if the stream came through
+     * this Space. For any other window, or `None`, it is
+     * [`Space::join_presence`].
+     */
+    suspend fun `joinPresenceFor`(`windowId`: kotlin.String?, `identity`: PresenceIdentity, `timeoutMs`: kotlin.ULong?): SpacePresence
+
+    /**
      * This Space's services.
      */
     suspend fun `keptServices`(): List<SpaceServiceInfo>
@@ -19159,6 +19177,36 @@ open class Space: Disposable, AutoCloseable, SpaceInterface
             UniffiLib.uniffi_cua_sdk_fn_method_space_join_presence(
                 uniffiHandle,
                 FfiConverterTypePresenceIdentity.lower(`identity`),FfiConverterOptionalULong.lower(`timeoutMs`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cua_sdk_rust_future_poll_u64(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cua_sdk_rust_future_complete_u64(future, continuation) },
+        { future -> UniffiLib.ffi_cua_sdk_rust_future_free_u64(future) },
+        // lift function
+        { FfiConverterTypeSpacePresence.lift(it) },
+        // Error FFI converter
+        CuaException.ErrorHandler,
+    )
+    }
+
+
+    /**
+     * Joins presence for the window being watched. For a window another
+     * Space shows here and the viewer streams straight from its origin
+     * (`window_id` from [`Space::windows`]), this joins the origin's channel
+     * and this Space's, publishes the cursor to both and reads them as one:
+     * one avatar and one cursor per viewer, as if the stream came through
+     * this Space. For any other window, or `None`, it is
+     * [`Space::join_presence`].
+     */
+    @Throws(CuaException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `joinPresenceFor`(`windowId`: kotlin.String?, `identity`: PresenceIdentity, `timeoutMs`: kotlin.ULong?) : SpacePresence {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cua_sdk_fn_method_space_join_presence_for(
+                uniffiHandle,
+                FfiConverterOptionalString.lower(`windowId`),FfiConverterTypePresenceIdentity.lower(`identity`),FfiConverterOptionalULong.lower(`timeoutMs`),
             )
         },
         { future, callback, continuation -> UniffiLib.ffi_cua_sdk_rust_future_poll_u64(future, callback, continuation) },

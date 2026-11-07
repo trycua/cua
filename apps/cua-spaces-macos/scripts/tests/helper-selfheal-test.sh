@@ -39,6 +39,9 @@ cleanup() {
 trap cleanup EXIT
 
 cp "$exe" "$app/Contents/MacOS/CuaSpacesMac"
+# A debug build finds Sparkle through @loader_path (and the cua library by
+# an absolute rpath): bring Sparkle along, as the app bundle would.
+[[ -d "$(dirname "$exe")/Sparkle.framework" ]] && cp -R "$(dirname "$exe")/Sparkle.framework" "$app/Contents/MacOS/"
 cat >"$app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

@@ -309,6 +309,9 @@ pub struct LumeRuntime {
     /// The version of a too-old Lume `runtime.lume = system` made cua use,
     /// named in a failed start.
     old_lume: std::sync::Mutex<Option<String>>,
+    /// One restart of a VM whose gateway ended at a time
+    /// ([`LumeRuntime::mend_gateway`]).
+    mending: tokio::sync::Mutex<()>,
 }
 
 /// Configured `lume serve` URL -> the one this process moved to because an
@@ -592,6 +595,7 @@ impl LumeRuntime {
             gpu_pref: Arc::new(gpu::Defaults),
             accepted: Default::default(),
             old_lume: Default::default(),
+            mending: Default::default(),
         }
     }
 
@@ -626,6 +630,51 @@ impl LumeRuntime {
         self.gpu()
             .before_start(name)
             .map_err(|e| VmmError::other(format!("GPU acceleration for {name}: {e}")))
+    }
+
+    /// Whether VM `name` (as Lume reports it) runs behind a network gateway
+    /// that has ended: a protected macOS VM, running, whose gateway process
+    /// is gone. Its network cable is cut for good (a gateway cannot be
+    /// attached to a VM that already runs), so nothing reaches its agent.
+    fn gateway_lost(&self, name: &str, vm: &VmDetails) -> bool {
+        vm.os.eq_ignore_ascii_case("macos")
+            && map_status(&vm.status) == Status::Running
+            && self.kept_network(name).is_some()
+            && self.load_gateway(name).is_some()
+            && !crate::netgw::gateway_running(&self.cfg.root.join(name))
+    }
+
+    /// Makes a running protected macOS VM whose gateway ended reachable
+    /// again by restarting it behind a new gateway (the gateway dies with
+    /// a signal that reaches it, as when an app update stops everything of
+    /// the old bundle; the VM, run by `lume serve`, does not). Unsaved work
+    /// in the guest is lost, as in any restart; left as it is the VM would
+    /// run without a network and without its agent.
+    async fn mend_gateway(&self, name: &str, vm: VmDetails) -> Result<VmDetails> {
+        if !self.gateway_lost(name, &vm) {
+            return Ok(vm);
+        }
+        let _one_at_a_time = self.mending.lock().await;
+        // Another caller may have mended it while this one waited.
+        let vm = self
+            .client
+            .get(name)
+            .await?
+            .ok_or_else(|| VmmError::NotFound(name.into()))?;
+        if !self.gateway_lost(name, &vm) {
+            return Ok(vm);
+        }
+        tracing::warn!(
+            vm = name,
+            "the VM's network gateway ended while it kept running, so it has no network and \
+             no agent; restarting it behind a new gateway"
+        );
+        self.stop_vm(name).await?;
+        self.resume(name).await?;
+        self.client
+            .get(name)
+            .await?
+            .ok_or_else(|| VmmError::NotFound(name.into()))
     }
 
     /// The macOS VMs Lume runs on this Mac other than `name` (Spaces or
@@ -3123,6 +3172,7 @@ impl Runtime for LumeRuntime {
             .get(name)
             .await?
             .ok_or_else(|| VmmError::NotFound(name.into()))?;
+        let vm = self.mend_gateway(name, vm).await?;
         Ok(self.with_gateway(
             name,
             Self::endpoints_from(&vm, None, &self.load_ports(name)),
@@ -4141,6 +4191,41 @@ mod tests {
         LumeRuntime::new(cfg()).save_ports("m", &[3211, 8080]);
         // A fresh runtime (another CLI process) reads them back.
         assert_eq!(LumeRuntime::new(cfg()).load_ports("m"), vec![3211, 8080]);
+    }
+
+    #[test]
+    fn a_running_protected_vm_without_its_gateway_is_lost() {
+        let dir = tempfile::tempdir().unwrap();
+        let rt = LumeRuntime::new(LumeConfig {
+            root: dir.path().to_path_buf(),
+            ..LumeConfig::default()
+        });
+        let vm = |os: &str, status: &str| -> VmDetails {
+            serde_json::from_value(serde_json::json!({
+                "name": "m", "os": os, "status": status, "cpuCount": 2,
+                "memorySize": 4u64 << 30, "display": "1024x768",
+                "diskSize": {"allocated": 1u64, "total": 2u64}
+            }))
+            .unwrap()
+        };
+        let mac = vm("macOS", "running");
+        // No network settings kept: not behind a gateway at all.
+        assert!(!rt.gateway_lost("m", &mac));
+        rt.keep_network("m", &crate::network::NetworkSettings::internet())
+            .unwrap();
+        // Settings but no gateway ever started: nothing to mend.
+        assert!(!rt.gateway_lost("m", &mac));
+        let gw = LumeGateway {
+            network: "gateway:/x".into(),
+            ports: [(22, 1), (3211, 2)].into(),
+        };
+        std::fs::write(rt.gateway_file("m"), serde_json::to_vec(&gw).unwrap()).unwrap();
+        // A gateway that ran, whose process is gone (no pid file): lost.
+        #[cfg(unix)]
+        assert!(rt.gateway_lost("m", &mac));
+        // Only a running macOS VM is concerned.
+        assert!(!rt.gateway_lost("m", &vm("macOS", "stopped")));
+        assert!(!rt.gateway_lost("m", &vm("linux", "running")));
     }
 
     #[test]

@@ -10,10 +10,10 @@
  */
 
 import { useNavigate } from "@tanstack/react-router";
-import { CheckIcon, ChevronRightIcon, CopyIcon, LoaderCircleIcon, MonitorIcon, PlusIcon, ShieldIcon, TerminalIcon, UserPlusIcon } from "lucide-react";
+import { CheckIcon, ChevronRightIcon, CopyIcon, LoaderCircleIcon, MonitorIcon, PlusIcon } from "lucide-react";
 import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 
-import { cliMissing, firstRunCliView, folderLabel, isNeedsProof, newPendingId, useCliInstall, useMachines, useSession, useSettings, useSpaces, type SignInPhase } from "@/bridge";
+import { folderLabel, isNeedsProof, newPendingId, useMachines, useSession, useSettings, useSpaces, type SignInPhase } from "@/bridge";
 import { BridgeContext } from "@/bridge/BridgeProvider";
 import { useAppPermissions, type AppPermissionsState } from "@/bridge/app-permissions";
 import { readFirstRun, useFirstRunSaved, writeFirstRun } from "@/bridge/first-run";
@@ -36,7 +36,6 @@ import {
   dotStep,
   INSTALL_PAGES,
   NEW_RUN_EMPTY,
-  nextView,
   placeName,
   reachedAfter,
   readyView,
@@ -49,7 +48,6 @@ import {
   type AgentView,
   type ComputerRow,
   type NewRunSaved,
-  type NextView,
   type ReadyView,
   type SignInView,
   type StepDot,
@@ -439,6 +437,8 @@ export function WhereScreen({
             </>
           ) : null}
         </div>
+        {/* Only where this computer can make one (CUA-3150, idea D). */}
+        {sep ? (
         <div className="mt-[min(18px,2vh)] max-w-[480px] px-[18px]" data-new-run-separate={sep.state} data-disabled={sep.disabled ? "" : undefined}>
           <div className={cn("flex items-center gap-2 text-[14px] leading-5 font-semibold", sep.disabled ? GREY : "text-white")}>
             <OsMark os="linux" className="h-[15px] w-4 shrink-0" />
@@ -459,6 +459,7 @@ export function WhereScreen({
             </div>
           ) : null}
         </div>
+        ) : null}
       </div>
       <Actions>
         <button type="button" className={WHITE_BUTTON} disabled={!view.continueEnabled} onClick={onContinue} data-onboarding-primary="">
@@ -595,63 +596,6 @@ export function ReadyScreen({ view, agent, onDone, onContinueChat, place }: { vi
   );
 }
 
-export function NextScreen({ view, onRow, onDone, apps, cli }: { view: NextView; onRow: (id: NextView["rows"][number]["id"]) => void; onDone: () => void; apps?: ReactNode; cli?: ReactNode }) {
-  const ICON = { invite: UserPlusIcon, "add-computer": MonitorIcon, apps: ShieldIcon, cli: TerminalIcon } as const;
-  return (
-    <div data-new-run="next">
-      <Title>{view.title}</Title>
-      <Line>{view.line}</Line>
-      <div className={cn(CARD, "mt-[min(28px,3vh)]")} data-new-run-next="">
-        {view.rows.map((r) => {
-          const Icon = ICON[r.id];
-          return (
-            <div key={r.id}>
-              {/* design-ok: the first run is drawn from the spaces.cua.ai hero (storyboard CUA-3193), not the app's pages */}
-              <button type="button" className="flex w-full items-center gap-3 rounded-[14px] px-3 py-2.5 text-left outline-none hover:bg-white/[0.06] focus-visible:ring-2 focus-visible:ring-[#5ec0e8]" onClick={() => onRow(r.id)} data-new-run-next-row={r.id}>
-                <span className="flex size-7 shrink-0 items-center justify-center rounded-full text-white shadow-[inset_0_0_0_1px_rgb(255_255_255/0.28)]">
-                  <Icon className="size-3.5" />
-                </span>
-                <span className="min-w-0 flex-1">
-                  <span className="block text-[15px] leading-5 font-medium text-white">{r.title}</span>
-                  <span className={cn("block text-[13.5px] leading-[19px] font-medium", GREY)}>{r.sub}</span>
-                </span>
-                <ChevronRightIcon className={cn("size-4 shrink-0", GREY)} />
-              </button>
-              {r.id === "apps" ? apps : r.id === "cli" ? cli : null}
-            </div>
-          );
-        })}
-      </div>
-      <Actions>
-        <button type="button" className={WHITE_BUTTON} onClick={onDone} data-onboarding-primary="">
-          {view.done}
-        </button>
-      </Actions>
-    </div>
-  );
-}
-
-/** Screen 6's "Use Cua from Terminal", opened: where the command goes and Install, or the line to try once it's there. */
-export function CliPanel({ view, onInstall }: { view: { status: string; installed: boolean; busy: boolean; tryCommand: string | null; error: string | null; primary: { id: string; label: string } | null }; onInstall: () => void }) {
-  const install = view.primary?.id === "install" ? view.primary : null;
-  return (
-    // design-ok: the same inset hairline as the apps row's panel above it, drawn from the spaces.cua.ai hero (storyboard CUA-3193)
-    <div className={cn("mx-3 mb-2 border-t border-white/[0.14] pt-2 pl-7 text-[13.5px] leading-[19px] font-medium", GREY)} data-new-run-cli={view.installed ? "installed" : "missing"}>
-      <p>{view.status}</p>
-      {view.error ? <p className="mt-1 text-white">{view.error}</p> : null}
-      {install ? (
-        <button type="button" className={cn(GLASS_CHIP, "mt-2 h-8 px-3.5 text-[13.5px]")} disabled={view.busy} onClick={onInstall} data-new-run-cli-install="">
-          {view.busy ? "Installing…" : install.label}
-        </button>
-      ) : view.tryCommand ? (
-        <code className="mt-2 block font-mono text-[12.5px] text-white select-text" data-new-run-cli-try="">
-          {view.tryCommand}
-        </code>
-      ) : null}
-    </div>
-  );
-}
-
 /** 2b, on a Mac: Cua Spaces' two permissions (the same rows as the Cua Driver page), each with Allow, and Later. Never blocks the run. */
 export function PermissionsScreen({ view, perms, onContinue }: { view: PermissionsStepView; perms: Pick<AppPermissionsState, "data" | "allow">; onContinue: () => void }) {
   return (
@@ -675,7 +619,7 @@ const CANT_RUN = /can['\u2019]t run (Spaces itself|virtual computers)/i;
 
 /**
  * The usage data's name for each screen (`schema::FIRST_RUN_STEPS`), so the onboarding funnel keeps its steps:
- * Ready and Next end the run and are counted by its finish, not as a step.
+ * Ready ends the run and is counted by its finish, not as a step.
  */
 const FUNNEL_STEP: Partial<Record<NewRunScreenName, string>> = {
   welcome: "welcome",
@@ -729,8 +673,6 @@ export function NewFirstRun() {
   const [addOpen, setAddOpen] = useState(false);
   // "Use a code from another computer": the sheet opens on "Enter a code".
   const [addEnter, setAddEnter] = useState(false);
-  const [appsOpen, setAppsOpen] = useState(false);
-  const [cliOpen, setCliOpen] = useState(false);
   const mainRef = useRef<HTMLElement>(null);
   useFadeUnder(mainRef, s.screen);
 
@@ -745,11 +687,6 @@ export function NewFirstRun() {
   });
   // Screen 1's usage line, in the core's words (the same as Settings, Privacy).
   const usage = s.screen === "welcome" && core && telemetry ? welcomeUsage(onboardingView(core, { ...onboardingInitial(core, null), step: "welcome", telemetry: onboardingTelemetry(telemetry) })) : null;
-  // Screen 6's "Use Cua from Terminal": only where this app carries the command and it isn't on this computer yet
-  // (or was installed from the row just now), as the old first run's step was.
-  const cli = useCliInstall(s.screen === "next");
-  const cliName = settings.data?.cli?.name ?? null;
-  const cliView = core && (cliMissing(cli.state) || cli.state.installed) ? firstRunCliView(core, { cli: cli.state, cliName }) : null;
   const runStarted = useRef(false);
   useEffect(() => {
     if (runStarted.current || !store || !core || !telemetry) return;
@@ -864,9 +801,9 @@ export function NewFirstRun() {
     };
   }, [s.screen, adapter]);
 
-  // 2b and screen 6's apps row: Cua Spaces' permissions, read while they show. A host with none to give (not a
-  // Mac, an older app) has no step: it goes on to the coding agent.
-  const perms = useAppPermissions(s.screen === "permissions" || (s.screen === "next" && appsOpen));
+  // 2b: Cua Spaces' permissions, read while the step shows. A host with none to give (not a Mac, an older app) has
+  // no step: it goes on to the coding agent.
+  const perms = useAppPermissions(s.screen === "permissions");
   useEffect(() => {
     if (s.screen === "permissions" && !perms.loading && !perms.available) go("agent");
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -914,6 +851,7 @@ export function NewFirstRun() {
     machines: machines.data ?? null,
     picks: s.picks,
     canMakeSeparate,
+    separateRefused: cantRun,
     separateBlocked: linux?.blocked ?? null,
     separate,
     now,
@@ -979,22 +917,30 @@ export function NewFirstRun() {
       go("where");
     } else leave();
   };
-  const finished = () => {
+  const finished = async () => {
     if (store && core) track(() => store.trackOnboardingFinished(funnelState(core)));
+    await session.completeOnboarding(thisState === "added" && signedIn ? "host" : "client").catch(() => {});
+    // Setup ends on Home, ready for the first job; the rest is asked for there once that job is done (CUA-3150, C).
+    const offer = readFirstRun().restOffer === "dismissed" ? ("dismissed" as const) : ("waiting" as const);
+    writeFirstRun({ finishedLater: false, todosClosed: false, restOffer: offer, restSinceMs: Date.now() });
   };
   const finish = async () => {
-    finished();
-    await session.completeOnboarding(thisState === "added" && signedIn ? "host" : "client").catch(() => {});
-    writeFirstRun({ finishedLater: false, todosClosed: false });
+    await finished();
     await navigate({ to: "/home" });
   };
   // Continue in Cua (CUA-3319): setup is done and the picked chat opens as a Home task. Nothing runs until the person sends.
   const continueChat = async (task: AskTask) => {
-    finished();
-    await session.completeOnboarding(thisState === "added" && signedIn ? "host" : "client").catch(() => {});
-    writeFirstRun({ finishedLater: false, todosClosed: false });
+    await finished();
     await navigate({ to: "/home/$taskId", params: { taskId: task.id } });
   };
+  // A run saved on the old last screen ("Now bring the rest in") finishes now: that screen lives on Home.
+  const finishing = useRef(false);
+  useEffect(() => {
+    if (s.screen !== "next" || finishing.current) return;
+    finishing.current = true;
+    void finish();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [s.screen]);
 
   const startSignIn = () => {
     started.current = true;
@@ -1002,7 +948,6 @@ export function NewFirstRun() {
     void session.signIn().catch(() => {});
   };
 
-  const accountUrl = settings.data?.accountUrl ?? "https://app.cua.ai";
   const dots = stepDots(s.screen, reachedAfter(s.reached, s.screen));
   const goDot = (i: number, viaKey: boolean) => {
     const to = dots?.[i]?.to;
@@ -1072,29 +1017,9 @@ export function NewFirstRun() {
       break;
     case "ready":
       body = s.agent ? (
-        <ReadyScreen view={readyView({ os, agent: s.agent, computers: pickedNames() })} agent={s.agent} place={placeName(os)} onDone={() => go("next")} onContinueChat={(task) => void continueChat(task)} />
+        <ReadyScreen view={readyView({ os, agent: s.agent, computers: pickedNames(), canMakeSeparate })} agent={s.agent} place={placeName(os)} onDone={() => void finish()} onContinueChat={(task) => void continueChat(task)} />
       ) : null;
       break;
-    case "next": {
-      body = (
-        <NextScreen
-          view={nextView({ os, cli: Boolean(cliView) })}
-          onRow={(id) => {
-            if (id === "invite") open(`${accountUrl}/team`);
-            else if (id === "add-computer") setAddOpen(true);
-            else if (id === "cli") setCliOpen((o) => !o);
-            else setAppsOpen((o) => !o);
-          }}
-          cli={cliOpen && cliView ? <CliPanel view={cliView} onInstall={() => void cli.install()} /> : null}
-          onDone={() => void finish()}
-          apps={
-            // design-ok: the first run is drawn from the spaces.cua.ai hero (storyboard CUA-3193), not the app's pages
-            appsOpen ? <AppPermissionList perms={perms} variant="hero" inset className="mx-3 mb-2 border-t border-white/[0.14] pt-2 pl-7" /> : null
-          }
-        />
-      );
-      break;
-    }
   }
 
   return (

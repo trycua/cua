@@ -168,6 +168,9 @@ pub(crate) const INDEX_RESOLVE_BUDGET: Duration = Duration::from_secs(6);
 /// Budget the toolkit lookup in front of an EditableText write leaves unspent,
 /// so the write itself still answers before the operation's deadline.
 const EDITABLE_WRITE_RESERVE: Duration = Duration::from_millis(250);
+/// Budget a walk in front of an EditableText write leaves unspent: the toolkit
+/// lookup gets what is above [`EDITABLE_WRITE_RESERVE`].
+const EDITABLE_WALK_RESERVE: Duration = Duration::from_millis(500);
 
 /// Emit a one-line diagnostic to stderr when `CUA_ATSPI_DEBUG` is set. The
 /// driver's stderr is surfaced in the test logs, so this is how we see what the
@@ -2986,6 +2989,20 @@ async fn before_write_reserve<T>(lookup: impl std::future::Future<Output = T>) -
     tokio::time::timeout(budget, lookup).await.ok()
 }
 
+/// Run a walk that finds the element to write into, so it stops early enough
+/// for the toolkit lookup and the write. A big app's tree outlasts any budget,
+/// and with none left the write would be skipped or answer past the deadline.
+async fn walk_before_write<T>(walk: impl std::future::Future<Output = T>) -> T {
+    let early = OP_DEADLINE
+        .try_with(|deadline| deadline.checked_sub(EDITABLE_WALK_RESERVE))
+        .ok()
+        .flatten();
+    match early {
+        Some(deadline) => OP_DEADLINE.scope(deadline, walk).await,
+        None => walk.await,
+    }
+}
+
 /// `length` for `EditableText.InsertText`. The unit depends on the toolkit. Qt
 /// resizes the string to exactly `length` UTF-16 units, so a shorter count drops
 /// the tail and a longer one appends uninitialized memory. GTK and the others
@@ -3030,7 +3047,7 @@ pub fn type_into_editable(pid: u32, text: &str) -> Result<()> {
                 visited,
                 truncation,
                 ..
-            } = collect_visited_bounded(conn, pid, 0, None, None)
+            } = walk_before_write(collect_visited_bounded(conn, pid, 0, None, None))
                 .await?
                 .ok_or_else(|| anyhow!("no AT-SPI application for pid {pid}"))?;
             if write_into_editable(&visited, truncation.is_none(), text).await? {
@@ -3049,7 +3066,7 @@ pub fn type_into_editable_at(pid: u32, idx: usize, text: &str) -> Result<()> {
         INDEX_RESOLVE_BUDGET,
         async {
             let conn = shared_connection().await?;
-            let visited = collect_visited(conn, pid)
+            let visited = walk_before_write(collect_visited(conn, pid))
                 .await?
                 .ok_or_else(|| anyhow!("no AT-SPI application for pid {pid}"))?;
             let target = visited
@@ -3063,7 +3080,7 @@ pub fn type_into_editable_at(pid: u32, idx: usize, text: &str) -> Result<()> {
                 // GrabFocus can rebuild WebKitGTK's accessibility object. Walk
                 // the same index space again and retry only that exact element;
                 // never fall through to a different focused/first editable.
-                let refreshed = collect_visited(conn, pid)
+                let refreshed = walk_before_write(collect_visited(conn, pid))
                     .await?
                     .ok_or_else(|| anyhow!("no AT-SPI application for pid {pid}"))?;
                 let refreshed_target = refreshed
@@ -3102,7 +3119,7 @@ pub fn insert_text(pid: u32, text: &str) -> Result<bool> {
                 visited,
                 truncation,
                 ..
-            } = match collect_visited_bounded(conn, pid, 0, None, None).await? {
+            } = match walk_before_write(collect_visited_bounded(conn, pid, 0, None, None)).await? {
                 Some(v) => v,
                 None => return Ok(false),
             };
@@ -5500,7 +5517,7 @@ pub fn set_value(pid: u32, idx: usize, value: &str) -> Result<()> {
         INDEX_RESOLVE_BUDGET,
         async {
             let conn = shared_connection().await?;
-            let visited = collect_visited(conn, pid)
+            let visited = walk_before_write(collect_visited(conn, pid))
                 .await?
                 .ok_or_else(|| anyhow!("no AT-SPI application for pid {pid}"))?;
             let action_nodes: Vec<&Visited> = visited.iter().filter(|v| is_indexable(v)).collect();
@@ -8795,7 +8812,8 @@ mod token_scope_tests {
 #[cfg(test)]
 mod editable_insert_length_tests {
     use super::{
-        editable_insert_length, editable_insert_length_for, EDITABLE_WRITE_RESERVE, OP_DEADLINE,
+        deadline_passed, editable_insert_length, editable_insert_length_for, walk_before_write,
+        EDITABLE_WRITE_RESERVE, INPUT_QUERY_BUDGET, OP_DEADLINE,
     };
     use std::time::Duration;
     use tokio::time::{sleep, Instant};
@@ -8813,6 +8831,25 @@ mod editable_insert_length_tests {
                 let lookup = answers_after(Duration::from_secs(1), "GTK");
                 assert_eq!(editable_insert_length_for("ñ🙂ab", lookup).await, None);
                 assert_eq!(deadline - Instant::now(), EDITABLE_WRITE_RESERVE);
+            })
+            .await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_walk_that_outlasts_the_budget_leaves_the_lookup_and_the_write_their_time() {
+        let deadline = Instant::now() + INPUT_QUERY_BUDGET;
+        OP_DEADLINE
+            .scope(deadline, async {
+                walk_before_write(async {
+                    while !deadline_passed() {
+                        sleep(Duration::from_millis(10)).await;
+                    }
+                })
+                .await;
+                assert!(!deadline_passed());
+                let lookup = answers_after(Duration::from_millis(100), "Qt");
+                assert_eq!(editable_insert_length_for("ñ🙂ab", lookup).await, Some(5));
+                assert!(deadline - Instant::now() >= EDITABLE_WRITE_RESERVE);
             })
             .await;
     }

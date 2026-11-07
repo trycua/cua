@@ -1142,11 +1142,20 @@ pub(crate) mod imp {
             &self,
             req: tonic::Request<pb::ConnectSpaceRequest>,
         ) -> R<pb::ConnectSpaceResponse> {
+            let started = std::time::Instant::now();
             let space = self
                 .spaces()
                 .space(&req.into_inner().space)
                 .await
                 .map_err(|e| st(e.into()))?;
+            // `stream.open` timing (debug): resolving the Space, which is the
+            // first hop of every stream a viewer opens.
+            tracing::debug!(
+                target: "cua::stream::timing",
+                hop = "connect_space",
+                ms = started.elapsed().as_secs_f64() * 1e3,
+                "stream.open"
+            );
             let id = space.id().to_string();
             let (base, token) = {
                 let info = self.0.info.lock().unwrap();

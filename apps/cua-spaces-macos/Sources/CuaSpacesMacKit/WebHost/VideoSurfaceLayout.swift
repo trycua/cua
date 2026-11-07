@@ -92,6 +92,9 @@ struct VideoSurfaceUpdate: Equatable {
 enum VideoSurfaceMessage: Equatable {
     case surfaces(update: [VideoSurfaceUpdate], remove: [String])
     case focus(String?)
+    /// The pointer or focus is heading for a Space (its tile, row or link):
+    /// open its viewer stream now, so the click finds it connected.
+    case prewarm(spaceId: String)
 
     init?(body: Any) {
         guard let body = body as? [String: Any], let type = body["type"] as? String else { return nil }
@@ -102,6 +105,9 @@ enum VideoSurfaceMessage: Equatable {
             self = .surfaces(update: update, remove: remove)
         case "focus":
             self = .focus(body["surfaceId"] as? String)
+        case "prewarm":
+            guard let id = body["spaceId"] as? String, !id.isEmpty else { return nil }
+            self = .prewarm(spaceId: id)
         default:
             return nil
         }

@@ -52,7 +52,7 @@ def write_entry(
     fail = 'printf() { return 1; }\n' if failing_write else ""
     script = f". {shlex.quote(str(COMMON))}\n{fail}cua_driver_write_kwin_desktop_entry {shlex.quote(executable)} {shlex.quote(cli)}\n"
     return home, subprocess.run(
-        ["/bin/bash", "-euc", script], env=env, text=True, capture_output=True, check=False
+        ["/bin/bash", "-euc", script], env=env, cwd=tmp_path, text=True, capture_output=True, check=False
     )
 
 
@@ -120,6 +120,12 @@ def test_a_second_install_with_its_own_cli_keeps_the_entry_of_a_live_install(tmp
     assert result.returncode == 0, result.stderr
     assert f'Exec="{live}" serve' in (home / ENTRY).read_text().splitlines()
     assert result.stdout == f"==> kept KWin desktop entry: it grants {live}\n"
+
+
+def test_a_relative_cli_path_is_recorded_absolute(tmp_path: Path) -> None:
+    home, result = write_entry(tmp_path, "/opt/cua-driver", cli="bin/cua-driver")
+    assert result.returncode == 0, result.stderr
+    assert f"X-Cua-Cli={tmp_path}/bin/cua-driver" in (home / ENTRY).read_text().splitlines()
 
 
 def test_a_relative_cli_link_still_counts_as_live(tmp_path: Path) -> None:

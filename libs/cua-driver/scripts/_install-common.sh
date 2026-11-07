@@ -549,6 +549,10 @@ cua_driver_write_kwin_desktop_entry() {
             ;;
     esac
     case "$cli" in
+        /*) ;;
+        *) cli="$PWD/$cli" ;;
+    esac
+    case "$cli" in
         *$'\n'*)
             printf '==> skipped KWin desktop entry: a desktop entry cannot carry %s\n' "$cli"
             return 0

@@ -204,7 +204,7 @@ impl TextTicket {
         let _ = self
             .0
             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |progress| {
-                (progress != Self::ABANDONED).then_some(progress + 1)
+                (progress != Self::ABANDONED).then(|| progress + 1)
             });
     }
 
@@ -1999,6 +1999,11 @@ pub(super) mod local_eis {
                             depressed: u32::from(pressed),
                             ..state
                         }));
+                        if pressed {
+                            // Long enough for the client to see the key held.
+                            let _ = self.ctx.flush();
+                            thread::sleep(Duration::from_millis(100));
+                        }
                     }
                 }
                 EisRequest::TextUtf8(t) => {
@@ -2646,6 +2651,29 @@ mod typing_route_tests {
     }
 
     #[test]
+    fn a_text_its_caller_gave_up_on_stops_at_its_next_step() {
+        let (result, events) = record(|| {
+            control(Control::Wedge(true));
+            let result = send_text(
+                tx().unwrap(),
+                "🙂\n🙂",
+                facts(false),
+                Duration::from_millis(100),
+            );
+            control(Control::Wedge(false));
+            // The worker takes a new text only once it is done with the old one.
+            send("x", false).unwrap();
+            result
+        });
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "type_text stopped: the libei worker stopped moving, so part of the text may have \
+             gone out and no more of it will. Read the field before retrying"
+        );
+        assert_eq!(events, [Emitted::Text("🙂".into()), Emitted::Text("x".into())]);
+    }
+
+    #[test]
     fn a_caller_waits_as_long_as_the_text_moves_and_no_longer() {
         const STEP: Duration = Duration::from_millis(40);
         // Moving: three waits' worth of text comes back with its result.
@@ -2877,6 +2905,31 @@ mod key_plan_tests {
         // Shift+KP1 gives KP_End here, as in `th`. This layout's real `1` is on
         // the main row, so the keypad key isn't used for it.
         assert_eq!(plan("1").unwrap(), [key(2, &[])]);
+    }
+
+    #[test]
+    fn chords_hold_only_keys_that_just_set_a_typing_modifier() {
+        // Left out: Alt, which apps read as a command, and Caps Lock, which sticks.
+        assert_eq!(
+            modifier_chords(&keymap(), 0),
+            [
+                vec![],
+                vec![LEFT_SHIFT],
+                vec![RIGHT_ALT],
+                vec![LEFT_SHIFT, RIGHT_ALT]
+            ]
+        );
+    }
+
+    #[test]
+    fn a_key_is_never_offered_behind_a_command_modifier() {
+        let find = |c: char| {
+            find_key(&keymap(), 0, xkb::utf32_to_keysym(u32::from(c)), |_, mask| {
+                Some((mask.count_ones(), mask))
+            })
+        };
+        assert_eq!(find('÷'), None);
+        assert_eq!(find('a'), Some((30, 0)));
     }
 
     #[test]

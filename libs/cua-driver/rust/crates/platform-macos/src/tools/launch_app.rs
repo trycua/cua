@@ -91,8 +91,7 @@ impl Tool for LaunchAppTool {
 
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
-        crate::window_change_detector::end_tail();
-        crate::window_change_detector::note_intentional_activation();
+        crate::focus_arbiter::note_intentional();
         let bundle_id = args.opt_str("bundle_id");
         let name = args.opt_str("name");
         let mut located = None;
@@ -344,7 +343,7 @@ impl Tool for LaunchAppTool {
                             // Not frontmost — nothing to do this tick.
                             continue;
                         }
-                        let activated = crate::apps::activate_pid(prior);
+                        let activated = crate::apps::reactivate_app(prior);
                         let still_frontmost = crate::apps::frontmost_pid() == Some(*pid);
                         if still_frontmost {
                             tracing::warn!(
@@ -410,6 +409,7 @@ impl Tool for LaunchAppTool {
                     if slow_launch_path {
                         let launched_pid = *pid;
                         let prior_pid = prior;
+                        let armed = crate::focus_arbiter::Epoch::now();
                         tokio::spawn(async move {
                             let _lease = crate::focus_steal::FocusStealPreventer::begin_suppression(
                                 Some(launched_pid),
@@ -420,9 +420,14 @@ impl Tool for LaunchAppTool {
                             for _ in 0..32 {
                                 // 32 × 250ms = 8s
                                 tokio::time::sleep(std::time::Duration::from_millis(250)).await;
-                                if crate::apps::frontmost_pid() == Some(launched_pid) {
+                                // Not once the driver has activated an app
+                                // since, or the user just switched to it.
+                                if crate::apps::frontmost_pid() == Some(launched_pid)
+                                    && crate::focus_arbiter::decide(armed)
+                                        == crate::focus_arbiter::Decision::Undo
+                                {
                                     late_activations += 1;
-                                    let _ = crate::apps::activate_pid(prior_pid);
+                                    let _ = crate::apps::reactivate_app(prior_pid);
                                 }
                             }
                             if late_activations > 0 {

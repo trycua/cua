@@ -47,6 +47,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
+use crate::focus_arbiter::{self, Decision, Epoch};
 use crate::input::skylight;
 
 /// How long a guarded target's tap hides the driver's own theft after an id
@@ -154,18 +155,19 @@ fn target_self_activated(front_process: Option<i32>, target: i32, front: i32) ->
 /// directly; `NSWorkspace` only learns of the activation once the daemon's run
 /// loop processes the notice, which took about a second in Bench v2 CDB-G04.
 /// Revert `target`'s self-activation right now, giving `front` its key
-/// window back (see [`revert_self_activation`]).
-pub fn revert_now(target: i32, front: i32) -> bool {
-    revert_self_activation(target, front)
+/// window back, if [`focus_arbiter::decide`] allows it for a watcher armed
+/// at `armed` (see [`revert_self_activation`]).
+pub fn revert_now(target: i32, front: i32, armed: Epoch) -> bool {
+    revert_self_activation(target, front, armed)
 }
 
-fn revert_self_activation(target: i32, front: i32) -> bool {
+fn revert_self_activation(target: i32, front: i32, armed: Epoch) -> bool {
     if !target_self_activated(skylight::front_process_pid(), target, front) {
         return false;
     }
-    // The user may have switched to the target themselves (a click on its
-    // window, or Cmd-Tab). Leave that alone.
-    if user_switched_recently() {
+    // The driver activated an app since `armed`, or the user may have switched
+    // to the target themselves (a click on its window, or Cmd-Tab).
+    if focus_arbiter::decide(armed) == Decision::Leave {
         return false;
     }
     let started = Instant::now();
@@ -175,7 +177,7 @@ fn revert_self_activation(target: i32, front: i32) -> bool {
     // daemon is only a request under cooperative activation and can be
     // ignored, so it is the fallback.
     let restored = skylight::key_window_of_pid(front)
-        .is_some_and(|wid| skylight::make_exact_window_key(front, wid))
+        .is_some_and(|wid| skylight::return_key_to(front, wid))
         && skylight::front_process_pid() == Some(front);
     if !restored {
         use objc2_app_kit::{NSApplicationActivationOptions, NSRunningApplication};
@@ -197,30 +199,6 @@ fn revert_self_activation(target: i32, front: i32) -> bool {
     true
 }
 
-/// A hardware mouse-down or modifier change within this long before an
-/// activation means the user may have caused it.
-const USER_SWITCH_WINDOW_S: f64 = 1.0;
-
-#[link(name = "ApplicationServices", kind = "framework")]
-extern "C" {
-    fn CGEventSourceSecondsSinceLastEventType(state: i32, event_type: u32) -> f64;
-}
-
-/// Whether the user pressed a mouse button or a modifier key on the real
-/// hardware just now. Events the driver posts to a pid do not count.
-fn user_switched_recently() -> bool {
-    const HID_SYSTEM_STATE: i32 = 1;
-    const LEFT_MOUSE_DOWN: u32 = 1;
-    const RIGHT_MOUSE_DOWN: u32 = 3;
-    const FLAGS_CHANGED: u32 = 12;
-    [LEFT_MOUSE_DOWN, RIGHT_MOUSE_DOWN, FLAGS_CHANGED]
-        .into_iter()
-        .any(|kind| {
-            let since = unsafe { CGEventSourceSecondsSinceLastEventType(HID_SYSTEM_STATE, kind) };
-            since.is_finite() && since < USER_SWITCH_WINDOW_S
-        })
-}
-
 /// How long the order stays watched after a guarded action ends. A target
 /// can raise a window a moment after the call that caused it returns (a
 /// banner, a sheet, or a menu that a renderer process opens later).
@@ -236,14 +214,14 @@ struct Watch {
     /// Also restore the window order (off when the user had put the target
     /// above their window before the action).
     order: bool,
-    /// [`crate::window_change_detector::intentional_epoch`] when armed.
-    epoch: u64,
+    /// When the watch was armed, for [`focus_arbiter::decide`].
+    epoch: Epoch,
 }
 
 /// Keep restoring the user's window above `target`, and undoing the target's
 /// self-activation, for a short while after the action. One watcher per
 /// target; a later action extends it.
-fn watch_order_after_action(target: i32, front: i32, order: bool, epoch: u64) {
+fn watch_order_after_action(target: i32, front: i32, order: bool, epoch: Epoch) {
     static WATCHING: OnceLock<Mutex<HashMap<i32, Watch>>> = OnceLock::new();
     let watching = WATCHING.get_or_init(|| Mutex::new(HashMap::new()));
     let watch = Watch {
@@ -278,11 +256,8 @@ fn watch_order_after_action(target: i32, front: i32, order: bool, epoch: u64) {
                     .get(&target)
                     .copied();
                 let Some(current) = current else { return };
-                // An activation the driver asked for since (bring_to_front,
-                // foreground delivery) is not reverted.
                 if reverts < MAX_RESTORES_PER_WATCH
-                    && current.epoch == crate::window_change_detector::intentional_epoch()
-                    && revert_self_activation(target, current.front)
+                    && revert_self_activation(target, current.front, current.epoch)
                 {
                     reverts += 1;
                 }
@@ -392,8 +367,8 @@ struct State {
     /// them (see [`target_tap_callback`]).
     target_taps: HashMap<i32, Tap>,
     /// Guarded pid -> (live leases, end of the tail after the last lease,
-    /// intentional-activation epoch when last armed).
-    guarded: HashMap<i32, (usize, Instant, u64)>,
+    /// epoch when last armed).
+    guarded: HashMap<i32, (usize, Instant, Epoch)>,
     /// End of the window in which target taps drop the driver's own theft
     /// notice (see [`release_target_theft`]).
     lookup_until: Option<Instant>,
@@ -431,17 +406,14 @@ pub struct Lease {
     /// A target window already sat above the user's window when the action
     /// started (the user arranged it so); then nothing is restored.
     above_before: bool,
-    /// [`crate::window_change_detector::intentional_epoch`] when armed. If
-    /// the driver activated an app itself since, the target's activation is
-    /// not reverted.
-    epoch: u64,
+    /// When armed. If the driver activated an app itself since, the target's
+    /// activation is not reverted ([`focus_arbiter::decide`]).
+    epoch: Epoch,
 }
 
 impl Drop for Lease {
     fn drop(&mut self) {
-        if self.epoch == crate::window_change_detector::intentional_epoch() {
-            revert_self_activation(self.pid, self.front);
-        }
+        revert_self_activation(self.pid, self.front, self.epoch);
         if !self.above_before {
             restore_front_if_raised(self.pid, self.front);
         }
@@ -481,7 +453,7 @@ pub fn protect(target_pid: i32) -> Option<Lease> {
     // ensure_tap.
     {
         let mut st = lock();
-        let epoch = crate::window_change_detector::intentional_epoch();
+        let epoch = Epoch::now();
         let entry = st
             .guarded
             .entry(target_pid)
@@ -494,7 +466,7 @@ pub fn protect(target_pid: i32) -> Option<Lease> {
         pid: target_pid,
         front,
         above_before: target_above_front(target_pid, front),
-        epoch: crate::window_change_detector::intentional_epoch(),
+        epoch: Epoch::now(),
     };
     // Do not touch key focus here. This runs before every background action
     // while the user may be typing, and any key event that reaches
@@ -518,7 +490,7 @@ pub fn protect(target_pid: i32) -> Option<Lease> {
 /// of a refused background invoke_menu, then the foreground invoke_menu found
 /// its key-window-gated item disabled).
 fn is_guarded(pid: i32) -> bool {
-    let epoch = crate::window_change_detector::intentional_epoch();
+    let epoch = Epoch::now();
     let st = lock();
     st.guarded.get(&pid).is_some_and(|&(leases, until, armed)| {
         guard_applies(leases, until, armed, Instant::now(), epoch)
@@ -526,7 +498,7 @@ fn is_guarded(pid: i32) -> bool {
 }
 
 /// Pure part of [`is_guarded`], for tests.
-fn guard_applies(leases: usize, until: Instant, armed: u64, now: Instant, epoch: u64) -> bool {
+fn guard_applies(leases: usize, until: Instant, armed: Epoch, now: Instant, epoch: Epoch) -> bool {
     armed == epoch && (leases > 0 || now < until)
 }
 
@@ -884,15 +856,16 @@ mod tests {
     fn an_intentional_activation_ends_the_guard() {
         let now = Instant::now();
         let later = now + Duration::from_secs(3);
+        let (e, next) = (Epoch::now(), Epoch::now().next());
         // Live lease or tail, same epoch: guarded.
-        assert!(guard_applies(1, now, 5, now, 5));
-        assert!(guard_applies(0, later, 5, now, 5));
+        assert!(guard_applies(1, now, e, now, e));
+        assert!(guard_applies(0, later, e, now, e));
         // The driver activated an app since (bring_to_front in the tail):
         // the target's key-focus change is that activation, not a menu.
-        assert!(!guard_applies(0, later, 5, now, 6));
-        assert!(!guard_applies(1, later, 5, now, 6));
+        assert!(!guard_applies(0, later, e, now, next));
+        assert!(!guard_applies(1, later, e, now, next));
         // Tail over.
-        assert!(!guard_applies(0, now, 5, later, 5));
+        assert!(!guard_applies(0, now, e, later, e));
     }
 
     #[test]

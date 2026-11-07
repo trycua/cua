@@ -69,6 +69,8 @@ use objc2_app_kit::{
 use objc2_foundation::NSOperationQueue;
 use uuid::Uuid;
 
+use crate::focus_arbiter::{self, Decision, Epoch};
+
 /// Per-entry deadline. After this much wall-clock time the dispatcher's
 /// observer (and the janitor) treats the entry as leaked and prunes it
 /// without firing. Mirrors Swift PR #1521.
@@ -103,6 +105,9 @@ struct Entry {
     /// Monotonic deadline. After this, the entry is pruned without
     /// firing.
     deadline: Instant,
+    /// When the entry was armed. A driver activation since then is never
+    /// undone ([`focus_arbiter::decide`]).
+    armed: Epoch,
     /// Provenance for tracing — e.g. `"LaunchAppTool.pre"`.
     #[allow(dead_code)]
     origin: &'static str,
@@ -300,6 +305,7 @@ impl Dispatcher {
             allowed_pid,
             restore_to,
             deadline: Instant::now() + ENTRY_DEADLINE,
+            armed: Epoch::now(),
             origin,
         };
         {
@@ -329,8 +335,9 @@ impl Dispatcher {
 
     /// Snapshot the entries (cloned to a small Vec) — used by tests
     /// and the activation handler to evaluate matches without holding
-    /// the lock across the restore call.
-    fn snapshot_matches(&self, activated_pid: i32) -> Vec<i32> {
+    /// the lock across the restore call. Only entries `may_undo` allows
+    /// for their arming epoch match.
+    fn snapshot_matches(&self, activated_pid: i32, may_undo: impl Fn(Epoch) -> bool) -> Vec<i32> {
         let mut guard = self.entries.lock().unwrap();
         // Reap expired entries first — keeps the dispatcher honest even
         // if the janitor hasn't ticked yet.
@@ -339,7 +346,7 @@ impl Dispatcher {
         guard
             .values()
             .filter(|e| {
-                if e.allowed_pid == Some(activated_pid) {
+                if e.allowed_pid == Some(activated_pid) || !may_undo(e.armed) {
                     return false;
                 }
                 match e.target_pid {
@@ -518,7 +525,9 @@ fn handle_activation(dispatcher: &Arc<Dispatcher>, note: &objc2_foundation::NSNo
         pid as i32
     };
 
-    let restore_pids = dispatcher.snapshot_matches(activated_pid);
+    let restore_pids = dispatcher.snapshot_matches(activated_pid, |armed| {
+        focus_arbiter::decide(armed) == Decision::Undo
+    });
     for pid in restore_pids {
         restore_focus(pid);
     }
@@ -545,6 +554,20 @@ mod tests {
     use super::*;
     use std::sync::Arc;
 
+    /// Every entry may undo; the epoch rule has its own test.
+    const ANY: fn(Epoch) -> bool = |_| true;
+
+    /// An entry armed before a driver activation never restores: the
+    /// activation is the driver's own (bring_to_front, foreground delivery).
+    #[test]
+    fn an_entry_armed_before_a_driver_activation_does_not_restore() {
+        let d = Arc::new(Dispatcher::new());
+        let _h = d.add(Some(42), 7, "test.epoch");
+        let armed = Epoch::now();
+        assert_eq!(d.snapshot_matches(42, |e| e == armed), vec![7]);
+        assert!(d.snapshot_matches(42, |e| e == armed.next()).is_empty());
+    }
+
     /// Dispatcher::add returns a handle, the entry is reachable by
     /// match, and remove() drops it.
     #[test]
@@ -552,10 +575,10 @@ mod tests {
         let d = Arc::new(Dispatcher::new());
         let h = d.add(Some(42), 7, "test.add");
         assert_eq!(d.len(), 1);
-        let matches = d.snapshot_matches(42);
+        let matches = d.snapshot_matches(42, ANY);
         assert_eq!(matches, vec![7]);
         // Non-matching pid: no restore candidates.
-        assert!(d.snapshot_matches(99).is_empty());
+        assert!(d.snapshot_matches(99, ANY).is_empty());
         d.remove(h);
         assert_eq!(d.len(), 0);
     }
@@ -567,9 +590,9 @@ mod tests {
         let d = Arc::new(Dispatcher::new());
         let _h = d.add(None, 7, "test.wild");
         // pid 99 != restore_to 7 → should match.
-        assert_eq!(d.snapshot_matches(99), vec![7]);
+        assert_eq!(d.snapshot_matches(99, ANY), vec![7]);
         // pid 7 == restore_to → must NOT match (don't fight ourselves).
-        assert!(d.snapshot_matches(7).is_empty());
+        assert!(d.snapshot_matches(7, ANY).is_empty());
     }
 
     /// A background pixel click intentionally makes its target AppKit-active
@@ -581,16 +604,16 @@ mod tests {
         let _h = d.add_allowing(42, 7, "test.allow");
 
         assert!(
-            d.snapshot_matches(42).is_empty(),
+            d.snapshot_matches(42, ANY).is_empty(),
             "intentional target activation must not be restored before the click"
         );
         assert_eq!(
-            d.snapshot_matches(99),
+            d.snapshot_matches(99, ANY),
             vec![7],
             "unrelated activations must remain suppressed"
         );
         assert!(
-            d.snapshot_matches(7).is_empty(),
+            d.snapshot_matches(7, ANY).is_empty(),
             "restoring the original foreground must never recurse"
         );
     }
@@ -641,13 +664,14 @@ mod tests {
                     allowed_pid: None,
                     restore_to: 7,
                     deadline: Instant::now() - Duration::from_secs(1),
+                    armed: Epoch::now(),
                     origin: "test.leak",
                 },
             );
         }
         assert_eq!(d.len(), 1);
         // snapshot_matches reaps expired entries before matching.
-        let matches = d.snapshot_matches(42);
+        let matches = d.snapshot_matches(42, ANY);
         assert!(matches.is_empty(), "expired entry should not fire");
         assert_eq!(d.len(), 0, "snapshot_matches should purge expired");
     }
@@ -708,7 +732,7 @@ mod tests {
         let d = Arc::new(Dispatcher::new());
         let _a = d.add(Some(42), 1, "test.m1");
         let _b = d.add(Some(42), 2, "test.m2");
-        let matches = d.snapshot_matches(42);
+        let matches = d.snapshot_matches(42, ANY);
         assert_eq!(matches.len(), 2);
         // Set equality — order is HashMap-dependent.
         assert!(matches.contains(&1));

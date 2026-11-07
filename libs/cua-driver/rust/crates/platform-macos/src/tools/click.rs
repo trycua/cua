@@ -253,7 +253,7 @@ pub(super) async fn restore_user_focus_after_background_pixel(
         pid,
         apps::frontmost_pid(),
     ) {
-        let _ = apps::activate_pid(previous_pid);
+        let _ = apps::reactivate_app(previous_pid);
         wait_until_frontmost(previous_pid, std::time::Duration::from_millis(300)).await;
         true
     } else {

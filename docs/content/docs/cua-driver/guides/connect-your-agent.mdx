@@ -27,7 +27,7 @@ cua-driver mcp-config --client <client>
 
 | Harness | Setup | Notes |
 | --- | --- | --- |
-| Claude Code | `claude mcp add --transport stdio cua-driver -- cua-driver mcp`, or `--client claude` for the computer-use compatibility profile | Install the skill for native skill activation. |
+| Claude Code | `claude mcp add --transport stdio cua-driver -- cua-driver mcp`, or `--client claude` for the computer-use compatibility profile | `claude mcp add` adds no skill: run `cua-driver skills install` too. `--client claude` installs it. |
 | Codex (CLI, IDE, app) | `--client codex`, which prints `codex mcp add cua-driver -- <path> mcp` | Codex's own approval policy also applies. |
 | Cursor | `--client cursor`; paste into `~/.cursor/mcp.json` or `.cursor/mcp.json` | |
 | Antigravity CLI (Gemini) | `--client antigravity`; merge into `~/.gemini/config/mcp_config.json` | `--client gemini` is a legacy alias. Building on the Gemini API directly? See [Gemini](/cua-driver/guides/gemini). |

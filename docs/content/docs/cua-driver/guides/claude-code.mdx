@@ -13,7 +13,7 @@ Register Cua Driver as an MCP server, then restart Claude Code:
 claude mcp add --transport stdio cua-driver -- cua-driver mcp
 ```
 
-Use `cua-driver mcp-config --client claude` instead for the computer-use compatibility profile. Both install the agent skill for native skill activation. See [Connect your agent](/cua-driver/guides/connect-your-agent) for the skill, permissions and the other clients.
+This adds the tools only. To also install the Cua Driver skill, which teaches Claude Code how to use them well, run `cua-driver skills install`. Or use `cua-driver mcp-config --client claude` for the computer-use compatibility profile: it installs the skill and prints the `claude mcp add-json` command for you to run. See [Connect your agent](/cua-driver/guides/connect-your-agent) for the skill, permissions and the other clients.
 
 ## Cua Spaces
 

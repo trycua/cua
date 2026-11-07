@@ -32,6 +32,7 @@ export function MembersPanel({
   roster,
   presence,
   facts,
+  extra,
   onMore,
   windows,
   desktop,
@@ -50,6 +51,8 @@ export function MembersPanel({
   presence?: MemberPresence;
   /** The first few of the core's facts; More opens the rest. */
   facts: SpaceFact[];
+  /** Rows after the facts, before More. */
+  extra?: ReactNode;
   onMore: () => void;
   /** The Space's windows (the core's Stream rows without the desktop); the first few show here. */
   windows: StreamRow[];
@@ -210,6 +213,7 @@ export function MembersPanel({
             </span>
           </div>
         ))}
+        {extra}
         <button
           type="button"
           data-call-more=""

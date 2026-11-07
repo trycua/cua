@@ -1,5 +1,9 @@
 # Cua Bench UI
 
+> [!WARNING]
+> **Deprecated:** `cua-bench-ui` is no longer updated and will not receive fixes. Its tests, builds and publishing are switched off. Existing releases stay on PyPI, so current installs keep working; [cua-bench](../../cua-bench/README.md) still uses the last release. See [Migrate from deprecated packages](https://cua.ai/docs/cua-sdk/guides/cua-cloud-ended#deprecated-packages).
+
+
 Lightweight webUI window controller for Cua bench environments using pywebview
 
 ## Usage

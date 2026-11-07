@@ -440,16 +440,23 @@ Use this runbook when the canary issue opens, or when users report that default 
 4. **Merge it.** The branded endpoints serve `main`. The canary runs on the push, so compare its installed version with the rollback version. To recheck the public one-liners after the endpoints refresh, dispatch `Monitor branded installer endpoints`.
 5. **Ship the fix as a new Release Please release.** Its tag run bakes the installers forward automatically once the published assets pass verification. Leave the withdrawn release and its assets in place for audit.
 
-## Cua Driver release gate before merge and nightly
+## Cua Driver desktop E2E: quick lane on PRs, full suite after merge and at release
 
-The stable tag run certifies the exact tag commit with the desktop E2E lanes. `E2E: Cua Driver release gate` (`.github/workflows/e2e-cua-driver-release-gate.yml`) runs the same lanes earlier, without publishing:
+The stable tag run certifies the exact tag commit with every desktop E2E lane (Linux, Windows, macOS hosted, standalone browsers). `E2E: Cua Driver release gate` (`.github/workflows/e2e-cua-driver-release-gate.yml`) runs the same lanes earlier, without publishing. It has two sizes:
 
-| Trigger | When | Result |
-| --- | --- | --- |
-| Nightly, 06:00 UTC | main's HEAD | A failure opens or updates one issue, "Cua Driver release gate failing on main (nightly)". The failed run also posts to #releases through the GitHub Slack app workflow-run subscription. The first fully clean nightly closes the issue. |
-| Pull request | The `e2e-gate` label is present, or the PR touches the cursor overlay, focus, background input or browser routing paths (globs in `.github/scripts/cua_driver_e2e_gate_paths.py`). release-please PRs skip the lanes (the tag gate runs them on the release commit) unless labelled | The four lanes run on the PR merge commit. |
-| Other pull requests | Everything else | The lanes are skipped and `E2E gate / result` passes at once. |
+- **Quick lane (pull requests).** The core paths on each OS, on the Electron harness: the `shared` lane on Windows, Linux and hosted macOS (click, type, scroll, drag, focus, background input), plus the Linux verification-skill proof that `E2E: Rust Linux interactive` already runs on PRs. The Tauri, WebView2, WPF, WinUI3 and GTK harnesses, the capture and installer lanes and the standalone browser lanes are left to the full run. The quick lane passes `lane: shared` and `harness_filter: electron` to the Windows and Linux workflows, and `quick=true` to the hosted macOS dispatch (not a certification: its result artifact is named `rust-macos-hosted-quick-result-*`).
+- **Full suite.** Every lane, 26 to 47 minutes each. It runs after merge and at release.
+
+| Trigger | When | Size | Result |
+| --- | --- | --- | --- |
+| Push to `main` | The pushed commits touch a gated path (`.github/scripts/cua_driver_e2e_gate_paths.py`). Runs queue; a burst of merges leaves one pending run for the newest commit | full | A failure alerts (`workflow-failure-alerts.yml`, Alertmanager) and opens or updates the issue below |
+| Nightly, 06:00 UTC | main's HEAD | full | Same. The first fully clean full run closes the issue |
+| Stable tag run | The exact release commit (`cd-rust-cua-driver.yml`) | full | Blocks publishing until every lane is green |
+| Pull request | The `e2e-gate` label is present, or the PR touches the cursor overlay, focus, background input or browser routing paths. release-please PRs skip the lanes (the tag gate runs them on the release commit) unless labelled | quick | The quick lanes run on the PR merge commit. |
+| Other pull requests | Everything else | none | The lanes are skipped and `E2E gate / result` passes at once. |
+
+A failed full run opens or updates one issue, "Cua Driver release gate failing on main (nightly)" (the title predates the post-merge run). The failed run also posts to #releases through the GitHub Slack app workflow-run subscription. A break the quick lane could not see, a Windows break included, is already on `main` when the full run finds it, so it is **fixed forward** with a new PR; the stable tag gate blocks a release until `main` is green again.
 
 **Retry once.** Inside each lane a failed case is rerun once (`lib/e2e-retry-once.sh`, and `Invoke-CargoTest` in the Windows runner). A pass on the retry is flaky: it is listed under "Flaky cases" in the job summary and in the tracking issue, and does not fail the gate. Two failures are a real failure. The first attempt's rows, videos and log are kept under `retried-attempts/` in the lane artifact.
 
-**Required check.** Branch protection cannot require a check by path, so the workflow always runs and `E2E gate / result` is the one check to require on `main`. It is green when the lanes are not needed. A repository admin has to add it under Settings, Branches. Until then the gate is advisory on pull requests; the label, path and release-PR triggers still run the lanes.
+**Required check.** Branch protection cannot require a check by path, so the workflow always runs and `E2E gate / result` is the one check to require on `main`. It is green when the lanes are not needed. A repository admin has to add it under Settings, Branches. Until then the gate is advisory on pull requests; the label, path and release-PR triggers still run the quick lanes.

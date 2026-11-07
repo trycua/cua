@@ -51,8 +51,6 @@ const entries = () =>
   within(runOnMenu())
     .getAllByRole("option")
     .map((o) => `${o.textContent}${(o as HTMLOptionElement).disabled ? " (disabled)" : ""}`);
-const YOUR_CLOUD = { cuaVolume: false, yourCloud: true, sharing: false };
-const NO_CLOUD = { cuaVolume: false, yourCloud: false, sharing: false };
 const MINI: SpaceHost = { id: "m-mini", name: "Mac mini", via: "relay", online: true, os: "macos", limits: [] };
 const STUDIO: SpaceHost = { id: "m-studio", name: "Studio", via: "relay", online: false, os: "", limits: [] };
 const suggestionRefs = () =>
@@ -168,7 +166,7 @@ describe("New Space wizard", () => {
     fireEvent.change(screen.getByRole("slider", { name: "CPU cores" }), { target: { value: "3" } });
     fireEvent.change(screen.getByRole("slider", { name: "Memory" }), { target: { value: "6" } });
     next();
-    fireEvent.change(screen.getByPlaceholderText(/^space-[0-9a-f]{10}$/), {
+    fireEvent.change(screen.getByPlaceholderText(/^[a-z]+-[a-z]+$/), {
       target: { value: "cua-e2e-vm" },
     });
     next();
@@ -189,16 +187,10 @@ describe("New Space wizard", () => {
     );
   });
 
-  it("lists This Mac and your machines; your clouds and Connect a cloud unless Your cloud is off", () => {
+  it("lists This Mac, your machines, your clouds and Connect a cloud", () => {
     const onConnectCloud = vi.fn();
-    renderWizard({ clouds: [AWS], hosts: [MINI, STUDIO], onConnectCloud, experiments: NO_CLOUD });
-    expect(entries()).toEqual(["Auto", "This Mac", "Mac mini", "Studio (offline) (disabled)"]);
-    expect(runOnMenu()).toHaveValue("local");
+    renderWizard({ clouds: [AWS], hosts: [MINI, STUDIO], onConnectCloud });
     expect(screen.queryByText(/Cua Cloud/)).toBeNull();
-    expect(screen.queryByText(/Add your cloud account/)).toBeNull();
-    expect(screen.queryByRole("button", { name: /Connect a cloud/ })).toBeNull();
-    cleanup();
-    renderWizard({ clouds: [AWS], hosts: [MINI, STUDIO], onConnectCloud, experiments: YOUR_CLOUD });
     expect(entries()).toEqual(["Auto", "This Mac", "Mac mini", "Studio (offline) (disabled)", "AWS \u00b7 us-west-2", "Add your cloud account…"]);
     runOn("add:cloud");
     expect(onConnectCloud).toHaveBeenCalled();
@@ -219,7 +211,7 @@ describe("New Space wizard", () => {
   });
 
   it("creates in a connected cloud with its machine, cost and lifetime", () => {
-    const props = renderWizard({ clouds: [AWS], experiments: YOUR_CLOUD });
+    const props = renderWizard({ clouds: [AWS] });
     runOn("aws");
     expect(runOnMenu()).toHaveValue("aws");
     // Windows cannot run there: its tile is greyed out.
@@ -281,7 +273,7 @@ describe("New Space wizard", () => {
     renderWizard();
     next();
     next();
-    fireEvent.change(screen.getByPlaceholderText(/^space-[0-9a-f]{10}$/), { target: { value: "Bad Name" } });
+    fireEvent.change(screen.getByPlaceholderText(/^[a-z]+-[a-z]+$/), { target: { value: "Bad Name" } });
     expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
   });
 
@@ -493,6 +485,16 @@ describe("QEMU VMs", () => {
     runOn("local");
     pick("ghcr.io/trycua/windows:2022");
     expect(continueButton()).toBeEnabled();
+  });
+
+  it("go on to the next step on a Windows PC when Continue is enabled (it did nothing)", () => {
+    vi.spyOn(navigator, "platform", "get").mockReturnValue("Win32");
+    renderWizard({ localBackends: ["docker", "qemu"] });
+    runOn("local");
+    pick("ghcr.io/trycua/windows:2022");
+    expect(continueButton()).toBeEnabled();
+    next();
+    expect(screen.getByRole("slider", { name: "CPU cores" })).toBeInTheDocument();
   });
 });
 

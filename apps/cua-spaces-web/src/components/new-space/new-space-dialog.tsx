@@ -21,6 +21,9 @@ import { ConnectCloudDialog } from "./connect-cloud-dialog";
 import { ImageField } from "./image-field";
 import { MenuSelect } from "./menu-select";
 import { RuntimeFixRow } from "./runtime-fix";
+import { PRESETS, presetInfo } from "@/components/network/presets";
+import { useNetworkPreview } from "@/components/network/use-network";
+import type { NetworkPreset } from "@/bridge/contracts/network";
 
 /**
  * New Space: System, Resources, Options, Summary, as the native app's sheet.
@@ -31,9 +34,9 @@ export function NewSpaceDialog() {
   const wizard = useNewSpaceWizard();
   const connect = useConnectCloud();
   const { view, send } = wizard;
-  const { defaultLocation, clouds = [], experiments } = wizard.env;
+  const { defaultLocation, clouds = [] } = wizard.env;
   // The default only counts once the clouds it may name have loaded.
-  const defaultKey = [defaultLocation, experiments?.yourCloud, ...clouds.map((c) => c.name)].join(" ");
+  const defaultKey = [defaultLocation, ...clouds.map((c) => c.name)].join(" ");
 
   // Until the person picks, follow the configured default (it can arrive
   // after the sheet opens, or change when a cloud is connected as default).
@@ -296,6 +299,7 @@ function SystemStep({ v }: { v: WizardView }) {
               {advanced.map((f) => (
                 <SystemRow key={f.id} field={f} v={v} />
               ))}
+              <NetworkRow />
             </Group>
           ) : null}
         </div>
@@ -390,6 +394,25 @@ function SystemRow({ field: f, v }: { field: WizardField; v: WizardView }) {
     default:
       return null;
   }
+}
+
+/** What the new Space may reach; Internet only by default (the host's
+ * create takes it as `config.network`). */
+function NetworkRow() {
+  const store = useNetworkPreview();
+  if (!store) return null;
+  return (
+    <Row id="network" label="Network">
+      <MenuSelect
+        aria-label="Network"
+        dataName="network"
+        side="top"
+        value={store.wizardPreset}
+        items={PRESETS.map((p) => ({ value: p.id, label: p.title, detail: p.description, group: p.id === "custom" ? "custom" : "preset" }))}
+        onValueChange={(p) => store.setWizardPreset(p as NetworkPreset)}
+      />
+    </Row>
+  );
 }
 
 /* ---- Resources ------------------------------------------------------------- */
@@ -687,7 +710,8 @@ function SummaryRow({ fact }: { fact: { label: string; value: string } }) {
 function SummaryStep({ v }: { v: WizardView }) {
   const { send } = useNewSpaceWizard();
   const plain = v.summary.filter((f) => !SUMMARY_ADVANCED.has(f.label));
-  const technical = v.summary.filter((f) => SUMMARY_ADVANCED.has(f.label));
+  const network = useNetworkPreview();
+  const technical = [...v.summary.filter((f) => SUMMARY_ADVANCED.has(f.label)), ...(network ? [{ label: "Network", value: presetInfo(network.wizardPreset).short }] : [])];
   return (
     <>
       <Group data-summary="">

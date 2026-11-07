@@ -183,10 +183,6 @@ public final class AppModel {
     public let pageDropTargets = SidebarDropTargets()
     public var settings: AppSettings
     let settingsPath: String
-    /// The running app's version: with it, the New UI's default follows
-    /// the update channel and the version (`appSettingsResolveNewUi`);
-    /// without it (tests, fixtures), the New UI is on only by choice.
-    let appVersion: String?
     /// Settings → About and the updater (none until `AppEnvironment`
     /// starts one).
     public var updates = UpdatesModel(updater: nil)
@@ -197,7 +193,7 @@ public final class AppModel {
                 telemetry: TelemetryRunning? = nil, agentSetup: AgentSetupRunning? = nil,
                 devices: DevicesRunning? = nil,
                 presence: PresenceChecking = LivePresence(), loginItem: LoginItemControlling? = nil,
-                startup: StartupModel? = nil, appVersion: String? = nil) {
+                startup: StartupModel? = nil) {
         self.backend = backend
         self.startup = startup ?? StartupModel()
         self.devices = DevicesModel(devices: devices, presence: presence)
@@ -220,9 +216,7 @@ public final class AppModel {
         self.keyvault = keyvault
         self.onboarding = onboarding
         self.settingsPath = settingsPath
-        self.appVersion = appVersion
-        var settings = appSettingsLoad(path: settingsPath)
-        if let appVersion { settings = appSettingsResolveNewUi(settings: settings, version: appVersion) }
+        let settings = appSettingsLoad(path: settingsPath)
         self.settings = settings
         self.wizard = WizardModel(env: AppWizardEnv(
             defaultLocation: settings.defaultLocation,
@@ -373,13 +367,12 @@ public final class AppModel {
             access: detail.access))
     }
 
-    /// The detail without what Settings, Experiments hides (Share while
-    /// Sharing is off), as this Mac sees it: a machine reached through the
+    /// The detail as this Mac sees it: a machine reached through the
     /// relay has its Connect greyed out while this Mac is not enrolled, and
     /// one that does not share its desktop shows why in its place.
     public func detail(_ space: AppSpace) -> AppSpaceDetail {
         appSpaceDetailFor(space: space, usage: usage[space.id], hostArch: Self.hostArch,
-                          experiments: settings.experiments, access: devices.accessNotice)
+                          access: devices.accessNotice)
     }
 
     /// The Spaces one of your machines provides (its detail lists them).
@@ -521,9 +514,16 @@ public final class AppModel {
 
     /// Remove from account: `machine` leaves the relay directory, then
     /// `device` is revoked. This Mac's own host setup is the host's
-    /// `remove` instead.
-    public func removeMachine(machine: String?, device: String?) async throws {
-        if let machine { try await backend.relayUnregister(id: "relay:\(machine)") }
+    /// `remove` instead. The Spaces made on the machine are detached (they
+    /// come back when it is added again), or with `deleteSpaces` deleted too.
+    public func removeMachine(machine: String?, device: String?, deleteSpaces: Bool = false) async throws {
+        if let machine {
+            if deleteSpaces {
+                try await backend.relayUnregisterComputer(id: "relay:\(machine)", deleteSpaces: true)
+            } else {
+                try await backend.relayUnregister(id: "relay:\(machine)")
+            }
+        }
         if let device {
             guard let relay = devices.devices else {
                 throw CuaError.InvalidArgument(message: "Revoking a machine needs a signed-in Cua account")
@@ -557,7 +557,7 @@ public final class AppModel {
 
     /// Your Spaces: neither This machine nor one of your machines.
     var realSpaces: [AppSpace] {
-        spaces.filter { !$0.id.hasPrefix("relay:") && !detail($0).isHost }
+        spaces.filter { !$0.id.hasPrefix("relay:") && !detail($0).isHost && !$0.hidden }
     }
 
     /// Where "Add a computer" opens: the New UI's sheet (one row per way to
@@ -779,6 +779,30 @@ public final class AppModel {
                 try? await Task.sleep(for: interval)
             }
         }
+    }
+
+    /// Keeps the notch's hotspot indicator on while a Space exits through
+    /// this computer ("Exit through: This computer"), as the hotspot's own
+    /// indicator is. Read every 15 seconds, as the Electron notch does.
+    /// Only while Secure Spaces (Labs) is on: off, nothing is read.
+    public func startExitsPoll(every interval: Duration = .seconds(15)) -> Task<Void, Never> {
+        Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                guard let self else { return }
+                await self.syncNotchExits()
+                try? await Task.sleep(for: interval)
+            }
+        }
+    }
+
+    /// Reads the exits once and shows them on the notch.
+    func syncNotchExits() async {
+        refreshDaemonExperiments()
+        guard settings.experiments.secureSpaces else {
+            notch.setExits([])
+            return
+        }
+        notch.setExits(await backend.exitsThroughThisMachine())
     }
 
     /// The daemon's push of list changes (`watchList`), while it is kept.
@@ -1949,6 +1973,27 @@ public final class AppModel {
 
     // MARK: - Experiments
 
+    /// The experiments the daemon enforces (Secure Spaces, Child Spaces, CI runners, Public TCP shares, Phone app, Warm start) as
+    /// the cua home keeps them: what `cua experiments enable` set shows here
+    /// the next time Settings is read.
+    public func refreshDaemonExperiments() {
+        let kept = appSettingsLoad(path: settingsPath).experiments
+        guard kept.secureSpaces != settings.experiments.secureSpaces
+            || kept.childSpaces != settings.experiments.childSpaces
+            || kept.askFirst != settings.experiments.askFirst
+            || kept.ciRunners != settings.experiments.ciRunners
+            || kept.tcpShares != settings.experiments.tcpShares
+            || kept.mobile != settings.experiments.mobile
+            || kept.warmPools != settings.experiments.warmPools else { return }
+        settings.experiments.secureSpaces = kept.secureSpaces
+        settings.experiments.childSpaces = kept.childSpaces
+        settings.experiments.askFirst = kept.askFirst
+        settings.experiments.ciRunners = kept.ciRunners
+        settings.experiments.tcpShares = kept.tcpShares
+        settings.experiments.mobile = kept.mobile
+        settings.experiments.warmPools = kept.warmPools
+    }
+
     /// Settings, Experiments: a switch and one line per experiment.
     public var experimentsPage: AppSettingsPage { appExperimentsPage(experiments: settings.experiments) }
 
@@ -1967,14 +2012,10 @@ public final class AppModel {
         applyExperiments(before: before, after: after)
     }
 
-    /// Settings → About's channel, saved; with no choice of the user's, the
-    /// New UI follows the channel's default at once.
+    /// Settings → About's channel, saved.
     public func setUpdateChannel(_ channel: AppUpdateChannel) {
         settings.updateChannel = channel
-        let before = settings.experiments
-        if let appVersion { settings = appSettingsResolveNewUi(settings: settings, version: appVersion) }
         saveSettings()
-        if settings.experiments != before { applyExperiments(before: before, after: settings.experiments) }
     }
 
     /// What follows a change of the switches: an open New Space.

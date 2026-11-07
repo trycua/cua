@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 /// One announced ei_device::Region — a single monitor's pixel rectangle
 /// inside the seat's logical coordinate space. Multi-monitor sessions
 /// announce one Region per output; we route each absolute (x, y) to the
@@ -24,12 +27,19 @@ impl RegionRect {
 /// First candidate whose regions contain `(x, y)`. `Ok(None)` means no
 /// candidate announced any region (caller falls back). Regions that exist but
 /// exclude the point are an error: EIS would silently discard the motion and
-/// the button would land at the stale pointer position.
+/// the button would land at the stale pointer position. A negative layout
+/// point is always an error, even on an output: region offsets are unsigned,
+/// and KWin drops such a motion with the same result.
 pub(super) fn route_absolute<'a, K>(
     candidates: impl IntoIterator<Item = (K, &'a [RegionRect])>,
     x: f64,
     y: f64,
 ) -> anyhow::Result<Option<K>> {
+    if x < 0.0 || y < 0.0 {
+        anyhow::bail!(
+            "libei: ({x}, {y}) is left of or above the layout origin, which libei cannot address"
+        );
+    }
     let mut announced = false;
     for (key, regions) in candidates {
         if regions.iter().any(|r| r.contains(x, y)) {

@@ -74,6 +74,134 @@ struct StoredRegistration {
 /// that signed in here before and are not signed in now.
 type Registrations = std::collections::BTreeMap<String, StoredRegistration>;
 
+/// This account's saved registration of this computer in `kept`: keyed by
+/// the account id the relay gave back, which is the token's subject on
+/// every relay that takes `sub` as the account (the default), else found by
+/// the token's verified email (the registration is also kept under it).
+fn saved_registration(kept: &Registrations, token: &str) -> Option<StoredRegistration> {
+    let by_sub = crate::device::token_subject(token).and_then(|sub| kept.get(&sub).cloned());
+    by_sub.or_else(|| {
+        crate::device::token_email(token).and_then(|email| kept.get(&email_key(&email)).cloned())
+    })
+}
+
+/// The key a registration is also kept under, for the account's email.
+fn email_key(email: &str) -> String {
+    format!("email:{}", email.trim().to_lowercase())
+}
+
+/// Why this computer was not registered again under its saved id.
+fn refused_saved_registration(id: &str, e: Error) -> Error {
+    let reason = match &e {
+        Error::PermissionDenied(_) => {
+            "the computer is connected to the relay right now with another credential"
+        }
+        Error::Conflict(_) => "the id belongs to another account",
+        _ => "the sign-in was refused",
+    };
+    let message = format!(
+        "the relay did not accept this computer's saved registration ({}): {reason} ({e}). \
+         It was not registered as a new computer, so no duplicate is listed; fix that and \
+         try again, or remove the computer from your account first.",
+        &id[..id.len().min(8)],
+    );
+    match e {
+        Error::Unauthenticated(_) => Error::Unauthenticated(message),
+        Error::Conflict(_) => Error::Conflict(message),
+        _ => Error::PermissionDenied(message),
+    }
+}
+
+/// The file under the machine-id directory (`<home>/spacesd`, which a
+/// removal keeps) that remembers relay registrations of this computer whose
+/// delete did not reach the relay.
+const PENDING_REMOVALS_FILE: &str = "pending-removals.json";
+/// A removal the relay refuses or misses for this long is dropped.
+const PENDING_REMOVAL_GIVE_UP_MS: u64 = 365 * 24 * 3600 * 1000;
+
+/// A computer's registration on a relay that still has to be deleted.
+#[derive(Clone, Serialize, Deserialize)]
+pub struct PendingRemoval {
+    /// The relay.
+    pub relay_url: String,
+    /// The computer's id on it.
+    pub machine_id: String,
+    /// What the relay last answered (or why it was not asked).
+    #[serde(default)]
+    pub last_error: Option<String>,
+    #[serde(default)]
+    machine_token: String,
+    #[serde(default)]
+    since_ms: u64,
+}
+
+impl std::fmt::Debug for PendingRemoval {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PendingRemoval")
+            .field("relay_url", &self.relay_url)
+            .field("machine_id", &self.machine_id)
+            .field("last_error", &self.last_error)
+            .finish_non_exhaustive()
+    }
+}
+
+impl PendingRemoval {
+    fn new(url: &str, id: &str, machine_token: String) -> Self {
+        Self {
+            relay_url: url.trim_end_matches('/').to_string(),
+            machine_id: id.to_string(),
+            last_error: None,
+            machine_token,
+            since_ms: now_ms(),
+        }
+    }
+
+    fn same(&self, url: &str, id: &str) -> bool {
+        self.machine_id == id && self.relay_url.trim_end_matches('/') == url.trim_end_matches('/')
+    }
+
+    /// Deletes it on the relay: with the computer's token, else (refused,
+    /// or none) as the owner through `account`. Already gone counts.
+    async fn try_delete(&self, account: Option<&RemovalAccount<'_>>) -> Result<()> {
+        let relay = RelayClient::new(&self.relay_url)?;
+        let mut refused = None;
+        if !self.machine_token.is_empty() {
+            match relay.delete(&self.machine_token, &self.machine_id).await {
+                Ok(()) | Err(Error::NotFound(_)) => return Ok(()),
+                Err(e @ (Error::Unauthenticated(_) | Error::PermissionDenied(_))) => {
+                    refused = Some(e);
+                }
+                Err(e) => return Err(e),
+            }
+        }
+        let Some(account) = account else {
+            return Err(refused.unwrap_or_else(|| {
+                Error::Unauthenticated("this computer has no token for the relay".into())
+            }));
+        };
+        let token = account.tokens.access_token().await?;
+        match relay
+            .clone()
+            .with_device_session(account.device_session.clone())
+            .delete(&token, &self.machine_id)
+            .await
+        {
+            Ok(()) | Err(Error::NotFound(_)) => Ok(()),
+            Err(e) => Err(e),
+        }
+    }
+}
+
+/// The signed-in account a removal falls back to when the relay does not
+/// take the computer's own token (or it has none).
+pub struct RemovalAccount<'a> {
+    /// The account's tokens.
+    pub tokens: &'a dyn AccountTokens,
+    /// This device's relay session, on a relay that requires an enrolled
+    /// device.
+    pub device_session: Option<String>,
+}
+
 /// Options for [`Host::setup`].
 #[derive(Clone, Debug)]
 pub struct SetupOptions {
@@ -294,6 +422,22 @@ pub struct HostPolicy {
     /// The daemon's share gateway socket (`<cua home>/share/gateway.sock`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub shares_gateway: Option<String>,
+    /// Share edges in the owner's own cloud this computer joins, so public
+    /// TCP shares of its Spaces reach players without Cua's relay
+    /// (CUA-2602). Written by the cua daemon; read by cua-spacesd.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub edges: Vec<ShareEdgeJoin>,
+}
+
+/// One share edge to join (see [`HostPolicy::edges`]).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ShareEdgeJoin {
+    /// `wss://<edge host>`.
+    pub url: String,
+    /// The edge's token, in a file only the owner can read.
+    pub token_file: PathBuf,
+    /// This computer's id on the edge.
+    pub machine_id: String,
 }
 
 /// How a host in direct mode provides Spaces (see [`crate::direct`]).
@@ -605,6 +749,13 @@ pub const META_ARCH: &str = "cua.host.arch";
 /// coordinates the pool places `--on <cloud>` work on it by this.
 pub const META_CLOUD: &str = "cua.host.cloud";
 
+/// The relay machine meta key saying this machine's Cua Spaces can answer the
+/// phone app's requests (`1`): the Spaces it runs, their threads, a task. It
+/// answers them only while the person has the phone app turned on
+/// (`cua experiments enable mobile`); the key is the build's ability. A
+/// machine without it is told to update, and its Spaces are not faked.
+pub const META_PHONE_FEED: &str = "cua.host.phone";
+
 /// `CUA_HOST_CLOUD`, when it names a cloud (lowercase letters and digits).
 fn host_cloud() -> Option<String> {
     cloud_word(std::env::var("CUA_HOST_CLOUD").ok())
@@ -640,6 +791,7 @@ fn host_meta(provide_spaces: bool) -> std::collections::BTreeMap<String, String>
         META_PROVIDES_SPACES.to_string(),
         if provide_spaces { "on" } else { "off" }.to_string(),
     )]);
+    meta.insert(META_PHONE_FEED.to_string(), "1".to_string());
     for (key, value) in [(META_OS, os_family()), (META_ARCH, arch())] {
         if !value.is_empty() {
             meta.insert(key.to_string(), value.to_string());
@@ -683,6 +835,11 @@ pub struct HostStatus {
     pub permissions: Vec<PermissionHint>,
     /// Last error talking to the relay, if any.
     pub error: Option<String>,
+    /// The relay refused this computer's token: it was removed from the
+    /// account (from another device, which detaches or deletes its Spaces).
+    /// `host setup` then registers it again instead of calling it set up.
+    #[serde(default)]
+    pub revoked: bool,
     /// Who reached this machine recently, newest first (the driver's
     /// hash-chained access log).
     #[serde(default)]
@@ -1068,6 +1225,9 @@ pub struct Host {
     /// The old LaunchAgent (tests; else [`service::Launchd`]).
     legacy: Option<Arc<dyn LegacyService>>,
     verify: VerifyTiming,
+    /// Whether setup waits for the relay to report this machine online
+    /// (`None`: yes, except under the test runner).
+    online_check: Option<bool>,
 }
 
 impl std::fmt::Debug for Host {
@@ -1089,7 +1249,16 @@ impl Host {
             helper: None,
             legacy: None,
             verify: VerifyTiming::default(),
+            online_check: None,
         }
+    }
+
+    /// Whether setup waits until the relay reports this machine online
+    /// before it reports success (on by default; tests with a fake runner
+    /// turn it on to test it).
+    pub fn with_online_check(mut self, on: bool) -> Self {
+        self.online_check = Some(on);
+        self
     }
 
     /// Uses `app` as the installed Cua Spaces app with its helper, run by
@@ -1135,7 +1304,10 @@ impl Host {
     fn legacy(&self) -> Arc<dyn LegacyService> {
         match &self.legacy {
             Some(l) => l.clone(),
-            None => Arc::new(service::Launchd::for_current_user(&user_home(&self.home))),
+            None => Arc::new(service::Launchd::for_current_user(
+                &user_home(&self.home),
+                self.service_names(),
+            )),
         }
     }
 
@@ -1187,7 +1359,15 @@ impl Host {
             runner,
             &user_home(&self.home),
             &self.paths.dir,
+            self.service_names(),
         ))
+    }
+
+    /// The names this home's host service is registered under (CUA-3512):
+    /// from this home, never from environment variables, so the CLI and
+    /// the app's daemon agree and a staging home never takes production's.
+    pub fn service_names(&self) -> service::ServiceNames {
+        service::ServiceNames::for_home(CuaChannel::current(), &self.home, &user_home(&self.home))
     }
 
     fn manager_for_config(&self, config: &HostConfig) -> Arc<dyn ServiceManager> {
@@ -1273,9 +1453,12 @@ impl Host {
             "--data-dir".into(),
             s(p.driver_data.clone()),
         ]);
-        // A machine that does not share its desktop runs no desktop
-        // services, no cua-driver and no /mcp at all: providing Spaces
-        // never needs them (the policy refuses relayed calls to the rest).
+        // A machine that does not share its desktop serves remote callers
+        // no desktop services, no Driver service and no /mcp at all:
+        // providing Spaces never needs them (the policy refuses relayed
+        // calls to the rest). The Cua Driver for this Mac's own coding
+        // agents still runs: cua-spacesd starts it whatever these flags say,
+        // and only "Let agents use apps on this Mac" turns it off.
         if !config.share_desktop {
             args.extend([
                 "--no-desktop".into(),
@@ -1506,8 +1689,20 @@ impl Host {
                         dedicated: opts.dedicated,
                         shares: true,
                         shares_gateway: Some(self.shares_gateway()),
+                        edges: Vec::new(),
                     },
                 )?;
+                // Leftovers of earlier removals the relay missed go now (this
+                // one is live and is never touched), so re-enabling cannot
+                // leave a ghost behind.
+                self.run_removals(
+                    Some(&RemovalAccount {
+                        tokens,
+                        device_session: opts.device_session.clone(),
+                    }),
+                    Some((relay.base().to_string(), reg.machine.id.clone())),
+                )
+                .await;
                 config.mode = "relay".into();
                 config.relay_url = Some(relay.base().to_string());
                 config.machine_id = Some(reg.machine.id);
@@ -1571,6 +1766,9 @@ impl Host {
             self.retire_legacy()?;
         }
         let manager = self.manager(runner);
+        // This home's service under another home's names (a build before
+        // CUA-3512): retired first, and only when it runs this home.
+        let retired = manager.retire_legacy_names();
         let previous = self.config().ok().flatten();
         self.choose_ports(&mut config, previous.as_ref(), manager.as_ref())
             .await?;
@@ -1581,6 +1779,13 @@ impl Host {
             let _ = manager.stop();
             return Err(e);
         }
+        // "Added" means online for the user's other devices (CUA-3513): a
+        // service that runs but never reaches the relay is not added.
+        let online_check = self.online_check.unwrap_or(manager.state().kind != "fake");
+        if online_check {
+            self.confirm_online(&config, manager.as_ref()).await?;
+        }
+        self.restore_default_home(&retired);
         let _ = crate::provided::audit(
             &self.paths.dir,
             "config",
@@ -1635,8 +1840,15 @@ impl Host {
             let p = p.service_ports(channel);
             preferred.push((p.tcp, p.quic));
         }
-        preferred.push((default.tcp, default.quic));
-        if !free(preferred[0]) && manager.state().installed {
+        // The other environment's home (staging beside production) never
+        // takes the channel's pair: production would find it taken the
+        // next time it starts (CUA-3512).
+        if self.service_names().other_env() {
+            preferred.retain(|&pair| pair != (default.tcp, default.quic));
+        } else {
+            preferred.push((default.tcp, default.quic));
+        }
+        if !preferred.is_empty() && !free(preferred[0]) && manager.state().installed {
             // Perhaps this user's own service: stop it and give it a moment
             // to let go of its sockets.
             let _ = manager.stop();
@@ -1646,24 +1858,27 @@ impl Host {
             }
         }
         let candidates = ports::candidates(&preferred, ports::per_user_seed());
+        // What the warning and the error name: this home's own pair, or
+        // the first one it may take.
+        let wanted = preferred.first().copied().unwrap_or(candidates[0]);
         let Some((tcp, quic)) = ports::first_free(&candidates, free) else {
             let (lo, hi) = ports::per_user_range();
             return Err(Error::Service(format!(
                 "no free port for the host service: {}/{} (TCP/UDP) and the per-user ports \
                  {lo}-{hi} are all in use by other programs; stop one of them, then run \
                  `{} host setup` again",
-                preferred[0].0,
-                preferred[0].1,
+                wanted.0,
+                wanted.1,
                 crate::cli()
             )));
         };
         let tcp = fixed_tcp.map_or(tcp, |_| default.tcp);
-        if quic != preferred[0].1 || (fixed_tcp.is_none() && tcp != preferred[0].0) {
+        if quic != wanted.1 || (fixed_tcp.is_none() && tcp != wanted.0) {
             tracing::warn!(
                 "port {}/{} is in use by another program (another user's Cua host on this \
                  machine?); this host service listens on {tcp} (TCP) and {quic} (QUIC) instead",
-                preferred[0].0,
-                preferred[0].1,
+                wanted.0,
+                wanted.1,
             );
         }
         config.port = (tcp != default.tcp).then_some(tcp);
@@ -1723,6 +1938,7 @@ impl Host {
             dedicated: false,
             shares: false,
             shares_gateway: None,
+            edges: Vec::new(),
         }
     }
 
@@ -1822,6 +2038,59 @@ impl Host {
         }
         policy.shares = true;
         policy.shares_gateway = Some(gateway);
+        write_json(&self.paths.policy(), &policy)?;
+        Ok(true)
+    }
+
+    /// Sets the share edges this computer joins (the cua daemon, for public
+    /// TCP shares through the owner's own cloud). The edge token goes to a
+    /// file only the owner can read; the policy holds its path. Returns
+    /// whether the policy changed. A machine without a host policy has no
+    /// cua-spacesd to join with, so this is a no-op there.
+    pub fn set_share_edges(&self, edges: &[(String, String)]) -> Result<bool> {
+        let Some(mut policy) = self.policy()? else {
+            return Ok(false);
+        };
+        let machine_id = load_or_create_machine_id(&self.paths.machine_id)?;
+        let dir = self.paths.machine_id.with_file_name("edges");
+        let mut want = Vec::new();
+        for (url, token) in edges {
+            let name: String = url
+                .trim_start_matches("wss://")
+                .chars()
+                .map(|c| {
+                    if c.is_ascii_alphanumeric() || c == '.' || c == '-' {
+                        c
+                    } else {
+                        '_'
+                    }
+                })
+                .collect();
+            let token_file = dir.join(format!("{name}.token"));
+            write_secret(&token_file, &format!("{token}\n"))?;
+            want.push(ShareEdgeJoin {
+                url: url.clone(),
+                token_file,
+                machine_id: machine_id.clone(),
+            });
+        }
+        // An edge reaches Spaces only through the share gateway.
+        let gateway = self.shares_gateway();
+        let gateway_ok = want.is_empty()
+            || (policy.shares && policy.shares_gateway.as_deref() == Some(gateway.as_str()));
+        if policy.edges == want && gateway_ok {
+            return Ok(false);
+        }
+        if !want.is_empty() {
+            policy.shares = true;
+            policy.shares_gateway = Some(gateway);
+        }
+        for old in &policy.edges {
+            if !want.iter().any(|w| w.token_file == old.token_file) {
+                let _ = std::fs::remove_file(&old.token_file);
+            }
+        }
+        policy.edges = want;
         write_json(&self.paths.policy(), &policy)?;
         Ok(true)
     }
@@ -1945,6 +2214,7 @@ impl Host {
     /// Current state: config, service, and (relay mode) the relay's view
     /// with the connected clients.
     pub async fn status(&self) -> Result<HostStatus> {
+        self.retry_pending_removals().await;
         let Some(config) = self.config()? else {
             return Ok(HostStatus::default());
         };
@@ -2010,7 +2280,10 @@ impl Host {
                         status.allow = m.allow;
                     }
                 }
-                Err(e) => status.error = Some(e.to_string()),
+                Err(e) => {
+                    status.revoked = matches!(e, Error::Unauthenticated(_));
+                    status.error = Some(e.to_string());
+                }
             }
         }
         self.add_access(&mut status, now_ms());
@@ -2291,6 +2564,26 @@ impl Host {
         self.resume_signed_in(account).await
     }
 
+    /// `cua host setup --pair` on a computer whose relay sharing is paused
+    /// because it was set up for another account: the pairing code stands
+    /// in for the account it was made in, and this computer is registered
+    /// again for that account the way a sign-in as it would
+    /// ([`Host::resume_or_switch_account`]), with no remove and set up.
+    /// The relay registers the computer to the account that made the code
+    /// (and refuses a code that is used, expired or revoked). `None` when
+    /// this computer is not paused like that: a plain setup applies.
+    pub async fn rejoin_with_code(
+        &self,
+        code: &crate::pairing::PairingCodeToken,
+    ) -> Result<Option<HostStatus>> {
+        match self.config()? {
+            Some(c) if c.mode == "relay" && c.paused_signed_out && self.policy()?.is_some() => {
+                self.switch_account(code).await.map(Some)
+            }
+            _ => Ok(None),
+        }
+    }
+
     /// Registers this computer again for the account behind `tokens`, which
     /// is not the one it was set up for. The old registration belongs to
     /// the previous account (the relay refuses its id, and the machine's
@@ -2347,13 +2640,14 @@ impl Host {
                 read_secret(&self.paths.machine_token()),
             )
         {
-            kept.insert(
-                policy.owner.clone(),
-                StoredRegistration {
-                    machine_id: id,
-                    machine_token,
-                },
-            );
+            let left = StoredRegistration {
+                machine_id: id,
+                machine_token,
+            };
+            if let Some(email) = policy.owner_email.as_deref().filter(|e| !e.is_empty()) {
+                kept.insert(email_key(email), left.clone());
+            }
+            kept.insert(policy.owner.clone(), left);
         }
         let request = |id: String| RegisterRequest {
             id,
@@ -2363,35 +2657,39 @@ impl Host {
             meta: host_meta(config.provide_spaces),
         };
         // This account's earlier registration of this computer, if any (the
-        // token says whose it is); else, or when the relay no longer takes
-        // it, a new machine id. Another account's id is never tried: if its
-        // record is gone from the relay it would register here and clash
-        // with the saved one.
-        let earlier: Vec<StoredRegistration> = crate::device::token_subject(&token)
-            .and_then(|sub| kept.get(&sub).cloned())
-            .into_iter()
-            .collect();
-        let mut reg = None;
-        for r in earlier {
-            match relay
-                .register_as_machine(&token, Some(&r.machine_token), &request(r.machine_id))
-                .await
-            {
-                Ok(r) => {
-                    reg = Some(r);
-                    break;
+        // token says whose it is: its subject, else its email). Another
+        // account's id is never tried: if its record is gone from the relay
+        // it would register here and clash with the saved one.
+        //
+        // A saved registration is never dropped for a new random id: that
+        // would leave the old computer listed on the relay (a duplicate row
+        // nobody can retire from here) and cut this computer off from
+        // whatever is tied to its id. When the relay refuses it, the reason
+        // is the answer, and the next check tries the same id again.
+        let reg = match saved_registration(&kept, &token) {
+            Some(earlier) => {
+                let id = earlier.machine_id.clone();
+                match relay
+                    .register_as_machine(&token, Some(&earlier.machine_token), &request(id.clone()))
+                    .await
+                {
+                    Ok(r) => r,
+                    // The relay lost the record: the id is free, so the same
+                    // computer takes it again (no machine token to show).
+                    Err(Error::NotFound(_)) => {
+                        relay
+                            .register_as_machine(&token, None, &request(id.clone()))
+                            .await?
+                    }
+                    Err(e @ (Error::Unauthenticated(_) | Error::PermissionDenied(_))) => {
+                        return Err(refused_saved_registration(&id, e));
+                    }
+                    Err(e @ Error::Conflict(_)) => {
+                        return Err(refused_saved_registration(&id, e));
+                    }
+                    Err(e) => return Err(e),
                 }
-                Err(
-                    Error::Unauthenticated(_)
-                    | Error::PermissionDenied(_)
-                    | Error::NotFound(_)
-                    | Error::Conflict(_),
-                ) => {}
-                Err(e) => return Err(e),
             }
-        }
-        let reg = match reg {
-            Some(r) => r,
             None => {
                 relay
                     .register_as_machine(&token, None, &request(random_hex(16)))
@@ -2400,13 +2698,14 @@ impl Host {
         };
         // The new registration is kept before anything else can fail, so a
         // retry reuses it instead of making another machine.
-        kept.insert(
-            reg.machine.owner.id.clone(),
-            StoredRegistration {
-                machine_id: reg.machine.id.clone(),
-                machine_token: reg.machine_token.clone(),
-            },
-        );
+        let current = StoredRegistration {
+            machine_id: reg.machine.id.clone(),
+            machine_token: reg.machine_token.clone(),
+        };
+        if let Some(email) = reg.machine.owner.email.as_deref().filter(|e| !e.is_empty()) {
+            kept.insert(email_key(email), current.clone());
+        }
+        kept.insert(reg.machine.owner.id.clone(), current);
         self.save_registrations(&kept)?;
         // The relay's sharing state follows this computer's own choice
         // (a reused registration keeps whatever it had under its account;
@@ -2446,6 +2745,9 @@ impl Host {
         // (until here it stays kept, so a crash or a failed write retries
         // with it instead of making another machine).
         kept.remove(&reg.machine.owner.id);
+        if let Some(email) = reg.machine.owner.email.as_deref() {
+            kept.remove(&email_key(email));
+        }
         self.save_registrations(&kept)?;
         // Registered for the new account and paused: resuming installs and
         // starts the service with the new registration (and keeps a stopped
@@ -2533,7 +2835,16 @@ impl Host {
     /// and deletes `<home>/host`. The machine id is kept so a later setup
     /// reuses it.
     pub async fn remove(&self) -> Result<()> {
-        self.remove_inner(false).await
+        self.remove_inner(false, None).await
+    }
+
+    /// [`Self::remove`] that also takes the computer off the relay as its
+    /// owner (`account`) when the relay refuses the computer's own token or
+    /// the computer has none: removal never depends on the computer being
+    /// able to prove itself. A relay that cannot be reached at all is
+    /// retried later ([`Self::finish_removals`], and on every status).
+    pub async fn remove_with_account(&self, account: &RemovalAccount<'_>) -> Result<()> {
+        self.remove_inner(false, Some(account)).await
     }
 
     /// [`Self::remove`] for an uninstall of the app: the Spaces this machine
@@ -2542,7 +2853,7 @@ impl Host {
     /// through the relay; the Spaces themselves are left as they are for
     /// the caller to turn off ([`Self::provided_spaces`]).
     pub async fn remove_for_uninstall(&self) -> Result<()> {
-        self.remove_inner(true).await
+        self.remove_inner(true, None).await
     }
 
     /// The Spaces this host provides to the owner's other devices.
@@ -2564,6 +2875,9 @@ impl Host {
         force: bool,
         app_version: &str,
     ) -> Result<ServiceMigration> {
+        if let Err(e) = self.migrate_service_names() {
+            tracing::warn!("could not move the host service to its own name: {e}");
+        }
         let config = self.config()?;
         let app = self.helper_app();
         let legacy = self.legacy();
@@ -2710,6 +3024,138 @@ impl Host {
         }
     }
 
+    /// Moves this home's host service off the names a build before CUA-3512
+    /// registered it under (another home's: production's for a staging
+    /// home set up without `CUA_HOME`, or a `CUA_HOME` hash) onto its own
+    /// ([`service::ServiceNames`]), and puts back production's service when
+    /// a staging setup had taken its place. Runs only for a runner that
+    /// runs this home ([`service::ServiceNames::owns`]); production's own
+    /// service is never touched. Returns the names it retired (none when
+    /// there was nothing to move). Setup (also when nothing else changes)
+    /// and [`Host::migrate_service`] run it.
+    pub fn migrate_service_names(&self) -> Result<Vec<String>> {
+        let Some(config) = self.config()? else {
+            return Ok(Vec::new());
+        };
+        let runner = RunnerKind::parse(&config.runner).unwrap_or(RunnerKind::Auto);
+        if runner == RunnerKind::AppHelper {
+            return Ok(Vec::new());
+        }
+        let manager = self.manager(runner);
+        let retired = manager.retire_legacy_names();
+        if retired.is_empty() {
+            return Ok(retired);
+        }
+        tracing::info!(?retired, "moved this home's host service to its own name");
+        if !config.paused_signed_out {
+            manager.install(&self.service_spec(&config))?;
+            manager.start()?;
+        }
+        self.restore_default_home(&retired);
+        Ok(retired)
+    }
+
+    /// Waits until the relay reports this machine online (relay mode), up to
+    /// [`VerifyTiming::timeout`]. Fails with the reason and the driver's last
+    /// log lines, so the app never says "Added" for a computer that stays
+    /// offline (CUA-3513).
+    async fn confirm_online(
+        &self,
+        config: &HostConfig,
+        manager: &dyn ServiceManager,
+    ) -> Result<()> {
+        if config.mode != "relay" || config.relay_url.is_none() || config.machine_id.is_none() {
+            return Ok(());
+        }
+        let mut t = self.verify;
+        // `CUA_HOST_ONLINE_WAIT_SECS`: how long to wait (0: not at all, for
+        // scripted setups against a relay the driver never joins).
+        if let Some(secs) = std::env::var("CUA_HOST_ONLINE_WAIT_SECS")
+            .ok()
+            .and_then(|v| v.trim().parse::<u64>().ok())
+        {
+            if secs == 0 {
+                return Ok(());
+            }
+            t.timeout = std::time::Duration::from_secs(secs);
+        }
+        let start = std::time::Instant::now();
+        loop {
+            let last = if !manager.state().running {
+                "the host service stopped"
+            } else {
+                match self.relay_session(config).await {
+                    Some((true, _)) => return Ok(()),
+                    Some((false, _)) => "the relay does not see it yet",
+                    None => "the relay did not answer",
+                }
+            };
+            if start.elapsed() >= t.timeout {
+                let tail = log_tail(&self.paths.log());
+                return Err(Error::Service(format!(
+                    "the host service started, but this computer did not come online for \
+                     your other devices within {} s ({last}). It keeps trying; `{} host \
+                     status` shows when it is online. Last log lines: {}",
+                    t.timeout.as_secs(),
+                    crate::cli(),
+                    if tail.is_empty() { "none" } else { &tail }
+                )));
+            }
+            tokio::time::sleep(t.poll).await;
+        }
+    }
+
+    /// After this home's service was retired from the production names
+    /// (a build before CUA-3512 set a staging host up under them and so
+    /// replaced the production host), puts the production home's service
+    /// back as its own setup made it. Best effort, logged.
+    fn restore_default_home(&self, retired: &[String]) {
+        let names = self.service_names();
+        if retired.is_empty() || names.is_default() {
+            return;
+        }
+        let channel = names.channel;
+        let user = user_home(&self.home);
+        let default_home = channel.home_dir_name();
+        let default_home = match channel.home_subdir(channel.default_env()) {
+            Some(sub) => user.join(default_home).join(sub),
+            None => user.join(default_home),
+        };
+        let default = Host::new(&default_home);
+        let default_names = default.service_names();
+        let took_default = retired.iter().any(|r| {
+            [
+                default_names.systemd_unit(),
+                default_names.launchd_label(),
+                default_names.windows_task(),
+                default_names.windows_run_value(),
+            ]
+            .contains(r)
+        });
+        if !took_default {
+            return;
+        }
+        let Ok(Some(config)) = default.config() else {
+            return;
+        };
+        let runner = RunnerKind::parse(&config.runner).unwrap_or(RunnerKind::Auto);
+        if runner == RunnerKind::AppHelper {
+            return;
+        }
+        let manager = default.manager(runner);
+        let spec = default.service_spec(&config);
+        match manager.install(&spec).and_then(|()| manager.start()) {
+            Ok(()) => tracing::info!(
+                home = %default_home.display(),
+                "restored the production host service a staging setup had replaced"
+            ),
+            Err(e) => tracing::warn!(
+                home = %default_home.display(),
+                "could not restore the production host service: {e}"
+            ),
+        }
+    }
+
     /// The relay's view of this machine's session: `(online, connected_at)`
     /// (relay mode; `None` when it could not be read). Read fresh, never
     /// the remembered answer [`Host::status`] shows during a hiccup.
@@ -2805,7 +3251,11 @@ impl Host {
         );
     }
 
-    async fn remove_inner(&self, uninstalling: bool) -> Result<()> {
+    async fn remove_inner(
+        &self,
+        uninstalling: bool,
+        account: Option<&RemovalAccount<'_>>,
+    ) -> Result<()> {
         let Some(config) = self.config()? else {
             return Ok(());
         };
@@ -2825,58 +3275,208 @@ impl Host {
                 crate::cli(),
             )));
         }
-        let mut relay_error = None;
-        let mut note = |e: Error| match e {
-            // Already gone: nothing to tell the relay.
-            Error::NotFound(_) => {}
-            // A refused machine token leaves the entry listed under My
-            // machines; report it (after the local cleanup) rather than
-            // pretending the unregister worked.
-            e => relay_error = Some(e),
+        // Everything of this computer that is listed on a relay. Written
+        // down before anything is deleted, outside the directory removed
+        // below, so a relay that cannot be reached (or refuses the
+        // computer's token) never leaves a row nobody can retire: the
+        // removal is retried, and by the account when the token is refused.
+        let mut targets: Vec<PendingRemoval> = Vec::new();
+        let mut want = |url: &str, id: &str, token: String| {
+            if url.is_empty() || id.is_empty() || targets.iter().any(|t| t.same(url, id)) {
+                return;
+            }
+            targets.push(PendingRemoval::new(url, id, token));
         };
         if uninstalling {
             for space in &provided {
-                if space.machine_token.is_empty() || space.relay_url.is_empty() {
-                    continue;
-                }
-                if let Err(e) = RelayClient::new(&space.relay_url)?
-                    .delete(&space.machine_token, &space.relay_machine)
-                    .await
-                {
-                    note(e);
-                }
+                want(
+                    &space.relay_url,
+                    &space.relay_machine,
+                    space.machine_token.clone(),
+                );
             }
         }
-        if let (Some(url), Some(id)) = (&config.relay_url, &config.machine_id)
-            && let Ok(token) = read_secret(&self.paths.machine_token())
-            && let Err(e) = RelayClient::new(url)?.delete(&token, id).await
-        {
-            note(e);
+        if let (Some(url), Some(id)) = (&config.relay_url, &config.machine_id) {
+            want(
+                url,
+                id,
+                read_secret(&self.paths.machine_token()).unwrap_or_default(),
+            );
         }
         // Its registrations under other accounts go too: nothing of this
         // computer stays listed anywhere.
         if let Some(url) = &config.relay_url {
             for r in self.registrations().values() {
-                if let Err(e) = RelayClient::new(url)?
-                    .delete(&r.machine_token, &r.machine_id)
-                    .await
-                {
-                    note(e);
-                }
+                want(url, &r.machine_id, r.machine_token.clone());
             }
         }
+        for t in &targets {
+            // A bad relay URL is the caller's mistake, not a relay failure.
+            RelayClient::new(&t.relay_url)?;
+        }
+        self.add_pending_removals(&targets)?;
+        let left = self.run_removals(account, None).await;
         self.manager_for_config(&config).uninstall()?;
         if config.runner == RunnerKind::AppHelper.as_str() {
             // Whatever an interrupted move left of the old agent.
             let _ = self.retire_legacy();
         }
         remove_dir_retrying(&self.paths.dir).await?;
-        match relay_error {
-            Some(e) => Err(Error::Relay(format!(
-                "removed locally, but the relay could not be told: {e}"
+        match left
+            .into_iter()
+            .find(|l| targets.iter().any(|t| t.same(&l.relay_url, &l.machine_id)))
+        {
+            Some(l) => Err(Error::Relay(format!(
+                "removed locally, but the relay could not be told: {}. Cua will take it off \
+                 your account the next time it reaches the relay.",
+                l.last_error
+                    .as_deref()
+                    .unwrap_or("the relay did not answer"),
             ))),
             None => Ok(()),
         }
+    }
+
+    // ------------------------------------------- removals the relay missed
+
+    fn pending_removals_path(&self) -> PathBuf {
+        // Beside the machine id, not under `<home>/host`, which a removal
+        // deletes.
+        self.paths.driver_data.join(PENDING_REMOVALS_FILE)
+    }
+
+    fn read_pending_removals(&self) -> Vec<PendingRemoval> {
+        read_json(&self.pending_removals_path())
+            .ok()
+            .flatten()
+            .unwrap_or_default()
+    }
+
+    fn save_pending_removals(&self, pending: &[PendingRemoval]) -> Result<()> {
+        let path = self.pending_removals_path();
+        if pending.is_empty() {
+            let _ = std::fs::remove_file(&path);
+            return Ok(());
+        }
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        write_json(&path, &pending)
+    }
+
+    fn add_pending_removals(&self, targets: &[PendingRemoval]) -> Result<()> {
+        if targets.is_empty() {
+            return Ok(());
+        }
+        let mut pending = self.read_pending_removals();
+        for t in targets {
+            match pending
+                .iter_mut()
+                .find(|p| p.same(&t.relay_url, &t.machine_id))
+            {
+                // The newest token wins.
+                Some(p) => {
+                    if !t.machine_token.is_empty() {
+                        p.machine_token = t.machine_token.clone();
+                    }
+                }
+                None => pending.push(t.clone()),
+            }
+        }
+        self.save_pending_removals(&pending)
+    }
+
+    /// The computers (relay URL, machine id) whose removal from a relay is
+    /// still waiting to reach it.
+    pub fn pending_removals(&self) -> Vec<(String, String)> {
+        self.read_pending_removals()
+            .into_iter()
+            .map(|p| (p.relay_url, p.machine_id))
+            .collect()
+    }
+
+    /// Takes off the relay every computer a removal could not reach it for
+    /// (this computer's earlier registrations whose delete failed because
+    /// the relay was unreachable or refused its token): first with the
+    /// computer's own token, then, with `account`, as the owner. One that
+    /// this computer has since registered again is never touched. Returns
+    /// the removals still waiting.
+    pub async fn finish_removals(
+        &self,
+        account: Option<&RemovalAccount<'_>>,
+    ) -> Vec<PendingRemoval> {
+        let live = self
+            .config()
+            .ok()
+            .flatten()
+            .and_then(|c| match (c.relay_url, c.machine_id) {
+                (Some(u), Some(i)) => Some((u, i)),
+                _ => None,
+            });
+        self.run_removals(account, live).await
+    }
+
+    async fn run_removals(
+        &self,
+        account: Option<&RemovalAccount<'_>>,
+        live: Option<(String, String)>,
+    ) -> Vec<PendingRemoval> {
+        let pending = self.read_pending_removals();
+        if pending.is_empty() {
+            return pending;
+        }
+        let mut left = Vec::new();
+        for mut p in pending {
+            // Registered again since (setup reuses the id): it is live, not
+            // a leftover.
+            if live.as_ref().is_some_and(|(url, id)| p.same(url, id)) {
+                continue;
+            }
+            match p.try_delete(account).await {
+                Ok(()) => {}
+                Err(e) => {
+                    tracing::warn!(machine = %p.machine_id, "relay removal still pending: {e}");
+                    p.last_error = Some(e.to_string());
+                    // A year of refusals is an answer: stop asking.
+                    if now_ms().saturating_sub(p.since_ms) < PENDING_REMOVAL_GIVE_UP_MS {
+                        left.push(p);
+                    }
+                }
+            }
+        }
+        if let Err(e) = self.save_pending_removals(&left) {
+            tracing::warn!("could not save the pending relay removals: {e}");
+        }
+        left
+    }
+
+    /// [`Host::finish_removals`] from [`Host::status`]: with the computer's
+    /// own tokens only, at most once a minute, and only when something is
+    /// waiting (a status is asked for often).
+    async fn retry_pending_removals(&self) {
+        static LAST: std::sync::Mutex<
+            Option<std::collections::HashMap<PathBuf, std::time::Instant>>,
+        > = std::sync::Mutex::new(None);
+        let path = self.pending_removals_path();
+        if !path.is_file() {
+            return;
+        }
+        {
+            let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
+            let last = last.get_or_insert_with(Default::default);
+            if last
+                .get(&path)
+                .is_some_and(|at| at.elapsed() < std::time::Duration::from_secs(60))
+            {
+                return;
+            }
+            last.insert(path, std::time::Instant::now());
+        }
+        let _ = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            self.finish_removals(None),
+        )
+        .await;
     }
 }
 
@@ -2989,21 +3589,39 @@ async fn confirm_running(manager: &dyn crate::service::ServiceManager, log: &Pat
     if manager.state().kind == "fake" {
         return Ok(());
     }
-    let settle = std::env::var("CUA_HOST_START_SETTLE_MS")
-        .ok()
-        .and_then(|v| v.parse::<u64>().ok())
-        .unwrap_or(4000);
+    let ms = |var: &str, default: u64| {
+        std::env::var(var)
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(default)
+    };
+    // First it must start. A freshly downloaded driver can take seconds to
+    // appear (Windows scans a new executable on its first run), so a check
+    // a second after the start found no process and reported a host that
+    // then ran (CUA-3513).
+    let start_wait = std::time::Duration::from_millis(ms("CUA_HOST_START_WAIT_MS", 20_000));
+    let started = std::time::Instant::now();
+    while !manager.state().running {
+        if started.elapsed() >= start_wait {
+            let st = manager.state();
+            let tail = log_tail(log);
+            return Err(Error::Service(format!(
+                "the host service did not start within {} s ({}); last log lines: {}",
+                start_wait.as_secs(),
+                st.detail.trim(),
+                if tail.is_empty() { "none" } else { &tail }
+            )));
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    }
+    // Then it must stay up.
+    let settle = ms("CUA_HOST_START_SETTLE_MS", 4000);
     let step = std::time::Duration::from_millis((settle / 3).max(1));
     for _ in 0..3 {
         tokio::time::sleep(step).await;
         let st = manager.state();
         if !st.running {
-            let tail = std::fs::read_to_string(log)
-                .map(|t| {
-                    let lines: Vec<&str> = t.lines().rev().take(3).collect();
-                    lines.into_iter().rev().collect::<Vec<_>>().join(" | ")
-                })
-                .unwrap_or_default();
+            let tail = log_tail(log);
             return Err(Error::Service(format!(
                 "the host service did not stay running ({}); last log lines: {}",
                 st.detail.trim(),
@@ -3012,6 +3630,16 @@ async fn confirm_running(manager: &dyn crate::service::ServiceManager, log: &Pat
         }
     }
     Ok(())
+}
+
+/// The last 3 lines of the driver's log, joined with ` | ` ("" when none).
+fn log_tail(log: &Path) -> String {
+    std::fs::read_to_string(log)
+        .map(|t| {
+            let lines: Vec<&str> = t.lines().rev().take(3).collect();
+            lines.into_iter().rev().collect::<Vec<_>>().join(" | ")
+        })
+        .unwrap_or_default()
 }
 
 /// Locates (or downloads) cua-spacesd and installs it at `dest`.
@@ -3237,6 +3865,48 @@ mod tests {
             std::fs::metadata(&p).unwrap().permissions().mode() & 0o777,
             0o600
         );
+    }
+
+    #[test]
+    fn share_edges_go_into_the_policy_with_owner_only_token_files() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let dir = tempfile::tempdir().unwrap();
+        let host = Host::new(dir.path());
+        // No host policy: nothing to join with.
+        assert!(
+            !host
+                .set_share_edges(&[("wss://e.example".into(), "t".into())])
+                .unwrap()
+        );
+        std::fs::create_dir_all(dir.path().join("host")).unwrap();
+        std::fs::write(host.paths.policy(), r#"{"owner":"acct-1"}"#).unwrap();
+        let edges = [(
+            "wss://ec2-1-2-3-4.compute.amazonaws.com".to_string(),
+            "secret".to_string(),
+        )];
+        assert!(host.set_share_edges(&edges).unwrap());
+        // The same edges again: no change.
+        assert!(!host.set_share_edges(&edges).unwrap());
+        let p = host.policy().unwrap().unwrap();
+        assert_eq!(p.edges.len(), 1);
+        assert!(p.shares && p.shares_gateway.is_some());
+        assert!(valid_machine_id(&p.edges[0].machine_id));
+        let tf = &p.edges[0].token_file;
+        assert_eq!(std::fs::read_to_string(tf).unwrap().trim(), "secret");
+        assert_eq!(
+            std::fs::metadata(tf).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        // The token is never in the policy itself.
+        assert!(
+            !std::fs::read_to_string(host.paths.policy())
+                .unwrap()
+                .contains("secret")
+        );
+        // Leaving every edge removes the token file.
+        assert!(host.set_share_edges(&[]).unwrap());
+        assert!(host.policy().unwrap().unwrap().edges.is_empty());
+        assert!(!tf.exists());
     }
 
     #[tokio::test]

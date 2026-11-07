@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Bookmark-URL-field JavaScript-execution bypass for Chromium-family
 //! browsers on Windows.
 //!
@@ -154,7 +157,7 @@ pub fn wrap_javascript(user_js: &str) -> String {
     //     needed. (Previously the wrapper used `(function(){ ... })()`
     //     which silently returned undefined for any caller that didn't
     //     write `return X` themselves — wrong for CDP-style callers.)
-    let safe_user_js = user_js.replace('\r', " ").replace('\n', " ");
+    let safe_user_js = user_js.replace(['\r', '\n'], " ");
     // Escape for inclusion inside a single-quoted JS string literal.
     let escaped = safe_user_js.replace('\\', "\\\\").replace('\'', "\\'");
     format!(
@@ -538,11 +541,9 @@ unsafe fn wait_for_menu_item(
                 // Edge labels its context-menu items literally ("Edit");
                 // Chrome adds ellipses ("Edit..."). Accept exact match,
                 // ellipsis-stripped match, and prefix-up-to-ellipsis match.
-                let trimmed = elem_name
-                    .trim_end_matches(|c: char| c == '.' || c == '…')
-                    .trim();
+                let trimmed = elem_name.trim_end_matches(['.', '…']).trim();
                 if accepted_names.iter().any(|n| {
-                    let n_trimmed = n.trim_end_matches(|c: char| c == '.' || c == '…').trim();
+                    let n_trimmed = n.trim_end_matches(['.', '…']).trim();
                     elem_name.eq_ignore_ascii_case(n) || trimmed.eq_ignore_ascii_case(n_trimmed)
                 }) {
                     return Ok(elem);

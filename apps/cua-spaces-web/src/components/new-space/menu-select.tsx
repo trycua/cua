@@ -26,13 +26,15 @@ interface MenuSelectProps {
   "aria-label": string;
   /** Marks the trigger and each item for tests (`data-<name>`, `data-<name>-option`). */
   dataName?: string;
+  /** Which side of the trigger the menu opens on (it flips when there is no room). */
+  side?: "top" | "bottom";
 }
 
 /**
  * A menu of choices with separators between groups, greyed-out entries and
  * a tooltip each: New Space's Run on and Runtime menus.
  */
-export function MenuSelect({ value, items, onValueChange, disabled, className, dataName, ...rest }: MenuSelectProps) {
+export function MenuSelect({ value, items, onValueChange, disabled, className, dataName, side = "bottom", ...rest }: MenuSelectProps) {
   const chosen = items.find((i) => i.value === value);
   const data = (suffix = "") => (dataName ? { [`data-${dataName}${suffix}`]: "" } : {});
   return (
@@ -59,8 +61,8 @@ export function MenuSelect({ value, items, onValueChange, disabled, className, d
         </SelectPrimitive.Icon>
       </SelectPrimitive.Trigger>
       <SelectPrimitive.Portal>
-        <SelectPrimitive.Positioner sideOffset={4} alignItemWithTrigger={false} className="z-[60] outline-none">
-          <SelectPrimitive.Popup className="glass max-h-(--available-height) min-w-(--anchor-width) origin-(--transform-origin) overflow-y-auto rounded-lg p-1 text-popover-foreground shadow-float outline-none transition-[opacity,scale] data-ending-style:scale-95 data-ending-style:opacity-0 data-starting-style:scale-95 data-starting-style:opacity-0">
+        <SelectPrimitive.Positioner side={side} sideOffset={4} alignItemWithTrigger={false} className="z-[60] outline-none">
+          <SelectPrimitive.Popup className="max-h-(--available-height) bg-popover min-w-(--anchor-width) origin-(--transform-origin) overflow-y-auto rounded-lg p-1 text-popover-foreground shadow-float outline-none transition-[opacity,scale] data-ending-style:scale-95 data-ending-style:opacity-0 data-starting-style:scale-95 data-starting-style:opacity-0">
             <SelectPrimitive.List>
               {items.map((item, i) => (
                 <Fragment key={item.value}>

@@ -297,7 +297,7 @@ export function NewSpaceWizard({
   );
   const [state, setState] = useState<WizardState>(() =>
     (quick ? [{ type: "choose-os", os: quick }] : (startActions ?? [])).reduce<WizardState>(
-      (s, action) => core<WizardState>("wizard.reduce", { state: s, action, env }),
+      (s, action) => core<WizardState>("wizard.reduce", { state: s, action, env, hostOs: hostOs() }),
       // The wasm core has no randomness: a seed for the name an unnamed
       // Space gets (the core shows it and creates the Space with it).
       core<WizardState>("wizard.initial", { env: { ...env, nameSeed: nameSeed() } }),
@@ -311,11 +311,11 @@ export function NewSpaceWizard({
     onCancel();
   };
   const dispatch = (action: WizardAction) =>
-    setState((s) => core<WizardState>("wizard.reduce", { state: s, action, env }));
+    setState((s) => core<WizardState>("wizard.reduce", { state: s, action, env, hostOs: hostOs() }));
   // Until the person picks, follow the configured default (it can arrive
   // after the sheet opens); the core ignores it once they picked.
   useEffect(() => {
-    setState((s) => core<WizardState>("wizard.reduce", { state: s, action: { type: "sync-default", location: defaultLocation }, env }));
+    setState((s) => core<WizardState>("wizard.reduce", { state: s, action: { type: "sync-default", location: defaultLocation }, env, hostOs: hostOs() }));
   }, [defaultLocation, env]);
   const v = core<WizardView>("wizard.view", { state, env, hostOs: hostOs() });
   // Before paint, so a quick create never shows the sheet; once, because StrictMode runs mount effects twice.

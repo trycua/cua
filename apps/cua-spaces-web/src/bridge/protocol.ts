@@ -36,6 +36,7 @@ import type { BulkResult } from "./contracts/spaces-page";
 import { NEW_SPACE_OPERATIONS, type NewSpaceOperations } from "./ops/new-space";
 import { SHARE_OPERATIONS, type ShareOperations } from "./ops/share";
 import { AGENT_KEYS_OPERATIONS } from "./ops/agent-keys";
+import { GITHUB_OPERATIONS } from "./ops/github";
 import { AGENT_DETAIL_OPERATIONS } from "./ops/agent-detail";
 import { KEYVAULT_MANAGE_OPERATIONS } from "./ops/keyvault-manage";
 import { KEYVAULT_SETUP_OPERATIONS } from "./ops/keyvault-setup";
@@ -50,13 +51,17 @@ import { RELAY_USAGE_OPERATIONS, type RelayUsageOps } from "./ops/relay-usage";
 import { NUDGES_OPERATIONS, type NudgesOps } from "./ops/nudges";
 import { RESOURCES_OPERATIONS, type ResourcesOps } from "./ops/resources";
 import { MACHINES_OPERATIONS, type MachinesOps } from "./ops/machines";
+import { SPACES_SETTINGS_OPERATIONS, type SpacesSettingsOps } from "./ops/spaces-settings";
 import { CHECKLIST_OPERATIONS, type ChecklistOps } from "./ops/checklist";
 import { LINKS_OPERATIONS, type LinksOps } from "./ops/links";
 import { CLI_OPERATIONS, type CliOps } from "./ops/cli";
+import { CI_OPERATIONS, type CiOps } from "./ops/ci";
 import { THREAD_OPERATIONS, type ThreadOps } from "./ops/thread";
 import { PRESENCE_OPERATIONS, type PresenceOps } from "./ops/presence";
 import { CLOUD_APPROVE_OPERATIONS, type CloudApproveOps } from "./ops/cloud-approve";
+import { AGENT_THREADS_OPERATIONS, type AgentThreadsOps } from "./ops/agent-threads";
 import { RUNTIME_FIX_OPERATIONS, type RuntimeFixOps } from "./ops/runtime-fix";
+import { DRIVER_OPERATIONS, type DriverOps } from "./ops/driver";
 import { TELEMETRY_OPERATIONS, type TelemetryOps } from "./ops/telemetry";
 import type { TipsState } from "./contracts/spaces-page";
 import { STARTUP_EVENTS, STARTUP_OPERATIONS, type StartupHostEvent, type StartupOps } from "./ops/startup";
@@ -94,9 +99,20 @@ export interface SettingsValues {
    * in pin order. Absent where the host keeps no core settings (the page keeps them
    * for this session). */
   notchPinned?: string[];
+  /** Which coding apps Home's agent menu shows (`AppSettings.agentMenu*`, the core's
+   * `agent_menu`). Absent where the host keeps no core settings (the page keeps it
+   * for this session). */
+  agentMenu?: AgentMenuPrefs;
 }
 
-export type UpdateChannel = "stable" | "beta";
+/** The apps whose default the person changed (`agent_menu::AgentMenuPrefs`). */
+export interface AgentMenuPrefs {
+  shown: string[];
+  hidden: string[];
+  seen: string[];
+}
+
+export type UpdateChannel = "stable" | "nightly";
 
 /** A login item status as the switch shows it (`LoginItemStatus::is_on`);
  * null when unknown or when the system can't find the app. */
@@ -232,15 +248,22 @@ export interface HostOperations
     NudgesOps,
     ResourcesOps,
     MachinesOps,
+    SpacesSettingsOps,
     ChecklistOps,
     LinksOps,
     CliOps,
+    CiOps,
     ThreadOps,
     PresenceOps,
     CloudApproveOps,
-    RuntimeFixOps {
+    AgentThreadsOps,
+    RuntimeFixOps,
+    DriverOps {
   "spaces.list": { args: Record<string, never>; result: SpaceRow[] };
-  /** `os`: the plan's OS, for a host that draws its own pending row (the SwiftUI app's notch). */
+  /** `os`: the plan's OS, for a host that draws its own pending row (the SwiftUI app's notch).
+   * `config.children` and `config.labels` (an agent home, CUA-2630) are forwarded to
+   * the SDK's create as they are by every host: Electron (`createExtras`), SwiftUI (`CreateExtras`)
+   * and Tauri (`SpaceCreateConfig`). */
   "spaces.create": { args: { config: SpaceCreateConfig; pendingId: string; os?: SpaceOs; notifyWhenReady?: boolean }; result: SpaceRow };
   "spaces.cancelCreate": { args: { pendingId: string }; result: CancelOutcome };
   "spaces.setPower": { args: { spaceId: string; on: boolean }; result: SpacePowerReport };
@@ -257,6 +280,52 @@ export interface HostOperations
    * (a Space shared with you is refused in plain words). A Space you shared,
    * or one of your computers provides, is renamed on the relay too. */
   "spaces.rename": { args: { spaceId: string; name: string }; result: null };
+  /** A Space's network as `cua network show` says it (the SDK's
+   * `Spaces.network`), with its clipboard and Volume settings. */
+  "network.get": { args: { spaceId: string }; result: SpaceNetworkWire };
+  /** Replaces a Space's network (`cua network set`): `network` is the
+   * preset word (`internet`, `none`, `localhost:5432,3000`, `localhost:all`,
+   * `lan`, `localhost+lan:5432,3000` (both extras), `custom`, `custom:none`,
+   * `unprotected`); `widen` lets a child
+   * reach more than its parent (the user's own choice, recorded). */
+  "network.set": {
+    args: {
+      spaceId: string;
+      network: string;
+      allow: string[];
+      deny: string[];
+      widen?: boolean;
+      tree?: boolean;
+      /** Where its internet traffic leaves: `internet`, `this-machine`,
+       * `space:<id>` or `socks5://host:port`. Left out: the exit it has. */
+      via?: string;
+    };
+    result: { applied: "now" | "next_start" };
+  };
+  /** What a Space tried to reach and its network blocked, most recent first. */
+  "network.log": { args: { spaceId: string }; result: NetworkEventWire[] };
+  /** The one-time notice about the new network default was shown. */
+  "network.ackNotice": { args: { spaceId: string }; result: null };
+  /** Sets a Space's clipboard (`viewing`, `ask`, `off`) and/or Volume
+   * (`own`, `off`) setting. `home` (CUA-2630): what the person approved for an agent home while it
+   * runs, written to the cua home's `agent-home/grants.json` where this machine's daemon reads it (`mentions`: Spaces and machines @mentioned in a later request, which count as the grant)
+   * (SwiftUI and Electron; the Tauri shell does not answer this operation). */
+  "spaces.setAccess": { args: { spaceId: string; clipboard?: string; volume?: string; home?: { listAll?: boolean; machines?: string[]; mentions?: string[] } }; result: null };
+  /** Every Space's place in its tree, and whether it may make children
+   * (the SDK's `Spaces.list`: `parent`, `depth`, `children`). */
+  "spaces.tree": { args: Record<string, never>; result: TreeNodeWire[] };
+  /** Lets a Space make child Spaces of its own, or stops it
+   * (`cua spaces children <space> on|off`). */
+  "children.set": { args: { spaceId: string; enabled: boolean }; result: null };
+  /** The budget of a Space's tree and what its children use
+   * (`cua spaces budget <space>`). */
+  "budget.get": { args: { spaceId: string }; result: TreeBudgetWire };
+  /** Sets the budget of a Space's tree; unset limits take the defaults. */
+  "budget.set": { args: { spaceId: string; limits: TreeBudgetLimitsWire }; result: TreeBudgetWire };
+  /** The commands a Space keeps running (`cua spaces service ls`). */
+  "services.list": { args: { spaceId: string }; result: ServiceWire[] };
+  /** Starts, stops, restarts or removes one (`cua spaces service ...`). */
+  "services.control": { args: { spaceId: string; name: string; action: "start" | "stop" | "restart" | "remove" }; result: null };
   /** Opens (or focuses) the Space's own desktop window, natively. `name`
    * and `os` title the window where the host wants them (Tauri). */
   "spaces.open": { args: { spaceId: string; name?: string; os?: SpaceOs }; result: null };
@@ -291,6 +360,8 @@ export interface HostOperations
   /** `launchAtLogin`: Done's checkbox, where the host draws it (Electron). */
   "session.completeOnboarding": { args: { mode: OnboardingMode; launchAtLogin?: boolean }; result: null };
   "session.openExternal": { args: { url: string }; result: null };
+  /** Settings, About, "Reset & Show": the host forgets the first run (its `onboarding.json`); the page clears its own (`onboarding-reset.ts`). */
+  "session.resetOnboarding": { args: Record<string, never>; result: null };
 
   /** Persistent agents (`persistent_agent_list`). */
   "agents.list": { args: Record<string, never>; result: PersistentAgent[] };
@@ -327,6 +398,94 @@ export type OpName = keyof HostOperations;
 export type OpArgs<K extends OpName> = HostOperations[K]["args"];
 export type OpResult<K extends OpName> = HostOperations[K]["result"];
 
+/** A Space's network as the host's SDK says it (`SpaceNetworkInfo`, camelCase),
+ * plus its clipboard and Volume settings. */
+export interface SpaceNetworkWire {
+  preset: string;
+  localhostPorts?: number[];
+  allLocalhostPorts?: boolean;
+  allow?: string[];
+  deny?: string[];
+  customBase?: string;
+  widenedBy?: string | null;
+  summary: string;
+  widenings?: string[];
+  /** `enforced`, `no_network`, `open`, `refused`, or empty. */
+  enforcement: string;
+  point: string;
+  note?: string | null;
+  parent?: string | null;
+  root?: string | null;
+  alwaysBlocked?: string[];
+  noticePending: boolean;
+  /** Where its internet traffic leaves; null or absent: its own network. */
+  via?: string | null;
+  /** Its topology as JSON text (`cua network show --json`'s `topology`). */
+  topologyJson?: string;
+  /** `viewing`, `ask` or `off`. */
+  clipboard: string;
+  /** `own` or `off`. */
+  volume: string;
+}
+
+/** A Space's place in its tree (the SDK's `SpaceInfo`, camelCase). */
+export interface TreeNodeWire {
+  id: string;
+  parent?: string | null;
+  depth: number;
+  /** It may make child Spaces of its own. */
+  children: boolean;
+  /** It is an agent's home (the Space made for ask-first, labelled `cua.home`): the agent it was made for.
+   * Absent or null: it is not one. The host reads it from the Space's labels, so a home is found again on
+   * a new device or after the app's storage is cleared. */
+  home?: string | null;
+}
+
+/** A tree's limits (the SDK's `TreeBudgetLimits`, camelCase); unset: the default. */
+export interface TreeBudgetLimitsWire {
+  maxSpaces?: number | null;
+  maxVcpus?: number | null;
+  maxMemoryMb?: number | null;
+  usdPerHour?: number | null;
+  usdTotal?: number | null;
+}
+
+/** A tree's budget and use (the SDK's `TreeBudget`, camelCase). */
+export interface TreeBudgetWire {
+  root: string;
+  set: TreeBudgetLimitsWire;
+  maxSpaces: number;
+  maxVcpus: number;
+  maxMemoryMb: number;
+  usdPerHour: number;
+  usdTotal?: number | null;
+  spaces: number;
+  vcpus: number;
+  memoryMb: number;
+  usdPerHourUsed: number;
+  usdSpent: number;
+}
+
+/** A kept command (the SDK's `SpaceServiceInfo`, camelCase). */
+export interface ServiceWire {
+  name: string;
+  command: string;
+  state: string;
+  restarts: number;
+  lastEnd: string;
+  probeError: string;
+}
+
+/** One kind of blocked connection (the SDK's `NetworkEvent`, camelCase). */
+export interface NetworkEventWire {
+  reason: string;
+  dst: string;
+  proto?: string | null;
+  count: number;
+  /** Unix seconds; null when unknown. */
+  lastUnix?: number | null;
+}
+
 /** Every operation, for hosts to check coverage against. */
 export const OPERATIONS = [
   "spaces.list",
@@ -337,6 +496,17 @@ export const OPERATIONS = [
   "spaces.deleteMany",
   "spaces.leave",
   "spaces.rename",
+  "network.get",
+  "network.set",
+  "network.log",
+  "network.ackNotice",
+  "spaces.setAccess",
+  "spaces.tree",
+  "children.set",
+  "budget.get",
+  "budget.set",
+  "services.list",
+  "services.control",
   "spaces.open",
   "machines.list",
   "host.status",
@@ -355,6 +525,7 @@ export const OPERATIONS = [
   "session.signOut",
   "session.completeOnboarding",
   "session.openExternal",
+  "session.resetOnboarding",
   "agents.list",
   "agents.runs",
   "agents.events",
@@ -375,6 +546,7 @@ export const OPERATIONS = [
   ...TELEPORT_OPERATIONS,
   ...SHARE_OPERATIONS,
   ...AGENT_KEYS_OPERATIONS,
+  ...GITHUB_OPERATIONS,
   ...KEYVAULT_SETUP_OPERATIONS,
   ...KEYVAULT_MANAGE_OPERATIONS,
   ...VOLUME_OPERATIONS,
@@ -383,13 +555,17 @@ export const OPERATIONS = [
   ...NUDGES_OPERATIONS,
   ...RESOURCES_OPERATIONS,
   ...MACHINES_OPERATIONS,
+  ...SPACES_SETTINGS_OPERATIONS,
   ...CHECKLIST_OPERATIONS,
   ...LINKS_OPERATIONS,
   ...CLI_OPERATIONS,
+  ...CI_OPERATIONS,
   ...THREAD_OPERATIONS,
   ...PRESENCE_OPERATIONS,
   ...CLOUD_APPROVE_OPERATIONS,
+  ...AGENT_THREADS_OPERATIONS,
   ...RUNTIME_FIX_OPERATIONS,
+  ...DRIVER_OPERATIONS,
   ...SETTINGS_OPERATIONS,
   ...NOTIFICATIONS_OPERATIONS,
   ...TELEMETRY_OPERATIONS,

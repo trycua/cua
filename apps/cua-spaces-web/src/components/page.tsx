@@ -18,11 +18,11 @@ export function Page({ children, className, contained }: { children: ReactNode; 
       </div>
     );
   }
-  // The gutter is always reserved: otherwise a page that scrolls (Settings >
-  // General) is narrower than one that doesn't, and the centred column jumps
-  // sideways between them.
+  // The scrollbar's room is always reserved (`scroll-y-stable`, index.css):
+  // otherwise a page that scrolls (Settings > General) is narrower than one
+  // that doesn't, and the centred column jumps sideways between them.
   return (
-    <div className="h-full overflow-y-auto [scrollbar-gutter:stable]">
+    <div className="h-full scroll-y-stable">
       <div className={cn("mx-auto w-full max-w-5xl px-8 pt-6 pb-16", className)}>{children}</div>
     </div>
   );

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use async_trait::async_trait;
 use cua_driver_core::{
     protocol::ToolResult,
@@ -108,7 +111,7 @@ impl Tool for DebugWindowInfoTool {
                         if ok.is_ok() && len > 0 {
                             let path = String::from_utf16_lossy(&buf[..len as usize]);
                             let base = path
-                                .rsplit(|c: char| c == '\\' || c == '/')
+                                .rsplit(['\\', '/'])
                                 .next()
                                 .unwrap_or(&path)
                                 .to_ascii_lowercase();

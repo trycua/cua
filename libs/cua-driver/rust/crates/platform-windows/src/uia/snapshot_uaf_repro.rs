@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Regression guard for the UIA element-cache use-after-free fixed in
 //! d95b89a1 (retain-under-lock / `RetainedElement`).
 //!
@@ -8,10 +11,10 @@
 //!     every cached `IUIAutomationElement`.
 //!   - Session B: `click` / `type_text` / `set_value` looked the element up out
 //!     of the cache and is mid-action, dereferencing the same COM pointer.
-//!   A bare pointer copy with no AddRef could be `Release`d to zero by A
-//!   between the lookup and the dereference → use-after-free → daemon crash.
-//!   This is the Windows analogue of the macOS #1796
-//!   `AXUIElementCopyActionNames` fault.
+//!     A bare pointer copy with no AddRef could be `Release`d to zero by A
+//!     between the lookup and the dereference → use-after-free → daemon crash.
+//!     This is the Windows analogue of the macOS #1796
+//!     `AXUIElementCopyActionNames` fault.
 //!
 //! HOW WE REPRODUCE IT DETERMINISTICALLY WITHOUT A GUI:
 //!   The cache only ever calls IUnknown vtable slots on the cached pointers

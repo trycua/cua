@@ -10,7 +10,7 @@ description: "Every Spaces tool by category, with parameters, results, errors an
   Version: 0.9.0
 */}
 
-The Spaces contract: 114 tools with the same names and schemas on every surface: `cua mcp`, `cua daemon mcp` and the Spaces SDKs. Contract 0.9.0, MCP protocol revision 2025-06-18, transports `mcp_stdio` and `mcp_streamable_http`. Experimental: names and shapes can change between minor versions.
+The Spaces contract: 121 tools with the same names and schemas on every surface: `cua mcp`, `cua daemon mcp` and the Spaces SDKs. Contract 0.9.0, MCP protocol revision 2025-06-18, transports `mcp_stdio` and `mcp_streamable_http`. Experimental: names and shapes can change between minor versions.
 
 ## Tools
 
@@ -24,6 +24,9 @@ Register, provision, list and release Spaces.
 | [`remove_space`](/spaces/reference/spaces#remove_space) | Forget a registered Space without touching it. | mutating, idempotent |
 | [`list_spaces`](/spaces/reference/spaces#list_spaces) | List the Spaces this connection can see. | read-only, idempotent |
 | [`create_space`](/spaces/reference/spaces#create_space) | Create a Space: a new sandbox on this computer, on one of your computers, or in the cloud. | destructive |
+| [`network_show`](/spaces/reference/spaces#network_show) | Show a Space's network: preset, what it opens, where it is enforced, what is always blocked. | read-only, idempotent |
+| [`network_log`](/spaces/reference/spaces#network_log) | List what a Space tried to reach and its network blocked. | read-only, idempotent |
+| [`network_set`](/spaces/reference/spaces#network_set) | Tighten a Space's network: internet, none or custom lists. Opening more is the user's to do. | mutating, idempotent |
 | [`delete_space`](/spaces/reference/spaces#delete_space) | Delete a Space's sandbox and forget it. | destructive |
 | [`stop_space`](/spaces/reference/spaces#stop_space) | Turn a Space off: stop it (disk kept, memory freed) or, with suspend, suspend it (memory kept). | mutating, idempotent |
 | [`resize_space`](/spaces/reference/spaces#resize_space) | Change a Space's vCPUs, memory or disk size. | mutating, idempotent |
@@ -36,6 +39,7 @@ Run shell commands and move files in and out of a Space.
 | Tool | Description | Effect |
 | --- | --- | --- |
 | [`space_bash`](/spaces/reference/spaces#space_bash) | Run a shell command inside the Space. | destructive |
+| [`space_job`](/spaces/reference/spaces#space_job) | Run a long command in the Space as a background job: tail its log, cancel it, or get woken when it ends. | destructive |
 | [`space_write`](/spaces/reference/spaces#space_write) | Write literal text to a path inside the Space. | destructive |
 | [`upload`](/spaces/reference/spaces#upload) | Send a local file or folder into the Space. | destructive |
 | [`send_file`](/spaces/reference/spaces#send_file) | Send a host file or folder into the Space's Downloads, verified by sha256 on arrival. | destructive |
@@ -62,6 +66,7 @@ Discover and call the MCP services inside a Space.
 | --- | --- | --- |
 | [`list_tools`](/spaces/reference/spaces#list_tools) | List the MCP services and tools reachable inside the Space. | read-only, idempotent |
 | [`call_tool`](/spaces/reference/spaces#call_tool) | Call a service tool inside the Space. | destructive |
+| [`space_service`](/spaces/reference/spaces#space_service) | Keep a command running in the Space: restarts, health checks, start on boot, logs. | destructive |
 
 ### [Agents](/spaces/reference/agents#agents)
 
@@ -77,6 +82,8 @@ Run coding agents inside a Space.
 | [`agent_stop`](/spaces/reference/agents#agent_stop) | Stop an agent run. | destructive |
 | [`agent_list`](/spaces/reference/agents#agent_list) | List agent runs in the Space. | read-only, idempotent |
 | [`agent_capabilities`](/spaces/reference/agents#agent_capabilities) | Report what the agent harnesses support. | read-only, idempotent |
+| [`agent_threads`](/spaces/reference/agents#agent_threads) | List the recent Claude Code, Codex and Hermes chats on this computer. For a person only. | read-only, idempotent |
+| [`agent_thread_read`](/spaces/reference/agents#agent_thread_read) | Read one of the recent Claude Code, Codex or Hermes chats on this computer. For a person only. | read-only, idempotent |
 
 ### [Persistent agents](/spaces/reference/agents#persistent-agents)
 
@@ -141,15 +148,15 @@ Use the user's saved credentials in a Space, only with their approval.
 | --- | --- | --- |
 | [`request_site_login`](/spaces/reference/agents#request_site_login) | Sign in to a site in the Space with the user's saved password. | destructive |
 
-### [Hotspot](/spaces/reference/spaces#hotspot)
+### [Hotspot](/spaces/reference/sharing-and-clouds#hotspot)
 
 Share this computer's network with a Space.
 
 | Tool | Description | Effect |
 | --- | --- | --- |
-| [`hotspot_start`](/spaces/reference/spaces#hotspot_start) | Start sharing this computer's network with a Space. | destructive |
-| [`hotspot_stop`](/spaces/reference/spaces#hotspot_stop) | Stop sharing this computer's network. | destructive |
-| [`hotspot_status`](/spaces/reference/spaces#hotspot_status) | Report which Spaces are sharing this computer's network, with counters. | read-only, idempotent |
+| [`hotspot_start`](/spaces/reference/sharing-and-clouds#hotspot_start) | Start sharing this computer's network with a Space. | destructive |
+| [`hotspot_stop`](/spaces/reference/sharing-and-clouds#hotspot_stop) | Stop sharing this computer's network. | destructive |
+| [`hotspot_status`](/spaces/reference/sharing-and-clouds#hotspot_status) | Report which Spaces are sharing this computer's network, with counters. | read-only, idempotent |
 
 ### [Cua Volume](/spaces/reference/agents#cua-volume)
 
@@ -183,41 +190,41 @@ Read and write the volume every Space and agent shares, decide who may reach wha
 | [`volume_cache_set`](/spaces/reference/agents#volume_cache_set) | Set the Cua Volume block cache's size cap. | mutating, idempotent |
 | [`volume_cache_clear`](/spaces/reference/agents#volume_cache_clear) | Clear the Cua Volume block cache. | mutating, idempotent |
 
-### [Sharing](/spaces/reference/spaces#sharing)
+### [Sharing](/spaces/reference/sharing-and-clouds#sharing)
 
 Let other cua.ai accounts watch or edit a Space, through the relay.
 
 | Tool | Description | Effect |
 | --- | --- | --- |
-| [`share_space`](/spaces/reference/spaces#share_space) | Let someone in your team watch or edit a Space. | mutating, idempotent |
-| [`unshare_space`](/spaces/reference/spaces#unshare_space) | Stop sharing a Space with an account, or with everyone. | mutating, idempotent |
-| [`space_shares`](/spaces/reference/spaces#space_shares) | List who a Space is shared with. | read-only, idempotent |
-| [`relay_register_space`](/spaces/reference/spaces#relay_register_space) | Publish a Space on the relay for the account's other devices. | mutating, idempotent |
-| [`relay_unregister_space`](/spaces/reference/spaces#relay_unregister_space) | Take a Space off the relay. | mutating, idempotent |
+| [`share_space`](/spaces/reference/sharing-and-clouds#share_space) | Let someone in your team watch or edit a Space. | mutating, idempotent |
+| [`unshare_space`](/spaces/reference/sharing-and-clouds#unshare_space) | Stop sharing a Space with an account, or with everyone. | mutating, idempotent |
+| [`space_shares`](/spaces/reference/sharing-and-clouds#space_shares) | List who a Space is shared with. | read-only, idempotent |
+| [`relay_register_space`](/spaces/reference/sharing-and-clouds#relay_register_space) | Publish a Space on the relay for the account's other devices. | mutating, idempotent |
+| [`relay_unregister_space`](/spaces/reference/sharing-and-clouds#relay_unregister_space) | Take a Space off the relay. | mutating, idempotent |
 
-### [Your cloud](/spaces/reference/spaces#your-cloud)
+### [Your cloud](/spaces/reference/sharing-and-clouds#your-cloud)
 
 Create Spaces in your own AWS, Google Cloud, Hetzner or Modal account: connect it, check it, and clean up what Cua created there.
 
 | Tool | Description | Effect |
 | --- | --- | --- |
-| [`cloud_status`](/spaces/reference/spaces#cloud_status) | List your clouds (AWS, Google Cloud, Hetzner, Modal): found credentials, the connected account and region, what each can run at what hourly cost, and what Cua created there. | read-only, idempotent |
-| [`cloud_connect`](/spaces/reference/spaces#cloud_connect) | Connect a cloud account Spaces can be created in. | mutating, idempotent |
-| [`cloud_test`](/spaces/reference/spaces#cloud_test) | Check a cloud account without creating anything. | read-only, idempotent |
-| [`cloud_disconnect`](/spaces/reference/spaces#cloud_disconnect) | Forget a connected cloud account (deleting what Cua created there first, with delete=true). | destructive |
-| [`cloud_approve`](/spaces/reference/spaces#cloud_approve) | Approve (or deny) what an agent asked for on a cloud: its link or its raised limits. For a person only. | destructive |
-| [`cloud_sweep`](/spaces/reference/spaces#cloud_sweep) | Find and delete what Cua left in your clouds. | destructive |
-| [`cloud_plan`](/spaces/reference/spaces#cloud_plan) | Show (or apply) the elastic pool's plan for some Spaces: where they go, which machines it adds, and the cost. | destructive |
-| [`cloud_hosts`](/spaces/reference/spaces#cloud_hosts) | List the hosts the elastic pool added in your clouds. | read-only, idempotent |
-| [`cloud_add_host`](/spaces/reference/spaces#cloud_add_host) | Add hosts to your pool in a linked cloud. | destructive |
-| [`cloud_remove_host`](/spaces/reference/spaces#cloud_remove_host) | Remove hosts this home added to your pool. | destructive |
-| [`cloud_budget`](/spaces/reference/spaces#cloud_budget) | Read or set the elastic pool's budget and autoscale switch. | mutating, idempotent |
-| [`cloud_reconcile`](/spaces/reference/spaces#cloud_reconcile) | Run the elastic pool's scale-in pass now. | destructive |
-| [`prewarm`](/spaces/reference/spaces#prewarm) | Keep Spaces of one shape ready where the elastic pool puts them, so the next creates start in a fraction of a second. | destructive |
-| [`prewarm_list`](/spaces/reference/spaces#prewarm_list) | List the prewarms and how many Spaces each keeps ready. | read-only, idempotent |
-| [`prewarm_remove`](/spaces/reference/spaces#prewarm_remove) | End a prewarm: its ready Spaces go. | mutating, idempotent |
-| [`cloud_audit`](/spaces/reference/spaces#cloud_audit) | Read the log of what Cua did in your clouds. | read-only, idempotent |
-| [`cloud_cost`](/spaces/reference/spaces#cloud_cost) | Estimate what Cua's machines in your clouds cost, by Space, agent, day or cloud. | read-only, idempotent |
+| [`cloud_status`](/spaces/reference/sharing-and-clouds#cloud_status) | List your clouds (AWS, Google Cloud, Hetzner, Modal): found credentials, the connected account and region, what each can run at what hourly cost, and what Cua created there. | read-only, idempotent |
+| [`cloud_connect`](/spaces/reference/sharing-and-clouds#cloud_connect) | Connect a cloud account Spaces can be created in. | mutating, idempotent |
+| [`cloud_test`](/spaces/reference/sharing-and-clouds#cloud_test) | Check a cloud account without creating anything. | read-only, idempotent |
+| [`cloud_disconnect`](/spaces/reference/sharing-and-clouds#cloud_disconnect) | Forget a connected cloud account (deleting what Cua created there first, with delete=true). | destructive |
+| [`cloud_approve`](/spaces/reference/sharing-and-clouds#cloud_approve) | Approve (or deny) what an agent asked for on a cloud: its link or its raised limits. For a person only. | destructive |
+| [`cloud_sweep`](/spaces/reference/sharing-and-clouds#cloud_sweep) | Find and delete what Cua left in your clouds. | destructive |
+| [`cloud_plan`](/spaces/reference/sharing-and-clouds#cloud_plan) | Show (or apply) the elastic pool's plan for some Spaces: where they go, which machines it adds, and the cost. | destructive |
+| [`cloud_hosts`](/spaces/reference/sharing-and-clouds#cloud_hosts) | List the hosts the elastic pool added in your clouds. | read-only, idempotent |
+| [`cloud_add_host`](/spaces/reference/sharing-and-clouds#cloud_add_host) | Add hosts to your pool in a linked cloud. | destructive |
+| [`cloud_remove_host`](/spaces/reference/sharing-and-clouds#cloud_remove_host) | Remove hosts this home added to your pool. | destructive |
+| [`cloud_budget`](/spaces/reference/sharing-and-clouds#cloud_budget) | Read or set the elastic pool's budget and autoscale switch. | mutating, idempotent |
+| [`cloud_reconcile`](/spaces/reference/sharing-and-clouds#cloud_reconcile) | Run the elastic pool's scale-in pass now. | destructive |
+| [`prewarm`](/spaces/reference/sharing-and-clouds#prewarm) | Keep Spaces of one shape ready where the elastic pool puts them, so the next creates start in a fraction of a second. | destructive |
+| [`prewarm_list`](/spaces/reference/sharing-and-clouds#prewarm_list) | List the prewarms and how many Spaces each keeps ready. | read-only, idempotent |
+| [`prewarm_remove`](/spaces/reference/sharing-and-clouds#prewarm_remove) | End a prewarm: its ready Spaces go. | mutating, idempotent |
+| [`cloud_audit`](/spaces/reference/sharing-and-clouds#cloud_audit) | Read the log of what Cua did in your clouds. | read-only, idempotent |
+| [`cloud_cost`](/spaces/reference/sharing-and-clouds#cloud_cost) | Estimate what Cua's machines in your clouds cost, by Space, agent, day or cloud. | read-only, idempotent |
 
 ## Space ids
 
@@ -299,7 +306,7 @@ An argument is missing, malformed or out of range.
 
 Fix: Check the call against the tool's input schema; the message names the argument.
 
-Listed by [`resize_space`](/spaces/reference/spaces#resize_space), [`thread_join`](/spaces/reference/threads#thread_join), [`thread_join_code_create`](/spaces/reference/threads#thread_join_code_create), [`thread_join_code_cancel`](/spaces/reference/threads#thread_join_code_cancel), [`volume_storage_set`](/spaces/reference/agents#volume_storage_set), [`volume_cache_set`](/spaces/reference/agents#volume_cache_set), [`relay_unregister_space`](/spaces/reference/spaces#relay_unregister_space), [`cloud_connect`](/spaces/reference/spaces#cloud_connect), [`cloud_approve`](/spaces/reference/spaces#cloud_approve), [`cloud_add_host`](/spaces/reference/spaces#cloud_add_host), [`cloud_budget`](/spaces/reference/spaces#cloud_budget), [`prewarm`](/spaces/reference/spaces#prewarm).
+Listed by [`network_show`](/spaces/reference/spaces#network_show), [`network_set`](/spaces/reference/spaces#network_set), [`resize_space`](/spaces/reference/spaces#resize_space), [`space_service`](/spaces/reference/spaces#space_service), [`agent_thread_read`](/spaces/reference/agents#agent_thread_read), [`thread_join`](/spaces/reference/threads#thread_join), [`thread_join_code_create`](/spaces/reference/threads#thread_join_code_create), [`thread_join_code_cancel`](/spaces/reference/threads#thread_join_code_cancel), [`volume_storage_set`](/spaces/reference/agents#volume_storage_set), [`volume_cache_set`](/spaces/reference/agents#volume_cache_set), [`relay_unregister_space`](/spaces/reference/sharing-and-clouds#relay_unregister_space), [`cloud_connect`](/spaces/reference/sharing-and-clouds#cloud_connect), [`cloud_approve`](/spaces/reference/sharing-and-clouds#cloud_approve), [`cloud_add_host`](/spaces/reference/sharing-and-clouds#cloud_add_host), [`cloud_budget`](/spaces/reference/sharing-and-clouds#cloud_budget), [`prewarm`](/spaces/reference/sharing-and-clouds#prewarm).
 
 #### not_found
 
@@ -307,7 +314,7 @@ No Space, run, window, service, tool or file with that id.
 
 Fix: List what exists first (list_spaces, agent_list, list_space_windows, list_tools).
 
-Listed by [`thread_join_code_cancel`](/spaces/reference/threads#thread_join_code_cancel), [`volume_sync_resolve`](/spaces/reference/agents#volume_sync_resolve), [`cloud_remove_host`](/spaces/reference/spaces#cloud_remove_host).
+Listed by [`network_show`](/spaces/reference/spaces#network_show), [`network_log`](/spaces/reference/spaces#network_log), [`network_set`](/spaces/reference/spaces#network_set), [`space_job`](/spaces/reference/spaces#space_job), [`space_service`](/spaces/reference/spaces#space_service), [`agent_thread_read`](/spaces/reference/agents#agent_thread_read), [`thread_join_code_cancel`](/spaces/reference/threads#thread_join_code_cancel), [`volume_sync_resolve`](/spaces/reference/agents#volume_sync_resolve), [`cloud_remove_host`](/spaces/reference/sharing-and-clouds#cloud_remove_host).
 
 #### spacesd_not_available
 
@@ -321,6 +328,8 @@ The Space's cua-spacesd reports a feature this tool needs as unsupported; the me
 
 Fix: Use a Space whose spacesd supports the feature (see the tool's `requires`).
 
+Listed by [`space_service`](/spaces/reference/spaces#space_service).
+
 #### host_capability_missing
 
 A prerequisite on this computer is missing: a local runtime, an operator display or app-session providers.
@@ -333,7 +342,7 @@ The operation does not apply to this kind of Space.
 
 Fix: Use a tool that serves the Space's provider (see the tool's `providers`).
 
-Listed by [`stop_space`](/spaces/reference/spaces#stop_space), [`resize_space`](/spaces/reference/spaces#resize_space), [`start_space`](/spaces/reference/spaces#start_space).
+Listed by [`network_log`](/spaces/reference/spaces#network_log), [`network_set`](/spaces/reference/spaces#network_set), [`stop_space`](/spaces/reference/spaces#stop_space), [`resize_space`](/spaces/reference/spaces#resize_space), [`start_space`](/spaces/reference/spaces#start_space), [`space_job`](/spaces/reference/spaces#space_job).
 
 #### unauthenticated
 
@@ -341,7 +350,7 @@ The Space's spacesd or the cua.ai relay rejected the token.
 
 Fix: Re-add the Space with a valid token, or sign in again with `cua auth login`.
 
-Listed by [`add_space`](/spaces/reference/spaces#add_space), [`list_spaces`](/spaces/reference/spaces#list_spaces), [`share_space`](/spaces/reference/spaces#share_space), [`unshare_space`](/spaces/reference/spaces#unshare_space), [`space_shares`](/spaces/reference/spaces#space_shares), [`relay_register_space`](/spaces/reference/spaces#relay_register_space), [`relay_unregister_space`](/spaces/reference/spaces#relay_unregister_space).
+Listed by [`add_space`](/spaces/reference/spaces#add_space), [`list_spaces`](/spaces/reference/spaces#list_spaces), [`share_space`](/spaces/reference/sharing-and-clouds#share_space), [`unshare_space`](/spaces/reference/sharing-and-clouds#unshare_space), [`space_shares`](/spaces/reference/sharing-and-clouds#space_shares), [`relay_register_space`](/spaces/reference/sharing-and-clouds#relay_register_space), [`relay_unregister_space`](/spaces/reference/sharing-and-clouds#relay_unregister_space).
 
 #### permission_denied
 
@@ -349,7 +358,7 @@ The signed-in account may not reach that relay computer.
 
 Fix: Sign in with the account that owns the computer.
 
-Listed by [`stop_space`](/spaces/reference/spaces#stop_space), [`start_space`](/spaces/reference/spaces#start_space), [`thread_import`](/spaces/reference/threads#thread_import), [`agent_set_rights`](/spaces/reference/threads#agent_set_rights), [`thread_join`](/spaces/reference/threads#thread_join), [`thread_join_code_create`](/spaces/reference/threads#thread_join_code_create), [`thread_join_code_cancel`](/spaces/reference/threads#thread_join_code_cancel), [`thread_join_redeem`](/spaces/reference/threads#thread_join_redeem), [`thread_settings`](/spaces/reference/threads#thread_settings), [`thread_device_revoke`](/spaces/reference/threads#thread_device_revoke), [`share_space`](/spaces/reference/spaces#share_space), [`unshare_space`](/spaces/reference/spaces#unshare_space), [`relay_unregister_space`](/spaces/reference/spaces#relay_unregister_space).
+Listed by [`stop_space`](/spaces/reference/spaces#stop_space), [`start_space`](/spaces/reference/spaces#start_space), [`agent_threads`](/spaces/reference/agents#agent_threads), [`agent_thread_read`](/spaces/reference/agents#agent_thread_read), [`thread_import`](/spaces/reference/threads#thread_import), [`agent_set_rights`](/spaces/reference/threads#agent_set_rights), [`thread_join`](/spaces/reference/threads#thread_join), [`thread_join_code_create`](/spaces/reference/threads#thread_join_code_create), [`thread_join_code_cancel`](/spaces/reference/threads#thread_join_code_cancel), [`thread_join_redeem`](/spaces/reference/threads#thread_join_redeem), [`thread_settings`](/spaces/reference/threads#thread_settings), [`thread_device_revoke`](/spaces/reference/threads#thread_device_revoke), [`share_space`](/spaces/reference/sharing-and-clouds#share_space), [`unshare_space`](/spaces/reference/sharing-and-clouds#unshare_space), [`relay_unregister_space`](/spaces/reference/sharing-and-clouds#relay_unregister_space).
 
 #### ambiguous_host
 
@@ -365,7 +374,7 @@ The host is at a capacity limit: two macOS VMs per Mac (Apple's macOS license, e
 
 Fix: Delete a Space on that host (delete_space), pick another computer, or create a Linux Space instead.
 
-Listed by [`create_space`](/spaces/reference/spaces#create_space), [`cloud_plan`](/spaces/reference/spaces#cloud_plan), [`prewarm`](/spaces/reference/spaces#prewarm).
+Listed by [`create_space`](/spaces/reference/spaces#create_space), [`cloud_plan`](/spaces/reference/sharing-and-clouds#cloud_plan), [`prewarm`](/spaces/reference/sharing-and-clouds#prewarm).
 
 #### host_capacity
 
@@ -453,7 +462,7 @@ Starting, stopping or deleting the Space's sandbox failed.
 
 Fix: Check the local runtime (`cua doctor`) or the cloud pool, then retry.
 
-Listed by [`create_space`](/spaces/reference/spaces#create_space), [`delete_space`](/spaces/reference/spaces#delete_space), [`stop_space`](/spaces/reference/spaces#stop_space), [`resize_space`](/spaces/reference/spaces#resize_space), [`start_space`](/spaces/reference/spaces#start_space), [`agent_pause`](/spaces/reference/agents#agent_pause), [`agent_resume`](/spaces/reference/agents#agent_resume).
+Listed by [`create_space`](/spaces/reference/spaces#create_space), [`network_log`](/spaces/reference/spaces#network_log), [`network_set`](/spaces/reference/spaces#network_set), [`delete_space`](/spaces/reference/spaces#delete_space), [`stop_space`](/spaces/reference/spaces#stop_space), [`resize_space`](/spaces/reference/spaces#resize_space), [`start_space`](/spaces/reference/spaces#start_space), [`agent_pause`](/spaces/reference/agents#agent_pause), [`agent_resume`](/spaces/reference/agents#agent_resume).
 
 #### cloud
 
@@ -461,7 +470,7 @@ Your cloud account refused or failed a call Cua made for a Space there (AWS, Goo
 
 Fix: Fix what the message names in that account (`cua cloud test <provider>` checks without creating anything), or connect another region or project.
 
-Listed by [`stop_space`](/spaces/reference/spaces#stop_space), [`start_space`](/spaces/reference/spaces#start_space), [`cloud_connect`](/spaces/reference/spaces#cloud_connect), [`cloud_test`](/spaces/reference/spaces#cloud_test), [`cloud_disconnect`](/spaces/reference/spaces#cloud_disconnect), [`cloud_approve`](/spaces/reference/spaces#cloud_approve), [`cloud_sweep`](/spaces/reference/spaces#cloud_sweep), [`cloud_plan`](/spaces/reference/spaces#cloud_plan), [`cloud_hosts`](/spaces/reference/spaces#cloud_hosts), [`cloud_add_host`](/spaces/reference/spaces#cloud_add_host), [`cloud_remove_host`](/spaces/reference/spaces#cloud_remove_host), [`cloud_reconcile`](/spaces/reference/spaces#cloud_reconcile), [`prewarm`](/spaces/reference/spaces#prewarm), [`prewarm_list`](/spaces/reference/spaces#prewarm_list), [`prewarm_remove`](/spaces/reference/spaces#prewarm_remove).
+Listed by [`stop_space`](/spaces/reference/spaces#stop_space), [`start_space`](/spaces/reference/spaces#start_space), [`cloud_connect`](/spaces/reference/sharing-and-clouds#cloud_connect), [`cloud_test`](/spaces/reference/sharing-and-clouds#cloud_test), [`cloud_disconnect`](/spaces/reference/sharing-and-clouds#cloud_disconnect), [`cloud_approve`](/spaces/reference/sharing-and-clouds#cloud_approve), [`cloud_sweep`](/spaces/reference/sharing-and-clouds#cloud_sweep), [`cloud_plan`](/spaces/reference/sharing-and-clouds#cloud_plan), [`cloud_hosts`](/spaces/reference/sharing-and-clouds#cloud_hosts), [`cloud_add_host`](/spaces/reference/sharing-and-clouds#cloud_add_host), [`cloud_remove_host`](/spaces/reference/sharing-and-clouds#cloud_remove_host), [`cloud_reconcile`](/spaces/reference/sharing-and-clouds#cloud_reconcile), [`prewarm`](/spaces/reference/sharing-and-clouds#prewarm), [`prewarm_list`](/spaces/reference/sharing-and-clouds#prewarm_list), [`prewarm_remove`](/spaces/reference/sharing-and-clouds#prewarm_remove).
 
 #### relay
 
@@ -469,7 +478,7 @@ The cua.ai relay directory failed.
 
 Fix: Retry; check `cua auth status`.
 
-Listed by [`list_spaces`](/spaces/reference/spaces#list_spaces), [`stop_space`](/spaces/reference/spaces#stop_space), [`start_space`](/spaces/reference/spaces#start_space), [`share_space`](/spaces/reference/spaces#share_space), [`unshare_space`](/spaces/reference/spaces#unshare_space), [`space_shares`](/spaces/reference/spaces#space_shares), [`relay_register_space`](/spaces/reference/spaces#relay_register_space), [`relay_unregister_space`](/spaces/reference/spaces#relay_unregister_space).
+Listed by [`list_spaces`](/spaces/reference/spaces#list_spaces), [`stop_space`](/spaces/reference/spaces#stop_space), [`start_space`](/spaces/reference/spaces#start_space), [`share_space`](/spaces/reference/sharing-and-clouds#share_space), [`unshare_space`](/spaces/reference/sharing-and-clouds#unshare_space), [`space_shares`](/spaces/reference/sharing-and-clouds#space_shares), [`relay_register_space`](/spaces/reference/sharing-and-clouds#relay_register_space), [`relay_unregister_space`](/spaces/reference/sharing-and-clouds#relay_unregister_space).
 
 #### mcp
 

@@ -16,6 +16,7 @@
  *   answers approvals.
  */
 
+import { useHiddenSpaceIds } from "../lib/prepare/store";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { CoreClient } from "./core";
@@ -238,7 +239,9 @@ export function useAgentChats(attempts: readonly ChatAttempt[] = []): AgentChats
   const [settled, setSettled] = useState(false);
   const [pending, setPending] = useState(0);
   const [round, setRound] = useState(0);
-  const list = (spaces ?? []).filter((s) => !s.id.startsWith("pending:"));
+  // The home warming for Home's box is no agent's place until a person wrote into it.
+  const warming = useHiddenSpaceIds(core);
+  const list = (spaces ?? []).filter((s) => !s.id.startsWith("pending:") && !warming.has(s.id));
   const ids = list.map((s) => s.id).join("\n");
   // Not asked again for a minute: a Space with no thread (a stopped machine, an old daemon) stays that way.
   const misses = useRef(new MissCache(MISS_TTL_MS));
@@ -493,7 +496,9 @@ export function useAgentDm(chat: AgentChat | null, only: string | null): AgentDm
       const t = chat?.spaces.find((s) => s.spaceId === spaceId);
       if (!data || !t || !text.trim()) return;
       // Sending is posting: an @mention of the agent is its task in that Space.
-      const body = new RegExp(`(^|\\s)@${t.handle}\\b`, "i").test(text) ? text.trim() : `@${t.handle} ${text.trim()}`;
+      // It names the Space's handle (`@claude`), never the host's key for the member (`claude-8`).
+      const at = t.member.handle ?? t.handle;
+      const body = new RegExp(`(^|\\s)@${at}\\b`, "i").test(text) ? text.trim() : `@${at} ${text.trim()}`;
       const entry = await data.call("thread.post", { spaceId, text: body });
       if (entry) merge(spaceId, [entry]);
       setReadSeq((r) => ({ ...r, [spaceId]: null }));

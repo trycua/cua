@@ -208,6 +208,7 @@ async fn space_service_delegates_to_cua_spaces_and_the_passthrough_carries_crede
     let msg = svc
         .delete_space(pb::DeleteSpaceRequest {
             space: added.id.clone(),
+            keep_children: false,
         })
         .await
         .unwrap()

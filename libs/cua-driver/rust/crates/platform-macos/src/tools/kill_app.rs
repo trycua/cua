@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! macOS `kill_app` tool — force-terminate a process by pid via SIGKILL.
 //!
 //! Cross-platform mirror of the Windows `kill_app` tool (which calls
@@ -55,7 +58,7 @@ impl Tool for KillAppTool {
         &self,
         adapter_id: &str,
         args: &Value,
-    ) -> Result<Option<Value>, String> {
+    ) -> Result<Option<Value>, cua_driver_core::tool::ProtectedResourceScopeError> {
         if adapter_id != "process_control" {
             return Ok(None);
         }
@@ -82,8 +85,8 @@ impl Tool for KillAppTool {
             {
                 Ok(Some(scope)) => scope["fingerprint"].clone(),
                 Ok(None) => Value::Null,
-                Err(message) => {
-                    return stale_process_refusal(message);
+                Err(error) => {
+                    return stale_process_refusal(error.message);
                 }
             };
             if current != *expected {

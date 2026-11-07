@@ -59,6 +59,7 @@ import { onboardingInitial, onboardingTelemetry, onboardingView, readSavedOnboar
 import type { OnboardingFlowState } from "./contracts/onboarding";
 import { useRelayUsage } from "./relay-usage";
 import { useAgentKeys } from "./agent-keys";
+import { useNewOnboarding } from "./flags";
 import { newPendingId } from "./store";
 import { extraName, spokenName } from "./space-names";
 import { runCreateFix } from "./create-retry";
@@ -85,6 +86,7 @@ function withExtraFix(view: FirstRunView, fix: CreateFix | null): FirstRunView {
   return { ...view, setup: { ...view.setup, extra: { ...card, note: `${card.note} ${fix.text}`, action: { id: "fix", label: fix.label } } } };
 }
 import { spaceState } from "../lib/spaces";
+import type { NewRunSaved } from "../lib/first-run-new";
 
 
 
@@ -115,7 +117,8 @@ export function cliMissing(cli: FirstRunCli | undefined): boolean {
 export function firstRunSteps(input: FirstRunInput): FirstRunStep[] {
   const cli = input.step === "cli" || Boolean(input.cli?.installed) || cliMissing(input.cli);
   const asks = input.hostOs === "macos" && input.signedIn && input.host?.shareDesktop !== false;
-  return ["welcome", "connect", ...(cli ? ["cli" as const] : []), "devices", ...(asks ? ["permissions" as const] : []), "setup"];
+  // Ask first has no Try it screen: the person asks in the ask-first Space.
+  return ["welcome", "connect", ...(cli ? ["cli" as const] : []), "devices", ...(asks ? ["permissions" as const] : []), ...(input.askFirst ? [] : ["setup" as const])];
 }
 
 /** The two permissions a shared screen needs (`firstRun.permissions`): the
@@ -153,18 +156,32 @@ const rank = (id: string) => {
   return i < 0 ? PREFERENCE.length : i;
 };
 
+/** Without the core: screen 3's sign-in line (`first_run::sign_in_row`). */
+function fallbackSignInRow(input: FirstRunInput): FirstRunRow | null {
+  if (input.signingIn) {
+    return input.signInCode
+      ? { id: "account", state: "checking", title: "Signing in", note: `Enter the code ${input.signInCode} on the sign-in page.`, action: { id: "reopen-sign-in", label: "Open the page" }, settingsUrl: null }
+      : { id: "account", state: "checking", title: "Signing in", note: "Finish signing in to Cua in your browser.", action: { id: "sign-in-code", label: "Use a code instead" }, settingsUrl: null };
+  }
+  if (!input.signInFailure) return null;
+  const code = input.signInFailure === "notConfirmed" || input.signInFailure === "codeRejected" || input.signInFailure === "unknown";
+  return { id: "account", state: "fix", title: "Sign-in didn't finish", note: "Try again, or use a code instead.", action: code ? { id: "sign-in-code", label: "Use a code instead" } : null, settingsUrl: null };
+}
+
 /** Without the core: the screens in their plainest state. Not the
  * product's behaviour; the demo and tests without wasm use it. */
 function fallbackView(input: FirstRunInput): FirstRunView {
-  const place = input.hostOs === "macos" ? "this Mac" : input.hostOs === "windows" ? "this PC" : "this machine";
+  const place = input.hostOs === "macos" ? "this Mac" : input.hostOs === "windows" ? "this PC" : "this computer";
   const Place = `${place[0]!.toUpperCase()}${place.slice(1)}`;
   const found = (input.agents ?? []).filter((a) => a.installed || a.configured).sort((a, b) => rank(a.agent) - rank(b.agent));
   const connected = found.filter((a) => a.configured || (input.picked ?? []).includes(a.agent));
   const lead = connected[0] ?? null;
   const steps = firstRunSteps(input);
   // The permissions screen of a Mac that no longer asks shows Try it instead.
-  const step: FirstRunStep = steps.includes(input.step) ? input.step : "setup";
+  const step: FirstRunStep = steps.includes(input.step) ? input.step : input.askFirst ? steps[steps.length - 1]! : "setup";
   const at = Math.max(steps.indexOf(step), 0);
+  /** The button that ends an ask-first run says where it goes. */
+  const continueLabel = (of: FirstRunStep) => (input.askFirst && steps[steps.length - 1] === of ? "Open Cua" : "Continue");
   const base: FirstRunView = {
     step,
     later: "Skip for now",
@@ -202,7 +219,7 @@ function fallbackView(input: FirstRunInput): FirstRunView {
       };
     }
     case "welcome":
-      return { ...base, welcome: { title: "Your machines, shared by your team and its agents.", lede: `Run agents in Spaces on ${place}, or on any computer your team connects.`, primary: { id: "start", label: "Get started" } } };
+      return { ...base, welcome: { title: "Your computers, shared by your team and its agents.", lede: `Run agents in Spaces on ${place}, or on any computer your team connects.`, primary: { id: "start", label: "Get started" } } };
     case "connect":
       return {
         ...base,
@@ -225,14 +242,16 @@ function fallbackView(input: FirstRunInput): FirstRunView {
       return {
         ...base,
         devices: {
-          title: input.signedIn ? `${Place} is in your account.` : "Add your other machines.",
-          lede: `Sign in to Cua here and on your other machines. Then they can all use ${place}'s Spaces.`,
+          title: input.signedIn ? `${Place} is in your account.` : "Add your other computers.",
+          lede: `Sign in to Cua here and on your other computers. Then they can all use ${place}'s Spaces.`,
           rows: [
-            { title: "Your other machines", note: "Sign in on each one" },
+            { title: "Your other computers", note: "Sign in on each one" },
             { title: "Your cloud", note: "Hetzner, AWS, Google Cloud or Modal" },
           ],
-          status: null,
-          primary: input.signedIn ? { id: "continue", label: "Continue" } : { id: "sign-in", label: "Sign in" },
+          status: input.signedIn ? null : fallbackSignInRow(input),
+          primary: input.signedIn
+            ? { id: "continue", label: continueLabel("devices") }
+            : { id: "sign-in", label: input.signInFailure && !input.signingIn ? "Try again" : "Sign in" },
           secondary: input.signedIn ? null : { id: "not-now", label: "Not now" },
           note: input.signedIn ? null : `Not now keeps Cua on ${place} only. You can sign in later.`,
         },
@@ -264,7 +283,7 @@ function fallbackView(input: FirstRunInput): FirstRunView {
             : `Allow two permissions so your team and agents can see and use ${place}.`,
           rows,
           note: `Allow opens System Settings, where you turn on ${host?.appName || "Cua Spaces"}.`,
-          primary: all ? { id: "continue", label: "Continue" } : null,
+          primary: all ? { id: "continue", label: continueLabel("permissions") } : null,
           secondary: all ? null : { id: "not-now", label: "Not now" },
         },
       };
@@ -318,6 +337,8 @@ export interface FirstRunSaved {
   todosClosed: boolean;
   /** Advanced setup on Pick your agent (CUA-2267). */
   advanced?: boolean;
+  /** The new first run's progress (Labs, "Try the new setup"; `lib/first-run-new.ts`). Kept here so Reset & Show forgets it too. */
+  newRun?: Partial<NewRunSaved>;
 }
 
 const KEY = "cua-spaces:first-run";
@@ -476,7 +497,7 @@ export interface FirstRunHook {
   disconnect(agent: string): Promise<void>;
   /** Starts an agent's own sign-in on this computer (`codex login`). */
   signIn(agent: string): Promise<void>;
-  /** A screen's button: `start`, `continue`, `skip`, `not-now` (next screen), `recheck` (read the agents again), `install` (the CLI), `sign-in`, `set-up`, `open-settings`, `allow` (the app's guide to that System Settings pane), `copy`, `add`. */
+  /** A screen's button: `start`, `continue`, `skip`, `not-now` (next screen), `recheck` (read the agents again), `install` (the CLI), `sign-in`, `sign-in-code` (a code instead of the browser), `reopen-sign-in` (the sign-in page again), `set-up`, `open-settings`, `allow` (the app's guide to that System Settings pane), `copy`, `add`. */
   act(id: string, settingsUrl?: string | null): Promise<void>;
   /** Copies `text` (the tab shown), else the selected request. */
   copyPrompt(text?: string): Promise<void>;
@@ -569,7 +590,7 @@ export function useScreenPermissions(active = true, pollMs = FIRST_RUN_POLL_MS):
 }
 
 /** Live readings while `active` (the first run, or what reads its state). */
-export function useFirstRun(active = true, pollMs = FIRST_RUN_POLL_MS): FirstRunHook {
+export function useFirstRun(active = true, pollMs = FIRST_RUN_POLL_MS, onFinished?: () => void): FirstRunHook {
   const ctx = useContext(BridgeContext);
   if (!ctx) throw new Error("bridge hooks need a <BridgeProvider> above them");
   const { core, adapter, store } = ctx;
@@ -579,6 +600,9 @@ export function useFirstRun(active = true, pollMs = FIRST_RUN_POLL_MS): FirstRun
   const spaces = useSpaces();
   const offersHook = useFirstSpaceOffers();
   const usage = useRelayUsage();
+  // The new setup (Settings, Advanced, Labs; off by default): no Try it screen, and the run ends on the new
+  // Home while the first Space gets ready. Off, the first run is the one every install has.
+  const askFirst = useNewOnboarding();
   const flags = useSyncExternalStore(subscribe, () => `${flag(UPSELL_DISMISSED_KEY)}:${flag(TEAMMATES_KEY)}`, () => "false:false");
   const [agents, setAgents] = useState<AgentSetupRow[] | null>(null);
   // The one connection status (`agents.status`); none where the host can't tell.
@@ -602,6 +626,11 @@ export function useFirstRun(active = true, pollMs = FIRST_RUN_POLL_MS): FirstRun
 
   const signedIn = Boolean(session.data?.signedIn);
   const signingIn = session.data?.signIn.kind === "starting" || session.data?.signIn.kind === "waiting";
+  // Every way the sign-in ends shows on the screen (the first run has no sidebar or toast).
+  const signInNow = session.data?.signIn;
+  const signInCode = signInNow?.kind === "waiting" ? (signInNow.userCode ?? null) : null;
+  const signInFailure = signInNow?.kind === "failed" ? (signInNow.reason ?? "unknown") : null;
+  const signInUrl = session.data?.signInUrl ?? null;
   // An older saved run may say any step; an unknown one starts over.
   const step: FirstRunStep = STEPS.includes(s.step) ? s.step : "welcome";
 
@@ -641,6 +670,23 @@ export function useFirstRun(active = true, pollMs = FIRST_RUN_POLL_MS): FirstRun
       window.removeEventListener("focus", focus);
     };
   }, [active, adapter, step, s.finishedLater, tick, pollMs]);
+
+  // Back from the browser: read the sign-in again at once, so one that
+  // finished (or failed) there shows now, not on the next host push.
+  const refreshSession = useRef(session.refresh);
+  refreshSession.current = session.refresh;
+  useEffect(() => {
+    if (!active || !signingIn) return;
+    const again = () => {
+      if (document.visibilityState !== "hidden") void refreshSession.current().catch(() => {});
+    };
+    window.addEventListener("focus", again);
+    document.addEventListener("visibilitychange", again);
+    return () => {
+      window.removeEventListener("focus", again);
+      document.removeEventListener("visibilitychange", again);
+    };
+  }, [active, signingIn]);
 
   const rows: FirstRunAgent[] | null = agents
     ? agents.map((a) => ({
@@ -712,6 +758,8 @@ export function useFirstRun(active = true, pollMs = FIRST_RUN_POLL_MS): FirstRun
     agentUsedAt: null,
     signedIn,
     signingIn,
+    signInCode,
+    signInFailure,
     host: host
       ? {
           configured: host.configured,
@@ -729,11 +777,12 @@ export function useFirstRun(active = true, pollMs = FIRST_RUN_POLL_MS): FirstRun
     plan,
     cli: cli.state,
     cliName: settings.data?.cli?.name ?? null,
+    askFirst,
   };
 
   // The lead connected agent (the core's order), for the try screen's access log.
   const leadName = (() => {
-    const v = firstRunView(core, { ...baseInput, step: "setup" });
+    const v = firstRunView(core, { ...baseInput, step: "setup", askFirst: false });
     const t = v.setup?.prompt ? v.setup.title.replace(/^Try it in /, "").replace(/\.$/, "") : null;
     return t;
   })();
@@ -797,6 +846,19 @@ export function useFirstRun(active = true, pollMs = FIRST_RUN_POLL_MS): FirstRun
     if (how === "completed") funnel("step_completed");
     else funnel("step_skipped", "step");
     go(shown[Math.min(at + 1, shown.length - 1)]!);
+  };
+  async function finishRun() {
+    // "Not now" on the first Space card already counted that screen as skipped.
+    if (extra.phase !== "not-now") funnel("step_completed");
+    if (store) track(() => store.trackOnboardingFinished(telemetryState()));
+    await session.completeOnboarding(host?.configured ? "host" : "client");
+    writeFirstRun({ finishedLater: false, todosClosed: false });
+  }
+  /** The last screen's button with the new setup on: the run is finished and the app opens Home. */
+  const endRun = async (how: "completed" | "skipped" = "completed") => {
+    if (how === "skipped") funnel("step_skipped", "step");
+    await finishRun();
+    onFinished?.();
   };
 
   // Each screen is counted when it shows (once per arrival).
@@ -957,14 +1019,18 @@ export function useFirstRun(active = true, pollMs = FIRST_RUN_POLL_MS): FirstRun
     openUrl: (url) => session.openExternal(url).catch(() => {}),
     extra: extraAct,
     async act(id, settingsUrl) {
+      // With the new setup, the last screen ends the run: the person asks on Home while the first Space is prepared.
+      const last = askFirst && at === shown.length - 1 && view.step !== "welcome";
       switch (id) {
         case "start":
         case "continue":
-          forward();
+          if (last) await endRun();
+          else forward();
           break;
         case "skip":
         case "not-now":
-          forward("skipped");
+          if (last) await endRun("skipped");
+          else forward("skipped");
           break;
         case "advanced":
         case "simple":
@@ -975,6 +1041,13 @@ export function useFirstRun(active = true, pollMs = FIRST_RUN_POLL_MS): FirstRun
           break;
         case "sign-in":
           await session.signIn().catch(() => {});
+          break;
+        case "sign-in-code":
+          // A code to enter on any browser or phone: for a tab that was closed, or opened in another browser.
+          await session.signIn({ code: true }).catch(() => {});
+          break;
+        case "reopen-sign-in":
+          if (signInUrl) await session.openExternal(signInUrl).catch(() => {});
           break;
         case "set-up":
           autoSetUp.current = true;
@@ -1002,13 +1075,7 @@ export function useFirstRun(active = true, pollMs = FIRST_RUN_POLL_MS): FirstRun
       }
       refresh();
     },
-    async finish() {
-      // "Not now" on the first Space card already counted that screen as skipped.
-      if (extra.phase !== "not-now") funnel("step_completed");
-      if (store) track(() => store.trackOnboardingFinished(telemetryState()));
-      await session.completeOnboarding(host?.configured ? "host" : "client");
-      writeFirstRun({ finishedLater: false, todosClosed: false });
-    },
+    finish: finishRun,
     later() {
       funnel("step_skipped", "later");
       leftAtMs = Date.now();

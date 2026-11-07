@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Native-Wayland backend.
 //!
 //! Used when the experimental backend is enabled under a Wayland compositor.
@@ -17,6 +20,7 @@ pub mod hyprland_capture;
 mod hyprland_compatibility;
 pub mod hyprland_input;
 pub mod kwin_helper;
+pub(crate) mod kwin_layout;
 pub mod niri;
 pub use niri::keyboard::call_budget as niri_keyboard_budget;
 pub(crate) use niri::AimedPoint;
@@ -31,9 +35,14 @@ pub mod shell_helper;
 pub mod sway_ipc;
 mod virtual_keyboard;
 // RemoteDesktop/libei input is portable and ships in release binaries.
-// PipeWire ScreenCast capture is no longer built here (the portal-capture feature is kept for downstream forwarding).
 #[cfg(feature = "portal-input")]
 pub mod libei;
+// PipeWire ScreenCast capture backs the portal video route for compositors
+// without wlr-screencopy (KDE/KWin).
+#[cfg(feature = "portal-capture")]
+pub(crate) mod libpipewire;
+#[cfg(feature = "portal-capture")]
+pub(crate) mod portal_screencast;
 
 /// Whether the GNOME/KDE RemoteDesktop + libei input backend is compiled in.
 pub const PORTAL_INPUT_ENABLED: bool = cfg!(feature = "portal-input");
@@ -1718,23 +1727,40 @@ fn pointer_reaches(origin_x: i32, origin_y: i32, w: u32, h: u32, x: i32, y: i32)
 
 /// How one desktop-scope action is addressed: desktop-frame points (from
 /// `get_desktop_state`) convert to layout coordinates, and the virtual pointer
-/// is sized, from a single compositor snapshot. Other compositors keep the
-/// frame at the layout origin and the pointer on the output's own mode.
+/// is sized, from a single compositor snapshot. Compositors without an adapter
+/// keep the frame at the layout origin and the pointer on the output's own mode.
 #[derive(Clone, Debug, Default)]
 pub struct DesktopInputSpace {
     snapshot: Option<hyprland::DesktopSnapshot>,
+    kwin_distorted: Option<kwin_layout::DistortedCapture>,
 }
 
 impl DesktopInputSpace {
     pub fn current() -> anyhow::Result<Self> {
-        let snapshot = if is_wayland() && hyprland::is_session() {
-            Some(hyprland::desktop_snapshot()?)
-        } else if niri::is_session() {
-            Some(niri::desktop_snapshot()?)
-        } else {
-            None
+        if is_wayland() && hyprland::is_session() {
+            return Ok(Self {
+                snapshot: Some(hyprland::desktop_snapshot()?),
+                kwin_distorted: None,
+            });
+        }
+        if niri::is_session() {
+            return Ok(Self {
+                snapshot: Some(niri::desktop_snapshot()?),
+                kwin_distorted: None,
+            });
+        }
+        // KWin input goes through libei, which takes layout coordinates, so it
+        // has no virtual-pointer layout to qualify.
+        let Some(layout) = kwin_desktop_layout()? else {
+            return Ok(Self::default());
         };
-        Ok(Self { snapshot })
+        Ok(Self {
+            snapshot: Some(hyprland::DesktopSnapshot {
+                frame: layout.frame,
+                pointer: None,
+            }),
+            kwin_distorted: layout.distorted,
+        })
     }
 
     /// Layout coordinates of a desktop-frame point.
@@ -1758,6 +1784,9 @@ impl DesktopInputSpace {
                 || snapshot.frame.output_contains_layout(layout_x, layout_y),
             "desktop point ({x}, {y}) is not on a powered monitor in the current layout; call get_desktop_state again"
         );
+        if let Some(distorted) = &self.kwin_distorted {
+            distorted.admit(&snapshot.frame, (x, y), (layout_x, layout_y))?;
+        }
         Ok((layout_x, layout_y))
     }
 }
@@ -1820,8 +1849,24 @@ pub(crate) fn compositor_logical_frame() -> Option<anyhow::Result<(u32, u32)>> {
             niri::desktop_snapshot().map(|snapshot| (snapshot.frame.width, snapshot.frame.height)),
         );
     }
-    hyprland::is_session()
-        .then(|| hyprland::screen_size().map(|(width, height, _scale)| (width, height)))
+    if hyprland::is_session() {
+        return Some(hyprland::screen_size().map(|(width, height, _scale)| (width, height)));
+    }
+    kwin_desktop_layout()
+        .transpose()
+        .map(|layout| layout.map(|layout| (layout.frame.width, layout.frame.height)))
+}
+
+/// KWin's desktop layout: its pointer input is logical while its screenshots
+/// are physical, so a screenshot pixel and a pointer coordinate only agree in
+/// this frame. `None` on any other compositor; a KWin that cannot report a
+/// usable layout is an error rather than a silent return to the mismatched
+/// physical frame.
+pub(crate) fn kwin_desktop_layout() -> anyhow::Result<Option<kwin_layout::DesktopLayout>> {
+    if !is_wayland() || hyprland::is_session() || niri::is_session() {
+        return Ok(None);
+    }
+    kwin_layout::desktop_layout()
 }
 
 /// Pointer space for `zwlr_virtual_pointer_v1::motion_absolute`, as
@@ -2153,7 +2198,7 @@ pub fn click_desktop(
     let (x, y) = space.input_layout(x, y)?;
     with_libei_fallback(
         || click_vptr(None, (x, y).into(), count, button, Some(space)),
-        || libei_click(x, y, count, button),
+        || libei_click_point(x, y, count, button),
     )
 }
 
@@ -2637,6 +2682,7 @@ pub fn drag(
 }
 
 /// Drag through desktop-absolute points without activating a named toplevel.
+#[allow(clippy::too_many_arguments)]
 pub fn drag_desktop(
     space: &DesktopInputSpace,
     from_x: i32,
@@ -3088,6 +3134,10 @@ fn libei_click(_x: i32, _y: i32, _count: u32, _button: u8) -> anyhow::Result<()>
     unreachable!("libei fallback compiled out (no portal-input feature)")
 }
 #[cfg(not(feature = "portal-input"))]
+fn libei_click_point(_x: i32, _y: i32, _count: u32, _button: u8) -> anyhow::Result<()> {
+    unreachable!("libei fallback compiled out (no portal-input feature)")
+}
+#[cfg(not(feature = "portal-input"))]
 fn libei_scroll(_direction: &str, _amount: u32) -> anyhow::Result<()> {
     unreachable!("libei fallback compiled out (no portal-input feature)")
 }
@@ -3153,21 +3203,28 @@ fn libei_click_with(
     button: u8,
     dimensions: impl FnOnce() -> anyhow::Result<(u32, u32)>,
 ) -> anyhow::Result<()> {
-    let btn = cua_button_to_libei(button);
     let (px, py) = if (x, y) == (0, 0) {
         let (w, h) = dimensions()?;
         ((w / 2) as i32, (h / 2) as i32)
     } else {
         (x, y)
     };
-    libei::move_absolute(px as f64, py as f64)?;
+    libei_click_point(px, py, count, button)
+}
+
+/// Click exactly at layout point `(x, y)`. Desktop-scope clicks use this: there
+/// `(0, 0)` is a real pixel of the screenshot, not "the output centre".
+#[cfg(feature = "portal-input")]
+fn libei_click_point(x: i32, y: i32, count: u32, button: u8) -> anyhow::Result<()> {
+    let btn = cua_button_to_libei(button);
+    libei::move_absolute(x as f64, y as f64)?;
     for i in 0..count.max(1) {
         if i > 0 {
             crate::interaction::pause(std::time::Duration::from_millis(80));
         }
-        libei::click(px as f64, py as f64, btn)?;
+        libei::click(x as f64, y as f64, btn)?;
     }
-    record_synth_cursor(px, py);
+    record_synth_cursor(x, y);
     Ok(())
 }
 
@@ -4756,6 +4813,22 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_negative_layout_point_is_refused_even_inside_a_region() {
+        let wrapped = region_route::RegionRect {
+            offset_x: -1920.0,
+            offset_y: 0.0,
+            width: 1920.0,
+            height: 1080.0,
+        };
+        let regions = [wrapped];
+        let err = region_route::route_absolute([("left", &regions[..])], -100.0, 10.0).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "libei: (-100, 10) is left of or above the layout origin, which libei cannot address"
+        );
+    }
+
     #[cfg(feature = "portal-input")]
     mod libei_adapters {
         use super::super::*;
@@ -4787,6 +4860,14 @@ mod tests {
                 })
                 .collect();
             assert_eq!(buttons, vec![true, false]);
+        }
+
+        #[test]
+        fn desktop_click_adapter_keeps_literal_origin() {
+            let (result, events) = record(|| libei_click_point(0, 0, 1, 1));
+            result.unwrap();
+            assert_eq!(events[0], motion(0.0, 0.0));
+            assert_eq!(events[1], motion(0.0, 0.0));
         }
 
         #[test]

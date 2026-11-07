@@ -373,7 +373,7 @@ pub fn docs_table(all: &[ProviderDef]) -> String {
             let word = match (m.kind.as_str(), m.flow.as_str()) {
                 ("api_key", _) => "API key",
                 ("import_login", "paste") => "A pasted Claude token",
-                ("import_login", _) => "Your sign-in on this machine",
+                ("import_login", _) => "Your sign-in on this computer",
                 ("device_code" | "subscription_login", _) => "Plan sign-in",
                 ("browser_oauth", _) => "Browser sign-in",
                 ("adc", _) => "Cloud credentials",

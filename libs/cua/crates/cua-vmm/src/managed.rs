@@ -46,6 +46,9 @@
 
 use std::path::{Path, PathBuf};
 
+#[path = "managed_wsl.rs"]
+pub mod wsl;
+
 use crate::error::{Result, VmmError};
 use crate::host;
 
@@ -154,12 +157,19 @@ pub fn disk_pin() -> Pin {
 
 /// Everything the first Linux Space downloads, in bytes.
 pub fn first_use_download() -> u64 {
+    if cfg!(windows) {
+        return wsl::first_use_download();
+    }
     colima_pin().size + lima_pin().size + disk_pin().size
 }
 
 /// One-line status for `doctor`.
 pub const STATUS: &str =
     "built-in Linux runtime (a small VM with Docker and gVisor), set up on first use";
+
+/// [`STATUS`] on Windows.
+pub const STATUS_WINDOWS: &str =
+    "built-in Linux runtime (a WSL 2 distribution of cua's own with Docker), set up on first use";
 
 /// The setting that picks the Linux engine: `runtime.linux` in
 /// `$CUA_HOME/config.toml`, overridden by `CUA_RUNTIME_LINUX`.
@@ -226,9 +236,10 @@ impl LinuxSource {
     }
 }
 
-/// The built-in runtime runs on macOS 13+ (Virtualization.framework).
+/// The built-in runtime runs on macOS 13+ (Virtualization.framework) and
+/// on Windows (a WSL 2 distribution, [`wsl`]).
 pub fn supported() -> bool {
-    cfg!(target_os = "macos")
+    cfg!(any(target_os = "macos", windows))
 }
 
 /// Local Linux Spaces run on the built-in runtime here, as [`choose`]
@@ -271,11 +282,17 @@ pub fn socket() -> PathBuf {
 
 /// The socket as an engine endpoint.
 pub fn endpoint() -> String {
+    if cfg!(windows) {
+        return wsl::endpoint();
+    }
     format!("unix://{}", socket().display())
 }
 
 /// Whether an engine endpoint is the built-in runtime's.
 pub fn is_endpoint(uri: &str) -> bool {
+    if cfg!(windows) {
+        return uri == wsl::endpoint();
+    }
     Path::new(uri.trim_start_matches("unix://")).starts_with(root())
 }
 
@@ -286,12 +303,18 @@ fn instance_dir() -> PathBuf {
 
 /// The VM was created (it may be stopped).
 pub fn exists() -> bool {
+    if cfg!(windows) {
+        return wsl::provisioned();
+    }
     instance_dir().join("lima.yaml").is_file()
 }
 
 /// Whether the VM as it runs now shares every job directory (Lima's
 /// configuration of the running instance names each).
 pub fn shares_job_dirs() -> bool {
+    if cfg!(windows) {
+        return false;
+    }
     let Ok(y) = std::fs::read_to_string(instance_dir().join("lima.yaml")) else {
         return false;
     };
@@ -302,11 +325,18 @@ pub fn shares_job_dirs() -> bool {
 
 /// The VM runs and its Docker engine answers on [`socket`].
 pub fn running() -> bool {
+    #[cfg(windows)]
+    {
+        if !wsl::pipe_exists() {
+            wsl::reattach();
+        }
+        wsl::pipe_exists()
+    }
     #[cfg(unix)]
     {
         std::os::unix::net::UnixStream::connect(socket()).is_ok()
     }
-    #[cfg(not(unix))]
+    #[cfg(not(any(unix, windows)))]
     {
         false
     }
@@ -773,6 +803,9 @@ pub const SETTING_UP: &str = "Setting up the Linux runtime";
 /// progress.
 #[cfg(feature = "lume")]
 pub async fn ensure() -> Result<String> {
+    if cfg!(windows) {
+        return ensure_windows().await;
+    }
     if running() {
         trim_running_vm_once().await;
         return Ok(endpoint());
@@ -785,7 +818,14 @@ pub async fn ensure() -> Result<String> {
     if !supported() {
         return Err(VmmError::missing(
             "a container engine",
-            "the built-in Linux runtime runs on macOS; install Docker",
+            "the built-in Linux runtime runs on macOS and Windows; install Docker",
+        ));
+    }
+    // Its VM would never start here: say so now, not after a minute of
+    // retries ending in "exit status 1".
+    if host::mac_virtualization_supported() == Some(false) {
+        return Err(VmmError::other(
+            cua_create_failure::preflight::MAC_UNSUPPORTED,
         ));
     }
     check_path_length()?;
@@ -855,6 +895,93 @@ pub async fn ensure() -> Result<String> {
         secs = started.elapsed().as_secs_f64(),
         "built-in Linux runtime is up"
     );
+    Ok(endpoint())
+}
+
+/// When the Windows runtime's engine last answered a check.
+static WINDOWS_VERIFIED: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
+
+/// [`ensure`] on Windows: this home's WSL 2 distribution is imported and
+/// set up when it is not ([`wsl::provision`]), Docker is started in it, and
+/// its pipe is served. Each step is skipped when it is already done, so
+/// calling it again is cheap and safe; the answer is checked at most every
+/// 30 s.
+#[cfg(feature = "lume")]
+async fn ensure_windows() -> Result<String> {
+    use crate::progress::{Phase, Progress, report};
+    let fresh_enough = || {
+        WINDOWS_VERIFIED
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_some_and(|t| t.elapsed() < std::time::Duration::from_secs(30))
+    };
+    if wsl::pipe_exists() && fresh_enough() {
+        return Ok(endpoint());
+    }
+    let _one = SETUP.lock().await;
+    if wsl::pipe_exists() && fresh_enough() {
+        return Ok(endpoint());
+    }
+    let w = wsl::WslExe;
+    let name = wsl::distro();
+    let step = |text: &str, f: f64| {
+        report(
+            Progress::phase(Phase::Preparing)
+                .detail(format!("{SETTING_UP}: {text}"))
+                .fraction(f),
+        )
+    };
+    step("checking WSL", 0.0);
+    let registered = match wsl::probe(&w).await {
+        wsl::Probe::Unavailable(why) => {
+            return Err(VmmError::other(format!(
+                "the built-in Linux runtime cannot run here: {why}"
+            )));
+        }
+        wsl::Probe::Available { distro } => distro,
+    };
+    if !registered || !wsl::provisioned() {
+        let started = std::time::Instant::now();
+        let pin = wsl::rootfs_pin();
+        std::fs::create_dir_all(root())?;
+        crate::disk::ensure_space(
+            &root(),
+            wsl::SETUP_DISK_BYTES,
+            "set up the built-in Linux runtime",
+        )?;
+        if registered {
+            // A setup that did not finish: start it over (this home's distribution only).
+            wsl::unregister(&w, &name).await;
+        }
+        let file = root().join("downloads").join(format!(
+            "alpine-minirootfs-{}-{}.tar.gz",
+            wsl::ALPINE_VERSION,
+            &pin.sha256[..8]
+        ));
+        std::fs::create_dir_all(file.parent().expect("has a parent"))?;
+        let mut dl = Downloads::new(pin.size);
+        download(pin, None, &file, &mut dl).await?;
+        wsl::provision(&w, &name, &wsl::install_dir(), &file, &|t, f| step(t, f)).await?;
+        let _ = std::fs::remove_file(&file);
+        tracing::info!(
+            secs = started.elapsed().as_secs_f64(),
+            "built-in Linux runtime (WSL) is set up"
+        );
+    }
+    step("starting Docker", 0.9);
+    wsl::start_engine(&w, &name).await?;
+    wsl::serve_pipe()?;
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !wsl::pipe_exists() {
+        if tokio::time::Instant::now() > deadline {
+            return Err(VmmError::other(
+                "the built-in Linux runtime's engine is up but its pipe did not open",
+            ));
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    let _ = std::fs::remove_file(stopped_names_file());
+    *WINDOWS_VERIFIED.lock().unwrap_or_else(|e| e.into_inner()) = Some(std::time::Instant::now());
     Ok(endpoint())
 }
 
@@ -1065,6 +1192,17 @@ async fn wait_engine() -> Result<()> {
 
 /// Stops the VM (its Spaces stop with it). Nothing to do when it is down.
 pub async fn stop(names: &[String]) -> Result<()> {
+    if cfg!(windows) {
+        let _one = SETUP.lock().await;
+        if !exists() {
+            return Ok(());
+        }
+        std::fs::write(stopped_names_file(), serde_json::to_vec(names)?)?;
+        wsl::stop_serving();
+        *WINDOWS_VERIFIED.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        wsl::terminate(&wsl::WslExe, &wsl::distro()).await;
+        return Ok(());
+    }
     let Some(tools) = installed_tools() else {
         return Ok(());
     };
@@ -1080,6 +1218,12 @@ pub async fn stop(names: &[String]) -> Result<()> {
 /// A Colima, Lima or Docker of the user's is elsewhere and stays.
 pub async fn remove() -> Result<()> {
     let _one = SETUP.lock().await;
+    if cfg!(windows) {
+        wsl::stop_serving();
+        *WINDOWS_VERIFIED.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        // This home's distribution only; the user's own are never named.
+        wsl::unregister(&wsl::WslExe, &wsl::distro()).await;
+    }
     if let Some(tools) = installed_tools()
         && exists()
         && let Err(e) = run_colima(&tools, &["delete", "--force", "--data"], 180).await
@@ -1201,9 +1345,34 @@ async fn ensure_disk(dl: &mut Downloads) -> Result<PathBuf> {
         "https://ghcr.io/v2/{DISK_REPOSITORY}/blobs/sha256:{}",
         pin.sha256
     );
-    let token = ghcr_token().await?;
-    download(Pin { url: "", ..pin }, Some((&url, &token)), &path, dl).await?;
-    Ok(path)
+    // A registry token is short-lived: on a slow connection it can run out
+    // mid-download, and the download carries on from the same place with a new one.
+    for attempt in 1..=3 {
+        let token = ghcr_token().await?;
+        let r = crate::fetch::fetch(
+            &crate::fetch::Fetch {
+                url: &url,
+                bearer: Some(&token),
+                size: Some(pin.size),
+                sha256: pin.sha256,
+            },
+            &path,
+            &crate::fetch::Policy::default(),
+            &mut |n| dl.add(n),
+        )
+        .await;
+        match r {
+            Ok(()) => return Ok(path),
+            Err(crate::fetch::FetchError::Unauthorized) if attempt < 3 => continue,
+            Err(crate::fetch::FetchError::Failed(e)) => {
+                return Err(VmmError::other(format!(
+                    "download the built-in Linux runtime: {e}"
+                )));
+            }
+            Err(e) => return Err(e.into()),
+        }
+    }
+    unreachable!("the loop returns on its last try")
 }
 
 /// A pull token for [`DISK_REPOSITORY`]: anonymous, or with the
@@ -1243,8 +1412,9 @@ fn http() -> Result<reqwest::Client> {
         .map_err(|e| VmmError::other(format!("download the built-in Linux runtime: {e}")))
 }
 
-/// Streams a pinned file to `to` (via `<to>.partial`), checking its size
-/// and SHA-256 before it is renamed into place.
+/// Downloads a pinned file to `to` (via `<to>.partial`), resuming from what
+/// is there and retrying a lost connection ([`crate::fetch`]); its size and
+/// SHA-256 are checked before it is renamed into place.
 #[cfg(feature = "lume")]
 async fn download(
     pin: Pin,
@@ -1252,52 +1422,28 @@ async fn download(
     to: &Path,
     dl: &mut Downloads,
 ) -> Result<()> {
-    use sha2::{Digest, Sha256};
-    use tokio::io::AsyncWriteExt as _;
     let (url, token) = match bearer {
         Some((u, t)) => (u, Some(t)),
         None => (pin.url, None),
     };
-    let mut req = http()?.get(url);
-    if let Some(t) = token {
-        req = req.bearer_auth(t);
-    }
-    let mut res = req
-        .send()
-        .await
-        .and_then(|r| r.error_for_status())
-        .map_err(|e| VmmError::other(format!("download the built-in Linux runtime: {e}")))?;
-    let partial = to.with_extension("partial");
-    let mut file = tokio::fs::File::create(&partial).await?;
-    let mut hash = Sha256::new();
-    let mut got = 0u64;
-    while let Some(chunk) = res
-        .chunk()
-        .await
-        .map_err(|e| VmmError::other(format!("download the built-in Linux runtime: {e}")))?
-    {
-        got += chunk.len() as u64;
-        if got > pin.size {
-            let _ = tokio::fs::remove_file(&partial).await;
-            return Err(VmmError::other(
-                "a built-in Linux runtime download is larger than its pin",
-            ));
+    crate::fetch::fetch(
+        &crate::fetch::Fetch {
+            url,
+            bearer: token,
+            size: Some(pin.size),
+            sha256: pin.sha256,
+        },
+        to,
+        &crate::fetch::Policy::default(),
+        &mut |n| dl.add(n),
+    )
+    .await
+    .map_err(|e| match e {
+        crate::fetch::FetchError::Failed(e) => {
+            VmmError::other(format!("download the built-in Linux runtime: {e}"))
         }
-        hash.update(&chunk);
-        file.write_all(&chunk).await?;
-        dl.add(chunk.len() as u64);
-    }
-    file.flush().await?;
-    drop(file);
-    let digest: String = hash.finalize().iter().map(|b| format!("{b:02x}")).collect();
-    if digest != pin.sha256 || got != pin.size {
-        let _ = tokio::fs::remove_file(&partial).await;
-        return Err(VmmError::other(format!(
-            "a built-in Linux runtime download did not match its checksum (got {digest}); try again"
-        )));
-    }
-    tokio::fs::rename(&partial, to).await?;
-    Ok(())
+        e => e.into(),
+    })
 }
 
 fn sha256_file(path: &Path) -> Result<String> {
@@ -1354,7 +1500,7 @@ mod engine_impl {
             LinuxSource::Builtin if supported() => builtin(cfg),
             LinuxSource::Builtin => Err(VmmError::missing(
                 "a container engine",
-                "the built-in Linux runtime runs on macOS; set runtime.linux to auto or system",
+                "the built-in Linux runtime runs on macOS and Windows; set runtime.linux to auto or system",
             )),
             LinuxSource::System => ContainerRuntime::connect(cfg)
                 .await
@@ -1465,6 +1611,12 @@ mod engine_impl {
         /// is not in the VM.
         async fn ready_for_mounts(&self, spec: &StartSpec) -> Result<()> {
             crate::types::check_mounts(crate::BackendKind::Container, &spec.mounts)?;
+            if cfg!(windows) && !spec.mounts.is_empty() {
+                return Err(VmmError::invalid(
+                    "the built-in Linux runtime on Windows cannot mount Windows folders yet \
+                     (its distribution has no access to the Windows drives)",
+                ));
+            }
             if let Some(m) = spec.mounts.iter().find(|m| !is_shared(&m.host)) {
                 return Err(VmmError::invalid(format!(
                     "the built-in Linux runtime shares only cua's job directories, not {}",
@@ -1676,6 +1828,25 @@ mod engine_impl {
             self.engine().await?.claim(member, new_name, identity).await
         }
 
+        fn keeps_prepared(&self) -> bool {
+            true
+        }
+
+        async fn save_prepared(&self, name: &str, tag: &str) -> Result<Option<ImageSource>> {
+            let _busy = self.busy();
+            self.engine().await?.save_prepared(name, tag).await
+        }
+
+        async fn find_prepared(&self, tag: &str) -> Result<Option<ImageSource>> {
+            let _busy = self.busy();
+            self.engine().await?.find_prepared(tag).await
+        }
+
+        async fn drop_prepared(&self, tag: &str) -> Result<()> {
+            let _busy = self.busy();
+            self.engine().await?.drop_prepared(tag).await
+        }
+
         async fn stop(&self, name: &str) -> Result<()> {
             {
                 let _busy = self.busy();
@@ -1724,6 +1895,22 @@ mod engine_impl {
         ) -> Result<crate::egress::Enforcement> {
             let _busy = self.busy();
             self.engine().await?.set_egress(name, policy).await
+        }
+
+        async fn set_network(
+            &self,
+            name: &str,
+            settings: &crate::network::NetworkSettings,
+        ) -> Result<crate::network::Applied> {
+            let _busy = self.busy();
+            self.engine().await?.set_network(name, settings).await
+        }
+
+        async fn network_events(&self, name: &str) -> Result<Vec<crate::egress::NetworkEvent>> {
+            match self.engine_if_running().await {
+                Some(rt) => rt.network_events(name).await,
+                None => Ok(vec![]),
+            }
         }
 
         async fn egress(&self, name: &str) -> Result<crate::egress::EgressPolicy> {
@@ -1933,11 +2120,16 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("trim.sh");
         std::fs::write(&file, body).unwrap();
-        let out = std::process::Command::new("sh")
+        let out = match std::process::Command::new("sh")
             .arg("-n")
             .arg(&file)
             .output()
-            .unwrap();
+        {
+            Ok(o) => o,
+            // No `sh` on this PC (a Windows host without Git Bash): nothing to parse it with.
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return,
+            Err(e) => panic!("{e}"),
+        };
         assert!(
             out.status.success(),
             "{}",
@@ -2009,7 +2201,7 @@ mod tests {
         assert!(!LinuxSource::System.allows_builtin());
         assert_eq!(
             LinuxSource::Auto.allows_builtin(),
-            cfg!(target_os = "macos")
+            cfg!(any(target_os = "macos", windows))
         );
     }
 

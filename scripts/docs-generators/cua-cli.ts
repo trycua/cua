@@ -95,10 +95,21 @@ export interface CuaDumpDocs {
 export const CLI_GROUPS: CliGroup[] = [
   {
     slug: 'spaces-and-computers',
-    title: 'Spaces, computers and teams',
-    summary:
-      'Your Spaces and machines, unattended access on this machine, devices, teams, your remote use this month, and a cua-spacesd by URL',
-    commands: ['spaces', 'machines', 'host', 'devices', 'team', 'usage', 'spacesd', 'share'],
+    title: 'Spaces',
+    summary: 'Your Spaces, and a cua-spacesd by URL',
+    commands: ['spaces', 'spacesd'],
+  },
+  {
+    slug: 'computers-and-teams',
+    title: 'Computers and teams',
+    summary: 'Your computers, unattended access on this computer, teams and your remote use this month',
+    commands: ['host', 'devices', 'team', 'usage'],
+  },
+  {
+    slug: 'sharing-and-networks',
+    title: 'Sharing and Space networks',
+    summary: 'Share a port, file or folder as a link or a public TCP address, set what a Space can reach and where its traffic leaves, the exit through this computer, and the paths between your computers',
+    commands: ['share', 'network', 'hotspot', 'mesh'],
   },
   {
     slug: 'files-teleport-and-keys',
@@ -111,6 +122,12 @@ export const CLI_GROUPS: CliGroup[] = [
     title: 'Sandboxes',
     summary: 'Create, reach and delete sandboxes; local runtimes, disk cleanup and the sandbox viewer',
     commands: ['sandbox', 'runtime', 'cache', 'viewer'],
+  },
+  {
+    slug: 'ci-runners',
+    title: 'CI runners',
+    summary: 'Run GitHub Actions jobs in a fresh Space each on your own computers (an experiment: `cua experiments enable ci-runners`)',
+    commands: ['ci'],
   },
   {
     slug: 'images-and-clouds',
@@ -134,7 +151,7 @@ export const CLI_GROUPS: CliGroup[] = [
     slug: 'account-and-setup',
     title: 'Account and setup',
     summary: 'Sign in and out, user defaults, the cua daemon, health checks and usage telemetry',
-    commands: ['auth', 'config', 'daemon', 'doctor', 'telemetry'],
+    commands: ['auth', 'config', 'daemon', 'doctor', 'telemetry', 'experiments'],
   },
   {
     slug: 'pool',

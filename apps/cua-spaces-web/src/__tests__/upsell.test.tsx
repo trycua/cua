@@ -68,7 +68,7 @@ describe.skipIf(!wasmBuilt)("in-app Pro and Teams prompts (real routes, wasm cor
       return el as HTMLElement;
     });
     expect(card.getAttribute("data-plan-card")).toBe("free");
-    expect(card.textContent).toBe("Free: 2 machines at once and 20 hours a month away from the machine you're using.");
+    expect(card.textContent).toBe("Free: 2 computers in use at once and 20 hours a month away from the computer you're using.");
     // "Free plan" shows once, in the plan row.
     const tab = document.querySelector<HTMLElement>('[data-settings-tab="account"]')!;
     expect(tab.textContent).not.toContain("Free plan");
@@ -79,12 +79,12 @@ describe.skipIf(!wasmBuilt)("in-app Pro and Teams prompts (real routes, wasm cor
     await waitFor(() => expect(features(tracked)).toContain("upsell_plan_card_click"));
   });
 
-  it("Settings shows the usage meter: Pro at 5 of 5 live sessions says so, with Upgrade to Teams", async () => {
+  it("Settings shows the usage meter: Pro at 5 of 5 computers in use at once gets the sessions card, with Upgrade to Teams", async () => {
     const opened: string[] = [];
     const { router } = await mountApp("/settings", host(idle({ plan: "pro", liveSessions: 5, liveSessionsLimit: 5, hoursUsed: 12, hoursLimit: 200 }), opened));
     await router.load();
     const sessions = await waitFor(() => {
-      const el = document.querySelector('[data-usage-meter="Live sessions"]');
+      const el = document.querySelector('[data-usage-meter="Computers in use"]');
       expect(el).toBeTruthy();
       return el as HTMLElement;
     });
@@ -92,18 +92,19 @@ describe.skipIf(!wasmBuilt)("in-app Pro and Teams prompts (real routes, wasm cor
     expect(sessions.getAttribute("aria-valuemax")).toBe("5");
     expect(sessions.hasAttribute("data-full")).toBe(true);
     const hours = document.querySelector('[data-usage-meter="Remote hours"]')!;
-    expect(document.body.textContent).toContain("Machines in use right now");
-    expect(document.body.textContent).toContain("Time away from this machine");
+    expect(document.body.textContent).toContain("Computers in use right now");
+    expect(document.body.textContent).toContain("Time away from this computer");
     expect(hours.getAttribute("aria-valuenow")).toBe("12");
     expect(hours.hasAttribute("data-full")).toBe(false);
-    const notice = await waitFor(() => {
-      const el = document.querySelector("[data-relay-allowance]");
+    const card = await waitFor(() => {
+      const el = document.querySelector("[data-relay-allowance='limit-card'] [data-upgrade-card]");
       expect(el).toBeTruthy();
       return el as HTMLElement;
     });
-    expect(notice.textContent).toContain("You're using 5 of 5 live sessions on Pro. Close one or upgrade to Teams.");
-    fireEvent.click(notice.querySelector("[data-relay-upgrade]")!);
-    await waitFor(() => expect(opened).toEqual(["https://app.cua.ai/buy/teams?from=app_meter"]));
+    expect(card.getAttribute("data-upgrade-card")).toBe("sessions");
+    expect(card.textContent).toContain("You have 5 of 5 computers in use at once");
+    fireEvent.click(card.querySelector("[data-upgrade-cta]")!);
+    await waitFor(() => expect(opened).toEqual(["https://app.cua.ai/buy/teams?from=app_card_sessions"]));
   });
 
   it("Account on Pro has no Upgrade button, only the web account", async () => {
@@ -114,7 +115,7 @@ describe.skipIf(!wasmBuilt)("in-app Pro and Teams prompts (real routes, wasm cor
       expect(el).toBeTruthy();
       return el as HTMLElement;
     });
-    expect(card.textContent).toBe("Pro: 5 machines at once and 200 hours a month away from the machine you're using.");
+    expect(card.textContent).toBe("Pro: 5 computers in use at once and 200 hours a month away from the computer you're using.");
     expect(document.querySelector("[data-plan-primary]")).toBeNull();
     expect(document.querySelector("[data-manage-account]")?.textContent).toBe("Manage account on the web");
   });
@@ -151,7 +152,7 @@ describe.skipIf(!wasmBuilt)("in-app Pro and Teams prompts (real routes, wasm cor
       expect(el).toBeTruthy();
       return el as HTMLElement;
     });
-    expect(prompt.textContent).toContain("Two computers now. Free includes 2 live sessions and 20 remote hours a month. Pro makes it 5 and 200, for $18 a month.");
+    expect(prompt.textContent).toContain("Two computers now. Free includes 2 computers in use at once and 20 remote hours a month. Pro makes it 5 and 200, for $18 a month.");
     await waitFor(() => expect(features(tracked)).toContain("upsell_machine_shown"));
     fireEvent.click(document.querySelector("[data-upsell=machine] [data-upsell-cta]")!);
     await waitFor(() => expect(opened).toEqual(["https://app.cua.ai/buy/pro?from=app_machine"]));

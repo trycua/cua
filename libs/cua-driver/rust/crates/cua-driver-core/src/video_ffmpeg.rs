@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! ffmpeg-subprocess video backend (Windows + Linux).
 //!
 //! macOS uses native ScreenCaptureKit in `platform_macos::video_sckit`
@@ -208,7 +211,9 @@ pub fn find_ffprobe() -> Option<PathBuf> {
     }
 }
 
-pub(crate) fn find_ffmpeg() -> Option<PathBuf> {
+/// Locate `ffmpeg`, preferring PATH and falling back to the winget install
+/// location on Windows. Shared by every subprocess-encoding video backend.
+pub fn find_ffmpeg() -> Option<PathBuf> {
     if Command::new("ffmpeg")
         .arg("-version")
         .stdout(Stdio::null())

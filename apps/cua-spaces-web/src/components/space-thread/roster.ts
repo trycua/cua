@@ -130,6 +130,8 @@ export function buildRoster(input: {
   harnessName: (harness: string) => string;
   /** Your role in the Space (null: a daemon that doesn't say, the owner's). */
   role?: ThreadRole | null;
+  /** Whose Space it is, when it was shared with you: only the owner sees the share list, so a guest learns the owner from here. */
+  owner?: { name: string; email?: string | null } | null;
 }): Roster {
   const agents: RosterAgent[] = input.members.map((m) => ({
     kind: "agent",
@@ -168,6 +170,12 @@ export function buildRoster(input: {
   const mine = input.me ? posted.get(input.me) : undefined;
   const myLabel = mine?.name || (input.identity ? personLabel(input.identity) : "You");
   add({ kind: "person", id: input.me ?? "me", label: myLabel, me: true }, input.me ?? "me", myLabel.toLowerCase());
+  if (input.owner) {
+    const label = input.owner.name || personLabel(input.owner.email ?? "");
+    const key = `share:${input.owner.email ?? label}`;
+    const author = [...posted.values()].find((a) => a.name.toLowerCase() === label.toLowerCase());
+    add({ kind: "person", id: author?.id ?? key, label, me: false }, author?.id ?? key, label.toLowerCase());
+  }
   for (const s of input.shares) {
     const label = personLabel(s.who);
     const author = [...posted.values()].find((a) => a.name.toLowerCase() === label.toLowerCase());

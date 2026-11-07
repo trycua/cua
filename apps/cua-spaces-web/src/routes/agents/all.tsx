@@ -41,6 +41,7 @@ import {
 } from "@/lib/agents";
 import { needsAgentKey } from "@/lib/agent-keys";
 import { relativeTime, cn } from "@/lib/utils";
+import { thisComputerLabel } from "@/lib/host-labels";
 
 export const Route = createFileRoute("/agents/all")({
   component: AgentsPage,
@@ -94,7 +95,7 @@ function AgentsPage() {
   const detail = opened && (selected.ref || selected.agent);
 
   return (
-    <div className="h-full overflow-y-auto [scrollbar-gutter:stable]">
+    <div className="h-full scroll-y-stable">
       <div className="mx-auto flex min-h-full w-full max-w-5xl flex-col px-8 pt-8 pb-16">
         {detail ? (
           <div className="flex min-h-0 flex-1 flex-col" data-agent-view>
@@ -164,7 +165,7 @@ function Overview({ data, onSelect, connections }: { data: AgentsData; onSelect:
       ) : null}
 
       {connections.rows.length > 0 ? (
-        <Block title="On This Mac" count={connections.rows.length} id="connections">
+        <Block title={`On ${thisComputerLabel()}`} count={connections.rows.length} id="connections">
           {connections.rows.map((c) => (
             <ConnectionListRow key={c.id} row={c} busy={connections.busy === c.id} note={connections.notes[c.id] ?? null} onAct={(a) => (a === "connect" ? void navigate({ to: "/settings/connections", search: { app: c.id } }) : void connections.act(c.id, a))} />
           ))}

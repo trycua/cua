@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Driver-independent desktop side-effect observations for E2E tests.
 
 use std::fmt;

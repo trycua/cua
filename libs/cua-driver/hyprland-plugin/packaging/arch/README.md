@@ -13,7 +13,7 @@ the pin and must not be guessed:
 ```bash
 export CUA_SOURCE_ROOT=/path/to/cua
 export CUA_HYPRLAND_PACKAGE_VERSION="$(pacman -Q hyprland | cut -d' ' -f2-)"
-export CUA_HYPRLAND_HEADER_VERSION=0.56.2
+export CUA_HYPRLAND_HEADER_VERSION=0.57.0
 makepkg -si
 ```
 

@@ -126,7 +126,25 @@ async fn app() -> std::net::SocketAddr {
         );
         r
     }
+    // A public TCP share's machine side (the daemon's gateway): a WebSocket
+    // that echoes binary messages, as the Space port would answer.
+    async fn tcp_echo(ws: axum::extract::ws::WebSocketUpgrade) -> impl IntoResponse {
+        ws.on_upgrade(|mut socket| async move {
+            while let Some(Ok(msg)) = socket.recv().await {
+                if let axum::extract::ws::Message::Binary(b) = msg {
+                    if socket
+                        .send(axum::extract::ws::Message::Binary(b))
+                        .await
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+            }
+        })
+    }
     let app = axum::Router::new()
+        .route("/share/pub/{token}/", get(tcp_echo))
         .route("/share/{sid}/html", get(html))
         .route("/share/pub/{token}/html", get(html))
         .fallback(echo);
@@ -144,6 +162,10 @@ struct Opts {
     limits: ShareLimits,
     trusted_proxies: &'static str,
     keep_path_mode: bool,
+    /// A one-port pool of public TCP shares.
+    tcp_port: Option<u16>,
+    /// Per-share connection cap and byte rate of TCP shares (defaults when unset).
+    tcp_caps: Option<(u32, u64)>,
 }
 
 impl Default for Opts {
@@ -154,6 +176,8 @@ impl Default for Opts {
             limits: ShareLimits::default(),
             trusted_proxies: "",
             keep_path_mode: false,
+            tcp_port: None,
+            tcp_caps: None,
         }
     }
 }
@@ -189,6 +213,15 @@ impl Env {
             state_file: Some(state.path().join("machines.json")),
             host_domain: o.host_mode.then(|| DOMAIN.to_owned()),
             keep_path_mode: o.keep_path_mode,
+            tcp_shares: o.tcp_port.map(|p| cua_relay::tcp_shares::TcpShareConfig {
+                ports: (p, p),
+                listen: std::net::IpAddr::from([127, 0, 0, 1]),
+                public_host: "tcp.relay.test".into(),
+                srv_domain: Some(DOMAIN.into()),
+                max_conns_per_share: o.tcp_caps.map(|c| c.0).unwrap_or(64),
+                bytes_per_sec: o.tcp_caps.map(|c| c.1).unwrap_or(4 << 20),
+                ..cua_relay::tcp_shares::TcpShareConfig::default()
+            }),
             public_url: Some(base.clone()),
             share_web: o.web.then(|| ShareWebConfig {
                 client_id: "share-web".into(),
@@ -947,4 +980,418 @@ async fn forwarded_for_is_ignored_without_trusted_proxies() {
         limited,
         "a client-chosen X-Forwarded-For must not pick the bucket"
     );
+}
+
+#[tokio::test]
+async fn a_tcp_share_carries_raw_bytes_to_its_share_and_closes() {
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+    let port = {
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        l.local_addr().unwrap().port()
+    };
+    let env = Env::start(Opts {
+        web: false,
+        tcp_port: Some(port),
+        ..Opts::default()
+    })
+    .await;
+    let url = format!("{}/v1/machines/{}/tcp-shares", env.base, env.machine);
+    // Someone else cannot open a port on this computer.
+    let r = env
+        .http
+        .post(&url)
+        .bearer_auth(env.token("bob"))
+        .json(&json!({"token": TOKEN, "target_port": 25565}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), StatusCode::FORBIDDEN);
+    // Admin ports are refused.
+    let r = env
+        .http
+        .post(&url)
+        .bearer_auth(env.token("ada"))
+        .json(&json!({"token": TOKEN, "target_port": 25575}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), StatusCode::FORBIDDEN);
+    let r = env
+        .http
+        .post(&url)
+        .bearer_auth(env.token("ada"))
+        .json(&json!({"token": TOKEN, "target_port": 25565, "service": "minecraft"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), StatusCode::CREATED);
+    let v: Value = r.json().await.unwrap();
+    assert_eq!(v["port"], port);
+    assert_eq!(v["address"], format!("tcp.relay.test:{port}"));
+    assert!(v["srv_name"].as_str().unwrap().starts_with("mc-"), "{v}");
+    // Bytes go through the relay, the computer's tunnel and back.
+    let mut s = tokio::net::TcpStream::connect(("127.0.0.1", port))
+        .await
+        .unwrap();
+    s.write_all(b"\x10\x00handshake").await.unwrap();
+    let mut got = [0u8; 11];
+    tokio::time::timeout(Duration::from_secs(10), s.read_exact(&mut got))
+        .await
+        .expect("echo in time")
+        .unwrap();
+    assert_eq!(&got, b"\x10\x00handshake");
+    // Listed for the owner, with its connection.
+    let l: Value = env
+        .http
+        .get(&url)
+        .bearer_auth(env.token("ada"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(l["shares"][0]["port"], port);
+    // Closing ends the port and the open connection.
+    let r = env
+        .http
+        .delete(format!("{url}/{port}"))
+        .bearer_auth(env.token("ada"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), StatusCode::OK);
+    let mut buf = [0u8; 1];
+    let n = tokio::time::timeout(Duration::from_secs(10), s.read(&mut buf))
+        .await
+        .expect("closed in time")
+        .unwrap_or(0);
+    assert_eq!(n, 0);
+    assert!(tokio::net::TcpStream::connect(("127.0.0.1", port))
+        .await
+        .is_err());
+    // The owner's audit log names both.
+    let audit = env.relay.audit_kinds("ada");
+    assert!(audit.iter().any(|k| k == "tcp_share_opened"), "{audit:?}");
+    assert!(audit.iter().any(|k| k == "tcp_share_closed"), "{audit:?}");
+}
+
+#[tokio::test]
+async fn a_tcp_share_holds_its_connection_cap_and_byte_rate() {
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+    let port = {
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        l.local_addr().unwrap().port()
+    };
+    let env = Env::start(Opts {
+        web: false,
+        tcp_port: Some(port),
+        tcp_caps: Some((2, 64 * 1024)),
+        ..Opts::default()
+    })
+    .await;
+    let r = env
+        .http
+        .post(format!(
+            "{}/v1/machines/{}/tcp-shares",
+            env.base, env.machine
+        ))
+        .bearer_auth(env.token("ada"))
+        .json(&json!({"token": TOKEN, "target_port": 25565}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), StatusCode::CREATED);
+    let echo = |mut s: tokio::net::TcpStream| async move {
+        s.write_all(b"ping").await.unwrap();
+        let mut got = [0u8; 4];
+        tokio::time::timeout(Duration::from_secs(10), s.read_exact(&mut got))
+            .await
+            .expect("echo in time")
+            .unwrap();
+        assert_eq!(&got, b"ping");
+        s
+    };
+    // Two connections are carried; a third is closed at once.
+    let a = echo(
+        tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .unwrap(),
+    )
+    .await;
+    let b = echo(
+        tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .unwrap(),
+    )
+    .await;
+    let mut c = tokio::net::TcpStream::connect(("127.0.0.1", port))
+        .await
+        .unwrap();
+    let _ = c.write_all(b"ping").await;
+    let mut buf = [0u8; 4];
+    let n = tokio::time::timeout(Duration::from_secs(10), c.read(&mut buf))
+        .await
+        .expect("refused in time")
+        .unwrap_or(0);
+    assert_eq!(n, 0, "the third connection is over the cap");
+    // One ends: room for another.
+    drop(a);
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let mut d = echo(
+        tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .unwrap(),
+    )
+    .await;
+    // The byte rate: 128 KiB echoed is 256 KiB through a 64 KiB/s budget
+    // (one second of burst), so about 3 s, never instant.
+    let data = vec![7u8; 128 * 1024];
+    let start = std::time::Instant::now();
+    let (mut r, mut w) = d.split();
+    let send = async {
+        w.write_all(&data).await.unwrap();
+    };
+    let recv = async {
+        let mut got = vec![0u8; data.len()];
+        tokio::time::timeout(Duration::from_secs(20), r.read_exact(&mut got))
+            .await
+            .expect("echo of 128 KiB in time")
+            .unwrap();
+        got
+    };
+    let (_, got) = tokio::join!(send, recv);
+    assert_eq!(got, data);
+    let took = start.elapsed();
+    assert!(took >= Duration::from_millis(1500), "{took:?}");
+    drop(b);
+}
+
+#[tokio::test]
+async fn an_edge_carries_tcp_shares_for_its_token_only_and_checks_hosts_and_allowlists() {
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+    const EDGE_TOKEN: &str = "edge-token-0123456789abcdef0123456789abcdef";
+    let port = {
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        l.local_addr().unwrap().port()
+    };
+    let relay = Relay::new(RelayConfig {
+        tokens: vec![EDGE_TOKEN.into()],
+        tcp_shares: Some(cua_relay::tcp_shares::TcpShareConfig {
+            ports: (port, port),
+            listen: std::net::IpAddr::from([127, 0, 0, 1]),
+            public_host: "edge.example".into(),
+            edge: true,
+            ..cua_relay::tcp_shares::TcpShareConfig::default()
+        }),
+        ..RelayConfig::default()
+    });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let serving = relay.clone();
+    tokio::spawn(async move {
+        let _ = serving.serve(listener, std::future::pending()).await;
+    });
+    let stop = CancellationToken::new();
+    let local = app().await;
+    let machine = "edge-daemon-0123456789abcdef".to_string();
+    let mut join = cua_relay::client::JoinConfig::new(
+        base.replace("http://", "ws://"),
+        EDGE_TOKEN.into(),
+        machine.clone(),
+        local,
+    );
+    join.heartbeat = Duration::from_secs(2);
+    tokio::spawn(cua_relay::client::run(join, stop.clone()));
+    for _ in 0..200 {
+        if relay.machine_ids().contains(&machine) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    let http = reqwest::Client::new();
+    let url = format!("{base}/v1/machines/{machine}/tcp-shares");
+    let body = json!({"token": TOKEN, "target_port": 25565, "service": "minecraft",
+                      "check_host": true, "allow": ["127.0.0.0/8"]});
+    // Without the edge's token: refused.
+    let r = http
+        .post(&url)
+        .bearer_auth("wrong")
+        .json(&body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), StatusCode::UNAUTHORIZED);
+    let r = http
+        .post(&url)
+        .bearer_auth(EDGE_TOKEN)
+        .json(&body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), StatusCode::CREATED, "{:?}", r.text().await);
+
+    // A connection that does not dial the share's host is dropped.
+    let mut wrong = tokio::net::TcpStream::connect(("127.0.0.1", port))
+        .await
+        .unwrap();
+    wrong
+        .write_all(&handshake("someone-else.example", 25565))
+        .await
+        .unwrap();
+    let mut b = [0u8; 1];
+    let n = tokio::time::timeout(Duration::from_secs(10), wrong.read(&mut b))
+        .await
+        .expect("dropped in time")
+        .unwrap_or(0);
+    assert_eq!(n, 0);
+    // The right host reaches the computer, handshake first.
+    let mut right = tokio::net::TcpStream::connect(("127.0.0.1", port))
+        .await
+        .unwrap();
+    let hs = handshake("edge.example", 25565);
+    right.write_all(&hs).await.unwrap();
+    let mut got = vec![0u8; hs.len()];
+    tokio::time::timeout(Duration::from_secs(10), right.read_exact(&mut got))
+        .await
+        .expect("echo in time")
+        .unwrap();
+    assert_eq!(got, hs);
+    stop.cancel();
+}
+
+#[tokio::test]
+async fn a_tcp_share_refuses_addresses_outside_its_allowlist() {
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+    let port = {
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        l.local_addr().unwrap().port()
+    };
+    let env = Env::start(Opts {
+        web: false,
+        tcp_port: Some(port),
+        ..Opts::default()
+    })
+    .await;
+    let r = env
+        .http
+        .post(format!(
+            "{}/v1/machines/{}/tcp-shares",
+            env.base, env.machine
+        ))
+        .bearer_auth(env.token("ada"))
+        .json(&json!({"token": TOKEN, "target_port": 7777, "allow": ["203.0.113.0/24"]}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), StatusCode::CREATED);
+    let mut s = tokio::net::TcpStream::connect(("127.0.0.1", port))
+        .await
+        .unwrap();
+    let _ = s.write_all(b"hello").await;
+    let mut b = [0u8; 1];
+    let n = tokio::time::timeout(Duration::from_secs(10), s.read(&mut b))
+        .await
+        .expect("dropped in time")
+        .unwrap_or(0);
+    assert_eq!(n, 0, "127.0.0.1 is not in 203.0.113.0/24");
+}
+
+#[tokio::test]
+async fn a_tcp_share_ends_its_connections_at_its_data_cap() {
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+    let port = {
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        l.local_addr().unwrap().port()
+    };
+    let env = Env::start(Opts {
+        web: false,
+        tcp_port: Some(port),
+        ..Opts::default()
+    })
+    .await;
+    let r = env
+        .http
+        .post(format!(
+            "{}/v1/machines/{}/tcp-shares",
+            env.base, env.machine
+        ))
+        .bearer_auth(env.token("ada"))
+        .json(&json!({"token": TOKEN, "target_port": 7777, "max_bytes": 8192}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), StatusCode::CREATED);
+    let mut s = tokio::net::TcpStream::connect(("127.0.0.1", port))
+        .await
+        .unwrap();
+    // Under the cap: carried.
+    s.write_all(&[1u8; 1024]).await.unwrap();
+    let mut got = vec![0u8; 1024];
+    tokio::time::timeout(Duration::from_secs(10), s.read_exact(&mut got))
+        .await
+        .expect("echo in time")
+        .unwrap();
+    // Past it (16 KiB echoed is 32 KiB moved): the connection ends.
+    let _ = s.write_all(&[2u8; 16 * 1024]).await;
+    let mut rest = Vec::new();
+    let _ = tokio::time::timeout(Duration::from_secs(10), s.read_to_end(&mut rest))
+        .await
+        .expect("closed in time");
+    assert!(rest.len() < 16 * 1024, "the cap ended the connection");
+    // And no new connection is carried.
+    let mut t = tokio::net::TcpStream::connect(("127.0.0.1", port))
+        .await
+        .unwrap();
+    let _ = t.write_all(b"ping").await;
+    let mut b = [0u8; 4];
+    let n = tokio::time::timeout(Duration::from_secs(10), t.read(&mut b))
+        .await
+        .expect("refused in time")
+        .unwrap_or(0);
+    assert_eq!(n, 0, "over its data cap");
+    // The view reports what moved and the cap.
+    let v: serde_json::Value = env
+        .http
+        .post(format!(
+            "{}/v1/machines/{}/tcp-shares/{port}/keepalive",
+            env.base, env.machine
+        ))
+        .bearer_auth(env.token("ada"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(v["max_bytes"], 8192);
+    assert!(v["bytes"].as_u64().unwrap() >= 8192, "{v}");
+}
+
+/// A Minecraft Java handshake for `host`.
+fn handshake(host: &str, port: u16) -> Vec<u8> {
+    fn vi(mut v: u32, out: &mut Vec<u8>) {
+        loop {
+            let mut b = (v & 0x7f) as u8;
+            v >>= 7;
+            if v != 0 {
+                b |= 0x80;
+            }
+            out.push(b);
+            if v == 0 {
+                break;
+            }
+        }
+    }
+    let mut body = Vec::new();
+    vi(0, &mut body);
+    vi(767, &mut body);
+    vi(host.len() as u32, &mut body);
+    body.extend_from_slice(host.as_bytes());
+    body.extend_from_slice(&port.to_be_bytes());
+    vi(1, &mut body);
+    let mut out = Vec::new();
+    vi(body.len() as u32, &mut out);
+    out.extend(body);
+    out
 }

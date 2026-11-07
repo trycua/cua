@@ -132,3 +132,11 @@ class TestCuaSpacesReleaseWiring(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_publish_step_clears_prerelease_on_stable_release():
+    # The Electron job can create the draft first; a stable release must not stay a prerelease,
+    # or the cua.ai /download page and the DMG redirect skip it (0.19.4, 3 Nov 2026).
+    workflow = (Path(__file__).resolve().parents[2] / "workflows" / "cd-cua-spaces.yml").read_text()
+    assert "flags+=(--prerelease=false)" in workflow
+    assert "--draft --prerelease --verify-tag" not in workflow

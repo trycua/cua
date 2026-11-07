@@ -17,6 +17,8 @@ pub mod failure;
 pub mod harness;
 pub mod installables;
 pub mod runs;
+pub mod subagents;
+pub mod tool_row;
 pub mod transcript;
 
 /// Where Claude Code keeps its sign-in (the freshness check at run start reads it).

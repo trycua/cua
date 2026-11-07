@@ -383,6 +383,89 @@ describe("stream surface helpers", () => {
 });
 
 describe("VideoSlotReporter", () => {
+  // CUA-SPACES-DESKTOP-3: WebKit's postMessage returns a promise that rejects with InvalidAccessError once the host
+  // removed the handler (its window closed) while this page's poll and frames keep running.
+  describe("when the host removes its handler", () => {
+    const gone = () => Object.assign(new Error("The object does not support the operation or argument."), { name: "InvalidAccessError" });
+
+    function setup(postMessage: (m: StreamSurfaceMessage) => unknown) {
+      vi.useFakeTimers();
+      vi.stubGlobal("innerWidth", 1000);
+      vi.stubGlobal("innerHeight", 700);
+      document.elementFromPoint = () => null;
+      document.elementsFromPoint = () => [];
+      const reporter = new VideoSlotReporter({ postMessage });
+      const el = document.createElement("div");
+      document.body.append(el);
+      box(el, { x: 10, y: 20, width: 232, height: 145 });
+      reporter.register(el, { spaceId: "a", tier: "tile", interactive: false, radius: 8 }, () => {});
+      return { reporter, el };
+    }
+
+    afterEach(() => {
+      vi.useRealTimers();
+      vi.restoreAllMocks();
+    });
+
+    it("stops its poll and frames, never leaves a rejection unhandled, and warns once", async () => {
+      const unhandled: unknown[] = [];
+      const onUnhandled = (e: unknown) => unhandled.push(e);
+      process.on("unhandledRejection", onUnhandled);
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      let removed = false;
+      let calls = 0;
+      const { reporter, el } = setup(() => {
+        calls += 1;
+        return removed ? Promise.reject(gone()) : Promise.resolve();
+      });
+      expect(calls).toBe(1);
+      removed = true;
+      el.style.width = "300px"; // something that changes the report
+      box(el, { x: 10, y: 20, width: 300, height: 145 });
+      await vi.advanceTimersByTimeAsync(400);
+      const afterFirst = calls;
+      expect(afterFirst).toBe(2);
+      expect(warn).toHaveBeenCalledTimes(1);
+      // The handler stays gone: later polls, frames and focus changes post nothing.
+      box(el, { x: 10, y: 20, width: 400, height: 145 });
+      reporter.schedule();
+      reporter.focus("x");
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(calls).toBe(afterFirst);
+      expect(warn).toHaveBeenCalledTimes(1);
+      vi.useRealTimers();
+      await new Promise<void>((r) => setTimeout(r, 20));
+      process.off("unhandledRejection", onUnhandled);
+      expect(unhandled).toEqual([]);
+    });
+
+    it("treats a synchronous throw the same way", async () => {
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+      let calls = 0;
+      setup(() => {
+        calls += 1;
+        throw gone();
+      });
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(calls).toBe(1);
+    });
+
+    it("keeps reporting after any other failure, warning only once", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      let calls = 0;
+      const { el } = setup(() => {
+        calls += 1;
+        return Promise.reject(new Error("transient"));
+      });
+      for (const w of [300, 320, 340]) {
+        box(el, { x: 10, y: 20, width: w, height: 145 });
+        await vi.advanceTimersByTimeAsync(400);
+      }
+      expect(calls).toBe(4);
+      expect(warn).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it("batches what changed, removes slots and relays the host's state and focus", () => {
     vi.stubGlobal("innerWidth", 1000);
     vi.stubGlobal("innerHeight", 700);
@@ -455,10 +538,10 @@ describe("<StreamSurface> native video", () => {
     posted = [];
   });
 
-  const mount = (props: { canStream?: boolean; children?: React.ReactNode } = {}) =>
+  const mount = (props: { canStream?: boolean; viewOnly?: boolean; children?: React.ReactNode } = {}) =>
     render(
       <BridgeProvider adapter={createDemoAdapter({ latencyMs: 1 })} core={noCore}>
-        <StreamSurface spaceId="sp-1" os="macos" canStream={props.canStream ?? true} previewText="Not reachable">
+        <StreamSurface spaceId="sp-1" os="macos" canStream={props.canStream ?? true} previewText="Not reachable" viewOnly={props.viewOnly}>
           {props.children}
         </StreamSurface>
       </BridgeProvider>,
@@ -506,6 +589,21 @@ describe("<StreamSurface> native video", () => {
 
     act(() => unmount());
     expect(posted.at(-1)).toEqual({ type: "surfaces", update: [], remove: [first.surfaceId] });
+  });
+
+  // CUA-3041: a teammate with Can view is told it is view only; the host is never asked to give the keys.
+  it("says view only for a viewer and never offers control", async () => {
+    hostDrawsVideo();
+    const { container, queryByText } = mount({ viewOnly: true });
+    await waitFor(() => expect(updates()).not.toHaveLength(0));
+    const first = updates()[0];
+    if (!first) throw new Error("no surface update");
+    expect(first).toMatchObject({ interactive: false });
+    act(() => hostEvent("video.surface", { surfaceId: first.surfaceId, state: "live" }));
+    expect(container.querySelector("[data-view-only]")?.textContent).toContain("View only");
+    act(() => hostEvent("video.focus", { surfaceId: first.surfaceId }));
+    expect(queryByText("Stop controlling")).toBeNull();
+    expect(container.querySelector("[data-video-focus]")).toBeNull();
   });
 
   // Regression: closing picture in picture showed "Could not connect to the

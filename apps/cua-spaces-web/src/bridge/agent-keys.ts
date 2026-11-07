@@ -30,6 +30,8 @@ export interface AgentKeysInput {
   /** Which credential each app that takes any provider uses, by app. */
   uses?: Record<string, { provider: string; env: string; slot?: string }>;
   unavailable?: string | null;
+  /** Keys are kept in an unencrypted file: shown as a notice while the buttons stay on. */
+  warning?: string | null;
   error?: string | null;
 }
 
@@ -104,6 +106,7 @@ export const agentKeysInputOf = (report: AgentKeysReport | undefined, error: Err
   ...((report?.keys ?? []).some((k) => k.slot) ? { extras: (report?.keys ?? []).filter((k) => k.slot).map(keyInput) } : {}),
   ...(report?.uses && Object.keys(report.uses).length ? { uses: report.uses } : {}),
   unavailable: report?.available === false ? (report.unavailable ?? "this machine can't keep keys") : null,
+  ...(report?.available !== false && report?.insecure ? { warning: report.insecure } : {}),
   error: error ? error.message : null,
 });
 
@@ -262,6 +265,15 @@ export class AgentKeysStore {
     this.set({ report, error: null });
   }
 
+  /** Gives a saved key or sign-in a name (`slot` null: the first saved for `env`). Throws the host's words. */
+  async rename(env: string, slot: string | null, label: string): Promise<void> {
+    this.epoch++;
+    const report = await this.adapter.call("agentKeys.rename", { env, label, ...(slot ? { slot } : {}) });
+    this.epoch++;
+    this.pinned = false;
+    this.set({ report, error: null });
+  }
+
   openSheet(provider: AgentKeyProvider, env: string | null = null): void {
     this.set({ sheet: { provider, env }, removing: null });
   }
@@ -282,6 +294,7 @@ export class AgentKeysStore {
       providers: [],
       available: !input.unavailable,
       unavailable: input.unavailable ?? null,
+      ...(input.warning ? { insecure: input.warning } : {}),
     };
     this.set({ report, error: input.error ? new Error(input.error) : null, unsupported: false, sheet: open?.sheet ?? null, removing: open?.removing ?? null });
   }
@@ -312,6 +325,8 @@ export interface AgentKeysHook extends AgentKeysState {
   remove(env: string, which?: { slot?: string; keepOthers?: boolean }): Promise<void>;
   /** Tells `app` which saved credential to use (null: the first that works). */
   use(app: string, choice: { env: string; slot?: string } | null): Promise<void>;
+  /** Gives a saved key or sign-in a name. */
+  rename(env: string, slot: string | null, label: string): Promise<void>;
   openSheet(provider: AgentKeyProvider, env?: string | null): void;
   closeSheet(): void;
   askRemove(env: string | null): void;
@@ -355,6 +370,7 @@ export function useAgentKeys({ watch = false }: { watch?: boolean } = {}): Agent
     save: (provider, value, env, choices, more) => need().save(provider, value, env, choices, more),
     remove: (env, which) => need().remove(env, which),
     use: (app, choice) => need().use(app, choice),
+    rename: (env, slot, label) => need().rename(env, slot, label),
     openSheet: (provider, env = null) => store?.openSheet(provider, env),
     closeSheet: () => store?.closeSheet(),
     askRemove: (env) => store?.askRemove(env),

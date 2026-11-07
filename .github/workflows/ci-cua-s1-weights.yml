@@ -334,14 +334,10 @@ jobs:
 
       - name: Install GUI and Rust build dependencies
         if: steps.cpu.outputs.supported == 'true'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            xvfb dbus-x11 at-spi2-core openbox picom python3-gi gir1.2-gtk-3.0 \
-            libgtk-3-dev clang pkg-config libdbus-1-dev libpipewire-0.3-dev \
-            libspa-0.2-dev libei-dev libx11-dev libxi-dev libxtst-dev libxext-dev \
-            libwebkit2gtk-4.1-dev libssl-dev libxdo-dev \
-            libayatana-appindicator3-dev librsvg2-dev ffmpeg jq
+        uses: ./.github/actions/apt-install
+        with:
+          packages: >-
+            xvfb dbus-x11 at-spi2-core openbox picom python3-gi gir1.2-gtk-3.0 libgtk-3-dev clang pkg-config libdbus-1-dev libpipewire-0.3-dev libspa-0.2-dev libei-dev libx11-dev libxi-dev libxtst-dev libxext-dev libwebkit2gtk-4.1-dev libssl-dev libxdo-dev libayatana-appindicator3-dev librsvg2-dev ffmpeg jq
 
       - name: Set up uv and Python
         if: steps.cpu.outputs.supported == 'true'
@@ -374,7 +370,7 @@ jobs:
           mkdir -p "$PERCEPTION_DIR"
           cd "$PERCEPTION_DIR"
           for asset in "${stem}.catalog.json" "${stem}.tar.gz" SHA256SUMS; do
-            curl --fail --silent --show-error --location --retry 3 -o "$asset" "$base/$asset"
+            curl --fail --silent --show-error --location --retry 5 --retry-delay 2 --retry-all-errors --connect-timeout 20 -o "$asset" "$base/$asset"
           done
           grep -E " \*?(${stem}\.catalog\.json|${stem}\.tar\.gz)$" SHA256SUMS | sha256sum --check --strict
           echo "${PERCEPTION_ARCHIVE_SHA256}  ${stem}.tar.gz" | sha256sum --check --strict

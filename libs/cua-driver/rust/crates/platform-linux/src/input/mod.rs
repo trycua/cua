@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Background input injection for Linux via X11 XSendEvent.
 //!
 //! XSendEvent sends synthetic events directly to a window without changing
@@ -3009,7 +3012,7 @@ fn restore_focus_state(display: *mut x11::xlib::Display, saved: &SavedFocus) {
             (Some(conn), Some(pid), Some(now)) => now != prev && is_own_dialog(conn, pid, now),
             _ => false,
         };
-        if own_dialog(ewmh_active_window(display)) {
+        if own_dialog(ewmh_active_window(display)) || !window_exists(display, prev) {
             return;
         }
         nap(Duration::from_millis(150));
@@ -3023,7 +3026,7 @@ fn restore_focus_state(display: *mut x11::xlib::Display, saved: &SavedFocus) {
                 if stable >= 3 {
                     return;
                 }
-            } else if own_dialog(now) {
+            } else if own_dialog(now) || !window_exists(display, prev) {
                 return;
             } else {
                 stable = 0;
@@ -3083,6 +3086,18 @@ fn restore_focus_state(display: *mut x11::xlib::Display, saved: &SavedFocus) {
         );
         x11::xlib::XSync(display, 0);
         x11::xlib::XSetErrorHandler(prev_handler);
+    }
+}
+
+/// Whether `window` still exists; a click that closed the saved window leaves
+/// nothing to restore.
+fn window_exists(display: *mut x11::xlib::Display, window: x11::xlib::Window) -> bool {
+    unsafe {
+        let prev_handler = x11::xlib::XSetErrorHandler(Some(ignore_x_error));
+        let mut attributes: x11::xlib::XWindowAttributes = std::mem::zeroed();
+        let exists = x11::xlib::XGetWindowAttributes(display, window, &mut attributes) != 0;
+        x11::xlib::XSetErrorHandler(prev_handler);
+        exists
     }
 }
 
@@ -3507,7 +3522,7 @@ pub fn send_button_down(xid: u64, x: i32, y: i32, button: u8) -> Result<()> {
         state: KeyButMask::from(0u16),
         same_screen: true,
     };
-    admitted(|| conn.send_event(false, target.window, EventMask::BUTTON_PRESS, &press))?.check()?;
+    admitted(|| conn.send_event(false, target.window, EventMask::BUTTON_PRESS, press))?.check()?;
     settle_synthetic_events(&conn);
     Ok(())
 }
@@ -3558,7 +3573,7 @@ pub fn send_button_up(xid: u64, x: i32, y: i32, button: u8) -> Result<()> {
         state: button_state_mask(button),
         same_screen: true,
     };
-    conn.send_event(false, target.window, EventMask::BUTTON_RELEASE, &release)?
+    conn.send_event(false, target.window, EventMask::BUTTON_RELEASE, release)?
         .check()?;
     settle_synthetic_events(&conn);
     Ok(())
@@ -3627,7 +3642,8 @@ fn type_text_in_spare_batches<G>(
         per => mapping
             .keysyms
             .chunks(per)
-            .filter(|syms| syms.iter().all(|&s| s == 0))
+            .enumerate()
+            .filter(|&(i, syms)| is_spare_keycode(8 + i, syms))
             .count(),
     };
     let mut rest = text.chars().peekable();
@@ -4023,6 +4039,7 @@ pub fn send_scroll_xtest_desktop(x: i32, y: i32, direction: &str, amount: usize)
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn send_drag_xtest_desktop_with_modifiers(
     from_x: i32,
     from_y: i32,
@@ -4401,7 +4418,7 @@ mod own_dialog_tests {
     use super::*;
     use std::io::{BufRead, BufReader};
     use std::process::{Command, Stdio};
-    use x11rb::protocol::{xproto::*, Event};
+    use x11rb::protocol::Event;
     use x11rb::wrapper::ConnectionExt as _;
 
     struct Server(std::process::Child);
@@ -4535,6 +4552,37 @@ mod own_dialog_tests {
             thread.join().unwrap();
             assert_eq!(focus, if delayed { dialog } else { main });
         }
+        // A click that closed the saved window leaves nothing to re-activate.
+        let (wm, _) = RustConnection::connect(Some(&name)).unwrap();
+        wm.change_window_attributes(
+            root,
+            &ChangeWindowAttributesAux::new().event_mask(EventMask::SUBSTRUCTURE_REDIRECT),
+        )
+        .unwrap()
+        .check()
+        .unwrap();
+        set32(
+            &conn,
+            root,
+            "_NET_ACTIVE_WINDOW",
+            AtomEnum::WINDOW,
+            &[sibling],
+        );
+        conn.destroy_window(main).unwrap();
+        conn.get_input_focus().unwrap().reply().unwrap();
+        restore_focus_state(
+            display,
+            &SavedFocus {
+                ewmh_active: Some(main.into()),
+                core_focus: 0,
+                core_revert_to: 0,
+            },
+        );
+        let mut activations = 0;
+        while let Some(event) = wm.poll_for_event().unwrap() {
+            activations += usize::from(matches!(event, Event::ClientMessage(_)));
+        }
+        assert_eq!(activations, 0);
         unsafe { x11::xlib::XCloseDisplay(display) };
     }
 }
@@ -4600,6 +4648,50 @@ mod key_name_alias_tests {
                 ("restore", 10),
             ]
         );
+    }
+
+    #[test]
+    fn spare_keycodes_skip_keycode_8() {
+        let mut mapping = GetKeyboardMappingReply {
+            keysyms_per_keycode: 2,
+            sequence: 0,
+            keysyms: vec![0, 0, 0, 0, 'a' as u32, 'A' as u32],
+        };
+        let mut reserve = || reserve_spare_keycode(&mut mapping, 0x100_4f60, |_, _, _, _| Ok(()));
+        assert_eq!(reserve().unwrap().0, 9);
+        assert_eq!(
+            reserve().unwrap_err().to_string(),
+            "no spare keycode available to remap keysym 0x1004F60"
+        );
+    }
+
+    #[test]
+    fn text_batches_do_not_count_keycode_8_as_spare() {
+        let mapping = GetKeyboardMappingReply {
+            keysyms_per_keycode: 2,
+            sequence: 0,
+            keysyms: vec![0, 0, 0, 0, 'a' as u32, 'A' as u32],
+        };
+        let mut events = Vec::new();
+        type_text_in_spare_batches(
+            "你好",
+            &mapping,
+            |ch, mapping| {
+                reserve_spare_keycode(
+                    mapping,
+                    super::mpx_keyboard::keysym_for_char(ch),
+                    |_, _, _, _| Ok(()),
+                )
+                .map(|(keycode, guard)| (keycode, Some(guard)))
+            },
+            |keycode, _| {
+                events.push(keycode);
+                Ok(())
+            },
+            || true,
+        )
+        .unwrap();
+        assert_eq!(events, [9, 9]);
     }
 
     #[test]
@@ -4742,6 +4834,14 @@ impl Drop for RemappedKeycode<'_> {
     }
 }
 
+/// Whether a text may borrow `keycode`: every keysym slot is NoSymbol (0) — i.e.
+/// completely unused — so borrowing it cannot clobber a real key. Keycode 8 is
+/// evdev KEY_RESERVED, which a virtual keyboard cannot send, so it is never
+/// borrowed.
+fn is_spare_keycode(keycode: usize, keysyms: &[u32]) -> bool {
+    keycode > 8 && keysyms.iter().all(|&s| s == 0)
+}
+
 /// Reserve a fully unused keycode for `keysym`, calling `bind` before updating
 /// the local mapping. Returns the keycode and the value produced by `bind`.
 fn reserve_spare_keycode<G>(
@@ -4754,15 +4854,14 @@ fn reserve_spare_keycode<G>(
         bail!("empty keyboard mapping; cannot remap keysym 0x{keysym:X}");
     }
 
-    // Find a keycode whose every keysym slot is NoSymbol (0) — i.e. completely
-    // unused — so borrowing it cannot clobber a real key. Scan high-to-low:
-    // high keycodes are far likelier to be free than the low, populated ones.
+    // Scan high-to-low: high keycodes are far likelier to be free than the
+    // low, populated ones.
     let spare = mapping
         .keysyms
         .chunks(per)
         .enumerate()
         .rev()
-        .find(|(_, syms)| syms.iter().all(|&s| s == 0))
+        .find(|&(i, syms)| is_spare_keycode(8 + i, syms))
         .map(|(i, _)| (8 + i) as u8)
         .ok_or_else(|| anyhow!("no spare keycode available to remap keysym 0x{keysym:X}"))?;
 

@@ -58,6 +58,18 @@ pub fn available() -> bool {
     false
 }
 
+/// The index of the keyboard layout KWin has active, or `None` when this isn't
+/// KWin or it doesn't answer. KWin before 6.8 doesn't tell libei clients.
+pub fn active_layout() -> Option<u32> {
+    let reply = gdbus_call_to(
+        "org.kde.keyboard",
+        "/Layouts",
+        "org.kde.KeyboardLayouts.getLayout",
+        &[],
+    )?;
+    parse_first_u32(&reply)
+}
+
 pub fn list_windows() -> Option<Vec<KwinWindow>> {
     snapshot_for_owner(&helper_owner()?)
 }

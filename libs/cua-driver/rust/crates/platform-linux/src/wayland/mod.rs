@@ -20,6 +20,8 @@ pub mod hyprland_capture;
 mod hyprland_compatibility;
 pub mod hyprland_input;
 pub mod kwin_helper;
+#[cfg(feature = "portal-input")]
+mod kwin_keystate;
 pub mod niri;
 pub use niri::keyboard::call_budget as niri_keyboard_budget;
 pub(crate) use niri::AimedPoint;
@@ -32,6 +34,8 @@ mod primary_seat;
 mod region_route;
 pub mod shell_helper;
 pub mod sway_ipc;
+mod text_keys;
+pub(crate) use text_keys::NOTHING_TYPED;
 mod virtual_keyboard;
 // RemoteDesktop/libei input is portable and ships in release binaries.
 #[cfg(feature = "portal-input")]
@@ -1593,7 +1597,7 @@ fn libei_recovery<T>(
                 tracing::info!(
                     "wlroots virtual-pointer unavailable ({e}); falling back to libei/portal"
                 );
-                return fallback();
+                fallback()
             }
             #[cfg(not(feature = "portal-input"))]
             {
@@ -2770,6 +2774,7 @@ fn type_into(window: Option<u64>, text: &str) -> anyhow::Result<()> {
     if text.is_empty() {
         return Ok(());
     }
+    let text = &*text_keys::typable_text(text)?;
     window.map_or(Ok(()), activate_window_for_input)?;
     if niri::is_session() {
         return niri::keyboard::type_text(window.or_else(niri_expected_window), text);
@@ -2802,6 +2807,7 @@ fn type_into(window: Option<u64>, text: &str) -> anyhow::Result<()> {
 /// headless wlroots seat dropping the first event from a second `wtype`
 /// process after the text has landed.
 pub fn type_text_then_key_focused(text: &str, key: &str) -> anyhow::Result<()> {
+    let text = &*text_keys::typable_text(text)?;
     let keysym = key_to_keysym(key);
     if niri::is_session() {
         niri::keyboard::type_text(niri_expected_window(), text)?;
@@ -2907,14 +2913,14 @@ fn chord_into(window: Option<u64>, keys: &[String]) -> anyhow::Result<()> {
             let stderr = other.map(|o| String::from_utf8_lossy(&o.stderr).into_owned());
             #[cfg(feature = "portal-input")]
             {
-                return with_wtype_libei_fallback(
+                with_wtype_libei_fallback(
                     || {
                         libei::wait_keyboard_ready()?;
                         window.map_or(Ok(()), activate_window_for_input)?;
                         libei_hotkey(&mods, &final_key)
                     },
                     stderr,
-                );
+                )
             }
             #[cfg(not(feature = "portal-input"))]
             {
@@ -3231,6 +3237,19 @@ fn libei_drag(
     )?;
     record_synth_cursor(to_x, to_y);
     Ok(())
+}
+
+/// The time the input route may spend between the parts of `text`, at most.
+pub(crate) fn text_pacing(text: &str) -> std::time::Duration {
+    #[cfg(feature = "portal-input")]
+    {
+        libei::text_pacing(text)
+    }
+    #[cfg(not(feature = "portal-input"))]
+    {
+        let _ = text;
+        std::time::Duration::ZERO
+    }
 }
 
 #[cfg(feature = "portal-input")]

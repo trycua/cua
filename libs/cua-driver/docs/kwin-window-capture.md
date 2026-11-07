@@ -92,6 +92,14 @@ rather than being stretched to the new frame. Native pixel formats are decoded
 with row-stride and premultiplied-alpha handling. Unsupported formats, invalid
 layouts, mismatched owners/UUIDs, closed windows and timeouts are errors.
 
+## Desktop capture
+
+A desktop screenshot asks `CaptureWorkspace` first, in logical pixels and with
+every output, before the Screenshot portal. Where KWin answers (see
+[Permissions](#permissions)), there is no consent dialog, and a **Deny** saved in
+the portal no longer applies, because the portal is never asked. Where KWin
+refuses, the portal runs as before.
+
 ## Focused native regression
 
 In a disposable KWin Wayland session, with `XDG_CURRENT_DESKTOP` set to `KDE` or

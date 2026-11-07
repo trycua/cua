@@ -421,11 +421,11 @@ export function machinesView(
 ): MachinesView | null {
   if (input.hostView) return input.hostView;
   const current = input.machines.find((m) => m.current);
-  const hostOs = current && ["macos", "linux", "windows"].includes(current.os) ? current.os : "macos";
+  const os: HostOs = current && ["macos", "linux", "windows"].includes(current.os) ? (current.os as HostOs) : hostOs();
   return (
     core?.tryCall<MachinesView>("machines.view", {
       input: {
-        page: { hostOs, spaces: input.spaces, now: input.nowSecs ?? Math.floor(Date.now() / 1000) },
+        page: { hostOs: os, spaces: input.spaces, now: input.nowSecs ?? Math.floor(Date.now() / 1000) },
         rows: input.machines.map((m) => pageRowOf(m, input.spaces, core)),
         host: input.host,
         clouds: input.clouds ?? null,

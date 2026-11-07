@@ -50,10 +50,6 @@ pub struct QemuConfig {
     pub resolver: Option<Arc<dyn DiskResolver>>,
     /// Allow installing QEMU through the host package manager when missing.
     pub allow_install: bool,
-    /// Install swtpm with Homebrew on a Mac when a Windows on ARM guest needs
-    /// its TPM and it is missing (a small package, so Windows 11 needs no
-    /// setup step beyond QEMU). Off by default; the daemon turns it on.
-    pub install_swtpm: bool,
     /// How long `stop` waits for an ACPI shutdown before forcing `quit`.
     pub graceful_stop: Duration,
     /// Allocate a VNC display per instance.
@@ -95,7 +91,6 @@ impl Default for QemuConfig {
             root: host::cua_home().join("vmm").join("qemu"),
             resolver: None,
             allow_install: false,
-            install_swtpm: false,
             graceful_stop: Duration::from_secs(30),
             vnc: true,
             accel: None,
@@ -376,6 +371,14 @@ pub(crate) fn refuse_windows_software_emulation(
 /// Windows 11 on ARM: the guest that needs Secure Boot firmware and a TPM.
 fn is_windows_arm(os: GuestOs, arch: Arch) -> bool {
     os == GuestOs::Windows && arch == Arch::Aarch64
+}
+
+/// Whether the guest gets a virtual TPM. Windows on ARM does, except on a Mac:
+/// Hypervisor.framework (HVF) cannot map the TPM's MMIO window (QEMU stops with
+/// `HV_BAD_ARGUMENT` in hvf-all.c), so there the unattended install bypasses
+/// the TPM check instead (`BypassTPMCheck`) and the guest runs without one.
+fn wants_tpm(os: GuestOs, arch: Arch, host_os: host::HostOs) -> bool {
+    is_windows_arm(os, arch) && host_os != host::HostOs::Macos
 }
 
 /// Whether this host can run a Windows-on-ARM guest.
@@ -870,7 +873,7 @@ impl QemuRuntime {
             }
             let (os, want) = boot_hints(backing, arch, spec_like).await;
             let firmware = self.setup_firmware(&dir, arch, os, want).await?;
-            let tpm = is_windows_arm(os, arch);
+            let tpm = wants_tpm(os, arch, host::HostOs::current());
             if tpm {
                 std::fs::create_dir_all(dir.join("tpm"))?;
                 #[cfg(unix)]
@@ -1225,16 +1228,6 @@ impl QemuRuntime {
                 };
                 let bin = match host::which("swtpm") {
                     Some(b) => b,
-                    // Windows on ARM needs a TPM: where cua provisions QEMU it
-                    // provisions swtpm too, so the first Windows Space needs no
-                    // extra step.
-                    None if self.cfg.allow_install
-                        && host::HostOs::current() == host::HostOs::Macos =>
-                    {
-                        install_swtpm_with(host::which("brew"), async |p, a| host::run(p, a).await)
-                            .await?;
-                        host::which("swtpm").ok_or_else(missing)?
-                    }
                     None => return Err(missing()),
                 };
                 self.stop_tpm(st).await?;
@@ -2651,22 +2644,6 @@ pub(crate) async fn windows_install(
     Ok(())
 }
 
-/// Installs swtpm (the TPM a Windows on ARM guest needs) with Homebrew.
-pub(crate) async fn install_swtpm_with(
-    brew: Option<PathBuf>,
-    run: impl AsyncFn(&str, &[&str]) -> Result<String>,
-) -> Result<()> {
-    let brew = brew.ok_or_else(|| {
-        VmmError::missing(
-            "swtpm",
-            "install Homebrew (https://brew.sh), then `brew install swtpm`",
-        )
-    })?;
-    tracing::info!("installing swtpm with Homebrew");
-    run(&brew.to_string_lossy(), &["install", "swtpm"]).await?;
-    Ok(())
-}
-
 /// What a QEMU VM needs that `which` does not find on an `os` host, as the
 /// error a create returns before pulling its image; `None` when both
 /// `qemu-system-<arch>` and `qemu-img` are there.
@@ -3936,6 +3913,17 @@ fn admission_file(memory: &Memory) -> Option<PathBuf> {
 
 #[cfg(test)]
 mod tests {
+    /// HVF cannot map the TPM window (`HV_BAD_ARGUMENT`), so a Mac gets no TPM
+    /// device; other hosts keep it for Windows on ARM.
+    #[test]
+    fn windows_arm_has_no_tpm_on_a_mac() {
+        use super::{Arch, GuestOs, host::HostOs, wants_tpm};
+        assert!(!wants_tpm(GuestOs::Windows, Arch::Aarch64, HostOs::Macos));
+        assert!(wants_tpm(GuestOs::Windows, Arch::Aarch64, HostOs::Linux));
+        assert!(!wants_tpm(GuestOs::Linux, Arch::Aarch64, HostOs::Linux));
+        assert!(!wants_tpm(GuestOs::Windows, Arch::X86_64, HostOs::Linux));
+    }
+
     /// A VM create dropped before its state file was written takes its
     /// directory with it; one that finished keeps it.
     #[test]
@@ -4943,35 +4931,6 @@ mod tests {
             .await
             .unwrap_err();
         assert!(err.to_string().contains("DiskResolver"));
-    }
-
-    #[tokio::test]
-    async fn swtpm_is_installed_with_homebrew_or_the_error_says_how() {
-        let calls = std::sync::Mutex::new(Vec::new());
-        install_swtpm_with(
-            Some(PathBuf::from("/opt/homebrew/bin/brew")),
-            async |p, a| {
-                calls.lock().unwrap().push((
-                    p.to_string(),
-                    a.iter().map(|x| x.to_string()).collect::<Vec<_>>(),
-                ));
-                Ok(String::new())
-            },
-        )
-        .await
-        .unwrap();
-        assert_eq!(
-            calls.lock().unwrap()[0],
-            (
-                "/opt/homebrew/bin/brew".to_string(),
-                vec!["install".to_string(), "swtpm".to_string()]
-            )
-        );
-        let e = install_swtpm_with(None, async |_, _| Ok(String::new()))
-            .await
-            .unwrap_err()
-            .to_string();
-        assert!(e.contains("brew install swtpm"), "{e}");
     }
 
     #[tokio::test]

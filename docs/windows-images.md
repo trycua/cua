@@ -134,8 +134,9 @@ access and presses for the first 14 s only.
 edk2 firmware (the one Homebrew's QEMU ships; Microsoft's Secure Boot key pair is used when present,
 and Setup's Secure Boot and TPM checks are bypassed in the answer file), an NVMe system disk, the
 install and data discs as USB storage on xHCI, `virtio-net` (driver from virtio-win, loaded by the
-answer file), `ramfb` (800x600) and a swtpm TPM 2.0. cua installs `swtpm` with Homebrew when it
-provisions QEMU (`brew install qemu swtpm` by hand otherwise).
+answer file), and `ramfb` (800x600). There is no TPM on a Mac: HVF cannot map the TPM device's MMIO window
+(`HV_BAD_ARGUMENT` at QEMU start), so Setup's TPM check is bypassed in the answer file and the
+guest runs without one (arm64 Linux hosts with KVM keep a swtpm TPM 2.0).
 
 Known gap: building on a Windows PC works through WSL2; **running** a UEFI Windows guest from
 the Rust QEMU runtime on a Windows PC still uses WHPX, which hangs in OVMF on current QEMU. Until

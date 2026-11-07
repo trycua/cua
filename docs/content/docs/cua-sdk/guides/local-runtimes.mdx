@@ -100,14 +100,16 @@ A Windows 11 on ARM guest (`os="windows"`, `arch="aarch64"`) runs on the QEMU
 runtime of an arm64 macOS or Linux host. Windows 11 needs 4 GB: a guest started
 with less is given 4096 MB.
 
-**TPM.** The guest gets a persistent software TPM 2.0 automatically. It needs
-`swtpm` on the host's `PATH`. On a Mac the daemon installs it with Homebrew the
-first time a Windows on ARM guest needs it; by hand:
+**TPM.** On an arm64 Linux host the guest gets a persistent software TPM 2.0
+automatically; it needs `swtpm` on the host's `PATH`:
 
 ```bash skip="host-install"
-brew install swtpm                 # macOS
 sudo apt-get install swtpm         # Debian, Ubuntu
 ```
+
+On a Mac the guest has no TPM: Apple's Hypervisor.framework cannot map the TPM's
+memory window (QEMU stops with `HV_BAD_ARGUMENT`), so the unattended install
+turns Windows 11's TPM check off instead and the guest runs without one.
 
 **Secure Boot firmware.** A guest that should see Secure Boot (Microsoft's keys
 enrolled) needs `AAVMF_CODE.secboot.fd` and `AAVMF_VARS.ms.fd`, both in one

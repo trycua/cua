@@ -59,10 +59,13 @@ const suggestionRefs = () =>
     .map((option) => option.querySelector(".wz-combo-ref")!.textContent);
 
 describe("the image field", () => {
-  // What pickers offer: published entries of groups without `picker: false`
+  // What pickers offer: published entries (or ones built on this computer on
+  // first use, `local_build`) of groups without `picker: false`
   // (benchmark images are for cua-bench, not Spaces).
   const offeredGroups = new Set(list.groups.filter((g) => !("picker" in g) || g.picker !== false).map((g) => g.id));
-  const offered = list.images.filter((image) => image.published && offeredGroups.has(image.group));
+  const offered = list.images.filter(
+    (image) => (image.published || "local_build" in image) && offeredGroups.has(image.group),
+  );
   const pressedOs = () =>
     ["Linux", "macOS", "Windows"].filter(
       (name) => screen.getByRole("button", { name: new RegExp(`^${name}`) }).getAttribute("aria-pressed") === "true",

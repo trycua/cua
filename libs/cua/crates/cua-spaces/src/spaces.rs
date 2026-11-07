@@ -4251,6 +4251,14 @@ pub(crate) const WINDOWS_COMING_SOON: &str = "This Mac runs ARM64 Windows at ful
 /// a person can act on. Remote host placement is checked by the selected host
 /// instead.
 fn refuse_windows_on_mac(image: Option<&str>, host_is_mac: bool) -> Result<()> {
+    refuse_windows_on_mac_for(image, host_is_mac, cua_image::windows::WindowsArch::host())
+}
+
+fn refuse_windows_on_mac_for(
+    image: Option<&str>,
+    host_is_mac: bool,
+    arch: cua_image::windows::WindowsArch,
+) -> Result<()> {
     let windows = image.is_some_and(|i| {
         cua_image::catalog::catalog_os(i).as_deref() == Some("windows")
             || i.rsplit('/')
@@ -4269,7 +4277,7 @@ fn refuse_windows_on_mac(image: Option<&str>, host_is_mac: bool) -> Result<()> {
             }?;
             cua_image::windows::build::local_build_target(&full)
         })
-        .is_some_and(|v| v.supports(cua_image::windows::WindowsArch::host()));
+        .is_some_and(|v| v.supports(arch));
     if runs_here {
         return Ok(());
     }
@@ -4431,6 +4439,8 @@ mod tests {
 
     #[test]
     fn a_windows_create_from_a_mac_is_refused_in_plain_words() {
+        // Apple silicon, whatever the CI host is.
+        const ARM: cua_image::windows::WindowsArch = cua_image::windows::WindowsArch::Arm64;
         // Published Server is x64; Server 2025 has no ARM64 build.
         for image in [
             "windows",
@@ -4438,16 +4448,19 @@ mod tests {
             "ghcr.io/trycua/windows:2022",
             "windows:2025",
         ] {
-            let e = refuse_windows_on_mac(Some(image), true).unwrap_err();
+            let e = refuse_windows_on_mac_for(Some(image), true, ARM).unwrap_err();
             assert!(e.to_string().contains("Use Windows 11"), "{image}: {e}");
-            assert!(refuse_windows_on_mac(Some(image), false).is_ok());
+            assert!(refuse_windows_on_mac_for(Some(image), false, ARM).is_ok());
         }
         // Windows 11 is built here with a build for this host.
         for image in ["windows:11", "ghcr.io/trycua/windows:11"] {
-            assert!(refuse_windows_on_mac(Some(image), true).is_ok(), "{image}");
+            assert!(
+                refuse_windows_on_mac_for(Some(image), true, ARM).is_ok(),
+                "{image}"
+            );
         }
-        assert!(refuse_windows_on_mac(Some("ghcr.io/trycua/linux:24.04"), true).is_ok());
-        assert!(refuse_windows_on_mac(None, true).is_ok());
+        assert!(refuse_windows_on_mac_for(Some("ghcr.io/trycua/linux:24.04"), true, ARM).is_ok());
+        assert!(refuse_windows_on_mac_for(None, true, ARM).is_ok());
     }
 
     #[test]

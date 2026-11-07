@@ -677,7 +677,6 @@ impl VmmLocal {
         let qemu = QemuRuntime::new(QemuConfig {
             resolver: Some(cua_image::ContainerDiskResolver::shared()),
             identity: Some(Arc::new(crate::guest_identity::SpacesdIdentity)),
-            install_swtpm: true,
             ..QemuConfig::default()
         });
         Self {

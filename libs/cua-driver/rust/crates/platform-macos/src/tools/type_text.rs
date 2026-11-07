@@ -88,7 +88,8 @@ fn def() -> &'static ToolDef {
                     "type": "string",
                     "enum": ["background", "foreground"],
                     "description": "Default \"background\": AX insert, then CGEvent keys, no focus steal. \"foreground\": front the window, type, restore; last resort for surfaces (WhatsApp/Catalyst) where background keys do not land."
-                }
+                },
+                "locked_input": super::locked_input_schema()
             },
             "additionalProperties": false
         }),
@@ -221,15 +222,16 @@ impl Tool for TypeTextTool {
         // AX write only (exact element, no CGEvent fallback), or a structured
         // refusal. delivery_mode:"foreground" stays the caller's explicit
         // last resort and is not gated here.
-        let (_mutation_lease, keyboard_policy) = match window_id {
+        let locked_input = args.get("locked_input").and_then(Value::as_bool) == Some(true);
+        let (_mutation_lease, keyboard_policy, under_lock) = match window_id {
             Some(wid) if !delivery_mode.is_foreground() => {
                 let gate_element_ptr = element_guard.as_ref().map(|(g, _)| g.as_ptr());
-                match background_keyboard_policy(pid, wid, gate_element_ptr).await {
-                    Ok((lease, policy)) => (Some(lease), policy),
+                match background_keyboard_policy(pid, wid, gate_element_ptr, locked_input).await {
+                    Ok((lease, policy, under_lock)) => (Some(lease), policy, under_lock),
                     Err(refusal_result) => return refusal_result,
                 }
             }
-            _ => (None, BackgroundKeyboardPolicy::Allowed),
+            _ => (None, BackgroundKeyboardPolicy::Allowed, false),
         };
         if let (Some((element, _)), Some(wid)) = (element_guard.as_ref(), window_id) {
             if let Some(refusal) = super::refuse_if_disabled(
@@ -395,6 +397,7 @@ impl Tool for TypeTextTool {
                             keyboard_policy: blocking_policy,
                             explicit_target: element_ptr.is_some() || used_pixel_focus,
                             key_window_confirmed: false,
+                            under_lock,
                         },
                     )
                 })
@@ -501,7 +504,9 @@ impl Tool for TypeTextTool {
                             .to_string(),
                     )
                 };
-                let note = if chromium_native_field && path == PATH_AX {
+                let note = if under_lock {
+                    super::UNDER_LOCK_NOTE.to_owned()
+                } else if chromium_native_field && path == PATH_AX {
                     format!("{note}{CHROMIUM_NATIVE_FIELD_NOTE}")
                 } else {
                     note
@@ -562,13 +567,16 @@ impl Tool for TypeTextTool {
                                 "reason": reason,
                             });
                         }
-                    } else if !verified && path != PATH_KEY_EVENTS_FG {
+                    } else if !verified && path != PATH_KEY_EVENTS_FG && !under_lock {
                         s["escalation"] = serde_json::json!({
                             "recommended": "foreground",
                             "reason": "background insert could not be confirmed — \
                                        re-call with delivery_mode:\"foreground\" if a \
                                        screenshot shows the text didn't land."
                         });
+                    }
+                    if under_lock {
+                        s["locked_input"] = true.into();
                     }
                     s
                 })
@@ -859,9 +867,18 @@ async fn background_keyboard_policy(
     pid: i32,
     window_id: u32,
     element_ptr: Option<usize>,
-) -> Result<(super::BackgroundMutationLease, BackgroundKeyboardPolicy), ToolResult> {
+    locked_input: bool,
+) -> Result<
+    (
+        super::BackgroundMutationLease,
+        BackgroundKeyboardPolicy,
+        bool,
+    ),
+    ToolResult,
+> {
     use cua_driver_core::background_input::{
-        decide_background_input, BackgroundAction, BackgroundInputDecision, ExactWindowTarget,
+        decide_background_input, decide_background_input_under_lock, BackgroundAction,
+        BackgroundInputDecision, ExactWindowTarget,
     };
     let lease = super::acquire_background_mutation(pid).await;
     let element_guard =
@@ -883,14 +900,27 @@ async fn background_keyboard_policy(
     // The exact window is made key for the key post (see
     // `super::post_keys_to_window`), so a sibling window is not ambiguous.
     let action = super::window_keyboard_action(BackgroundAction::InsertText);
-    match decide_background_input(target, &facts, action) {
-        BackgroundInputDecision::Execute { .. } => Ok((lease, BackgroundKeyboardPolicy::Allowed)),
+    let decision = if locked_input {
+        decide_background_input_under_lock(target, &facts, action)
+    } else {
+        decide_background_input(target, &facts, action)
+    };
+    match decision {
+        BackgroundInputDecision::Execute { .. } => Ok((
+            lease,
+            BackgroundKeyboardPolicy::Allowed,
+            locked_input && facts.screen_locked,
+        )),
         BackgroundInputDecision::Refuse(refusal) => {
             let semantic_available = element_ptr.is_some()
                 && decide_background_input(target, &facts, BackgroundAction::AxSemantic)
                     .is_execute();
             if semantic_available {
-                Ok((lease, BackgroundKeyboardPolicy::SemanticOnly(refusal)))
+                Ok((
+                    lease,
+                    BackgroundKeyboardPolicy::SemanticOnly(refusal),
+                    false,
+                ))
             } else {
                 Err(super::background_refusal_result(pid, window_id, &refusal))
             }
@@ -1332,6 +1362,10 @@ struct KeyboardRoute {
     /// call. An app that is not active reports no focused element even then
     /// (LibreOffice), so a missing focus is not a reason to refuse.
     key_window_confirmed: bool,
+    /// The session is locked and the caller passed `locked_input`: the keys go
+    /// to the app's key window as it was, with no key-window records and no
+    /// focused element to read.
+    under_lock: bool,
 }
 
 /// Best-effort-background ladder for `type_text`.
@@ -1357,6 +1391,7 @@ fn type_text_blocking(
     // focused element is read or any key is posted. Unconfirmed: refuse
     // (CUA-1767: with Find & Replace open the keys went into its Find field).
     let _scope = if !route.delivery_mode.is_foreground()
+        && !route.under_lock
         && matches!(route.keyboard_policy, BackgroundKeyboardPolicy::Allowed)
     {
         match super::key_scope(pid, route.window_id) {
@@ -1400,6 +1435,7 @@ fn type_text_in_key_window(
         keyboard_policy,
         explicit_target,
         key_window_confirmed,
+        under_lock,
     } = route;
     // Original field value before any rung drives read-back verification only.
     // An unreadable value is not evidence that the field is empty — and for a
@@ -1638,7 +1674,10 @@ fn type_text_in_key_window(
             },
             // No focused element, but the window is the confirmed key window:
             // post the keys to it, as press_key does.
-            None => unfocused_window_accepts_keys(key_window_confirmed, &bundle_id_of(pid)),
+            None => {
+                under_lock
+                    || unfocused_window_accepts_keys(key_window_confirmed, &bundle_id_of(pid))
+            }
         };
         if !accepts_text {
             if let Some((element, true, _)) = ax_target {
@@ -1926,6 +1965,14 @@ mod tests {
 
     use super::*;
 
+    #[test]
+    fn locked_input_is_an_advertised_boolean() {
+        assert_eq!(
+            def().input_schema["properties"]["locked_input"]["type"],
+            "boolean"
+        );
+    }
+
     /// A semantic-only policy must refuse the terminal short-circuit before
     /// any CGEvent is posted: terminals have no semantic AX rung, so nothing
     /// safe remains and the carried refusal comes back unchanged.
@@ -1948,6 +1995,7 @@ mod tests {
                 keyboard_policy: BackgroundKeyboardPolicy::SemanticOnly(refusal.clone()),
                 explicit_target: false,
                 key_window_confirmed: false,
+                under_lock: false,
             },
         );
         match r {
@@ -1972,6 +2020,7 @@ mod tests {
                 keyboard_policy: BackgroundKeyboardPolicy::Allowed,
                 explicit_target: false,
                 key_window_confirmed: false,
+                under_lock: false,
             },
         )
         .expect("the refusal is a delivery outcome");
@@ -2016,6 +2065,7 @@ mod tests {
                 keyboard_policy: BackgroundKeyboardPolicy::Allowed,
                 explicit_target: false,
                 key_window_confirmed: false,
+                under_lock: false,
             },
         )
         .expect("preflight refusal must not attempt the invalid pid");

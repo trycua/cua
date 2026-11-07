@@ -85,7 +85,6 @@ async fn the_join_returns_at_once_and_the_channel_opens_behind_it() {
             port: 1,
             certificate_sha256: "00".repeat(32),
             alpn: String::new(),
-            ..Default::default()
         }),
         ticket: "t".into(),
         ..Default::default()

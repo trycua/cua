@@ -81,7 +81,7 @@ struct LocalNetworkPermissionTests {
     /// lets the create go ahead.
     @Test func explainedThenAllowedGoesAhead() async throws {
         let shown = Shown()
-        let probe = FakeProbe([.blocked, .allowed], prompts: [0, 1, 1])
+        let probe = FakeProbe([.blocked, .allowed], prompts: [1])
         let g = gate(probe, shown: shown)
         try await g.check()
         #expect(shown.steps.map(\.kind) == [.explain])
@@ -91,11 +91,24 @@ struct LocalNetworkPermissionTests {
         #expect(g.asked)
     }
 
+    /// Regression (first run): macOS's prompt had been open since launch, so
+    /// no new one appeared after Continue and the gate said it failed within
+    /// 3 s. A prompt already on screen is waited on like a new one.
+    @Test func aPromptAlreadyOnScreenIsWaitedOn() async throws {
+        let shown = Shown()
+        let probe = FakeProbe([.blocked, .blocked, .blocked, .allowed], prompts: [1])
+        let g = gate(probe, shown: shown)
+        g.promptAppears = 0
+        try await g.check()
+        #expect(shown.steps.map(\.kind) == [.explain])
+        #expect(probe.connects == 4)
+    }
+
     /// Don't Allow (the prompt goes, access stays blocked): the create fails
     /// at once with the fix, and the dialog opens Local Network settings.
     @Test func deniedFailsAtOnceWithTheFix() async throws {
         let shown = Shown()
-        let probe = FakeProbe([.blocked], prompts: [0, 1, 0])
+        let probe = FakeProbe([.blocked], prompts: [1, 0])
         let g = gate(probe, shown: shown)
         // Never the whole wait for an answer: the prompt went, so it is over.
         g.promptAnswered = 600
@@ -196,7 +209,7 @@ struct LocalNetworkWhenProvidingTests {
     @Test func aNewSetupThatProvidesSpacesAsksOnThisMac() async throws {
         let host = FixtureHost()
         let shown = LocalNetworkPermissionTests.Shown()
-        let probe = LocalNetworkPermissionTests.FakeProbe([.blocked, .allowed], prompts: [0, 1, 1])
+        let probe = LocalNetworkPermissionTests.FakeProbe([.blocked, .allowed], prompts: [1])
         let m = model(host, probe: probe, shown: shown)
         try await m.host.setUp(request(nil), on: host)
         #expect(host.current.provideSpaces, "a new setup provides Spaces")

@@ -1083,6 +1083,17 @@ impl LumeRuntime {
         Ok(run)
     }
 
+    /// The guest ports a VM's gateway forwards: the ports its start
+    /// published ([`Self::save_ports`], recorded before the gateway starts)
+    /// and SSH.
+    fn gateway_guest_ports(&self, name: &str) -> Vec<u16> {
+        let mut guest = self.load_ports(name);
+        guest.push(22);
+        guest.sort_unstable();
+        guest.dedup();
+        guest
+    }
+
     /// Starts the gateway of VM `name` for one run and returns its
     /// `gateway:<socket>` network, when the VM's network is protected
     /// ([`Self::keep_network`]); `None` for a VM on Apple's NAT. The gateway
@@ -1131,10 +1142,7 @@ impl LumeRuntime {
         // Lume finds the control socket beside the network socket.
         let sock = run.join("net.sock");
         let control = run.join("control.sock");
-        let mut guest: Vec<u16> = self.load_ports(name);
-        guest.push(22);
-        guest.sort_unstable();
-        guest.dedup();
+        let guest = self.gateway_guest_ports(name);
         let hosts = host::free_ports(guest.len())?;
         let ports: std::collections::BTreeMap<u16, u16> =
             guest.iter().copied().zip(hosts).collect();
@@ -2085,6 +2093,11 @@ impl LumeRuntime {
                 crate::egress::check(BackendKind::Lume, &spec.egress)?;
             }
         }
+        // Record the published guest ports before anything starts: the VM's
+        // gateway forwards exactly the ports recorded here, so recording
+        // them only after boot (`finish_start`) left a first start's
+        // gateway with SSH alone and the host with no route to cua-spacesd.
+        self.save_ports(&spec.name, &spec.ports);
         crate::types::reject_injection(BackendKind::Lume, spec)?;
         if macos_guest(spec) {
             macos_mount_shares(&spec.mounts)?;
@@ -4003,6 +4016,36 @@ mod tests {
         LumeRuntime::new(cfg()).save_ports("m", &[3211, 8080]);
         // A fresh runtime (another CLI process) reads them back.
         assert_eq!(LumeRuntime::new(cfg()).load_ports("m"), vec![3211, 8080]);
+    }
+
+    #[test]
+    fn a_gateway_forwards_the_ports_a_start_recorded_so_the_probe_port_resolves() {
+        let dir = tempfile::tempdir().unwrap();
+        let rt = LumeRuntime::new(LumeConfig {
+            root: dir.path().to_path_buf(),
+            ..LumeConfig::default()
+        });
+        // Nothing recorded yet: the gateway would forward SSH alone, and
+        // cua-spacesd's port would have no route (the bug).
+        assert_eq!(rt.gateway_guest_ports("m"), vec![22]);
+        rt.save_ports("m", &[3211]);
+        assert_eq!(rt.gateway_guest_ports("m"), vec![22, 3211]);
+        // The gateway's forwards decide the endpoints the probes dial.
+        let gw = LumeGateway {
+            network: "gateway:/x".into(),
+            ports: [(22, 50022), (3211, 50211)].into(),
+        };
+        std::fs::create_dir_all(dir.path().join("m")).unwrap();
+        std::fs::write(rt.gateway_file("m"), serde_json::to_vec(&gw).unwrap()).unwrap();
+        let ep = rt.with_gateway(
+            "m",
+            Endpoints {
+                host: "192.168.64.5".into(),
+                ports: [(22, 22), (3211, 3211)].into(),
+                ..Default::default()
+            },
+        );
+        assert_eq!(ep.addr(3211).as_deref(), Some("127.0.0.1:50211"));
     }
 
     #[tokio::test]

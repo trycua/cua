@@ -17,7 +17,7 @@ import { Callout } from 'fumadocs-ui/components/callout';
 
 [`trycua/hermes-cua-spaces`](https://github.com/trycua/hermes-cua-spaces) is a Hermes terminal backend. Hermes looks and works the same. Its terminal, file and code tools run in a Space instead of on your computer. The Space is the sandbox, so Hermes skips its risky-command prompts for Spaces the plugin creates.
 
-```bash
+```bash skip="no-runner"
 hermes plugins install https://github.com/trycua/hermes-cua-spaces
 hermes config set terminal.backend cua
 ```
@@ -36,7 +36,7 @@ Hermes's browser tools, `computer_use` and Bot Desktop still use your own machin
 
 Hermes can create Spaces, run commands in them, drive their desktops and delete them as tools it calls itself. Add the Cua MCP server to `~/.hermes/config.yaml`:
 
-```yaml
+```yaml skip="no-runner"
 mcp_servers:
   cua:
     command: cua
@@ -47,7 +47,7 @@ Limit what Hermes may do with `--permissions` (for example `["mcp", "--permissio
 
 ## Run Hermes inside a Space
 
-```bash
+```bash skip="no-runner"
 cua agent create ada --harness hermes --in local:dev --env-from-host OPENAI_API_KEY
 cua agent tell ada "Summarize the repo in /home/cua/project"
 ```

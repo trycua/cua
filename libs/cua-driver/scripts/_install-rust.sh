@@ -116,10 +116,9 @@ if [[ "$_cua_install_common_loaded" == "0" ]]; then
     # so a fetch failure shows up in the install log, but don't fail
     # the install over it — the binary swap below is the load-bearing
     # part, daemon cleanup is "nice to have".
-    printf 'warning: could not load _install-common.sh (on-disk + network); daemon kill and KWin desktop entry skipped\n' >&2
+    printf 'warning: could not load _install-common.sh (on-disk + network); daemon kill skipped\n' >&2
     stop_cua_driver_daemons() { :; }
     show_cua_driver_daemon_survivors() { :; }
-    cua_driver_write_kwin_desktop_entry() { :; }
     unregister_other_cua_driver_copies() { :; }
     cua_driver_lsregister_path() { return 1; }
 fi
@@ -1511,8 +1510,9 @@ else
     rm -f "$BIN_LINK"
     ln -s "$CURRENT_LINK/$BINARY_NAME" "$BIN_LINK"
     log "symlinked $BIN_LINK -> $CURRENT_LINK/$BINARY_NAME"
-    cua_driver_write_kwin_desktop_entry "$CURRENT_LINK/$BINARY_NAME" "$BIN_LINK" \
-        || log "warning: could not write the KWin desktop entry; KWin won't grant window capture"
+    if command -v kwin_wayland >/dev/null 2>&1; then
+        log "KWin window capture is off; \`cua-driver kwin-capture on\` turns it on"
+    fi
 
     # Post-install GC of old per-version release dirs. Runs AFTER the
     # atomic `current` swap above so the about-to-be-active version is

@@ -1270,3 +1270,46 @@ fn vms_forward_localhost_lan_ports_too() {
         [3000, 5432]
     );
 }
+
+/// Conformance for every runtime that gives a guest DNS servers: whatever
+/// the engine host's resolver files name, each server the guest is given
+/// ([`crate::resolver`]) is reachable on port 53 under the Secure rules of
+/// every preset that has a network, so a name resolves and a fetch over
+/// HTTPS can follow. The runner case: Azure's DNS behind a systemd stub.
+#[test]
+fn every_server_a_guest_is_given_is_reachable_on_53_under_secure() {
+    let hosts: [&[&str]; 5] = [
+        &["127.0.0.53", "168.63.129.16"],
+        &["168.63.129.16"],
+        &["169.254.169.254", "10.0.2.3"],
+        &["192.168.65.7", "100.100.100.200"],
+        &[],
+    ];
+    let presets = [
+        NetworkSettings::internet(),
+        localhost(&[3000]),
+        NetworkSettings {
+            preset: NetworkPreset::Unprotected,
+            ..Default::default()
+        },
+    ];
+    for host in hosts {
+        let host: Vec<IpAddr> = host.iter().map(|h| ip(h)).collect();
+        let resolvers = crate::resolver::select(None, &host, false);
+        assert!(!resolvers.is_empty(), "{host:?}");
+        for s in &presets {
+            let mut c = ctx();
+            c.resolvers = resolvers.clone();
+            let r = compile_mode(s, &c, Mode::Secure).unwrap();
+            for d in &resolvers {
+                assert!(
+                    r.allows_port(*d, Proto::Udp, 53) && r.allows_port(*d, Proto::Tcp, 53),
+                    "{d} from {host:?} under {:?}",
+                    s.preset
+                );
+            }
+            // And HTTPS to a public address follows.
+            assert!(r.allows_port(ip("1.1.1.1"), Proto::Tcp, 443));
+        }
+    }
+}

@@ -257,14 +257,9 @@ export function WelcomeScreen({ onAdd, usage, onUsage, onUsageLink }: { onAdd: (
     <div data-new-run="welcome">
       <Title>{WELCOME.title}</Title>
       <Line>{WELCOME.line}</Line>
-      <Actions>
-        <button type="button" className={WHITE_BUTTON} onClick={onAdd} data-onboarding-primary="">
-          {WELCOME.primary}
-        </button>
-      </Actions>
       {usage ? (
         // Before anything is sent: the hosts hold every usage event until the run leaves this screen.
-        <div className={cn("mt-5 flex max-w-[520px] items-start gap-3 text-[13px] leading-[19px] font-medium", GREY)} data-new-run-usage={usage.on ? "on" : "off"}>
+        <div className={cn("mt-6 flex max-w-[520px] items-start gap-3 text-[13px] leading-[19px] font-medium", GREY)} data-new-run-usage={usage.on ? "on" : "off"}>
           <Switch className="mt-px shrink-0" checked={usage.on} disabled={!usage.enabled} onCheckedChange={(on) => onUsage?.(on)} aria-label={usage.label} data-new-run-usage-switch="" />
           <span className="min-w-0">
             <span className="block text-white">{usage.label}</span>
@@ -278,6 +273,11 @@ export function WelcomeScreen({ onAdd, usage, onUsage, onUsageLink }: { onAdd: (
           </span>
         </div>
       ) : null}
+      <Actions>
+        <button type="button" className={WHITE_BUTTON} onClick={onAdd} data-onboarding-primary="">
+          {WELCOME.primary}
+        </button>
+      </Actions>
     </div>
   );
 }

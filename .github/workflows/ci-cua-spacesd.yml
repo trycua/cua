@@ -188,14 +188,10 @@ jobs:
           workspaces: "libs/cua-spacesd -> target"
       - name: Install Linux build dependencies
         if: runner.os == 'Linux'
-        working-directory: .
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            build-essential pkg-config perl libx11-dev libxkbcommon-dev \
-            libwayland-dev libdbus-1-dev libxcb1-dev libx11-xcb-dev \
-            libxkbcommon-x11-dev libxrandr-dev libxi-dev libxtst-dev \
-            libxfixes-dev libxdamage-dev libudev-dev
+        uses: ./.github/actions/apt-install
+        with:
+          packages: >-
+            build-essential pkg-config perl libx11-dev libxkbcommon-dev libwayland-dev libdbus-1-dev libxcb1-dev libx11-xcb-dev libxkbcommon-x11-dev libxrandr-dev libxi-dev libxtst-dev libxfixes-dev libxdamage-dev libudev-dev
       - name: Format
         run: cargo fmt --all --check
       - uses: ./.github/actions/nextest

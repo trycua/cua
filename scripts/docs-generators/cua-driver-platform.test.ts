@@ -17,7 +17,7 @@ import {
 import { stableJson } from './lib/mdx';
 
 const CLI_COMMANDS = [
-  'mcp', 'mcp-config', 'list-tools', 'describe', 'call', 'manifest', 'dump-docs', 'serve', 'stop', 'status', 'sessions',
+  'mcp', 'connect', 'mcp-config', 'list-tools', 'describe', 'call', 'manifest', 'dump-docs', 'serve', 'stop', 'status', 'sessions',
   'revoke', 'autostart', 'permissions', 'doctor', 'diagnose', 'test', 'recording', 'history', 'config', 'telemetry',
   'cursor-theme', 'cursor', 'skills', 'extension', 'perception', 'check-update', 'update', 'channel',
 ];

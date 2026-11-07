@@ -25,6 +25,7 @@ mod broken_pipe;
 mod bundle;
 mod check_update_tool;
 mod cli;
+mod connect;
 mod doctor;
 mod driver_service_http;
 #[cfg(any(target_os = "macos", all(test, unix)))]
@@ -371,6 +372,61 @@ fn inspect_tools_without_runtime() -> serde_json::Value {
     })
 }
 
+/// A cua-driver host whose `get_screen_size` is a counting probe, so a test
+/// can prove whether a route reached tool execution. The name is one the
+/// typed envelope route admits.
+#[cfg(test)]
+async fn probe_sdk() -> (
+    Arc<cua_driver_sdk::CuaDriver>,
+    Arc<sdk_adapter::SdkAdapter>,
+    &'static std::sync::atomic::AtomicUsize,
+) {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static CALLS: AtomicUsize = AtomicUsize::new(0);
+    struct Probe(cua_driver_core::tool::ToolDef);
+    #[async_trait::async_trait]
+    impl cua_driver_core::tool::Tool for Probe {
+        fn def(&self) -> &cua_driver_core::tool::ToolDef {
+            &self.0
+        }
+        async fn invoke(&self, _: serde_json::Value) -> cua_driver_core::protocol::ToolResult {
+            CALLS.fetch_add(1, Ordering::SeqCst);
+            cua_driver_core::protocol::ToolResult::text("probe ran")
+        }
+    }
+    fn register(registry: &mut cua_driver_core::tool::ToolRegistry) {
+        registry.register(Box::new(Probe(cua_driver_core::tool::ToolDef {
+            name: "get_screen_size".into(),
+            description: "test probe".into(),
+            input_schema: serde_json::json!({"type": "object"}),
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+            open_world: false,
+        })));
+    }
+    CALLS.store(0, Ordering::SeqCst);
+    let driver =
+        cua_driver_sdk::CuaDriver::try_create_service_for_host(cua_driver_sdk::DriverHostOptions {
+            cursor: cursor_overlay::CursorConfig {
+                enabled: false,
+                ..cursor_overlay::CursorConfig::default()
+            },
+            host_owns_permission_ux: false,
+            host_bundle_id: None,
+            claude_code_compatibility: false,
+            prepare_desktop_environment: false,
+            register_host_tools: Some(register),
+            authorization_host: None,
+            activity_observer: None,
+        })
+        .expect("probe host runtime");
+    let sdk = sdk_adapter::SdkAdapter::load(driver.clone())
+        .await
+        .expect("SDK adapter");
+    (driver, sdk, &CALLS)
+}
+
 #[cfg(test)]
 fn test_runtime_lock() -> &'static tokio::sync::Mutex<()> {
     static LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
@@ -503,6 +559,16 @@ fn main() {
     if let Some(code) = platform_macos::permissions::gate::run_permission_probe_if_requested() {
         std::process::exit(code);
     }
+    // macOS's "Quit & Reopen" after the Screen Recording switch restarts the
+    // app with no arguments. Mid-guide, come back as the same service so the
+    // guide can show that it finished.
+    if let Some(args) = platform_macos::permissions::guide::resume_serve_args() {
+        use std::os::unix::process::CommandExt as _;
+        if let Ok(exe) = std::env::current_exe() {
+            let error = std::process::Command::new(exe).args(&args).exec();
+            eprintln!("cua-driver: could not reopen after the permission guide: {error}");
+        }
+    }
     // The packaged uninstaller needs a truly offline, pre-telemetry purge
     // path while this exact signed executable still exists on disk.
     if let Some(code) = history_runtime::run_offline_purge_if_requested() {
@@ -565,6 +631,13 @@ fn main() {
         }
         cli::Command::McpConfig { client, no_skills } => {
             cli::run_mcp_config(client.as_deref(), no_skills);
+        }
+        cli::Command::Connect {
+            clients,
+            dry_run,
+            json,
+        } => {
+            connect::run_connect(&clients, dry_run, json);
         }
         cli::Command::Manifest { pretty } => {
             // Surface 8: machine-readable CLI manifest. Read-only — no
@@ -634,10 +707,6 @@ fn main() {
                     );
                 }
             }
-            // Fail closed until a fresh helper-process probe completes. This
-            // also covers a probe launch failure without letting the serving
-            // process perform and cache its own negative TCC preflight.
-            serve::set_permission_gate_pending(!gate_opts.opt_out);
             telemetry::capture_start(
                 telemetry::event::SERVE_START_LEGACY,
                 telemetry::Transport::Daemon,
@@ -675,6 +744,12 @@ fn main() {
                     std::process::exit(1);
                 }
             };
+            // Fail closed until a fresh helper-process probe completes. This
+            // also covers a probe launch failure without letting the serving
+            // process perform and cache its own negative TCC preflight. Set
+            // before the serve thread binds the socket.
+            serve::set_permission_gate_pending(&driver, !gate_opts.opt_out);
+            let gate_driver = driver.clone();
             let sp = socket.unwrap_or_else(serve::default_socket_path);
             let pid_path = pid_file.unwrap_or_else(serve::default_pid_file_path);
 
@@ -731,7 +806,7 @@ fn main() {
                     }
                 },
             );
-            serve::settle_permission_gate(gate_result.is_ok(), move || {
+            serve::settle_permission_gate(gate_driver, gate_result.is_ok(), move || {
                 platform_macos::permissions::gate::wait_for_grants(&slow_opts)
             });
             let gate_context = platform_macos::permissions::gate::telemetry_context();
@@ -993,6 +1068,14 @@ fn main() -> anyhow::Result<()> {
         }
         cli::Command::McpConfig { client, no_skills } => {
             cli::run_mcp_config(client.as_deref(), no_skills);
+            Ok(())
+        }
+        cli::Command::Connect {
+            clients,
+            dry_run,
+            json,
+        } => {
+            connect::run_connect(&clients, dry_run, json);
             Ok(())
         }
         cli::Command::Manifest { pretty } => {

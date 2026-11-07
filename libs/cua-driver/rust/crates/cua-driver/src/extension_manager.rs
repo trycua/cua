@@ -611,6 +611,8 @@ fn ensure_private_directory_path(path: &Path) -> Result<Dir> {
 }
 
 fn sync_cap_dir(dir: &Dir) -> Result<()> {
+    #[cfg(not(unix))]
+    let _ = dir;
     #[cfg(unix)]
     {
         let mut options = CapOpenOptions::new();
@@ -1770,18 +1772,18 @@ fn initial_publisher_trust() -> PublisherTrust {
     }
 }
 
+/// A lone backup means a commit stopped between its two renames; it is the
+/// committed trust that `recover_publisher_trust_locked` would restore.
 fn load_publisher_trust_at(root: &Dir) -> Result<PublisherTrust> {
-    let active = private_regular_file_or_missing_at(root, TRUST_NAME)?;
-    let backup = private_regular_file_or_missing_at(root, TRUST_BACKUP_NAME)?;
-    if !active && backup {
-        bail!("publisher trust update is interrupted; run an extension mutation to recover it");
-    }
-    if !active {
+    let name = if private_regular_file_or_missing_at(root, TRUST_NAME)? {
+        TRUST_NAME
+    } else if private_regular_file_or_missing_at(root, TRUST_BACKUP_NAME)? {
+        TRUST_BACKUP_NAME
+    } else {
         return Ok(initial_publisher_trust());
-    }
-    let trust: PublisherTrust =
-        serde_json::from_slice(&read_small_file_at(root, Path::new(TRUST_NAME))?)
-            .context("parse publisher trust state")?;
+    };
+    let trust: PublisherTrust = serde_json::from_slice(&read_small_file_at(root, Path::new(name))?)
+        .context("parse publisher trust state")?;
     validate_publisher_trust(&trust)?;
     Ok(trust)
 }
@@ -2056,14 +2058,6 @@ impl ExtensionStore {
         }
         let root = open_directory_path_nofollow(&self.root)?;
         verify_cap_directory_permissions_portable(&root)?;
-        let active = private_regular_file_or_missing_at(&root, TRUST_NAME)?;
-        let backup = private_regular_file_or_missing_at(&root, TRUST_BACKUP_NAME)?;
-        if !active && backup {
-            bail!("publisher trust update is interrupted; run an extension mutation to recover it");
-        }
-        if !active {
-            return Ok(initial_publisher_trust());
-        }
         load_publisher_trust_at(&root)
     }
 
@@ -3462,14 +3456,14 @@ fn verify_installed_version_for_startup(
     #[cfg(windows)]
     {
         let started = Instant::now();
-        return converge_windows_startup_verification_with(
+        converge_windows_startup_verification_with(
             WINDOWS_ACL_CONVERGENCE_ATTEMPTS,
             WINDOWS_ACL_CONVERGENCE_RETRY_WINDOW,
             || started.elapsed(),
             std::thread::sleep,
             || windows_harden_private_tree(root),
             || verify_installed_version_for_startup_at(root, entry),
-        );
+        )
     }
     #[cfg(not(windows))]
     verify_installed_version_for_startup_at(root, entry)
@@ -6051,6 +6045,7 @@ mod tests {
     }
 
     /// A publisher-verifiable extension archive and its signed catalog.
+    #[cfg(any(unix, feature = "review-trust-root"))]
     fn signed_fixture(
         directory: &Path,
         pair: &ring::signature::Ed25519KeyPair,
@@ -6062,9 +6057,31 @@ mod tests {
         let notice = b"notice";
         let source = b"source";
         let model_license = b"model license";
+        let runtime_name = if cfg!(target_os = "macos") {
+            "libonnxruntime.dylib"
+        } else {
+            "libonnxruntime.so"
+        };
+        let runtime_path = format!("runtime/{runtime_name}");
+        let contract = serde_json::to_vec(&serde_json::json!({
+            "$schema": "runtime-contract.schema.json",
+            "schemaVersion": 1,
+            "target": current_target().unwrap(),
+            "protocolVersion": 1,
+            "worker": {"name": "cua-perception", "sha256": hex_sha256(worker)},
+            "runtime": {"name": runtime_name, "sha256": hex_sha256(model)},
+            "modelManifest": {"name": "model-manifest.json", "sha256": hex_sha256(model)},
+            "models": [{"name": "parser.bin", "role": "icon-detect", "sha256": hex_sha256(model)}],
+            "dictionary": {"name": "parser.bin", "role": "ocr-dictionary", "sha256": hex_sha256(model)},
+            "rejectMismatch": true
+        }))
+        .unwrap();
         let bindings = [
             ("bin/cua-perception", worker.as_slice(), true),
             ("models/parser.bin", model.as_slice(), false),
+            ("models/model-manifest.json", model.as_slice(), false),
+            (runtime_path.as_str(), model.as_slice(), false),
+            (PERCEPTION_RUNTIME_CONTRACT, contract.as_slice(), false),
             ("LICENSES/NOTICE.txt", notice.as_slice(), false),
             ("LICENSES/model.txt", model_license.as_slice(), false),
             ("SOURCE/source.txt", source.as_slice(), false),
@@ -7827,6 +7844,61 @@ mod tests {
             .unwrap()
             .to_string();
         assert!(error.contains("no record"), "{error}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn interrupted_trust_commit_reads_the_backup_everywhere() {
+        let pair = ring::signature::Ed25519KeyPair::from_seed_unchecked(&[28; 32]).unwrap();
+        let key = test_publisher_key("current", &pair, 1, u64::MAX);
+        let entry = registry_entry(PERCEPTION_ID).unwrap();
+        let temp = TempDir::new().unwrap();
+        let store = ExtensionStore::new(temp.path().join("extensions"));
+        let root = ensure_private_directory_path(&store.root).unwrap();
+        store
+            .commit_publisher_trust_locked(&root, &test_trust(key, 0))
+            .unwrap();
+        let (archive, catalog) = signed_fixture(temp.path(), &pair, "current", 2026092402);
+        let source = |store: &ExtensionStore| InstallSource {
+            archive: archive.clone(),
+            trust: verified_trust_class(),
+            catalog: Some(catalog.payload.clone()),
+            signed_catalog: Some(catalog.clone()),
+            trust_update: Some(
+                verify_catalog_at(
+                    entry,
+                    &catalog,
+                    &store.load_publisher_trust().unwrap(),
+                    store.load_catalog_ledger().as_ref(),
+                    unix_now().unwrap(),
+                )
+                .unwrap(),
+            ),
+        };
+        store.install_source(entry, &source(&store), false).unwrap();
+        let committed = store.load_publisher_trust().unwrap();
+        assert_eq!(committed.highest_catalog_version, 2026092402);
+
+        // A crash between commit's two renames leaves only the backup, which
+        // is still the committed trust. Read-only callers must not fail on it.
+        root.rename(TRUST_NAME, &root, TRUST_BACKUP_NAME).unwrap();
+        write_new_file_at(&root, TRUST_NEW_NAME, b"interrupted").unwrap();
+        assert_eq!(store.load_publisher_trust().unwrap(), committed);
+        let info = store.info(entry, false).unwrap();
+        assert!(info.healthy, "{}", info.detail);
+        assert!(store.active_path(PERCEPTION_ID).unwrap().is_some());
+        assert!(perception_worker_config_in(&store).unwrap().is_some());
+        assert!(!store.root.join(TRUST_NAME).exists());
+
+        // Mutations read the same trust and leave the store recovered.
+        store.remove(entry).unwrap();
+        assert!(!store.root.join(TRUST_NAME).exists());
+        assert_eq!(store.load_publisher_trust().unwrap(), committed);
+        store.install_source(entry, &source(&store), false).unwrap();
+        assert_eq!(store.load_publisher_trust().unwrap(), committed);
+        assert!(store.root.join(TRUST_NAME).exists());
+        assert!(!store.root.join(TRUST_BACKUP_NAME).exists());
+        assert!(!store.root.join(TRUST_NEW_NAME).exists());
     }
 
     #[test]

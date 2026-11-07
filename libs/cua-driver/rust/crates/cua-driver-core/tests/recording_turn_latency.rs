@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 use async_trait::async_trait;
 use cua_driver_core::protocol::ToolResult;
 use cua_driver_core::recording::{
-    set_budgeted_ax_snapshot_fn, set_screenshot_fn, StateCaptureBudget,
+    set_budgeted_ax_snapshot_fn, set_screenshot_fn, StateCaptureBudget, StopBy,
 };
 use cua_driver_core::tool::{Tool, ToolDef, ToolRegistry};
 use serde_json::{json, Value};
@@ -208,5 +208,5 @@ async fn recorded_actions_stay_bounded_with_a_slow_accessibility_provider() {
         assert!(turn.join(format!("{phase}_state.json")).is_file());
     }
 
-    registry.recording.stop_owner(None).unwrap();
+    registry.recording.stop(StopBy::Anyone).unwrap();
 }

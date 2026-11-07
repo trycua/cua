@@ -23,6 +23,8 @@ on:
   pull_request_target:
     types: [opened, reopened, synchronize, edited, labeled, unlabeled, ready_for_review]
     branches: [main]
+  push:
+    branches: [main]
   schedule:
     - cron: "17,47 * * * *"
   workflow_dispatch: {}
@@ -86,7 +88,7 @@ jobs:
           if [ -n "$PR_NUMBER" ]; then
             args+=(--pr "$PR_NUMBER")
           fi
-          if [ "$GITHUB_EVENT_NAME" != pull_request_target ]; then
+          if [ "$GITHUB_EVENT_NAME" != pull_request_target ] && [ "$GITHUB_EVENT_NAME" != push ]; then
             args+=(--alert)
           fi
           python3 .github/scripts/release_pr_automerge.py "${args[@]}"

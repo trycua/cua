@@ -41,6 +41,7 @@ pub mod phone;
 pub mod push_card;
 pub(crate) use phases::DISPATCH_BUDGET;
 pub mod rights;
+mod sleep;
 pub mod wake;
 
 use crate::DriveResult as _;
@@ -51,8 +52,10 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use crate::thread::{Author, Draft, EntryKind, check_text};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 
 use cua_spaces::agents::{self as ag, Agents, RunOptions, RunStatus};
 use cua_spaces::routines::{
@@ -502,6 +505,8 @@ pub(crate) struct Live {
     /// The credential hash an agent's run would start with now, by agent
     /// name, and when it was worked out.
     cred_hashes: HashMap<String, (std::time::Instant, Option<String>)>,
+    /// Spaces that sleep on their own: what the last checks found ([`sleep`]).
+    sleep: HashMap<String, sleep::Watch>,
 }
 
 /// How long a worked-out credential hash is reused.
@@ -538,10 +543,30 @@ pub(crate) type Partials = Arc<std::sync::Mutex<HashMap<String, Partial>>>;
 pub(crate) struct Partial {
     turn: u32,
     text: String,
+    /// The last chunk of `text` seen and when it was first seen at that length: a stretch of prose
+    /// nothing has been added to for [`QUIET`] is finished (the agent woke up on its own after a
+    /// turn, or stopped mid-thought) and is posted like any other.
+    seen_seq: u64,
+    seen_at: Option<Instant>,
+    /// Subagent tracking (kept under the session's key with a `!subs` suffix): the events that
+    /// concern subagents, the fold of them, and whether the run's earlier events were read.
+    sub_events: Vec<ag::AgentEvent>,
+    subs: Vec<cua_agents::subagents::Subagent>,
+    sub_last: u64,
+    backfilled: bool,
+    /// The run those belong to (a new run numbers its events from 1 again).
+    sub_run: String,
 }
+
+/// How long a stretch of the agent's words must stay unchanged, with nothing after it, before it
+/// is posted as a message of its own.
+const QUIET: Duration = Duration::from_millis(1500);
 
 /// The longest streaming text a live row carries (characters): the whole message follows as the reply.
 const MAX_PARTIAL: usize = 8_000;
+
+/// How many of the thread's newest entries a pass looks through to see whether it posted a message already.
+const RECENT: u64 = 300;
 
 impl std::fmt::Debug for Persistent {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -1087,6 +1112,8 @@ impl Persistent {
                 "{name} is paused; resume it first (agent_resume)"
             )));
         }
+        // A Space the host put to sleep wakes for the message.
+        self.wake_space(&rec.space).await?;
         if k == 1 {
             self.take_lease(&rec).await?;
         }
@@ -1194,7 +1221,7 @@ impl Persistent {
                     }),
                     durable,
                     // A standby run waits for its messages for as long as it lives.
-                    idle_exit_secs: rec.policy.standby.then_some(7 * 24 * 3600),
+                    idle_exit_secs: self.idle_exit_for(&rec),
                     ..Default::default()
                 },
             )
@@ -1277,6 +1304,7 @@ impl Persistent {
         if rec.paused {
             return Err(Error::Agent(format!("{name} is paused")));
         }
+        self.wake_space(&rec.space).await?;
         if let Some(run) = &rec.run_id {
             let agents = self.agents_for(&rec.space).await?;
             let status = match known {
@@ -1922,16 +1950,17 @@ impl Persistent {
         // A Space someone stopped or suspended is left alone: its durable
         // members wait for it to run again instead of waking it.
         let off = self.spaces_off();
+        let asleep = self.asleep_spaces();
         if self.detach_dispatch {
             // A posted message is handed to its member first, ahead of
             // anything below that can wait on a Space; each session is read
             // on a task of its own (see `serve_sessions`).
             self.dispatch(&mut report).await;
-            self.serve_sessions(&records, &off, &mut report);
+            self.serve_sessions(&records, &off, &asleep, &mut report);
         } else {
             let live_sessions: Vec<AgentRecord> = records
                 .iter()
-                .filter(|r| !r.paused && !(r.policy.durable && off.contains(&r.space)))
+                .filter(|r| !r.paused && !sleep::waits_for_space(r, &off, &asleep))
                 .flat_map(|r| r.session_views())
                 .filter(|r| r.run_id.is_some())
                 .collect();
@@ -1957,6 +1986,7 @@ impl Persistent {
         }
         self.tick_setups(&mut report).await;
         self.tick_standby(&mut report, false).await;
+        self.tick_sleep(&mut report).await;
         // Thread tasks for members that are free (after the turns that
         // ended above closed theirs).
         if !self.detach_dispatch {
@@ -1978,6 +2008,7 @@ impl Persistent {
         &self,
         records: &[AgentRecord],
         off: &std::collections::BTreeSet<String>,
+        asleep: &std::collections::BTreeSet<String>,
         report: &mut TickReport,
     ) {
         report.errors.append(
@@ -1988,7 +2019,7 @@ impl Persistent {
         );
         let live_sessions = records
             .iter()
-            .filter(|r| !r.paused && !(r.policy.durable && off.contains(&r.space)))
+            .filter(|r| !r.paused && !sleep::waits_for_space(r, off, asleep))
             .flat_map(|r| r.session_views())
             .filter(|r| r.run_id.is_some());
         for rec in live_sessions {
@@ -2068,7 +2099,8 @@ impl Persistent {
         self.tick_standby(&mut report, true).await;
         self.dispatch(&mut report).await;
         if let (Ok(records), off) = (self.list(), self.spaces_off()) {
-            self.serve_sessions(&records, &off, &mut report);
+            let asleep = self.asleep_spaces();
+            self.serve_sessions(&records, &off, &asleep, &mut report);
         }
         if !report.errors.is_empty() {
             self.detached_errors
@@ -2183,47 +2215,309 @@ impl Persistent {
         r
     }
 
-    /// Keeps what the session's turn has said so far (`message` events), so the thread can show it
-    /// as one live entry that is replaced whole; clears it when the turn ends or fails, because the
-    /// reply then lands as the entry. Wakes the thread's followers when the text changed.
-    fn note_partial(
-        &self,
-        rec: &AgentRecord,
-        events: &[ag::AgentEvent],
-        ended: Option<u32>,
-        failed: Option<&(u32, String)>,
-    ) {
+    /// Posts every message the agent has finished saying, each as an entry of its own, in order,
+    /// under the task its turn works on (nothing is replaced or left out), and keeps the one it is
+    /// still saying as the thread's live entry. A message is finished when a tool call, a thought or
+    /// the end of the turn follows it, or when it stayed unchanged for [`QUIET`]. Returns whether
+    /// one is still open (the caller then keeps its event bookmark, so a restart reads it whole).
+    fn post_said(&self, rec: &AgentRecord, run: &str, events: &[ag::AgentEvent]) -> Result<bool> {
         let key = format!("{}/{}#{}", rec.space, rec.name, rec.k());
+        let said = cua_agents::subagents::said(events);
+        let mut open = false;
         let mut changed = false;
+        let mut post: Vec<cua_agents::subagents::Said> = vec![];
         {
             let mut map = self.partials.lock().unwrap_or_else(|p| p.into_inner());
-            for e in events.iter().filter(|e| e.kind == "message") {
-                let Some(text) = e.text.as_deref().filter(|t| !t.is_empty()) else {
-                    continue;
-                };
-                let p = map.entry(key.clone()).or_default();
-                if p.turn != e.turn {
-                    *p = Partial {
-                        turn: e.turn,
-                        text: String::new(),
-                    };
-                }
-                if p.text.chars().count() < MAX_PARTIAL {
-                    p.text.push_str(text);
-                    changed = true;
+            let p = map.entry(key.clone()).or_default();
+            for (i, s) in said.iter().enumerate() {
+                let last = i + 1 == said.len();
+                if !s.closed && last {
+                    if p.seen_seq != s.last_seq {
+                        p.seen_seq = s.last_seq;
+                        p.seen_at = Some(Instant::now());
+                    }
+                    if p.seen_at.is_some_and(|t| t.elapsed() >= QUIET) {
+                        post.push(s.clone());
+                    } else {
+                        open = true;
+                        let shown: String = s.text.chars().take(MAX_PARTIAL).collect();
+                        if p.text != shown || p.turn != s.turn {
+                            p.turn = s.turn;
+                            p.text = shown;
+                            changed = true;
+                        }
+                    }
+                } else {
+                    post.push(s.clone());
                 }
             }
-            let over = |turn: u32| {
-                ended.is_some_and(|t| t >= turn) || failed.is_some_and(|(t, _)| *t >= turn)
-            };
-            if map.get(&key).is_some_and(|p| over(p.turn)) {
-                map.remove(&key);
+            if !open && !p.text.is_empty() {
+                p.text.clear();
                 changed = true;
             }
+            if !open {
+                p.seen_seq = 0;
+                p.seen_at = None;
+            }
+        }
+        if !post.is_empty() {
+            self.append_said(rec, run, &post)?;
+            changed = true;
         }
         if changed {
             self.thread_store(&rec.space).wake();
         }
+        Ok(open)
+    }
+
+    /// Writes `said` to the thread as the agent's messages (see [`Self::post_said`]). Idempotent:
+    /// each carries a key naming the run, the first chunk and how much of it was posted.
+    fn append_said(
+        &self,
+        rec: &AgentRecord,
+        run: &str,
+        said: &[cua_agents::subagents::Said],
+    ) -> Result<()> {
+        let store = self.thread_store(&rec.space);
+        let fold = store.fold()?;
+        let reply_to = rec.task.as_ref().map(|t| t.seq).or_else(|| {
+            fold.tasks
+                .values()
+                .filter(|t| t.to == rec.name)
+                .map(|t| t.seq)
+                .max()
+        });
+        let me = Author::agent(&rec.name);
+        let last = store.last_seq()?;
+        let recent = store.read(last.saturating_sub(RECENT), RECENT as usize + 1)?;
+        let mut drafts = vec![];
+        for s in said {
+            let prefix = format!("seg:{run}:{}:", s.first_seq);
+            // How much of this stretch an earlier pass posted (it grows only when the agent paused
+            // mid-sentence for longer than [`QUIET`]).
+            let done = recent
+                .iter()
+                .filter_map(|e| {
+                    e.client_id
+                        .as_deref()?
+                        .strip_prefix(prefix.as_str())?
+                        .parse::<usize>()
+                        .ok()
+                })
+                .max()
+                .unwrap_or(0);
+            let total = s.text.chars().count();
+            if total <= done {
+                continue;
+            }
+            let text: String = s.text.chars().skip(done).collect();
+            let text = text.trim().to_string();
+            if text.is_empty() {
+                continue;
+            }
+            // Already in the thread word for word (the agent posted it itself with `thread_reply`).
+            if recent.iter().any(|e| {
+                e.author.id == me.id && e.kind == EntryKind::Message && e.text.trim() == text
+            }) {
+                continue;
+            }
+            let text = if check_text(&text).is_ok() {
+                text
+            } else {
+                "(A message of mine looked like it held a secret, so it was not posted.)".into()
+            };
+            let mut d = Draft::new(me.clone(), EntryKind::Message, text);
+            d.reply_to = reply_to;
+            d.client_id = Some(format!("{prefix}{total}"));
+            drafts.push(d);
+        }
+        store.append_many(drafts)?;
+        Ok(())
+    }
+
+    /// Records in the thread each child Space the member's Space made while the member works on a
+    /// task (one note each, with a link the clients draw), so a Space made inside a Space is visible
+    /// where the person is looking. Children come from the Space tree the daemon keeps; nothing
+    /// here depends on what kind of Space or runtime they are.
+    fn track_children(&self, rec: &AgentRecord) -> Result<()> {
+        let Some(task) = rec.task.as_ref().map(|t| t.seq) else {
+            return Ok(());
+        };
+        let Ok(kids) = self.spaces.children(&rec.space) else {
+            return Ok(());
+        };
+        if kids.is_empty() {
+            return Ok(());
+        }
+        let store = self.thread_store(&rec.space);
+        let last = store.last_seq()?;
+        let recent = store.read(last.saturating_sub(RECENT * 2), RECENT as usize * 2 + 1)?;
+        let infos = self.spaces.list()?;
+        let mut drafts = vec![];
+        for id in kids {
+            let key = format!("child:{id}");
+            if recent
+                .iter()
+                .any(|e| e.client_id.as_deref() == Some(key.as_str()))
+            {
+                continue;
+            }
+            let Some(info) = infos.iter().find(|i| i.id == id) else {
+                continue;
+            };
+            let name = if info.display_name.is_empty() {
+                info.name.clone()
+            } else {
+                info.display_name.clone()
+            };
+            let os = match info.os.as_str() {
+                "macos" => "macOS",
+                "windows" => "Windows",
+                "linux" => "Linux",
+                _ => "",
+            };
+            let mut d = Draft::event(
+                "child_space",
+                format!("{} made the computer {name}", rec.name),
+                json!({"kind": "child_space", "space": id, "name": name, "os": os, "agent": rec.handle()}),
+            );
+            d.task_seq = Some(task);
+            d.client_id = Some(key);
+            drafts.push(d);
+        }
+        store.append_many(drafts)?;
+        Ok(())
+    }
+
+    /// Follows the subagents of the session's run: absorbs the events that concern them, records
+    /// each one's start and end in the thread (one note each, keyed so a pass never repeats it)
+    /// and keeps the running ones for the live row. `page` is what this pass read.
+    async fn track_subagents(
+        &self,
+        rec: &AgentRecord,
+        agents: &Agents,
+        run: &str,
+        page: &[ag::AgentEvent],
+    ) -> Result<()> {
+        let key = format!("{}/{}#{}!subs", rec.space, rec.name, rec.k());
+        let backfill = {
+            let mut map = self.partials.lock().unwrap_or_else(|p| p.into_inner());
+            let p = map.entry(key.clone()).or_default();
+            if p.sub_run != run {
+                *p = Partial {
+                    sub_run: run.to_string(),
+                    ..Partial::default()
+                };
+            }
+            !p.backfilled
+        };
+        let mut earlier = vec![];
+        if backfill && rec.cursor > 0 {
+            // A daemon that restarted mid-run: read what concerns subagents from the start.
+            let mut cursor = 0;
+            loop {
+                let pg = agents.events(run, cursor, 500).await?;
+                let moved = pg.cursor != cursor;
+                cursor = pg.cursor;
+                earlier.extend(pg.events);
+                if pg.caught_up || !moved || cursor >= rec.cursor {
+                    break;
+                }
+            }
+        }
+        let (subs, changed) = {
+            let mut map = self.partials.lock().unwrap_or_else(|p| p.into_inner());
+            let p = map.entry(key.clone()).or_default();
+            p.backfilled = true;
+            let relevant = |e: &ag::AgentEvent| {
+                e.parent_tool_id.is_some()
+                    || cua_agents::subagents::is_subagent_call(e)
+                    || e.kind == "exited"
+                    || (e.kind == "usage"
+                        && e.raw["update"]["_meta"]["_claude/origin"]["kind"].as_str()
+                            == Some("task-notification"))
+            };
+            for e in earlier.iter().chain(page) {
+                if e.seq > p.sub_last && relevant(e) {
+                    p.sub_events.push(e.clone());
+                }
+                p.sub_last = p.sub_last.max(e.seq);
+            }
+            if p.sub_events.len() > 4000 {
+                let drop = p.sub_events.len() - 4000;
+                p.sub_events.drain(..drop);
+            }
+            let subs = cua_agents::subagents::fold(p.sub_events.iter());
+            let changed = subs != p.subs;
+            p.subs = subs.clone();
+            (subs, changed)
+        };
+        if subs.is_empty() {
+            return Ok(());
+        }
+        let store = self.thread_store(&rec.space);
+        let last = store.last_seq()?;
+        let recent = store.read(last.saturating_sub(RECENT * 2), RECENT as usize * 2 + 1)?;
+        let reply_to = rec.task.as_ref().map(|t| t.seq).or_else(|| {
+            store
+                .fold()
+                .ok()?
+                .tasks
+                .values()
+                .filter(|t| t.to == rec.name)
+                .map(|t| t.seq)
+                .max()
+        });
+        let mut drafts = vec![];
+        for s in &subs {
+            // The call names its task a moment after it starts: the note waits for the name.
+            if s.state == "running" && s.title == "Subagent" {
+                continue;
+            }
+            let mut states = vec!["running"];
+            if s.state != "running" {
+                states.push(s.state);
+            }
+            for state in states {
+                let id = format!("sub:{run}:{}:{state}", s.id);
+                if recent
+                    .iter()
+                    .any(|e| e.client_id.as_deref() == Some(id.as_str()))
+                {
+                    continue;
+                }
+                let title = members::clip_line(&s.title, 120);
+                let text = match state {
+                    "running" => format!("{} started a subagent: {title}", rec.name),
+                    "done" => format!("{}'s subagent finished: {title}", rec.name),
+                    _ => format!("{}'s subagent failed: {title}", rec.name),
+                };
+                let result = s.result.as_deref().filter(|r| check_text(r).is_ok());
+                let mut d = Draft::event(
+                    "subagent",
+                    text,
+                    json!({
+                        "kind": "subagent",
+                        "id": s.id,
+                        "agent": rec.handle(),
+                        "title": title,
+                        "state": state,
+                        "steps": s.steps,
+                        "result": result,
+                        "started_ms": s.started_ms,
+                        "ended_ms": s.ended_ms,
+                    }),
+                );
+                d.task_seq = reply_to;
+                d.client_id = Some(id);
+                drafts.push(d);
+            }
+        }
+        store.append_many(drafts)?;
+        if changed {
+            store.wake();
+        }
+        Ok(())
     }
 
     async fn tick_agent_inner(&self, rec: AgentRecord, report: &mut TickReport) -> Result<()> {
@@ -2253,10 +2547,10 @@ impl Persistent {
         self.renew_claims(&rec, &agents, &run).await?;
         let rec = self.get(&rec.name)?.session(rec.k());
         let (ended, failed) = turn_outcome(&page.events);
-        self.note_partial(&rec, &page.events, ended, failed.as_ref());
         // A harness may answer a refused credential as an ordinary turn (Hermes does, with its own
         // advice): read the reply as the failed turn it is, so the person's message is not "Done",
         // the reply is the standard Connect card and the credential reads as needing a reconnect.
+        let mut reply_is_the_failure = None;
         let failed = match (&failed, ended) {
             (None, Some(turn)) if turn > rec.saved_turn => agents
                 .result(&run)
@@ -2264,9 +2558,30 @@ impl Persistent {
                 .ok()
                 .map(|r| r.text)
                 .filter(|text| ag::failure::is_auth_failure_reply(&rec.harness, text))
-                .map(|text| (turn, text.trim().to_string())),
+                .map(|text| {
+                    reply_is_the_failure = Some(turn);
+                    (turn, text.trim().to_string())
+                }),
             _ => failed,
         };
+        // Everything the agent said, as it said it, one entry per message (the words of a turn
+        // that only carried a provider's refusal are the failure, which is said in plain words
+        // below). An unfinished message keeps the bookmark where it is, so it is read whole again.
+        let said_open = match reply_is_the_failure {
+            Some(turn) => {
+                let kept: Vec<ag::AgentEvent> = page
+                    .events
+                    .iter()
+                    .filter(|e| !(e.kind == "message" && e.turn == turn))
+                    .cloned()
+                    .collect();
+                self.post_said(&rec, &run, &kept)?
+            }
+            None => self.post_said(&rec, &run, &page.events)?,
+        };
+        self.track_subagents(&rec, &agents, &run, &page.events)
+            .await?;
+        self.track_children(&rec)?;
         // The thread task this run's turn worked on: its reply and state.
         let mut anchor = None;
         let mut task_ended = false;
@@ -2435,8 +2750,13 @@ impl Persistent {
         {
             cua_spaces::agents::telemetry::observe(&info);
         }
-        if page.cursor != rec.cursor {
-            let cursor = page.cursor;
+        let next = if said_open && page.events.len() < 500 {
+            rec.cursor
+        } else {
+            page.cursor
+        };
+        if next != rec.cursor {
+            let cursor = next;
             self.update_in(&rec, |r| r.cursor = cursor)?;
         }
         if rec.k() == 1 {

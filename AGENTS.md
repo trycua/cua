@@ -186,6 +186,9 @@ main now. Stable stays Release Please plus the canary gate. Details:
 
 ## Monorepo component release resolution
 
+Follow [`docs/component-release-workflow.md`](docs/component-release-workflow.md)
+for the normal Release Please preparation, publication, and verification path.
+
 Cua is a monorepo with independent component release streams. Never use
 GitHub's repository-wide "Latest" release badge, the `/releases/latest`
 endpoint, or a generic "stable" designation to determine whether a component

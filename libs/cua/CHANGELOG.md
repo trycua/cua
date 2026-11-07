@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.13.0](https://github.com/trycua/cua/compare/cua-sdk-v0.12.1...cua-sdk-v0.13.0) (2026-11-07)
+
+
+### Features
+
+* **spaces:** put quiet agent home Spaces to sleep ([#6754](https://github.com/trycua/cua/issues/6754)) ([c131a07](https://github.com/trycua/cua/commit/c131a070740605de7b0d86243ddfece22ba9f88d))
+
+
+### Bug Fixes
+
+* **spaces:** every agent message is appended to the thread, child Spaces work from inside a Space, and child agents show in the chat ([#6733](https://github.com/trycua/cua/issues/6733)) ([515371a](https://github.com/trycua/cua/commit/515371a48a616aea3bba5f0ea13e0863c8a26041))
+* **spaces:** say computers in use at once for the plan limit (CUA-3690) ([#6790](https://github.com/trycua/cua/issues/6790)) ([891ccb7](https://github.com/trycua/cua/commit/891ccb7153dde86f6219da719c583d2de0b88b14))
+
+## [0.12.1](https://github.com/trycua/cua/compare/cua-sdk-v0.12.0...cua-sdk-v0.12.1) (2026-11-07)
+
+
+### Bug Fixes
+
+* **cua-spaces:** the relay-turned-off mesh test no longer waits out the reconnect spread, and CI runs cua-spaces unit tests ([#6795](https://github.com/trycua/cua/issues/6795)) ([6c52391](https://github.com/trycua/cua/commit/6c52391390d721a22e53073176edabf010cc7db9))
+
 ## [0.12.0](https://github.com/trycua/cua/compare/cua-sdk-v0.11.0...cua-sdk-v0.12.0) (2026-11-07)
 
 

@@ -557,7 +557,7 @@ impl Backend for DaemonBackend {
         #[cfg(target_os = "macos")]
         {
             // The app may still be inside its first-launch permission step.
-            return crate::cli::request_permissions_via_launchservices(false);
+            crate::cli::request_permissions_via_launchservices(false)
         }
         #[cfg(not(target_os = "macos"))]
         Err("no answer".to_owned())

@@ -23,7 +23,6 @@
 use std::collections::{BTreeSet, HashMap};
 use std::time::{Duration, Instant};
 
-use cua_spaces::sleep::Sleep;
 use cua_spacesd_client::Command;
 
 use super::{AgentRecord, Persistent, RunStatus, TickReport};
@@ -51,10 +50,10 @@ pub(super) struct Watch {
 
 /// Prints `procs=<n> files=<n> up=<secs>`: processes that are not the
 /// Space's own. The Space's own are its start-up (anything started within
-/// the first seconds) and the desktop's helpers (by name, unless started
-/// through cua-spacesd, which is how every run, exec and job starts): under
-/// load a desktop starts well after the first 30 s. The probe's own
-/// processes live under 2 s and are skipped, and files changed in the home folder since boot
+/// the first seconds, under load that includes a slow desktop) and the
+/// desktop's helpers (by name, unless started through cua-spacesd, which is
+/// how every run, exec and job starts). The probe's own processes live under
+/// 2 s and are skipped, and files changed in the home folder since boot
 /// (hidden folders hold tool state and are skipped).
 const PROBE: &str = r#"
 up=$(ps -o etimes= -p 1 2>/dev/null | tr -d ' ')
@@ -121,7 +120,7 @@ impl Persistent {
                 l.into_iter()
                     .filter(|s| {
                         super::space_is_off(&s.power_state)
-                            && Sleep::from_labels(&s.labels).sleeps()
+                            && self.spaces.sleep_with_labels(&s.id, &s.labels).sleeps()
                     })
                     .map(|s| s.id)
                     .collect()
@@ -161,7 +160,7 @@ impl Persistent {
         let now = Instant::now();
         let mut seen = BTreeSet::new();
         for row in rows {
-            let sleep = Sleep::from_labels(&row.labels);
+            let sleep = self.spaces.sleep_with_labels(&row.id, &row.labels);
             if !row.id.starts_with("local:") || !sleep.sleeps() {
                 continue;
             }
@@ -175,21 +174,33 @@ impl Persistent {
                 continue;
             }
             // Cheap reasons first, from the records alone.
-            let held = members.iter().find_map(|r| {
-                let why = if r.paused {
-                    "is paused"
-                } else if r.relaunch {
-                    "is waiting to be relaunched"
-                } else if r.policy.standby {
-                    "is on standby"
-                } else if r.policy.durable {
-                    "is durable"
-                } else if r.session_views().iter().any(|s| s.task.is_some()) {
-                    "has a task in flight"
-                } else {
-                    return None;
-                };
-                Some(format!("{} {why}", r.name))
+            let kept = self.spaces.keep_awake_of(&row.id).map(|k| {
+                format!(
+                    "kept awake: {}",
+                    if k.reason.is_empty() {
+                        "no reason given"
+                    } else {
+                        &k.reason
+                    }
+                )
+            });
+            let held = kept.or_else(|| {
+                members.iter().find_map(|r| {
+                    let why = if r.paused {
+                        "is paused"
+                    } else if r.relaunch {
+                        "is waiting to be relaunched"
+                    } else if r.policy.standby {
+                        "is on standby"
+                    } else if r.policy.durable {
+                        "is durable"
+                    } else if r.session_views().iter().any(|s| s.task.is_some()) {
+                        "has a task in flight"
+                    } else {
+                        return None;
+                    };
+                    Some(format!("{} {why}", r.name))
+                })
             });
             let due = {
                 let mut live = self.live.lock().await;

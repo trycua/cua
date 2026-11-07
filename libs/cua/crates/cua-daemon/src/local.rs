@@ -1485,8 +1485,9 @@ fn order_for_warm(all: Vec<String>, recent: &[String]) -> (Vec<String>, usize) {
     (ordered, n)
 }
 
-/// How long the warm Space sits unused before it is given back.
-pub const WARM_POOLS_IDLE: std::time::Duration = std::time::Duration::from_secs(2 * 60 * 60);
+/// How long the warm Space sits unused before it is given back: the same
+/// idle policy as a home that sleeps on its own (it was two hours).
+pub const WARM_POOLS_IDLE: std::time::Duration = std::time::Duration::from_secs(10 * 60);
 
 /// What the warm pool asks of this machine: cua-spacesd of its members, and
 /// the memory they draw on.

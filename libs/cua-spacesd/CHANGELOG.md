@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.4](https://github.com/trycua/cua/compare/cua-spacesd-v0.12.3...cua-spacesd-v0.12.4) (2026-11-07)
+
+
+### Bug Fixes
+
+* **cua-driver:** keep a session's last use on its lifecycle record ([#6773](https://github.com/trycua/cua/issues/6773)) ([94e3d18](https://github.com/trycua/cua/commit/94e3d186262431c30cdf0891231eeee55909398e))
+
 ## [0.12.3](https://github.com/trycua/cua/compare/cua-spacesd-v0.12.2...cua-spacesd-v0.12.3) (2026-11-06)
 
 

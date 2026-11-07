@@ -59,7 +59,7 @@ describe("host setup failures", () => {
     expect(f.message).not.toMatch(/429|http|relay/i);
   });
 
-  it.each(["http: relay: HTTP 429: computer limit for this token reached", "HTTP 429: at most 5 unused pairing codes", "You're using 5 of 5 live sessions on Pro. Close one or upgrade to Teams."])(
+  it.each(["http: relay: HTTP 429: computer limit for this token reached", "HTTP 429: at most 5 unused pairing codes", "You have 5 of 5 computers in use at once on Pro. Close one or upgrade to Teams."])(
     "a limit the relay explains is not a throttle: %s",
     (raw) => expect(classify(raw)).toBe("other"),
   );

@@ -1451,7 +1451,7 @@ mod pixel_focus_readback_tests {
 
 #[cfg(test)]
 mod recording_start_guard_tests {
-    use cua_driver_core::recording::RecordingSession;
+    use cua_driver_core::recording::{RecordingSession, StopBy};
     use cua_driver_core::session::fire_session_end;
 
     #[test]
@@ -1483,7 +1483,7 @@ mod recording_start_guard_tests {
         let ok = rec.start(dir.to_str().unwrap(), false, Some(sid));
         assert!(ok.is_ok(), "start for a live session owner must succeed");
         assert!(rec.current_state().enabled);
-        let _ = rec.stop_owner(Some(sid));
+        let _ = rec.stop(StopBy::Owner(sid));
     }
 
     #[test]
@@ -1494,7 +1494,7 @@ mod recording_start_guard_tests {
         let ok = rec.start(dir.to_str().unwrap(), false, None);
         assert!(ok.is_ok(), "anonymous start must never be gated");
         assert!(rec.current_state().enabled);
-        let _ = rec.stop_owner(None);
+        let _ = rec.stop(StopBy::Anyone);
     }
 }
 

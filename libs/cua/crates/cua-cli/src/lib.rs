@@ -399,7 +399,7 @@ enum Command {
   cua ci disconnect"
     )]
     Ci(ci_cmd::CiCmd),
-    /// Your remote use this month: live sessions, remote hours, and your
+    /// Your remote use this month: computers in use at once, remote hours, and your
     /// plan. Remote hours are time spent using your computers from
     /// somewhere else; using a computer from itself is free.
     #[command(after_help = "Examples:

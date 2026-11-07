@@ -195,6 +195,23 @@ def test_a_verified_release_installs(fixture: Fixture) -> None:
 
 
 @linux_only
+def test_a_release_install_writes_the_kwin_desktop_entry(fixture: Fixture) -> None:
+    # The real helper, with the stub after it so the daemon cleanup stays stubbed.
+    common = (SCRIPTS / "_install-common.sh").read_text() + COMMON_STUB
+    (fixture.scripts / "_install-common.sh").write_text(common)
+    kwin = fixture.shims / "kwin_wayland"
+    kwin.write_text("#!/bin/sh\nexit 0\n")
+    kwin.chmod(0o755)
+    fixture.with_cosign()
+    fixture.publish("0.31.0")
+    result = fixture.install("0.31.0")
+    assert result.returncode == 0, result.stderr + result.stdout
+    entry = fixture.home / ".local/share/applications/ai.cua.driver.release.desktop"
+    current = fixture.home / ".cua-driver/packages/current/cua-driver"
+    assert f'Exec="{current}" serve' in entry.read_text().splitlines()
+
+
+@linux_only
 def test_a_checksum_mismatch_is_refused(fixture: Fixture) -> None:
     fixture.publish("0.31.0", sums="bad")
     result = fixture.install("0.31.0")

@@ -1708,7 +1708,7 @@ mod tests {
         let b = call_value("upsell.proBanner", json!({"plan": "free"})).unwrap();
         assert_eq!(
             b,
-            json!({"visible": true, "text": "Run more Spaces at once with Pro", "button": "Upgrade"})
+            json!({"visible": true, "text": "Use more computers at once with Pro", "button": "Upgrade"})
         );
         let b = call_value("upsell.proBanner", json!({"plan": "pro"})).unwrap();
         assert_eq!(b["visible"], false);

@@ -140,7 +140,7 @@ describe.skipIf(!wasmBuilt)("the new Spaces page's decisions (wasm core)", () =>
 
   it("shows the Pro banner on Free only", async () => {
     const core = await testCore();
-    expect(proBanner(core, { plan: "free" })).toEqual({ visible: true, text: "Run more Spaces at once with Pro", button: "Upgrade" });
+    expect(proBanner(core, { plan: "free" })).toEqual({ visible: true, text: "Use more computers at once with Pro", button: "Upgrade" });
     for (const plan of ["pro", "team", "teams", ""]) expect(proBanner(core, { plan }).visible).toBe(false);
   });
 

@@ -93,7 +93,7 @@ export function Sidebar() {
       <div className="flex-1" />
       <SidebarCreating spaces={(spaces ?? []).filter((s) => !warming.has(s.id))} />
       <SidebarTip />
-      {/* Free only: "Run more Spaces at once with Pro", right above the account line. */}
+      {/* Free only: "Use more computers at once with Pro", right above the account line. */}
       <ProBanner />
       {/* A ready update is a compact button at the end of the account line. */}
       <AccountFooter trailing={<SidebarUpdateButton />} />

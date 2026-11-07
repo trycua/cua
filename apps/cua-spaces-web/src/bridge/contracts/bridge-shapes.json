@@ -6695,6 +6695,24 @@
                     "agent": {
                       "type": "string"
                     },
+                    "by": {
+                      "type": [
+                        "object",
+                        "null"
+                      ],
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "name"
+                      ]
+                    },
                     "state": {
                       "enum": [
                         "creating",

@@ -1134,6 +1134,7 @@ const ThreadEntryShape = ref(
             name: str,
             os: str,
             agent: str,
+            by: opt(nullable(object({ id: str, name: str }))),
             state: opt(oneOf("creating", "ready", "failed")),
             phase: opt(str),
             percent: opt(nullable(num)),

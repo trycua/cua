@@ -85,6 +85,27 @@ describe("every agent message and the child agents", () => {
     expect(e.child).toMatchObject({ kind: "child_space", state: "creating", phase: "Starting it", percent: 40, startedMs: 5, key: "mac:1" });
   });
 
+  describe("a created Space's row sits under its creator", () => {
+    const kid = (seq: number, key: string, extra: object = {}) =>
+      note(seq, { kind: "child_space", space: `local:${key}`, key: `${key}:1`, name: key, os: "Linux", agent: "claude", state: "creating", ...extra });
+    const shape = (items: ReturnType<typeof foldThread>) => items.map((i) => (i.type === "message" ? `${i.entry.author.name}${i.entry.text ? ":" + i.entry.text : ":header"}` : i.type));
+
+    it("follows the agent's own text with no second header", () => {
+      expect(shape(foldThread([task, said(2, "On it."), kid(3, "a")], { me: ME.id }))).toEqual(["task", "Claude Code:On it.", "child_space"]);
+    });
+
+    it("brings the agent's header with the row when it has not spoken yet, and groups several creates under it", () => {
+      const items = foldThread([task, kid(2, "a"), kid(3, "b"), kid(4, "a", { state: "ready" })], { me: ME.id });
+      expect(shape(items)).toEqual(["task", "claude:header", "child_space", "child_space"]);
+      expect(items.filter((i) => i.type === "child_space").map((i) => (i as { space: { name: string; state: string } }).space.state)).toEqual(["ready", "creating"]);
+    });
+
+    it("sits under the person's header when a person made it, and alone when nobody is recorded", () => {
+      expect(shape(foldThread([kid(2, "p", { agent: "", by: { id: "acct_ada", name: "Ada" } })], { me: ME.id }))).toEqual(["Ada:header", "child_space"]);
+      expect(shape(foldThread([kid(2, "z", { agent: "" })], { me: ME.id }))).toEqual(["child_space"]);
+    });
+  });
+
   it("reads the live children from the daemon", () => {
     const p = threadPageFromTool({ entries: [], cursor: 1, caught_up: true, unread: 0, role: "owner", live: { key: "k", agents: [{ agent: "@claude", stage: "thinking", children: [{ id: "t1", title: "Map", steps: 1, step: "Ran ls" }] }] } });
     expect(p.live.agents[0]!.children).toEqual([{ id: "t1", title: "Map", steps: 1, step: "Ran ls" }]);

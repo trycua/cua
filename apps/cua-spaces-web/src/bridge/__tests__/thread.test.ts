@@ -466,7 +466,58 @@ describe("every agent message and the child agents in the thread", () => {
     const read = entry({ author: GRACE, text: "hi" });
     const child = entry({ author: SYSTEM, kind: "system", text: "claude made the computer safari", child: { kind: "child_space", space: "local:safari", name: "safari", os: "macOS", agent: "claude" } });
     const items = foldThread([read, child], { readSeq: read.seq });
-    expect(items.map((i) => i.type)).toEqual(["message", "child_space"]);
+    // Not the person's message: the row sits under its creator's header, never floating under theirs.
+    expect(items.map((i) => i.type)).toEqual(["message", "message", "child_space"]);
+  });
+
+  describe("a created Space's row sits under its creator", () => {
+    const CLAUDE = { kind: "agent" as const, id: "agent:claude", name: "claude" };
+    const row = (key: string, over: object = {}) =>
+      entry({ author: SYSTEM, kind: "system", text: "t", child: { kind: "child_space", space: `local:${key}`, key: `${key}:1`, name: key, os: "Linux", agent: "claude", state: "creating", ...over } as never });
+    const shape = (items: ReturnType<typeof foldThread>) => items.map((i) => (i.type === "message" ? `${i.entry.author.name}${i.entry.text ? ":" + i.entry.text : ":header"}` : i.type));
+
+    it("follows the agent's own text without a second header", () => {
+      seq = 0;
+      const ask = entry({ author: GRACE, text: "make one" });
+      const said = entry({ author: CLAUDE, text: "On it." });
+      expect(shape(foldThread([ask, said, row("a")], { readSeq: 9999 }))).toEqual(["Grace:make one", "claude:On it.", "child_space"]);
+    });
+
+    it("brings the agent's header with the row when it has not spoken yet", () => {
+      seq = 0;
+      const ask = entry({ author: GRACE, text: "make one" });
+      const items = foldThread([ask, row("a")], { readSeq: 9999 });
+      expect(shape(items)).toEqual(["Grace:make one", "claude:header", "child_space"]);
+      const header = items[1]!;
+      expect(header.type === "message" && header.entry.author).toMatchObject({ kind: "agent", id: "agent:claude" });
+    });
+
+    it("groups several creates of one agent under one header, in order", () => {
+      seq = 0;
+      const ask = entry({ author: GRACE, text: "make two" });
+      const items = foldThread([ask, row("a"), row("b"), row("a", { state: "ready" })], { readSeq: 9999 });
+      expect(shape(items)).toEqual(["Grace:make one".replace("one", "two"), "claude:header", "child_space", "child_space"]);
+      expect(items.filter((i) => i.type === "child_space").map((i) => (i.type === "child_space" ? [i.space.name, i.space.state] : []))).toEqual([["a", "ready"], ["b", "creating"]]);
+    });
+
+    it("starts a new header after the agent's later text, and for another agent", () => {
+      seq = 0;
+      const items = foldThread([row("a"), entry({ author: CLAUDE, text: "Made it." }), row("b", { agent: "hermes" })], { readSeq: 9999 });
+      expect(shape(items)).toEqual(["claude:header", "child_space", "claude:Made it.", "hermes:header", "child_space"]);
+    });
+
+    it("sits under the person's header when a person made it", () => {
+      seq = 0;
+      const items = foldThread([row("p", { agent: "", by: { id: "acct_ada", name: "Ada" } }), row("q", { agent: "", by: { id: "acct_ada", name: "Ada" } })], { readSeq: 9999 });
+      expect(shape(items)).toEqual(["Ada:header", "child_space", "child_space"]);
+      const h = items[0]!;
+      expect(h.type === "message" && h.entry.author.kind).toBe("person");
+    });
+
+    it("stands alone when nobody is recorded as the creator", () => {
+      seq = 0;
+      expect(shape(foldThread([row("z", { agent: "" })], { readSeq: 9999 }))).toEqual(["child_space"]);
+    });
   });
 
   it("folds the steps of one Space create into one row, in the order it started, then its outcome", () => {

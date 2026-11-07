@@ -867,7 +867,11 @@ async fn handle_proxy_tool_request(
             Response::ok(id, initialize_result())
         }
 
-        "tools/list" => Response::ok(id, (**cached_tools_list).clone()),
+        "tools/list" => {
+            let mut list = (**cached_tools_list).clone();
+            cua_driver_core::tool_profile::ToolProfile::from_env().apply(&mut list);
+            Response::ok(id, list)
+        }
 
         "tools/call" => match req.tool_call() {
             Err(e) => Response::error(id, -32602, format!("Invalid params: {e}")),

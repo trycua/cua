@@ -1584,6 +1584,14 @@ mod tests {
         }];
         frame.rebase_windows(&mut windows);
         assert_eq!((windows[0].x, windows[0].y), (100, 36));
+
+        // A window whose geometry the compositor did not report stays unknown.
+        windows[0].x = 0;
+        windows[0].y = 0;
+        windows[0].width = 0;
+        windows[0].height = 0;
+        frame.rebase_windows(&mut windows);
+        assert_eq!((windows[0].x, windows[0].y), (0, 0));
     }
 
     #[test]

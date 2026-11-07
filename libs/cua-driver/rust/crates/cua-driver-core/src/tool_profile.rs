@@ -51,6 +51,9 @@ pub const GROUPS: &[(&str, &[&str])] = &[
             "set_window_frame",
             "clipboard_read",
             "clipboard_write",
+            "right_click",
+            "move_cursor",
+            "get_accessibility_tree",
             "run_steps",
             "run_script",
             "get_guide",
@@ -70,6 +73,7 @@ pub const GROUPS: &[(&str, &[&str])] = &[
             "browser_download",
             "browser_set_input_files",
             "page",
+            "install_extension",
         ],
     ),
     (
@@ -110,18 +114,14 @@ pub const GROUPS: &[(&str, &[&str])] = &[
             "health_report",
             "check_permissions",
             "check_for_update",
-            "install_extension",
         ],
     ),
     (
         "input_extra",
         &[
-            "right_click",
-            "move_cursor",
             "kill_app",
             "get_cursor_position",
             "get_screen_size",
-            "get_accessibility_tree",
         ],
     ),
 ];

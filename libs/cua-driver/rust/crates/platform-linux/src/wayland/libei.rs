@@ -1685,7 +1685,8 @@ fn keyboard_now(
     let locks = desktop.lock_keys.ok_or_else(|| {
         refused(
             "the compositor doesn't say which lock and modifier keys are on, so keys could \
-             type something else",
+             type something else; on KDE Plasma 6.3 to 6.5, `cua-driver kwin-capture on` lets \
+             the driver read them",
         )
     })?;
     if locks.modifier_held {
@@ -2844,7 +2845,8 @@ mod typing_route_tests {
             assert_eq!(
                 result.unwrap_err().to_string(),
                 "foreground_unavailable: the compositor doesn't say which lock and modifier keys \
-                 are on, so keys could type something else; nothing was typed"
+                 are on, so keys could type something else; on KDE Plasma 6.3 to 6.5, \
+                 `cua-driver kwin-capture on` lets the driver read them; nothing was typed"
             );
             assert_eq!(events, probe);
         }

@@ -41,6 +41,7 @@ mod release_channel;
 mod release_source;
 mod responsibility;
 mod sdk_adapter;
+mod selftest;
 mod serve;
 mod skills;
 mod stop;
@@ -856,6 +857,9 @@ fn main() {
         cli::Command::Diagnose => {
             cli::run_diagnose_cmd();
         }
+        cli::Command::Test { json } => {
+            std::process::exit(selftest::run_cmd(json));
+        }
         cli::Command::Permissions { subcommand, json } => {
             cli::run_permissions_cmd(&subcommand, json);
         }
@@ -1165,6 +1169,9 @@ fn main() -> anyhow::Result<()> {
         cli::Command::Diagnose => {
             cli::run_diagnose_cmd();
             Ok(())
+        }
+        cli::Command::Test { json } => {
+            std::process::exit(selftest::run_cmd(json));
         }
         cli::Command::Permissions { subcommand, json } => {
             cli::run_permissions_cmd(&subcommand, json);

@@ -98,7 +98,7 @@ export function ThisMacCall({
           setNudge((n) => n + 1);
           throw new Error(NOT_SHARING_CHAT);
         }
-        if (noThread) throw new Error("Chat isn't available on this Mac's own desktop yet.");
+        if (noThread) throw new Error(`Chat isn't available on ${thisComputerText()}'s own desktop yet.`);
         return live.post(text, view);
       },
     }),

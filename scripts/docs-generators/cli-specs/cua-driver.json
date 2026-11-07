@@ -1352,6 +1352,32 @@
    "subcommands": []
   },
   {
+   "abstract": "Check that Cua Driver works on this computer.",
+   "arguments": [],
+   "discussion": "Checks permissions, a screen read, Cua Driver's own pointer, and (macOS) typing in a background TextEdit window that is closed without saving. Exit code is 0 when everything works and 1 when something needs fixing.",
+   "examples": [
+    {
+     "command": "cua-driver test",
+     "description": "Check that Cua Driver works on this computer"
+    },
+    {
+     "command": "cua-driver test --json",
+     "description": "Emit the result as JSON"
+    }
+   ],
+   "flags": [
+    {
+     "default_value": false,
+     "help": "Emit the result as JSON.",
+     "name": "json",
+     "short_name": null
+    }
+   ],
+   "name": "test",
+   "options": [],
+   "subcommands": []
+  },
+  {
    "abstract": "Print a pasteable install-layout and permission-attribution report.",
    "arguments": [],
    "discussion": "",
@@ -2299,5 +2325,5 @@
   }
  ],
  "name": "cua-driver",
- "version": "0.40.6"
+ "version": "0.41.2"
 }

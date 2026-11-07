@@ -429,6 +429,7 @@ impl Tool for PressKeyTool {
                 return crate::interaction::with_x11_foreground(
                     xid,
                     crate::input::ForegroundOptions::keyboard(),
+                    crate::interaction::RestoreMode::LeaveFocused,
                     || {
                         if let Some(element) = &token {
                             let element_index = element.index;

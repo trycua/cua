@@ -11,6 +11,7 @@ use crate::{DriverActivityEvent, DriverActivityKind, DriverActivityObserver};
 use cua_driver_core::{
     authorization::PermissionMode,
     protocol::ToolResult as CoreToolResult,
+    recording::StopBy,
     session_authorization::{
         AuthenticatedActionConnection, DelegatedSessionRequest, EffectiveAuthorizationContext,
         SessionAuthorizationError, SessionAuthorizationRegistry, SessionModeCeiling,
@@ -246,7 +247,7 @@ impl DriverRuntime {
             &self.compatibility_context.runtime_scope_key(),
         );
         let recording = self.registry.recording.clone();
-        let _ = tokio::task::spawn_blocking(move || recording.stop_owner(None)).await;
+        let _ = tokio::task::spawn_blocking(move || recording.stop(StopBy::Anyone)).await;
     }
 
     fn stop_lifecycle_maintenance(&self) {
@@ -400,7 +401,8 @@ impl DriverRuntime {
             // `end_session` is a lifecycle boundary: do not report completion
             // until any recording owned by the session has finalized.
             let recording = self.registry.recording.clone();
-            let _ = tokio::task::spawn_blocking(move || recording.stop_owner(Some(&session))).await;
+            let _ =
+                tokio::task::spawn_blocking(move || recording.stop(StopBy::Owner(&session))).await;
         }
         Some(result)
     }
@@ -474,7 +476,7 @@ impl Drop for DriverRuntime {
         // another generation.
         if was_running {
             let recording = self.registry.recording.clone();
-            let _ = recording.stop_owner(None);
+            let _ = recording.stop(StopBy::Anyone);
         }
     }
 }
@@ -542,9 +544,15 @@ fn spawn_lifecycle_maintenance(runtime: &Arc<DriverRuntime>) -> LifecycleMainten
             );
         }
         let idle = now_unix_secs().saturating_sub(runtime.last_activity.load(Ordering::Relaxed));
-        if idle >= recording_ttl && runtime.registry.recording.current_state().enabled {
+        if idle < recording_ttl {
+            continue;
+        }
+        if let Some(generation) = runtime.registry.recording.current_state().generation {
             tracing::warn!("recording idle {idle}s ≥ {recording_ttl}s TTL; auto-stopping");
-            let _ = runtime.registry.recording.stop_owner(None);
+            let _ = runtime
+                .registry
+                .recording
+                .stop(StopBy::Generation(generation));
         }
     });
     LifecycleMaintenance { shutdown, thread }
@@ -622,7 +630,7 @@ fn build_registry(options: &RuntimeOptions) -> ToolRegistry {
                 return Ok(());
             };
             recording
-                .stop_owner(Some(session))
+                .stop(StopBy::Owner(session))
                 .map_err(|error| error.to_string())
         },
     );

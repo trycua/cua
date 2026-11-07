@@ -142,6 +142,10 @@ pub enum Command {
         fix: bool,
     },
     Diagnose,
+    /// `cua-driver test [--json]` - check a new install end to end.
+    Test {
+        json: bool,
+    },
     /// `cua-driver permissions status|grant [--json]` — report TCC status
     /// (with source attribution + a live capture probe) or raise the
     /// correctly-attributed grant by launching CuaDriver via LaunchServices.
@@ -357,6 +361,7 @@ fn finite_command_name_from_args(args: &[String]) -> Option<&'static str> {
         Some("channel") => Some("channel"),
         Some("doctor") => Some("doctor"),
         Some("diagnose") => Some("diagnose"),
+        Some("test") => Some("test"),
         Some("permissions") => Some("permissions"),
         Some("autostart") => Some("autostart"),
         Some("skills") => Some("skills"),
@@ -720,6 +725,10 @@ pub fn parse_command() -> Command {
         println!("                                  hardcoded launch argv like _CUA_DRIVER_ARGS = [\"mcp\"].");
         println!("    --pretty / -p                 Pretty-print the JSON.");
         println!();
+        println!("test options:");
+        println!("  cua-driver test [--json]  Check permissions, screen read, pointer and typing.");
+        println!("                          Exit 0 when Cua Driver works, 1 when something needs fixing.");
+        println!();
         println!("doctor options:");
         println!("  --json                  Emit the probe report as JSON for scripting.");
         println!();
@@ -966,6 +975,9 @@ pub fn parse_command() -> Command {
             Command::Doctor { json, fix }
         }
         Some("diagnose") => Command::Diagnose,
+        Some("test") => Command::Test {
+            json: args.iter().any(|a| a == "--json"),
+        },
         Some("permissions") => {
             let subcommand = pos.next().unwrap_or("status").to_string();
             let json = args.iter().any(|a| a == "--json");
@@ -2099,6 +2111,11 @@ pub fn build_manifest() -> serde_json::Value {
               "args": [
                   { "name": "--json", "type": "flag", "description": "Machine-readable doctor report." },
                   { "name": "--fix", "type": "flag", "description": "macOS: make LaunchServices forget every other copy of CuaDriver.app (no files are deleted)." }
+              ] },
+            { "name": "test",
+              "description": "Check a new install end to end: permissions, screen read, pointer, and typing in TextEdit (macOS). Exit 0 when it all works.",
+              "args": [
+                  { "name": "--json", "type": "flag", "description": "Machine-readable result." }
               ] },
             { "name": "diagnose",
               "description": "Emit a developer-focused diagnostic dump suitable for bug reports.",
@@ -3807,7 +3824,7 @@ pub fn run_permissions_host_request_if_requested() -> Option<i32> {
 }
 
 #[cfg(target_os = "macos")]
-fn request_permissions_via_launchservices(
+pub(crate) fn request_permissions_via_launchservices(
     probe_direct_capture: bool,
 ) -> Result<serde_json::Value, String> {
     launchservices_permission_host(true, probe_direct_capture)
@@ -4246,6 +4263,7 @@ const HELP_SUBCOMMANDS: &[&str] = &[
     "sessions",
     "history",
     "mcp-config",
+    "test",
 ];
 
 fn cli_docs_json() -> serde_json::Value {
@@ -4719,6 +4737,15 @@ fn cli_docs_literal() -> serde_json::Value {
                 "subcommands": no_subcommands
             },
             {
+                "name": "test",
+                "abstract": "Check that Cua Driver works on this computer.",
+                "discussion": "Checks permissions, a screen read, Cua Driver's own pointer, and (macOS) typing in a background TextEdit window that is closed without saving. Exit code is 0 when everything works and 1 when something needs fixing.",
+                "arguments": no_args,
+                "options": no_options,
+                "flags": [{"name":"json","short_name":null,"help":"Emit the result as JSON.","default_value":false}],
+                "subcommands": no_subcommands
+            },
+            {
                 "name": "diagnose",
                 "abstract": "Print a pasteable install-layout and permission-attribution report.",
                 "discussion": "",
@@ -4919,6 +4946,10 @@ const CLI_EXAMPLES: &[(&str, &[(&str, &str)])] = &[
         ("cua-driver doctor", "Run the diagnostic probes"),
         ("cua-driver doctor --json", "Emit the probe report as JSON"),
         ("cua-driver doctor --fix", "macOS: make macOS forget extra copies of the app (deletes no files)"),
+    ]),
+    ("test", &[
+        ("cua-driver test", "Check that Cua Driver works on this computer"),
+        ("cua-driver test --json", "Emit the result as JSON"),
     ]),
     ("diagnose", &[("cua-driver diagnose", "Print an install and permission report to paste into an issue")]),
     ("autostart", &[("cua-driver autostart status", "Check the autostart entry")]),

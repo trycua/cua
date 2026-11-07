@@ -15,7 +15,7 @@ import { MainWindow } from "./MainWindow";
 import { createFakeCloudBridge, type CloudBridge } from '../../native/cloud';
 
 /** A Space created unnamed: the name the wizard generated and showed. */
-const GENERATED = /space-[0-9a-f]{10}/;
+const GENERATED = /(?<![\w-])[a-z]{3,}-[a-z]{3,}(?![\w-])/;
 
 const ROWS: SpaceRow[] = [
   { id: "relay:aurora", name: "aurora", provider: "relay", spacesdVersion: "0.4.0", features: [], os: "linux", reachable: true },
@@ -110,7 +110,7 @@ describe("MainWindow", () => {
         on: "local",
         kind: "vm",
         runtime: "auto",
-        name: expect.stringMatching(/^space-[0-9a-f]{10}$/),
+        name: expect.stringMatching(/^[a-z]+-[a-z]+$/),
         cpus: 2,
         memoryMb: 4096,
         spacesd: true,

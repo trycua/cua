@@ -166,7 +166,7 @@ describe("New Space wizard", () => {
     fireEvent.change(screen.getByRole("slider", { name: "CPU cores" }), { target: { value: "3" } });
     fireEvent.change(screen.getByRole("slider", { name: "Memory" }), { target: { value: "6" } });
     next();
-    fireEvent.change(screen.getByPlaceholderText(/^space-[0-9a-f]{10}$/), {
+    fireEvent.change(screen.getByPlaceholderText(/^[a-z]+-[a-z]+$/), {
       target: { value: "cua-e2e-vm" },
     });
     next();
@@ -273,7 +273,7 @@ describe("New Space wizard", () => {
     renderWizard();
     next();
     next();
-    fireEvent.change(screen.getByPlaceholderText(/^space-[0-9a-f]{10}$/), { target: { value: "Bad Name" } });
+    fireEvent.change(screen.getByPlaceholderText(/^[a-z]+-[a-z]+$/), { target: { value: "Bad Name" } });
     expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
   });
 

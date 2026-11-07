@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.12.1](https://github.com/trycua/cua/compare/cua-sdk-v0.12.0...cua-sdk-v0.12.1) (2026-11-07)
+
+
+### Bug Fixes
+
+* **cua-spaces:** the relay-turned-off mesh test no longer waits out the reconnect spread, and CI runs cua-spaces unit tests ([#6795](https://github.com/trycua/cua/issues/6795)) ([6c52391](https://github.com/trycua/cua/commit/6c52391390d721a22e53073176edabf010cc7db9))
+
+## [0.12.0](https://github.com/trycua/cua/compare/cua-sdk-v0.11.0...cua-sdk-v0.12.0) (2026-11-07)
+
+
+### Features
+
+* **spaces:** Local dev builds keep agent keys in a private file without the Keychain; install-local.sh signs with its own Keychain ([#6587](https://github.com/trycua/cua/issues/6587)) ([ffa4c06](https://github.com/trycua/cua/commit/ffa4c068ac246b015c13b30982b1f57086443b5c))
+
+
+### Bug Fixes
+
+* **cua-vmm:** macOS Spaces run on Lume 0.7.0, the first release that takes a network gateway ([#6767](https://github.com/trycua/cua/issues/6767)) ([b7b1ae2](https://github.com/trycua/cua/commit/b7b1ae20b78ba27ecfb7cc08779db4ceffa97f92))
+* **spaces:** explain a refused new computer and offer a code from another computer ([#6710](https://github.com/trycua/cua/issues/6710)) ([327f41c](https://github.com/trycua/cua/commit/327f41c89be3e8209a4bfc3b5785cb423f97de9c))
+* **spaces:** New Space Continue did nothing for a Windows image on a Windows PC ([#6724](https://github.com/trycua/cua/issues/6724)) ([2f2af69](https://github.com/trycua/cua/commit/2f2af6925c21eb372b0a2a90a3b0f1fb09d1222c))
+* **spaces:** say This PC (not This Mac) for the current computer on Windows ([#6735](https://github.com/trycua/cua/issues/6735)) ([35407b5](https://github.com/trycua/cua/commit/35407b58467cfddd049547aae9f944d7e0956ded))
+* **spaces:** start never pulls a moved image, pending first message for a new home, pet-name default names ([#6707](https://github.com/trycua/cua/issues/6707)) ([8ef19f2](https://github.com/trycua/cua/commit/8ef19f259a99e2b3b1153bf3e53025f730409736))
+
 ## [0.11.0](https://github.com/trycua/cua/compare/cua-sdk-v0.10.1...cua-sdk-v0.11.0) (2026-11-06)
 
 

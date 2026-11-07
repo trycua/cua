@@ -121,7 +121,7 @@ impl Tool for TypeTextTool {
                     "scope": "desktop", "path": "SendInput", "characters": text_len,
                     "effect": "unverifiable"
                 })),
-                Ok(Err(error)) => ToolResult::error(error.to_string()),
+                Ok(Err(error)) => crate::typing_turn::foreground_input_error(error),
                 Err(error) => ToolResult::error(format!("desktop type task failed: {error}")),
             };
         }
@@ -345,7 +345,7 @@ impl Tool for TypeTextTool {
                     // foreground IS the escalated rung (mirrors macOS PATH_KEY_EVENTS_FG).
                     "effect": "unverifiable",
                 })),
-                Ok(Err(e)) => ToolResult::error(e.to_string()),
+                Ok(Err(e)) => crate::typing_turn::foreground_input_error(e),
                 Err(e)     => ToolResult::error(format!("Task error: {e}")),
             };
         }

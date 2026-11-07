@@ -805,6 +805,7 @@ impl Tool for ScrollTool {
                     crate::interaction::with_x11_foreground(
                         xid,
                         crate::input::ForegroundOptions::pointer(),
+                        crate::interaction::RestoreMode::LeaveFocused,
                         || {
                             crate::input::send_click_xtest_desktop(
                                 point.0 as i32,

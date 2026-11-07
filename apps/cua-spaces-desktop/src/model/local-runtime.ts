@@ -10,8 +10,11 @@ const DOCKER_DESKTOP_URL = "https://docs.docker.com/desktop/setup/install/window
  * is the runtime doctor's detail for the container engine, when it gave one
  * (for example "container engine at npipe://... is not running").
  */
-export function noLocalRuntimeReason(platform: string, containerDetail?: string): string {
+export function noLocalRuntimeReason(platform: string, containerDetail?: string, managedDetail?: string): string {
   if (platform === "darwin") return "No local runtime found (Docker or Lume).";
+  // Windows: Cua Spaces runs its own container engine in WSL 2. When it cannot, its
+  // detail says what to turn on (WSL 2, Virtual Machine Platform, virtualization).
+  if (platform === "win32" && managedDetail && /wsl|virtual|not enough disk space/i.test(managedDetail)) return managedDetail;
   const detail = (containerDetail ?? "").toLowerCase();
   const installedButStopped = /not running|did not answer|not listening|start |socket not found|pipe\/dockerdesktop/.test(detail);
   if (platform === "win32") {

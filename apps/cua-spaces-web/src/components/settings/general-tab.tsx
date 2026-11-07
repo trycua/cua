@@ -17,7 +17,7 @@ import { Input } from "@/components/ui/input";
 import { Segmented } from "@/components/ui/segmented";
 import { Switch } from "@/components/ui/switch";
 import { toastError } from "@/components/ui/toast";
-import { globalShortcutLine, showsMacShellSettings, thisComputerLabel } from "@/lib/host-labels";
+import { globalShortcutLine, showsMacShellSettings, thisComputerLabel, thisComputerText } from "@/lib/host-labels";
 import { LAUNCH_HELP, LAUNCH_LABEL } from "@/lib/settings-copy";
 import { acceleratorOf } from "@/lib/shortcut-keys";
 import { useTheme, type ThemePreference } from "@/lib/theme";
@@ -160,7 +160,7 @@ function SharingGroup() {
     void (async () => {
       try {
         if (!panel.configured) {
-          if (next && !(await host.quickSetUp())) throw new Error(host.setupError?.message ?? "Couldn't set this Mac up.");
+          if (next && !(await host.quickSetUp())) throw new Error(host.setupError?.message ?? `Couldn't set ${thisComputerText()} up.`);
           return;
         }
         if (!toggle) return;

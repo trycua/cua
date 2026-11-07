@@ -1224,7 +1224,7 @@ impl ClickTool {
                 let refusal = tokio::task::spawn_blocking(move || unsafe {
                     let element = element_at_screen_position(pid, screen_x, screen_y)?;
                     let refusal = (crate::ax::exact_target::element_window_id(element)
-                        == Some(select_wid)
+                        .is_some_and(|window| window.is(select_wid))
                         && super::set_value::is_chromium_web_select(pid, select_wid, element))
                     .then(|| {
                         super::set_value::chromium_select_open_refusal(
@@ -1270,7 +1270,9 @@ impl ClickTool {
                     // Require proven ancestry in the requested window before
                     // acting; otherwise fall through to the routed pixel path
                     // (already gated for this exact window).
-                    if crate::ax::exact_target::element_window_id(element) != Some(hit_test_wid) {
+                    if !crate::ax::exact_target::element_window_id(element)
+                        .is_some_and(|window| window.is(hit_test_wid))
+                    {
                         CFRelease(element as _);
                         return Ok(false);
                     }

@@ -58,7 +58,7 @@ use crate::host;
 pub const BASE_VERSION: &str = "24.04.5";
 
 /// What the one-time setup installs, from Ubuntu's archive.
-pub const PACKAGES: &str = "docker.io iptables nftables socat ca-certificates";
+pub const PACKAGES: &str = "docker.io iptables nftables iproute2 socat ca-certificates";
 
 /// Docker's default bridge, away from WSL's own `172.x` subnets.
 pub const BRIDGE_CIDR: &str = "10.230.0.1/24";
@@ -69,7 +69,7 @@ pub const ADDRESS_POOL: &str = "10.231.0.0/16";
 pub const GUEST_SOCKET: &str = "/run/cua/docker.sock";
 
 /// Bumped when the one-time setup changes: an older distribution is set up again.
-pub const SETUP_VERSION: u32 = 2;
+pub const SETUP_VERSION: u32 = 3;
 
 /// The pinned Ubuntu base rootfs for this PC's architecture.
 pub fn rootfs_pin() -> Pin {
@@ -422,9 +422,9 @@ pub fn install_script() -> String {
 
 /// What the engine helper needs of the engine's Linux (`container::snapshot`
 /// bind-mounts `/usr`, starts `/usr/bin/sleep` and runs `/usr/sbin/chroot`;
-/// `container::egress` runs `nsenter` and `nft` in it):
+/// `container::egress` runs `ip`, `nsenter` and `nft` in it):
 /// setup fails with a clear message instead of every later create doing so.
-pub const HELPER_CHECK: &str = "test -x /usr/bin/sleep && test -x /usr/sbin/chroot && command -v nft >/dev/null && command -v nsenter >/dev/null || { echo 'the runtime image lacks /usr/bin/sleep, /usr/sbin/chroot, nft or nsenter (merged /usr layout)' >&2; exit 1; }";
+pub const HELPER_CHECK: &str = "test -x /usr/bin/sleep && test -x /usr/sbin/chroot && command -v nft >/dev/null && command -v nsenter >/dev/null && command -v ip >/dev/null || { echo 'the runtime image lacks /usr/bin/sleep, /usr/sbin/chroot, nft, nsenter or ip (merged /usr layout)' >&2; exit 1; }";
 
 /// The program that is the engine: Docker's daemon on [`GUEST_SOCKET`].
 pub const DOCKERD_SCRIPT: &str = "mkdir -p /run/cua && exec dockerd --host=unix:///run/cua/docker.sock --pidfile=/run/cua/dockerd.pid >>/var/log/dockerd.log 2>&1";
@@ -937,7 +937,11 @@ mod tests {
         let s = install_script();
         assert!(s.contains(HELPER_CHECK), "{s}");
         assert!(
-            HELPER_CHECK.contains("/usr/bin/sleep") && HELPER_CHECK.contains("/usr/sbin/chroot")
+            HELPER_CHECK.contains("/usr/bin/sleep")
+                && HELPER_CHECK.contains("/usr/sbin/chroot")
+                && HELPER_CHECK.contains("nft")
+                && HELPER_CHECK.contains("nsenter")
+                && HELPER_CHECK.contains("command -v ip ")
         );
         // Debian's package scripts must not try to start services in a distribution without init.
         assert!(s.contains("policy-rc.d") && s.contains("exit 101"));

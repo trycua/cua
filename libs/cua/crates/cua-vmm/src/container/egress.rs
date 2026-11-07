@@ -316,6 +316,7 @@ if [ "$pid" != 0 ]; then
   [ -n "$idx" ] && ip -o link | sed -n "s/^$idx: \([^:@]*\)[@:].*/veth=\1/p"
 fi
 command -v nft >/dev/null 2>&1 || echo nft=missing
+if nft add table bridge cua_probe_br 2>/dev/null; then nft delete table bridge cua_probe_br 2>/dev/null; echo bridgefam=ok; else echo bridgefam=missing; fi
 for f in /etc/resolv.conf /run/systemd/resolve/resolv.conf; do
   [ -r "$f" ] && sed -n 's/^nameserver[[:space:]]*\([0-9a-fA-F:.]*\).*/dns=\1/p' "$f"
 done
@@ -697,6 +698,7 @@ impl ContainerRuntime {
                  egress policies are enforced there",
             ));
         }
+        let bridge_family = field("bridgefam").as_deref() != Some("missing");
         let gateway_mac = field("gw")
             .as_deref()
             .and_then(egress::normalize_mac)
@@ -749,9 +751,20 @@ impl ContainerRuntime {
                 mac,
                 port,
                 isolate_l2: !tree_net,
+                bridge_family,
             },
             ctx,
         ))
+    }
+
+    /// Whether the engine host's kernel has the nftables `bridge` family
+    /// (true when it cannot be told: the rules are then written as before).
+    async fn engine_bridge_family(&self) -> bool {
+        let script = r#"if nft add table bridge cua_probe_br 2>/dev/null; then nft delete table bridge cua_probe_br 2>/dev/null; echo bridgefam=ok; else echo bridgefam=missing; fi"#;
+        match self.engine_sh(script, &[]).await {
+            Ok(o) => !o.stdout.contains("bridgefam=missing"),
+            Err(_) => true,
+        }
     }
 
     /// Writes `text` with nft on the engine host.
@@ -780,7 +793,9 @@ impl ContainerRuntime {
         if network.is_none() && !legacy.blocks_anything() {
             // Nothing to filter: remove what was there.
             if let Some(t) = &previous {
-                self.engine_apply(&egress::engine_remove(t)).await?;
+                let family = self.engine_bridge_family().await;
+                self.engine_apply(&egress::engine_remove_for(t, family))
+                    .await?;
             }
             return keep(
                 name,
@@ -804,9 +819,15 @@ impl ContainerRuntime {
             Some(s) => crate::network::compile_mode(s, &ctx, Mode::Secure)?,
             None => legacy,
         };
+        if !target.bridge_family {
+            if !rules.user_rules_in_tree().is_empty() {
+                return Err(VmmError::Engine(egress::NO_BRIDGE_FAMILY.into()));
+            }
+            tracing::warn!(container = name, "{}", egress::BRIDGE_FAMILY_LIMITS);
+        }
         let mut text = String::new();
         if let Some(t) = previous.as_ref().filter(|t| **t != target.table) {
-            text.push_str(&egress::engine_remove(t));
+            text.push_str(&egress::engine_remove_for(t, target.bridge_family));
         }
         text.push_str(&egress::engine_ruleset(&target, &rules));
         if let Err(e) = self.engine_apply(&text).await {
@@ -880,7 +901,10 @@ impl ContainerRuntime {
     /// its policy (the container is gone).
     pub(crate) async fn unpolice(&self, name: &str) {
         if let Some(t) = kept(name).and_then(|k| k.table)
-            && let Err(e) = self.engine_apply(&egress::engine_remove(&t)).await
+            && let family = self.engine_bridge_family().await
+            && let Err(e) = self
+                .engine_apply(&egress::engine_remove_for(&t, family))
+                .await
         {
             tracing::warn!(container = name, error = %e, "could not remove a deleted container's egress rules");
         }

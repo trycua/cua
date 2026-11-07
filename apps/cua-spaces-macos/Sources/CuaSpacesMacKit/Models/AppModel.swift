@@ -1541,7 +1541,12 @@ public final class AppModel {
         confirmDeleteId = nil
         // A failed create is only removed from the list.
         if appCreatesIsPending(id: space.id) {
-            dismissPending(space.id)
+            // A create still going is stopped (and what it made removed); a failed one only leaves the list.
+            if creates.pending.contains(where: { $0.id == space.id && $0.error == nil && $0.spaceId == nil }) {
+                cancelCreate(space.id)
+            } else {
+                dismissPending(space.id)
+            }
             return
         }
         guard !isDeleting(space.id) else { return }

@@ -131,8 +131,18 @@ pub fn person_reason(message: &str) -> String {
         .strip_prefix("invalid request: ")
         .or_else(|| m.strip_prefix("failed precondition: "))
         .unwrap_or(m);
+    let m = m
+        .strip_prefix("local runtime: ")
+        .unwrap_or(m)
+        .trim_start_matches("container engine: ")
+        .trim();
     let l = m.to_lowercase();
-    let out = if l.contains("probe port") || l.contains("is not published") {
+    let out = if l.contains("pull access denied")
+        || l.contains("repository does not exist")
+        || l.contains("manifest unknown")
+    {
+        "the image was not found, or it needs a sign-in to download".to_string()
+    } else if l.contains("probe port") || l.contains("is not published") {
         "its network setup did not come up".to_string()
     } else if l.contains("not enough disk space") {
         "there is not enough disk space".to_string()
@@ -320,6 +330,13 @@ mod tests {
         let r = person_reason("invalid request: probe port 3211 is not published by this sandbox");
         assert_eq!(r, "Its network setup did not come up");
         assert!(!r.chars().any(|c| c.is_ascii_digit()));
+        let r = person_reason(
+            "local runtime: container engine: pull nosuchimage-xyz:1: Docker responded with status code 404: pull access denied for nosuchimage-xyz",
+        );
+        assert_eq!(
+            r,
+            "The image was not found, or it needs a sign-in to download"
+        );
     }
 
     #[test]

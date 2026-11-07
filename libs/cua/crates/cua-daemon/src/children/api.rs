@@ -534,7 +534,10 @@ impl Tracked {
 
     fn failed(&self, why: &str) {
         let reason = cua_spaces::child_creates::person_reason(why);
+        // A create the person cancelled is not a failure to show on a row.
+        let cancelled = why.to_lowercase().contains("cancel");
         self.set(|e| {
+            e.hidden = cancelled;
             e.state = cua_spaces::child_creates::State::Failed;
             e.error = reason;
             e.percent = None;

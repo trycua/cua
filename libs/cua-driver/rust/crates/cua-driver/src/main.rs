@@ -228,6 +228,9 @@ fn run_cursor_theme_command(args: &[String]) -> ! {
             std::process::exit(1);
         }
     };
+    // On macOS, current_exe can retain the launch symlink. Find the compiler
+    // beside the actual driver rather than beside its PATH entry.
+    let executable = executable.canonicalize().unwrap_or(executable);
     let binary_name = if cfg!(target_os = "windows") {
         "cua-cursor-theme.exe"
     } else {

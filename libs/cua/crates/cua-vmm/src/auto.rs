@@ -727,6 +727,9 @@ pub fn containerization_backend(r: &ContainerizationReport) -> BackendStatus {
 /// firecracker` does; passt is the host's to install ([`crate::microvm::assets::PASTA_HINT`]).
 #[cfg(feature = "microvm")]
 async fn microvm_status() -> Option<(BackendStatus, MicroVmReport)> {
+    if HostOs::current() == HostOs::Windows {
+        return Some(windows_microvm_status().await);
+    }
     if HostOs::current() != HostOs::Linux {
         return None;
     }
@@ -774,6 +777,117 @@ async fn microvm_status() -> Option<(BackendStatus, MicroVmReport)> {
         provisioning,
     };
     Some((status, r))
+}
+
+/// microVMs on Windows (QEMU on the Windows Hypervisor Platform, hardware
+/// acceleration only) for `doctor`: ready when WHPX answers, QEMU 9 or later
+/// and the static guest init are there; installable when only what cua can
+/// fetch or turn on is missing (QEMU through winget, the kernel, the
+/// Windows feature through one administrator prompt).
+#[cfg(feature = "microvm")]
+async fn windows_microvm_status() -> (BackendStatus, MicroVmReport) {
+    use crate::microvm::{assets, whpx};
+    let root = crate::microvm::MicroVmConfig::default().root;
+    let w = whpx::status();
+    let qemu = whpx::qemu_bin();
+    let version = match &qemu {
+        Some(q) => host::run(q, &["--version"])
+            .await
+            .ok()
+            .and_then(|s| s.lines().next().map(|l| l.trim().to_string())),
+        None => None,
+    };
+    let old_qemu = version
+        .as_deref()
+        .and_then(whpx::qemu_major)
+        .is_some_and(|m| m < whpx::MIN_QEMU_MAJOR);
+    let init = assets::init_bin();
+    let init_static = init
+        .as_ref()
+        .and_then(|p| std::fs::read(p).ok())
+        .and_then(|b| crate::microvm::rootfs::elf_interpreter(&b))
+        .is_some_and(|interp| interp.is_none());
+    let kernel_cached = assets::kernel_path(&root).is_file();
+    let mut missing = Vec::new();
+    if w != whpx::Whpx::Ready {
+        missing.push("Windows Hypervisor Platform".to_string());
+    }
+    if qemu.is_none() {
+        missing.push("QEMU".into());
+    } else if old_qemu {
+        missing.push(format!("QEMU {} or later", whpx::MIN_QEMU_MAJOR));
+    }
+    if init.is_none() {
+        missing.push("cua-microvm-init".into());
+    } else if !init_static {
+        missing.push("a static cua-microvm-init".into());
+    }
+    let mut provisioning = Vec::new();
+    if w == whpx::Whpx::FeatureOff {
+        provisioning.push(
+            "turn on the Windows feature Windows Hypervisor Platform (one administrator prompt), \
+             then restart this PC"
+                .to_string(),
+        );
+    }
+    if qemu.is_none() || old_qemu {
+        provisioning.push("install QEMU with winget (SoftwareFreedomConservancy.QEMU)".into());
+    }
+    if !kernel_cached {
+        provisioning.push(format!(
+            "download the guest kernel {} (pinned, about 44 MB)",
+            assets::KERNEL_VERSION
+        ));
+    }
+    // Hardware only: a PC whose firmware has virtualization off, or that needs a
+    // restart, is told so and is not offered a setup that cannot finish.
+    let hardware_ok = matches!(w, whpx::Whpx::Ready | whpx::Whpx::FeatureOff);
+    let guest_ok = init.is_some() && init_static;
+    // The microVM's disk and downloads go under the cua home: say so now, not
+    // midway, when that drive has no room.
+    let disk = crate::disk::ensure_space(&root, 2 << 30, "set up microVMs").err();
+    let ready = missing.is_empty() && disk.is_none();
+    let detail = if let Some(d) = &disk {
+        missing.push("disk space".into());
+        d.to_string()
+    } else if let Some(why) = whpx::unsupported_reason(&w) {
+        why
+    } else if qemu.is_none() {
+        "microVMs run in QEMU on the Windows Hypervisor Platform: QEMU is set up on first use \
+         (winget)"
+            .into()
+    } else if missing.is_empty() {
+        format!(
+            "{} on the Windows Hypervisor Platform{}",
+            version.clone().unwrap_or_else(|| "QEMU".into()),
+            if kernel_cached {
+                ""
+            } else {
+                "; the guest kernel downloads on first use"
+            }
+        )
+    } else {
+        format!("microVMs are not set up: {}", missing.join(", "))
+    };
+    let status = BackendStatus {
+        backend: BackendKind::Firecracker,
+        ready,
+        provisionable: !ready && hardware_ok && guest_ok && disk.is_none(),
+        detail,
+        missing: missing.clone(),
+        provisioning,
+    };
+    let report = MicroVmReport {
+        kvm: w == whpx::Whpx::Ready,
+        firecracker: qemu,
+        firecracker_version: version,
+        init,
+        init_static,
+        kernel_cached,
+        userns: true,
+        ..Default::default()
+    };
+    (status, report)
 }
 
 #[cfg(not(feature = "microvm"))]

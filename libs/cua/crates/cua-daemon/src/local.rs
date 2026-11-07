@@ -1196,7 +1196,7 @@ impl VmmLocal {
             add(BackendKind::Container, rt.list().await)?;
         }
         add(BackendKind::Qemu, self.qemu.instances())?;
-        if cfg!(any(target_os = "linux", target_os = "macos")) {
+        if cfg!(any(target_os = "linux", target_os = "macos", windows)) {
             let kind = if cfg!(target_os = "macos") {
                 BackendKind::Vz
             } else {
@@ -1284,7 +1284,7 @@ impl VmmLocal {
             v.push(BackendKind::Vz);
             v.push(BackendKind::Containerization);
         }
-        if cfg!(target_os = "linux") {
+        if cfg!(any(target_os = "linux", windows)) {
             v.push(BackendKind::Firecracker);
         }
         v
@@ -1295,7 +1295,7 @@ impl VmmLocal {
         match runtime_type.trim().to_ascii_lowercase().as_str() {
             "qemu" => Some(BackendKind::Qemu),
             "lume" if cfg!(target_os = "macos") => Some(BackendKind::Lume),
-            "firecracker" | "microvm" if cfg!(target_os = "linux") => {
+            "firecracker" | "microvm" if cfg!(any(target_os = "linux", windows)) => {
                 Some(BackendKind::Firecracker)
             }
             "containerization" if cfg!(target_os = "macos") => Some(BackendKind::Containerization),
@@ -2136,10 +2136,10 @@ impl VmmLocal {
             .ok_or_else(|| rt_err(e))?;
         }
         let p = r.placement.clone();
-        if p.backend == BackendKind::Firecracker && !cfg!(target_os = "linux") {
+        if p.backend == BackendKind::Firecracker && !cfg!(any(target_os = "linux", windows)) {
             return Err(RuntimeError::Unsupported {
                 backend: "firecracker".into(),
-                op: "a host other than Linux (microVMs need Linux with KVM)".into(),
+                op: "a host other than Linux or Windows (microVMs need Linux with KVM, or Windows with the Hypervisor Platform)".into(),
             });
         }
         if p.backend == BackendKind::Vz && !cfg!(target_os = "macos") {
@@ -2696,6 +2696,8 @@ impl LocalRuntime for VmmLocal {
             // The VM stops (its memory goes back to the machine) and boots
             // again from its disk.
             "lume" | "containerization" | "qemu" => Some(PowerControl::Stop),
+            // A QEMU microVM (Windows) has no snapshots: turning it off powers it down.
+            "firecracker" if cfg!(windows) => Some(PowerControl::Stop),
             "gvisor" | "runsc" | "runc" | "container" | "docker" if managed::in_use() => {
                 Some(PowerControl::Stop)
             }
@@ -3533,7 +3535,43 @@ async fn install_vz() -> std::result::Result<(), VmmError> {
     Ok(())
 }
 
+/// Windows microVMs (QEMU on WHPX): the Windows Hypervisor Platform feature
+/// (one UAC prompt, then a restart when Windows asks), QEMU through winget, and
+/// the pinned guest kernel. The guest init ships next to `cua`.
+async fn install_microvm_windows() -> std::result::Result<(), VmmError> {
+    use cua_vmm::microvm::{assets, whpx};
+    if let Some(why) = whpx::unsupported_reason(&whpx::status()) {
+        match whpx::status() {
+            whpx::Whpx::FeatureOff => match whpx::enable_elevated().await? {
+                whpx::Enabled::Ready => {}
+                whpx::Enabled::RestartNeeded => {
+                    return Err(VmmError::other(
+                        "Windows Hypervisor Platform is on now; restart this PC, then run \
+                         `cua runtime setup microvm` again",
+                    ));
+                }
+            },
+            _ => return Err(VmmError::other(why)),
+        }
+    }
+    if whpx::qemu_bin().is_none() {
+        cua_vmm::qemu::install_qemu().await?;
+    }
+    if assets::init_bin().is_none() {
+        return Err(VmmError::missing(
+            "cua-microvm-init",
+            "the microVM guest init ships next to `cua` (a cua release, or build it: \
+             cargo build --release -p cua-microvm-init --target x86_64-unknown-linux-musl)",
+        ));
+    }
+    assets::ensure_kernel(&MicroVmConfig::default().root).await?;
+    Ok(())
+}
+
 async fn install_microvm() -> std::result::Result<(), VmmError> {
+    if cfg!(windows) {
+        return install_microvm_windows().await;
+    }
     if cua_vmm::microvm::assets::firecracker_bin().is_none() {
         cua_vmm::microvm::assets::install_firecracker().await?;
     }

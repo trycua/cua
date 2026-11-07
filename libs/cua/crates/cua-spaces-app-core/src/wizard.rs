@@ -1263,6 +1263,16 @@ fn microvm_block_of(probe: &LocalProbe<'_>, os: SpaceOs) -> MicrovmBlock {
                 "needs the microVM tools: see cua runtime doctor".into()
             }
         }
+        // QEMU on the Windows Hypervisor Platform: the doctor says which
+        // piece is missing (the Windows feature, QEMU, the guest init).
+        SpaceOs::Windows => {
+            let fc = detail("firecracker");
+            if fc.is_empty() {
+                "needs the Windows Hypervisor Platform: see cua runtime doctor".into()
+            } else {
+                fc
+            }
+        }
         _ => "needs a Mac or Linux with KVM".into(),
     })
 }

@@ -51,6 +51,7 @@ pub mod assets;
 pub mod fcapi;
 pub mod rootfs;
 pub mod vz;
+pub mod whpx;
 
 /// Firecracker runs on Linux only; the rest of cua builds this module on
 /// every OS (the daemon names the runtime everywhere), so the few calls into
@@ -115,6 +116,8 @@ pub enum Vmm {
     Firecracker,
     /// `cua-vz`, Virtualization.framework (macOS on Apple silicon).
     Vz,
+    /// QEMU on the Windows Hypervisor Platform ([`whpx`]).
+    Qemu,
 }
 
 impl Vmm {
@@ -122,15 +125,18 @@ impl Vmm {
     pub fn host() -> Self {
         if cfg!(target_os = "macos") {
             Vmm::Vz
+        } else if cfg!(windows) {
+            Vmm::Qemu
         } else {
             Vmm::Firecracker
         }
     }
 
-    /// The backend its VMs are listed under.
+    /// The backend its VMs are listed under (a Windows microVM is the Linux
+    /// microVM backend's id, `firecracker`: its monitor is QEMU).
     pub fn backend(self) -> BackendKind {
         match self {
-            Vmm::Firecracker => BackendKind::Firecracker,
+            Vmm::Firecracker | Vmm::Qemu => BackendKind::Firecracker,
             Vmm::Vz => BackendKind::Vz,
         }
     }
@@ -139,14 +145,17 @@ impl Vmm {
         match self {
             Vmm::Firecracker => "kvm",
             Vmm::Vz => "vz",
+            Vmm::Qemu => "whpx",
         }
     }
 }
 
-/// A VM's monitor control: Firecracker's API or `cua-vz`'s.
+/// A VM's monitor control: Firecracker's API, `cua-vz`'s, or none (QEMU
+/// has no snapshots here, so nothing to pause for).
 enum Ctl {
     Fc(FcApi),
     Vz(VzApi),
+    Qemu,
 }
 
 impl Ctl {
@@ -154,6 +163,7 @@ impl Ctl {
         match self {
             Ctl::Fc(a) => a.pause().await,
             Ctl::Vz(a) => a.pause().await,
+            Ctl::Qemu => Err(qemu_unsupported("pause")),
         }
     }
 
@@ -161,7 +171,16 @@ impl Ctl {
         match self {
             Ctl::Fc(a) => a.resume().await,
             Ctl::Vz(a) => a.resume().await,
+            Ctl::Qemu => Err(qemu_unsupported("resume")),
         }
+    }
+}
+
+/// What a QEMU microVM (Windows) does not do.
+fn qemu_unsupported(op: &'static str) -> VmmError {
+    VmmError::Unsupported {
+        backend: "microvm (QEMU on Windows)",
+        op,
     }
 }
 
@@ -231,7 +250,7 @@ impl Default for MicroVmConfig {
             stage: None,
             graceful_stop: Duration::from_secs(10),
             base_format: match vmm {
-                Vmm::Vz => BaseFormat::Squashfs,
+                Vmm::Vz | Vmm::Qemu => BaseFormat::Squashfs,
                 Vmm::Firecracker => BaseFormat::from_env(),
             },
             vmm,
@@ -297,6 +316,12 @@ pub struct VmState {
     pub sock_id: Option<String>,
     #[serde(default)]
     pub paused: bool,
+    /// QEMU (Windows): the loopback port the init's TCP link is forwarded
+    /// to, and the key its connections start with, for the run in progress.
+    #[serde(default)]
+    pub agent_port: Option<u16>,
+    #[serde(default)]
+    pub agent_key: Option<String>,
     /// A snapshot directory the next start restores (a fork).
     #[serde(default)]
     pub restore_from: Option<PathBuf>,
@@ -462,6 +487,16 @@ fn random_hex(n: usize) -> String {
     let mut b = vec![0u8; n];
     if let Ok(mut f) = std::fs::File::open("/dev/urandom") {
         let _ = f.read_exact(&mut b);
+    } else if cfg!(windows) {
+        // `RandomState` is keyed from the OS's generator for each value.
+        use std::hash::{BuildHasher, Hasher};
+        for chunk in b.chunks_mut(8) {
+            let r = std::collections::hash_map::RandomState::new()
+                .build_hasher()
+                .finish()
+                .to_le_bytes();
+            chunk.copy_from_slice(&r[..chunk.len()]);
+        }
     } else {
         let seed = now_nanos().to_le_bytes();
         let h = Sha256::digest(seed);
@@ -483,6 +518,16 @@ fn unsupported_host(vmm: Vmm) -> Option<VmmError> {
                 "the macOS microVM monitor ships next to `cua`; set CUA_VZ to its path or put it \
                  in ~/.cua/bin (libs/cua/vz/build.sh builds it)",
             ));
+        }
+        return None;
+    }
+    if vmm == Vmm::Qemu {
+        // WHPX, QEMU and a static init, each with what to do about it.
+        if let Some(why) = whpx::unsupported_reason(&whpx::status()) {
+            return Some(VmmError::other(why));
+        }
+        if whpx::qemu_bin().is_none() {
+            return Some(whpx::qemu_missing());
         }
         return None;
     }
@@ -511,6 +556,104 @@ fn boot_args() -> String {
          i8042.nopnp i8042.dumbkbd random.trust_cpu=on \
          ip={GUEST_IP}::{GATEWAY_IP}:255.255.255.252::eth0:off"
     )
+}
+
+/// QEMU's user-mode network: the guest's address, its gateway and resolver
+/// (the stack's fixed ones), and the TCP port of the guest init.
+const QEMU_GUEST_IP: &str = "10.0.2.15";
+const QEMU_GATEWAY: &str = "10.0.2.2";
+const QEMU_DNS: &str = "10.0.2.3";
+const QEMU_AGENT_PORT: u16 = 3212;
+
+/// The kernel command line of a QEMU microVM: PCI on (q35), the init's network
+/// fixed by `ip=`, its host link a TCP port with a key, quiet, and reboot =
+/// exit (QEMU ends when the guest powers off or resets).
+fn qemu_boot_args(agent_key: &str) -> String {
+    format!(
+        "console=ttyS0 reboot=t panic=1 quiet loglevel=3 8250.nr_uarts=1 random.trust_cpu=on \
+         ip={QEMU_GUEST_IP}::{QEMU_GATEWAY}:255.255.255.0::eth0:off \
+         cua.agent=tcp:{QEMU_AGENT_PORT} cua.key={agent_key} cua.dns={QEMU_DNS}"
+    )
+}
+
+/// What a QEMU microVM is launched with.
+struct QemuLaunch<'a> {
+    name: &'a str,
+    cpus: u32,
+    memory_mb: u64,
+    kernel: &'a Path,
+    initrd: &'a Path,
+    base: &'a Path,
+    scratch: &'a Path,
+    console: &'a Path,
+    /// Guest port, host port: published on the host's loopback.
+    ports: &'a BTreeMap<u16, u16>,
+    agent_host_port: u16,
+    agent_key: &'a str,
+    /// No network at all (published ports still work).
+    no_network: bool,
+}
+
+/// QEMU's arguments for one microVM: `q35` on WHPX (hardware acceleration
+/// only), the image and the scratch disk as virtio block devices in that
+/// order (the init mounts `/dev/vda` and `/dev/vdb`), user-mode networking with
+/// `hostfwd` for the published ports and the init's link, and the serial
+/// console in a file.
+fn qemu_args(l: &QemuLaunch<'_>) -> Vec<String> {
+    let mut fwd = String::new();
+    for (guest, host) in l.ports {
+        fwd.push_str(&format!(",hostfwd=tcp:127.0.0.1:{host}-:{guest}"));
+    }
+    fwd.push_str(&format!(
+        ",hostfwd=tcp:127.0.0.1:{}-:{QEMU_AGENT_PORT}",
+        l.agent_host_port
+    ));
+    let restrict = if l.no_network { ",restrict=on" } else { "" };
+    let a = |s: &str| s.to_string();
+    vec![
+        a("-name"),
+        format!("cua-microvm-{}", l.name),
+        a("-M"),
+        a("q35"),
+        a("-accel"),
+        a("whpx"),
+        a("-cpu"),
+        a("qemu64"),
+        a("-smp"),
+        l.cpus.max(1).to_string(),
+        a("-m"),
+        format!("{}", l.memory_mb.max(256)),
+        a("-kernel"),
+        l.kernel.display().to_string(),
+        a("-initrd"),
+        l.initrd.display().to_string(),
+        a("-append"),
+        qemu_boot_args(l.agent_key),
+        a("-display"),
+        a("none"),
+        a("-monitor"),
+        a("none"),
+        a("-serial"),
+        format!("file:{}", l.console.display()),
+        a("-no-reboot"),
+        a("-drive"),
+        format!(
+            "id=base,file={},format=raw,if=none,readonly=on",
+            l.base.display()
+        ),
+        a("-device"),
+        a("virtio-blk-pci,drive=base"),
+        a("-drive"),
+        format!("id=scratch,file={},format=raw,if=none", l.scratch.display()),
+        a("-device"),
+        a("virtio-blk-pci,drive=scratch"),
+        a("-netdev"),
+        format!("user,id=n0,ipv6=off{restrict}{fwd}"),
+        a("-device"),
+        a("virtio-net-pci,netdev=n0"),
+        a("-device"),
+        a("virtio-rng-pci"),
+    ]
 }
 
 /// Whether a Vz microVM boots with no network: always under the secure
@@ -922,6 +1065,12 @@ impl MicroVmRuntime {
     }
 
     fn agent(&self, name: &str) -> Agent {
+        if self.cfg.vmm == Vmm::Qemu
+            && let Ok(st) = self.load(name)
+            && let (Some(port), Some(key)) = (st.agent_port, st.agent_key)
+        {
+            return Agent::tcp(format!("127.0.0.1:{port}"), key);
+        }
         Agent::new(self.sock(name, "v.sock"))
     }
 
@@ -937,13 +1086,14 @@ impl MicroVmRuntime {
         match self.cfg.vmm {
             Vmm::Firecracker => Ctl::Fc(self.api(name)),
             Vmm::Vz => Ctl::Vz(self.vz_api(name)),
+            Vmm::Qemu => Ctl::Qemu,
         }
     }
 
     /// The image format new VMs use.
     fn base_format(&self) -> BaseFormat {
         match self.cfg.vmm {
-            Vmm::Vz => BaseFormat::Squashfs,
+            Vmm::Vz | Vmm::Qemu => BaseFormat::Squashfs,
             Vmm::Firecracker => self.cfg.base_format,
         }
     }
@@ -1063,7 +1213,7 @@ impl MicroVmRuntime {
             // The in-process squashfs writer also keeps the merged tarball.
             total.saturating_mul(match format {
                 BaseFormat::Ext4Dax => 6,
-                BaseFormat::Squashfs if self.cfg.vmm == Vmm::Vz => 5,
+                BaseFormat::Squashfs if self.cfg.vmm != Vmm::Firecracker => 5,
                 BaseFormat::Squashfs => 2,
             }),
             &format!("microVM rootfs of {reference}"),
@@ -1075,7 +1225,7 @@ impl MicroVmRuntime {
         let out = dir.join(format.file());
         let files = image_layers;
         let started = std::time::Instant::now();
-        let native = self.cfg.vmm == Vmm::Vz;
+        let native = self.cfg.vmm != Vmm::Firecracker;
         tokio::task::spawn_blocking(move || match format {
             BaseFormat::Squashfs if native => rootfs::build_squashfs_native(&files, &out),
             BaseFormat::Squashfs => rootfs::build_squashfs(&files, &out),
@@ -1169,10 +1319,22 @@ impl MicroVmRuntime {
         Ok(p)
     }
 
+    /// What a QEMU microVM needs first: WHPX, QEMU and its version (before
+    /// anything downloads), each with what to do about it.
+    fn check_whpx(&self) -> Result<()> {
+        let w = whpx::status();
+        if let Some(why) = whpx::unsupported_reason(&w) {
+            return Err(VmmError::other(why));
+        }
+        let qemu = whpx::qemu_bin().ok_or_else(whpx::qemu_missing)?;
+        let _ = qemu;
+        Ok(())
+    }
+
     /// A fresh scratch disk at `dest` (a sparse copy of a formatted
     /// template).
     async fn fresh_scratch(&self, dest: &Path, gib: u32) -> Result<()> {
-        if self.cfg.vmm == Vmm::Vz {
+        if self.cfg.vmm != Vmm::Firecracker {
             // No mkfs.ext4 here: a small formatted ext4 in a file of the
             // asked size, which the guest init grows at boot.
             let (dest, size) = (dest.to_path_buf(), u64::from(gib.max(1)) << 30);
@@ -1208,6 +1370,65 @@ impl MicroVmRuntime {
     }
 
     // ------------------------------------------------------------ processes
+
+    /// Starts QEMU (WHPX) for `st`: a cold boot of `kernel` and `initrd`
+    /// with the image and the scratch disk. Returns once the process runs;
+    /// the caller waits for the init.
+    async fn launch_qemu(&self, st: &mut VmState, kernel: &Path, initrd: &Path) -> Result<()> {
+        let dir = self.dir(&st.name);
+        let qemu = whpx::qemu_bin().ok_or_else(whpx::qemu_missing)?;
+        let base = self.base_dir(&st.base).join(st.base_format.file());
+        let scratch = dir.join("scratch.ext4");
+        let console = dir.join("console.log");
+        let _ = std::fs::remove_file(&console);
+        let mut host_ports = self.pick_ports(st.ports.len() + 1)?;
+        let agent_port = host_ports
+            .pop()
+            .ok_or_else(|| VmmError::other("no free loopback port"))?;
+        st.host_ports = st.ports.iter().copied().zip(host_ports).collect();
+        let key = random_hex(16);
+        let args = qemu_args(&QemuLaunch {
+            name: &st.name,
+            cpus: st.cpus,
+            memory_mb: st.memory_mb,
+            kernel,
+            initrd,
+            base: &base,
+            scratch: &scratch,
+            console: &console,
+            ports: &st.host_ports,
+            agent_host_port: agent_port,
+            agent_key: &key,
+            no_network: st.restrict_network,
+        });
+        let log = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(dir.join("qemu.log"))?;
+        let mut cmd = tokio::process::Command::new(&qemu);
+        cmd.args(&args)
+            .current_dir(&dir)
+            .stdin(std::process::Stdio::null())
+            .stdout(log.try_clone()?)
+            .stderr(log)
+            .kill_on_drop(false);
+        #[cfg(windows)]
+        cmd.creation_flags(0x0800_0000 | 0x0000_0200);
+        let mut child = cmd
+            .spawn()
+            .map_err(|e| VmmError::other(format!("qemu: {e}")))?;
+        st.fc_pid = child.id();
+        st.pasta_pid = None;
+        st.agent_port = Some(agent_port);
+        st.agent_key = Some(key);
+        st.paused = false;
+        // Reap it whenever it exits (the VM outlives this handle).
+        tokio::spawn(async move {
+            let _ = child.wait().await;
+        });
+        self.save(st)?;
+        Ok(())
+    }
 
     #[cfg(not(unix))]
     async fn launch(&self, _st: &mut VmState, _config: Option<serde_json::Value>) -> Result<()> {
@@ -1665,6 +1886,7 @@ impl MicroVmRuntime {
         let monitor = match self.cfg.vmm {
             Vmm::Firecracker => assets::firecracker_bin(),
             Vmm::Vz => vz::vz_bin(),
+            Vmm::Qemu => whpx::qemu_bin(),
         };
         let fc = monitor
             .and_then(|p| std::fs::metadata(&p).ok().map(|m| (p, m.len())))
@@ -1695,7 +1917,7 @@ impl MicroVmRuntime {
     /// snapshot of the same configuration (a fresh VM only), else a cold
     /// boot (which records the golden snapshot when warm starts are on).
     async fn boot(&self, st: &mut VmState, fresh: bool, timeout: Duration) -> Result<()> {
-        if self.cfg.vmm == Vmm::Vz {
+        if matches!(self.cfg.vmm, Vmm::Vz | Vmm::Qemu) {
             // Decided before anything keys on it (golden snapshots, the
             // monitor's config): a Mac has no point to enforce rules yet, so
             // no network unless the user chose No protection.
@@ -1716,7 +1938,8 @@ impl MicroVmRuntime {
             return Ok(());
         }
         let initrd = self.ensure_initrd().await?;
-        let warm = self.cfg.warm && fresh && !st.probes.is_empty();
+        // A QEMU microVM has no snapshots to warm-start from.
+        let warm = self.cfg.warm && fresh && !st.probes.is_empty() && self.cfg.vmm != Vmm::Qemu;
         let key = warm.then(|| self.golden_key(st, &initrd));
         if let Some(k) = &key {
             let g = self.golden_dir(k);
@@ -1757,6 +1980,9 @@ impl MicroVmRuntime {
             assets::pasta_bin().ok_or_else(assets::pasta_missing)?;
             assets::ensure_firecracker().await?;
         }
+        if self.cfg.vmm == Vmm::Qemu {
+            self.check_whpx()?;
+        }
         let kernel = assets::ensure_kernel(&self.cfg.root).await?;
         crate::progress::report(crate::progress::Progress::phase(
             crate::progress::Phase::Booting,
@@ -1768,6 +1994,7 @@ impl MicroVmRuntime {
                 self.launch(st, Some(config)).await?;
             }
             Vmm::Vz => self.launch_vz(st, &kernel, initrd, None, timeout).await?,
+            Vmm::Qemu => self.launch_qemu(st, &kernel, initrd).await?,
         }
         let agent = self.agent(&st.name);
         let (name, fc) = (st.name.clone(), st.fc_pid);
@@ -1850,6 +2077,7 @@ impl MicroVmRuntime {
                 }
                 st.mem_base = self.own_base(&st.name, &snap.join("mem"));
             }
+            Vmm::Qemu => return Err(qemu_unsupported("restoring a snapshot")),
             Vmm::Vz => {
                 // The saved VM's machine identifier: the framework restores
                 // into no other.
@@ -2324,6 +2552,8 @@ impl MicroVmRuntime {
             pasta_pid: None,
             fc_pid: None,
             sock_id: None,
+            agent_port: None,
+            agent_key: None,
             paused: false,
             restore_from: None,
             source: Some(meta.name.clone()),
@@ -2589,6 +2819,8 @@ impl Runtime for MicroVmRuntime {
             pasta_pid: None,
             fc_pid: None,
             sock_id: None,
+            agent_port: None,
+            agent_key: None,
             paused: false,
             restore_from: None,
             source: Some(reference),
@@ -3336,6 +3568,90 @@ mod tests {
         let s = "cpu  100 5 50 1000 20 3 2 0 0 0\ncpu0 1 2 3 4\n";
         assert_eq!(cpu_jiffies(s), Some((160, 1180)));
         assert_eq!(cpu_jiffies("intr 1 2"), None);
+    }
+
+    /// QEMU's command line for a Windows microVM: WHPX only (never software
+    /// emulation), the image then the scratch disk (the init mounts vda and vdb),
+    /// the published ports and the init's link forwarded on loopback only.
+    #[test]
+    fn a_qemu_microvm_is_hardware_accelerated_and_forwards_loopback_only() {
+        let ports: BTreeMap<u16, u16> = [(3211, 41000)].into();
+        let args = qemu_args(&QemuLaunch {
+            name: "a",
+            cpus: 2,
+            memory_mb: 1024,
+            kernel: Path::new("k"),
+            initrd: Path::new("i"),
+            base: Path::new("base.sqfs"),
+            scratch: Path::new("scratch.ext4"),
+            console: Path::new("console.log"),
+            ports: &ports,
+            agent_host_port: 41001,
+            agent_key: "kkk",
+            no_network: false,
+        });
+        let line = args.join(" ");
+        assert!(line.contains("-accel whpx"), "{line}");
+        assert!(!line.contains("tcg"), "{line}");
+        assert!(line.contains("-M q35"), "{line}");
+        assert!(line.contains("hostfwd=tcp:127.0.0.1:41000-:3211"), "{line}");
+        assert!(line.contains("hostfwd=tcp:127.0.0.1:41001-:3212"), "{line}");
+        assert!(
+            !line.contains("hostfwd=tcp::"),
+            "no wildcard forwards: {line}"
+        );
+        assert!(!line.contains("restrict=on"), "{line}");
+        let base = line.find("file=base.sqfs").unwrap();
+        let scratch = line.find("file=scratch.ext4").unwrap();
+        assert!(base < scratch, "the image is vda: {line}");
+        assert!(line.contains("readonly=on"), "{line}");
+        assert!(line.contains("cua.key=kkk") && line.contains("cua.agent=tcp:3212"));
+        let none = qemu_args(&QemuLaunch {
+            no_network: true,
+            ..QemuLaunch {
+                name: "a",
+                cpus: 1,
+                memory_mb: 1,
+                kernel: Path::new("k"),
+                initrd: Path::new("i"),
+                base: Path::new("b"),
+                scratch: Path::new("s"),
+                console: Path::new("c"),
+                ports: &ports,
+                agent_host_port: 1,
+                agent_key: "k",
+                no_network: false,
+            }
+        });
+        assert!(none.join(" ").contains("restrict=on"));
+        // At least 256 MiB, at least one CPU.
+        assert!(none.join(" ").contains("-m 256") && none.join(" ").contains("-smp 1"));
+    }
+
+    #[test]
+    fn a_windows_microvm_boot_line_has_pci_and_the_tcp_link() {
+        let a = qemu_boot_args("abc");
+        assert!(
+            a.contains("ip=10.0.2.15::10.0.2.2:255.255.255.0::eth0:off"),
+            "{a}"
+        );
+        assert!(
+            a.contains("cua.agent=tcp:3212 cua.key=abc cua.dns=10.0.2.3"),
+            "{a}"
+        );
+        assert!(!a.contains("pci=off"), "q35 needs PCI: {a}");
+    }
+
+    #[test]
+    fn a_qemu_microvm_does_not_pause() {
+        assert_eq!(Vmm::Qemu.backend(), BackendKind::Firecracker);
+        assert_eq!(Vmm::Qemu.accel(), "whpx");
+        let e = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap()
+            .block_on(Ctl::Qemu.pause())
+            .unwrap_err();
+        assert!(e.to_string().contains("QEMU"), "{e}");
     }
 
     #[test]

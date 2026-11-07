@@ -13,6 +13,17 @@ Install, uninstall, local-build, and VM sync helpers for cua-driver.
 | `sync-vm-worktree.sh` | Sync this checkout to verification VMs and pull artifacts back |
 | `post-install-hints.txt` | User-facing hints printed by install scripts |
 
+## KDE Plasma (KWin) desktop entry
+
+On Linux, when `kwin_wayland` is on the `PATH`, `install.sh` writes
+`$XDG_DATA_HOME/applications/ai.cua.driver.release.desktop` (default
+`~/.local/share/applications`). KWin grants window management and exact window
+capture only to an executable named by such an entry. The entry follows the
+install that owns the `cua-driver` CLI link, so a later install that takes the
+link takes the entry too. If KWin was installed after cua-driver, re-run
+`install.sh` to write it. `uninstall.sh` removes the entry when it names that
+install.
+
 ## Stable macOS local signing
 
 macOS Accessibility and Screen Recording grants are tied to an app's

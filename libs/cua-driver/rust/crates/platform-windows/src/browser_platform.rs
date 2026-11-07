@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use std::ffi::c_void;
 use std::future::Future;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::os::windows::process::CommandExt as _;
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::{Arc, Mutex};
@@ -64,8 +65,8 @@ use windows::Win32::Storage::FileSystem::{
 use windows::Win32::System::Com::CoTaskMemFree;
 use windows::Win32::System::SystemInformation::GetSystemDirectoryW;
 use windows::Win32::System::Threading::{
-    GetProcessTimes, OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_FORMAT,
-    PROCESS_QUERY_LIMITED_INFORMATION,
+    GetProcessTimes, OpenProcess, QueryFullProcessImageNameW, CREATE_NO_WINDOW,
+    PROCESS_NAME_FORMAT, PROCESS_QUERY_LIMITED_INFORMATION,
 };
 use windows::Win32::UI::HiDpi::{GetDpiForMonitor, GetDpiForWindow, MDT_EFFECTIVE_DPI};
 use windows::Win32::UI::Shell::{
@@ -390,6 +391,7 @@ fn authenticode_output(executable: &std::path::Path) -> std::io::Result<std::pro
     };
     let powershell = system32.join(r"WindowsPowerShell\v1.0\powershell.exe");
     std::process::Command::new(powershell)
+        .creation_flags(CREATE_NO_WINDOW.0)
         .args([
             "-NoLogo",
             "-NoProfile",
@@ -762,6 +764,7 @@ async fn browser_command_line(pid: u32) -> Result<String, BrowserRefusal> {
         "$OutputEncoding=[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); (Get-CimInstance Win32_Process -Filter 'ProcessId = {pid}' -ErrorAction Stop).CommandLine"
     );
     let output = tokio::process::Command::new(powershell)
+        .creation_flags(CREATE_NO_WINDOW.0)
         .args([
             "-NoLogo",
             "-NoProfile",

@@ -330,7 +330,7 @@ function SpaceDetailPage() {
       ) : (
         <StateLabel state={state} space={space} />
       )}
-      <ParentLine spaceId={space.id} />
+      {parentRef ? null : <ParentLine spaceId={space.id} />}
     </p>
   );
   const osMark = (

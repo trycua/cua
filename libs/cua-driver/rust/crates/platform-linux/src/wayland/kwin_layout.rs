@@ -314,9 +314,9 @@ fn distorted_capture(
     }
 }
 
-/// KWin's desktop layout. `Ok(None)` when this is not KWin or there is no
-/// Wayland connection. Once the compositor is known to be KWin, a layout it
-/// cannot report is an error: the physical frame would miss every click.
+/// KWin's desktop layout. `Ok(None)` only when the compositor answered and is
+/// not KWin. A compositor that cannot be asked might be KWin, and a layout KWin
+/// cannot report is an error too: the physical frame would miss every click.
 pub(crate) fn desktop_layout() -> anyhow::Result<Option<DesktopLayout>> {
     let Some(outputs) = query()? else {
         return Ok(None);
@@ -353,13 +353,9 @@ pub(crate) fn screen_report() -> anyhow::Result<Option<(DesktopFrame, serde_json
 }
 
 fn query() -> anyhow::Result<Option<Vec<OutputRect>>> {
-    match Connection::connect_to_env() {
-        Ok(connection) => query_on(&connection),
-        Err(error) => {
-            tracing::debug!("no Wayland connection for the KWin layout: {error}");
-            Ok(None)
-        }
-    }
+    let connection = Connection::connect_to_env()
+        .context("the Wayland compositor could not be asked whether it is KWin")?;
+    query_on(&connection)
 }
 
 fn query_on(connection: &Connection) -> anyhow::Result<Option<Vec<OutputRect>>> {
@@ -367,10 +363,9 @@ fn query_on(connection: &Connection) -> anyhow::Result<Option<Vec<OutputRect>>> 
     let qh = queue.handle();
     connection.display().get_registry(&qh, ());
     let mut report = Report::default();
-    if let Err(error) = queue.roundtrip(&mut report) {
-        tracing::debug!("Wayland connection lost before its globals: {error}");
-        return Ok(None);
-    }
+    queue
+        .roundtrip(&mut report)
+        .context("the Wayland compositor could not be asked whether it is KWin")?;
     if !report.is_kwin {
         return Ok(None);
     }
@@ -573,9 +568,9 @@ mod tests {
         globals: Vec<&'static str>,
         /// Logical position and size sent for each `get_xdg_output`, in order.
         logical: Vec<(i32, i32, i32, i32)>,
-        /// Hang up instead of answering the second sync, once the client has
-        /// the globals.
-        hang_up_mid_read: bool,
+        /// Hang up instead of answering this sync: 1 before the client has
+        /// the globals, 2 once it has them.
+        hang_up_at_sync: Option<u32>,
     }
 
     fn message(object: u32, opcode: u16, args: &[u8]) -> Vec<u8> {
@@ -629,7 +624,7 @@ mod tests {
                 // wl_display.sync: flush what is pending, then answer.
                 (1, 0) => {
                     syncs += 1;
-                    if syncs == 2 && script.hang_up_mid_read {
+                    if script.hang_up_at_sync == Some(syncs) {
                         return;
                     }
                     pending.extend(message(word(&request, 2), 0, &0u32.to_ne_bytes()));
@@ -728,10 +723,24 @@ mod tests {
     fn a_kwin_connection_lost_mid_read_is_an_error_not_the_physical_frame() {
         let error = query_script(Script {
             globals: KWIN_GLOBALS.to_vec(),
-            hang_up_mid_read: true,
+            hang_up_at_sync: Some(2),
             ..Script::default()
         })
         .unwrap_err();
         assert_eq!(error.to_string(), "KWin's output layout could not be read");
+    }
+
+    #[test]
+    fn a_compositor_lost_before_its_globals_is_an_error_not_a_non_kwin_session() {
+        let error = query_script(Script {
+            globals: KWIN_GLOBALS.to_vec(),
+            hang_up_at_sync: Some(1),
+            ..Script::default()
+        })
+        .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "the Wayland compositor could not be asked whether it is KWin"
+        );
     }
 }

@@ -1700,7 +1700,8 @@ fn plan_on_any(
         if other? != plan {
             return Err(refused(
                 "the compositor doesn't say whether Caps Lock or Num Lock is on, so keys could \
-                 type the wrong case",
+                 type the wrong case; on KDE Plasma 6.3 to 6.5, `cua-driver kwin-capture on` \
+                 lets the driver read them",
             ));
         }
     }
@@ -2795,7 +2796,8 @@ mod typing_route_tests {
         assert_eq!(
             result.unwrap_err().to_string(),
             "foreground_unavailable: the compositor doesn't say whether Caps Lock or Num Lock is \
-             on, so keys could type the wrong case; nothing was typed"
+             on, so keys could type the wrong case; on KDE Plasma 6.3 to 6.5, `cua-driver \
+             kwin-capture on` lets the driver read them; nothing was typed"
         );
         assert_eq!(events, tap(SHIFT));
 

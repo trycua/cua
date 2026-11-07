@@ -314,6 +314,7 @@ jobs:
         # asserts wall-clock budgets.
         run: |
           cargo test --locked -p cua-mesh --lib --test mesh -- --test-threads=4
+          cargo test --locked -p cua-spaces --lib -- --test-threads=4
           cargo test --locked -p cua-mesh --test scale -- --test-threads=1 --nocapture
       - name: Test the Space list at scale and under chaos (budgets)
         if: matrix.shard == 1
@@ -464,6 +465,7 @@ jobs:
         # asserts wall-clock budgets.
         run: |
           cargo test --locked -p cua-mesh --lib --test mesh -- --test-threads=4
+          cargo test --locked -p cua-spaces --lib -- --test-threads=4
           cargo test --locked -p cua-mesh --test scale -- --test-threads=1 --nocapture
       - name: Test the Space list at scale and under chaos (budgets)
         # 20 computers x 10 Spaces with computers off, slow, lossy, hung or

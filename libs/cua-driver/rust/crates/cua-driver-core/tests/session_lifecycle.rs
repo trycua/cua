@@ -78,7 +78,7 @@ fn unique_id(tag: &str) -> String {
 /// production `register_session_end_hook` registration:
 /// - `cursor_removed`   → `platform-macos`: `CursorRegistry::remove` + overlay.
 /// - `config_cleared`   → `platform-macos`: `SessionConfigRegistry::clear`.
-/// - `recording_stopped`→ `serve.rs`: `RecordingSession::stop_owner(Some(sid))`.
+/// - `recording_stopped`→ `serve.rs`: `RecordingSession::stop(StopBy::Owner(sid))`.
 ///
 /// Each counts fires for ONE specific session id (hooks are process-global, so we
 /// filter). A correctly-disposed session shows all three == 1.

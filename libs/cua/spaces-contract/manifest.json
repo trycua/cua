@@ -9,7 +9,7 @@
     "mcp_stdio",
     "mcp_streamable_http"
   ],
-  "tool_count": 119,
+  "tool_count": 121,
   "categories": [
     {
       "id": "lifecycle",
@@ -402,7 +402,7 @@
       "sdk_symbol": "SpacesConnection.spaces()",
       "rust_symbol": "Spaces::list",
       "notes": [],
-      "result": "JSON: an array of Spaces (`id`, `name`, `provider`, `spacesd_version`, `features`, `os`, `services`, `added_at`, for a Space one of your computers provides `host` and `host_name`, for a Space that can be turned off and on `power` (`suspend` or `stop`) and `power_state`, and for a Space in your cloud `cloud`, `cloud_place` and `cloud_delete`, and for a relay computer the relay cannot reach now `status` (`offline` or `not sharing`)), each with `phase`: `ready`, or `offline` for a relay computer the relay cannot reach now (a computer that is off or stopped sharing, or a Space that is gone and left its record; `relay_unregister_space` removes it).",
+      "result": "JSON: an array of Spaces (`id`, `name`, `provider`, `spacesd_version`, `features`, `os`, `services`, `added_at`, for a Space one of your computers provides `host` and `host_name`, for a Space that can be turned off and on `power` (`suspend` or `stop`) and `power_state`, and for a Space in your cloud `cloud`, `cloud_place` and `cloud_delete`, and for a relay computer the relay cannot reach now `status` (`offline` or `not sharing`)), `parent` (a Space one of your computers provides: that computer's Space id, `relay:<computer>`; null for a computer or any other Space) and `default` (true for the Space the account chose as its default, false for every other; false for all when signed out or the relay does not answer), each with `phase`: `ready`, or `offline` for a relay computer the relay cannot reach now (a computer that is off or stopped sharing, or a Space that is gone and left its record; `relay_unregister_space` removes it).",
       "errors": [
         "relay",
         "unauthenticated"
@@ -541,7 +541,7 @@
             "type": "object"
           },
           "name": {
-            "description": "Name. Default: a generated `space-<hex>`.",
+            "description": "Name. Default: a generated friendly name such as `brave-otter`.",
             "type": "string"
           },
           "network": {
@@ -2181,6 +2181,14 @@
             "description": "Git URL cloned into the working directory first.",
             "type": "string"
           },
+          "resume_context": {
+            "description": "With `resume_session`: the earlier conversation as text, given to\nthe agent before the prompt only when the harness cannot reload the\nsession (up to 32 KiB).",
+            "type": "string"
+          },
+          "resume_session": {
+            "description": "Continue this session of the harness's own (an id from\n`agent_threads`) instead of starting a new one: the harness reloads\nit from its own store on this computer. Give `cwd` as the chat's\nfolder. Not with `home`.",
+            "type": "string"
+          },
           "sandbox_mcp": {
             "description": "Give the agent the Space's own MCP tools. Default true.",
             "type": "boolean"
@@ -2615,6 +2623,122 @@
       "errors": [],
       "input_schema": {
         "properties": {},
+        "type": "object"
+      }
+    },
+    {
+      "name": "agent_threads",
+      "category": "agents",
+      "description": "List the recent Claude Code, Codex and Hermes chats on this computer. For a person only.",
+      "instructions": "Only for a person, never for an agent: no MCP server lists or runs it, and the daemon answers only this computer's own user (never a relay caller or a Space's agent). Reads the coding agents' own stores on this computer read-only (Claude Code's projects folder, Codex's sessions, Hermes's state.db) and returns only each chat's title, folder and time; nothing is kept or sent anywhere. A store that is missing or unreadable adds nothing.",
+      "platforms": [
+        "macos",
+        "windows",
+        "linux"
+      ],
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free",
+      "capabilities": [
+        "agent.threads.read"
+      ],
+      "requires": [],
+      "host_requires": [],
+      "annotations": {
+        "read_only": true,
+        "destructive": false,
+        "idempotent": true,
+        "open_world": true
+      },
+      "sdk_symbol": "spaces.callTool(\"agent_threads\")",
+      "rust_symbol": "cua_agent_threads::recent",
+      "notes": [],
+      "result": "JSON: `threads`, newest first, each `agent` (harness id), `id`, `title` (the chat's name, or its first prompt cut to 80 characters), `cwd` (its folder, or null), `last_active_ms` and `resume` (the agent's own command that continues it in a terminal, as argv).",
+      "errors": [
+        "permission_denied"
+      ],
+      "input_schema": {
+        "properties": {
+          "agents": {
+            "default": [],
+            "description": "Harness ids to look at: `claude-code`, `openai-codex`, `hermes`.\nDefault: all three.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "limit": {
+            "description": "How many chats, newest first (1-50). Default 4.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      }
+    },
+    {
+      "name": "agent_thread_read",
+      "category": "agents",
+      "description": "Read one of the recent Claude Code, Codex or Hermes chats on this computer. For a person only.",
+      "instructions": "Only for a person, never for an agent: no MCP server lists or runs it, and the daemon answers only this computer's own user. Reads one chat from the agent's own store, read-only: what the person typed and the agent's replies, without tool calls, tool output, thinking or the agent's own injected instructions. Call it once the person picked the chat; continue it with agent_start's `resume_session`.",
+      "platforms": [
+        "macos",
+        "windows",
+        "linux"
+      ],
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free",
+      "capabilities": [
+        "agent.threads.read"
+      ],
+      "requires": [],
+      "host_requires": [],
+      "annotations": {
+        "read_only": true,
+        "destructive": false,
+        "idempotent": true,
+        "open_world": true
+      },
+      "sdk_symbol": "spaces.callTool(\"agent_thread_read\")",
+      "rust_symbol": "cua_agent_threads::history",
+      "notes": [],
+      "result": "JSON: `thread` (as in `agent_threads`), `messages` (oldest first, each `key`, `role` (`person` or `agent`), `text` (cut to 8 KiB), `ts_ms`, and `cut` when cut) and `earlier_omitted` (older messages left out).",
+      "errors": [
+        "permission_denied",
+        "not_found",
+        "invalid_argument"
+      ],
+      "input_schema": {
+        "properties": {
+          "agent": {
+            "description": "Its harness id (`claude-code`, `openai-codex`, `hermes`).",
+            "type": "string"
+          },
+          "id": {
+            "description": "Its id, from `agent_threads`.",
+            "type": "string"
+          },
+          "limit": {
+            "description": "The newest messages to return (1-5000). Default 200.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "agent",
+          "id"
+        ],
         "type": "object"
       }
     },
@@ -4037,7 +4161,7 @@
       "name": "thread_reply",
       "category": "thread",
       "description": "Reply to a task and update it.",
-      "instructions": "Replies under a task and sets its state (`done` by default). When an agent ends a turn without replying, the daemon posts the turn's answer as its reply.",
+      "instructions": "Replies under a task and sets its state (`done` by default). An agent does not need it for plain text: every message an agent writes between tool calls is posted to the thread as it is written, in order, and none is replaced. Use it to attach files, to mark a task `failed`, or to say something under a task that is already closed (the message is appended and the task keeps its state). A turn that says nothing ends with `Finished.`",
       "platforms": [
         "macos",
         "windows",
@@ -6709,7 +6833,7 @@
       "name": "relay_unregister_space",
       "category": "sharing",
       "description": "Take a Space off the relay.",
-      "instructions": "Takes the Space off the relay: its driver leaves and its computer is removed, with every share. A `relay:<computer>` id removes that computer's record from the relay directory, which only its owner may do: a Space that registered itself (also after it was deleted), or a computer that is no longer connected. A host that is connected now is taken off with `cua host remove` on that computer instead.",
+      "instructions": "Takes the Space off the relay: its driver leaves and its computer is removed, with every share. A `relay:<computer>` id removes that computer's record from the relay directory, which only its owner may do: a Space that registered itself (also after it was deleted), or a computer that is no longer connected. A host that is connected now is taken off with `cua host remove` on that computer instead. Removing one of your computers keeps the Spaces it provides on your account, detached (hidden, and refused until the computer registers again with the same id, which brings them back unchanged); `delete_spaces: true` deletes them too, files first (through the computer while it answers), then their records.",
       "platforms": [
         "macos",
         "windows",
@@ -6747,6 +6871,10 @@
       ],
       "input_schema": {
         "properties": {
+          "delete_spaces": {
+            "description": "For one of your computers: also delete the Spaces it provides, their\nfiles first (through the computer while it answers), then their\nrecords. Default false: they stay on your account, detached, and come\nback when the computer registers again.",
+            "type": "boolean"
+          },
           "space": {
             "description": "Space id or name.",
             "type": "string"

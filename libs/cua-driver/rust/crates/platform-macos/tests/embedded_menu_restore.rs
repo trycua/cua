@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 #[cfg(not(target_os = "macos"))]
 fn main() {}
 
@@ -210,7 +213,9 @@ mod native {
                     && platform_macos::apps::frontmost_pid() == Some(std::process::id() as i32)
                     && platform_macos::ax::bindings::focused_window_id_of_pid(
                         std::process::id() as i32
-                    ) == Some(original_wid as u32);
+                    )
+                    .map(|window| window.own)
+                        == Some(original_wid as u32);
                 if ready {
                     if stable_since.get_or_insert_with(Instant::now).elapsed()
                         >= Duration::from_millis(300)

@@ -69,9 +69,32 @@ const REFILL_DELAY: Duration = Duration::from_millis(1500);
 /// [`WarmPool::refill_later`]).
 const REFILL_MAX_WAIT: Duration = Duration::from_millis(7500);
 
+/// The explicit-pool source of the `warm-pools` experiment's Linux Space
+/// ([`crate::local::VmmLocal::apply_pools`]). A shape that has it is kept
+/// warm on purpose for creates that follow each other: a refill starts the
+/// moment a member is claimed, and a create that finds no member ready waits
+/// for the one that is starting (it began before this create, so waiting is
+/// never slower than a cold start of its own) instead of booting another.
+pub const WARM_SOURCE: &str = "warm-pools";
+
+/// The longest a create waits for a member that is starting
+/// ([`WARM_SOURCE`]): about what a cold start and the install it saves take.
+/// Past it the create starts cold, as it does without the experiment.
+const WARM_WAIT_MAX: Duration = Duration::from_secs(30);
+
+/// The longest the agent stack of a member takes to install.
+const PREPARE_TIMEOUT: Duration = Duration::from_secs(900);
+
 /// Consecutive failed member starts after which a shape stops refilling
 /// until it is used again.
 const MAX_FAILURES: u32 = 3;
+
+/// How long a shape that failed [`MAX_FAILURES`] starts in a row waits
+/// before it tries one more (a registry or engine that was down recovers).
+const FAILURE_COOLDOWN: Duration = Duration::from_secs(300);
+
+/// How often a refill that stays deferred for the same reason says so again.
+const DEFER_LOG_EVERY: Duration = Duration::from_secs(120);
 
 /// The estimate of a member's memory until one was measured: a container
 /// Space at idle (a gVisor desktop is well under this). VMs count their
@@ -230,6 +253,46 @@ pub trait PoolHost: Send + Sync {
     /// it can list them without starting anything (container engines).
     async fn members_present(&self, backend: BackendKind) -> Option<Vec<String>>;
 
+    /// Whether a member of `backend` can be prepared before it is claimed:
+    /// it answers calls made with its pool secret (a container does; a
+    /// microVM waits paused and a QEMU member restores memory only when it
+    /// is claimed, so those are prepared after the claim, as before).
+    fn can_prepare(&self, backend: BackendKind) -> bool {
+        let _ = backend;
+        false
+    }
+
+    /// Puts the agent stack of `harnesses` (bridge, runner, skills and the
+    /// coding apps) in the member at `endpoints`, which answers to its pool
+    /// `secret`, for at most `timeout`. Only called when
+    /// [`PoolHost::can_prepare`] says the backend can.
+    async fn prepare(
+        &self,
+        endpoints: &Endpoints,
+        secret: &str,
+        harnesses: &[String],
+        timeout: Duration,
+    ) -> Result<(), String> {
+        let _ = (endpoints, secret, harnesses, timeout);
+        Err("this runtime cannot prepare a member".into())
+    }
+
+    /// Reads the files of the apps `harnesses` once in the member at
+    /// `endpoints`, so the first session of the Space that claims it does
+    /// not read them from the engine's disk (a member booted from a saved
+    /// filesystem has an empty file cache). Best effort, in the
+    /// background, never needed for correctness.
+    async fn warm_files(&self, endpoints: &Endpoints, secret: &str, harnesses: &[String]) {
+        let _ = (endpoints, secret, harnesses);
+    }
+
+    /// What pins the install of `harness` in a prepared filesystem: the
+    /// versions of the apps a build installs for it. A saved filesystem
+    /// serves a build whose pins for the harnesses it wants are the same.
+    fn pin(&self, harness: &str) -> String {
+        harness.to_string()
+    }
+
     /// Whether this machine runs on battery now (no member then).
     fn on_battery(&self) -> bool;
 
@@ -272,12 +335,25 @@ impl Ready {
     }
 }
 
+/// The saved filesystem a member boots from.
+#[derive(Clone)]
+struct Chosen {
+    tag: String,
+    image: cua_vmm::ImageSource,
+    /// What is installed in it (id to pin).
+    have: std::collections::BTreeMap<String, String>,
+    /// It has every app the shape wants.
+    covers_all: bool,
+}
+
 /// A ready member.
 #[derive(Clone)]
 struct Member {
     name: String,
     secret: String,
     footprint_mb: u64,
+    /// The agent stack of the shape's harnesses is in it already.
+    prepared: bool,
 }
 
 /// A remembered shape.
@@ -291,6 +367,9 @@ struct Shape {
     members: Vec<Member>,
     starting: u32,
     failures: u32,
+    /// When the last member start failed (the cool-down after
+    /// [`MAX_FAILURES`] runs from it).
+    failed_at: Option<Instant>,
     /// Measured idle footprint of a member (MiB).
     footprint_mb: Option<u64>,
     /// Its creates.
@@ -307,6 +386,19 @@ struct Shape {
     /// The words a create of it asked for (image, kind, runtime), as
     /// placement keys warm members.
     requested: Option<(String, String, String)>,
+    /// The harnesses whose agent stack a member gets before it is ready
+    /// ([`WarmPool::set_prepare`]); empty: members are bare.
+    prepare: Vec<String>,
+    /// How many of `prepare` (from the front) a member is prepared for before
+    /// it can be claimed: the apps the person most likely uses first. The
+    /// rest go into the saved filesystem in the background. 0: all of them.
+    prepare_first: usize,
+    /// Measured (EWMA, seconds): a member's preparation.
+    prepare_s: Option<f64>,
+    /// The saved filesystem of the first prepared member
+    /// ([`cua_vmm::Runtime::save_prepared`]): its tag and the image the next
+    /// members start from, already prepared.
+    prepared_image: Option<(String, cua_vmm::ImageSource)>,
 }
 
 impl Shape {
@@ -319,6 +411,7 @@ impl Shape {
             members: vec![],
             starting: 0,
             failures: 0,
+            failed_at: None,
             footprint_mb: None,
             arrivals: Default::default(),
             boot_s: None,
@@ -327,7 +420,43 @@ impl Shape {
             decision: None,
             requested: None,
             last_used: None,
+            prepare: Vec::new(),
+            prepare_first: 0,
+            prepare_s: None,
+            prepared_image: None,
         }
+    }
+
+    /// Whether a create may wait for a member that is starting: the shape is
+    /// kept warm on purpose for the `warm-pools` experiment and that pool is
+    /// not idle.
+    fn waits_for_refill(&self) -> bool {
+        self.explicit
+            .get(WARM_SOURCE)
+            .is_some_and(|e| !self.idle(e))
+            && self.refill_estimate().is_some_and(|d| d < WARM_WAIT_MAX)
+    }
+
+    /// Whether the shape is kept warm for the experiment, whatever the
+    /// estimate (the refill after a claim starts at once).
+    fn is_warm_source(&self) -> bool {
+        self.explicit
+            .get(WARM_SOURCE)
+            .is_some_and(|e| !self.idle(e))
+    }
+
+    /// How long the member that is starting takes to be ready, as measured,
+    /// and `None` before this shape has had a member (the first member of a
+    /// new install pulls the image and installs the apps: a create does not
+    /// wait for that, it starts cold).
+    fn refill_estimate(&self) -> Option<Duration> {
+        let boot = self.boot_s?;
+        let secs = if self.prepared_image.is_some() || self.prepare.is_empty() {
+            boot
+        } else {
+            boot + self.prepare_s?
+        };
+        Some(Duration::from_secs_f64(secs))
     }
 
     /// Whether explicit pool `e` is idle now (no create of the shape for
@@ -438,6 +567,9 @@ struct Record {
     template: StartSpec,
     #[serde(default)]
     keep: u32,
+    /// The agent stack was installed before the member was ready.
+    #[serde(default)]
+    prepared: bool,
 }
 
 /// What the pool holds now ([`WarmPool::status`]).
@@ -481,6 +613,20 @@ struct Inner {
     /// [`WarmPool::reclaim`] took members back for other work: the policy
     /// starts no member of its own until then.
     held_off_until: Mutex<Option<Instant>>,
+    /// Woken when a member becomes ready or a start ends without one, so a
+    /// create that waits for a starting member ([`WARM_SOURCE`]) looks again.
+    arrived: tokio::sync::Notify,
+    /// Shapes with a refill scheduled that has not started yet.
+    due: Mutex<HashSet<String>>,
+    /// Why each shape's refill is deferred now, and when that was last
+    /// logged ([`WarmPool::defer`]).
+    deferred: Mutex<HashMap<String, (String, Instant)>>,
+    /// Shapes whose saved filesystem is being built now, and (after a
+    /// failure) when the next try may start.
+    building: Mutex<HashSet<String>>,
+    build_blocked: Mutex<HashMap<String, Instant>>,
+    /// Serialises changes of the index of saved filesystems.
+    index_lock: Mutex<()>,
 }
 
 /// How long the policy starts no member after other work took capacity back.
@@ -530,29 +676,86 @@ pub fn shape_key(spec: &StartSpec, backend: BackendKind, spacesd: bool) -> Optio
     if !plain || image.starts_with("cua-vmm/") {
         return None;
     }
-    let t = template_of(spec);
+    let canonical = canonical_of(&template_of(spec), backend, image, false);
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::digest(canonical.to_string().as_bytes());
+    Some(digest.iter().take(8).map(|b| format!("{b:02x}")).collect())
+}
+
+/// The environment variables a headless Space adds to a desktop one's.
+const HEADLESS_ENV: [&str; 3] = ["CUA_HEADLESS", "CUA_ENV_NO_DESKTOP", "CUA_ENV_QUIC_PORT"];
+
+/// Everything that makes two templates interchangeable, as JSON. `loose`:
+/// without what a bigger or desktop member still satisfies (CPUs, memory,
+/// the command and the environment that switch the desktop off), for
+/// [`serves`].
+fn canonical_of(
+    t: &StartSpec,
+    backend: BackendKind,
+    image: &str,
+    loose: bool,
+) -> serde_json::Value {
     let mut ports = t.ports.clone();
     ports.sort_unstable();
     ports.dedup();
-    let canonical = serde_json::json!({
+    let mut env = t.env.clone();
+    if loose {
+        for k in HEADLESS_ENV {
+            env.remove(k);
+        }
+    }
+    serde_json::json!({
         "backend": backend.as_str(),
         "image": image,
         "os": t.os,
         "arch": t.arch,
-        "cpus": t.cpus,
-        "memory_mb": t.memory_mb,
+        "cpus": (!loose).then_some(t.cpus),
+        "memory_mb": (!loose).then_some(t.memory_mb),
         "firmware": t.firmware,
         "ports": ports,
-        "env": t.env,
-        "probes": t.probes,
+        "env": env,
+        "probes": (!loose).then_some(&t.probes),
         "restrict_network": t.restrict_network,
         "labels": t.labels,
         "container_runtime": t.container_runtime,
-        "command": t.command,
-    });
-    use sha2::{Digest, Sha256};
-    let digest = Sha256::digest(canonical.to_string().as_bytes());
-    Some(digest.iter().take(8).map(|b| format!("{b:02x}")).collect())
+        "command": (!loose).then_some(&t.command),
+    })
+}
+
+/// Whether the member is ready by every check `want` waits for: a probe on
+/// a port is covered by one on the same port that is at least as strict (an
+/// HTTP check also means the port accepts connections).
+fn probes_covered(member: &StartSpec, want: &StartSpec) -> bool {
+    use cua_vmm::Probe;
+    want.probes.iter().all(|w| match w {
+        Probe::None => true,
+        Probe::Tcp { port } => member.probes.iter().any(
+            |m| matches!(m, Probe::Tcp { port: p } | Probe::Http { port: p, .. } if p == port),
+        ),
+        Probe::Http { port, path } => member
+            .probes
+            .iter()
+            .any(|m| matches!(m, Probe::Http { port: p, path: q } if p == port && q == path)),
+    })
+}
+
+/// Whether a member of shape `member` can be handed to a create of `want`
+/// as it is: the same in everything but size and desktop, and at least as
+/// big, with a desktop where one is wanted (a headless create runs fine
+/// on a desktop member; the other way round it would not).
+fn serves(member: &StartSpec, want: &StartSpec, backend: BackendKind) -> bool {
+    let (
+        cua_vmm::ImageSource::Oci { reference: have },
+        cua_vmm::ImageSource::Oci { reference: asked },
+    ) = (&member.image, &want.image)
+    else {
+        return false;
+    };
+    member.cpus >= want.cpus
+        && member.memory_mb >= want.memory_mb
+        && (has_desktop(member) || !has_desktop(want))
+        && probes_covered(member, want)
+        && canonical_of(member, backend, have, true) == canonical_of(want, backend, asked, true)
 }
 
 /// Whether a member of `spec` runs a desktop: every Space but a headless
@@ -584,6 +787,62 @@ fn token_of(spec: &StartSpec) -> Option<String> {
         .find_map(|k| spec.env.get(*k))
         .filter(|t| !t.is_empty())
         .cloned()
+}
+
+/// What a saved filesystem is keyed by, apart from the apps in it: the
+/// backend, the image it was made from and its platform. Nothing else of a
+/// shape (network preset, size, ports, environment) is in the saved files,
+/// so a change of those never throws a prepared filesystem away.
+fn prepared_base(template: &StartSpec, backend: BackendKind) -> String {
+    use sha2::{Digest, Sha256};
+    let image = match &template.image {
+        cua_vmm::ImageSource::Oci { reference } => reference.as_str(),
+        _ => "",
+    };
+    let mut h = Sha256::new();
+    for part in [
+        backend.as_str(),
+        image,
+        &format!("{:?}", template.os),
+        &format!("{:?}", template.arch),
+    ] {
+        h.update(part.as_bytes());
+        h.update([0]);
+    }
+    h.finalize()
+        .iter()
+        .take(6)
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
+/// A saved filesystem: made from `base`, with these harnesses (and their
+/// pins, [`PoolHost::pin`]) installed.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct PreparedEntry {
+    tag: String,
+    base: String,
+    harnesses: std::collections::BTreeMap<String, String>,
+}
+
+/// The tag of the saved filesystem of `base` with `harnesses` (id to pin).
+fn prepared_tag(base: &str, harnesses: &std::collections::BTreeMap<String, String>) -> String {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    for (id, pin) in harnesses {
+        h.update(id.as_bytes());
+        h.update([0]);
+        h.update(pin.as_bytes());
+        h.update([0]);
+    }
+    let d = h.finalize();
+    format!(
+        "warm-{base}-{}",
+        d.iter()
+            .take(4)
+            .map(|b| format!("{b:02x}"))
+            .collect::<String>()
+    )
 }
 
 /// A fresh name for a member.
@@ -621,6 +880,12 @@ impl WarmPool {
                 ticks: Default::default(),
                 class: policy::HostClass::current(),
                 held_off_until: Mutex::new(None),
+                arrived: tokio::sync::Notify::new(),
+                due: Mutex::new(HashSet::new()),
+                deferred: Mutex::new(HashMap::new()),
+                building: Mutex::new(HashSet::new()),
+                build_blocked: Mutex::new(HashMap::new()),
+                index_lock: Mutex::new(()),
             }),
         }
     }
@@ -744,14 +1009,22 @@ impl WarmPool {
         backend: BackendKind,
         spacesd: bool,
     ) -> Option<Instance> {
-        let key = shape_key(spec, backend, spacesd)?;
-        let token = token_of(spec)?;
+        let Some(key) = shape_key(spec, backend, spacesd) else {
+            tracing::debug!(space = %spec.name, "warm pool: this create is not of a shape that pools");
+            return None;
+        };
+        let Some(token) = token_of(spec) else {
+            tracing::debug!(space = %spec.name, "warm pool: this create has no Spaces token yet");
+            return None;
+        };
         let arrived = self.now_s();
-        let (member, rt) = {
-            let mut shapes = self.inner.shapes.lock().unwrap();
-            let shape = shapes.get_mut(&key)?;
-            let m = shape.members.pop()?;
-            (m, shape.rt.clone())
+        let want = template_of(spec);
+        // The shape's own member first; else a bigger one the experiment
+        // keeps warm ([`serves`]), whose shape then pays for the claim.
+        let shapes_known = self.inner.shapes.lock().unwrap().len();
+        let Some((member, rt, key)) = self.take_member(&key, &want, backend).await else {
+            tracing::debug!(space = %spec.name, shapes_known, "warm pool: no member for this create");
+            return None;
         };
         let started = Instant::now();
         let identity = ClaimIdentity {
@@ -796,6 +1069,7 @@ impl WarmPool {
             member = %member.name,
             claim_ms,
             ready_ms = (ready_s * 1000.0) as u64,
+            prepared = member.prepared,
             "claimed a warm Space"
         );
         if let Some(s) = self.inner.shapes.lock().unwrap().get_mut(&key) {
@@ -804,8 +1078,160 @@ impl WarmPool {
             s.last_used = Some(Instant::now());
         }
         self.evaluate(&key);
-        self.refill_later(&key, REFILL_DELAY);
+        // A shape kept warm on purpose is refilled at once: the next create
+        // (typed while this Space starts) should find a member ready. Others
+        // wait for the claimed Space's first commands to pass.
+        let warm = self
+            .inner
+            .shapes
+            .lock()
+            .unwrap()
+            .get(&key)
+            .is_some_and(|s| s.is_warm_source());
+        self.refill_later(&key, if warm { Duration::ZERO } else { REFILL_DELAY });
         Some(inst)
+    }
+
+    /// Takes a ready member of shape `key`. A shape kept warm for the
+    /// `warm-pools` experiment ([`WARM_SOURCE`]) whose member is starting
+    /// is waited for (up to [`WARM_WAIT_MAX`]): that member began before this
+    /// create, so waiting is never slower than a cold start of its own, and
+    /// a cold start would not have the agent stack in it. Any other shape
+    /// answers at once.
+    async fn take_member(
+        &self,
+        own: &str,
+        want: &StartSpec,
+        backend: BackendKind,
+    ) -> Option<(Member, Arc<dyn VmmRuntime>, String)> {
+        let deadline = Instant::now() + WARM_WAIT_MAX;
+        let mut waited = false;
+        loop {
+            // Registered before the look, so a member that arrives between
+            // the look and the wait is not missed.
+            let notified = self.inner.arrived.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            let starting = {
+                let mut shapes = self.inner.shapes.lock().unwrap();
+                // The shape itself, then the warm shapes that serve it.
+                let mut keys = vec![own.to_string()];
+                let mut warm: Vec<&String> = shapes
+                    .iter()
+                    .filter(|(k, s)| {
+                        k.as_str() != own
+                            && s.backend == backend
+                            && s.is_warm_source()
+                            && serves(&s.template, want, backend)
+                    })
+                    .map(|(k, _)| k)
+                    .collect();
+                // The smallest that serves first: it holds the least back.
+                warm.sort_by_key(|k| {
+                    let t = &shapes[*k].template;
+                    (t.memory_mb, t.cpus)
+                });
+                keys.extend(warm.into_iter().cloned());
+                for key in &keys {
+                    let Some(shape) = shapes.get_mut(key) else {
+                        continue;
+                    };
+                    // One with the coding apps in it first.
+                    let at = shape
+                        .members
+                        .iter()
+                        .rposition(|m| m.prepared)
+                        .or(shape.members.len().checked_sub(1));
+                    if let Some(m) = at.map(|i| shape.members.remove(i)) {
+                        if waited {
+                            tracing::info!(
+                                shape = key.as_str(),
+                                "a create waited for the member that was starting"
+                            );
+                        }
+                        if key != own {
+                            tracing::info!(
+                                shape = key.as_str(),
+                                "claiming a warm Space bigger than the one asked for"
+                            );
+                        }
+                        return Some((m, shape.rt.clone(), key.clone()));
+                    }
+                }
+                keys.iter().any(|k| {
+                    shapes.get(k).is_some_and(|shape| {
+                        shape.waits_for_refill()
+                            && (shape.starting > 0
+                                || self.inner.refilling.lock().unwrap().contains(k.as_str())
+                                || self.inner.due.lock().unwrap().contains(k.as_str()))
+                    })
+                })
+            };
+            let Some(left) = deadline.checked_duration_since(Instant::now()) else {
+                tracing::warn!(
+                    shape = own,
+                    "warm-pools: the member that was starting did not arrive in time; starting cold"
+                );
+                return None;
+            };
+            if !starting {
+                self.explain_miss(own, want, backend);
+                if waited || self.is_warm_shape(own) {
+                    tracing::info!(
+                        shape = own,
+                        "warm-pools: no prepared Space was ready and none is starting; starting cold"
+                    );
+                }
+                return None;
+            }
+            waited = true;
+            if tokio::time::timeout(left, notified).await.is_err() {
+                tracing::warn!(
+                    shape = own,
+                    "warm-pools: the member that was starting did not arrive in time; starting cold"
+                );
+                return None;
+            }
+        }
+    }
+
+    /// Says why no warm Space of the experiment serves `want` (a debug
+    /// aid for shapes that never match).
+    fn explain_miss(&self, own: &str, want: &StartSpec, backend: BackendKind) {
+        let shapes = self.inner.shapes.lock().unwrap();
+        for (k, s) in shapes.iter().filter(|(_, s)| s.is_warm_source()) {
+            let image = match &s.template.image {
+                cua_vmm::ImageSource::Oci { reference } => reference.as_str(),
+                _ => continue,
+            };
+            let (a, b) = (
+                canonical_of(&s.template, backend, image, true),
+                canonical_of(want, backend, image, true),
+            );
+            tracing::debug!(
+                shape = own,
+                warm = k.as_str(),
+                member_cpus = s.template.cpus,
+                member_mb = s.template.memory_mb,
+                want_cpus = want.cpus,
+                want_mb = want.memory_mb,
+                same_but_size = (a == b),
+                "warm-pools: a warm Space does not serve this create"
+            );
+            if a != b {
+                tracing::debug!(member = %a, want = %b, "warm-pools: the shapes differ");
+            }
+        }
+    }
+
+    /// Whether shape `key` is kept warm for the `warm-pools` experiment.
+    fn is_warm_shape(&self, key: &str) -> bool {
+        self.inner
+            .shapes
+            .lock()
+            .unwrap()
+            .get(key)
+            .is_some_and(|s| s.is_warm_source())
     }
 
     /// Records a create of `spec`'s shape that started on the default tier
@@ -859,6 +1285,28 @@ impl WarmPool {
         until: Option<Instant>,
         idle: Option<Duration>,
     ) -> Option<String> {
+        self.set_explicit_prepared(
+            source, template, backend, spacesd, rt, min, max, until, idle, None,
+        )
+    }
+
+    /// [`WarmPool::set_explicit`] that also sets the harnesses the shape's
+    /// members are prepared for before their first start (`Some`; `None`
+    /// leaves them as they are).
+    #[allow(clippy::too_many_arguments)]
+    pub fn set_explicit_prepared(
+        &self,
+        source: &str,
+        template: &StartSpec,
+        backend: BackendKind,
+        spacesd: bool,
+        rt: Arc<dyn VmmRuntime>,
+        min: u32,
+        max: Option<u32>,
+        until: Option<Instant>,
+        idle: Option<Duration>,
+        prepare: Option<Vec<String>>,
+    ) -> Option<String> {
         let key = shape_key(template, backend, spacesd)?;
         {
             let mut shapes = self.inner.shapes.lock().unwrap();
@@ -887,9 +1335,20 @@ impl WarmPool {
                 },
             );
             shape.failures = 0;
+            if let Some(p) = prepare {
+                shape.prepare = p;
+            }
         }
         self.refill_later(&key, Duration::ZERO);
         Some(key)
+    }
+
+    /// Sets how many of the shape's apps (from the front of its list) a member
+    /// is prepared for before it can be claimed ([`Shape::prepare_first`]).
+    pub fn set_prepare_first(&self, key: &str, n: usize) {
+        if let Some(s) = self.inner.shapes.lock().unwrap().get_mut(key) {
+            s.prepare_first = n;
+        }
     }
 
     /// Keeps `count` members of `template`'s shape regardless of use
@@ -988,6 +1447,7 @@ impl WarmPool {
     fn refill_later(&self, key: &str, delay: Duration) {
         let pool = self.clone();
         let key = key.to_string();
+        self.inner.due.lock().unwrap().insert(key.clone());
         if let Ok(h) = tokio::runtime::Handle::try_current() {
             h.spawn(async move {
                 if !delay.is_zero() {
@@ -1027,13 +1487,17 @@ impl WarmPool {
     /// Starts members of shape `key` until it has its target, memory
     /// allowing. One refill per shape at a time.
     pub async fn refill(&self, key: &str) {
-        if !self.inner.refilling.lock().unwrap().insert(key.to_string()) {
+        let started = self.inner.refilling.lock().unwrap().insert(key.to_string());
+        self.inner.due.lock().unwrap().remove(key);
+        if !started {
             return;
         }
         struct Done<'a>(&'a Inner, String);
         impl Drop for Done<'_> {
             fn drop(&mut self) {
                 self.0.refilling.lock().unwrap().remove(&self.1);
+                // A create waiting for a member looks again: none is coming.
+                self.0.arrived.notify_waiters();
             }
         }
         let _done = Done(&self.inner, key.to_string());
@@ -1046,8 +1510,25 @@ impl WarmPool {
                 let shapes = self.inner.shapes.lock().unwrap();
                 let Some(s) = shapes.get(key) else { return };
                 let have = s.members.len() as u32 + s.starting;
-                if have >= s.target(auto) || s.failures >= MAX_FAILURES {
+                if have >= s.target(auto) {
+                    self.undefer(key);
                     return;
+                }
+                if s.failures >= MAX_FAILURES {
+                    let wait = s
+                        .failed_at
+                        .map(|t| FAILURE_COOLDOWN.saturating_sub(t.elapsed()))
+                        .unwrap_or_default();
+                    if !wait.is_zero() {
+                        let why = format!(
+                            "the last {} member starts failed; trying again in {}s",
+                            s.failures,
+                            wait.as_secs()
+                        );
+                        drop(shapes);
+                        self.defer(key, "failing", why);
+                        return;
+                    }
                 }
                 (s.template.clone(), s.backend, s.rt.clone(), s.estimate_mb())
             };
@@ -1059,21 +1540,28 @@ impl WarmPool {
                 let shapes = self.inner.shapes.lock().unwrap();
                 shapes.get(key).map(|s| s.keep()).unwrap_or(0)
             };
-            if self.held_off() || (keep == 0 && self.inner.host.busy()) {
-                tracing::debug!(
-                    shape = key,
-                    "warm pool: the machine's capacity is wanted elsewhere"
+            if self.held_off() {
+                self.defer(
+                    key,
+                    "held off",
+                    "other work took capacity back a moment ago; no member starts for a while"
+                        .into(),
+                );
+                return;
+            }
+            if keep == 0 && self.inner.host.busy() {
+                self.defer(
+                    key,
+                    "busy",
+                    "the machine's CPUs are busy with other work".into(),
                 );
                 return;
             }
             if keep > 0 && self.inner.host.memory(backend).await.is_none() {
                 self.inner.host.wake(backend).await;
             }
-            if !self.memory_allows(backend, estimate).await {
-                tracing::debug!(
-                    shape = key,
-                    "warm pool: not enough memory for another member"
-                );
+            if let Err(why) = self.memory_allows(backend, estimate, key).await {
+                self.defer(key, "memory", why);
                 return;
             }
             {
@@ -1099,26 +1587,49 @@ impl WarmPool {
             match started {
                 Ok(m) => {
                     s.failures = 0;
+                    s.failed_at = None;
                     if s.footprint_mb.is_none() || m.footprint_mb > 0 {
                         s.footprint_mb = Some(m.footprint_mb);
                     }
                     s.members.push(m);
+                    self.undefer(key);
                 }
                 Err(e) => {
                     s.failures += 1;
+                    s.failed_at = Some(Instant::now());
                     tracing::warn!(shape = key, error = %e, "a warm-pool member did not start");
                 }
             }
+            drop(shapes);
+            self.inner.arrived.notify_waiters();
         }
     }
 
     /// Whether one more member estimated at `estimate_mb` fits: the pool
     /// stays within `pool.memory_percent` of the memory and above the free
     /// floor.
-    async fn memory_allows(&self, backend: BackendKind, estimate_mb: u64) -> bool {
+    ///
+    /// The one warm Space of the `warm-pools` experiment ([`WARM_SOURCE`])
+    /// is not held to the percentage while it is the only member held (on a
+    /// built-in runtime of 4 GiB, 15 percent is less than one warm Space):
+    /// it still needs the free floor, so it never takes memory a Space in use
+    /// needs.
+    async fn memory_allows(
+        &self,
+        backend: BackendKind,
+        estimate_mb: u64,
+        key: &str,
+    ) -> Result<(), String> {
         let Some(mem) = self.inner.host.memory(backend).await else {
-            return false;
+            return Err("the engine's memory cannot be read now".into());
         };
+        let one_warm_home = self
+            .inner
+            .shapes
+            .lock()
+            .unwrap()
+            .get(key)
+            .is_some_and(|s| s.is_warm_source());
         let pct = u64::from(self.settings().memory_percent);
         let held: u64 = {
             let shapes = self.inner.shapes.lock().unwrap();
@@ -1131,7 +1642,328 @@ impl WarmPool {
                 })
                 .sum()
         };
-        fits(mem, pct, held, estimate_mb)
+        let (pct, held) = if one_warm_home && held == 0 {
+            (100, 0)
+        } else {
+            (pct, held)
+        };
+        if fits(mem, pct, held, estimate_mb) {
+            return Ok(());
+        }
+        let floor = memory_floor_mb(mem.total_mb);
+        let used = mem.total_mb.saturating_sub(mem.available_mb);
+        Err(format!(
+            "not enough free memory: {} MiB of {} MiB in use by running Spaces, a member needs about {} MiB and {} MiB stay free (pool holds {} of its {} MiB share)",
+            used,
+            mem.total_mb,
+            estimate_mb,
+            floor,
+            held,
+            mem.total_mb * pct / 100
+        ))
+    }
+
+    /// Says why the refill of `key` waits, once, and again when the reason
+    /// changes or every [`DEFER_LOG_EVERY`] while it stays.
+    fn defer(&self, key: &str, kind: &str, why: String) {
+        let mut d = self.inner.deferred.lock().unwrap();
+        let fresh = d
+            .get(key)
+            .is_none_or(|(k, at)| k != kind || at.elapsed() >= DEFER_LOG_EVERY);
+        if fresh {
+            tracing::info!(shape = key, reason = %why, "warm pool: refill deferred");
+            d.insert(key.to_string(), (kind.to_string(), Instant::now()));
+        }
+    }
+
+    /// The refill of `key` is no longer deferred.
+    fn undefer(&self, key: &str) {
+        self.inner.deferred.lock().unwrap().remove(key);
+    }
+
+    fn index_path(&self) -> PathBuf {
+        self.inner.dir.join("prepared-index.json")
+    }
+
+    fn index_load(&self) -> Vec<PreparedEntry> {
+        std::fs::read(self.index_path())
+            .ok()
+            .and_then(|b| serde_json::from_slice(&b).ok())
+            .unwrap_or_default()
+    }
+
+    fn index_update(&self, f: impl FnOnce(&mut Vec<PreparedEntry>)) {
+        let _g = self.inner.index_lock.lock().unwrap();
+        let mut v = self.index_load();
+        f(&mut v);
+        let path = self.index_path();
+        if cua_home::guard_write(&path).is_ok() {
+            let _ = std::fs::create_dir_all(&self.inner.dir);
+            if let Ok(b) = serde_json::to_vec_pretty(&v) {
+                let _ = cua_home::write_private(&path, &b);
+            }
+        }
+    }
+
+    fn index_remove(&self, tag: &str) {
+        self.index_update(|v| v.retain(|e| e.tag != tag));
+    }
+
+    /// The pin of each of `harnesses` in this build.
+    fn pins(&self, harnesses: &[String]) -> std::collections::BTreeMap<String, String> {
+        harnesses
+            .iter()
+            .map(|h| (h.clone(), self.inner.host.pin(h)))
+            .collect()
+    }
+
+    /// The saved filesystem a member of `template`'s shape boots from: one
+    /// of the same image with at least the `first` apps in it (at these
+    /// pins), the one with most of `all`. A superset is as good as an exact
+    /// match; nothing but the image and the apps keys it, so a build, a
+    /// network preset or a size change does not throw it away.
+    async fn choose_prepared(
+        &self,
+        key: &str,
+        template: &StartSpec,
+        backend: BackendKind,
+        rt: &dyn VmmRuntime,
+        all: &[String],
+        first: &[String],
+    ) -> Option<Chosen> {
+        let base = prepared_base(template, backend);
+        let pins = self.pins(all);
+        let mut cands: Vec<(usize, PreparedEntry)> = Vec::new();
+        let mut why: Vec<String> = Vec::new();
+        for e in self.index_load().into_iter().filter(|e| e.base == base) {
+            let has = |h: &String| e.harnesses.get(h) == pins.get(h);
+            if let Some(m) = first.iter().find(|h| !has(h)) {
+                why.push(format!("{} lacks {m} at this build's pin", e.tag));
+                continue;
+            }
+            cands.push((all.iter().filter(|h| has(h)).count(), e));
+        }
+        cands.sort_by(|a, b| {
+            b.0.cmp(&a.0)
+                .then(a.1.harnesses.len().cmp(&b.1.harnesses.len()))
+        });
+        for (n, e) in cands {
+            match rt.find_prepared(&e.tag).await {
+                Ok(Some(image)) => {
+                    tracing::info!(
+                        shape = key,
+                        tag = %e.tag,
+                        covers = n,
+                        wanted = all.len(),
+                        "warm-pool: prepared filesystem reused"
+                    );
+                    return Some(Chosen {
+                        covers_all: n == all.len(),
+                        tag: e.tag,
+                        image,
+                        have: e.harnesses,
+                    });
+                }
+                _ => {
+                    why.push(format!("{} is gone from the engine", e.tag));
+                    self.index_remove(&e.tag);
+                }
+            }
+        }
+        if why.is_empty() {
+            why.push(format!("none saved for base {base}"));
+        }
+        tracing::info!(
+            shape = key,
+            wanted = %first.join(","),
+            reason = %why.join("; "),
+            "warm-pool: no prepared filesystem to reuse; the member is prepared"
+        );
+        None
+    }
+
+    /// Builds the saved filesystem with all of `all` in a member of its own
+    /// (booted from `from`, which has some of them), in the background:
+    /// the `first` apps are saved as soon as they are in, then the rest.
+    /// Members that can be claimed never wait for a save.
+    #[allow(clippy::too_many_arguments)]
+    fn build_prepared(
+        &self,
+        key: &str,
+        template: &StartSpec,
+        backend: BackendKind,
+        rt: Arc<dyn VmmRuntime>,
+        all: Vec<String>,
+        first: Vec<String>,
+        from: Option<Chosen>,
+    ) {
+        if self.inner.closed.load(std::sync::atomic::Ordering::SeqCst) || !rt.keeps_prepared() {
+            return;
+        }
+        if let Some(t) = self.inner.build_blocked.lock().unwrap().get(key)
+            && *t > Instant::now()
+        {
+            return;
+        }
+        if !self.inner.building.lock().unwrap().insert(key.to_string()) {
+            return;
+        }
+        let Ok(handle) = tokio::runtime::Handle::try_current() else {
+            self.inner.building.lock().unwrap().remove(key);
+            return;
+        };
+        let (pool, key, template) = (self.clone(), key.to_string(), template.clone());
+        handle.spawn(async move {
+            let began = Instant::now();
+            let r = {
+                let work = pool.build_inner(&key, &template, backend, rt, &all, &first, from);
+                let closed = async {
+                    while !pool.inner.closed.load(std::sync::atomic::Ordering::SeqCst) {
+                        tokio::time::sleep(Duration::from_secs(1)).await;
+                    }
+                };
+                tokio::select! { r = work => r, _ = closed => Err("the pool closed".to_string()) }
+            };
+            pool.inner.building.lock().unwrap().remove(&key);
+            match r {
+                Ok(true) => tracing::info!(
+                    shape = %key,
+                    built_ms = began.elapsed().as_millis() as u64,
+                    since_start_s = pool.inner.epoch.elapsed().as_secs(),
+                    "warm-pool: the prepared filesystem has every app"
+                ),
+                // This runtime keeps nothing: members are prepared one by one.
+                Ok(false) => {
+                    pool.inner
+                        .build_blocked
+                        .lock()
+                        .unwrap()
+                        .insert(key, Instant::now() + Duration::from_secs(3600));
+                }
+                Err(e) => {
+                    tracing::warn!(shape = %key, error = %e, "warm-pool: could not build the prepared filesystem; trying again later");
+                    pool.inner
+                        .build_blocked
+                        .lock()
+                        .unwrap()
+                        .insert(key, Instant::now() + Duration::from_secs(600));
+                }
+            }
+        });
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn build_inner(
+        &self,
+        key: &str,
+        template: &StartSpec,
+        backend: BackendKind,
+        rt: Arc<dyn VmmRuntime>,
+        all: &[String],
+        first: &[String],
+        from: Option<Chosen>,
+    ) -> Result<bool, String> {
+        let base = prepared_base(template, backend);
+        let pins = self.pins(all);
+        let name = member_name();
+        let secret = pool_secret();
+        let record = Record {
+            name: name.clone(),
+            key: key.to_string(),
+            backend,
+            secret: secret.clone(),
+            template: template.clone(),
+            keep: 0,
+            prepared: false,
+        };
+        self.write_record(&record).map_err(|e| e.to_string())?;
+        if let Err(e) = self.inner.leases.write_lease(&name, self.inner.pid) {
+            self.remove_record(&name);
+            return Err(e.to_string());
+        }
+        self.inner.starting.lock().unwrap().insert(name.clone());
+        let work = async {
+            let mut spec = template.clone();
+            spec.name = name.clone();
+            spec.pool_member = true;
+            if let Some(c) = &from {
+                spec.image = c.image.clone();
+            }
+            spec.env.insert("CUA_ENV_TOKEN".into(), secret.clone());
+            spec.labels
+                .insert(cua_vmm::container::LABEL_POOL.into(), "true".into());
+            let inst = rt.start(&spec).await.map_err(|e| e.to_string())?;
+            if backend == BackendKind::Container {
+                self.inner
+                    .host
+                    .member_ready(
+                        &inst.endpoints,
+                        &secret,
+                        has_desktop(&spec),
+                        MEMBER_READY_TIMEOUT,
+                    )
+                    .await?;
+            }
+            let mut have = from.map(|c| c.have).unwrap_or_default();
+            // The apps a member needs to be claimed, saved at once; then the
+            // rest.
+            for layer in [first, all] {
+                let missing: Vec<String> = layer
+                    .iter()
+                    .filter(|h| have.get(*h) != pins.get(*h))
+                    .cloned()
+                    .collect();
+                if missing.is_empty() {
+                    continue;
+                }
+                let began = Instant::now();
+                self.inner
+                    .host
+                    .prepare(&inst.endpoints, &secret, &missing, PREPARE_TIMEOUT)
+                    .await?;
+                for h in &missing {
+                    if let Some(p) = pins.get(h) {
+                        have.insert(h.clone(), p.clone());
+                    }
+                }
+                let tag = prepared_tag(&base, &have);
+                let saving = Instant::now();
+                match rt.save_prepared(&name, &tag).await {
+                    Ok(Some(_)) => {
+                        let entry = PreparedEntry {
+                            tag: tag.clone(),
+                            base: base.clone(),
+                            harnesses: have.clone(),
+                        };
+                        self.index_update(|v| {
+                            v.retain(|e| e.tag != tag);
+                            v.push(entry);
+                        });
+                        tracing::info!(
+                            shape = key,
+                            %tag,
+                            harnesses = %have.keys().cloned().collect::<Vec<_>>().join(","),
+                            prepare_ms = began.elapsed().as_millis() as u64 - saving.elapsed().as_millis() as u64,
+                            save_ms = saving.elapsed().as_millis() as u64,
+                            since_start_s = self.inner.epoch.elapsed().as_secs(),
+                            "warm-pool: the prepared filesystem is kept for the next member"
+                        );
+                    }
+                    Ok(None) => return Ok(false),
+                    Err(e) => return Err(e.to_string()),
+                }
+            }
+            Ok(true)
+        }
+        .await;
+        match rt.delete(&name).await {
+            Ok(()) | Err(VmmError::NotFound(_)) => self.forget_member(&name),
+            Err(e) => {
+                tracing::warn!(member = %name, error = %e, "could not remove a warm-pool builder")
+            }
+        }
+        self.inner.starting.lock().unwrap().remove(&name);
+        work
     }
 
     async fn start_member(
@@ -1147,13 +1979,34 @@ impl WarmPool {
             let shapes = self.inner.shapes.lock().unwrap();
             shapes.get(key).map(|s| s.keep()).unwrap_or(0)
         };
-        let record = Record {
+        let (all, first_n) = {
+            let shapes = self.inner.shapes.lock().unwrap();
+            shapes
+                .get(key)
+                .map(|s| (s.prepare.clone(), s.prepare_first))
+                .unwrap_or_default()
+        };
+        let all = if self.inner.host.can_prepare(backend) {
+            all
+        } else {
+            Vec::new()
+        };
+        // The apps a member must have before it can be claimed; the others
+        // go into the saved filesystem in the background.
+        let first: Vec<String> = all
+            .iter()
+            .take(if first_n == 0 { all.len() } else { first_n })
+            .cloned()
+            .collect();
+        let prepare = first.clone();
+        let mut record = Record {
             name: name.clone(),
             key: key.to_string(),
             backend,
             secret: secret.clone(),
             template: template.clone(),
             keep,
+            prepared: false,
         };
         // Recorded and leased before anything exists: a crash from here on
         // leaves a lease whose process is gone, and the reaper removes it.
@@ -1165,6 +2018,22 @@ impl WarmPool {
         let mut spec = template.clone();
         spec.name = name.clone();
         spec.pool_member = true;
+        // A member boots from a saved filesystem that has the apps it needs
+        // (a build or a daemon before saved it): they are in it already, so
+        // it is ready in the time of a boot, not of an install.
+        let chosen = if all.is_empty() {
+            None
+        } else {
+            self.choose_prepared(key, template, backend, rt.as_ref(), &all, &first)
+                .await
+        };
+        if let Some(s) = self.inner.shapes.lock().unwrap().get_mut(key) {
+            s.prepared_image = chosen.as_ref().map(|c| (c.tag.clone(), c.image.clone()));
+        }
+        let saved = chosen.as_ref().map(|c| (c.tag.clone(), c.image.clone()));
+        if let Some((_, image)) = &saved {
+            spec.image = image.clone();
+        }
         spec.env.insert("CUA_ENV_TOKEN".into(), secret.clone());
         spec.labels.insert(
             cua_vmm::container::LABEL_POOL.into(),
@@ -1178,8 +2047,20 @@ impl WarmPool {
         // Until its shape holds it (the refill moves it there), the sweep
         // of unknown members leaves it alone.
         self.inner.starting.lock().unwrap().insert(name.clone());
+        let mut prepared = false;
         let ready = async {
-            let inst = rt.start(&spec).await.map_err(|e| e.to_string())?;
+            let inst = rt.start(&spec).await.map_err(|e| e.to_string());
+            if inst.is_err()
+                && let Some((tag, _)) = &saved
+            {
+                // The saved filesystem does not start any more (the engine
+                // lost it): the next member is prepared from scratch.
+                if let Some(s) = self.inner.shapes.lock().unwrap().get_mut(key) {
+                    s.prepared_image = None;
+                }
+                self.index_remove(tag);
+            }
+            let inst = inst?;
             // A container member runs with its pool secret: it is ready
             // once it serves a command and a screenshot. Other backends
             // return from `start` with a member ready to claim (a microVM
@@ -1198,6 +2079,40 @@ impl WarmPool {
             Ok::<_, String>(inst)
         }
         .await;
+        let booted = started.elapsed();
+        // The agent stack goes in while the member is hidden, so the Space
+        // that claims it has its coding apps. A member that cannot be
+        // prepared is still a member: it is claimed bare, and the stack goes
+        // in after the claim as it does without a pool.
+        if ready.is_ok() && saved.is_some() {
+            prepared = true;
+            record.prepared = true;
+            let _ = self.write_record(&record);
+        } else if let Ok(inst) = &ready
+            && !prepare.is_empty()
+        {
+            let began = Instant::now();
+            match self
+                .inner
+                .host
+                .prepare(&inst.endpoints, &secret, &prepare, PREPARE_TIMEOUT)
+                .await
+            {
+                Ok(()) => {
+                    prepared = true;
+                    record.prepared = true;
+                    let _ = self.write_record(&record);
+                    let took = began.elapsed().as_secs_f64();
+                    if let Some(s) = self.inner.shapes.lock().unwrap().get_mut(key) {
+                        s.prepare_s = ewma(s.prepare_s, took);
+                    }
+                    tracing::info!(member = %name, harnesses = %prepare.join(","), prepare_ms = (took * 1000.0) as u64, "warm-pool member prepared");
+                }
+                Err(e) => {
+                    tracing::warn!(member = %name, error = %e, "warm-pool member could not be prepared; it is claimed bare");
+                }
+            }
+        }
         match ready {
             Ok(_) => {}
             Err(e) => {
@@ -1209,19 +2124,50 @@ impl WarmPool {
         };
         let footprint_mb = self.inner.host.used_mb(backend, &name).await.unwrap_or(0);
         if let Some(s) = self.inner.shapes.lock().unwrap().get_mut(key) {
-            s.boot_s = ewma(s.boot_s, started.elapsed().as_secs_f64());
+            // The boot alone: preparing and saving are measured on their own.
+            s.boot_s = ewma(s.boot_s, booted.as_secs_f64());
         }
         tracing::info!(
             member = %name,
             shape = key,
             ready_ms = started.elapsed().as_millis() as u64,
+            claimable_after_start_s = self.inner.epoch.elapsed().as_secs_f64().round() as u64,
+            prepared_for = %prepare.join(","),
+            from = saved.as_ref().map_or("the image", |(t, _)| t.as_str()),
             footprint_mb,
             "warm-pool member ready"
         );
+        // The saved filesystem is built beside the members, never from one
+        // that can be claimed (a claim changes what is in it).
+        if !all.is_empty() && !chosen.as_ref().is_some_and(|c| c.covers_all) {
+            self.build_prepared(
+                key,
+                template,
+                backend,
+                rt.clone(),
+                all.clone(),
+                first.clone(),
+                chosen.clone(),
+            );
+        }
+        // A member that booted from the saved filesystem has nothing in its
+        // file cache: its apps are read now, while it waits to be claimed.
+        if saved.is_some()
+            && prepared
+            && let Ok(inst) = &ready
+        {
+            let pool = self.clone();
+            let (endpoints, secret, apps) =
+                (inst.endpoints.clone(), secret.clone(), prepare.clone());
+            tokio::spawn(async move {
+                pool.inner.host.warm_files(&endpoints, &secret, &apps).await;
+            });
+        }
         Ok(Member {
             name,
             secret,
             footprint_mb,
+            prepared,
         })
     }
 
@@ -1247,6 +2193,7 @@ impl WarmPool {
             self.evaluate(k);
         }
         let mut drained = Vec::new();
+        let mut saved_gone: Vec<(Arc<dyn VmmRuntime>, String)> = Vec::new();
         {
             let mut shapes = self.inner.shapes.lock().unwrap();
             for k in &keys {
@@ -1261,7 +2208,11 @@ impl WarmPool {
                         .last()
                         .is_none_or(|t| now - t > policy::HORIZON_S);
                 if stale {
-                    shapes.remove(k);
+                    if let Some(gone) = shapes.remove(k)
+                        && let Some((tag, _)) = gone.prepared_image
+                    {
+                        saved_gone.push((gone.rt.clone(), tag));
+                    }
                     continue;
                 }
                 let excess = shape
@@ -1274,6 +2225,9 @@ impl WarmPool {
                     }
                 }
             }
+        }
+        for (rt, tag) in saved_gone {
+            self.drop_saved(rt, tag);
         }
         for (rt, m, why) in drained {
             tracing::info!(member = %m.name, reason = %why, "warm pool: a member is no longer wanted");
@@ -1473,6 +2427,7 @@ impl WarmPool {
                 name: r.name.clone(),
                 secret: r.secret.clone(),
                 footprint_mb,
+                prepared: r.prepared,
             });
         }
     }
@@ -1562,16 +2517,23 @@ impl WarmPool {
             }
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
+        let mut saved: Vec<(Arc<dyn VmmRuntime>, String)> = Vec::new();
         let all: Vec<(Arc<dyn VmmRuntime>, Member)> = {
             let mut shapes = self.inner.shapes.lock().unwrap();
             shapes
                 .drain()
                 .flat_map(|(_, s)| {
                     let rt = s.rt.clone();
+                    if let Some((tag, _)) = &s.prepared_image {
+                        saved.push((rt.clone(), tag.clone()));
+                    }
                     s.members.into_iter().map(move |m| (rt.clone(), m))
                 })
                 .collect()
         };
+        // The saved filesystems stay: a daemon that starts again finds them
+        // ([`prepared_tag`]) instead of preparing a member for minutes.
+        drop(saved);
         for (rt, m) in all {
             match rt.delete(&m.name).await {
                 Ok(()) | Err(VmmError::NotFound(_)) => self.forget_member(&m.name),
@@ -1602,9 +2564,22 @@ impl WarmPool {
     fn forget_shape(&self, key: &str) {
         let gone = self.inner.shapes.lock().unwrap().remove(key);
         if let Some(s) = gone {
+            // The saved filesystem stays (a shape that comes back finds it
+            // by its image and apps; the disk budget removes the old).
             for m in s.members {
                 self.discard(s.rt.clone(), m.name);
             }
+        }
+    }
+
+    /// Deletes the saved filesystem `tag` in the background.
+    fn drop_saved(&self, rt: Arc<dyn VmmRuntime>, tag: String) {
+        if let Ok(h) = tokio::runtime::Handle::try_current() {
+            h.spawn(async move {
+                if let Err(e) = rt.drop_prepared(&tag).await {
+                    tracing::debug!(%tag, error = %e, "warm pool: could not delete a saved filesystem");
+                }
+            });
         }
     }
 
@@ -1679,6 +2654,15 @@ mod tests {
         no_claims: bool,
         starts: AtomicU32,
         fail_starts: AtomicBool,
+        /// How long a start takes, in ms (a booting member).
+        start_ms: std::sync::atomic::AtomicU64,
+        /// Whether `save_prepared` keeps a filesystem, and the tags kept
+        /// and dropped.
+        can_save: AtomicBool,
+        saved: Mutex<Vec<String>>,
+        dropped: Mutex<Vec<String>>,
+        /// The image of every start, in order.
+        images: Mutex<Vec<String>>,
     }
 
     fn instance(name: &str) -> Instance {
@@ -1706,6 +2690,13 @@ mod tests {
         }
         async fn start(&self, spec: &StartSpec) -> VResult<Instance> {
             self.starts.fetch_add(1, SeqCst);
+            if let ImageSource::Oci { reference } = &spec.image {
+                self.images.lock().unwrap().push(reference.clone());
+            }
+            let ms = self.start_ms.load(SeqCst);
+            if ms > 0 {
+                tokio::time::sleep(Duration::from_millis(ms)).await;
+            }
             if self.fail_starts.load(SeqCst) {
                 return Err(VmmError::other("boom"));
             }
@@ -1747,6 +2738,29 @@ mod tests {
             Ok(instance(new_name))
         }
         async fn fork(&self, _: &str, _: &str) -> VResult<()> {
+            Ok(())
+        }
+        fn keeps_prepared(&self) -> bool {
+            self.can_save.load(SeqCst)
+        }
+        async fn save_prepared(&self, _: &str, tag: &str) -> VResult<Option<ImageSource>> {
+            if !self.can_save.load(SeqCst) {
+                return Ok(None);
+            }
+            self.saved.lock().unwrap().push(tag.to_string());
+            Ok(Some(ImageSource::oci(format!("local/prepared:{tag}"))))
+        }
+        async fn find_prepared(&self, tag: &str) -> VResult<Option<ImageSource>> {
+            Ok(self
+                .saved
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|t| t == tag)
+                .then(|| ImageSource::oci(format!("local/prepared:{tag}"))))
+        }
+        async fn drop_prepared(&self, tag: &str) -> VResult<()> {
+            self.dropped.lock().unwrap().push(tag.to_string());
             Ok(())
         }
         async fn checkpoint(&self, _: &str, _: &str) -> VResult<CheckpointInfo> {
@@ -1799,6 +2813,12 @@ mod tests {
         fail_rotate: AtomicBool,
         ready: AtomicBool,
         busy: AtomicBool,
+        /// Whether members can be prepared, what was prepared (harnesses
+        /// per member) and whether preparing fails.
+        can_prepare: AtomicBool,
+        prepared: Mutex<Vec<Vec<String>>>,
+        fail_prepare: AtomicBool,
+        prepare_ms: std::sync::atomic::AtomicU64,
     }
 
     impl Default for FakeHost {
@@ -1812,6 +2832,10 @@ mod tests {
                 fail_rotate: AtomicBool::new(false),
                 ready: AtomicBool::new(true),
                 busy: AtomicBool::new(false),
+                can_prepare: AtomicBool::new(true),
+                prepared: Mutex::new(vec![]),
+                fail_prepare: AtomicBool::new(false),
+                prepare_ms: Default::default(),
             }
         }
     }
@@ -1845,6 +2869,26 @@ mod tests {
                 .lock()
                 .unwrap()
                 .push((secret.to_string(), token.to_string()));
+            Ok(())
+        }
+        fn can_prepare(&self, _: BackendKind) -> bool {
+            self.can_prepare.load(SeqCst)
+        }
+        async fn prepare(
+            &self,
+            _: &Endpoints,
+            _: &str,
+            harnesses: &[String],
+            _: Duration,
+        ) -> Result<(), String> {
+            let ms = self.prepare_ms.load(SeqCst);
+            if ms > 0 {
+                tokio::time::sleep(Duration::from_millis(ms)).await;
+            }
+            if self.fail_prepare.load(SeqCst) {
+                return Err("no network".into());
+            }
+            self.prepared.lock().unwrap().push(harnesses.to_vec());
             Ok(())
         }
         async fn memory(&self, _: BackendKind) -> Option<Memory> {
@@ -2375,6 +3419,56 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_refill_short_of_memory_says_why_and_goes_ahead_when_memory_frees() {
+        let f = fixture(PoolSettings::default(), FakeRuntime::default());
+        *f.host.memory.lock().unwrap() = Memory {
+            total_mb: 6144,
+            available_mb: 1500,
+        };
+        let key = warm(&f, &spec("one", "t")).await;
+        assert_eq!(f.rt.starts.load(SeqCst), 0);
+        let said = f.pool.inner.deferred.lock().unwrap().get(&key).cloned();
+        assert_eq!(said.map(|(kind, _)| kind), Some("memory".to_string()));
+        // A Space deleted: the next tick's refill starts the member.
+        *f.host.memory.lock().unwrap() = Memory {
+            total_mb: 6144,
+            available_mb: 5000,
+        };
+        f.pool.refill(&key).await;
+        assert_eq!(f.rt.starts.load(SeqCst), 1);
+        assert_eq!(f.pool.status().members, 1);
+        assert!(f.pool.inner.deferred.lock().unwrap().get(&key).is_none());
+        // Never more than the pool's size.
+        f.pool.refill(&key).await;
+        assert_eq!(f.rt.starts.load(SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn failed_starts_wait_out_a_cooldown_and_then_try_again() {
+        let f = fixture(PoolSettings::default(), FakeRuntime::default());
+        f.rt.fail_starts.store(true, SeqCst);
+        let key = warm(&f, &spec("one", "t")).await;
+        assert_eq!(f.rt.starts.load(SeqCst), MAX_FAILURES);
+        // Still cooling down: no start, and the reason is recorded.
+        f.pool.refill(&key).await;
+        assert_eq!(f.rt.starts.load(SeqCst), MAX_FAILURES);
+        let said = f.pool.inner.deferred.lock().unwrap().get(&key).cloned();
+        assert_eq!(said.map(|(kind, _)| kind), Some("failing".to_string()));
+        // After the cooldown one more start is tried, and a good one resets.
+        f.rt.fail_starts.store(false, SeqCst);
+        f.pool
+            .inner
+            .shapes
+            .lock()
+            .unwrap()
+            .get_mut(&key)
+            .unwrap()
+            .failed_at = Some(Instant::now() - FAILURE_COOLDOWN - Duration::from_secs(1));
+        f.pool.refill(&key).await;
+        assert_eq!(f.pool.status().members, 1);
+    }
+
+    #[tokio::test]
     async fn failed_starts_stop_refilling_and_leave_nothing() {
         let f = fixture(PoolSettings::default(), FakeRuntime::default());
         f.rt.fail_starts.store(true, SeqCst);
@@ -2474,5 +3568,590 @@ mod tests {
         warm(&f, &spec("one", "t")).await;
         assert!(f.rt.members().is_empty());
         assert!(f.state.leases().is_empty());
+    }
+
+    /// The `warm-pools` Space: one member, prepared with the coding
+    /// apps, kept ready after every claim.
+    async fn keep_warm_space(f: &Fixture, s: &StartSpec) -> String {
+        let rt: Arc<dyn VmmRuntime> = f.rt.clone();
+        f.pool
+            .set_explicit_prepared(
+                WARM_SOURCE,
+                s,
+                BackendKind::Container,
+                true,
+                rt,
+                1,
+                Some(1),
+                None,
+                Some(Duration::from_secs(7200)),
+                Some(vec!["claude-code".into(), "openai-codex".into()]),
+            )
+            .unwrap()
+    }
+
+    /// Waits until shape `key` holds `n` ready members.
+    async fn until_ready(f: &Fixture, key: &str, n: u32) {
+        for _ in 0..200 {
+            if f.pool.shape_status(key).is_some_and(|s| s.0 >= n) {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        panic!(
+            "shape {key} never had {n} ready member(s): {:?}",
+            f.pool.shape_status(key)
+        );
+    }
+
+    #[tokio::test]
+    async fn a_warm_pools_member_has_its_coding_apps_before_it_is_ready() {
+        let f = fixture(PoolSettings::default(), FakeRuntime::default());
+        let key = keep_warm_space(&f, &spec("one", "t")).await;
+        until_ready(&f, &key, 1).await;
+        assert_eq!(
+            f.host.prepared.lock().unwrap().clone(),
+            vec![vec!["claude-code".to_string(), "openai-codex".to_string()]],
+            "prepared once, for both apps, before it counted as ready"
+        );
+        // The record says so: a daemon that adopts it knows.
+        let rec = f.pool.records();
+        assert_eq!(rec.len(), 1);
+        assert!(rec[0].prepared);
+    }
+
+    #[tokio::test]
+    async fn a_backend_that_cannot_prepare_its_members_keeps_them_bare() {
+        let f = fixture(PoolSettings::default(), FakeRuntime::default());
+        f.host.can_prepare.store(false, SeqCst);
+        let key = keep_warm_space(&f, &spec("one", "t")).await;
+        until_ready(&f, &key, 1).await;
+        assert!(f.host.prepared.lock().unwrap().is_empty());
+        assert!(!f.pool.records()[0].prepared);
+        // A claim still works: the stack goes in after it, as without a pool.
+        let c = f
+            .pool
+            .claim(&spec("mine", "tok"), BackendKind::Container, true)
+            .await;
+        assert!(c.is_some());
+    }
+
+    #[tokio::test]
+    async fn a_member_that_fails_to_prepare_is_still_a_member() {
+        let f = fixture(PoolSettings::default(), FakeRuntime::default());
+        f.host.fail_prepare.store(true, SeqCst);
+        let key = keep_warm_space(&f, &spec("one", "t")).await;
+        until_ready(&f, &key, 1).await;
+        assert!(!f.pool.records()[0].prepared, "claimed bare, never refused");
+        assert!(
+            f.pool
+                .claim(&spec("mine", "tok"), BackendKind::Container, true)
+                .await
+                .is_some()
+        );
+    }
+
+    #[tokio::test]
+    async fn the_next_create_finds_a_member_because_a_claim_refills_at_once() {
+        let f = fixture(PoolSettings::default(), FakeRuntime::default());
+        let key = keep_warm_space(&f, &spec("one", "t")).await;
+        until_ready(&f, &key, 1).await;
+        for i in 0..4 {
+            let got = f
+                .pool
+                .claim(
+                    &spec(&format!("s{i}"), &format!("t{i}")),
+                    BackendKind::Container,
+                    true,
+                )
+                .await;
+            assert!(got.is_some(), "create {i} claims a ready member");
+            // Not the 1.5 s the other shapes wait: a few polls, not seconds.
+            until_ready(&f, &key, 1).await;
+        }
+        assert_eq!(
+            f.host.prepared.lock().unwrap().len(),
+            5,
+            "one member each, all prepared"
+        );
+    }
+
+    /// A create the way the Spaces app's Home asks: one CPU, 1 GB, no desktop.
+    fn home_spec(name: &str, token: &str) -> StartSpec {
+        let mut s = spec(name, token).cpus(1).memory_mb(1024);
+        for (k, v) in crate::local::headless_env() {
+            s.env.insert(k, v);
+        }
+        s.command = Some(crate::local::headless_command_line());
+        // A create waits for the port to accept; the warm member's check
+        // (HTTP health) covers it.
+        s.probes = vec![cua_vmm::Probe::tcp(3211)];
+        s
+    }
+
+    #[tokio::test]
+    async fn a_home_claims_the_bigger_warm_space_and_only_that() {
+        let f = fixture(PoolSettings::default(), FakeRuntime::default());
+        let mut member = spec("one", "t");
+        member.probes = vec![cua_vmm::Probe::http(3211, "/health")];
+        let warm_key = keep_warm_space(&f, &member).await;
+        until_ready(&f, &warm_key, 1).await;
+        assert_ne!(
+            shape_key(&home_spec("h", "t"), BackendKind::Container, true),
+            Some(warm_key.clone()),
+            "the home is another shape"
+        );
+        // Bigger than the member: starts cold.
+        let big = spec("big", "t1").cpus(8);
+        assert!(
+            f.pool
+                .claim(&big, BackendKind::Container, true)
+                .await
+                .is_none()
+        );
+        // A desktop create is not served by a headless member.
+        let started = Instant::now();
+        let got = f
+            .pool
+            .claim(&home_spec("home-a", "t2"), BackendKind::Container, true)
+            .await;
+        assert!(got.is_some(), "the home claims the warm member");
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "a claim is the whole cost: {:?}",
+            started.elapsed()
+        );
+        // The member is replaced for the next one.
+        until_ready(&f, &warm_key, 1).await;
+        assert_eq!(f.host.prepared.lock().unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn a_headless_member_does_not_serve_a_desktop_create_nor_a_plain_pool_a_home() {
+        let f = fixture(PoolSettings::default(), FakeRuntime::default());
+        // Kept warm headless: a desktop create is not served by it.
+        let key = keep_warm_space(&f, &home_spec("one", "t")).await;
+        until_ready(&f, &key, 1).await;
+        assert!(
+            f.pool
+                .claim(&spec("desk", "t1"), BackendKind::Container, true)
+                .await
+                .is_none()
+        );
+        // A shape kept by `pool.warm` (not the experiment) is claimed only by its own shape.
+        let f = fixture(PoolSettings::default(), FakeRuntime::default());
+        let key = warm(&f, &spec("one", "t")).await;
+        assert_eq!(f.pool.shape_status(&key).map(|s| s.0), Some(1));
+        assert!(
+            f.pool
+                .claim(&home_spec("h", "t1"), BackendKind::Container, true)
+                .await
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_create_waits_for_the_member_that_is_starting_instead_of_booting_another() {
+        let rt = FakeRuntime::default();
+        rt.start_ms.store(150, SeqCst);
+        let f = fixture(PoolSettings::default(), rt);
+        let key = keep_warm_space(&f, &spec("one", "t")).await;
+        // The very first member (a new install) is not waited for: the
+        // create starts cold.
+        let t = Instant::now();
+        assert!(
+            f.pool
+                .claim(&spec("early", "t0"), BackendKind::Container, true)
+                .await
+                .is_none(),
+            "no member has been ready yet: cold"
+        );
+        assert!(t.elapsed() < Duration::from_millis(100));
+        until_ready(&f, &key, 1).await;
+        assert!(
+            f.pool
+                .claim(&spec("first", "t1"), BackendKind::Container, true)
+                .await
+                .is_some()
+        );
+        // Now a member is starting and its boot is known: the next create
+        // waits for it.
+        let t = Instant::now();
+        let got = f
+            .pool
+            .claim(&spec("mine", "tok"), BackendKind::Container, true)
+            .await;
+        assert!(got.is_some(), "claimed the member that was starting");
+        assert!(
+            t.elapsed() >= Duration::from_millis(80),
+            "it waited for the boot"
+        );
+        until_ready(&f, &key, 1).await;
+    }
+
+    #[tokio::test]
+    async fn a_shape_that_is_not_kept_warm_never_makes_a_create_wait() {
+        let rt = FakeRuntime::default();
+        rt.start_ms.store(300, SeqCst);
+        let f = fixture(PoolSettings::default(), rt);
+        let rt2: Arc<dyn VmmRuntime> = f.rt.clone();
+        // An ordinary explicit pool (`pool.warm`): a member is starting.
+        let key = f
+            .pool
+            .keep(&spec("one", "t"), BackendKind::Container, true, rt2, 1)
+            .unwrap();
+        let pool = f.pool.clone();
+        let refill = tokio::spawn(async move { pool.refill(&key).await });
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let t = Instant::now();
+        let got = f
+            .pool
+            .claim(&spec("mine", "tok"), BackendKind::Container, true)
+            .await;
+        assert!(got.is_none(), "no member ready: the create starts cold");
+        assert!(
+            t.elapsed() < Duration::from_millis(100),
+            "and does not wait"
+        );
+        refill.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_create_stops_waiting_when_the_member_fails_to_start() {
+        let rt = FakeRuntime::default();
+        rt.start_ms.store(100, SeqCst);
+        rt.fail_starts.store(true, SeqCst);
+        let f = fixture(PoolSettings::default(), rt);
+        keep_warm_space(&f, &spec("one", "t")).await;
+        let t = Instant::now();
+        let got = f
+            .pool
+            .claim(&spec("mine", "tok"), BackendKind::Container, true)
+            .await;
+        assert!(got.is_none(), "cold start, never a refused create");
+        assert!(
+            t.elapsed() < Duration::from_secs(5),
+            "released when the start failed"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_warm_space_goes_back_when_nobody_creates() {
+        let f = fixture(PoolSettings::default(), FakeRuntime::default());
+        let rt: Arc<dyn VmmRuntime> = f.rt.clone();
+        let key = f
+            .pool
+            .set_explicit_prepared(
+                WARM_SOURCE,
+                &spec("one", "t"),
+                BackendKind::Container,
+                true,
+                rt,
+                1,
+                Some(1),
+                None,
+                Some(Duration::from_millis(1)),
+                Some(vec!["claude-code".into()]),
+            )
+            .unwrap();
+        until_ready(&f, &key, 1).await;
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        // Idle now: the next tick gives the member back, nothing refills it,
+        // and a create never waits for one.
+        f.pool.tick().await;
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        f.pool.refill(&key).await;
+        assert_eq!(
+            f.rt.members().len(),
+            0,
+            "an idle warm Space keeps no member"
+        );
+        let t = Instant::now();
+        assert!(
+            f.pool
+                .claim(&spec("m", "t"), BackendKind::Container, true)
+                .await
+                .is_none()
+        );
+        assert!(t.elapsed() < Duration::from_millis(100));
+        // Withdrawn (the experiment turned off): the source is gone.
+        f.pool.retain_explicit(|src| src != WARM_SOURCE);
+        f.pool.tick().await;
+        assert_eq!(f.pool.shape_status(&key).map(|s| s.0).unwrap_or(0), 0);
+    }
+
+    #[tokio::test]
+    async fn the_one_warm_space_is_not_held_to_the_percentage_but_to_the_free_floor() {
+        // A small engine VM: 15 percent of it is less than one member.
+        let f = fixture(PoolSettings::default(), FakeRuntime::default());
+        *f.host.memory.lock().unwrap() = Memory {
+            total_mb: 3000,
+            available_mb: 2500,
+        };
+        let rt: Arc<dyn VmmRuntime> = f.rt.clone();
+        let plain = f
+            .pool
+            .keep(
+                &spec("a", "t").memory_mb(1024),
+                BackendKind::Container,
+                true,
+                rt,
+                1,
+            )
+            .unwrap();
+        f.pool.refill(&plain).await;
+        assert_eq!(
+            f.rt.members().len(),
+            0,
+            "an ordinary pool respects the share"
+        );
+        let key = keep_warm_space(&f, &spec("one", "t")).await;
+        until_ready(&f, &key, 1).await;
+        assert_eq!(
+            f.rt.members().len(),
+            1,
+            "the warm Space gets its one member"
+        );
+        // Not below the floor: with 1.2 GB free it starts nothing.
+        f.pool
+            .claim(&spec("m", "tok"), BackendKind::Container, true)
+            .await
+            .unwrap();
+        *f.host.memory.lock().unwrap() = Memory {
+            total_mb: 3000,
+            available_mb: 1200,
+        };
+        f.pool.refill(&key).await;
+        assert_eq!(f.rt.members().len(), 0, "the free floor still holds");
+    }
+
+    /// Waits until the runtime kept `n` filesystems.
+    async fn until_saved(f: &Fixture, n: usize) {
+        for _ in 0..300 {
+            if f.rt.saved.lock().unwrap().len() >= n {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        panic!("never saved {n}: {:?}", f.rt.saved.lock().unwrap());
+    }
+
+    #[tokio::test]
+    async fn later_members_boot_from_the_filesystem_built_beside_the_first() {
+        let f = fixture(PoolSettings::default(), FakeRuntime::default());
+        f.rt.can_save.store(true, SeqCst);
+        let key = keep_warm_space(&f, &spec("one", "t")).await;
+        until_ready(&f, &key, 1).await;
+        // The first member is claimable as prepared; its filesystem is kept
+        // by a builder of its own, never by a member someone can claim.
+        until_saved(&f, 1).await;
+        for i in 0..3 {
+            assert!(
+                f.pool
+                    .claim(
+                        &spec(&format!("s{i}"), &format!("t{i}")),
+                        BackendKind::Container,
+                        true
+                    )
+                    .await
+                    .is_some()
+            );
+            until_ready(&f, &key, 1).await;
+        }
+        let images = f.rt.images.lock().unwrap().clone();
+        assert!(
+            !images[0].starts_with("local/prepared:"),
+            "the first boots the image"
+        );
+        assert!(
+            images[images.len() - 1].starts_with("local/prepared:warm-"),
+            "{images:?}"
+        );
+        assert_eq!(f.rt.saved.lock().unwrap().len(), 1, "kept once");
+        assert!(f.pool.records().iter().all(|r| r.prepared));
+        // A daemon that stops keeps it for the next one.
+        f.pool.retain_explicit(|src| src != WARM_SOURCE);
+        f.pool.drain().await;
+        assert!(f.rt.dropped.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn the_first_member_is_claimable_after_the_first_apps_and_the_rest_follow() {
+        let f = fixture(PoolSettings::default(), FakeRuntime::default());
+        f.rt.can_save.store(true, SeqCst);
+        let rt: Arc<dyn VmmRuntime> = f.rt.clone();
+        let s0 = spec("one", "t");
+        let key = f
+            .pool
+            .set_explicit_prepared(
+                WARM_SOURCE,
+                &s0,
+                BackendKind::Container,
+                true,
+                rt,
+                1,
+                Some(1),
+                None,
+                Some(Duration::from_secs(7200)),
+                Some(vec!["claude-code".into(), "hermes".into(), "goose".into()]),
+            )
+            .unwrap();
+        f.pool.set_prepare_first(&key, 1);
+        until_ready(&f, &key, 1).await;
+        assert_eq!(
+            f.host.prepared.lock().unwrap()[0],
+            ["claude-code"],
+            "the member waited for the first app only"
+        );
+        // Beside it: the first app is kept at once, then the whole set.
+        until_saved(&f, 2).await;
+        let base = prepared_base(&s0, BackendKind::Container);
+        let idx = f.pool.index_load();
+        let sizes: Vec<usize> = idx.iter().map(|e| e.harnesses.len()).collect();
+        assert!(sizes.contains(&1) && sizes.contains(&3), "{sizes:?}");
+        assert!(idx.iter().all(|e| e.base == base));
+        // The next member starts from the full one, with nothing to install.
+        f.pool
+            .claim(&spec("s", "t1"), BackendKind::Container, true)
+            .await
+            .unwrap();
+        until_ready(&f, &key, 1).await;
+        let before = f.host.prepared.lock().unwrap().len();
+        let images = f.rt.images.lock().unwrap().clone();
+        assert!(images.last().unwrap().starts_with("local/prepared:warm-"));
+        assert_eq!(f.host.prepared.lock().unwrap().len(), before);
+        let full = idx
+            .iter()
+            .max_by_key(|e| e.harnesses.len())
+            .unwrap()
+            .tag
+            .clone();
+        assert!(images.last().unwrap().ends_with(&full), "{images:?}");
+    }
+
+    #[tokio::test]
+    async fn a_changed_network_preset_or_size_keeps_the_prepared_filesystem() {
+        let f = fixture(PoolSettings::default(), FakeRuntime::default());
+        f.rt.can_save.store(true, SeqCst);
+        let s0 = spec("one", "t");
+        let have: std::collections::BTreeMap<String, String> = ["claude-code", "openai-codex"]
+            .map(|h| (h.to_string(), h.to_string()))
+            .into();
+        let base = prepared_base(&s0, BackendKind::Container);
+        let tag = prepared_tag(&base, &have);
+        f.rt.saved.lock().unwrap().push(tag.clone());
+        f.pool.index_update(|v| {
+            v.push(PreparedEntry {
+                tag: tag.clone(),
+                base,
+                harnesses: have,
+            })
+        });
+        // The same image under another network preset and a bigger size is
+        // another shape, but the same saved files.
+        let mut s1 = spec("two", "t");
+        s1.restrict_network = true;
+        s1.cpus = 4;
+        assert_ne!(
+            shape_key(&s0, BackendKind::Container, true),
+            shape_key(&s1, BackendKind::Container, true)
+        );
+        let key = keep_warm_space(&f, &s1).await;
+        until_ready(&f, &key, 1).await;
+        assert!(
+            f.host.prepared.lock().unwrap().is_empty(),
+            "nothing prepared"
+        );
+        assert!(
+            f.rt.images.lock().unwrap()[0].starts_with("local/prepared:warm-"),
+            "booted from the kept filesystem"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_filesystem_prepared_at_another_pin_is_not_reused() {
+        let f = fixture(PoolSettings::default(), FakeRuntime::default());
+        f.rt.can_save.store(true, SeqCst);
+        let s0 = spec("one", "t");
+        let have: std::collections::BTreeMap<String, String> = ["claude-code", "openai-codex"]
+            .map(|h| (h.to_string(), "old-version".to_string()))
+            .into();
+        let base = prepared_base(&s0, BackendKind::Container);
+        let tag = prepared_tag(&base, &have);
+        f.rt.saved.lock().unwrap().push(tag.clone());
+        f.pool.index_update(|v| {
+            v.push(PreparedEntry {
+                tag,
+                base,
+                harnesses: have,
+            })
+        });
+        let key = keep_warm_space(&f, &s0).await;
+        until_ready(&f, &key, 1).await;
+        assert_eq!(
+            f.host.prepared.lock().unwrap()[0],
+            ["claude-code", "openai-codex"],
+            "prepared again for the apps this build installs"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_runtime_that_cannot_save_prepares_every_member() {
+        let f = fixture(PoolSettings::default(), FakeRuntime::default());
+        let key = keep_warm_space(&f, &spec("one", "t")).await;
+        until_ready(&f, &key, 1).await;
+        f.pool
+            .claim(&spec("s", "t1"), BackendKind::Container, true)
+            .await
+            .unwrap();
+        until_ready(&f, &key, 1).await;
+        assert_eq!(
+            f.host.prepared.lock().unwrap().len(),
+            2,
+            "each member prepared"
+        );
+        assert!(
+            f.rt.images
+                .lock()
+                .unwrap()
+                .iter()
+                .all(|i| !i.starts_with("local/prepared:"))
+        );
+    }
+
+    #[tokio::test]
+    async fn a_restarted_daemon_finds_the_filesystem_the_last_one_saved() {
+        let f = fixture(PoolSettings::default(), FakeRuntime::default());
+        f.rt.can_save.store(true, SeqCst);
+        // What a previous daemon saved for this image and these apps (more
+        // than are wanted, and under another network preset: still reused).
+        let s0 = spec("one", "t");
+        let key = shape_key(&s0, BackendKind::Container, true).unwrap();
+        let have: std::collections::BTreeMap<String, String> =
+            ["claude-code", "openai-codex", "pi"]
+                .map(|h| (h.to_string(), h.to_string()))
+                .into();
+        let tag = prepared_tag(&prepared_base(&s0, BackendKind::Container), &have);
+        f.rt.saved.lock().unwrap().push(tag.clone());
+        f.pool.index_update(|v| {
+            v.push(PreparedEntry {
+                tag: tag.clone(),
+                base: prepared_base(&s0, BackendKind::Container),
+                harnesses: have.clone(),
+            })
+        });
+        let key2 = keep_warm_space(&f, &s0).await;
+        assert_eq!(key, key2);
+        until_ready(&f, &key, 1).await;
+        let images = f.rt.images.lock().unwrap().clone();
+        assert_eq!(images.len(), 1);
+        assert!(
+            images[0].starts_with("local/prepared:warm-"),
+            "the first member booted from it: {images:?}"
+        );
+        assert!(
+            f.host.prepared.lock().unwrap().is_empty(),
+            "and was not prepared again"
+        );
     }
 }

@@ -77,12 +77,12 @@ describe.skipIf(!wasmBuilt)("Settings tabs (real routes, wasm core)", () => {
     expect(text).not.toMatch(/Keyboard shortcuts|Shared links|Storage|Runtimes|Keyvault|AI agents|Welcome/);
   });
 
-  it("puts the Providers below Coding apps and On another machine, and Terminal is not on this tab", async () => {
+  it("puts the Agent menu below Coding apps, then On another machine and the Providers, and Terminal is not on this tab", async () => {
     await mountApp("/settings/connections", { ...host, demo: { cli: "missing" } });
     await waitFor(() => expect(document.querySelector("[data-connectors-providers]")).not.toBeNull(), { timeout: 8000 });
     const t = tab("connections")!;
     const headings = [...t.querySelectorAll("h2")].map((h) => h.textContent);
-    expect(headings).toEqual(["Coding apps", "On another machine", "Providers"]);
+    expect(headings).toEqual(["Coding apps", "Agent menu", "On another machine", "Providers"]);
     // The providers are the last section on the page.
     const sections = [...t.querySelectorAll("[data-connectors-apps], [data-connectors-other-machine-group], [data-connectors-providers]")].map((e) => e.getAttributeNames().find((n) => n.startsWith("data-connectors-")));
     expect(sections).toEqual(["data-connectors-apps", "data-connectors-other-machine-group", "data-connectors-providers"]);
@@ -99,11 +99,14 @@ describe.skipIf(!wasmBuilt)("Settings tabs (real routes, wasm core)", () => {
     expect(tab("general")!.textContent).toContain("Use Cua from Terminal");
   });
 
-  it("moves Early releases here from About, and drops the Sharing and Your cloud switches", async () => {
+  it("offers Stable or Nightly updates here, and drops the Sharing and Your cloud switches", async () => {
     await mountApp("/settings/advanced", host);
     await waitFor(() => expect(tab("advanced")).not.toBeNull());
-    await waitFor(() => expect(tab("advanced")!.textContent).toContain("Get early releases (Beta)"));
+    await waitFor(() => expect(document.querySelector('[data-setting-row="update-channel"]')).not.toBeNull());
     const text = tab("advanced")!.textContent!;
+    expect(text).toContain("Stable");
+    expect(text).toContain("Nightly");
+    expect(text).not.toContain("Beta");
     expect(text).toContain("Cua Volume");
     expect(text).not.toMatch(/Your cloud|Sharing|Experiments/);
     expect(document.querySelector('[data-setting-row="experiment:sharing"]')).toBeNull();

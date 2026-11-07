@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! macOS platform backend for cua-driver-rs.
 //!
 //! Provides background automation on macOS via:
@@ -33,6 +36,8 @@ pub mod display_awake;
 pub mod document_edit;
 #[cfg(target_os = "macos")]
 pub mod fast_path_guard;
+#[cfg(target_os = "macos")]
+pub mod focus_arbiter;
 #[cfg(target_os = "macos")]
 pub mod focus_guard;
 #[cfg(target_os = "macos")]
@@ -92,10 +97,9 @@ pub fn register_tools() -> ToolRegistry {
     register_tools_with_compat(false)
 }
 
-/// Same as `register_tools` but lets the caller pick the Claude Code
-/// computer-use compat mode. `compat=true` swaps the regular `screenshot`
-/// tool for the window-scoped variant (pid + window_id required,
-/// JPEG @ 85%, text note pointing at pixel tools).
+/// Same as `register_tools` but accepts the legacy Claude Code
+/// computer-use compatibility flag. The flag currently has no tool-surface
+/// effect; it remains accepted so existing launch configurations keep working.
 pub fn register_tools_with_compat(compat: bool) -> ToolRegistry {
     #[cfg(target_os = "macos")]
     {
@@ -116,10 +120,8 @@ pub fn register_tools_with_compat(compat: bool) -> ToolRegistry {
 /// `platform_macos::cursor::overlay::run_on_main_thread()` on the OS
 /// main thread to actually display the overlay.
 ///
-/// `compat=true` enables Claude Code computer-use compatibility mode:
-/// the regular `screenshot` tool is replaced by a window-scoped variant
-/// (pid + window_id required, JPEG @ 85%, text note pointing at pixel
-/// tools). See `tools::screenshot_compat`.
+/// `compat` is a legacy Claude Code compatibility flag with no current
+/// tool-surface effect. It remains accepted for launch compatibility.
 pub fn register_tools_with_cursor(
     cfg: cursor_overlay::CursorConfig,
     compat: bool,

@@ -136,7 +136,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$HOME/egress"
-          curl -fsSL -o "$HOME/egress/noble.qcow2" \
+          curl -fsSL --fail --retry 5 --retry-delay 2 --retry-all-errors --connect-timeout 20 -o "$HOME/egress/noble.qcow2" \
             https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img
           cargo build --locked --release -p cua-microvm-init --target x86_64-unknown-linux-musl
       - name: Egress policies of QEMU and Firecracker VMs

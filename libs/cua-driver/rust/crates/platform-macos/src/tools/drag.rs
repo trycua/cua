@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! drag tool — matches the Swift reference DragTool.swift.
 //!
 //! Press-drag-release gesture: mouseDown at (from_x, from_y), N interpolated
@@ -351,6 +354,7 @@ impl Tool for DragTool {
         // background the target itself may become AppKit-active without
         // raising; anything else that takes focus is reported and undone.
         let prior_front = apps::frontmost_pid();
+        let undo = crate::focus_arbiter::UndoWatch::arm();
         let snapshot = if fg {
             WindowChangeDetector::snapshot(prior_front)
         } else {
@@ -509,6 +513,7 @@ impl Tool for DragTool {
 
         if !fg {
             super::click::restore_user_focus_after_background_pixel(
+                undo,
                 pid,
                 prior_front,
                 prior_key_wid,

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Admission checks shared by every platform's `launch_app`.
 
 /// Refusal text for a `launch_app` call that tries to enable Chromium

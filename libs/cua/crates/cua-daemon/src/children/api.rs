@@ -113,12 +113,50 @@ impl Scoped {
             .into_iter()
             .filter(|r| below.contains(&r.id))
             .collect();
-        for r in &mut records {
+        self.fill(&mut records);
+        Ok(records)
+    }
+
+    /// Power, stop reason and the rest of a record's live fields.
+    fn fill(&self, records: &mut [pb::Space]) {
+        for r in records.iter_mut() {
             (r.power, r.power_state) = self.spaces().power_of(&r.id);
             r.stop_reason = self.spaces().stop_reason_of(&r.id);
         }
-        self.spaces().fill_records(&mut records);
-        crate::spaces_svc::imp::mark_children(self.spaces(), &mut records);
+        self.spaces().fill_records(records);
+        crate::spaces_svc::imp::mark_children(self.spaces(), records);
+    }
+
+    /// What an agent home reaches beyond its tree (none for any other Space).
+    fn home_scope(&self) -> super::home::HomeScope {
+        // What the home was made with, plus what the person approved since.
+        self.own_meta()
+            .map(|m| super::home::HomeScope::from_labels(&m.labels))
+            .unwrap_or_default()
+            .with_grants(super::home::read_grants(
+                self.spaces().home_dir(),
+                &self.space,
+            ))
+    }
+
+    /// The Spaces outside the caller's subtree that an agent home may see:
+    /// the ones the person @mentioned, or all once the person approved
+    /// listing all. Read only: they are never resolved by the calls that
+    /// change or connect to a Space.
+    fn granted_records(&self, seen: &[pb::Space]) -> Result<Vec<pb::Space>, Status> {
+        let scope = self.home_scope();
+        if !scope.is_home {
+            return Ok(Vec::new());
+        }
+        let mut records: Vec<pb::Space> = self
+            .spaces()
+            .registry()
+            .list()
+            .map_err(|e| Status::internal(e.to_string()))?
+            .into_iter()
+            .filter(|r| !seen.iter().any(|s| s.id == r.id) && scope.may_list(&r.id, &r.name))
+            .collect();
+        self.fill(&mut records);
         Ok(records)
     }
 
@@ -203,6 +241,17 @@ impl Scoped {
                 return Err(Status::failed_precondition(format!(
                     "a child goes on this computer, `auto`, one of your computers \
                      (`host:<name>`) or a linked cloud; on={location:?} is not one"
+                )));
+            }
+        }
+        // An agent home puts children on the person's computers only where
+        // the person said so (an approval, or an @mention).
+        if let On::Host(machine) = &on {
+            let scope = self.home_scope();
+            if scope.is_home && !scope.may_use_machine(machine) {
+                return Err(refused(&format!(
+                    "use the computer {machine:?} once the person lets this agent use it \
+                     (ask them, or have them @mention it); for now it can make children here or with `auto`"
                 )));
             }
         }
@@ -414,6 +463,43 @@ impl Scoped {
 
 /// What a create of a child asks of its tree's budget (a child on this
 /// machine costs nothing per hour).
+/// A create refused for a reason the agent can do nothing about, in words it can pass on to the
+/// person: what is missing, and that retrying from inside the Space will not help. The host's own
+/// wording talks to someone at a terminal (`cua cache prune`, a build script); an agent that
+/// repeats it sends the person to commands they do not need.
+pub(crate) fn for_the_agent(status: Status) -> Status {
+    match agent_words(status.message()) {
+        Some(m) => Status::new(status.code(), m),
+        None => status,
+    }
+}
+
+fn agent_words(msg: &str) -> Option<String> {
+    let l = msg.to_lowercase();
+    if l.contains("not enough disk space") {
+        let between = |a: &str, b: &str| -> Option<String> {
+            let from = msg.find(a)? + a.len();
+            let rest = &msg[from..];
+            Some(rest[..rest.find(b)?].trim().to_string())
+        };
+        let needed = between("needs about ", " and").unwrap_or_else(|| "more than is free".into());
+        let free = between("but only ", " is available").unwrap_or_else(|| "too little".into());
+        return Some(format!(
+            "There is not enough free disk on the person's computer to make this computer: it needs about {needed} and only {free} is free. \
+             Nothing in this Space can free it. Tell the person to free disk space on their computer (delete computers they no longer use in Cua Spaces, \
+             or empty the Trash) and then try again. A Linux computer needs far less, if that can do the job."
+        ));
+    }
+    if l.contains("cua-netgw") && (l.contains("not installed") || l.contains("ships next to")) {
+        return Some(
+            "This installation of Cua Spaces is missing its network gateway, which a child computer needs so its network stays inside its parent's limits. \
+             That is a problem with the install, not with the request: tell the person to update Cua Spaces. Trying again will not help."
+                .into(),
+        );
+    }
+    None
+}
+
 fn ask_of(r: &pb::CreateSpaceRequest) -> super::budget::Ask {
     super::budget::Ask {
         vcpus: if r.cpus == 0 { 2 } else { r.cpus },
@@ -549,8 +635,11 @@ impl SpaceService for Scoped {
     }
 
     async fn list_spaces(&self, _: Request<pb::ListSpacesRequest>) -> R<pb::ListSpacesResponse> {
+        let mut spaces = self.subtree_records()?;
+        let granted = self.granted_records(&spaces)?;
+        spaces.extend(granted);
         Ok(Response::new(pb::ListSpacesResponse {
-            spaces: self.subtree_records()?,
+            spaces,
             ..Default::default()
         }))
     }
@@ -612,7 +701,11 @@ impl SpaceService for Scoped {
         let _held = super::admit(&self.shared, &claims.root, ask).inspect_err(|e| {
             self.audit("refuse", &name, e.message());
         })?;
-        let resp = self.owner().create_space(Request::new(child)).await?;
+        let resp = self
+            .owner()
+            .create_space(Request::new(child))
+            .await
+            .map_err(for_the_agent)?;
         if let Some(s) = &resp.get_ref().space {
             self.audit("spawn", &s.id, &name);
             self.adopt(&claims, &s.id);
@@ -638,11 +731,13 @@ impl SpaceService for Scoped {
             .create_space_stream(Request::new(pb::CreateSpaceStreamRequest {
                 create: Some(child),
             }))
-            .await?
+            .await
+            .map_err(for_the_agent)?
             .into_inner();
         let me = self.clone();
         // The reservation lasts as long as the create's stream.
         let adopted = stream.map(move |item| {
+            let item = item.map_err(for_the_agent);
             let _ = &held;
             if let Ok(pb::CreateSpaceStreamResponse {
                 event: Some(pb::create_space_stream_response::Event::Result(r)),
@@ -1184,5 +1279,37 @@ impl cua_proto::daemon::v1::share_service_server::ShareService for Scoped {
         _: Request<pb::RemoveShareEdgeRequest>,
     ) -> R<pb::RemoveShareEdgeResponse> {
         Err(refused("share settings are the owner's"))
+    }
+}
+
+#[cfg(test)]
+mod agent_words_tests {
+    use super::*;
+
+    #[test]
+    fn a_full_disk_is_said_for_the_person_not_the_terminal() {
+        let m = "not enough disk space to pull ghcr.io/trycua/macos:26: it needs about 55.0 GiB and cua keeps 5.0 GiB free, but only 24.5 GiB is available on /Users/a/.cua (run `cua cache prune` to free space, or lower CUA_DISK_MIN_FREE)";
+        let w = agent_words(m).unwrap();
+        assert!(
+            w.contains("needs about 55.0 GiB") && w.contains("only 24.5 GiB is free"),
+            "{w}"
+        );
+        assert!(!w.contains("cache prune") && !w.contains("CUA_DISK_MIN_FREE"));
+        assert!(w.contains("Tell the person"));
+    }
+
+    #[test]
+    fn a_missing_gateway_is_an_install_problem() {
+        let w = agent_words("cua-netgw is missing: the network gateway ships next to `cua`; set CUA_NETGW to its path (libs/cua/netgw/build.sh builds it)").unwrap();
+        assert!(w.contains("update Cua Spaces") && !w.contains("build.sh"));
+    }
+
+    #[test]
+    fn other_errors_pass_through() {
+        assert!(agent_words("the budget is spent").is_none());
+        assert_eq!(
+            for_the_agent(Status::resource_exhausted("the budget is spent")).message(),
+            "the budget is spent"
+        );
     }
 }

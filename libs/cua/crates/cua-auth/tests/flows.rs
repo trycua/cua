@@ -9,8 +9,9 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 #[derive(Default)]
 struct State {
     pkce_ok: bool,
-    challenge: Option<String>,
-    redirect: Option<String>,
+    /// Each browser attempt's PKCE challenge, by its redirect URI (every
+    /// attempt has its own listener port), as a real issuer keeps per-request state.
+    attempts: std::collections::HashMap<String, String>,
     refreshes: u32,
     revoked: bool,
     refresh_dead: bool,
@@ -102,8 +103,11 @@ async fn issuer(state: Arc<Mutex<State>>) -> String {
                             let u = url::Url::parse(&format!("http://x{target}")).unwrap();
                             let q: std::collections::HashMap<String, String> =
                                 u.query_pairs().into_owned().collect();
-                            g.challenge = q.get("code_challenge").cloned();
-                            g.redirect = q.get("redirect_uri").cloned();
+                            if let (Some(r), Some(c)) =
+                                (q.get("redirect_uri"), q.get("code_challenge"))
+                            {
+                                g.attempts.insert(r.clone(), c.clone());
+                            }
                             if g.pkce_ok {
                                 (200, json!({}))
                             } else {
@@ -118,8 +122,8 @@ async fn issuer(state: Arc<Mutex<State>>) -> String {
                         ("POST", "/token") => match form(&body, "grant_type").as_deref() {
                             Some("authorization_code") => {
                                 let v = form(&body, "code_verifier").unwrap_or_default();
-                                if Some(cua_auth::pkce_challenge(&v)) != g.challenge
-                                    || form(&body, "redirect_uri") != g.redirect
+                                let r = form(&body, "redirect_uri").unwrap_or_default();
+                                if Some(&cua_auth::pkce_challenge(&v)) != g.attempts.get(&r)
                                     || form(&body, "code").as_deref() != Some("code-1")
                                 {
                                     (400, json!({"error": "invalid_grant"}))
@@ -340,4 +344,167 @@ async fn a_refresh_lost_to_another_process_keeps_its_rotated_session() {
     );
     // The other process's session survives.
     assert_eq!(store.load().unwrap(), Some(fresh));
+}
+
+/// The browser attempt `p`'s redirect URI and state.
+fn redirect_of(p: &cua_auth::PendingLogin) -> (String, String) {
+    let u = url::Url::parse(&p.url).unwrap();
+    let q: std::collections::HashMap<String, String> = u.query_pairs().into_owned().collect();
+    (q["redirect_uri"].clone(), q["state"].clone())
+}
+
+#[tokio::test]
+async fn a_browser_sign_in_that_cannot_be_saved_says_so_on_the_page_too() {
+    let st = Arc::new(Mutex::new(State {
+        pkce_ok: true,
+        ..Default::default()
+    }));
+    let url = issuer(st).await;
+    let d = tempfile::tempdir().unwrap();
+    // The store's directory is a file: every write fails, as a locked
+    // keychain's or a denied prompt's would.
+    let blocker = d.path().join("not-a-directory");
+    std::fs::write(&blocker, b"x").unwrap();
+    let s = Arc::new(Session::new(
+        Oidc::new(&url, "cua-cli"),
+        Store::File(blocker.join("credentials.json")),
+    ));
+    let p = s.begin_login(Flow::Browser).await.unwrap();
+    let (redirect, state) = redirect_of(&p);
+    let s2 = s.clone();
+    let done = tokio::spawn(async move { s2.finish_login(p).await });
+    let r = reqwest::get(format!("{redirect}?code=code-1&state={state}"))
+        .await
+        .unwrap();
+    let (status, page) = (r.status().as_u16(), r.text().await.unwrap());
+    let e = done.await.unwrap().unwrap_err();
+    assert!(matches!(e, cua_auth::Error::Store(_)), "{e}");
+    // Never "You're signed in" for a session the app then reports as lost.
+    assert_eq!(status, 500);
+    assert!(page.contains("couldn't be saved"), "{page}");
+    assert!(page.contains("Sign-in couldn't be saved"), "{page}");
+    assert!(!page.contains("You're signed in"), "{page}");
+    assert!(s.credentials().is_err() || s.credentials().unwrap().is_none());
+}
+
+#[tokio::test]
+async fn a_browser_sign_in_the_issuer_fails_says_it_did_not_finish() {
+    let st = Arc::new(Mutex::new(State {
+        pkce_ok: true,
+        ..Default::default()
+    }));
+    let url = issuer(st).await;
+    let d = tempfile::tempdir().unwrap();
+    let s = Arc::new(session(&url, d.path()));
+    let p = s.begin_login(Flow::Browser).await.unwrap();
+    let (redirect, state) = redirect_of(&p);
+    let s2 = s.clone();
+    let done = tokio::spawn(async move { s2.finish_login(p).await });
+    let r = reqwest::get(format!(
+        "{redirect}?error=server_error&error_description=boom&state={state}"
+    ))
+    .await
+    .unwrap();
+    let page = r.text().await.unwrap();
+    let e = done.await.unwrap().unwrap_err();
+    assert!(e.to_string().contains("boom"), "{e}");
+    assert!(page.contains("Sign-in didn't finish"), "{page}");
+    assert!(!page.contains("You're signed in"), "{page}");
+    assert!(s.credentials().unwrap().is_none());
+}
+
+#[tokio::test]
+async fn a_browser_sign_in_saves_before_the_page_says_signed_in() {
+    let st = Arc::new(Mutex::new(State {
+        pkce_ok: true,
+        ..Default::default()
+    }));
+    let url = issuer(st).await;
+    let d = tempfile::tempdir().unwrap();
+    let s = Arc::new(session(&url, d.path()));
+    let p = s.begin_login(Flow::Browser).await.unwrap();
+    let (redirect, state) = redirect_of(&p);
+    let s2 = s.clone();
+    let done = tokio::spawn(async move { s2.finish_login(p).await });
+    let r = reqwest::get(format!("{redirect}?code=code-1&state={state}"))
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 200);
+    // By the time the page answers, the session is on disk.
+    assert!(s.credentials().unwrap().is_some());
+    let id = done.await.unwrap().unwrap();
+    assert_eq!(id.email.as_deref(), Some("t@example.com"));
+}
+
+#[tokio::test]
+async fn a_stopped_sign_in_closes_its_listener() {
+    let st = Arc::new(Mutex::new(State {
+        pkce_ok: true,
+        ..Default::default()
+    }));
+    let url = issuer(st.clone()).await;
+    let d = tempfile::tempdir().unwrap();
+    let s = session(&url, d.path());
+    let p = s.begin_login(Flow::Browser).await.unwrap();
+    let (redirect, _) = redirect_of(&p);
+    let stop = p.canceller();
+    let done = tokio::spawn(tokio::time::timeout(
+        std::time::Duration::from_secs(20),
+        p.complete(),
+    ));
+    stop.cancel();
+    let e = done.await.unwrap().unwrap().unwrap_err();
+    assert!(matches!(e, cua_auth::Error::Timeout(_)), "{e}");
+    assert!(e.to_string().starts_with(cua_auth::LOGIN_STOPPED), "{e}");
+    // Nothing listens on the old port any more: no stale listener.
+    let port = url::Url::parse(&redirect).unwrap().port().unwrap();
+    assert!(
+        tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .is_err(),
+        "the stopped sign-in still listens on {port}"
+    );
+
+    // A code sign-in stopped before it finishes never polls on.
+    let st = Arc::new(Mutex::new(State::default()));
+    let url = issuer(st).await;
+    let p = session(&url, d.path())
+        .begin_login(Flow::Device)
+        .await
+        .unwrap();
+    p.canceller().cancel();
+    let e = p.complete().await.unwrap_err();
+    assert!(e.to_string().starts_with(cua_auth::LOGIN_STOPPED), "{e}");
+}
+
+#[tokio::test]
+async fn an_earlier_tab_still_signs_in_after_a_retry() {
+    let st = Arc::new(Mutex::new(State {
+        pkce_ok: true,
+        ..Default::default()
+    }));
+    let url = issuer(st).await;
+    let d = tempfile::tempdir().unwrap();
+    let s = Arc::new(session(&url, d.path()));
+    // "Sign in", then "Try again" before the first tab finished: each
+    // attempt has its own port, so neither tab reaches the other's listener.
+    let first = s.begin_login(Flow::Browser).await.unwrap();
+    let retry = s.begin_login(Flow::Browser).await.unwrap();
+    let (r1, s1) = redirect_of(&first);
+    let (r2, _) = redirect_of(&retry);
+    assert_ne!(r1, r2);
+    let stop_retry = retry.canceller();
+    let (a, b) = (s.clone(), s.clone());
+    let first_done = tokio::spawn(async move { a.finish_login(first).await });
+    let retry_done = tokio::spawn(async move { b.finish_login(retry).await });
+    let r = reqwest::get(format!("{r1}?code=code-1&state={s1}"))
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 200);
+    assert!(first_done.await.unwrap().is_ok());
+    // The caller stops the other attempt once one signed in.
+    stop_retry.cancel();
+    let e = retry_done.await.unwrap().unwrap_err();
+    assert!(e.to_string().starts_with(cua_auth::LOGIN_STOPPED), "{e}");
+    assert!(s.credentials().unwrap().is_some());
 }

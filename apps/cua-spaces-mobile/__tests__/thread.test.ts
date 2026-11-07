@@ -56,3 +56,27 @@ describe("foldThread", () => {
     expect(readSeqFrom(entries, 0, ME.id)).toBe(3);
   });
 });
+
+describe("every agent message and the child agents", () => {
+  const t0 = 2_000_000;
+  const task = entry(1, t0, SAM, "@claude do the thing", { task: { to: "claude", session: null }, mentions: ["claude"] });
+  const said = (seq: number, text: string) => entry(seq, t0 + seq, CLAUDE, text, { replyTo: 1 });
+  const note = (seq: number, child: unknown) => entry(seq, t0 + seq, CUA, "note", { kind: "system", child } as never);
+
+  it("keeps each message in order, including one after the task closed", () => {
+    const items = foldThread([task, said(2, "On it."), said(3, "Found them."), said(4, "Late news.")], { me: ME.id });
+    expect(items.filter((i) => i.type === "message").map((i) => (i as { entry: { text: string } }).entry.text)).toEqual(["On it.", "Found them.", "Late news."]);
+  });
+
+  it("folds a subagent's notes into one row with its latest state, and draws a child Space", () => {
+    const sub = (seq: number, state: string) => note(seq, { kind: "subagent", id: "t1", agent: "claude", title: "Map", state, steps: 2, result: null, startedMs: null, endedMs: null });
+    const items = foldThread([task, said(2, "Started."), sub(3, "running"), sub(4, "done"), note(5, { kind: "child_space", space: "local:s", name: "s", os: "Linux", agent: "claude" })], { me: ME.id });
+    expect(items.map((i) => i.type)).toEqual(["task", "message", "subagent", "child_space"]);
+    expect((items[2] as { sub: { state: string } }).sub.state).toBe("done");
+  });
+
+  it("reads the live children from the daemon", () => {
+    const p = threadPageFromTool({ entries: [], cursor: 1, caught_up: true, unread: 0, role: "owner", live: { key: "k", agents: [{ agent: "@claude", stage: "thinking", children: [{ id: "t1", title: "Map", steps: 1, step: "Ran ls" }] }] } });
+    expect(p.live.agents[0]!.children).toEqual([{ id: "t1", title: "Map", steps: 1, step: "Ran ls" }]);
+  });
+});

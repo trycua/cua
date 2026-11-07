@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Installed-product identity.
 //!
 //! Release and source builds deliberately use different executable/app names.
@@ -106,7 +109,7 @@ pub fn is_executable_inside_cuadriver_app() -> bool {
 
 /// Returns `true` when the env var is one of `1|true|yes|on`
 /// (case-insensitive). Anything else, including unset, is falsy.
-#[cfg(target_os = "windows")]
+#[cfg(all(target_os = "windows", test))]
 pub fn is_env_truthy(name: &str) -> bool {
     match crate::env_vars::var(name) {
         Some(value) => matches!(

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Focus-free keyboard injection into terminals the driver launched, by
 //! borrowing the terminal emulator's PTY *master* fd and writing bytes to it.
 //! The kernel delivers them to the slave (the shell's stdin) exactly as if

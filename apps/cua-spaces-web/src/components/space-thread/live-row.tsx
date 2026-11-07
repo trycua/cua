@@ -18,6 +18,7 @@ import { useEffect, useRef } from "react";
 import type { LiveAgent } from "@/bridge";
 
 import { MemberAvatar } from "./avatar";
+import { LiveChildren } from "./child-rows";
 import type { Roster } from "./roster";
 import { ThreadText } from "./thread-view";
 
@@ -90,6 +91,7 @@ export function LiveRows({ live, roster }: { live: readonly LiveAgent[]; roster:
                 <Dots /> <WorkingFor sinceMs={a.sinceMs} />
               </p>
             </div>
+            <LiveChildren children={a.children ?? []} />
           </div>
         );
       })}

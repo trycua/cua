@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Native AT-SPI access over D-Bus via the `atspi` crate (zbus).
 //!
 //! Replaces the previous `python3 -c "import pyatspi; ..."` subprocess bridge:
@@ -162,6 +165,9 @@ pub(crate) const INPUT_QUERY_BUDGET: Duration = Duration::from_millis(1500);
 /// snapshot answers it. Larger than [`INPUT_QUERY_BUDGET`] because the caller
 /// named a specific element and a miss is an error, not a fallback.
 pub(crate) const INDEX_RESOLVE_BUDGET: Duration = Duration::from_secs(6);
+/// Budget the toolkit lookup in front of an EditableText write leaves unspent,
+/// so the write itself still answers before the operation's deadline.
+const EDITABLE_WRITE_RESERVE: Duration = Duration::from_millis(250);
 
 /// Emit a one-line diagnostic to stderr when `CUA_ATSPI_DEBUG` is set. The
 /// driver's stderr is surfaced in the test logs, so this is how we see what the
@@ -1427,7 +1433,7 @@ async fn resolve_window_frame(
 /// - `max_depth = None` keeps depth uncapped (the historical behaviour);
 ///   `Some(d)` skips enqueueing children whose depth would exceed `d`.
 ///
-/// Issue #22865: caps protect against Electron / large web apps that produce
+/// These caps protect against Electron / large web apps that produce
 /// 10k+ element trees and blow context windows.
 async fn collect_visited_bounded<'a>(
     conn: &'a AccessibilityConnection,
@@ -1868,7 +1874,7 @@ async fn collect_visited_bounded_opts<'a>(
         let child_in_web_doc = in_web_doc || is_document_role(&role);
 
         // Enqueue children (fetched above) before moving `acc` into `visited`.
-        // Honor max_depth (#22865): skip enqueueing descendants whose depth
+        // Honor max_depth: skip enqueueing descendants whose depth
         // would exceed the cap.
         let descend = max_depth.map(|d| depth < d).unwrap_or(true);
         // A menu that is not open (a menubar entry that is not expanded, or
@@ -2510,7 +2516,7 @@ pub struct WalkedTree {
 
 /// Walk the AT-SPI tree with caller-supplied node + depth caps.
 /// `max_elements = None` keeps the historical 5 000-node default; `max_depth
-/// = None` keeps the historical unbounded depth. Issue #22865.
+/// = None` keeps the historical unbounded depth.
 pub fn walk_tree_bounded(
     pid: u32,
     xid: u64,
@@ -2896,11 +2902,15 @@ async fn write_into_editable_acc(
         .proxies()
         .await
         .map_err(|e| anyhow!("interface proxies unavailable: {e}"))?;
+    let Some(len) = editable_insert_length_for(text, toolkit_of(acc)).await else {
+        dlog!("toolkit unknown, no safe InsertText length for non-ASCII text");
+        return Ok(false);
+    };
 
     // A focus-free EditableText write is the strongest background route. Try it
     // before GrabFocus: WebKitGTK can invalidate the original proxy when focus
     // changes, and writing through that stale object then returns false.
-    if write_through_editable_proxies(&proxies, text).await? {
+    if write_through_editable_proxies(&proxies, text, len).await? {
         return Ok(true);
     }
 
@@ -2923,12 +2933,13 @@ async fn write_into_editable_acc(
         dlog!("Target has no Component interface, skipping GrabFocus");
     }
 
-    write_through_editable_proxies(&proxies, text).await
+    write_through_editable_proxies(&proxies, text, len).await
 }
 
 async fn write_through_editable_proxies(
     proxies: &atspi::proxy::proxy_ext::Proxies<'_>,
     text: &str,
+    len: i32,
 ) -> Result<bool> {
     let et = proxies
         .editable_text()
@@ -2939,7 +2950,6 @@ async fn write_through_editable_proxies(
         Ok(tp) => tp.caret_offset().await.unwrap_or(0),
         Err(_) => 0,
     };
-    let len = text.chars().count() as i32;
 
     if et.insert_text(off, text, len).await.unwrap_or(false) {
         return Ok(true);
@@ -2948,6 +2958,61 @@ async fn write_through_editable_proxies(
         return Ok(true);
     }
     Ok(false)
+}
+
+/// `length` for writing `text`, from the toolkit `lookup` names (polled only
+/// for non-ASCII text). `None` when no length is safe: send nothing rather than
+/// a guess.
+async fn editable_insert_length_for(
+    text: &str,
+    lookup: impl std::future::Future<Output = Option<String>>,
+) -> Option<i32> {
+    if text.is_ascii() {
+        return editable_insert_length(None, text);
+    }
+    let toolkit = before_write_reserve(lookup).await.flatten();
+    editable_insert_length(toolkit.as_deref(), text)
+}
+
+/// Run `lookup` only while it leaves [`EDITABLE_WRITE_RESERVE`] of the budget
+/// for the write; `None` once it would eat into it. A write that went out but
+/// answered after the deadline would be retried as synthetic input and typed
+/// twice.
+async fn before_write_reserve<T>(lookup: impl std::future::Future<Output = T>) -> Option<T> {
+    let budget = remaining_budget().saturating_sub(EDITABLE_WRITE_RESERVE);
+    if budget.is_zero() {
+        return None;
+    }
+    tokio::time::timeout(budget, lookup).await.ok()
+}
+
+/// `length` for `EditableText.InsertText`. The unit depends on the toolkit. Qt
+/// resizes the string to exactly `length` UTF-16 units, so a shorter count drops
+/// the tail and a longer one appends uninitialized memory. GTK and the others
+/// read bytes, the unit the string travels in. ASCII is the same in every unit.
+/// Any other text for an unknown toolkit has no safe length: UTF-16 units cut
+/// GTK short and bytes over-read in Qt.
+fn editable_insert_length(toolkit: Option<&str>, text: &str) -> Option<i32> {
+    let length = match toolkit {
+        _ if text.is_ascii() => text.len(),
+        Some(name) if name.trim().eq_ignore_ascii_case("qt") => text.encode_utf16().count(),
+        Some(_) => text.len(),
+        None => return None,
+    };
+    i32::try_from(length).ok()
+}
+
+/// The toolkit behind an element, from its application's root object.
+async fn toolkit_of(acc: &AccessibleProxy<'_>) -> Option<String> {
+    let inner = acc.inner();
+    let application = atspi::proxy::application::ApplicationProxy::builder(inner.connection())
+        .cache_properties(zbus::proxy::CacheProperties::No)
+        .destination(inner.destination().to_owned())
+        .ok()?
+        .build()
+        .await
+        .ok()?;
+    call(application.toolkit_name()).await?.ok()
 }
 
 /// Write into the best editable exposed by the current AT-SPI tree without
@@ -4118,16 +4183,9 @@ async fn decoration_frame_origin(
 }
 
 async fn toolkit_measures_from_frame(app: &AccessibleProxy<'_>) -> bool {
-    let Some(Ok(proxies)) = call(app.proxies()).await else {
-        return false;
-    };
-    let Some(Ok(application)) = call(proxies.application()).await else {
-        return false;
-    };
-    let Some(Ok(name)) = call(application.toolkit_name()).await else {
-        return false;
-    };
-    is_frame_coordinate_toolkit(&name)
+    toolkit_of(app)
+        .await
+        .is_some_and(|name| is_frame_coordinate_toolkit(&name))
 }
 
 /// VCL (LibreOffice) measures `Window` coordinates from the WM frame, title
@@ -5410,10 +5468,13 @@ async fn set_value_on(
             Ok(tp) => tp.caret_offset().await.unwrap_or(0),
             Err(_) => 0,
         };
-        let len = value.chars().count() as i32;
-        if et.insert_text(off, value, len).await.unwrap_or(false) {
-            commit_editable_write(&proxies).await;
-            return Ok(());
+        match editable_insert_length_for(value, toolkit_of(acc)).await {
+            Some(len) if et.insert_text(off, value, len).await.unwrap_or(false) => {
+                commit_editable_write(&proxies).await;
+                return Ok(());
+            }
+            Some(_) => {}
+            None => dlog!("toolkit unknown, no safe InsertText length for non-ASCII value"),
         }
     }
     if has_value {
@@ -5534,6 +5595,64 @@ pub enum OptionPick {
     Unavailable,
 }
 
+/// A pick was sent to the toolkit, which then failed or did not answer in
+/// time: the option may be set. Not a failure to route around
+/// or report as "nothing changed".
+#[derive(Debug)]
+pub struct OptionPickSent(pub String);
+impl std::fmt::Display for OptionPickSent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+impl std::error::Error for OptionPickSent {}
+
+/// Send a pick and read the toolkit's answer: `true` picked, `false` refused
+/// (nothing changed). A reply saying the option is gone means it never ran.
+/// Any other error reply, or no answer, is [`OptionPickSent`].
+async fn send_pick(
+    request: &str,
+    name: &str,
+    pick: impl std::future::Future<Output = atspi::zbus::Result<bool>>,
+) -> Result<OptionPick> {
+    // `call` gives up without sending once the deadline has passed.
+    if deadline_passed() {
+        return Err(anyhow!(
+            "{request} for option {name:?} was not sent in time"
+        ));
+    }
+    let error = match call(pick).await {
+        Some(Ok(true)) => {
+            return Ok(OptionPick::Picked {
+                name: name.to_owned(),
+            })
+        }
+        Some(Ok(false)) => return Err(anyhow!("{request} was refused for option {name:?}")),
+        Some(Err(error)) => error,
+        None => {
+            return Err(OptionPickSent(format!(
+                "{request} for option {name:?} did not answer in time"
+            ))
+            .into())
+        }
+    };
+    let failed = format!("{request} for option {name:?} failed: {error}");
+    match &error {
+        atspi::zbus::Error::MethodError(reply, ..)
+            if matches!(
+                reply.as_str(),
+                "org.freedesktop.DBus.Error.UnknownObject"
+                    | "org.freedesktop.DBus.Error.UnknownMethod"
+                    | "org.freedesktop.DBus.Error.UnknownInterface"
+                    | "org.freedesktop.DBus.Error.ServiceUnknown"
+            ) =>
+        {
+            Err(anyhow!(failed))
+        }
+        _ => Err(OptionPickSent(failed).into()),
+    }
+}
+
 struct OptionNode {
     oref: RawObjectRef,
     name: String,
@@ -5641,18 +5760,12 @@ pub fn select_option_ref(object_ref: &ObjectRef, value: &str) -> Result<OptionPi
                 .selection()
                 .await
                 .map_err(|e| anyhow!("Selection unavailable: {e}"))?;
-            match call(selection.select_child(option.index)).await {
-                Some(Ok(true)) => Ok(OptionPick::Picked {
-                    name: option.name.clone(),
-                }),
-                Some(Ok(false)) => Err(anyhow!(
-                    "Selection.SelectChild({}) was refused for option {:?}",
-                    option.index,
-                    option.name
-                )),
-                Some(Err(e)) => Err(anyhow!("Selection.SelectChild failed: {e}")),
-                None => Err(anyhow!("Selection.SelectChild did not answer in time")),
-            }
+            send_pick(
+                &format!("Selection.SelectChild({})", option.index),
+                &option.name,
+                selection.select_child(option.index),
+            )
+            .await
         },
         || Err(anyhow!("select option (cached element) timed out")),
     )
@@ -5696,14 +5809,12 @@ pub fn activate_option_ref(object_ref: &ObjectRef, value: &str) -> Result<Option
             let chosen = activation_index(&role, &actions).ok_or_else(|| {
                 anyhow!("option {:?} advertises no activation action", option.name)
             })?;
-            match call(ap.do_action(chosen as i32)).await {
-                Some(Ok(true)) => Ok(OptionPick::Picked {
-                    name: option.name.clone(),
-                }),
-                Some(Ok(false)) => Err(anyhow!("option {:?} refused its action", option.name)),
-                Some(Err(e)) => Err(anyhow!("option action failed: {e}")),
-                None => Err(anyhow!("option action did not answer in time")),
-            }
+            send_pick(
+                "the option's action",
+                &option.name,
+                ap.do_action(chosen as i32),
+            )
+            .await
         },
         || Err(anyhow!("activate option (cached element) timed out")),
     )
@@ -8678,5 +8789,92 @@ mod token_scope_tests {
         )
         .is_ok());
         assert!(window_element_membership(Some(0), None, proven(None, vec![REQUESTED_B])).is_ok());
+    }
+}
+
+#[cfg(test)]
+mod editable_insert_length_tests {
+    use super::{
+        editable_insert_length, editable_insert_length_for, EDITABLE_WRITE_RESERVE, OP_DEADLINE,
+    };
+    use std::time::Duration;
+    use tokio::time::{sleep, Instant};
+
+    async fn answers_after(delay: Duration, toolkit: &str) -> Option<String> {
+        sleep(delay).await;
+        Some(toolkit.to_owned())
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_delayed_lookup_sends_no_length_and_leaves_the_write_its_reserve() {
+        let deadline = Instant::now() + Duration::from_millis(400);
+        OP_DEADLINE
+            .scope(deadline, async {
+                let lookup = answers_after(Duration::from_secs(1), "GTK");
+                assert_eq!(editable_insert_length_for("ñ🙂ab", lookup).await, None);
+                assert_eq!(deadline - Instant::now(), EDITABLE_WRITE_RESERVE);
+            })
+            .await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn no_lookup_runs_when_only_the_reserve_is_left() {
+        let deadline = Instant::now() + EDITABLE_WRITE_RESERVE;
+        OP_DEADLINE
+            .scope(deadline, async {
+                let lookup = answers_after(Duration::ZERO, "GTK");
+                assert_eq!(editable_insert_length_for("ñ🙂ab", lookup).await, None);
+                assert_eq!(Instant::now() + EDITABLE_WRITE_RESERVE, deadline);
+            })
+            .await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_failed_lookup_sends_no_length_for_non_ascii_text() {
+        OP_DEADLINE
+            .scope(Instant::now() + Duration::from_secs(1), async {
+                let failed = async { None };
+                assert_eq!(editable_insert_length_for("ñ🙂ab", failed).await, None);
+            })
+            .await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_prompt_lookup_names_the_unit_and_ascii_needs_none() {
+        OP_DEADLINE
+            .scope(Instant::now() + Duration::from_secs(1), async {
+                let gtk = answers_after(Duration::from_millis(10), "GTK");
+                assert_eq!(editable_insert_length_for("ñ🙂ab", gtk).await, Some(8));
+                let qt = answers_after(Duration::from_millis(10), "Qt");
+                assert_eq!(editable_insert_length_for("ñ🙂ab", qt).await, Some(5));
+                let never = std::future::pending();
+                assert_eq!(editable_insert_length_for("abc", never).await, Some(3));
+            })
+            .await;
+    }
+
+    #[test]
+    fn qt_gets_utf16_units_because_it_resizes_the_string_to_exactly_that() {
+        // Measured on Qt 6: 4 drops the last character, 8 appends garbage.
+        assert_eq!(editable_insert_length(Some("Qt"), "ñ🙂ab"), Some(5));
+        assert_eq!(editable_insert_length(Some("qt"), "ok"), Some(2));
+    }
+
+    #[test]
+    fn every_other_toolkit_gets_bytes() {
+        for toolkit in ["GTK", "gail", "Chromium"] {
+            assert_eq!(
+                editable_insert_length(Some(toolkit), "ñ🙂ab"),
+                Some(8),
+                "{toolkit}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_unknown_toolkit_gets_no_length_for_text_the_units_disagree_on() {
+        // GTK reads bytes (8) and Qt UTF-16 units (5): either guess breaks one.
+        assert_eq!(editable_insert_length(None, "ñ🙂ab"), None);
+        assert_eq!(editable_insert_length(None, "abc"), Some(3));
     }
 }

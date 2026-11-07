@@ -206,9 +206,18 @@ struct Args {
     /// device, a re-key of a computer it already has, or (verified email) a
     /// sign-in proving MFA; any other new device needs an approval from an
     /// enrolled device. Off by default: a fresh sign-in enrolls any device
-    /// of the account.
-    #[arg(long, env = "CUA_RELAY_DEVICE_REQUIRE_APPROVAL")]
-    device_require_approval: bool,
+    /// of the account. `phones` applies the strict rule only to phone-class
+    /// devices (enrolled by a `CUA_RELAY_PHONE_CLIENTS` client or reporting
+    /// a phone platform); every other device keeps the default. It needs
+    /// `CUA_RELAY_PUSH=on` and a non-empty `CUA_RELAY_PHONE_CLIENTS`.
+    #[arg(
+        long,
+        env = "CUA_RELAY_DEVICE_REQUIRE_APPROVAL",
+        num_args = 0..=1,
+        default_missing_value = "true",
+        default_value = "false"
+    )]
+    device_require_approval: String,
     /// Devices and audit log file (default: `<state file>.devices.json`).
     #[arg(long, env = "CUA_RELAY_DEVICES_FILE")]
     devices_file: Option<std::path::PathBuf>,
@@ -611,6 +620,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     } else {
         None
     };
+    let (require_approval, approval_phones_only) =
+        cua_relay::devices::DevicePolicy::parse_approval(&args.device_require_approval)?;
+    cua_relay::devices::DevicePolicy::check_approval_scope(
+        approval_phones_only,
+        push.as_ref().map(|p| p.phone_clients()),
+    )?;
     let relay = Relay::try_new(RelayConfig {
         tcp_shares,
         push,
@@ -637,7 +652,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             ttl_secs: args.device_ttl_days.max(1) * 86_400,
             grace_secs: args.device_grace_days * 86_400,
             bootstrap_max_auth_age_secs: args.device_bootstrap_max_auth_age_secs,
-            require_approval: args.device_require_approval,
+            require_approval,
+            approval_phones_only,
             ..cua_relay::devices::DevicePolicy::default()
         },
         devices_file: args.devices_file,

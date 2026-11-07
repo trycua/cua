@@ -12,7 +12,6 @@ import {
   normalizePairingCode,
   pairingLinkRelay,
   teamName,
-  useFlag,
   useJoinWithCode,
   useMachines,
   usePairingCode,
@@ -33,6 +32,7 @@ import { Segmented } from "@/components/ui/segmented";
 import { Select } from "@/components/ui/select";
 import { UpgradeCard } from "@/components/upgrade-card";
 import { cn } from "@/lib/utils";
+import { THIS_MACHINE } from "@/bridge/host-os";
 
 /** Where Cua Spaces is downloaded; the page picks the download for the computer that opens it. */
 export const INSTALL_URL = "https://cua.ai/install";
@@ -252,9 +252,10 @@ function computerIds(list: readonly Machine[]): Set<string> {
   return new Set(list.filter((m) => !m.device).map((m) => m.id));
 }
 
-/** "This Mac" on a Mac, else "This computer". */
+/** What this computer is called, in the words of its own system ("This Mac", "This PC", "This machine"). */
 function thisComputerName(list: readonly Machine[]): string {
-  return list.find((m) => m.current)?.os === "macos" ? "This Mac" : "This machine";
+  const os = list.find((m) => m.current)?.os;
+  return os === "macos" || os === "windows" || os === "linux" ? THIS_MACHINE[os] : "This machine";
 }
 
 /* ---- The first page: the methods -------------------------------------------------- */
@@ -439,9 +440,8 @@ function Footer({
   const { openExternal } = useSession();
   const team = pairing.team;
   const limit = team?.phase === "failed" && team.upgradeUrl ? (team.kind ?? "other") : null;
-  // Behind `upsell_cards`: a team owner out of seats or computers gets the
-  // limit card (only an owner gets the checkout link) instead of Upgrade.
-  const cards = useFlag("upsell_cards");
+  // A team owner out of seats or computers gets the limit card (only an owner
+  // gets the checkout link) instead of Upgrade.
   const failedText = team?.phase === "failed" ? (team.error ?? "") : "";
   const cardReason: "seats" | "machines" | null = !limit
     ? null
@@ -450,7 +450,7 @@ function Footer({
       : limit === "machines" || /as many machines as it has seats/.test(failedText)
         ? "machines"
         : null;
-  const asCard = cards && cardReason !== null;
+  const asCard = cardReason !== null;
   const shownLimit = useRef<string | null>(null);
   useEffect(() => {
     if (!limit) shownLimit.current = null;

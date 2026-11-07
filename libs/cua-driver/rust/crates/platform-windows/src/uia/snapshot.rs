@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use super::UiaNode;
 use cua_driver_core::snapshot_store::{SnapshotPayload, SnapshotStore};
 use windows::core::Interface;

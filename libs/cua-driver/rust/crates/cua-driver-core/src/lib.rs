@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Platform-independent Driver core and dual-era MCP dispatch.
 //!
 //! Stdio supports legacy initialization and modern per-request negotiation.
@@ -57,6 +60,7 @@ pub fn parent_liveness_stdin_enabled() -> bool {
 pub mod action_record;
 pub mod action_target;
 pub mod agent_cursor;
+pub mod app_names;
 pub mod authorization;
 pub mod background_input;
 pub mod batch_nudge;

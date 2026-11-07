@@ -289,7 +289,9 @@ try {
 const state = {
   status: "starting",
   turn: prev.turn ?? 0,
-  sessionId: prev.sessionId ?? null,
+  // A run that continues the agent's own earlier session (`resume`, from agent_start's
+  // resume_session) reloads it like a restarted run reloads its own.
+  sessionId: prev.sessionId ?? (!cfg.durable && typeof cfg.resume?.sessionId === "string" ? cfg.resume.sessionId : null),
   runnerPid: process.pid,
   agentPid: null,
   stopReason: prev.stopReason ?? null,
@@ -981,7 +983,13 @@ if (durable) {
   for (const q of plan.unstarted) first.push({ op: "prompt", text: q.text, files: q.files ?? [], msgId: q.msgId });
   queue.push(...first);
 } else if (cfg.prompt && !prev.sessionId) {
-  queue.push({ op: "prompt", text: cfg.prompt, files: cfg.files ?? [] });
+  queue.push({ op: "prompt", text: cfg.prompt, files: cfg.files ?? [], first: true });
+}
+
+/** The first prompt of a run whose earlier session could not be reloaded: the earlier conversation goes first. */
+export function withResumeContext(text, context) {
+  if (typeof context !== "string" || !context.trim()) return text;
+  return `[cua] The agent could not reload this chat's earlier session, so here is what was said in it so far. This note is automatic; it is not from the user.\n\n${context.trim()}\n\n[cua] The user's next message:\n\n${text}`;
 }
 
 function drainInbox() {
@@ -1170,6 +1178,11 @@ async function drive(a) {
       configOptions = res.configOptions ?? null;
     }
     if (stale()) return;
+    // The earlier session of a `resume` run is gone: the first prompt carries the earlier conversation instead.
+    if (!resumed && !durable && cfg.resume?.sessionId && wantSession === cfg.resume.sessionId) {
+      const first = queue.find((q) => q.first);
+      if (first) first.text = withResumeContext(first.text, cfg.resume.context);
+    }
     save({ sessionId, status: "idle", ...(durable ? { degraded: state.degraded || degraded } : {}) });
     emit("session", { sessionId, resumed, modes });
 

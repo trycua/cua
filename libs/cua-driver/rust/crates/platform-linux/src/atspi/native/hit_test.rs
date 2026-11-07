@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Point ownership for element clicks.
 //!
 //! A snapshot frame is where the toolkit *said* an element is; a real pointer

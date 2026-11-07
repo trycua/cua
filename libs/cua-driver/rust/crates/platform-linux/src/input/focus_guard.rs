@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Background non-invasiveness safety net for X11.
 //!
 //! A `delivery_mode:"background"` action must leave the user's desktop as it
@@ -518,16 +521,19 @@ impl FocusSnapshot {
         })
     }
 
-    fn diff(&self, x: &X) -> Vec<String> {
+    /// What moved since capture. PointerRoot (1) / None (0) focus and a
+    /// cleared active window are transient while the WM moves focus, so they
+    /// are skipped unless `strict`: the foreground restore owes back exactly
+    /// the saved focus.
+    fn diff(&self, x: &X, strict: bool) -> Vec<String> {
         let mut changes = Vec::new();
         let (focus, _) = x.core_focus();
-        // PointerRoot (1) / None (0) are transient states while the WM moves
-        // focus; the settle loop sees the final value.
-        if focus > 1 && focus != self.core_focus {
+        let known = |now: bool, saved: bool| now || (strict && saved);
+        if known(focus > 1, self.core_focus > 1) && focus != self.core_focus {
             changes.push(format!("focus 0x{:x}->0x{:x}", self.core_focus, focus));
         }
         let active = x.active_window();
-        if active != self.active && active.is_some() {
+        if active != self.active && known(active.is_some(), self.active.is_some()) {
             changes.push(format!(
                 "active 0x{:x}->0x{:x}",
                 self.active.unwrap_or(0),
@@ -567,7 +573,7 @@ impl FocusSnapshot {
     }
 
     /// The window that held the focus at capture time (active, else core).
-    fn previous_focus_window(&self) -> Option<Window> {
+    pub(crate) fn previous_focus_window(&self) -> Option<Window> {
         self.active
             .or_else(|| (self.core_focus > 1).then_some(self.core_focus))
     }
@@ -589,10 +595,29 @@ impl FocusSnapshot {
         target_pid: Option<u32>,
         settle_watch: bool,
     ) -> FocusGuardReport {
+        self.restore_guarded(target_pid, settle_watch, true)
+            .unwrap_or_default()
+    }
+
+    /// The foreground transaction's restore: `target_pid` attributes a new
+    /// popup's grab, but the same-app rule is off, since a foreground action
+    /// gives the focus back even to a prior window of the target's process.
+    /// `None` when the display could not be opened to restore.
+    pub(crate) fn restore_after_foreground(
+        &self,
+        target_pid: Option<u32>,
+    ) -> Option<FocusGuardReport> {
+        self.restore_guarded(target_pid, false, false)
+    }
+
+    fn restore_guarded(
+        &self,
+        target_pid: Option<u32>,
+        settle_watch: bool,
+        same_app: bool,
+    ) -> Option<FocusGuardReport> {
         let started = Instant::now();
-        let Ok(x) = X::open() else {
-            return FocusGuardReport::default();
-        };
+        let x = X::open().ok()?;
         let mut report = FocusGuardReport::default();
 
         // Settle watch: stop at the first observed change. A new top-level
@@ -607,7 +632,7 @@ impl FocusSnapshot {
             started
         };
         let mut extended = false;
-        let mut changes = self.diff(&x);
+        let mut changes = self.diff(&x, !same_app);
         let mut new_clients = self.new_clients(&x);
         let mut own_window = self.own_new_window(&x, target_pid, &new_clients);
         if !settle_watch && !new_clients.is_empty() && own_window.is_none() {
@@ -618,7 +643,7 @@ impl FocusSnapshot {
             std::thread::sleep(
                 SETTLE_POLL.min(watch_until.saturating_duration_since(Instant::now())),
             );
-            changes = self.diff(&x);
+            changes = self.diff(&x, !same_app);
             new_clients = self.new_clients(&x);
             own_window = self.own_new_window(&x, target_pid, &new_clients);
             if !extended && !new_clients.is_empty() && own_window.is_none() {
@@ -628,10 +653,12 @@ impl FocusSnapshot {
         }
 
         // Popups opened by the action: an open GTK/VCL menu grabs the keyboard.
+        // The driver's own agent-cursor overlay grabs nothing.
         let new_popups: Vec<Window> = x
             .mapped_popups()
             .difference(&self.popups)
             .copied()
+            .filter(|w| !crate::overlay::is_x11_overlay_window(*w))
             .collect();
         if !new_popups.is_empty() {
             report.grab_held_by = new_popups
@@ -643,7 +670,7 @@ impl FocusSnapshot {
         if changes.is_empty() {
             report.same_app_window = own_window;
             report.elapsed_ms = started.elapsed().as_millis() as u64;
-            return report;
+            return Some(report);
         }
         report.changed = true;
         report.changes = changes;
@@ -671,7 +698,7 @@ impl FocusSnapshot {
             && x.active_window() != self.active;
         match guard_restore(
             closed.is_some(),
-            target_pid,
+            target_pid.filter(|_| same_app),
             self.previous_owner,
             new_owner.filter(|_| !wm_only),
             report.grab_held_by.is_some(),
@@ -684,7 +711,7 @@ impl FocusSnapshot {
                     focused: true,
                 });
                 report.elapsed_ms = started.elapsed().as_millis() as u64;
-                return report;
+                return Some(report);
             }
             GuardRestore::SameAppDialog => {
                 let window = focus_window.unwrap_or(0);
@@ -694,11 +721,11 @@ impl FocusSnapshot {
                     focused: true,
                 });
                 report.elapsed_ms = started.elapsed().as_millis() as u64;
-                return report;
+                return Some(report);
             }
             GuardRestore::GrabHeld => {
                 report.elapsed_ms = started.elapsed().as_millis() as u64;
-                return report;
+                return Some(report);
             }
             GuardRestore::Restore => {}
         }
@@ -714,7 +741,7 @@ impl FocusSnapshot {
             std::thread::sleep(
                 RESTORE_POLL.min(deadline.saturating_duration_since(Instant::now())),
             );
-            let now = self.diff(&x);
+            let now = self.diff(&x, !same_app);
             if now.is_empty() {
                 stable += 1;
                 if stable >= STABLE_POLLS {
@@ -737,7 +764,7 @@ impl FocusSnapshot {
             );
         }
         report.elapsed_ms = started.elapsed().as_millis() as u64;
-        report
+        Some(report)
     }
 
     /// The topmost freshly mapped toplevel of the target pid, when the target

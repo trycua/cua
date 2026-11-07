@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Keyboard focus on niri: focusing, confirming and restoring windows, and
 //! the save, focus and restore steps of the shared foreground transaction.
 
@@ -113,22 +116,54 @@ pub(super) fn confirm_focus<C: FnMut(Instant) -> Result<UnixStream>>(
     pid: Option<i32>,
     deadline: Instant,
 ) -> Result<()> {
-    let mut focused: Option<IpcWindow> = None;
+    // The last focus niri reported, `None` until a read-back answers.
+    let mut focused: Option<Option<IpcWindow>> = None;
     if interaction::confirm(deadline, |deadline| {
-        focused = ipc.query_until(Request::FocusedWindow, deadline)?;
+        let Some(window) =
+            read_back::<Option<IpcWindow>, _>(ipc, Request::FocusedWindow, deadline)?
+        else {
+            return Ok(false);
+        };
+        let observed = window.as_ref().map(|window| (window.pid, window.id));
+        focused = Some(window);
         anyhow::Ok(interaction::policy::focused(
             &(pid, id),
-            &interaction::facts::Fact::Known(
-                focused.as_ref().map(|window| (window.pid, window.id)),
-            ),
+            &interaction::facts::Fact::Known(observed),
         ))
     })? {
         return Ok(());
     }
     Err(foreground_unavailable(format!(
         "niri did not confirm focus on window {id} (focused: {})",
-        focused.map_or_else(|| "none".to_owned(), |focused| focused.id.to_string())
+        match focused {
+            None => "unknown".to_owned(),
+            Some(None) => "none".to_owned(),
+            Some(Some(focused)) => focused.id.to_string(),
+        }
     )))
+}
+
+/// A confirm loop's read-back, `None` when the deadline cut it off. The
+/// read-back shares the confirm deadline, so a cut-off one means niri did
+/// not confirm in time, not that IPC failed.
+fn read_back<T: DeserializeOwned, C: FnMut(Instant) -> Result<UnixStream>>(
+    ipc: &mut Ipc<C>,
+    request: Request,
+    deadline: Instant,
+) -> Result<Option<T>> {
+    match ipc.query_until(request, deadline) {
+        Ok(value) => Ok(Some(value)),
+        Err(error) if timed_out(&error) => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
+fn timed_out(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| {
+        cause
+            .downcast_ref::<io::Error>()
+            .is_some_and(|error| error.kind() == io::ErrorKind::TimedOut)
+    })
 }
 
 /// Focus an exact niri window for input, confirmed by read-back.
@@ -289,7 +324,10 @@ fn restore_focus<C: FnMut(Instant) -> Result<UnixStream>>(
     // single-workspace restore does.
     let mut pending = None;
     if interaction::confirm(cleanup, |deadline| {
-        let now: Vec<IpcWorkspace> = ipc.query_until(Request::Workspaces, deadline)?;
+        let Some(now) = read_back::<Vec<IpcWorkspace>, _>(ipc, Request::Workspaces, deadline)?
+        else {
+            return Ok(false);
+        };
         pending = before
             .iter()
             .filter(|was| was.is_active)
@@ -319,12 +357,12 @@ fn restore_workspace<C: FnMut(Instant) -> Result<UnixStream>>(
 ) -> Result<()> {
     ipc.restore_action(focus_workspace_action(workspace), cleanup)?;
     let focused = interaction::confirm(cleanup, |deadline| {
-        let workspaces: Vec<IpcWorkspace> = ipc.query_until(Request::Workspaces, deadline)?;
-        anyhow::Ok(
+        let workspaces: Option<Vec<IpcWorkspace>> = read_back(ipc, Request::Workspaces, deadline)?;
+        anyhow::Ok(workspaces.is_some_and(|workspaces| {
             workspaces
                 .iter()
-                .any(|candidate| candidate.id == workspace && candidate.is_focused),
-        )
+                .any(|candidate| candidate.id == workspace && candidate.is_focused)
+        }))
     })?;
     if !focused {
         bail!("niri did not confirm focus on workspace {workspace}");
@@ -672,6 +710,177 @@ mod tests {
         let fake = fake.lock().unwrap();
         assert!(fake.active(1) && !fake.active(2));
         assert_eq!(fake.focused(), Some(5));
+    }
+
+    #[test]
+    fn a_read_back_the_deadline_cuts_off_still_refuses_as_unconfirmed() {
+        // niri answers two read-backs without the window, then is too slow
+        // for the rest of the budget.
+        let mut ipc = ipc_with(
+            |_| {
+                let (client, server) = UnixStream::pair()?;
+                std::thread::spawn(move || {
+                    let mut lines = Lines::new(server);
+                    for _ in 0..2 {
+                        let deadline = Instant::now() + Duration::from_secs(2);
+                        if !matches!(lines.next(deadline), Ok(Some(_))) {
+                            return;
+                        }
+                        let reply = b"{\"Ok\":{\"FocusedWindow\":null}}\n";
+                        if lines.stream.write_all(reply).is_err() {
+                            return;
+                        }
+                    }
+                    std::thread::sleep(Duration::from_secs(2));
+                });
+                Ok(client)
+            },
+            QUERY_TIMEOUT,
+        );
+        let error = confirm_focus(
+            &mut ipc,
+            7,
+            Some(107),
+            Instant::now() + Duration::from_millis(100),
+        )
+        .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "foreground_unavailable: niri did not confirm focus on window 7 (focused: none)"
+        );
+        // Without any answer, nothing is known about niri's focus.
+        let mut held = Vec::new();
+        let mut silent = ipc_with(
+            |_| {
+                let (client, server) = UnixStream::pair()?;
+                held.push(server);
+                Ok(client)
+            },
+            QUERY_TIMEOUT,
+        );
+        let error = confirm_focus(
+            &mut silent,
+            7,
+            Some(107),
+            Instant::now() + Duration::from_millis(50),
+        )
+        .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "foreground_unavailable: niri did not confirm focus on window 7 (focused: unknown)"
+        );
+    }
+
+    /// niri answering each request with the next of `replies`, then too
+    /// slow for any budget.
+    fn scripted(replies: Vec<Value>) -> Ipc<impl FnMut(Instant) -> Result<UnixStream>> {
+        let mut replies = Some(replies);
+        ipc_with(
+            move |_| {
+                let (client, server) = UnixStream::pair()?;
+                let replies = replies.take().unwrap_or_default();
+                std::thread::spawn(move || {
+                    let mut lines = Lines::new(server);
+                    for reply in replies {
+                        let deadline = Instant::now() + Duration::from_secs(2);
+                        if !matches!(lines.next(deadline), Ok(Some(_))) {
+                            return;
+                        }
+                        if lines
+                            .stream
+                            .write_all(format!("{reply}\n").as_bytes())
+                            .is_err()
+                        {
+                            return;
+                        }
+                    }
+                    std::thread::sleep(Duration::from_secs(2));
+                });
+                Ok(client)
+            },
+            QUERY_TIMEOUT,
+        )
+    }
+
+    #[test]
+    fn a_workspace_read_back_the_deadline_cuts_off_still_refuses_as_unconfirmed() {
+        // niri reports workspace 1 unfocused once, then is too slow for the
+        // rest of the cleanup budget.
+        let mut ipc = scripted(vec![
+            json!({"Ok": "Handled"}),
+            json!({"Ok": {"Workspaces": [workspace(1, "winit", false, None), workspace(2, "winit", true, Some(7))]}}),
+        ]);
+        let error = restore_workspace(&mut ipc, 1, Instant::now() + Duration::from_millis(200))
+            .unwrap_err();
+        assert_eq!(
+            format!("{error:#}"),
+            "niri did not confirm focus on workspace 1"
+        );
+    }
+
+    #[test]
+    fn a_read_back_niri_hangs_up_on_is_still_an_ipc_error() {
+        // niri handles the switch, then hangs up on the read-back.
+        let mut ipc = ipc_with(
+            |_| {
+                let (client, server) = UnixStream::pair()?;
+                std::thread::spawn(move || {
+                    let mut lines = Lines::new(server);
+                    let deadline = Instant::now() + Duration::from_secs(2);
+                    if matches!(lines.next(deadline), Ok(Some(_)))
+                        && lines.stream.write_all(b"{\"Ok\":\"Handled\"}\n").is_ok()
+                    {
+                        let _ = lines.next(deadline);
+                    }
+                });
+                Ok(client)
+            },
+            QUERY_TIMEOUT,
+        );
+        let error = restore_workspace(&mut ipc, 1, Instant::now() + Duration::from_millis(200))
+            .unwrap_err();
+        assert_eq!(
+            format!("{error:#}"),
+            "niri IPC Workspaces failed: niri closed the IPC connection"
+        );
+    }
+
+    #[test]
+    fn a_workspace_restore_check_the_deadline_cuts_off_names_the_workspace() {
+        // The prior workspace is back, then the last check sees it
+        // inactive again before niri goes quiet.
+        let mut window = floating(7, 2, (100.0, 60.0), (300, 200));
+        window["is_focused"] = json!(true);
+        let target: IpcWindow = serde_json::from_value(window.clone()).unwrap();
+        let prior = json!([
+            workspace(1, "winit", true, None),
+            workspace(2, "winit", false, Some(7)),
+        ]);
+        let before: Vec<IpcWorkspace> = serde_json::from_value(prior.clone()).unwrap();
+        let switched = json!({"Ok": {"Workspaces": [
+            workspace(1, "winit", false, None),
+            workspace(2, "winit", true, Some(7)),
+        ]}});
+        let mut ipc = scripted(vec![
+            json!({"Ok": {"FocusedWindow": window}}),
+            switched.clone(),
+            switched.clone(),
+            json!({"Ok": "Handled"}),
+            json!({"Ok": {"Workspaces": prior}}),
+            switched,
+        ]);
+        let error = restore_focus(
+            &mut ipc,
+            None,
+            &before,
+            &target,
+            Instant::now() + Duration::from_millis(200),
+        )
+        .unwrap_err();
+        assert_eq!(
+            format!("{error:#}"),
+            "niri did not restore workspace 1 on output winit"
+        );
     }
 
     #[test]

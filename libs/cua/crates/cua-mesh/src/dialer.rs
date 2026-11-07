@@ -85,6 +85,13 @@ impl Dialer {
     ) -> Result<Self> {
         let mut cfg = MeshConfig::new(relay.to_owned(), NodeKind::Client, identity, auth);
         cfg.media_udp_port = media_udp_port;
+        Self::start_with_config(cfg, timeout).await
+    }
+
+    /// [`Dialer::start`] with a prepared node config (tests only, to
+    /// speed up reconnects).
+    #[doc(hidden)]
+    pub async fn start_with_config(cfg: MeshConfig, timeout: Duration) -> Result<Self> {
         let mesh = Mesh::start(cfg).await?;
         if let Err(e) = mesh.wait_ready(timeout).await {
             mesh.shutdown();

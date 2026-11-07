@@ -22,7 +22,9 @@
  * `machines.remove {machine, device}`: `machine` leaves the relay directory
  * (`Spaces.relay_unregister("relay:<machine>")`, refused while it is
  * online), then `device` is revoked. This machine's own host setup is
- * removed with `host.action {action: "remove"}`.
+ * removed with `host.action {action: "remove"}`. With `deleteSpaces: true`
+ * the relay also forgets the Spaces made on it (`?spaces=delete`); without
+ * it they are detached and come back when the computer is added again.
  *
  * `machines.checkHealth {}`: the host asks each machine the view names a
  * `healthTarget` for (This Mac through its own daemon, another of yours
@@ -36,7 +38,9 @@ import type { OpCoverage } from "../coverage";
 
 export interface MachinesOps {
   "machines.rename": { args: { id: string; name: string }; result: null };
-  "machines.remove": { args: { machine?: string | null; device?: string | null }; result: null };
+  /** `deleteSpaces`: the relay also forgets the Spaces made on it (the page deleted each one through the computer first);
+   * without it they are only detached, and come back when the computer is added again. */
+  "machines.remove": { args: { machine?: string | null; device?: string | null; deleteSpaces?: boolean }; result: null };
   "machines.checkHealth": { args: Record<string, never>; result: null };
 }
 

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use async_trait::async_trait;
 use cua_driver_contract::ClickButton;
 use cua_driver_core::{
@@ -675,7 +678,6 @@ impl Tool for ClickTool {
                             crate::uia::fg_bypass::run_with_uwp_bypass(hwnd as isize, || unsafe {
                                 pattern.Expand()
                             });
-                        std::mem::forget(element);
                         result.map_err(|error| {
                             anyhow::anyhow!("ExpandCollapse.Expand failed: {error}")
                         })

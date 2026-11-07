@@ -249,6 +249,18 @@ if [ "$channel" = local ]; then
   /usr/libexec/PlistBuddy -c "Set :AssociatedBundleIdentifiers:0 $bundle_id" "$helper_plist"
   plutil -lint "$helper_plist" >/dev/null
 fi
+# Cua Driver's own login item (CUA-3638): `CuaSpacesMac --driver-helper run`
+# keeps Contents/Helpers/cua-driver running for this Mac's coding agents,
+# whether or not this Mac is set up or shared. Named after the helper's label
+# (com.trycua.spaces.driver, com.trycua.spaces.local.driver).
+driver_label="${helper_label%.helper}.driver"
+driver_plist="$app/Contents/Library/LaunchAgents/$driver_label.plist"
+cp "$here/Support/Helper/com.trycua.spaces.driver.plist" "$driver_plist"
+if [ "$channel" = local ]; then
+  /usr/libexec/PlistBuddy -c "Set :Label $driver_label" "$driver_plist"
+  /usr/libexec/PlistBuddy -c "Set :AssociatedBundleIdentifiers:0 $bundle_id" "$driver_plist"
+  plutil -lint "$driver_plist" >/dev/null
+fi
 [ -x "$cli" ] && cp "$cli" "$app/Contents/MacOS/cua"
 
 # Release: symbols go to dSYMs, not into the download (about 40% of each

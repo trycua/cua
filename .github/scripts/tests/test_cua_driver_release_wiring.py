@@ -259,8 +259,8 @@ fi
         self.assertNotIn("NSMicrophoneUsageDescription", plist)
 
         cli = self.read("libs/cua-driver/rust/crates/cua-driver/src/cli.rs")
-        self.assertIn("missing from Screen & System Audio Recording", cli)
-        self.assertIn("add {app_path}", cli)
+        self.assertIn("isn't in the Screen & System Audio Recording list", cli)
+        self.assertIn("choose {app_path}", cli)
 
         limits = self.read("docs/content/docs/cua-driver/guides/troubleshoot.mdx")
         self.assertIn("without this grant it returns the tree only (no PNG)", limits)
@@ -839,7 +839,9 @@ fi
 
         # Every candidate build checks out the tag (or the nightly source ref);
         # there is no dispatch path that retargets an older tag for publication.
-        self.assertEqual(workflow.count("ref: ${{ inputs.source_ref || github.ref }}"), 6)
+        self.assertEqual(
+            workflow.count("ref: ${{ inputs.rebuild_sha || inputs.source_ref || github.ref }}"), 6
+        )
         self.assertNotIn("inputs.publish", workflow)
         self.assertNotIn("format('refs/tags/cua-driver-rs-v{0}', inputs.version)", workflow)
         self.assertIn(
@@ -951,8 +953,9 @@ fi
     def test_driver_tag_push_publishes_only_after_automatic_e2e_gate(self) -> None:
         workflow = self.read(".github/workflows/cd-rust-cua-driver.yml")
         tag_push = (
-            "github.event_name == 'push' && "
-            "startsWith(github.ref, 'refs/tags/cua-driver-rs-v')"
+            "((github.event_name == 'push' && "
+            "startsWith(github.ref, 'refs/tags/cua-driver-rs-v')) || "
+            "(github.event_name == 'workflow_dispatch' && inputs.rebuild_tag != ''))"
         )
 
         # No manual publish input or dispatch path exists.
@@ -964,7 +967,9 @@ fi
         # The Release Please tag push calls every canonical hosted E2E suite
         # against the exact tag SHA, after the attribution preflight. Nightly
         # builds call the same suites against their exact source_ref.
-        gate_sha = "${{ inputs.channel == 'nightly' && inputs.source_ref || github.sha }}"
+        gate_sha = (
+            "${{ inputs.channel == 'nightly' && inputs.source_ref || inputs.rebuild_sha || github.sha }}"
+        )
         gates = {
             "e2e-linux": ("e2e-rust-linux.yml", f"ref: {gate_sha}"),
             "e2e-windows": ("e2e-rust-windows.yml", f"ref: {gate_sha}"),
@@ -977,7 +982,7 @@ fi
         for job, (called, sha_input) in gates.items():
             block = workflow.split(f"\n  {job}:\n", 1)[1].split("\n\n", 1)[0]
             self.assertIn("    needs: release-attribution-preflight\n", block)
-            self.assertIn(f"    if: ({tag_push}) || inputs.channel == 'nightly'\n", block)
+            self.assertIn(f"    if: {tag_push} || inputs.channel == 'nightly'\n", block)
             self.assertIn(f"    uses: ./.github/workflows/{called}\n", block)
             self.assertIn(sha_input, block)
             self.assertIn("      actions: read\n", block)
@@ -1004,8 +1009,8 @@ fi
             self.assertIn(f"      - {job}\n", needs)
         self.assertIn(f"    if: {tag_push}\n", needs)
         self.assertNotIn("always()", needs)
-        self.assertIn("ref: ${{ github.ref }}", steps)
-        self.assertIn('if [[ "$SHA" != "$GITHUB_SHA" ]]; then', steps)
+        self.assertIn("ref: ${{ env.RELEASE_REF }}", steps)
+        self.assertIn('if [[ "$SHA" != "$CERTIFIED_SHA" ]]; then', steps)
 
         # E2E evidence shares the run, so release-bound downloads are scoped.
         self.assertIn('pattern: "{cua-driver-rs-*,cua-hyprland-plugin-source}"', steps)

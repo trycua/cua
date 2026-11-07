@@ -12,9 +12,12 @@ import { Inlines } from "@/components/markdown";
 import { Button } from "@/components/ui/button";
 import { parseInline } from "@/lib/markdown";
 import { mentionSegments } from "@/lib/mentions";
+import { abilityOfAction } from "@/lib/agent-home/prompt";
+import { askText } from "@/lib/agent-home/requests";
 import { cn, isMacPlatform } from "@/lib/utils";
 
 import { AgentTile, MemberAvatar } from "./avatar";
+import { ChildSpaceRow, SubagentRow } from "./child-rows";
 import { FailureNote } from "./failure-note";
 import { AgentName, AiTag, holderNames, MemberEventNote } from "./identity";
 import { MentionChip, ProfileTrigger } from "./profile-card";
@@ -167,7 +170,7 @@ export function ThreadView({
 export function aboveSeq(items: readonly ThreadItem[], i: number): number | null {
   for (let j = i - 1; j >= 0; j--) {
     const it = items[j]!;
-    if (it.type === "system" || it.type === "unread") continue;
+    if (it.type === "system" || it.type === "unread" || it.type === "subagent" || it.type === "child_space") continue;
     return it.entry.seq;
   }
   return null;
@@ -214,6 +217,10 @@ export const ThreadItemView = memo(function Item({
           {item.text}
         </p>
       );
+    case "subagent":
+      return <SubagentRow item={item} />;
+    case "child_space":
+      return <ChildSpaceRow item={item} />;
     case "message":
       // One row, in order. A reply quotes the message it answers only when that is not the one right above it.
       return <Message entry={item.entry} {...m} quote={item.quote && item.quote.seq !== above ? item.quote : null} task={item.taskText !== null ? { text: item.taskText, onRetry } : undefined} />;
@@ -470,7 +477,10 @@ function Approval({
   const { core } = useBridge();
   const card = useMemo(() => (entry.approval?.card ? exportCardView(core, entry.approval.card) : null), [core, entry.approval?.card]);
   const exportAsk = !card && entry.approval ? exportAskText(entry.approval.action, entry.approval.details) : null;
-  const ask = card ? { title: card.repo, detail: "", allow: card.allow } : exportAsk;
+  // An agent asking for an ability (see Spaces, use a machine) says it in plain words, on this same card.
+  const ability = !card && !exportAsk && entry.approval ? abilityOfAction(entry.approval.action) : null;
+  const abilityAsk = ability ? askText({ seq: entry.seq, ability, detail: (entry.approval?.details ?? "").trim(), tsMs: entry.tsMs }, null) : null;
+  const ask = card ? { title: card.repo, detail: "", allow: card.allow } : (exportAsk ?? abilityAsk);
   const press = (approve: boolean) => {
     setBusy(approve);
     setError(null);

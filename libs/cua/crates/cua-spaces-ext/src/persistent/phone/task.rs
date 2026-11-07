@@ -50,10 +50,11 @@ use cua_spaces::extension::Caller;
 use cua_spaces::mcp::ToolOutcome;
 use cua_spaces::{Error, Result, SpaceCreate, SpaceCreated, Spaces};
 
-/// The agent home runs on the agent home image (the slim Linux image plus the
-/// cua CLI, so the agent can make child Spaces); a test keeps it equal to the
-/// image catalog and to the desktop app's `AGENT_HOME_IMAGE` where that exists.
-pub const HOME_IMAGE: &str = "ghcr.io/trycua/agent-home:24.04";
+/// The agent home runs on the slim Linux image (the `cua` CLI and a
+/// spawn-capable cua-spacesd are baked into that tier, so the agent can make
+/// child Spaces); a test keeps it equal to the image catalog and to the
+/// desktop app's `AGENT_HOME_IMAGE` where that exists.
+pub const HOME_IMAGE: &str = "ghcr.io/trycua/linux:24.04-slim";
 /// The labels the daemon reads on a home (`cua-daemon`'s `children::home`).
 pub const LABEL_HOME: &str = "cua.home";
 pub const LABEL_AGENT: &str = "cua.home.agent";
@@ -115,35 +116,10 @@ fn startable(id: &str) -> Option<&'static Startable> {
     AGENTS.iter().find(|a| a.harness == id)
 }
 
-/// The home's name: short, readable in the Spaces list.
-pub fn home_name(prompt: &str, now_ms: u64) -> String {
-    let lower = prompt.to_lowercase();
-    // Links are not part of a name.
-    let no_links: Vec<&str> = lower
-        .split_whitespace()
-        .filter(|w| !w.starts_with("http://") && !w.starts_with("https://"))
-        .collect();
-    let mut slug = String::new();
-    let mut dash = true;
-    for c in no_links.join(" ").chars() {
-        if c.is_ascii_alphanumeric() {
-            slug.push(c);
-            dash = false;
-        } else if !dash {
-            slug.push('-');
-            dash = true;
-        }
-    }
-    let slug: String = slug.trim_matches('-').chars().take(24).collect();
-    let slug = slug.trim_end_matches('-');
-    let slug = if slug.is_empty() { "task" } else { slug };
-    let mut n = now_ms;
-    let mut suffix = String::new();
-    for _ in 0..3 {
-        suffix.insert(0, char::from_digit((n % 36) as u32, 36).unwrap_or('0'));
-        n /= 36;
-    }
-    format!("home-{slug}-{suffix}")
+/// The home's name: a friendly pair (`brave-otter`) no Space has yet. The
+/// task is not part of it: a prompt rarely reads well as a name.
+pub fn home_name(taken: impl Fn(&str) -> bool) -> String {
+    cua_spaces::names::pet_name(taken)
 }
 
 /// Where the job runs, as the phone asks.
@@ -528,7 +504,6 @@ pub(crate) async fn task_start(
         agent,
         model,
         text,
-        prompt,
         place,
         fresh,
     };
@@ -553,7 +528,6 @@ struct Job {
     agent: &'static Startable,
     model: Option<String>,
     text: String,
-    prompt: String,
     place: Where,
     fresh: bool,
 }
@@ -591,6 +565,8 @@ impl Job {
         if created {
             self.record.space = Some(space.clone());
             save(&self.p, self.record.clone())?;
+        } else {
+            self.p.wake_space(&space).await?;
         }
         self.add_agent(&space, matches!(self.place, Where::Space(_)))?;
         let t = self.p.thread(&self.caller, &space).await?;
@@ -643,7 +619,12 @@ impl Job {
             image: Some(HOME_IMAGE.to_string()),
             on,
             kind,
-            name: Some(home_name(&self.prompt, now_ms())),
+            name: Some(home_name(|n| {
+                self.spaces
+                    .list()
+                    .map(|v| v.iter().any(|i| i.name == n))
+                    .unwrap_or(false)
+            })),
             cpus: Some(1),
             memory_mb: Some(1024),
             wait: Some(true),
@@ -654,6 +635,11 @@ impl Job {
             labels: [
                 (LABEL_HOME.to_string(), "1".to_string()),
                 (LABEL_AGENT.to_string(), self.agent.harness.to_string()),
+                // A home is made for a task: it sleeps when the task is done.
+                (
+                    cua_spaces::sleep::LABEL_SLEEP.to_string(),
+                    cua_spaces::sleep::Sleep::Auto.word(),
+                ),
             ]
             .into(),
             // No network, egress or mount argument: the secure default
@@ -681,11 +667,7 @@ impl Job {
     /// updates it). In a Space the caller was given, an agent that is not a
     /// member yet is the owner's to add.
     fn add_agent(&self, space: &str, existing: bool) -> Result<()> {
-        let rec = self
-            .p
-            .members_of(space)?
-            .into_iter()
-            .find(|r| r.handle() == self.agent.handle);
+        let rec = self.p.member_named(space, self.agent.handle)?;
         if rec.is_some() && existing {
             return Ok(());
         }
@@ -761,17 +743,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_home_is_named_from_the_job() {
-        assert_eq!(
-            home_name("Fix the retry backoff!", 0),
-            "home-fix-the-retry-backoff-000"
-        );
-        assert!(
-            home_name("see https://example.com/x now", 36 * 36 * 36 + 1)
-                .starts_with("home-see-now-")
-        );
-        assert_eq!(home_name("   ", 1), "home-task-001");
-        assert!(home_name(&"word ".repeat(40), 5).len() <= "home--xxx".len() + 24);
+    fn a_home_gets_a_friendly_name_no_space_has() {
+        let n = home_name(|_| false);
+        assert!(cua_spaces::names::is_pet_name(&n), "{n}");
+        // A name that is taken is not handed out again.
+        let first = std::cell::RefCell::new(String::new());
+        let m = home_name(|c| {
+            if first.borrow().is_empty() {
+                *first.borrow_mut() = c.to_string();
+            }
+            c == first.borrow().as_str()
+        });
+        assert_ne!(m, *first.borrow());
     }
 
     #[test]
@@ -873,7 +856,7 @@ mod tests {
         for call in [
             "cua spaces ls",
             "cua spaces create <linux|windows|macos> --name <name> [--image <image>]",
-            "cua spaces create <os> --on host:<machine>",
+            "cua spaces create <os> --on host:<computer>",
         ] {
             assert!(container.contains(call), "{call}");
         }

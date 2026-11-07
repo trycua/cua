@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use async_trait::async_trait;
 use cua_driver_contract::PressKeyInput;
 use cua_driver_core::{
@@ -92,7 +95,7 @@ impl Tool for PressKeyTool {
                     "scope": "desktop", "path": "SendInput", "key": key_display,
                     "effect": "unverifiable"
                 })),
-                Ok(Err(error)) => ToolResult::error(error.to_string()),
+                Ok(Err(error)) => crate::typing_turn::foreground_input_error(error),
                 Err(error) => ToolResult::error(format!("desktop key task failed: {error}")),
             };
         }
@@ -225,7 +228,7 @@ impl Tool for PressKeyTool {
             let (cx, cy) = match resolve_onscreen_point_with_scroll(
                 &admitted,
                 hwnd,
-                idx as usize,
+                idx,
                 cx,
                 cy,
                 "focusing for key delivery",
@@ -289,7 +292,7 @@ impl Tool for PressKeyTool {
         if !px_focus && delivery == DeliveryMode::Foreground {
             let focus_target = elem_idx.map(|idx| {
                 let point = admitted.as_ref().map(|element| element.center);
-                (idx as usize, point)
+                (idx, point)
             });
             let send_result = tokio::task::spawn_blocking({
                 let admitted = admitted.clone();
@@ -309,7 +312,7 @@ impl Tool for PressKeyTool {
                 Ok(Ok(())) => ToolResult::text(format!(
                     "✅ Sent {key_display} via SendInput on pid {raw_pid} (delivery_mode:foreground)."
                 )),
-                Ok(Err(e)) => ToolResult::error(e.to_string()),
+                Ok(Err(e)) => crate::typing_turn::foreground_input_error(e),
                 Err(e)     => ToolResult::error(format!("Task error: {e}")),
             };
         }

@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-import { CheckIcon, ChevronDownIcon, ChevronRightIcon, CopyIcon, LoaderCircleIcon, TriangleAlertIcon } from "lucide-react";
+import { CheckIcon, ChevronDownIcon, ChevronRightIcon, CopyIcon, LoaderCircleIcon, ShieldCheckIcon, TriangleAlertIcon } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import {
+  isNeedsProof,
   useSession,
   useThisMachine,
   type HostAccessRow,
@@ -13,7 +14,9 @@ import {
   type HostPanelView,
   type HostSetupFormView,
 } from "@/bridge";
+import { useAppPermissions } from "@/bridge/app-permissions";
 import { throttleSeconds } from "@/bridge/friendly-errors";
+import { AppPermissionList } from "@/components/app-permissions";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { GroupedSection, SectionHeading } from "@/components/ui/grouped";
@@ -24,6 +27,9 @@ import { toast } from "@/components/ui/toast";
 import { Tooltip } from "@/components/ui/tooltip";
 import { cn, relativeTime } from "@/lib/utils";
 
+/** The permissions `AppPermissionList` draws; any other (Local Network) keeps its own row. */
+const GUIDED = new Set(["screen-recording", "accessibility"]);
+
 /** The log open in full ("Show All…"). */
 type HostLog = "access" | "activity";
 
@@ -33,17 +39,20 @@ type HostLog = "access" | "activity";
  * the owner now (`alerts`: a running setup's progress, permissions to
  * grant, a failed action, a log that does not verify) and the access and
  * Spaces logs (`logs`, under Details). The switches, Spaces, Details and
- * Remove are `machines_view::view`'s, drawn by the page.
+ * Remove are `machines_view::view`'s, drawn by the page. `onUseCode` opens
+ * "Enter a code": the answer to a failure the account wants proof for.
  */
-export function ThisMachineExtras({ panel, progress, part }: { panel: HostPanelView | null; progress?: string; part?: "alerts" | "logs" }) {
+export function ThisMachineExtras({ panel, progress, part, onUseCode }: { panel: HostPanelView | null; progress?: string; part?: "alerts" | "logs"; onUseCode?: () => void }) {
   const { data: session } = useSession();
   const host = useThisMachine(session?.identity ?? null);
+  // Screen Recording and Accessibility: Cua Spaces' own, the same rows and live status as the first run and the Cua Driver page.
+  const perms = useAppPermissions(part === "alerts" && Boolean(panel?.permissionsTitle));
   const [fullLog, setFullLog] = useState<HostLog | null>(null);
   const now = Date.now();
 
   if (!part) {
     return host.formView ? (
-      <HostSetupForm view={host.formView} host={host} failure={host.setupError} progress={progress} onRetry={() => void host.retrySetUp()} />
+      <HostSetupForm view={host.formView} host={host} failure={host.setupError} progress={progress} onRetry={() => void host.retrySetUp()} onUseCode={onUseCode} />
     ) : null;
   }
   if (!panel) return null;
@@ -62,9 +71,10 @@ export function ThisMachineExtras({ panel, progress, part }: { panel: HostPanelV
             </div>
           </GroupedSection>
         ) : null}
-        {panel.permissionsTitle ? (
-          <Group title={panel.permissionsTitle}>
-            {panel.permissions.map((p) => (
+        {panel.permissionsTitle && perms.available ? <AppPermissionList perms={perms} variant="settings" title={panel.permissionsTitle} className="mb-6" /> : null}
+        {panel.permissionsTitle && (!perms.available || panel.permissions.some((p) => !GUIDED.has(p.id))) ? (
+          <Group title={perms.available ? "Also in System Settings" : panel.permissionsTitle}>
+            {panel.permissions.filter((p) => !perms.available || !GUIDED.has(p.id)).map((p) => (
               <Row key={p.id} label={p.title} hint={p.help} data-host-permission={p.id}>
                 {p.settingsUrl ? (
                   <Button size="sm" variant="secondary" onClick={() => void openSettings(p.settingsUrl!)}>
@@ -80,7 +90,7 @@ export function ThisMachineExtras({ panel, progress, part }: { panel: HostPanelV
           // the raw error under Details.
           <GroupedSection className="mb-6">
             <div className="px-4 py-3">
-              <FailureView failure={host.error} retrying={host.busy} onRetry={() => void host.retry()} />
+              <FailureView failure={host.error} retrying={host.busy} onRetry={() => void host.retry()} onUseCode={onUseCode} />
             </div>
           </GroupedSection>
         ) : null}
@@ -133,19 +143,22 @@ const TEXT_ACTION: Record<string, (text: string) => Parameters<FormHost["send"]>
 /** The host setup form: the core's fields in order, Advanced ones under
  * Advanced. A failed setup shows in plain words with Retry (the same
  * request again) and the raw error under Details; `progress` is what a
- * running setup waits for (the sign-in in the browser). */
+ * running setup waits for (the sign-in in the browser). `onUseCode`
+ * answers a setup the account wants proof for (see `FailureView`). */
 export function HostSetupForm({
   view,
   host,
   failure,
   progress,
   onRetry,
+  onUseCode,
 }: {
   view: HostSetupFormView;
   host: FormHost;
   failure?: HostFailure | null;
   progress?: string;
   onRetry?: () => void;
+  onUseCode?: () => void;
 }) {
   const basic = view.fields.filter((f) => !f.advanced);
   const advanced = view.fields.filter((f) => f.advanced);
@@ -172,7 +185,7 @@ export function HostSetupForm({
         ))}
         {failure && onRetry ? (
           <div data-host-form-error className="px-4 py-2.5">
-            <FailureView failure={failure} retrying={view.busy} onRetry={onRetry} />
+            <FailureView failure={failure} retrying={view.busy} onRetry={onRetry} onUseCode={onUseCode} />
           </div>
         ) : view.error ? (
           <div data-host-form-error className="flex items-start gap-2 px-4 py-2.5 text-[13px] text-destructive">
@@ -327,14 +340,21 @@ function Progress({ text }: { text: string }) {
 
 /** A failed setup or button, as the SwiftUI app's `HostSetupFailureView`:
  * a warning and a short title, Retry, one line saying what to do, and the
- * raw error under a collapsed Details (selectable, with Copy). */
-export function FailureView({ failure, retrying, onRetry }: { failure: HostFailure; retrying: boolean; onRetry: () => void }) {
+ * raw error under a collapsed Details (selectable, with Copy).
+ *
+ * A new computer the account wants proof for (`needsProof`: the relay
+ * refused it with no enrolled device, no sign-in with a second factor and no
+ * pairing code) is not something to retry: it says "Confirm it's you" and
+ * its button, "Use a code from another computer", calls `onUseCode` (the
+ * page's "Enter a code"). Without `onUseCode` it falls back to Retry. */
+export function FailureView({ failure, retrying, onRetry, onUseCode }: { failure: HostFailure; retrying: boolean; onRetry: () => void; onUseCode?: () => void }) {
+  const proof = isNeedsProof(failure) && Boolean(onUseCode);
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const details = failure.details && failure.details !== failure.message ? failure.details : null;
   // One automatic retry per setup: a second throttle waits for the user.
   const autoRetried = useRef(false);
-  const wait = autoRetried.current ? null : throttleSeconds(failure.details ?? failure.message);
+  const wait = autoRetried.current || proof ? null : throttleSeconds(failure.details ?? failure.message);
   const [left, setLeft] = useState<number | null>(wait);
   // A throttled setup counts down live, then tries again once.
   useEffect(() => {
@@ -357,15 +377,21 @@ export function FailureView({ failure, retrying, onRetry }: { failure: HostFailu
   const manual = autoRetried.current ? throttleSeconds(failure.details ?? failure.message) : null;
   const message = manual ? `Wait ${manual} ${manual === 1 ? "second" : "seconds"}, then try again.` : left === null ? failure.message : `Trying again in ${left} ${left === 1 ? "second" : "seconds"}.`;
   return (
-    <div data-host-failure className="text-[13px]">
+    <div data-host-failure={proof ? "needs-proof" : ""} className="text-[13px]">
       <div className="flex items-center gap-2">
-        <TriangleAlertIcon className="size-3.5 shrink-0 text-amber-500" />
+        {proof ? <ShieldCheckIcon className="size-3.5 shrink-0 text-muted-foreground" /> : <TriangleAlertIcon className="size-3.5 shrink-0 text-amber-500" />}
         <span data-host-failure-title className={cn("min-w-0 flex-1 break-words", failure.title ? "font-medium" : "text-destructive")}>
           {failure.title ?? failure.message}
         </span>
-        <Button size="sm" variant="secondary" data-host-retry="" disabled={retrying} onClick={onRetry}>
-          {retrying ? "Retrying…" : (failure.actionLabel ?? "Retry")}
-        </Button>
+        {proof ? (
+          <Button size="sm" variant="secondary" data-host-use-code="" onClick={onUseCode}>
+            {failure.actionLabel ?? "Use a code from another computer"}
+          </Button>
+        ) : (
+          <Button size="sm" variant="secondary" data-host-retry="" disabled={retrying} onClick={onRetry}>
+            {retrying ? "Retrying…" : isNeedsProof(failure) ? "Retry" : (failure.actionLabel ?? "Retry")}
+          </Button>
+        )}
       </div>
       {failure.title ? (
         <p data-host-failure-message className="mt-1 text-xs text-muted-foreground">

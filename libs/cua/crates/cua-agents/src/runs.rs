@@ -78,6 +78,10 @@ pub struct Attachment {
     pub bytes: Vec<u8>,
 }
 
+/// How long a run waits for its next prompt before it exits, unless the
+/// caller says otherwise.
+pub const DEFAULT_IDLE_EXIT_SECS: u32 = 1800;
+
 /// Options for [`Agents::start`]. Everything is optional.
 #[derive(Clone, Debug, Default)]
 pub struct RunOptions {
@@ -107,7 +111,7 @@ pub struct RunOptions {
     pub install: Option<bool>,
     /// Exit (resumably) once the queue is empty: fire-and-forget batch runs.
     pub exit_when_idle: bool,
-    /// Exit after this long without a prompt. Default 1800.
+    /// Exit after this long without a prompt. Default `DEFAULT_IDLE_EXIT_SECS` (30 minutes).
     pub idle_exit_secs: Option<u32>,
     /// A label for listings.
     pub label: Option<String>,
@@ -132,6 +136,50 @@ pub struct RunOptions {
     /// from the guest's own setup. Ignored for other harnesses and with an
     /// endpoint.
     pub hermes_config: Option<String>,
+    /// Continue this session of the harness's own (Claude Code, Codex or
+    /// Hermes keep it on the computer the run is on) instead of opening a
+    /// new one: the runner asks the agent to reload it (ACP `session/resume`
+    /// or `session/load`). Not with `durable`, which keeps its own session.
+    pub resume_session: Option<String>,
+    /// With `resume_session`: the earlier conversation as text, put before
+    /// the first prompt only when the agent cannot reload the session.
+    pub resume_context: Option<String>,
+}
+
+/// The most of `resume_context` a run takes.
+pub const RESUME_CONTEXT_MAX: usize = 32 * 1024;
+
+/// `run.json`'s `resume`: the agent's own session to reload, and the
+/// context for when it can't be.
+fn resume_section(opts: &RunOptions) -> Result<Value> {
+    let Some(id) = opts.resume_session.as_deref() else {
+        return Ok(Value::Null);
+    };
+    let valid = !id.is_empty()
+        && id.len() <= 128
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'));
+    if !valid {
+        return Err(Error::Invalid(format!(
+            "resume_session: {id:?} is not a session id"
+        )));
+    }
+    if opts.durable.is_some() {
+        return Err(Error::Invalid(
+            "resume_session: a durable run keeps its own session".into(),
+        ));
+    }
+    let context = opts
+        .resume_context
+        .as_deref()
+        .filter(|c| !c.trim().is_empty());
+    if context.is_some_and(|c| c.len() > RESUME_CONTEXT_MAX) {
+        return Err(Error::Invalid(format!(
+            "resume_context: at most {RESUME_CONTEXT_MAX} bytes"
+        )));
+    }
+    Ok(json!({"sessionId": id, "context": context}))
 }
 
 /// `meta.json`.
@@ -731,6 +779,50 @@ impl Agents {
         Ok(done)
     }
 
+    /// Whether a start of `h` must run the install script: asked for, and
+    /// something is missing. With every tool in place the script only prints
+    /// that it found them, and each of its steps writes an event (a process
+    /// or two in the guest, a quarter of a second each on a sandboxed
+    /// kernel), so a start with the tools there skips it.
+    async fn install_wanted(&self, h: &Harness, asked: bool) -> bool {
+        asked && !self.tools_in_place(h).await
+    }
+
+    /// Whether the tools of `h` (and the runner's own) are installed under
+    /// the guest user's home by this crate, in one guest call. A tool baked
+    /// into the image, or one with operating system packages, always takes
+    /// the script.
+    async fn tools_in_place(&self, h: &Harness) -> bool {
+        let mut ids: Vec<&str> = vec!["acp-sdk", "mcp-remote"];
+        ids.extend(h.installs.iter().copied());
+        let Ok(order) = installables::resolve(&ids) else {
+            return false;
+        };
+        let mut tests = vec![];
+        for id in &order {
+            let Some(it) = installables::get(id) else {
+                return false;
+            };
+            if !it.apt.is_empty() {
+                return false;
+            }
+            tests.push(format!(
+                "[ -f {} ]",
+                quote(&format!(
+                    "{}/{}/{id}/{}/.cua-installed",
+                    self.home.trim_end_matches('/'),
+                    installables::TOOLS_DIR,
+                    it.version
+                ))
+            ));
+        }
+        let script = format!("{} && echo in-place", tests.join(" && "));
+        matches!(
+            self.sh(&script, Duration::from_secs(30)).await,
+            Ok(out) if out.trim() == "in-place"
+        )
+    }
+
     /// Puts what every start of `h` needs in the guest, once and in
     /// parallel: the bridge pipe, the runner and the cua skills, each skipped
     /// when it is already there. Safe to run ahead of a start (when an agent
@@ -1105,7 +1197,7 @@ impl Agents {
             "files": files,
             "mcpServers": mcp,
             "exitWhenIdle": opts.exit_when_idle || opts.durable.is_some(),
-            "idleExitSecs": opts.idle_exit_secs.unwrap_or(1800),
+            "idleExitSecs": opts.idle_exit_secs.unwrap_or(DEFAULT_IDLE_EXIT_SECS),
             "authMethod": h.auth_method,
             "authHint": h.auth_hint(),
             "keyCheck": harness::key_check(h, &opts.env, endpoint.as_ref()),
@@ -1114,6 +1206,7 @@ impl Agents {
             "guardModeKinds": crate::durable::guard_mode_kinds(h),
             "secretEnv": opts.durable.as_ref().map(|_| opts.env.keys().collect::<Vec<_>>()),
             "durable": opts.durable.as_ref().map(|d| d.run_section(Some(&rdir))),
+            "resume": resume_section(&opts)?,
         });
         uploads.push((
             format!("{rdir}/run.json"),
@@ -1160,7 +1253,7 @@ impl Agents {
             h,
             &rdir,
             &runner_dir,
-            opts.install.unwrap_or(true),
+            self.install_wanted(h, opts.install.unwrap_or(true)).await,
             opts.repo
                 .as_deref()
                 .map(|r| (r, opts.branch.as_deref(), cwd.as_str())),
@@ -1227,11 +1320,19 @@ impl Agents {
             .and_then(|b| serde_json::from_slice(&b).ok()))
     }
 
-    /// One run's status. Never disturbs the run.
+    /// One run's status. Never disturbs the run. The three guest reads it
+    /// takes (meta, state, whether the process lives) go out together, so it
+    /// costs one round trip.
     pub async fn status(&self, run_id: &str) -> Result<RunInfo> {
         valid_run_id(run_id)?;
         let rdir = self.run_dir(run_id);
-        let meta: Option<RunMeta> = match self.json_file(&format!("{rdir}/meta.json")).await {
+        let (meta_path, state_path) = (format!("{rdir}/meta.json"), format!("{rdir}/state.json"));
+        let (meta, state, alive) = tokio::join!(
+            self.json_file(&meta_path),
+            self.json_file(&state_path),
+            self.alive(run_id)
+        );
+        let meta: Option<RunMeta> = match meta {
             Ok(m) => m.and_then(|v| serde_json::from_value(v).ok()),
             Err(e) => {
                 return Ok(RunInfo {
@@ -1253,13 +1354,7 @@ impl Agents {
         let Some(meta) = meta else {
             return Err(Error::NotFound(format!("no run {run_id} in this sandbox")));
         };
-        let state = self
-            .json_file(&format!("{rdir}/state.json"))
-            .await
-            .ok()
-            .flatten()
-            .unwrap_or(Value::Null);
-        let alive = self.alive(run_id).await;
+        let state = state.ok().flatten().unwrap_or(Value::Null);
         Ok(info(run_id, meta, &state, alive))
     }
 
@@ -1350,8 +1445,23 @@ impl Agents {
         model: Option<&str>,
     ) -> Result<RunInfo> {
         let before = self.status(run_id).await?;
+        self.send_after(run_id, text, files, &before, model).await?;
+        self.status(run_id).await
+    }
+
+    /// [`Self::send_with_model`] for a caller that read the run's status
+    /// just now (`before`): with a live runner it is one guest write, no
+    /// status reads around it. The events say what the turn it starts did.
+    pub async fn send_after(
+        &self,
+        run_id: &str,
+        text: &str,
+        files: Vec<Attachment>,
+        before: &RunInfo,
+        model: Option<&str>,
+    ) -> Result<()> {
         if matches!(before.status, RunStatus::Unknown) {
-            return Err(Error::Guest(before.reason));
+            return Err(Error::Guest(before.reason.clone()));
         }
         let rdir = self.run_dir(run_id);
         let mut paths = vec![];
@@ -1390,7 +1500,7 @@ impl Agents {
             }
             self.spawn_run(run_id).await?;
         }
-        self.status(run_id).await
+        Ok(())
     }
 
     /// Interrupts the turn in flight (ACP `session/cancel`); the session
@@ -1617,6 +1727,32 @@ mod tests {
             )
         );
         assert!(!a.contains("one"));
+    }
+
+    #[test]
+    fn a_resume_names_the_agents_own_session() {
+        let opts = |id: &str, ctx: Option<&str>| RunOptions {
+            resume_session: Some(id.into()),
+            resume_context: ctx.map(String::from),
+            ..Default::default()
+        };
+        assert_eq!(resume_section(&RunOptions::default()).unwrap(), Value::Null);
+        assert_eq!(
+            resume_section(&opts("0b1e5c2a-1111", Some("earlier"))).unwrap(),
+            json!({"sessionId": "0b1e5c2a-1111", "context": "earlier"})
+        );
+        assert_eq!(
+            resume_section(&opts("abc", Some("  "))).unwrap()["context"],
+            Value::Null
+        );
+        assert!(resume_section(&opts("../x", None)).is_err());
+        let big = "x".repeat(RESUME_CONTEXT_MAX + 1);
+        assert!(resume_section(&opts("abc", Some(&big))).is_err());
+        let durable = RunOptions {
+            durable: Some(Default::default()),
+            ..opts("abc", None)
+        };
+        assert!(resume_section(&durable).is_err());
     }
 
     fn probe(h: &Harness, home: &std::path::Path, env: &[(&str, &str)]) -> String {

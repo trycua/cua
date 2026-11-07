@@ -237,6 +237,7 @@
     "spaces.cancel",
     "spaces.children",
     "spaces.create",
+    "spaces.default",
     "spaces.delete",
     "spaces.egress",
     "spaces.gpus",

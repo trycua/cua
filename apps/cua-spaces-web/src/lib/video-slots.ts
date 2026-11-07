@@ -6,6 +6,7 @@ import {
   type SurfacePhase,
   type SurfaceRect,
   type SurfaceState,
+  type StreamSurfaceMessage,
   type SurfaceTier,
   type VideoHandler,
 } from "./stream-surface";
@@ -179,6 +180,9 @@ export class VideoSlotReporter {
   /** The keyboard was handed back to the page for the modal dialog open now (once per dialog). */
   private releasedForModal = false;
   private next = 0;
+  /** The host removed its `cuaVideo` handler (its window closed or the page was torn down): nothing is listening any more. */
+  private gone = false;
+  private warned = false;
 
   constructor(
     private readonly handler: VideoHandler,
@@ -205,7 +209,37 @@ export class VideoSlotReporter {
 
   /** Gives keys to a slot's Space (null: back to the page). */
   focus(id: string | null): void {
-    this.handler.postMessage({ type: "focus", surfaceId: id });
+    this.send({ type: "focus", surfaceId: id });
+  }
+
+  /**
+   * Posts to the host and settles the result here. WebKit's `postMessage`
+   * returns a promise that rejects with `InvalidAccessError` once the host
+   * removed the handler (`removeAllScriptMessageHandlers` when its window
+   * closes) or the frame is gone, while this page, its 400 ms poll and its
+   * animation frames keep running: an unhandled rejection on every tick
+   * (CUA-SPACES-DESKTOP-3). A handler that is gone stays gone, so the reporter
+   * stops; any other failure is warned about once and the loop goes on.
+   */
+  private send(message: StreamSurfaceMessage): void {
+    if (this.gone) return;
+    const fail = (err: unknown): void => {
+      if ((err as { name?: string } | null)?.name === "InvalidAccessError") {
+        this.gone = true;
+        this.stop();
+      }
+      if (this.warned) return;
+      this.warned = true;
+      console.warn("[video] the host's video handler rejected a message", err);
+    };
+    try {
+      const result: unknown = this.handler.postMessage(message);
+      if (result && typeof (result as PromiseLike<unknown>).then === "function") {
+        (result as PromiseLike<unknown>).then(undefined, fail);
+      }
+    } catch (err) {
+      fail(err);
+    }
   }
 
   /** The id of the slot `el` registered as, for `focus`. */
@@ -216,6 +250,7 @@ export class VideoSlotReporter {
 
   /** Measure on the next frame, and for a few frames after. */
   schedule = (): void => {
+    if (this.gone) return;
     this.settle = SETTLE_FRAMES;
     if (!this.frame) this.frame = this.win.requestAnimationFrame(this.tick);
   };
@@ -223,7 +258,7 @@ export class VideoSlotReporter {
   private tick = (): void => {
     this.frame = 0;
     this.flush();
-    if (this.settle > 0) {
+    if (this.settle > 0 && !this.gone) {
       this.settle -= 1;
       this.frame = this.win.requestAnimationFrame(this.tick);
     }
@@ -231,6 +266,7 @@ export class VideoSlotReporter {
 
   /** Measures every slot now and sends what changed. */
   flush(): void {
+    if (this.gone) return;
     // A modal dialog takes the keyboard from a viewer that has it (once; the host answers `video.focus`).
     const modal = modalOpen(this.win.document);
     if (modal && this.focused && !this.releasedForModal) {
@@ -247,7 +283,7 @@ export class VideoSlotReporter {
     }
     const remove = this.removed;
     this.removed = [];
-    if (update.length || remove.length) this.handler.postMessage({ type: "surfaces", update, remove });
+    if (update.length || remove.length) this.send({ type: "surfaces", update, remove });
   }
 
   private measure(slot: Slot): SurfaceState {
@@ -312,6 +348,7 @@ export class VideoSlotReporter {
   };
 
   private start(): void {
+    if (this.gone) return;
     const w = this.win;
     if (typeof ResizeObserver !== "undefined") {
       this.resize = new ResizeObserver(this.schedule);
@@ -354,6 +391,7 @@ export class VideoSlotReporter {
     this.dpr = null;
     if (this.poll) clearInterval(this.poll);
     this.poll = null;
+    this.settle = 0;
   }
 }
 

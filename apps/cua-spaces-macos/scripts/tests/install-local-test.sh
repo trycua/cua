@@ -378,6 +378,12 @@ run() {
         export HOME="$FAKE_HOME" PATH="$SHIMS:$PATH" CUA_LSREGISTER="$SHIMS/lsregister" \
             SHIM_LOG SHIM_STATE STUB_LOG FAKE_BUILD_LOG="$BUILD_LOG" FAKE_STUB="$STUB_BIN" \
             FAKE_DYLIB="$STUB_DYLIB" LUME_LOG CARGO_LOG WEB_LOG FAKE_CHECKOUT_DAEMON="$DAEMON_CHECKOUT" FAKE_PINNED_DAEMON="$DAEMON_PINNED"
+        # The own signing Keychain of the script is off unless a test turns it on:
+        # these tests shim the login Keychain.
+        export CUA_LOCAL_SIGNING_OWN_KEYCHAIN="${TEST_OWN_KEYCHAIN:-0}"
+        # The shipped default is ad hoc (no Keychain); the older tests cover the
+        # stable certificate path, so they opt into it unless a test sets TEST_SIGN.
+        export CUA_LOCAL_SIGN="${TEST_SIGN:-stable}"
         # CI is set on a CI runner and not on a Mac. The web UI check expects
         # CI=true only where install-local.sh sets it (pnpm install), so drop it.
         unset SUDO_USER CUA_DRIVER_LOCAL_SIGNING_KEYCHAIN CUA_DRIVER_LOCAL_SIGNING_IDENTITY CUA_CHANNEL CUA_HOME CUA_ENV \
@@ -593,6 +599,17 @@ check "an ad hoc cdhash change resets the Local TCC rows, and only those" \
     'grep >/dev/null "^tccutil reset ScreenCapture com.trycua.spaces.macos.local\$" "$SHIM_LOG" && ! grep "^tccutil" "$SHIM_LOG" | grep -v "com.trycua.spaces.macos.local"'
 check "Stable files are byte-identical after a rebuild" '[ "$(snap_stable)" = "$STABLE_BEFORE" ]'
 check "nothing but the Local app changed" '[ "$(snap_all | grep -v "Cua Spaces Local.app")" = "$(printf "%s\n" "$ALL_BEFORE" | grep -v "Cua Spaces Local.app")" ]'
+
+echo "== default signing is ad hoc: no Keychain is asked for anything =="
+reset_fixture
+: > "$SHIM_LOG"
+run env -u CUA_LOCAL_SIGN "$FAKE_SCRIPTS/install-local.sh" --no-launch
+check "a plain install-local.sh run succeeds (status $RC)" '[ "$RC" = 0 ]'
+check "a plain run makes no security(1) call that reads or writes a Keychain item (only the read-only list-keychains)" \
+    '! grep "^security " "$SHIM_LOG" | grep -v "^security list-keychains " | grep >/dev/null .'
+check "a plain run says it signed ad hoc" 'printf "%s" "$OUT" | grep -i >/dev/null "ad hoc"'
+check "the ad hoc signature verifies" '/usr/bin/codesign --verify --deep --strict "$LOCAL_APP" 2>/dev/null'
+reset_fixture
 
 # --- 3. Launch and --prefix ----------------------------------------------------------------
 
@@ -1221,6 +1238,33 @@ fresh_install
 check "a certificate codesign can already use: no warning and no setup" \
     '! printf "%s" "$OUT" | grep -F >/dev/null "codesign cannot use" && ! security_calls | grep >/dev/null -e "add-trusted-cert" -e "set-key-partition-list"'
 check "the Stable files are untouched by all of this" '[ "$(snap_stable)" = "$(snap_stable)" ] && [ ! -e "$FAKE_HOME/.cua-local" ]'
+
+# The script's own signing Keychain, on the real `security` and `codesign` but
+# under the fake HOME: it makes ~/Library/Keychains/cua-spaces-local-signing.keychain-db
+# there, never a login Keychain, and signs ad hoc with one line saying why when
+# macOS does not trust the new certificate yet (a unit test must not change trust).
+echo "== the script's own signing Keychain =="
+if command -v openssl >/dev/null 2>&1; then
+    OWN_KC="$FAKE_HOME/Library/Keychains/cua-spaces-local-signing.keychain-db"
+    own_install() { TEST_OWN_KEYCHAIN=1 run env SHIM_SECURITY_PASSTHROUGH=1 "$FAKE_SCRIPTS/install-local.sh" --no-launch "$@"; }
+    reset_fixture
+    STABLE_BEFORE="$(snap_stable)"
+    own_install
+    check "it makes its own Keychain (status $RC)" '[ "$RC" = 0 ] && [ -f "$OWN_KC" ]'
+    check "it never creates or writes the login Keychain" '[ ! -e "$FAKE_HOME/Library/Keychains/login.keychain-db" ] && [ ! -e "$FAKE_HOME/Library/Keychains/login.keychain" ]'
+    check "the certificate is in its Keychain" '/usr/bin/security find-certificate -c "CuaDriver Local Signing (cua-driver-rs)" "$OWN_KC" >/dev/null 2>&1'
+    check "untrusted, it signs ad hoc and says why in one line, with what to run" \
+        'printf "%s" "$OUT" | grep -F >/dev/null "is signed ad hoc because macOS does not trust the local signing certificate yet: run  scripts/install-local.sh --setup-signing  once" && [ -d "$LOCAL_APP" ]'
+    check "the Stable files are untouched" '[ "$(snap_stable)" = "$STABLE_BEFORE" ]'
+    reset_fixture
+    own_install --require-stable-signing
+    check "--require-stable-signing with an untrusted certificate stops and installs nothing" '[ "$RC" != 0 ] && [ ! -e "$LOCAL_APP" ]'
+    reset_fixture
+    run env CUA_LOCAL_SIGNING_OWN_KEYCHAIN=0 SHIM_SECURITY_PASSTHROUGH=0 "$FAKE_SCRIPTS/install-local.sh" --no-launch
+    check "CUA_LOCAL_SIGNING_OWN_KEYCHAIN=0 makes no Keychain of its own" '[ ! -e "$OWN_KC" ]'
+else
+    note "SKIP: no openssl for the own-Keychain checks"
+fi
 
 # The stable local certificate itself (shared with Cua Driver's local install)
 # needs a code-signing identity that codesign can use without a prompt, from a

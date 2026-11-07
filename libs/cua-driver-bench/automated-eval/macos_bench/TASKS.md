@@ -255,3 +255,15 @@ built with `xcrun swiftc -O tools/benchinput.swift -o <dir>/benchinput`.
 
 BenchLab has other modes, used by earlier pilot tasks that are not part of
 Bench v2 and are not in this repository.
+
+## Platforms, splits and the task manifest
+
+[`../../taskpack/v2-taskset.json`](../../taskpack/v2-taskset.json) lists every task with its category, apps, OS
+availability (all ten tasks: macOS, Linux and Windows), conditions,
+health requirements and split; the bench README renders it as a table. Selectors are in `probes/<ID>/task.json`.
+A task whose selector says `"split": "heldout"` is read from a separate pack with the same layout, named by
+`CDB_TASKPACK_HELDOUT` (selectors in `probes/`, trees in `tasks/`, digests in `pins.heldout.json`); `--task-set
+v2-public` / `v2-heldout` select one split. A pack task may declare native macOS apps (`kind: native`, exact
+`process_names`) and a `semantics.export` step that reads app data into the workspace after the agent and before the
+evaluator; the checker reads only the exported files. A task whose manifest entry lists `conditions` runs only in
+those when a set other than `v2` is selected, so `v2` reproduces earlier runs.

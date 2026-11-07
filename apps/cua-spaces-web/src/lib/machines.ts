@@ -88,3 +88,21 @@ export function selectedMachine<T extends Pick<Machine, "id">>(machines: readonl
 export function machinesSummary(total: number, online: number): string {
   return `${plural(total, "machine")}, ${online} online`;
 }
+
+/**
+ * The computers a chat could carry on on ("Continue on"): your other
+ * computers that are online and shared, each once. Signed-in devices that
+ * aren't computers (a web browser, a phone) can't run a chat, nor can an
+ * offline one; `offline` counts the computers left out for being offline.
+ */
+export function chatComputers(machines: readonly Machine[]): { computers: Machine[]; offline: number } {
+  const seen = new Set<string>();
+  const others: Machine[] = [];
+  for (const m of machines) {
+    if (m.current || m.device || seen.has(m.id)) continue;
+    seen.add(m.id);
+    others.push(m);
+  }
+  const computers = others.filter(reachable);
+  return { computers, offline: others.length - computers.length };
+}

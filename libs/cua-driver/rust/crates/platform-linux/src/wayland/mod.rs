@@ -20,6 +20,8 @@ pub mod hyprland_capture;
 mod hyprland_compatibility;
 pub mod hyprland_input;
 pub mod kwin_helper;
+#[cfg(feature = "portal-input")]
+mod kwin_keystate;
 pub mod niri;
 pub use niri::keyboard::call_budget as niri_keyboard_budget;
 pub(crate) use niri::AimedPoint;
@@ -32,6 +34,7 @@ mod primary_seat;
 mod region_route;
 pub mod shell_helper;
 pub mod sway_ipc;
+mod text_keys;
 mod virtual_keyboard;
 // RemoteDesktop/libei input is portable and ships in release binaries.
 #[cfg(feature = "portal-input")]
@@ -3231,6 +3234,19 @@ fn libei_drag(
     )?;
     record_synth_cursor(to_x, to_y);
     Ok(())
+}
+
+/// The time the input route may spend between the parts of `text`, at most.
+pub(crate) fn text_pacing(text: &str) -> std::time::Duration {
+    #[cfg(feature = "portal-input")]
+    {
+        libei::text_pacing(text)
+    }
+    #[cfg(not(feature = "portal-input"))]
+    {
+        let _ = text;
+        std::time::Duration::ZERO
+    }
 }
 
 #[cfg(feature = "portal-input")]

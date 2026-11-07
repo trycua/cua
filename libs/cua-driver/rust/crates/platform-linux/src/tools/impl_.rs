@@ -1292,6 +1292,13 @@ pub(crate) fn typing_budget(chars: usize, niri: bool) -> std::time::Duration {
     }
 }
 
+/// The budget of a `type_text` call that types `text`, whichever input route it
+/// takes. libei text with line breaks takes time between its parts.
+pub(crate) fn text_typing_budget(text: &str) -> std::time::Duration {
+    typing_budget(text.chars().count(), crate::wayland::niri::is_session())
+        + crate::wayland::text_pacing(text)
+}
+
 #[cfg(test)]
 #[test]
 fn niri_typing_outlasts_the_keyboard_deadline() {
@@ -1355,7 +1362,11 @@ pub(crate) fn input_error_result(e: anyhow::Error) -> ToolResult {
                 "Take a screenshot (get_desktop_state) to confirm the desktop is responsive, then retry once."
             } else {
                 crate::wayland::niri::refusal_suggestion(&text).unwrap_or(
-                    "Call bring_to_front on the window (or its modal dialog), confirm with get_window_state, then retry.",
+                    if text.ends_with("nothing was typed") {
+                        "Use set_value on the element, or clipboard_write and then hotkey ctrl+v."
+                    } else {
+                        "Call bring_to_front on the window (or its modal dialog), confirm with get_window_state, then retry."
+                    },
                 )
             },
         })),

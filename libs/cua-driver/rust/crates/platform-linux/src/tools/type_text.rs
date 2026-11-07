@@ -21,7 +21,7 @@ use super::impl_::{
     isolated_hyprland_refusal, isolated_hyprland_result, isolated_hyprland_task_error,
     named_session_cursor_key, position_named_session_keyboard_cursor, prove_token_element,
     resolve_cursor_key, spawn_blocking_bounded, spawn_isolated_hyprland, stale_observed_element,
-    typing_budget, unavailable_chromium_background, unavailable_wayland_focused_input_background,
+    text_typing_budget, unavailable_chromium_background, unavailable_wayland_focused_input_background,
     unavailable_webkit_keyboard_background, values_agree, KeyRoute, ToolState,
 };
 
@@ -267,7 +267,7 @@ impl Tool for TypeTextTool {
             let path = if wayland { "wayland_focused" } else { "xtest" };
             let result = spawn_blocking_bounded(
                 "desktop type_text",
-                typing_budget(text.chars().count(), crate::wayland::niri::is_session()),
+                text_typing_budget(&text),
                 move || {
                     if wayland {
                         crate::wayland::type_text_focused(&text)
@@ -282,7 +282,7 @@ impl Tool for TypeTextTool {
                     .with_structured(
                         json!({"scope":"desktop","path":path,"effect":"unverifiable"}),
                     ),
-                Ok(Err(error)) => ToolResult::error(error.to_string()),
+                Ok(Err(error)) => input_error_result(error),
                 Err(error) => ToolResult::error(format!("Task error: {error}")),
             };
         }
@@ -619,7 +619,7 @@ impl Tool for TypeTextTool {
                 let text_w = text.clone();
                 let result = spawn_blocking_bounded(
                     "type_text",
-                    typing_budget(text_w.chars().count(), crate::wayland::niri::is_session()),
+                    text_typing_budget(&text_w),
                     move || {
                         crate::interaction::with_target_foreground(
                             pid,
@@ -703,7 +703,7 @@ impl Tool for TypeTextTool {
             let element = token.clone();
             let result = spawn_blocking_bounded(
                 "type_text",
-                typing_budget(text_w.chars().count(), crate::wayland::niri::is_session()),
+                text_typing_budget(&text_w),
                 move || {
                     crate::interaction::with_target_foreground(
                         pid,
@@ -760,7 +760,7 @@ impl Tool for TypeTextTool {
             let cursor_id = resolve_cursor_key(&args);
             let result = spawn_blocking_bounded(
                 "type_text terminal",
-                typing_budget(text_len, crate::wayland::niri::is_session()),
+                text_typing_budget(&text),
                 move || -> anyhow::Result<(&'static str, Option<crate::input::KeyboardDeliveryReport>)> {
                 // pty-master injection is preferred — it skips the X event
                 // queue entirely. Falls through to key events if the terminal
@@ -810,7 +810,7 @@ impl Tool for TypeTextTool {
             let element = token.clone();
             let result = spawn_blocking_bounded(
                 "foreground type_text",
-                typing_budget(text_len, crate::wayland::niri::is_session()),
+                text_typing_budget(&text),
                 move || {
                     crate::interaction::with_x11_foreground(
                         xid,
@@ -866,7 +866,7 @@ impl Tool for TypeTextTool {
             let cursor_id = resolve_cursor_key(&args);
             let result = spawn_blocking_bounded(
                 "background type_text",
-                typing_budget(text_len, crate::wayland::niri::is_session()),
+                text_typing_budget(&text),
                 move || background_text_route(&cursor_id, pid, xid, &text_b),
             )
             .await;
@@ -904,7 +904,7 @@ impl Tool for TypeTextTool {
                 let cursor_id = resolve_cursor_key(&args);
                 let result = spawn_blocking_bounded(
                     "background type_text",
-                    typing_budget(text_len, crate::wayland::niri::is_session()),
+                    text_typing_budget(&text),
                     move || -> anyhow::Result<Option<KeyRoute>> {
                         if inject_terminal_input(pid, xid, &text_b)? {
                             return Ok(Some(KeyRoute::Terminal));
@@ -927,7 +927,7 @@ impl Tool for TypeTextTool {
             let text_f = text.clone();
             let result = spawn_blocking_bounded(
                 "foreground type_text",
-                typing_budget(text_len, crate::wayland::niri::is_session()),
+                text_typing_budget(&text),
                 move || {
                     if inject_terminal_input(pid, xid, &text_f)? {
                         return Ok(());
@@ -985,7 +985,7 @@ impl Tool for TypeTextTool {
         let text_clone2 = text.clone();
         let qt5_result = spawn_blocking_bounded(
             "Qt5 type_text",
-            typing_budget(text_len, crate::wayland::niri::is_session()),
+            text_typing_budget(&text),
             move || {
                 if !is_qt5_process(pid) {
                     anyhow::bail!("not a Qt5 process; synthetic-FocusIn bridge workaround skipped");
@@ -1025,7 +1025,7 @@ impl Tool for TypeTextTool {
         let cursor_id = resolve_cursor_key(&args);
         let result = spawn_blocking_bounded(
             "type_text",
-            typing_budget(text_len, crate::wayland::niri::is_session()),
+            text_typing_budget(&text),
             move || -> anyhow::Result<(&'static str, Option<crate::input::KeyboardDeliveryReport>)> {
             // Terminals: write to the pty master (focus-free, below the toolkit).
             if inject_terminal_input(pid, xid, &text)? {

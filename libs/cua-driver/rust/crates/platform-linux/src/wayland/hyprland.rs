@@ -187,9 +187,10 @@ impl DesktopFrame {
     }
 
     /// Move window geometry from layout coordinates into this frame, so it
-    /// shares an origin with a screenshot of the frame.
+    /// shares an origin with a screenshot of the frame. A window with no
+    /// geometry (the compositor did not report one) has nothing to move.
     pub fn rebase_windows(&self, windows: &mut [crate::x11::WindowInfo]) {
-        for window in windows {
+        for window in windows.iter_mut().filter(|w| w.width > 0 && w.height > 0) {
             (window.x, window.y) = self.from_layout(window.x, window.y);
         }
     }
@@ -560,7 +561,7 @@ fn frame_output(monitor: &DisplayMonitor) -> Result<FrameOutput> {
 }
 
 /// Bounding box of logical output rectangles, in layout coordinates.
-fn bounding_box(outputs: &[FrameOutput]) -> Result<(i32, i32, u32, u32)> {
+pub(super) fn bounding_box(outputs: &[FrameOutput]) -> Result<(i32, i32, u32, u32)> {
     let min_x = outputs
         .iter()
         .map(|o| i64::from(o.x))
@@ -584,7 +585,7 @@ fn bounding_box(outputs: &[FrameOutput]) -> Result<(i32, i32, u32, u32)> {
     let width = u32::try_from(max_x - min_x)?;
     let height = u32::try_from(max_y - min_y)?;
     if !valid_dimensions(width, height) {
-        bail!("invalid Hyprland display dimensions");
+        bail!("invalid display dimensions: {width}x{height}");
     }
     Ok((i32::try_from(min_x)?, i32::try_from(min_y)?, width, height))
 }
@@ -1632,6 +1633,14 @@ mod tests {
         }];
         frame.rebase_windows(&mut windows);
         assert_eq!((windows[0].x, windows[0].y), (100, 36));
+
+        // A window whose geometry the compositor did not report stays unknown.
+        windows[0].x = 0;
+        windows[0].y = 0;
+        windows[0].width = 0;
+        windows[0].height = 0;
+        frame.rebase_windows(&mut windows);
+        assert_eq!((windows[0].x, windows[0].y), (0, 0));
     }
 
     #[test]

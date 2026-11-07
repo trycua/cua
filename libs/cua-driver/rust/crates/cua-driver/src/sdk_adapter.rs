@@ -154,6 +154,10 @@ impl SdkAdapter {
         self.driver.local_history_manager()
     }
 
+    pub fn permissions_pending_result(&self) -> Option<Value> {
+        self.driver.permissions_pending_result()
+    }
+
     pub fn is_known_tool(&self, name: &str) -> bool {
         cua_driver_core::tool::renamed_tool(name).is_some()
             || self.driver.local_is_known_tool(name).unwrap_or(false)

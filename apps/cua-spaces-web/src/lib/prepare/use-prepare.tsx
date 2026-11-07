@@ -3,15 +3,19 @@
 
 import { useEffect, useRef } from "react";
 
-import { firstMessage, newPendingId, useBridge, useFirstSpaceOffers, useSpaces } from "@/bridge";
+import { firstMessage, newPendingId, useBridge, useFirstSpaceOffers, useSavedOnboarding, useSession, useSpaces } from "@/bridge";
+import { useNewOnboarding } from "@/bridge/flags";
+import { useExperimentFlags } from "@/bridge/volume";
 import { useSummonIn } from "@/components/ask-first/use-summon-in";
 import { setPrepareSink } from "@/components/space-thread/queued";
 import { updateAskTask } from "@/lib/ask-first";
 import { spaceState } from "@/lib/spaces";
 
+import { useInstalledAgents } from "@/components/ask-first/use-installed-agents";
+
 import { localPrepareStorage, PrepareDriver, type PrepareEnv } from "./driver";
 import { homeCreateRequest } from "./home-request";
-import { getDriver, setDriver } from "./store";
+import { getDriver, markResumed, resumedThisLoad, setDriver, usePrepare } from "./store";
 
 /** The coding app the first Space is for when it is on this computer: the first installed one otherwise. */
 export const DEFAULT_HARNESS = "claude-code";
@@ -27,10 +31,19 @@ const POLL_MS = 800;
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 /**
- * Mounted once at the root: keeps the driver's view of the host current. It does not tick or follow the connection: nothing it holds can carry on by itself. It never
- * starts, resumes or repairs a home by itself: the app makes no Space a person did
- * not choose (not after the first run, not on an update, not when a home was removed).
- * A Linux Space is made only when the person picks "New computer" for a job.
+ * Mounted once at the root: keeps the driver's view of the host current.
+ *
+ * By default it never starts, resumes or repairs a home by itself: the app makes no
+ * Space a person did not choose (not after the first run, not on an update, not when
+ * a home was removed). A Linux Space is made only when the person picks "New computer"
+ * for a job.
+ *
+ * The one exception is the `warm-pools` experiment (Settings, Advanced, Labs, "Warm
+ * start") together with the new setup: then the app warms the home Home's prompt box
+ * writes into, as before CUA-3622. It starts once the first run is over (claiming the
+ * daemon's warm Space), resumes a saved record once per page load, rebuilds a removed
+ * home, and follows the connection. The home stays hidden until a person writes into it.
+ * With the experiment off, none of that runs.
  */
 export function PrepareRoot(): null {
   const { core, data: host } = useBridge();
@@ -39,6 +52,18 @@ export function PrepareRoot(): null {
   const { offers, known } = useFirstSpaceOffers();
   const latestOffers = useRef(offers);
   latestOffers.current = offers;
+  // The warming home runs only with the `warm-pools` experiment on (and the new setup, whose Home it serves).
+  const newSetup = useNewOnboarding();
+  const warmPools = useExperimentFlags()?.warmPools === true;
+  const warming = newSetup && warmPools;
+  // The new first run makes nothing the person didn't ask for: the home starts warming only once the first run
+  // is done or skipped, not while it shows.
+  const session = useSession();
+  const savedOnboarding = useSavedOnboarding();
+  const firstRunOver = Boolean(session.data?.onboarding.completed || savedOnboarding.skipped);
+  // Only an agent found on this computer is prepared: one Cua only wrote files for has no sign-in to bring.
+  const installed = useInstalledAgents();
+  const harness = installed === null ? null : installed.has(DEFAULT_HARNESS) ? DEFAULT_HARNESS : (installed.values().next().value ?? null);
   const { summonInput, summonIn, canSummon } = useSummonIn();
   const latestSpaces = useRef(spaces);
   latestSpaces.current = spaces;
@@ -123,6 +148,23 @@ export function PrepareRoot(): null {
   // The offers must be read first: before that there is no image to make the home from.
   const ready = Boolean(core && host && spaces && known);
 
+  // Warm start only: start at launch; a saved record resumes once.
+  const driverNow = usePrepare().driver;
+  useEffect(() => {
+    const d = driverNow;
+    if (!warming || !ready || !d) return;
+    if (d.state?.wanted) {
+      // A saved record resumes once per page load, however often the layout mounts.
+      if (!resumedThisLoad()) {
+        markResumed();
+        d.resume();
+      }
+    } else if (harness && firstRunOver) {
+      markResumed();
+      d.start(harness);
+    }
+  }, [warming, ready, driverNow, harness, firstRunOver]);
+
   // The home's composer sends here while it is being made: kept, then delivered once.
   useEffect(() => {
     if (!ready) return;
@@ -148,6 +190,29 @@ export function PrepareRoot(): null {
       d.progress({ phase: e.progress.phase, detail: e.progress.detail, bytesDone: e.progress.bytesDone, bytesTotal: e.progress.bytesTotal, bytesPerSecond: e.progress.bytesPerSecond });
     });
   }, [ready, host]);
+
+  // Warm start only: the connection (the browser says when it goes and comes back).
+  useEffect(() => {
+    if (!warming || !ready) return;
+    const on = () => getDriver()?.online(true);
+    const off = () => getDriver()?.online(false);
+    globalThis.addEventListener?.("online", on);
+    globalThis.addEventListener?.("offline", off);
+    return () => {
+      globalThis.removeEventListener?.("online", on);
+      globalThis.removeEventListener?.("offline", off);
+    };
+  }, [warming, ready]);
+
+  // Warm start only: the list changed, so a home that was removed is made again; a second a tick while it waits.
+  useEffect(() => {
+    if (warming && ready) getDriver()?.checkHome();
+  }, [warming, ready, spaces]);
+  useEffect(() => {
+    if (!warming || !ready) return;
+    const t = setInterval(() => getDriver()?.tick(), 1_000);
+    return () => clearInterval(t);
+  }, [warming, ready]);
 
   return null;
 }

@@ -1354,6 +1354,17 @@ pub(crate) fn input_error_result(e: anyhow::Error) -> ToolResult {
         return refusal;
     }
     match crate::input::foreground::error_code(&e) {
+        Some(code) if text.ends_with(crate::wayland::NOTHING_TYPED) => {
+            ToolResult::error(text.clone()).with_structured(json!({
+                "code": code,
+                "detail": text,
+                "effect": "none",
+                // Set here so it isn't the generic hint for this code, which
+                // blames a window that could not be brought forward.
+                "hint": "This text can't be typed right now, so nothing was sent. The detail says why.",
+                "suggestion": "Use set_value on the element, or clipboard_write and then hotkey ctrl+v.",
+            }))
+        }
         Some(code) => ToolResult::error(text.clone()).with_structured(json!({
             "code": code,
             "detail": text,
@@ -1362,16 +1373,34 @@ pub(crate) fn input_error_result(e: anyhow::Error) -> ToolResult {
                 "Take a screenshot (get_desktop_state) to confirm the desktop is responsive, then retry once."
             } else {
                 crate::wayland::niri::refusal_suggestion(&text).unwrap_or(
-                    if text.ends_with("nothing was typed") {
-                        "Use set_value on the element, or clipboard_write and then hotkey ctrl+v."
-                    } else {
-                        "Call bring_to_front on the window (or its modal dialog), confirm with get_window_state, then retry."
-                    },
+                    "Call bring_to_front on the window (or its modal dialog), confirm with get_window_state, then retry.",
                 )
             },
         })),
         None => linux_input_error(e),
     }
+}
+
+#[cfg(test)]
+#[test]
+fn a_refused_text_says_why_instead_of_blaming_a_window() {
+    let mut refused =
+        input_error_result(crate::wayland::type_text_focused("abc\u{8}").unwrap_err());
+    cua_driver_core::recovery_hint::annotate(
+        "type_text",
+        &cua_driver_core::recovery_hint::Seed::from_args(&json!({})),
+        &mut refused,
+    );
+    assert_eq!(
+        refused.structured_content.unwrap(),
+        json!({
+            "code": "foreground_unavailable",
+            "detail": "foreground_unavailable: control character U+0008 cannot be typed; nothing was typed",
+            "effect": "none",
+            "hint": "This text can't be typed right now, so nothing was sent. The detail says why.",
+            "suggestion": "Use set_value on the element, or clipboard_write and then hotkey ctrl+v.",
+        })
+    );
 }
 
 #[cfg(test)]

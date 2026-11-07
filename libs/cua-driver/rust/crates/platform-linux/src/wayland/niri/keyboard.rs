@@ -833,7 +833,7 @@ mod tests {
         for (group, text) in [(0, ascii.as_str()), (1, german.as_str())] {
             for code in codes(group, text) {
                 assert!(
-                    super::super::super::text_keys::is_typing_key(code),
+                    crate::wayland::text_keys::is_typing_key(code),
                     "layout {group} types ASCII on evdev {code}"
                 );
             }

@@ -62,9 +62,12 @@ pub(in crate::wayland) fn is_typing_key(code: u32) -> bool {
     matches!(code, 1..=53 | 57 | 86 | 89 | 124)
 }
 
+/// How every refused string's message ends.
+pub(crate) const NOTHING_TYPED: &str = "nothing was typed";
+
 /// A string that goes out whole or not at all, on every compositor.
 pub(in crate::wayland) fn refused(detail: impl std::fmt::Display) -> anyhow::Error {
-    anyhow!("foreground_unavailable: {detail}; nothing was typed")
+    anyhow!("foreground_unavailable: {detail}; {NOTHING_TYPED}")
 }
 
 /// `text` with every line ending a line feed, so a Windows line ending is one
@@ -93,6 +96,16 @@ pub(in crate::wayland) fn text_sym(c: char) -> Result<xkb::Keysym> {
             sym => Ok(sym),
         },
     }
+}
+
+/// `text` as it goes out on a route that types by itself, such as `wtype`: refused
+/// if any of it can't be typed, with line endings made line feeds.
+pub(in crate::wayland) fn typable_text(text: &str) -> Result<Cow<'_, str>> {
+    let text = with_line_feeds(text);
+    for c in text.chars() {
+        text_sym(c)?;
+    }
+    Ok(text)
 }
 
 pub(in crate::wayland) fn level_mods(

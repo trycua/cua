@@ -379,8 +379,8 @@ struct DesktopFacts {
     x11_app_may_have_focus: bool,
     /// The active layout, from the compositor itself.
     active_layout: Option<u32>,
-    /// The lock keys, from the compositor itself. Not knowing means off.
-    lock_keys: LockKeys,
+    /// The lock keys, from the compositor itself, when it says.
+    lock_keys: Option<LockKeys>,
 }
 
 impl DesktopFacts {
@@ -391,11 +391,7 @@ impl DesktopFacts {
             active_layout: (!keyboard_known)
                 .then(super::kwin_helper::active_layout)
                 .flatten(),
-            lock_keys: if keyboard_known {
-                LockKeys::default()
-            } else {
-                lock_keys().unwrap_or_default()
-            },
+            lock_keys: (!keyboard_known).then(lock_keys).flatten(),
         }
     }
 }
@@ -1364,8 +1360,7 @@ impl EisState {
             .as_ref()
             .ok_or_else(|| refused("the compositor announced no keyboard layout"))
             .and_then(|map| {
-                let keyboard = keyboard_now(self.keyboard, desktop, map)?;
-                plan_keys(&text, map, keyboard)
+                plan_on_any(&text, map, &keyboard_now(self.keyboard, desktop, map)?)
             });
         let ei_text = self.device_with_interface("ei_text").is_some();
         if !ei_text || desktop.x11_app_may_have_focus || (text.contains('\n') && keys.is_ok()) {
@@ -1645,16 +1640,17 @@ struct KeyboardState {
     group: u32,
 }
 
-/// The keyboard's state right now: what EIS last said or, when it has said
-/// nothing, what the compositor said when asked. A keymap with several layouts and
-/// no word on which is active is refused, since any guess can type wrong letters.
+/// The states the keyboard can be in right now: what EIS last said or, when it
+/// has said nothing, what the compositor said when asked. A keymap with several
+/// layouts and no word on which is active is refused, since any guess can type
+/// wrong letters. With no word on the lock keys, it can be in any of their states.
 fn keyboard_now(
     reported: Option<KeyboardState>,
     desktop: DesktopFacts,
     map: &xkb::Keymap,
-) -> anyhow::Result<KeyboardState> {
+) -> anyhow::Result<Vec<KeyboardState>> {
     if let Some(keyboard) = reported {
-        return Ok(keyboard);
+        return Ok(vec![keyboard]);
     }
     let group = match desktop.active_layout {
         Some(group) => group,
@@ -1670,12 +1666,47 @@ fn keyboard_now(
         true => 1_u32.checked_shl(map.mod_get_index(name)).unwrap_or(0),
         false => 0,
     };
-    Ok(KeyboardState {
-        group,
-        locked: lock_mask(desktop.lock_keys.caps, xkb::MOD_NAME_CAPS)
-            | lock_mask(desktop.lock_keys.num, xkb::MOD_NAME_NUM),
-        ..KeyboardState::default()
-    })
+    let locks = match desktop.lock_keys {
+        Some(locks) => vec![locks],
+        None => [false, true]
+            .into_iter()
+            .flat_map(|caps| [false, true].map(|num| LockKeys { caps, num }))
+            .collect(),
+    };
+    Ok(locks
+        .into_iter()
+        .map(|locks| KeyboardState {
+            group,
+            locked: lock_mask(locks.caps, xkb::MOD_NAME_CAPS)
+                | lock_mask(locks.num, xkb::MOD_NAME_NUM),
+            ..KeyboardState::default()
+        })
+        .collect())
+}
+
+/// The keys that type `text` in every state the keyboard can be in. Text they
+/// would type differently is refused: letters when the lock keys are unknown, but
+/// not digits on most layouts.
+fn plan_on_any(
+    text: &str,
+    map: &xkb::Keymap,
+    keyboards: &[KeyboardState],
+) -> anyhow::Result<Vec<TypedKey>> {
+    let mut plans = keyboards
+        .iter()
+        .map(|&keyboard| plan_keys(text, map, keyboard));
+    let plan = plans
+        .next()
+        .ok_or_else(|| refused("the keyboard's state is unknown"))??;
+    for other in plans {
+        if other? != plan {
+            return Err(refused(
+                "the compositor doesn't say whether Caps Lock or Num Lock is on, so keys could \
+                 type the wrong case",
+            ));
+        }
+    }
+    Ok(plan)
 }
 
 /// One key press that types a character on the active layout, and the modifier
@@ -2535,11 +2566,23 @@ mod typing_route_tests {
             action.abandon();
             typing.join().unwrap()
         });
-        let error = result.unwrap_err().to_string();
+        // How far it got depends on timing; the rest of the message doesn't.
+        let error: String = result
+            .unwrap_err()
+            .to_string()
+            .chars()
+            .filter(|c| !c.is_ascii_digit())
+            .collect();
+        let over = "foreground_timeout: the call ran out of time, so no further input was sent";
         assert!(
-            error.contains(
-                "foreground_timeout: the call ran out of time, so no further input was sent"
-            ) && error.starts_with("type_text stopped after "),
+            [
+                format!("type_text stopped after  of  characters: {over}"),
+                format!(
+                    "type_text stopped after  of  characters, and the next  may have gone out: \
+                     {over}"
+                ),
+            ]
+            .contains(&error),
             "{error}"
         );
         assert!(
@@ -2662,7 +2705,7 @@ mod typing_route_tests {
         let de = DesktopFacts {
             x11_app_may_have_focus: true,
             active_layout: Some(DE),
-            ..DesktopFacts::default()
+            lock_keys: Some(LockKeys::default()),
         };
 
         // The first text taps Shift, once, to see if the compositor reports it.
@@ -2674,10 +2717,10 @@ mod typing_route_tests {
         assert_eq!(events, tap(Z));
 
         let caps = DesktopFacts {
-            lock_keys: LockKeys {
+            lock_keys: Some(LockKeys {
                 caps: true,
                 num: false,
-            },
+            }),
             ..de
         };
         let (result, events) = on_silent_compositor(&local, "z", caps);
@@ -2691,6 +2734,29 @@ mod typing_route_tests {
              which is active; nothing was typed"
         );
         assert_eq!(events, []);
+    }
+
+    #[test]
+    fn with_the_lock_keys_unknown_only_text_they_dont_change_goes_out() {
+        const SHIFT: u32 = 42;
+        let local = LocalEis::start(None);
+        let unknown = DesktopFacts {
+            x11_app_may_have_focus: true,
+            active_layout: Some(0),
+            lock_keys: None,
+        };
+
+        let (result, events) = on_silent_compositor(&local, "a", unknown);
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "foreground_unavailable: the compositor doesn't say whether Caps Lock or Num Lock is \
+             on, so keys could type the wrong case; nothing was typed"
+        );
+        assert_eq!(events, tap(SHIFT));
+
+        let (result, events) = on_silent_compositor(&local, "1 2\n", unknown);
+        result.unwrap();
+        assert_eq!(events, [tap(2), tap(57), tap(3), tap(28)].concat());
     }
 
     #[test]
@@ -2837,9 +2903,12 @@ mod key_plan_tests {
             group: 3,
             ..KeyboardState::default()
         };
-        assert!(plan_keys("a", &keymap(), keyboard)
-            .unwrap_err()
-            .to_string()
-            .starts_with("foreground_unavailable: the active keyboard layout has no key for"));
+        assert_eq!(
+            plan_keys("a", &keymap(), keyboard)
+                .unwrap_err()
+                .to_string(),
+            "foreground_unavailable: the active keyboard layout has no key for \"a\". Use set_value \
+             on the element, or clipboard_write and then hotkey ctrl+v; nothing was typed"
+        );
     }
 }

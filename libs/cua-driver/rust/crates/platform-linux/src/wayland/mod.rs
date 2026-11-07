@@ -35,6 +35,7 @@ mod region_route;
 pub mod shell_helper;
 pub mod sway_ipc;
 mod text_keys;
+pub(crate) use text_keys::NOTHING_TYPED;
 mod virtual_keyboard;
 // RemoteDesktop/libei input is portable and ships in release binaries.
 #[cfg(feature = "portal-input")]
@@ -2773,6 +2774,7 @@ fn type_into(window: Option<u64>, text: &str) -> anyhow::Result<()> {
     if text.is_empty() {
         return Ok(());
     }
+    let text = &*text_keys::typable_text(text)?;
     window.map_or(Ok(()), activate_window_for_input)?;
     if niri::is_session() {
         return niri::keyboard::type_text(window.or_else(niri_expected_window), text);
@@ -2805,6 +2807,7 @@ fn type_into(window: Option<u64>, text: &str) -> anyhow::Result<()> {
 /// headless wlroots seat dropping the first event from a second `wtype`
 /// process after the text has landed.
 pub fn type_text_then_key_focused(text: &str, key: &str) -> anyhow::Result<()> {
+    let text = &*text_keys::typable_text(text)?;
     let keysym = key_to_keysym(key);
     if niri::is_session() {
         niri::keyboard::type_text(niri_expected_window(), text)?;

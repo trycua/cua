@@ -526,6 +526,35 @@ fn session_guard(
     }
 }
 
+/// Pauses between the steps of one delivery.
+#[derive(Clone, Copy)]
+struct StepPacing {
+    /// After every step.
+    step: Duration,
+    /// After a release, on top of `step`.
+    after_release: Duration,
+}
+
+impl StepPacing {
+    /// Key chords: the fixed hold.
+    fn keys() -> Self {
+        Self {
+            step: Duration::from_millis(KEY_DELAY_MS),
+            after_release: Duration::ZERO,
+        }
+    }
+
+    /// Text under the `delay_ms` contract: batched delivery has no pauses
+    /// (the raw-key confirmation after the last step proves the server read
+    /// the batch), paced delivery holds each key and waits `delay_ms`.
+    fn for_text(pacing: super::TypePacing) -> Self {
+        Self {
+            step: pacing.hold(),
+            after_release: pacing.gap(),
+        }
+    }
+}
+
 /// Deliver `steps` to `target_window` through the session's virtual master
 /// keyboard. The caller holds the session's MPX operation guard.
 /// `remap_guards` keeps any spare-keycode remaps alive until the server has
@@ -536,6 +565,7 @@ fn deliver(
     steps: &[KeyStep],
     remap_guards: Vec<RemappedKeycode<'_>>,
     keymap_conn: &RustConnection,
+    pacing: StepPacing,
 ) -> Result<KeyboardDeliveryReport> {
     let display = open_display()?;
     let result = (|| -> Result<KeyboardDeliveryReport> {
@@ -618,7 +648,14 @@ fn deliver(
                 held.retain(|code| *code != step.evdev_code);
             }
             last = Some(*step);
-            sleep(Duration::from_millis(KEY_DELAY_MS));
+            let pause = if step.press {
+                pacing.step
+            } else {
+                pacing.step + pacing.after_release
+            };
+            if !pause.is_zero() {
+                sleep(pause);
+            }
         }
         let delivery_confirmed = match last {
             Some(last) => wait_for_raw_key(
@@ -673,17 +710,36 @@ pub fn send_virtual_keyboard_text(
     target_window: u64,
     text: &str,
 ) -> Result<KeyboardDeliveryReport> {
-    keyboard_text(Some(cursor_id), target_window, text)
+    send_virtual_keyboard_text_paced(cursor_id, target_window, text, super::TypePacing::default())
+}
+
+/// [`send_virtual_keyboard_text`] with the `delay_ms` contract in `pacing`.
+pub fn send_virtual_keyboard_text_paced(
+    cursor_id: &str,
+    target_window: u64,
+    text: &str,
+    pacing: super::TypePacing,
+) -> Result<KeyboardDeliveryReport> {
+    keyboard_text(Some(cursor_id), target_window, text, pacing)
 }
 
 pub fn send_popup_keyboard_text(popup: u64, text: &str) -> Result<KeyboardDeliveryReport> {
-    keyboard_text(None, popup, text)
+    send_popup_keyboard_text_paced(popup, text, super::TypePacing::default())
+}
+
+pub fn send_popup_keyboard_text_paced(
+    popup: u64,
+    text: &str,
+    pacing: super::TypePacing,
+) -> Result<KeyboardDeliveryReport> {
+    keyboard_text(None, popup, text, pacing)
 }
 
 fn keyboard_text(
     session: Option<&str>,
     target_window: u64,
     text: &str,
+    pacing: super::TypePacing,
 ) -> Result<KeyboardDeliveryReport> {
     let (_op, cursor_id) = session_guard(session, target_window)?;
     let keymap = Keymap::load()?;
@@ -699,7 +755,14 @@ fn keyboard_text(
         plan_text_with_fallback(&keymap.mapping, keymap.shift, text, |ch, mapping| {
             keycode_for_keysym(&keymap.conn, mapping, keysym_for_char(ch), &ch.to_string())
         })?;
-    deliver(&cursor_id, target_window, &steps, guards, &keymap.conn)
+    deliver(
+        &cursor_id,
+        target_window,
+        &steps,
+        guards,
+        &keymap.conn,
+        StepPacing::for_text(pacing),
+    )
 }
 
 /// Press `key` with `modifiers` held, into `target_window`, without touching
@@ -749,7 +812,14 @@ fn keyboard_key(
         }
     };
     let steps = plan_chord(&modifier_keycodes, keycode, needs_shift, keymap.shift);
-    deliver(&cursor_id, target_window, &steps, guards, &keymap.conn)
+    deliver(
+        &cursor_id,
+        target_window,
+        &steps,
+        guards,
+        &keymap.conn,
+        StepPacing::keys(),
+    )
 }
 
 #[cfg(test)]

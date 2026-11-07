@@ -237,7 +237,7 @@ export function spacesMethods(ctx: BridgeContext): Handlers {
       await b.setAccess(string(args, "spaceId"), clipboard, volume);
       return {};
     },
-    // Child Spaces (the Child Spaces experiment; the daemon refuses them while it is off).
+    // Child Spaces.
     "spaces.tree": async () => {
       const b = model.backend;
       return b.spaceTree ? await b.spaceTree() : [];

@@ -16,7 +16,8 @@
 //!    local stub (`127.0.0.53`, a dnsmasq) has none a guest can reach.
 //!
 //! A server counts only when a guest can reach it: not a loopback, link
-//! local, multicast or unspecified address (those are the host's own), and
+//! local, multicast or unspecified address (those are the host's own), not a
+//! cloud metadata endpoint (always denied; Azure's DNS lives at one), and
 //! an IPv6 server only on a network that has IPv6. At most [`MAX_SERVERS`]
 //! (what a `resolv.conf` honours). The list is both written into the guest
 //! and allowed on port 53 by the Space's egress rules
@@ -35,8 +36,23 @@ pub const FALLBACK: [&str; 2] = ["1.1.1.1", "8.8.8.8"];
 /// The most servers a `resolv.conf` honours (glibc's `MAXNS`).
 pub const MAX_SERVERS: usize = 3;
 
+/// Whether `ip` is a cloud metadata endpoint ([`crate::network::METADATA`]).
+/// Those are denied to every Space before any resolver is allowed, so a
+/// resolver there would be written into the guest and never answer. It is
+/// the only resolver of a GitHub-hosted runner (Azure answers DNS at
+/// `168.63.129.16`, behind the `127.0.0.53` stub).
+fn is_metadata(ip: IpAddr) -> bool {
+    crate::network::METADATA
+        .iter()
+        .filter_map(|n| crate::egress::Net::parse(n).ok())
+        .any(|n| n.contains(ip))
+}
+
 /// Whether a guest could send DNS to `ip`.
 pub fn usable(ip: IpAddr, ipv6: bool) -> bool {
+    if is_metadata(ip) {
+        return false;
+    }
     match ip {
         IpAddr::V4(a) => {
             !(a.is_loopback()
@@ -160,6 +176,24 @@ mod tests {
         // The usable one among them is kept.
         let conf = "nameserver 127.0.0.53\nnameserver 10.1.2.3\n";
         assert_eq!(select(None, &nameservers(conf), false), [ip("10.1.2.3")]);
+    }
+
+    #[test]
+    fn a_hosts_only_resolver_behind_cloud_metadata_falls_back_to_public_ones() {
+        // GitHub-hosted runner: /etc/resolv.conf is the 127.0.0.53 stub and
+        // systemd-resolved's upstream is Azure's wireserver, which every
+        // Space is denied. The guest must be given servers it can reach.
+        let conf = "nameserver 127.0.0.53\nnameserver 168.63.129.16\n";
+        assert_eq!(
+            select(None, &nameservers(conf), false),
+            [ip("1.1.1.1"), ip("8.8.8.8")]
+        );
+        for m in ["169.254.169.254", "fd00:ec2::254", "100.100.100.200"] {
+            assert!(!usable(ip(m), true), "{m}");
+        }
+        // A private resolver beside it is kept.
+        let conf = "nameserver 168.63.129.16\nnameserver 10.0.0.2\n";
+        assert_eq!(select(None, &nameservers(conf), false), [ip("10.0.0.2")]);
     }
 
     #[test]

@@ -72,7 +72,7 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         "spaces.setPower", "spaces.delete", "spaces.rename", "spaces.deleteMany", "spaces.leave", "spaces.cancelCreate",
         // A Space's network, clipboard and Volume settings (the SDK's).
         "network.get", "network.set", "network.log", "network.ackNotice", "spaces.setAccess",
-        // Child Spaces (the Child Spaces experiment; the daemon refuses them while it is off).
+        // Child Spaces.
         "spaces.tree", "children.set", "budget.get", "budget.set", "services.list", "services.control",
         "machines.list", "host.status",
         "agents.list", "agents.runs", "agents.events", "agents.pause", "agents.resume",

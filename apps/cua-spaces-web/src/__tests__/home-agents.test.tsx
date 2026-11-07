@@ -9,7 +9,6 @@
 import { act, cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { setFlagOverride } from "@/bridge";
 import { wasmBuilt } from "@/bridge/__tests__/testCore";
 import { resetWakeNotes } from "@/components/space-thread/summon";
 import { resetConnectedAppsState } from "@/hooks/use-connected-apps";
@@ -24,7 +23,6 @@ beforeEach(() => {
   resetWakeNotes();
   resetConnectState();
   resetConnectedAppsState();
-  setFlagOverride("spaces_ask_first_home", true);
 });
 afterEach(() => {
   cleanup();

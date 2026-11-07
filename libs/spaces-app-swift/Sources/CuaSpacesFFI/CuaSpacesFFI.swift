@@ -17107,23 +17107,6 @@ public struct AppExperiments: Equatable, Hashable {
      */
     public var cuaVolume: Bool
     /**
-     * Secure Spaces: a Space reaches the internet and nothing else on the
-     * network unless it is opened. Off unless turned on; the daemon enforces
-     * it (the switch is kept in the cua home).
-     */
-    public var secureSpaces: Bool
-    /**
-     * Child Spaces: a Space may make Spaces of its own. Off unless turned
-     * on; the daemon enforces it (the switch is kept in the cua home).
-     */
-    public var childSpaces: Bool
-    /**
-     * Ask first: an agent asks on a card before something leaves its Space
-     * (a push to GitHub). Off unless turned on; the daemon enforces it (the
-     * switch is kept in the cua home).
-     */
-    public var askFirst: Bool
-    /**
      * CI runners: GitHub Actions jobs run in a fresh Space each (`cua ci`
      * and the CI Runners page). Off unless turned on; the daemon and the
      * `cua` command enforce it (the switch is kept in the cua home).
@@ -17141,12 +17124,6 @@ public struct AppExperiments: Equatable, Hashable {
      * is kept in the cua home).
      */
     public var mobile: Bool
-    /**
-     * Warm pools: one Linux Space kept ready, with its coding apps
-     * installed, so the next Create from Home starts at once. Off unless
-     * turned on; the daemon enforces it (the switch is kept in the cua home).
-     */
-    public var warmPools: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -17154,20 +17131,6 @@ public struct AppExperiments: Equatable, Hashable {
         /**
          * Cua Volume in the first run and Settings, Storage.
          */cuaVolume: Bool,
-        /**
-         * Secure Spaces: a Space reaches the internet and nothing else on the
-         * network unless it is opened. Off unless turned on; the daemon enforces
-         * it (the switch is kept in the cua home).
-         */secureSpaces: Bool,
-        /**
-         * Child Spaces: a Space may make Spaces of its own. Off unless turned
-         * on; the daemon enforces it (the switch is kept in the cua home).
-         */childSpaces: Bool,
-        /**
-         * Ask first: an agent asks on a card before something leaves its Space
-         * (a push to GitHub). Off unless turned on; the daemon enforces it (the
-         * switch is kept in the cua home).
-         */askFirst: Bool,
         /**
          * CI runners: GitHub Actions jobs run in a fresh Space each (`cua ci`
          * and the CI Runners page). Off unless turned on; the daemon and the
@@ -17182,20 +17145,11 @@ public struct AppExperiments: Equatable, Hashable {
          * Mobile: the computer answers the Cua Spaces phone app (its tools and
          * push events). Off unless turned on; the daemon enforces it (the switch
          * is kept in the cua home).
-         */mobile: Bool,
-        /**
-         * Warm pools: one Linux Space kept ready, with its coding apps
-         * installed, so the next Create from Home starts at once. Off unless
-         * turned on; the daemon enforces it (the switch is kept in the cua home).
-         */warmPools: Bool) {
+         */mobile: Bool) {
         self.cuaVolume = cuaVolume
-        self.secureSpaces = secureSpaces
-        self.childSpaces = childSpaces
-        self.askFirst = askFirst
         self.ciRunners = ciRunners
         self.tcpShares = tcpShares
         self.mobile = mobile
-        self.warmPools = warmPools
     }
 
 
@@ -17215,25 +17169,17 @@ public struct FfiConverterTypeAppExperiments: FfiConverterRustBuffer {
         return
             try AppExperiments(
                 cuaVolume: FfiConverterBool.read(from: &buf),
-                secureSpaces: FfiConverterBool.read(from: &buf),
-                childSpaces: FfiConverterBool.read(from: &buf),
-                askFirst: FfiConverterBool.read(from: &buf),
                 ciRunners: FfiConverterBool.read(from: &buf),
                 tcpShares: FfiConverterBool.read(from: &buf),
-                mobile: FfiConverterBool.read(from: &buf),
-                warmPools: FfiConverterBool.read(from: &buf)
+                mobile: FfiConverterBool.read(from: &buf)
         )
     }
 
     public static func write(_ value: AppExperiments, into buf: inout [UInt8]) {
         FfiConverterBool.write(value.cuaVolume, into: &buf)
-        FfiConverterBool.write(value.secureSpaces, into: &buf)
-        FfiConverterBool.write(value.childSpaces, into: &buf)
-        FfiConverterBool.write(value.askFirst, into: &buf)
         FfiConverterBool.write(value.ciRunners, into: &buf)
         FfiConverterBool.write(value.tcpShares, into: &buf)
         FfiConverterBool.write(value.mobile, into: &buf)
-        FfiConverterBool.write(value.warmPools, into: &buf)
     }
 }
 
@@ -35844,8 +35790,8 @@ public struct AppSettings: Equatable, Hashable {
      */
     public var launchAtLogin: Bool?
     /**
-     * Settings, Experiments: every switch off unless turned on
-     * ([`crate::experiments`]).
+     * Settings, Experiments: each switch has a default
+     * ([`crate::experiments::Experiments::default`]); a stored on or off wins.
      */
     public var experiments: AppExperiments
     /**
@@ -35944,8 +35890,8 @@ public struct AppSettings: Equatable, Hashable {
          * Settings); `None`: never chosen ([`crate::login_item::launch_plan`]).
          */launchAtLogin: Bool?,
         /**
-         * Settings, Experiments: every switch off unless turned on
-         * ([`crate::experiments`]).
+         * Settings, Experiments: each switch has a default
+         * ([`crate::experiments::Experiments::default`]); a stored on or off wins.
          */experiments: AppExperiments,
         /**
          * Keyvault copies (import ids) the user dismissed from the notch: it no

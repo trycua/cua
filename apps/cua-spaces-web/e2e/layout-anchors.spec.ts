@@ -4,7 +4,7 @@
 /**
  * Nothing jumps when you move between first-run steps or Settings tabs, at the window sizes people use.
  *
- * First run (the new setup, Labs): the logo, the headline's top edge, the step dots and the primary button stay put
+ * First run (the setup): the logo, the headline's top edge, the step dots and the primary button stay put
  * on every step. Steps differ in height; they used to be centred, so the headline and the button moved up and down,
  * and the header and the dots' row changed height with Skip for now and the dots.
  *
@@ -60,10 +60,6 @@ for (const [width, height] of SIZES) {
   test.describe(`${width}x${height}`, () => {
     test("first run: the logo, headline, step dots and primary button stay put on every step", async ({ page }) => {
       await page.setViewportSize({ width, height });
-      await page.addInitScript(() => {
-        localStorage.setItem("cua.flag.spaces_new_onboarding", "1");
-        localStorage.setItem("cua.flag.spaces_ask_first_home", "1");
-      });
       // signin-wait: the browser never confirms, so the sign-in step stays to be measured.
       await page.goto("/onboarding?bridge=demo&demo=fresh,signin-wait&parity");
       const root = page.locator("[data-new-first-run]");

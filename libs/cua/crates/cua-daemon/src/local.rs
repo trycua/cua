@@ -798,16 +798,14 @@ impl VmmLocal {
                 Err(e) => tracing::warn!(%image, "pool.warm: {e}"),
             }
         }
-        if cua_vmm::experiments::enabled(cua_vmm::experiments::Gate::WarmPools) {
-            match self.keep_warm_space(pool).await {
-                Ok(()) => {
-                    sources.insert(crate::pool::WARM_SOURCE.to_string());
-                    if !self.pending.lock().unwrap().is_empty() {
-                        sources.insert(NEXT_SOURCE.to_string());
-                    }
+        match self.keep_warm_space(pool).await {
+            Ok(()) => {
+                sources.insert(crate::pool::WARM_SOURCE.to_string());
+                if !self.pending.lock().unwrap().is_empty() {
+                    sources.insert(NEXT_SOURCE.to_string());
                 }
-                Err(e) => tracing::warn!("warm-pools: {e}"),
             }
+            Err(e) => tracing::warn!("warm-pools: {e}"),
         }
         for np in pool.named_pools() {
             let source = format!("pool:{}", np.name);
@@ -840,7 +838,7 @@ impl VmmLocal {
         });
     }
 
-    /// The `warm-pools` experiment: keeps one Linux Space ready, the Space
+    /// Warm start: keeps one Linux Space ready, the Space
     /// the Spaces app's Home makes for a new agent, with the coding apps of
     /// [`warm_pools_harnesses`] installed in it. The shape is a plain local
     /// create of [`warm_pools_image`] (the size a create without one gets),
@@ -1036,8 +1034,7 @@ impl VmmLocal {
                         // The image of a kept-warm request moved: creates keep
                         // the one they were served until a warm member of the
                         // new one is ready, so none waits on its pull.
-                        let kept = key.0 == warm_pools_image()
-                            && cua_vmm::experiments::enabled(cua_vmm::experiments::Gate::WarmPools);
+                        let kept = key.0 == warm_pools_image();
                         let next = match hold_refresh(&served, fresh, kept) {
                             Refresh::Serve(r) => r,
                             Refresh::Hold { next } => {
@@ -1377,9 +1374,8 @@ async fn warm_session(
     result
 }
 
-/// The image of the Linux Space the `warm-pools` experiment keeps ready: the
-/// Linux slim tier, which the Spaces app's Home creates for a new agent while
-/// the experiment is on (the wizard reads the same catalog file).
+/// The image of the Linux Space warm start keeps ready: the Linux slim tier, which the Spaces
+/// app's Home creates for a new agent (the wizard reads the same catalog file).
 pub fn warm_pools_image() -> String {
     cua_image::catalog::entries()
         .iter()
@@ -3819,9 +3815,8 @@ mod tests {
 
     #[test]
     fn the_warm_space_is_the_image_home_creates_and_its_apps_can_be_chosen() {
-        // The Spaces app's Home creates the Linux slim tier for a new agent
-        // while the experiment is on (the wizard's `first_space_offers`); a
-        // different image here would never be claimed.
+        // The Spaces app's Home creates the Linux slim tier for a new agent (the wizard's
+        // `first_space_offers`); a different image here would never be claimed.
         assert_eq!(super::warm_pools_image(), "ghcr.io/trycua/linux:24.04-slim");
         static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
         let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());

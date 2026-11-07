@@ -274,7 +274,7 @@ fn all_builders(s: &str) -> Vec<Event> {
         )
         .unwrap(),
     );
-    v.push(events::experiment("experiment_off", "warm_pools").unwrap());
+    v.push(events::experiment("experiment_off", "tcp_shares").unwrap());
     v.push(events::installer_step("installer_started", s, s, s, &[s]).unwrap());
     v.push(events::installer_step("installer_failed", s, s, "ps1", &[s, "cli"]).unwrap());
     v.push(
@@ -1633,7 +1633,7 @@ fn the_active_day_carries_the_experiments_that_are_on() {
         "none",
         "mobile",
         "cua_volume+mobile",
-        "cua_volume+mobile+warm_pools",
+        "cua_volume+tcp_shares+mobile",
     ] {
         assert!(schema::value_ok(k, &Value::from(ok)), "{ok}");
     }
@@ -1657,7 +1657,7 @@ fn the_active_day_carries_the_experiments_that_are_on() {
     let h = tempfile::tempdir().unwrap();
     let (t, sink) = ready(h.path(), &[]);
     assert_eq!(t.capture_active_on(20_000), Captured::Queued);
-    t.set_experiments_on(&["warm_pools", "alice@example.com"]);
+    t.set_experiments_on(&["tcp_shares", "alice@example.com"]);
     // The next day, another process of the same install.
     let (t2, sink2) = ready(h.path(), &[]);
     assert_eq!(t2.capture_active_on(20_001), Captured::Queued);
@@ -1676,7 +1676,7 @@ fn the_active_day_carries_the_experiments_that_are_on() {
             .collect()
     };
     assert_eq!(sets(&sink), ["none"], "the first day had none");
-    assert_eq!(sets(&sink2), ["warm_pools"]);
+    assert_eq!(sets(&sink2), ["tcp_shares"]);
     let h2 = tempfile::tempdir().unwrap();
     let (off, _) = ready(h2.path(), &[("DO_NOT_TRACK", "1")]);
     off.set_experiments_on(&["mobile"]);

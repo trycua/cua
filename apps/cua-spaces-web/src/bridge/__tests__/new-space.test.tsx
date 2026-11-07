@@ -291,16 +291,18 @@ describe.skipIf(!wasmBuilt)("First Space in one click (wasm core)", () => {
     const fresh = { ...DEMO_NEW_SPACE_OPTIONS, local: { ...DEMO_NEW_SPACE_OPTIONS.local!, storage: { ...DEMO_NEW_SPACE_OPTIONS.local!.storage!, pulled: [] } } };
     const [linux, macos, ...rest] = firstSpaceOffers(core, env(core, fresh));
     expect(rest).toEqual([]);
-    expect(linux).toMatchObject({ os: "linux", image: "ghcr.io/trycua/linux:24.04", time: "about 2 min", blocked: null });
-    expect(linux!.size).toMatch(/^1\.\d GB download$/);
+    // The slim tier: the Linux Space warm start keeps ready is the one the first Create takes.
+    expect(linux).toMatchObject({ os: "linux", image: "ghcr.io/trycua/linux:24.04-slim", time: "about 2 min", blocked: null });
+    expect(linux!.size).toBe("470 MB download");
     // On this Mac, whatever Settings' default says.
-    expect(linux!.args).toMatchObject({ image: "ghcr.io/trycua/linux:24.04", on: "local" });
+    expect(linux!.args).toMatchObject({ image: "ghcr.io/trycua/linux:24.04-slim", on: "local" });
     expect(macos).toMatchObject({ os: "macos", image: "ghcr.io/trycua/macos:26", time: "10 to 30 min the first time", blocked: null });
     expect(macos!.size).toMatch(/^2\d GB download$/);
     expect(macos!.args).toMatchObject({ on: "local", kind: "vm" });
     expect(macos!.args.gpu).toBeUndefined();
     // A pulled image says so, and is quicker.
-    const [cached] = firstSpaceOffers(core, env(core));
+    const pulled = { ...DEMO_NEW_SPACE_OPTIONS, local: { ...DEMO_NEW_SPACE_OPTIONS.local!, storage: { ...DEMO_NEW_SPACE_OPTIONS.local!.storage!, pulled: ["ghcr.io/trycua/linux:24.04-slim"] } } };
+    const [cached] = firstSpaceOffers(core, env(core, pulled));
     expect(cached).toMatchObject({ size: "Already downloaded", time: "under a minute" });
   });
 
@@ -373,7 +375,7 @@ describe.skipIf(!wasmBuilt)("On the SwiftUI host's answer (wasm core)", () => {
     expect(e.storage?.container?.name).toBe("Macintosh HD");
     const [linux, macos, ...rest] = firstSpaceOffers(core, e);
     expect(rest).toEqual([]);
-    expect(linux).toMatchObject({ os: "linux", image: "ghcr.io/trycua/linux:24.04", size: "Already downloaded", blocked: null });
+    expect(linux).toMatchObject({ os: "linux", image: "ghcr.io/trycua/linux:24.04-slim", size: "470 MB download", blocked: null });
     expect(macos).toMatchObject({ os: "macos", image: "ghcr.io/trycua/macos:26", blocked: null });
     expect(macos!.size).toMatch(/^2\d GB download$/);
     let state = wizardReduce(core, wizardInitial(core, e), { type: "choose-placement", on: "local" }, e);
@@ -391,7 +393,7 @@ describe.skipIf(!wasmBuilt)("On the SwiftUI host's answer (wasm core)", () => {
     await waitFor(() => expect(asked()?.pending).toBe(true));
     // macOS waits for the host's free space: no 24 GB guess before it.
     await waitFor(() => expect(hooks.first.offers.map((o) => o.id)).toEqual(["linux"]));
-    expect(hooks.first.offers[0]!.size).not.toBe("Already downloaded");
+    expect(hooks.first.offers[0]!.size).toBe("470 MB download");
     expect(hooks.first.macosVmsRunning).toBeNull();
     // Access is given; the host is ready and says so; the page asks again.
     await act(async () => {
@@ -400,7 +402,7 @@ describe.skipIf(!wasmBuilt)("On the SwiftUI host's answer (wasm core)", () => {
     // Before the offer's own retry (5 s): the ready event asks again.
     await waitFor(() => expect(asked()?.pending).toBeUndefined(), { timeout: 3000 });
     expect(asked()?.env?.storage?.container?.name).toBe("Macintosh HD");
-    await waitFor(() => expect(hooks.first.offers[0]!.size).toBe("Already downloaded"));
+    await waitFor(() => expect(hooks.first.offers.map((o) => o.id)).toEqual(["linux", "macos"]));
     expect(hooks.first.offers.map((o) => o.id)).toEqual(["linux", "macos"]);
     expect(hooks.first.macosVmsRunning).toBe(2);
     expect(hooks.wizard.macosVmsRunning).toBe(2);

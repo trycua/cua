@@ -22,7 +22,7 @@ import { thisComputerText } from "@/lib/host-labels";
 const SELF_HOSTED = "self-hosted";
 
 /** Experiments that stay as Labs. "Your cloud" and "Sharing" have no switch any more: the plan decides on the server. */
-const LABS = new Set(["experiment:cua_volume", "experiment:secure_spaces", "experiment:child_spaces", "experiment:ask_first", "experiment:ci_runners", "experiment:tcp_shares", "experiment:mobile", "experiment:warm_pools"]);
+const LABS = new Set(["experiment:cua_volume", "experiment:ci_runners", "experiment:tcp_shares", "experiment:mobile"]);
 
 /**
  * Settings, Advanced: the update channel (Stable or Nightly), Labs, which software runs Spaces on
@@ -145,60 +145,36 @@ function Sharing() {
 
 /** Whether a task asks before it works on this Mac itself (the answer to "Work on this Mac?" is kept per device). */
 function thisMacAskRow(asks: boolean): CoreRow {
-  return { ...flagRow("spaces_ask_first_home", "", asks), id: "ask-first:this-mac", label: `Ask before a task uses ${thisComputerText()}`, options: [
+  return { ...flagRow("ask-first-this-mac", "", asks), id: "ask-first:this-mac", label: `Ask before a task uses ${thisComputerText()}`, options: [
     { id: "on", label: "On", active: asks },
     { id: "off", label: "Off", active: !asks },
   ] };
 }
 
-/** Cua Volume and the new Home. Off hides; nothing set up is undone. */
+/** Cua Volume, the other Labs switches and Spaces as a tree. Off hides; nothing set up is undone. */
 function Labs() {
   const { data, chooseExperiment } = useExperiments();
-  const askFirst = useFlag("spaces_ask_first_home");
-  const newSetup = useFlag("spaces_new_onboarding");
   const tree = useFlag("spaces_tree");
   const thisMacOk = useThisMacConfirmed();
   const rows = (data?.page?.sections.flatMap((s) => s.rows) ?? []).filter((r) => LABS.has(r.id));
   const note: Record<string, string> = {
     "experiment:cua_volume": "Memory and files your agents share across every Space.",
-    "experiment:secure_spaces": "A Space reaches the internet and nothing else on your network unless you open it.",
-    "experiment:child_spaces": "A Space can make Spaces of its own, inside a budget you set.",
-    "experiment:ask_first": "An agent asks you on a card before anything leaves its Space, such as a push to GitHub.",
     "experiment:ci_runners": "Run GitHub Actions jobs in a fresh Space each, on this computer. Adds CI Runners to the sidebar.",
     "experiment:tcp_shares": "Share a game server or another TCP service in a Space at a public address.",
     "experiment:mobile": "Your computers answer the Cua Spaces phone app: start a task, follow the thread and review changes.",
-    "experiment:warm_pools": "Keep one Linux Space ready on this computer, with its coding apps installed, so the next Create from Home starts at once.",
   };
   return (
     <SettingsGroup title="Labs">
       <CoreSettingsRow
-        row={flagRow("spaces_ask_first_home", "Try the new Home", askFirst)}
-        description="Home asks what you want done, then does it on a fresh computer you can watch. On this device only."
-        onChoose={(_, option) => setFlagOverride("spaces_ask_first_home", option === "on")}
+        row={flagRow("spaces_tree", "Spaces as a tree", tree)}
+        description="Your computers and the Spaces made on them in one list. New tasks run on your default Space. On this device only."
+        onChoose={(_, option) => setFlagOverride("spaces_tree", option === "on")}
       />
       <CoreSettingsRow
-        row={flagRow("spaces_new_onboarding", "Try the new setup", newSetup && askFirst)}
-        description="Your first Linux Space and Claude Code get ready while you go through setup, which ends on the new Home. Turns on the new Home too. On this device only."
-        onChoose={(_, option) => {
-          setFlagOverride("spaces_new_onboarding", option === "on");
-          if (option === "on") setFlagOverride("spaces_ask_first_home", true);
-        }}
+        row={thisMacAskRow(!thisMacOk)}
+        description={`Before a task works directly on ${thisComputerText()}, with your files and apps. Turn it on to be asked again.`}
+        onChoose={(_, option) => setThisMacConfirmed(option === "off")}
       />
-      <CoreSettingsRow
-        row={flagRow("spaces_tree", "Spaces as a tree", tree && askFirst)}
-        description="Your computers and the Spaces made on them in one list. New tasks run on your default Space. Turns on the new Home too. On this device only."
-        onChoose={(_, option) => {
-          setFlagOverride("spaces_tree", option === "on");
-          if (option === "on") setFlagOverride("spaces_ask_first_home", true);
-        }}
-      />
-      {askFirst ? (
-        <CoreSettingsRow
-          row={thisMacAskRow(!thisMacOk)}
-          description={`Before a task works directly on ${thisComputerText()}, with your files and apps. Turn it on to be asked again.`}
-          onChoose={(_, option) => setThisMacConfirmed(option === "off")}
-        />
-      ) : null}
       {rows.map((r) => (
         <CoreSettingsRow
           key={r.id}

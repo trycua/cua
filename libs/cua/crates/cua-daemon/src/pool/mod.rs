@@ -69,7 +69,7 @@ const REFILL_DELAY: Duration = Duration::from_millis(1500);
 /// [`WarmPool::refill_later`]).
 const REFILL_MAX_WAIT: Duration = Duration::from_millis(7500);
 
-/// The explicit-pool source of the `warm-pools` experiment's Linux Space
+/// The explicit-pool source of warm start's Linux Space
 /// ([`crate::local::VmmLocal::apply_pools`]). A shape that has it is kept
 /// warm on purpose for creates that follow each other: a refill starts the
 /// moment a member is claimed, and a create that finds no member ready waits
@@ -428,7 +428,7 @@ impl Shape {
     }
 
     /// Whether a create may wait for a member that is starting: the shape is
-    /// kept warm on purpose for the `warm-pools` experiment and that pool is
+    /// kept warm on purpose for warm start and that pool is
     /// not idle.
     fn waits_for_refill(&self) -> bool {
         self.explicit
@@ -437,7 +437,7 @@ impl Shape {
             && self.refill_estimate().is_some_and(|d| d < WARM_WAIT_MAX)
     }
 
-    /// Whether the shape is kept warm for the experiment, whatever the
+    /// Whether the shape is kept warm for warm start, whatever the
     /// estimate (the refill after a claim starts at once).
     fn is_warm_source(&self) -> bool {
         self.explicit
@@ -1093,7 +1093,7 @@ impl WarmPool {
     }
 
     /// Takes a ready member of shape `key`. A shape kept warm for the
-    /// `warm-pools` experiment ([`WARM_SOURCE`]) whose member is starting
+    /// warm start ([`WARM_SOURCE`]) whose member is starting
     /// is waited for (up to [`WARM_WAIT_MAX`]): that member began before this
     /// create, so waiting is never slower than a cold start of its own, and
     /// a cold start would not have the agent stack in it. Any other shape
@@ -1195,7 +1195,7 @@ impl WarmPool {
         }
     }
 
-    /// Says why no warm Space of the experiment serves `want` (a debug
+    /// Says why no warm Space of warm start serves `want` (a debug
     /// aid for shapes that never match).
     fn explain_miss(&self, own: &str, want: &StartSpec, backend: BackendKind) {
         let shapes = self.inner.shapes.lock().unwrap();
@@ -1224,7 +1224,7 @@ impl WarmPool {
         }
     }
 
-    /// Whether shape `key` is kept warm for the `warm-pools` experiment.
+    /// Whether shape `key` is kept warm for warm start.
     fn is_warm_shape(&self, key: &str) -> bool {
         self.inner
             .shapes
@@ -1609,7 +1609,7 @@ impl WarmPool {
     /// stays within `pool.memory_percent` of the memory and above the free
     /// floor.
     ///
-    /// The one warm Space of the `warm-pools` experiment ([`WARM_SOURCE`])
+    /// The one warm Space of warm start ([`WARM_SOURCE`])
     /// is not held to the percentage while it is the only member held (on a
     /// built-in runtime of 4 GiB, 15 percent is less than one warm Space):
     /// it still needs the free floor, so it never takes memory a Space in use
@@ -3874,7 +3874,7 @@ mod tests {
                 .is_none()
         );
         assert!(t.elapsed() < Duration::from_millis(100));
-        // Withdrawn (the experiment turned off): the source is gone.
+        // Withdrawn (the source is no longer kept, for instance no image to keep): the source is gone.
         f.pool.retain_explicit(|src| src != WARM_SOURCE);
         f.pool.tick().await;
         assert_eq!(f.pool.shape_status(&key).map(|s| s.0).unwrap_or(0), 0);

@@ -277,13 +277,6 @@ pub(crate) fn channel_app(shared: Arc<Shared>, space: String) -> axum::Router {
             let Some(authority) = shared.spawn_authority() else {
                 return unauthenticated(grpc, "child Spaces are off on this computer");
             };
-            // An experiment: while it is off, no capability does anything.
-            if !cua_vmm::experiments::enabled(cua_vmm::experiments::Gate::ChildSpaces) {
-                return unauthenticated(
-                    grpc,
-                    &cua_vmm::experiments::Gate::ChildSpaces.off_message(),
-                );
-            }
             let Some(token) = bearer(&req) else {
                 return unauthenticated(grpc, capability::Refusal::Malformed.message());
             };

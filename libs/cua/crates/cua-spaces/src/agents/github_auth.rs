@@ -67,16 +67,6 @@ pub fn is_app_method(name: &str) -> bool {
     APP_METHODS.contains(&name)
 }
 
-/// Whether Ask first, the experiment this module belongs to, is on.
-pub fn enabled() -> bool {
-    crate::experiments::enabled(crate::experiments::Gate::AskFirst)
-}
-
-/// The refusal for a call while Ask first is off.
-pub fn off_error() -> Error {
-    Error::InvalidArgument(crate::experiments::Gate::AskFirst.off_message())
-}
-
 /// A token. It never prints, serializes or compares as text: only
 /// [`Token::expose`] gives it out, for the one call that uses it.
 #[derive(Clone)]

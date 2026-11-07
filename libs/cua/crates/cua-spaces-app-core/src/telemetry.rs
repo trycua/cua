@@ -2201,10 +2201,10 @@ mod tests {
     #[test]
     fn an_experiment_toggle_is_one_event_and_the_set_that_is_on() {
         use crate::experiments::Experiments;
-        let off = Experiments::default();
+        let off = Experiments::all_off();
         let on = Experiments {
             mobile: true,
-            ..Default::default()
+            ..Experiments::all_off()
         };
         let signals = experiments_changed(&off, &on);
         assert_eq!(
@@ -2244,13 +2244,9 @@ mod tests {
             vec![TelemetrySignal::ExperimentsOn {
                 experiments: vec![
                     "cua_volume".into(),
-                    "secure_spaces".into(),
-                    "child_spaces".into(),
-                    "ask_first".into(),
                     "ci_runners".into(),
                     "tcp_shares".into(),
-                    "mobile".into(),
-                    "warm_pools".into()
+                    "mobile".into()
                 ]
             }]
         );
@@ -2284,11 +2280,11 @@ mod tests {
             .foreground()
             .build();
         t.acknowledge_notice();
-        let off = Experiments::default();
+        let off = Experiments::all_off();
         let on = Experiments {
             cua_volume: true,
             mobile: true,
-            ..Default::default()
+            ..Experiments::all_off()
         };
         let signals = experiments_changed(&off, &on);
         assert_eq!(

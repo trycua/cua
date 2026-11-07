@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.22.2](https://github.com/trycua/cua/compare/cua-spaces-v0.22.1...cua-spaces-v0.22.2) (2026-11-07)
+
+
+### Bug Fixes
+
+* **spaces:** the permission guide always docks under System Settings and says what the pane needs; the rows show each switch live (CUA-3551) ([#6870](https://github.com/trycua/cua/issues/6870)) ([a947cac](https://github.com/trycua/cua/commit/a947cac8e345966db46a11e12f42593560e8e86d))
+
 ## [0.22.1](https://github.com/trycua/cua/compare/cua-spaces-v0.22.0...cua-spaces-v0.22.1) (2026-11-07)
 
 

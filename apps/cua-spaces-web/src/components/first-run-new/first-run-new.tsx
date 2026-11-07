@@ -15,14 +15,14 @@ import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type
 
 import { folderLabel, isNeedsProof, newPendingId, useMachines, useSession, useSettings, useSpaces, type SignInPhase } from "@/bridge";
 import { BridgeContext } from "@/bridge/BridgeProvider";
-import { useAppPermissions, type AppPermissionsState } from "@/bridge/app-permissions";
+import { useAppPermissions } from "@/bridge/app-permissions";
 import { readFirstRun, useFirstRunSaved, writeFirstRun } from "@/bridge/first-run";
 import { hostOs } from "@/bridge/host-os";
 import { useFirstSpaceOffers } from "@/bridge/new-space-hooks";
 import { readSavedOnboarding, writeSavedOnboarding } from "@/bridge/onboarding";
 import { extraName, spokenName } from "@/bridge/space-names";
 import { AddComputerSheet } from "@/components/add-computer-sheet";
-import { AppPermissionList } from "@/components/app-permissions";
+import { AppPermissionList, type PermissionsView } from "@/components/app-permissions";
 import { AppMarkImage } from "@/components/agents/harness-mark";
 import { agoLabel, useRecentThreads } from "@/components/ask-first/pick-up";
 import { CuaLogo } from "@/components/cua-logo";
@@ -613,7 +613,7 @@ export function NextScreen({ view, onRow, onDone, apps }: { view: NextView; onRo
 }
 
 /** 2b, on a Mac: Cua Spaces' two permissions (the same rows as the Cua Driver page), each with Allow, and Later. Never blocks the run. */
-export function PermissionsScreen({ view, perms, onContinue }: { view: PermissionsStepView; perms: Pick<AppPermissionsState, "data" | "allow">; onContinue: () => void }) {
+export function PermissionsScreen({ view, perms, onContinue }: { view: PermissionsStepView; perms: PermissionsView; onContinue: () => void }) {
   return (
     <div data-new-run="permissions">
       <Title>{view.title}</Title>

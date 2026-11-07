@@ -2106,6 +2106,15 @@
         "granted": {
           "type": "boolean"
         },
+        "state": {
+          "enum": [
+            "on",
+            "off",
+            "absent",
+            "unknown",
+            null
+          ]
+        },
         "settingsUrl": {
           "type": [
             "string",

@@ -30,19 +30,23 @@ pub struct WindowInfo {
     pub height: u32,
 }
 
-/// The windows in property `name` of `root`, at most `max`. An absent property
-/// is an empty list. `None` means the server gave no answer.
+/// The windows in property `name` of `root`, at most `max`. `None` means the
+/// server gave no answer, or the property is absent or not a window list.
 fn root_windows(conn: &RustConnection, root: Window, name: &[u8], max: u32) -> Option<Vec<Window>> {
     let atom = conn.intern_atom(true, name).ok()?.reply().ok()?.atom;
     if atom == 0 {
-        return Some(Vec::new());
+        return None;
     }
     let reply = conn
         .get_property(false, root, atom, AtomEnum::WINDOW, 0, max)
         .ok()?
         .reply()
         .ok()?;
-    Some(reply.value32().map_or_else(Vec::new, Iterator::collect))
+    if reply.type_ != u32::from(AtomEnum::WINDOW) {
+        return None;
+    }
+    let windows = reply.value32()?.collect();
+    Some(windows)
 }
 
 /// The window the window manager reports as active (`_NET_ACTIVE_WINDOW`
@@ -54,22 +58,24 @@ pub fn active_window() -> Option<u64> {
     (id != 0).then_some(u64::from(id))
 }
 
-/// Whether an X11 app has keyboard focus. `None` means the X server can't say.
+/// Whether an X11 app has keyboard focus. `None` means the X server can't say,
+/// which includes a window manager that doesn't publish the active window and
+/// its clients.
 pub fn active_window_is_a_client() -> Option<bool> {
     let (conn, screen_num) = RustConnection::connect(None).ok()?;
     let root = conn.setup().roots.get(screen_num)?.root;
-    Some(is_a_client(
+    is_a_client(
         &root_windows(&conn, root, b"_NET_ACTIVE_WINDOW", 1)?,
         &root_windows(&conn, root, b"_NET_CLIENT_LIST", 4096)?,
-    ))
+    )
 }
 
 /// KWin keeps its own helper window in `_NET_ACTIVE_WINDOW` while a Wayland app
-/// has focus, so a window only counts when it is also a listed client.
-fn is_a_client(active: &[Window], clients: &[Window]) -> bool {
-    active
-        .first()
-        .is_some_and(|window| clients.contains(window))
+/// has focus, so a window only counts when it is also a listed client. An empty
+/// `_NET_ACTIVE_WINDOW` says nothing.
+fn is_a_client(active: &[Window], clients: &[Window]) -> Option<bool> {
+    let window = *active.first()?;
+    Some(window != 0 && clients.contains(&window))
 }
 
 /// List top-level windows, optionally filtered by pid.
@@ -879,10 +885,10 @@ mod tests {
     fn only_a_listed_client_counts_as_the_active_x11_window() {
         const KWIN_HELPER: u32 = 0x200000;
         const X11_APP: u32 = 0x600007;
-        assert!(super::is_a_client(&[X11_APP], &[X11_APP]));
-        assert!(!super::is_a_client(&[KWIN_HELPER], &[X11_APP]));
-        assert!(!super::is_a_client(&[0], &[]));
-        assert!(!super::is_a_client(&[], &[X11_APP]));
+        assert_eq!(super::is_a_client(&[X11_APP], &[X11_APP]), Some(true));
+        assert_eq!(super::is_a_client(&[KWIN_HELPER], &[X11_APP]), Some(false));
+        assert_eq!(super::is_a_client(&[0], &[]), Some(false));
+        assert_eq!(super::is_a_client(&[], &[X11_APP]), None);
     }
 
     use super::*;

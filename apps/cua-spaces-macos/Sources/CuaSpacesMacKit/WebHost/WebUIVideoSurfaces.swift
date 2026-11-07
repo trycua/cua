@@ -458,7 +458,8 @@ final class WebUIVideoSurfaces: NSObject, WKScriptMessageHandler {
     /// Keeps a Space's last picture, so its next viewer shows it while it
     /// connects instead of black.
     private func rememberPoster(of session: LiveStreamSession, key: StreamKey) {
-        guard key.tier == .full, let buffer = session.frame else { return }
+        // The poster is the Space's desktop: a window's picture is not what the next viewer of the Space sees first.
+        guard key.tier == .full, key.windowId == nil, let buffer = session.frame else { return }
         posters[key.spaceId] = Poster(buffer: buffer, at: now())
         posterOrder.removeAll { $0 == key.spaceId }
         posterOrder.append(key.spaceId)
@@ -477,9 +478,10 @@ final class WebUIVideoSurfaces: NSObject, WKScriptMessageHandler {
         return true
     }
 
-    /// The Space's last picture, if a recent one is kept.
+    /// The Space's last picture, if a recent one is kept. A window slot has none: the desktop under
+    /// "Connecting…" would be a picture of something else.
     func poster(for key: StreamKey) -> CVPixelBuffer? {
-        guard key.tier == .full, let p = posters[key.spaceId], now() - p.at < Self.posterMaxAge else { return nil }
+        guard key.tier == .full, key.windowId == nil, let p = posters[key.spaceId], now() - p.at < Self.posterMaxAge else { return nil }
         return p.buffer
     }
 

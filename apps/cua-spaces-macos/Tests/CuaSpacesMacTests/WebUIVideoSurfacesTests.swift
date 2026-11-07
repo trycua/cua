@@ -965,6 +965,8 @@ struct WebUIVideoSurfacesTests {
         await settle { s.stats().isEmpty }
         #expect(s.poster(for: .init(spaceId: "a", tier: .full)) != nil)
         #expect(s.poster(for: .init(spaceId: "b", tier: .full)) == nil)
+        // A window of that Space is another picture: it does not borrow the desktop's.
+        #expect(s.poster(for: .init(spaceId: "a", tier: .full, windowId: "xs:1")) == nil)
 
         slow = true
         s.handle(message([entry("v2", space: "a")]))

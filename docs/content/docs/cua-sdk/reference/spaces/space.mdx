@@ -56,7 +56,8 @@ Returned by [`Space.fork`](/cua-sdk/reference/sandbox/checkpoints#spacefork), [`
 | [`displays`](/cua-sdk/reference/spaces/space#spacedisplays) | The Space's displays, primary first, with their resolution in physical pixels. |
 | [`fork`](/cua-sdk/reference/sandbox/checkpoints#spacefork) | Starts Space `name`, a fork of this one (with its memory when it is running), and returns it connected. |
 | [`forward`](/cua-sdk/reference/spaces/channel#spaceforward) | Forwards a free loopback port on this machine to guest `port` over this Space's own connection (cua-spacesd's tunnel): the same path its calls take, so a Space one of your machines provides on your LAN is reached directly, and never through a port opened on that machine's network. |
-| [`join_presence`](/cua-sdk/reference/spaces/streams#spacejoin_presence) | Joins presence. |
+| [`join_presence`](/cua-sdk/reference/spaces/presence#spacejoin_presence) | Joins presence. |
+| [`join_presence_for`](/cua-sdk/reference/spaces/presence#spacejoin_presence_for) | Joins presence for the window being watched. |
 | [`kept_services`](/cua-sdk/reference/spaces/services#spacekept_services) | This Space's services. |
 | [`open_stream`](/cua-sdk/reference/spaces/streams#spaceopen_stream) | Mints a media session (ticket + WebSocket URL) for another client to attach to. |
 | [`put_service`](/cua-sdk/reference/spaces/services#spaceput_service) | Keeps a command running in this Space (replacing a service of that name): restarted by its policy when it ends or fails its health check, started when the Space boots, its output kept in a log file. |

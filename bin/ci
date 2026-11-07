@@ -356,7 +356,7 @@ def rust_env(notes: List[str]) -> Dict[str, str]:
     """
     env: Dict[str, str] = {}
     channel = pinned_rust_channel()
-    rustup = shutil.which("rustup")
+    rustup = find_rustup()
     if not rustup or not channel:
         if have("cargo"):
             notes.append("rustup not found: using the cargo on PATH; rustfmt and clippy may differ from CI")
@@ -371,7 +371,7 @@ def rust_env(notes: List[str]) -> Dict[str, str]:
     env["RUSTUP_TOOLCHAIN"] = channel
     proxy_dirs = [Path(rustup).resolve().parent, Path(rustup).parent]
     brew = Path(rustup).resolve().parent.parent / "bin"  # Homebrew keeps the proxies next to rustup
-    for d in (Path("/opt/homebrew/opt/rustup/bin"), Path("/usr/local/opt/rustup/bin"), Path.home() / ".cargo/bin", brew, *proxy_dirs):
+    for d in (*RUSTUP_DIRS, Path.home() / ".cargo/bin", brew, *proxy_dirs):
         if (d / "cargo").exists() and (d / "cargo-clippy").exists():
             current = shutil.which("cargo")
             if current is None or Path(current).parent != d:
@@ -380,12 +380,95 @@ def rust_env(notes: List[str]) -> Dict[str, str]:
     return env
 
 
-def pnpm_cmd(version: Optional[str]) -> str:
-    """pnpm at the version a package pins (CI's pnpm/action-setup reads packageManager)."""
+# Homebrew's rustup is keg-only: its `rustup` and the cargo/clippy proxies live
+# here, not on PATH, while Homebrew's own `cargo` (a different version that
+# ignores rust-toolchain.toml) is.
+RUSTUP_DIRS = (Path("/opt/homebrew/opt/rustup/bin"), Path("/usr/local/opt/rustup/bin"))
+
+
+def find_rustup() -> Optional[str]:
+    found = shutil.which("rustup")
+    if found:
+        return found
+    exe = "rustup.exe" if IS_WINDOWS else "rustup"
+    for d in (Path.home() / ".cargo/bin", *RUSTUP_DIRS):
+        if (d / exe).exists():
+            return str(d / exe)
+    return None
+
+
+def rust_pin_error(env: Dict[str, str]) -> Optional[str]:
+    """None when the `cargo` and `cargo clippy` bin/ci will run match the pinned toolchain, else why not.
+
+    A cargo from outside rustup (Homebrew's, a distro's) ignores rust-toolchain.toml and
+    reports lint findings CI never sees.
+    """
+    channel = pinned_rust_channel()
+    if not channel or not re.fullmatch(r"\d+\.\d+(\.\d+)?", channel) or not have("cargo"):
+        return None
+    full = {**os.environ, **env}
+    probes = (("cargo --version", ["cargo", "--version"], rf"^cargo {re.escape(channel)}\b"),
+              ("cargo clippy --version", ["cargo", "clippy", "--version"], rf"^clippy 0\.1\.{channel.split('.')[1]}\b"))
+    for label, cmd, rx in probes:
+        out = subprocess.run(cmd, capture_output=True, text=True, cwd=str(ROOT / "libs/cua-driver/rust" if (ROOT / "libs/cua-driver/rust").exists() else ROOT), env=full)
+        got = out.stdout.strip() or out.stderr.strip()
+        if out.returncode != 0 or not re.search(rx, got):
+            if label == "cargo clippy --version" and out.returncode != 0 and "no such command" in got:
+                return f"clippy is not installed for Rust {channel}: rustup component add clippy --toolchain {channel}"
+            return (f"`{label}` reports {got!r}, but CI pins Rust {channel} (rust-toolchain.toml). "
+                    f"Homebrew's cargo ignores the pin. Use rustup's: put ~/.cargo/bin (or /opt/homebrew/opt/rustup/bin) "
+                    f"before /opt/homebrew/bin on PATH, and run `rustup toolchain install {channel} --component clippy,rustfmt`.")
+    return None
+
+
+PNPM_SHIM_DIR = ROOT / "scripts/ci/lib/pnpm"
+PNPM_PIN_RX = re.compile(r"pnpm@\d+\.\d+\.\d+(\+\S+)?")
+
+
+def use_pnpm_shim() -> None:
+    """Put the corepack pnpm shim first on PATH for this run and everything it starts.
+
+    Like the rustup handling above: the pnpm on a machine is whatever it is (pnpm 11 on
+    ours), but each lockfile must be written by the pnpm that package pins in
+    packageManager, which is what CI's pnpm/action-setup installs. The shim runs that
+    version through corepack and fails with a clear message when it cannot.
+    """
+    if IS_WINDOWS or not (PNPM_SHIM_DIR / "pnpm").exists():
+        return
+    path = os.environ.get("PATH", "")
+    if str(PNPM_SHIM_DIR) not in path.split(os.pathsep):
+        os.environ["PATH"] = f"{PNPM_SHIM_DIR}{os.pathsep}{path}"
+
+
+def pnpm_pin_problems() -> List[str]:
+    """Every package with a pnpm-lock.yaml must pin its pnpm in package.json (packageManager)."""
+    problems = []
+    for lock in sorted(set(git("ls-files", "--cached", "--others", "--exclude-standard", "--", "*pnpm-lock.yaml").split())):
+        if re.search(r"(^|/)(node_modules|target)/", lock):
+            continue
+        pkg = (ROOT / lock).parent / "package.json"
+        rel = pkg.relative_to(ROOT).as_posix()
+        if not pkg.exists():
+            problems.append(f"{lock}: no package.json next to the lockfile")
+            continue
+        try:
+            pin = json.loads(pkg.read_text(encoding="utf-8")).get("packageManager", "")
+        except ValueError as e:
+            problems.append(f"{rel}: not valid JSON ({e})")
+            continue
+        if not PNPM_PIN_RX.fullmatch(pin or ""):
+            problems.append(f'{rel}: "packageManager" is {pin!r}; pin the pnpm that wrote {lock}, e.g. "packageManager": "pnpm@9.0.4"')
+    return problems
+
+
+def pnpm_cmd(version: Optional[str] = None) -> str:
+    """The pnpm command for a package. On Unix it is `pnpm`: the shim (use_pnpm_shim) resolves
+    the version from the package's own packageManager pin, so no version is passed around."""
+    if not IS_WINDOWS:
+        return "pnpm"
+    # Windows has no sh shim: fall back to npx at the pinned version when the local major differs.
     if not version:
         return "pnpm"
-    # Ask from outside the repo: pnpm reports the root packageManager version
-    # inside it, whatever version actually runs.
     local = sh(["pnpm", "--version"], cwd=Path(tempfile.gettempdir())).strip() if have("pnpm") else ""
     if local.split(".")[0] == version.split(".")[0]:
         return "pnpm"
@@ -585,10 +668,10 @@ DOCS_GENERATOR_NEEDS: Dict[str, Tuple[Tuple[str, ...], Tuple[Tuple[str, str], ..
     "lume": (("swift",), (), True),
 }
 
-# Web packages: (dir, trigger regex, pnpm version or "npm", install, [(id, title, cmd, fix)])
+# Web packages: (dir, trigger regex, None for pnpm at the package.json pin or "npm", install, [(id, title, cmd, fix)])
 WEB_PACKAGES = [
     ("apps/cua-spaces-web", r"^(apps/cua-spaces-web/|apps/cua-spaces/core-wasm/|libs/cua/crates/cua-spaces-app-core/)",
-     "11.20.0", "pnpm install --ignore-workspace --frozen-lockfile", [
+     None, "pnpm install --ignore-workspace --frozen-lockfile", [
          ("typecheck", "typecheck", "pnpm typecheck", None),
          ("design-lint", "design lint (drift guard)", "pnpm exec vitest run src/lib/design-lint.test.ts", None),
          ("test", "tests and bridge contract", "pnpm test", None),
@@ -597,7 +680,7 @@ WEB_PACKAGES = [
         ("typecheck", "typecheck", "pnpm typecheck", None),
         ("test", "tests and router contract", "pnpm test", None),
     ]),
-    ("apps/cua-spaces", r"^(apps/cua-spaces/(?!src-tauri/)|libs/cua/crates/cua-spaces-app-core/)", "9.0.4", "pnpm install --frozen-lockfile", [
+    ("apps/cua-spaces", r"^(apps/cua-spaces/(?!src-tauri/)|libs/cua/crates/cua-spaces-app-core/)", None, "pnpm install --frozen-lockfile", [
         ("typecheck", "typecheck (builds the core wasm)", "pnpm typecheck", None),
         ("test", "vitest (app core parity)", "pnpm test", None),
     ]),
@@ -1416,6 +1499,13 @@ def main(argv: Sequence[str]) -> int:
     args = parse_args(argv)
     os.chdir(ROOT)
     raise_open_file_limit()
+    use_pnpm_shim()
+    problems = pnpm_pin_problems()
+    if problems and not args.verify_sync and not args.hook:
+        print("bin/ci: every package with a pnpm-lock.yaml must pin its pnpm version:", file=sys.stderr)
+        for p in problems:
+            print(f"  {p}", file=sys.stderr)
+        return 2
     if args.verify_sync:
         return verify_sync()
     if args.install_hook:
@@ -1445,6 +1535,11 @@ def main(argv: Sequence[str]) -> int:
     ctx = Context(args)
     started = time.monotonic()
     plan = build_plan(changes, ctx)
+    if not args.list and any("cargo" in c.tools and not c.skip_reason for c in plan):
+        pin_error = rust_pin_error(ctx.rust_env)
+        if pin_error:
+            print(f"bin/ci: wrong Rust toolchain: {pin_error}", file=sys.stderr)
+            return 2
     scope = "every check" if args.full else f"{len(changes.files)} changed file(s) since {base[:10]} ({base_desc})"
     print(f"bin/ci: {mode} mode, {scope}: {len(plan)} check(s)")
     for n in ctx.notes:

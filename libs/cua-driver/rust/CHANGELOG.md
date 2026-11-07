@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.42.2](https://github.com/trycua/cua/compare/cua-driver-rs-v0.42.1...cua-driver-rs-v0.42.2) (2026-11-07)
+
+
+### Bug Fixes
+
+* **spaces:** every agent message is appended to the thread, child Spaces work from inside a Space, and child agents show in the chat ([#6733](https://github.com/trycua/cua/issues/6733)) ([515371a](https://github.com/trycua/cua/commit/515371a48a616aea3bba5f0ea13e0863c8a26041))
+
+## [0.42.1](https://github.com/trycua/cua/compare/cua-driver-rs-v0.42.0...cua-driver-rs-v0.42.1) (2026-11-07)
+
+
+### Bug Fixes
+
+* **cua-driver:** read backup publisher trust when its commit was interrupted ([#6835](https://github.com/trycua/cua/issues/6835)) ([96f7f52](https://github.com/trycua/cua/commit/96f7f522b3d668d238f142358a6041181d858421))
+
+## [0.42.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.41.5...cua-driver-rs-v0.42.0) (2026-11-07)
+
+
+### Features
+
+* **cua-driver:** connect Claude Code, Codex and Cursor during install (CUA-3660) ([#6763](https://github.com/trycua/cua/issues/6763)) ([1b0ecb8](https://github.com/trycua/cua/commit/1b0ecb8f26d4428ec5cad4d8007eb9a0efc299ff))
+
+## [0.41.5](https://github.com/trycua/cua/compare/cua-driver-rs-v0.41.4...cua-driver-rs-v0.41.5) (2026-11-07)
+
+
+### Bug Fixes
+
+* **cua-driver:** stop cutting off non-ASCII text typed into GTK3 and Qt fields ([#6829](https://github.com/trycua/cua/issues/6829)) ([6957956](https://github.com/trycua/cua/commit/69579562351a7b8c047fce4be06de0872eb4c8ba))
+
 ## [0.41.4](https://github.com/trycua/cua/compare/cua-driver-rs-v0.41.3...cua-driver-rs-v0.41.4) (2026-11-07)
 
 

@@ -1164,7 +1164,7 @@ fn validate_metadata(
 fn default_socket_path(generation: &str) -> String {
     #[cfg(target_os = "windows")]
     {
-        return format!(r"\\.\pipe\cua-{}-{}", std::process::id(), &generation[..8]);
+        format!(r"\\.\pipe\cua-{}-{}", std::process::id(), &generation[..8])
     }
     #[cfg(not(target_os = "windows"))]
     {

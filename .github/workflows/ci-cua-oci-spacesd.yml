@@ -68,7 +68,10 @@ jobs:
         with:
           targets: x86_64-unknown-linux-musl
       - name: musl toolchain
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq musl-tools
+        uses: ./.github/actions/apt-install
+        with:
+          packages: >-
+            musl-tools
       - uses: ./.github/actions/rust-cache
         with:
           workspaces: "libs/cua-spacesd -> target"

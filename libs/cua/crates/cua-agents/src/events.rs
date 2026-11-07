@@ -45,6 +45,12 @@ pub struct AgentEvent {
     /// One short line for an `activity` event (see [`AgentEvent::summary`]).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub summary: Option<String>,
+    /// The subagent call this event happened inside (the `tool_id` of the
+    /// parent's Task/Agent call), when the harness says so: its tool calls
+    /// and words belong to the child, not to the agent's own turn (see
+    /// [`crate::subagents`]).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent_tool_id: Option<String>,
     /// The line as written.
     pub raw: Value,
 }
@@ -156,6 +162,7 @@ impl AgentEvent {
             stop_reason: None,
             category: "hidden",
             summary: None,
+            parent_tool_id: None,
             raw: Value::Null,
         };
         let ty = raw.get("type").and_then(Value::as_str).unwrap_or("");
@@ -243,6 +250,10 @@ impl AgentEvent {
             }
             _ => "other",
         };
+        e.parent_tool_id = raw["update"]["_meta"]["claudeCode"]["parentToolUseId"]
+            .as_str()
+            .filter(|p| !p.is_empty())
+            .map(str::to_string);
         e.raw = raw;
         e.classify();
         Some(e)
@@ -278,6 +289,7 @@ impl AgentEvent {
             stop_reason: s(v, "stop_reason"),
             category: "hidden",
             summary: None,
+            parent_tool_id: s(v, "parent_tool_id"),
             raw: v.get("raw").cloned().unwrap_or(Value::Null),
         };
         e.classify();
@@ -409,6 +421,16 @@ impl AgentEvent {
 
     /// One human-readable line (CLI logs, the MCP `output_tail`).
     pub fn render(&self) -> Option<String> {
+        let line = self.render_line()?;
+        // What a subagent did is indented under the call that started it.
+        Some(if self.parent_tool_id.is_some() {
+            format!("  | {line}")
+        } else {
+            line
+        })
+    }
+
+    fn render_line(&self) -> Option<String> {
         let t = |s: &Option<String>| s.clone().unwrap_or_default();
         Some(match self.kind {
             "message" => t(&self.text),
@@ -496,6 +518,18 @@ pub fn page(bytes: &[u8], from: u64, max: usize) -> EventPage {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_subagents_steps_are_indented_in_the_log_and_name_their_parent() {
+        let child = r#"{"seq":5,"ts":1,"turn":1,"type":"update","update":{"_meta":{"claudeCode":{"parentToolUseId":"toolu_1"}},"sessionUpdate":"tool_call","toolCallId":"c1","title":"ls","kind":"execute","status":"pending"}}"#;
+        let e = AgentEvent::parse(child).unwrap();
+        assert_eq!(e.parent_tool_id.as_deref(), Some("toolu_1"));
+        assert_eq!(e.render().unwrap(), "  | [tool execute] ls");
+        let own = AgentEvent::parse(&child.replace("\"parentToolUseId\":\"toolu_1\"", "\"x\":1"))
+            .unwrap();
+        assert!(own.parent_tool_id.is_none());
+        assert_eq!(own.render().unwrap(), "[tool execute] ls");
+    }
 
     /// Lines recorded from real runs (claude-agent-acp 0.81.1 and codex-acp
     /// 1.13.1 against cua-mock-llm, the mock provider).

@@ -395,3 +395,38 @@ async fn a_viewer_on_both_channels_is_one_avatar_and_one_cursor_and_publishes_to
     }
     alice.leave().await.unwrap();
 }
+
+#[tokio::test]
+async fn an_app_launched_a_moment_ago_is_waited_for_not_reported_missing() {
+    let p = pair().await;
+    // Notes was just launched: its window is not listed yet, and appears half a second later.
+    let late = p.origin_srv.state.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        late.set_windows(vec![mock_window(
+            "n1",
+            "Apple",
+            "Notes",
+            (0.0, 0.0, 600.0, 400.0),
+        )]);
+    });
+    p.origin_srv.state.set_windows(vec![]);
+    // Without a wait the answer is "not found" ...
+    assert!(p.origin.find_window("Notes").await.is_err());
+    // ... with one the window is found as soon as it exists,
+    let found = p
+        .origin
+        .find_window_within("Notes", std::time::Duration::from_secs(5))
+        .await
+        .unwrap();
+    assert_eq!(found.window_id, "n1");
+    // and an app that never opens still ends in the same plain answer, after the wait.
+    let started = std::time::Instant::now();
+    let err = p
+        .origin
+        .find_window_within("Nothing", std::time::Duration::from_millis(700))
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("Nothing"), "{err}");
+    assert!(started.elapsed() >= std::time::Duration::from_millis(700));
+}

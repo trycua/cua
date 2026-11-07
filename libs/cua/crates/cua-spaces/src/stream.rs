@@ -389,6 +389,26 @@ impl Space {
             .ok_or_else(|| Error::NotFound(format!("a visible {app:?} window in {}", self.id())))
     }
 
+    /// [`Self::find_window`], waiting up to `wait` for the app's window to appear. `launch_app`
+    /// answers when the process starts, a moment before its window exists, so an agent that
+    /// launches an app and then asks for its window would otherwise get "not found" every time.
+    /// Any other error is returned at once.
+    pub async fn find_window_within(
+        &self,
+        app: &str,
+        wait: std::time::Duration,
+    ) -> Result<WindowTarget> {
+        let deadline = std::time::Instant::now() + wait;
+        loop {
+            match self.find_window(app).await {
+                Err(Error::NotFound(_)) if std::time::Instant::now() < deadline => {
+                    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+                }
+                other => return other,
+            }
+        }
+    }
+
     /// Opens a media session and returns its ticket and URL.
     pub async fn open_stream(
         &self,

@@ -12,6 +12,9 @@ use std::time::Duration;
 
 /// The most Spaces one `create_space` call makes.
 const MAX_CREATE_COUNT: u32 = 8;
+/// How long a tool that takes an app name waits for that app's window: `launch_app` answers when
+/// the process starts, a moment before its window exists.
+const APP_WINDOW_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
 
 pub(super) fn args<T: DeserializeOwned>(tool: &str, value: Value) -> Result<T> {
     let value = if value.is_null() { json!({}) } else { value };
@@ -780,9 +783,9 @@ async fn dispatch(
             let s = space_for(spaces, tool, &a.space).await?;
             let target = match (a.window_id, a.app_name) {
                 (Some(w), _) if !w.is_empty() => StreamTarget::Window(w),
-                (_, Some(app)) if !app.is_empty() => {
-                    StreamTarget::Window(s.find_window(&app).await?.window_id)
-                }
+                (_, Some(app)) if !app.is_empty() => StreamTarget::Window(
+                    s.find_window_within(&app, APP_WINDOW_WAIT).await?.window_id,
+                ),
                 _ => StreamTarget::Display(a.display),
             };
             let ticket = s
@@ -827,7 +830,9 @@ async fn dispatch(
                     .into_iter()
                     .find(|w| w.window_id == id)
                     .ok_or_else(|| Error::NotFound(format!("window {id} in {}", s.id())))?,
-                (None, Some(app)) if !app.is_empty() => s.find_window(app).await?,
+                (None, Some(app)) if !app.is_empty() => {
+                    s.find_window_within(app, APP_WINDOW_WAIT).await?
+                }
                 _ => {
                     return Err(Error::invalid(
                         "stream_space_window needs a window_id or an app_name",

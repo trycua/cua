@@ -327,6 +327,7 @@ impl Drop for SelfActivationGuard {
 }
 
 fn watch_self_activation(pid: i32, front: i32, stop: &std::sync::atomic::AtomicBool) {
+    use crate::focus_arbiter::{Decision, UndoWatch};
     use std::sync::atomic::Ordering;
     use std::time::Instant;
     // Read before anything happens: after a key loss the user's app may
@@ -334,17 +335,20 @@ fn watch_self_activation(pid: i32, front: i32, stop: &std::sync::atomic::AtomicB
     let user_key_window = crate::input::skylight::key_window_of_pid(front);
     // A Chrome window the user had placed above their own stays there.
     let above_before = crate::key_focus_guard::target_window_above_front(pid, front);
-    let rekey = || {
-        user_key_window.is_some_and(|wid| crate::input::skylight::make_exact_window_key(front, wid))
-    };
+    let rekey =
+        || user_key_window.is_some_and(|wid| crate::input::skylight::return_key_to(front, wid));
     let mut last_rekey = Instant::now();
     let mut last_order_check = Instant::now();
-    let mut epoch = crate::window_change_detector::intentional_epoch();
+    // The watch outlives single driver activations and user switches: once
+    // the driver or the user has put Chrome in front, it leaves Chrome alone
+    // until Chrome is no longer in front, then holds off briefly and re-arms.
+    let mut undo = UndoWatch::arm();
     let mut quiet_until = Instant::now();
     while !stop.load(Ordering::SeqCst) {
-        let now_epoch = crate::window_change_detector::intentional_epoch();
-        if now_epoch != epoch {
-            epoch = now_epoch;
+        if (undo.has_left() || !undo.epoch().is_current())
+            && crate::input::skylight::front_process_pid() != Some(pid)
+        {
+            undo = UndoWatch::arm();
             quiet_until = Instant::now() + Duration::from_millis(400);
         }
         let calm = !crate::input::skylight::foreground_turn_active()
@@ -353,8 +357,9 @@ fn watch_self_activation(pid: i32, front: i32, stop: &std::sync::atomic::AtomicB
         if calm {
             let front_now = crate::input::skylight::front_process_pid();
             if front_now == Some(pid) {
-                if !rekey() {
-                    crate::key_focus_guard::revert_now(pid, front);
+                // Not when the user switched to Chrome themselves.
+                if undo.decide() == Decision::Undo && !rekey() {
+                    crate::key_focus_guard::revert_now(pid, front, &undo);
                 }
                 last_rekey = Instant::now();
             } else if front_now == Some(front) {
@@ -391,7 +396,7 @@ fn restore_front_app_if_browser_front(previous_pid: i64, browser_pid: i64) -> bo
     if previous == browser || crate::apps::frontmost_pid() != Some(browser) {
         return false;
     }
-    crate::apps::activate_pid(previous)
+    crate::apps::reactivate_app(previous)
 }
 
 fn is_chromium(name: &str, bundle_id: &str) -> bool {

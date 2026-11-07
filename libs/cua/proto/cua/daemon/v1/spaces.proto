@@ -1249,7 +1249,8 @@ message OpenStreamEntryResponse {
   // The ticket (`StreamTicket` as JSON), scoped to that Space and window.
   // Empty for a direct route that was not asked to mint.
   string ticket_json = 4;
-  // The origin Space (canonical id) and the window's handle in it.
+  // The origin Space (canonical id).
   string origin_space = 5;
+  // The window's handle in the origin.
   string origin_window_id = 6;
 }

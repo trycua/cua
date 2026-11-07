@@ -425,7 +425,10 @@ mod tests {
         assert_eq!(row.label, "Apple");
         assert_eq!(row.help, "Apple in mac-child");
         let o = row.origin.as_ref().expect("origin");
-        assert_eq!((o.name.as_str(), o.os_icon.as_str()), ("mac-child", "os-macos"));
+        assert_eq!(
+            (o.name.as_str(), o.os_icon.as_str()),
+            ("mac-child", "os-macos")
+        );
         // An older shell's rows (no origin) serialize without the field.
         assert!(serde_json::to_value(own).unwrap().get("origin").is_none());
     }

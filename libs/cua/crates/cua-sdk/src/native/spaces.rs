@@ -3416,7 +3416,10 @@ impl Host {
                         height: t.frame_size[1],
                         needs_headers: true,
                     }),
-                    None => self.open_direct(&r.origin_space, &r.origin_window_id, options).await,
+                    None => {
+                        self.open_direct(&r.origin_space, &r.origin_window_id, options)
+                            .await
+                    }
                 };
             }
         };

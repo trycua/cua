@@ -50,7 +50,9 @@ pub fn entry_window_id(entry_id: &str) -> String {
 /// The entry id of a window handle from [`entry_window_id`], `None` for an
 /// ordinary window of the Space.
 pub fn entry_of_window_id(window_id: &str) -> Option<&str> {
-    window_id.strip_prefix(ENTRY_PREFIX).filter(|s| !s.is_empty())
+    window_id
+        .strip_prefix(ENTRY_PREFIX)
+        .filter(|s| !s.is_empty())
 }
 
 /// What the viewer may do with the origin Space.
@@ -294,7 +296,10 @@ impl Spaces {
         }
         let info = self.find(&origin_id).await.ok();
         let entry = StreamEntry {
-            id: format!("{:016x}", rand_id(&parent_id, &origin_id, &window.window_id)),
+            id: format!(
+                "{:016x}",
+                rand_id(&parent_id, &origin_id, &window.window_id)
+            ),
             parent: parent_id,
             origin_name: info
                 .as_ref()
@@ -365,7 +370,10 @@ impl Spaces {
     /// A Space was stopped, suspended or deleted: its entries, and the ones
     /// it shows, end now.
     pub(crate) fn drop_stream_entries(&self, space: &str) {
-        let id = self.resolve(space).map(|i| i.to_string()).unwrap_or_else(|_| space.to_string());
+        let id = self
+            .resolve(space)
+            .map(|i| i.to_string())
+            .unwrap_or_else(|_| space.to_string());
         self.inner.streams.drop_space(&id);
     }
 

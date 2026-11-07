@@ -808,9 +808,9 @@ async fn dispatch(
                     .await
                     .into_iter()
                     .filter(|w| {
-                        a.app_name.as_deref().is_none_or(|n| {
-                            w.app_name.to_lowercase().contains(&n.to_lowercase())
-                        })
+                        a.app_name
+                            .as_deref()
+                            .is_none_or(|n| w.app_name.to_lowercase().contains(&n.to_lowercase()))
                     }),
             );
             Ok(ToolOutcome::json(&windows))

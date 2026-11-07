@@ -303,7 +303,9 @@ async fn without_into_a_child_shows_its_window_in_the_space_that_made_it() {
     let parent = p.parent.id().to_string();
     p.spaces
         .registry()
-        .update_meta(&p.origin.id().to_string(), |m| m.parent = Some(parent.clone()))
+        .update_meta(&p.origin.id().to_string(), |m| {
+            m.parent = Some(parent.clone())
+        })
         .unwrap();
     let (err, shown) = tool(
         &p.spaces,

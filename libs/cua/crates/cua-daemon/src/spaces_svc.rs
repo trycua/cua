@@ -1033,10 +1033,7 @@ pub(crate) mod imp {
             &self,
             req: tonic::Request<pb::ListStreamWindowsRequest>,
         ) -> R<pb::ListStreamWindowsResponse> {
-            let rows = self
-                .spaces()
-                .stream_windows(&req.into_inner().space)
-                .await;
+            let rows = self.spaces().stream_windows(&req.into_inner().space).await;
             ok(pb::ListStreamWindowsResponse {
                 windows: rows
                     .into_iter()
@@ -1075,9 +1072,7 @@ pub(crate) mod imp {
                 .map_err(|e| st(e.into()))?;
             // A direct route is the client's to open with its own handle on
             // the origin; a proxied one is minted here.
-            let opened = if r.mint
-                || decided.route == cua_spaces::stream_registry::Route::Proxied
-            {
+            let opened = if r.mint || decided.route == cua_spaces::stream_registry::Route::Proxied {
                 self.spaces()
                     .open_stream_entry(&r.window_id, options)
                     .await

@@ -438,8 +438,16 @@ impl Scoped {
     /// names the child.
     fn tool_target(name: &str) -> Option<&'static str> {
         Some(match name {
-            "stop_space" | "start_space" | "space_bash" | "space_write" | "upload" | "download"
-            | "list_tools" | "call_tool" | "list_space_windows" | "stream_space_window" => "space",
+            "stop_space"
+            | "start_space"
+            | "space_bash"
+            | "space_write"
+            | "upload"
+            | "download"
+            | "list_tools"
+            | "call_tool"
+            | "list_space_windows"
+            | "stream_space_window" => "space",
             _ => return None,
         })
     }

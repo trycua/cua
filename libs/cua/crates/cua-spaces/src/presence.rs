@@ -460,9 +460,7 @@ impl MergedRoster {
     /// Folds one event into channel `channel`. Returns whether it changed
     /// anything.
     pub fn apply(&mut self, channel: usize, e: &PresenceEvent) -> bool {
-        self.channels
-            .get_mut(channel)
-            .is_some_and(|r| r.apply(e))
+        self.channels.get_mut(channel).is_some_and(|r| r.apply(e))
     }
 
     /// Everyone but the caller, once each: a participant on two channels
@@ -479,7 +477,10 @@ impl MergedRoster {
                 if me.contains(&p.principal_id.as_str()) {
                     continue;
                 }
-                match out.iter_mut().find(|(q, _)| q.principal_id == p.principal_id) {
+                match out
+                    .iter_mut()
+                    .find(|(q, _)| q.principal_id == p.principal_id)
+                {
                     Some((_, have)) => {
                         let newer = match (have.as_ref(), c) {
                             (None, Some(_)) => true,
@@ -1246,11 +1247,26 @@ mod merged_tests {
         assert_eq!(names, ["me", "bob", "agent"]);
         // Bob moves on both channels; the newest sample wins and only one
         // cursor is drawn.
-        m.apply(0, &PresenceEvent::CursorMoved { participant_id: "o-bob".into(), cursor: at(100.0) });
-        m.apply(1, &PresenceEvent::CursorMoved { participant_id: "p-bob".into(), cursor: at(160.0) });
+        m.apply(
+            0,
+            &PresenceEvent::CursorMoved {
+                participant_id: "o-bob".into(),
+                cursor: at(100.0),
+            },
+        );
+        m.apply(
+            1,
+            &PresenceEvent::CursorMoved {
+                participant_id: "p-bob".into(),
+                cursor: at(160.0),
+            },
+        );
         let others = m.others();
         assert_eq!(others.len(), 2);
-        let bob = others.iter().find(|(p, _)| p.principal_id == "bob").unwrap();
+        let bob = others
+            .iter()
+            .find(|(p, _)| p.principal_id == "bob")
+            .unwrap();
         assert_eq!(bob.1.as_ref().unwrap().at_ms, 160.0);
         // The caller never appears among the cursors, whichever channel.
         assert!(others.iter().all(|(p, _)| p.principal_id != "me"));
@@ -1261,9 +1277,21 @@ mod merged_tests {
         let origin = roster(("o-me", "me"), &[("o-bob", "bob")]);
         let parent = roster(("p-me", "me"), &[("p-bob", "bob")]);
         let mut m = MergedRoster::new(vec![origin, parent]);
-        assert!(m.apply(0, &PresenceEvent::Left { participant_id: "o-bob".into(), reason: Default::default() }));
+        assert!(m.apply(
+            0,
+            &PresenceEvent::Left {
+                participant_id: "o-bob".into(),
+                reason: Default::default()
+            }
+        ));
         assert_eq!(m.others().len(), 1);
-        m.apply(1, &PresenceEvent::Left { participant_id: "p-bob".into(), reason: Default::default() });
+        m.apply(
+            1,
+            &PresenceEvent::Left {
+                participant_id: "p-bob".into(),
+                reason: Default::default(),
+            },
+        );
         assert!(m.others().is_empty());
     }
 }

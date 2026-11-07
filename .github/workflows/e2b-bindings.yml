@@ -71,16 +71,29 @@ jobs:
         uses: ./.github/actions/setup-protoc
       - uses: dtolnay/rust-toolchain@1.97.1
       - uses: ./.github/actions/rust-cache
+        id: cache
         with:
           workspaces: libs/cua
           shared-key: cua-sdk-swift
           size: 8G
-      - name: Release dylib, test fixtures, Swift suite
-        run: |
-          cargo build --locked --release -p cua-sdk
-          scripts/build-test-fixtures.sh
-          node scripts/stage-uniffi-library.mjs --only=swift
-          swift/scripts/test.sh
+          save-always: "true"
+      - name: Release cua-sdk dylib
+        run: cargo build --locked --release -p cua-sdk
+      - name: Test fixtures
+        run: scripts/build-test-fixtures.sh
+      - name: Stage the UniFFI library
+        run: node scripts/stage-uniffi-library.mjs --only=swift
+      - name: Swift build (tests included)
+        run: swift/scripts/test.sh --build-only
+      - name: Swift tests
+        run: swift/scripts/test.sh --skip-build --parallel
+      # Keep the warm compile even when a test step above fails.
+      - uses: ./.github/actions/rust-cache-save
+        if: ${{ always() && steps.cache.outputs.save == 'true' }}
+        with:
+          key: ${{ steps.cache.outputs.key }}
+          dir: ${{ steps.cache.outputs.dir }}
+          exact-hit: ${{ steps.cache.outputs.exact-hit }}
 
   report:
     name: open or update the issue

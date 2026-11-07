@@ -869,9 +869,17 @@ fn managed_status(
         } else if source == LinuxSource::System {
             "Linux Spaces are set to use this Mac's own container engine".into()
         } else if running && cfg!(windows) {
-            "built-in Linux runtime running (WSL 2, runc)".into()
+            format!(
+                "built-in Linux runtime running (WSL 2, runc); {}",
+                crate::egress::BRIDGE_FAMILY_LIMITS
+            )
         } else if running {
             "built-in Linux runtime running (gVisor)".into()
+        } else if picked && managed::exists() && cfg!(windows) {
+            format!(
+                "built-in Linux runtime, started on demand; {}",
+                crate::egress::BRIDGE_FAMILY_LIMITS
+            )
         } else if picked && managed::exists() {
             "built-in Linux runtime, started on demand".into()
         } else if picked && cfg!(windows) {

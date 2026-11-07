@@ -328,6 +328,26 @@ impl CuaDriver {
         }
     }
 
+    /// Daemon-host seam for its permission gate: while awaiting, every tool
+    /// route refuses with `permissions_pending` before dispatch. Only an
+    /// embedded runtime has a gate; other backends ignore it.
+    #[doc(hidden)]
+    pub fn set_awaiting_permissions(&self, awaiting: bool) {
+        if let DriverBackend::Embedded(runtime) = &self.backend {
+            runtime.set_awaiting_permissions(awaiting);
+        }
+    }
+
+    /// The raw `permissions_pending` tool result while the permission gate is
+    /// pending, so a host transport can answer it before its own refusals.
+    #[doc(hidden)]
+    pub fn permissions_pending_result(&self) -> Option<Value> {
+        match &self.backend {
+            DriverBackend::Embedded(runtime) => runtime.permissions_pending_result(),
+            _ => None,
+        }
+    }
+
     /// Trusted Rust-host access to the daemon-owned local history controller.
     /// This is intentionally absent from UniFFI and public agent protocols.
     #[doc(hidden)]
@@ -2084,6 +2104,7 @@ mod tests {
 
     mod native_windows;
     use super::*;
+    #[cfg(unix)]
     use cua_driver_contract::{ParseVisualRegionsOutput, VisualParseError};
     #[cfg(unix)]
     use std::io::{BufRead, BufReader, Write};

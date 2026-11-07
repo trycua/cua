@@ -421,3 +421,58 @@ describe("the live rows' JSON", () => {
     expect(threadPageFromTool({ entries: [], cursor: 0, live: { key: "k", agents: [{ agent: "a", stage: "starting" }] } }).live.agents).toEqual([{ agent: "a", stage: "starting" }]);
   });
 });
+
+describe("every agent message and the child agents in the thread", () => {
+  const say = (text: string, replyTo: number) => entry({ author: CLAUDE, replyTo, text });
+  const sub = (id: string, state: "running" | "done" | "failed", extra: Record<string, unknown> = {}) =>
+    entry({ author: SYSTEM, kind: "system", text: `claude's subagent: ${state}`, event: null, child: { kind: "subagent", id, agent: "claude", title: "Map the desktop", state, steps: 0, result: null, startedMs: null, endedMs: null, ...extra } as ThreadEntry["child"] });
+
+  it("keeps each message an agent posts under one task, in order, none replaced", () => {
+    seq = 0;
+    const task = entry({ text: "@claude do the thing", task: { to: "claude", session: null } });
+    const items = foldThread([task, say("On it.", task.seq), say("Found the files.", task.seq), say("All done.", task.seq), update(task.seq, "done")], { readSeq: null });
+    const said = items.filter((i) => i.type === "message").map((i) => (i as { entry: ThreadEntry }).entry.text);
+    expect(said).toEqual(["On it.", "Found the files.", "All done."]);
+  });
+
+  it("quotes the task once when an agent says several things under it", () => {
+    seq = 0;
+    const task = entry({ text: "@claude do the thing", task: { to: "claude", session: null } });
+    const other = entry({ author: GRACE, text: "unrelated" });
+    const items = foldThread([task, other, say("One.", task.seq), say("Two.", task.seq), say("Three.", task.seq)], { readSeq: null });
+    const quotes = items.filter((i) => i.type === "message" && i.entry.author.kind === "agent").map((i) => (i as { quote: unknown }).quote !== null);
+    expect(quotes).toEqual([true, false, false]);
+  });
+
+  it("shows a message that arrives after the task closed", () => {
+    seq = 0;
+    const task = entry({ text: "@claude start the job", task: { to: "claude", session: null } });
+    const items = foldThread([task, say("Starting.", task.seq), update(task.seq, "done"), say("The job failed: no gateway.", task.seq)], { readSeq: null });
+    expect(items.filter((i) => i.type === "message").map((i) => (i as { entry: ThreadEntry }).entry.text)).toEqual(["Starting.", "The job failed: no gateway."]);
+  });
+
+  it("folds a subagent's notes into one row at its first note, with the latest state", () => {
+    seq = 0;
+    const task = entry({ text: "@claude have a subagent map my files", task: { to: "claude", session: null } });
+    const items = foldThread([task, say("Started a subagent.", task.seq), sub("t1", "running"), sub("t2", "running", { title: "Other" }), sub("t1", "done", { steps: 4, result: "3 files" })], { readSeq: null });
+    const subs = items.filter((i) => i.type === "subagent") as Extract<(typeof items)[number], { type: "subagent" }>[];
+    expect(subs.map((s) => [s.sub.id, s.sub.state])).toEqual([["t1", "done"], ["t2", "running"]]);
+    expect(subs[0]!.sub.result).toBe("3 files");
+    expect(items.map((i) => i.type)).toEqual(["task", "message", "subagent", "subagent"]);
+  });
+
+  it("draws a child Space as its own row and never counts these rows as unread messages", () => {
+    seq = 0;
+    const read = entry({ author: GRACE, text: "hi" });
+    const child = entry({ author: SYSTEM, kind: "system", text: "claude made the computer safari", child: { kind: "child_space", space: "local:safari", name: "safari", os: "macOS", agent: "claude" } });
+    const items = foldThread([read, child], { readSeq: read.seq });
+    expect(items.map((i) => i.type)).toEqual(["message", "child_space"]);
+  });
+
+  it("reads the subagent and child notes and the live children from the daemon's JSON", () => {
+    const e = threadEntryFromTool({ seq: 9, id: "x", ts_ms: 1, author: { kind: "system", id: "system:subagent", name: "Cua" }, kind: "system", text: "t", event: { kind: "subagent", id: "t1", agent: "claude", title: "Map", state: "failed", steps: 2, result: "boom" } });
+    expect(e?.child).toMatchObject({ kind: "subagent", id: "t1", state: "failed", steps: 2, result: "boom" });
+    const live = threadLiveFromTool({ key: "k", agents: [{ agent: "claude", stage: "using ls", children: [{ id: "t1", title: "Map", steps: 3, step: "Ran ls" }] }] });
+    expect(live.agents[0]!.children).toEqual([{ id: "t1", title: "Map", steps: 3, step: "Ran ls" }]);
+  });
+});

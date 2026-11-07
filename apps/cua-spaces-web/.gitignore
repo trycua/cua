@@ -7,3 +7,4 @@ src/bridge/core/wasm/
 # Written by `pnpm screenshots` and scripts/demo-video.mjs (demo mode).
 docs/screenshots/
 docs/demo/
+pr-screenshots/

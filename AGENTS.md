@@ -159,6 +159,24 @@ These rules come from the #4094 test audit.
 - When pruning or merging tests, mutation-check the keeper: break the
   behavior and confirm the remaining test fails.
 
+## UI changes need screenshots
+
+A pull request that changes UI (`apps/cua-spaces-web`, the Electron renderer in
+`apps/cua-spaces-desktop/src`, the app-core copy and onboarding in
+`libs/cua/crates/cua-spaces-app-core`, or any other visible surface) must show
+before and after screenshots at desktop (1440x900) and mobile (390x844) in its
+description.
+
+- Use demo data only (`?demo=` flags on the demo adapter). Never capture real
+  accounts, hostnames, chats, or credentials.
+- `pnpm screenshots:pr` in `apps/cua-spaces-web` renders the key screens; the
+  `CI: PR screenshots` workflow does the same for the branch and its
+  merge-base and links the images in a sticky comment.
+- Upload the images to GitHub and embed them in the description. Never commit
+  them to the branch. Add `Screenshot routes: /a, /b` to the description for
+  routes beyond the fixed list.
+- If nothing visible changes, write `Screenshots: not needed - <reason>`.
+
 ## Pull request titles and component releases
 
 Follow the [release-title rules](.github/CONTRIBUTING.md#agent-assisted-contributions)

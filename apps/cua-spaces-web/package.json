@@ -19,6 +19,7 @@
     "parity": "node scripts/build-core-wasm.mjs && playwright test -c e2e/playwright.config.ts",
     "parity:electron": "node scripts/build-core-wasm.mjs && vite build && (cd ../cua-spaces-desktop && rm -rf dist-electron && npx tsdown && node scripts/check-channels.mjs) && PARITY_HOST=electron playwright test -c e2e/playwright.config.ts",
     "screenshots": "node scripts/screenshots.mjs",
+    "screenshots:pr": "node scripts/pr-screenshots.mjs",
     "perf": "node scripts/perf.mjs",
     "scale": "node scripts/scale-bench.mjs"
   },

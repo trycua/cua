@@ -32463,7 +32463,7 @@ public func FfiConverterTypeAppRefreshReport_lower(_ value: AppRefreshReport) ->
 
 public struct AppRelayAllowanceNotice: Equatable, Hashable {
     /**
-     * On Free: "You're using 2 of 2 live sessions on the free plan. ..."
+     * On Free: "You have 2 of 2 computers in use at once on the free plan. ..."
      */
     public var text: String
     /**
@@ -32504,7 +32504,7 @@ public struct AppRelayAllowanceNotice: Equatable, Hashable {
     // declare one manually.
     public init(
         /**
-         * On Free: "You're using 2 of 2 live sessions on the free plan. ..."
+         * On Free: "You have 2 of 2 computers in use at once on the free plan. ..."
          */text: String,
         /**
          * [`UPGRADE`].
@@ -32615,11 +32615,11 @@ public struct AppRelayUsage: Equatable, Hashable {
      */
     public var team: AppRelayUsageTeam?
     /**
-     * Live sessions now.
+     * Computers in use now.
      */
     public var liveSessions: UInt32
     /**
-     * Live sessions allowed at once (none: no limit).
+     * Computers in use allowed at once (none: no limit).
      */
     public var liveSessionsLimit: UInt32?
     /**
@@ -32663,10 +32663,10 @@ public struct AppRelayUsage: Equatable, Hashable {
          * The team whose allowance is pooled.
          */team: AppRelayUsageTeam?,
         /**
-         * Live sessions now.
+         * Computers in use now.
          */liveSessions: UInt32,
         /**
-         * Live sessions allowed at once (none: no limit).
+         * Computers in use allowed at once (none: no limit).
          */liveSessionsLimit: UInt32?,
         /**
          * Relay hours used this month (the team's, when pooled).
@@ -32835,7 +32835,7 @@ public struct AppRelayUsageView: Equatable, Hashable {
      */
     public var label: String
     /**
-     * "Live sessions 1 of 2 · Relay hours 6.5 of 20 this month", then the
+     * "Computers in use 1 of 2 · Relay hours 6.5 of 20 this month", then the
      * team pool when there is one.
      */
     public var line: String
@@ -32859,7 +32859,7 @@ public struct AppRelayUsageView: Equatable, Hashable {
          * [`ROW_LABEL`].
          */label: String,
         /**
-         * "Live sessions 1 of 2 · Relay hours 6.5 of 20 this month", then the
+         * "Computers in use 1 of 2 · Relay hours 6.5 of 20 this month", then the
          * team pool when there is one.
          */line: String,
         /**

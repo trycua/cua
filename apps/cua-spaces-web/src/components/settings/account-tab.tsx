@@ -62,7 +62,7 @@ function UsageBar({ id, label, text, used, limit }: { id: string; label: string;
 function allowanceLine(plan: string, usage: RelayUsage): string | null {
   const { liveSessionsLimit: machines, hoursLimit: away } = usage;
   if (!machines || !away) return null;
-  return `${plan}: ${machines} machines at once and ${hours(away)} hours a month away from the machine you're using.`;
+  return `${plan}: ${machines} computers in use at once and ${hours(away)} hours a month away from the computer you're using.`;
 }
 
 /**
@@ -127,14 +127,14 @@ export function AccountTab() {
           <div data-relay-usage="">
             <UsageBar
               id="Remote hours"
-              label="Time away from this machine"
+              label="Time away from this computer"
               text={`${hours(usage.hoursUsed)} of ${usage.hoursLimit ?? 0} hours`}
               used={usage.hoursUsed}
               limit={usage.hoursLimit}
             />
             <UsageBar
-              id="Live sessions"
-              label="Machines in use right now"
+              id="Computers in use"
+              label="Computers in use right now"
               text={`${usage.liveSessions} of ${usage.liveSessionsLimit ?? 0}`}
               used={usage.liveSessions}
               limit={usage.liveSessionsLimit}

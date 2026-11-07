@@ -429,8 +429,8 @@ async fn invoke_daemon_tool(
     sdk: &std::sync::Arc<crate::sdk_adapter::SdkAdapter>,
     req: DaemonRequest,
 ) -> DaemonResponse {
-    if let Some(response) = permission_gate_pending_response(&req) {
-        return response;
+    if let Some(refusal) = sdk.permissions_pending_result() {
+        return permissions_pending_response(req.observation_origin, refusal);
     }
     let observation_transport = daemon_observation_transport(&req);
     let direct_client_kind = req.client_kind;
@@ -682,16 +682,13 @@ fn prepare_embedded_socket_path(
     }
 }
 
-static PERMISSION_GATE_PENDING: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
-
-// Only the macOS first-launch gate sets it; elsewhere it stays false.
 #[cfg(target_os = "macos")]
 /// Mark whether the macOS first-launch gate is still waiting for TCC grants.
-/// The daemon socket and lifecycle diagnostics remain reachable, but tool calls
-/// are rejected before execution until fresh child-process probes confirm grants.
-pub fn set_permission_gate_pending(pending: bool) {
-    PERMISSION_GATE_PENDING.store(pending, std::sync::atomic::Ordering::Release);
+/// The daemon socket and lifecycle diagnostics remain reachable, but the
+/// runtime refuses every tool call with `permissions_pending` until fresh
+/// child-process probes confirm grants.
+pub fn set_permission_gate_pending(driver: &cua_driver_sdk::CuaDriver, pending: bool) {
+    driver.set_awaiting_permissions(pending);
 }
 
 #[cfg(target_os = "macos")]
@@ -699,51 +696,42 @@ pub fn set_permission_gate_pending(pending: bool) {
 /// A timeout keeps them gated while `wait_after_timeout` keeps polling on its
 /// own thread, so a later grant opens them without a restart.
 pub fn settle_permission_gate(
-    gate_passed: bool,
-    wait_after_timeout: impl FnOnce() -> anyhow::Result<()> + Send + 'static,
-) {
-    settle_gate_flag(&PERMISSION_GATE_PENDING, gate_passed, wait_after_timeout);
-}
-
-#[cfg(target_os = "macos")]
-fn settle_gate_flag(
-    pending: &'static std::sync::atomic::AtomicBool,
+    driver: std::sync::Arc<cua_driver_sdk::CuaDriver>,
     gate_passed: bool,
     wait_after_timeout: impl FnOnce() -> anyhow::Result<()> + Send + 'static,
 ) -> Option<std::thread::JoinHandle<()>> {
     if gate_passed {
-        pending.store(false, std::sync::atomic::Ordering::Release);
+        set_permission_gate_pending(&driver, false);
         return None;
     }
     let poll = std::thread::Builder::new()
         .name("cua-permissions-poll".into())
         .spawn(move || {
             if wait_after_timeout().is_ok() {
-                pending.store(false, std::sync::atomic::Ordering::Release);
+                set_permission_gate_pending(&driver, false);
             }
         })
         .expect("spawn permissions poll thread");
     Some(poll)
 }
 
-fn permission_gate_pending_response(request: &DaemonRequest) -> Option<DaemonResponse> {
-    permission_gate_response_for_state(
-        request,
-        PERMISSION_GATE_PENDING.load(std::sync::atomic::Ordering::Acquire),
-    )
-}
-
-fn permission_gate_response_for_state(
-    _request: &DaemonRequest,
-    pending: bool,
-) -> Option<DaemonResponse> {
-    if !pending {
-        return None;
+/// A pending gate answers before every other socket refusal (unknown tool,
+/// ended session, authorization). Direct socket clients read it as a
+/// retryable transport error (`EX_TEMPFAIL`). The MCP proxy forwards tool
+/// results, so it gets the structured `permissions_pending` refusal instead.
+fn permissions_pending_response(
+    request_origin: Option<ToolObservationOrigin>,
+    refusal: serde_json::Value,
+) -> DaemonResponse {
+    if request_origin == Some(ToolObservationOrigin::McpProxy) {
+        return DaemonResponse::ok(refusal);
     }
-    Some(DaemonResponse::err(
-        "permissions_pending: macOS Accessibility or Screen Recording permission is still pending; no action started, retry after the permission gate completes",
-        75,
-    ))
+    let message = refusal
+        .pointer("/structuredContent/refusal/message")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("permissions_pending")
+        .to_owned();
+    DaemonResponse::err(message, 75)
 }
 
 fn daemon_metadata_response() -> DaemonResponse {
@@ -3099,68 +3087,229 @@ mod gate_tests {
 }
 
 #[cfg(test)]
-mod permission_gate_routing_tests {
-    use super::{permission_gate_response_for_state, DaemonRequest};
+mod permission_gate_tests {
+    use super::bind_trusted_connection;
+    use std::sync::atomic::Ordering;
 
-    fn call(name: &str) -> DaemonRequest {
-        DaemonRequest {
-            method: "call".into(),
-            name: Some(name.into()),
-            args: Some(serde_json::json!({})),
-            session_id: None,
-            observation_origin: None,
-            client_kind: None,
-        }
+    fn refusal_code(result: &serde_json::Value) -> Option<&str> {
+        result.pointer("/structuredContent/refusal/code")?.as_str()
     }
 
-    #[test]
-    fn pending_gate_rejects_desktop_calls_with_typed_retry() {
-        let response = permission_gate_response_for_state(&call("list_windows"), true)
-            .expect("pending gate must reject desktop calls");
-        assert!(!response.ok);
-        assert!(response
-            .error
-            .as_deref()
-            .is_some_and(|message| message.starts_with("permissions_pending:")));
-        assert_eq!(response.exit_code, Some(75));
+    /// On main the socket checked the gate before anything else, so a pending
+    /// gate answers `permissions_pending` even for an unknown tool, an ended
+    /// session or a call authorization would refuse. Each of those keeps its
+    /// own answer once the gate opens.
+    #[cfg(unix)]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn socket_permissions_pending_wins_over_every_other_refusal() {
+        use super::{run_serve, send_request, DaemonRequest, ToolObservationOrigin};
+        let _guard = crate::test_runtime_lock().lock().await;
+        let (driver, sdk, calls) = crate::probe_sdk().await;
+        let socket = format!(
+            "/tmp/cua-driver-pending-{}-{}.sock",
+            std::process::id(),
+            uuid::Uuid::new_v4().simple()
+        );
+        let server = tokio::spawn({
+            let (sdk, socket) = (sdk.clone(), socket.clone());
+            async move {
+                let _ = run_serve(sdk, &socket, None).await;
+            }
+        });
+        for _ in 0..100 {
+            if std::path::Path::new(&socket).exists() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        let send = |request: DaemonRequest| {
+            let socket = socket.clone();
+            async move {
+                tokio::task::spawn_blocking(move || send_request(&socket, &request))
+                    .await
+                    .unwrap()
+                    .expect("daemon response")
+            }
+        };
+        let request =
+            |method: &str, name: Option<&str>, args, session: Option<&str>| DaemonRequest {
+                method: method.into(),
+                name: name.map(str::to_owned),
+                args,
+                session_id: session.map(str::to_owned),
+                observation_origin: None,
+                client_kind: None,
+            };
+        let ended = "pending-ended-session";
+        let probe = |session| {
+            request(
+                "call",
+                Some("get_screen_size"),
+                Some(serde_json::json!({})),
+                session,
+            )
+        };
+        let refusals = || {
+            [
+                (
+                    "unknown tool",
+                    request(
+                        "call",
+                        Some("no_such_tool"),
+                        Some(serde_json::json!({})),
+                        None,
+                    ),
+                ),
+                ("ended session", probe(Some(ended))),
+                (
+                    "failed authorization",
+                    request(
+                        "call",
+                        Some("click"),
+                        Some(serde_json::json!({"pid": std::process::id(), "x": 1, "y": 1})),
+                        None,
+                    ),
+                ),
+            ]
+        };
+
+        assert!(send(probe(Some(ended))).await.ok);
+        assert!(
+            send(request("session_end", None, None, Some(ended)))
+                .await
+                .ok
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+
+        driver.set_awaiting_permissions(true);
+        let mut proxied = probe(None);
+        proxied.observation_origin = Some(ToolObservationOrigin::McpProxy);
+        let proxied = send(proxied).await;
+        assert!(
+            proxied.ok,
+            "the MCP proxy forwards the refusal as a tool result"
+        );
+        assert_eq!(
+            proxied.result.as_ref().and_then(refusal_code),
+            Some("permissions_pending")
+        );
+        for (label, call) in std::iter::once(("open call", probe(None))).chain(refusals()) {
+            let pending = send(call).await;
+            assert!(!pending.ok, "{label}");
+            assert_eq!(pending.exit_code, Some(75), "{label}: {:?}", pending.error);
+            assert!(
+                pending
+                    .error
+                    .as_deref()
+                    .is_some_and(|message| message.starts_with("permissions_pending:")),
+                "{label}: {:?}",
+                pending.error
+            );
+        }
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "no tool may run while pending"
+        );
+
+        driver.set_awaiting_permissions(false);
+        for ((label, call), (code, text)) in refusals().into_iter().zip([
+            (64, "Unknown tool: no_such_tool"),
+            (1, "has ended"),
+            (1, "own authorization process"),
+        ]) {
+            let refused = send(call).await;
+            assert_eq!(
+                refused.exit_code,
+                Some(code),
+                "{label}: {:?}",
+                refused.error
+            );
+            assert!(
+                refused
+                    .error
+                    .as_deref()
+                    .is_some_and(|message| message.contains(text)),
+                "{label}: {:?}",
+                refused.error
+            );
+        }
+        let open = send(probe(None)).await;
+        assert!(open.ok, "{:?}", open.error);
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+
+        let _ = send(request("shutdown", None, None, None)).await;
+        let _ = server.await;
+        let _ = std::fs::remove_file(&socket);
     }
 
     #[cfg(target_os = "macos")]
-    #[test]
-    fn a_late_grant_reopens_tool_calls_without_a_restart() {
-        use std::sync::atomic::{AtomicBool, Ordering};
-        // Private flags: the daemon tests in this binary read the real one.
-        fn gated(pending: &AtomicBool) -> bool {
-            permission_gate_response_for_state(
-                &call("list_windows"),
-                pending.load(Ordering::Acquire),
-            )
-            .is_some()
-        }
+    #[tokio::test]
+    async fn a_late_grant_reopens_tool_calls_without_a_restart() {
+        let _guard = crate::test_runtime_lock().lock().await;
+        let (driver, _sdk, calls) = crate::probe_sdk().await;
+        let call = || driver.call_tool("get_screen_size".into(), "{}".into());
+        let refused = |result: cua_driver_sdk::ToolResult| {
+            let value: serde_json::Value = serde_json::from_str(&result.raw_json).unwrap();
+            refusal_code(&value) == Some("permissions_pending")
+        };
 
-        static PASSED: AtomicBool = AtomicBool::new(true);
-        assert!(super::settle_gate_flag(&PASSED, true, || unreachable!()).is_none());
-        assert!(!gated(&PASSED));
+        driver.set_awaiting_permissions(true);
+        assert!(super::settle_permission_gate(driver.clone(), true, || unreachable!()).is_none());
+        assert!(!refused(call().await.unwrap()));
 
-        static NEVER_GRANTED: AtomicBool = AtomicBool::new(true);
-        super::settle_gate_flag(&NEVER_GRANTED, false, || anyhow::bail!("not granted"))
+        driver.set_awaiting_permissions(true);
+        super::settle_permission_gate(driver.clone(), false, || anyhow::bail!("not granted"))
             .expect("a timed-out gate keeps polling")
             .join()
             .unwrap();
-        assert!(gated(&NEVER_GRANTED));
+        assert!(refused(call().await.unwrap()));
 
-        static LATE_GRANT: AtomicBool = AtomicBool::new(true);
-        super::settle_gate_flag(&LATE_GRANT, false, || Ok(()))
+        super::settle_permission_gate(driver.clone(), false, || Ok(()))
             .expect("a timed-out gate keeps polling")
             .join()
             .unwrap();
-        assert!(!gated(&LATE_GRANT));
+        assert!(!refused(call().await.unwrap()));
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        driver.shutdown().await.unwrap();
     }
 
-    #[test]
-    fn calls_resume_only_after_the_gate_completes() {
-        assert!(permission_gate_response_for_state(&call("check_permissions"), true).is_some());
-        assert!(permission_gate_response_for_state(&call("list_windows"), false).is_none());
+    #[tokio::test]
+    async fn trusted_session_call_waits_for_the_permission_gate() {
+        let _guard = crate::test_runtime_lock().lock().await;
+        let (driver, sdk, calls) = crate::probe_sdk().await;
+        let options = cua_driver_sdk::TrustedSessionOptions {
+            public_session: "pending-trusted".into(),
+            mode: cua_driver_sdk::SessionPermissionMode::Standard,
+            ttl_seconds: 60,
+            idle_ttl_seconds: 30,
+            capability_manifest_path: None,
+            bounded_manifest_path: None,
+        };
+        // The `trusted_session_call` arm calls this bound session directly.
+        let connection = bind_trusted_connection(&sdk, options, "trusted-pending".into())
+            .expect("bind trusted session");
+        let call = || {
+            connection
+                .session
+                .call_tool("get_screen_size".into(), "{}".into())
+        };
+
+        driver.set_awaiting_permissions(true);
+        let pending: serde_json::Value =
+            serde_json::from_str(&call().await.expect("refusal result").raw_json).unwrap();
+        assert_eq!(refusal_code(&pending), Some("permissions_pending"));
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            0,
+            "no tool may run while pending"
+        );
+
+        driver.set_awaiting_permissions(false);
+        assert!(!call().await.expect("tool result").is_error);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        connection.session.close();
+        sdk.shutdown().await.unwrap();
     }
 }
 

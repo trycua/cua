@@ -6336,6 +6336,82 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn install_sweeps_staging_left_by_a_dead_installer() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let temp = TempDir::new().unwrap();
+        let store = ExtensionStore::new(temp.path().join("extensions"));
+        let entry = registry_entry("cua-perception").unwrap();
+        let staging = store.root.join(".staging");
+        let mut planted = Vec::new();
+        for name in ["cua-perception-99999-0", "other-99999-0", "cua-perception-x"] {
+            let directory = staging.join(name);
+            fs::create_dir_all(&directory).unwrap();
+            fs::write(directory.join("payload"), b"partial").unwrap();
+            fs::set_permissions(directory.join("payload"), fs::Permissions::from_mode(0o600))
+                .unwrap();
+            planted.push(directory);
+        }
+        for directory in [&store.root, &staging].into_iter().chain(&planted) {
+            fs::set_permissions(directory, fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let archive = fixture_archive(
+            temp.path(),
+            "1.0.0",
+            &current_target().unwrap(),
+            1,
+            b"worker",
+        );
+
+        store.install_archive(entry, &archive).unwrap();
+        // Only this id's crash leftovers are collected; other ids and names
+        // that are not staging names stay put.
+        let mut left: Vec<_> = fs::read_dir(&staging)
+            .unwrap()
+            .map(|child| child.unwrap().file_name().into_string().unwrap())
+            .collect();
+        left.sort();
+        assert_eq!(left, ["cua-perception-x", "other-99999-0"]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn every_refusal_after_staging_cleans_it() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let temp = TempDir::new().unwrap();
+        let store = ExtensionStore::new(temp.path().join("extensions"));
+        let entry = registry_entry("cua-perception").unwrap();
+        let archive = fixture_archive(
+            temp.path(),
+            "1.0.0",
+            &current_target().unwrap(),
+            1,
+            b"worker",
+        );
+
+        // A catalog that expired after the preview is refused only once the
+        // archive is staged.
+        let expired = InstallSource {
+            archive: archive.clone(),
+            trust: TrustClass::DeveloperUnsignedLocal,
+            catalog: Some(test_catalog_payload("current", 1)),
+            signed_catalog: None,
+            trust_update: None,
+        };
+        let error = store.install_source(entry, &expired, false).unwrap_err();
+        assert!(format!("{error:#}").contains("expired"), "{error:#}");
+        assert!(staging_is_empty(&store), "expired catalog leaked staging");
+
+        // Reinstalling over a version directory with unsafe permissions is
+        // refused after staging too.
+        store.install_archive(entry, &archive).unwrap();
+        let installed = store.versions_dir(entry.id).join("1.0.0");
+        fs::set_permissions(&installed, fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(store.install_archive(entry, &archive).is_err());
+        assert!(staging_is_empty(&store), "unsafe existing version leaked staging");
+    }
+
     #[test]
     fn rejects_traversal_and_link_entries_and_cleans_staging() {
         let temp = TempDir::new().unwrap();

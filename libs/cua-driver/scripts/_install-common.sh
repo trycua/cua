@@ -562,7 +562,7 @@ cua_driver_write_kwin_desktop_entry() {
         'Name=Cua Driver' \
         "Exec=\"$executable\" serve" \
         'NoDisplay=true' \
-        'X-KDE-Wayland-Interfaces=org_kde_plasma_window_management' \
+        'X-KDE-Wayland-Interfaces=org_kde_plasma_window_management,org_kde_kwin_keystate' \
         'X-KDE-DBUS-Restricted-Interfaces=org.kde.KWin.ScreenShot2' \
         > "$entry.tmp.$$" \
         || ! mv -f "$entry.tmp.$$" "$entry"; then

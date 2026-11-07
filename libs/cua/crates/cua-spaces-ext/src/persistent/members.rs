@@ -791,7 +791,15 @@ impl Persistent {
     async fn dispatch_member(&self, rec: &AgentRecord, store: &ThreadStore) -> Result<Vec<u64>> {
         // A claim nobody renewed (its session is gone or unreachable): the
         // task goes back to the queue, and the session lets go of it.
-        let requeued = store.requeue_expired(&rec.name, &[])?;
+        let requeued = store.requeue_expired(&rec.name, &[], !rec.paused)?;
+        if !requeued.is_empty() {
+            // Their next start is a restart nobody asked for: it says so.
+            self.live
+                .lock()
+                .await
+                .restarted
+                .extend(requeued.iter().copied());
+        }
         let mut sessions = rec.session_views();
         for s in &mut sessions {
             if s.task.as_ref().is_some_and(|t| requeued.contains(&t.seq)) {
@@ -937,12 +945,11 @@ impl Persistent {
                     // A follow-up to a running agent: its steps are timed too.
                     Box::pin(self.follow_warm(rec, &d.run_id, posted_ms, picked_ms)).await;
                 } else {
-                    // The note ("woke up and joined") comes when the agent is up.
-                    self.live
-                        .lock()
-                        .await
-                        .joining
-                        .insert(d.run_id.clone(), task.seq);
+                    // A restart nobody asked for says so once the agent is up;
+                    // a start the person asked for shows as the starting row.
+                    let mut live = self.live.lock().await;
+                    let restart = live.restarted.remove(&task.seq);
+                    live.joining.insert(d.run_id.clone(), (task.seq, restart));
                 }
                 store.claim(
                     task.seq,
@@ -2738,6 +2745,21 @@ pub(crate) enum Delivered {
 }
 
 /// `ada`, or `ada (session 2)`.
+/// The thread note for an agent that is up: only a restart nobody asked for
+/// has one. A start the person asked for says nothing, because its starting
+/// row already showed it.
+pub(crate) fn start_note(restart: bool, agent: &str, task_text: &str) -> Option<String> {
+    restart.then(|| restarted_text(agent, task_text))
+}
+
+/// What the thread says when a run restarted by itself is back on its task.
+pub(crate) fn restarted_text(agent: &str, task_text: &str) -> String {
+    format!(
+        "{agent} restarted and is back on {}.",
+        crate::thread::task_words(task_text)
+    )
+}
+
 pub(crate) fn session_name(rec: &AgentRecord) -> String {
     match rec.k() {
         1 => rec.name.clone(),
@@ -2896,4 +2918,24 @@ fn store_has_queued(store: &ThreadStore, name: &str) -> bool {
                 .any(|t| t.state == TaskState::Queued)
         })
         .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod notice_tests {
+    use super::*;
+
+    #[test]
+    fn a_start_the_person_asked_for_has_no_note_and_a_restart_names_the_task() {
+        assert_eq!(
+            start_note(false, "claude", "@claude fix the flaky test"),
+            None
+        );
+        let t = start_note(true, "claude", "@claude fix the flaky test").unwrap();
+        assert_eq!(
+            t,
+            "claude restarted and is back on \u{201c}fix the flaky test\u{201d}."
+        );
+        assert!(!t.contains("session") && !t.contains('#') && !t.contains('/'));
+        assert!(!t.chars().any(|c| c.is_ascii_digit()));
+    }
 }

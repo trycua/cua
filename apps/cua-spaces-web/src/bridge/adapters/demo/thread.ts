@@ -390,6 +390,16 @@ function demoConversation(now: number, owner: { id: string; name: string }, opts
   const bump = add({ ts_ms: min(14), author: GRACE, text: "@claude bump the retry timeout in ws_reconnect", mentions: ["claude"], task: { to: "claude", session: null }, ...keys(GRACE) });
   update(min(14), bump, "claimed");
   update(min(13), bump, "working");
+  add({ ts_ms: min(13), author: { kind: "system", id: "system:dispatcher", name: "Cua" }, kind: "system", text: "Claude restarted and is back on \u201cbump the retry timeout in ws_reconnect\u201d.", task_seq: bump });
+  add({
+    ts_ms: min(1),
+    author: { kind: "system", id: "system:dispatcher", name: "Cua" },
+    kind: "system",
+    text: "Claude started a subagent",
+    task_seq: bump,
+    event: { kind: "subagent", id: "sub-1", agent: "claude", title: "Check the reconnect logs for the last failures", state: "running", steps: 3, started_ms: min(1) },
+  });
+  add({ ts_ms: min(12), author: { kind: "system", id: "system:dispatcher", name: "Cua" }, kind: "system", text: "Cursor was added to this Space." });
   const changelog = add({
     ts_ms: min(11),
     author: CLAUDE,
@@ -397,7 +407,7 @@ function demoConversation(now: number, owner: { id: string; name: string }, opts
     mentions: ["hermes"],
     task: { to: "hermes", session: null },
   });
-  add({ ts_ms: min(11), author: { kind: "system", id: "system:dispatcher", name: "Cua" }, kind: "system", text: "Hermes woke up and joined", task_seq: changelog });
+  add({ ts_ms: min(11), author: { kind: "system", id: "system:dispatcher", name: "Cua" }, kind: "system", text: "Hermes stopped working on \u201cwrite the 2 failures up for the changelog\u201d. It will pick it up again.", task_seq: changelog });
   update(min(11), changelog, "working");
   const notes = seq + 1;
   add({ ts_ms: min(8), author: HERMES, reply_to: changelog, text: "Done. Two bullet points, ready to paste.", attachments: [file(notes, "changelog.md", 1_100, "text/markdown")] });
@@ -601,11 +611,10 @@ export function demoThreadHandlers({
     t.members.push(member);
     const id = member.identity;
     for (const m of t.members) m.identity.collides = t.members.filter((x) => x.identity.display_name.toLowerCase() === m.identity.display_name.toLowerCase()).length > 1;
-    const from = id.device ? ` from ${id.device.name}` : "";
     append(space, {
       author: SYSTEM,
       kind: "system",
-      text: id.origin === "space" ? `${id.display_name} joined. ${id.owner.name} started it here.` : `${id.display_name} joined. ${id.owner.name} connected it${from}.`,
+      text: `${id.display_name} was added to this Space.`,
       event: { kind: "member_joined", member: id, by: id.joined.by },
     });
   };
@@ -762,8 +771,7 @@ export function demoThreadHandlers({
       await wait(stepMs);
       setStage(space, agent, "starting");
       await wait(stepMs);
-      // The note comes once the agent is up.
-      append(space, { author: system, kind: "system", text: `${label(agent)} woke up and joined`, task_seq: task });
+      // No note: the starting row above already showed it (the core says nothing for a start the person asked for).
     }
     append(space, { author: system, kind: "task_update", update: { task, state: "working", session: 1, note: null } });
     setStage(space, agent, "thinking");
@@ -991,4 +999,3 @@ export function seedLongDm(handlers: DemoHandlers<ThreadOpName>, count: number):
   })();
 }
 
-const label = (agent: string) => (agent === "claude" ? "Claude Code" : agent.charAt(0).toUpperCase() + agent.slice(1));

@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.22.1](https://github.com/trycua/cua/compare/cua-spaces-v0.22.0...cua-spaces-v0.22.1) (2026-11-07)
+
+
+### Bug Fixes
+
+* **cua-spaces-macos:** make Restart to update install the downloaded update ([#6759](https://github.com/trycua/cua/issues/6759)) ([e1c7840](https://github.com/trycua/cua/commit/e1c784079a92c0cf9b9c32ebe80f27c41863e1c5))
+* **spaces-macos:** bundle cua 0.12.0 in Cua Spaces ([#6781](https://github.com/trycua/cua/issues/6781)) ([2c4374a](https://github.com/trycua/cua/commit/2c4374a0af7d6e462acd1501ecc7c29777822a76))
+* **spaces-macos:** bundle cua 0.12.1 in Cua Spaces ([#6801](https://github.com/trycua/cua/issues/6801)) ([d9665a6](https://github.com/trycua/cua/commit/d9665a631f8537b4dbb58230827512208bf7e58d))
+* **spaces:** say computers in use at once for the plan limit (CUA-3690) ([#6790](https://github.com/trycua/cua/issues/6790)) ([891ccb7](https://github.com/trycua/cua/commit/891ccb7153dde86f6219da719c583d2de0b88b14))
+
 ## [0.22.0](https://github.com/trycua/cua/compare/cua-spaces-v0.21.1...cua-spaces-v0.22.0) (2026-11-07)
 
 

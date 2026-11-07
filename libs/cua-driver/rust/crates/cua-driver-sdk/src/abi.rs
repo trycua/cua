@@ -1325,6 +1325,14 @@ impl NativeAbiDriver {
         }
     }
 
+    pub(crate) fn set_awaiting_permissions(&self, awaiting: bool) {
+        unsafe {
+            if let Some(handle) = self.raw_handle().cast::<CuaDriverHandle>().as_ref() {
+                handle.runtime.set_awaiting_permissions(awaiting);
+            }
+        }
+    }
+
     pub(crate) fn is_available(&self) -> bool {
         let mut available = false;
         let mut error = CuaDriverBuffer::empty();

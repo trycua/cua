@@ -22,7 +22,7 @@ use cua_driver_core::{
 use cursor_overlay::CursorConfig;
 use serde_json::Value;
 use std::sync::{
-    atomic::{AtomicBool, AtomicU64, Ordering},
+    atomic::{AtomicU64, AtomicU8, Ordering},
     Arc, Mutex,
 };
 
@@ -160,11 +160,34 @@ impl Drop for RuntimeSession {
     }
 }
 
+/// Whether the runtime accepts tool calls. `Closed` is terminal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+enum Admission {
+    Open = 0,
+    /// The host's permission gate has not confirmed its grants yet. Inventory
+    /// and lifecycle diagnostics stay reachable; no tool runs.
+    AwaitingPermissions = 1,
+    Closed = 2,
+}
+
+impl Admission {
+    fn from_u8(value: u8) -> Self {
+        match value {
+            0 => Self::Open,
+            1 => Self::AwaitingPermissions,
+            _ => Self::Closed,
+        }
+    }
+}
+
+const PERMISSIONS_PENDING: &str = "permissions_pending: macOS Accessibility or Screen Recording permission is still pending; no action started, retry after the permission gate completes";
+
 pub(crate) struct DriverRuntime {
     registry: Arc<ToolRegistry>,
     authorization_registry: Arc<SessionAuthorizationRegistry>,
     compatibility_context: Arc<EffectiveAuthorizationContext>,
-    shutdown: AtomicBool,
+    admission: AtomicU8,
     last_activity: AtomicU64,
     /// Calls hold a read guard; shutdown takes the write guard after closing
     /// admission. Therefore shutdown is idempotent and does not return while a
@@ -209,7 +232,7 @@ impl DriverRuntime {
             registry,
             authorization_registry,
             compatibility_context,
-            shutdown: AtomicBool::new(false),
+            admission: AtomicU8::new(Admission::Open as u8),
             last_activity: AtomicU64::new(now_unix_secs()),
             lifecycle: tokio::sync::RwLock::new(()),
             lifecycle_maintenance: Mutex::new(None),
@@ -220,8 +243,28 @@ impl DriverRuntime {
         Ok(runtime)
     }
 
+    fn admission(&self) -> Admission {
+        Admission::from_u8(self.admission.load(Ordering::Acquire))
+    }
+
     pub(crate) fn is_running(&self) -> bool {
-        !self.shutdown.load(Ordering::Acquire)
+        self.admission() != Admission::Closed
+    }
+
+    /// Hold or release tool calls for the host's permission gate. A closed
+    /// runtime stays closed.
+    pub(crate) fn set_awaiting_permissions(&self, awaiting: bool) {
+        let (from, to) = if awaiting {
+            (Admission::Open, Admission::AwaitingPermissions)
+        } else {
+            (Admission::AwaitingPermissions, Admission::Open)
+        };
+        let _ = self.admission.compare_exchange(
+            from as u8,
+            to as u8,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        );
     }
 
     pub(crate) fn runtime_scope_key(&self) -> String {
@@ -229,7 +272,8 @@ impl DriverRuntime {
     }
 
     pub(crate) async fn shutdown(&self) {
-        self.shutdown.store(true, Ordering::Release);
+        self.admission
+            .store(Admission::Closed as u8, Ordering::Release);
         let _drained = self.lifecycle.write().await;
         self.stop_lifecycle_maintenance();
         self.authorization_registry.revoke_all();
@@ -313,8 +357,15 @@ impl DriverRuntime {
         context: Arc<EffectiveAuthorizationContext>,
         evidence: cua_driver_core::tool::TrustedInvocationEvidence,
     ) -> Option<CoreToolResult> {
-        if !self.is_running() {
-            return None;
+        match self.admission() {
+            Admission::Closed => return None,
+            Admission::AwaitingPermissions => {
+                return Some(refusal_result(
+                    "permissions_pending",
+                    PERMISSIONS_PENDING.to_owned(),
+                ))
+            }
+            Admission::Open => {}
         }
         self.last_activity.store(now_unix_secs(), Ordering::Relaxed);
         let _operation = self.lifecycle.read().await;
@@ -460,7 +511,10 @@ fn activity_lifecycle_event(
 
 impl Drop for DriverRuntime {
     fn drop(&mut self) {
-        let was_running = !self.shutdown.swap(true, Ordering::AcqRel);
+        let was_running = self
+            .admission
+            .swap(Admission::Closed as u8, Ordering::AcqRel)
+            != Admission::Closed as u8;
         self.stop_lifecycle_maintenance();
         self.authorization_registry.revoke_all();
         let runtime_scope = self.compatibility_context.runtime_scope_key();
@@ -480,10 +534,14 @@ impl Drop for DriverRuntime {
 }
 
 fn permission_denied_result(message: String) -> CoreToolResult {
+    refusal_result("permission_denied", message)
+}
+
+fn refusal_result(code: &str, message: String) -> CoreToolResult {
     CoreToolResult::error(message.clone()).with_structured(serde_json::json!({
         "status": "refused",
         "refusal": {
-            "code": "permission_denied",
+            "code": code,
             "message": message,
         }
     }))
@@ -914,6 +972,34 @@ mod tests {
         );
 
         runtime.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn awaiting_permissions_refuses_before_dispatch_and_never_reopens_a_closed_runtime() {
+        let _runtime_test = TEST_RUNTIME_LOCK.lock().await;
+        let runtime = DriverRuntime::create(standard_options()).unwrap();
+        runtime.set_awaiting_permissions(true);
+        let pending = runtime
+            .invoke("get_config", serde_json::json!({}))
+            .await
+            .expect("an awaiting runtime answers");
+        assert_eq!(
+            pending
+                .structured_content
+                .as_ref()
+                .and_then(|value| value.pointer("/refusal/code")),
+            Some(&serde_json::json!("permissions_pending"))
+        );
+        assert!(runtime.is_running(), "awaiting is not closed");
+        assert!(runtime.tools_list().is_some(), "inventory stays reachable");
+
+        runtime.shutdown().await;
+        runtime.set_awaiting_permissions(false);
+        assert!(!runtime.is_running());
+        assert!(runtime
+            .invoke("get_config", serde_json::json!({}))
+            .await
+            .is_none());
     }
 
     #[tokio::test]

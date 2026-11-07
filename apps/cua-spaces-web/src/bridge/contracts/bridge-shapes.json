@@ -3303,6 +3303,9 @@
         "hostname": {
           "type": "string"
         },
+        "deviceId": {
+          "type": "string"
+        },
         "presence": {
           "type": [
             "boolean",
@@ -3466,6 +3469,12 @@
                     },
                     "text": {
                       "type": "string"
+                    },
+                    "detail": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
                     },
                     "action": {
                       "type": [
@@ -7946,6 +7955,15 @@
           ]
         },
         "hostnames": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "deviceIds": {
           "type": [
             "object",
             "null"

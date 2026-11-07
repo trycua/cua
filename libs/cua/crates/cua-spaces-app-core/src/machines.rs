@@ -890,13 +890,10 @@ mod tests {
             spaces: vec![],
             ..Default::default()
         };
-        page.spaces.push(
-            serde_json::from_value(serde_json::json!({
-                "id": "relay:m1", "name": name, "os": "macos", "status": "running",
-                "provider": "relay", "sdk": {"features": [], "spacesdVersion": "", "reachable": true}
-            }))
-            .unwrap(),
-        );
+        page.spaces.push(space(serde_json::json!({
+            "id": "relay:m1", "name": name, "os": "macos", "status": "running",
+            "provider": "relay"
+        })));
         page.device_ids.insert("m1".into(), "dev_b".into());
         let rows = page_rows(&page);
         let m1 = rows.iter().find(|r| r.id == "m1").unwrap();

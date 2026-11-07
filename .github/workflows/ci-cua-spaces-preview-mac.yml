@@ -1,0 +1,233 @@
+name: "Preview: Cua Spaces for macOS (label preview:mac)"
+
+# A maintainer adds the `preview:mac` label to a pull request; this builds an
+# installable "Cua Spaces Local" from the PR head and posts one sticky comment
+# with the download. While the label stays on, each new push rebuilds it.
+#
+# The build is the one a person runs by hand:
+# apps/cua-spaces-macos/scripts/install-local.sh --release. The app installs
+# next to the released Cua Spaces (own bundle id, home, URL scheme and
+# Keychain items, no update feed), points at production (CuaEnv=prod) and is
+# signed ad hoc. There are no signing or notarization secrets here and none
+# are needed.
+#
+# Trust: it runs only for pull requests from a branch of this repository
+# (head.repo.full_name == github.repository), so it never builds fork code.
+# Only someone who can label or push to a branch here can start it.
+# The build job has a read-only token; only the two small comment jobs hold
+# pull-requests: write, and they check out nothing and run no PR code.
+# Fork previews are an open decision (5a299b9c) and are not built.
+
+on:
+  pull_request:
+    types: [labeled, synchronize]
+
+permissions:
+  contents: read
+
+# One build per pull request. A push, or the label being added, cancels the
+# build in flight. Any other label (or a push without the label) is a skipped
+# run: it gets its own group so it can neither cancel nor replace a build.
+concurrency:
+  group: >-
+    preview-mac-${{ github.event.pull_request.number }}-${{
+      ((github.event.action == 'labeled' && github.event.label.name == 'preview:mac') ||
+       (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'preview:mac')))
+      && 'build' || github.run_id }}
+  cancel-in-progress: true
+
+env:
+  CARGO_NET_RETRY: "10"
+  CARGO_HTTP_TIMEOUT: "120"
+  CARGO_HTTP_MULTIPLEXING: "false"
+  COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
+
+jobs:
+  started:
+    name: Comment that the build started
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      ((github.event.action == 'labeled' && github.event.label.name == 'preview:mac') ||
+       (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'preview:mac')))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: none
+      pull-requests: write
+    steps:
+      - name: Post or update the preview comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          body="<!-- preview-mac -->
+          **Cua Spaces macOS preview: building**
+
+          Building commit \`${SHA:0:12}\`. It takes about 30 to 90 minutes. This comment gets the download link when it finishes. [Build log]($RUN_URL)"
+          id=$(gh api --paginate "repos/$REPO/issues/$PR_NUMBER/comments?per_page=100" \
+            --jq '[.[] | select(.user.login == "github-actions[bot]" and (.body | startswith("<!-- preview-mac -->")))][0].id // empty' | head -n 1)
+          if [ -n "$id" ]; then
+            gh api -X PATCH "repos/$REPO/issues/comments/$id" -f body="$body" >/dev/null
+          else
+            gh api -X POST "repos/$REPO/issues/$PR_NUMBER/comments" -f body="$body" >/dev/null
+          fi
+
+  build:
+    name: Build Cua Spaces Local (ad hoc signed)
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      ((github.event.action == 'labeled' && github.event.label.name == 'preview:mac') ||
+       (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'preview:mac')))
+    runs-on: macos-26
+    # A cold Rust build is 20 to 60+ minutes (see ci-cua-spaces-macos.yml).
+    timeout-minutes: 150
+    permissions:
+      contents: read
+    env:
+      CARGO_BUILD_JOBS: 4
+      # Ad hoc, never a certificate or Keychain item.
+      CUA_LOCAL_SIGN: adhoc
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+    outputs:
+      artifact-url: ${{ steps.upload.outputs.artifact-url }}
+    steps:
+      - name: Check out the pull request head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - name: Install Rust (toolchain from rust-toolchain.toml)
+        working-directory: libs/cua
+        run: rustup show active-toolchain || rustup toolchain install
+      # The web UI's app core is Rust built for the browser, on the toolchain
+      # apps/cua-spaces pins; install-local.sh checks for this target.
+      - name: Install the wasm32 target for the web UI
+        run: |
+          toolchain=$(sed -n 's/^channel *= *"\(.*\)"/\1/p' apps/cua-spaces/rust-toolchain.toml | head -n 1)
+          rustup toolchain install "$toolchain" --profile minimal --target wasm32-unknown-unknown
+      - name: Install protoc
+        uses: ./.github/actions/setup-protoc
+      - name: Install cmake (the audio codec build)
+        run: command -v cmake >/dev/null || brew install cmake
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: libs/cua/netgw/go.mod
+          cache: false
+      # sccache through the repository's Rust cache action: restores main's
+      # entry, never saves from a pull request.
+      - uses: ./.github/actions/rust-cache
+        with:
+          workspaces: libs/cua
+          save-if: "false"
+      - name: Install wasm-bindgen (the web UI's app core)
+        uses: ./.github/actions/wasm-bindgen
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # pnpm through corepack: the root package.json pins pnpm 9.0.4, the
+      # Electron shell and the web UI pin 11.20.0, and corepack picks the one
+      # each directory's packageManager names.
+      - name: Enable corepack
+        run: corepack enable
+
+      # A clean SwiftPM .build, then the repository's resolve step (retries the
+      # Sparkle and Sentry binary downloads from github.com).
+      - name: Start from a clean SwiftPM build directory
+        run: find . -name .build -type d -prune -exec rm -rf {} +
+      - uses: ./.github/actions/swiftpm-resolve
+
+      # A stale generated binding crashed a build on 7 Nov. Check both before
+      # spending the build time. The Swift check builds the library (release)
+      # that the install below reuses.
+      - name: The Cua Spaces app Swift binding is up to date
+        run: node libs/spaces-app-swift/scripts/generate-bindings.mjs --check
+      - name: The Electron TypeScript app core binding is up to date
+        working-directory: apps/cua-spaces-desktop
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm native -- --skip-build --check-bindings
+
+      - name: Build Cua Spaces Local
+        run: |
+          apps/cua-spaces-macos/scripts/install-local.sh --release --no-launch \
+            --prefix "$RUNNER_TEMP/preview"
+
+      # Local builds default to the staging deployment. The preview points at
+      # production (CuaEnv=prod), so it is re-signed ad hoc after the edit.
+      - name: Point the app at production and sign it ad hoc
+        run: |
+          set -euo pipefail
+          app="$RUNNER_TEMP/preview/Applications/Cua Spaces Local.app"
+          test -d "$app"
+          /usr/libexec/PlistBuddy -c "Set :CuaEnv prod" "$app/Contents/Info.plist"
+          codesign --force --deep -s - "$app"
+          codesign --verify --deep --strict "$app"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CuaEnv' "$app/Contents/Info.plist")" = prod
+          mkdir -p "$RUNNER_TEMP/out"
+          zip_name="Cua-Spaces-Local-pr${PR_NUMBER}-${HEAD_SHA:0:7}.zip"
+          ditto -c -k --keepParent "$app" "$RUNNER_TEMP/out/$zip_name"
+          ls -l "$RUNNER_TEMP/out"
+
+      - name: Upload the app
+        id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: cua-spaces-local-pr${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}
+          path: ${{ runner.temp }}/out/*.zip
+          if-no-files-found: error
+          retention-days: 14
+
+  result:
+    name: Comment the download link
+    needs: [build]
+    # Not on a cancelled run (a newer push replaced it) or a skipped build.
+    if: ${{ !cancelled() && (needs.build.result == 'success' || needs.build.result == 'failure') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: none
+      pull-requests: write
+    steps:
+      - name: Post or update the preview comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+          RESULT: ${{ needs.build.result }}
+          ARTIFACT_URL: ${{ needs.build.outputs.artifact-url }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          if [ "$RESULT" = success ]; then
+            body="<!-- preview-mac -->
+          **Cua Spaces macOS preview: ready**
+
+          [Download Cua Spaces Local]($ARTIFACT_URL) for commit \`${SHA:0:12}\` (needs a GitHub sign-in with access to this repository; kept 14 days).
+
+          To open it:
+          1. Unzip the download, then unzip the zip inside it.
+          2. The app is signed ad hoc, so macOS blocks it the first time. Right-click it and choose Open. If macOS only offers Cancel, run \`xattr -dr com.apple.quarantine \"Cua Spaces Local.app\"\` once, or use System Settings > Privacy & Security > Open Anyway.
+          3. It installs as \"Cua Spaces Local\", next to the released Cua Spaces, and keeps its own sign-in and data.
+
+          A new push to this branch rebuilds it while the \`preview:mac\` label stays on. [Build log]($RUN_URL)"
+          else
+            body="<!-- preview-mac -->
+          **Cua Spaces macOS preview: build failed**
+
+          The build for commit \`${SHA:0:12}\` failed. [Build log]($RUN_URL). Pushing a fix rebuilds it while the \`preview:mac\` label stays on."
+          fi
+          id=$(gh api --paginate "repos/$REPO/issues/$PR_NUMBER/comments?per_page=100" \
+            --jq '[.[] | select(.user.login == "github-actions[bot]" and (.body | startswith("<!-- preview-mac -->")))][0].id // empty' | head -n 1)
+          if [ -n "$id" ]; then
+            gh api -X PATCH "repos/$REPO/issues/comments/$id" -f body="$body" >/dev/null
+          else
+            gh api -X POST "repos/$REPO/issues/$PR_NUMBER/comments" -f body="$body" >/dev/null
+          fi

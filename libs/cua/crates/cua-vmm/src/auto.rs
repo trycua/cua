@@ -860,7 +860,7 @@ fn managed_status(
         };
     }
     let running = picked && managed::running();
-    BackendStatus {
+    let mut status = BackendStatus {
         backend: BackendKind::Managed,
         ready: running,
         provisionable: picked && !running,
@@ -900,7 +900,17 @@ fn managed_status(
         } else {
             vec![]
         },
+    };
+    // Windows: the runtime's disk is a sparse VHDX that grows with images and
+    // Spaces. Say so while the drive is filling up, before Docker fails midway.
+    if cfg!(windows)
+        && picked
+        && managed::exists()
+        && let Some(note) = managed::wsl::low_space_note(&nearest_existing(&managed::root()))
+    {
+        status.detail = format!("{}; {note}", status.detail);
     }
+    status
 }
 
 /// `path`, or its nearest ancestor that exists (a volume to ask about).

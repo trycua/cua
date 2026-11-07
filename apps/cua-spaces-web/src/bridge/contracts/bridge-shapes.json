@@ -6564,6 +6564,12 @@
             "name"
           ]
         },
+        "audience": {
+          "enum": [
+            "agent",
+            "human"
+          ]
+        },
         "event": {
           "type": [
             "object",

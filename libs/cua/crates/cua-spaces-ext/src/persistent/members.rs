@@ -194,8 +194,25 @@ fn denied(msg: impl Into<String>) -> Error {
 /// An entry as `thread_read` shows it. An approval also says what kind of
 /// request it is (decided by the host, never from the agent's words), what
 /// an answer may choose (`scope_choices`) and which entry answered it.
-fn approval_overlay(e: &ThreadEntry, fold: &crate::thread::Fold) -> Value {
+fn approval_overlay(e: &ThreadEntry, fold: &crate::thread::Fold, all: &[ThreadEntry]) -> Value {
     let mut v = serde_json::to_value(e).unwrap_or(Value::Null);
+    // Text clients (the CLI, an agent reading the thread) get the card as one plain line, outcome included.
+    if let Some(a) = &e.approval {
+        let outcome = fold
+            .answer_of
+            .get(&e.seq)
+            .and_then(|s| all.iter().find(|x| x.seq == *s))
+            .and_then(|x| {
+                x.answer
+                    .as_ref()
+                    .map(|ans| (ans.approve, x.author.name.clone()))
+            });
+        v["line"] = json!(approval_line(
+            &a.action,
+            &a.details,
+            outcome.as_ref().map(|(ok, who)| (*ok, who.as_str()))
+        ));
+    }
     if e.approval.is_some()
         && let Some(a) = v.get_mut("approval").and_then(Value::as_object_mut)
     {
@@ -209,6 +226,20 @@ fn approval_overlay(e: &ThreadEntry, fold: &crate::thread::Fold) -> Value {
         }
     }
     v
+}
+
+/// The approval card as one plain line: `[approval] ability:spaces.create: Create a child Space named x. Approved by Owner`.
+pub(crate) fn approval_line(action: &str, details: &str, outcome: Option<(bool, &str)>) -> String {
+    let what = if details.trim().is_empty() {
+        action.to_string()
+    } else {
+        format!("{action}: {}", details.trim().trim_end_matches('.'))
+    };
+    match outcome {
+        Some((true, who)) => format!("[approval] {what}. Approved by {who}"),
+        Some((false, who)) => format!("[approval] {what}. Denied by {who}"),
+        None => format!("[approval] {what}. Waiting for an answer"),
+    }
 }
 
 /// Managing members (add, remove, schedules) is the owner's.
@@ -827,6 +858,7 @@ impl Persistent {
             let (visible, guidance) = expired_text(&rec.name, &what);
             let mut tell = Draft::new(Author::system("approval"), EntryKind::Message, visible);
             tell.event = Some(json!({"kind": "agent_note", "note": guidance}));
+            tell.audience = Some("agent".into());
             tell.mentions = vec![rec.name.clone()];
             tell.task = Some(TaskTo {
                 to: rec.name.clone(),
@@ -1681,6 +1713,16 @@ pub struct Thread {
 }
 
 impl Thread {
+    /// The answer entries of the approvals among `entries` (what the plain line of an approval says).
+    fn answers_for(&self, entries: &[ThreadEntry], fold: &crate::thread::Fold) -> Vec<ThreadEntry> {
+        entries
+            .iter()
+            .filter(|e| e.approval.is_some())
+            .filter_map(|e| fold.answer_of.get(&e.seq))
+            .filter_map(|s| self.store.get(*s).ok().flatten())
+            .collect()
+    }
+
     /// The thread as session `k` of the calling agent.
     pub fn as_session(mut self, k: u32) -> Thread {
         self.session = Some(k.max(1));
@@ -2147,6 +2189,7 @@ impl Thread {
         let (text, guidance) = outcome_text(&agent, who, approve, &what, note);
         let mut d = Draft::new(Author::system("approval"), EntryKind::Message, text);
         d.event = Some(json!({"kind": "agent_note", "note": guidance}));
+        d.audience = Some("agent".into());
         d.mentions = vec![agent.clone()];
         d.task = Some(TaskTo {
             to: agent,
@@ -2287,6 +2330,7 @@ impl Thread {
         let read_seq = self.store.cursors()?.get(&me.id).map_or(0, |c| c.read_seq);
         // A join request says whether this caller may answer it.
         let fold = self.store.fold()?;
+        let all_entries = self.answers_for(&entries, &fold);
         let answers_joins = matches!(
             self.p.role_of(&self.caller),
             policy::Role::Owner | policy::Role::Admin
@@ -2296,7 +2340,7 @@ impl Thread {
             .map(|e| {
                 let open =
                     e.join_request.is_some() && fold.join_requests.get(&e.seq) == Some(&None);
-                let mut v = approval_overlay(&e, &fold);
+                let mut v = approval_overlay(&e, &fold, &all_entries);
                 if e.join_request.is_some() {
                     v["you_can_answer"] = json!(open && answers_joins);
                 }
@@ -2373,7 +2417,10 @@ impl Thread {
             .filter(|e| e.seq > read_seq && e.author.id != me.id)
             .count();
         let fold = self.store.fold()?;
-        let entries: Vec<Value> = entries.iter().map(|e| approval_overlay(e, &fold)).collect();
+        let entries: Vec<Value> = entries
+            .iter()
+            .map(|e| approval_overlay(e, &fold, &all))
+            .collect();
         Ok(json!({
             "space": self.store.space(),
             "me": me,

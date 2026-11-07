@@ -524,6 +524,17 @@ describe("every agent message and the child agents in the thread", () => {
     ]);
   });
 
+  it("an event only the agents are told is not drawn for people, and everything else is", () => {
+    seq = 0;
+    const ask = entry({ author: GRACE, text: "make one" });
+    const told = entry({ author: SYSTEM, kind: "system", text: "@claude Grace allowed your request: x.", audience: "agent" });
+    const said = entry({ author: SYSTEM, kind: "system", text: "Everyone sees this." });
+    const items = foldThread([ask, told, said], { readSeq: 9999 });
+    expect(items.map((i) => (i.type === "system" ? i.text : i.type))).toEqual(["message", "Everyone sees this."]);
+    const e = threadEntryFromTool({ seq: 4, id: "z", ts_ms: 1, author: { kind: "system", id: "system:approval", name: "Cua" }, kind: "message", text: "@claude no", audience: "agent" });
+    expect(e?.audience).toBe("agent");
+  });
+
   it("reads the subagent and child notes and the live children from the daemon's JSON", () => {
     const e = threadEntryFromTool({ seq: 9, id: "x", ts_ms: 1, author: { kind: "system", id: "system:subagent", name: "Cua" }, kind: "system", text: "t", event: { kind: "subagent", id: "t1", agent: "claude", title: "Map", state: "failed", steps: 2, result: "boom" } });
     expect(e?.child).toMatchObject({ kind: "subagent", id: "t1", state: "failed", steps: 2, result: "boom" });

@@ -201,6 +201,8 @@ export interface ThreadEntry {
   update: { task: number; state: TaskState; session: number | null; note: string | null } | null;
   /** A task someone other than the owner gave, run on the owner's provider keys. */
   runsOnKeysOf: { id: string; name: string } | null;
+  /** Who the entry is for: `agent` entries (an event the agents are told) are not drawn; absent is everyone. */
+  audience?: "agent" | "human";
   /** A system note about a member joining, leaving or a refused name (CUA-2262). */
   event: MemberEvent | null;
   /** A subagent or a child Space the agent started (a system note). */
@@ -748,6 +750,7 @@ export function threadEntryFromTool(v: unknown): ThreadEntry | null {
         ? { task: num(update.task)!, state: updateState, session: num(update.session), note: str(update.note) || null }
         : null,
     runsOnKeysOf: keyOwner(e.runs_on_keys_of),
+    ...(e.audience === "agent" || e.audience === "human" ? { audience: e.audience } : {}),
     event: kind === "system" ? memberEvent(e.event) : null,
     ...(kind === "system" && childNote(e.event) ? { child: childNote(e.event) } : {}),
     ...(kind === "join_request" ? { joinRequest: joinRequest(e) } : {}),

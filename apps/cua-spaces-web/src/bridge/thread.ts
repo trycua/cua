@@ -97,6 +97,8 @@ export function foldThread(entries: readonly ThreadEntry[], opts: { readSeq?: nu
   for (const e of sorted) {
     // The copy of a message that tasks one more agent: the original is the row.
     if (e.fanoutOf != null) continue;
+    // An event only the agents are told (an approval's outcome: the card already shows it) is not drawn for people.
+    if (e.audience === "agent") continue;
     if (e.kind === "task_update") {
       const u = e.update;
       const task = u ? tasks.get(u.task) : undefined;

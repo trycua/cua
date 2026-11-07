@@ -1123,6 +1123,7 @@ const ThreadEntryShape = ref(
     noteFor: nullable(num),
     update: nullable(object({ task: num, state: taskState, session: nullable(num), note: nullable(str) })),
     runsOnKeysOf: nullable(object({ id: str, name: str })),
+    audience: opt(oneOf("agent", "human")),
     event: nullable(object({ kind: oneOf("member_joined", "member_removed", "name_refused", "rate_limited"), member: nullable(MemberIdentityShape), by: nullable(memberRef) })),
     child: opt(
       nullable(

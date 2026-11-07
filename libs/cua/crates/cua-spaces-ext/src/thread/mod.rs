@@ -563,6 +563,10 @@ pub struct ThreadEntry {
     /// member, by}`); `text` says the same in words.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub event: Option<Value>,
+    /// Who the entry is for: `agent` (an event the agents are told, that the apps do not draw: the card
+    /// already shows it) or `human`; absent is both. `text` is the plain rendering every text client reads.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audience: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub join_request: Option<JoinRequest>,
     /// What the person was looking at when they posted ([`ViewContext`]).
@@ -617,6 +621,8 @@ pub struct Draft {
     pub task_seq: Option<u64>,
     pub runs_on_keys_of: Option<KeyOwner>,
     pub event: Option<Value>,
+    /// `agent` or `human` (see [`ThreadEntry::audience`]); `None`: both.
+    pub audience: Option<String>,
     pub join_request: Option<JoinRequest>,
     pub view: Option<ViewContext>,
     pub failure: Option<cua_agents::failure::Failure>,
@@ -648,6 +654,7 @@ impl Draft {
             import: None,
             task_seq: None,
             runs_on_keys_of: None,
+            audience: None,
             event: None,
             join_request: None,
             view: None,
@@ -1071,6 +1078,7 @@ impl ThreadStore {
                 task_seq: d.task_seq,
                 runs_on_keys_of: d.runs_on_keys_of,
                 event: d.event,
+                audience: d.audience,
                 join_request: d.join_request,
                 view: d.view,
                 failure: d.failure,

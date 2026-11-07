@@ -112,6 +112,14 @@ describe("every agent message and the child agents", () => {
     expect(p.live.agents[0]!.children).toEqual([{ id: "space:a:5", title: "a", steps: 0, step: "Starting it", space: { os: "Linux", page: "pending:agent-a-5", percent: 40 } }]);
   });
 
+  it("an event only the agents are told is not drawn", () => {
+    const told = note(3, { kind: "x" } as never);
+    const hidden = { ...entry(3, t0 + 3, CUA, "@claude Sam allowed your request: x.", { kind: "message" } as never), audience: "agent" as const };
+    expect(foldThread([task, hidden], { me: ME.id }).map((i) => i.type)).toEqual(["task"]);
+    expect(told.seq).toBe(3);
+    expect(threadEntryFromTool({ seq: 4, id: "z", ts_ms: 1, author: { kind: "system", id: "system:approval", name: "Cua" }, kind: "message", text: "@claude no", audience: "agent" })?.audience).toBe("agent");
+  });
+
   it("reads the live children from the daemon", () => {
     const p = threadPageFromTool({ entries: [], cursor: 1, caught_up: true, unread: 0, role: "owner", live: { key: "k", agents: [{ agent: "@claude", stage: "thinking", children: [{ id: "t1", title: "Map", steps: 1, step: "Ran ls" }] }] } });
     expect(p.live.agents[0]!.children).toEqual([{ id: "t1", title: "Map", steps: 1, step: "Ran ls" }]);

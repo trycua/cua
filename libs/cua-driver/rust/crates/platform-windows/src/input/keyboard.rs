@@ -321,6 +321,7 @@ pub fn post_type_text_with_delay(hwnd: u64, text: &str, inter_char_ms: u64) -> R
     };
     let mut since_barrier = 0usize;
     for range in ranges {
+        let batch_len = range.len();
         for unit in &units[range] {
             match unit {
                 // The Enter keystroke makes the target's TranslateMessage append a
@@ -373,12 +374,22 @@ pub fn post_type_text_with_delay(hwnd: u64, text: &str, inter_char_ms: u64) -> R
         }
         if batched && since_barrier > 0 {
             wait_for_target_pump(h);
+            // A pump round trip does not prove the target has dispatched the
+            // posted characters: sent messages are serviced ahead of posted
+            // ones. Give it time to drain the batch, so the backlog stays
+            // bounded to one batch; the caller's read-back repairs the rest.
+            sleep(Duration::from_millis(
+                BATCH_DRAIN_MS_PER_UNIT * batch_len as u64,
+            ));
             since_barrier = 0;
         }
     }
     wait_for_target_pump(h);
     Ok(())
 }
+
+/// Drain time per posted unit at the end of a batched `WM_CHAR` batch.
+const BATCH_DRAIN_MS_PER_UNIT: u64 = 2;
 
 /// Posted characters between two pump barriers.
 const POST_CHUNK_UNITS: usize = 32;

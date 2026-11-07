@@ -93,10 +93,28 @@ describe("<MembersPanel> sections", () => {
   it("remembers what is folded", () => {
     panel();
     fireEvent.click(toggle("details"));
-    expect(JSON.parse(localStorage.getItem(SPACE_LAYOUT_STORAGE_KEY)!).state.folded).toEqual({ people: false, stream: false, details: true });
+    expect(JSON.parse(localStorage.getItem(SPACE_LAYOUT_STORAGE_KEY)!).state.folded).toEqual({ people: false, children: false, stream: false, details: true });
     cleanup();
     panel();
     expect(toggle("details").getAttribute("aria-expanded")).toBe("false");
     expect(document.querySelector("[data-rail-fact]")).toBeNull();
+  });
+});
+
+describe("Child Spaces section heading", () => {
+  it("uses the same quiet heading: no icon, a full-row button that folds the list", async () => {
+    const { ChildSpacesSection } = await import("@/components/space-detail/child-spaces-section");
+    expect(typeof ChildSpacesSection).toBe("function");
+    const { SectionHeading } = await import("./section-heading");
+    render(
+      <SectionHeading id="children" folded={false} bodyId="section-children">
+        Child Spaces
+      </SectionHeading>,
+    );
+    const b = toggle("children");
+    expect(b.querySelector("svg")).toBeNull();
+    expect(b.getAttribute("aria-expanded")).toBe("true");
+    fireEvent.click(b);
+    expect(useSpaceLayoutStore.getState().folded.children).toBe(true);
   });
 });

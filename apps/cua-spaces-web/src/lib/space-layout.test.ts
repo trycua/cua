@@ -95,7 +95,7 @@ describe("space layout rules", () => {
         dock: "right",
         vSplit: 0.3,
         hSplit: 0.6,
-        folded: { people: false, stream: true, details: false },
+        folded: { people: false, children: false, stream: true, details: false },
       });
     });
   });

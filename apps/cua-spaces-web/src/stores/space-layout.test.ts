@@ -17,7 +17,7 @@ beforeEach(() => {
 describe("space layout store", () => {
   it("starts vertical with every section open", () => {
     const s = useSpaceLayoutStore.getState();
-    expect([s.dock, s.folded]).toEqual(["top", { people: false, stream: false, details: false }]);
+    expect([s.dock, s.folded]).toEqual(["top", { people: false, children: false, stream: false, details: false }]);
   });
 
   it("remembers the dock and each axis's size", () => {
@@ -33,13 +33,13 @@ describe("space layout store", () => {
     useSpaceLayoutStore.getState().toggleSection("stream");
     useSpaceLayoutStore.getState().toggleSection("details");
     useSpaceLayoutStore.getState().toggleSection("details");
-    expect(stored().folded).toEqual({ people: false, stream: true, details: false });
+    expect(stored().folded).toEqual({ people: false, children: false, stream: true, details: false });
     // A restart: the state in memory is gone, the saved copy is read back.
     const saved = localStorage.getItem(SPACE_LAYOUT_STORAGE_KEY)!;
     useSpaceLayoutStore.setState({ ...DEFAULT_PREFS });
     localStorage.setItem(SPACE_LAYOUT_STORAGE_KEY, saved);
     await useSpaceLayoutStore.persist.rehydrate();
-    expect(useSpaceLayoutStore.getState().folded).toEqual({ people: false, stream: true, details: false });
+    expect(useSpaceLayoutStore.getState().folded).toEqual({ people: false, children: false, stream: true, details: false });
   });
 
   it("ignores a damaged saved copy", async () => {

@@ -221,7 +221,7 @@ describe("Cua Driver in setup (A, CUA-2706): the permissions step is the Cua Dri
       const h = heading();
       if (h && seen.at(-1) !== h) seen.push(h);
     };
-    await waitFor(() => expect(heading()).toBe("Bring all your computers under one account"));
+    await waitFor(() => expect(heading()).toBe("Combine your existing computers into one supercomputer."));
     note();
     fireEvent.click(q("[data-onboarding-later]")!);
     await waitFor(() => expect(heading()).toBe("Pick where your agents work"));

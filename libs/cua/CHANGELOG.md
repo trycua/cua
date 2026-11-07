@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.2](https://github.com/trycua/cua/compare/cua-sdk-v0.12.1...cua-sdk-v0.12.2) (2026-11-07)
+
+
+### Bug Fixes
+
+* **spaces:** say computers in use at once for the plan limit (CUA-3690) ([#6790](https://github.com/trycua/cua/issues/6790)) ([891ccb7](https://github.com/trycua/cua/commit/891ccb7153dde86f6219da719c583d2de0b88b14))
+
 ## [0.12.1](https://github.com/trycua/cua/compare/cua-sdk-v0.12.0...cua-sdk-v0.12.1) (2026-11-07)
 
 

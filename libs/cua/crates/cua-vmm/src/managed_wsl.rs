@@ -706,22 +706,55 @@ pub fn serve_pipe() -> Result<()> {
     }
 }
 
+/// How many clients of the pipe may be bridged at once: each is a `wsl.exe`
+/// (and a `socat`) in the distribution, and a few hundred of them exhausted
+/// the WSL service's sockets.
+#[cfg(windows)]
+const MAX_BRIDGES: usize = 48;
+
+/// How long a bridge lets Docker finish its reply after the client went away.
+#[cfg(windows)]
+const CLOSE_GRACE: std::time::Duration = std::time::Duration::from_secs(2);
+
 /// One client of the pipe to Docker's socket.
 #[cfg(windows)]
 async fn bridge(client: tokio::net::windows::named_pipe::NamedPipeServer, distro: String) {
-    use tokio::io::{AsyncWriteExt as _, split};
+    static LIMIT: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(MAX_BRIDGES);
+    let Ok(Ok(_slot)) =
+        tokio::time::timeout(std::time::Duration::from_secs(10), LIMIT.acquire()).await
+    else {
+        tracing::warn!("the Linux runtime's pipe has {MAX_BRIDGES} connections open; refusing one");
+        return;
+    };
     let mut c = tokio::process::Command::new("wsl.exe");
     c.args(exec_args(
         &distro,
         &["socat", "-", &format!("UNIX-CONNECT:{GUEST_SOCKET}")],
     ))
     .env("WSL_UTF8", "1")
-    .stdin(std::process::Stdio::piped())
-    .stdout(std::process::Stdio::piped())
-    .stderr(std::process::Stdio::null())
-    .creation_flags(CREATE_NO_WINDOW)
-    .kill_on_drop(true);
-    let Ok(mut child) = c.spawn() else { return };
+    .creation_flags(CREATE_NO_WINDOW);
+    bridge_with(client, c).await;
+}
+
+/// Runs `command` (it speaks to Docker's socket on its stdin and stdout) for
+/// `client` until either side is done, then ends it. `wsl.exe` does not pass
+/// the end of its stdin on to the program in the distribution, so a client that
+/// went away must not leave it running: that leaked one `wsl.exe` per
+/// connection.
+#[cfg(windows)]
+async fn bridge_with<C>(client: C, mut command: tokio::process::Command)
+where
+    C: tokio::io::AsyncRead + tokio::io::AsyncWrite + Send + Unpin,
+{
+    use tokio::io::{AsyncWriteExt as _, split};
+    command
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .kill_on_drop(true);
+    let Ok(mut child) = command.spawn() else {
+        return;
+    };
     let (Some(mut to_guest), Some(mut from_guest)) = (child.stdin.take(), child.stdout.take())
     else {
         return;
@@ -735,13 +768,15 @@ async fn bridge(client: tokio::net::windows::named_pipe::NamedPipeServer, distro
         let _ = tokio::io::copy(&mut from_guest, &mut to_client).await;
         let _ = to_client.shutdown().await;
     };
-    // The connection is over when Docker's side ends; the client's side
-    // ending only closes the request half.
     tokio::pin!(up);
     tokio::pin!(down);
     tokio::select! {
+        // Docker closed its side (or the program ended): done.
         _ = &mut down => {}
-        _ = async { (&mut up).await; std::future::pending::<()>().await } => {}
+        // The client is gone: a moment for the reply, then the program ends.
+        _ = &mut up => {
+            let _ = tokio::time::timeout(CLOSE_GRACE, &mut down).await;
+        }
     }
     let _ = child.kill().await;
 }
@@ -955,6 +990,30 @@ mod tests {
             helper.contains("/usr/bin/sleep"),
             "the helper's entrypoint this check is for"
         );
+    }
+
+    /// A client that closes its end must not leave the bridged program (a
+    /// `wsl.exe` that ignores the end of its stdin) running: 600 leaked ones
+    /// exhausted the WSL service.
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn a_client_that_goes_away_ends_the_bridged_program() {
+        use tokio::io::AsyncWriteExt as _;
+        let (mut client, server) = tokio::io::duplex(1024);
+        let mut sleeper = tokio::process::Command::new("powershell.exe");
+        sleeper.args(["-NoProfile", "-Command", "Start-Sleep -Seconds 120"]);
+        let task = tokio::spawn(bridge_with(server, sleeper));
+        client
+            .write_all(
+                b"GET /_ping HTTP/1.1
+
+",
+            )
+            .await
+            .unwrap();
+        drop(client);
+        let ended = tokio::time::timeout(CLOSE_GRACE * 3, task).await;
+        assert!(ended.is_ok(), "the bridge stayed up after its client left");
     }
 
     #[test]

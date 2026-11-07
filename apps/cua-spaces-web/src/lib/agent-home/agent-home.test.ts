@@ -117,6 +117,8 @@ describe("the agent's prompt", () => {
   it("says where it is, what it can do and how to ask", () => {
     const p = homePrompt("test https://github.com/acme/app", setup, containerHome.abilities());
     expect(p).toContain("your own small Linux Space");
+    expect(p).toContain("Your final text is posted as your one reply");
+    expect(p).toContain("Never list your abilities unless asked");
     expect(p).toContain("cua spaces ls");
     expect(p).toContain(approvalAction("machines.use"));
     expect(p).toContain("Unless the person says where");

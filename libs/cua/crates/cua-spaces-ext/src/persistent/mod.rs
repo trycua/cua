@@ -537,7 +537,11 @@ pub(crate) type Partials = Arc<std::sync::Mutex<HashMap<String, Partial>>>;
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Partial {
     turn: u32,
+    /// The words since the turn's last tool call: a reply is what follows the
+    /// work, not the narration before it.
     text: String,
+    /// A tool call came after `text`; the next words start a new stretch.
+    after_tool: bool,
 }
 
 /// The longest streaming text a live row carries (characters): the whole message follows as the reply.
@@ -2197,7 +2201,16 @@ impl Persistent {
         let mut changed = false;
         {
             let mut map = self.partials.lock().unwrap_or_else(|p| p.into_inner());
-            for e in events.iter().filter(|e| e.kind == "message") {
+            for e in events
+                .iter()
+                .filter(|e| e.kind == "message" || e.kind == "tool_call")
+            {
+                if e.kind == "tool_call" {
+                    if let Some(p) = map.get_mut(&key).filter(|p| p.turn == e.turn) {
+                        p.after_tool = true;
+                    }
+                    continue;
+                }
                 let Some(text) = e.text.as_deref().filter(|t| !t.is_empty()) else {
                     continue;
                 };
@@ -2205,8 +2218,12 @@ impl Persistent {
                 if p.turn != e.turn {
                     *p = Partial {
                         turn: e.turn,
-                        text: String::new(),
+                        ..Partial::default()
                     };
+                }
+                if p.after_tool {
+                    p.text.clear();
+                    p.after_tool = false;
                 }
                 if p.text.chars().count() < MAX_PARTIAL {
                     p.text.push_str(text);
@@ -2280,7 +2297,7 @@ impl Persistent {
             {
                 let answer = match &error {
                     Some(_) => None,
-                    None => Some(agents.result(&run).await?.text),
+                    None => Some(agents.reply(&run).await?),
                 };
                 anchor = self.finish_task(&rec, &inflight, answer, error).await?;
                 task_ended = true;
@@ -2408,11 +2425,11 @@ impl Persistent {
                 report.notified += 1;
             }
             if rec.notify && !ended_in_error(turn, failed.as_ref()) {
-                let result = agents.result(&run).await?;
-                let body = if result.text.trim().is_empty() {
+                let reply = agents.reply(&run).await?;
+                let body = if reply.trim().is_empty() {
                     "Finished.".to_string()
                 } else {
-                    result.text.trim().to_string()
+                    reply.trim().to_string()
                 };
                 self.feed().post_anchored(
                     Some(&rec.name),

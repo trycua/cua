@@ -37,9 +37,9 @@ export interface DemoVolumeState {
   storage: DriveStorageInput;
 }
 
-export function demoVolumeState(now: number, onboarded: boolean, platform: DemoPlatform = MAC_DEMO_PLATFORM, askFirst = false, ciRunners = false): DemoVolumeState {
+export function demoVolumeState(now: number, onboarded: boolean, platform: DemoPlatform = MAC_DEMO_PLATFORM, ciRunners = false): DemoVolumeState {
   return {
-    experiments: { cuaVolume: true, secureSpaces: false, childSpaces: false, askFirst, ciRunners, tcpShares: false, mobile: false, warmPools: false },
+    experiments: { cuaVolume: true, childSpaces: false, ciRunners, tcpShares: false, mobile: false, warmPools: false },
     requests: [
       { id: "req-research", principal: "agent:researcher", prefix: "agents/writer/outputs/", mode: "r", reason: "Cite the launch draft in the weekly summary" },
     ],

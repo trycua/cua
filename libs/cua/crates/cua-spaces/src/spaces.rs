@@ -2401,8 +2401,8 @@ impl Spaces {
     pub async fn create(&self, mut opts: SpaceCreate) -> Result<SpaceCreated> {
         use cua_sandbox_core::progress::{Phase, Progress, report};
         crate::registry::validate_labels(&opts.labels)?;
-        // Secure Spaces and Child Spaces are experiments: until they are on, a
-        // create asks for no more than the old lists and no parent.
+        // Under the operator override that turns the secure default off, a create asks for no
+        // more than the old lists. Child Spaces is an experiment: until it is on, no parent.
         crate::network::require_secure_spaces(opts.network_settings.as_ref())?;
         if opts.parent.is_some()
             && !cua_vmm::experiments::enabled(cua_vmm::experiments::Gate::ChildSpaces)

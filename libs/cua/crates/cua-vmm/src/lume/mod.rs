@@ -63,6 +63,27 @@ pub fn macos_limit_message(others: &[String]) -> String {
     )
 }
 
+/// The capacity error when Apple Virtualization refused the boot for the
+/// limit and the VMs holding it are not ones this Lume lists (another Cua
+/// Spaces, another Lume, any app running macOS VMs).
+pub fn macos_limit_unlisted_message() -> String {
+    format!(
+        "this Mac is already running its limit of macOS VMs; Apple allows {MACOS_VMS_PER_MAC} at \
+         once, and others outside this Space (another Cua Spaces, Lume or a virtualization app) \
+         hold them. Stop or delete one of them and try again"
+    )
+}
+
+/// Whether `log` (a `lume serve` log) says Apple Virtualization refused to
+/// run VM `name` for the limit on active virtual machines.
+pub fn log_says_vm_limit(log: &str, name: &str) -> bool {
+    let tag = format!("name={name}");
+    log.lines().any(|l| {
+        l.contains("number of virtual machines exceeds the limit")
+            && l.split_whitespace().any(|t| t == tag)
+    })
+}
+
 /// The host a macOS guest's published ports are dialed on once they are
 /// forwarded over vsock ([`client::VmDetails::forwards`]).
 pub const VSOCK_HOST: &str = "127.0.0.1";
@@ -875,6 +896,11 @@ impl LumeRuntime {
                         {
                             return Err(VmmError::HostCapacity(macos_limit_message(&others)));
                         }
+                        // The VMs holding the limit may be another Lume's,
+                        // which this one does not list: its own log says so.
+                        if self.serve_log_says_vm_limit(name) {
+                            return Err(VmmError::HostCapacity(macos_limit_unlisted_message()));
+                        }
                         return Err(VmmError::other(format!(
                             "lume VM '{name}' stopped while booting{}",
                             self.run_log_tail(name)
@@ -918,6 +944,24 @@ impl LumeRuntime {
                 self.run_log_tail(name)
             ),
         })
+    }
+
+    fn serve_log_says_vm_limit(&self, name: &str) -> bool {
+        use std::io::{Read as _, Seek as _, SeekFrom};
+        // Lume's request log is large (every poll of a VM is a line), so
+        // only its end is read: the refusal is the last few seconds of it.
+        const TAIL: u64 = 8 * 1024 * 1024;
+        let Ok(mut f) = std::fs::File::open(self.cfg.root.join("serve.log")) else {
+            return false;
+        };
+        let len = f.metadata().map(|m| m.len()).unwrap_or(0);
+        let mut bytes = Vec::new();
+        if f.seek(SeekFrom::Start(len.saturating_sub(TAIL))).is_err()
+            || f.read_to_end(&mut bytes).is_err()
+        {
+            return false;
+        }
+        log_says_vm_limit(&String::from_utf8_lossy(&bytes), name)
     }
 
     fn run_log_tail(&self, name: &str) -> String {
@@ -4016,6 +4060,40 @@ mod tests {
         LumeRuntime::new(cfg()).save_ports("m", &[3211, 8080]);
         // A fresh runtime (another CLI process) reads them back.
         assert_eq!(LumeRuntime::new(cfg()).load_ports("m"), vec![3211, 8080]);
+    }
+
+    #[test]
+    fn the_vm_limit_is_read_from_lume_serves_own_log() {
+        let log = "[2026-11-07T01:48:13Z] ERROR: Failed in VM.run name=child-safari error=The number of virtual machines exceeds the limit. The maximum supported number of active virtual machines has been reached. errorType=NSError\n";
+        assert!(log_says_vm_limit(log, "child-safari"));
+        // Lume orders the fields as it likes: the name may come last.
+        let last = "ERROR: Failed in VM.run error=The number of virtual machines exceeds the limit. The maximum supported number of active virtual machines has been reached. name=hold-one";
+        assert!(log_says_vm_limit(last, "hold-one"));
+        assert!(!log_says_vm_limit(last, "hold"));
+        assert!(!log_says_vm_limit(log, "other-vm"));
+        assert!(!log_says_vm_limit(
+            "INFO: all fine name=child-safari",
+            "child-safari"
+        ));
+        let msg = macos_limit_unlisted_message();
+        assert!(msg.contains("Apple allows 2"), "{msg}");
+        assert!(!msg.contains("stopped while booting"), "{msg}");
+    }
+
+    #[test]
+    fn the_serve_log_is_read_from_its_end_however_large_it_is() {
+        let dir = tempfile::tempdir().unwrap();
+        let rt = LumeRuntime::new(LumeConfig {
+            root: dir.path().to_path_buf(),
+            ..LumeConfig::default()
+        });
+        let filler = format!("INFO: poll {}\n", "x".repeat(4000));
+        let mut log = filler.repeat(1200);
+        log.push_str("ERROR: Failed in VM.run error=The number of virtual machines exceeds the limit. name=w errorType=NSError\n");
+        log.push_str(&filler.repeat(100));
+        std::fs::write(dir.path().join("serve.log"), log).unwrap();
+        assert!(rt.serve_log_says_vm_limit("w"));
+        assert!(!rt.serve_log_says_vm_limit("z"));
     }
 
     #[test]

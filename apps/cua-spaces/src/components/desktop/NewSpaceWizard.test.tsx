@@ -88,7 +88,9 @@ describe("the image field", () => {
     expect(pressedOs()).toEqual([]);
     fireEvent.keyDown(imageField(), { key: "Escape" });
     fireEvent.click(imageField());
-    expect(suggestionRefs()).toEqual(offered.map((i) => i.ref));
+    // Published images first, then the ones built on this computer on first use.
+    const searched = [...offered.filter((i) => i.published), ...offered.filter((i) => !i.published)];
+    expect(suggestionRefs()).toEqual(searched.map((i) => i.ref));
   });
 
   it("groups the suggestions the way the file groups them, one line a row", () => {

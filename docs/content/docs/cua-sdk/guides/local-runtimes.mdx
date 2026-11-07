@@ -107,9 +107,7 @@ automatically; it needs `swtpm` on the host's `PATH`:
 sudo apt-get install swtpm         # Debian, Ubuntu
 ```
 
-On a Mac the guest has no TPM: Apple's Hypervisor.framework cannot map the TPM's
-memory window (QEMU stops with `HV_BAD_ARGUMENT`), so the unattended install
-turns Windows 11's TPM check off instead and the guest runs without one.
+On a Mac the guest has no TPM (Hypervisor.framework cannot map its memory window), so the unattended install turns Windows 11's TPM check off.
 
 **Secure Boot firmware.** A guest that should see Secure Boot (Microsoft's keys
 enrolled) needs `AAVMF_CODE.secboot.fd` and `AAVMF_VARS.ms.fd`, both in one

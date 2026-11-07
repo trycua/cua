@@ -89,6 +89,34 @@ class AptPolicy(unittest.TestCase):
         stale = [r for r, (n, _) in ALLOWED.items() if counts.get(r, 0) < n]
         self.assertFalse(stale, f"lower or remove these ALLOWED entries: {stale}")
 
+    def test_local_apt_action_has_a_checkout_before_it(self):
+        """A job that uses a local action must check the repo out first."""
+        bad = []
+        for path in sorted((ROOT / ".github/workflows").glob("*.y*ml")):
+            job = None
+            checked_out = False
+            in_jobs = False
+            for line in path.read_text().splitlines():
+                if re.match(r"jobs:\s*$", line):
+                    in_jobs = True
+                    continue
+                if in_jobs and re.match(r"  [\w-]+:\s*$", line):
+                    job, checked_out = line.strip().rstrip(":"), False
+                    continue
+                if re.match(r"\s*-?\s*uses:\s*actions/checkout@", line):
+                    checked_out = True
+                if (
+                    job
+                    and not checked_out
+                    and re.match(r"\s*-?\s*uses:\s*\./\.github/actions/apt-install\b", line)
+                ):
+                    bad.append(f"{path.name}: job {job}")
+        self.assertFalse(
+            bad,
+            "Add actions/checkout (sparse-checkout: .github/actions) before "
+            "the local apt-install action in:\n" + "\n".join(bad),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

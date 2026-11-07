@@ -162,6 +162,12 @@ jobs:
       RUN_ID: ${{ needs.resolve.outputs.run_id }}
     timeout-minutes: 25
     steps:
+      # A local action needs the repo on disk; this job has no other checkout.
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/actions
+          persist-credentials: false
+
       - name: Download electron-linux
         run: gh run download "$RUN_ID" -n electron-linux -D dl
 

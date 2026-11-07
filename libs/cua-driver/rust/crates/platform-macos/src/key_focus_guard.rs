@@ -263,6 +263,7 @@ fn watch_order_after_action(target: i32, front: i32, order: bool, epoch: Epoch) 
                 }
                 if current.order
                     && restores < MAX_RESTORES_PER_WATCH
+                    && focus_arbiter::decide(current.epoch) == Decision::Undo
                     && restore_front_if_raised(target, current.front)
                 {
                     restores += 1;

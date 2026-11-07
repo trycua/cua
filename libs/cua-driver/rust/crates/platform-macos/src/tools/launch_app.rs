@@ -294,6 +294,7 @@ impl Tool for LaunchAppTool {
         if let Ok(Ok((pid, _, _))) = &launch_result {
             if let Some(prior) = prior_frontmost {
                 if *pid != prior {
+                    let armed = crate::focus_arbiter::Epoch::now();
                     let targeted_lease = crate::focus_steal::FocusStealPreventer::begin_suppression(
                         Some(*pid),
                         prior,
@@ -334,13 +335,17 @@ impl Tool for LaunchAppTool {
                     // the same tokio tick the lease dropped), demote it.
                     // Loop 5x200ms = 1s of post-window coverage. Each
                     // iteration is cheap (one frontmost_pid + maybe one
-                    // activate_pid call) so this stays well under the
+                    // reactivate_app call) so this stays well under the
                     // RPC budget even when the demote keeps working.
                     let mut demotion_succeeded = true;
                     for _ in 0..5 {
                         let frontmost_now = crate::apps::frontmost_pid();
-                        if frontmost_now != Some(*pid) {
-                            // Not frontmost — nothing to do this tick.
+                        // Not frontmost, or the driver or the user has
+                        // fronted an app since: nothing to do this tick.
+                        if frontmost_now != Some(*pid)
+                            || crate::focus_arbiter::decide(armed)
+                                == crate::focus_arbiter::Decision::Leave
+                        {
                             continue;
                         }
                         let activated = crate::apps::reactivate_app(prior);
@@ -409,7 +414,6 @@ impl Tool for LaunchAppTool {
                     if slow_launch_path {
                         let launched_pid = *pid;
                         let prior_pid = prior;
-                        let armed = crate::focus_arbiter::Epoch::now();
                         tokio::spawn(async move {
                             let _lease = crate::focus_steal::FocusStealPreventer::begin_suppression(
                                 Some(launched_pid),

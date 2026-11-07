@@ -555,6 +555,19 @@ pub(crate) fn for_the_agent(status: Status) -> Status {
 
 fn agent_words(msg: &str) -> Option<String> {
     let l = msg.to_lowercase();
+    if l.contains("probe port") && l.contains("not published") {
+        // The agent repeats what it is told to the person: no port numbers or internals.
+        return Some(
+            "The Space's network setup did not come up, so it was not made. Say that plainly; do not quote ports or internals. Offer to try a Linux Space instead, or to try this one again later."
+                .into(),
+        );
+    }
+    if l.contains("stopped while booting") {
+        return Some(
+            "The Space stopped while starting up, so it was not made. Say that plainly and offer to try again or to use a Linux Space instead."
+                .into(),
+        );
+    }
     if l.contains("not enough disk space") {
         let between = |a: &str, b: &str| -> Option<String> {
             let from = msg.find(a)? + a.len();
@@ -1386,6 +1399,21 @@ impl cua_proto::daemon::v1::share_service_server::ShareService for Scoped {
 #[cfg(test)]
 mod agent_words_tests {
     use super::*;
+
+    #[test]
+    fn a_network_or_boot_failure_is_said_without_ports_or_internals() {
+        let a = agent_words("invalid request: probe port 3211 is not published by this sandbox")
+            .unwrap();
+        assert!(
+            !a.contains("3211") && a.contains("network setup did not come up"),
+            "{a}"
+        );
+        let b = agent_words("local runtime: lume VM 'mac1' stopped while booting").unwrap();
+        assert!(
+            !b.to_lowercase().contains("lume") && b.contains("stopped while starting up"),
+            "{b}"
+        );
+    }
 
     #[test]
     fn a_full_disk_is_said_for_the_person_not_the_terminal() {

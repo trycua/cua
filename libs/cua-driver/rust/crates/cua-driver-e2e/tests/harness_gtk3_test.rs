@@ -1591,8 +1591,10 @@ catalog_test!(
         route: DriverRoute::LinuxAtSpiValue,
         operation: Operation::AxTypeText {
             target: "txt-input",
-            text: "ax-typed",
-            expected: "mirror=ax-typed"
+            // GTK3 reads InsertText's length as bytes: send any shorter unit
+            // and this arrives cut short, which ASCII alone can't show.
+            text: "ax-ñ🙂-typed",
+            expected: "mirror=ax-ñ🙂-typed"
         },
     }
 );

@@ -483,25 +483,35 @@ pub fn activate(window_id: u64, pid: Option<u32>) -> anyhow::Result<()> {
             .any(|window| window.xid == window_id && pid.is_none_or(|pid| window.pid == Some(pid))),
         "foreground_unavailable: KWin window {window_id} no longer exists or belongs to another process"
     );
-    let mut plasma = Plasma::connect(Connection::connect_to_env()?)
+    let plasma = Plasma::connect(Connection::connect_to_env()?)
         .context("foreground_unavailable: KWin window management protocol unavailable")?;
+    request_active(plasma, uuid)
+        .context("foreground_unavailable: KWin did not confirm the window became active")
+}
+
+/// Ask KWin to activate `uuid` and wait until it reports Active as of after the
+/// request. A flag cached before KWin read `set_state` may be stale, so nothing
+/// counts until the reply to a sync queued behind the request: by then every
+/// state change KWin made up to that point has been dispatched.
+fn request_active(mut plasma: Plasma, uuid: String) -> anyhow::Result<()> {
     let window = plasma
         .manager
         .get_window_by_uuid(uuid.clone(), &plasma.queue.handle(), uuid);
     plasma.roundtrip("KWin window state", |_| true)?;
     let active = management::State::Active as u32;
     window.set_state(active, active);
-    plasma.connection.flush()?;
+    plasma.connection.display().sync(&plasma.queue.handle(), ());
+    let after_request = plasma.state.roundtrips + 1;
     let confirmed = super::hyprland_capture::dispatch_until(
         &mut plasma.queue,
         &mut plasma.state,
         Instant::now() + Duration::from_secs(1),
         "KWin activation",
-        |state| is_active(state.target_state),
+        |state| state.roundtrips >= after_request && is_active(state.target_state),
     );
     window.destroy();
     let _ = plasma.connection.flush();
-    confirmed.context("foreground_unavailable: KWin did not confirm the window became active")
+    confirmed
 }
 
 pub fn capture(window_id: u64, pid: Option<u32>) -> anyhow::Result<Vec<u8>> {
@@ -793,18 +803,129 @@ mod tests {
         );
     }
 
+    fn string(value: &str) -> Vec<u8> {
+        let mut bytes = ((value.len() + 1) as u32).to_ne_bytes().to_vec();
+        bytes.extend(value.as_bytes());
+        bytes.push(0);
+        bytes.resize(bytes.len().next_multiple_of(4), 0);
+        bytes
+    }
+
+    /// A request from the client: object id, opcode and payload, or None at hang-up.
+    fn receive(server: &mut std::os::unix::net::UnixStream) -> Option<(u32, u32, Vec<u8>)> {
+        use std::io::Read;
+        let mut header = [0; 8];
+        match server.read_exact(&mut header) {
+            Ok(()) => {}
+            // A client that hangs up with unread replies resets the socket.
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::UnexpectedEof | std::io::ErrorKind::ConnectionReset
+                ) =>
+            {
+                return None
+            }
+            Err(error) => panic!("Wayland fixture: {error}"),
+        }
+        let word = u32::from_ne_bytes(header[4..].try_into().unwrap());
+        let mut payload = vec![0; (word >> 16) as usize - 8];
+        server.read_exact(&mut payload).unwrap();
+        Some((
+            u32::from_ne_bytes(header[..4].try_into().unwrap()),
+            word & 0xffff,
+            payload,
+        ))
+    }
+
     #[test]
-    fn uuid_protocol_versions_preserve_compositor_stacking() {
-        use std::io::{Read, Write};
+    fn activation_is_confirmed_only_by_state_kwin_reports_after_the_request() {
         use std::os::unix::net::UnixStream;
 
-        fn string(value: &str) -> Vec<u8> {
-            let mut bytes = ((value.len() + 1) as u32).to_ne_bytes().to_vec();
-            bytes.extend(value.as_bytes());
-            bytes.push(0);
-            bytes.resize(bytes.len().next_multiple_of(4), 0);
-            bytes
+        fn send(socket: &mut UnixStream, id: u32, opcode: u32, payload: &[u8]) {
+            use std::io::Write;
+            let mut message = id.to_ne_bytes().to_vec();
+            message.extend(((payload.len() as u32 + 8) << 16 | opcode).to_ne_bytes());
+            message.extend(payload);
+            let _ = socket.write_all(&message);
         }
+        let active = management::State::Active as u32;
+        let state_changed = u32::from(plasma_window::EVT_STATE_CHANGED_OPCODE);
+        // The window's state when bound, then any change KWin sends once it has
+        // read set_state. Active at bind but inactive by then: the bind-time flag
+        // is stale and must not count. Granted: confirmed. Active at bind with no
+        // change: still active as of the sync reply, so confirmed.
+        for (before, after, confirmed) in [
+            (active, Some(0), false),
+            (0, Some(active), true),
+            (active, None, true),
+        ] {
+            let (client, mut server) = UnixStream::pair().unwrap();
+            server
+                .set_read_timeout(Some(Duration::from_secs(3)))
+                .unwrap();
+            let fixture = std::thread::spawn(move || {
+                let (mut registry, mut manager, mut window) = (0, 0, 0);
+                let mut requested = None;
+                while let Some((id, opcode, payload)) = receive(&mut server) {
+                    let argument = |offset: usize| {
+                        u32::from_ne_bytes(payload[offset..offset + 4].try_into().unwrap())
+                    };
+                    if id == 1 && opcode == 1 {
+                        registry = argument(0);
+                        let mut global = 7u32.to_ne_bytes().to_vec();
+                        global.extend(string(OrgKdePlasmaWindowManagement::interface().name));
+                        global.extend(17u32.to_ne_bytes());
+                        send(&mut server, registry, 0, &global);
+                    } else if id == 1 && opcode == 0 {
+                        let callback = argument(0);
+                        send(&mut server, callback, 0, &0u32.to_ne_bytes());
+                        send(&mut server, 1, 1, &callback.to_ne_bytes());
+                    } else if id == registry && opcode == 0 {
+                        manager = argument(payload.len() - 4);
+                    } else if id == manager
+                        && opcode == u32::from(management::REQ_GET_WINDOW_BY_UUID_OPCODE)
+                    {
+                        window = argument(0);
+                        send(&mut server, window, state_changed, &before.to_ne_bytes());
+                    } else if id == window
+                        && opcode == u32::from(plasma_window::REQ_SET_STATE_OPCODE)
+                    {
+                        requested = Some((argument(0), argument(4)));
+                        if let Some(after) = after {
+                            send(&mut server, window, state_changed, &after.to_ne_bytes());
+                        }
+                    } else if id == window && opcode == u32::from(plasma_window::REQ_DESTROY_OPCODE)
+                    {
+                        break;
+                    } else {
+                        panic!("unexpected Wayland request {id}/{opcode}");
+                    }
+                }
+                assert_eq!(requested, Some((active, active)));
+            });
+            let plasma = Plasma::connect(Connection::from_socket(client).unwrap()).unwrap();
+            let result = request_active(plasma, "window".into());
+            assert_eq!(
+                result.is_ok(),
+                confirmed,
+                "{before} then {after:?}: {result:?}"
+            );
+            if !confirmed {
+                assert_eq!(
+                    result.unwrap_err().to_string(),
+                    "wayland capture timed out waiting for KWin activation"
+                );
+            }
+            fixture.join().unwrap();
+        }
+    }
+
+    #[test]
+    fn uuid_protocol_versions_preserve_compositor_stacking() {
+        use std::io::Write;
+        use std::os::unix::net::UnixStream;
+
         fn send(socket: &mut UnixStream, id: u32, opcode: u32, payload: &[u8]) {
             let mut message = id.to_ne_bytes().to_vec();
             message.extend(((payload.len() as u32 + 8) << 16 | opcode).to_ne_bytes());
@@ -830,27 +951,7 @@ mod tests {
                 let mut manager = 0;
                 let mut bound = None;
                 let mut requested_stacking = false;
-                loop {
-                    let mut header = [0; 8];
-                    match server.read_exact(&mut header) {
-                        Ok(()) => {}
-                        // A client that hangs up with unread replies resets the socket.
-                        Err(error)
-                            if matches!(
-                                error.kind(),
-                                std::io::ErrorKind::UnexpectedEof
-                                    | std::io::ErrorKind::ConnectionReset
-                            ) =>
-                        {
-                            break
-                        }
-                        Err(error) => panic!("Wayland fixture: {error}"),
-                    }
-                    let id = u32::from_ne_bytes(header[..4].try_into().unwrap());
-                    let word = u32::from_ne_bytes(header[4..].try_into().unwrap());
-                    let opcode = word & 0xffff;
-                    let mut payload = vec![0; (word >> 16) as usize - 8];
-                    server.read_exact(&mut payload).unwrap();
+                while let Some((id, opcode, payload)) = receive(&mut server) {
                     let argument = |offset| {
                         u32::from_ne_bytes(payload[offset..offset + 4].try_into().unwrap())
                     };

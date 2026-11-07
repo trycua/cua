@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.43.1](https://github.com/trycua/cua/compare/cua-driver-rs-v0.43.0...cua-driver-rs-v0.43.1) (2026-11-07)
+
+
+### Bug Fixes
+
+* **cua-driver:** an AX press on a web textarea now takes DOM focus (CUA-3763) ([#6909](https://github.com/trycua/cua/issues/6909)) ([eefa210](https://github.com/trycua/cua/commit/eefa2104df2b0757b80b57599997a74d4fa7d50b))
+
 ## [0.43.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.42.4...cua-driver-rs-v0.43.0) (2026-11-07)
 
 

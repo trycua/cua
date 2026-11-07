@@ -183,6 +183,13 @@ fn a_screenshot_pixel_lands_on_target_on_every_output() {
         );
     }
 
+    // Mixed scales report the largest one, whichever output came first.
+    let largest = reported
+        .iter()
+        .map(|r| r["scale"].as_f64().expect("monitor scale"))
+        .fold(f64::MIN, f64::max);
+    assert_eq!(size["scale_factor"].as_f64(), Some(largest), "{size}");
+
     // The screenshot is that same frame, described with the same numbers.
     let (state, image) = screenshot(&mut driver);
     assert_eq!(i64::from(image.width()), width);

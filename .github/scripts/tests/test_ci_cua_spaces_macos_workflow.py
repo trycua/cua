@@ -120,7 +120,7 @@ def test_the_slice_action_builds_by_default_and_restores_only_on_request():
     assert action["inputs"]["build"]["default"] == "true"
     steps = action["runs"]["steps"]
     by_id = {s.get("id"): s for s in steps if s.get("id")}
-    assert by_id["cache"]["uses"].startswith("actions/cache@") and by_id["cache"]["if"] == "inputs.build == 'true'"
+    assert by_id["cache"]["uses"].startswith("actions/cache/restore@") and by_id["cache"]["if"] == "inputs.build == 'true'"
     assert by_id["restore"]["uses"].startswith("actions/cache/restore@")
     assert by_id["restore"]["if"] == "inputs.build != 'true'"
     # Nothing compiles unless build is on.

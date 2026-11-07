@@ -5,6 +5,10 @@ use async_trait::async_trait;
 use cua_driver_core::{
     protocol::ToolResult,
     tool::{Tool, ToolDef},
+    window_target::{
+        describe_candidates, resolve_pid_window_target, PidWindowTargetResolution,
+        WindowTargetCandidate,
+    },
 };
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -45,18 +49,6 @@ fn megapixel_long_edge_cap(w: u32, h: u32, max_pixels: u64) -> Option<u32> {
     Some(edge)
 }
 
-/// The window a pid-only call means: on KWin the pid's topmost window, then its
-/// open popup menu, then X11's choice. A KWin handle is not an X11 id, so X11's
-/// focus read can't choose among them, and an X11 popup id would be refused as
-/// not belonging to the pid: popups are only read back on an X11 session.
-fn pid_only_window(
-    kwin: impl FnOnce() -> Option<u64>,
-    popup: impl FnOnce() -> Option<u64>,
-    x11: impl FnOnce() -> Option<u64>,
-) -> Option<u64> {
-    kwin().or_else(popup).or_else(x11)
-}
-
 /// The pid's topmost window when the KWin adapter listed it. Other compositors,
 /// and a KWin that doesn't let this executable enumerate, keep the existing choice.
 fn kwin_topmost_window(pid: u32) -> Option<u64> {
@@ -67,18 +59,64 @@ fn kwin_topmost_window(pid: u32) -> Option<u64> {
         .filter(|window| crate::wayland::kwin_capture::knows_window(*window))
 }
 
+/// The window a pid-only read means when the input resolver chose none.
+#[derive(Debug, PartialEq)]
+enum PidRead {
+    Window(u64),
+    Ambiguous(Vec<WindowTargetCandidate>),
+    NotFound,
+}
+
+/// A pid's one listed window is read even off-screen, as `list_windows` shows
+/// it. Several with no focus or stacking to choose by are the caller's choice.
+fn listed_pid_window(candidates: Vec<WindowTargetCandidate>) -> PidRead {
+    match resolve_pid_window_target(candidates) {
+        PidWindowTargetResolution::NotFound => PidRead::NotFound,
+        PidWindowTargetResolution::Resolved(candidate) => PidRead::Window(candidate.window_id),
+        PidWindowTargetResolution::Ambiguous(candidates) => PidRead::Ambiguous(candidates),
+    }
+}
+
+fn ambiguous_pid_read(pid: u32, candidates: Vec<WindowTargetCandidate>) -> ToolResult {
+    ToolResult::error(format!(
+        "pid {pid} owns more than one window and none is known to be in use: {}. Provide \
+         window_id.",
+        describe_candidates(&candidates)
+    ))
+    .with_structured(json!({
+        "code": "ambiguous_window_target",
+        "effect": "refused",
+        "pid": pid,
+        "candidates": candidates
+    }))
+}
+
 #[cfg(test)]
-mod pid_only_window_tests {
-    use super::pid_only_window;
+mod pid_read_tests {
+    use super::{listed_pid_window, PidRead, WindowTargetCandidate};
+
+    fn candidate(window_id: u64, is_on_screen: bool) -> WindowTargetCandidate {
+        WindowTargetCandidate {
+            window_id,
+            transient_for: None,
+            title: format!("w{window_id}"),
+            app_name: None,
+            is_on_screen,
+        }
+    }
 
     #[test]
-    fn kwin_answers_first_and_every_other_compositor_keeps_its_choice() {
-        let unreached = || -> Option<u64> { panic!("KWin already answered") };
-        assert_eq!(pid_only_window(|| Some(1), unreached, unreached), Some(1));
-        // Sway, GNOME and the rest: no KWin answer, so the popup, then X11, as before.
-        assert_eq!(pid_only_window(|| None, || Some(2), || Some(3)), Some(2));
-        assert_eq!(pid_only_window(|| None, || None, || Some(3)), Some(3));
-        assert_eq!(pid_only_window(|| None, || None, || None), None);
+    fn a_pid_s_only_listed_window_is_read_even_off_screen() {
+        assert_eq!(
+            listed_pid_window(vec![candidate(5, false)]),
+            PidRead::Window(5)
+        );
+        assert_eq!(listed_pid_window(Vec::new()), PidRead::NotFound);
+        let several = vec![candidate(5, false), candidate(6, true)];
+        assert_eq!(
+            listed_pid_window(several.clone()),
+            PidRead::Ambiguous(several)
+        );
     }
 }
 
@@ -387,36 +425,39 @@ impl Tool for GetWindowStateTool {
             Some(v) => v,
             None => {
                 let chosen = tokio::task::spawn_blocking(move || {
-                    pid_only_window(
-                        || kwin_topmost_window(pid),
-                        || {
-                            crate::input::mapped_popup_windows()
-                                .into_iter()
-                                .rev()
-                                .find(|p| p.pid == Some(pid))
-                                .map(|p| p.window)
-                        },
-                        || {
-                            let windows = crate::x11::list_windows(Some(pid));
-                            let candidates: Vec<u64> = windows.iter().map(|w| w.xid).collect();
-                            crate::x11::pick_pid_window(
-                                &windows,
-                                crate::x11::focused_window_among(&candidates),
-                                crate::x11::transient_for,
-                                crate::x11::active_window(),
-                            )
-                        },
-                    )
+                    // A KWin handle first: X11's popup and focus reads can't choose among them.
+                    if let Some(window) = kwin_topmost_window(pid) {
+                        return PidRead::Window(window);
+                    }
+                    if let Some(popup) = crate::input::mapped_popup_windows()
+                        .into_iter()
+                        .rev()
+                        .find(|p| p.pid == Some(pid))
+                    {
+                        return PidRead::Window(popup.window);
+                    }
+                    super::impl_::pid_fallback_window_resolver()(i64::from(pid))
+                        .map(PidRead::Window)
+                        .unwrap_or_else(|| {
+                            listed_pid_window(super::impl_::pid_window_target_candidates(
+                                i64::from(pid),
+                            ))
+                        })
                 })
                 .await
-                .ok()
-                .flatten();
+                .unwrap_or(PidRead::NotFound);
                 match chosen {
-                    Some(v) => v,
-                    None => {
-                        return ToolResult::error(format!(
-                            "No windows found for pid {pid}. Provide window_id."
-                        ))
+                    PidRead::Window(v) => v,
+                    PidRead::Ambiguous(candidates) => {
+                        return ambiguous_pid_read(pid, candidates);
+                    }
+                    PidRead::NotFound => {
+                        let message = tokio::task::spawn_blocking(move || {
+                            crate::atspi::no_windows_error(pid)
+                        })
+                        .await
+                        .unwrap_or_else(|error| format!("Task error: {error}"));
+                        return ToolResult::error(message);
                     }
                 }
             }

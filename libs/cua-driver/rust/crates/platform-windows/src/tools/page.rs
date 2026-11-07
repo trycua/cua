@@ -287,7 +287,7 @@ impl PageBackend for WindowsPageBackend {
         // HWND so the overlay sits at z+1 of the page, glide, click-pulse.
         // Inlined GA_ROOT lookup mirrors the helper in tools/impl_.rs but
         // keeps page.rs from depending on a private symbol there.
-        let hwnd = window_id as u64;
+        let hwnd = window_id;
         {
             use windows::Win32::Foundation::HWND;
             use windows::Win32::UI::WindowsAndMessaging::{GetAncestor, GA_ROOT};
@@ -345,8 +345,7 @@ impl PageBackend for WindowsPageBackend {
 fn escape_js_string_literal(s: &str) -> String {
     s.replace('\\', "\\\\")
         .replace('\'', "\\'")
-        .replace('\r', " ")
-        .replace('\n', " ")
+        .replace(['\r', '\n'], " ")
 }
 
 /// `execute_javascript` returns the raw JS result prefixed with the

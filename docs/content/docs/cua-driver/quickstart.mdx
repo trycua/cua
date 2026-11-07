@@ -66,7 +66,7 @@ off. Switching it on is what grants access.
   relaunch. If the daemon does not come back, run `cua-driver permissions grant` again.
 </Callout>
 
-macOS does not always show both prompts in one pass. Check what landed:
+A small Cua Driver window walks you through both switches, one at a time. It moves on by itself when a switch turns on, offers an app tile to drag into the list if Cua Driver isn't there, and closes when both are on. To check later:
 
 ```bash test="cli-shape" id="cua-driver-permissions-status"
 cua-driver permissions status
@@ -145,7 +145,10 @@ any permission or display error `doctor` reports before you go on.
 
 ## 3. Connect your agent
 
-Pick one way in. A skill teaches the agent to run the Cua Driver CLI. An MCP
+The install line from step 1 already ran `cua-driver connect`, which connects
+Claude Code, Codex and Cursor if they are installed, so you can skip this step
+for those. Run `cua-driver connect` yourself to connect an agent you installed
+later; it is safe to run again. For any other agent, pick one way in below. A skill teaches the agent to run the Cua Driver CLI. An MCP
 registration exposes Cua Driver as a tool server. `mcp-config` prints the
 registration command, which you run, and installs the skill for that agent
 (add `--no-skills` to skip it). It uses the paths on your machine, not the
@@ -176,7 +179,7 @@ cua-driver mcp-config --client claude
 ```
 
 ```bash output
-claude mcp add-json --scope user cua-computer-use '{"args":["mcp"],"command":"/Users/you/.local/bin/cua-driver"}'
+claude mcp add-json --scope user cua-driver '{"args":["mcp"],"command":"/Users/you/.local/bin/cua-driver"}'
 ```
 
   </Tab>
@@ -269,7 +272,7 @@ Name the setup you chose in place of "the Cua Driver skill":
 | Your setup | Say |
 | --- | --- |
 | Claude Code or Prime Agent, with the skill | the Cua Driver skill |
-| Claude Code, with MCP registration | the cua-computer-use MCP server |
+| Claude Code, with MCP registration | the cua-driver MCP server |
 | Codex or OpenClaw | the cua-driver MCP server |
 | Hermes | the computer_use toolset |
 

@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.6](https://github.com/trycua/cua/compare/cua-spacesd-v0.12.5...cua-spacesd-v0.12.6) (2026-11-07)
+
+
+### Bug Fixes
+
+* **spaces:** every agent message is appended to the thread, child Spaces work from inside a Space, and child agents show in the chat ([#6733](https://github.com/trycua/cua/issues/6733)) ([515371a](https://github.com/trycua/cua/commit/515371a48a616aea3bba5f0ea13e0863c8a26041))
+
 ## [0.12.5](https://github.com/trycua/cua/compare/cua-spacesd-v0.12.4...cua-spacesd-v0.12.5) (2026-11-07)
 
 

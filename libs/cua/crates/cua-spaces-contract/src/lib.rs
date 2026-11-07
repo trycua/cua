@@ -1461,7 +1461,7 @@ pub fn tools() -> Vec<Tool> {
             category: Category::Thread,
             result: "JSON: `reply` (the reply entry) and `update` (the `task_update` entry).",
             errors: &["forbidden"],
-            instructions: "Replies under a task and sets its state (`done` by default). When an agent ends a turn without replying, the daemon posts the turn's answer as its reply.",
+            instructions: "Replies under a task and sets its state (`done` by default). An agent does not need it for plain text: every message an agent writes between tool calls is posted to the thread as it is written, in order, and none is replaced. Use it to attach files, to mark a task `failed`, or to say something under a task that is already closed (the message is appended and the task keeps its state). A turn that says nothing ends with `Finished.`",
             capabilities: &["thread.post"],
             annotations: Annotations::mutating(),
             sdk_symbol: "space.thread().reply(_:text:)",

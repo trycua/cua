@@ -75,6 +75,21 @@ describe("<MembersPanel> sections", () => {
     expect(document.activeElement).toBe(toggle("details"));
   });
 
+  it("has no icon on a heading: the whole row is the control, filled on hover and on keyboard focus", () => {
+    panel();
+    for (const id of ["people", "stream", "details"]) {
+      const b = toggle(id);
+      expect(b.querySelector("svg")).toBeNull();
+      expect(b.className).toContain("cursor-pointer");
+      expect(b.className).toContain("w-full");
+      expect(b.className).toContain("focus-visible:bg-accent");
+    }
+    // Stream and Details fill from edge to edge of the panel; In this Space's row takes the hover.
+    expect(toggle("stream").className).toContain("hover:bg-accent");
+    expect(toggle("stream").closest("h2")!.className).toContain("-mx-3");
+    expect(toggle("people").closest("div")!.className).toContain("hover:bg-accent");
+  });
+
   it("remembers what is folded", () => {
     panel();
     fireEvent.click(toggle("details"));

@@ -30,19 +30,22 @@ export type MemberPresence = Record<string, "online">;
  * button (`aria-expanded`) that folds the section's body shut. Remembered per
  * person (`stores/space-layout.ts`).
  */
-function SectionHeading({ id, folded, bodyId, children, className }: { id: SectionId; folded: boolean; bodyId: string; children: ReactNode; className?: string }) {
+function SectionHeading({ id, folded, bodyId, children, className, inRow }: { id: SectionId; folded: boolean; bodyId: string; children: ReactNode; className?: string; /** The heading shares a row with controls: the row takes the hover, the button fills what is left of it. */ inRow?: boolean }) {
   const toggle = useSpaceLayoutStore((s) => s.toggleSection);
   return (
-    <h2 className={cn("text-[11px] font-semibold tracking-wide text-muted-foreground uppercase", className)}>
+    <h2 className={cn("text-[11px] font-semibold tracking-wide text-muted-foreground uppercase", inRow && "flex-1 self-stretch", className)}>
       <button
         type="button"
         data-section-toggle={id}
         aria-expanded={!folded}
         aria-controls={bodyId}
         onClick={() => toggle(id)}
-        className="group/section -ml-1 inline-flex h-6 cursor-default items-center gap-0.5 rounded-lg pr-1.5 pl-0.5 uppercase outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60"
+        className={cn(
+          // No icon: the whole row is the control, a quiet fill on hover and on keyboard focus, edge to edge.
+          "flex w-full cursor-pointer items-center px-5 text-left uppercase outline-none hover:text-foreground focus-visible:bg-accent focus-visible:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:ring-inset",
+          inRow ? "h-full" : "h-8 hover:bg-accent",
+        )}
       >
-        <ChevronRightIcon className={cn("size-3.5 opacity-60 transition-transform group-hover/section:opacity-100", !folded && "rotate-90")} />
         {children}
       </button>
     </h2>
@@ -121,8 +124,8 @@ export function MembersPanel({
   }
   return (
     <aside data-members-panel="" className="flex w-72 shrink-0 flex-col bg-chrome">
-      <div className="flex h-10 items-center justify-between pr-2 pl-5">
-        <SectionHeading id="people" folded={shut.people} bodyId="section-people">
+      <div className="flex h-10 items-center justify-between pr-2 hover:bg-accent">
+        <SectionHeading id="people" folded={shut.people} bodyId="section-people" inRow>
           In this Space
         </SectionHeading>
         <span className="flex items-center">
@@ -133,7 +136,7 @@ export function MembersPanel({
                 aria-label="Add an agent"
                 data-add-agent-open=""
                 onClick={onAddAgent}
-                className="inline-flex size-7 cursor-default items-center justify-center rounded-lg text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60"
+                className="inline-flex size-7 cursor-default items-center justify-center rounded-lg text-muted-foreground outline-none hover:bg-background hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60"
               >
                 <PlusIcon className="size-4" />
               </button>
@@ -171,8 +174,8 @@ export function MembersPanel({
       </ul>
       )}
       {windows.length || desktop ? (
-        <section className="px-3 pt-2 pb-2" data-call-stream="">
-          <SectionHeading id="stream" folded={shut.stream} bodyId="section-stream" className="mb-1 px-2">
+        <section className="px-3 pt-1 pb-2" data-call-stream="">
+          <SectionHeading id="stream" folded={shut.stream} bodyId="section-stream" className="-mx-3 mb-1">
             Stream
           </SectionHeading>
           {shut.stream ? null : (
@@ -240,8 +243,8 @@ export function MembersPanel({
           )}
         </section>
       ) : null}
-      <section className="px-3 pt-2 pb-3" data-call-details="">
-        <SectionHeading id="details" folded={shut.details} bodyId="section-details" className="mb-1 px-2">
+      <section className="px-3 pt-1 pb-3" data-call-details="">
+        <SectionHeading id="details" folded={shut.details} bodyId="section-details" className="-mx-3 mb-1">
           Details
         </SectionHeading>
         {shut.details ? null : (
@@ -490,7 +493,7 @@ function FoldButton({ folded, onFold }: { folded: boolean; onFold: (folded: bool
         aria-label={label}
         data-members-fold=""
         onClick={() => onFold(!folded)}
-        className="inline-flex size-7 cursor-default items-center justify-center rounded-lg text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60"
+        className="inline-flex size-7 cursor-default items-center justify-center rounded-lg text-muted-foreground outline-none hover:bg-background hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60"
       >
         {folded ? <PanelRightOpenIcon className="size-4" /> : <PanelRightCloseIcon className="size-4" />}
       </button>

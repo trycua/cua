@@ -901,6 +901,10 @@ pub enum FailureCause {
     /// The image download stopped partway: Lume's pull failed or was
     /// cancelled, or Lume stopped. Another try resumes it.
     PullStopped,
+    /// Microsoft is limiting Windows downloads from this network (the first
+    /// Windows 11 build downloads its ISO): another request now only extends
+    /// the wait, so the app does not retry by itself.
+    WindowsDownloadLimited,
     /// The VM's runtime is not on this machine (QEMU for a Windows or Linux
     /// VM on a PC without it): trying again does not help.
     RuntimeMissing,
@@ -919,9 +923,28 @@ impl FailureCause {
             Self::Gpu => "Unsupported",
             Self::Unauthenticated => "Unauthenticated",
             Self::ServiceTimeout | Self::PullTimeout => "Timeout",
-            Self::PullStopped => "ImagePull",
+            Self::PullStopped | Self::WindowsDownloadLimited => "ImagePull",
             Self::RuntimeMissing => "RuntimeMissing",
         }
+    }
+}
+
+/// Microsoft's per-network limit on Windows downloads, as the build says it
+/// (`cua_image::windows::msdl::LIMITED`), lowercased.
+const WINDOWS_LIMITED: &str = "microsoft is limiting windows downloads";
+
+/// The page the Windows 11 ARM64 disc image is downloaded from by hand.
+pub const WINDOWS_ARM64_PAGE: &str = "https://www.microsoft.com/software-download/windows11arm64";
+
+/// The way out of Microsoft's limit, as the failed Space's one button.
+fn windows_download_fix() -> CreateFix {
+    CreateFix {
+        text: "Download the Windows 11 ARM64 disc image from Microsoft and save it in your \
+               Downloads folder. Then choose Try again: Cua finds it and carries on."
+            .into(),
+        label: "Open Microsoft's download page".into(),
+        action: CreateFixAction::OpenUrl,
+        value: Some(WINDOWS_ARM64_PAGE.into()),
     }
 }
 
@@ -933,6 +956,9 @@ const PULL_STOPPED: &str = "the image download stopped before it finished";
 /// failed and `gpu` whether GPU acceleration was asked for, when known.
 pub fn failure_cause(raw: &str, phase: Option<&str>, gpu: bool) -> Option<FailureCause> {
     let l = crate::errors::plain_error(raw).to_ascii_lowercase();
+    if l.contains(WINDOWS_LIMITED) {
+        return Some(FailureCause::WindowsDownloadLimited);
+    }
     if l.contains("not enough disk space")
         || l.contains("insufficient disk")
         || l.contains("insufficient_disk")
@@ -1040,12 +1066,19 @@ pub fn fail_decision(p: &PendingCreate, error: &str, error_variant: &str) -> Fai
     let kind = retry::snake(failure_variant(error, Some(&p.phase), p.gpu, error_variant));
     let plain = crate::errors::plain_error(error);
     let subclass = retry::subclass(&kind, &plain);
-    let retry =
-        if p.attempt == 0 && !p.cancelling && p.space_id.is_none() && !error.trim().is_empty() {
-            retry::decide(&kind, subclass)
-        } else {
-            Retry::Never
-        };
+    // Another request to Microsoft inside its limit only extends it.
+    let limited =
+        failure_cause(error, Some(&p.phase), p.gpu) == Some(FailureCause::WindowsDownloadLimited);
+    let retry = if !limited
+        && p.attempt == 0
+        && !p.cancelling
+        && p.space_id.is_none()
+        && !error.trim().is_empty()
+    {
+        retry::decide(&kind, subclass)
+    } else {
+        Retry::Never
+    };
     FailDecision {
         kind,
         subclass,
@@ -1297,6 +1330,27 @@ pub fn failure_text_on(
                  picks up where it stopped."
             )
         }
+        Some(FailureCause::WindowsDownloadLimited) => {
+            // "... Try again in about 42 minutes, or download ..." names the
+            // time left of the wait.
+            let wait = l
+                .find("try again in ")
+                .map(|at| {
+                    let rest = &plain[at + "try again in ".len()..];
+                    rest.split([',', '.'])
+                        .next()
+                        .unwrap_or("")
+                        .trim()
+                        .to_string()
+                })
+                .filter(|w| !w.is_empty() && w.len() < 30)
+                .unwrap_or_else(|| "about an hour".into());
+            format!(
+                "Microsoft is limiting Windows downloads from your network right now. Try again in \
+                 {wait}, or download the Windows 11 ARM64 disc image yourself and save it in your \
+                 Downloads folder: Cua finds it."
+            )
+        }
         Some(FailureCause::PullTimeout) => "The image download did not finish in the time \
              allowed. Check your internet connection, then try again."
             .into(),
@@ -1540,7 +1594,13 @@ pub fn reduce(state: &CreatesState, action: &CreateAction) -> CreatesState {
                     return next;
                 }
                 // The same failure again: its fix, not a plain Try again.
-                p.fix = (repeats >= 2).then(|| fix_for(&decision.kind, p)).flatten();
+                p.fix = if failure_cause(error, Some(&p.phase), p.gpu)
+                    == Some(FailureCause::WindowsDownloadLimited)
+                {
+                    Some(windows_download_fix())
+                } else {
+                    (repeats >= 2).then(|| fix_for(&decision.kind, p)).flatten()
+                };
                 p.error = Some(if error.trim().is_empty() {
                     "Could not create the Space".into()
                 } else {
@@ -2359,6 +2419,40 @@ mod tests {
             pending_space(&pulled.pending[0]).progress.unwrap().label,
             "Downloading image\u{2026}"
         );
+    }
+
+    #[test]
+    fn microsofts_limit_is_said_in_plain_words_with_its_way_out_and_never_retried() {
+        let raw = "local runtime: build failed at windows iso: Microsoft is limiting Windows downloads from this network (Sentinel marked this request as rejected.) right now. Try again in about 42 minutes, or download the Windows ISO yourself (https://www.microsoft.com/software-download/windows11arm64) and save it in your Downloads folder: Cua finds it. With the command line: cua sb create windows:11 --iso ~/Downloads/<the file>.iso";
+        let text = failure_text(raw, Some("pulling"), Some(SpaceProvider::Local), false);
+        assert_eq!(
+            text,
+            "Microsoft is limiting Windows downloads from your network right now. Try again in about 42 minutes, or download the Windows 11 ARM64 disc image yourself and save it in your Downloads folder: Cua finds it."
+        );
+        assert!(!text.contains("Sentinel") && !text.contains("--iso"));
+        let s = reduce(
+            &CreatesState::default(),
+            &start_image(
+                "pending:w",
+                "ghcr.io/trycua/windows:11",
+                Some(SpaceKind::Vm),
+            ),
+        );
+        let failed = reduce(
+            &s,
+            &CreateAction::Fail {
+                id: "pending:w".into(),
+                error: raw.into(),
+                error_variant: "Runtime".into(),
+                now: Some(5_000),
+            },
+        );
+        let p = &failed.pending[0];
+        assert!(!p.retry_pending && p.attempt == 0, "no automatic retry");
+        let fix = p.fix.as_ref().expect("the way out is on the first failure");
+        assert_eq!(fix.label, "Open Microsoft's download page");
+        assert_eq!(fix.value.as_deref(), Some(WINDOWS_ARM64_PAGE));
+        assert_eq!(fix.action, CreateFixAction::OpenUrl);
     }
 
     /// The bar of a first-time Windows build only moves forward through the

@@ -30,6 +30,9 @@ pub enum IsoOrigin {
     Cached,
     /// Downloaded now.
     Downloaded,
+    /// A matching ISO the person had already saved (Downloads, or the cache
+    /// folder), used because Microsoft would not give a link.
+    Detected,
 }
 
 /// A usable ISO.
@@ -49,6 +52,133 @@ pub struct IsoRequest<'a> {
     pub cache_dir: &'a Path,
     /// A checksum the ISO must have (`--iso-sha256`).
     pub sha256: Option<&'a str>,
+    /// Folders searched for an ISO the person saved themselves when Microsoft
+    /// will not give a download link (see [`default_scan_dirs`]).
+    pub scan_dirs: Vec<PathBuf>,
+}
+
+/// How long to wait after Microsoft's per-network limit before asking again.
+/// Microsoft does not say; every request made inside the block extends it.
+pub const COOLDOWN_SECS: u64 = 60 * 60;
+
+/// The folders an ISO the person downloaded is looked for in: Downloads, and
+/// `extra` (the cache folder).
+pub fn default_scan_dirs(extra: &Path) -> Vec<PathBuf> {
+    let mut v = Vec::new();
+    if let Some(home) = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")) {
+        v.push(PathBuf::from(home).join("Downloads"));
+    }
+    v.push(extra.to_path_buf());
+    v
+}
+
+fn cooldown_file(cache_dir: &Path) -> PathBuf {
+    cache_dir.join("microsoft-limited-until")
+}
+
+fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// Seconds left of the wait after a rejection, when one is running.
+pub fn cooldown_left(cache_dir: &Path) -> Option<u64> {
+    let until: u64 = std::fs::read_to_string(cooldown_file(cache_dir))
+        .ok()?
+        .trim()
+        .parse()
+        .ok()?;
+    until.checked_sub(unix_now()).filter(|s| *s > 0)
+}
+
+fn start_cooldown(cache_dir: &Path) {
+    let _ = std::fs::create_dir_all(cache_dir);
+    let _ = std::fs::write(
+        cooldown_file(cache_dir),
+        (unix_now() + COOLDOWN_SECS).to_string(),
+    );
+}
+
+/// "about 42 minutes", "about an hour".
+fn wait_words(secs: u64) -> String {
+    let mins = secs.div_ceil(60);
+    if mins >= 55 {
+        "about an hour".into()
+    } else {
+        format!("about {mins} minutes")
+    }
+}
+
+/// The volume label of an ISO 9660 image (`CCCOMA_A64FRE_EN-US_DV9`), from
+/// its primary volume descriptor.
+pub fn volume_label(path: &Path) -> Option<String> {
+    use std::io::{Read as _, Seek as _, SeekFrom};
+    let mut f = std::fs::File::open(path).ok()?;
+    let mut d = [0u8; 40];
+    f.seek(SeekFrom::Start(0x8000)).ok()?;
+    f.read_exact(&mut d).ok()?;
+    (&d[1..6] == b"CD001").then(|| String::from_utf8_lossy(&d[8..40]).trim().to_string())
+}
+
+/// A Windows ISO for `arch` the person saved in one of `dirs`: an ISO 9660
+/// image over 3 GiB whose volume label carries the architecture Windows
+/// media use (`A64` for ARM64, `X64`), newest first.
+pub fn detect_iso(dirs: &[PathBuf], arch: WindowsArch) -> Option<PathBuf> {
+    let tag = match arch {
+        WindowsArch::Arm64 => "A64",
+        WindowsArch::Amd64 => "X64",
+    };
+    let mut found: Vec<(std::time::SystemTime, PathBuf)> = Vec::new();
+    for dir in dirs {
+        let Ok(rd) = std::fs::read_dir(dir) else {
+            continue;
+        };
+        for e in rd.flatten() {
+            let p = e.path();
+            if !p.extension().is_some_and(|x| x.eq_ignore_ascii_case("iso")) {
+                continue;
+            }
+            let Ok(m) = e.metadata() else { continue };
+            // Not our own cache copies, not a partial download, not a small disc.
+            if !m.is_file() || m.len() < 3 << 30 {
+                continue;
+            }
+            if volume_label(&p).is_some_and(|l| l.to_ascii_uppercase().contains(tag)) {
+                found.push((m.modified().unwrap_or(std::time::UNIX_EPOCH), p));
+            }
+        }
+    }
+    found.sort_by(|a, b| b.0.cmp(&a.0));
+    found.into_iter().next().map(|(_, p)| p)
+}
+
+/// The ISO you saved yourself instead of the download Microsoft refused, or
+/// the plain error that says when to retry and what to do meanwhile.
+fn saved_or_limited(req: &IsoRequest<'_>, left: Option<u64>, slug: &str) -> Result<ResolvedIso> {
+    if let Some(p) = detect_iso(&req.scan_dirs, req.arch)
+        && check_user_iso(&p, req.arch).is_ok()
+    {
+        // Remembered, so the next create needs nothing.
+        let _ = register(req.cache_dir, req.version, req.arch, &p);
+        tracing::info!(iso = %p.display(), "using the Windows ISO found on this computer");
+        return Ok(ResolvedIso {
+            path: p,
+            origin: IsoOrigin::Detected,
+        });
+    }
+    let wait = wait_words(left.unwrap_or(COOLDOWN_SECS));
+    Err(ImageError::Build {
+        step: "windows iso".into(),
+        detail: format!(
+            "{} right now. Try again in {wait}, or download the Windows ISO yourself \
+             (https://www.microsoft.com/software-download/{slug}) and save it in your Downloads folder: Cua finds it. \
+             With the command line: cua sb create windows:{} --iso ~/Downloads/<the file>.iso",
+            super::msdl::LIMITED,
+            req.version.id
+        ),
+    })
 }
 
 /// The network side of resolution, so tests need none.
@@ -303,7 +433,19 @@ pub async fn resolve_iso(
             download_reporting(fetcher, &url, &cached, &label, ISO_SPAN, on_bytes).await?;
         }
         Media::Consumer(slug) => {
-            let m = super::msdl::resolve(fetcher, slug).await?;
+            // Inside the wait after a rejection no request is made (each one
+            // extends the block); a saved ISO is used if there is one.
+            if let Some(left) = cooldown_left(req.cache_dir) {
+                return saved_or_limited(req, Some(left), slug);
+            }
+            let m = match super::msdl::resolve(fetcher, slug).await {
+                Ok(m) => m,
+                Err(ImageError::Build { detail, .. }) if detail.contains(super::msdl::LIMITED) => {
+                    start_cooldown(req.cache_dir);
+                    return saved_or_limited(req, Some(COOLDOWN_SECS), slug);
+                }
+                Err(e) => return Err(e),
+            };
             published = m.sha256;
             let label = format!("Downloading the {} ISO", req.version.name);
             download_reporting(fetcher, &m.url, &cached, &label, ISO_SPAN, on_bytes).await?;
@@ -480,6 +622,7 @@ mod tests {
             user_iso: user,
             cache_dir: dir,
             sha256: None,
+            scan_dirs: vec![],
         }
     }
 
@@ -593,6 +736,8 @@ mod tests {
     struct Microsoft {
         sha256: String,
         calls: Mutex<Vec<String>>,
+        /// Answer the link request with Microsoft's per-network rejection.
+        limited: bool,
     }
 
     #[async_trait]
@@ -615,6 +760,8 @@ mod tests {
             } else if url.contains("getskuinformationbyproductedition") {
                 assert!(url.contains("productEditionId=3816"), "{url}");
                 r#"{"Skus":[{"Id":"27200","Language":"English"}]}"#.into()
+            } else if url.contains("GetProductDownloadLinksBySku") && self.limited {
+                r#"{"Errors":[{"Key":"ErrorSettings.SentinelReject","Value":"Sentinel marked this request as rejected.","Type":9}]}"#.into()
             } else if url.contains("GetProductDownloadLinksBySku") {
                 assert!(url.contains("SKU=27200"), "{url}");
                 r#"{"ProductDownloadOptions":[{"Uri":"https://software.download.prss.microsoft.com/w11arm.iso?t=1","ProductDisplayName":"Windows 11 ARM 64"}]}"#.into()
@@ -654,6 +801,7 @@ mod tests {
         let ms = Microsoft {
             sha256: sha,
             calls: Mutex::new(vec![]),
+            limited: false,
         };
         let r = resolve_iso(&arm_req(d.path()), &ms, &mut |_| {})
             .await
@@ -670,6 +818,7 @@ mod tests {
         let again = Microsoft {
             sha256: String::new(),
             calls: Mutex::new(vec![]),
+            limited: false,
         };
         let r = resolve_iso(&arm_req(d.path()), &again, &mut |_| {})
             .await
@@ -684,6 +833,7 @@ mod tests {
         let ms = Microsoft {
             sha256: "00".repeat(32),
             calls: Mutex::new(vec![]),
+            limited: false,
         };
         let e = resolve_iso(&arm_req(d.path()), &ms, &mut |_| {})
             .await
@@ -691,6 +841,92 @@ mod tests {
             .to_string();
         assert!(e.contains("Microsoft"), "{e}");
         assert!(!cache_path(d.path(), lookup("11").unwrap(), WindowsArch::Arm64).exists());
+    }
+
+    /// A sparse file shaped like a Windows ARM64 ISO: the volume label Windows
+    /// media carry, over 3 GiB.
+    fn windows_iso_saved(path: &Path, label: &str) {
+        use std::io::{Seek as _, SeekFrom, Write as _};
+        let mut f = std::fs::File::create(path).unwrap();
+        f.seek(SeekFrom::Start(0x8000)).unwrap();
+        let mut d = vec![b' '; 40];
+        d[0] = 1;
+        d[1..6].copy_from_slice(b"CD001");
+        d[8..8 + label.len()].copy_from_slice(label.as_bytes());
+        f.write_all(&d).unwrap();
+        f.set_len((3 << 30) + 4096).unwrap();
+    }
+
+    fn limited_ms() -> Microsoft {
+        Microsoft {
+            sha256: String::new(),
+            calls: Mutex::new(vec![]),
+            limited: true,
+        }
+    }
+
+    #[tokio::test]
+    async fn a_rejection_by_microsoft_waits_and_asks_only_once() {
+        let d = tempfile::tempdir().unwrap();
+        let ms = limited_ms();
+        let e = resolve_iso(&arm_req(d.path()), &ms, &mut |_| {})
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains(super::super::msdl::LIMITED), "{e}");
+        assert!(e.contains("Try again in about an hour"), "{e}");
+        assert!(e.contains("--iso ~/Downloads/"), "{e}");
+        let asked = ms.calls.lock().unwrap().len();
+        // Inside the wait: no request at all, and the time left is said.
+        let again = limited_ms();
+        let e2 = resolve_iso(&arm_req(d.path()), &again, &mut |_| {})
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(again.calls.lock().unwrap().is_empty(), "no new request");
+        assert!(e2.contains("Try again in about"), "{e2}");
+        assert!(asked > 0);
+        // One request for a link per attempt.
+        let links = ms
+            .calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|c| c.contains("GetProductDownloadLinksBySku"))
+            .count();
+        assert_eq!(links, 1);
+    }
+
+    #[tokio::test]
+    async fn an_iso_saved_in_downloads_is_used_when_microsoft_refuses_and_remembered() {
+        let d = tempfile::tempdir().unwrap();
+        let downloads = d.path().join("Downloads");
+        std::fs::create_dir(&downloads).unwrap();
+        windows_iso_saved(
+            &downloads.join("Win11_25H2_English_Arm64_v2.iso"),
+            "CCCOMA_A64FRE_EN-US_DV9",
+        );
+        // An x64 disc and a small file are not it.
+        windows_iso_saved(&downloads.join("Win11_x64.iso"), "CCCOMA_X64FRE_EN-US_DV9");
+        std::fs::write(downloads.join("tiny.iso"), b"x").unwrap();
+        let cache = d.path().join("cache");
+        let mut r = arm_req(&cache);
+        r.scan_dirs = vec![downloads.clone()];
+        let got = resolve_iso(&r, &limited_ms(), &mut |_| {}).await.unwrap();
+        assert_eq!(got.origin, IsoOrigin::Detected);
+        assert!(got.path.ends_with("Win11_25H2_English_Arm64_v2.iso"));
+        // Remembered for the next create.
+        let v = lookup("11").unwrap();
+        assert!(registered(&cache, v, WindowsArch::Arm64).is_some());
+    }
+
+    #[test]
+    fn the_volume_label_is_read_from_the_iso() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("a.iso");
+        windows_iso_saved(&p, "CCCOMA_A64FRE_EN-US_DV9");
+        assert_eq!(volume_label(&p).as_deref(), Some("CCCOMA_A64FRE_EN-US_DV9"));
+        assert_eq!(volume_label(&d.path().join("none.iso")), None);
     }
 
     #[tokio::test]

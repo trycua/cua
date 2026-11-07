@@ -304,6 +304,7 @@ pub async fn ensure_base_with(
             user_iso: req.user_iso.as_deref(),
             cache_dir: &layout.iso_dir(),
             sha256: req.iso_sha256.as_deref(),
+            scan_dirs: iso::default_scan_dirs(&layout.iso_dir()),
         },
         fetcher,
         &mut |_| {},

@@ -25,6 +25,17 @@ const ORG_ID: &str = "y6jn8c31";
 const INSTANCE_ID: &str = "560dc9f3-1aa5-4a2f-b63c-9e18f8d0e175";
 const LANGUAGE: &str = "English";
 
+/// The words of a refusal by Microsoft's per-network limit: the app and the
+/// cooldown recognise a failure by them.
+pub const LIMITED: &str = "Microsoft is limiting Windows downloads from this network";
+
+/// Whether the service's error text is that limit ("Sentinel marked this
+/// request as rejected", or a ban notice).
+pub fn is_rate_limit(text: &str) -> bool {
+    let l = text.to_ascii_lowercase();
+    l.contains("sentinel") || l.contains("banned") || l.contains("rejected")
+}
+
 /// A consumer ISO Microsoft serves: where from, and the checksum it publishes.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ConsumerMedia {
@@ -213,6 +224,9 @@ pub async fn resolve(fetcher: &dyn IsoFetcher, page_slug: &str) -> Result<Consum
         .await
         .map_err(|e| fail(format!("Microsoft's download service did not answer ({e})")))?;
     let (url, product) = download_link(&links).map_err(|e| {
+        if is_rate_limit(&e) {
+            return fail(format!("{LIMITED} ({e})"));
+        }
         fail(format!(
             "Microsoft would not give a download link ({e}). It limits downloads per network; try again later, or download the ISO in a browser and pass it with --iso <path>"
         ))

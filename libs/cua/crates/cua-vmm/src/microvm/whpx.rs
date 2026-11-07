@@ -16,7 +16,9 @@
 //! * **The network** is QEMU's user-mode stack. It enforces no rules, so under
 //!   the secure default a VM has no network at all (as on a Mac) unless the user
 //!   chose No protection; published ports are `hostfwd` rules on loopback.
-//! * **No snapshots**: no warm starts, pools, checkpoints or forks.
+//! * **Disk-only snapshots**: WHPX blocks QEMU migration, so there is no saved
+//!   memory. A checkpoint is the scratch disk (qcow2 over a shared template),
+//!   a fork copies it and boots cold, and a pool member is booted and paused.
 //!
 //! [`status`] answers whether WHPX is there without elevation (a call to
 //! `WHvGetCapability`); [`enable_elevated`] turns the Windows feature on through

@@ -39,7 +39,7 @@ const heading = () => document.querySelector("[data-onboarding-heading]")?.textC
 async function throughOnboarding(hold?: Promise<void>, calls: { op: string }[] = []) {
   const { router } = await mountApp("/onboarding", { failsCreates: false, listsGhost: false, hold, intercept: (op) => (calls.push({ op }), undefined), demo: { signedIn: false, onboarded: false, noSpaces: true, keys: "several" } });
   // The new first run (CUA-3318): Skip for now, this computer, the agent found here, Ready, then Home.
-  await waitFor(() => expect(heading()).toBe("Bring all your computers under one account"));
+  await waitFor(() => expect(heading()).toBe("Combine your existing computers into one supercomputer."));
   click("[data-onboarding-later]");
   await waitFor(() => expect(heading()).toBe("Pick where your agents work"));
   click("[data-onboarding-primary]");

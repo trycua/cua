@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.42.1](https://github.com/trycua/cua/compare/cua-driver-rs-v0.42.0...cua-driver-rs-v0.42.1) (2026-11-07)
+
+
+### Bug Fixes
+
+* **cua-driver:** read backup publisher trust when its commit was interrupted ([#6835](https://github.com/trycua/cua/issues/6835)) ([96f7f52](https://github.com/trycua/cua/commit/96f7f522b3d668d238f142358a6041181d858421))
+
 ## [0.42.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.41.5...cua-driver-rs-v0.42.0) (2026-11-07)
 
 

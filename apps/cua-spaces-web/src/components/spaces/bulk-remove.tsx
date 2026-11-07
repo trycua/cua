@@ -87,15 +87,30 @@ export function useBulkRemove(present: ReadonlySet<string>, onDone: (results: Bu
       setRun({ items, finished: [] });
       const done = (r: BulkResult[]) => setRun((cur) => (cur ? { ...cur, finished: [...cur.finished, ...r.map((x) => x.id)] } : cur));
       // Yours are deleted, others' left; both at once, each answering per Space.
+      // A call that fails as a whole answers every Space of it with the reason, so nothing is silent.
+      const settle = (ids: string[], p: Promise<BulkResult[]>) =>
+        p.then(
+          (r) => (done(r), r),
+          (e: unknown) => {
+            const r = ids.map((id) => ({ id, ok: false, error: e instanceof Error ? e.message : String(e) }));
+            done(r);
+            return r;
+          },
+        );
       const [deleted, left] = await Promise.all([
-        view.deleteIds.length ? deleteSpaces(view.deleteIds).then((r) => (done(r), r)) : Promise.resolve([] as BulkResult[]),
-        view.leaveIds.length ? leaveSpaces(view.leaveIds).then((r) => (done(r), r)) : Promise.resolve([] as BulkResult[]),
+        view.deleteIds.length ? settle(view.deleteIds, deleteSpaces(view.deleteIds)) : Promise.resolve([] as BulkResult[]),
+        view.leaveIds.length ? settle(view.leaveIds, leaveSpaces(view.leaveIds)) : Promise.resolve([] as BulkResult[]),
       ]);
       const results = [...deleted, ...left];
       setRun(null);
       busy.current = false;
-      const said = bulkDone(core, items, results);
       const failed = results.filter((r) => !r.ok);
+      let said: { text: string; tone: string };
+      try {
+        said = bulkDone(core, items, results);
+      } catch {
+        said = { text: failed.length ? `Couldn't delete ${failed.length} of ${results.length}` : `Deleted ${results.length}`, tone: failed.length ? "error" : "ok" };
+      }
       toast(said.text, {
         type: said.tone === "ok" ? "success" : "error",
         description: failed.length ? failed.map((r) => `${items.find((i) => i.id === r.id)?.name ?? r.id}: ${r.error ?? "failed"}`).join("\n") : undefined,

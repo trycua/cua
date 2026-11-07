@@ -197,9 +197,13 @@ async fn relay_setup_registers_writes_policy_and_installs_the_service() {
     assert_ne!(relay.machine_token(&id).unwrap(), old_token);
 
     // Remove: relay forgets it, service uninstalled, host dir gone, id kept.
+    // The service's log is kept: it is the evidence of why a service failed
+    // (CUA-3746), and removing and adding the host again is the usual cure.
+    std::fs::write(p.log(), "port 3621 in use\n").unwrap();
     host.remove().await.unwrap();
     assert!(relay.machine(&id).is_none());
     assert!(!p.dir.exists());
+    assert_eq!(std::fs::read_to_string(p.log()).unwrap(), "port 3621 in use\n");
     assert!(p.machine_id.exists());
     assert!(!host.status().await.unwrap().configured);
     let calls = f.manager.calls.lock().unwrap().clone();
@@ -3123,6 +3127,7 @@ async fn setup_fails_when_the_machine_never_comes_online() {
         .with_online_check(true)
         .with_verify_timing(quick_verify());
     std::fs::create_dir_all(host.paths().dir.clone()).unwrap();
+    std::fs::create_dir_all(&host.paths().logs).unwrap();
     std::fs::write(host.paths().log(), "joining relay\nrelay refused: 503\n").unwrap();
     let err = host
         .setup(f.relay_opts(&relay.url), &StaticToken("acct-token".into()))

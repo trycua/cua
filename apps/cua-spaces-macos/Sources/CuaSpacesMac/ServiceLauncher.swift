@@ -102,6 +102,7 @@ private func spawn(_ args: [String], env extra: [(String, String)], logPath: Str
     if let logPath {
         let dir = (logPath as NSString).deletingLastPathComponent
         try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        HelperService.rotateLog(logPath)
         posix_spawn_file_actions_addopen(&actions, 0, "/dev/null", O_RDONLY, 0)
         posix_spawn_file_actions_addopen(&actions, 1, logPath, O_WRONLY | O_CREAT | O_APPEND, 0o600)
         posix_spawn_file_actions_adddup2(&actions, 1, 2)
@@ -138,13 +139,17 @@ private func wait(_ pid: pid_t) -> Int32 {
 
 
 // Stop (launchctl kill SIGTERM, logout, shutdown) reaches the child, and
-// the service then exits 0 so launchd leaves it stopped. Any other end of
-// the child is a failure launchd restarts (KeepAlive SuccessfulExit=false).
+// the service then exits 0 so launchd leaves it stopped, unless the stop came
+// in the first seconds of a start (a restarter fighting the update: it exits
+// 75 and comes back). Any other end of the child is a failure launchd
+// restarts (KeepAlive SuccessfulExit=false).
 private var serviceChild: pid_t = 0
 private var serviceStopping: sig_atomic_t = 0
 // The app was updated in place: exit non-zero once the child is gone, so
 // launchd starts the new build.
 private var serviceRestarting: sig_atomic_t = 0
+// The host was removed (its spec is gone): a stop that stays stopped.
+private var serviceRemoved: sig_atomic_t = 0
 
 enum ServiceLauncher {
     /// `CuaSpacesMac check-permissions` (and any other cua-spacesd command):
@@ -201,6 +206,7 @@ enum ServiceLauncher {
             exit(1)
         }
         serviceChild = pid
+        let childStarted = Date()
         // Its files, watched while it runs:
         // * gone (the app was replaced by one without the service, a
         //   downgrade, or the host was removed): stop, so the service that
@@ -225,8 +231,14 @@ enum ServiceLauncher {
                 case .keep:
                     continue
                 case .stop:
-                    log("the app's cua-spacesd or its spec is gone; stopping")
+                    log("the host's spec is gone; stopping")
                     serviceStopping = 1
+                    serviceRemoved = 1
+                    kill(pid, SIGTERM)
+                    return
+                case .retryLater:
+                    log("the app's cua-spacesd is gone; stopping, launchd tries again")
+                    serviceRestarting = 1
                     kill(pid, SIGTERM)
                     return
                 case .restart:
@@ -238,7 +250,8 @@ enum ServiceLauncher {
             }
         }
         let code = wait(pid)
-        if serviceRestarting != 0 { exit(HelperService.restartExitCode) }
-        exit(serviceStopping != 0 ? 0 : (code == 0 ? 1 : code))
+        exit(HelperService.launcherExitCode(
+            stopping: serviceStopping != 0, restarting: serviceRestarting != 0, childCode: code,
+            uptime: Date().timeIntervalSince(childStarted), removed: serviceRemoved != 0))
     }
 }

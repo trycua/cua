@@ -127,12 +127,7 @@ public enum AppEnvironment {
             // network, the credential vault) is the error itself, never a
             // silent nil that reads as "not signed in".
             let token: (Bool) async throws -> String? = { force in
-                guard let auth = await gate.wait().live?.cua.auth() else { return nil }
-                do {
-                    return try await auth.accessToken(force: force)
-                } catch CuaError.Unauthenticated {
-                    return nil
-                }
+                try await LiveAccountToken.read(gate: gate, force: force)
             }
             model.host.accountToken = token
             model.teamsReader = LiveTeams(token: token)

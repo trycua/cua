@@ -78,14 +78,69 @@ struct HelperServiceTests {
         #expect(HelperService.watch(started: old, now: [nil, old[1]], specPresent: true, misses: &misses) == .keep)
         #expect(HelperService.watch(started: old, now: new, specPresent: true, misses: &misses) == .restart)
         #expect(misses == 0)
-        // Gone twice (a downgrade without the service, the host removed): stop.
+        // Files gone twice with the host still set up (a slow swap, a
+        // downgrade): not a removal. Exit 75 so launchd tries again; exit 0
+        // left the helper stopped after the 0.22.0 update (CUA-3746).
         misses = 0
         #expect(HelperService.watch(started: old, now: [old[0], nil], specPresent: true, misses: &misses) == .keep)
-        #expect(HelperService.watch(started: old, now: [old[0], nil], specPresent: true, misses: &misses) == .stop)
+        #expect(HelperService.watch(started: old, now: [old[0], nil], specPresent: true, misses: &misses) == .retryLater)
+        // The spec gone twice (the host removed): stop.
         misses = 0
         #expect(HelperService.watch(started: old, now: old, specPresent: false, misses: &misses) == .keep)
         #expect(HelperService.watch(started: old, now: old, specPresent: false, misses: &misses) == .stop)
         #expect(HelperService.restartExitCode != 0)
+    }
+
+    /// CUA-3746: what the launcher exits with decides whether launchd leaves
+    /// it stopped (0) or starts it again.
+    @Test func theLauncherComesBackUnlessItWasStoppedOnPurpose() {
+        let exit = HelperService.launcherExitCode
+        // An update's restart, whenever it comes.
+        #expect(exit(false, true, 0, 100, false) == 75)
+        #expect(exit(true, true, 0, 1, false) == 75)
+        // Stopped long after it started (launchctl kill, logout): stays stopped.
+        #expect(exit(true, false, 0, 3600, false) == 0)
+        // SIGTERM 22 ms after the start: a restarter, not a person. Comes back.
+        #expect(exit(true, false, 0, 0.022, false) == 75)
+        // The host was removed: stays stopped even at once.
+        #expect(exit(true, false, 0, 0.022, true) == 0)
+        // The child died by itself: always a failure, even exit 0.
+        #expect(exit(false, false, 0, 50, false) == 1)
+        #expect(exit(false, false, 3, 50, false) == 3)
+    }
+
+    /// CUA-3746: the app starts a helper that should run with backoff, and
+    /// never gives up.
+    @Test func theRepairBacksOffAndStartsOverOnceItRuns() {
+        var b = HelperService.RepairBackoff()
+        let t0 = Date(timeIntervalSince1970: 1_800_000_000)
+        #expect(b.due(now: t0))
+        b.attempted(now: t0)
+        #expect(!b.due(now: t0.addingTimeInterval(14)))
+        #expect(b.due(now: t0.addingTimeInterval(15)))
+        b.attempted(now: t0.addingTimeInterval(15))
+        #expect(!b.due(now: t0.addingTimeInterval(44)))
+        #expect(b.due(now: t0.addingTimeInterval(45)))
+        for i in 0..<20 { b.attempted(now: t0.addingTimeInterval(1000 + Double(i))) }
+        // Capped at 5 minutes, still going after many tries.
+        #expect(!b.due(now: t0.addingTimeInterval(1019 + 299)))
+        #expect(b.due(now: t0.addingTimeInterval(1019 + 300)))
+        b.healthy()
+        #expect(b.due(now: t0) && b.attempts == 0)
+    }
+
+    @Test func aBigServiceLogIsMovedAside() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("cua-helper-log-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let log = dir.appendingPathComponent("host.log").path
+        try Data(repeating: 65, count: 100).write(to: URL(fileURLWithPath: log))
+        HelperService.rotateLog(log, max: 1000)
+        #expect(FileManager.default.fileExists(atPath: log))
+        HelperService.rotateLog(log, max: 50)
+        #expect(!FileManager.default.fileExists(atPath: log))
+        #expect(FileManager.default.fileExists(atPath: log + ".1"))
+        HelperService.rotateLog(log, max: 0)
     }
 
     @Test func aFileReplacedAtTheSamePathHasANewIdentity() throws {

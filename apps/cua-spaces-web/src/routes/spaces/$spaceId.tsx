@@ -544,6 +544,7 @@ function SpaceDetailPage() {
           childSpaces={<ChildSpacesSection spaceId={space.id} spaceName={space.name} />}
           more={sections}
           windows={creating ? [] : (stream?.rows.filter((r) => r.kind === "window") ?? [])}
+          streamReady={!creating && Boolean(stream)}
           desktop={creating ? null : (desktopRow ?? null)}
           selected={shownRow?.id ?? null}
           onSelect={(row) => setShown(row.kind === "window" ? { spaceId: space.id, row: row.id } : null)}

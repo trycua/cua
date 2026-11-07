@@ -64,6 +64,9 @@ export const savedStreamHidden = (spaceId: string, hiddenByDefault = false): boo
   return v === null ? hiddenByDefault : v === "1";
 };
 
+/** The person has shown or folded this Space's stream (a default is not a choice). */
+export const hasStreamChoice = (spaceId: string): boolean => read(hiddenKey(spaceId)) !== null;
+
 export function useStreamHidden(spaceId: string, hiddenByDefault = false): [boolean, (hidden: boolean) => void] {
   const [state, setState] = useState<{ spaceId: string; hidden: boolean | null }>(() => ({ spaceId, hidden: null }));
   // Until the person chooses, the default decides (it may change once the Space is known to be a home).

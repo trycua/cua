@@ -29,7 +29,8 @@ import { Composer, type ComposerHandle } from "./composer";
 import { LiveRows } from "./live-row";
 import { MembersPanel, type MemberPresence } from "./members-panel";
 import { panelFacts } from "./rail";
-import { useStreamHidden, type SpaceLayout } from "./layout-mode";
+import { useAutoOpenFirstStream } from "./auto-open-stream";
+import { hasStreamChoice, useStreamHidden, type SpaceLayout } from "./layout-mode";
 import { MiniPlayer } from "./mini-player";
 import { GUEST_COMPOSER } from "./rights";
 import { buildRoster } from "./roster";
@@ -61,6 +62,7 @@ export function SpaceCall({
   childSpaces,
   more,
   windows,
+  streamReady = false,
   desktop,
   selected,
   onSelect,
@@ -103,6 +105,8 @@ export function SpaceCall({
   more: ReactNode;
   /** The Space's windows (Stream rows without the desktop). */
   windows: StreamRow[];
+  /** The Stream list has loaded (a home opens its first new window stream by itself). */
+  streamReady?: boolean;
   /** The Desktop row (the default view), first in the Stream list. */
   desktop?: StreamRow | null;
   /** The row the stage shows (the desktop when none). */
@@ -144,6 +148,18 @@ export function SpaceCall({
   // An agent's home starts with the desktop folded away (the chat is the page); a choice is kept per Space.
   const isHome = Boolean(useChildren()?.node(spaceId)?.home);
   const [streamHidden, setStreamHidden] = useStreamHidden(spaceId, isHome);
+  // The first window that shows up in a home's Stream list opens by itself (once, never over the person's choice).
+  useAutoOpenFirstStream({
+    spaceId,
+    enabled: isHome && Boolean(onSelect),
+    ready: streamReady,
+    windows,
+    chosen: () => hasStreamChoice(spaceId),
+    onOpen: (row) => {
+      setStreamHidden(false);
+      onSelect?.(row);
+    },
+  });
   // ⌘⇧T (Ctrl+Shift+T): thread view and back.
   useEffect(() => {
     if (!onLayout) return;

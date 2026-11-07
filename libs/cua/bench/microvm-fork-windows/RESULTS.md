@@ -1,6 +1,6 @@
 # microVM fork benchmark on Windows (QEMU + WHPX)
 
-Same harness as `../microvm-fork` (the Mac numbers behind cua.ai/compare), with the host
+Same harness as `../microvm-fork` (the one behind the published Mac numbers), with the host
 memory probe changed. It drives the real `cua` CLI and daemon. Image
 `ghcr.io/trycua/linux:24.04-slim`, 2 vCPU / 2 GB Spaces, 256 MiB written to the source's
 tmpfs before the checkpoint. This PC: Windows 11 Pro 26200, QEMU 11.1 with `-accel whpx`, the **release** `cua-local.exe`

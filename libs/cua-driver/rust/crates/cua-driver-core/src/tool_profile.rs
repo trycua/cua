@@ -118,11 +118,7 @@ pub const GROUPS: &[(&str, &[&str])] = &[
     ),
     (
         "input_extra",
-        &[
-            "kill_app",
-            "get_cursor_position",
-            "get_screen_size",
-        ],
+        &["kill_app", "get_cursor_position", "get_screen_size"],
     ),
 ];
 

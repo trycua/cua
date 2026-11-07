@@ -13,6 +13,7 @@
 //! compositor-attested surfaces and return a typed identity error otherwise.
 
 mod compositor_peer;
+mod dynamic_library;
 pub mod ext_screencopy;
 pub mod ext_toplevel;
 pub mod hyprland;

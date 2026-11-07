@@ -5336,6 +5336,7 @@ dependencies = [
  "futures-util",
  "image",
  "libc",
+ "libloading",
  "memmap2",
  "meval",
  "pip-preview",

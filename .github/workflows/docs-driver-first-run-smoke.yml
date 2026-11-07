@@ -38,12 +38,10 @@ jobs:
       - name: Test the display-result oracle
         run: python3 -m unittest discover -s docs/scripts/tests -p test_driver_first_run_smoke.py
       - name: Install disposable desktop dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            xvfb xauth dbus-x11 at-spi2-core openbox picom galculator \
-            libxi6 libxtst6 libglib2.0-bin gsettings-desktop-schemas \
-            x11-utils xdotool tesseract-ocr
+        uses: ./.github/actions/apt-install
+        with:
+          packages: >-
+            xvfb xauth dbus-x11 at-spi2-core openbox picom galculator libxi6 libxtst6 libglib2.0-bin gsettings-desktop-schemas x11-utils xdotool tesseract-ocr
       - name: Verify the Linux tutorial from a cold start
         env:
           CUA_DOCS_SOURCE_SHA: ${{ github.sha }}

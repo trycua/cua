@@ -338,7 +338,7 @@ impl Tool for PidOnlyWindowTargetGuard {
 }
 
 /// `window_id 7 "Position and Size" (dialog, transient of window 3); window_id 3 "doc - Writer"`
-fn describe_candidates(candidates: &[WindowTargetCandidate]) -> String {
+pub fn describe_candidates(candidates: &[WindowTargetCandidate]) -> String {
     candidates
         .iter()
         .map(|candidate| {

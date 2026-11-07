@@ -360,6 +360,7 @@ struct BridgeContractTests {
         "spaces.add": "needs a running cua-spacesd at the address",
         "host.setUp": "installs the host service", "host.action": "changes the host service", "host.limits": "changes the host settings (HostBridgeTests covers hostLimitsChangeThroughTheHostModel)",
         "host.openSettings": "opens System Settings",
+        "windows.chooseIso": "opens a file picker; WebUIHostTests covers it",
         "host.joinWithCode": "runs the bundled cua; JoinWithCodeTests covers the arguments and bad args",
         "agents.events": "needs the daemon's agent_events; WebUIHostTests checks it is unsupported without it",
         "agents.start": "starts a coding agent through the daemon; WebUIHostTests checks it is unsupported without it",

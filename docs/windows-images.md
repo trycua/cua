@@ -166,10 +166,14 @@ bytes and time left, then "Installing Windows (first time only)" with a bar that
 writes nothing), then the ordinary "Preparing the disk", "Booting Windows" and "Starting Cua inside
 the Space". Cancelling the create stops the install VM.
 
-UI gap: the dialog has no ISO-path field yet. That needs `isoPath` on the wizard's `CreatePlan` and
-the UniFFI/TS generated bindings regenerated; until then register an ISO once with
-`cua sb create windows:11 --iso <path>` (or set `CUA_WINDOWS_ISO`), and the dialog uses it. It is
-optional: Windows 11 on Apple silicon needs no manual step.
+Choose Windows ISO...: the host op `windows.chooseIso {image}` opens the native picker (SwiftUI
+`NSOpenPanel`, Electron's open dialog), then `windows_use_iso` (cua-spaces-ffi) checks the file and
+registers it for the image, exactly as `--iso` does, so the create that follows installs from it
+with no environment variable. A wrong file is refused at once in plain words. It is offered (1) as a
+link in the Windows step of New Space and (2) on the failed create's screen, beside "Open Microsoft's
+download page" and Try again, whenever the download is limited (Sentinel) or fails for another
+reason (the core's `CreateFix` with action `choose-windows-iso`). After the pick the failed create
+runs again as a new row. The CLI's own failure text says `--iso <path>`.
 
 ## Guard rails from dogfooding
 

@@ -231,6 +231,7 @@ export const DEMO_ARGS: { [K in OpName]: OpArgs<K> } = {
   "spaces.thumbnail": { spaceId: SPACE },
   "spaces.chooseFiles": {},
   "spaces.droppedFiles": { names: ["notes.txt"] },
+  "windows.chooseIso": { image: "ghcr.io/trycua/windows:11" },
   "spaces.sendFiles": { spaceId: SPACE, paths: ["/tmp/cua-contract-notes.txt"] },
   "host.setUp": { request: { mode: "relay" } },
   "host.joinWithCode": { code: "K7QM-4XPB-2RHD" },

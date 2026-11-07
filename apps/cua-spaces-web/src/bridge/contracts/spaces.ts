@@ -223,8 +223,12 @@ export interface CreateFix {
   label: string;
   /** Copy `value` (a Terminal command), open `value` (a help page), or
    * open the failed create's details. */
-  action: "copy-command" | "open-url" | "details";
+  action: "copy-command" | "open-url" | "details" | "choose-windows-iso";
   value?: string;
+  /** A second button beside the first: it opens `linkUrl` (Microsoft's
+   * download page, beside "Choose Windows ISO…"). */
+  linkLabel?: string;
+  linkUrl?: string;
   /** Keep Try again beside the button: the fix is something to do first
    * (download a file), then the same create is tried again. */
   keepRetry?: boolean;

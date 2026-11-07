@@ -1726,10 +1726,17 @@
           "enum": [
             "copy-command",
             "open-url",
-            "details"
+            "details",
+            "choose-windows-iso"
           ]
         },
         "value": {
+          "type": "string"
+        },
+        "linkLabel": {
+          "type": "string"
+        },
+        "linkUrl": {
           "type": "string"
         },
         "keepRetry": {
@@ -11473,6 +11480,20 @@
     },
     "volume.unmount": {
       "$ref": "#/$defs/DriveMountInput"
+    },
+    "windows.chooseIso": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ]
     }
   },
   "webkit": {
@@ -15340,6 +15361,20 @@
     },
     "window.setDropTargets": {
       "type": "null"
+    },
+    "windows.chooseIso": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ]
     }
   },
   "webkitUnshaped": {

@@ -165,6 +165,7 @@ const ARGS: { [K in OpName]: OpArgs<K> } = {
   "spaces.thumbnail": { spaceId: "s1" },
   "spaces.chooseFiles": {},
   "spaces.droppedFiles": { names: ["notes.txt"] },
+  "windows.chooseIso": { image: "ghcr.io/trycua/windows:11" },
   "spaces.sendFiles": { spaceId: "s1", paths: ["/tmp/notes.txt"] },
   "host.setUp": { request: { mode: "relay" } },
   "host.joinWithCode": { code: "K7QM-4XPB-2RHD" },

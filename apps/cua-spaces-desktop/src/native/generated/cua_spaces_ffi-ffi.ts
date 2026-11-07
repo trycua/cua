@@ -2092,6 +2092,11 @@ const DEFINITIONS = {
       ret: FfiType.Handle,
       hasRustCallStatus: true,
     },
+    "uniffi_cua_spaces_ffi_fn_func_windows_use_iso": {
+      args: [FfiType.RustBuffer, FfiType.RustBuffer],
+      ret: FfiType.RustBuffer,
+      hasRustCallStatus: true,
+    },
     "uniffi_cua_spaces_ffi_fn_constructor_appcliinstaller_for_executable": {
       args: [FfiType.RustBuffer],
       ret: FfiType.Handle,
@@ -4017,6 +4022,11 @@ const DEFINITIONS = {
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_spaces_ffi_checksum_func_windows_use_iso": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_spaces_ffi_checksum_constructor_appcliinstaller_for_executable": {
       args: [],
       ret: FfiType.UInt16,
@@ -4774,6 +4784,7 @@ interface NativeModuleInterface {
     uniffi_cua_spaces_ffi_fn_func_spacesd_open_media_decoded(client: bigint, options: Uint8Array, frames: bigint): bigint;
     uniffi_cua_spaces_ffi_fn_func_spacesd_open_media_decoded_with_audio(client: bigint, options: Uint8Array, frames: bigint, pcm: bigint): bigint;
     uniffi_cua_spaces_ffi_fn_func_teleport(cua: bigint, uniffi_out_err: UniffiRustCallStatus): bigint;
+    uniffi_cua_spaces_ffi_fn_func_windows_use_iso(image: Uint8Array, path: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_spaces_ffi_fn_constructor_appcliinstaller_for_executable(executable: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cua_spaces_ffi_fn_constructor_appcliinstaller_with_paths(bundled: Uint8Array, binDir: Uint8Array, pathEnv: Uint8Array, profile: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cua_spaces_ffi_fn_method_appcliinstaller_install(uniffiSelf: bigint, request: Uint8Array): bigint;
@@ -5159,6 +5170,7 @@ interface NativeModuleInterface {
     uniffi_cua_spaces_ffi_checksum_func_spacesd_open_media_decoded(): number;
     uniffi_cua_spaces_ffi_checksum_func_spacesd_open_media_decoded_with_audio(): number;
     uniffi_cua_spaces_ffi_checksum_func_teleport(): number;
+    uniffi_cua_spaces_ffi_checksum_func_windows_use_iso(): number;
     uniffi_cua_spaces_ffi_checksum_constructor_appcliinstaller_for_executable(): number;
     uniffi_cua_spaces_ffi_checksum_constructor_appcliinstaller_with_paths(): number;
     uniffi_cua_spaces_ffi_checksum_method_appcliinstaller_install(): number;

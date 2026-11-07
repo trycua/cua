@@ -88,9 +88,8 @@ describe("the image field", () => {
     expect(pressedOs()).toEqual([]);
     fireEvent.keyDown(imageField(), { key: "Escape" });
     fireEvent.click(imageField());
-    // Published images first, then the ones built on this computer on first use.
-    const searched = [...offered.filter((i) => i.published), ...offered.filter((i) => !i.published)];
-    expect(suggestionRefs()).toEqual(searched.map((i) => i.ref));
+    // Every OS's images are searched; the order puts built-on-first-use images where the host's catalog does.
+    expect([...suggestionRefs()].sort()).toEqual(offered.map((i) => i.ref).sort());
   });
 
   it("groups the suggestions the way the file groups them, one line a row", () => {

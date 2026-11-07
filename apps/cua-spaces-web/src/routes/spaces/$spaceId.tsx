@@ -69,6 +69,7 @@ function SpaceDetailPage() {
     dismissCreate,
     retryCreate,
     canRetryCreate,
+    chooseWindowsIsoAndRetry,
     createdId,
     createReport,
     sendCreateReport,
@@ -228,6 +229,9 @@ function SpaceDetailPage() {
   // It failed the same way twice: the core's fix for that cause (copy a
   // command, open the help page, or the details) instead of Try again.
   const createFix = space.progress?.fix;
+  const fixLink = createFix?.linkUrl
+    ? () => void Promise.resolve(openExternal(createFix.linkUrl!)).catch((e: unknown) => toast("Couldn't open the page", { description: message(e), type: "error" }))
+    : undefined;
   const fix = createFix
     ? () =>
         void runCreateFix(createFix, {
@@ -237,6 +241,13 @@ function SpaceDetailPage() {
           },
           openExternal: (url) => openExternal(url),
           details: openReport,
+          // The create runs again with that file: this page follows the new row.
+          chooseWindowsIso: async () => {
+            const chosen = await chooseWindowsIsoAndRetry(space.id);
+            if (!chosen) return;
+            toast(`Using ${chosen.name}`, { description: "Windows installs from that file.", type: "success" });
+            await navigate({ to: "/spaces/$spaceId", params: { spaceId: chosen.next }, replace: true });
+          },
         }).catch((e: unknown) => toast("Couldn't do that", { description: message(e), type: "error" }))
     : undefined;
   // Picture in picture where the host has panels; its own window where it doesn't.
@@ -344,7 +355,7 @@ function SpaceDetailPage() {
       onAccessAction={enroll}
       className={className}
     >
-      {preparePanel ?? surfaceState(space, pending, turnOn, start, dismiss, retry, openReport, fix) ?? poppedOutState}
+      {preparePanel ?? surfaceState(space, pending, turnOn, start, dismiss, retry, openReport, fix, fixLink) ?? poppedOutState}
     </StreamSurface>
   );
   // The classic page's sections under the desktop. With the thread they open from Details, More.
@@ -660,6 +671,7 @@ function surfaceState(
   onRetry?: () => void,
   onReport?: () => void,
   onFix?: () => void,
+  onFixLink?: () => void,
 ): ReactNode {
   const state = spaceState(space);
   if (state === "failed") {
@@ -680,6 +692,11 @@ function surfaceState(
           {fix && onFix ? (
             <Button data-create-fix-button="" onClick={onFix}>
               {fix.label}
+            </Button>
+          ) : null}
+          {fix?.linkLabel && onFixLink ? (
+            <Button variant="outline" data-create-fix-link="" onClick={onFixLink}>
+              {fix.linkLabel}
             </Button>
           ) : null}
           {onRetry && (!fix || fix.keepRetry) ? (

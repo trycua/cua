@@ -59,10 +59,13 @@ export interface CreateFixActions {
   copy(text: string): Promise<void> | void;
   openExternal(url: string): Promise<void> | void;
   details(): void;
+  /** "Choose Windows ISO…": the picker, then the create again with that file. */
+  chooseWindowsIso?(): Promise<void> | void;
 }
 
 export async function runCreateFix(fix: CreateFix, act: CreateFixActions): Promise<void> {
   if (fix.action === 'copy-command' && fix.value) await act.copy(fix.value);
   else if (fix.action === 'open-url' && fix.value) await act.openExternal(fix.value);
+  else if (fix.action === 'choose-windows-iso' && act.chooseWindowsIso) await act.chooseWindowsIso();
   else act.details();
 }

@@ -67,6 +67,38 @@ export function NewSpaceDialog() {
   );
 }
 
+/** "Choose Windows ISO…" in the Windows create flow: a disc image the person
+ * already has is used instead of the download from Microsoft (which is
+ * sometimes refused). The file is checked and remembered at once; the
+ * create that follows installs from it. */
+function WindowsIsoRow({ image }: { image: string }) {
+  const { chooseWindowsIso } = useSpaces();
+  const [chosen, setChosen] = useState<string | null>(null);
+  const [problem, setProblem] = useState<string | null>(null);
+  const choose = () => {
+    setProblem(null);
+    chooseWindowsIso(image).then(
+      (name) => name && setChosen(name),
+      (e: unknown) => setProblem(e instanceof Error ? e.message : String(e)),
+    );
+  };
+  return (
+    <div data-windows-iso="" className="mt-3 px-1 text-xs text-muted-foreground">
+      <p>
+        {chosen ? `Windows installs from ${chosen}.` : "Cua downloads Windows from Microsoft the first time. Already have the disc image?"}{" "}
+        <button type="button" data-windows-iso-choose="" className="text-brand-strong hover:underline" onClick={choose}>
+          {chosen ? "Choose another" : "Choose Windows ISO\u2026"}
+        </button>
+      </p>
+      {problem ? (
+        <p role="alert" data-windows-iso-error="" className="mt-1 text-destructive">
+          {problem}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 function WizardBody({ view: v }: { view: WizardView }) {
   const wizard = useNewSpaceWizard();
   const create = useCreateFromWizard();
@@ -109,6 +141,7 @@ function WizardBody({ view: v }: { view: WizardView }) {
         ) : (
           <SummaryStep v={v} />
         )}
+        {!address && v.image.os === "windows" && v.image.local_build && v.plan.placement === "local" ? <WindowsIsoRow image={v.image.ref} /> : null}
         {macosLimit ? (
           <p role="alert" data-macos-limit="" className="mt-3 px-1 text-xs text-destructive">
             {macosLimit}

@@ -9,7 +9,7 @@
 // events go out when what the page shows changed, and the page's adapter
 // reads every answer into its contract. Skipped when this machine's native
 // directory was not built.
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
@@ -128,6 +128,7 @@ describe.skipIf(!built)("the bridge on the app core", () => {
         setDropTargets: (win, targets) => dropTargets.push([win, targets]),
         activate: () => {},
         chooseFiles: async () => ["/Users/ada/Desktop/picked.txt"],
+        chooseIso: async () => chosen,
         pip: { open: (spec, closed) => pipsOpen.set(`${spec.spaceId}|${spec.key}`, closed), close: (id, key) => pipsOpen.delete(`${id}|${key}`) },
       },
     });
@@ -137,6 +138,7 @@ describe.skipIf(!built)("the bridge on the app core", () => {
     await model.devices.refresh();
   });
 
+  let chosen: string | null = null;
   const call = (method: string, args: Record<string, unknown> = {}) => bridge.registry.handle(method, args, { window: "win-1" });
   const code = (method: string, args: Record<string, unknown> = {}) =>
     bridge.registry.dispatch({ id: "x", method, args }).then((r) => (r.ok ? null : r.error.code));
@@ -214,7 +216,7 @@ describe.skipIf(!built)("the bridge on the app core", () => {
     // Every ported method has its case (or is checked below).
     // (Teleport and the Keyvault: vault-native.test.ts; This machine, Devices, Settings and the rest: host-bridge.test.ts; the relay allowance: relay-usage.test.ts; resource numbers: resources.test.ts; presence: presence-bridge.test.ts; the Machines page's rename, remove and health checks, and the default Space: machines-view.test.ts; the Windows runtime fix: below.)
     // (The CI Runners methods, ci.*: ci.test.ts. They run the bundled `cua`, which this core-only test does not have.)
-    const elsewhere = new Set(["ci.overview", "ci.connect", "ci.connectToken", "ci.connectCancel", "ci.repositories", "ci.goal", "ci.log", "session.signIn", "spaces.create", "spaces.delete", "spaces.openStream", "relay.usage", "sharing.removals", "sharing.ackRemovals", "resources.get", "machines.rename", "machines.remove", "machines.checkHealth", "spaces.settings", "spaces.setSettings", "spaces.resolveDefault", "presence.join", "presence.publish", "presence.leave", "spaces.fixRuntime", "cli.install", "runtimes.check", "runtimes.browse", "repoCache.get", "repoCache.set", "repoCache.clear", "driver.status", "driver.list", "driver.config", "driver.setConfig", "driver.test", "driver.pause", "driver.setup", "driver.setApp", "driver.permissions", ...THREAD_OPERATIONS, ...AGENT_METHODS, ...VAULT_METHODS, ...HOST_METHODS]);
+    const elsewhere = new Set(["ci.overview", "ci.connect", "ci.connectToken", "ci.connectCancel", "ci.repositories", "ci.goal", "ci.log", "session.signIn", "spaces.create", "spaces.delete", "spaces.openStream", "relay.usage", "sharing.removals", "sharing.ackRemovals", "resources.get", "machines.rename", "machines.remove", "machines.checkHealth", "spaces.settings", "spaces.setSettings", "spaces.resolveDefault", "presence.join", "presence.publish", "presence.leave", "spaces.fixRuntime", "windows.chooseIso", "cli.install", "runtimes.check", "runtimes.browse", "repoCache.get", "repoCache.set", "repoCache.clear", "driver.status", "driver.list", "driver.config", "driver.setConfig", "driver.test", "driver.pause", "driver.setup", "driver.setApp", "driver.permissions", ...THREAD_OPERATIONS, ...AGENT_METHODS, ...VAULT_METHODS, ...HOST_METHODS]);
     const ported = bridge.registry.methods.filter((m) => !NOT_YET.includes(m) && !elsewhere.has(m));
     expect(ported.filter((m) => !cases.some(([c]) => c === m))).toEqual([]);
   });
@@ -224,6 +226,22 @@ describe.skipIf(!built)("the bridge on the app core", () => {
     expect(info).toMatchObject({ platform: "macos", host: "electron", version: "1.2.3" });
     expect(info.methods[0]).toBe("app.info");
     expect(info.methods.at(-1)).toBe("spaces.fixRuntime");
+  });
+
+  it("checks a chosen Windows ISO at once: a wrong file is refused in plain words, a cancelled picker answers nothing", async () => {
+    // Only refusals here: a file that is accepted is remembered under the user's own CUA_HOME.
+    const notes = path.join(tmpdir(), `cua-iso-test-${process.pid}.txt`);
+    writeFileSync(notes, "hello");
+    try {
+      chosen = notes;
+      await expect(call("windows.chooseIso", { image: "ghcr.io/trycua/windows:11" })).rejects.toMatchObject({ code: "bad_iso", message: expect.stringContaining("is not a Windows disc image") });
+      await expect(call("windows.chooseIso", { image: "ghcr.io/trycua/linux:24.04" })).rejects.toMatchObject({ code: "bad_iso", message: "This image does not install from a Windows ISO." });
+      chosen = null;
+      expect(await call("windows.chooseIso", { image: "ghcr.io/trycua/windows:11" })).toBeNull();
+      await expect(call("windows.chooseIso", {})).rejects.toMatchObject({ code: "bad_args" });
+    } finally {
+      rmSync(notes, { force: true });
+    }
   });
 
   it("checks spaces.fixRuntime's action, and has no runtime fix off Windows", async () => {
@@ -661,7 +679,7 @@ describe.skipIf(!built)("the bridge on the app core", () => {
     // This machine, Devices, Settings and the rest: host-bridge.test.ts reads them with their arguments (the Machines page's rename and remove: machines-view.test.ts).
     // (The CI Runners methods, ci.*: ci.test.ts. They run the bundled `cua`, which this core-only test does not have.)
     // (The Cua Driver page, driver.*: the Electron app has no driver and refuses with "comes with the Mac app".)
-    const skip = new Set<OpName>(["driver.status", "driver.list", "driver.config", "driver.setConfig", "driver.test", "driver.pause", "driver.setup", "driver.setApp", "driver.permissions", "ci.overview", "ci.connect", "ci.connectToken", "ci.connectCancel", "ci.repositories", "ci.goal", "ci.log", "spaces.create", "spaces.delete", "session.signIn", "session.signOut", "session.openExternal", "spaces.openStream", "relay.usage", "sharing.removals", "sharing.ackRemovals", "resources.get", "machines.rename", "machines.remove", "machines.checkHealth", "spaces.settings", "spaces.setSettings", "spaces.resolveDefault", "presence.join", "presence.publish", "presence.leave", "spaces.fixRuntime", "cli.install", "runtimes.check", "runtimes.browse", "repoCache.get", "repoCache.set", "repoCache.clear", ...(THREAD_OPERATIONS as readonly string[] as OpName[]), ...VAULT_OPS, ...(HOST_OPS as OpName[])]);
+    const skip = new Set<OpName>(["driver.status", "driver.list", "driver.config", "driver.setConfig", "driver.test", "driver.pause", "driver.setup", "driver.setApp", "driver.permissions", "ci.overview", "ci.connect", "ci.connectToken", "ci.connectCancel", "ci.repositories", "ci.goal", "ci.log", "spaces.create", "spaces.delete", "session.signIn", "session.signOut", "session.openExternal", "spaces.openStream", "relay.usage", "sharing.removals", "sharing.ackRemovals", "resources.get", "machines.rename", "machines.remove", "machines.checkHealth", "spaces.settings", "spaces.setSettings", "spaces.resolveDefault", "presence.join", "presence.publish", "presence.leave", "spaces.fixRuntime", "windows.chooseIso", "cli.install", "runtimes.check", "runtimes.browse", "repoCache.get", "repoCache.set", "repoCache.clear", ...(THREAD_OPERATIONS as readonly string[] as OpName[]), ...VAULT_OPS, ...(HOST_OPS as OpName[])]);
     // (The thread: thread.test.ts.)
     const problems: string[] = [];
     const checked: string[] = [];

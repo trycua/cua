@@ -454,11 +454,13 @@ pub async fn resolve_iso(
                     start_cooldown(req.cache_dir);
                     return saved_or_limited(req, Some(COOLDOWN_SECS), slug);
                 }
-                Err(e) => return Err(e),
+                Err(e) => return Err(with_iso_hint(e)),
             };
             published = m.sha256;
             let label = format!("Downloading the {} ISO", req.version.name);
-            download_reporting(fetcher, &m.url, &cached, &label, ISO_SPAN, on_bytes).await?;
+            download_reporting(fetcher, &m.url, &cached, &label, ISO_SPAN, on_bytes)
+                .await
+                .map_err(with_iso_hint)?;
         }
         Media::None => {
             return Err(ImageError::Build {
@@ -502,6 +504,27 @@ pub async fn resolve_iso(
         path: cached,
         origin: IsoOrigin::Downloaded,
     })
+}
+
+/// The way past a failed download, named in the CLI's own words.
+fn with_iso_hint(e: ImageError) -> ImageError {
+    match e {
+        ImageError::Build { step, detail } => ImageError::Build {
+            step,
+            detail: if detail.contains("--iso") {
+                detail
+            } else {
+                format!(
+                    "{detail}. Download the Windows ISO from Microsoft yourself and pass it with: cua sb create <windows image> --iso <path to the .iso>"
+                )
+            },
+        },
+        d @ ImageError::Digest { .. } => d,
+        other => with_iso_hint(ImageError::Build {
+            step: "windows iso".into(),
+            detail: other.to_string(),
+        }),
+    }
 }
 
 fn verify(path: &Path, want: &str) -> Result<()> {
@@ -1036,5 +1059,34 @@ mod tests {
             .set_len(MIN_ISO_BYTES)
             .unwrap();
         assert!(check_user_iso(&notiso, WindowsArch::Amd64).is_err());
+    }
+
+    /// A failed download names the way past it in the CLI's own words.
+    #[test]
+    fn a_failed_download_points_at_the_iso_flag_once() {
+        let e = with_iso_hint(ImageError::Build {
+            step: "windows iso".into(),
+            detail: "Microsoft's download service did not answer (timed out)".into(),
+        });
+        let text = e.to_string();
+        assert!(text.contains("--iso <path to the .iso>"), "{text}");
+        assert!(text.starts_with("build failed at windows iso: Microsoft's download service"));
+        // Already says it: not added twice.
+        assert_eq!(with_iso_hint(e).to_string(), text);
+        // Another kind of error becomes the same step, with the hint.
+        let io =
+            with_iso_hint(ImageError::Io(std::io::Error::other("connection reset"))).to_string();
+        assert!(
+            io.contains("build failed at windows iso: ") && io.contains("--iso"),
+            "{io}"
+        );
+        // A checksum mismatch keeps its own words.
+        let d = with_iso_hint(ImageError::Digest {
+            what: "x".into(),
+            expected: "a".into(),
+            actual: "b".into(),
+        })
+        .to_string();
+        assert!(!d.contains("--iso"));
     }
 }

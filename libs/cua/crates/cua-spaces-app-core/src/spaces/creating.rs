@@ -905,6 +905,10 @@ pub enum FailureCause {
     /// Windows 11 build downloads its ISO): another request now only extends
     /// the wait, so the app does not retry by itself.
     WindowsDownloadLimited,
+    /// The Windows ISO could not be downloaded or checked for another reason
+    /// (Microsoft's service did not answer, the page changed, a bad
+    /// checksum): a disc image downloaded by hand gets past it.
+    WindowsDownloadFailed,
     /// The VM's runtime is not on this machine (QEMU for a Windows or Linux
     /// VM on a PC without it): trying again does not help.
     RuntimeMissing,
@@ -923,7 +927,9 @@ impl FailureCause {
             Self::Gpu => "Unsupported",
             Self::Unauthenticated => "Unauthenticated",
             Self::ServiceTimeout | Self::PullTimeout => "Timeout",
-            Self::PullStopped | Self::WindowsDownloadLimited => "ImagePull",
+            Self::PullStopped | Self::WindowsDownloadLimited | Self::WindowsDownloadFailed => {
+                "ImagePull"
+            }
             Self::RuntimeMissing => "RuntimeMissing",
         }
     }
@@ -933,19 +939,28 @@ impl FailureCause {
 /// (`cua_image::windows::msdl::LIMITED`), lowercased.
 const WINDOWS_LIMITED: &str = "microsoft is limiting windows downloads";
 
+/// The build step that gets the Windows ISO (`ImageError::Build`'s step),
+/// as the SDK words it, lowercased.
+const WINDOWS_ISO_STEP: &str = "build failed at windows iso";
+
 /// The page the Windows 11 ARM64 disc image is downloaded from by hand.
 pub const WINDOWS_ARM64_PAGE: &str = "https://www.microsoft.com/software-download/windows11arm64";
 
-/// The way out of Microsoft's limit, as the failed Space's one button.
+/// The way out when Windows can't be downloaded (Microsoft's limit, or the
+/// download failing): choose a disc image downloaded by hand, with Microsoft's
+/// page beside it and Try again after.
 fn windows_download_fix() -> CreateFix {
     CreateFix {
-        text: "Download the Windows 11 ARM64 disc image from Microsoft and save it in your \
-               Downloads folder. Then choose Try again: Cua finds it and carries on."
+        text: "Download the Windows 11 ARM64 disc image from Microsoft, then choose Choose \
+               Windows ISO\u{2026} and pick the file: Cua carries on with it. Or save it in your \
+               Downloads folder and choose Try again."
             .into(),
-        label: "Open Microsoft's download page".into(),
-        action: CreateFixAction::OpenUrl,
-        value: Some(WINDOWS_ARM64_PAGE.into()),
+        label: "Choose Windows ISO\u{2026}".into(),
+        action: CreateFixAction::ChooseWindowsIso,
+        value: None,
         keep_retry: true,
+        link_label: Some("Open Microsoft's download page".into()),
+        link_url: Some(WINDOWS_ARM64_PAGE.into()),
     }
 }
 
@@ -959,6 +974,9 @@ pub fn failure_cause(raw: &str, phase: Option<&str>, gpu: bool) -> Option<Failur
     let l = crate::errors::plain_error(raw).to_ascii_lowercase();
     if l.contains(WINDOWS_LIMITED) {
         return Some(FailureCause::WindowsDownloadLimited);
+    }
+    if l.contains(WINDOWS_ISO_STEP) || l.contains("iso (against the checksum") {
+        return Some(FailureCause::WindowsDownloadFailed);
     }
     if l.contains("not enough disk space")
         || l.contains("insufficient disk")
@@ -1068,8 +1086,10 @@ pub fn fail_decision(p: &PendingCreate, error: &str, error_variant: &str) -> Fai
     let plain = crate::errors::plain_error(error);
     let subclass = retry::subclass(&kind, &plain);
     // Another request to Microsoft inside its limit only extends it.
-    let limited =
-        failure_cause(error, Some(&p.phase), p.gpu) == Some(FailureCause::WindowsDownloadLimited);
+    let limited = matches!(
+        failure_cause(error, Some(&p.phase), p.gpu),
+        Some(FailureCause::WindowsDownloadLimited | FailureCause::WindowsDownloadFailed)
+    );
     let retry = if !limited
         && p.attempt == 0
         && !p.cancelling
@@ -1154,6 +1174,8 @@ pub fn fix_for(kind: &str, p: &PendingCreate) -> Option<CreateFix> {
         action: CreateFixAction::CopyCommand,
         value: Some(command.into()),
         keep_retry: false,
+        link_label: None,
+        link_url: None,
     };
     let help = |text: String| CreateFix {
         text,
@@ -1161,6 +1183,8 @@ pub fn fix_for(kind: &str, p: &PendingCreate) -> Option<CreateFix> {
         action: CreateFixAction::OpenUrl,
         value: Some(TROUBLESHOOT_URL.into()),
         keep_retry: false,
+        link_label: None,
+        link_url: None,
     };
     let details = |text: String| CreateFix {
         text,
@@ -1168,6 +1192,8 @@ pub fn fix_for(kind: &str, p: &PendingCreate) -> Option<CreateFix> {
         action: CreateFixAction::Details,
         value: None,
         keep_retry: false,
+        link_label: None,
+        link_url: None,
     };
     let on = if elsewhere { " on that computer" } else { "" };
     Some(match kind {
@@ -1351,10 +1377,13 @@ pub fn failure_text_on(
                 .unwrap_or_else(|| "about an hour".into());
             format!(
                 "Microsoft is limiting Windows downloads from your network right now. Try again in \
-                 {wait}, or download the Windows 11 ARM64 disc image yourself and save it in your \
-                 Downloads folder: Cua finds it."
+                 {wait}, or download the Windows 11 ARM64 disc image yourself and choose it \
+                 here."
             )
         }
+        Some(FailureCause::WindowsDownloadFailed) => "Cua couldn't download Windows from \
+             Microsoft. Choose a Windows disc image you downloaded yourself, or try again."
+            .into(),
         Some(FailureCause::PullTimeout) => "The image download did not finish in the time \
              allowed. Check your internet connection, then try again."
             .into(),
@@ -1598,9 +1627,12 @@ pub fn reduce(state: &CreatesState, action: &CreateAction) -> CreatesState {
                     return next;
                 }
                 // The same failure again: its fix, not a plain Try again.
-                p.fix = if failure_cause(error, Some(&p.phase), p.gpu)
-                    == Some(FailureCause::WindowsDownloadLimited)
-                {
+                p.fix = if matches!(
+                    failure_cause(error, Some(&p.phase), p.gpu),
+                    Some(
+                        FailureCause::WindowsDownloadLimited | FailureCause::WindowsDownloadFailed
+                    )
+                ) {
                     Some(windows_download_fix())
                 } else {
                     (repeats >= 2).then(|| fix_for(&decision.kind, p)).flatten()
@@ -2311,7 +2343,9 @@ mod tests {
                 CreateFixAction::CopyCommand | CreateFixAction::OpenUrl => {
                     assert!(fix.value.is_some(), "{kind}")
                 }
-                CreateFixAction::Details => assert!(fix.value.is_none(), "{kind}"),
+                CreateFixAction::Details | CreateFixAction::ChooseWindowsIso => {
+                    assert!(fix.value.is_none(), "{kind}")
+                }
             }
         }
         assert!(fix_for("cancelled", p).is_none() && fix_for("quota_exceeded", p).is_none());
@@ -2431,7 +2465,7 @@ mod tests {
         let text = failure_text(raw, Some("pulling"), Some(SpaceProvider::Local), false);
         assert_eq!(
             text,
-            "Microsoft is limiting Windows downloads from your network right now. Try again in about 42 minutes, or download the Windows 11 ARM64 disc image yourself and save it in your Downloads folder: Cua finds it."
+            "Microsoft is limiting Windows downloads from your network right now. Try again in about 42 minutes, or download the Windows 11 ARM64 disc image yourself and choose it here."
         );
         assert!(!text.contains("Sentinel") && !text.contains("--iso"));
         let s = reduce(
@@ -2454,10 +2488,49 @@ mod tests {
         let p = &failed.pending[0];
         assert!(!p.retry_pending && p.attempt == 0, "no automatic retry");
         let fix = p.fix.as_ref().expect("the way out is on the first failure");
-        assert_eq!(fix.label, "Open Microsoft's download page");
-        assert_eq!(fix.value.as_deref(), Some(WINDOWS_ARM64_PAGE));
-        assert_eq!(fix.action, CreateFixAction::OpenUrl);
+        assert_eq!(fix.label, "Choose Windows ISO\u{2026}");
+        assert_eq!(fix.action, CreateFixAction::ChooseWindowsIso);
+        assert_eq!(
+            fix.link_label.as_deref(),
+            Some("Open Microsoft's download page")
+        );
+        assert_eq!(fix.link_url.as_deref(), Some(WINDOWS_ARM64_PAGE));
         assert!(fix.keep_retry, "Try again stays beside it");
+    }
+
+    /// Any other failure to get the ISO offers the same way out, at once.
+    #[test]
+    fn a_failed_windows_download_offers_the_iso_picker_on_the_first_failure() {
+        let raw = "local runtime: build failed at windows iso: Microsoft's download service did not answer (timed out)";
+        assert_eq!(
+            failure_cause(raw, Some("pulling"), false),
+            Some(FailureCause::WindowsDownloadFailed)
+        );
+        let text = failure_text(raw, Some("pulling"), Some(SpaceProvider::Local), false);
+        assert!(text.contains("Choose a Windows disc image") && !text.contains("windows iso"));
+        let s = reduce(
+            &CreatesState::default(),
+            &start_image(
+                "pending:w",
+                "ghcr.io/trycua/windows:11",
+                Some(SpaceKind::Vm),
+            ),
+        );
+        let failed = reduce(
+            &s,
+            &CreateAction::Fail {
+                id: "pending:w".into(),
+                error: raw.into(),
+                error_variant: "Runtime".into(),
+                now: Some(5_000),
+            },
+        );
+        let fix = failed.pending[0]
+            .fix
+            .as_ref()
+            .expect("the picker on the first failure");
+        assert_eq!(fix.action, CreateFixAction::ChooseWindowsIso);
+        assert!(fix.keep_retry);
     }
 
     /// The bar of a first-time Windows build only moves forward through the

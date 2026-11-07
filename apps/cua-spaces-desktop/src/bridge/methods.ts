@@ -39,7 +39,7 @@ export const METHODS = [
   "notifications.list", "notifications.markAllRead", "notifications.markRead",
   "telemetry.track", "telemetry.linkNotice", "telemetry.acknowledgeLinkNotice", "crashReporting.config", "spaces.usage", "spaces.windows", "stream.pip",
   "spaces.thumbnail",
-  "spaces.chooseFiles", "spaces.droppedFiles", "spaces.sendFiles",
+  "spaces.chooseFiles", "spaces.droppedFiles", "spaces.sendFiles", "windows.chooseIso",
   "host.setUp", "host.joinWithCode", "host.action", "host.limits", "host.openSettings",
   "settings.get", "settings.choose", "settings.update",
   "runtimes.check", "runtimes.browse", "repoCache.get", "repoCache.set", "repoCache.clear",

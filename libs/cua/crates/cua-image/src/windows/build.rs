@@ -492,6 +492,48 @@ pub fn local_build_target(reference: &str) -> Option<&'static WindowsVersion> {
     super::table::lookup(tag).filter(|v| v.builds_locally())
 }
 
+/// Remembers a Windows ISO the person chose for the image `reference` names
+/// (what `cua sb create windows:11 --iso <path>` does), in `layout`: the
+/// build that follows installs from it instead of downloading one. Answers
+/// the file's name, or why it cannot be used, in plain words.
+pub fn use_user_iso(
+    layout: &Layout,
+    reference: &str,
+    path: &Path,
+) -> std::result::Result<String, String> {
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.display().to_string());
+    let version = local_build_target(reference)
+        .ok_or_else(|| "This image does not install from a Windows ISO.".to_string())?;
+    let arch = WindowsArch::host();
+    version.check_arch(arch).map_err(|e| e.to_string())?;
+    iso::register(&layout.iso_dir(), version, arch, path).map_err(|e| iso_problem(&name, &e))?;
+    Ok(name)
+}
+
+/// Why an ISO the person chose cannot be used, in plain words.
+fn iso_problem(name: &str, e: &ImageError) -> String {
+    let why = match e {
+        ImageError::Reference(_, why) => why.as_str(),
+        _ => return format!("{name} can't be used: {e}"),
+    };
+    if why.starts_with("no such file") {
+        format!("{name} is gone. Choose the Windows ISO again.")
+    } else if why.contains("too small") || why.contains("not an ISO 9660") {
+        format!(
+            "{name} is not a Windows disc image (.iso). Choose the file you downloaded from Microsoft."
+        )
+    } else if why.contains("ARM64 ISO") {
+        format!("{name} is for ARM64 PCs, but this computer needs the x64 Windows ISO.")
+    } else if why.contains("x64 ISO") {
+        format!("{name} is for x64 PCs, but this computer needs the ARM64 Windows ISO.")
+    } else {
+        format!("{name} can't be used: {why}.")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -723,5 +765,34 @@ mod tests {
         assert_eq!(r.user_iso.as_deref(), Some(Path::new("/isos/w.iso")));
         let bad = |k: &str| (k == "CUA_WINDOWS_USER").then(|| "a b".to_string());
         assert!(BuildRequest::from_env(v, WindowsArch::Amd64, &layout, &bad).is_err());
+    }
+
+    /// A chosen ISO is remembered for the image (the build then finds it), and
+    /// one that is not a disc image is refused in plain words.
+    #[test]
+    fn a_chosen_iso_is_remembered_and_a_wrong_file_is_refused_plainly() {
+        use std::io::{Seek as _, SeekFrom, Write as _};
+        let d = tempfile::tempdir().unwrap();
+        let layout = Layout::new(d.path().join("windows"));
+        let good = d.path().join("Windows11.iso");
+        let mut f = std::fs::File::create(&good).unwrap();
+        f.set_len(iso::MIN_ISO_BYTES).unwrap();
+        f.seek(SeekFrom::Start(0x8001)).unwrap();
+        f.write_all(b"CD001").unwrap();
+        drop(f);
+        let name = use_user_iso(&layout, "ghcr.io/trycua/windows:11", &good).unwrap();
+        assert_eq!(name, "Windows11.iso");
+        let v = local_build_target("ghcr.io/trycua/windows:11").unwrap();
+        assert_eq!(
+            iso::registered(&layout.iso_dir(), v, WindowsArch::host()),
+            Some(std::fs::canonicalize(&good).unwrap())
+        );
+        let text = d.path().join("notes.txt");
+        std::fs::write(&text, b"hello").unwrap();
+        let e = use_user_iso(&layout, "ghcr.io/trycua/windows:11", &text).unwrap_err();
+        assert!(e.contains("notes.txt is not a Windows disc image"), "{e}");
+        assert!(!e.contains(d.path().to_str().unwrap()), "no path in {e}");
+        let e = use_user_iso(&layout, "ghcr.io/trycua/linux:24.04", &good).unwrap_err();
+        assert_eq!(e, "This image does not install from a Windows ISO.");
     }
 }

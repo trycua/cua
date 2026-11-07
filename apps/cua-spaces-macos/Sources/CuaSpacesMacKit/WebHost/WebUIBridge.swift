@@ -109,7 +109,7 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         // A Space's thumbnail (WebUIBridge+Thumbnails.swift).
         "spaces.thumbnail",
         // A Space's drop well: Send file… and dropped files (WebUIBridge+Files.swift).
-        "spaces.chooseFiles", "spaces.droppedFiles", "spaces.sendFiles",
+        "spaces.chooseFiles", "spaces.droppedFiles", "spaces.sendFiles", "windows.chooseIso",
         "host.setUp", "host.joinWithCode", "host.action", "host.limits", "host.openSettings",
         "settings.get", "settings.choose", "settings.update",
         // Settings, Advanced's runtime rows (WebUIBridge+Runtimes.swift).
@@ -201,6 +201,11 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
     var offeredPaths: Set<String> = []
     /// "Send file…"'s picker (a test sets its own).
     var pickFiles: @MainActor () -> [URL]? = WebUIBridge.openPanel
+    /// "Choose Windows ISO…"'s picker (a test sets its own).
+    var pickIso: @MainActor () -> URL? = WebUIBridge.isoPanel
+    /// Checks and remembers the chosen ISO for a Windows image (the cua SDK's
+    /// own `--iso`; a test sets its own).
+    var useWindowsIso: @MainActor (_ image: String, _ path: String) -> WindowsIsoChoice = { windowsUseIso(image: $0, path: $1) }
     /// Settings, Advanced's "Browse…" for a kind's program (a test sets its own).
     var pickRuntime: @MainActor (String) async -> URL? = { WebUIBridge.runtimePanel($0) }
     /// The "<Space> is ready" notification of a create the onboarding

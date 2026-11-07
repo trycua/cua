@@ -15,6 +15,7 @@
  * | `spaces.thumbnail {spaceId, maxAgeMs?}` | none | `SpaceThumbnails.refresh` (the notch's and the cover's image) | `SpaceThumbnails`, ported |
  * | `spaces.chooseFiles {}` | none | "Send file…"'s `NSOpenPanel` (`SpaceDetailView.chooseFiles`) | Electron's open dialog |
  * | `spaces.droppedFiles {names}` | none | the drag pasteboard's file URLs (`TeleportDropZone`'s drop) | the drop's paths, read by the preload |
+ * | `windows.chooseIso {image}` | none | `NSOpenPanel` for an `.iso`, then `windowsUseIso` | Electron's open dialog, then `windowsUseIso` |
  * | `spaces.sendFiles {spaceId, paths}` | none | `backend.sendFiles` (`Space.send_file`) | the same SDK call |
  *
  * Types mirror `cua-spaces-app-core/src/spaces/sidebar.rs` and `stream.rs`.
@@ -258,6 +259,17 @@ export interface SpaceDetailOps {
   "spaces.droppedFiles": { args: { names: string[] }; result: string[] };
   /** Sends picked or dropped files into the Space's Downloads. */
   "spaces.sendFiles": { args: { spaceId: string; paths: string[] }; result: SentFileInfo[] };
+  /** "Choose Windows ISO…": the host's file picker for a Windows disc image
+   * (`.iso`), checked and remembered for `image` (what `cua sb create
+   * windows:11 --iso <path>` does), so the create that follows installs
+   * from that file. Null when cancelled. A file that cannot be used rejects
+   * with the reason in plain words. */
+  "windows.chooseIso": { args: { image: string }; result: ChosenIso | null };
+}
+
+/** The Windows ISO a person chose (`windows_use_iso`): its file name. */
+export interface ChosenIso {
+  name: string;
 }
 
 
@@ -274,6 +286,7 @@ export const TAURI_SPACE_DETAIL_UNSUPPORTED = [
   "spaces.chooseFiles",
   "spaces.droppedFiles",
   "spaces.sendFiles",
+  "windows.chooseIso",
 ] as const;
 
 export function tauriSpaceDetailOps(invoke: Invoke) {
@@ -320,6 +333,11 @@ export const SPACE_DETAIL_COVERAGE = {
     tauri: [],
     unsupported: { tauri: DROP_WELL },
   },
+  "windows.chooseIso": {
+    webkit: { methods: ["windows.chooseIso"] },
+    tauri: [],
+    unsupported: { tauri: "the Tauri app builds no Windows images" },
+  },
 } as const satisfies Record<keyof SpaceDetailOps, OpCoverage>;
 
 /** Arguments that take each W5 operation down its usual path in the demo host (coverage tests). */
@@ -332,6 +350,7 @@ export const DETAIL_ARGS = {
   "spaces.chooseFiles": {},
   "spaces.droppedFiles": { names: ["notes.txt"] },
   "spaces.sendFiles": { spaceId: "local:design-review", paths: ["/Users/demo/notes.txt"] },
+  "windows.chooseIso": { image: "ghcr.io/trycua/windows:11" },
   "host.setUp": { request: { mode: "relay" } },
   "host.joinWithCode": { code: "K7QM-4XPB-2RHD" },
   "host.action": { action: "stop-sharing" as const },

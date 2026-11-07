@@ -11,9 +11,7 @@ use std::{future::Future, path::Path, sync::Arc, time::Duration};
 
 use super::ToolState;
 use crate::permission_observation::{DirectCaptureEvidenceStore, DirectCaptureVerification};
-use crate::permissions::status::{
-    accessibility_granted, current_status, request_next_missing, screen_recording_granted,
-};
+use crate::permissions::status::{current_status, request_next_missing};
 
 /// Private argv sentinel shared by the trusted CLI launcher and the public
 /// launch_app refusal.
@@ -401,8 +399,19 @@ impl Tool for CheckPermissionsTool {
             // Accessibility is on.
             let _ = request_next_missing(current_status());
         }
-        let accessibility = accessibility_granted();
-        let screen_recording = screen_recording_granted();
+        // A read-only check also answers while the daemon's permission gate
+        // is pending. macOS caches a negative preflight for the life of the
+        // process that asked, so the daemon reads it from a fresh copy of
+        // itself, as the gate does. A host-owned runtime's executable is the
+        // host's, so it reads in process.
+        let status = (!should_prompt
+            && !self.state.host_owns_permission_ux
+            && !cua_driver_core::embedded_mode())
+        .then(|| crate::permissions::gate::fresh_status_with_request(false).ok())
+        .flatten()
+        .unwrap_or_else(current_status);
+        let accessibility = status.accessibility;
+        let screen_recording = status.screen_recording;
         // (A) Authoritative live probe — see `screen_recording_capturable`.
         // The probe's capture raises Tahoe's separate private-window-picker
         // bypass consent. A status/read-only call must therefore never

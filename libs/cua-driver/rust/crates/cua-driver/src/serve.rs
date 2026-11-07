@@ -431,7 +431,7 @@ async fn invoke_daemon_tool(
     sdk: &std::sync::Arc<crate::sdk_adapter::SdkAdapter>,
     req: DaemonRequest,
 ) -> DaemonResponse {
-    if let Some(refusal) = sdk.permissions_pending_result() {
+    if let Some(refusal) = sdk.permissions_pending_result(req.name.as_deref().unwrap_or("")) {
         return permissions_pending_response(req.observation_origin, refusal);
     }
     let observation_transport = daemon_observation_transport(&req);
@@ -694,23 +694,46 @@ pub fn set_permission_gate_pending(driver: &cua_driver_sdk::CuaDriver, pending: 
 }
 
 #[cfg(target_os = "macos")]
-/// Settle the gate after its interactive phase. A pass opens tool calls now.
-/// A timeout keeps them gated while `wait_after_timeout` keeps polling on its
-/// own thread, so a later grant opens them without a restart.
+/// Settle the gate after its interactive phase, then follow the grants while
+/// the daemon runs. A pass opens tool calls now. A timeout keeps them gated
+/// until `wait_after_timeout` sees the grants. After that, every `interval`
+/// `grants_on` is read again: a revoked grant gates tool calls and a restored
+/// one opens them, without a restart. `None` (no answer) changes nothing.
+/// An opted-out gate passes `follow: false` and is never gated.
 pub fn settle_permission_gate(
     driver: std::sync::Arc<cua_driver_sdk::CuaDriver>,
     gate_passed: bool,
     wait_after_timeout: impl FnOnce() -> anyhow::Result<()> + Send + 'static,
+    follow: bool,
+    mut grants_on: impl FnMut() -> Option<bool> + Send + 'static,
+    interval: std::time::Duration,
 ) -> Option<std::thread::JoinHandle<()>> {
     if gate_passed {
         set_permission_gate_pending(&driver, false);
-        return None;
+        if !follow {
+            return None;
+        }
     }
     let poll = std::thread::Builder::new()
         .name("cua-permissions-poll".into())
         .spawn(move || {
-            if wait_after_timeout().is_ok() {
+            if !gate_passed {
+                if wait_after_timeout().is_err() {
+                    return;
+                }
                 set_permission_gate_pending(&driver, false);
+            }
+            if !follow {
+                return;
+            }
+            loop {
+                std::thread::sleep(interval);
+                if !driver.is_available() {
+                    return;
+                }
+                if let Some(on) = grants_on() {
+                    set_permission_gate_pending(&driver, !on);
+                }
             }
         })
         .expect("spawn permissions poll thread");
@@ -3256,24 +3279,97 @@ mod permission_gate_tests {
             refusal_code(&value) == Some("permissions_pending")
         };
 
+        let tick = std::time::Duration::from_millis(1);
+        let settle = |passed: bool, wait: anyhow::Result<()>| {
+            super::settle_permission_gate(
+                driver.clone(),
+                passed,
+                move || wait,
+                false,
+                || None,
+                tick,
+            )
+        };
+
         driver.set_awaiting_permissions(true);
-        assert!(super::settle_permission_gate(driver.clone(), true, || unreachable!()).is_none());
+        assert!(settle(true, Ok(())).is_none());
         assert!(!refused(call().await.unwrap()));
 
         driver.set_awaiting_permissions(true);
-        super::settle_permission_gate(driver.clone(), false, || anyhow::bail!("not granted"))
+        settle(false, Err(anyhow::anyhow!("not granted")))
             .expect("a timed-out gate keeps polling")
             .join()
             .unwrap();
         assert!(refused(call().await.unwrap()));
 
-        super::settle_permission_gate(driver.clone(), false, || Ok(()))
-            .expect("a timed-out gate keeps polling")
-            .join()
-            .unwrap();
-        assert!(!refused(call().await.unwrap()));
+        let poll = settle(false, Ok(())).expect("a timed-out gate keeps polling");
+        let mut opened = false;
+        for _ in 0..200 {
+            if !refused(call().await.unwrap()) {
+                opened = true;
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        assert!(opened, "a late grant opens tool calls");
         assert_eq!(calls.load(Ordering::SeqCst), 2);
         driver.shutdown().await.unwrap();
+        poll.join().unwrap();
+    }
+
+    /// A grant revoked while the daemon runs gates tool calls again, and
+    /// turning it back on reopens them. A probe that cannot answer changes
+    /// nothing, and the poll ends with the runtime.
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn a_revoked_grant_gates_tool_calls_until_it_is_back() {
+        let _guard = crate::test_runtime_lock().lock().await;
+        let (driver, _sdk, calls) = crate::probe_sdk().await;
+        let call = || driver.call_tool("get_screen_size".into(), "{}".into());
+        let refused = |result: cua_driver_sdk::ToolResult| {
+            let value: serde_json::Value = serde_json::from_str(&result.raw_json).unwrap();
+            refusal_code(&value) == Some("permissions_pending")
+        };
+        // The test sets what the next probes answer.
+        let grants = std::sync::Arc::new(std::sync::Mutex::new(Some(true)));
+        let probe = {
+            let grants = grants.clone();
+            move || *grants.lock().unwrap()
+        };
+        let poll = super::settle_permission_gate(
+            driver.clone(),
+            true,
+            || unreachable!("a passed gate never waits"),
+            true,
+            probe,
+            std::time::Duration::from_millis(1),
+        )
+        .expect("a followed gate keeps polling");
+        let settles_to = |want_refused: bool| {
+            let call = &call;
+            async move {
+                for _ in 0..400 {
+                    if refused(call().await.unwrap()) == want_refused {
+                        return true;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+                }
+                false
+            }
+        };
+
+        assert!(settles_to(false).await, "granted: tool calls run");
+        *grants.lock().unwrap() = Some(false);
+        assert!(settles_to(true).await, "revoked: tool calls are gated");
+        *grants.lock().unwrap() = None;
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        assert!(refused(call().await.unwrap()), "no answer keeps the gate");
+        *grants.lock().unwrap() = Some(true);
+        assert!(settles_to(false).await, "restored: tool calls run again");
+        assert!(calls.load(Ordering::SeqCst) >= 2);
+
+        driver.shutdown().await.unwrap();
+        poll.join().expect("the poll ends with the runtime");
     }
 
     #[tokio::test]

@@ -117,7 +117,7 @@ pub(crate) struct RuntimeSession {
 
 impl RuntimeSession {
     pub(crate) async fn invoke(&self, name: &str, mut args: Value) -> Option<CoreToolResult> {
-        if let Some(refusal) = self.runtime.permissions_pending_refusal() {
+        if let Some(refusal) = self.runtime.permissions_pending_refusal(name) {
             return Some(refusal);
         }
         cua_driver_core::tool_args::sanitize_reserved_args(&mut args);
@@ -169,8 +169,9 @@ impl Drop for RuntimeSession {
 #[repr(u8)]
 enum Admission {
     Open = 0,
-    /// The host's permission gate has not confirmed its grants yet. Inventory
-    /// and lifecycle diagnostics stay reachable; no tool runs.
+    /// The host's permission gate has not confirmed its grants, or saw them
+    /// revoked. Inventory and lifecycle diagnostics stay reachable; no tool
+    /// runs except `check_permissions`, which explains the wait.
     AwaitingPermissions = 1,
     Closed = 2,
 }
@@ -271,10 +272,10 @@ impl DriverRuntime {
         );
     }
 
-    /// The refusal every tool call gets while the permission gate is pending.
+    /// The refusal a call to `tool` gets while the permission gate is pending.
     /// It answers before any other refusal.
-    pub(crate) fn permissions_pending_refusal(&self) -> Option<CoreToolResult> {
-        (self.admission() == Admission::AwaitingPermissions)
+    pub(crate) fn permissions_pending_refusal(&self, tool: &str) -> Option<CoreToolResult> {
+        (self.admission() == Admission::AwaitingPermissions && tool != "check_permissions")
             .then(|| refusal_result("permissions_pending", PERMISSIONS_PENDING.to_owned()))
     }
 
@@ -368,7 +369,7 @@ impl DriverRuntime {
         context: Arc<EffectiveAuthorizationContext>,
         evidence: cua_driver_core::tool::TrustedInvocationEvidence,
     ) -> Option<CoreToolResult> {
-        if let Some(refusal) = self.permissions_pending_refusal() {
+        if let Some(refusal) = self.permissions_pending_refusal(name) {
             return Some(refusal);
         }
         if !self.is_running() {
@@ -1006,6 +1007,15 @@ mod tests {
         );
         assert!(runtime.is_running(), "awaiting is not closed");
         assert!(runtime.tools_list().is_some(), "inventory stays reachable");
+        let explained = runtime
+            .invoke("check_permissions", serde_json::json!({"prompt": false}))
+            .await
+            .expect("an awaiting runtime answers");
+        assert_ne!(
+            explained.is_error,
+            Some(true),
+            "check_permissions explains the wait instead of being refused: {explained:?}"
+        );
 
         runtime.shutdown().await;
         runtime.set_awaiting_permissions(false);

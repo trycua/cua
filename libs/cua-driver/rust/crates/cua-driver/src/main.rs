@@ -788,6 +788,7 @@ fn main() {
             // CUA_DRIVER_RS_PERMISSIONS_GATE=0 for CI / headless.
             //
             let slow_opts = gate_opts.after_timeout();
+            let follow_grants = !gate_opts.opt_out;
             let gate_result = platform_macos::permissions::run_if_needed_with_observer(
                 gate_opts,
                 |progress, context| match progress {
@@ -806,9 +807,15 @@ fn main() {
                     }
                 },
             );
-            serve::settle_permission_gate(gate_driver, gate_result.is_ok(), move || {
-                platform_macos::permissions::gate::wait_for_grants(&slow_opts)
-            });
+            let recheck = slow_opts.poll_interval;
+            serve::settle_permission_gate(
+                gate_driver,
+                gate_result.is_ok(),
+                move || platform_macos::permissions::gate::wait_for_grants(&slow_opts),
+                follow_grants,
+                platform_macos::permissions::gate::fresh_grants_on,
+                recheck,
+            );
             let gate_context = platform_macos::permissions::gate::telemetry_context();
             if gate_context.engaged {
                 telemetry::capture_permissions_gate_completed(

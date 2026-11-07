@@ -338,12 +338,13 @@ impl CuaDriver {
         }
     }
 
-    /// The raw `permissions_pending` tool result while the permission gate is
-    /// pending, so a host transport can answer it before its own refusals.
+    /// The raw `permissions_pending` result a call to `tool` gets while the
+    /// permission gate is pending, so a host transport can answer it before
+    /// its own refusals.
     #[doc(hidden)]
-    pub fn permissions_pending_result(&self) -> Option<Value> {
+    pub fn permissions_pending_result(&self, tool: &str) -> Option<Value> {
         match &self.backend {
-            DriverBackend::Embedded(runtime) => runtime.permissions_pending_result(),
+            DriverBackend::Embedded(runtime) => runtime.permissions_pending_result(tool),
             _ => None,
         }
     }

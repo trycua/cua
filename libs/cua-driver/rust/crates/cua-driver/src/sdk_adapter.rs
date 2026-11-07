@@ -154,8 +154,8 @@ impl SdkAdapter {
         self.driver.local_history_manager()
     }
 
-    pub fn permissions_pending_result(&self) -> Option<Value> {
-        self.driver.permissions_pending_result()
+    pub fn permissions_pending_result(&self, tool: &str) -> Option<Value> {
+        self.driver.permissions_pending_result(tool)
     }
 
     pub fn is_known_tool(&self, name: &str) -> bool {

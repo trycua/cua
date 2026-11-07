@@ -148,6 +148,14 @@ pub(crate) fn fresh_status() -> PermissionsStatus {
     })
 }
 
+/// Whether both grants are on, read from a fresh helper process. `None` when
+/// the helper could not answer, so a caller can keep its current state.
+pub fn fresh_grants_on() -> Option<bool> {
+    fresh_status_with_request(false)
+        .ok()
+        .map(PermissionsStatus::all_granted)
+}
+
 /// Inspect fresh TCC state and return whatever is missing.
 pub fn check_required_permissions() -> Vec<MissingPermission> {
     missing_from_status(fresh_status())

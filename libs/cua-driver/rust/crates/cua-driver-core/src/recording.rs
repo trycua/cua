@@ -2657,6 +2657,42 @@ mod tests {
     }
 
     #[test]
+    fn state_hook_admits_one_running_walk_per_pid() {
+        const PID: i64 = 990_101;
+        let (entered_tx, entered) = std::sync::mpsc::channel::<()>();
+        let (release, gate) = std::sync::mpsc::channel::<()>();
+        let entered_tx = Mutex::new(entered_tx);
+        let gate = Mutex::new(gate);
+        let slow: AxSnapshotFn = Arc::new(move |_, _, _| {
+            let _ = entered_tx.lock().unwrap().send(());
+            let _ = gate.lock().unwrap().recv();
+            Some(b"{}".to_vec())
+        });
+        let budget = StateCaptureBudget { timeout_ms: 10_000 };
+        let first = std::thread::spawn(move || run_state_hook(slow, None, Some(PID), budget));
+        entered.recv().unwrap();
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let counting_calls = calls.clone();
+        let fast: AxSnapshotFn = Arc::new(move |_, _, _| {
+            counting_calls.fetch_add(1, Ordering::SeqCst);
+            Some(b"{}".to_vec())
+        });
+        let second = run_state_hook(fast.clone(), None, Some(PID), budget);
+        assert_eq!(second.classification, Some("state_capture_busy"));
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            0,
+            "one walk per app at a time"
+        );
+
+        release.send(()).unwrap();
+        assert!(first.join().unwrap().bytes.is_some());
+        let after = run_state_hook(fast, None, Some(PID), budget);
+        assert!(after.bytes.is_some(), "a finished walk frees its pid");
+    }
+
+    #[test]
     fn predicted_refusal_skips_state_and_records_a_missed_prediction() {
         let refusal = crate::action_record::ActionExecutionRecord::builder(
             crate::action_record::ActionEffect::Refused,

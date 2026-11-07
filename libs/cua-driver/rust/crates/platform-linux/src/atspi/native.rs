@@ -2846,7 +2846,23 @@ fn list_windows_blocking(filter_pid: Option<u32>) -> Vec<crate::x11::WindowInfo>
     })
 }
 
-/// Pick the editable node to write into, by priority:
+fn pick_editable<'v, 'a>(visited: &'v [Visited<'a>], complete: bool) -> Option<&'v Visited<'a>> {
+    let flags = visited.iter().map(|v| EditableFlags {
+        editable: v.has_editable,
+        focused: v.focused,
+        in_web_doc: v.in_web_doc,
+    });
+    visited.get(pick_editable_index(flags, complete)?)
+}
+
+#[derive(Clone, Copy)]
+struct EditableFlags {
+    editable: bool,
+    focused: bool,
+    in_web_doc: bool,
+}
+
+/// Index of the editable to write into, by priority:
 ///   1. the focused editable (if the toolkit exposes focus),
 ///   2. an editable inside web/document content — for a browser this is the
 ///      page's field, not the address bar (which sorts first in the tree but is
@@ -2854,21 +2870,22 @@ fn list_windows_blocking(filter_pid: Option<u32>) -> Vec<crate::x11::WindowInfo>
 ///   3. the first editable anywhere (covers single-field apps like a GTK dialog
 ///      entry, or a GTK4 GtkEntry).
 ///
-/// Choose the editable to write into. `complete` says whether `visited` is the
-/// whole tree: on a *partial* walk the "first editable anywhere" fallback is
-/// withheld, because the field the user means (the focused one) may simply not
-/// have been reached yet and writing into an arbitrary earlier field (a name
-/// box, a search entry) would be a silent misdelivery.
-fn pick_editable<'v, 'a>(visited: &'v [Visited<'a>], complete: bool) -> Option<&'v Visited<'a>> {
-    visited
-        .iter()
-        .find(|v| v.has_editable && v.focused)
-        .or_else(|| visited.iter().find(|v| v.has_editable && v.in_web_doc))
-        .or_else(|| {
-            complete
-                .then(|| visited.iter().find(|v| v.has_editable))
-                .flatten()
-        })
+/// `complete` says whether the nodes are the whole tree. A *partial* walk keeps
+/// only rule 1: the focused field may not have been reached yet, and rules 2
+/// and 3 would then write into an earlier field (a second page input, a search
+/// box), a silent misdelivery. The caller falls through to a route that
+/// follows the app's real focus instead.
+fn pick_editable_index(
+    nodes: impl Iterator<Item = EditableFlags> + Clone,
+    complete: bool,
+) -> Option<usize> {
+    let first =
+        |rule: fn(&EditableFlags) -> bool| nodes.clone().position(|n| n.editable && rule(&n));
+    first(|n| n.focused).or_else(|| {
+        complete
+            .then(|| first(|n| n.in_web_doc).or_else(|| first(|_| true)))
+            .flatten()
+    })
 }
 
 /// Try to write `text` into the best editable node in `visited` via AT-SPI
@@ -8806,6 +8823,66 @@ mod token_scope_tests {
         )
         .is_ok());
         assert!(window_element_membership(Some(0), None, proven(None, vec![REQUESTED_B])).is_ok());
+    }
+}
+
+#[cfg(test)]
+mod pick_editable_tests {
+    use super::{pick_editable_index, EditableFlags};
+
+    const ENTRY: EditableFlags = EditableFlags {
+        editable: true,
+        focused: false,
+        in_web_doc: false,
+    };
+    const PAGE_FIELD: EditableFlags = EditableFlags {
+        in_web_doc: true,
+        ..ENTRY
+    };
+    const LABEL: EditableFlags = EditableFlags {
+        editable: false,
+        ..ENTRY
+    };
+
+    fn pick(nodes: &[EditableFlags], complete: bool) -> Option<usize> {
+        pick_editable_index(nodes.iter().copied(), complete)
+    }
+
+    #[test]
+    fn a_reached_focused_editable_wins_on_any_walk() {
+        let focused = EditableFlags {
+            focused: true,
+            ..PAGE_FIELD
+        };
+        let tree = [ENTRY, PAGE_FIELD, LABEL, focused];
+        assert_eq!(pick(&tree, true), Some(3));
+        assert_eq!(pick(&tree, false), Some(3));
+    }
+
+    #[test]
+    fn a_partial_walk_writes_nowhere_but_the_focused_editable() {
+        // The focused field may sit past where the walk stopped, so neither an
+        // earlier page field nor an earlier entry is a safe target.
+        assert_eq!(pick(&[ENTRY, LABEL, PAGE_FIELD], false), None);
+        assert_eq!(pick(&[PAGE_FIELD], false), None);
+        assert_eq!(pick(&[ENTRY], false), None);
+    }
+
+    #[test]
+    fn a_complete_walk_without_focus_prefers_page_content_then_any_editable() {
+        assert_eq!(pick(&[ENTRY, LABEL, PAGE_FIELD], true), Some(2));
+        assert_eq!(pick(&[LABEL, ENTRY, ENTRY], true), Some(1));
+        assert_eq!(pick(&[LABEL], true), None);
+    }
+
+    #[test]
+    fn focus_on_a_non_editable_node_is_not_a_target() {
+        let focused_label = EditableFlags {
+            focused: true,
+            ..LABEL
+        };
+        assert_eq!(pick(&[focused_label, PAGE_FIELD], false), None);
+        assert_eq!(pick(&[focused_label, PAGE_FIELD], true), Some(1));
     }
 }
 

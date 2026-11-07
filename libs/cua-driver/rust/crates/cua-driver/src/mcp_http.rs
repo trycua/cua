@@ -893,6 +893,33 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn http_tool_call_waits_for_the_permission_gate() {
+        let _runtime_guard = crate::test_runtime_lock().lock().await;
+        let (driver, sdk, calls) = crate::probe_sdk().await;
+        let call = || {
+            dispatch(
+                br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"get_screen_size","arguments":{}}}"#,
+                &sdk,
+                "http-pending",
+            )
+        };
+
+        driver.set_awaiting_permissions(true);
+        let pending: serde_json::Value =
+            serde_json::from_str(&call().await.expect("JSON-RPC response")).unwrap();
+        assert_eq!(
+            pending["result"]["structuredContent"]["refusal"]["code"], "permissions_pending",
+            "{pending}"
+        );
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+
+        driver.set_awaiting_permissions(false);
+        call().await.expect("JSON-RPC response");
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+        sdk.shutdown().await.expect("SDK shutdown");
+    }
+
+    #[tokio::test]
     async fn invalid_bearer_receives_401_before_json_rpc_dispatch() {
         let _runtime_guard = crate::test_runtime_lock().lock().await;
         let sdk = crate::sdk_adapter::SdkAdapter::load(crate::build_driver_without_cursor())

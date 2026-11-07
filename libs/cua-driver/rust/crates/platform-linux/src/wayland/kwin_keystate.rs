@@ -3,8 +3,9 @@
 
 //! Caps Lock and Num Lock as KWin knows them, through `org_kde_kwin_keystate`.
 //! KWin before 6.8 tells a libei client nothing about the keyboard's state, and
-//! an EIS key goes through that state. This global is privileged: KWin offers it
-//! only to a program whose desktop entry lists it in `X-KDE-Wayland-Interfaces`.
+//! an EIS key goes through that state. KWin 6.3 to 6.5 offers this global only to
+//! a program whose desktop entry lists it in `X-KDE-Wayland-Interfaces`; KWin 6.6
+//! offers it to any client.
 
 use std::time::{Duration, Instant};
 

@@ -263,7 +263,7 @@ fn watch_order_after_action(target: i32, front: i32, order: bool, epoch: Epoch) 
                 }
                 if current.order
                     && restores < MAX_RESTORES_PER_WATCH
-                    && focus_arbiter::decide(current.epoch) == Decision::Undo
+                    && current.epoch.is_current()
                     && restore_front_if_raised(target, current.front)
                 {
                     restores += 1;
@@ -415,7 +415,7 @@ pub struct Lease {
 impl Drop for Lease {
     fn drop(&mut self) {
         revert_self_activation(self.pid, self.front, self.epoch);
-        if !self.above_before {
+        if !self.above_before && self.epoch.is_current() {
             restore_front_if_raised(self.pid, self.front);
         }
         watch_order_after_action(self.pid, self.front, !self.above_before, self.epoch);

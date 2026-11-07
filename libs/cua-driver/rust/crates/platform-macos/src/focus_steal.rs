@@ -148,8 +148,21 @@ impl FocusStealPreventer {
         restore_to: i32,
         origin: &'static str,
     ) -> SuppressionLease {
+        Self::begin_suppression_since(target_pid, restore_to, origin, Epoch::now())
+    }
+
+    /// [`Self::begin_suppression`] for an action that started at `armed`: a
+    /// driver activation since then is not undone.
+    pub fn begin_suppression_since(
+        target_pid: Option<i32>,
+        restore_to: i32,
+        origin: &'static str,
+        armed: Epoch,
+    ) -> SuppressionLease {
         let shared = Self::shared();
-        let handle = shared.dispatcher.add(target_pid, restore_to, origin);
+        let handle = shared
+            .dispatcher
+            .add_entry(target_pid, None, restore_to, origin, armed);
         SuppressionLease {
             handle,
             dispatcher: Arc::clone(&shared.dispatcher),
@@ -168,9 +181,10 @@ impl FocusStealPreventer {
         origin: &'static str,
     ) -> SuppressionLease {
         let shared = Self::shared();
-        let handle = shared
-            .dispatcher
-            .add_allowing(allowed_pid, restore_to, origin);
+        let handle =
+            shared
+                .dispatcher
+                .add_entry(None, Some(allowed_pid), restore_to, origin, Epoch::now());
         SuppressionLease {
             handle,
             dispatcher: Arc::clone(&shared.dispatcher),
@@ -273,23 +287,25 @@ impl Dispatcher {
     /// subsequent adds would skip the kick and the janitor never
     /// started, leaving deadline-reaping entirely up to the
     /// `snapshot_matches` reap fallback (only fires on an activation).
+    #[cfg(test)]
     fn add(
         self: &Arc<Self>,
         target_pid: Option<i32>,
         restore_to: i32,
         origin: &'static str,
     ) -> SuppressionHandle {
-        self.add_entry(target_pid, None, restore_to, origin)
+        self.add_entry(target_pid, None, restore_to, origin, Epoch::now())
     }
 
     /// Add a wildcard entry that ignores one intentional target activation.
+    #[cfg(test)]
     fn add_allowing(
         self: &Arc<Self>,
         allowed_pid: i32,
         restore_to: i32,
         origin: &'static str,
     ) -> SuppressionHandle {
-        self.add_entry(None, Some(allowed_pid), restore_to, origin)
+        self.add_entry(None, Some(allowed_pid), restore_to, origin, Epoch::now())
     }
 
     fn add_entry(
@@ -298,6 +314,7 @@ impl Dispatcher {
         allowed_pid: Option<i32>,
         restore_to: i32,
         origin: &'static str,
+        armed: Epoch,
     ) -> SuppressionHandle {
         let id = Uuid::new_v4();
         let entry = Entry {
@@ -305,7 +322,7 @@ impl Dispatcher {
             allowed_pid,
             restore_to,
             deadline: Instant::now() + ENTRY_DEADLINE,
-            armed: Epoch::now(),
+            armed,
             origin,
         };
         {

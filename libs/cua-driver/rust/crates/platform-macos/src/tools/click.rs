@@ -246,13 +246,16 @@ pub(super) async fn restore_user_focus_after_background_pixel(
     if prior_front == Some(pid) {
         return;
     }
+    let armed = crate::focus_arbiter::Epoch::now();
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     let reactivated = if let Some(previous_pid) = background_pixel_restore_pid(
         PixelActivationPolicy::AllowTargetWithoutRaise,
         prior_front,
         pid,
         apps::frontmost_pid(),
-    ) {
+    )
+    .filter(|_| crate::focus_arbiter::decide(armed) == crate::focus_arbiter::Decision::Undo)
+    {
         let _ = apps::reactivate_app(previous_pid);
         wait_until_frontmost(previous_pid, std::time::Duration::from_millis(300)).await;
         true

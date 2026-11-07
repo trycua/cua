@@ -1651,6 +1651,13 @@ impl LocalRuntime for WithExternal {
         }
     }
 
+    async fn mend(&self, name: &str, runtime_type: &str) -> RuntimeResult<Option<LocalInstance>> {
+        match self.by_type(runtime_type) {
+            Some(rt) => rt.mend(name, runtime_type).await,
+            None => self.inner.mend(name, runtime_type).await,
+        }
+    }
+
     async fn delete(&self, name: &str) -> RuntimeResult<()> {
         match self.owner(name).await {
             Some(rt) => {

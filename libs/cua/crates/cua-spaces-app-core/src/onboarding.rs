@@ -1417,7 +1417,7 @@ pub fn view_for(s: &OnboardingState, os: SpaceOs, cli_page: bool) -> OnboardingV
             vec![]
         },
         notice: (s.step == Welcome).then(|| {
-            "Cua collects usage data, like which features you use and when something goes wrong. When you're signed in, it's linked to your account through a random ID. Never your files, what you type or your screen. Change this here or in Settings, Privacy."
+            "Features you use and errors, linked to your account. Never your files, typing or screen."
                 .into()
         }),
         notice_link_label: (s.step == Welcome).then(|| "What is collected".into()),

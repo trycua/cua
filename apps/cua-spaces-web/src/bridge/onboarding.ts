@@ -319,7 +319,7 @@ function fallbackView(s: OnboardingFlowState, os: HostOs): OnboardingView {
             { menuBar: true, title: "Menu bar only", id: "onboarding-menu-bar", imageLabel: "The menu bar menu alone", selected: s.menuBar },
           ]
         : [],
-    notice: s.step === "welcome" ? "Cua collects usage data, like which features you use and when something goes wrong. When you're signed in, it's linked to your account through a random ID. Never your files, what you type or your screen. Change this here or in Settings, Privacy." : null,
+    notice: s.step === "welcome" ? "Features you use and errors, linked to your account. Never your files, typing or screen." : null,
     noticeLinkLabel: s.step === "welcome" ? "What is collected" : null,
     noticeLinkUrl: s.step === "welcome" ? "https://cua.ai/docs/cua-sdk/concepts/telemetry" : null,
     usage:

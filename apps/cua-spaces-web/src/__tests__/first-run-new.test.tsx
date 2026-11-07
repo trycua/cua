@@ -502,7 +502,7 @@ describe("after the first job, on Home: the rest of setup", () => {
 
 describe("screen 1, usage data", () => {
   const core = {
-    notice: "Cua collects usage data, like which features you use and when something goes wrong. Never your files, what you type or your screen.",
+    notice: "Features you use and errors, linked to your account. Never your files, typing or screen.",
     noticeLinkLabel: "What is collected",
     noticeLinkUrl: "https://cua.ai/docs/cua-sdk/concepts/telemetry",
     usage: { label: "Share usage data to help improve Cua", on: true, enabled: true, help: null },
@@ -515,7 +515,7 @@ describe("screen 1, usage data", () => {
     const line = document.querySelector<HTMLElement>("[data-new-run-usage]")!;
     expect(line.getAttribute("data-new-run-usage")).toBe("on");
     expect(line.textContent).toContain("Share usage data to help improve Cua");
-    expect(line.textContent).toContain("Never your files, what you type or your screen.");
+    expect(line.textContent).toContain("Never your files, typing or screen.");
     const sw = screen.getByRole("switch", { name: "Share usage data to help improve Cua" });
     fireEvent.click(sw);
     expect(onUsage).toHaveBeenCalledWith(false);

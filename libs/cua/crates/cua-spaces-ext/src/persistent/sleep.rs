@@ -27,8 +27,8 @@ use cua_spaces::sleep::Sleep;
 use cua_spacesd_client::Command;
 
 use super::{AgentRecord, Persistent, RunStatus, TickReport};
+use crate::Result;
 use crate::SpacesDrive as _;
-use crate::{Error, Result};
 
 /// How often one Space is looked at.
 pub(super) const CHECK_EVERY: Duration = Duration::from_secs(10);
@@ -296,7 +296,7 @@ impl Persistent {
         }
         self.spaces.volume_detach(space).await?;
         self.forget_space(space).await;
-        self.spaces.sleep(space).await.map_err(Error::from)
+        self.spaces.sleep(space).await
     }
 }
 

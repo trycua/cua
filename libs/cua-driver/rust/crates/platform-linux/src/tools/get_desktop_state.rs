@@ -73,6 +73,9 @@ impl Tool for GetDesktopStateTool {
             let niri_frame = (crate::wayland::is_wayland() && crate::wayland::niri::is_session())
                 .then(|| crate::wayland::niri::desktop_snapshot().map(|snapshot| snapshot.frame))
                 .transpose()?;
+            // KWin: the logical frame, read before the capture and compared
+            // after it. Its capture is that frame at the largest output scale.
+            let kwin_frame = crate::wayland::kwin_desktop_frame()?;
             let (native_png, overlay_capture) =
                 cursor_overlay::capture_exclusion::capture_excluding_overlays(
                     &crate::overlay_capture::OverlayExcluder,
@@ -103,6 +106,8 @@ impl Tool for GetDesktopStateTool {
             let hyprland_frame = hyprland_plan.map(|plan| plan.frame);
             let (screen_w, screen_h) = if let Some(frame) = &hyprland_frame {
                 (frame.width, frame.height)
+            } else if let Some(frame) = &kwin_frame {
+                (frame.width, frame.height)
             } else if crate::wayland::is_wayland() {
                 crate::capture_action_frame::desktop_action_dimensions((native_w, native_h))?
             } else {
@@ -110,6 +115,10 @@ impl Tool for GetDesktopStateTool {
             };
             let (png, shot_w, shot_h, scale_factor) =
                 normalize_desktop_capture_for_action_frame(native_png, screen_w, screen_h)?;
+            // One number for one desktop: get_screen_size reports this too.
+            let scale_factor = kwin_frame
+                .as_ref()
+                .map_or(scale_factor, |frame| frame.scale);
             // Opt-in long-edge cap: the full-size capture is the desktop
             // action frame; a capped image is mapped back at dispatch
             // (cua_driver_core::desktop_capture_scale) and by its capture_id.
@@ -154,6 +163,13 @@ impl Tool for GetDesktopStateTool {
                 anyhow::ensure!(
                     crate::wayland::niri::desktop_snapshot()?.frame == *frame,
                     "the niri output layout changed during get_desktop_state; call it again"
+                );
+                frame.rebase_windows(&mut windows);
+            } else if let Some(frame) = &kwin_frame {
+                // KWin window geometry is in layout coordinates too.
+                anyhow::ensure!(
+                    crate::wayland::kwin_desktop_frame()?.as_ref() == Some(frame),
+                    "the KWin output layout changed during get_desktop_state; call it again"
                 );
                 frame.rebase_windows(&mut windows);
             }

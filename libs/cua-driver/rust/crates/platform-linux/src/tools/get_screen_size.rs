@@ -58,13 +58,11 @@ impl Tool for GetScreenSizeTool {
                 return Ok((frame.width, frame.height, frame.scale, Some(monitors)));
             }
             if crate::wayland::is_wayland() {
-                // KWin: logical layout, so these match desktop capture and input.
-                if let Some(outputs) = crate::wayland::kwin_layout::query().ok().flatten() {
-                    let (width, height) = crate::wayland::kwin_layout::bounding_frame(&outputs)?;
-                    let scale = outputs
-                        .first()
-                        .map_or(1.0, crate::wayland::kwin_layout::output_scale);
-                    return Ok((width, height, scale, None));
+                // KWin: its logical layout, the frame desktop capture and
+                // input use. The scale is the largest output's, like the frame
+                // get_desktop_state reports.
+                if let Some((frame, monitors)) = crate::wayland::kwin_layout::screen_report()? {
+                    return Ok((frame.width, frame.height, frame.scale, Some(monitors)));
                 }
             }
             // X11 reports pixel dimensions; scale factor on X11 is not

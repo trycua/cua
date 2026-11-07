@@ -140,13 +140,11 @@ pub fn current_pins() -> Vec<Pin> {
         }
     }
     // The slim Linux image every agent home starts from: a create that has resolved its digest must still find it.
-    for r in ["ghcr.io/trycua/linux:24.04-slim"] {
-        let digest = cua_image::catalog::find(r).and_then(|e| e.digest.clone());
-        out.push(Pin {
-            reference: r.to_string(),
-            digest,
-        });
-    }
+    let slim = "ghcr.io/trycua/linux:24.04-slim";
+    out.push(Pin {
+        reference: slim.to_string(),
+        digest: cua_image::catalog::find(slim).and_then(|e| e.digest.clone()),
+    });
     out
 }
 

@@ -452,18 +452,16 @@ pub fn agent_actions(state: &CreatesState, creates: &[AgentCreate], now: i64) ->
                     });
                 }
             }
-            "failed" => {
-                if known.is_none_or(|p| p.error.is_none()) {
-                    if known.is_none() {
-                        out.push(start());
-                    }
-                    out.push(CreateAction::Fail {
-                        id: id.clone(),
-                        error: c.error.clone(),
-                        error_variant: "AgentCreate".into(),
-                        now: Some(now),
-                    });
+            "failed" if known.is_none_or(|p| p.error.is_none()) => {
+                if known.is_none() {
+                    out.push(start());
                 }
+                out.push(CreateAction::Fail {
+                    id: id.clone(),
+                    error: c.error.clone(),
+                    error_variant: "AgentCreate".into(),
+                    now: Some(now),
+                });
             }
             _ => {}
         }

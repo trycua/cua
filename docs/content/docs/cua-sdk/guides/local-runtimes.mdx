@@ -230,6 +230,17 @@ create's progress.
   another Space of the same tree is refused. `cua runtime doctor` says so.
 - **Today.** Spaces run under `runc` (the Mac adds gVisor).
 
+## microVMs on Windows
+
+`--kind microvm` runs in QEMU on the Windows Hypervisor Platform: hardware
+acceleration only, never software emulation. `cua runtime doctor` and New Space
+say what is missing: the Windows feature (`cua runtime setup microvm` turns it on
+through one administrator prompt, then Windows asks for a restart), QEMU 9 or
+later (installed with winget), or virtualization in the firmware. The kernel is
+pinned and downloaded on first use. A microVM has no snapshots here (no
+checkpoint, fork or warm pool); turning it off powers it down. Under the secure
+default it has no network, as on a Mac, unless you choose No protection.
+
 ## Your own cloud
 
 Sandboxes and Spaces can run in a cloud account you own: `--on aws` (EC2),

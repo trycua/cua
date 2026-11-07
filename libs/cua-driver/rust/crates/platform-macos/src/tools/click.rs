@@ -525,6 +525,7 @@ impl ClickTool {
             };
         }
 
+        ctrace("start");
         let pid = match super::target_pid(&self.state, &args) {
             Ok(v) => v,
             Err(e) => return e,
@@ -549,6 +550,7 @@ impl ClickTool {
             Ok(window_id) => window_id,
             Err(error) => return error,
         };
+        ctrace("resolve_token");
         let x = args
             .opt_f64("x")
             .or_else(|| args.opt_i64("x").map(|i| i as f64));
@@ -631,6 +633,7 @@ impl ClickTool {
                 None
             };
 
+            ctrace("bg_gate");
             // Fast path: check the cached element against what the agent saw.
             match crate::fast_path_guard::guard_element(
                 "click",
@@ -646,6 +649,7 @@ impl ClickTool {
                 crate::fast_path_guard::Outcome::Proceed { summary, .. } => *fast_path = summary,
             }
 
+            ctrace("fast_path_guard");
             // Surface 5: button=right on the AX path → AXShowMenu (the same surface
             // the dedicated `right_click` tool dispatches). Threads through the
             // identical perform_ax_click code path with the action remapped.
@@ -676,6 +680,7 @@ impl ClickTool {
                 }
             }
 
+            ctrace("select_check");
             // Animate cursor to element center BEFORE firing AX action,
             // mirroring Swift's `performElementClick` → `animateAndWait(to:)`.
             let center_guard = element_guard.clone();
@@ -690,6 +695,7 @@ impl ClickTool {
             })
             .await
             .unwrap_or((None, None));
+            ctrace("element_center");
 
             // Surface 5: button=middle on the AX path has no AX equivalent.
             // Fall back to a pixel middle-click at the element's screen-space center
@@ -807,6 +813,7 @@ impl ClickTool {
                 self.state.cursor_registry.note_press(&cursor_key, cx, cy);
             }
 
+            ctrace("cursor_glide");
             // Finder icon/list items can expose a readable AXSelected state
             // while refusing both AXSelected writes and AXPress. Resolve a
             // verified coordinate frame only for those collection-like
@@ -862,6 +869,7 @@ impl ClickTool {
             // itself via FocusGuard. After the action returns, detect any
             // new-window / foreground side-effects and append a one-liner
             // suffix matching Swift's wording.
+            ctrace("selection_probe");
             let prior_front = apps::frontmost_pid();
             let foreground = delivery_mode.is_foreground();
             let snapshot = if foreground {
@@ -939,9 +947,23 @@ impl ClickTool {
             )
             .await;
 
+            ctrace("ax_dispatch_total");
             // Drop the wildcard lease + detect window/foreground side-effects.
-            let acted_at = std::time::Instant::now();
-            let changes = super::finish_window_observation(snapshot).await;
+            // The window watch and the web focus wait are independent, so they
+            // run together: the click returns after the slower of the two, not
+            // after their sum, and the focus cap counts from the press.
+            let wait_for_focus = matches!(&result, Ok(Ok(((_, true, _, _, _), _))));
+            let changes = if wait_for_focus {
+                let cap = cua_driver_core::input_pacing::webkit_settle_cap();
+                let (changes, ()) = tokio::join!(
+                    super::finish_window_observation(snapshot),
+                    wait_for_web_focus(settle_guard, pid, cap)
+                );
+                changes
+            } else {
+                super::finish_window_observation(snapshot).await
+            };
+            ctrace("window_watch_and_focus_wait");
 
             match result {
                 Ok(Ok((
@@ -954,16 +976,9 @@ impl ClickTool {
                     ),
                     fronted,
                 ))) => {
-                    // For text inputs in web content, wait for the page to move
-                    // DOM focus onto the field. The wait ends as soon as AX
-                    // reports the field focused and stable, and is capped by
-                    // `CUA_DRIVER_WEBKIT_SETTLE_MS` (default 800, the old fixed
-                    // wait). The window watch above already used part of it.
-                    if needs_webkit_delay {
-                        let cap = cua_driver_core::input_pacing::webkit_settle_cap()
-                            .saturating_sub(acted_at.elapsed());
-                        wait_for_web_focus(settle_guard, cap).await;
-                    }
+                    // Text inputs in web content waited above for the page to
+                    // move DOM focus onto the field (see `wait_for_web_focus`).
+                    let _ = needs_webkit_delay;
                     msg.push_str(&changes.result_suffix());
                     // AX dispatch went through, but AXPerformAction returning
                     // success does not confirm the on-screen effect (many elements
@@ -1626,12 +1641,59 @@ fn prime_key_window_for_background_press(pid: i32, window_id: u32, action: &str)
     }
 }
 
+/// Timing spans for the click path, printed to stderr when
+/// `CUA_DRIVER_CLICK_TRACE` is set. Each call prints the time since the
+/// previous mark.
+fn ctrace(label: &str) {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if !*ON.get_or_init(|| std::env::var_os("CUA_DRIVER_CLICK_TRACE").is_some()) {
+        return;
+    }
+    static LAST: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
+    let now = std::time::Instant::now();
+    let mut g = LAST.lock().unwrap();
+    let ms = g
+        .map(|t| now.duration_since(t).as_secs_f64() * 1000.0)
+        .unwrap_or(0.0);
+    *g = Some(now);
+    eprintln!("click-trace {label} +{ms:.1}ms");
+}
+
+/// Whether the page has moved focus onto `element`: the field reports
+/// `AXFocused`, or the app's focused element is the field. WebKit does not
+/// always set `AXFocused` on a web field, but does publish it as the app's
+/// `AXFocusedUIElement`; reading only the first made every press wait out the
+/// whole cap.
+fn web_field_focused(element: AXUIElementRef, pid: i32) -> bool {
+    use core_foundation::base::{CFEqual, CFRelease, CFTypeRef};
+    unsafe {
+        if copy_bool_attr(element, "AXFocused") == Some(true) {
+            return true;
+        }
+        let app = crate::ax::bindings::AXUIElementCreateApplication(pid);
+        if app.is_null() {
+            return false;
+        }
+        let focused = copy_element_attr(app, "AXFocusedUIElement");
+        CFRelease(app as CFTypeRef);
+        match focused {
+            Some(focused) => {
+                let same = CFEqual(element as CFTypeRef, focused as CFTypeRef) != 0;
+                CFRelease(focused as CFTypeRef);
+                same
+            }
+            None => false,
+        }
+    }
+}
+
 /// Wait, off the async executor, until `element` reports `AXFocused` on two
 /// reads a few milliseconds apart, or `cap` runs out. Replaces a fixed sleep:
 /// a page that moves focus in a few ms returns in a few ms, and one that never
 /// does costs no more than the cap.
 async fn wait_for_web_focus(
     element: crate::ax::snapshot::RetainedElement,
+    pid: i32,
     cap: std::time::Duration,
 ) {
     if cap.is_zero() {
@@ -1643,7 +1705,7 @@ async fn wait_for_web_focus(
             cap,
             std::time::Duration::from_millis(4),
             std::time::Duration::from_millis(8),
-            || unsafe { copy_bool_attr(element.as_ptr() as AXUIElementRef, "AXFocused") } == Some(true),
+            || web_field_focused(element.as_ptr() as AXUIElementRef, pid),
             || start.elapsed(),
             std::thread::sleep,
         )
@@ -1715,7 +1777,9 @@ fn perform_ax_click(
     // enable menu items that were disabled in the cached snapshot, while a
     // background transition can disable them after that snapshot. macOS may
     // otherwise return success for a disabled action that did nothing.
+    ctrace("pac_start");
     crate::input::ax_actions::ensure_ax_action_enabled(element_ptr, ax_action)?;
+    ctrace("pac_ensure_enabled");
 
     // Capture advertised actions BEFORE dispatching so we can detect silent no-ops
     // (AX returns success even when the element doesn't advertise the action).
@@ -1723,6 +1787,7 @@ fn perform_ax_click(
 
     let role = unsafe { copy_string_attr(element, "AXRole") }.unwrap_or_default();
     let title = unsafe { copy_string_attr(element, "AXTitle") }.unwrap_or_default();
+    ctrace("pac_actions_role_title");
 
     // A click on an AppKit collection item is frequently represented by a
     // label child or row that does not advertise AXPress. Prefer a bounded,
@@ -1850,7 +1915,9 @@ fn perform_ax_click(
     if !foreground {
         prime_key_window_for_background_press(pid, window_id, ax_action);
     }
+    ctrace("pac_prime");
     let err = unsafe { crate::ax::bindings::perform_action(element, ax_action) };
+    ctrace("pac_perform_action");
     if err != crate::ax::bindings::kAXErrorSuccess {
         // Checked before the row-selection fallback, which writes AXSelected
         // on an ancestor: a toggle whose press landed needs no other write.
@@ -1958,6 +2025,7 @@ fn perform_ax_click(
     let needs_webkit_delay =
         needs_web_focus_settle(ax_action, &role, || unsafe { ancestor_roles(element) });
 
+    ctrace("pac_ancestors");
     // Offer the focus-rect highlight around the element (matches Swift
     // showFocusRect); the overlay paints it only with `cursor.marks` on. Also
     // move the cursor to the element center so the glide animation plays.
@@ -1977,6 +2045,7 @@ fn perform_ax_click(
             cursor_overlay::OverlayCommand::ClickPulse { x: cx, y: cy },
         );
     }
+    ctrace("pac_overlay");
     let _ = pid;
     let _ = window_id; // used by caller context
 

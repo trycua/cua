@@ -738,6 +738,59 @@ describe.skipIf(!wasmBuilt)("the new first run on its route", () => {
     await waitFor(() => expect(document.querySelector("[data-bring-rest-cli]")?.getAttribute("data-bring-rest-cli")).toBe("installed"), { timeout: 15_000 });
   });
 
+  // CUA-3551, Mac test 7 Nov (run 2, A2): Accessibility off, quit, relaunch, and Home showed no apps row at all,
+  // because the row lived only inside "Now bring the rest in", which waits for the first job.
+  const SCREEN_URL = "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture";
+  const AX_URL = "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility";
+  const axOff = (axOn: () => boolean) => (op: string) =>
+    op === "driver.permissions"
+      ? {
+          appName: "Cua Spaces Local",
+          permissions: [
+            { id: "screen", granted: true, state: "on", settingsUrl: SCREEN_URL },
+            { id: "accessibility", granted: axOn(), state: axOn() ? "on" : "off", settingsUrl: AX_URL },
+          ],
+        }
+      : undefined;
+  const status = (id: string) => document.querySelector(`[data-home-apps] [data-app-permission=${id}] [data-permission-status]`)?.getAttribute("data-permission-status") ?? null;
+
+  for (const offer of ["waiting", "dismissed", null] as const) {
+    it(`Home shows the apps row at launch while a permission is missing, each switch live (offer ${offer ?? "none"})`, { timeout: 60_000 }, async () => {
+      let on = false;
+      writeFirstRunForTest({ restOffer: offer, restSinceMs: Date.now() });
+      await mountApp("/home", { failsCreates: false, listsGhost: false, demo: { signedIn: true, onboarded: true }, intercept: axOff(() => on) });
+      await waitFor(() => expect(document.querySelector("[data-home-apps]")).not.toBeNull(), { timeout: 15_000 });
+      expect(document.querySelector("#home-apps-heading")!.textContent).toBe("Let agents use apps on this Mac");
+      expect(document.querySelector("[data-home-apps]")!.textContent).toContain("One switch in System Settings is still off.");
+      expect(status("screen")).toBe("on");
+      expect(status("accessibility")).toBe("off");
+      expect(document.querySelector("[data-bring-rest]")).toBeNull();
+      // The switch turns on in System Settings: the row says On in place, without a click.
+      on = true;
+      window.dispatchEvent(new Event("focus"));
+      await waitFor(() => expect(status("accessibility")).toBe("on"), { timeout: 15_000 });
+      expect(document.querySelector("[data-home-apps-done]")!.textContent).toContain("On");
+    });
+  }
+
+  it("Home's apps row stays away while both permissions are on", { timeout: 60_000 }, async () => {
+    writeFirstRunForTest({ restOffer: "waiting", restSinceMs: Date.now() });
+    await mountApp("/home", { failsCreates: false, listsGhost: false, demo: { signedIn: true, onboarded: true }, intercept: axOff(() => true) });
+    await waitFor(() => expect(document.querySelector("[data-ask-first-home]:not([aria-busy])")).not.toBeNull(), { timeout: 15_000 });
+    await new Promise((r) => setTimeout(r, 300));
+    expect(document.querySelector("[data-home-apps]")).toBeNull();
+  });
+
+  it("with 'Now bring the rest in' showing, its apps row opens by itself while a permission is missing", { timeout: 60_000 }, async () => {
+    writeFirstRunForTest({ restOffer: "shown" });
+    await mountApp("/home", { failsCreates: false, listsGhost: false, demo: { signedIn: true, onboarded: true }, intercept: axOff(() => false) });
+    await waitFor(() => expect(document.querySelector("[data-bring-rest-apps]")).not.toBeNull(), { timeout: 15_000 });
+    expect(document.querySelector("[data-bring-rest-row=apps]")!.getAttribute("aria-expanded")).toBe("true");
+    expect(document.querySelector("[data-bring-rest-apps] [data-app-permission=accessibility] [data-permission-status]")!.getAttribute("data-permission-status")).toBe("off");
+    // One card, not two.
+    expect(document.querySelector("[data-home-apps]")).toBeNull();
+  });
+
   it("signed in: Add this computer opens the sign-in, then this Mac was added just now and the account's computers are listed", { timeout: 60_000 }, async () => {
     const calls: Calls = [];
     await mountApp("/onboarding", {

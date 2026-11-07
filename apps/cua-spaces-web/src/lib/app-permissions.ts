@@ -47,6 +47,23 @@ export function allowHint(appName: string, allGranted = false): string {
   return allGranted ? "Both are on. Agents can use apps on this Mac." : `Allow opens System Settings. Turn on ${appName} there, then come back.`;
 }
 
+/**
+ * Whether Home shows its apps row on its own, outside "Now bring the rest in" (CUA-3551): on a Mac, whenever a
+ * permission is missing, at every launch, whatever setup did; and, once shown, until Home is left, so a switch turned
+ * on in System Settings shows as On there instead of the row vanishing.
+ */
+export function homeAppsRowShown(input: { os: string; available: boolean; allGranted: boolean; shownBefore: boolean }): boolean {
+  if (input.os !== "macos" || !input.available) return false;
+  return !input.allGranted || input.shownBefore;
+}
+
+/** The line under Home's apps row title: how many switches are still off, or that both are on. */
+export function homeAppsRowLine(permissions: readonly Pick<DriverPermission, "granted">[]): string {
+  const off = permissions.filter((p) => !p.granted).length;
+  if (off === 0) return "Both switches are on. Agents can see the screen and use the mouse and keyboard.";
+  return off === 1 ? "One switch in System Settings is still off." : "Two switches in System Settings are still off.";
+}
+
 /** Under the Cua Driver page's rows: one set of permissions, no second app. */
 export function driverUsesAppPermissions(appName: string): string {
   return `Cua Driver uses the permissions you give ${appName}. It never asks for its own.`;

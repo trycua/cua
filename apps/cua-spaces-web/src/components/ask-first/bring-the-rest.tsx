@@ -8,7 +8,7 @@
  */
 
 import { CheckIcon, ChevronRightIcon, MonitorIcon, ShieldIcon, TerminalIcon, UserPlusIcon } from "lucide-react";
-import { useContext, useEffect, useState, type ReactNode } from "react";
+import { useContext, useEffect, useRef, useState, type ReactNode } from "react";
 
 import { cliMissing, firstRunCliView, useAgents, useCliInstall, useSession, useSettings, type AgentRunSummary } from "@/bridge";
 import { BridgeContext } from "@/bridge/BridgeProvider";
@@ -20,9 +20,9 @@ import { PermissionStatus, type PermissionsView } from "@/components/app-permiss
 import { Button } from "@/components/ui/button";
 import { GroupedSection } from "@/components/ui/grouped";
 import { toastError } from "@/components/ui/toast";
-import { allowHint, permissionWords } from "@/lib/app-permissions";
+import { allowHint, homeAppsRowLine, homeAppsRowShown, permissionWords } from "@/lib/app-permissions";
 import { taskState, useAskTasks, type AskTask } from "@/lib/ask-first";
-import { bringRestView, firstJobDone, type BringRestView } from "@/lib/first-run-new";
+import { bringRestView, firstJobDone, placeName, type BringRestView } from "@/lib/first-run-new";
 
 type RowId = BringRestView["rows"][number]["id"];
 const ICON = { invite: UserPlusIcon, "add-computer": MonitorIcon, apps: ShieldIcon, cli: TerminalIcon } as const;
@@ -162,6 +162,13 @@ function Shown() {
   const [open, setOpen] = useState<RowId | null>(() => (os === "macos" && readAskedAt() != null ? "apps" : null));
   const [addOpen, setAddOpen] = useState(false);
   const perms = useAppPermissions(os === "macos");
+  // Any launch with a permission missing: the apps row opens by itself too, unless the person has opened or closed a
+  // row already.
+  const touched = useRef(false);
+  const missing = perms.available && !perms.allGranted;
+  useEffect(() => {
+    if (missing && !touched.current) setOpen("apps");
+  }, [missing]);
   const cli = useCliInstall(true);
   const cliName = settings.data?.cli?.name ?? null;
   const cliView = core && (cliMissing(cli.state) || cli.state.installed) ? firstRunCliView(core, { cli: cli.state, cliName }) : null;
@@ -175,7 +182,10 @@ function Shown() {
         onRow={(id) => {
           if (id === "invite") void session.openExternal(`${accountUrl}/team`).catch(() => {});
           else if (id === "add-computer") setAddOpen(true);
-          else setOpen((o) => (o === id ? null : id));
+          else {
+            touched.current = true;
+            setOpen((o) => (o === id ? null : id));
+          }
         }}
         onDismiss={() => writeFirstRun({ restOffer: "dismissed" })}
         apps={<AppsPanel perms={perms} />}
@@ -187,10 +197,64 @@ function Shown() {
   );
 }
 
-/** Home's "Now bring the rest in": nothing until setup ended here and the first job is done; gone after "Not now". */
+/**
+ * Home's apps row on its own (CUA-3551), drawn from `useAppPermissions`: the row's title, how many switches are still
+ * off, and the two permissions with their live status and Allow. Tests draw every state.
+ */
+export function AppsOnThisMacCard({ perms, os }: { perms: PermissionsView & { allGranted: boolean }; os: string }) {
+  const permissions = perms.data?.permissions ?? [];
+  return (
+    <section aria-labelledby="home-apps-heading" data-home-apps="">
+      <GroupedSection>
+        <div>
+          <div className="flex items-center gap-3 px-4 py-3">
+            <ShieldIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
+            <span className="min-w-0 flex-1">
+              <span id="home-apps-heading" className="block text-[13px] font-medium">
+                Let agents use apps on {placeName(os)}
+              </span>
+              <span className="block text-xs text-muted-foreground">{homeAppsRowLine(permissions)}</span>
+            </span>
+            {perms.allGranted ? (
+              <span className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground" data-home-apps-done="">
+                <CheckIcon aria-hidden className="size-3.5" /> On
+              </span>
+            ) : null}
+          </div>
+          <AppsPanel perms={perms} />
+        </div>
+      </GroupedSection>
+    </section>
+  );
+}
+
+/**
+ * The apps row when "Now bring the rest in" isn't showing (before the first job, after "Not now", or setup finished
+ * elsewhere): on a Mac, at every launch with a permission missing, each switch live. Once shown it stays until Home is
+ * left, so the switches turn to On in place.
+ */
+export function AppsOnThisMac() {
+  const os = hostOs();
+  const perms = useAppPermissions(os === "macos");
+  const [shownBefore, setShownBefore] = useState(false);
+  const show = homeAppsRowShown({ os, available: perms.available, allGranted: perms.allGranted, shownBefore });
+  useEffect(() => {
+    if (show) setShownBefore(true);
+  }, [show]);
+  return show ? <AppsOnThisMacCard perms={perms} os={os} /> : null;
+}
+
+/**
+ * Home's "Now bring the rest in": nothing until setup ended here and the first job is done; gone after "Not now".
+ * Whenever it isn't showing, a Mac with a permission missing still gets the apps row on its own.
+ */
 export function BringTheRest() {
   const saved = useFirstRunSaved();
-  if (saved.restOffer === "waiting") return <WaitForFirstJob sinceMs={saved.restSinceMs ?? 0} />;
   if (saved.restOffer === "shown") return <Shown />;
-  return null;
+  return (
+    <>
+      {saved.restOffer === "waiting" ? <WaitForFirstJob sinceMs={saved.restSinceMs ?? 0} /> : null}
+      <AppsOnThisMac />
+    </>
+  );
 }

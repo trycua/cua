@@ -7,28 +7,17 @@ import { firstMessage, newPendingId, useAgents, useBridge, useFeatureRecorder, u
 import type { SpaceCreateConfig } from "@/bridge/contracts/host";
 import { useChildren } from "@/components/children/use-children";
 import { useSummonIn } from "@/components/ask-first/use-summon-in";
-import { enqueue, flushQueue, resolveQueue } from "@/components/space-thread/queued";
+import { dropQueue, enqueue, flushQueue, resolveQueue } from "@/components/space-thread/queued";
 import { useConnectors } from "@/hooks/use-connectors";
 import { containerHome } from "@/lib/agent-home/container";
 import { grantsFor, homeGrantsArg, homeMentionsArg } from "@/lib/agent-home/grants";
 import { homeForRequest, rememberHome } from "@/lib/agent-home/home-space";
+import { petName } from "@/lib/pet-name";
 import { parseMentions } from "@/lib/agent-home/mentions";
 import { homeBrief, homePrompt } from "@/lib/agent-home/prompt";
 import type { AskRepo } from "@/lib/ask-first-repo";
 import { getDriver } from "@/lib/prepare/store";
 import { addAskTask, askTask, HOST_NOT_SHARED, hostSpaceId, postToSpaceThread, retryTarget, taskTarget, updateAskTask, whereOs, type AskTask, type TaskTarget, type TaskWhere } from "@/lib/ask-first";
-
-/** The home's name: short, and readable in the Spaces list. */
-export const homeName = (prompt: string, now = Date.now()) => {
-  const slug = prompt
-    .toLowerCase()
-    .replace(/https?:\/\/\S+/g, " ")
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 24)
-    .replace(/-+$/g, "");
-  return `home-${slug || "task"}-${now.toString(36).slice(-3)}`;
-};
 
 /** The job as the agent is told it: the repo the person picked is a line of it, said once in plain words. */
 export const withRepo = (prompt: string, repo?: { url: string } | null) => (repo ? `${prompt.trim()}\n\nRepo: ${repo.url}` : prompt);
@@ -127,7 +116,7 @@ export function useStartTask(): {
           if (isHome && children) {
             // The agent home: a slim Linux Space, the root of this person's tree (the agent decides where the work runs).
             const agent = task0?.agent ?? "";
-            const config: SpaceCreateConfig = containerHome.create(setupFor(agent, task0?.prompt ?? ""), homeName(task0?.prompt ?? ""));
+            const config: SpaceCreateConfig = containerHome.create(setupFor(agent, task0?.prompt ?? ""), petName((n) => (spaces ?? []).some((x) => x.name === n)));
             space = await createSpace({ ...config, os: "linux" }, pendingId);
             // The spawn capability, whatever the host did with `children` in the config.
             children.setChildrenOn(space.id, true);
@@ -141,6 +130,8 @@ export function useStartTask(): {
           spaceId = space.id;
           updateAskTask(id, { spaceId, pendingId: null });
           place?.onCreated?.(spaceId);
+          // A home's message was shown while it was made; it is posted below with its briefing.
+          if (isHome) resolveQueue(pendingId, spaceId);
           if (place?.queued) {
             // The job (and anything typed meanwhile) waited in the Space's thread: send it now.
             resolveQueue(pendingId, spaceId);
@@ -163,7 +154,10 @@ export function useStartTask(): {
           homeText = homePrompt(task?.prompt ?? "", setupFor(agent, task?.prompt ?? ""), containerHome.abilities(), task?.repo ?? undefined);
           // A home takes the job through its member (a new one too): the chosen repo is a line of the message.
           const brief = homeBrief(setupFor(agent, task?.prompt ?? ""), containerHome.abilities());
-          if ((await reuseHome(spaceId, agent, prompt, task?.model, brief)) === "posted") {
+          const outcome = await reuseHome(spaceId, agent, prompt, task?.model, brief);
+          // Posted for real now (or not at all): the pending copy does not stay.
+          if (place?.pendingId) dropQueue(place.pendingId);
+          if (outcome === "posted") {
             updateAskTask(id, { inSpace: true });
             return;
           }
@@ -181,6 +175,7 @@ export function useStartTask(): {
         const started = await startRun({ spaceId, agent, prompt: homeText ?? prompt, ...(task?.model ? { model: task.model } : {}) });
         updateAskTask(id, { runId: started.run_id, inSpace: true });
       } catch (e) {
+        if (place?.pendingId) dropQueue(place.pendingId);
         updateAskTask(id, { error: e instanceof Error ? e.message : String(e), pendingId: null });
       }
     })();
@@ -234,6 +229,11 @@ export function useStartTask(): {
         // The job shows in the Space's thread at once, queued until the Space is ready (a home gets it with its briefing instead).
         const first = !home && canSummon() ? firstMessage(core, { members: [], people: [], canAdd: true, connectors }, agent, withRepo(prompt, repo)) : null;
         if (first?.handle) enqueue(pendingId, first.text);
+        // A new home is made first: the message shows in its thread right away, pending until the home can take it.
+        else if (home && canSummon()) {
+          const shown = firstMessage(core, { members: [], people: [], canAdd: true, connectors }, agent, withRepo(prompt, repo));
+          if (shown?.handle) enqueue(pendingId, shown.text);
+        }
         run(task.id, target, { pendingId, onCreated, queued: Boolean(first?.handle) });
         go(pendingId);
       } else {

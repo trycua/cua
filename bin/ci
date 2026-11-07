@@ -356,7 +356,7 @@ def rust_env(notes: List[str]) -> Dict[str, str]:
     """
     env: Dict[str, str] = {}
     channel = pinned_rust_channel()
-    rustup = shutil.which("rustup")
+    rustup = find_rustup()
     if not rustup or not channel:
         if have("cargo"):
             notes.append("rustup not found: using the cargo on PATH; rustfmt and clippy may differ from CI")
@@ -371,13 +371,54 @@ def rust_env(notes: List[str]) -> Dict[str, str]:
     env["RUSTUP_TOOLCHAIN"] = channel
     proxy_dirs = [Path(rustup).resolve().parent, Path(rustup).parent]
     brew = Path(rustup).resolve().parent.parent / "bin"  # Homebrew keeps the proxies next to rustup
-    for d in (Path("/opt/homebrew/opt/rustup/bin"), Path("/usr/local/opt/rustup/bin"), Path.home() / ".cargo/bin", brew, *proxy_dirs):
+    for d in (*RUSTUP_DIRS, Path.home() / ".cargo/bin", brew, *proxy_dirs):
         if (d / "cargo").exists() and (d / "cargo-clippy").exists():
             current = shutil.which("cargo")
             if current is None or Path(current).parent != d:
                 env["PATH"] = f"{d}{os.pathsep}{os.environ.get('PATH', '')}"
             break
     return env
+
+
+# Homebrew's rustup is keg-only: its `rustup` and the cargo/clippy proxies live
+# here, not on PATH, while Homebrew's own `cargo` (a different version that
+# ignores rust-toolchain.toml) is.
+RUSTUP_DIRS = (Path("/opt/homebrew/opt/rustup/bin"), Path("/usr/local/opt/rustup/bin"))
+
+
+def find_rustup() -> Optional[str]:
+    found = shutil.which("rustup")
+    if found:
+        return found
+    exe = "rustup.exe" if IS_WINDOWS else "rustup"
+    for d in (Path.home() / ".cargo/bin", *RUSTUP_DIRS):
+        if (d / exe).exists():
+            return str(d / exe)
+    return None
+
+
+def rust_pin_error(env: Dict[str, str]) -> Optional[str]:
+    """None when the `cargo` and `cargo clippy` bin/ci will run match the pinned toolchain, else why not.
+
+    A cargo from outside rustup (Homebrew's, a distro's) ignores rust-toolchain.toml and
+    reports lint findings CI never sees.
+    """
+    channel = pinned_rust_channel()
+    if not channel or not re.fullmatch(r"\d+\.\d+(\.\d+)?", channel) or not have("cargo"):
+        return None
+    full = {**os.environ, **env}
+    probes = (("cargo --version", ["cargo", "--version"], rf"^cargo {re.escape(channel)}\b"),
+              ("cargo clippy --version", ["cargo", "clippy", "--version"], rf"^clippy 0\.1\.{channel.split('.')[1]}\b"))
+    for label, cmd, rx in probes:
+        out = subprocess.run(cmd, capture_output=True, text=True, cwd=str(ROOT / "libs/cua-driver/rust" if (ROOT / "libs/cua-driver/rust").exists() else ROOT), env=full)
+        got = out.stdout.strip() or out.stderr.strip()
+        if out.returncode != 0 or not re.search(rx, got):
+            if label == "cargo clippy --version" and out.returncode != 0 and "no such command" in got:
+                return f"clippy is not installed for Rust {channel}: rustup component add clippy --toolchain {channel}"
+            return (f"`{label}` reports {got!r}, but CI pins Rust {channel} (rust-toolchain.toml). "
+                    f"Homebrew's cargo ignores the pin. Use rustup's: put ~/.cargo/bin (or /opt/homebrew/opt/rustup/bin) "
+                    f"before /opt/homebrew/bin on PATH, and run `rustup toolchain install {channel} --component clippy,rustfmt`.")
+    return None
 
 
 def pnpm_cmd(version: Optional[str]) -> str:
@@ -1445,6 +1486,11 @@ def main(argv: Sequence[str]) -> int:
     ctx = Context(args)
     started = time.monotonic()
     plan = build_plan(changes, ctx)
+    if not args.list and any("cargo" in c.tools and not c.skip_reason for c in plan):
+        pin_error = rust_pin_error(ctx.rust_env)
+        if pin_error:
+            print(f"bin/ci: wrong Rust toolchain: {pin_error}", file=sys.stderr)
+            return 2
     scope = "every check" if args.full else f"{len(changes.files)} changed file(s) since {base[:10]} ({base_desc})"
     print(f"bin/ci: {mode} mode, {scope}: {len(plan)} check(s)")
     for n in ctx.notes:

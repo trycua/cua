@@ -104,7 +104,9 @@ class SessionManager {
   /** The system sign-in sheet; resolves when signed in, throws a `SignInError` in the core's words otherwise. */
   async signIn(): Promise<void> {
     if (config.devTokenUrl) return this.devSignIn(config.devTokenUrl);
-    const redirectUri = AuthSession.makeRedirectUri({ scheme: config.redirectScheme, path: config.redirectPath });
+    // Exactly the redirect registered for the phone's client, `ai.cua.spaces:/oauth/callback` (one slash).
+    // `makeRedirectUri` builds `ai.cua.spaces://oauth/callback`, which the provider refuses ("Invalid parameter: redirect_uri").
+    const redirectUri = `${config.redirectScheme}:/${config.redirectPath}`;
     let discovery: AuthSession.DiscoveryDocument;
     try {
       discovery = await AuthSession.fetchDiscoveryAsync(config.issuer);

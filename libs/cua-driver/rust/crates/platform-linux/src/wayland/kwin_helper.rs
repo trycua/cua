@@ -242,6 +242,11 @@ fn json_u32(value: &serde_json::Value, key: &str) -> Option<u32> {
         .then(|| number.round() as u32)
 }
 
+/// KWin's own support report, which names its version. No permission needed.
+pub(crate) fn support_information() -> Option<String> {
+    gdbus_call_to(KWIN_DEST, "/KWin", "org.kde.KWin.supportInformation", &[])
+}
+
 fn dbus_call(method: &str, args: &[String]) -> Option<String> {
     gdbus_call_to(
         DBUS_DEST,

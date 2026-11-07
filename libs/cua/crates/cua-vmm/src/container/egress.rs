@@ -317,6 +317,13 @@ if [ "$pid" != 0 ]; then
 fi
 command -v nft >/dev/null 2>&1 || echo nft=missing
 if nft add table bridge cua_probe_br 2>/dev/null; then nft delete table bridge cua_probe_br 2>/dev/null; echo bridgefam=ok; else echo bridgefam=missing; fi
+if nft -f - 2>/dev/null <<'EOT'
+add table inet cua_probe_fib
+add chain inet cua_probe_fib c
+add rule inet cua_probe_fib c fib daddr type local counter
+EOT
+then echo fib=ok; else echo fib=missing; fi
+nft delete table inet cua_probe_fib 2>/dev/null
 for f in /etc/resolv.conf /run/systemd/resolve/resolv.conf; do
   [ -r "$f" ] && sed -n 's/^nameserver[[:space:]]*\([0-9a-fA-F:.]*\).*/dns=\1/p' "$f"
 done
@@ -699,6 +706,13 @@ impl ContainerRuntime {
             ));
         }
         let bridge_family = field("bridgefam").as_deref() != Some("missing");
+        let fib = field("fib").as_deref() != Some("missing");
+        let host_addrs: Vec<std::net::IpAddr> = out
+            .stdout
+            .lines()
+            .filter_map(|l| l.strip_prefix("addr="))
+            .filter_map(|a| a.split('/').next()?.parse().ok())
+            .collect();
         let gateway_mac = field("gw")
             .as_deref()
             .and_then(egress::normalize_mac)
@@ -752,6 +766,8 @@ impl ContainerRuntime {
                 port,
                 isolate_l2: !tree_net,
                 bridge_family,
+                fib,
+                host_addrs,
             },
             ctx,
         ))

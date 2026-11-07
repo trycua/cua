@@ -926,6 +926,13 @@ pub struct EngineTarget {
     /// off its siblings, a tree's own denies) are then left out, and the
     /// `inet` policy alone is enforced ([`NO_BRIDGE_FAMILY`]).
     pub bridge_family: bool,
+    /// The kernel has the nftables `fib` expression (`CONFIG_NFT_FIB`).
+    /// WSL 2's has not: a rule for "this computer's own addresses" is then
+    /// written against [`EngineTarget::host_addrs`] instead of
+    /// `fib daddr type local`.
+    pub fib: bool,
+    /// The engine host's own interface addresses (used when `fib` is off).
+    pub host_addrs: Vec<IpAddr>,
 }
 
 /// The nft input that removes one sandbox's tables in one transaction
@@ -1052,10 +1059,37 @@ fn inet_table(out: &mut String, t: &EngineTarget, rules: &Rules) -> String {
         bridge = t.bridge,
     ));
     for rule in &rules.rules {
-        out.push_str(&nft_rule(rule));
+        out.push_str(&nft_rule_for(rule, t));
     }
     out.push_str("  }\n}\n");
     std::mem::take(out)
+}
+
+/// [`nft_rule`] for the engine host `t`: on a kernel without `fib`, the
+/// rule for the host's own addresses names them.
+pub fn nft_rule_for(rule: &Rule, t: &EngineTarget) -> String {
+    if !rule.host_local || t.fib {
+        return nft_rule(rule);
+    }
+    let verdict = if rule.accept { "accept" } else { "drop" };
+    let counter = if rule.accept { "" } else { " counter" };
+    let l4 = nft_l4(rule);
+    let list = |v6: bool| {
+        t.host_addrs
+            .iter()
+            .filter(|a| a.is_ipv6() == v6)
+            .map(IpAddr::to_string)
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let mut out = String::new();
+    for (v6, kw) in [(false, "ip daddr"), (true, "ip6 daddr")] {
+        let addrs = list(v6);
+        if !addrs.is_empty() {
+            out.push_str(&format!("    {kw} {{ {addrs} }}{l4}{counter} {verdict}\n"));
+        }
+    }
+    out
 }
 
 /// One [`Rule`] as an nft statement (in an `inet` chain).
@@ -1651,7 +1685,41 @@ mod tests {
             }),
             isolate_l2: true,
             bridge_family: true,
+            fib: true,
+            host_addrs: vec![],
         }
+    }
+
+    /// WSL 2's kernel has no nftables `fib` expression: the rules for the
+    /// engine host's own addresses name them (a rule that cannot load stops
+    /// the Space from starting).
+    #[test]
+    fn a_kernel_without_fib_names_the_hosts_addresses() {
+        let t = EngineTarget {
+            fib: false,
+            host_addrs: vec![
+                "172.24.60.153".parse().unwrap(),
+                "fe80::1".parse().unwrap(),
+                "10.230.0.1".parse().unwrap(),
+            ],
+            ..target(true)
+        };
+        let rule = Rule::host_local(false, Reason::DefaultHost);
+        let text = nft_rule_for(&rule, &t);
+        assert!(!text.contains("fib"), "{text}");
+        assert!(
+            text.contains("ip daddr { 172.24.60.153, 10.230.0.1 } counter drop"),
+            "{text}"
+        );
+        assert!(
+            text.contains("ip6 daddr { fe80::1 } counter drop"),
+            "{text}"
+        );
+        // With fib the rule is the same as before.
+        assert_eq!(nft_rule_for(&rule, &target(true)), nft_rule(&rule));
+        // Other rules are untouched.
+        let net = rules(&[], &["10.0.0.0/8"]);
+        assert_eq!(nft_rule_for(&net.rules[0], &t), nft_rule(&net.rules[0]));
     }
 
     /// WSL 2's kernel has no nftables bridge family: its engine host gets the
@@ -1821,6 +1889,8 @@ mod tests {
             port: None,
             isolate_l2: false,
             bridge_family: true,
+            fib: true,
+            host_addrs: vec![],
         };
         let text = engine_ruleset(&t, &r);
         assert!(

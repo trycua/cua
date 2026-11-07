@@ -82,6 +82,8 @@ fn pulls(st: &FakeLume) -> Vec<String> {
 /// process-wide.
 #[tokio::test]
 async fn the_published_image_is_pulled_building_is_the_fallback() {
+    // About which image is pulled, not the network gateway Secure Spaces (on by default) needs.
+    let _open = cua_vmm::network::hold_mode(cua_vmm::network::Mode::Legacy);
     temp_home();
     let held = base_vm_name(&held_full());
     let dev = base_vm_name(DEV);

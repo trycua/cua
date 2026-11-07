@@ -272,19 +272,16 @@ fn every_host_address_is_closed_after_the_resolver_and_localhost() {
 }
 
 #[test]
-fn the_old_open_default_is_what_you_get_until_secure_spaces_is_on() {
-    // Off (the experiment is off): the old open default.
-    assert_eq!(Mode::from_value(None, false), Mode::Legacy);
-    assert_eq!(Mode::from_value(Some(""), false), Mode::Legacy);
-    // On: the secure default.
-    assert_eq!(Mode::from_value(None, true), Mode::Secure);
-    // The variable wins over the experiment, either way.
-    assert_eq!(Mode::from_value(Some("1"), false), Mode::Secure);
-    for on in ["true", "ON", " yes "] {
-        assert_eq!(Mode::from_value(Some(on), false), Mode::Secure, "{on}");
+fn the_secure_default_is_always_on_and_only_the_variable_turns_it_off() {
+    // Not set (or anything else): the secure default.
+    assert_eq!(Mode::from_value(None), Mode::Secure);
+    assert_eq!(Mode::from_value(Some("")), Mode::Secure);
+    // The emergency override: the variable forces either mode.
+    for on in ["1", "true", "ON", " yes "] {
+        assert_eq!(Mode::from_value(Some(on)), Mode::Secure, "{on}");
     }
     for off in ["0", "false", "OFF", " no "] {
-        assert_eq!(Mode::from_value(Some(off), true), Mode::Legacy, "{off}");
+        assert_eq!(Mode::from_value(Some(off)), Mode::Legacy, "{off}");
     }
     let r = compile_mode(&NetworkSettings::internet(), &ctx(), Mode::Legacy).unwrap();
     assert!(r.is_empty());
@@ -1269,4 +1266,47 @@ fn vms_forward_localhost_lan_ports_too() {
         vm_localhost_ports(Some(&both(&[3000, 5432]))).unwrap(),
         [3000, 5432]
     );
+}
+
+/// Conformance for every runtime that gives a guest DNS servers: whatever
+/// the engine host's resolver files name, each server the guest is given
+/// ([`crate::resolver`]) is reachable on port 53 under the Secure rules of
+/// every preset that has a network, so a name resolves and a fetch over
+/// HTTPS can follow. The runner case: Azure's DNS behind a systemd stub.
+#[test]
+fn every_server_a_guest_is_given_is_reachable_on_53_under_secure() {
+    let hosts: [&[&str]; 5] = [
+        &["127.0.0.53", "168.63.129.16"],
+        &["168.63.129.16"],
+        &["169.254.169.254", "10.0.2.3"],
+        &["192.168.65.7", "100.100.100.200"],
+        &[],
+    ];
+    let presets = [
+        NetworkSettings::internet(),
+        localhost(&[3000]),
+        NetworkSettings {
+            preset: NetworkPreset::Unprotected,
+            ..Default::default()
+        },
+    ];
+    for host in hosts {
+        let host: Vec<IpAddr> = host.iter().map(|h| ip(h)).collect();
+        let resolvers = crate::resolver::select(None, &host, false);
+        assert!(!resolvers.is_empty(), "{host:?}");
+        for s in &presets {
+            let mut c = ctx();
+            c.resolvers = resolvers.clone();
+            let r = compile_mode(s, &c, Mode::Secure).unwrap();
+            for d in &resolvers {
+                assert!(
+                    r.allows_port(*d, Proto::Udp, 53) && r.allows_port(*d, Proto::Tcp, 53),
+                    "{d} from {host:?} under {:?}",
+                    s.preset
+                );
+            }
+            // And HTTPS to a public address follows.
+            assert!(r.allows_port(ip("1.1.1.1"), Proto::Tcp, 443));
+        }
+    }
 }

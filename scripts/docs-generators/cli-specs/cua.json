@@ -10284,7 +10284,7 @@
    "usage": "cua build [OPTIONS] [CONTEXT]"
   },
   {
-   "abstract": "What a Space can reach on the network, and changing it: `show`, `set`, `log`. An experiment: see `cua experiments`",
+   "abstract": "What a Space can reach on the network, and changing it: `show`, `set`, `log`",
    "aliases": [],
    "arguments": [],
    "flags": [],
@@ -10461,7 +10461,7 @@
    "usage": "cua network [OPTIONS] <COMMAND>"
   },
   {
-   "abstract": "Send a Space's internet traffic out through this computer for a while: `start`, `stop`, `status`. (`cua network set --via this-computer` keeps it.) Part of the Secure Spaces experiment",
+   "abstract": "Send a Space's internet traffic out through this computer for a while: `start`, `stop`, `status`. (`cua network set --via this-computer` keeps it.)",
    "aliases": [],
    "arguments": [],
    "flags": [],
@@ -10579,7 +10579,7 @@
    "usage": "cua hotspot [OPTIONS] <COMMAND>"
   },
   {
-   "abstract": "How traffic reaches your other computers: `status` (and `--prefer`). Part of the Secure Spaces experiment",
+   "abstract": "How traffic reaches your other computers: `status` (and `--prefer`)",
    "aliases": [],
    "arguments": [],
    "flags": [],
@@ -10650,7 +10650,7 @@
     },
     {
      "abstract": "Turn an experiment on",
-     "after_help": "Examples:\n  cua experiments enable secure-spaces",
+     "after_help": "Examples:\n  cua experiments enable ci-runners",
      "aliases": [],
      "arguments": [
       {
@@ -10675,7 +10675,7 @@
     },
     {
      "abstract": "Turn an experiment off. Nothing it made is deleted",
-     "after_help": "Examples:\n  cua experiments disable secure-spaces",
+     "after_help": "Examples:\n  cua experiments disable ci-runners",
      "aliases": [],
      "arguments": [
       {

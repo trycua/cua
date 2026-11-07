@@ -192,10 +192,15 @@ async fn member_with_idle_run(fx: &Fx) -> (Persistent, cua_spacesd_client::Proce
         ],
     );
     let proc = alive(fx).await;
-    // The supervisor has seen turn 1 already.
+    // The supervisor has seen turn 1 already: its bookmark is past those events, as a real one is.
+    let seen = fx
+        .srv
+        .state
+        .file(&format!("{RUNS}/{RUN}/events.jsonl"))
+        .map_or(0, |b| b.len());
     edit_record(fx, "ada", |r| {
         r["saved_turn"] = json!(1);
-        r["cursor"] = json!(3);
+        r["cursor"] = json!(seen);
     });
     (p, proc)
 }
@@ -1012,8 +1017,13 @@ async fn an_agent_that_replies_itself_is_not_answered_twice() {
         .into_iter()
         .filter(|e| e["reply_to"] == task && e["kind"] == "message")
         .collect();
-    assert_eq!(replies.len(), 1);
-    assert_eq!(replies[0]["text"], "summary: fine");
+    // What the agent posted itself and what it said in its turn are both messages of the thread,
+    // in order; neither replaces the other, and nothing is posted twice.
+    let said: Vec<&str> = replies
+        .iter()
+        .map(|r| r["text"].as_str().unwrap())
+        .collect();
+    assert_eq!(said, ["summary: fine", "ignored"]);
     assert!(p.get("ada").unwrap().task.is_none());
 }
 

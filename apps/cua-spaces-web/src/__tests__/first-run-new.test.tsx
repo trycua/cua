@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-// The new first run (Labs, "Try the new setup"; CUA-3318), phase 1: each screen's words and choices in
+// The new first run (CUA-3318), phase 1: each screen's words and choices in
 // every state the storyboard draws (signed out, signed in, an offline computer, no coding agent, a Mac
 // that can't make a separate computer, a sign-in that didn't finish), then the whole run on its real
 // route with the wasm core.
@@ -9,16 +9,20 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { wasmBuilt } from "@/bridge/__tests__/testCore";
+import { testCore, wasmBuilt } from "@/bridge/__tests__/testCore";
+import type { WizardEnv } from "@/bridge/contracts/new-space";
+import { firstSpaceOffers } from "@/bridge/new-space";
 import type { AgentSetupRow } from "@/bridge/contracts/agents";
 import { readFirstRun, resetFirstRunCache, writeFirstRun as writeFirstRunForTest } from "@/bridge/first-run";
 import { resetSavedOnboardingCache } from "@/bridge/onboarding";
-import { AgentScreen, CliPanel, NextScreen, PermissionsScreen, ReadyScreen, SignInScreen, StepDots, WelcomeScreen, WhereScreen } from "@/components/first-run-new/first-run-new";
+import { AgentScreen, PermissionsScreen, ReadyScreen, SignInScreen, StepDots, WelcomeScreen, WhereScreen } from "@/components/first-run-new/first-run-new";
+import { BringTheRestCard, CliPanel } from "@/components/ask-first/bring-the-rest";
 import { placeKeys } from "@/components/first-run-new/float-keys";
 import { resetConnectedAppsState } from "@/hooks/use-connected-apps";
 import type { AppPermissions } from "@/bridge/app-permissions";
 import { permissionsStepView } from "@/lib/app-permissions";
-import { afterWhere, agentView, chosenAgent, dotFor, dotStep, nextView, reachedAfter, readyView, signInView, stepDots, togglePick, welcomeUsage, whereView, type WhereInput } from "@/lib/first-run-new";
+import { afterWhere, agentView, bringRestView, chosenAgent, dotFor, dotStep, firstJobDone, NEW_RUN_SCREENS, reachedAfter, readyView, signInView, stepDots, togglePick, welcomeUsage, whereView, type WhereInput } from "@/lib/first-run-new";
+import { addAskTask, resetAskTasks } from "@/lib/ask-first";
 import { getDriver, resetPrepare } from "@/lib/prepare/store";
 import { mountApp, stubBrowserApis } from "./app-harness";
 
@@ -185,8 +189,19 @@ describe("screen 2, signed out (after Skip for now)", () => {
 });
 
 describe("screen 2, this Mac can't make a separate computer", () => {
-  it("greys only that option, with one plain sentence; this Mac and the other computers still work", () => {
+  it("leaves the option out when the host says so before anyone asks (offer only what it can run)", () => {
+    for (const os of ["macos", "windows", "linux"]) {
+      expect(whereView({ ...base, os, canMakeSeparate: false, separateBlocked: "Needs Apple silicon." }).separate).toBeNull();
+      expect(whereView({ ...base, os, canMakeSeparate: true }).separate?.state).toBe("offer");
+    }
     drawWhere({ ...base, canMakeSeparate: false, separateBlocked: "Needs Apple silicon." });
+    expect(document.querySelector("[data-new-run-separate]")).toBeNull();
+    expect(document.body.textContent).not.toContain("Or make a separate computer");
+    expect(screen.getByRole("button", { name: "Continue" }).hasAttribute("disabled")).toBe(false);
+  });
+
+  it("once a create was refused, greys only that option, with one plain sentence; this Mac and the other computers still work", () => {
+    drawWhere({ ...base, canMakeSeparate: false, separateRefused: true, separateBlocked: "Needs Apple silicon." });
     const sep = document.querySelector<HTMLElement>("[data-new-run-separate]")!;
     expect(sep.dataset.disabled).toBe("");
     expect(sep.textContent).toContain("This Mac can't make one. Older Intel Macs can't, for example. Your agents can still work on this Mac or on another computer you add.");
@@ -195,9 +210,9 @@ describe("screen 2, this Mac can't make a separate computer", () => {
     expect(document.querySelector("[data-new-run-computer=mini]")!.getAttribute("aria-disabled")).toBeNull();
   });
 
-  it("on a PC, says the host's reason", () => {
-    const v = whereView({ ...base, os: "windows", canMakeSeparate: false, separateBlocked: "Docker Desktop isn't running." });
-    expect(v.separate.sub).toBe("Docker Desktop isn't running. Your agents can still work on this PC or on another computer you add.");
+  it("on a PC, says the host's reason once a create was refused", () => {
+    const v = whereView({ ...base, os: "windows", canMakeSeparate: false, separateRefused: true, separateBlocked: "Docker Desktop isn't running." });
+    expect(v.separate?.sub).toBe("Docker Desktop isn't running. Your agents can still work on this PC or on another computer you add.");
   });
 
   it("explains the Local Network ask before the create, then follows it", () => {
@@ -206,8 +221,44 @@ describe("screen 2, this Mac can't make a separate computer", () => {
       action: "Make it",
       sub: "If macOS asks to let Cua Spaces find devices on your local network, choose Allow. Cua uses it to reach the new computer.",
     });
-    expect(whereView({ ...base, separate: { phase: "making", name: "Linux 1", error: null } }).separate.sub).toBe("Making Linux 1 now. You can continue; it keeps going.");
+    expect(whereView({ ...base, separate: { phase: "making", name: "Linux 1", error: null } }).separate?.sub).toBe("Making Linux 1 now. You can continue; it keeps going.");
     expect(whereView({ ...base, separate: { phase: "failed", name: "Linux 1", error: "Not enough memory." } }).separate).toMatchObject({ sub: "Couldn't make it. Not enough memory.", action: "Try again" });
+  });
+});
+
+describe.skipIf(!wasmBuilt)("what this computer can make, per system (the core's offers the setup reads)", () => {
+  const vol = { availableBytes: 500e9, totalBytes: 1000e9, name: "disk" };
+  const storage = { reserveBytes: 5e9, lume: vol, qemu: vol, container: vol, pulled: [] };
+  const offers = async (os: "macos" | "windows" | "linux", hostArch: string, backends: string[]) => {
+    const env = { defaultLocation: "local", localAvailable: backends.length > 0, localBackends: backends, maxCpus: 8, hostArch, storage } as WizardEnv;
+    return firstSpaceOffers(await testCore(), env, os).map((o) => [o.id, o.blocked]);
+  };
+
+  it("a Mac with Apple silicon: Linux, and macOS", async () => {
+    expect(await offers("macos", "arm64", ["lume", "managed"])).toEqual([
+      ["linux", null],
+      ["macos", null],
+    ]);
+  });
+
+  it("an Intel Mac: Linux only, never macOS", async () => {
+    expect(await offers("macos", "amd64", ["lume", "managed"])).toEqual([["linux", null]]);
+  });
+
+  it("a PC: never macOS", async () => {
+    for (const backends of [["docker"], ["qemu", "docker"]]) expect((await offers("windows", "amd64", backends)).map(([id]) => id)).not.toContain("macos");
+  });
+
+  it("a Linux computer: never macOS", async () => {
+    expect((await offers("linux", "amd64", ["docker", "qemu"])).map(([id]) => id)).not.toContain("macos");
+    expect(await offers("linux", "arm64", ["docker"])).toEqual([["linux", null]]);
+  });
+
+  it("no runtime ready: Linux is offered blocked, so setup leaves the separate computer out", async () => {
+    const [[id, blocked]] = (await offers("macos", "arm64", [])) as [[string, string | null]];
+    expect(id).toBe("linux");
+    expect(blocked).toBeTruthy();
+    expect(whereView({ ...base, canMakeSeparate: !blocked }).separate).toBeNull();
   });
 });
 
@@ -308,6 +359,16 @@ describe("screen 4, Ready", () => {
       command: 'codex "Make a separate Linux computer on this Mac and run this repo\'s tests in it"',
     });
   });
+
+  it("never suggests a separate computer where this one can't make it", () => {
+    for (const os of ["macos", "windows", "linux"]) {
+      const v = readyView({ os, agent: "codex", computers: ["this"], canMakeSeparate: false });
+      expect(v.command).not.toContain("separate");
+      expect(v.command).toContain("Run this repo's tests on this");
+    }
+    // Still checking: the usual line.
+    expect(readyView({ os: "macos", agent: "codex", computers: ["this"], canMakeSeparate: null }).command).toContain("separate Linux computer");
+  });
 });
 
 describe("2b, Cua Spaces' permissions (a Mac only)", () => {
@@ -372,28 +433,38 @@ describe("2b, Cua Spaces' permissions (a Mac only)", () => {
   });
 });
 
-describe("screen 6, next steps", () => {
-  it("offers to invite a teammate, add another computer and let agents use apps on this Mac", () => {
+describe("after the first job, on Home: the rest of setup", () => {
+  it("is not one of setup's screens: Ready is the last", () => {
+    expect(NEW_RUN_SCREENS.at(-1)).toBe("ready");
+    expect(NEW_RUN_SCREENS).not.toContain("next");
+  });
+
+  it("offers to invite a teammate, add another computer and let agents use apps on this Mac, and Not now", () => {
     const onRow = vi.fn();
-    render(<NextScreen view={nextView({ os: "macos" })} onRow={onRow} onDone={noop} />);
+    const onDismiss = vi.fn();
+    render(<BringTheRestCard view={bringRestView({ os: "macos" })} onRow={onRow} onDismiss={onDismiss} />);
     expect(screen.getByRole("heading").textContent).toBe("Now bring the rest in");
-    const rows = [...document.querySelectorAll<HTMLElement>("[data-new-run-next-row]")].map((r) => r.textContent);
+    expect(text()).toContain("Your first job is done.");
+    const rows = [...document.querySelectorAll<HTMLElement>("[data-bring-rest-row]")].map((r) => r.textContent);
     expect(rows[0]).toContain("Invite a teammate");
     expect(rows[1]).toContain("Add another computer");
     expect(rows[2]).toContain("Let agents use apps on this Mac");
-    fireEvent.click(document.querySelector("[data-new-run-next-row=apps]")!);
+    fireEvent.click(document.querySelector("[data-bring-rest-row=apps]")!);
     expect(onRow).toHaveBeenCalledWith("apps");
+    fireEvent.click(screen.getByRole("button", { name: "Not now" }));
+    expect(onDismiss).toHaveBeenCalledTimes(1);
   });
 
-  it("has no apps row away from a Mac", () => {
-    expect(nextView({ os: "windows" }).rows.map((r) => r.id)).toEqual(["invite", "add-computer"]);
+  it("has no apps row away from a Mac, or on a Mac with no permissions to give", () => {
+    expect(bringRestView({ os: "windows" }).rows.map((r) => r.id)).toEqual(["invite", "add-computer"]);
+    expect(bringRestView({ os: "macos", apps: false }).rows.map((r) => r.id)).toEqual(["invite", "add-computer"]);
   });
 
   it("adds Use Cua from Terminal as the last row, only where this app can install the command", () => {
-    expect(nextView({ os: "macos", cli: true }).rows.map((r) => r.id)).toEqual(["invite", "add-computer", "apps", "cli"]);
-    expect(nextView({ os: "linux", cli: true }).rows.map((r) => r.id)).toEqual(["invite", "add-computer", "cli"]);
-    expect(nextView({ os: "windows", cli: false }).rows.map((r) => r.id)).toEqual(["invite", "add-computer"]);
-    const row = nextView({ os: "windows", cli: true }).rows.at(-1)!;
+    expect(bringRestView({ os: "macos", cli: true }).rows.map((r) => r.id)).toEqual(["invite", "add-computer", "apps", "cli"]);
+    expect(bringRestView({ os: "linux", cli: true }).rows.map((r) => r.id)).toEqual(["invite", "add-computer", "cli"]);
+    expect(bringRestView({ os: "windows", cli: false }).rows.map((r) => r.id)).toEqual(["invite", "add-computer"]);
+    const row = bringRestView({ os: "windows", cli: true }).rows.at(-1)!;
     expect(row.title).toBe("Use Cua from Terminal");
     for (const word of ["CLI", "PATH", "binary", "shell"]) expect(`${row.title} ${row.sub}`).not.toContain(word);
   });
@@ -402,16 +473,29 @@ describe("screen 6, next steps", () => {
     const onRow = vi.fn();
     const onInstall = vi.fn();
     const missing = { status: "Installs the cua command in ~/.local/bin.", installed: false, busy: false, tryCommand: null, error: null, primary: { id: "install", label: "Install" } };
-    const { rerender } = render(<NextScreen view={nextView({ os: "linux", cli: true })} onRow={onRow} onDone={noop} cli={<CliPanel view={missing} onInstall={onInstall} />} />);
-    fireEvent.click(document.querySelector("[data-new-run-next-row=cli]")!);
+    const { rerender } = render(<BringTheRestCard view={bringRestView({ os: "linux", cli: true })} open="cli" onRow={onRow} onDismiss={noop} cli={<CliPanel view={missing} onInstall={onInstall} />} />);
+    fireEvent.click(document.querySelector("[data-bring-rest-row=cli]")!);
     expect(onRow).toHaveBeenCalledWith("cli");
-    expect(document.querySelector("[data-new-run-cli]")!.getAttribute("data-new-run-cli")).toBe("missing");
-    fireEvent.click(document.querySelector("[data-new-run-cli-install]")!);
+    expect(document.querySelector("[data-bring-rest-cli]")!.getAttribute("data-bring-rest-cli")).toBe("missing");
+    fireEvent.click(document.querySelector("[data-bring-rest-cli-install]")!);
     expect(onInstall).toHaveBeenCalledTimes(1);
     const done = { ...missing, status: "Installed in ~/.local/bin.", installed: true, tryCommand: "cua spaces list", primary: null };
-    rerender(<NextScreen view={nextView({ os: "linux", cli: true })} onRow={onRow} onDone={noop} cli={<CliPanel view={done} onInstall={onInstall} />} />);
-    expect(document.querySelector("[data-new-run-cli-install]")).toBeNull();
-    expect(document.querySelector("[data-new-run-cli-try]")!.textContent).toBe("cua spaces list");
+    rerender(<BringTheRestCard view={bringRestView({ os: "linux", cli: true })} open="cli" onRow={onRow} onDismiss={noop} cli={<CliPanel view={done} onInstall={onInstall} />} />);
+    expect(document.querySelector("[data-bring-rest-cli-install]")).toBeNull();
+    expect(document.querySelector("[data-bring-rest-cli-try]")!.textContent).toBe("cua spaces list");
+  });
+
+  it("waits for a job that finished: a done Home task, or a run since setup ended that finished its turn", () => {
+    const since = 1_000;
+    expect(firstJobDone({ tasks: [], runs: [] }, since)).toBe(false);
+    expect(firstJobDone({ tasks: [{ state: "working", ending: null }, { state: "starting", ending: null }], runs: [] }, since)).toBe(false);
+    expect(firstJobDone({ tasks: [{ state: "failed", ending: null }], runs: [] }, since)).toBe(false);
+    expect(firstJobDone({ tasks: [{ state: "done", ending: null }], runs: [] }, since)).toBe(true);
+    expect(firstJobDone({ tasks: [{ state: null, ending: "thrown" }], runs: [] }, since)).toBe(true);
+    // Runs from before setup ended don't count; a run still going or one that failed doesn't either.
+    expect(firstJobDone({ tasks: [], runs: [{ startedMs: 500, status: "idle" }] }, since)).toBe(false);
+    expect(firstJobDone({ tasks: [], runs: [{ startedMs: 2_000, status: "running" }, { startedMs: 2_000, status: "failed" }] }, since)).toBe(false);
+    expect(firstJobDone({ tasks: [], runs: [{ startedMs: 2_000, status: "idle" }] }, since)).toBe(true);
   });
 });
 
@@ -521,6 +605,7 @@ beforeEach(() => {
   resetSavedOnboardingCache();
   resetFirstRunCache();
   resetConnectedAppsState();
+  resetAskTasks();
   resetPrepare();
 });
 afterEach(() => {
@@ -533,7 +618,7 @@ const onlyCodex = (rows: AgentSetupRow[]) => rows.map((r) => ({ ...r, installed:
 type Calls = { op: string; args: unknown }[];
 
 describe.skipIf(!wasmBuilt)("the new first run on its route", () => {
-  it("signed out: Skip for now, this Mac only, the agent found here, Ready, next steps, then Home; nothing is made meanwhile", { timeout: 60_000 }, async () => {
+  it("signed out: Skip for now, this Mac only, the agent found here, Ready, then Home; nothing is made meanwhile", { timeout: 60_000 }, async () => {
     const calls: Calls = [];
     const { router } = await mountApp("/onboarding", {
       failsCreates: false,
@@ -557,14 +642,23 @@ describe.skipIf(!wasmBuilt)("the new first run on its route", () => {
     click("[data-onboarding-primary]");
     await waitFor(() => expect(heading()).toBe("Codex can now use this Mac"), { timeout: 15_000 });
     expect(calls.some((c) => c.op === "agents.connect" || c.op === "agents.configure")).toBe(true);
-    click("[data-onboarding-primary]");
-    await waitFor(() => expect(heading()).toBe("Now bring the rest in"));
     // No Space was made while the first run showed.
     expect(calls.some((c) => c.op === "spaces.create")).toBe(false);
     expect(getDriver()?.state?.wanted ?? false).toBe(false);
+    // Ready is the last screen: Done ends setup on Home, ready for the first job.
     click("[data-onboarding-primary]");
     await waitFor(() => expect(calls.find((c) => c.op === "session.completeOnboarding")).toBeTruthy());
     await waitFor(() => expect(router.state.location.pathname).toBe("/home"));
+    // The rest is asked for once the first job is done, not now.
+    expect(readFirstRun().restOffer).toBe("waiting");
+    expect(document.querySelector("[data-bring-rest]")).toBeNull();
+  });
+
+  it("a run saved on the old last screen finishes on Home", { timeout: 60_000 }, async () => {
+    writeFirstRunForTest({ newRun: { screen: "next", reached: 3 } });
+    const { router } = await mountApp("/onboarding", { failsCreates: false, listsGhost: false, demo: { signedIn: true, onboarded: false, noSpaces: true } });
+    await waitFor(() => expect(router.state.location.pathname).toBe("/home"), { timeout: 15_000 });
+    expect(readFirstRun().restOffer).toBe("waiting");
   });
 
   it("screen 1 shows the usage line from the core; turning it off is saved before the run moves on", { timeout: 60_000 }, async () => {
@@ -589,39 +683,58 @@ describe.skipIf(!wasmBuilt)("the new first run on its route", () => {
     expect(heading()).toBe("Bring all your computers under one account");
   });
 
-  it("the last screen has no Terminal row when the command is already on this computer", { timeout: 60_000 }, async () => {
-    writeFirstRunForTest({ newRun: { screen: "next", reached: 3 } });
-    await mountApp("/onboarding", { failsCreates: false, listsGhost: false, demo: { signedIn: true, onboarded: false, noSpaces: true } });
-    await waitFor(() => expect(heading()).toBe("Now bring the rest in"));
+  it("Home asks for the rest only once the first job is done, and Not now puts it away for good", { timeout: 60_000 }, async () => {
+    writeFirstRunForTest({ restOffer: "waiting", restSinceMs: Date.now() });
+    await mountApp("/home", { failsCreates: false, listsGhost: false, demo: { signedIn: true, onboarded: true } });
+    await waitFor(() => expect(document.querySelector("[data-ask-first-home]:not([aria-busy])")).not.toBeNull(), { timeout: 15_000 });
     await new Promise((r) => setTimeout(r, 300));
-    expect(document.querySelector("[data-new-run-next-row=cli]")).toBeNull();
+    // The demo's agent runs all started before setup ended: no job yet.
+    expect(document.querySelector("[data-bring-rest]")).toBeNull();
+    // A Home task finishes.
+    addAskTask({ prompt: "Run the tests", agent: "claude-code", os: "linux", ending: "kept", endedMs: Date.now() });
+    await waitFor(() => expect(document.querySelector("[data-bring-rest]")).not.toBeNull(), { timeout: 15_000 });
+    expect(readFirstRun().restOffer).toBe("shown");
+    expect(document.querySelector("#bring-rest-heading")!.textContent).toBe("Now bring the rest in");
+    fireEvent.click(screen.getByRole("button", { name: "Not now" }));
+    await waitFor(() => expect(document.querySelector("[data-bring-rest]")).toBeNull());
+    expect(readFirstRun().restOffer).toBe("dismissed");
   });
 
-  it("the last screen offers Use Cua from Terminal where the app carries the command, and Install installs it", { timeout: 60_000 }, async () => {
+  it("Home has no Terminal row when the command is already on this computer", { timeout: 60_000 }, async () => {
+    writeFirstRunForTest({ restOffer: "shown" });
+    await mountApp("/home", { failsCreates: false, listsGhost: false, demo: { signedIn: true, onboarded: true } });
+    await waitFor(() => expect(document.querySelector("[data-bring-rest]")).not.toBeNull(), { timeout: 15_000 });
+    await new Promise((r) => setTimeout(r, 300));
+    expect(document.querySelector("[data-bring-rest-row=cli]")).toBeNull();
+  });
+
+  it("Home offers Use Cua from Terminal where the app carries the command, and Install installs it", { timeout: 60_000 }, async () => {
     const calls: Calls = [];
-    writeFirstRunForTest({ newRun: { screen: "next", reached: 3 } });
-    await mountApp("/onboarding", {
+    writeFirstRunForTest({ restOffer: "shown" });
+    await mountApp("/home", {
       failsCreates: false,
       listsGhost: false,
-      demo: { signedIn: true, onboarded: false, noSpaces: true, cli: "missing" },
+      demo: { signedIn: true, onboarded: true, cli: "missing" },
       intercept: (op, args) => (calls.push({ op, args }), undefined),
     });
-    await waitFor(() => expect(heading()).toBe("Now bring the rest in"));
-    const row = await waitFor(() => {
-      const el = document.querySelector<HTMLElement>("[data-new-run-next-row=cli]");
-      if (!el) throw new Error("no Terminal row");
-      return el;
-    });
+    const row = await waitFor(
+      () => {
+        const el = document.querySelector<HTMLElement>("[data-bring-rest-row=cli]");
+        if (!el) throw new Error("no Terminal row");
+        return el;
+      },
+      { timeout: 15_000 },
+    );
     expect(row.textContent).toContain("Use Cua from Terminal");
     fireEvent.click(row);
     const install = await waitFor(() => {
-      const el = document.querySelector<HTMLElement>("[data-new-run-cli-install]");
+      const el = document.querySelector<HTMLElement>("[data-bring-rest-cli-install]");
       if (!el) throw new Error("no Install");
       return el;
     });
     fireEvent.click(install);
     await waitFor(() => expect(calls.some((c) => c.op === "cli.install")).toBe(true));
-    await waitFor(() => expect(document.querySelector("[data-new-run-cli]")?.getAttribute("data-new-run-cli")).toBe("installed"), { timeout: 15_000 });
+    await waitFor(() => expect(document.querySelector("[data-bring-rest-cli]")?.getAttribute("data-bring-rest-cli")).toBe("installed"), { timeout: 15_000 });
   });
 
   it("signed in: Add this computer opens the sign-in, then this Mac was added just now and the account's computers are listed", { timeout: 60_000 }, async () => {

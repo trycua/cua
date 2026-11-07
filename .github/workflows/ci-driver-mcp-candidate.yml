@@ -66,11 +66,10 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Install Linux build dependencies
         if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            clang pkg-config libdbus-1-dev libpipewire-0.3-dev libspa-0.2-dev \
-            libei-dev libxkbcommon-dev libx11-dev libxi-dev libxtst-dev libxext-dev
+        uses: ./.github/actions/apt-install
+        with:
+          packages: >-
+            clang pkg-config libdbus-1-dev libpipewire-0.3-dev libspa-0.2-dev libei-dev libxkbcommon-dev libx11-dev libxi-dev libxtst-dev libxext-dev
       - name: Run envelope receiver and service tests
         working-directory: libs/cua-driver/rust
         run: |

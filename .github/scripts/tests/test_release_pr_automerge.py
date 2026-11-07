@@ -149,6 +149,58 @@ class Wiring(unittest.TestCase):
         self.assertIn("labeled, unlabeled", text)
 
 
+CONFIG = {
+    "packages": {
+        "libs/cua-driver": {
+            "component": "cua-driver-rs",
+            "exclude-paths": ["libs/cua-driver/docs", "libs/cua-driver/python"],
+        },
+        "libs/lume": {"component": "lume"},
+    }
+}
+DRIVER = "release-please--branches--main--components--cua-driver-rs"
+
+
+def compare(*files):
+    import json
+
+    return json.dumps({"ahead_by": len(files), "files": [{"filename": f} for f in files]})
+
+
+class StaleReleaseBranch(unittest.TestCase):
+    """cua-driver-rs 0.41.5: #6834 merged 13 s after #6766, so its changelog missed #6766."""
+
+    def test_new_component_commit_on_main_holds_auto_merge_off(self):
+        with mock.patch.object(rp, "gh", return_value=compare("libs/cua-driver/rust/crates/x.rs")) as gh:
+            out = rp.reconcile(pr(9, ref=DRIVER, auto={"mergeMethod": "SQUASH"}), "trycua/cua", config=CONFIG)
+        self.assertIn("stale", out)
+        gh.assert_called_with("pr", "merge", "9", "--repo", "trycua/cua", "--disable-auto")
+
+    def test_stale_pr_never_gets_auto_merge_enabled(self):
+        with mock.patch.object(rp, "gh", return_value=compare("libs/cua-driver/rust/a.rs")) as gh:
+            rp.reconcile(pr(9, ref=DRIVER), "trycua/cua", config=CONFIG)
+        for call in gh.call_args_list:
+            self.assertNotIn("--auto", call.args)
+
+    def test_other_component_and_excluded_paths_do_not_count(self):
+        with mock.patch.object(rp, "gh", side_effect=[compare("libs/lume/a.swift", "libs/cua-driver/docs/a.md", "libs/cua-driver/python/b.py"), ""]) as gh:
+            out = rp.reconcile(pr(9, ref=DRIVER), "trycua/cua", config=CONFIG)
+        self.assertIn("auto-merge", out)
+        gh.assert_called_with("pr", "merge", "9", "--repo", "trycua/cua", "--auto", "--squash")
+
+    def test_release_tooling_change_counts(self):
+        self.assertEqual(rp.stale_files([".github/scripts/release_attribution.py"], ["libs/cua-driver"], []), [".github/scripts/release_attribution.py"])
+
+    def test_up_to_date_branch_is_enabled(self):
+        with mock.patch.object(rp, "gh", side_effect=[compare(), ""]) as gh:
+            rp.reconcile(pr(9, ref=DRIVER), "trycua/cua", config=CONFIG)
+        gh.assert_called_with("pr", "merge", "9", "--repo", "trycua/cua", "--auto", "--squash")
+
+    def test_workflow_sweeps_on_every_main_push(self):
+        flow = (ROOT / ".github/workflows/release-pr-auto-merge.yml").read_text()
+        self.assertIn("push:\n    branches: [main]", flow)
+
+
 if __name__ == "__main__":
     unittest.main()
 

@@ -867,6 +867,7 @@ impl SpaceService for Scoped {
         let me = self.clone();
         // The reservation lasts as long as the create's stream.
         let adopted = stream.map(move |item| {
+            let item = item.map_err(for_the_agent);
             let _ = &held;
             match &item {
                 Ok(pb::CreateSpaceStreamResponse {

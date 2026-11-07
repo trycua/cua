@@ -2402,6 +2402,7 @@ fn secure_open_lock_file(path: &Path) -> Result<File, HistoryError> {
 fn secure_open_lock_file(path: &Path) -> Result<File, HistoryError> {
     OpenOptions::new()
         .create(true)
+        .truncate(false)
         .read(true)
         .write(true)
         .open(path)

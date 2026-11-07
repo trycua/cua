@@ -8,8 +8,8 @@ use std::time::{Duration, Instant};
 
 use anyhow::{bail, Result};
 use platform_linux::input::{
-    send_click, send_key, send_key_at, send_key_xtest, send_type_text, send_type_text_xtest,
-    send_type_text_xtest_paced, TypePacing,
+    send_click, send_key, send_key_at, send_key_xtest, send_type_text, send_type_text_with_delay,
+    send_type_text_xtest, send_type_text_xtest_paced, TypePacing,
 };
 use x11rb::connection::Connection;
 use x11rb::protocol::xproto::*;
@@ -321,10 +321,13 @@ fn text_delivers_distinct_unmapped_keysyms_on_both_paths() -> Result<()> {
     for xtest in [false, true] {
         std::thread::scope(|scope| -> Result<()> {
             let sender = scope.spawn(move || {
+                // Paced: the test reads each key's keysym from the server's
+                // keymap while the keycode is still borrowed, so it needs the
+                // time between keys that batched delivery no longer takes.
                 if xtest {
-                    send_type_text_xtest("你好")
+                    send_type_text_xtest_paced("你好", TypePacing { delay_ms: 30 })
                 } else {
-                    send_type_text(u64::from(window), "你好")
+                    send_type_text_with_delay(u64::from(window), "你好", 30)
                 }
             });
             let mut keycodes = Vec::new();
@@ -941,7 +944,8 @@ fn xtest_text_batches_deliver_every_key_in_order() -> Result<()> {
     let (conn, screen) = connect()?;
     focused_input_window(&conn, screen)?;
     // More than one batch of 16, with Return and Tab between batches.
-    let text = "The quick brown fox\njumps over\tthe lazy dog 0123456789";
+    // Lower case only: a capital adds Shift events to the stream.
+    let text = "the quick brown fox\njumps over\tthe lazy dog 0123456789";
     send_type_text_xtest(text)?;
     let events = keyboard_events(&conn, text.chars().count() * 2)?;
     assert_typed(&conn, &events, text)
@@ -970,7 +974,7 @@ fn xtest_text_with_a_delay_paces_each_key() -> Result<()> {
 fn xsendevent_text_batches_deliver_every_key_in_order() -> Result<()> {
     let (conn, screen) = connect()?;
     let window = input_window(&conn, conn.setup().roots[screen].root, 0, 0)?;
-    let text = "Batched synthetic keys, over sixteen of them";
+    let text = "batched synthetic keys, over sixteen of them";
     send_type_text(u64::from(window), text)?;
     let events = keyboard_events(&conn, text.chars().count() * 2)?;
     assert_typed(&conn, &events, text)

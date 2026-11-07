@@ -330,6 +330,8 @@ export interface ModelChoice {
   fast: boolean;
   /** The provider's own default. */
   default: boolean;
+  /** An older id kept so a saved choice still works: accepted, but not shown in the menu. */
+  legacy?: boolean;
 }
 
 export interface ModelGroup {

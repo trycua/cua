@@ -1905,6 +1905,12 @@ impl Thread {
             .as_ref()
             .filter(|a| fold.join_requests.contains_key(&a.approval))
             .map(|a| (a.approval, a.approve));
+        // An answer to the agent's own request wakes it with the outcome: its turn may have ended
+        // while it waited, and nothing else would tell it.
+        let answered_ask = draft_answer
+            .as_ref()
+            .filter(|a| !fold.join_requests.contains_key(&a.approval))
+            .map(|a| (a.approval, a.approve, a.note.clone()));
         if let Some(k) = args.to_session {
             let to = task_to.as_deref().ok_or_else(|| {
                 Error::invalid("to_session needs an @mention of an agent member of this Space")
@@ -2010,6 +2016,9 @@ impl Thread {
             self.p
                 .answer_join_request(&self.caller, &self.store, seq, approve)?;
         }
+        if let Some((ap, approve, note)) = answered_ask {
+            self.wake_asker(ap, approve, &note, &who)?;
+        }
         for (to, holders) in refused {
             self.store.append(Draft::note(
                 "rights",
@@ -2037,6 +2046,39 @@ impl Thread {
             }
         }
         Ok(e)
+    }
+
+    /// Tells the agent that asked in approval `ap` what the person answered, as a task for it, so
+    /// it continues (allowed) or stops asking (declined). Only an agent's own request: the host's
+    /// own approvals (a push) wait inside their tool call.
+    fn wake_asker(&self, ap: u64, approve: bool, note: &str, who: &str) -> Result<()> {
+        let Some(asked) = self.store.get(ap)? else {
+            return Ok(());
+        };
+        let Some(agent) = asked.author.agent_name().map(str::to_string) else {
+            return Ok(());
+        };
+        let Some(a) = &asked.approval else {
+            return Ok(());
+        };
+        if crate::thread::grants::kind(&asked) == "push" || self.p.get(&agent).is_err() {
+            return Ok(());
+        }
+        let what = if a.details.trim().is_empty() {
+            a.action.clone()
+        } else {
+            a.details.trim().to_string()
+        };
+        let text = outcome_text(&agent, who, approve, &what, note);
+        let mut d = Draft::new(Author::system("approval"), EntryKind::Message, text);
+        d.mentions = vec![agent.clone()];
+        d.reply_to = Some(ap);
+        d.task = Some(TaskTo {
+            to: agent,
+            session: None,
+        });
+        self.store.append(d)?;
+        Ok(())
     }
 
     /// Resolves attachments: Volume paths the caller can read are
@@ -2752,6 +2794,32 @@ pub(crate) fn start_note(restart: bool, agent: &str, task_text: &str) -> Option<
     restart.then(|| restarted_text(agent, task_text))
 }
 
+/// What an agent is told when the person answered its request: allowed means go on, declined means
+/// the answer is no and the agent does not ask again or look for a way around it.
+pub(crate) fn outcome_text(
+    agent: &str,
+    who: &str,
+    approve: bool,
+    what: &str,
+    note: &str,
+) -> String {
+    let note = note.trim();
+    let extra = if note.is_empty() {
+        String::new()
+    } else {
+        format!(" They said: {note}")
+    };
+    if approve {
+        format!(
+            "{who} allowed your request: {what}.{extra} Go ahead now. Tell the thread what happened when it is done or if it fails, in your own words."
+        )
+    } else {
+        format!(
+            "{who} said no to your request: {what}.{extra} Do not try it again and do not look for a way around it, {agent}. Tell the thread what you will do instead, or stop."
+        )
+    }
+}
+
 /// What the thread says when a run restarted by itself is back on its task.
 pub(crate) fn restarted_text(agent: &str, task_text: &str) -> String {
     format!(
@@ -2937,5 +3005,27 @@ mod notice_tests {
         );
         assert!(!t.contains("session") && !t.contains('#') && !t.contains('/'));
         assert!(!t.chars().any(|c| c.is_ascii_digit()));
+    }
+}
+
+#[cfg(test)]
+mod outcome_tests {
+    use super::*;
+
+    #[test]
+    fn the_agent_hears_yes_and_no_plainly() {
+        let y = outcome_text("claude", "Ada", true, "create a macOS Space", "");
+        assert!(
+            y.starts_with("Ada allowed your request: create a macOS Space."),
+            "{y}"
+        );
+        assert!(y.contains("Go ahead now"));
+        let n = outcome_text("claude", "Ada", false, "create a macOS Space", "too big");
+        assert!(
+            n.contains("said no")
+                && n.contains("They said: too big")
+                && n.contains("Do not try it again"),
+            "{n}"
+        );
     }
 }

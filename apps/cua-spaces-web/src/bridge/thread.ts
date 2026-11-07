@@ -92,6 +92,7 @@ export function foldThread(entries: readonly ThreadEntry[], opts: { readSeq?: nu
   const tasks = new Map<number, Extract<ThreadItem, { type: "task" }>>();
   const approvals = new Map<number, Extract<ThreadItem, { type: "approval" | "join_request" }>>();
   const subs = new Map<string, Extract<ThreadItem, { type: "subagent" }>>();
+  const kids = new Map<string, Extract<ThreadItem, { type: "child_space" }>>();
   const answered = new Set<string>();
   for (const e of sorted) {
     // The copy of a message that tasks one more agent: the original is the row.
@@ -127,7 +128,15 @@ export function foldThread(entries: readonly ThreadEntry[], opts: { readSeq?: nu
       continue;
     }
     if (e.kind === "system" && e.child?.kind === "child_space") {
-      items.push({ type: "child_space", key: `c${e.seq}`, entry: e, space: e.child });
+      // The notes of one create (its steps, then ready or failed) are one row, in the order it started.
+      const known = e.child.key ? kids.get(e.child.key) : undefined;
+      if (known) {
+        known.space = e.child;
+      } else {
+        const item = { type: "child_space" as const, key: `c${e.seq}`, entry: e, space: e.child };
+        if (e.child.key) kids.set(e.child.key, item);
+        items.push(item);
+      }
       continue;
     }
     if (e.kind === "system") {

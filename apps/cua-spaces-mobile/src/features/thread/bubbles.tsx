@@ -214,15 +214,37 @@ export function SubagentRow({ sub }: { sub: Extract<ChildNote, { kind: "subagent
   );
 }
 
-/** A child Space the agent made, with a way to open it. */
+/**
+ * A child Space the agent made, drawn as a subagent row: the state's dot, the Space's name, and a muted
+ * line for where it is ("Cloning the disk", "Ready in 1m 05s", "Couldn't make it: ..."). Tapping the row
+ * opens the child's page, which exists from the moment the create starts.
+ */
 export function ChildSpaceRow({ space }: { space: Extract<ChildNote, { kind: "child_space" }> }) {
   const router = useRouter();
+  const { c } = useTheme();
+  const state = space.state ?? "ready";
+  const color = state === "failed" ? c.destructive : state === "ready" ? c.mutedForeground : c.success;
+  const running = useRunning(space.startedMs, state === "creating");
+  const took = space.startedMs != null && space.endedMs != null ? runningFor(space.startedMs, space.endedMs) : null;
+  const line =
+    state === "creating"
+      ? `${space.phase || "Starting"}${space.percent != null ? `, ${space.percent}%` : ""}${running ? `, ${running}` : ""}`
+      : state === "failed"
+        ? `Couldn't make it: ${space.error || "something went wrong"}`
+        : `Ready${took ? ` in ${took}` : ""}`;
   return (
-    <View style={{ marginLeft: 38, marginRight: 16, marginTop: 6, flexDirection: "row", alignItems: "center", gap: 12 }} testID={`child-space-${space.space}`}>
-      <Text variant="footnote" style={{ flex: 1 }} numberOfLines={1}>{`Made a ${space.os || "new"} computer ${space.name}`}</Text>
-      <Pressable onPress={() => router.push({ pathname: "/space/[id]", params: { id: space.space } })} accessibilityRole="link" accessibilityLabel={`Open ${space.name}`} hitSlop={10}>
-        <Text variant="footnote" color="success" weight="600">Open</Text>
-      </Pressable>
-    </View>
+    <Pressable
+      onPress={() => router.push({ pathname: "/space/[id]", params: { id: space.space } })}
+      style={{ marginLeft: 38, marginRight: 16, marginTop: 6, flexDirection: "row", gap: 8 }}
+      testID={`child-space-${space.space}`}
+      accessibilityRole="link"
+      accessibilityLabel={`Open ${space.name}. ${line}`}
+    >
+      <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: color, marginTop: 6 }} />
+      <View style={{ flex: 1 }}>
+        <Text variant="footnote" numberOfLines={1}>{`${space.os ? `${space.os} ` : ""}${space.name}`}</Text>
+        <Text variant="caption" color="muted" numberOfLines={2}>{line}</Text>
+      </View>
+    </Pressable>
   );
 }

@@ -1127,7 +1127,20 @@ const ThreadEntryShape = ref(
       nullable(
         union(
           object({ kind: oneOf("subagent"), id: str, agent: str, title: str, state: oneOf("running", "done", "failed"), steps: num, result: nullable(str), startedMs: nullable(num), endedMs: nullable(num) }),
-          object({ kind: oneOf("child_space"), space: str, name: str, os: str, agent: str }),
+          object({
+            kind: oneOf("child_space"),
+            space: str,
+            key: opt(str),
+            name: str,
+            os: str,
+            agent: str,
+            state: opt(oneOf("creating", "ready", "failed")),
+            phase: opt(str),
+            percent: opt(nullable(num)),
+            error: opt(str),
+            startedMs: opt(nullable(num)),
+            endedMs: opt(nullable(num)),
+          }),
         ),
       ),
     ),

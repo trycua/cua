@@ -6683,6 +6683,9 @@
                     "space": {
                       "type": "string"
                     },
+                    "key": {
+                      "type": "string"
+                    },
                     "name": {
                       "type": "string"
                     },
@@ -6691,6 +6694,37 @@
                     },
                     "agent": {
                       "type": "string"
+                    },
+                    "state": {
+                      "enum": [
+                        "creating",
+                        "ready",
+                        "failed"
+                      ]
+                    },
+                    "phase": {
+                      "type": "string"
+                    },
+                    "percent": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "startedMs": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    },
+                    "endedMs": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
                     }
                   },
                   "required": [

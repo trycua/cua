@@ -109,7 +109,22 @@ export interface ThreadFailure {
 /** A subagent the agent started, or a child Space it made, on a system note. */
 export type ChildNote =
   | { kind: "subagent"; id: string; agent: string; title: string; state: "running" | "done" | "failed"; steps: number; result: string | null; startedMs: number | null; endedMs: number | null }
-  | { kind: "child_space"; space: string; name: string; os: string; agent: string };
+  | {
+      kind: "child_space";
+      space: string;
+      /** One create: the notes of a Space being made fold into one row. */
+      key?: string;
+      name: string;
+      os: string;
+      agent: string;
+      /** Absent on a note from before: it is made. */
+      state?: "creating" | "ready" | "failed";
+      phase?: string;
+      percent?: number | null;
+      error?: string;
+      startedMs?: number | null;
+      endedMs?: number | null;
+    };
 
 /** A subagent that runs now, on the agent's live row. */
 export interface LiveChild {
@@ -572,7 +587,18 @@ function childNote(v: unknown): ChildNote | null {
     const state = e.state === "done" || e.state === "failed" ? e.state : "running";
     return { kind: "subagent", id: str(e.id), agent: str(e.agent), title: str(e.title) || "Subagent", state, steps: num(e.steps) ?? 0, result: str(e.result) || null, startedMs: num(e.started_ms), endedMs: num(e.ended_ms) };
   }
-  if (e.kind === "child_space" && str(e.space)) return { kind: "child_space", space: str(e.space), name: str(e.name) || str(e.space), os: str(e.os), agent: str(e.agent) };
+  if (e.kind === "child_space" && str(e.space)) {
+    const state = e.state === "creating" || e.state === "ready" || e.state === "failed" ? e.state : undefined;
+    return {
+      kind: "child_space",
+      space: str(e.space),
+      name: str(e.name) || str(e.space),
+      os: str(e.os),
+      agent: str(e.agent),
+      ...(str(e.key) ? { key: str(e.key) } : {}),
+      ...(state ? { state, phase: str(e.phase), percent: num(e.percent), error: str(e.error), startedMs: num(e.started_ms), endedMs: num(e.ended_ms) } : {}),
+    };
+  }
   return null;
 }
 

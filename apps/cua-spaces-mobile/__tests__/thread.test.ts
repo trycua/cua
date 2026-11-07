@@ -75,6 +75,16 @@ describe("every agent message and the child agents", () => {
     expect((items[2] as { sub: { state: string } }).sub.state).toBe("done");
   });
 
+  it("folds the notes of one Space create into one row with its latest state and reads the daemon's JSON", () => {
+    const k = (seq: number, state: string, extra: object = {}) => note(seq, { kind: "child_space", space: "local:mac", key: "mac:1", name: "mac", os: "macOS", agent: "claude", state, ...extra });
+    const items = foldThread([task, k(2, "creating", { phase: "Starting it" }), k(3, "failed", { error: "Its network setup did not come up" })], { me: ME.id });
+    const rows = items.filter((i) => i.type === "child_space");
+    expect(rows).toHaveLength(1);
+    expect((rows[0] as { space: { state: string; error: string } }).space).toMatchObject({ state: "failed", error: "Its network setup did not come up" });
+    const e = threadPageFromTool({ entries: [{ seq: 9, id: "x", ts_ms: 1, author: { kind: "system", id: "system:dispatcher", name: "Cua" }, kind: "system", text: "t", event: { kind: "child_space", space: "local:mac", key: "mac:1", name: "mac", os: "macOS", agent: "claude", state: "creating", phase: "Starting it", percent: 40, started_ms: 5 } }], cursor: 9, caught_up: true, unread: 0, role: "owner" }).entries[0]!;
+    expect(e.child).toMatchObject({ kind: "child_space", state: "creating", phase: "Starting it", percent: 40, startedMs: 5, key: "mac:1" });
+  });
+
   it("reads the live children from the daemon", () => {
     const p = threadPageFromTool({ entries: [], cursor: 1, caught_up: true, unread: 0, role: "owner", live: { key: "k", agents: [{ agent: "@claude", stage: "thinking", children: [{ id: "t1", title: "Map", steps: 1, step: "Ran ls" }] }] } });
     expect(p.live.agents[0]!.children).toEqual([{ id: "t1", title: "Map", steps: 1, step: "Ran ls" }]);

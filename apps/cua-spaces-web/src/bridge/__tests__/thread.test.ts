@@ -469,6 +469,33 @@ describe("every agent message and the child agents in the thread", () => {
     expect(items.map((i) => i.type)).toEqual(["message", "child_space"]);
   });
 
+  it("folds the steps of one Space create into one row, in the order it started, then its outcome", () => {
+    seq = 0;
+    const note = (key: string, over: object) =>
+      entry({ author: SYSTEM, kind: "system", text: "t", child: { kind: "child_space", space: `local:${key.split(":")[0]}`, key, name: key.split(":")[0]!, os: "macOS", agent: "claude", ...over } as never });
+    const items = foldThread(
+      [
+        note("mac:1", { state: "creating", phase: "Cloning the disk for the macOS Space", startedMs: 1000 }),
+        note("lin:2", { state: "creating", phase: "Starting it", startedMs: 2000, os: "Linux" }),
+        note("mac:1", { state: "creating", phase: "Starting it", startedMs: 1000 }),
+        note("lin:2", { state: "ready", phase: "Ready", startedMs: 2000, endedMs: 9000, os: "Linux" }),
+        note("mac:1", { state: "failed", error: "Its network setup did not come up", startedMs: 1000, endedMs: 5000 }),
+      ],
+      { readSeq: 0 },
+    );
+    const rows = items.filter((i) => i.type === "child_space");
+    expect(rows).toHaveLength(2);
+    expect(rows.map((r) => (r.type === "child_space" ? [r.space.name, r.space.state] : []))).toEqual([["mac", "failed"], ["lin", "ready"]]);
+  });
+
+  it("reads a create's state, step and reason from the daemon's JSON, and an old note as made", () => {
+    const e = threadEntryFromTool({ seq: 5, id: "y", ts_ms: 1, author: { kind: "system", id: "system:dispatcher", name: "Cua" }, kind: "system", text: "t", event: { kind: "child_space", space: "local:mac", key: "mac:1", name: "mac", os: "macOS", agent: "claude", state: "failed", phase: "", percent: null, error: "Its network setup did not come up", started_ms: 1, ended_ms: 4 } });
+    expect(e?.child).toMatchObject({ kind: "child_space", state: "failed", error: "Its network setup did not come up", key: "mac:1", startedMs: 1, endedMs: 4 });
+    const old = threadEntryFromTool({ seq: 6, id: "z", ts_ms: 1, author: { kind: "system", id: "system:dispatcher", name: "Cua" }, kind: "system", text: "t", event: { kind: "child_space", space: "local:a", name: "a", os: "Linux", agent: "claude" } });
+    expect(old?.child).toMatchObject({ kind: "child_space", space: "local:a" });
+    expect((old?.child as { state?: string }).state).toBeUndefined();
+  });
+
   it("reads the subagent and child notes and the live children from the daemon's JSON", () => {
     const e = threadEntryFromTool({ seq: 9, id: "x", ts_ms: 1, author: { kind: "system", id: "system:subagent", name: "Cua" }, kind: "system", text: "t", event: { kind: "subagent", id: "t1", agent: "claude", title: "Map", state: "failed", steps: 2, result: "boom" } });
     expect(e?.child).toMatchObject({ kind: "subagent", id: "t1", state: "failed", steps: 2, result: "boom" });

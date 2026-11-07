@@ -467,6 +467,81 @@ impl Scoped {
 /// person: what is missing, and that retrying from inside the Space will not help. The host's own
 /// wording talks to someone at a terminal (`cua cache prune`, a build script); an agent that
 /// repeats it sends the person to commands they do not need.
+/// What the thread shows of one create an agent asked for: recorded in
+/// [`cua_spaces::child_creates`] as it goes, so every client draws the same row.
+struct Tracked {
+    home: std::path::PathBuf,
+    parent: String,
+    key: String,
+    name: String,
+    os: &'static str,
+}
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis() as u64)
+}
+
+impl Tracked {
+    fn start(home: &std::path::Path, parent: &str, child: &pb::CreateSpaceRequest) -> Tracked {
+        let t = Tracked {
+            home: home.to_path_buf(),
+            parent: parent.to_string(),
+            key: child.name.clone(),
+            name: child.name.clone(),
+            os: cua_spaces::child_creates::os_of_image(&child.image),
+        };
+        t.set(|_| {});
+        t
+    }
+
+    fn set(&self, f: impl FnOnce(&mut cua_spaces::child_creates::Entry)) {
+        cua_spaces::child_creates::update(
+            &self.home,
+            &self.parent,
+            &self.key,
+            &self.name,
+            self.os,
+            now_ms(),
+            f,
+        );
+    }
+
+    fn progress(&self, p: &pb::CreateSpaceProgress) {
+        let words = cua_spaces::child_creates::phase_words(&p.phase, self.os);
+        self.set(|e| {
+            if !words.is_empty() {
+                e.phase = words;
+            }
+            e.percent = p.fraction.map(|f| (f.clamp(0.0, 1.0) * 100.0) as u8);
+            if !p.space.is_empty() {
+                e.space = p.space.clone();
+            }
+        });
+    }
+
+    fn ready(&self, id: &str) {
+        self.set(|e| {
+            e.state = cua_spaces::child_creates::State::Ready;
+            e.space = id.to_string();
+            e.phase = "Ready".into();
+            e.percent = None;
+            e.ended_ms = Some(now_ms());
+        });
+    }
+
+    fn failed(&self, why: &str) {
+        let reason = cua_spaces::child_creates::person_reason(why);
+        self.set(|e| {
+            e.state = cua_spaces::child_creates::State::Failed;
+            e.error = reason;
+            e.percent = None;
+            e.ended_ms = Some(now_ms());
+        });
+    }
+}
+
 pub(crate) fn for_the_agent(status: Status) -> Status {
     match agent_words(status.message()) {
         Some(m) => Status::new(status.code(), m),
@@ -701,12 +776,16 @@ impl SpaceService for Scoped {
         let _held = super::admit(&self.shared, &claims.root, ask).inspect_err(|e| {
             self.audit("refuse", &name, e.message());
         })?;
-        let resp = self
-            .owner()
-            .create_space(Request::new(child))
-            .await
-            .map_err(for_the_agent)?;
+        let tracked = Tracked::start(self.spaces().home_dir(), &self.space, &child);
+        let resp = match self.owner().create_space(Request::new(child)).await {
+            Ok(r) => r,
+            Err(e) => {
+                tracked.failed(e.message());
+                return Err(for_the_agent(e));
+            }
+        };
         if let Some(s) = &resp.get_ref().space {
+            tracked.ready(&s.id);
             self.audit("spawn", &s.id, &name);
             self.adopt(&claims, &s.id);
             super::record_cost(&self.shared, &claims.root, &s.id, ask);
@@ -726,24 +805,42 @@ impl SpaceService for Scoped {
         let child = self.child_request(&claims, inner.create.unwrap_or_default())?;
         let ask = priced(self.spaces(), &child, ask_of(&child)).await?;
         let held = super::admit(&self.shared, &claims.root, ask)?;
-        let stream = self
+        let tracked = std::sync::Arc::new(Tracked::start(
+            self.spaces().home_dir(),
+            &self.space,
+            &child,
+        ));
+        let stream = match self
             .owner()
             .create_space_stream(Request::new(pb::CreateSpaceStreamRequest {
                 create: Some(child),
             }))
             .await
-            .map_err(for_the_agent)?
-            .into_inner();
+        {
+            Ok(r) => r.into_inner(),
+            Err(e) => {
+                tracked.failed(e.message());
+                return Err(for_the_agent(e));
+            }
+        };
         let me = self.clone();
         // The reservation lasts as long as the create's stream.
         let adopted = stream.map(move |item| {
-            let item = item.map_err(for_the_agent);
             let _ = &held;
+            match &item {
+                Ok(pb::CreateSpaceStreamResponse {
+                    event: Some(pb::create_space_stream_response::Event::Progress(p)),
+                }) => tracked.progress(p),
+                Err(e) => tracked.failed(e.message()),
+                _ => {}
+            }
+            let item = item.map_err(for_the_agent);
             if let Ok(pb::CreateSpaceStreamResponse {
                 event: Some(pb::create_space_stream_response::Event::Result(r)),
             }) = &item
                 && let Some(s) = &r.space
             {
+                tracked.ready(&s.id);
                 me.adopt(&claims, &s.id);
                 super::record_cost(&me.shared, &claims.root, &s.id, ask);
             }

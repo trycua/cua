@@ -1033,7 +1033,7 @@ export function NewFirstRun() {
         </span>
         {showSkip ? (
           <button type="button" className={cn(GLASS_CHIP, "h-9 px-4 text-[14px]")} onClick={skip} data-onboarding-later="">
-            Skip for now
+            Skip for now (screenshot test)
           </button>
         ) : null}
       </header>

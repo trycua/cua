@@ -66,6 +66,8 @@ export interface AskTask {
   imported?: ImportedChat;
   /** The model the person picked (its id), when they did. */
   model?: string;
+  /** The reasoning level the person picked, when the model has levels. */
+  effort?: string;
   /** The repo the task starts from, when one was chosen. */
   repo?: { url: string; label: string };
 }

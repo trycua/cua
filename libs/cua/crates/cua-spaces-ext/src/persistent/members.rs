@@ -452,10 +452,17 @@ impl Persistent {
                 }
                 // The model it is asked for now is the one its next message
                 // names (an open run switches to it before the turn).
-                if spec.model.is_some() || spec.base_url.is_some() || spec.brief.is_some() {
+                if spec.model.is_some()
+                    || spec.effort.is_some()
+                    || spec.base_url.is_some()
+                    || spec.brief.is_some()
+                {
                     self.update(&r.name, |x| {
                         if spec.model.is_some() {
                             x.model = spec.model.clone();
+                        }
+                        if spec.effort.is_some() {
+                            x.effort = spec.effort.clone();
                         }
                         if spec.base_url.is_some() {
                             x.base_url = spec.base_url.clone();

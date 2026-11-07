@@ -42,7 +42,7 @@ const posted = new Set<string>();
  * unless the person said where, and the Spaces it makes appear under the home.
  */
 export function useStartTask(): {
-  start: (job: { prompt: string; agent: string; where: TaskWhere; model?: string; repo?: AskRepo | null }) => void;
+  start: (job: { prompt: string; agent: string; where: TaskWhere; model?: string; effort?: string; repo?: AskRepo | null }) => void;
   retry: (task: AskTask, where?: TaskWhere) => void;
 } {
   const navigate = useNavigate();
@@ -76,7 +76,7 @@ export function useStartTask(): {
   const setupFor = (agent: string, prompt: string, where?: TaskWhere) => ({ agent, grants: grantsFor(agent), mentions: named(prompt, where) });
 
   /** Posts the job to the agent's home: what the person named now is the grant, then the message goes to the agent through the thread. */
-  const reuseHome = async (spaceId: string, agent: string, prompt: string, model?: string, brief?: string): Promise<"posted" | "needs-run"> => {
+  const reuseHome = async (spaceId: string, agent: string, prompt: string, model?: string, brief?: string, effort?: string): Promise<"posted" | "needs-run"> => {
     // An @mention of a Space or a computer, or "on my Mac", is the approval, so no card asks. It goes to the grants
     // file the daemon reads each time the home asks (no restart).
     const mentions = named(prompt);
@@ -87,7 +87,7 @@ export function useStartTask(): {
       await host.call("spaces.setAccess", { spaceId, home: { ...homeGrantsArg(merged, names), mentions: homeMentionsArg(mentions) } }).catch(() => null);
     }
     // The home's agent is a member of the Space, kept on standby with the picked model.
-    if (await summonIn(spaceId, agent, prompt, model, true, brief)) return "posted";
+    if (await summonIn(spaceId, agent, prompt, model, true, brief, effort)) return "posted";
     return "needs-run";
   };
 
@@ -139,7 +139,7 @@ export function useStartTask(): {
             const t = askTask(id);
             if (t?.model && host && canSummon()) {
               const first = firstMessage(core, await summonInput(spaceId), t.agent, "");
-              if (first?.handle) await host.call("thread.agentAdd", { spaceId, name: first.handle, harness: first.harness || t.agent, model: t.model }).catch(() => null);
+              if (first?.handle) await host.call("thread.agentAdd", { spaceId, name: first.handle, harness: first.harness || t.agent, model: t.model, ...(t.effort ? { effort: t.effort } : {}) }).catch(() => null);
             }
             await flushQueue(pendingId, send(spaceId, await summonInput(spaceId)));
             updateAskTask(id, { inSpace: true });
@@ -154,7 +154,7 @@ export function useStartTask(): {
           homeText = homePrompt(task?.prompt ?? "", setupFor(agent, task?.prompt ?? ""), containerHome.abilities(), task?.repo ?? undefined);
           // A home takes the job through its member (a new one too): the chosen repo is a line of the message.
           const brief = homeBrief(setupFor(agent, task?.prompt ?? ""), containerHome.abilities());
-          const outcome = await reuseHome(spaceId, agent, prompt, task?.model, brief);
+          const outcome = await reuseHome(spaceId, agent, prompt, task?.model, brief, task?.effort);
           // Posted for real now (or not at all): the pending copy does not stay.
           if (place?.pendingId) dropQueue(place.pendingId);
           if (outcome === "posted") {
@@ -162,7 +162,7 @@ export function useStartTask(): {
             return;
           }
         }
-        if (!isHome && place && (await summonIn(spaceId, agent, prompt, task?.model))) {
+        if (!isHome && place && (await summonIn(spaceId, agent, prompt, task?.model, false, undefined, task?.effort))) {
           updateAskTask(id, { inSpace: true });
           return;
         }
@@ -172,7 +172,7 @@ export function useStartTask(): {
           posted.add(`${id}\u0000${spaceId}`);
           await postToSpaceThread(host, spaceId, prompt);
         }
-        const started = await startRun({ spaceId, agent, prompt: homeText ?? prompt, ...(task?.model ? { model: task.model } : {}) });
+        const started = await startRun({ spaceId, agent, prompt: homeText ?? prompt, ...(task?.model ? { model: task.model } : {}), ...(task?.effort ? { effort: task.effort } : {}) });
         updateAskTask(id, { runId: started.run_id, inSpace: true });
       } catch (e) {
         if (place?.pendingId) dropQueue(place.pendingId);
@@ -181,7 +181,7 @@ export function useStartTask(): {
     })();
 
   return {
-    start: ({ prompt, agent, where, model, repo }) => {
+    start: ({ prompt, agent, where, model, effort, repo }) => {
       const target = taskTarget(where);
       // With Child Spaces on, the agent decides (or is told a computer): its home Space takes the request.
       const home = Boolean(children) && (where.kind === "agent" || where.kind === "machine");
@@ -207,6 +207,7 @@ export function useStartTask(): {
         onHost: target.kind === "host",
         ...(home ? { home, named: [...mentions.spaces.map((s) => s.name), ...mentions.machines.map((m) => m.name)] } : {}),
         ...(model ? { model } : {}),
+        ...(effort ? { effort } : {}),
         ...(repo ? { repo } : {}),
       });
       record("ask_first_task_started");

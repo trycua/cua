@@ -687,6 +687,25 @@ pub fn launch_with_home(
     launch_with_config(h, endpoint, model, run_dir, cwd, home, None)
 }
 
+/// Sets the reasoning level of a run on the harnesses that take one: Claude Code
+/// reads `CLAUDE_CODE_EFFORT_LEVEL`, Codex a `-c model_reasoning_effort=` override.
+/// Any other harness (or an unknown level) is left as it was.
+pub fn apply_effort(h: &Harness, l: &mut Launch, effort: Option<&str>) {
+    let Some(e) = effort.filter(|e| ["low", "medium", "high", "xhigh", "max"].contains(e)) else {
+        return;
+    };
+    match h.id {
+        "claude-code" => l.env.push(("CLAUDE_CODE_EFFORT_LEVEL".into(), e.into())),
+        // Codex has no `max`; its top level is `xhigh`.
+        "openai-codex" | "codex" => {
+            let e = if e == "max" { "xhigh" } else { e };
+            l.args
+                .extend(["-c".into(), format!("model_reasoning_effort={e:?}")]);
+        }
+        _ => {}
+    }
+}
+
 /// [`launch_with_home`] with `hermes_config`: the `config.yaml` Cua generated
 /// from the person's connections (`cua_connections::hermes`). Hermes then
 /// starts from it, not from the guest's own setup, and uses the provider it
@@ -1067,6 +1086,35 @@ impl Harness {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_reasoning_level_reaches_only_the_apps_that_take_one() {
+        let mut c = launch(harness("claude-code").unwrap(), None, None, "/r", "/w").unwrap();
+        apply_effort(harness("claude-code").unwrap(), &mut c, Some("low"));
+        assert!(
+            c.env
+                .contains(&("CLAUDE_CODE_EFFORT_LEVEL".into(), "low".into()))
+        );
+        let mut x = launch(harness("openai-codex").unwrap(), None, None, "/r", "/w").unwrap();
+        apply_effort(harness("openai-codex").unwrap(), &mut x, Some("max"));
+        assert!(
+            x.args
+                .windows(2)
+                .any(|w| w[0] == "-c" && w[1] == "model_reasoning_effort=\"xhigh\"")
+        );
+        let mut o = launch(harness("opencode").unwrap(), None, None, "/r", "/w").unwrap();
+        let before = (o.env.clone(), o.args.clone());
+        apply_effort(harness("opencode").unwrap(), &mut o, Some("high"));
+        apply_effort(harness("claude-code").unwrap(), &mut c, Some("bogus; rm"));
+        assert_eq!((o.env, o.args), before);
+        assert_eq!(
+            c.env
+                .iter()
+                .filter(|(k, _)| k == "CLAUDE_CODE_EFFORT_LEVEL")
+                .count(),
+            1
+        );
+    }
 
     #[test]
     fn short_names_resolve_to_the_registry_id() {

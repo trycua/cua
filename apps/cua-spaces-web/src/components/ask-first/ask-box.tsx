@@ -121,6 +121,7 @@ export function AskBox({
   selected,
   onPickAccount,
   onModel,
+  onEffort,
   onSignIn,
   onConfigure,
   accounts,
@@ -151,6 +152,7 @@ export function AskBox({
   selected: AgentSelection | null;
   onPickAccount: (group: AgentGroup, account: AgentAccount) => void;
   onModel: (model: string) => void;
+  onEffort?: (level: string) => void;
   /** Starts the sign-in of an app that has no account. */
   onSignIn: (group: AgentGroup) => void;
   /** Opens Settings, Connections, where the menu's apps are chosen. */
@@ -217,7 +219,7 @@ export function AskBox({
         className={cn("block w-full resize-none bg-transparent px-5 pt-4 text-[16px] leading-relaxed outline-none placeholder:text-muted-foreground", compact ? "min-h-14" : "min-h-24")}
       />
       <div className="flex items-center gap-1 px-2 pt-1 pb-2">
-        <AgentPicker view={view} selected={selected} onPick={onPickAccount} onModel={onModel} onSignIn={onSignIn} onConfigure={onConfigure} accounts={accounts} />
+        <AgentPicker view={view} selected={selected} onPick={onPickAccount} onModel={onModel} onEffort={onEffort} onSignIn={onSignIn} onConfigure={onConfigure} accounts={accounts} />
         <RepoChip repo={repo} onRepo={onRepo} />
         {placed && agentHome ? (
           <span data-ask-where="" className="max-w-64 truncate px-1.5 text-[13px] text-muted-foreground">

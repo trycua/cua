@@ -592,6 +592,7 @@ impl Persistent {
                 harness: "other".into(),
                 space: code.space.clone(),
                 model: None,
+                effort: None,
                 base_url: None,
                 env_from_host: vec![],
                 env: Default::default(),

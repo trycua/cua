@@ -110,7 +110,7 @@ export function AskFirstHome() {
     }
     // The run uses the app's own choice of account: make it the one shown.
     if (!selected.account.selected) void connectors.useCredential(selected.group.app, { env: selected.account.env, slot: selected.account.slot });
-    start({ prompt, agent: chosenAgent, where: w, model: selected.model.id, repo });
+    start({ prompt, agent: chosenAgent, where: w, model: selected.model.id, ...(selected.effort ? { effort: selected.effort } : {}), repo });
     setText("");
   };
   // A sign-in that did not work says so, in plain words, where the person clicked.
@@ -152,6 +152,7 @@ export function AskFirstHome() {
           selected={selected}
           onPickAccount={useAccount}
           onModel={(model) => selected && rememberAgent({ ...pickOf(selected), model })}
+          onEffort={(effort) => selected && rememberAgent({ ...pickOf(selected), effort })}
           onSignIn={(g) => void signInTo(g.app, g.label)}
           onConfigure={() => void navigate({ to: "/settings/connections" })}
           accounts={accountActions}

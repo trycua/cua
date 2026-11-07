@@ -512,6 +512,10 @@ pub struct CreateFix {
     /// The command to copy or the page to open.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub value: Option<String>,
+    /// Keep Try again next to the button: the fix is something to do first
+    /// (download a file), after which the same create is tried again.
+    #[serde(default)]
+    pub keep_retry: bool,
 }
 
 /// One row of the SDK's `list_spaces`.

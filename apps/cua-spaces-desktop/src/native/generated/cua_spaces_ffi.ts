@@ -12589,7 +12589,12 @@ export type AppCreateFix = {
     /**
      * The command to copy or the page to open.
      */
-    value?: string
+    value?: string,
+    /**
+     * Keep Try again next to the button: the fix is something to do first
+     * (download a file), after which the same create is tried again.
+     */
+    keepRetry: boolean
 }
 
 /**
@@ -12616,7 +12621,8 @@ const FfiConverterTypeAppCreateFix = (() => {
                 text: FfiConverterString.read(from),
                 label: FfiConverterString.read(from),
                 action: FfiConverterTypeAppCreateFixAction.read(from),
-                value: FfiConverterOptionalString.read(from)
+                value: FfiConverterOptionalString.read(from),
+                keepRetry: FfiConverterBool.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -12624,12 +12630,14 @@ const FfiConverterTypeAppCreateFix = (() => {
             FfiConverterString.write(value.label, into);
             FfiConverterTypeAppCreateFixAction.write(value.action, into);
             FfiConverterOptionalString.write(value.value, into);
+            FfiConverterBool.write(value.keepRetry, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterString.allocationSize(value.text) +
              FfiConverterString.allocationSize(value.label) +
              FfiConverterTypeAppCreateFixAction.allocationSize(value.action) +
-             FfiConverterOptionalString.allocationSize(value.value);
+             FfiConverterOptionalString.allocationSize(value.value) +
+             FfiConverterBool.allocationSize(value.keepRetry);
 
         }
     };

@@ -945,6 +945,7 @@ fn windows_download_fix() -> CreateFix {
         label: "Open Microsoft's download page".into(),
         action: CreateFixAction::OpenUrl,
         value: Some(WINDOWS_ARM64_PAGE.into()),
+        keep_retry: true,
     }
 }
 
@@ -1152,18 +1153,21 @@ pub fn fix_for(kind: &str, p: &PendingCreate) -> Option<CreateFix> {
         label: format!("Copy {command}"),
         action: CreateFixAction::CopyCommand,
         value: Some(command.into()),
+        keep_retry: false,
     };
     let help = |text: String| CreateFix {
         text,
         label: "How to fix it".into(),
         action: CreateFixAction::OpenUrl,
         value: Some(TROUBLESHOOT_URL.into()),
+        keep_retry: false,
     };
     let details = |text: String| CreateFix {
         text,
         label: "See details".into(),
         action: CreateFixAction::Details,
         value: None,
+        keep_retry: false,
     };
     let on = if elsewhere { " on that computer" } else { "" };
     Some(match kind {
@@ -2453,6 +2457,7 @@ mod tests {
         assert_eq!(fix.label, "Open Microsoft's download page");
         assert_eq!(fix.value.as_deref(), Some(WINDOWS_ARM64_PAGE));
         assert_eq!(fix.action, CreateFixAction::OpenUrl);
+        assert!(fix.keep_retry, "Try again stays beside it");
     }
 
     /// The bar of a first-time Windows build only moves forward through the

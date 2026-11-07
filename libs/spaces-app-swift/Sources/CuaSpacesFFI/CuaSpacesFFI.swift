@@ -11706,6 +11706,11 @@ public struct AppCreateFix: Equatable, Hashable {
      * The command to copy or the page to open.
      */
     public var value: String?
+    /**
+     * Keep Try again next to the button: the fix is something to do first
+     * (download a file), after which the same create is tried again.
+     */
+    public var keepRetry: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -11721,11 +11726,16 @@ public struct AppCreateFix: Equatable, Hashable {
          */action: AppCreateFixAction,
         /**
          * The command to copy or the page to open.
-         */value: String?) {
+         */value: String?,
+        /**
+         * Keep Try again next to the button: the fix is something to do first
+         * (download a file), after which the same create is tried again.
+         */keepRetry: Bool) {
         self.text = text
         self.label = label
         self.action = action
         self.value = value
+        self.keepRetry = keepRetry
     }
 
 
@@ -11747,7 +11757,8 @@ public struct FfiConverterTypeAppCreateFix: FfiConverterRustBuffer {
                 text: FfiConverterString.read(from: &buf),
                 label: FfiConverterString.read(from: &buf),
                 action: FfiConverterTypeAppCreateFixAction.read(from: &buf),
-                value: FfiConverterOptionString.read(from: &buf)
+                value: FfiConverterOptionString.read(from: &buf),
+                keepRetry: FfiConverterBool.read(from: &buf)
         )
     }
 
@@ -11756,6 +11767,7 @@ public struct FfiConverterTypeAppCreateFix: FfiConverterRustBuffer {
         FfiConverterString.write(value.label, into: &buf)
         FfiConverterTypeAppCreateFixAction.write(value.action, into: &buf)
         FfiConverterOptionString.write(value.value, into: &buf)
+        FfiConverterBool.write(value.keepRetry, into: &buf)
     }
 }
 

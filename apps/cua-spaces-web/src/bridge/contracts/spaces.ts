@@ -225,6 +225,9 @@ export interface CreateFix {
    * open the failed create's details. */
   action: "copy-command" | "open-url" | "details";
   value?: string;
+  /** Keep Try again beside the button: the fix is something to do first
+   * (download a file), then the same create is tried again. */
+  keepRetry?: boolean;
 }
 
 export type RegionId = "us-east" | "us-central" | "eu-west";

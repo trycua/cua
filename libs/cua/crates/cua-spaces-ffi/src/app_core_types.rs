@@ -148,6 +148,9 @@ pub struct AppCreateFix {
     pub action: AppCreateFixAction,
     /// The command to copy or the page to open.
     pub value: Option<String>,
+    /// Keep Try again next to the button: the fix is something to do first
+    /// (download a file), after which the same create is tried again.
+    pub keep_retry: bool,
 }
 
 /// How a Space turns off: the SDK's `power` words.

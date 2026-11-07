@@ -116,10 +116,11 @@ fn wait_words(secs: u64) -> String {
 pub fn volume_label(path: &Path) -> Option<String> {
     use std::io::{Read as _, Seek as _, SeekFrom};
     let mut f = std::fs::File::open(path).ok()?;
-    let mut d = [0u8; 40];
+    // Type, "CD001", version, then the 32-byte system id and the 32-byte volume id.
+    let mut d = [0u8; 72];
     f.seek(SeekFrom::Start(0x8000)).ok()?;
     f.read_exact(&mut d).ok()?;
-    (&d[1..6] == b"CD001").then(|| String::from_utf8_lossy(&d[8..40]).trim().to_string())
+    (&d[1..6] == b"CD001").then(|| String::from_utf8_lossy(&d[40..72]).trim().to_string())
 }
 
 /// A Windows ISO for `arch` the person saved in one of `dirs`: an ISO 9660
@@ -140,7 +141,10 @@ pub fn detect_iso(dirs: &[PathBuf], arch: WindowsArch) -> Option<PathBuf> {
             if !p.extension().is_some_and(|x| x.eq_ignore_ascii_case("iso")) {
                 continue;
             }
-            let Ok(m) = e.metadata() else { continue };
+            // Through links: a Downloads folder may hold an alias or a symlink.
+            let Ok(m) = std::fs::metadata(&p) else {
+                continue;
+            };
             // Not our own cache copies, not a partial download, not a small disc.
             if !m.is_file() || m.len() < 3 << 30 {
                 continue;
@@ -157,22 +161,28 @@ pub fn detect_iso(dirs: &[PathBuf], arch: WindowsArch) -> Option<PathBuf> {
 /// The ISO you saved yourself instead of the download Microsoft refused, or
 /// the plain error that says when to retry and what to do meanwhile.
 fn saved_or_limited(req: &IsoRequest<'_>, left: Option<u64>, slug: &str) -> Result<ResolvedIso> {
-    if let Some(p) = detect_iso(&req.scan_dirs, req.arch)
-        && check_user_iso(&p, req.arch).is_ok()
-    {
-        // Remembered, so the next create needs nothing.
-        let _ = register(req.cache_dir, req.version, req.arch, &p);
-        tracing::info!(iso = %p.display(), "using the Windows ISO found on this computer");
-        return Ok(ResolvedIso {
-            path: p,
-            origin: IsoOrigin::Detected,
-        });
+    let mut why_not = String::new();
+    if let Some(p) = detect_iso(&req.scan_dirs, req.arch) {
+        match check_user_iso(&p, req.arch) {
+            Ok(()) => {
+                // Remembered, so the next create needs nothing.
+                if let Err(e) = register(req.cache_dir, req.version, req.arch, &p) {
+                    tracing::warn!("could not remember {}: {e}", p.display());
+                }
+                tracing::info!(iso = %p.display(), "using the Windows ISO found on this computer");
+                return Ok(ResolvedIso {
+                    path: p,
+                    origin: IsoOrigin::Detected,
+                });
+            }
+            Err(e) => why_not = format!(" ({} was found but not used: {e})", p.display()),
+        }
     }
     let wait = wait_words(left.unwrap_or(COOLDOWN_SECS));
     Err(ImageError::Build {
         step: "windows iso".into(),
         detail: format!(
-            "{} right now. Try again in {wait}, or download the Windows ISO yourself \
+            "{} right now{why_not}. Try again in {wait}, or download the Windows ISO yourself \
              (https://www.microsoft.com/software-download/{slug}) and save it in your Downloads folder: Cua finds it. \
              With the command line: cua sb create windows:{} --iso ~/Downloads/<the file>.iso",
             super::msdl::LIMITED,
@@ -849,10 +859,10 @@ mod tests {
         use std::io::{Seek as _, SeekFrom, Write as _};
         let mut f = std::fs::File::create(path).unwrap();
         f.seek(SeekFrom::Start(0x8000)).unwrap();
-        let mut d = vec![b' '; 40];
+        let mut d = vec![b' '; 72];
         d[0] = 1;
         d[1..6].copy_from_slice(b"CD001");
-        d[8..8 + label.len()].copy_from_slice(label.as_bytes());
+        d[40..40 + label.len()].copy_from_slice(label.as_bytes());
         f.write_all(&d).unwrap();
         f.set_len((3 << 30) + 4096).unwrap();
     }
@@ -918,6 +928,37 @@ mod tests {
         // Remembered for the next create.
         let v = lookup("11").unwrap();
         assert!(registered(&cache, v, WindowsArch::Arm64).is_some());
+    }
+
+    #[test]
+    fn a_linked_iso_in_downloads_is_found_and_an_x64_one_is_not_taken_for_arm64() {
+        let d = tempfile::tempdir().unwrap();
+        let real = d.path().join("real.iso");
+        windows_iso_saved(&real, "CCCOMA_A64FRE_EN-US_DV9");
+        let dl = d.path().join("Downloads");
+        std::fs::create_dir(&dl).unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&real, dl.join("Win11_Arm64.iso")).unwrap();
+        #[cfg(not(unix))]
+        std::fs::copy(&real, dl.join("Win11_Arm64.iso")).unwrap();
+        assert!(detect_iso(&[dl.clone()], WindowsArch::Arm64).is_some());
+        assert!(detect_iso(&[dl], WindowsArch::Amd64).is_none());
+    }
+
+    /// Against a real Windows ISO: `CUA_REAL_ISO_DIR=<folder with it> cargo test -- --ignored real_iso`.
+    #[test]
+    #[ignore = "needs a real Windows ISO"]
+    fn real_iso_in_a_folder_is_detected_by_its_label() {
+        let Some(dir) = std::env::var_os("CUA_REAL_ISO_DIR") else {
+            return;
+        };
+        let dirs = [PathBuf::from(dir)];
+        let found = detect_iso(&dirs, WindowsArch::Arm64);
+        eprintln!("found {found:?}");
+        let p = found.expect("an ARM64 ISO");
+        eprintln!("label {:?}", volume_label(&p));
+        check_user_iso(&p, WindowsArch::Arm64).unwrap();
+        assert!(detect_iso(&dirs, WindowsArch::Amd64).is_none());
     }
 
     #[test]

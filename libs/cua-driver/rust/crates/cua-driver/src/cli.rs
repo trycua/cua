@@ -4866,7 +4866,7 @@ fn cli_docs_literal() -> serde_json::Value {
             {
                 "name": "kwin-capture",
                 "abstract": "Turn exact KWin window capture and activation on or off (Linux).",
-                "discussion": "Off by default on every KWin release. The setting is read on every call, so no restart is needed; on waits until KWin grants it, up to five seconds on KWin 6.7 and older. Only this command changes it; set_config cannot.",
+                "discussion": "Off by default on every KWin release. The setting is read on every call, so no restart is needed; on waits up to about five seconds for KWin to grant it on KWin 6.7 and older, then prints the status line either way. Only this command changes it; set_config cannot.",
                 "arguments": no_args,
                 "options": no_options,
                 "flags": no_flags,

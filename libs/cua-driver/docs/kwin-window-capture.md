@@ -42,9 +42,11 @@ cua-driver kwin-capture status
 The command saves `on`, `off` or `override-portal-deny` in
 `~/.cua-driver/kwin-window-capture`. Any other content, or no file, is off. The driver reads it on every call, so no restart
 of the driver or of KWin is needed. Off applies from the next call. On
-returns once KWin grants a fresh connection, waiting up to five seconds on 6.7
-and older while KWin rereads its desktop-entry cache, so it applies from the next
-call too. `set_config` cannot change it, so a model
+returns once KWin grants a fresh connection, waiting up to about five seconds on
+6.7 and older while KWin rereads its desktop-entry cache, so it applies from the
+next call too. If KWin hasn't granted it by then, `on` still saves the setting,
+prints the status line and exits 0; run `cua-driver kwin-capture status` to
+check again. `set_config` cannot change it, so a model
 can't turn it on for itself. While it is off, the driver behaves as it does
 without this adapter: window capture on KWin returns `surface_identity_unproven`
 and `bring_to_front` returns `foreground_unavailable`. Window ids listed while

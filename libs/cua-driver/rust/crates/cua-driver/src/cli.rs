@@ -47,6 +47,12 @@ pub enum Command {
         /// `serve::default_socket_path()` when None.
         socket: Option<String>,
     },
+    /// `cua-driver connect`: connect Claude Code, Codex and Cursor.
+    Connect {
+        clients: Vec<String>,
+        dry_run: bool,
+        json: bool,
+    },
     McpConfig {
         client: Option<String>,
         /// Skip installing the skill pack for `client` (`--no-skills`).
@@ -347,6 +353,7 @@ fn finite_command_name_from_args(args: &[String]) -> Option<&'static str> {
         Some("list-tools") => Some("list_tools"),
         Some("describe") => Some("describe"),
         Some("mcp-config") => Some("mcp_config"),
+        Some("connect") => Some("connect"),
         Some("manifest") => Some("manifest"),
         Some("call") => Some("call"),
         Some("stop") => Some("stop"),
@@ -830,7 +837,9 @@ pub fn parse_command() -> Command {
                 eprintln!("You probably meant one of:");
                 eprintln!("  cua-driver list-tools                           # available tools");
                 eprintln!("  cua-driver status                               # check the daemon");
-                eprintln!("  cua-driver mcp-config --client claude-code      # wire into a client");
+                eprintln!(
+                    "  cua-driver connect                              # connect your agents"
+                );
                 eprintln!("  cua-driver --help                               # everything else");
                 eprintln!();
                 eprintln!("To run the MCP server explicitly (and pipe JSON-RPC by hand):");
@@ -851,6 +860,11 @@ pub fn parse_command() -> Command {
             grants: grants.clone(),
         },
         Some("list-tools") => Command::ListTools,
+        Some("connect") => Command::Connect {
+            clients: flag_values(&args, "--client"),
+            dry_run: args.iter().any(|a| a == "--dry-run"),
+            json: args.iter().any(|a| a == "--json"),
+        },
         Some("mcp-config") => Command::McpConfig {
             client: mcp_client,
             no_skills: args.iter().any(|a| a == "--no-skills"),
@@ -2058,6 +2072,13 @@ pub fn build_manifest() -> serde_json::Value {
                   { "name": "--screenshot-out-file", "type": "string", "description": "Write image content to this path instead of emitting base64." },
                   { "name": "--socket", "type": "string", "description": "Override the required daemon socket path." }
               ] },
+            { "name": "connect",
+              "description": "Connect Claude Code, Codex and Cursor to Cua Driver: add it to each agent that is installed and install the skill pack. Safe to run again.",
+              "args": [
+                  { "name": "--client", "type": "string", "description": "Connect only this agent (claude, codex or cursor). Repeat for several. Default: every agent found." },
+                  { "name": "--dry-run", "type": "flag", "description": "Show what would be connected without changing anything." },
+                  { "name": "--json", "type": "flag", "description": "Emit machine-readable output." }
+              ] },
             { "name": "mcp-config",
               "description": "Print client-specific connection guidance (MCP config where supported) and, with --client, install the skill pack for that agent.",
               "args": [
@@ -2222,10 +2243,9 @@ pub fn run_mcp_config(client: Option<&str>, no_skills: bool) {
             );
         }
         Some("claude") | Some("claude-code") => {
-            // Claude Code wants the MCP server registered as
-            // `cua-computer-use` — the bare key "computer-use" is
-            // reserved, so external stdio registrations use a distinct
-            // key. We emit `--scope user` so the entry lands in
+            // The server is registered as `cua-driver`, the same name every
+            // other client uses (older versions used `cua-computer-use`;
+            // `cua-driver connect` still recognises it). We emit `--scope user` so the entry lands in
             // `~/.claude.json` and is visible from every Claude Code
             // session regardless of cwd. Without it, `claude mcp add`
             // defaults to the per-project config (`<cwd>/.claude.json`),
@@ -2265,10 +2285,7 @@ pub fn run_mcp_config(client: Option<&str>, no_skills: bool) {
             let json = cfg.to_string();
             #[cfg(windows)]
             let json = json.replace('"', "\\\"");
-            println!(
-                "claude mcp add-json --scope user cua-computer-use '{}'",
-                json
-            );
+            println!("claude mcp add-json --scope user cua-driver '{}'", json);
         }
         Some("codex") => {
             println!("codex mcp add cua-driver -- {binary} mcp");
@@ -4262,6 +4279,7 @@ const HELP_SUBCOMMANDS: &[&str] = &[
     "cursor",
     "sessions",
     "history",
+    "connect",
     "mcp-config",
     "test",
 ];
@@ -4605,6 +4623,15 @@ fn cli_docs_literal() -> serde_json::Value {
                 ]
             },
             {
+                "name": "connect",
+                "abstract": "Connect Claude Code, Codex and Cursor to Cua Driver: add it to each agent that is installed and install the skill pack.",
+                "discussion": "Registers one server named cua-driver with each agent found (through the agent's own CLI, or by merging into Cursor's mcp.json without touching other entries) and installs the skill pack. An agent already connected, including under the older Claude Code name cua-computer-use, is left alone, so it is safe to run again. One agent failing does not stop the others; the exit code is non-zero only when an agent was found and none could be connected.",
+                "arguments": no_args,
+                "options": [{"name":"client","short_name":null,"help":"Connect only this agent (claude, codex or cursor). Repeat for several.","type":"String","default_value":null,"is_optional":true}],
+                "flags": [{"name":"dry-run","short_name":null,"help":"Show what would be connected without changing anything.","default_value":false},{"name":"json","short_name":null,"help":"Emit machine-readable output.","default_value":false}],
+                "subcommands": no_subcommands
+            },
+            {
                 "name": "mcp-config",
                 "abstract": "Print client-specific connection guidance (MCP config where supported) and install the skill pack for that agent.",
                 "discussion": "Supported clients include claude, codex, cursor, antigravity, openclaw, opencode, hermes, pi, prime-agent, qwen, droid, and zcode. With --client, the cua-driver skill pack is also installed for that agent (not for qwen, droid or zcode, which have no skills folder), and one line on stderr says where; --no-skills skips it.",
@@ -4904,6 +4931,11 @@ const CLI_EXAMPLES: &[(&str, &[(&str, &str)])] = &[
     ("permissions", &[("cua-driver permissions", "Report Accessibility and Screen Recording status")]),
     ("permissions status", &[("cua-driver permissions status --json", "Report the grants as JSON")]),
     ("permissions grant", &[("cua-driver permissions grant", "Request the grants for CuaDriver.app")]),
+    ("connect", &[
+        ("cua-driver connect", "Connect every agent found on this computer"),
+        ("cua-driver connect --client claude --dry-run", "Show what would change for Claude Code"),
+        ("cua-driver connect --json", "Print the result for each agent as JSON"),
+    ]),
     ("mcp-config", &[
         ("cua-driver mcp-config", "Print a generic mcpServers entry"),
         ("cua-driver mcp-config --client codex", "Print setup for Codex and install its skill pack"),
@@ -6348,6 +6380,7 @@ mod tests {
             "revoke",
             "status",
             "mcp-config",
+            "connect",
             "manifest",
             "history",
         ] {

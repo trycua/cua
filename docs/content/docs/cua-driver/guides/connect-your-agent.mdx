@@ -10,6 +10,12 @@ An agent reaches Cua Driver in one of two ways: an MCP client launches
 `cua-driver call <tool>`. The harness owns the model and the loop; Cua Driver
 never calls a model API.
 
+## Connect with one command
+
+`cua-driver connect` finds Claude Code, Codex and Cursor on the computer, connects each one to Cua Driver (the server name is `cua-driver`) and installs the [agent skill](#install-the-agent-skill) for it. The installer runs it for you. It is safe to run again: an agent that is already connected, including one connected under the older Claude Code name `cua-computer-use`, is left alone. Use `--client claude`, `--client codex` or `--client cursor` to pick one, `--dry-run` to preview, and `--json` for machine-readable output. Restart the agent afterwards. Cursor's `~/.cursor/mcp.json` is merged, never replaced.
+
+For any other agent, or to see the exact setup, use `mcp-config` below.
+
 ## Register the MCP server
 
 To add the skill and MCP server to every agent on the machine in one step, use
@@ -27,7 +33,7 @@ cua-driver mcp-config --client <client>
 
 | Harness | Setup | Notes |
 | --- | --- | --- |
-| Claude Code | `claude mcp add --transport stdio cua-driver -- cua-driver mcp`, or `--client claude` for the computer-use compatibility profile | Install the skill for native skill activation. |
+| Claude Code | `cua-driver connect`, or `--client claude`, which prints `claude mcp add-json --scope user cua-driver '{…}'` | Install the skill for native skill activation. |
 | Codex (CLI, IDE, app) | `--client codex`, which prints `codex mcp add cua-driver -- <path> mcp` | Codex's own approval policy also applies. |
 | Cursor | `--client cursor`; paste into `~/.cursor/mcp.json` or `.cursor/mcp.json` | |
 | Antigravity CLI (Gemini) | `--client antigravity`; merge into `~/.gemini/config/mcp_config.json` | `--client gemini` is a legacy alias. Building on the Gemini API directly? See [Gemini](/cua-driver/guides/gemini). |

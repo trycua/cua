@@ -41,6 +41,7 @@ pub mod phone;
 pub mod push_card;
 pub(crate) use phases::DISPATCH_BUDGET;
 pub mod rights;
+mod sleep;
 pub mod wake;
 
 use crate::DriveResult as _;
@@ -502,6 +503,8 @@ pub(crate) struct Live {
     /// The credential hash an agent's run would start with now, by agent
     /// name, and when it was worked out.
     cred_hashes: HashMap<String, (std::time::Instant, Option<String>)>,
+    /// Spaces that sleep on their own: what the last checks found ([`sleep`]).
+    sleep: HashMap<String, sleep::Watch>,
 }
 
 /// How long a worked-out credential hash is reused.
@@ -1087,6 +1090,8 @@ impl Persistent {
                 "{name} is paused; resume it first (agent_resume)"
             )));
         }
+        // A Space the host put to sleep wakes for the message.
+        self.wake_space(&rec.space).await?;
         if k == 1 {
             self.take_lease(&rec).await?;
         }
@@ -1194,7 +1199,7 @@ impl Persistent {
                     }),
                     durable,
                     // A standby run waits for its messages for as long as it lives.
-                    idle_exit_secs: rec.policy.standby.then_some(7 * 24 * 3600),
+                    idle_exit_secs: self.idle_exit_for(&rec),
                     ..Default::default()
                 },
             )
@@ -1277,6 +1282,7 @@ impl Persistent {
         if rec.paused {
             return Err(Error::Agent(format!("{name} is paused")));
         }
+        self.wake_space(&rec.space).await?;
         if let Some(run) = &rec.run_id {
             let agents = self.agents_for(&rec.space).await?;
             let status = match known {
@@ -1922,16 +1928,17 @@ impl Persistent {
         // A Space someone stopped or suspended is left alone: its durable
         // members wait for it to run again instead of waking it.
         let off = self.spaces_off();
+        let asleep = self.asleep_spaces();
         if self.detach_dispatch {
             // A posted message is handed to its member first, ahead of
             // anything below that can wait on a Space; each session is read
             // on a task of its own (see `serve_sessions`).
             self.dispatch(&mut report).await;
-            self.serve_sessions(&records, &off, &mut report);
+            self.serve_sessions(&records, &off, &asleep, &mut report);
         } else {
             let live_sessions: Vec<AgentRecord> = records
                 .iter()
-                .filter(|r| !r.paused && !(r.policy.durable && off.contains(&r.space)))
+                .filter(|r| !r.paused && !sleep::waits_for_space(r, &off, &asleep))
                 .flat_map(|r| r.session_views())
                 .filter(|r| r.run_id.is_some())
                 .collect();
@@ -1957,6 +1964,7 @@ impl Persistent {
         }
         self.tick_setups(&mut report).await;
         self.tick_standby(&mut report, false).await;
+        self.tick_sleep(&mut report).await;
         // Thread tasks for members that are free (after the turns that
         // ended above closed theirs).
         if !self.detach_dispatch {
@@ -1978,6 +1986,7 @@ impl Persistent {
         &self,
         records: &[AgentRecord],
         off: &std::collections::BTreeSet<String>,
+        asleep: &std::collections::BTreeSet<String>,
         report: &mut TickReport,
     ) {
         report.errors.append(
@@ -1988,7 +1997,7 @@ impl Persistent {
         );
         let live_sessions = records
             .iter()
-            .filter(|r| !r.paused && !(r.policy.durable && off.contains(&r.space)))
+            .filter(|r| !r.paused && !sleep::waits_for_space(r, off, asleep))
             .flat_map(|r| r.session_views())
             .filter(|r| r.run_id.is_some());
         for rec in live_sessions {
@@ -2068,7 +2077,8 @@ impl Persistent {
         self.tick_standby(&mut report, true).await;
         self.dispatch(&mut report).await;
         if let (Ok(records), off) = (self.list(), self.spaces_off()) {
-            self.serve_sessions(&records, &off, &mut report);
+            let asleep = self.asleep_spaces();
+            self.serve_sessions(&records, &off, &asleep, &mut report);
         }
         if !report.errors.is_empty() {
             self.detached_errors

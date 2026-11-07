@@ -7,7 +7,6 @@
 import { act, cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { setFlagOverride } from "@/bridge";
 import { wasmBuilt } from "@/bridge/__tests__/testCore";
 import { resetFirstRunCache } from "@/bridge/first-run";
 import { resetSavedOnboardingCache } from "@/bridge/onboarding";
@@ -28,13 +27,9 @@ beforeEach(() => {
   // The agent the first run prepares a home for is the one the person last used.
   resetPickedAgent();
   rememberAgent({ harness: "claude-code" });
-  setFlagOverride("spaces_ask_first_home", true);
-  setFlagOverride("spaces_new_onboarding", true);
 });
 afterEach(() => {
   cleanup();
-  setFlagOverride("spaces_ask_first_home", null);
-  setFlagOverride("spaces_new_onboarding", null);
   resetPrepare();
 });
 

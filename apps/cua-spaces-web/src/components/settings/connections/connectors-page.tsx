@@ -5,7 +5,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { CheckIcon, ChevronDownIcon, ChevronRightIcon, ChevronUpIcon, Loader2Icon, TriangleAlertIcon } from "lucide-react";
 import { lazy, Suspense, useEffect, useState, type KeyboardEvent, type MouseEvent } from "react";
 
-import { useAgentKeys, useBridge, useExperiments, useKeysRecheck, type AgentKeysHook, type ConnectorAppRow, type ConnectorProviderRow } from "@/bridge";
+import { useAgentKeys, useBridge, useKeysRecheck, type AgentKeysHook, type ConnectorAppRow, type ConnectorProviderRow } from "@/bridge";
 import { OtherMachineBlock, useThisAndOthers } from "@/components/agents/other-machine-block";
 import { HarnessMark } from "@/components/agents/harness-mark";
 import { KeySheet } from "@/components/agents/key-sheet";
@@ -41,8 +41,6 @@ export function ConnectorsRedesign({ focusApp }: { focusApp?: string }) {
   const navigate = useNavigate();
   const { data } = useBridge();
   const keys = useAgentKeys();
-  // The GitHub sign-in is part of the Ask first experiment: no row until it is on.
-  const askFirst = useExperiments().data?.experiments.askFirst === true;
   // Opening this page asks the providers whether the saved sign-ins and keys still work.
   useKeysRecheck();
   const [all, setAll] = useState(false);
@@ -199,7 +197,7 @@ export function ConnectorsRedesign({ focusApp }: { focusApp?: string }) {
         </GroupedAction>
       </SettingsGroup>
 
-      {askFirst ? <GithubGroup onPaste={() => keys.openSheet("other", "GITHUB_TOKEN")} saved={keys.input.keys.some((k) => k.env === "GITHUB_TOKEN")} /> : null}
+      <GithubGroup onPaste={() => keys.openSheet("other", "GITHUB_TOKEN")} saved={keys.input.keys.some((k) => k.env === "GITHUB_TOKEN")} />
 
       {detailRow ? (
         <ProviderDetail

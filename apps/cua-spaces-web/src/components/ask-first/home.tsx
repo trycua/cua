@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 import { useNavigate } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { agentsView, useAgentChats, useAgentKeys, useBridge, useMachines, useSpaces, type AgentAccount, type AgentGroup, type AgentRunSummary } from "@/bridge";
 import { useChildren } from "@/components/children/use-children";
@@ -90,7 +90,7 @@ export function AskFirstHome() {
   // This computer once it's in the account, else a new Linux computer, unless you pick; a pick that's no longer
   // offered falls back to it.
   const [pickedWhere, setWhere] = useState<TaskWhere | null>(null);
-  // The first Space being prepared since launch (Labs, the new setup): silent unless it fails.
+  // The first Space being prepared since launch (the setup): silent unless it fails.
   const prep = usePrepare();
   const onPrepareAction = usePrepareAction();
   const [whereOpen, setWhereOpen] = useState(false);
@@ -141,9 +141,19 @@ export function AskFirstHome() {
   const prepared = (id: string) => Boolean(prep.state?.wanted && (id === prep.state.homeSpaceId || id === prep.state.pendingId));
   const first = prep.state?.wanted ? tasks.length === 0 && listed.counted.every((c) => prepared(c.id)) : !chats?.length && listed.counted.length === 0;
 
+  // Until the Spaces list and the agents have answered (or half a second has passed), the page holds its
+  // place without painting: the welcome and the list differ in width and height, and showing one then the
+  // other shifts everything.
+  const [waited, setWaited] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setWaited(true), 500);
+    return () => clearTimeout(t);
+  }, []);
+  const settled = waited || (spaces !== undefined && machineRows !== undefined && chats !== null);
+
   return (
-    <div className="h-full scroll-y-stable" data-ask-first-home="">
-      <div className={cn("mx-auto flex w-full flex-col gap-8 px-8 pb-16", first ? "max-w-[880px] pt-24" : "max-w-[1040px] pt-10")}>
+    <div className="h-full scroll-y-stable" data-ask-first-home="" aria-busy={!settled}>
+      <div className={cn("mx-auto flex w-full flex-col gap-8 px-8 pb-16", !settled && "invisible", first ? "max-w-[880px] pt-24" : "max-w-[1040px] pt-10")}>
         {first ? <h1 className="font-heading text-[40px] font-semibold tracking-tight">What do you want to do?</h1> : null}
         <AskBox
           text={text}

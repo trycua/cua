@@ -59,7 +59,6 @@ import { onboardingInitial, onboardingTelemetry, onboardingView, readSavedOnboar
 import type { OnboardingFlowState } from "./contracts/onboarding";
 import { useRelayUsage } from "./relay-usage";
 import { useAgentKeys } from "./agent-keys";
-import { useNewOnboarding } from "./flags";
 import { newPendingId } from "./store";
 import { extraName, spokenName } from "./space-names";
 import { runCreateFix } from "./create-retry";
@@ -337,7 +336,7 @@ export interface FirstRunSaved {
   todosClosed: boolean;
   /** Advanced setup on Pick your agent (CUA-2267). */
   advanced?: boolean;
-  /** The new first run's progress (Labs, "Try the new setup"; `lib/first-run-new.ts`). Kept here so Reset & Show forgets it too. */
+  /** The new first run's progress (`lib/first-run-new.ts`). Kept here so Reset & Show forgets it too. */
   newRun?: Partial<NewRunSaved>;
 }
 
@@ -600,9 +599,8 @@ export function useFirstRun(active = true, pollMs = FIRST_RUN_POLL_MS, onFinishe
   const spaces = useSpaces();
   const offersHook = useFirstSpaceOffers();
   const usage = useRelayUsage();
-  // The new setup (Settings, Advanced, Labs; off by default): no Try it screen, and the run ends on the new
-  // Home while the first Space gets ready. Off, the first run is the one every install has.
-  const askFirst = useNewOnboarding();
+  // The setup has no Try it screen, and the run ends on the new Home while the first Space gets ready.
+  const askFirst = true;
   const flags = useSyncExternalStore(subscribe, () => `${flag(UPSELL_DISMISSED_KEY)}:${flag(TEAMMATES_KEY)}`, () => "false:false");
   const [agents, setAgents] = useState<AgentSetupRow[] | null>(null);
   // The one connection status (`agents.status`); none where the host can't tell.
@@ -854,7 +852,7 @@ export function useFirstRun(active = true, pollMs = FIRST_RUN_POLL_MS, onFinishe
     await session.completeOnboarding(host?.configured ? "host" : "client");
     writeFirstRun({ finishedLater: false, todosClosed: false });
   }
-  /** The last screen's button with the new setup on: the run is finished and the app opens Home. */
+  /** The last screen's button: the run is finished and the app opens Home. */
   const endRun = async (how: "completed" | "skipped" = "completed") => {
     if (how === "skipped") funnel("step_skipped", "step");
     await finishRun();
@@ -1019,7 +1017,7 @@ export function useFirstRun(active = true, pollMs = FIRST_RUN_POLL_MS, onFinishe
     openUrl: (url) => session.openExternal(url).catch(() => {}),
     extra: extraAct,
     async act(id, settingsUrl) {
-      // With the new setup, the last screen ends the run: the person asks on Home while the first Space is prepared.
+      // The last screen ends the run: the person asks on Home while the first Space is prepared.
       const last = askFirst && at === shown.length - 1 && view.step !== "welcome";
       switch (id) {
         case "start":

@@ -5,8 +5,6 @@ description: 'Run a server, a worker or a bot in a Space and have it restarted w
 
 import { Tabs, Tab } from 'fumadocs-ui/components/tabs';
 
-Keeping a command running is part of the [Child Spaces experiment](/spaces/guides/experiments): turn it on with `cua experiments enable child-spaces` before you add a service. Listing, stopping and removing services work whether it is on or off.
-
 A service is a command a Space keeps running. Its cua-spacesd starts it,
 starts it again when it ends, restarts it when its health check fails,
 starts it when the Space boots, and keeps its output in a log file in the

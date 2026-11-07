@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 /**
- * The new first run (Labs, "Try the new setup"; CUA-3318, storyboard CUA-3193), phase 1: what each
+ * The first run (CUA-3318, storyboard CUA-3193), phase 1: what each
  * screen says and which choices it offers, from what the app knows. Pure, so every state is tested
  * without a host. The page (`components/first-run-new`) draws it.
  *

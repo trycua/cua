@@ -315,13 +315,9 @@ interface WkAppInfo {
 /** The experiments' row ids (`experiments::row_id`). */
 const EXPERIMENT_ROWS: Record<keyof Experiments, string> = {
   cuaVolume: "experiment:cua_volume",
-  secureSpaces: "experiment:secure_spaces",
-  childSpaces: "experiment:child_spaces",
-  askFirst: "experiment:ask_first",
   ciRunners: "experiment:ci_runners",
   tcpShares: "experiment:tcp_shares",
   mobile: "experiment:mobile",
-  warmPools: "experiment:warm_pools",
 };
 
 /**

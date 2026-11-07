@@ -221,14 +221,6 @@ async fn run(shared: Arc<Shared>, id: String) {
         let Some(authority) = shared.spawn_authority() else {
             return;
         };
-        // Child Spaces are an experiment: no capability while it is off
-        // (turning it off ends this channel at its next renewal; the API
-        // refuses the capability at once).
-        if !cua_vmm::experiments::enabled(cua_vmm::experiments::Gate::ChildSpaces) {
-            authority.revoke(&id);
-            tokio::time::sleep(NO_FEATURE_RETRY).await;
-            continue;
-        }
         let (root, depth) = super::api::position(spaces, &id);
         let limit = if root == id {
             DEFAULT_MAX_DEPTH

@@ -11,7 +11,6 @@
 import { act, cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { setFlagOverride } from "@/bridge";
 import { wasmBuilt } from "@/bridge/__tests__/testCore";
 import { addAskTask, askTask, askTasks, resetAskTasks, setThisMacConfirmed, thisMacConfirmed } from "@/lib/ask-first";
 
@@ -30,7 +29,6 @@ stubBrowserApis();
 beforeEach(() => {
   localStorage.clear();
   resetAskTasks();
-  setFlagOverride("spaces_ask_first_home", true);
 });
 
 async function pickThisMac() {

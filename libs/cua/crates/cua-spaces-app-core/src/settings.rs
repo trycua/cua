@@ -63,8 +63,8 @@ pub struct AppSettings {
     /// Launch at login, as the user chose it (the first run's Done page or
     /// Settings); `None`: never chosen ([`crate::login_item::launch_plan`]).
     pub launch_at_login: Option<bool>,
-    /// Settings, Experiments: every switch off unless turned on
-    /// ([`crate::experiments`]).
+    /// Settings, Experiments: each switch has a default
+    /// ([`crate::experiments::Experiments::default`]); a stored on or off wins.
     pub experiments: Experiments,
     /// Keyvault copies (import ids) the user dismissed from the notch: it no
     /// longer shows them, nothing is revoked or wiped

@@ -784,7 +784,6 @@ public final class AppModel {
     /// Keeps the notch's hotspot indicator on while a Space exits through
     /// this computer ("Exit through: This computer"), as the hotspot's own
     /// indicator is. Read every 15 seconds, as the Electron notch does.
-    /// Only while Secure Spaces (Labs) is on: off, nothing is read.
     public func startExitsPoll(every interval: Duration = .seconds(15)) -> Task<Void, Never> {
         Task { @MainActor [weak self] in
             while !Task.isCancelled {
@@ -797,11 +796,6 @@ public final class AppModel {
 
     /// Reads the exits once and shows them on the notch.
     func syncNotchExits() async {
-        refreshDaemonExperiments()
-        guard settings.experiments.secureSpaces else {
-            notch.setExits([])
-            return
-        }
         notch.setExits(await backend.exitsThroughThisMachine())
     }
 
@@ -1998,25 +1992,17 @@ public final class AppModel {
 
     // MARK: - Experiments
 
-    /// The experiments the daemon enforces (Secure Spaces, Child Spaces, CI runners, Public TCP shares, Phone app, Warm start) as
+    /// The experiments the daemon enforces (CI runners, Public TCP shares, Phone app) as
     /// the cua home keeps them: what `cua experiments enable` set shows here
     /// the next time Settings is read.
     public func refreshDaemonExperiments() {
         let kept = appSettingsLoad(path: settingsPath).experiments
-        guard kept.secureSpaces != settings.experiments.secureSpaces
-            || kept.childSpaces != settings.experiments.childSpaces
-            || kept.askFirst != settings.experiments.askFirst
-            || kept.ciRunners != settings.experiments.ciRunners
+        guard kept.ciRunners != settings.experiments.ciRunners
             || kept.tcpShares != settings.experiments.tcpShares
-            || kept.mobile != settings.experiments.mobile
-            || kept.warmPools != settings.experiments.warmPools else { return }
-        settings.experiments.secureSpaces = kept.secureSpaces
-        settings.experiments.childSpaces = kept.childSpaces
-        settings.experiments.askFirst = kept.askFirst
+            || kept.mobile != settings.experiments.mobile else { return }
         settings.experiments.ciRunners = kept.ciRunners
         settings.experiments.tcpShares = kept.tcpShares
         settings.experiments.mobile = kept.mobile
-        settings.experiments.warmPools = kept.warmPools
     }
 
     /// Settings, Experiments: a switch and one line per experiment.

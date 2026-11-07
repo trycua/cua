@@ -2299,15 +2299,6 @@
         "cuaVolume": {
           "type": "boolean"
         },
-        "secureSpaces": {
-          "type": "boolean"
-        },
-        "childSpaces": {
-          "type": "boolean"
-        },
-        "askFirst": {
-          "type": "boolean"
-        },
         "ciRunners": {
           "type": "boolean"
         },
@@ -2315,9 +2306,6 @@
           "type": "boolean"
         },
         "mobile": {
-          "type": "boolean"
-        },
-        "warmPools": {
           "type": "boolean"
         }
       }

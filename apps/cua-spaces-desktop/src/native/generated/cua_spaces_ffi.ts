@@ -14578,23 +14578,6 @@ export type AppExperiments = {
      */
     cuaVolume: boolean,
     /**
-     * Secure Spaces: a Space reaches the internet and nothing else on the
-     * network unless it is opened. Off unless turned on; the daemon enforces
-     * it (the switch is kept in the cua home).
-     */
-    secureSpaces: boolean,
-    /**
-     * Child Spaces: a Space may make Spaces of its own. Off unless turned
-     * on; the daemon enforces it (the switch is kept in the cua home).
-     */
-    childSpaces: boolean,
-    /**
-     * Ask first: an agent asks on a card before something leaves its Space
-     * (a push to GitHub). Off unless turned on; the daemon enforces it (the
-     * switch is kept in the cua home).
-     */
-    askFirst: boolean,
-    /**
      * CI runners: GitHub Actions jobs run in a fresh Space each (`cua ci`
      * and the CI Runners page). Off unless turned on; the daemon and the
      * `cua` command enforce it (the switch is kept in the cua home).
@@ -14611,13 +14594,7 @@ export type AppExperiments = {
      * push events). Off unless turned on; the daemon enforces it (the switch
      * is kept in the cua home).
      */
-    mobile: boolean,
-    /**
-     * Warm pools: one Linux Space kept ready, with its coding apps
-     * installed, so the next Create from Home starts at once. Off unless
-     * turned on; the daemon enforces it (the switch is kept in the cua home).
-     */
-    warmPools: boolean
+    mobile: boolean
 }
 
 /**
@@ -14642,34 +14619,22 @@ const FfiConverterTypeAppExperiments = (() => {
         read(from: RustBuffer): TypeName {
             return {
                 cuaVolume: FfiConverterBool.read(from),
-                secureSpaces: FfiConverterBool.read(from),
-                childSpaces: FfiConverterBool.read(from),
-                askFirst: FfiConverterBool.read(from),
                 ciRunners: FfiConverterBool.read(from),
                 tcpShares: FfiConverterBool.read(from),
-                mobile: FfiConverterBool.read(from),
-                warmPools: FfiConverterBool.read(from)
+                mobile: FfiConverterBool.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
             FfiConverterBool.write(value.cuaVolume, into);
-            FfiConverterBool.write(value.secureSpaces, into);
-            FfiConverterBool.write(value.childSpaces, into);
-            FfiConverterBool.write(value.askFirst, into);
             FfiConverterBool.write(value.ciRunners, into);
             FfiConverterBool.write(value.tcpShares, into);
             FfiConverterBool.write(value.mobile, into);
-            FfiConverterBool.write(value.warmPools, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterBool.allocationSize(value.cuaVolume) +
-             FfiConverterBool.allocationSize(value.secureSpaces) +
-             FfiConverterBool.allocationSize(value.childSpaces) +
-             FfiConverterBool.allocationSize(value.askFirst) +
              FfiConverterBool.allocationSize(value.ciRunners) +
              FfiConverterBool.allocationSize(value.tcpShares) +
-             FfiConverterBool.allocationSize(value.mobile) +
-             FfiConverterBool.allocationSize(value.warmPools);
+             FfiConverterBool.allocationSize(value.mobile);
 
         }
     };
@@ -40897,8 +40862,8 @@ export type AppSettings = {
      */
     launchAtLogin?: boolean,
     /**
-     * Settings, Experiments: every switch off unless turned on
-     * ([`crate::experiments`]).
+     * Settings, Experiments: each switch has a default
+     * ([`crate::experiments::Experiments::default`]); a stored on or off wins.
      */
     experiments: AppExperiments,
     /**

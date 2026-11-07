@@ -506,7 +506,7 @@ const SettingsShape = ref(
 
 const ExperimentsShape = ref(
   "Experiments",
-  obj<Experiments>()({ cuaVolume: opt(bool), secureSpaces: opt(bool), childSpaces: opt(bool), askFirst: opt(bool), ciRunners: opt(bool), tcpShares: opt(bool), mobile: opt(bool), warmPools: opt(bool) }),
+  obj<Experiments>()({ cuaVolume: opt(bool), ciRunners: opt(bool), tcpShares: opt(bool), mobile: opt(bool) }),
 );
 
 const RepoCacheShape = ref(

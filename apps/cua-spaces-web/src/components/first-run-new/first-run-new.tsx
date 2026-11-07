@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 /**
- * The new first run (Labs, "Try the new setup"; CUA-3318), phase 1 of the approved storyboard
+ * The first run (CUA-3318), phase 1 of the approved storyboard
  * (CUA-3193): drawn on the spaces.cua.ai hero (its starfield, keys, Outfit title, white button and
  * the Cua lockup). The words and choices are `lib/first-run-new.ts`; this file reads the app's state
  * (sign-in, the account's computers, this computer's agents and whether it can make a separate

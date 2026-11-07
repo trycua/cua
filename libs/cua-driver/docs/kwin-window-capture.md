@@ -125,10 +125,14 @@ capture exactly. The driver log at debug level names the cause.
 
 ## Desktop capture
 
-A desktop screenshot asks `CaptureWorkspace` first, in logical pixels and with
-every output, before the Screenshot portal. Where KWin answers (see
-[Permissions](#permissions)), there is no consent dialog, and a **Deny** saved in
-the portal no longer applies, because the portal is never asked. Where KWin
+While the adapter is on, a desktop screenshot asks `CaptureWorkspace` before
+the Screenshot portal, in logical pixels and with every output. Its image is the
+desktop frame `get_desktop_state` and desktop input use, so window positions and
+clicks line up with it on any layout. Where KWin answers (see
+[Turning it on and off](#turning-it-on-and-off)), there is no consent dialog.
+`ScreenShot2` never asks the portal, so the switch is what keeps a portal
+**Deny**: a saved Deny keeps this off, as it does window capture, unless
+`--override-portal-deny` was given. While the adapter is off, or where KWin
 refuses, the portal runs as before.
 
 ## Focused native regression

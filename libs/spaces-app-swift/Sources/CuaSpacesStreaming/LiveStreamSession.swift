@@ -504,7 +504,7 @@ public final class LiveStreamSession: ObservableObject {
         presenceJoining = true
         defer { presenceJoining = false }
         do {
-            let session = try await provider.joinPresence(name: name, color: color)
+            let session = try await provider.joinPresence(name: name, color: color, source: source)
             presence = session
             presenceView = session.view()
             let me = try await session.me()

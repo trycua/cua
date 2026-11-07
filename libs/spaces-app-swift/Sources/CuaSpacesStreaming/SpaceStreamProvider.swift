@@ -98,8 +98,15 @@ public final class SpaceStreamProvider: SpaceStreamSourceProviding, @unchecked S
     }
 
     public func joinPresence(name: String, color: String?) async throws -> SpacePresence {
+        try await joinPresence(name: name, color: color, source: .desktop)
+    }
+
+    public func joinPresence(name: String, color: String?, source: StreamSource) async throws -> SpacePresence {
         let id = "swift-\(ProcessInfo.processInfo.processIdentifier)-\(name)"
-        return try await handle().joinPresence(
+        var window: String?
+        if case let .window(w) = source { window = w.id }
+        return try await handle().joinPresenceFor(
+            windowId: window,
             identity: PresenceIdentity(id: id, displayName: name, color: color ?? "", agent: false),
             timeoutMs: 10_000)
     }

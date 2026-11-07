@@ -102,6 +102,12 @@ public protocol SpaceStreamSourceProviding: AnyObject, Sendable {
     /// Joins the Space's presence as `name`.
     func joinPresence(name: String, color: String?) async throws -> SpacePresence
 
+    /// Joins presence for the surface being watched. A window another Space
+    /// shows here, streamed straight from its origin, joins the origin's
+    /// channel and this Space's together (one avatar and one cursor per
+    /// viewer); any other source is `joinPresence(name:color:)`.
+    func joinPresence(name: String, color: String?, source: StreamSource) async throws -> SpacePresence
+
     /// Whether ⌘ chords go to the Space with Control instead of Command: a
     /// Linux or Windows guest, where Command arrives as Super (⌘C would be
     /// Super+C, which types "c"). Known once a session opened.
@@ -109,6 +115,10 @@ public protocol SpaceStreamSourceProviding: AnyObject, Sendable {
 }
 
 extension SpaceStreamSourceProviding {
+    public func joinPresence(name: String, color: String?, source: StreamSource) async throws -> SpacePresence {
+        try await joinPresence(name: name, color: color)
+    }
+
     /// Providers that don't know the guest send ⌘ as it is.
     public var commandAsControl: Bool { false }
 

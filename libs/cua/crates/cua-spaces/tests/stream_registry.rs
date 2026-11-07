@@ -28,7 +28,8 @@ async fn pair() -> Pair {
             ..Default::default()
         })
         .await;
-        srv.state.advertise(&["windows", "window_stream"]);
+        srv.state
+            .advertise(&["windows", "window_stream", "presence"]);
         servers.push(srv);
     }
     let origin_srv = servers.pop().unwrap();
@@ -316,4 +317,81 @@ async fn without_into_a_child_shows_its_window_in_the_space_that_made_it() {
     assert!(!err, "{shown}");
     assert_eq!(shown["into"], parent);
     assert_eq!(p.spaces.stream_windows(&parent).await.len(), 1);
+}
+
+fn who(id: &str) -> cua_spaces::presence::Identity {
+    cua_spaces::presence::Identity {
+        id: id.into(),
+        display_name: id.into(),
+        color: String::new(),
+        agent: false,
+    }
+}
+
+#[tokio::test]
+async fn a_viewer_on_both_channels_is_one_avatar_and_one_cursor_and_publishes_to_both() {
+    use cua_spaces::presence::{Cursor, DualPresence, PresenceEvent};
+    use std::time::Duration;
+    const T: Duration = Duration::from_secs(5);
+    let p = pair().await;
+    // Alice joins both channels and merges them; then bob (on both) and
+    // carol (the parent only) arrive.
+    let a_o = p.origin.join_presence(who("alice"), T).await.unwrap();
+    let a_p = p.parent.join_presence(who("alice"), T).await.unwrap();
+    let mut alice = DualPresence::new(a_o, a_p);
+    let mut bob_o = p.origin.join_presence(who("bob"), T).await.unwrap();
+    let mut bob_p = p.parent.join_presence(who("bob"), T).await.unwrap();
+    let _carol = p.parent.join_presence(who("carol"), T).await.unwrap();
+    // Whoever was present arrives in the roster or as joins.
+    let mut names: Vec<String> = alice
+        .roster()
+        .into_iter()
+        .map(|(x, _)| x.principal_id)
+        .collect();
+    let end = std::time::Instant::now() + Duration::from_millis(800);
+    while std::time::Instant::now() < end {
+        if let Ok(Some(PresenceEvent::Joined { participant })) =
+            alice.next_event(Duration::from_millis(100)).await
+        {
+            names.push(participant.principal_id);
+        }
+    }
+    assert_eq!(names.iter().filter(|n| *n == "bob").count(), 1, "{names:?}");
+    assert_eq!(
+        names.iter().filter(|n| *n == "carol").count(),
+        1,
+        "{names:?}"
+    );
+    assert_eq!(
+        names.iter().filter(|n| *n == "alice").count(),
+        0,
+        "{names:?}"
+    );
+
+    // Bob moves on both channels: alice sees one cursor for him.
+    bob_o.update_cursor(&Cursor::at(0.2, 0.2)).await.unwrap();
+    bob_p.update_cursor(&Cursor::at(0.2, 0.2)).await.unwrap();
+    let mut movers = std::collections::HashSet::new();
+    let end = std::time::Instant::now() + Duration::from_millis(1500);
+    while std::time::Instant::now() < end {
+        if let Ok(Some(PresenceEvent::CursorMoved { participant_id, .. })) =
+            alice.next_event(Duration::from_millis(200)).await
+        {
+            movers.insert(participant_id);
+        }
+    }
+    assert_eq!(movers.len(), 1, "one cursor for bob: {movers:?}");
+
+    // Alice's cursor reaches bob on both channels.
+    alice.sender().update(&Cursor::at(0.7, 0.7)).await.unwrap();
+    for (name, s) in [("origin", &mut bob_o), ("parent", &mut bob_p)] {
+        let got = s
+            .wait_for(T, 30, |e| matches!(e, PresenceEvent::CursorMoved { .. }))
+            .await;
+        assert!(
+            got.is_ok(),
+            "alice's cursor reached bob on the {name} channel"
+        );
+    }
+    alice.leave().await.unwrap();
 }

@@ -2030,6 +2030,94 @@ pub struct SpaceStreamOptions {
     pub policy: Option<String>,
 }
 
+/// Media sessions opened on another Space's behalf (a window it shows
+/// here): session id to the Space whose spacesd minted it, so closing goes
+/// to that Space and not to the one that listed the window.
+static ORIGIN_SESSIONS: std::sync::Mutex<Option<std::collections::HashMap<String, String>>> =
+    std::sync::Mutex::new(None);
+
+fn remember_origin_session(session: &str, origin: &str) {
+    if session.is_empty() {
+        return;
+    }
+    ORIGIN_SESSIONS
+        .lock()
+        .expect("origin sessions")
+        .get_or_insert_with(Default::default)
+        .insert(session.to_string(), origin.to_string());
+}
+
+fn take_origin_session(session: &str) -> Option<String> {
+    ORIGIN_SESSIONS
+        .lock()
+        .expect("origin sessions")
+        .as_mut()
+        .and_then(|m| m.remove(session))
+}
+
+/// The proxied route: the daemon opens the origin's window and serves it on
+/// its loopback media bridge; the viewer attaches to the daemon (with the
+/// daemon's credentials, which the parent's handle carries), never to the
+/// origin it has no access to.
+async fn open_proxied(
+    d: &DaemonClient,
+    origin: &str,
+    window: &str,
+    parent: &str,
+    options: &SpaceStreamOptions,
+) -> Result<SpaceStreamTicket> {
+    let mut open = serde_json::json!({
+        "target": {"window": {"id": window}},
+        "policy": "SESSION_POLICY_BACKGROUND_ONLY",
+        "ticketTtl": "120s",
+    });
+    if options.max_fps > 0 {
+        open["maxFps"] = serde_json::json!(options.max_fps);
+    }
+    let r = d
+        .open_media_bridge(origin, Some(open.to_string()))
+        .await
+        .map_err(|e| CuaError::Internal(e.to_string()))?;
+    let resp: Value = serde_json::from_str(&r.open_media_response_json).unwrap_or(Value::Null);
+    let pick = |a: &str, b: &str| {
+        resp.get(a)
+            .or_else(|| resp.get(b))
+            .cloned()
+            .unwrap_or(Value::Null)
+    };
+    let media_session_id = pick("mediaSessionId", "media_session_id")
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
+    let size = |k: &str| {
+        resp["geometry"]["frameSize"][k]
+            .as_u64()
+            .or_else(|| resp["geometry"]["frame_size"][k].as_u64())
+            .unwrap_or(0) as u32
+    };
+    remember_origin_session(&media_session_id, origin);
+    Ok(SpaceStreamTicket {
+        space: parent.to_string(),
+        media_session_id,
+        ws_url: r.ws_url,
+        ticket: r.ticket,
+        ticket_expires_at: None,
+        codec: pick("codec", "codec")
+            .as_str()
+            .map(|c| c.trim_start_matches("MEDIA_CODEC_").to_lowercase())
+            .unwrap_or_default(),
+        wire_version: pick("wireVersion", "wire_version").as_u64().unwrap_or(2) as u32,
+        width: size("width"),
+        height: size("height"),
+        needs_headers: true,
+    })
+}
+
+struct EntryRoute {
+    direct: bool,
+    origin_space: String,
+}
+
 struct StreamTicketJson {
     space: String,
     media_session_id: String,
@@ -3349,10 +3437,39 @@ impl Host {
         }
     }
 
+    /// How a registry entry streams for this viewer.
+    async fn entry_route(&self, window_id: &str) -> Result<EntryRoute> {
+        match self {
+            Host::Embedded(s) => {
+                let d = s.resolve_stream_entry(window_id).await?;
+                Ok(EntryRoute {
+                    direct: d.route == cua_spaces::stream_registry::Route::Direct,
+                    origin_space: d.entry.origin_space,
+                })
+            }
+            Host::Daemon(d) => {
+                let r = d
+                    .spaces()
+                    .open_stream_entry(dpb::OpenStreamEntryRequest {
+                        window_id: window_id.into(),
+                        ..Default::default()
+                    })
+                    .await
+                    .map_err(daemon_err)?
+                    .into_inner();
+                Ok(EntryRoute {
+                    direct: r.route == "direct",
+                    origin_space: r.origin_space,
+                })
+            }
+        }
+    }
+
     /// Opens a registry entry's window ([`Space::open_stream`]).
     async fn open_entry_stream(
         &self,
         window_id: &str,
+        parent: &str,
         options: &SpaceStreamOptions,
     ) -> Result<SpaceStreamTicket> {
         let (route, origin, origin_window, ticket) = match self {
@@ -3390,6 +3507,12 @@ impl Host {
                 let t = (!r.ticket_json.is_empty())
                     .then(|| serde_json::from_str::<Value>(&r.ticket_json).ok())
                     .flatten();
+                // No access to the origin: the daemon that holds it relays
+                // the stream through its media bridge.
+                if r.route == "proxied" && t.is_none() {
+                    return open_proxied(d, &r.origin_space, &r.origin_window_id, parent, options)
+                        .await;
+                }
                 let t = t.map(|t| StreamTicketJson {
                     space: t["space"].as_str().unwrap_or_default().into(),
                     media_session_id: t["media_session_id"].as_str().unwrap_or_default().into(),
@@ -3403,6 +3526,9 @@ impl Host {
                         t["frame_size"][1].as_u64().unwrap_or(0) as u32,
                     ],
                 });
+                if let Some(t) = &t {
+                    remember_origin_session(&t.media_session_id, &r.origin_space);
+                }
                 return match t {
                     Some(t) => Ok(SpaceStreamTicket {
                         space: t.space,
@@ -3424,6 +3550,9 @@ impl Host {
             }
         };
         let _ = route;
+        if let Some(t) = &ticket {
+            remember_origin_session(&t.media_session_id, &origin);
+        }
         match ticket {
             Some(t) => Ok(SpaceStreamTicket {
                 space: t.space,
@@ -3457,6 +3586,7 @@ impl Host {
                 stream_options(options)?,
             )
             .await?;
+        remember_origin_session(&t.media_session_id, origin);
         Ok(SpaceStreamTicket {
             space: t.space,
             media_session_id: t.media_session_id,
@@ -6146,6 +6276,7 @@ impl Space {
         let s = self.inner.clone();
         let daemon = matches!(self.host, Host::Daemon(_));
         let host = self.host.clone();
+        let parent = self.inner.id().to_string();
         run(async move {
             // A window another Space shows here: the route is decided now.
             // The viewer who may reach the origin connects straight to it
@@ -6156,7 +6287,7 @@ impl Space {
                 .as_deref()
                 .filter(|w| cua_spaces::stream_registry::entry_of_window_id(w).is_some())
             {
-                return host.open_entry_stream(w, &options).await;
+                return host.open_entry_stream(w, &parent, &options).await;
             }
             let target = stream_target(&s, &options).await?;
             let t = s.open_stream(target, stream_options(&options)?).await?;
@@ -6179,7 +6310,20 @@ impl Space {
     /// Closes a media session opened with [`Space::open_stream`].
     pub async fn close_stream(&self, media_session_id: String) -> Result<()> {
         let s = self.inner.clone();
-        run(async move { Ok(s.close_stream(&media_session_id).await?) }).await
+        let host = self.host.clone();
+        run(async move {
+            // A window another Space shows here was minted by that Space.
+            if let Some(origin) = take_origin_session(&media_session_id) {
+                // A viewer with no handle on the origin was served through the
+                // daemon's bridge: that session ends with its socket.
+                return match host.connect(&origin).await {
+                    Ok((_, handle)) => Ok(handle.close_stream(&media_session_id).await?),
+                    Err(_) => Ok(()),
+                };
+            }
+            Ok(s.close_stream(&media_session_id).await?)
+        })
+        .await
     }
 
     /// Attaches to a ticket from [`Self::open_stream`] and delivers the
@@ -6277,26 +6421,66 @@ impl Space {
         identity: PresenceIdentity,
         timeout_ms: Option<u64>,
     ) -> Result<Arc<SpacePresence>> {
+        self.join_presence_for(None, identity, timeout_ms).await
+    }
+
+    /// Joins presence for the window being watched. For a window another
+    /// Space shows here and the viewer streams straight from its origin
+    /// (`window_id` from [`Space::windows`]), this joins the origin's channel
+    /// and this Space's, publishes the cursor to both and reads them as one:
+    /// one avatar and one cursor per viewer, as if the stream came through
+    /// this Space. For any other window, or `None`, it is
+    /// [`Space::join_presence`].
+    pub async fn join_presence_for(
+        &self,
+        window_id: Option<String>,
+        identity: PresenceIdentity,
+        timeout_ms: Option<u64>,
+    ) -> Result<Arc<SpacePresence>> {
         let s = self.inner.clone();
+        let host = self.host.clone();
         let started = std::time::Instant::now();
+        let timeout = Duration::from_millis(timeout_ms.unwrap_or(10_000));
         let r = run(async move {
-            let session = s
-                .join_presence(
-                    cua_spaces::presence::Identity {
-                        id: identity.id,
-                        display_name: identity.display_name,
-                        color: identity.color,
-                        agent: identity.agent,
-                    },
-                    Duration::from_millis(timeout_ms.unwrap_or(10_000)),
-                )
-                .await?;
+            let who = cua_spaces::presence::Identity {
+                id: identity.id,
+                display_name: identity.display_name,
+                color: identity.color,
+                agent: identity.agent,
+            };
+            let entry = window_id
+                .as_deref()
+                .filter(|w| cua_spaces::stream_registry::entry_of_window_id(w).is_some());
+            if let Some(w) = entry {
+                let route = host.entry_route(w).await?;
+                // Only a direct attach has a second channel; a proxied
+                // stream is the parent's own.
+                if route.direct {
+                    let (_, origin) = host.connect(&route.origin_space).await?;
+                    let primary = origin.join_presence(who.clone(), timeout).await?;
+                    let secondary = s.join_presence(who, timeout).await?;
+                    let dual = cua_spaces::presence::DualPresence::new(primary, secondary);
+                    let peak = dual.roster().len() as u64;
+                    return Ok(Arc::new(SpacePresence {
+                        sender: PresenceSender::Fanout(dual.sender()),
+                        datagrams: dual.uses_datagrams(),
+                        view_seed: dual.view(),
+                        inner: Arc::new(tokio::sync::Mutex::new(Some(PresenceChannels::Dual(
+                            Box::new(dual),
+                        )))),
+                        stats: PresenceStats::new(peak),
+                    }));
+                }
+            }
+            let session = s.join_presence(who, timeout).await?;
             let peak = session.roster().len() as u64;
             Ok(Arc::new(SpacePresence {
-                sender: session.sender(),
+                sender: PresenceSender::Single(session.sender()),
                 datagrams: session.uses_datagrams(),
                 view_seed: session.view(),
-                inner: Arc::new(tokio::sync::Mutex::new(Some(session))),
+                inner: Arc::new(tokio::sync::Mutex::new(Some(PresenceChannels::Single(
+                    Box::new(session),
+                )))),
                 stats: PresenceStats::new(peak),
             }))
         })
@@ -6896,13 +7080,74 @@ impl SpaceStreamSession {
 /// A joined presence session.
 #[derive(uniffi::Object)]
 pub struct SpacePresence {
-    inner: Arc<tokio::sync::Mutex<Option<cua_spaces::presence::PresenceSession>>>,
+    inner: Arc<tokio::sync::Mutex<Option<PresenceChannels>>>,
     /// Publishes without the session lock, so `update_cursor` never waits
     /// for a pending `next_event`.
-    sender: cua_spaces::presence::CursorSender,
+    sender: PresenceSender,
     datagrams: bool,
     view_seed: cua_spaces::presence::PresenceView,
     stats: PresenceStats,
+}
+
+/// One presence session, or two for a window streamed straight from another
+/// Space (the origin's and the parent's, read as one).
+enum PresenceChannels {
+    Single(Box<cua_spaces::presence::PresenceSession>),
+    Dual(Box<cua_spaces::presence::DualPresence>),
+}
+
+impl PresenceChannels {
+    fn me(&self) -> cua_spaces::presence::Participant {
+        match self {
+            Self::Single(s) => s.me().clone(),
+            Self::Dual(d) => d.me().clone(),
+        }
+    }
+
+    fn roster(
+        &self,
+    ) -> Vec<(
+        cua_spaces::presence::Participant,
+        Option<cua_spaces::presence::Cursor>,
+    )> {
+        match self {
+            Self::Single(s) => s.roster().to_vec(),
+            Self::Dual(d) => d.roster(),
+        }
+    }
+
+    async fn next_event(
+        &mut self,
+        timeout: Duration,
+    ) -> cua_spaces::Result<Option<cua_spaces::presence::PresenceEvent>> {
+        match self {
+            Self::Single(s) => s.next_event(timeout).await,
+            Self::Dual(d) => d.next_event(timeout).await,
+        }
+    }
+
+    async fn leave(self) -> cua_spaces::Result<()> {
+        match self {
+            Self::Single(s) => s.leave().await,
+            Self::Dual(d) => d.leave().await,
+        }
+    }
+}
+
+/// Publishes the viewer's cursor on one channel or on both.
+#[derive(Clone)]
+enum PresenceSender {
+    Single(cua_spaces::presence::CursorSender),
+    Fanout(cua_spaces::presence::FanoutSender),
+}
+
+impl PresenceSender {
+    async fn update(&self, c: &cua_spaces::presence::Cursor) -> cua_spaces::Result<()> {
+        match self {
+            Self::Single(s) => s.update(c).await,
+            Self::Fanout(f) => f.update(c).await,
+        }
+    }
 }
 
 /// What `cua_presence_session` reports when the session ends: how long it
@@ -6950,10 +7195,7 @@ impl Drop for SpacePresence {
 }
 
 impl SpacePresence {
-    async fn with<T>(
-        &self,
-        f: impl FnOnce(&mut cua_spaces::presence::PresenceSession) -> T,
-    ) -> Result<T> {
+    async fn with<T>(&self, f: impl FnOnce(&mut PresenceChannels) -> T) -> Result<T> {
         let mut g = self.inner.lock().await;
         let s = g
             .as_mut()
@@ -6966,7 +7208,7 @@ impl SpacePresence {
 impl SpacePresence {
     /// This participant.
     pub async fn me(&self) -> Result<PresenceParticipant> {
-        self.with(|s| s.me().clone().into()).await
+        self.with(|s| s.me().into()).await
     }
 
     /// Everyone present, with cursors when known.
@@ -6974,10 +7216,10 @@ impl SpacePresence {
         self.with(|s| {
             self.stats.saw(s.roster().len());
             s.roster()
-                .iter()
+                .into_iter()
                 .map(|(p, c)| PresenceMember {
-                    participant: p.clone().into(),
-                    cursor: c.clone().map(Into::into),
+                    participant: p.into(),
+                    cursor: c.map(Into::into),
                 })
                 .collect()
         })

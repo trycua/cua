@@ -512,6 +512,215 @@ impl MergedRoster {
     }
 }
 
+/// A window streamed straight from another Space has two presence channels:
+/// the origin's (it carries the stream, so its roster is the primary) and the
+/// parent's, which lists the window. `DualPresence` joins the viewer to both,
+/// publishes the cursor to both ([`FanoutSender`]) and reads them as one
+/// session: a viewer present on both is one participant, the viewer's own
+/// second identity never shows, and a roster heartbeat from either channel
+/// lists everyone from both so neither drops the other's participants.
+pub struct DualPresence {
+    primary: PresenceSession,
+    secondary: PresenceSession,
+    /// Principals the primary channel has shown.
+    primary_principals: std::collections::HashMap<String, String>,
+    /// Secondary participants let through (pid -> principal).
+    passed: std::collections::HashMap<String, String>,
+    primary_ids: std::collections::HashSet<String>,
+    turn: bool,
+    fanout: FanoutSender,
+}
+
+impl DualPresence {
+    /// Joins `primary` and `secondary` into one.
+    pub fn new(primary: PresenceSession, secondary: PresenceSession) -> Self {
+        let mut d = DualPresence {
+            fanout: FanoutSender::new(vec![primary.sender(), secondary.sender()]),
+            primary,
+            secondary,
+            primary_principals: Default::default(),
+            passed: Default::default(),
+            primary_ids: Default::default(),
+            turn: false,
+        };
+        for (p, _) in d.primary.roster() {
+            d.primary_principals
+                .insert(p.participant_id.clone(), p.principal_id.clone());
+            d.primary_ids.insert(p.participant_id.clone());
+        }
+        d.primary_principals.insert(
+            d.primary.me().participant_id.clone(),
+            d.primary.me().principal_id.clone(),
+        );
+        let secondary: Vec<_> = d.secondary.roster().to_vec();
+        for (p, _) in secondary {
+            d.admit(&p);
+        }
+        d
+    }
+
+    fn known_principal(&self, principal: &str) -> bool {
+        self.primary_principals.values().any(|p| p == principal)
+            || self.passed.values().any(|p| p == principal)
+            || self.secondary.me().principal_id == principal
+    }
+
+    /// Lets a secondary participant through unless the same principal is
+    /// already shown (or is the viewer).
+    fn admit(&mut self, p: &Participant) -> bool {
+        if p.participant_id == self.secondary.me().participant_id
+            || self.known_principal(&p.principal_id)
+        {
+            return false;
+        }
+        self.passed
+            .insert(p.participant_id.clone(), p.principal_id.clone());
+        true
+    }
+
+    /// The viewer, as the primary channel knows them.
+    pub fn me(&self) -> &Participant {
+        self.primary.me()
+    }
+
+    /// Everyone else, once each, cursors where known.
+    pub fn roster(&self) -> Vec<(Participant, Option<Cursor>)> {
+        let mut out: Vec<(Participant, Option<Cursor>)> = self.primary.roster().to_vec();
+        for (p, c) in self.secondary.roster() {
+            if self.passed.contains_key(&p.participant_id) {
+                out.push((p.clone(), c.clone()));
+            }
+        }
+        out
+    }
+
+    /// Whether cursors travel over the QUIC datagram channel (the primary's).
+    pub fn uses_datagrams(&self) -> bool {
+        self.primary.uses_datagrams()
+    }
+
+    /// A [`PresenceView`] seeded with the viewer and everyone shown.
+    pub fn view(&self) -> PresenceView {
+        let mut v = self.primary.view();
+        for (p, _) in self.secondary.roster() {
+            if self.passed.contains_key(&p.participant_id) {
+                v.upsert(p.clone());
+            }
+        }
+        v
+    }
+
+    /// Publishes the viewer's cursor on both channels.
+    pub fn sender(&self) -> FanoutSender {
+        self.fanout.clone()
+    }
+
+    /// The next event of either channel after de-duplication; `Timeout` when
+    /// none arrives in `timeout`.
+    pub async fn next_event(&mut self, timeout: Duration) -> Result<Option<PresenceEvent>> {
+        let deadline = tokio::time::Instant::now() + timeout;
+        loop {
+            let left = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if left.is_zero() {
+                return Err(Error::Timeout("waiting for a presence event".into()));
+            }
+            self.turn = !self.turn;
+            let slice = left.min(Duration::from_millis(40));
+            let from_primary = self.turn;
+            let got = if from_primary {
+                self.primary.next_event(slice).await
+            } else {
+                self.secondary.next_event(slice).await
+            };
+            let e = match got {
+                Ok(Some(e)) => e,
+                Ok(None) => {
+                    if from_primary {
+                        return Ok(None);
+                    }
+                    continue;
+                }
+                Err(Error::Timeout(_)) => continue,
+                Err(e) => return Err(e),
+            };
+            if let Some(e) = self.fold(from_primary, e) {
+                return Ok(Some(e));
+            }
+        }
+    }
+
+    fn fold(&mut self, from_primary: bool, e: PresenceEvent) -> Option<PresenceEvent> {
+        if from_primary {
+            match &e {
+                PresenceEvent::Joined { participant } => {
+                    self.primary_principals.insert(
+                        participant.participant_id.clone(),
+                        participant.principal_id.clone(),
+                    );
+                    self.primary_ids.insert(participant.participant_id.clone());
+                    // The same viewer already shown from the parent's channel:
+                    // the origin's identity replaces it.
+                    let dup: Vec<String> = self
+                        .passed
+                        .iter()
+                        .filter(|(_, p)| **p == participant.principal_id)
+                        .map(|(k, _)| k.clone())
+                        .collect();
+                    if !dup.is_empty() {
+                        for k in dup {
+                            self.passed.remove(&k);
+                        }
+                    }
+                }
+                PresenceEvent::Left { participant_id, .. } => {
+                    self.primary_ids.remove(participant_id);
+                    self.primary_principals.remove(participant_id);
+                }
+                PresenceEvent::Heartbeat { participant_ids } => {
+                    self.primary_ids = participant_ids.iter().cloned().collect();
+                    return Some(PresenceEvent::Heartbeat {
+                        participant_ids: self.union_ids(),
+                    });
+                }
+                _ => {}
+            }
+            return Some(e);
+        }
+        match &e {
+            PresenceEvent::Joined { participant } => self.admit(participant).then_some(e),
+            PresenceEvent::Left { participant_id, .. } => {
+                self.passed.remove(participant_id).map(|_| e)
+            }
+            PresenceEvent::CursorMoved { participant_id, .. }
+            | PresenceEvent::ShapeChanged { participant_id, .. } => {
+                // A cursor of the viewer's own second identity never draws.
+                self.passed.contains_key(participant_id).then_some(e)
+            }
+            PresenceEvent::Heartbeat { participant_ids } => {
+                self.passed.retain(|k, _| participant_ids.contains(k));
+                Some(PresenceEvent::Heartbeat {
+                    participant_ids: self.union_ids(),
+                })
+            }
+            PresenceEvent::KeepAlive => Some(e),
+        }
+    }
+
+    fn union_ids(&self) -> Vec<String> {
+        let mut ids: Vec<String> = self.primary_ids.iter().cloned().collect();
+        ids.extend(self.passed.keys().cloned());
+        ids.push(self.primary.me().participant_id.clone());
+        ids
+    }
+
+    /// Leaves both channels.
+    pub async fn leave(self) -> Result<()> {
+        let a = self.primary.leave().await;
+        let b = self.secondary.leave().await;
+        a.and(b)
+    }
+}
+
 /// Shortest interval between two cursor sends (30 Hz, newest wins).
 pub const SEND_INTERVAL: Duration = Duration::from_millis(33);
 /// Roster heartbeat interval the SDK asks for.

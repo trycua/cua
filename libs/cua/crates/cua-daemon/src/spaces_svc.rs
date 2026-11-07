@@ -1051,9 +1051,11 @@ pub(crate) mod imp {
                 .resolve_stream_entry(&r.window_id)
                 .await
                 .map_err(|e| st(e.into()))?;
-            // A direct route is the client's to open with its own handle on
-            // the origin; a proxied one is minted here.
-            let opened = if r.mint || decided.route == cua_spaces::stream_registry::Route::Proxied {
+            // The client opens the stream itself: straight from the origin
+            // with its own handle (direct), or through this daemon's media
+            // bridge (proxied, `DaemonService.OpenMediaBridge`). The daemon
+            // mints a ticket here only when asked to.
+            let opened = if r.mint {
                 self.spaces()
                     .open_stream_entry(&r.window_id, options)
                     .await

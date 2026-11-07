@@ -73,7 +73,7 @@ class ADBTransport(Transport):
         if action in ("shell", "execute", "run_command"):
             cmd = params.get("command", "")
             cmd = f"[ -f /data/local/tmp/.cua_env ] && . /data/local/tmp/.cua_env; {cmd}"
-            result = await self._adb_cmd_async("shell", cmd)
+            result = await self._adb_cmd_async("shell", cmd, timeout=params.get("timeout", 15))
             return {
                 "stdout": result.stdout.decode(errors="replace"),
                 "stderr": result.stderr.decode(errors="replace"),

@@ -194,7 +194,7 @@ def test_a_verified_release_installs(fixture: Fixture) -> None:
     assert fixture.installed()
 
 
-KWIN_HINT = "KWin window capture is off; `cua-driver kwin-capture on` turns it on"
+KWIN_HINT = "==> KWin window capture is off; `cua-driver kwin-capture on` turns it on"
 
 
 @linux_only
@@ -208,7 +208,7 @@ def test_a_release_install_grants_nothing_on_kwin_and_says_how_to(fixture: Fixtu
     fixture.publish("0.31.0")
     result = fixture.install("0.31.0")
     assert result.returncode == 0, result.stderr + result.stdout
-    assert (KWIN_HINT in result.stdout) == kwin
+    assert result.stdout.splitlines().count(KWIN_HINT) == int(kwin)
     assert not (fixture.home / ".local/share/applications").exists()
 
 

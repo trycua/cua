@@ -43,8 +43,9 @@ struct Client {
     /// Absent on compositors that do not report it; never read as native.
     #[serde(default)]
     xwayland: Option<bool>,
-    /// 0 is the focused client; larger is longer ago. Absent on old builds.
-    #[serde(rename = "focusHistoryID", default)]
+    /// 0 is the focused client; larger is longer ago. Absent on old builds,
+    /// read as -1, Hyprland's own "not in the focus history".
+    #[serde(rename = "focusHistoryID", default = "not_in_focus_history")]
     focus_history: i64,
 }
 
@@ -81,6 +82,10 @@ struct DisplayMonitor {
 
 fn powered_by_default() -> bool {
     true
+}
+
+fn not_in_focus_history() -> i64 {
+    -1
 }
 
 impl DisplayMonitor {
@@ -978,6 +983,15 @@ mod tests {
         assert!(!native_attestation(&windows, 0x10, 43));
         assert!(!native_attestation(&windows, 0x40, 42));
         assert!(!native_attestation(&windows, 0, 42));
+    }
+
+    #[test]
+    fn a_client_without_focus_history_is_never_the_window_in_use() {
+        let windows =
+            windows_from_clients(vec![client("0x10", 42, [800, 600])], &HashSet::from([1]))
+                .unwrap();
+        assert_eq!(windows[0].focus_order, -1);
+        assert_eq!(pick_window_in_use(&windows, 42), None);
     }
 
     #[test]

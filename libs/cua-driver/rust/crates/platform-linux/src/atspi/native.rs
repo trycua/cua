@@ -2988,10 +2988,12 @@ async fn before_write_reserve<T>(lookup: impl std::future::Future<Output = T>) -
 
 /// `length` for `EditableText.InsertText`. The unit depends on the toolkit. Qt
 /// resizes the string to exactly `length` UTF-16 units, so a shorter count drops
-/// the tail and a longer one appends uninitialized memory. GTK and the others
-/// read bytes, the unit the string travels in. ASCII is the same in every unit.
-/// Any other text for an unknown toolkit has no safe length: UTF-16 units cut
-/// GTK short and bytes over-read in Qt.
+/// the tail and a longer one appends uninitialized memory. GTK3 reads bytes, the
+/// unit AT-SPI documents. Every other toolkit gets bytes too because no count is
+/// larger: one that ignores or clamps `length` still inserts the whole text, and
+/// only one that reads a smaller unit exactly would over-read. ASCII is the same
+/// in every unit. Any other text for an unknown toolkit has no safe length:
+/// UTF-16 units cut GTK3 short and bytes over-read in Qt.
 fn editable_insert_length(toolkit: Option<&str>, text: &str) -> Option<i32> {
     let length = match toolkit {
         _ if text.is_ascii() => text.len(),

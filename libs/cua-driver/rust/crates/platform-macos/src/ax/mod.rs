@@ -26,6 +26,7 @@ pub mod launch;
 pub(crate) mod main_thread;
 pub mod reveal_scroll;
 pub mod snapshot;
+pub mod surface;
 pub mod tree;
 pub mod window_scope;
 

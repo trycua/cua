@@ -1353,13 +1353,24 @@ impl EisState {
             text_sym(ch)?;
         }
         if self.device_with_interface("ei_keyboard").is_none() {
+            if desktop.x11_app_may_have_focus {
+                return Err(refused(
+                    "the compositor offers no keyboard, and an X11 app may have focus and \
+                     lose text it gets another way",
+                ));
+            }
+            if text.contains('\n') {
+                return Err(refused(
+                    "the compositor offers no keyboard to press Return for a line break",
+                ));
+            }
             return Ok((vec![TextStep::Utf8(text.into_owned())], Duration::ZERO));
         }
         let keys = self
             .keymap
             .as_ref()
             .ok_or_else(|| refused("the compositor announced no keyboard layout"))
-            .and_then(|map| plan_on_any(&text, map, &keyboard_now(self.keyboard, desktop, map)?));
+            .and_then(|map| plan_keys(&text, map, keyboard_now(self.keyboard, desktop, map)?));
         let ei_text = self.device_with_interface("ei_text").is_some();
         if !ei_text || desktop.x11_app_may_have_focus || (text.contains('\n') && keys.is_ok()) {
             let steps = keys?
@@ -1638,17 +1649,18 @@ struct KeyboardState {
     group: u32,
 }
 
-/// The states the keyboard can be in right now: what EIS last said or, when it
-/// has said nothing, what the compositor said when asked. A keymap with several
-/// layouts and no word on which is active is refused, since any guess can type
-/// wrong letters. With no word on the lock keys, it can be in any of their states.
+/// The keyboard's state right now: what EIS last said or, when it has said
+/// nothing, what the compositor said when asked. A keymap with several layouts and
+/// no word on which is active is refused, since any guess can type wrong letters.
+/// So is a keyboard with no word on its modifier keys, since a held Shift turns
+/// `a` into `A` and `1` into `!`.
 fn keyboard_now(
     reported: Option<KeyboardState>,
     desktop: DesktopFacts,
     map: &xkb::Keymap,
-) -> anyhow::Result<Vec<KeyboardState>> {
+) -> anyhow::Result<KeyboardState> {
     if let Some(keyboard) = reported {
-        return Ok(vec![keyboard]);
+        return Ok(keyboard);
     }
     let group = match desktop.active_layout {
         Some(group) => group,
@@ -1660,52 +1672,28 @@ fn keyboard_now(
             )))
         }
     };
+    let locks = desktop.lock_keys.ok_or_else(|| {
+        refused(
+            "the compositor doesn't say which lock and modifier keys are on, so keys could \
+             type something else",
+        )
+    })?;
+    if locks.modifier_held {
+        return Err(refused(MODIFIER_HELD));
+    }
     let lock_mask = |on: bool, name: &str| match on {
         true => 1_u32.checked_shl(map.mod_get_index(name)).unwrap_or(0),
         false => 0,
     };
-    let locks = match desktop.lock_keys {
-        Some(locks) => vec![locks],
-        None => [false, true]
-            .into_iter()
-            .flat_map(|caps| [false, true].map(|num| LockKeys { caps, num }))
-            .collect(),
-    };
-    Ok(locks
-        .into_iter()
-        .map(|locks| KeyboardState {
-            group,
-            locked: lock_mask(locks.caps, xkb::MOD_NAME_CAPS)
-                | lock_mask(locks.num, xkb::MOD_NAME_NUM),
-            ..KeyboardState::default()
-        })
-        .collect())
+    Ok(KeyboardState {
+        group,
+        locked: lock_mask(locks.caps, xkb::MOD_NAME_CAPS) | lock_mask(locks.num, xkb::MOD_NAME_NUM),
+        ..KeyboardState::default()
+    })
 }
 
-/// The keys that type `text` in every state the keyboard can be in. Text they
-/// would type differently is refused: letters when the lock keys are unknown, but
-/// not digits on most layouts.
-fn plan_on_any(
-    text: &str,
-    map: &xkb::Keymap,
-    keyboards: &[KeyboardState],
-) -> anyhow::Result<Vec<TypedKey>> {
-    let mut plans = keyboards
-        .iter()
-        .map(|&keyboard| plan_keys(text, map, keyboard));
-    let plan = plans
-        .next()
-        .ok_or_else(|| refused("the keyboard's state is unknown"))??;
-    for other in plans {
-        if other? != plan {
-            return Err(refused(
-                "the compositor doesn't say whether Caps Lock or Num Lock is on, so keys could \
-                 type the wrong case",
-            ));
-        }
-    }
-    Ok(plan)
-}
+const MODIFIER_HELD: &str =
+    "a modifier key is held or latched, so keys would not type what they say";
 
 /// One key press that types a character on the active layout, and the modifier
 /// keys to hold around it, in press order.
@@ -1766,9 +1754,7 @@ fn plan_keys(
     keyboard: KeyboardState,
 ) -> anyhow::Result<Vec<TypedKey>> {
     if keyboard.depressed | keyboard.latched != 0 {
-        return Err(refused(
-            "a modifier key is held or latched, so keys would not type what they say",
-        ));
+        return Err(refused(MODIFIER_HELD));
     }
     let chords = modifier_chords(map, keyboard.group);
     let mut known = HashMap::new();
@@ -1877,6 +1863,10 @@ pub(super) mod local_eis {
         Modifiers(KeyboardState),
         /// Pause or resume the `ei_text` device.
         TextDevice {
+            resumed: bool,
+        },
+        /// Pause or resume the `ei_keyboard` device.
+        KeyboardDevice {
             resumed: bool,
         },
         /// Pause every device once the next text arrives.
@@ -2044,6 +2034,14 @@ pub(super) mod local_eis {
                         text.resumed();
                     } else {
                         text.paused();
+                    }
+                }
+                Control::KeyboardDevice { resumed } => {
+                    let keyboard = self.keyboard.as_ref().expect("the seat is bound");
+                    if resumed {
+                        keyboard.resumed();
+                    } else {
+                        keyboard.paused();
                     }
                 }
                 Control::PauseOnText => self.pause_on_text = true,
@@ -2534,6 +2532,30 @@ mod typing_route_tests {
     }
 
     #[test]
+    fn with_only_ei_text_a_line_goes_out_and_x11_or_line_breaks_are_refused() {
+        let (results, events) = record(|| {
+            control(Control::KeyboardDevice { resumed: false });
+            wait_until_ready("ei_text").unwrap();
+            let results = (send("ab", false), send("ab", true), send("a\nb", false));
+            control(Control::KeyboardDevice { resumed: true });
+            wait_keyboard_ready().unwrap();
+            results
+        });
+        results.0.unwrap();
+        assert_eq!(
+            results.1.unwrap_err().to_string(),
+            "foreground_unavailable: the compositor offers no keyboard, and an X11 app may have \
+             focus and lose text it gets another way; nothing was typed"
+        );
+        assert_eq!(
+            results.2.unwrap_err().to_string(),
+            "foreground_unavailable: the compositor offers no keyboard to press Return for a \
+             line break; nothing was typed"
+        );
+        assert_eq!(events, [Emitted::Text("ab".into())]);
+    }
+
+    #[test]
     fn a_long_text_arrives_whole_and_in_order() {
         let text = "ab".repeat(KEYS_PER_STEP * 3);
         let (result, events) = typed(&text, true);
@@ -2764,7 +2786,7 @@ mod typing_route_tests {
         let caps = DesktopFacts {
             lock_keys: Some(LockKeys {
                 caps: true,
-                num: false,
+                ..LockKeys::default()
             }),
             ..de
         };
@@ -2782,7 +2804,7 @@ mod typing_route_tests {
     }
 
     #[test]
-    fn with_the_lock_keys_unknown_only_text_they_dont_change_goes_out() {
+    fn with_the_key_states_unknown_or_a_modifier_held_no_key_goes_out() {
         const SHIFT: u32 = 42;
         let local = LocalEis::start(None);
         let unknown = DesktopFacts {
@@ -2791,17 +2813,30 @@ mod typing_route_tests {
             lock_keys: None,
         };
 
-        let (result, events) = on_silent_compositor(&local, "a", unknown);
+        // A held Shift would turn digits into symbols too, so nothing goes out.
+        for (text, probe) in [("a", tap(SHIFT).to_vec()), ("1 2\n", vec![])] {
+            let (result, events) = on_silent_compositor(&local, text, unknown);
+            assert_eq!(
+                result.unwrap_err().to_string(),
+                "foreground_unavailable: the compositor doesn't say which lock and modifier keys \
+                 are on, so keys could type something else; nothing was typed"
+            );
+            assert_eq!(events, probe);
+        }
+
+        let held = DesktopFacts {
+            lock_keys: Some(LockKeys {
+                modifier_held: true,
+                ..LockKeys::default()
+            }),
+            ..unknown
+        };
+        let (result, events) = on_silent_compositor(&local, "1", held);
         assert_eq!(
             result.unwrap_err().to_string(),
-            "foreground_unavailable: the compositor doesn't say whether Caps Lock or Num Lock is \
-             on, so keys could type the wrong case; nothing was typed"
+            format!("foreground_unavailable: {MODIFIER_HELD}; nothing was typed")
         );
-        assert_eq!(events, tap(SHIFT));
-
-        let (result, events) = on_silent_compositor(&local, "1 2\n", unknown);
-        result.unwrap();
-        assert_eq!(events, [tap(2), tap(57), tap(3), tap(28)].concat());
+        assert_eq!(events, []);
     }
 
     #[test]

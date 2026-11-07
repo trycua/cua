@@ -1328,6 +1328,92 @@ fn any_typing_delay_gives_a_budget() {
     crate::input::action::Action::new(longest);
 }
 
+/// The result for AT-SPI input that was sent and whose effect is unknown: an
+/// error with `effect: unverifiable` and `delivery.mode: unknown`. It has no
+/// `background_unavailable` code and no foreground escalation, so neither the
+/// caller nor `run_steps` sends the input a second time.
+pub(crate) fn atspi_outcome_unknown(
+    summary: String,
+    transport: cua_driver_core::action_record::ActionTransport,
+    delivery: crate::input::delivery::DeliveryMode,
+    detail: Option<String>,
+) -> ToolResult {
+    use cua_driver_core::action_record::{
+        ActionEffect, ActionExecutionRecord, ActualDelivery, RequestedDelivery,
+    };
+    let requested = if delivery.is_foreground() {
+        RequestedDelivery::Foreground
+    } else {
+        RequestedDelivery::Background
+    };
+    let mut record =
+        ActionExecutionRecord::builder(ActionEffect::Unverifiable, transport, requested)
+            .actual_delivery(ActualDelivery::Unknown);
+    if let Some(detail) = detail {
+        record = record.detail(detail);
+    }
+    let record = record
+        .build()
+        .expect("uncertain semantic activation has no delivered count or replay");
+    let public = serde_json::to_value(record.public_result().unwrap()).unwrap();
+    ToolResult::error(summary)
+        .with_structured(public)
+        .with_action_record(record)
+}
+
+/// [`atspi_outcome_unknown`] for a `doAction` that failed after it was sent
+/// ([`crate::atspi::InputMayHaveLanded`]).
+pub(crate) fn atspi_click_outcome_unknown(
+    target: &str,
+    delivery: crate::input::delivery::DeliveryMode,
+    error: &anyhow::Error,
+) -> ToolResult {
+    atspi_outcome_unknown(
+        format!(
+            "click: the AT-SPI action for {target} was sent, but {error}; whether it took \
+             effect is unknown. Refresh state (get_window_state or a screenshot) before \
+             clicking again."
+        ),
+        cua_driver_core::action_record::ActionTransport::LinuxAtSpiAction,
+        delivery,
+        Some(error.to_string()),
+    )
+}
+
+/// [`atspi_outcome_unknown`] for an `EditableText` write that failed after it
+/// was sent ([`crate::atspi::InputMayHaveLanded`]).
+pub(crate) fn atspi_text_outcome_unknown(
+    delivery: crate::input::delivery::DeliveryMode,
+    error: &anyhow::Error,
+) -> ToolResult {
+    atspi_outcome_unknown(
+        format!(
+            "type_text: the AT-SPI text write was sent, but {error}; whether the text \
+             landed is unknown. Read the field back (get_window_state) before typing again."
+        ),
+        cua_driver_core::action_record::ActionTransport::LinuxAtSpiValue,
+        delivery,
+        Some(error.to_string()),
+    )
+}
+
+/// Report a cleanup step that failed after the input was sent, without
+/// changing the input's own outcome: a sentence appended to the text and a
+/// `warning` field.
+pub(crate) fn with_cleanup_warning(mut result: ToolResult, warning: Option<String>) -> ToolResult {
+    let Some(warning) = warning else {
+        return result;
+    };
+    if let Some(cua_driver_core::protocol::Content::Text { text, .. }) = result.content.first_mut()
+    {
+        text.push_str(&format!(" Warning: {warning}."));
+    }
+    if let Some(Value::Object(structured)) = result.structured_content.as_mut() {
+        structured.insert("warning".into(), json!(warning));
+    }
+    result
+}
+
 /// Map an input-path error to a tool error, attaching the structured
 /// foreground `code` (`foreground_unavailable` / `foreground_timeout`) when the
 /// message carries one so the caller can branch instead of parsing prose.
@@ -3055,12 +3141,13 @@ pub(crate) fn hyprland_input_result(result: anyhow::Result<Value>, foreground: b
                 .as_u64()
                 .and_then(|count| u32::try_from(count).ok())
                 .filter(|count| *count > 0);
-            let outcome = if value["effect"] == "partial"
-                && delivered.is_some_and(|count| foreground || count == 1)
-            {
+            // Keys or wheel packets the compositor acknowledged before the
+            // stop stay reported, so a caller does not read them as unsent.
+            let partial = delivered.filter(|_| value["effect"] == "partial");
+            let outcome = if let Some(count) = partial {
                 record(ActionEffect::Partial)
                     .actual_delivery(actual)
-                    .delivered_count(delivered.unwrap())
+                    .delivered_count(count)
             } else {
                 value["effect"] = json!("refused");
                 value
@@ -3588,6 +3675,26 @@ fn isolated_hyprland_refused_partial_and_unknown_outcomes_stay_distinct() {
     let public = partial.action_record.unwrap().public_result().unwrap();
     assert_eq!(public.effect, cua_driver_contract::ActionEffect::Partial);
     assert_eq!(public.delivery.unwrap().delivered_count, Some(1));
+
+    // Text interrupted after three keys: those keys landed, so the result is
+    // partial with its count, never a refusal that reads as "nothing sent".
+    let typed = isolated_hyprland_result(Ok(json!({
+        "ok": false, "code": "text_interrupted", "detail": "lane lost",
+        "effect": "partial", "delivery": {"mode": "background", "delivered_count": 3}
+    })));
+    let content = typed.structured_content.as_ref().unwrap();
+    assert_eq!(content["effect"], "partial");
+    assert_eq!(content["delivery"]["delivered_count"], 3);
+    assert!(content.get("escalation").is_none());
+    let public = typed.action_record.unwrap().public_result().unwrap();
+    public.validate_invariants().unwrap();
+    assert_eq!(public.effect, cua_driver_contract::ActionEffect::Partial);
+    let delivery = public.delivery.unwrap();
+    assert_eq!(
+        delivery.mode,
+        cua_driver_contract::ActionDeliveryMode::Background
+    );
+    assert_eq!(delivery.delivered_count, Some(3));
 
     let unknown = isolated_hyprland_result(Err(anyhow::anyhow!("connection lost")));
     let public = unknown.action_record.unwrap().public_result().unwrap();

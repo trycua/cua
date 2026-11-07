@@ -18,7 +18,42 @@ use anyhow::Result;
 pub mod native;
 pub mod snapshot;
 pub use native::ensure_listener_active;
+pub use native::InputMayHaveLanded;
 pub use snapshot::Snapshots;
+
+/// Whether `error` reports AT-SPI input that was sent and may have taken
+/// effect ([`InputMayHaveLanded`]). Such input must not be sent again by
+/// another route, and the result must not say that nothing was delivered.
+pub fn input_may_have_landed(error: &anyhow::Error) -> bool {
+    error.is::<InputMayHaveLanded>()
+}
+
+/// The outcome of an action whose effect the caller reads back from the UI
+/// before deciding anything. One that failed after it was sent may have
+/// acted, so it counts as sent and the readback decides; a refusal there
+/// would hide what it did. Other errors are returned.
+pub fn action_sent<T>(result: Result<T>) -> Result<()> {
+    match result {
+        Ok(_) => Ok(()),
+        Err(error) if input_may_have_landed(&error) => {
+            tracing::debug!("action may have acted, reading it back: {error:#}");
+            Ok(())
+        }
+        Err(error) => Err(error),
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn an_action_that_may_have_acted_is_read_back_not_refused() {
+    let sent = anyhow::Error::new(InputMayHaveLanded(
+        "doAction failed: raised after acting".into(),
+    ));
+    assert!(action_sent(Err::<(), _>(sent.context("the exact checkbox action"))).is_ok());
+    assert!(action_sent(Ok(("click".to_owned(), false, false))).is_ok());
+    let unsent = action_sent(Err::<(), _>(anyhow::anyhow!("no Action interface")));
+    assert_eq!(unsent.unwrap_err().to_string(), "no Action interface");
+}
 
 /// Stable address on one AT-SPI bus connection, including the owning frame.
 /// Unique bus names prevent a restarted process from reusing an observed path.
@@ -434,6 +469,7 @@ pub fn perform_action_at_point_in(
                                 object_ref.path.clone(),
                             )))
                         }
+                        Err(error) if input_may_have_landed(&error) => return Err(error),
                         Err(error) => tracing::debug!(
                             "cached hit-test element {idx} (pid {pid}) failed: {error:#}"
                         ),
@@ -442,12 +478,27 @@ pub fn perform_action_at_point_in(
             }
         }
     }
-    match native::perform_action_at_point_in(pid, xid, win_x, win_y, skip_focus_roles) {
+    walk_unless_fired(
+        native::perform_action_at_point_in(pid, xid, win_x, win_y, skip_focus_roles),
+        || native::perform_action_at_point(pid, win_x, win_y, skip_focus_roles),
+    )
+}
+
+/// The `GetAccessibleAtPoint` tier's outcome decides whether the full-walk
+/// tier runs. Only a miss (or a failure before anything was sent) walks: a
+/// hit, which includes a `doAction` that did not answer, or input that may
+/// have landed ends the click, since walking would send the action again.
+fn walk_unless_fired(
+    live: Result<Option<AtPointHit>>,
+    walk: impl FnOnce() -> Result<Option<AtPointHit>>,
+) -> Result<Option<AtPointHit>> {
+    match live {
         Ok(Some(hit)) => return Ok(Some(hit)),
         Ok(None) => {}
+        Err(error) if input_may_have_landed(&error) => return Err(error),
         Err(error) => tracing::debug!("GetAccessibleAtPoint hit-test failed: {error:#}"),
     }
-    native::perform_action_at_point(pid, win_x, win_y, skip_focus_roles)
+    walk()
 }
 
 /// Resolve a *screen* pixel to the indexable element whose reconstructed screen
@@ -618,7 +669,8 @@ impl TokenElement {
             Ok(done) => return Ok(done),
             Err(error) => error,
         };
-        if !self.may_reresolve {
+        // Input that may have landed is never sent again by index.
+        if !self.may_reresolve || input_may_have_landed(&error) {
             return Err(error);
         }
         tracing::debug!(
@@ -1023,6 +1075,20 @@ mod token_dispatch_tests {
             })
             .unwrap_err();
         assert!(error.is::<native::CachedElementGone>());
+    }
+
+    #[test]
+    fn input_that_may_have_landed_is_never_re_sent_by_index() {
+        let sent = |_: &native::ObjectRef| -> Result<String> {
+            Err(InputMayHaveLanded("EditableText.InsertText did not answer in time".into()).into())
+        };
+        let error = token(WindowProof::NotRequired)
+            .act(sent, |_| panic!("re-sent input that may have landed"))
+            .unwrap_err();
+        assert!(input_may_have_landed(&error));
+        // A failure before anything was sent still re-resolves.
+        let retried = token(WindowProof::NotRequired).act(gone, |_| Ok("by index".to_owned()));
+        assert_eq!(retried.unwrap(), "by index");
     }
 
     #[test]

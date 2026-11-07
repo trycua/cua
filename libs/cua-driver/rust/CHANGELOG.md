@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.43.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.42.4...cua-driver-rs-v0.43.0) (2026-11-07)
+
+
+### Features
+
+* **cua-driver:** expose macOS search field identity attributes ([#6893](https://github.com/trycua/cua/issues/6893)) ([e298a4f](https://github.com/trycua/cua/commit/e298a4f0bc0f339665946401b24004d124591dbe))
+
 ## [0.42.4](https://github.com/trycua/cua/compare/cua-driver-rs-v0.42.3...cua-driver-rs-v0.42.4) (2026-11-07)
 
 

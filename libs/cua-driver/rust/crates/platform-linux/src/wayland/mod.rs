@@ -19,6 +19,7 @@ pub mod hyprland;
 pub mod hyprland_capture;
 mod hyprland_compatibility;
 pub mod hyprland_input;
+pub mod kwin_capture;
 pub mod kwin_helper;
 pub mod niri;
 pub use niri::keyboard::call_budget as niri_keyboard_budget;
@@ -1270,6 +1271,9 @@ pub fn screenshot_dispatch_with_pid(xid: u64, pid: u32) -> anyhow::Result<Vec<u8
 }
 
 fn screenshot_dispatch_for_pid(xid: u64, pid: Option<u32>) -> anyhow::Result<Vec<u8>> {
+    if is_wayland() && kwin_capture::knows_window(xid) {
+        return kwin_capture::capture(xid, pid);
+    }
     if is_wayland() && hyprland::is_session() {
         return hyprland::capture(xid, pid).map_err(|error| {
             tracing::debug!("Hyprland target capture refused: {error:#}");
@@ -1401,13 +1405,15 @@ fn crop_png_to_rect(
 /// Display-level capture dispatcher. Cascade:
 /// 1. Opt-in GNOME compositor helper. If available, capture failure is
 ///    terminal rather than cascading into GNOME's portal implementation.
-/// 2. Native Wayland on wlroots: zwlr_screencopy_manager_v1 (fast, zero
+/// 2. KWin's ScreenShot2, when KWin lets this executable call it. It runs before
+///    the portal, so a Deny saved in the portal doesn't apply to it.
+/// 3. Native Wayland on wlroots: zwlr_screencopy_manager_v1 (fast, zero
 ///    consent).
-/// 3. ext-image-copy-capture-v1 on supported compositors.
-/// 4. xdg-desktop-portal Screenshot via ashpd. Triggers a consent prompt on
-///    first use per session. A refusal from the portal is terminal; the
-///    request has a 30-second deadline, after which the cascade continues.
-/// 5. X11: existing root-window path.
+/// 4. ext-image-copy-capture-v1 on supported compositors.
+/// 5. xdg-desktop-portal Screenshot via ashpd. Asks once and saves the answer. A
+///    refusal from the portal is terminal; the request has a 30-second deadline,
+///    after which the cascade continues.
+/// 6. X11: existing root-window path.
 pub fn screenshot_display_dispatch() -> anyhow::Result<Vec<u8>> {
     if niri::is_session() {
         return niri_display_capture().map(|capture| capture.png);
@@ -1432,7 +1438,15 @@ pub fn screenshot_display_dispatch() -> anyhow::Result<Vec<u8>> {
         ) {
             return result;
         }
-        // Tier 2: native wlroots screencopy (fast, zero consent).
+        // Tier 2: KWin answers directly when it lets this executable call
+        // ScreenShot2: every output, no portal request to wait on.
+        if kwin_capture::may_be_session() {
+            match kwin_capture::capture_workspace() {
+                Ok(bytes) => return Ok(bytes),
+                Err(e) => tracing::debug!("KWin workspace capture unavailable: {e:#}"),
+            }
+        }
+        // Tier 3: native wlroots screencopy (fast, zero consent).
         match screenshot_bytes() {
             Ok(bytes) => return orient_display_png(bytes),
             Err(e) => {
@@ -1441,7 +1455,7 @@ pub fn screenshot_display_dispatch() -> anyhow::Result<Vec<u8>> {
                 );
             }
         }
-        // Tier 3: ext-image-copy-capture-v1 (sway 1.10+, labwc 0.8+,
+        // Tier 4: ext-image-copy-capture-v1 (sway 1.10+, labwc 0.8+,
         // hyprland, KDE 6.2+, GNOME 47+).
         match ext_screencopy::screenshot_via_ext_copy() {
             Ok(bytes) => return orient_display_png(bytes),
@@ -1451,7 +1465,7 @@ pub fn screenshot_display_dispatch() -> anyhow::Result<Vec<u8>> {
                 );
             }
         }
-        // Tier 4: xdg-desktop-portal (GNOME, KDE, COSMIC fallback), then X11.
+        // Tier 5: xdg-desktop-portal (GNOME, KDE, COSMIC fallback), then X11.
         return portal_or_x11(
             portal_screenshot::screenshot_via_portal,
             crate::capture::screenshot_display_bytes_x11,
@@ -1966,6 +1980,27 @@ fn open_vptr_session_in(
     })
 }
 
+/// KWin's portal/libei input goes to whatever holds focus when it lands, so
+/// activating a KWin handle first wouldn't bind the input to that window.
+fn refuse_kwin_input(window_id: u64) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        !kwin_capture::knows_window(window_id),
+        "foreground_unavailable: KWin input is focus-bound, so window {window_id} cannot be \
+         targeted: focus could move before the input lands; no global input was sent"
+    );
+    Ok(())
+}
+
+/// Bring one exact window forward for its own sake: `bring_to_front`, and a menu
+/// path fired through AT-SPI. No global input follows, so KWin's activation is
+/// safe here where [`activate_window_for_input_target`] refuses it.
+pub fn activate_window(window_id: u64, target_pid: Option<u32>) -> anyhow::Result<()> {
+    if kwin_capture::knows_window(window_id) {
+        return kwin_capture::activate(window_id, target_pid);
+    }
+    activate_window_for_input_target(window_id, target_pid)
+}
+
 /// Focus and raise a specific native Wayland toplevel before focus-bound
 /// keyboard or portal/libei input. wlroots exposes an activation request on its
 /// foreign-toplevel protocol; GNOME uses the bundled compositor helper. Other
@@ -1986,6 +2021,7 @@ pub fn activate_window_for_input_target(
     window_id: u64,
     target_pid: Option<u32>,
 ) -> anyhow::Result<()> {
+    refuse_kwin_input(window_id)?;
     if is_wayland() && hyprland::is_session() {
         // A full compositor address must never enter the generic protocol-id
         // or title-matching route. This observation-only adapter can attest an
@@ -2102,6 +2138,8 @@ fn event_time_ms() -> u32 {
 /// real coords. A short delay between iterations gives the compositor time
 /// to discriminate single vs. double clicks.
 pub fn click(window_id: u64, at: AimedPoint, count: u32, button: u8) -> anyhow::Result<()> {
+    // Before the fallback below can ask for portal consent on a doomed call.
+    refuse_kwin_input(window_id)?;
     with_libei_fallback(
         || click_vptr(Some(window_id), at, count, button, None),
         || {
@@ -2458,6 +2496,7 @@ pub fn scroll_at(
     direction: &str,
     amount: u32,
 ) -> anyhow::Result<()> {
+    refuse_kwin_input(window_id)?;
     let direction = direction.to_string();
     with_libei_fallback(
         || scroll_vptr(Some(window_id), point, &direction, amount, None),
@@ -2633,6 +2672,7 @@ pub fn drag(
     duration_ms: u64,
     button: u8,
 ) -> anyhow::Result<()> {
+    refuse_kwin_input(window_id)?;
     let ((from_x, from_y), (to_x, to_y)) = (from.point, to.point);
     with_libei_fallback(
         || drag_vptr(Some(window_id), from, to, steps, button, None),
@@ -4096,6 +4136,12 @@ pub fn list_windows_dispatch(filter_pid: Option<u32>) -> Vec<WindowInfo> {
         // Do not probe unrelated compositor protocols for every preview frame.
         if let Some(ws) = shell_helper::list_windows(filter_pid) {
             return listed_windows(ws);
+        }
+        if kwin_capture::may_be_session() {
+            match kwin_capture::list_windows() {
+                Ok(ws) => return listed_windows(apply_pid_filter(ws, filter_pid)),
+                Err(error) => tracing::debug!("KWin window enumeration unavailable: {error:#}"),
+            }
         }
         if let Some(ws) = kwin_helper::list_window_infos() {
             return listed_windows(apply_pid_filter(ws, filter_pid));

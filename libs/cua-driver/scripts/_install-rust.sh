@@ -1511,7 +1511,7 @@ else
     rm -f "$BIN_LINK"
     ln -s "$CURRENT_LINK/$BINARY_NAME" "$BIN_LINK"
     log "symlinked $BIN_LINK -> $CURRENT_LINK/$BINARY_NAME"
-    cua_driver_write_kwin_desktop_entry "$CURRENT_LINK/$BINARY_NAME" \
+    cua_driver_write_kwin_desktop_entry "$CURRENT_LINK/$BINARY_NAME" "$BIN_LINK" \
         || log "warning: could not write the KWin desktop entry; KWin won't grant window capture"
 
     # Post-install GC of old per-version release dirs. Runs AFTER the

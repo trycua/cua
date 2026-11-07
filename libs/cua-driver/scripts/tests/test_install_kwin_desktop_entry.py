@@ -30,6 +30,7 @@ def write_entry(
     tmp_path: Path,
     executable: str,
     *,
+    cli: str = "/home/test/.local/bin/cua-driver",
     kwin: bool = True,
     data_home: Path | None = None,
     failing_write: bool = False,
@@ -38,7 +39,7 @@ def write_entry(
     home, fake_bin = tmp_path / "home", tmp_path / "bin"
     home.mkdir(exist_ok=True)
     fake_bin.mkdir(exist_ok=True)
-    for tool in ("mkdir", "mv", "rm", "sed"):
+    for tool in ("mkdir", "mv", "readlink", "rm", "sed"):
         link = fake_bin / tool
         if not link.exists():
             link.symlink_to(shutil.which(tool))
@@ -49,7 +50,7 @@ def write_entry(
         env["XDG_DATA_HOME"] = str(data_home)
     # `printf` is a builtin, so a failed write is simulated by shadowing it.
     fail = 'printf() { return 1; }\n' if failing_write else ""
-    script = f". {shlex.quote(str(COMMON))}\n{fail}cua_driver_write_kwin_desktop_entry {shlex.quote(executable)}\n"
+    script = f". {shlex.quote(str(COMMON))}\n{fail}cua_driver_write_kwin_desktop_entry {shlex.quote(executable)} {shlex.quote(cli)}\n"
     return home, subprocess.run(
         ["/bin/bash", "-euc", script], env=env, text=True, capture_output=True, check=False
     )
@@ -67,6 +68,7 @@ def test_entry_names_the_stable_path_and_both_grants(tmp_path: Path) -> None:
         "NoDisplay=true",
         "X-KDE-Wayland-Interfaces=org_kde_plasma_window_management,org_kde_kwin_keystate",
         "X-KDE-DBUS-Restricted-Interfaces=org.kde.KWin.ScreenShot2",
+        "X-Cua-Cli=/home/test/.local/bin/cua-driver",
     ]
     assert [p.name for p in (home / ENTRY).parent.iterdir()] == [Path(ENTRY).name]
 
@@ -101,15 +103,44 @@ def test_rerun_replaces_a_stale_entry(tmp_path: Path) -> None:
     assert "/old/" not in (home / ENTRY).read_text()
 
 
-def test_a_second_install_keeps_the_entry_of_a_live_install(tmp_path: Path) -> None:
-    live = tmp_path / "live/cua-driver"
-    live.parent.mkdir()
-    fake(live)
-    home, _ = write_entry(tmp_path, str(live))
-    _, result = write_entry(tmp_path, "/tmp/throwaway/cua-driver")
+def live_install(tmp_path: Path, name: str) -> tuple[Path, Path]:
+    executable = tmp_path / name / "cua-driver"
+    executable.parent.mkdir()
+    fake(executable)
+    cli = tmp_path / f"{name}-bin/cua-driver"
+    cli.parent.mkdir()
+    cli.symlink_to(executable)
+    return executable, cli
+
+
+def test_a_second_install_with_its_own_cli_keeps_the_entry_of_a_live_install(tmp_path: Path) -> None:
+    live, live_cli = live_install(tmp_path, "live")
+    home, _ = write_entry(tmp_path, str(live), cli=str(live_cli))
+    _, result = write_entry(tmp_path, "/tmp/throwaway/cua-driver", cli="/tmp/throwaway-bin/cua-driver")
     assert result.returncode == 0, result.stderr
     assert f'Exec="{live}" serve' in (home / ENTRY).read_text().splitlines()
     assert result.stdout == f"==> kept KWin desktop entry: it grants {live}\n"
+
+
+def test_a_second_install_that_takes_the_cli_takes_the_entry(tmp_path: Path) -> None:
+    first, cli = live_install(tmp_path, "first")
+    home, _ = write_entry(tmp_path, str(first), cli=str(cli))
+    second = tmp_path / "second/cua-driver"
+    second.parent.mkdir()
+    fake(second)
+    cli.unlink()
+    cli.symlink_to(second)
+    _, result = write_entry(tmp_path, str(second), cli=str(cli))
+    assert result.returncode == 0, result.stderr
+    assert f'Exec="{second}" serve' in (home / ENTRY).read_text().splitlines()
+
+
+def test_rerunning_the_install_after_kwin_appears_writes_the_entry(tmp_path: Path) -> None:
+    home, _ = write_entry(tmp_path, "/opt/cua-driver", kwin=False)
+    assert not (home / ENTRY).exists()
+    _, result = write_entry(tmp_path, "/opt/cua-driver")
+    assert result.returncode == 0, result.stderr
+    assert 'Exec="/opt/cua-driver" serve' in (home / ENTRY).read_text().splitlines()
 
 
 def test_path_with_a_space_stays_one_argument(tmp_path: Path) -> None:

@@ -491,9 +491,13 @@ pub(crate) struct Live {
     setups: std::collections::HashSet<String>,
     /// Journal shippers of durable runs, by `<run>#<epoch>`.
     shippers: HashMap<String, crate::session_journal::Shipper>,
-    /// Runs started for a task whose "woke up and joined" note waits until
-    /// the agent is up: run id to the task's seq.
-    joining: HashMap<String, u64>,
+    /// Runs started for a task, until the agent is up: run id to the task's
+    /// seq and whether the start is a restart nobody asked for (only that
+    /// one says so in the thread; a start the person asked for shows as the
+    /// starting row).
+    joining: HashMap<String, (u64, bool)>,
+    /// Tasks put back after an agent stopped, whose next start is a restart.
+    restarted: std::collections::HashSet<u64>,
     /// Agent-to-agent wakes per Space ([`wake`]).
     wake: wake::LiveWake,
     /// Local Spaces some agent names that the registry does not have, and
@@ -2659,18 +2663,22 @@ impl Persistent {
                 self.thread_store(&rec.space).wake();
             }
         }
-        // "woke up and joined" says so once the agent is up (an agent that
-        // never gets there fails instead, and says that).
+        // A run restarted without the person asking says so once the agent
+        // is up (an agent that never gets there fails instead, and says
+        // that). A start the person asked for says nothing: its starting
+        // row already showed it.
         if agent_ready(&page.events)
-            && let Some(seq) = self.live.lock().await.joining.remove(&run)
+            && let Some((seq, restart)) = self.live.lock().await.joining.remove(&run)
         {
-            let _ = self
-                .thread_store(&rec.space)
-                .append(crate::thread::Draft::note(
-                    "dispatch",
-                    Some(seq),
-                    format!("{} woke up and joined", members::session_name(&rec)),
-                ));
+            let store = self.thread_store(&rec.space);
+            let words = store
+                .fold()
+                .ok()
+                .and_then(|f| f.tasks.get(&seq).map(|t| t.text.clone()))
+                .unwrap_or_default();
+            if let Some(text) = members::start_note(restart, &rec.name, &words) {
+                let _ = store.append(crate::thread::Draft::note("dispatch", Some(seq), text));
+            }
         }
         if failed.is_some() || ended.is_some() {
             self.live.lock().await.joining.remove(&run);

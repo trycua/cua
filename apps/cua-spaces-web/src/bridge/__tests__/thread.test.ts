@@ -271,7 +271,7 @@ describe("the demo host's thread", () => {
     expect(states).toEqual(expect.arrayContaining(["done", "working", "queued"]));
     expect(items.some((i) => i.type === "approval" && i.answer === null)).toBe(true);
     expect(items.some((i) => i.type === "unread")).toBe(true);
-    expect(items.some((i) => i.type === "system" && i.text === "Hermes woke up and joined")).toBe(true);
+    expect(items.some((i) => i.type === "system" && i.text.startsWith("Hermes stopped working on"))).toBe(true);
     expect(page.hasMoreBefore).toBe(false);
     const posted = await demo.call("thread.post", { spaceId: "local:design-review", text: "hello" });
     expect(posted?.text).toBe("hello");

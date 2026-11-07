@@ -17,7 +17,7 @@ import { CheckIcon, XIcon } from "lucide-react";
 import type { LiveChild, ThreadItem } from "@/bridge";
 import { cn } from "@/lib/utils";
 
-import { elapsedText } from "./live-row";
+import { WorkingFor, elapsedText } from "./live-row";
 
 const stepsText = (n: number) => (n === 1 ? "1 step" : `${n} steps`);
 
@@ -36,7 +36,13 @@ export function SubagentRow({ item }: { item: Extract<ThreadItem, { type: "subag
   const took = sub.startedMs != null && sub.endedMs != null ? elapsedText(sub.endedMs - sub.startedMs) : null;
   const facts = (
     <span className="flex flex-wrap items-center gap-x-3 text-[12px] text-muted-foreground">
-      <span data-subagent-state={sub.state}>{STATE_WORD[sub.state]}</span>
+      {sub.state === "running" && sub.startedMs != null ? (
+        <span data-subagent-state={sub.state}>
+          <WorkingFor label="Running" sinceMs={sub.startedMs} />
+        </span>
+      ) : (
+        <span data-subagent-state={sub.state}>{STATE_WORD[sub.state]}</span>
+      )}
       {sub.steps > 0 ? <span>{stepsText(sub.steps)}</span> : null}
       {took ? <span className="tabular-nums">{took}</span> : null}
     </span>
@@ -97,6 +103,12 @@ export function LiveChildren({ children }: { children: readonly LiveChild[] }) {
             <span className="block truncate text-[12px] text-muted-foreground">
               {c.step ?? "Starting"}
               {c.steps > 0 ? `, ${stepsText(c.steps)}` : ""}
+              {c.sinceMs ? (
+                <>
+                  {", "}
+                  <WorkingFor label="Running" sinceMs={c.sinceMs} />
+                </>
+              ) : null}
             </span>
           </span>
         </li>

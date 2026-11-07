@@ -3,7 +3,8 @@
 
 import * as Clipboard from "expo-clipboard";
 import { useRouter } from "expo-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { runningFor } from "./running";
 import { Pressable, View } from "react-native";
 import Animated, { FadeIn } from "react-native-reanimated";
 
@@ -170,6 +171,19 @@ export function PendingRow({ row, onRetry, onDiscard }: { row: OutboxRow; onRetr
   );
 }
 
+/** How long a subagent has run, ticking once a second while it does. */
+function useRunning(since: number | null | undefined, on: boolean): string | null {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!on || !since) return;
+    setNow(Date.now());
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [on, since]);
+  if (!on || !since) return null;
+  return runningFor(since, now);
+}
+
 /** A subagent the agent started: its task, whether it runs, is done or failed, its steps, and (tap) what it handed back. */
 export function SubagentRow({ sub }: { sub: Extract<ChildNote, { kind: "subagent" }> }) {
   const { c } = useTheme();
@@ -177,6 +191,7 @@ export function SubagentRow({ sub }: { sub: Extract<ChildNote, { kind: "subagent
   const word = sub.state === "running" ? "Running" : sub.state === "done" ? "Done" : "Failed";
   const color = sub.state === "failed" ? c.destructive : sub.state === "done" ? c.mutedForeground : c.success;
   const steps = sub.steps > 0 ? (sub.steps === 1 ? "1 step" : `${sub.steps} steps`) : null;
+  const running = useRunning(sub.startedMs, sub.state === "running");
   return (
     <Pressable
       onPress={() => sub.result && setOpen((o) => !o)}
@@ -190,7 +205,7 @@ export function SubagentRow({ sub }: { sub: Extract<ChildNote, { kind: "subagent
       <View style={{ flex: 1 }}>
         <Text variant="footnote" numberOfLines={open ? undefined : 2}>{sub.title}</Text>
         <View style={{ flexDirection: "row", gap: 10 }}>
-          <Text variant="caption" color="muted">{word}</Text>
+          <Text variant="caption" color="muted">{running ? `Running ${running}` : word}</Text>
           {steps ? <Text variant="caption" color="muted">{steps}</Text> : null}
         </View>
         {open && sub.result ? <Text variant="caption" color="muted" style={{ marginTop: 4 }}>{sub.result}</Text> : null}

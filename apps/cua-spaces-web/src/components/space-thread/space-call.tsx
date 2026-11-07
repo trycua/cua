@@ -361,7 +361,7 @@ export function SpaceCall({
                 </Tooltip>
               ) : undefined
             }
-            stage={<div className="h-full px-5 pt-4">{stage}</div>}
+            stage={stage}
             below={
               <>
                 {threadView(0)}

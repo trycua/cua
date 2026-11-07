@@ -1,0 +1,87 @@
+// SPDX-License-Identifier: FSL-1.1-MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import type { StreamRow } from "@/bridge";
+import { DEFAULT_PREFS, SPACE_LAYOUT_STORAGE_KEY } from "@/lib/space-layout";
+import { useSpaceLayoutStore } from "@/stores/space-layout";
+
+import { MembersPanel } from "./members-panel";
+import type { Roster } from "./roster";
+
+const roster = { people: [{ id: "p1", label: "Dillon", me: true }], agents: [] } as unknown as Roster;
+const desktop = { id: "desktop", kind: "desktop", label: "Desktop", help: "", actions: [], icon: { kind: "os", id: "os-ubuntu" } } as unknown as StreamRow;
+
+function panel() {
+  return render(
+    <MembersPanel
+      roster={roster}
+      facts={[{ label: "Image", value: "linux" }] as never}
+      onMore={() => {}}
+      windows={[]}
+      desktop={desktop}
+      onStream={() => {}}
+      folded={false}
+      onFold={() => {}}
+    />,
+  );
+}
+
+beforeEach(() => {
+  vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
+  useSpaceLayoutStore.setState({ ...DEFAULT_PREFS });
+  localStorage.clear();
+});
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
+
+const toggle = (id: string) => document.querySelector<HTMLButtonElement>(`[data-section-toggle="${id}"]`)!;
+
+describe("<MembersPanel> sections", () => {
+  it("opens every section, each behind a button that says whether it is open", () => {
+    panel();
+    for (const id of ["people", "stream", "details"]) {
+      expect(toggle(id).tagName).toBe("BUTTON");
+      expect(toggle(id).getAttribute("aria-expanded")).toBe("true");
+      expect(document.getElementById(toggle(id).getAttribute("aria-controls")!)).not.toBeNull();
+    }
+    expect(document.querySelector("[data-members]")).not.toBeNull();
+    expect(document.querySelector("[data-stream-desktop]")).not.toBeNull();
+    expect(document.querySelector("[data-rail-fact]")).not.toBeNull();
+  });
+
+  it("folds and opens each section on its own, with the keyboard too", () => {
+    panel();
+    fireEvent.click(toggle("stream"));
+    expect(toggle("stream").getAttribute("aria-expanded")).toBe("false");
+    expect(document.querySelector("[data-stream-desktop]")).toBeNull();
+    expect(document.querySelector("[data-members]")).not.toBeNull();
+    expect(document.querySelector("[data-rail-fact]")).not.toBeNull();
+    fireEvent.click(toggle("details"));
+    expect(document.querySelector("[data-rail-fact]")).toBeNull();
+    expect(document.querySelector("[data-call-more]")).toBeNull();
+    fireEvent.click(toggle("people"));
+    expect(document.querySelector("[data-members]")).toBeNull();
+    // Only the three headings are left, and the panel's own controls still work.
+    expect(screen.getByLabelText("Hide people")).toBeTruthy();
+    fireEvent.click(toggle("people"));
+    expect(document.querySelector("[data-members]")).not.toBeNull();
+    // A button: Enter and Space are the browser's, and it takes focus.
+    toggle("details").focus();
+    expect(document.activeElement).toBe(toggle("details"));
+  });
+
+  it("remembers what is folded", () => {
+    panel();
+    fireEvent.click(toggle("details"));
+    expect(JSON.parse(localStorage.getItem(SPACE_LAYOUT_STORAGE_KEY)!).state.folded).toEqual({ people: false, stream: false, details: true });
+    cleanup();
+    panel();
+    expect(toggle("details").getAttribute("aria-expanded")).toBe("false");
+    expect(document.querySelector("[data-rail-fact]")).toBeNull();
+  });
+});

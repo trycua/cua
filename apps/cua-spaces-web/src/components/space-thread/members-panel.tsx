@@ -9,7 +9,9 @@ import { OsIcon } from "@/components/os-icon";
 import { Select } from "@/components/ui/select";
 import { toast } from "@/components/ui/toast";
 import { Tooltip } from "@/components/ui/tooltip";
+import type { SectionId } from "@/lib/space-layout";
 import { cn } from "@/lib/utils";
+import { useSpaceLayoutStore } from "@/stores/space-layout";
 
 import { MemberAvatar } from "./avatar";
 import { FailureDetails } from "./failure-note";
@@ -22,6 +24,30 @@ import type { Roster, RosterAgent, RosterPerson } from "./roster";
 /** Who is here right now (P2: relay presence and session states). Without
  * it no dot is drawn: P1 never guesses. */
 export type MemberPresence = Record<string, "online">;
+
+/**
+ * A section's heading as its disclosure: a quiet chevron and the title in one
+ * button (`aria-expanded`) that folds the section's body shut. Remembered per
+ * person (`stores/space-layout.ts`).
+ */
+function SectionHeading({ id, folded, bodyId, children, className }: { id: SectionId; folded: boolean; bodyId: string; children: ReactNode; className?: string }) {
+  const toggle = useSpaceLayoutStore((s) => s.toggleSection);
+  return (
+    <h2 className={cn("text-[11px] font-semibold tracking-wide text-muted-foreground uppercase", className)}>
+      <button
+        type="button"
+        data-section-toggle={id}
+        aria-expanded={!folded}
+        aria-controls={bodyId}
+        onClick={() => toggle(id)}
+        className="group/section -ml-1 inline-flex h-6 cursor-default items-center gap-0.5 rounded-lg pr-1.5 pl-0.5 uppercase outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60"
+      >
+        <ChevronRightIcon className={cn("size-3.5 opacity-60 transition-transform group-hover/section:opacity-100", !folded && "rotate-90")} />
+        {children}
+      </button>
+    </h2>
+  );
+}
 
 /**
  * The right side of the call layout: "In this Space" (people, then agents
@@ -71,6 +97,7 @@ export function MembersPanel({
   folded: boolean;
   onFold: (folded: boolean) => void;
 }) {
+  const shut = useSpaceLayoutStore((st) => st.folded);
   if (folded) {
     return (
       <aside data-members-panel="folded" className="flex w-12 shrink-0 flex-col items-center gap-2.5 bg-chrome py-3">
@@ -95,7 +122,9 @@ export function MembersPanel({
   return (
     <aside data-members-panel="" className="flex w-72 shrink-0 flex-col bg-chrome">
       <div className="flex h-10 items-center justify-between pr-2 pl-5">
-        <h2 className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">In this Space</h2>
+        <SectionHeading id="people" folded={shut.people} bodyId="section-people">
+          In this Space
+        </SectionHeading>
         <span className="flex items-center">
           {onAddAgent ? (
             <Tooltip content="Add an agent" side="left">
@@ -113,7 +142,8 @@ export function MembersPanel({
           <FoldButton folded={false} onFold={onFold} />
         </span>
       </div>
-      <ul className="min-h-0 flex-1 overflow-y-auto px-3 pb-3" data-members="">
+      {shut.people ? null : (
+      <ul id="section-people" className="min-h-0 flex-1 overflow-y-auto px-3 pb-3" data-members="">
         {roster.people.map((p) => (
           <ProfileRow key={p.id} person={p}>
             <Row member={p.id} mark={<MemberAvatar kind="person" name={p.label} size={24} presence={presence?.[p.id] ?? null} />} label={p.label} caption={p.me ? "You" : null} />
@@ -139,10 +169,15 @@ export function MembersPanel({
           </ProfileRow>
         ))}
       </ul>
+      )}
       {windows.length || desktop ? (
         <section className="px-3 pt-2 pb-2" data-call-stream="">
-          <h2 className="mb-1 px-2 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Stream</h2>
-          <ul>
+          <SectionHeading id="stream" folded={shut.stream} bodyId="section-stream" className="mb-1 px-2">
+            Stream
+          </SectionHeading>
+          {shut.stream ? null : (
+          <>
+          <ul id="section-stream">
             {[...(desktop ? [desktop] : []), ...railStreams(windows, selected ?? null)].map((w) => {
               const pip = w.actions.find((a) => a.id === "pip");
               const isDesktop = w.kind === "desktop";
@@ -201,10 +236,16 @@ export function MembersPanel({
               Show all {windows.length}
             </button>
           ) : null}
+          </>
+          )}
         </section>
       ) : null}
       <section className="px-3 pt-2 pb-3" data-call-details="">
-        <h2 className="mb-1 px-2 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Details</h2>
+        <SectionHeading id="details" folded={shut.details} bodyId="section-details" className="mb-1 px-2">
+          Details
+        </SectionHeading>
+        {shut.details ? null : (
+        <div id="section-details">
         {facts.map((f) => (
           <div key={f.label} data-rail-fact={f.label} className="flex h-8 items-center justify-between gap-4 px-2 text-[13px]">
             <span className="shrink-0 text-muted-foreground">{f.label}</span>
@@ -223,6 +264,8 @@ export function MembersPanel({
           More
           <ChevronRightIcon className="size-3.5" />
         </button>
+        </div>
+        )}
       </section>
     </aside>
   );

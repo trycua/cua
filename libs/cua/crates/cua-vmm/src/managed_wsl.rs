@@ -710,11 +710,13 @@ pub fn serve_pipe() -> Result<()> {
 /// (and a `socat`) in the distribution, and a few hundred of them exhausted
 /// the WSL service's sockets.
 #[cfg(windows)]
-const MAX_BRIDGES: usize = 48;
+const MAX_BRIDGES: usize = 96;
 
-/// How long a bridge lets Docker finish its reply after the client went away.
+/// How long a bridge lets Docker finish its reply after the client went away (a
+/// named pipe has no half-close, so a client that left wants nothing more; the
+/// daemon opens ten of these a second, and each lives this long).
 #[cfg(windows)]
-const CLOSE_GRACE: std::time::Duration = std::time::Duration::from_secs(2);
+const CLOSE_GRACE: std::time::Duration = std::time::Duration::from_millis(200);
 
 /// One client of the pipe to Docker's socket.
 #[cfg(windows)]
@@ -1012,7 +1014,7 @@ mod tests {
             .await
             .unwrap();
         drop(client);
-        let ended = tokio::time::timeout(CLOSE_GRACE * 3, task).await;
+        let ended = tokio::time::timeout(std::time::Duration::from_secs(5), task).await;
         assert!(ended.is_ok(), "the bridge stayed up after its client left");
     }
 

@@ -1,0 +1,55 @@
+# Every top-level entry of trycua/cua. Checked by .github/scripts/check_root_layout.py
+# (bin/ci and the "CI: Root layout" workflow). One name per line; "#" starts a comment.
+#
+# The root is for what a visitor needs next to the README. A new top-level file
+# or folder fails the check unless it is listed here, and listing it needs a
+# reason a reviewer accepts. Where things go instead:
+#   images, logos, GIFs         .github/assets/
+#   scripts and one-off tools   scripts/ (or bin/ for commands people run)
+#   docs, blog posts, notes     docs/
+#   agent skills and rules      .agents/ (.cursor is a symlink to it)
+#   config for one component    inside that component (apps/<app>/ or libs/<lib>/)
+#   GitHub config               .github/
+
+# Repo front door
+README.md
+LICENSE.md
+CITATION.cff
+AGENTS.md
+CLAUDE.md
+
+# Code and content
+apps
+libs
+docs
+examples
+skills
+scripts
+bin
+tests
+legal
+nix
+
+# Toolchain and release manifests
+flake.nix
+flake.lock
+package.json
+pnpm-lock.yaml
+pyproject.toml
+uv.lock
+release-please-config.json
+.release-please-manifest.json
+
+# Standard dotfiles and tool folders
+.github
+.agents
+.cursor
+.vscode
+.cargo
+.editorconfig
+.gitattributes
+.gitignore
+.lycheeignore
+.pre-commit-config.yaml
+.prettierignore
+.prettierrc.yaml

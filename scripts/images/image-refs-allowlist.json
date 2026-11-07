@@ -1,7 +1,7 @@
 {
   "_doc": "Image refs that are not in libs/images/sandbox-images.json (or a bench lock), each with a reason. Checked by scripts/images/check-image-refs.py; an entry or path that matches nothing fails the gate, so this list only shrinks.",
   "exclude": [
-    "blog/**",
+    "docs/blog/**",
     "docs/changelog/**",
     "CHANGELOG*",
     "*/CHANGELOG*",

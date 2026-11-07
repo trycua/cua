@@ -682,6 +682,13 @@ def static_checks(changes: Changes, ctx: "Context") -> List[Check]:
                   "python3 .github/scripts/check_no_larger_runners.py",
                   hint="use ubuntu-latest, macos-26 or windows-latest; opt-outs: .github/larger-runners-allowed.txt"))
 
+    # Repo-wide gate: the root holds the README and standard files only.
+    if changes.files or changes.full:
+        add(Check("root-layout", "no new top-level files outside the allowlist",
+                  "python3 .github/scripts/check_root_layout.py",
+                  hint="move the file to where the error says, or (rarely) list it in .github/root-allowlist.txt",
+                  ci=(("ci-root-layout.yml", "python3 .github/scripts/check_root_layout.py"),)))
+
     # Repo-wide gate (no path filter in CI): every image ref comes from the catalog.
     if changes.files or changes.full:
         add(Check("image-refs", "image refs come from the catalog",

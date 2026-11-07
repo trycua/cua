@@ -18,7 +18,7 @@ Decision (the Play Store / Firebase / Sentry release-health pattern):
   pause     a gate is past its threshold: the workflow pauses and alerts
   advance   old enough, every gate has enough data and passes: 10 -> 50 -> 100
 
-Soak (how old "old enough" is), thresholds in config/spaces-rollout-soak.json:
+Soak (how old "old enough" is), thresholds in apps/cua-spaces-desktop/spaces-rollout-soak.json:
   patch release   soak_hours_10 (2h) at 10%, soak_hours_50 (4h) at 50%, but only once the crash
                   gate has passed on min_sessions sessions; until then it waits, up to soak_hours_full
   x.y.0 release   soak_hours_full (24h) at every step, as before
@@ -36,7 +36,7 @@ previous stable (the most active non-prerelease version in the week before the s
                (needs --min-update-events)
   incident     no active incident.io incident with "spaces" in its name (needs
                INCIDENT_IO_API_KEY; without it the gate is reported as skipped)
-  crash        Sentry release health (org and project from config/spaces-crash-reporting.json,
+  crash        Sentry release health (org and project from apps/cua-spaces-desktop/crash-reporting.json,
                release cua-spaces-desktop@<version>, environment stable): crash-free sessions of
                the new version since the stage began are at most --max-crash-free-drop points
                below the previous version's over the same window (needs --min-sessions on the
@@ -70,13 +70,13 @@ import release_rollout as rr  # noqa: E402
 
 POSTHOG = "https://eu.posthog.com/api/projects/56041/query/"
 SENTRY_DEFAULT_HOST = "https://de.sentry.io"
-SENTRY_CONFIG = Path(__file__).resolve().parents[2] / "config" / "spaces-crash-reporting.json"
-SOAK_CONFIG = Path(__file__).resolve().parents[2] / "config" / "spaces-rollout-soak.json"
+SENTRY_CONFIG = Path(__file__).resolve().parents[2] / "apps" / "cua-spaces-desktop" / "crash-reporting.json"
+SOAK_CONFIG = Path(__file__).resolve().parents[2] / "apps" / "cua-spaces-desktop" / "spaces-rollout-soak.json"
 NEXT = {"10": "50", "50": "100"}
 
 
 def load_soak(path: Path = SOAK_CONFIG) -> dict:
-    """The named soak thresholds (config/spaces-rollout-soak.json); every one is also a flag."""
+    """The named soak thresholds (apps/cua-spaces-desktop/spaces-rollout-soak.json); every one is also a flag."""
     return json.loads(path.read_text())
 
 

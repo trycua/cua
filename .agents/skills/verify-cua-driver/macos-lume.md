@@ -9,7 +9,7 @@ Do not run the AppKit E2E tests directly on the maintainer host's own desktop. T
 The Mac with Lume has an installed wrapper, `~/.local/bin/lume-e2e`, configured by `~/.local/share/cua-lume-e2e/config.json`. It clones the configured seed and boots the worker. It then copies a `git archive` of the exact SHA, starts `run-all.sh` from the guest's GUI Terminal (not over SSH), pulls back the evidence and stops the worker. It never deletes a VM. The skill helper wraps it:
 
 ```bash
-H=.cursor/skills/verify-cua-driver/scripts/verify-macos.sh
+H=.agents/skills/verify-cua-driver/scripts/verify-macos.sh
 $H doctor                                              # host + seed readiness, no VM started
 $H --source /abs/clean/checkout focus <cell>           # one registered cell, one attempt
 $H --source /abs/clean/checkout full                   # full matrix (about an hour)

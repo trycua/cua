@@ -53,7 +53,7 @@ every gate has data and passes; a gate with too little data still waits. A
 failing gate pauses at any age, and the hold still stops advancing. A Spaces
 release reaches 100% in about 8h instead of 48h.
 
-Every threshold is a named value in `config/spaces-rollout-soak.json`, and each is also a flag
+Every threshold is a named value in `apps/cua-spaces-desktop/spaces-rollout-soak.json`, and each is also a flag
 of the script that overrides it for one run:
 
 | Config value | Flag | Default | Meaning |
@@ -79,7 +79,7 @@ previous stable, the most active non-prerelease version the week before the stag
 - space create: `cua_space_create` error share at most 10 points above the previous version's, at least 30 events each;
 - update: failed share of `cua_app_update` from the previous version (the one installing the new one) at most 15 points above its share the week before, at least 20 attempts;
 - incident: no active incident.io incident with "spaces" in its name (needs the `INCIDENT_IO_API_KEY` secret; skipped and said so in the summary until it is set).
-- crash: Sentry release health (org and project in `config/spaces-crash-reporting.json`, release `cua-spaces-desktop@<version>`, environment `stable`). Crash-free sessions of the new version since the stage began must be at most 0.5 points below the previous version's over the same window, with at least 100 sessions on the new version (fewer: wait). A previous version with fewer than 100 sessions (it shipped before crash reporting) is no baseline, so the new version must reach 99% crash-free. Needs the `SENTRY_AUTH_TOKEN` secret (`org:read`, `project:read`); skipped and said so in the summary until it is set. Crash reports and sessions only come from people who left "Share usage data" on, so the numbers are a sample.
+- crash: Sentry release health (org and project in `apps/cua-spaces-desktop/crash-reporting.json`, release `cua-spaces-desktop@<version>`, environment `stable`). Crash-free sessions of the new version since the stage began must be at most 0.5 points below the previous version's over the same window, with at least 100 sessions on the new version (fewer: wait). A previous version with fewer than 100 sessions (it shipped before crash reporting) is no baseline, so the new version must reach 99% crash-free. Needs the `SENTRY_AUTH_TOKEN` secret (`org:read`, `project:read`); skipped and said so in the summary until it is set. Crash reports and sessions only come from people who left "Share usage data" on, so the numbers are a sample.
 
 Thresholds are in the config file and flags of that script. Secrets: `POSTHOG_API_KEY` (query read),
 optional `INCIDENT_IO_API_KEY`, `SENTRY_AUTH_TOKEN`, and the existing

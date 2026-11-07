@@ -6,9 +6,9 @@
       "case": "01 welcome",
       "step": "welcome",
       "welcome": {
-        "lede": "Run agents in Spaces on this Mac, or on any computer your team connects.",
+        "lede": "Your computers, shared by your team and its agents. Run agents in Spaces on this Mac, or on any computer your team connects.",
         "primary": "start:Get started",
-        "title": "Your computers, shared by your team and its agents."
+        "title": "Combine your existing computers into one supercomputer."
       }
     },
     {

@@ -542,7 +542,7 @@ describe("screen 1, usage data", () => {
 describe("the step dots", () => {
   it("name each step and go back to any earlier one, but forward only to a step already reached", () => {
     const where = stepDots("where", 1)!;
-    expect(where.map((d) => d.label)).toEqual(["Step 1 of 3: Bring all your computers under one account", "Step 2 of 3: Pick where your agents work", "Step 3 of 3: Pick your coding agent"]);
+    expect(where.map((d) => d.label)).toEqual(["Step 1 of 3: Combine your existing computers into one supercomputer.", "Step 2 of 3: Pick where your agents work", "Step 3 of 3: Pick your coding agent"]);
     expect(where.map((d) => d.to)).toEqual(["welcome", null, null]);
     expect(where.map((d) => d.current)).toEqual([false, true, false]);
     // Back on screen 1 after reaching screen 3: both later steps open again.
@@ -569,7 +569,7 @@ describe("the step dots", () => {
   it("are buttons with their step's name: a click or an arrow key opens a step, a step not reached yet can't be pressed", () => {
     const onGo = vi.fn();
     render(<StepDots dots={stepDots("where", 1)!} onGo={onGo} />);
-    const first = screen.getByRole("button", { name: "Step 1 of 3: Bring all your computers under one account" });
+    const first = screen.getByRole("button", { name: "Step 1 of 3: Combine your existing computers into one supercomputer." });
     const second = screen.getByRole("button", { name: "Step 2 of 3: Pick where your agents work" });
     const third = screen.getByRole("button", { name: "Step 3 of 3: Pick your coding agent" });
     expect(second.getAttribute("aria-current")).toBe("step");
@@ -628,7 +628,7 @@ describe.skipIf(!wasmBuilt)("the new first run on its route", () => {
       intercept: (op, args) => (calls.push({ op, args }), undefined),
       answer: (op, out) => (op === "agents.setup" || op === "agents.configure" ? onlyCodex(out as AgentSetupRow[]) : out),
     });
-    await waitFor(() => expect(heading()).toBe("Bring all your computers under one account"));
+    await waitFor(() => expect(heading()).toBe("Combine your existing computers into one supercomputer."));
     expect(document.querySelector("[data-float-keys]")).not.toBeNull();
     click("[data-onboarding-later]");
     await waitFor(() => expect(heading()).toBe("Pick where your agents work"));
@@ -670,7 +670,7 @@ describe.skipIf(!wasmBuilt)("the new first run on its route", () => {
       demo: { signedIn: false, onboarded: false, noSpaces: true },
       intercept: (op, args) => (calls.push({ op, args }), undefined),
     });
-    await waitFor(() => expect(heading()).toBe("Bring all your computers under one account"));
+    await waitFor(() => expect(heading()).toBe("Combine your existing computers into one supercomputer."));
     const line = await waitFor(() => {
       const el = document.querySelector<HTMLElement>("[data-new-run-usage]");
       if (!el) throw new Error("no usage line");
@@ -681,7 +681,7 @@ describe.skipIf(!wasmBuilt)("the new first run on its route", () => {
     fireEvent.click(screen.getByRole("switch", { name: "Share usage data to help improve Cua" }));
     await waitFor(() => expect(calls.find((c) => c.op === "settings.set")?.args).toEqual({ key: "telemetry", value: false }));
     // Still on screen 1: nothing moved on.
-    expect(heading()).toBe("Bring all your computers under one account");
+    expect(heading()).toBe("Combine your existing computers into one supercomputer.");
   });
 
   it("Home asks for the rest only once the first job is done, and Not now puts it away for good", { timeout: 60_000 }, async () => {
@@ -746,7 +746,7 @@ describe.skipIf(!wasmBuilt)("the new first run on its route", () => {
       demo: { signedIn: false, onboarded: false, noSpaces: true },
       intercept: (op, args) => (calls.push({ op, args }), undefined),
     });
-    await waitFor(() => expect(heading()).toBe("Bring all your computers under one account"));
+    await waitFor(() => expect(heading()).toBe("Combine your existing computers into one supercomputer."));
     click("[data-onboarding-primary]");
     await waitFor(() => expect(heading()).toBe("Finish signing in in your browser"));
     expect(calls.some((c) => c.op === "session.signIn")).toBe(true);
@@ -764,7 +764,7 @@ describe.skipIf(!wasmBuilt)("the new first run on its route", () => {
       demo: { signedIn: false, onboarded: false, noSpaces: true, failCreates: "unsupported" },
       intercept: (op, args) => (calls.push({ op, args }), undefined),
     });
-    await waitFor(() => expect(heading()).toBe("Bring all your computers under one account"));
+    await waitFor(() => expect(heading()).toBe("Combine your existing computers into one supercomputer."));
     click("[data-onboarding-later]");
     await waitFor(() => expect(document.querySelector("[data-new-run-separate-open]")).not.toBeNull(), { timeout: 15_000 });
     click("[data-new-run-separate-open]");
@@ -789,13 +789,13 @@ describe.skipIf(!wasmBuilt)("the new first run on its route", () => {
 
   it("the step dots go back to screen 1 and forward again to screen 2, but never past the sign-in", { timeout: 60_000 }, async () => {
     await mountApp("/onboarding", { failsCreates: false, listsGhost: false, demo: { signedIn: false, onboarded: false, noSpaces: true } });
-    await waitFor(() => expect(heading()).toBe("Bring all your computers under one account"));
+    await waitFor(() => expect(heading()).toBe("Combine your existing computers into one supercomputer."));
     // Screen 2 isn't reached yet: its dot can't be pressed, so it can't skip the sign-in.
     expect(screen.getByRole("button", { name: "Step 2 of 3: Pick where your agents work" }).hasAttribute("disabled")).toBe(true);
     click("[data-onboarding-later]");
     await waitFor(() => expect(heading()).toBe("Pick where your agents work"));
-    fireEvent.click(screen.getByRole("button", { name: "Step 1 of 3: Bring all your computers under one account" }));
-    await waitFor(() => expect(heading()).toBe("Bring all your computers under one account"));
+    fireEvent.click(screen.getByRole("button", { name: "Step 1 of 3: Combine your existing computers into one supercomputer." }));
+    await waitFor(() => expect(heading()).toBe("Combine your existing computers into one supercomputer."));
     fireEvent.click(screen.getByRole("button", { name: "Step 2 of 3: Pick where your agents work" }));
     await waitFor(() => expect(heading()).toBe("Pick where your agents work"));
     expect(screen.getByRole("button", { name: "Step 3 of 3: Pick your coding agent" }).hasAttribute("disabled")).toBe(true);

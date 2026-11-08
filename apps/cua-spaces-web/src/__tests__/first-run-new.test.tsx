@@ -674,7 +674,16 @@ describe.skipIf(!wasmBuilt)("the new first run on its route", () => {
     await waitFor(() => expect(heading()).toBe("Use Codex on all your computers"), { timeout: 15_000 });
     click("[data-onboarding-primary]");
     await waitFor(() => expect(heading()).toBe("Codex can now use this Mac"), { timeout: 15_000 });
-    expect(calls.some((c) => c.op === "agents.connect" || c.op === "agents.configure")).toBe(true);
+    // Only Cua's tools were waited for; the sign-in is kept after Ready shows, and the chats listed are Codex's,
+    // asked for while Codex was being connected.
+    const connects = () => calls.filter((c) => c.op === "agents.connect").map((c) => c.args);
+    expect(connects()[0]).toEqual({ agents: ["codex"], signIn: false });
+    await waitFor(() => expect(connects()).toContainEqual({ agents: ["codex"], signIn: true }));
+    const listed = calls.findIndex((c) => c.op === "agents.recentThreads");
+    expect(calls[listed]!.args).toEqual({ limit: 4, agents: ["openai-codex"] });
+    expect(listed).toBeLessThan(calls.findIndex((c) => c.op === "agents.connect"));
+    await waitFor(() => expect(document.querySelectorAll("[data-pick-up-row]").length).toBeGreaterThan(0));
+    expect([...document.querySelectorAll<HTMLElement>("[data-pick-up-row]")].every((r) => r.dataset.pickUpRow === "openai-codex")).toBe(true);
     // No Space was made while the first run showed.
     expect(calls.some((c) => c.op === "spaces.create")).toBe(false);
     expect(getDriver()?.state?.wanted ?? false).toBe(false);
@@ -703,6 +712,11 @@ describe.skipIf(!wasmBuilt)("the new first run on its route", () => {
     await waitFor(() => expect(heading()).toBe("Claude Code and Codex can now use this Mac"), { timeout: 15_000 });
     const connect = calls.find((c) => c.op === "agents.connect" || c.op === "agents.configure");
     expect((connect!.args as { agents: string[] }).agents).toEqual(["claude-code", "codex"]);
+    // Both agents' chats are read while connecting; the sign-ins are kept after Ready shows.
+    const connects = () => calls.filter((c) => c.op === "agents.connect").map((c) => c.args);
+    expect(connects()[0]).toEqual({ agents: ["claude-code", "codex"], signIn: false });
+    await waitFor(() => expect(connects()).toContainEqual({ agents: ["claude-code", "codex"], signIn: true }));
+    expect(calls.find((c) => c.op === "agents.recentThreads")!.args).toEqual({ limit: 4, agents: ["claude-code", "openai-codex"] });
   });
 
   it("Choose later: setup ends on Home and no agent's settings are touched", { timeout: 60_000 }, async () => {

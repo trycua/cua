@@ -488,13 +488,15 @@ extension WebUIBridge {
         return try await model.persistent.daemonTool(name, args)
     }
 
-    /// `agents.recentThreads {limit?}` and `agents.threadHistory {agent, id, limit?}`:
+    /// `agents.recentThreads {limit?, agents?}` and `agents.threadHistory {agent, id, limit?}`:
     /// the person-only daemon tools `agent_threads` and `agent_thread_read`,
-    /// their JSON back untouched (`ops/agent-threads.ts` maps it). A daemon
-    /// without them answers `unsupported`, and the Ready screen hides the list.
+    /// their JSON back untouched (`ops/agent-threads.ts` maps it). `agents`
+    /// (the agent picked in setup) is read by the daemon, as on every host. A
+    /// daemon without them answers `unsupported`, and the Ready screen hides the list.
     func agentThreads(_ method: String, _ args: [String: Any]) async throws -> Any {
         var out: [String: Any] = [:]
         if let limit = args["limit"] as? NSNumber { out["limit"] = limit }
+        if method == "agents.recentThreads", let agents = args["agents"] as? [String], !agents.isEmpty { out["agents"] = agents }
         let name: String
         if method == "agents.threadHistory" {
             guard let agent = args["agent"] as? String, !agent.isEmpty else { throw Failure.badArgs("agent: string") }

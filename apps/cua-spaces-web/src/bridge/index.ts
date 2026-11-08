@@ -246,7 +246,7 @@ export {
   type ThreadPage,
   type ThreadRole,
 } from "./ops/thread";
-export { folderLabel, resumeContext, THREAD_AGENTS, type PastMessage, type PastThread, type RecentThread, type ThreadAgent } from "./ops/agent-threads";
+export { agentOf as threadAgentOf, folderLabel, onlyAgents, resumeContext, THREAD_AGENTS, type PastMessage, type PastThread, type RecentThread, type ThreadAgent } from "./ops/agent-threads";
 export type { LinkAccess, LinkCreate, ShareLanding, ShareLink, ShareSettings } from "./ops/links";
 export {
   useResources,

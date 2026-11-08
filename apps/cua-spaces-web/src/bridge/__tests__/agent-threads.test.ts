@@ -5,7 +5,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { folderLabel, isMissingAgentThreadsTool, pastThreadFromTool, recentThreadsFromTool, resumeContext, webkitAgentThreadsOps } from "../ops/agent-threads";
+import { AGENT_THREADS_TOOLS, folderLabel, isMissingAgentThreadsTool, onlyAgents, pastThreadFromTool, recentThreadsFromTool, resumeContext, webkitAgentThreadsOps } from "../ops/agent-threads";
 
 const ROW = { agent: "claude-code", id: "abc", title: "Kettle timer", cwd: "/Users/sam/code/kettle", last_active_ms: 1_000, resume: ["claude", "--resume", "abc"] };
 
@@ -54,6 +54,29 @@ describe("agent threads", () => {
     ];
     expect(resumeContext(msgs)).toBe(`User: ${"a".repeat(100)}\n\nAgent: the answer\n\nUser: thanks`);
     expect(resumeContext(msgs, 40)).toBe("Agent: the answer\n\nUser: thanks");
+  });
+
+  it("asks the daemon for the picked agents only, and keeps only theirs from an older daemon", async () => {
+    const args = AGENT_THREADS_TOOLS["agents.recentThreads"].args;
+    expect(args({ limit: 4, agents: ["claude-code"] })).toEqual({ limit: 4, agents: ["claude-code"] });
+    expect(args({ limit: 4, agents: [] })).toEqual({ limit: 4 });
+    const rows = recentThreadsFromTool({
+      threads: [
+        { agent: "claude-code", id: "a", title: "A", last_active_ms: 3 },
+        { agent: "openai-codex", id: "b", title: "B", last_active_ms: 2 },
+        { agent: "hermes", id: "c", title: "C", last_active_ms: 1 },
+      ],
+    });
+    expect(onlyAgents(rows, ["claude-code"]).map((t) => t.id)).toEqual(["a"]);
+    // The setup's id for Codex is `codex`.
+    expect(onlyAgents(rows, ["codex"]).map((t) => t.id)).toEqual(["b"]);
+    expect(onlyAgents(rows, ["claude-code", "codex"]).map((t) => t.id)).toEqual(["a", "b"]);
+    expect(onlyAgents(rows, ["gemini-cli"])).toEqual([]);
+    expect(onlyAgents(rows)).toHaveLength(3);
+    const seen: unknown[] = [];
+    const ops = webkitAgentThreadsOps(<T,>(_m: string, a?: Record<string, unknown>) => (seen.push(a), Promise.resolve({ threads: [{ agent: "openai-codex", id: "b", title: "B" }] } as T)));
+    expect(await ops["agents.recentThreads"]({ agents: ["claude-code"] })).toEqual([]);
+    expect(seen).toEqual([{ agents: ["claude-code"] }]);
   });
 
   it("a daemon without the tools is unsupported", async () => {

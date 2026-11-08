@@ -24,7 +24,7 @@ VARIABLES pc, conn, proxy, lock, successor, overlap, leakedProxy
 vars == <<pc, conn, proxy, lock, successor, overlap, leakedProxy>>
 \* pc: the old daemon, "serving" | "draining" | "released" | "sdkdown" | "gone"
 \* conn: its connection, "calling" (a tool call in flight) | "idle" | "closed"
-\* proxy: the connection registered a proxy session: "active" | "released"
+\* proxy: its entry in ACTIVE_PROXY_SESSIONS: "active" | "released"
 \* lock: who holds the daemon name lock: "old" | "free" | "new"
 \* successor: "none" | "serving"
 
@@ -68,6 +68,7 @@ Spec == Init /\ [][Next]_vars
 
 \* SD1. A successor daemon never serves while the old one still runs a call.
 SD1 == ~overlap
-\* SD2. Shutdown releases every proxy session before the SDK goes down.
+\* SD2. Shutdown clears the proxy-session registry before the SDK goes down.
+\* (sdk.shutdown revokes the sessions themselves; the registry entry is what stays.)
 SD2 == ~leakedProxy
 ====

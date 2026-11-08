@@ -67,7 +67,7 @@ pub fn with_target_foreground<T>(
         )?;
         return body();
     }
-    if std::env::var_os("WAYLAND_DISPLAY").is_none() {
+    if crate::desktop::desktop() == crate::desktop::Desktop::X11 {
         return with_x11_foreground(window_id, ForegroundOptions::pointer(), mode, body)
             .map(|(value, _report)| value);
     }

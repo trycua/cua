@@ -175,7 +175,7 @@ fn trusted_setup_navigation(
     descriptor: &BrowserSetupDescriptor,
     clipboard: &dyn cua_driver_core::clipboard::ClipboardBackend,
 ) -> anyhow::Result<()> {
-    let wayland = std::env::var_os("WAYLAND_DISPLAY").is_some();
+    let wayland = crate::desktop::desktop() != crate::desktop::Desktop::X11;
 
     // A fresh tab, so the setup page never displaces a page the user was on.
     // `ctrl+l` then focuses the address field. Both are single letters, so
@@ -635,7 +635,7 @@ fn set_remote_debugging(
                             let center_y = y
                                 .checked_add(i32::try_from(height / 2)?)
                                 .ok_or_else(|| anyhow::anyhow!("checkbox center y overflowed"))?;
-                            if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+                            if crate::desktop::desktop() != crate::desktop::Desktop::X11 {
                                 // AT-SPI screen bounds are layout coordinates, as in
                                 // browser_consent_ui's click_focused path, not
                                 // desktop-frame points, so no frame conversion applies.

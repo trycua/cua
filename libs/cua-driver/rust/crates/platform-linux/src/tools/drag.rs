@@ -181,7 +181,7 @@ impl Tool for DragTool {
         // Native Hyprland window drags remain fail-closed on their own lane.
         args.opt_str("scope").as_deref() != Some("desktop")
             && !crate::input::delivery::DeliveryMode::from_args(args).is_foreground()
-            && crate::wayland::wayland_input_enabled()
+            && crate::wayland::is_wayland()
             && crate::wayland::hyprland::is_session()
     }
 
@@ -233,7 +233,7 @@ impl Tool for DragTool {
             let duration_ms = input.duration_ms.unwrap_or(500).min(10_000);
             let steps = input.steps.unwrap_or(20).clamp(1, 200) as usize;
             let modifiers = input.modifier.unwrap_or_default();
-            let wayland = crate::wayland::wayland_input_enabled();
+            let wayland = crate::wayland::is_wayland();
             if wayland && !modifiers.is_empty() {
                 return wayland_modified_drag_refusal();
             }
@@ -315,7 +315,7 @@ impl Tool for DragTool {
         let delivery = crate::input::delivery::DeliveryMode::from_args(&args);
         let isolated_background = isolated_hyprland_background(delivery);
         let native_refusal = if !isolated_background {
-            if crate::wayland::wayland_input_enabled() && !modifiers.is_empty() {
+            if crate::wayland::is_wayland() && !modifiers.is_empty() {
                 return wayland_modified_drag_refusal();
             }
             if let Some(refusal) = unavailable_chromium_background(pid, delivery) {
@@ -559,7 +559,7 @@ impl Tool for DragTool {
             cursor_id.clone(),
             cursor_overlay::OverlayCommand::PinAbove(xid),
         );
-        let wayland_points = match crate::wayland::wayland_input_enabled()
+        let wayland_points = match crate::wayland::is_wayland()
             .then(|| {
                 crate::wayland::window_local_to_output(
                     xid,
@@ -605,7 +605,7 @@ impl Tool for DragTool {
         // Native Wayland: emit press + interpolated motion + release as one
         // virtual-pointer (wlroots) or libei (GNOME/KDE) sequence, output-relative
         // coords. Returns early so we don't fall into the X11 XSendEvent loop below.
-        if crate::wayland::wayland_input_enabled() {
+        if crate::wayland::is_wayland() {
             let steps_u32 = steps as u32;
             let inject = crate::wayland::is_inject_mode();
             let (from_aimed, to_aimed) = wayland_points.unwrap_or_else(|| {

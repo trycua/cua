@@ -139,7 +139,7 @@ impl Tool for DoubleClickTool {
                     }
                     let lxi = lx as i32;
                     let lyi = ly as i32;
-                    let wayland_point = match crate::wayland::wayland_input_enabled()
+                    let wayland_point = match crate::wayland::is_wayland()
                         .then(|| crate::wayland::window_local_to_output(xid, lxi, lyi))
                         .transpose()
                     {
@@ -155,7 +155,7 @@ impl Tool for DoubleClickTool {
                                 return crate::wayland::inject_click(pid, xid, lx, ly, 2, 1)
                                     .map(|()| PointerRoute::Wayland);
                             }
-                            if crate::wayland::wayland_input_enabled() {
+                            if crate::wayland::is_wayland() {
                                 let aimed = wayland_point.unwrap_or_else(|| (lxi, lyi).into());
                                 return crate::interaction::with_target_foreground(
                                     pid,
@@ -251,7 +251,7 @@ impl Tool for DoubleClickTool {
             cursor_id.clone(),
             cursor_overlay::OverlayCommand::PinAbove(xid),
         );
-        let wayland_output_point = if crate::wayland::wayland_input_enabled() {
+        let wayland_output_point = if crate::wayland::is_wayland() {
             match crate::wayland::window_local_to_output(xid, x.round() as i32, y.round() as i32) {
                 Ok(point) => Some(point),
                 Err(error) => return input_error_result(error),
@@ -283,7 +283,7 @@ impl Tool for DoubleClickTool {
                     return crate::wayland::inject_click(pid, xid, x, y, 2, 1)
                         .map(|()| PointerRoute::Wayland);
                 }
-                if crate::wayland::wayland_input_enabled() {
+                if crate::wayland::is_wayland() {
                     let aimed = wayland_output_point.unwrap_or_else(|| (xi, yi).into());
                     return crate::interaction::with_target_foreground(
                         pid,

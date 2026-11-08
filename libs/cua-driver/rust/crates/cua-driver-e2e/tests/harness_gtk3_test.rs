@@ -1095,7 +1095,7 @@ fn invoke_operation(
             );
             if !pixel
                 && mode == "foreground"
-                && platform_linux::wayland::wayland_input_enabled()
+                && platform_linux::wayland::is_wayland()
                 && platform_linux::wayland::hyprland::is_session()
             {
                 assert_eq!(
@@ -1152,7 +1152,7 @@ fn invoke_operation(
                 response.text()
             );
             if mode == "foreground"
-                && platform_linux::wayland::wayland_input_enabled()
+                && platform_linux::wayland::is_wayland()
                 && platform_linux::wayland::hyprland::is_session()
             {
                 assert_eq!(

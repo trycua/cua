@@ -114,7 +114,8 @@ pub(super) fn probe(
 /// tell (see [`Probed::Unknown`]), so niri's routes refuse.
 pub fn is_session() -> bool {
     if let Some(known) = session_check(
-        !super::super::is_inject_mode() && super::super::is_wayland(),
+        crate::desktop::desktop()
+            == crate::desktop::Desktop::Wayland(crate::desktop::Compositor::Niri),
         RECOGNIZED.get().is_some(),
         std::env::var_os("NIRI_SOCKET").is_some_and(|socket| !socket.is_empty()),
     ) {

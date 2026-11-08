@@ -281,7 +281,7 @@ impl Tool for TypeTextTool {
                     .into_owned();
             position_named_session_keyboard_cursor(&self.state, &args, 0, 0, None, None, false)
                 .await;
-            let wayland = crate::wayland::wayland_input_enabled();
+            let wayland = crate::wayland::is_wayland();
             let path = if wayland { "wayland_focused" } else { "xtest" };
             let result = spawn_blocking_bounded(
                 "desktop type_text",
@@ -629,7 +629,7 @@ impl Tool for TypeTextTool {
         // native Wayland, focus the named field and send real keyboard input so
         // Chromium/WebKit observe the same event sequence as a user.
         if delivery.is_foreground()
-            && crate::wayland::wayland_input_enabled()
+            && crate::wayland::is_wayland()
             && (is_chromium_embedder(pid) || is_webkitgtk_embedder(pid))
         {
             if let Some(element) = token.clone() {
@@ -698,7 +698,7 @@ impl Tool for TypeTextTool {
                     .await;
                 }
                 Ok(Err(_)) | Err(_)
-                    if !delivery.is_foreground() && crate::wayland::wayland_input_enabled() =>
+                    if !delivery.is_foreground() && crate::wayland::is_wayland() =>
                 {
                     return crate::input::delivery::background_unavailable_error(
                         crate::input::delivery::BackgroundUnavailable::FocusedInputOnly,
@@ -711,7 +711,7 @@ impl Tool for TypeTextTool {
         // Native Wayland: keys go to the *focused* surface (no pid/window
         // targeting in the protocol). Type via the virtual-keyboard tool; pair
         // with a prior `click`/`activate` to focus the intended window.
-        if crate::wayland::wayland_input_enabled() {
+        if crate::wayland::is_wayland() {
             if !delivery.is_foreground() {
                 return crate::input::delivery::background_unavailable_error(
                     crate::input::delivery::BackgroundUnavailable::FocusedInputOnly,

@@ -130,7 +130,7 @@ impl Tool for SetValueTool {
         //    typed like a user would: click the field (real pointer), select
         //    all, type, commit with Tab.
         let is_combo = token.observed.role.eq_ignore_ascii_case("combo box");
-        let wayland = crate::wayland::wayland_input_enabled();
+        let wayland = crate::wayland::is_wayland();
         let background_route = !delivery.is_foreground()
             && !wayland
             && crate::input::real_pointer_input_available()

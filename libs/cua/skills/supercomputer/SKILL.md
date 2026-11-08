@@ -74,6 +74,13 @@ what a longer run would add; train longer only when they ask. The first run on a
 (a minute or two); later runs reuse them. Report the final state in one short message: what you made, where it is
 open, and anything that did not work.
 
+On a Mac (MLX) a model trains several times slower than on CUDA, so shrink the problem instead of waiting: a
+small grid (32x32), a few dozen steps per training step, a batch of 16, one `mx.compile` over the whole step with
+the random masks passed in as an input. Build neighbourhood features from one `mx.pad(..., mode="edge")` and slices:
+`mx.roll` inside a compiled gradient fails with a key-not-found error. Rasterize an SVG with `resvg_py`, not
+`cairosvg` (a job on a Mac cannot find cairo). A neural cellular automaton on a logo reaches a recognisable result
+in one 85-second run this way.
+
 ## Follow and finish
 
 ```bash

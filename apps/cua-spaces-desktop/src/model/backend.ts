@@ -5,6 +5,8 @@
 // app's SpacesBackend.swift). Every decision about what they mean (names,
 // status, grouping, what is allowed) is the app core's; this only moves
 // data. Bounded where the app waits on it.
+import fs from "node:fs";
+import path from "node:path";
 import type { Native } from "../native/load";
 import type {
   AppCreateSpaceArgs,
@@ -735,13 +737,17 @@ export class LiveSpacesBackend implements SpacesBackend {
   }
 
   async spaceTree(): Promise<TreeNodeJson[]> {
-    return (await this.cua.spaces().list()).map((s) => ({
+    const nodes = (await this.cua.spaces().list()).map((s) => ({
       id: s.id,
       parent: s.parent ?? null,
       depth: Number(s.depth),
       children: Boolean(s.children),
       home: s.labels.get("cua.home") === "1" ? (s.labels.get("cua.home.agent") ?? "") : null,
-    }));
+    })) as TreeNodeJson[];
+    // The jobs of every Space, wherever they run: the daemon writes them from its run ledger and the pool
+    // (`spawn/job-rows.json`), so a job on another computer, or a native job with no Space at all, is still one
+    // logical child under the Space that submitted it.
+    return [...nodes, ...jobNodes(nodes)];
   }
 
   async setChildren(id: string, enabled: boolean): Promise<void> {
@@ -1115,6 +1121,40 @@ export interface SpaceNetworkJson {
   volume: string;
 }
 
+/** The jobs (`spawn/job-rows.json`, written by the daemon) as tree nodes under their submitting Spaces. */
+export function jobNodes(nodes: readonly TreeNodeJson[], home: string | undefined = process.env.CUA_HOME): TreeNodeJson[] {
+  if (!home) return [];
+  let rows: Array<Record<string, unknown>> = [];
+  try {
+    rows = JSON.parse(fs.readFileSync(path.join(home, "spawn", "job-rows.json"), "utf8"));
+  } catch {
+    return [];
+  }
+  const depthOf = new Map(nodes.map((n) => [n.id, n.depth]));
+  const out: TreeNodeJson[] = [];
+  for (const r of Array.isArray(rows) ? rows : []) {
+    const parent = typeof r.parent === "string" ? r.parent : "";
+    if (!parent || typeof r.run !== "string" || !depthOf.has(parent)) continue;
+    out.push({
+      id: `job:${r.run}`,
+      parent,
+      depth: (depthOf.get(parent) ?? 0) + 1,
+      children: false,
+      home: null,
+      job: {
+        run: r.run,
+        name: String(r.name ?? "job"),
+        gpu: Boolean(r.gpu),
+        host: String(r.host ?? ""),
+        state: (["queued", "starting", "running", "failed"].includes(String(r.state)) ? r.state : "queued") as "queued",
+        members: Number(r.members ?? 1) || 1,
+        ...(r.error ? { error: String(r.error) } : {}),
+      },
+    });
+  }
+  return out;
+}
+
 /** A Space's place in its tree, as `spaces.tree` answers it. */
 export interface TreeNodeJson {
   id: string;
@@ -1123,6 +1163,8 @@ export interface TreeNodeJson {
   children: boolean;
   /** The agent it is the home of (its `cua.home` labels), or null. */
   home: string | null;
+  /** A job of its parent, wherever it runs (see [`jobNodes`]). */
+  job?: { run: string; name: string; gpu: boolean; host: string; state: "queued" | "starting" | "running" | "failed"; members: number; error?: string };
 }
 
 /** A tree's limits, as `budget.set` takes them. */

@@ -7048,6 +7048,48 @@
             "string",
             "null"
           ]
+        },
+        "job": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "run": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "gpu": {
+              "type": "boolean"
+            },
+            "host": {
+              "type": "string"
+            },
+            "state": {
+              "enum": [
+                "queued",
+                "starting",
+                "running",
+                "failed"
+              ]
+            },
+            "members": {
+              "type": "number"
+            },
+            "error": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "run",
+            "name",
+            "gpu",
+            "host",
+            "state",
+            "members"
+          ]
         }
       },
       "required": [

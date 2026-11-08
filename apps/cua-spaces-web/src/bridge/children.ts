@@ -21,7 +21,7 @@ const FRESH_MS = 10_000;
 const num = (v: number | null | undefined) => (v === null || v === undefined ? undefined : v);
 
 export function nodeFromWire(w: TreeNodeWire): TreeNode {
-  return { id: w.id, parent: w.parent ?? undefined, depth: w.depth, childrenOn: w.children, ...(w.home ? { home: w.home } : {}) };
+  return { id: w.id, parent: w.parent ?? undefined, depth: w.depth, childrenOn: w.children, ...(w.home ? { home: w.home } : {}), ...(w.job ? { job: w.job } : {}) };
 }
 
 export function limitsFromWire(w: TreeBudgetLimitsWire | null | undefined): TreeBudgetLimits {

@@ -68,3 +68,35 @@ export function oneRowPerJob<T extends { id: string } & JobFields>(spaces: reado
   }
   return out;
 }
+
+/** What a logical job row (a tree node from the run ledger) shows. */
+export interface JobNodeView {
+  run: string;
+  name: string;
+  gpu: boolean;
+  host: string;
+  state: "queued" | "starting" | "running" | "failed";
+  members: number;
+  error?: string;
+}
+
+const JOB_WORD: Record<JobNodeView["state"], string> = { queued: "Queued", starting: "Starting", running: "Running", failed: "Failed" };
+
+/** The status word of a job row ("Running", "Queued", ...). */
+export const jobWord = (j: Pick<JobNodeView, "state">) => JOB_WORD[j.state];
+
+/** The dot of a job row, in the list's own state language. */
+export const jobDot = (j: Pick<JobNodeView, "state">): "running" | "creating" | "failed" => (j.state === "running" ? "running" : j.state === "failed" ? "failed" : "creating");
+
+/** "on mac-m2max" / "3 members": the quiet second line of a job row; where it runs is a detail, never a place in the tree. */
+export function jobDetail(j: Pick<JobNodeView, "host" | "members">): string {
+  const where = j.host ? `on ${j.host}` : "";
+  const count = j.members > 1 ? `${j.members} members` : "";
+  return [where, count].filter(Boolean).join(" · ");
+}
+
+/** The Spaces to list as children once the logical jobs are in: a job's own Space on this computer is the same job as its node (matched by run), so it is not listed twice. */
+export function withoutJobSpacesOf<T extends { id: string; jobRun?: string }>(spaces: readonly T[], jobs: readonly Pick<JobNodeView, "run">[]): T[] {
+  const runs = new Set(jobs.map((j) => j.run));
+  return spaces.filter((s) => !(s.jobRun && [...runs].some((r) => s.jobRun === r || s.jobRun?.endsWith(`/${r}`))));
+}

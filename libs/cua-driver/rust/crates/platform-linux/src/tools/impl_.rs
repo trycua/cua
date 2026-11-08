@@ -845,7 +845,7 @@ pub(crate) fn resolve_element_local_coords(
 
     let xid = if let Some(x) = xid_hint {
         x
-    } else if crate::wayland::wayland_input_enabled() {
+    } else if crate::wayland::is_wayland() {
         crate::wayland::list_windows_dispatch(Some(pid))
             .into_iter()
             .next()
@@ -859,7 +859,7 @@ pub(crate) fn resolve_element_local_coords(
             .ok_or_else(|| anyhow::anyhow!("No windows for pid {pid}"))?
     };
 
-    if crate::wayland::wayland_input_enabled() {
+    if crate::wayland::is_wayland() {
         let (window_x, window_y, window_width, window_height) =
             crate::wayland::window_geometry(xid)
                 .ok_or_else(|| anyhow::anyhow!("No Wayland geometry for window {xid}"))?;
@@ -917,7 +917,7 @@ pub(crate) fn checked_element_local_coords(
     xid_hint: Option<u64>,
 ) -> anyhow::Result<(u64, f64, f64)> {
     let (xid, lx, ly) = resolve_element_local_coords(pid, token, xid_hint)?;
-    if crate::wayland::wayland_input_enabled() {
+    if crate::wayland::is_wayland() {
         return Ok((xid, lx, ly));
     }
     use x11rb::protocol::xproto::ConnectionExt as _;
@@ -2210,7 +2210,7 @@ pub(crate) fn unavailable_wayland_focused_input_background(
     delivery: crate::input::delivery::DeliveryMode,
     focus_free_inject_supported: bool,
 ) -> Option<ToolResult> {
-    (crate::wayland::wayland_input_enabled()
+    (crate::wayland::is_wayland()
         && !(focus_free_inject_supported && crate::wayland::is_inject_mode())
         && !delivery.is_foreground())
     .then(|| {
@@ -2791,7 +2791,7 @@ pub(crate) fn isolated_hyprland_background(delivery: crate::input::delivery::Del
 
 pub(crate) fn hyprland_foreground(delivery: crate::input::delivery::DeliveryMode) -> bool {
     delivery.is_foreground()
-        && crate::wayland::wayland_input_enabled()
+        && crate::wayland::is_wayland()
         && crate::wayland::hyprland::is_session()
 }
 
@@ -2872,9 +2872,7 @@ pub(crate) async fn wm_chord_background(
     modifiers: &[String],
     delivery: crate::input::delivery::DeliveryMode,
 ) -> Option<ToolResult> {
-    if delivery.is_foreground()
-        || crate::wayland::wayland_input_enabled()
-        || crate::wayland::is_inject_mode()
+    if delivery.is_foreground() || crate::wayland::is_wayland() || crate::wayland::is_inject_mode()
     {
         return None;
     }
@@ -3995,7 +3993,7 @@ pub(crate) async fn desktop_input_space() -> anyhow::Result<crate::wayland::Desk
             crate::interaction::policy::Scope::DesktopInput,
             crate::interaction::facts::Fact::Unknown("desktop input addresses no window".into()),
         )?;
-        if !crate::wayland::wayland_input_enabled() {
+        if !crate::wayland::is_wayland() {
             return Ok(crate::wayland::DesktopInputSpace::default());
         }
         crate::wayland::DesktopInputSpace::current()
@@ -4109,7 +4107,7 @@ pub(crate) fn explicit_keyboard_cursor_target(
     }
 
     let (x, y) = pixel_target?;
-    if crate::wayland::wayland_input_enabled() {
+    if crate::wayland::is_wayland() {
         return crate::wayland::window_geometry(xid)
             .map(|(wx, wy, _, _)| (f64::from(wx) + x.round(), f64::from(wy) + y.round()));
     }

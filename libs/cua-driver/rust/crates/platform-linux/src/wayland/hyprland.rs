@@ -218,8 +218,7 @@ pub struct Window {
 }
 
 pub fn is_session() -> bool {
-    !super::is_inject_mode()
-        && std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE").is_some_and(|s| !s.is_empty())
+    crate::desktop::desktop().compositor() == Some(crate::desktop::Compositor::Hyprland)
 }
 
 fn ipc_path() -> Result<PathBuf> {

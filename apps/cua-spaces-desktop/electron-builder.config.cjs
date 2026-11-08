@@ -203,7 +203,8 @@ module.exports = {
     // (cua-keyvault `windows_signing`), so the daemon and the libraries beside it
     // are signed here, with the same signer, before the installer is made.
     if (context.electronPlatformName === "win32" && azureSigning) {
-      for (const f of files) await context.packager.signIf(path.join(resources, "native", f));
+      // cua-microvm-init is a static Linux ELF for the QEMU guest: Authenticode cannot sign it.
+      for (const f of files.filter((f) => f !== "cua-microvm-init")) await context.packager.signIf(path.join(resources, "native", f));
     }
   },
   // Chromium's English strings are `en-US.pak`, which "en" alone strips from

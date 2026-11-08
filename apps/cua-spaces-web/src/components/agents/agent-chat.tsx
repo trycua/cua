@@ -13,7 +13,7 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { ArrowUpRightIcon, EyeIcon, InfoIcon, LinkIcon, LockIcon, MonitorPlayIcon, PlayIcon, PlusIcon } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
-import { useAgentDm, useAgents, useBridge, type AgentChat, type AgentChatSpace, type AgentSetupRow, type ChatNeed, type DmItem, type ThreadAttachment, type ThreadEntry } from "@/bridge";
+import { useAgentDm, useAgents, useBridge, type AgentChat, type AgentChatSpace, type AgentSetupRow, type ChatNeed, type DmItem, type Space, type ThreadAttachment, type ThreadEntry } from "@/bridge";
 import { AddAgentSheet, type AddAgentStage } from "@/components/add-agent/add-agent-sheet";
 import { HarnessMark as AppMark } from "@/components/agents/harness-mark";
 import { OsIcon } from "@/components/os-icon";
@@ -28,6 +28,7 @@ import { Dialog, DialogPopup, DialogTitle } from "@/components/ui/dialog";
 import { Segmented } from "@/components/ui/segmented";
 import { Select } from "@/components/ui/select";
 import { toast } from "@/components/ui/toast";
+import { orderSpaces } from "@/lib/spaces";
 import { cn } from "@/lib/utils";
 import { thisComputerLabel } from "@/lib/host-labels";
 
@@ -568,6 +569,9 @@ export function AgentPage({ chat, open, onOpenChange, me, identity }: { chat: Ag
   );
 }
 
+/** What New agent orders its Spaces by (`orderSpaces`). */
+type SheetSpace = Pick<Space, "id" | "name" | "status" | "power" | "lastUsedAt" | "provider" | "host" | "progress">;
+
 /** New agent / the empty state's rows: the approved sheet, with the Space picked in its title. */
 export function NewAgentSheet({
   open,
@@ -579,17 +583,25 @@ export function NewAgentSheet({
   open: boolean;
   onOpenChange: (open: boolean) => void;
   stage?: AddAgentStage;
-  spaces: { id: string; name: string }[];
+  spaces: SheetSpace[];
   taken: (spaceId: string) => string[];
 }) {
   const [space, setSpace] = useState<string | null>(null);
-  const picked = spaces.find((s) => s.id === space) ?? spaces[0] ?? null;
+  // Running Spaces first, then the latest used, machines' desktops after them: the first is the default.
+  const ordered = useMemo(() => orderSpaces(spaces).map((s) => ({ id: s.id, name: s.name })), [spaces]);
+  // The default is taken once per opening, so a Space that starts meanwhile doesn't move the agent.
+  const first = ordered[0]?.id ?? null;
+  useEffect(() => {
+    if (!open) setSpace(null);
+    else if (space === null && first) setSpace(first);
+  }, [open, first, space]);
+  const picked = ordered.find((s) => s.id === space) ?? ordered[0] ?? null;
   return (
     <AddAgentSheet
       open={open}
       onOpenChange={onOpenChange}
       space={picked}
-      spaces={spaces}
+      spaces={ordered}
       onSpaceChange={setSpace}
       role={null}
       taken={picked ? taken(picked.id) : []}

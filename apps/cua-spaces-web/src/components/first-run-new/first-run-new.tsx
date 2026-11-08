@@ -141,7 +141,7 @@ function Row({ icon, name, sub, picked, disabled, onClick, extra, check = true, 
   );
   // design-ok: the first run is drawn from the spaces.cua.ai hero (storyboard CUA-3193), not the app's pages
   // Picked is said by the check alone (Cua Blue) and the name at full white; no box around the row.
-  const cls = cn("flex w-full items-center gap-3 rounded-[12px] px-3 py-[9px]", disabled && "pointer-events-none cursor-not-allowed opacity-40");
+  const cls = cn("flex w-full items-center gap-3 rounded-xl px-3 py-[9px]", disabled && "pointer-events-none cursor-not-allowed opacity-40");
   if (!onClick || disabled)
     return (
       <div className={cls} aria-disabled={disabled || undefined} {...rest}>

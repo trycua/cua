@@ -396,11 +396,14 @@ impl WindowChangeDetector {
         // A new action supersedes the previous action's detached observation.
         // Taking the entry under its lock ends the watch's right to publish;
         // a watch an intentional activation already ended says nothing.
+        let epoch = focus_arbiter::Epoch::now();
         let watched = lock(&WATCHED)
             .take()
             .filter(|w| focus_arbiter::holds_detached(w.id));
         focus_arbiter::end_detached();
         let current = host_windows();
+        // A driver activation since the check made what follows its own.
+        let watched = watched.filter(|_| epoch.is_current());
         let window_ids: HashSet<u32> = current.iter().map(|w| w.window_id).collect();
         let mut snapshot = Self::capture_from(window_ids, prior_front, suppress_focus, allowed_pid);
         // A change the ended watch had not read yet is in this snapshot's

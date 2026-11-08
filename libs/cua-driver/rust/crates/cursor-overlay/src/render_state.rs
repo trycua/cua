@@ -1441,6 +1441,28 @@ pub fn paint_cursor(
     focus_rect: Option<FocusRect>,
     backing_scale: f32,
 ) {
+    paint_cursor_with_badge(
+        pm,
+        core,
+        origin_x,
+        origin_y,
+        focus_rect,
+        backing_scale,
+        true,
+    );
+}
+
+/// Paint cursor art across a display seam, keeping its badge on the anchor display.
+#[allow(clippy::too_many_arguments)]
+pub fn paint_cursor_with_badge(
+    pm: &mut tiny_skia::Pixmap,
+    core: &RenderStateCore,
+    origin_x: f64,
+    origin_y: f64,
+    focus_rect: Option<FocusRect>,
+    backing_scale: f32,
+    show_badge: bool,
+) {
     if !core.is_revealed() || core.pinned_target_off_workspace {
         return;
     }
@@ -1584,6 +1606,9 @@ pub fn paint_cursor(
     }
     paint_effects_over(pm, &effects, effect_rgb, f64::from(alpha_scale), &to_px, sf);
 
+    if !show_badge {
+        return;
+    }
     if let Some(layout) = crate::session_badge_layout(core.session_badge_input(
         (px as f32, py as f32),
         backing_scale.max(1.0),

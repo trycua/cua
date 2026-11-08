@@ -4,7 +4,7 @@
 import { useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import { agentsView, useAgentChats, useAgentKeys, useBridge, useMachines, useSpaces, type AgentAccount, type AgentGroup, type AgentRunSummary } from "@/bridge";
+import { agentsView, useAgentChats, useBridge, useMachines, useSpaces, type AgentAccount, type AgentGroup, type AgentRunSummary } from "@/bridge";
 import { useChildren } from "@/components/children/use-children";
 import { CuaKey } from "@/components/cua-key";
 import { useAgentAttempts } from "@/hooks/use-agent-attempts";
@@ -23,7 +23,6 @@ import { AskBox, type TaskWhere } from "./ask-box";
 import { BringTheRest } from "./bring-the-rest";
 import { agentName } from "./task-agents";
 import { AgentStatus } from "./agent-status";
-import type { AccountActions } from "./agent-picker";
 import { useAgentReadiness } from "./use-agent-readiness";
 import { useKeepHomeWarm } from "./use-keep-home-warm";
 import { YourAgents, YourSpaces as YourSpacesRow } from "./home-sections";
@@ -68,7 +67,6 @@ export function AskFirstHome() {
   // The agent: the last app, account and model picked while they are still there, else the first connected app. The
   // account is the app's own choice (kept by the host), so a run uses the one shown.
   const connectors = useConnectors();
-  const keys = useAgentKeys();
   // Which apps the menu lists is the person's choice (Settings, Connections); an app they connect shows again.
   const menu = useAgentMenu(connectors);
   const navigate = useNavigate();
@@ -118,13 +116,7 @@ export function AskFirstHome() {
     rememberAgent(pickAccount(group, account, picked));
     if (!account.selected) void connectors.useCredential(group.app, { env: account.env, slot: account.slot });
   };
-  const accountActions: AccountActions = {
-    onUse: useAccount,
-    onRemove: (_g, a) => void (a.slot ? keys.remove(a.env, { slot: a.slot }) : keys.remove(a.env, { keepOthers: true })).catch(() => {}),
-    onRename: (_g, a, name) => void keys.rename(a.env, a.slot, name).catch(() => {}),
-    // Another sign-in or key beside the others: Claude Code's takes a token, the others the key of their provider.
-    onAdd: (g, name, value) => keys.save(g.accounts[0]?.provider ?? (g.app === "claude-code" ? "anthropic" : g.app === "codex" ? "openai" : "anthropic"), value, null, {}, { add: true, ...(name ? { label: name } : {}) }),
-  };
+
 
   // Home lists agents and Spaces, not tasks: with neither (a first run,
   // or tasks whose Spaces are gone), Home is the welcome again.
@@ -155,7 +147,6 @@ export function AskFirstHome() {
           onModel={(model) => selected && rememberAgent({ ...pickOf(selected), model })}
           onSignIn={(g) => void signInTo(g.app, g.label)}
           onConfigure={() => void navigate({ to: "/settings/connections" })}
-          accounts={accountActions}
           repo={repo}
           where={where}
           onWhere={(w) => pick.choose(w, setWhere, () => setWhereOpen(true))}

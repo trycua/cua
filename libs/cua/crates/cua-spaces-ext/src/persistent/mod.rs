@@ -2291,7 +2291,13 @@ impl Persistent {
         let last = store.last_seq()?;
         let recent = store.read(last.saturating_sub(RECENT), RECENT as usize + 1)?;
         let mut drafts = vec![];
+        // The first stretch of a run is its opening line; every later one is either the closing message
+        // or narration between tool calls ("Let me look at it..."), which the thread does not carry.
+        let opening = said.iter().map(|s| s.first_seq).min();
         for s in said {
+            if Some(s.first_seq) != opening && is_process_narration(&s.text) {
+                continue;
+            }
             let prefix = format!("seg:{run}:{}:", s.first_seq);
             // How much of this stretch an earlier pass posted (it grows only when the agent paused
             // mid-sentence for longer than [`QUIET`]).
@@ -3189,5 +3195,65 @@ mod power_tests {
         assert!(space_is_off("suspended"));
         assert!(!space_is_off("running"));
         assert!(!space_is_off(""));
+    }
+}
+
+/// Whether a stretch of an agent's words is narration of its own process ("Let me look at the
+/// logo", "I'll check the packages", "Now I'm writing the script"): the agent speaks as the
+/// person's computers, and narrates neither tools nor plans. Held back in the thread; the app's own
+/// working line shows that it is busy.
+fn is_process_narration(text: &str) -> bool {
+    let t = text.trim().to_lowercase();
+    let first: String = t
+        .split(['.', '!', '\n'])
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    // "Got the logo. Let me look at it": any sentence that starts a plan counts.
+    let sentences: Vec<String> = t
+        .split(['.', '!', '\n'])
+        .map(|x| x.trim().to_string())
+        .filter(|x| !x.is_empty())
+        .collect();
+    const STARTS: [&str; 12] = [
+        "let me ",
+        "let's ",
+        "i'll ",
+        "i will ",
+        "i'm going to ",
+        "i am going to ",
+        "now i",
+        "next, i",
+        "first, i",
+        "i need to ",
+        "i'm checking",
+        "i'm looking",
+    ];
+    let narrates = |x: &str| STARTS.iter().any(|p| x.starts_with(p));
+    narrates(&first) || (sentences.len() <= 3 && sentences.iter().any(|x| narrates(x)))
+}
+
+#[cfg(test)]
+mod voice_tests {
+    use super::is_process_narration;
+
+    #[test]
+    fn narration_of_the_process_is_held_back_and_a_final_message_is_not() {
+        for n in [
+            "Got the logo. Let me look at it and see which packages exist for rasterizing.",
+            "I'll check the pool skill first.",
+            "Now I'm writing the training script.",
+            "Let's try a longer run.",
+        ] {
+            assert!(is_process_narration(n), "{n}");
+        }
+        for ok in [
+            "Training on your Mac with MLX, about 90 seconds.",
+            "Your Cua logo has grown from a single cell. The window is open in your Stream: click it to erase a patch and watch it regrow.",
+            "Opening the window now.",
+        ] {
+            assert!(!is_process_narration(ok), "{ok}");
+        }
     }
 }

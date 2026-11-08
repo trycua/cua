@@ -217,13 +217,15 @@ export function SubagentRow({ sub }: { sub: Extract<ChildNote, { kind: "subagent
 
 /**
  * A child Space the agent made, drawn as a subagent row: the state's dot, the Space's name, and a muted
- * line for where it is ("Cloning the disk", "Ready in 1m 05s", "Couldn't make it: ..."). Tapping the row
- * opens the child's page, which exists from the moment the create starts.
+ * line for where it is ("Cloning the disk", "Ready in 1m 05s", "Couldn't make it: ..."). A Space that is
+ * ready opens its page on a tap; one still being made, or that could not be made, has no page on this
+ * phone (the desktop draws a placeholder for it, a phone has none), so its row is not a link.
  */
 export function ChildSpaceRow({ space }: { space: Extract<ChildNote, { kind: "child_space" }> }) {
   const router = useRouter();
   const { c } = useTheme();
   const state = space.state ?? "ready";
+  const openable = state === "ready";
   const color = state === "failed" ? c.destructive : state === "ready" ? c.mutedForeground : c.success;
   const running = useRunning(space.startedMs, state === "creating");
   const took = space.startedMs != null && space.endedMs != null ? runningFor(space.startedMs, space.endedMs) : null;
@@ -235,11 +237,12 @@ export function ChildSpaceRow({ space }: { space: Extract<ChildNote, { kind: "ch
         : `Ready${took ? ` in ${took}` : ""}`;
   return (
     <Pressable
-      onPress={() => router.push({ pathname: "/space/[id]", params: { id: childPageId(space) } })}
+      onPress={openable ? () => router.push({ pathname: "/space/[id]", params: { id: childPageId(space) } }) : undefined}
+      disabled={!openable}
       style={{ marginLeft: 38, marginRight: 16, marginTop: 6, flexDirection: "row", gap: 8 }}
       testID={`child-space-${space.space}`}
-      accessibilityRole="link"
-      accessibilityLabel={`Open ${space.name}. ${line}`}
+      accessibilityRole={openable ? "link" : undefined}
+      accessibilityLabel={openable ? `Open ${space.name}. ${line}` : `${space.name}. ${line}`}
     >
       <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: color, marginTop: 6 }} />
       <View style={{ flex: 1 }}>

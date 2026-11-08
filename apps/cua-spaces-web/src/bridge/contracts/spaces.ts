@@ -260,6 +260,8 @@ export interface SpaceRow {
   error?: string;
   /** For a Space one of your machines provides: that machine's relay id and name. */
   host?: string;
+  /** The home warming in the background for Home's box (`cua.hidden`): no list or count shows it. */
+  hidden?: boolean;
   /** The Space it is a child of (its id). */
   parent?: string;
   hostName?: string;

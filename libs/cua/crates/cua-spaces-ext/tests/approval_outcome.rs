@@ -262,6 +262,44 @@ async fn an_allowed_request_wakes_the_agent_to_go_on() {
     );
 }
 
+/// A request the person already allowed for the whole Space is answered the moment it is posted; the agent that
+/// asked is still told, or it would wait for an answer nobody will give.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_request_allowed_by_a_space_wide_grant_still_wakes_the_agent() {
+    let mut fx = setup().await;
+    let p = member(&mut fx, 1).await;
+    let ask = || json!({"text": "May I run the build?", "approval": {"action": "run the build", "details": "Run the build"}});
+    let first = bridge_call(&fx, &p, 1, "thread_post", ask()).await;
+    let first: Value =
+        serde_json::from_str(first["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
+    let seq = first["entry"]["seq"].as_u64().unwrap();
+    call(
+        &fx.mcp,
+        "thread_post",
+        json!({"space": fx.space, "text": "", "answer": {"approval": seq, "approve": true, "scope": "space"}}),
+    )
+    .await
+    .unwrap();
+    // The same request again: answered by the grant, with no person involved.
+    bridge_call(&fx, &p, 1, "thread_post", ask()).await;
+    let all = entries(&fx).await;
+    let w = woke(&all);
+    assert_eq!(
+        w.len(),
+        2,
+        "one wake per request, the second from the grant: {all:?}"
+    );
+    assert!(
+        w[1]["text"]
+            .as_str()
+            .unwrap()
+            .contains("allowed your request"),
+        "{:?}",
+        w[1]
+    );
+    assert_eq!(w[1]["event"]["kind"], "approval_allowed");
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_declined_request_tells_the_agent_no_and_not_to_retry() {
     let mut fx = setup().await;
@@ -307,16 +345,12 @@ async fn a_space_the_host_makes_shows_its_steps_then_ready_or_the_plain_failure_
     let parent = fx.space.clone();
     use cua_spaces::child_creates as cc;
     // One create is cloning, another is making a Linux Space.
-    cc::update(
-        &home,
-        &parent,
-        "macos-child",
-        "macos-child",
-        "macOS",
-        100,
-        |e| e.phase = cc::phase_words("creating", "macOS"),
-    );
-    cc::update(&home, &parent, "build", "build", "Linux", 101, |e| {
+    let mac = cc::start(&home, &parent, "macos-child", "macos-child", "macOS", 100);
+    cc::update_id(&home, &mac, |e| {
+        e.phase = cc::phase_words("creating", "macOS")
+    });
+    let build = cc::start(&home, &parent, "build", "build", "Linux", 101);
+    cc::update_id(&home, &build, |e| {
         e.phase = cc::phase_words("booting", "Linux")
     });
     Box::pin(p.tick()).await;
@@ -334,22 +368,13 @@ async fn a_space_the_host_makes_shows_its_steps_then_ready_or_the_plain_failure_
             .any(|e| e["event"]["phase"] == "Cloning the disk for the macOS Space")
     );
     // The first fails, the second is ready.
-    cc::update(
-        &home,
-        &parent,
-        "macos-child",
-        "macos-child",
-        "macOS",
-        110,
-        |e| {
-            e.state = cc::State::Failed;
-            e.error = cc::person_reason(
-                "invalid request: probe port 3211 is not published by this sandbox",
-            );
-            e.ended_ms = Some(110);
-        },
-    );
-    cc::update(&home, &parent, "build", "build", "Linux", 111, |e| {
+    cc::update_id(&home, &mac, |e| {
+        e.state = cc::State::Failed;
+        e.error =
+            cc::person_reason("invalid request: probe port 3211 is not published by this sandbox");
+        e.ended_ms = Some(110);
+    });
+    cc::update_id(&home, &build, |e| {
         e.state = cc::State::Ready;
         e.space = "local:build".into();
         e.phase = "Ready".into();
@@ -379,6 +404,35 @@ async fn a_space_the_host_makes_shows_its_steps_then_ready_or_the_plain_failure_
         .map(|e| e["event"]["key"].as_str().unwrap().to_string())
         .collect();
     assert_eq!(mac_keys.len(), 1);
+}
+
+/// A step's percentage keeps moving in the thread, and a create is told once, by the member it was
+/// attributed to, on the task that member was on.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_steps_progress_keeps_moving_and_a_create_belongs_to_one_member_and_task() {
+    let mut fx = setup().await;
+    let p = member(&mut fx, 1).await;
+    let task = post(&fx, json!({"text": "@ada make a computer"}))
+        .await
+        .unwrap();
+    Box::pin(p.tick()).await;
+    let home = fx.home.path().to_path_buf();
+    use cua_spaces::child_creates as cc;
+    let id = cc::start(&home, &fx.space, "big", "big", "Linux", 100);
+    for pct in [10u8, 40, 70] {
+        cc::update_id(&home, &id, |e| {
+            e.phase = "Downloading the image".into();
+            e.percent = Some(pct);
+        });
+        Box::pin(p.tick()).await;
+    }
+    let all = entries(&fx).await;
+    let n = child_notes(&all);
+    let pcts: Vec<_> = n.iter().map(|e| e["event"]["percent"].clone()).collect();
+    assert_eq!(pcts, [json!(10), json!(40), json!(70)], "{n:?}");
+    let mine = cc::of(&home, &fx.space);
+    assert_eq!(mine[0].agent, "ada");
+    assert_eq!(mine[0].task, task, "attributed to the task it was asked on");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

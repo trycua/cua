@@ -471,9 +471,11 @@ impl Scoped {
 /// [`cua_spaces::child_creates`] as it goes, so every client draws the same row.
 struct Tracked {
     home: std::path::PathBuf,
-    parent: String,
-    key: String,
-    name: String,
+    /// This create's own record (two creates under one name never share one).
+    id: String,
+    /// Whether it ended in a result or an error. One that is dropped before either (its stream was
+    /// cut) is failed, not left on "creating".
+    done: std::sync::atomic::AtomicBool,
     os: &'static str,
 }
 
@@ -485,27 +487,24 @@ fn now_ms() -> u64 {
 
 impl Tracked {
     fn start(home: &std::path::Path, parent: &str, child: &pb::CreateSpaceRequest) -> Tracked {
-        let t = Tracked {
+        let os = cua_spaces::child_creates::os_of_image(&child.image);
+        Tracked {
             home: home.to_path_buf(),
-            parent: parent.to_string(),
-            key: child.name.clone(),
-            name: child.name.clone(),
-            os: cua_spaces::child_creates::os_of_image(&child.image),
-        };
-        t.set(|_| {});
-        t
+            id: cua_spaces::child_creates::start(
+                home,
+                parent,
+                &child.name,
+                &child.name,
+                os,
+                now_ms(),
+            ),
+            done: std::sync::atomic::AtomicBool::new(false),
+            os,
+        }
     }
 
     fn set(&self, f: impl FnOnce(&mut cua_spaces::child_creates::Entry)) {
-        cua_spaces::child_creates::update(
-            &self.home,
-            &self.parent,
-            &self.key,
-            &self.name,
-            self.os,
-            now_ms(),
-            f,
-        );
+        cua_spaces::child_creates::update_id(&self.home, &self.id, f);
     }
 
     fn progress(&self, p: &pb::CreateSpaceProgress) {
@@ -523,6 +522,7 @@ impl Tracked {
     }
 
     fn ready(&self, id: &str) {
+        self.done.store(true, std::sync::atomic::Ordering::Relaxed);
         self.set(|e| {
             e.state = cua_spaces::child_creates::State::Ready;
             e.space = id.to_string();
@@ -533,6 +533,7 @@ impl Tracked {
     }
 
     fn failed(&self, why: &str) {
+        self.done.store(true, std::sync::atomic::Ordering::Relaxed);
         let reason = cua_spaces::child_creates::person_reason(why);
         // A create the person cancelled is not a failure to show on a row.
         let cancelled = why.to_lowercase().contains("cancel");
@@ -543,6 +544,16 @@ impl Tracked {
             e.percent = None;
             e.ended_ms = Some(now_ms());
         });
+    }
+}
+
+impl Drop for Tracked {
+    fn drop(&mut self) {
+        if !self.done.load(std::sync::atomic::Ordering::Relaxed) {
+            // The stream was dropped (the agent or its connection went away) before the create ended: it
+            // is cancelled with it, so its row says so instead of staying on "creating".
+            self.failed("The create was interrupted before it finished");
+        }
     }
 }
 
@@ -1453,5 +1464,50 @@ mod agent_words_tests {
             for_the_agent(Status::resource_exhausted("the budget is spent")).message(),
             "the budget is spent"
         );
+    }
+}
+
+#[cfg(test)]
+mod tracked_tests {
+    use super::*;
+
+    fn req(name: &str) -> pb::CreateSpaceRequest {
+        pb::CreateSpaceRequest {
+            name: name.into(),
+            image: "linux:24.04".into(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_create_whose_stream_is_dropped_is_failed_not_left_on_creating() {
+        let d = tempfile::tempdir().unwrap();
+        let t = Tracked::start(d.path(), "local:p", &req("a"));
+        drop(t);
+        let e = &cua_spaces::child_creates::of(d.path(), "local:p")[0];
+        assert_eq!(e.state, cua_spaces::child_creates::State::Failed);
+        assert!(e.error.contains("interrupted"), "{}", e.error);
+    }
+
+    #[test]
+    fn a_create_that_finished_is_not_touched_when_dropped() {
+        let d = tempfile::tempdir().unwrap();
+        let t = Tracked::start(d.path(), "local:p", &req("a"));
+        t.ready("local:a");
+        drop(t);
+        let e = &cua_spaces::child_creates::of(d.path(), "local:p")[0];
+        assert_eq!(e.state, cua_spaces::child_creates::State::Ready);
+    }
+
+    #[test]
+    fn two_creates_under_one_name_are_tracked_apart() {
+        let d = tempfile::tempdir().unwrap();
+        let a = Tracked::start(d.path(), "local:p", &req("same"));
+        let b = Tracked::start(d.path(), "local:p", &req("same"));
+        b.failed("nope");
+        let all = cua_spaces::child_creates::of(d.path(), "local:p");
+        assert_eq!(all.len(), 2);
+        assert_eq!(all[0].state, cua_spaces::child_creates::State::Creating);
+        drop(a);
     }
 }

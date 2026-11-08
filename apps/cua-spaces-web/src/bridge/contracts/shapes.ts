@@ -310,6 +310,7 @@ const SpaceRowShape = ref(
     reachable: bool,
     error: opt(str),
     host: opt(str),
+    hidden: opt(bool),
     hostName: opt(str),
     parent: opt(str),
     power: opt(str),

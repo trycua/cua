@@ -24,7 +24,36 @@ pub const FILE: &str = "spawn/creates.json";
 /// Entries kept for one asking Space.
 pub const KEEP: usize = 50;
 
+/// Serializes this process's threads; [`Guard`] adds the lock other processes honour.
 static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Exclusive access to the ledger for one read-modify-write: a mutex for this process's threads and an
+/// advisory file lock (`spawn/creates.lock`) for every other process (the daemon, the app, the CLI), so no
+/// process's update is lost to another's. Released on drop.
+struct Guard {
+    _file: Option<std::fs::File>,
+    _thread: std::sync::MutexGuard<'static, ()>,
+}
+
+fn locked(home: &Path) -> Guard {
+    let thread = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let file = (|| {
+        let p = home.join("spawn/creates.lock");
+        std::fs::create_dir_all(p.parent()?).ok()?;
+        let f = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(p)
+            .ok()?;
+        f.lock().ok()?;
+        Some(f)
+    })();
+    Guard {
+        _file: file,
+        _thread: thread,
+    }
+}
 
 /// Where a create is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -38,6 +67,16 @@ pub enum State {
 /// One create an agent asked of the host.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Entry {
+    /// This create's own id, unique across creates (two under one name are two rows). Empty in records
+    /// written before it existed.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub id: String,
+    /// The agent member that asked, once a thread's supervisor attributed it (see [`claim`]); empty before.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub agent: String,
+    /// The thread task that agent was on when it asked; 0 when none.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub task: u64,
     /// The asking Space (the parent).
     pub parent: String,
     /// The create's own key: the name the Space is made under.
@@ -69,6 +108,10 @@ pub struct Entry {
     /// The person removed its row from the list (Remove from list): apps do not draw it again.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub hidden: bool,
+}
+
+fn is_zero(n: &u64) -> bool {
+    *n == 0
 }
 
 fn path(home: &Path) -> PathBuf {
@@ -164,45 +207,78 @@ pub fn person_reason(message: &str) -> String {
     }
 }
 
-/// Records (or updates) the create `key` of `parent`: `f` changes the entry,
-/// which starts as a new `Creating` one when there is none.
-pub fn update(
-    home: &Path,
-    parent: &str,
-    key: &str,
-    name: &str,
-    os: &str,
-    now_ms: u64,
-    f: impl FnOnce(&mut Entry),
-) {
-    let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+/// Records a new create `key` of `parent` and returns its id. Every call is its own create: two under one
+/// name are two rows, each updated by its own id ([`update_id`]).
+pub fn start(home: &Path, parent: &str, key: &str, name: &str, os: &str, now_ms: u64) -> String {
+    static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let id = format!(
+        "{now_ms}-{}-{}",
+        std::process::id(),
+        N.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    );
+    let _g = locked(home);
     let mut all = load(home);
-    let i = match all
-        .iter()
-        .position(|e| e.parent == parent && e.key == key && e.state == State::Creating)
+    // Clients tell a row by its name and start time: no two creates share both.
+    let mut now_ms = now_ms;
+    while all.iter().any(|e| e.key == key && e.started_ms == now_ms) {
+        now_ms += 1;
+    }
+    all.push(Entry {
+        id: id.clone(),
+        agent: String::new(),
+        task: 0,
+        parent: parent.into(),
+        key: key.into(),
+        name: name.into(),
+        os: os.into(),
+        state: State::Creating,
+        phase: String::new(),
+        code: String::new(),
+        percent: None,
+        space: String::new(),
+        error: String::new(),
+        started_ms: now_ms,
+        ended_ms: None,
+        hidden: false,
+    });
+    bound(&mut all, parent);
+    let _ = save(home, &all);
+    id
+}
+
+/// Changes the create `id` (read, change and write under the cross-process lock). Nothing happens when
+/// it is gone.
+pub fn update_id(home: &Path, id: &str, f: impl FnOnce(&mut Entry)) {
+    let _g = locked(home);
+    let mut all = load(home);
+    if let Some(e) = all.iter_mut().find(|e| e.id == id) {
+        f(e);
+        let _ = save(home, &all);
+    }
+}
+
+/// Attributes the creates of `parent` nobody has claimed yet to `agent` and its task `task`: the first
+/// member of a Space to see a create is the one working on it, and only that member tells its thread
+/// (compare-and-set under the lock, so two members never both claim one).
+pub fn claim(home: &Path, parent: &str, agent: &str, task: u64) {
+    let _g = locked(home);
+    let mut all = load(home);
+    let mut changed = false;
+    for e in all
+        .iter_mut()
+        .filter(|e| e.parent == parent && e.agent.is_empty())
     {
-        Some(i) => i,
-        None => {
-            all.push(Entry {
-                parent: parent.into(),
-                key: key.into(),
-                name: name.into(),
-                os: os.into(),
-                state: State::Creating,
-                phase: String::new(),
-                code: String::new(),
-                percent: None,
-                space: String::new(),
-                error: String::new(),
-                started_ms: now_ms,
-                ended_ms: None,
-                hidden: false,
-            });
-            all.len() - 1
-        }
-    };
-    f(&mut all[i]);
-    // Bound what is kept for this parent.
+        e.agent = agent.into();
+        e.task = task;
+        changed = true;
+    }
+    if changed {
+        let _ = save(home, &all);
+    }
+}
+
+/// Bounds what is kept for `parent`.
+fn bound(all: &mut Vec<Entry>, parent: &str) {
     let mine = all.iter().filter(|e| e.parent == parent).count();
     if mine > KEEP {
         let mut drop = mine - KEEP;
@@ -215,14 +291,13 @@ pub fn update(
             }
         });
     }
-    let _ = save(home, &all);
 }
 
 /// Drops the records whose asking Space is gone (`present` holds every Space the registry lists): nothing can use
 /// them, and the apps must not draw a placeholder for a parent that no longer exists. A create still going is kept.
 /// Returns how many were dropped.
 pub fn retain_parents(home: &Path, present: &std::collections::BTreeSet<String>) -> usize {
-    let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _g = locked(home);
     let mut all = load(home);
     let before = all.len();
     all.retain(|e| {
@@ -242,7 +317,7 @@ pub fn visible(home: &Path) -> Vec<Entry> {
 
 /// Hides the finished create `key` that started at `started_ms` (the person removed its row).
 pub fn hide(home: &Path, key: &str, started_ms: u64) {
-    let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _g = locked(home);
     let mut all = load(home);
     for e in all
         .iter_mut()
@@ -264,7 +339,7 @@ pub fn of(home: &Path, parent: &str) -> Vec<Entry> {
 /// A create that was still going when its host process died is failed:
 /// nothing will finish it.
 pub fn fail_orphans(home: &Path, now_ms: u64) {
-    let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _g = locked(home);
     let mut all = load(home);
     let mut changed = false;
     for e in all.iter_mut().filter(|e| e.state == State::Creating) {
@@ -281,6 +356,26 @@ pub fn fail_orphans(home: &Path, now_ms: u64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Records (or changes) the create `key` of `parent` that is still going, or starts one.
+    fn update(
+        home: &Path,
+        parent: &str,
+        key: &str,
+        name: &str,
+        os: &str,
+        now_ms: u64,
+        f: impl FnOnce(&mut Entry),
+    ) {
+        let going = load(home)
+            .into_iter()
+            .find(|e| e.parent == parent && e.key == key && e.state == State::Creating);
+        let id = match going {
+            Some(e) => e.id,
+            None => start(home, parent, key, name, os, now_ms),
+        };
+        update_id(home, &id, f);
+    }
 
     #[test]
     fn a_create_goes_through_its_steps_to_ready() {
@@ -388,5 +483,70 @@ mod tests {
             phase_words("waiting_for_services", ""),
             "Waiting for it to be ready"
         );
+    }
+
+    #[test]
+    fn two_creates_under_one_name_are_two_rows_each_updated_by_its_own_id() {
+        let d = tempfile::tempdir().unwrap();
+        let h = d.path();
+        let a = start(h, "p", "same", "same", "", 1);
+        let b = start(h, "p", "same", "same", "", 1);
+        assert_ne!(a, b);
+        update_id(h, &b, |e| e.state = State::Failed);
+        let all = of(h, "p");
+        assert_eq!(
+            (all[0].state, all[1].state),
+            (State::Creating, State::Failed)
+        );
+    }
+
+    #[test]
+    fn a_create_is_claimed_once_by_the_first_member_to_see_it() {
+        let d = tempfile::tempdir().unwrap();
+        let h = d.path();
+        start(h, "p", "a", "a", "", 1);
+        claim(h, "p", "ada", 7);
+        claim(h, "p", "bob", 9);
+        let e = &of(h, "p")[0];
+        assert_eq!((e.agent.as_str(), e.task), ("ada", 7));
+    }
+
+    #[test]
+    fn updates_from_many_threads_and_processes_are_not_lost() {
+        let d = tempfile::tempdir().unwrap();
+        let h = d.path().to_path_buf();
+        let ids: Vec<String> = (0..8)
+            .map(|i| start(&h, "p", &format!("k{i}"), "n", "", i))
+            .collect();
+        let threads: Vec<_> = ids
+            .into_iter()
+            .map(|id| {
+                let h = h.clone();
+                std::thread::spawn(move || {
+                    for n in 0..25u8 {
+                        update_id(&h, &id, |e| e.percent = Some(n));
+                    }
+                })
+            })
+            .collect();
+        for t in threads {
+            t.join().unwrap();
+        }
+        assert!(of(&h, "p").iter().all(|e| e.percent == Some(24)));
+    }
+
+    #[test]
+    fn the_ledger_is_locked_against_other_processes_while_it_is_changed() {
+        let d = tempfile::tempdir().unwrap();
+        let h = d.path();
+        let g = locked(h);
+        // Another process opens its own handle to the lock file: it must not get the lock now.
+        let other = std::fs::File::open(h.join("spawn/creates.lock")).unwrap();
+        assert!(matches!(
+            other.try_lock(),
+            Err(std::fs::TryLockError::WouldBlock)
+        ));
+        drop(g);
+        assert!(other.try_lock().is_ok());
     }
 }

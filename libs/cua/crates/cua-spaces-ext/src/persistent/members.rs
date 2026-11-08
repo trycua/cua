@@ -2101,6 +2101,12 @@ impl Thread {
             .as_ref()
             .filter(|a| a.scope.as_deref() == Some("space"))
             .map(|a| a.approval);
+        let auto_note = granted.as_ref().map(|g| {
+            format!(
+                "Allowed for this Space (you said yes to this in #{})",
+                g.approval
+            )
+        });
         let e = match granted {
             Some(g) => {
                 let mut auto =
@@ -2122,6 +2128,11 @@ impl Thread {
         };
         if let Some(approval) = space_grant {
             self.remember_grant(approval, &e)?;
+        }
+        // An agent whose request was answered by a grant is told like any other answer: it has ended
+        // its turn waiting for it and nobody else will ever answer.
+        if let Some(note) = auto_note {
+            self.wake_asker(e.seq, true, &note, "the person")?;
         }
         let mut copied = vec![];
         for (to, mut c) in copies {

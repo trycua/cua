@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { childrenEffect, childrenOfSpace, deleteAllText, descendantCount } from "./child-spaces-section";
+import { childrenEffect, deleteFailures, childrenOfSpace, deleteAllText, descendantCount } from "./child-spaces-section";
 
 const sp = (id: string, parent?: string, name = id) => ({ id, name, parent }) as never;
 
@@ -35,5 +35,15 @@ describe("a Space's child Spaces", () => {
 
   it("a loop does not hang the count", () => {
     expect(descendantCount([sp("p", "q"), sp("q", "p")], "p", null)).toBe(2);
+  });
+
+  it("a delete that failed for some Spaces says which and why, instead of looking like it worked", () => {
+    const names = new Map([["a", "build"], ["b", "test"]]);
+    expect(deleteFailures([{ id: "a", ok: true }, { id: "b", ok: true }], names)).toBeNull();
+    expect(deleteFailures([{ id: "a", ok: true }, { id: "b", ok: false, error: "It is busy" }], names)).toEqual({
+      title: "Couldn't delete 1 of 2 child Spaces",
+      description: "test: It is busy",
+    });
+    expect(deleteFailures([{ id: "a", ok: false }], names)?.title).toBe("Couldn't delete 1 child Space");
   });
 });

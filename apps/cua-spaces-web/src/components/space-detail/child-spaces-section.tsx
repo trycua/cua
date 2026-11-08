@@ -18,7 +18,7 @@ import { OsIcon } from "@/components/os-icon";
 import { StateLabel } from "@/components/state-dot";
 import { ConfirmDialog } from "@/components/ui/alert-dialog";
 import { Menu } from "@/components/ui/menu";
-import { toastError } from "@/components/ui/toast";
+import { toast, toastError } from "@/components/ui/toast";
 import { plural } from "@/lib/plural";
 import { parentIdOf } from "@/lib/space-tree";
 import { createError, spaceState } from "@/lib/spaces";
@@ -66,6 +66,19 @@ export function childrenEffect(kind: "stop" | "delete", kids: readonly Pick<Spac
   return ` Its ${plural(kids.length, "child Space")} (${names}) ${kids.length === 1 ? "is" : "are"} deleted with it${deeper > 0 ? `, and so ${deeper === 1 ? "is the 1 Space" : `are the ${deeper} Spaces`} made under ${kids.length === 1 ? "it" : "them"}` : ""}.`;
 }
 
+/** What to tell the person when a delete finished with failures: the bridge answers per Space, it does not throw. `null` when all went. */
+export function deleteFailures(
+  results: readonly { id: string; ok: boolean; error?: string | null }[],
+  names: ReadonlyMap<string, string>,
+): { title: string; description: string } | null {
+  const failed = results.filter((r) => !r.ok);
+  if (!failed.length) return null;
+  return {
+    title: failed.length === results.length ? `Couldn't delete ${plural(failed.length, "child Space")}` : `Couldn't delete ${failed.length} of ${plural(results.length, "child Space")}`,
+    description: failed.map((r) => `${names.get(r.id) ?? r.id}: ${r.error || "something went wrong"}`).join("\n"),
+  };
+}
+
 export function ChildSpacesSection({ spaceId, spaceName }: { spaceId: string; spaceName: string }) {
   const tree = useChildren();
   const { data, startSpace, stopSpace, deleteSpaces } = useSpaces();
@@ -77,7 +90,13 @@ export function ChildSpacesSection({ spaceId, spaceName }: { spaceId: string; sp
   const budget = tree?.budget(spaceId) ?? null;
   const one = confirm && confirm !== "all" ? kids.find((k) => k.id === confirm) : null;
   const text = confirm === "all" ? deleteAllText(spaceName, kids, total) : one ? deleteAllText(spaceName, [one], 1 + descendantCount(all, one.id, tree)) : null;
-  const remove = (ids: string[]) => void deleteSpaces(ids).catch(toastError("Couldn't delete the child Spaces"));
+  const remove = (ids: string[]) =>
+    void deleteSpaces(ids)
+      .then((results) => {
+        const bad = deleteFailures(results, new Map(all.map((s) => [s.id, s.name])));
+        if (bad) toast(bad.title, { type: "error", description: bad.description });
+      })
+      .catch(toastError("Couldn't delete the child Spaces"));
   return (
     <section className="px-3 pt-2 pb-2" data-child-spaces="">
       <div className="mb-1 flex items-center justify-between px-2">

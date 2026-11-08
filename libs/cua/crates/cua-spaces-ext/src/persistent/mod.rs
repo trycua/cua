@@ -2350,7 +2350,13 @@ impl Persistent {
             return Ok(());
         };
         let kids = self.spaces.children(&rec.space).unwrap_or_default();
-        let asked = cua_spaces::child_creates::of(self.spaces.home_dir(), &rec.space);
+        // A create is told by the one member it is attributed to, on the task that member was on when it
+        // saw the create (not whichever task is current when a later pass runs).
+        cua_spaces::child_creates::claim(self.spaces.home_dir(), &rec.space, &rec.name, task);
+        let asked: Vec<_> = cua_spaces::child_creates::of(self.spaces.home_dir(), &rec.space)
+            .into_iter()
+            .filter(|e| e.agent == rec.name)
+            .collect();
         if kids.is_empty() && asked.is_empty() {
             return Ok(());
         }
@@ -2369,7 +2375,12 @@ impl Persistent {
                 cua_spaces::child_creates::State::Failed => "failed",
             };
             let key = match e.state {
-                cua_spaces::child_creates::State::Creating => format!("{base}:p:{}", e.phase),
+                // A step posts again as it moves on (every 5 percent), so the row's bar keeps moving.
+                cua_spaces::child_creates::State::Creating => format!(
+                    "{base}:p:{}:{}",
+                    e.phase,
+                    e.percent.map_or(String::new(), |p| (p / 5 * 5).to_string())
+                ),
                 _ => format!("{base}:{state}"),
             };
             if recent
@@ -2413,7 +2424,7 @@ impl Persistent {
                     "phase": e.phase, "percent": e.percent, "error": e.error,
                     "started_ms": e.started_ms, "ended_ms": e.ended_ms,
                 }),
-                task_seq: Some(task),
+                task_seq: Some(if e.task > 0 { e.task } else { task }),
                 client_id: Some(key),
                 from: "child_space",
             }));

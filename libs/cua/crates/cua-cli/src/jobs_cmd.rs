@@ -524,22 +524,41 @@ fn transient(e: &CuaError) -> bool {
     matches!(e, CuaError::Timeout(_) | CuaError::Internal(_))
 }
 
+/// The waits between the tries of a submit: the pool's link (a tunnel, a flapping network) is
+/// given up to about a minute to come back, in growing steps.
+fn submit_waits() -> Vec<Duration> {
+    [1, 2, 4, 8, 8, 8, 8, 8, 8]
+        .map(Duration::from_secs)
+        .to_vec()
+}
+
+/// What is said, once, when the pool does not answer: plainly, with how long it keeps trying.
+fn unreachable_notice(total: Duration) -> String {
+    format!(
+        "Your computers did not answer (a network or tunnel hiccup is the usual cause). Trying again for up to {} s; nothing was started yet.",
+        total.as_secs()
+    )
+}
+
 /// Sends `params` until the coordinator of its run (this machine's for an
 /// `l-` run, the pool's for a `p-` one) acknowledges it (the same run id
-/// makes a repeat a no-op), at most 4 times.
+/// makes a repeat a no-op), for about a minute of transient failures.
 async fn submit_acknowledged(params: &Value) -> Result<Value, CuaError> {
     let target = target_of_run(params["run"].as_str().unwrap_or_default());
-    let mut delay = Duration::from_secs(1);
-    for i in 0.. {
+    let waits = submit_waits();
+    let total: Duration = waits.iter().sum();
+    for (i, wait) in waits.iter().enumerate() {
         match request(target, "submit", params.clone()).await {
-            Err(e) if transient(&e) && i < 3 => {
-                tokio::time::sleep(delay).await;
-                delay *= 2;
+            Err(e) if transient(&e) => {
+                if i == 0 {
+                    eprintln!("{}", unreachable_notice(total));
+                }
+                tokio::time::sleep(*wait).await;
             }
             r => return r,
         }
     }
-    unreachable!()
+    request(target, "submit", params.clone()).await
 }
 
 /// The key of a submission (hex): file, function, bundle, spec and flags.
@@ -1523,15 +1542,23 @@ pub async fn follow(
     let mut shown_attempt = 0u64;
     let mut placed_attempt = 0u64;
     let mut waiting_said = String::new();
+    let mut unreachable_said = false;
     loop {
         let r = match request(target_of_run(run_id), "run", json!({"run": run_id})).await {
             Ok(r) => r,
             Err(CuaError::Timeout(_)) => {
+                if !unreachable_said {
+                    unreachable_said = true;
+                    eprintln!(
+                        "Your computers did not answer; still trying. The run is not lost: it keeps going where it is."
+                    );
+                }
                 tokio::time::sleep(Duration::from_secs(1)).await;
                 continue;
             }
             Err(e) => return Err(e),
         };
+        unreachable_said = false;
         let attempt = r["gang"]["attempt"].as_u64().unwrap_or(1).max(1);
         let members: Vec<Value> = r["members"].as_array().cloned().unwrap_or_default();
         let of = |a: u64| -> Vec<Value> {
@@ -1798,6 +1825,20 @@ pub fn run_table(r: &Value) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_pool_that_does_not_answer_gets_a_minute_and_a_plain_sentence() {
+        let total: Duration = submit_waits().iter().sum();
+        assert!(
+            total >= Duration::from_secs(45) && total <= Duration::from_secs(75),
+            "{total:?}"
+        );
+        let m = unreachable_notice(total);
+        assert!(
+            m.contains("did not answer") && m.contains("nothing was started yet"),
+            "{m}"
+        );
+        assert!(!m.contains("tonic") && !m.contains("transport"), "{m}");
+    }
 
     #[test]
     fn a_run_is_followed_to_the_end_only_where_someone_is_watching() {

@@ -80,6 +80,10 @@ the random masks passed in as an input. Build neighbourhood features from one `m
 `mx.roll` inside a compiled gradient fails with a key-not-found error. Rasterize an SVG with `resvg_py`, not
 `cairosvg` (a job on a Mac cannot find cairo). A neural cellular automaton on a logo reaches a recognisable result
 in one 85-second run this way.
+A tested script for this exact job is in `examples/nca_mlx.py` next to this file: copy it beside the logo as
+`logo.svg`, change nothing, and `cua run nca_mlx.py::train --detach`. It trains for 85 seconds and returns the grown
+picture and the weights. Writing your own is how a run ends up failing (for example `mx.value_and_grad` takes no
+`has_aux`: return `(loss, x)` and the first value is the one differentiated).
 
 ## Follow and finish
 

@@ -1708,7 +1708,7 @@ mod tests {
         let b = call_value("upsell.proBanner", json!({"plan": "free"})).unwrap();
         assert_eq!(
             b,
-            json!({"visible": true, "text": "Run more Spaces at once with Pro", "button": "Upgrade"})
+            json!({"visible": true, "text": "Use more computers at once with Pro", "button": "Upgrade"})
         );
         let b = call_value("upsell.proBanner", json!({"plan": "pro"})).unwrap();
         assert_eq!(b["visible"], false);
@@ -1862,7 +1862,7 @@ mod tests {
                 .contains("on this PC in Windows Credential Manager,")
         );
         let linux = intro(json!({ "input": input, "hostOs": "linux" }));
-        assert!(linux.contains("on this machine,") && !linux.contains("Keychain"));
+        assert!(linux.contains("on this computer,") && !linux.contains("Keychain"));
         let help = |os: Value| {
             call_value(
                 "agentKeys.form",
@@ -1880,7 +1880,7 @@ mod tests {
         assert!(help(json!("windows")).contains("in Windows Credential Manager on this PC"));
         assert_eq!(
             help(json!("linux")),
-            "It's saved on this machine and won't be shown again."
+            "It's saved on this computer and won't be shown again."
         );
     }
 

@@ -897,7 +897,7 @@ impl Tool for GetWindowStateTool {
         // names the surface even on the capture-only path, where no AX tree is
         // present to identify it. Omitted per-field when WindowServer reports an
         // empty string.
-        if let Some(info) = crate::windows::window_info_by_id(window_id) {
+        if let Some(info) = crate::windows::describe_window(window_id) {
             if !info.app_name.is_empty() {
                 structured["app_name"] = serde_json::json!(info.app_name);
             }
@@ -909,14 +909,14 @@ impl Tool for GetWindowStateTool {
         if on_current_space == Some(false) {
             structured["on_current_space"] = serde_json::json!(false);
         }
-        if let Some(note) = off_space_staleness_note(on_current_space, chromium_browser_window(pid))
-        {
+        let chromium = chromium_browser_window(pid);
+        if let Some(note) = off_space_staleness_note(on_current_space, chromium) {
             structured["off_space_staleness"] = serde_json::json!(note);
             content.push(Content::text(note));
         }
         cua_driver_core::window_inspection::mark_browser_chrome_capture_coverage(
             &mut structured,
-            chromium_browser_window(pid).then_some(
+            chromium.then_some(
                 cua_driver_core::window_inspection::BrowserChromeCaptureCoverage::MayBeIncomplete,
             ),
         );
@@ -1185,6 +1185,16 @@ fn element_entry(node: &crate::ax::tree::AXNode, snapshot_id: Option<u32>) -> se
     }
     if let Some(label) = label {
         entry["label"] = serde_json::Value::String(label);
+    }
+    for (key, value) in [
+        ("title", node.title.as_deref()),
+        ("description", node.description.as_deref()),
+        ("placeholder", node.placeholder.as_deref()),
+        ("subrole", node.subrole.as_deref()),
+    ] {
+        if let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) {
+            entry[key] = serde_json::Value::String(value.to_owned());
+        }
     }
     // Surface the element's AXValue separately from `label`. `label`
     // collapses title→description→value→identifier into one display
@@ -1681,6 +1691,8 @@ mod tests {
             title: title.map(|s| s.to_string()),
             value: None,
             description: None,
+            placeholder: None,
+            subrole: None,
             identifier: None,
             help: None,
             actions,
@@ -1916,6 +1928,120 @@ mod tests {
         let entry = &build_elements_array_with_token(&nodes, None)[0];
         for key in ["value_description", "min", "max", "enabled", "selected"] {
             assert!(entry.get(key).is_none(), "{key} must be omitted");
+        }
+    }
+
+    #[test]
+    fn search_field_identities_survive_protocol_conformance() {
+        let mut search = node(Some(0), "AXTextField", None, 1, None, None, vec![]);
+        search.title = Some("  Search title  ".into());
+        search.description = Some("\nSearch description\t".into());
+        search.placeholder = Some("  Search chatrooms, participants\n".into());
+        search.subrole = Some("\tAXSearchField  ".into());
+        search.value = Some("Search-like AXValue".into());
+        search.value_state = search.value.clone();
+
+        let entry = element_entry(&search, None);
+        let wire = cua_driver_core::mcp_result::conforming_tool_result(
+            "get_window_state",
+            serde_json::json!({
+                "content": [],
+                "isError": false,
+                "structuredContent": {
+                    "pid": 7,
+                    "window_id": 9,
+                    "elements": [entry],
+                }
+            }),
+        );
+        assert_eq!(wire["isError"], false, "{wire}");
+        let element = &wire["structuredContent"]["elements"][0];
+        assert_eq!(element["title"], "Search title");
+        assert_eq!(element["description"], "Search description");
+        assert_eq!(element["placeholder"], "Search chatrooms, participants");
+        assert_eq!(element["subrole"], "AXSearchField");
+        assert_eq!(element["value"], "Search-like AXValue");
+    }
+
+    #[test]
+    fn search_field_names_and_send_guard_negatives_keep_distinct_identities() {
+        let placeholder_only = {
+            let mut field = node(Some(0), "AXTextField", None, 1, None, None, vec![]);
+            field.placeholder = Some(" Search chatrooms, participants ".into());
+            element_entry(&field, None)
+        };
+        assert_eq!(
+            placeholder_only["placeholder"],
+            "Search chatrooms, participants"
+        );
+        assert!(placeholder_only.get("title").is_none());
+        assert!(placeholder_only.get("description").is_none());
+        assert!(placeholder_only.get("subrole").is_none());
+
+        let subrole_only = {
+            let mut field = node(Some(1), "AXTextField", None, 1, None, None, vec![]);
+            field.subrole = Some(" AXSearchField ".into());
+            element_entry(&field, None)
+        };
+        assert_eq!(subrole_only["subrole"], "AXSearchField");
+        assert!(subrole_only.get("placeholder").is_none());
+
+        let composer = {
+            let mut field = node(
+                Some(2),
+                "AXTextArea",
+                Some("Enter public message"),
+                1,
+                None,
+                None,
+                vec![],
+            );
+            field.placeholder = Some(" Message ".into());
+            field.value = Some("Search chatrooms, participants".into());
+            field.value_state = field.value.clone();
+            element_entry(&field, None)
+        };
+        assert_eq!(composer["label"], "Enter public message");
+        assert_eq!(composer["title"], "Enter public message");
+        assert_eq!(composer["placeholder"], "Message");
+        assert_eq!(composer["value"], "Search chatrooms, participants");
+        assert!(composer.get("subrole").is_none());
+
+        let unnamed = {
+            let mut field = node(Some(3), "AXTextField", None, 1, None, None, vec![]);
+            field.value = Some("Search chatrooms, participants".into());
+            field.value_state = field.value.clone();
+            element_entry(&field, None)
+        };
+        assert_eq!(unnamed["label"], "Search chatrooms, participants");
+        assert_eq!(unnamed["value"], "Search chatrooms, participants");
+        for key in ["title", "description", "placeholder", "subrole"] {
+            assert!(
+                unnamed.get(key).is_none(),
+                "{key} must not come from AXValue"
+            );
+        }
+
+        let send_button = element_entry(
+            &node(
+                Some(4),
+                "AXButton",
+                Some("Send"),
+                1,
+                None,
+                Some([600.0, 800.0, 44.0, 32.0]),
+                vec!["AXPress".into()],
+            ),
+            None,
+        );
+        assert_eq!(send_button["role"], "AXButton");
+        assert_eq!(send_button["title"], "Send");
+        assert_eq!(
+            send_button["frame"],
+            serde_json::json!({"x":600.0,"y":800.0,"w":44.0,"h":32.0})
+        );
+        for key in ["description", "placeholder", "subrole"] {
+            assert!(send_button.get(key).is_none());
         }
     }
 

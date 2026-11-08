@@ -1263,6 +1263,16 @@ fn microvm_block_of(probe: &LocalProbe<'_>, os: SpaceOs) -> MicrovmBlock {
                 "needs the microVM tools: see cua runtime doctor".into()
             }
         }
+        // A PC: the microVM is QEMU on the Windows Hypervisor Platform, and the
+        // doctor says which piece is missing (the feature, QEMU, the guest init).
+        SpaceOs::Windows => {
+            let fc = detail("firecracker");
+            if fc.is_empty() {
+                "needs the Windows Hypervisor Platform: see cua runtime doctor".into()
+            } else {
+                fc
+            }
+        }
         _ => "needs a Mac or Linux with KVM".into(),
     })
 }
@@ -1489,14 +1499,15 @@ fn runtime_switch(image: &SandboxImage, env: &WizardEnv) -> Option<RuntimeSwitch
 }
 
 /// The one line under "Run on" when nothing can run the Space here and
-/// none of your machines is listed: how another Mac of yours joins.
-pub const OTHER_MAC_HINT: &str = "To use another Mac, open Cua Spaces on it, choose Set up for \
-     access and turn on Spaces for your machines. It then shows up here.";
+/// none of your computers is listed: how another Mac of yours joins (the
+/// same words as the first run's "Add another computer").
+pub const OTHER_MAC_HINT: &str =
+    "To use another Mac, install Cua Spaces on it and sign in. It then shows up here.";
 
-/// [`OTHER_MAC_HINT`] on Windows and Linux, where the other machine may be
+/// [`OTHER_MAC_HINT`] on Windows and Linux, where the other computer may be
 /// any computer.
-pub const OTHER_COMPUTER_HINT: &str = "To use another computer, open Cua Spaces on it, choose \
-     Set up for access and turn on Spaces for your machines. It then shows up here.";
+pub const OTHER_COMPUTER_HINT: &str =
+    "To use another computer, install Cua Spaces on it and sign in. It then shows up here.";
 
 /// The line under "Run on" naming how another machine joins, in the words
 /// of the system the app runs on.
@@ -2977,9 +2988,14 @@ pub struct WizardView {
 }
 
 fn runtime_word(r: &Runtime, kind: SpaceKind, os: SpaceOs) -> String {
+    // On a PC the microVM runtime is QEMU on the Windows Hypervisor Platform.
+    let label = match (r, os) {
+        (Runtime::Firecracker, SpaceOs::Windows) => "QEMU (Windows Hypervisor Platform)".into(),
+        _ => r.label(),
+    };
     format!(
         "{} {} on {}",
-        r.label(),
+        label,
         match kind {
             SpaceKind::Vm => "virtual machine",
             SpaceKind::Microvm => "microVM",
@@ -5316,7 +5332,7 @@ mod tests {
         assert_eq!(placement_options(&s, &e)[0].label, "This Mac");
         for (os, here, lower) in [
             (SpaceOs::Windows, "This PC", "this PC"),
-            (SpaceOs::Linux, "This machine", "this machine"),
+            (SpaceOs::Linux, "This computer", "this computer"),
         ] {
             let local = &placement_options_on(&s, &e, os)[0];
             assert_eq!(local.label, here);
@@ -5826,6 +5842,16 @@ mod tests {
             ("runtime.lume", "builtin", "Use built-in Lume")
         );
         assert_eq!(v.placement_hint.as_deref(), Some(OTHER_MAC_HINT));
+        // Plain words that match today's app: no Machines page, no "Set up for access" switch to find.
+        for hint in [OTHER_MAC_HINT, OTHER_COMPUTER_HINT] {
+            assert!(
+                hint.contains("install Cua Spaces on it and sign in"),
+                "{hint}"
+            );
+            for gone in ["machines", "Set up for access"] {
+                assert!(!hint.contains(gone), "{hint}");
+            }
+        }
         // Off a Mac, the other machine is any computer.
         for os in [SpaceOs::Windows, SpaceOs::Linux] {
             assert_eq!(
@@ -6228,7 +6254,7 @@ mod tests {
     /// choosing it does nothing.
     #[test]
     fn microvm_is_greyed_out_and_settings_says_why() {
-        let cases: [(WizardEnv, SpaceOs, &str); 7] = [
+        let cases: [(WizardEnv, SpaceOs, &str); 8] = [
             // A Mac before macOS 26 without cua's monitor.
             (
                 mac_env(
@@ -6286,7 +6312,18 @@ mod tests {
             (
                 mac_env(&["docker"], &[]),
                 SpaceOs::Windows,
-                "Needs a Mac or Linux with KVM.",
+                "Needs the Windows Hypervisor Platform: see cua runtime doctor.",
+            ),
+            (
+                mac_env(
+                    &["docker"],
+                    &[(
+                        "firecracker",
+                        "microVMs need the Windows feature Windows Hypervisor Platform",
+                    )],
+                ),
+                SpaceOs::Windows,
+                "MicroVMs need the Windows feature Windows Hypervisor Platform.",
             ),
             (
                 WizardEnv {

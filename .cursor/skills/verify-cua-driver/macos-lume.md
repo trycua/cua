@@ -16,9 +16,9 @@ $H --source /abs/clean/checkout full                   # full matrix (about an h
 $H --source /abs/clean/checkout full --standalone-browser
 ```
 
-`--source` defaults to this checkout. The source must be a clean git root, and its `HEAD` is the SHA under test. Use a detached worktree at the PR head, not a working branch with edits. The helper runs `lume-e2e --doctor` first. It refuses a focused AppKit cell when the SHA has no `scripts/ci/macos/appkit-cells.tsv`; use `full` there. The wrapper prints `evidence=<run dir>` before it clones and `result.json` at the end. Exit 0 means the runner passed and the wrapper verified the evidence and the standard-daemon restore. Exit 1 means a test or infrastructure failure. Exit 2 means it was blocked before execution.
+`--source` defaults to this checkout. The source must be a clean git root, and its `HEAD` is the SHA under test. Use a detached worktree at the PR head, not a working branch with edits. The helper runs `lume-e2e --doctor` first. The wrapper prints `evidence=<run dir>` before it clones and `result.json` at the end. Exit 0 means the runner passed and the wrapper verified the evidence and the standard-daemon restore. Exit 1 means a test or infrastructure failure. Exit 2 means it was blocked before execution.
 
-Focused cells are the names in `scripts/ci/macos/appkit-cells.tsv`, plus the shared scroll and typed-SDK click cells that the wrapper accepts. A focused pass is `mode: focused`, `focused_passing_cells: 1`. It is evidence for that cell only, never full-matrix certification.
+Main has no `scripts/ci/macos/appkit-cells.tsv` yet, so on main an AppKit change runs `full`. The cells you can focus on main are `macos-textedit-type-text-ax-background`, `macos-{electron,tauri,wkwebview}-scroll-ax-{foreground,background}` and `macos-{electron,tauri,wkwebview}-left-click-ax-background-typed-sdk`. Pick the one whose route the diff changes. On a branch that carries the manifest, its AppKit names can be focused too. A focused pass is `mode: focused`, `focused_passing_cells: 1`. It is evidence for that cell only, never full-matrix certification.
 
 A Mac without the wrapper has to follow the runner README by hand: clone a worker, run `sync-vm-worktree.sh push`, run `run-all.sh` in the guest Terminal, run `pull-artifacts`, then stop the worker.
 
@@ -44,6 +44,8 @@ On the relay Mac mini:
 - **AppKit fixture hang.** On the host desktop, `~/Library/Application Support/com.apple.sharedfilelist` returns `Interrupted system call` (EINTR). The AppKit fixture's main thread then blocks in the Apple menu's recent-items lookup, and AX calls return `-25204`. `harness_appkit_smoke` fails on main this way too. Run AppKit cells in the Lume guest only. Host-side `cargo test` for `platform-macos` unit tests is fine.
 - **Root-owned `~/.npm`.** Host-side `npm ci` and `npm install` fail with `EACCES`. Pass a private cache, for example `npm ci --cache "$(mktemp -d)"`, and delete it afterwards. The guest is unaffected.
 - `lume ls` lists every past `cua-e2e-*` worker. The wrapper only stops them, so don't treat a stopped worker as the seed, and don't prune VMs from a verify run.
+- **Blocked before a VM starts.** Doctor refuses under `minimum_free_gib` (80) of free disk, and a second run refuses while another holds `run.lock`. Report the lane as blocked with that reason, not as having no guest.
+- **Lume 0.5.3 `lume stop` kills itself, not the VM,** so the run ends `worker_stopped: false` and `incomplete` even when every cell passed. Read `runner_exit` and `summary.md` for the test result. Stop that worker with `kill -TERM` on its exact `lume run <worker>` pid, never `lume serve`. Lume on main finds the owner from a recorded file instead, so updating the installed lume fixes it.
 
 ## Report
 

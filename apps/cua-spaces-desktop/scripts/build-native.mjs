@@ -136,7 +136,24 @@ function buildNative() {
   strip(join(outDir, libraryName), "lib");
   strip(join(outDir, "cua_node_runtime.node"), "lib");
   strip(join(outDir, cliName), "exe");
+  if (platform === "win32" && arch === "x64") buildGuestInit();
   console.log(`native layer for ${target} in ${outDir}`);
+}
+
+/**
+ * Windows microVMs boot the static Linux guest init (QEMU on the Windows
+ * Hypervisor Platform runs a Linux guest): `cua-microvm-init`, built for
+ * x86_64-unknown-linux-musl with the Rust toolchain's own linker (no C toolchain
+ * needed) and shipped next to `cua.exe`, where the daemon looks for it.
+ */
+function buildGuestInit() {
+  const musl = "x86_64-unknown-linux-musl";
+  run("rustup", ["target", "add", musl], { cwd: cuaRoot });
+  const env = { ...process.env, CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: "rust-lld" };
+  run("cargo", ["build", "--locked", "--release", "-p", "cua-microvm-init", "--target", musl], { cwd: cuaRoot, env });
+  const init = join(cargoTarget, musl, "release", "cua-microvm-init");
+  if (!existsSync(init)) throw new Error(`missing ${init}`);
+  copyFileSync(init, join(outDir, "cua-microvm-init"));
 }
 
 /* ---- Bindings ------------------------------------------------------------- */

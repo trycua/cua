@@ -931,6 +931,12 @@ fn main() {
         cli::Command::Autostart { subcommand } => {
             autostart::run_autostart_cmd(&subcommand);
         }
+        cli::Command::KwinCapture {
+            subcommand,
+            override_portal_deny,
+        } => {
+            cli::run_kwin_capture_cmd(&subcommand, override_portal_deny);
+        }
         cli::Command::Skills { subcommand, flags } => {
             skills::run(&subcommand, &flags);
         }
@@ -1252,6 +1258,13 @@ fn main() -> anyhow::Result<()> {
         }
         cli::Command::Autostart { subcommand } => {
             autostart::run_autostart_cmd(&subcommand);
+            Ok(())
+        }
+        cli::Command::KwinCapture {
+            subcommand,
+            override_portal_deny,
+        } => {
+            cli::run_kwin_capture_cmd(&subcommand, override_portal_deny);
             Ok(())
         }
         cli::Command::Skills { subcommand, flags } => {

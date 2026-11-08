@@ -2,6 +2,7 @@
   "name": "@cua/cua-spaces-web",
   "private": true,
   "version": "0.0.0",
+  "packageManager": "pnpm@11.20.0",
   "license": "FSL-1.1-MIT",
   "description": "Cua Spaces web UI, shared by the desktop shells",
   "type": "module",

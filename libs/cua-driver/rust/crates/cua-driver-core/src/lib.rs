@@ -92,6 +92,7 @@ pub mod history;
 #[cfg(feature = "keyring")]
 pub mod history_keyring;
 pub mod image_utils;
+pub mod input_pacing;
 pub mod interactive_input;
 pub mod key_pacing;
 pub mod launch_guard;
@@ -129,6 +130,7 @@ pub mod tool;
 pub mod tool_activity;
 pub mod tool_args;
 pub mod tool_schema;
+pub mod type_pacing;
 pub mod video;
 pub mod video_ffmpeg;
 pub mod walk_budget;

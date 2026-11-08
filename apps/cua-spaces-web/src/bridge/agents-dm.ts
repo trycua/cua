@@ -254,14 +254,18 @@ export function useAgentChats(attempts: readonly ChatAttempt[] = []): AgentChats
     const known = new Set(list.map((s) => s.id));
     misses.current.prune(known);
     for (const id of [...reads.current!.keys()]) if (!known.has(id)) reads.current!.delete(id);
-    // A pass's answers redraw the page together, not one by one.
-    const flush = () => {
+    // A pass's answers redraw the page together, not one by one. The pass's end is drawn with its last answers,
+    // so the list never shows as empty for a moment before they arrive.
+    let settleNext = false;
+    const flush = (settle = false) => {
+      settleNext ||= settle;
       if (flushTimer !== undefined) return;
       flushTimer = setTimeout(() => {
         flushTimer = undefined;
         if (!alive) return;
         saveLastKnown(reads.current!);
         setVersion((v) => v + 1);
+        if (settleNext) setSettled(true);
       }, FLUSH_MS);
     };
     const readOne = async (space: Space) => {
@@ -289,10 +293,7 @@ export function useAgentChats(attempts: readonly ChatAttempt[] = []): AgentChats
       // Spaces that answered last time go first: the slow ones are last in line, never in front.
       asked.sort((x, y) => Number(reads.current!.has(y.id)) - Number(reads.current!.has(x.id)));
       await forEachLimit(asked, CHATS_PARALLEL, CHATS_SLOT_MS, readOne);
-      if (alive) {
-        setSettled(true);
-        flush();
-      }
+      if (alive) flush(true);
     };
     // One pass at a time, the next after the last one's slots end: slower as the
     // account grows (`chatsPollMs`), spread so pages don't ask together, and

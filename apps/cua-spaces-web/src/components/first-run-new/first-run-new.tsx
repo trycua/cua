@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 /**
- * The new first run (Labs, "Try the new setup"; CUA-3318), phase 1 of the approved storyboard
+ * The first run (CUA-3318), phase 1 of the approved storyboard
  * (CUA-3193): drawn on the spaces.cua.ai hero (its starfield, keys, Outfit title, white button and
  * the Cua lockup). The words and choices are `lib/first-run-new.ts`; this file reads the app's state
  * (sign-in, the account's computers, this computer's agents and whether it can make a separate
@@ -10,22 +10,23 @@
  */
 
 import { useNavigate } from "@tanstack/react-router";
-import { CheckIcon, ChevronRightIcon, CopyIcon, LoaderCircleIcon, MonitorIcon, PlusIcon, ShieldIcon, UserPlusIcon } from "lucide-react";
+import { CheckIcon, ChevronRightIcon, CopyIcon, LoaderCircleIcon, MonitorIcon, PlusIcon } from "lucide-react";
 import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 
 import { folderLabel, isNeedsProof, newPendingId, useMachines, useSession, useSettings, useSpaces, type SignInPhase } from "@/bridge";
 import { BridgeContext } from "@/bridge/BridgeProvider";
-import { useAppPermissions, type AppPermissionsState } from "@/bridge/app-permissions";
+import { useAppPermissions } from "@/bridge/app-permissions";
 import { readFirstRun, useFirstRunSaved, writeFirstRun } from "@/bridge/first-run";
 import { hostOs } from "@/bridge/host-os";
 import { useFirstSpaceOffers } from "@/bridge/new-space-hooks";
-import { readSavedOnboarding, writeSavedOnboarding } from "@/bridge/onboarding";
+import { onboardingInitial, onboardingTelemetry, onboardingView, readSavedOnboarding, writeSavedOnboarding } from "@/bridge/onboarding";
 import { extraName, spokenName } from "@/bridge/space-names";
 import { AddComputerSheet } from "@/components/add-computer-sheet";
-import { AppPermissionList } from "@/components/app-permissions";
+import { AppPermissionList, type PermissionsView } from "@/components/app-permissions";
 import { AppMarkImage } from "@/components/agents/harness-mark";
 import { agoLabel, useRecentThreads } from "@/components/ask-first/pick-up";
 import { CuaLogo } from "@/components/cua-logo";
+import { Switch } from "@/components/ui/switch";
 import { permissionsStepView, type PermissionsStepView } from "@/lib/app-permissions";
 import { addImportedTask, type AskTask } from "@/lib/ask-first";
 import {
@@ -35,7 +36,6 @@ import {
   dotStep,
   INSTALL_PAGES,
   NEW_RUN_EMPTY,
-  nextView,
   placeName,
   reachedAfter,
   readyView,
@@ -43,14 +43,15 @@ import {
   stepDots,
   togglePick,
   WELCOME,
+  welcomeUsage,
   whereView,
   type AgentView,
   type ComputerRow,
   type NewRunSaved,
-  type NextView,
   type ReadyView,
   type SignInView,
   type StepDot,
+  type WelcomeUsage,
   type WhereView,
 } from "@/lib/first-run-new";
 import { spaceState } from "@/lib/spaces";
@@ -249,11 +250,27 @@ export function StepDots({ dots, onGo }: { dots: StepDot[]; onGo: (i: number, vi
 
 /* ---- The screens (drawn from their views, so tests draw every state) --------------------- */
 
-export function WelcomeScreen({ onAdd }: { onAdd: () => void }) {
+export function WelcomeScreen({ onAdd, usage, onUsage, onUsageLink }: { onAdd: () => void; usage?: WelcomeUsage | null; onUsage?: (on: boolean) => void; onUsageLink?: () => void }) {
   return (
     <div data-new-run="welcome">
       <Title>{WELCOME.title}</Title>
       <Line>{WELCOME.line}</Line>
+      {usage ? (
+        // Before anything is sent: the hosts hold every usage event until the run leaves this screen.
+        <div className={cn("mt-6 flex max-w-[520px] items-start gap-3 text-[13px] leading-[19px] font-medium", GREY)} data-new-run-usage={usage.on ? "on" : "off"}>
+          <Switch className="mt-px shrink-0" checked={usage.on} disabled={!usage.enabled} onCheckedChange={(on) => onUsage?.(on)} aria-label={usage.label} data-new-run-usage-switch="" />
+          <span className="min-w-0">
+            <span className="block text-white">{usage.label}</span>
+            <span className="block" data-new-run-usage-notice="">
+              {usage.notice}{" "}
+              <button type="button" className="underline underline-offset-2 hover:text-white" onClick={onUsageLink} data-new-run-usage-link="">
+                {usage.linkLabel}
+              </button>
+            </span>
+            {usage.help ? <span className="block">{usage.help}</span> : null}
+          </span>
+        </div>
+      ) : null}
       <Actions>
         <button type="button" className={WHITE_BUTTON} onClick={onAdd} data-onboarding-primary="">
           {WELCOME.primary}
@@ -420,6 +437,8 @@ export function WhereScreen({
             </>
           ) : null}
         </div>
+        {/* Only where this computer can make one (CUA-3150, idea D). */}
+        {sep ? (
         <div className="mt-[min(18px,2vh)] max-w-[480px] px-[18px]" data-new-run-separate={sep.state} data-disabled={sep.disabled ? "" : undefined}>
           <div className={cn("flex items-center gap-2 text-[14px] leading-5 font-semibold", sep.disabled ? GREY : "text-white")}>
             <OsMark os="linux" className="h-[15px] w-4 shrink-0" />
@@ -440,6 +459,7 @@ export function WhereScreen({
             </div>
           ) : null}
         </div>
+        ) : null}
       </div>
       <Actions>
         <button type="button" className={WHITE_BUTTON} disabled={!view.continueEnabled} onClick={onContinue} data-onboarding-primary="">
@@ -576,44 +596,8 @@ export function ReadyScreen({ view, agent, onDone, onContinueChat, place }: { vi
   );
 }
 
-export function NextScreen({ view, onRow, onDone, apps }: { view: NextView; onRow: (id: NextView["rows"][number]["id"]) => void; onDone: () => void; apps?: ReactNode }) {
-  const ICON = { invite: UserPlusIcon, "add-computer": MonitorIcon, apps: ShieldIcon } as const;
-  return (
-    <div data-new-run="next">
-      <Title>{view.title}</Title>
-      <Line>{view.line}</Line>
-      <div className={cn(CARD, "mt-[min(28px,3vh)]")} data-new-run-next="">
-        {view.rows.map((r) => {
-          const Icon = ICON[r.id];
-          return (
-            <div key={r.id}>
-              {/* design-ok: the first run is drawn from the spaces.cua.ai hero (storyboard CUA-3193), not the app's pages */}
-              <button type="button" className="flex w-full items-center gap-3 rounded-[14px] px-3 py-2.5 text-left outline-none hover:bg-white/[0.06] focus-visible:ring-2 focus-visible:ring-[#5ec0e8]" onClick={() => onRow(r.id)} data-new-run-next-row={r.id}>
-                <span className="flex size-7 shrink-0 items-center justify-center rounded-full text-white shadow-[inset_0_0_0_1px_rgb(255_255_255/0.28)]">
-                  <Icon className="size-3.5" />
-                </span>
-                <span className="min-w-0 flex-1">
-                  <span className="block text-[15px] leading-5 font-medium text-white">{r.title}</span>
-                  <span className={cn("block text-[13.5px] leading-[19px] font-medium", GREY)}>{r.sub}</span>
-                </span>
-                <ChevronRightIcon className={cn("size-4 shrink-0", GREY)} />
-              </button>
-              {r.id === "apps" ? apps : null}
-            </div>
-          );
-        })}
-      </div>
-      <Actions>
-        <button type="button" className={WHITE_BUTTON} onClick={onDone} data-onboarding-primary="">
-          {view.done}
-        </button>
-      </Actions>
-    </div>
-  );
-}
-
 /** 2b, on a Mac: Cua Spaces' two permissions (the same rows as the Cua Driver page), each with Allow, and Later. Never blocks the run. */
-export function PermissionsScreen({ view, perms, onContinue }: { view: PermissionsStepView; perms: Pick<AppPermissionsState, "data" | "allow">; onContinue: () => void }) {
+export function PermissionsScreen({ view, perms, onContinue }: { view: PermissionsStepView; perms: PermissionsView; onContinue: () => void }) {
   return (
     <div data-new-run="permissions">
       <Title>{view.title}</Title>
@@ -632,6 +616,27 @@ export function PermissionsScreen({ view, perms, onContinue }: { view: Permissio
 
 /** The daemon's refusal on a Mac that can't run virtual computers (`cua_create_failure::preflight::MAC_UNSUPPORTED`). */
 const CANT_RUN = /can['\u2019]t run (Spaces itself|virtual computers)/i;
+
+/**
+ * The usage data's name for each screen (`schema::FIRST_RUN_STEPS`), so the onboarding funnel keeps its steps:
+ * Ready ends the run and is counted by its finish, not as a step.
+ */
+const FUNNEL_STEP: Partial<Record<NewRunScreenName, string>> = {
+  welcome: "welcome",
+  signin: "sign_in",
+  where: "create_space",
+  permissions: "permissions",
+  agent: "connect_agent",
+};
+
+/** Usage events never get in the way of the run. */
+function track(send: () => void): void {
+  try {
+    send();
+  } catch {
+    // An older core that reads the state differently: no event.
+  }
+}
 
 /** The new first run's whole page. */
 export function NewFirstRun() {
@@ -668,9 +673,34 @@ export function NewFirstRun() {
   const [addOpen, setAddOpen] = useState(false);
   // "Use a code from another computer": the sheet opens on "Enter a code".
   const [addEnter, setAddEnter] = useState(false);
-  const [appsOpen, setAppsOpen] = useState(false);
   const mainRef = useRef<HTMLElement>(null);
   useFadeUnder(mainRef, s.screen);
+
+  // The onboarding funnel (`cua_onboarding_*`): the run starts once, then each screen counts when it shows.
+  const core = ctx?.core ?? null;
+  const telemetry = settings.data?.telemetry ?? null;
+  const funnelState = (c: NonNullable<typeof core>) => ({
+    ...onboardingInitial(c, session.data?.identity ?? null),
+    step: s.screen === "welcome" || s.screen === "signin" ? ("welcome" as const) : ("agents" as const),
+    runCounted: true,
+    telemetry: telemetry ? onboardingTelemetry(telemetry) : null,
+  });
+  // Screen 1's usage line, in the core's words (the same as Settings, Privacy).
+  const usage = s.screen === "welcome" && core && telemetry ? welcomeUsage(onboardingView(core, { ...onboardingInitial(core, null), step: "welcome", telemetry: onboardingTelemetry(telemetry) })) : null;
+  const runStarted = useRef(false);
+  useEffect(() => {
+    if (runStarted.current || !store || !core || !telemetry) return;
+    runStarted.current = true;
+    track(() => store.trackOnboarding({ ...onboardingInitial(core, null), telemetry: onboardingTelemetry(telemetry) }, { type: "start" }));
+  }, [store, core, telemetry]);
+  useEffect(() => {
+    const step = FUNNEL_STEP[s.screen];
+    if (store && step) track(() => store.trackFirstRunStep(step, "step_viewed"));
+  }, [store, s.screen]);
+  const funnel = (action: string, detail = "none") => {
+    const step = FUNNEL_STEP[s.screen];
+    if (store && step) track(() => store.trackFirstRunStep(step, action, detail));
+  };
 
   // A new screen: focus moves to its title, so a screen reader reads it. Moved with the arrow keys on the
   // step dots, focus stays on the dots instead.
@@ -771,9 +801,9 @@ export function NewFirstRun() {
     };
   }, [s.screen, adapter]);
 
-  // 2b and screen 6's apps row: Cua Spaces' permissions, read while they show. A host with none to give (not a
-  // Mac, an older app) has no step: it goes on to the coding agent.
-  const perms = useAppPermissions(s.screen === "permissions" || (s.screen === "next" && appsOpen));
+  // 2b: Cua Spaces' permissions, read while the step shows. A host with none to give (not a Mac, an older app) has
+  // no step: it goes on to the coding agent.
+  const perms = useAppPermissions(s.screen === "permissions");
   useEffect(() => {
     if (s.screen === "permissions" && !perms.loading && !perms.available) go("agent");
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -821,6 +851,7 @@ export function NewFirstRun() {
     machines: machines.data ?? null,
     picks: s.picks,
     canMakeSeparate,
+    separateRefused: cantRun,
     separateBlocked: linux?.blocked ?? null,
     separate,
     now,
@@ -871,28 +902,45 @@ export function NewFirstRun() {
   const open = (url: string) => void session.openExternal(url).catch(() => {});
 
   const leave = () => {
+    funnel("step_skipped", "step");
+    if (store && core) track(() => store.trackOnboardingSkipped(funnelState(core)));
     session.cancelSignIn();
     writeSavedOnboarding({ ...readSavedOnboarding(), skipped: true });
     writeFirstRun({ finishedLater: true });
-    void navigate({ to: "/spaces" });
+    // Home is where the app opens (CUA-3551), so leaving setup early lands there too.
+    void navigate({ to: "/home" });
   };
   const skip = () => {
     if (s.screen === "welcome" || s.screen === "signin") {
+      funnel("step_skipped", "step");
       session.cancelSignIn();
       go("where");
     } else leave();
   };
-  const finish = async () => {
+  const finished = async () => {
+    if (store && core) track(() => store.trackOnboardingFinished(funnelState(core)));
     await session.completeOnboarding(thisState === "added" && signedIn ? "host" : "client").catch(() => {});
-    writeFirstRun({ finishedLater: false, todosClosed: false });
+    // Setup ends on Home, ready for the first job; the rest is asked for there once that job is done (CUA-3150, C).
+    const offer = readFirstRun().restOffer === "dismissed" ? ("dismissed" as const) : ("waiting" as const);
+    writeFirstRun({ finishedLater: false, todosClosed: false, restOffer: offer, restSinceMs: Date.now() });
+  };
+  const finish = async () => {
+    await finished();
     await navigate({ to: "/home" });
   };
   // Continue in Cua (CUA-3319): setup is done and the picked chat opens as a Home task. Nothing runs until the person sends.
   const continueChat = async (task: AskTask) => {
-    await session.completeOnboarding(thisState === "added" && signedIn ? "host" : "client").catch(() => {});
-    writeFirstRun({ finishedLater: false, todosClosed: false });
+    await finished();
     await navigate({ to: "/home/$taskId", params: { taskId: task.id } });
   };
+  // A run saved on the old last screen ("Now bring the rest in") finishes now: that screen lives on Home.
+  const finishing = useRef(false);
+  useEffect(() => {
+    if (s.screen !== "next" || finishing.current) return;
+    finishing.current = true;
+    void finish();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [s.screen]);
 
   const startSignIn = () => {
     started.current = true;
@@ -900,7 +948,6 @@ export function NewFirstRun() {
     void session.signIn().catch(() => {});
   };
 
-  const accountUrl = settings.data?.accountUrl ?? "https://app.cua.ai";
   const dots = stepDots(s.screen, reachedAfter(s.reached, s.screen));
   const goDot = (i: number, viaKey: boolean) => {
     const to = dots?.[i]?.to;
@@ -914,7 +961,7 @@ export function NewFirstRun() {
   let body: ReactNode = null;
   switch (s.screen) {
     case "welcome":
-      body = <WelcomeScreen onAdd={startSignIn} />;
+      body = <WelcomeScreen onAdd={startSignIn} usage={usage} onUsage={(on) => void settings.updateSetting("telemetry", on).catch(() => {})} onUsageLink={() => usage && open(usage.linkUrl)} />;
       break;
     case "signin":
       body = (
@@ -970,27 +1017,9 @@ export function NewFirstRun() {
       break;
     case "ready":
       body = s.agent ? (
-        <ReadyScreen view={readyView({ os, agent: s.agent, computers: pickedNames() })} agent={s.agent} place={placeName(os)} onDone={() => go("next")} onContinueChat={(task) => void continueChat(task)} />
+        <ReadyScreen view={readyView({ os, agent: s.agent, computers: pickedNames(), canMakeSeparate })} agent={s.agent} place={placeName(os)} onDone={() => void finish()} onContinueChat={(task) => void continueChat(task)} />
       ) : null;
       break;
-    case "next": {
-      body = (
-        <NextScreen
-          view={nextView({ os })}
-          onRow={(id) => {
-            if (id === "invite") open(`${accountUrl}/team`);
-            else if (id === "add-computer") setAddOpen(true);
-            else setAppsOpen((o) => !o);
-          }}
-          onDone={() => void finish()}
-          apps={
-            // design-ok: the first run is drawn from the spaces.cua.ai hero (storyboard CUA-3193), not the app's pages
-            appsOpen ? <AppPermissionList perms={perms} variant="hero" inset className="mx-3 mb-2 border-t border-white/[0.14] pt-2 pl-7" /> : null
-          }
-        />
-      );
-      break;
-    }
   }
 
   return (

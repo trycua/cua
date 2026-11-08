@@ -472,6 +472,7 @@ pub fn run_connect(clients: &[String], dry_run: bool, json: bool) {
 mod tests {
     use super::*;
 
+    #[cfg_attr(not(unix), allow(dead_code))]
     struct Fixture {
         _dir: tempfile::TempDir,
         env: Env,
@@ -516,6 +517,7 @@ mod tests {
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
     }
 
+    #[cfg(unix)]
     fn calls(f: &Fixture) -> String {
         std::fs::read_to_string(&f.log).unwrap_or_default()
     }

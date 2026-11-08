@@ -90,20 +90,90 @@ fn control_key_for_char(ch: char) -> Option<u16> {
 /// uppercase char (e.g. 'E') is seen as Shift+e and the modifier leaks into
 /// the next character (Swift fix: event.flags = []).
 fn char_key_events(source: &CGEventSource, ch: char) -> anyhow::Result<(CGEvent, CGEvent)> {
-    let (key_code, payload) = match control_key_for_char(ch) {
-        Some(code) => (code, None),
-        None => (0, Some(ch.to_string())),
-    };
+    match control_key_for_char(ch) {
+        Some(code) => key_events(source, code, None),
+        None => key_events(source, 0, Some(ch.encode_utf8(&mut [0; 4]))),
+    }
+}
+
+fn key_events(
+    source: &CGEventSource,
+    key_code: u16,
+    payload: Option<&str>,
+) -> anyhow::Result<(CGEvent, CGEvent)> {
     let make = |down: bool| -> anyhow::Result<CGEvent> {
         let event = CGEvent::new_keyboard_event(source.clone(), key_code, down)
             .map_err(|_| anyhow::anyhow!("CGEvent keyboard event failed"))?;
-        if let Some(payload) = &payload {
+        if let Some(payload) = payload {
             event.set_string(payload);
         }
         event.set_flags(CGEventFlags::CGEventFlagNull);
         Ok(event)
     };
     Ok((make(true)?, make(false)?))
+}
+
+/// Most UTF-16 units one keyboard event may carry
+/// (`CGEventKeyboardSetUnicodeString` documents a 20-unit ceiling).
+pub const MAX_UNICODE_UNITS_PER_EVENT: usize = 16;
+
+/// One keyboard event pair of batched typing.
+#[derive(Debug, PartialEq, Eq)]
+pub enum TypingChunk<'a> {
+    /// Plain text carried as one Unicode payload on a single key pair.
+    Text(&'a str),
+    /// A control character sent as its real Return/Tab key.
+    Control(char),
+}
+
+/// Split `text` into the fewest key-event pairs: runs of ordinary characters
+/// of at most [`MAX_UNICODE_UNITS_PER_EVENT`] UTF-16 units (never splitting a
+/// character), with `\n`, `\r` and `\t` kept as their own real key presses.
+pub fn plan_chunks(text: &str) -> Vec<TypingChunk<'_>> {
+    let mut chunks = Vec::new();
+    let mut start = 0;
+    let mut units = 0;
+    for (i, ch) in text.char_indices() {
+        if control_key_for_char(ch).is_some() {
+            if start < i {
+                chunks.push(TypingChunk::Text(&text[start..i]));
+            }
+            chunks.push(TypingChunk::Control(ch));
+            start = i + ch.len_utf8();
+            units = 0;
+            continue;
+        }
+        let n = ch.len_utf16();
+        if units + n > MAX_UNICODE_UNITS_PER_EVENT {
+            chunks.push(TypingChunk::Text(&text[start..i]));
+            start = i;
+            units = 0;
+        }
+        units += n;
+    }
+    if start < text.len() {
+        chunks.push(TypingChunk::Text(&text[start..]));
+    }
+    chunks
+}
+
+/// Type `text` to `pid` in batches: one key-down/key-up pair per
+/// [`TypingChunk`] instead of per character, with no inter-character sleep.
+/// A 100-character string costs about 7 pairs rather than 100.
+pub fn type_text_batched(pid: i32, text: &str) -> anyhow::Result<()> {
+    let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
+        .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
+    for chunk in plan_chunks(text) {
+        let (down, up) = match chunk {
+            TypingChunk::Text(run) => key_events(&source, 0, Some(run))?,
+            TypingChunk::Control(ch) => char_key_events(&source, ch)?,
+        };
+        post_keyboard_event(pid, &down);
+        key_gap_sleep();
+        post_keyboard_event(pid, &up);
+        key_gap_sleep();
+    }
+    Ok(())
 }
 
 /// Type a string character-by-character to `pid`.
@@ -123,7 +193,14 @@ pub fn type_text(pid: i32, text: &str) -> anyhow::Result<()> {
 
 /// Type a string character-by-character with an extra `inter_char_delay_ms`
 /// pause after each character (on top of the internal down/up key gap).
+///
+/// `inter_char_delay_ms == 0` selects [`type_text_batched`]: a caller that asks
+/// for no pacing gets the fast path; any positive delay keeps one event pair
+/// per character so debounce-sensitive fields see each key.
 pub fn type_text_with_delay(pid: i32, text: &str, inter_char_delay_ms: u64) -> anyhow::Result<()> {
+    if inter_char_delay_ms == 0 {
+        return type_text_batched(pid, text);
+    }
     let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
         .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
 
@@ -1456,5 +1533,92 @@ mod tests {
         assert!(is_screen_sharing_bundle_id("com.apple.ScreenSharing"));
         assert!(!is_screen_sharing_bundle_id("com.apple.screensharing"));
         assert!(!is_screen_sharing_bundle_id("com.microsoft.rdc.macos"));
+    }
+}
+
+#[cfg(test)]
+mod chunk_tests {
+    use super::*;
+
+    #[test]
+    fn short_text_is_one_pair() {
+        assert_eq!(plan_chunks("hello"), vec![TypingChunk::Text("hello")]);
+    }
+
+    #[test]
+    fn controls_split_runs_and_stay_real_keys() {
+        assert_eq!(
+            plan_chunks("a\tb\n"),
+            vec![
+                TypingChunk::Text("a"),
+                TypingChunk::Control('\t'),
+                TypingChunk::Text("b"),
+                TypingChunk::Control('\n'),
+            ]
+        );
+    }
+
+    #[test]
+    fn long_text_chunks_never_exceed_the_unit_limit_and_round_trip() {
+        let text = "x".repeat(100) + "é😀日本語" + &"y".repeat(33);
+        let chunks = plan_chunks(&text);
+        let mut joined = String::new();
+        for c in &chunks {
+            let TypingChunk::Text(t) = c else { panic!() };
+            assert!(t.encode_utf16().count() <= MAX_UNICODE_UNITS_PER_EVENT);
+            joined.push_str(t);
+        }
+        assert_eq!(joined, text);
+        assert!(chunks.len() < text.chars().count() / 8);
+    }
+
+    #[test]
+    fn astral_characters_are_not_split() {
+        let text = "😀".repeat(9); // 18 units
+        let chunks = plan_chunks(&text);
+        assert_eq!(chunks.len(), 2);
+        assert_eq!(chunks[0], TypingChunk::Text(&"😀".repeat(8)));
+    }
+
+    #[test]
+    fn empty_text_is_no_chunks() {
+        assert!(plan_chunks("").is_empty());
+    }
+}
+
+#[cfg(test)]
+mod bench {
+    use super::*;
+
+    /// Micro-benchmark: wall time to post a 100-character string to `pid`,
+    /// paced (the old 30 ms default) versus batched. Run with
+    /// `CUA_BENCH_PID=<pid> cargo test -p platform-macos bench_type_text_posting -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn bench_type_text_posting() {
+        let pid: i32 = std::env::var("CUA_BENCH_PID")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .expect("set CUA_BENCH_PID to a running app's pid");
+        let text = "The quick brown fox jumps over the lazy dog. 0123456789 hello there, world! Cua Driver type_text bench.";
+        assert!(text.chars().count() >= 100);
+        for (label, delay) in [
+            ("paced (before, delay_ms=30)", 30u64),
+            ("batched (after, delay_ms=0)", 0),
+        ] {
+            let mut ms: Vec<f64> = (0..9)
+                .map(|_| {
+                    let t = std::time::Instant::now();
+                    type_text_with_delay(pid, text, delay).unwrap();
+                    t.elapsed().as_secs_f64() * 1000.0
+                })
+                .collect();
+            ms.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            println!(
+                "{label}: p50 {:.0} ms over {} chars",
+                ms[ms.len() / 2],
+                text.chars().count()
+            );
+        }
     }
 }

@@ -2,14 +2,14 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 //! What the Machines page adds from the account: the machines waiting to be
-//! added ("Add machine", "Not me"), this machine's own trust, and who reached
+//! added ("Add computer", "Not me"), this machine's own trust, and who reached
 //! each machine lately. It replaces Settings > Trusted machines: one list of
 //! machines, with the state on the row and everything you can do to a machine
 //! on its page.
 //!
 //! [`view`] reads what the relay says of the account's sign-ins and its
 //! access log ([`crate::devices::DevicesInput`]) and answers in plain words:
-//! "machines", never "devices", and no jargon about enrolling. The web UI
+//! "computers", never "devices", and no jargon about enrolling. The web UI
 //! in the Mac app, in Electron and in the browser all draw this one view.
 
 use serde::{Deserialize, Serialize};
@@ -19,8 +19,8 @@ use crate::devices::{self, BannerTone, DevicesInput, EnrollmentKind, devices_vie
 /// Newest access lines one machine's page shows.
 pub const RECENT_PER_MACHINE: usize = 5;
 
-/// "Add machine": what the person does to a machine that waits.
-pub const ADD_LABEL: &str = "Add machine";
+/// "Add computer": what the person does to a machine that waits.
+pub const ADD_LABEL: &str = "Add computer";
 /// "Not me": the machine is not the person's.
 pub const NOT_ME_LABEL: &str = "Not me";
 /// The pending group's title.
@@ -39,7 +39,7 @@ pub enum PendingKind {
     Machine,
     /// A machine that signed in and waits for an added machine to approve it
     /// (or one that needs a quick check again): Add machine opens the
-    /// "Add this machine?" sheet, Not me denies it.
+    /// "Add this computer?" sheet, Not me denies it.
     SignIn,
 }
 
@@ -59,7 +59,7 @@ pub struct PendingMachine {
     pub line: String,
     /// When it last reached the relay (Unix seconds): "asked 2 minutes ago".
     pub since: Option<u64>,
-    /// The question the "Add this machine?" page asks.
+    /// The question the "Add this computer?" page asks.
     pub text: String,
     /// The relay machine (`kind` machine).
     pub machine: Option<String>,
@@ -73,7 +73,7 @@ pub struct PendingMachine {
     pub notify_title: String,
     /// See `notify_title`.
     pub notify_body: String,
-    /// "Add machine".
+    /// "Add computer".
     pub add_label: String,
     /// "Not me".
     pub not_me_label: String,
@@ -93,7 +93,7 @@ pub struct ThisMachineTrust {
     pub text: Option<String>,
     /// `warning` or `critical`.
     pub tone: Option<String>,
-    /// The button that fixes it ("Trust this machine"), when there is one.
+    /// The button that fixes it ("Trust this computer"), when there is one.
     pub action_label: Option<String>,
 }
 
@@ -157,7 +157,7 @@ pub fn view(input: &DevicesInput, now: u64, read_error: Option<&str>) -> Machine
             line: "Waiting to be added".into(),
             since: None,
             text: format!(
-                "Add \u{201c}{}\u{201d} to your machines? It signed in without proof it was you. Only add a machine you recognize.",
+                "Add \u{201c}{}\u{201d} to your computers? It signed in without proof it was you. Only add a computer you recognize.",
                 m.title
             ),
             machine: Some(m.id.clone()),
@@ -165,7 +165,7 @@ pub fn view(input: &DevicesInput, now: u64, read_error: Option<&str>) -> Machine
             expired: false,
             requires_presence: false,
             notify_title: format!("Add \u{201c}{}\u{201d}?", m.title),
-            notify_body: "A machine signed in to your Cua account and asks to be added.".into(),
+            notify_body: "A computer signed in to your Cua account and asks to be added.".into(),
             add_label: ADD_LABEL.into(),
             not_me_label: NOT_ME_LABEL.into(),
         })
@@ -342,12 +342,12 @@ mod tests {
         for p in &v.pending {
             assert_eq!(
                 (p.add_label.as_str(), p.not_me_label.as_str()),
-                ("Add machine", "Not me")
+                ("Add computer", "Not me")
             );
-            // The words are the machine's: no "device" and no "computer".
+            // The words are the computer's: no "device" and no "machine" (CUA-3551).
             for text in [&p.text, &p.line, &p.notify_title, &p.notify_body] {
                 assert!(!text.to_lowercase().contains("device"), "{text}");
-                assert!(!text.to_lowercase().contains("computer"), "{text}");
+                assert!(!text.to_lowercase().contains("machine"), "{text}");
             }
         }
         assert_eq!(v.pending[1].os, "macOS");
@@ -366,7 +366,7 @@ mod tests {
         assert_eq!(v.pending_count, 1);
         let me = v.this_machine.unwrap();
         assert_eq!(me.status, "Waiting to be added");
-        assert_eq!(me.action_label.as_deref(), Some("Trust this machine"));
+        assert_eq!(me.action_label.as_deref(), Some("Trust this computer"));
         assert!(!me.text.unwrap().to_lowercase().contains("device"));
     }
 
@@ -386,7 +386,7 @@ mod tests {
         // The session is not access; the other two are, newest first.
         assert_eq!(v.access.len(), 2);
         assert!(v.access[0].notable);
-        assert_eq!(v.access[0].text, "An untrusted machine used your account");
+        assert_eq!(v.access[0].text, "An untrusted computer used your account");
         let studio = access_for(&v.access, "studio", Some("dev_old"));
         assert_eq!(studio.len(), 2);
         assert!(access_for(&v.access, "other", None).is_empty());

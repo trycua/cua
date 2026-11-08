@@ -3,7 +3,7 @@
 
 // The shell as the SwiftUI main window has it (real routes, the wasm core,
 // the demo host): the enroll bar above every page, the power button on a
-// Space's tile, and the Keyvault's Settings rows the host reports.
+// Space's tile on Home, and the Keyvault's Settings rows the host reports.
 
 import { createMemoryHistory, createRouter, RouterProvider } from "@tanstack/react-router";
 import { cleanup, fireEvent, render, waitFor, within } from "@testing-library/react";
@@ -55,13 +55,13 @@ describe.skipIf(!wasmBuilt)("the shell as the SwiftUI main window (real routes, 
   it("shows the trust bar above every page while this machine is not trusted, and its button opens the sheet", async () => {
     const { router } = await mount("/spaces", { unenrolled: true });
     const bar = await found<HTMLElement>("[data-shell-devices-banner]");
-    expect(bar.textContent).toMatch(/Trust this machine/);
+    expect(bar.textContent).toMatch(/Trust this computer/);
 
     await router.navigate({ to: "/keyvault" });
     await found("[data-shell-devices-banner]");
 
     fireEvent.click(await found("[data-shell-banner-enroll]"));
-    await waitFor(() => expect(router.state.location.pathname).toBe("/machines"));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/spaces/computer/this-mac"));
     await found("[data-enroll]");
     // This machine's page says it under its own name: no second bar there.
     expect(document.querySelector("[data-shell-devices-banner]")).toBeNull();
@@ -83,8 +83,8 @@ describe.skipIf(!wasmBuilt)("the shell as the SwiftUI main window (real routes, 
     expect(document.querySelector("[data-shell-devices-banner]")).toBeNull();
   });
 
-  it("gives a Space's tile the core's power button, and pressing it turns the Space off", async () => {
-    const { calls } = await mount("/spaces");
+  it("gives a Space's tile on Home the core's power button, and pressing it turns the Space off", async () => {
+    const { calls } = await mount("/home");
     const tile = (await found<HTMLElement>('[data-space-id][data-state="running"]')).parentElement!;
     const power = await waitFor(() => {
       const b = tile.querySelector<HTMLButtonElement>("[data-tile-power]");

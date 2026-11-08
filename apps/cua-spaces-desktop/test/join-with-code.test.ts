@@ -119,13 +119,13 @@ describe("host.joinWithCode", () => {
 
 describe("cua:// links", () => {
   it("opens Machines with the code", () => {
-    expect(routeForDeepLink("cua://add/K7QM-4XPB-2RHD")).toBe("/machines?join=K7QM4XPB2RHD");
-    expect(routeForDeepLink("cua://add/k7qm4xpb2rhd")).toBe("/machines?join=K7QM4XPB2RHD");
-    expect(routeForDeepLink("cua://add?code=K7QM-4XPB-2RHD")).toBe("/machines?join=K7QM4XPB2RHD");
+    expect(routeForDeepLink("cua://add/K7QM-4XPB-2RHD")).toBe("/spaces?join=K7QM4XPB2RHD");
+    expect(routeForDeepLink("cua://add/k7qm4xpb2rhd")).toBe("/spaces?join=K7QM4XPB2RHD");
+    expect(routeForDeepLink("cua://add?code=K7QM-4XPB-2RHD")).toBe("/spaces?join=K7QM4XPB2RHD");
   });
   it("carries an http(s) relay", () => {
-    expect(routeForDeepLink("cua://add/K7QM-4XPB-2RHD?relay=https%3A%2F%2Fr.example")).toBe("/machines?join=K7QM4XPB2RHD&relay=https%3A%2F%2Fr.example");
-    expect(routeForDeepLink("cua://add/K7QM-4XPB-2RHD?relay=javascript%3Aalert(1)")).toBe("/machines?join=K7QM4XPB2RHD");
+    expect(routeForDeepLink("cua://add/K7QM-4XPB-2RHD?relay=https%3A%2F%2Fr.example")).toBe("/spaces?join=K7QM4XPB2RHD&relay=https%3A%2F%2Fr.example");
+    expect(routeForDeepLink("cua://add/K7QM-4XPB-2RHD?relay=javascript%3Aalert(1)")).toBe("/spaces?join=K7QM4XPB2RHD");
   });
   it("ignores anything else", () => {
     for (const bad of ["cua://keyvault", "cua://add", "cua://add/short", "cua://add/K7QM-4XPB-2RH!", "https://cua.ai/add/K7QM-4XPB-2RHD", "cua-spaces://app/machines", "not a url"]) {

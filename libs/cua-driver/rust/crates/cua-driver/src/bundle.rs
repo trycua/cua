@@ -13,9 +13,13 @@ use std::path::Path;
 pub const RELEASE_CLI_NAME: &str = "cua-driver";
 pub const LOCAL_CLI_NAME: &str = "cua-driver-local";
 
+#[cfg(target_os = "macos")]
 pub const RELEASE_APP_NAME: &str = "CuaDriver";
+#[cfg(target_os = "macos")]
 pub const LOCAL_APP_NAME: &str = "CuaDriverLocal";
+#[cfg(target_os = "macos")]
 pub const RELEASE_BUNDLE_ID: &str = "com.trycua.driver";
+#[cfg(target_os = "macos")]
 pub const LOCAL_BUNDLE_ID: &str = "com.trycua.driver.local";
 
 pub(crate) fn path_is_local(path: &Path) -> bool {
@@ -71,6 +75,7 @@ pub fn autostart_task_name() -> &'static str {
     }
 }
 
+#[cfg(target_os = "macos")]
 pub fn app_name() -> &'static str {
     if is_local_installation() {
         LOCAL_APP_NAME
@@ -84,6 +89,7 @@ pub fn app_bundle_path() -> String {
     format!("/Applications/{}.app", app_name())
 }
 
+#[cfg(target_os = "macos")]
 pub fn bundle_id() -> &'static str {
     if is_local_installation() {
         LOCAL_BUNDLE_ID

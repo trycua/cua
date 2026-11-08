@@ -39,6 +39,9 @@ import { Route as SpacesSpaceIdRouteImport } from './routes/spaces/$spaceId'
 import { Route as VolumeIndexRouteImport } from './routes/volume/index'
 import { Route as SettingsConnectionsAppRouteImport } from './routes/settings/connections.$app'
 import { Route as SettingsConnectorsAppRouteImport } from './routes/settings/connectors.$app'
+import { Route as SpacesCloudCloudIdRouteImport } from './routes/spaces/cloud/$cloudId'
+import { Route as SpacesComputerComputerIdIndexRouteImport } from './routes/spaces/computer/$computerId/index'
+import { Route as SpacesComputerComputerIdDriverRouteImport } from './routes/spaces/computer/$computerId/driver'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -175,6 +178,23 @@ const SettingsConnectorsAppRoute = SettingsConnectorsAppRouteImport.update({
   path: '/$app',
   getParentRoute: () => SettingsConnectorsRoute,
 } as any)
+const SpacesCloudCloudIdRoute = SpacesCloudCloudIdRouteImport.update({
+  id: '/spaces/cloud/$cloudId',
+  path: '/spaces/cloud/$cloudId',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SpacesComputerComputerIdIndexRoute =
+  SpacesComputerComputerIdIndexRouteImport.update({
+    id: '/spaces/computer/$computerId/',
+    path: '/spaces/computer/$computerId/',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const SpacesComputerComputerIdDriverRoute =
+  SpacesComputerComputerIdDriverRouteImport.update({
+    id: '/spaces/computer/$computerId/driver',
+    path: '/spaces/computer/$computerId/driver',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -204,6 +224,9 @@ export interface FileRoutesByFullPath {
   '/volume/': typeof VolumeIndexRoute
   '/settings/connections/$app': typeof SettingsConnectionsAppRoute
   '/settings/connectors/$app': typeof SettingsConnectorsAppRoute
+  '/spaces/cloud/$cloudId': typeof SpacesCloudCloudIdRoute
+  '/spaces/computer/$computerId/driver': typeof SpacesComputerComputerIdDriverRoute
+  '/spaces/computer/$computerId/': typeof SpacesComputerComputerIdIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -232,6 +255,9 @@ export interface FileRoutesByTo {
   '/volume': typeof VolumeIndexRoute
   '/settings/connections/$app': typeof SettingsConnectionsAppRoute
   '/settings/connectors/$app': typeof SettingsConnectorsAppRoute
+  '/spaces/cloud/$cloudId': typeof SpacesCloudCloudIdRoute
+  '/spaces/computer/$computerId/driver': typeof SpacesComputerComputerIdDriverRoute
+  '/spaces/computer/$computerId': typeof SpacesComputerComputerIdIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -262,6 +288,9 @@ export interface FileRoutesById {
   '/volume/': typeof VolumeIndexRoute
   '/settings/connections/$app': typeof SettingsConnectionsAppRoute
   '/settings/connectors/$app': typeof SettingsConnectorsAppRoute
+  '/spaces/cloud/$cloudId': typeof SpacesCloudCloudIdRoute
+  '/spaces/computer/$computerId/driver': typeof SpacesComputerComputerIdDriverRoute
+  '/spaces/computer/$computerId/': typeof SpacesComputerComputerIdIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -293,6 +322,9 @@ export interface FileRouteTypes {
     | '/volume/'
     | '/settings/connections/$app'
     | '/settings/connectors/$app'
+    | '/spaces/cloud/$cloudId'
+    | '/spaces/computer/$computerId/driver'
+    | '/spaces/computer/$computerId/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -321,6 +353,9 @@ export interface FileRouteTypes {
     | '/volume'
     | '/settings/connections/$app'
     | '/settings/connectors/$app'
+    | '/spaces/cloud/$cloudId'
+    | '/spaces/computer/$computerId/driver'
+    | '/spaces/computer/$computerId'
   id:
     | '__root__'
     | '/'
@@ -350,6 +385,9 @@ export interface FileRouteTypes {
     | '/volume/'
     | '/settings/connections/$app'
     | '/settings/connectors/$app'
+    | '/spaces/cloud/$cloudId'
+    | '/spaces/computer/$computerId/driver'
+    | '/spaces/computer/$computerId/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -368,6 +406,9 @@ export interface RootRouteChildren {
   OnboardingIndexRoute: typeof OnboardingIndexRoute
   SpacesIndexRoute: typeof SpacesIndexRoute
   VolumeIndexRoute: typeof VolumeIndexRoute
+  SpacesCloudCloudIdRoute: typeof SpacesCloudCloudIdRoute
+  SpacesComputerComputerIdDriverRoute: typeof SpacesComputerComputerIdDriverRoute
+  SpacesComputerComputerIdIndexRoute: typeof SpacesComputerComputerIdIndexRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -561,6 +602,27 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsConnectorsAppRouteImport
       parentRoute: typeof SettingsConnectorsRoute
     }
+    '/spaces/cloud/$cloudId': {
+      id: '/spaces/cloud/$cloudId'
+      path: '/spaces/cloud/$cloudId'
+      fullPath: '/spaces/cloud/$cloudId'
+      preLoaderRoute: typeof SpacesCloudCloudIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/spaces/computer/$computerId/': {
+      id: '/spaces/computer/$computerId/'
+      path: '/spaces/computer/$computerId'
+      fullPath: '/spaces/computer/$computerId/'
+      preLoaderRoute: typeof SpacesComputerComputerIdIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/spaces/computer/$computerId/driver': {
+      id: '/spaces/computer/$computerId/driver'
+      path: '/spaces/computer/$computerId/driver'
+      fullPath: '/spaces/computer/$computerId/driver'
+      preLoaderRoute: typeof SpacesComputerComputerIdDriverRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -632,6 +694,9 @@ const rootRouteChildren: RootRouteChildren = {
   OnboardingIndexRoute: OnboardingIndexRoute,
   SpacesIndexRoute: SpacesIndexRoute,
   VolumeIndexRoute: VolumeIndexRoute,
+  SpacesCloudCloudIdRoute: SpacesCloudCloudIdRoute,
+  SpacesComputerComputerIdDriverRoute: SpacesComputerComputerIdDriverRoute,
+  SpacesComputerComputerIdIndexRoute: SpacesComputerComputerIdIndexRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

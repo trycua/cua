@@ -15,6 +15,10 @@
 \*               unconditional). The arbiter's hardware-input check is not
 \*               used: the HID route posts its own events at the HID tap.
 \*
+\* Not modelled: the front read and set_front(prev) are two calls, so a switch
+\* in that gap is still overridden; and the HID route's second set_front(T)
+\* after a slow focus wait is one Front here. Both windows are milliseconds.
+\*
 \* Check with TLC (tla2tools.jar):
 \*   java -cp tla2tools.jar tlc2.TLC -config foreground_restore.cfg foreground_restore.tla
 \*     main today: FR1 fails, the restore undoes your app switch

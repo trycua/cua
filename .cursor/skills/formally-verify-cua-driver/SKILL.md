@@ -83,7 +83,7 @@ Never weaken a rule or delete an action to make a row pass. If the code changed 
 
 ## What is not covered
 
-These are models. A pass covers the model at its bounds, not the code. They leave out: more than one session, call or caller at a time (except where a row says so); real time, so deadlines and TTLs are only orderings; cleanup hooks that keep failing; the unattached Windows typing path (`TypingTurn::Settled`, a 40 ms sleep); the Linux foreground table and desktop identity; the macOS key-focus guard's order watch; a switch you make between a foreground turn's front read and its `set_front` (the activation overrides it), or back to the target during the turn; per-turn recording content; and the daemon's launch race, which is fixed by the lock files and not modelled here.
+These are models. A pass covers the model at its bounds, not the code. They leave out: more than one session, call or caller at a time (except where a row says so); real time, so deadlines and TTLs are only orderings; cleanup hooks that keep failing; the unattached Windows typing path (`TypingTurn::Settled`, a 40 ms sleep); the Linux foreground table and desktop identity; the macOS key-focus guard's order watch; a switch you make between a foreground turn's front read and its `set_front` (the activation overrides it), or back to the target during the turn; a switch between the restore's front check and its `set_front`, or during the HID route's second activation; per-turn recording content; and the daemon's launch race, which is fixed by the lock files and not modelled here.
 
 ## Keeping it in sync
 

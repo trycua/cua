@@ -96,7 +96,7 @@ impl TypePacing {
     /// server round trip before the next one. Never in paced mode, where each
     /// key already has its own pause.
     pub(crate) fn batch_boundary(self, sent: usize) -> bool {
-        self.is_batched() && sent % cua_driver_core::type_pacing::BATCH_UNITS == 0
+        self.is_batched() && sent.is_multiple_of(cua_driver_core::type_pacing::BATCH_UNITS)
     }
 }
 const PING_TIMEOUT: Duration = Duration::from_secs(1);

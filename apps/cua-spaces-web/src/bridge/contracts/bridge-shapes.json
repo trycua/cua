@@ -5491,6 +5491,28 @@
             "name",
             "installed"
           ]
+        },
+        "target": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "channel": {
+              "type": "string"
+            },
+            "env": {
+              "type": "string"
+            },
+            "authHost": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "channel",
+            "env",
+            "authHost"
+          ]
         }
       },
       "required": [
@@ -8240,6 +8262,28 @@
           "required": [
             "name",
             "installed"
+          ]
+        },
+        "target": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "channel": {
+              "type": "string"
+            },
+            "env": {
+              "type": "string"
+            },
+            "authHost": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "channel",
+            "env",
+            "authHost"
           ]
         },
         "tips": {

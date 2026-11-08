@@ -42155,6 +42155,86 @@ public func FfiConverterTypeAppTabView_lower(_ value: AppTabView) -> RustBuffer 
 }
 
 
+public struct AppTarget: Equatable, Hashable {
+    /**
+     * `stable` or `local` (`CuaChannel`); anything else is Stable.
+     */
+    public var channel: String
+    /**
+     * `prod` or `staging` (`CuaEnv::name`).
+     */
+    public var env: String
+    /**
+     * The sign-in server's host (`auth.staging.cua.ai`), from the resolved
+     * OIDC issuer, so an override (`CUA_OIDC_ISSUER`) shows as it is.
+     * Empty: the environment's default.
+     */
+    public var authHost: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * `stable` or `local` (`CuaChannel`); anything else is Stable.
+         */channel: String,
+        /**
+         * `prod` or `staging` (`CuaEnv::name`).
+         */env: String,
+        /**
+         * The sign-in server's host (`auth.staging.cua.ai`), from the resolved
+         * OIDC issuer, so an override (`CUA_OIDC_ISSUER`) shows as it is.
+         * Empty: the environment's default.
+         */authHost: String) {
+        self.channel = channel
+        self.env = env
+        self.authHost = authHost
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppTarget: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppTarget: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppTarget {
+        return
+            try AppTarget(
+                channel: FfiConverterString.read(from: &buf),
+                env: FfiConverterString.read(from: &buf),
+                authHost: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppTarget, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.channel, into: &buf)
+        FfiConverterString.write(value.env, into: &buf)
+        FfiConverterString.write(value.authHost, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppTarget_lift(_ buf: RustBuffer) throws -> AppTarget {
+    return try FfiConverterTypeAppTarget.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppTarget_lower(_ value: AppTarget) -> RustBuffer {
+    return FfiConverterTypeAppTarget.lower(value)
+}
+
+
 public struct AppTeamInput: Equatable, Hashable {
     public var id: String
     /**
@@ -81361,6 +81441,19 @@ public func appStreamSection(input: AppStreamSectionInput) -> AppStreamSection  
 })
 }
 /**
+ * Which build and deployment this app runs as: its channel (`stable` or
+ * `local`, `CuaChannel`), its environment (`prod` or `staging`, `CuaEnv`)
+ * and the host of the sign-in server it uses, resolved as every other part
+ * of the app resolves them. The web UI's title bar tag ("Local · Staging",
+ * the app core's `environment.tag`) is drawn from it, so every shell agrees.
+ */
+public func appTarget() -> AppTarget  {
+    return try!  FfiConverterTypeAppTarget_lift(try! rustCall() {
+    uniffi_cua_spaces_ffi_fn_func_app_target($0
+    )
+})
+}
+/**
  * The account's Teams (the organizations of `GET /v1/me` on the Spaces
  * API for this environment, `api.cua.ai` or `api.staging.cua.ai`), each
  * with its members and pending invites, read with `account_token`.
@@ -83093,6 +83186,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_func_app_stream_section() != 40082) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_spaces_ffi_checksum_func_app_target() != 5718) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_func_app_teams() != 64616) {

@@ -92,6 +92,7 @@ export {
   type AppearanceTheme,
   type HostEvent,
   type HostOperations,
+  type AppTarget,
   type CliInfo,
   type GlobalShortcut,
   type HostSettings,
@@ -181,6 +182,7 @@ export {
   type RelayUsage,
   type RelayUsageView,
 } from "./relay-usage";
+export { environmentTag, useEnvironmentTag, type EnvironmentTag } from "./environment-tag";
 export {
   resolveDefaultSpace,
   useSpacesDefault,

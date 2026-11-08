@@ -2109,6 +2109,21 @@ pub fn app_account_app_url() -> String {
     cua_home::env::account_app_url()
 }
 
+/// Which build and deployment this app runs as: its channel (`stable` or
+/// `local`, `CuaChannel`), its environment (`prod` or `staging`, `CuaEnv`)
+/// and the host of the sign-in server it uses, resolved as every other part
+/// of the app resolves them. The web UI's title bar tag ("Local · Staging",
+/// the app core's `environment.tag`) is drawn from it, so every shell agrees.
+#[uniffi::export]
+pub fn app_target() -> AppTarget {
+    let (channel, env) = cua_home::channel::CuaChannel::current_with_env();
+    AppTarget {
+        channel: channel.name().to_string(),
+        env: env.name().to_string(),
+        auth_host: core::environment_tag::auth_host(&cua_home::env::oidc_issuer()),
+    }
+}
+
 /// Settings' "Relay usage" row and the notice past the allowance; none
 /// when the relay meters nothing.
 #[uniffi::export]

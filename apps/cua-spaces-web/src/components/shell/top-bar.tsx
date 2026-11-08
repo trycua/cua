@@ -10,6 +10,7 @@ import { Tooltip } from "@/components/ui/tooltip";
 import { bindingFor } from "@/lib/keybindings";
 import { useTheme } from "@/lib/theme";
 import { useUiStore } from "@/stores/ui";
+import { EnvironmentTag } from "./environment-tag";
 import { useNavItems } from "./nav";
 import { TopBarUpdateIndicator } from "./update-indicator";
 
@@ -37,6 +38,7 @@ export function TopBar() {
         </Button>
       </Tooltip>
       <span className="truncate text-[13px] font-semibold">{title}</span>
+      <EnvironmentTag />
       <div className="flex-1" />
       <button
         type="button"

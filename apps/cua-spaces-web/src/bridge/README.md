@@ -211,6 +211,13 @@ speaks it as is:
   (`app_account_app_url`: `CUA_ENV`, `CUA_ACCOUNT_APP_URL`). The page's wasm
   core has no environment, so the relay notice's Upgrade falls back to that
   app's billing page (`relayUsage.view {usage, accountApp}`).
+- `settings.get` also carries `target: {channel, env, authHost}`, the
+  channel and environment the app runs as (`app_target`, from cua-home's
+  `CuaChannel` and `CuaEnv`). The title bar draws the core's
+  `environment.tag {target, updateChannel}` beside the page title: "Local ·
+  Staging" or "Local · Prod", and nothing for the released app on
+  production. `?demo=local-staging`, `local-prod` and `stable-staging` show
+  it on the demo host.
 - Touch ID and the unlock prompt stay native.
 - Launch at login is the core's `launch-at-login` row. The adapter reads it
   from the page and sets it with `settings.choose {row: "launch-at-login"}`,

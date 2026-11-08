@@ -690,6 +690,10 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
             // The account app (CUA_ENV, CUA_ACCOUNT_APP_URL): the page's core
             // has no environment, so Upgrade's billing fallback names this one.
             "accountUrl": appAccountAppUrl(),
+            // The channel and environment this app runs as (CUA_CHANNEL,
+            // CUA_ENV, as cua-home resolves them): the page's title bar tag
+            // ("Local · Staging", the core's `environment.tag`).
+            "target": BridgeValue.encode(appTarget()),
             // The CLI this app installs and whether it is here (WebUIBridge+Cli.swift).
             "cli": cliSetting(),
             // Settings, Advanced's runtimes as read (`runtimes::RuntimesInput`):

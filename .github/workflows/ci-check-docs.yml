@@ -32,6 +32,7 @@ on:
       - "docs/content/docs/cua-sdk/guides/images.mdx"
       - ".github/workflows/ci-check-docs.yml"
       - ".gitattributes"
+  merge_group:
   # Run every native check on demand, e.g. to produce the native Windows Driver
   # MCP snapshot (artifact cua-driver-mcp-snapshot-windows) without a PR.
   workflow_dispatch:
@@ -57,12 +58,12 @@ jobs:
   # decide to skip.
   quick:
     name: quick
-    if: github.event_name == 'pull_request'
+    if: (github.event_name == 'pull_request' || github.event_name == 'merge_group')
     uses: ./.github/workflows/ci-quick.yml
 
   scope:
     needs: quick
-    if: ${{ !failure() && !cancelled() }}
+    if: ${{ !failure() && !cancelled() && needs.quick.outputs.skip != 'true' }}
     name: Select affected generators
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -126,8 +127,8 @@ jobs:
 
   native-reference:
     name: Reference / ${{ matrix.library }} / ${{ matrix.platform }}
-    needs: scope
-    if: ${{ !failure() && !cancelled() && needs.scope.result == 'success' && (needs.scope.outputs.selected == 'true') }}
+    needs: [quick, scope]
+    if: ${{ !failure() && !cancelled() && needs.scope.result == 'success' && (needs.scope.outputs.selected == 'true') && needs.quick.outputs.skip != 'true' }}
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.scope.outputs.matrix) }}
@@ -251,8 +252,8 @@ jobs:
 
   check-docs-sync:
     name: Check Documentation Sync
-    if: always()
-    needs: [scope, native-reference]
+    if: ${{ always() && needs.quick.outputs.skip != 'true' }}
+    needs: [quick, scope, native-reference]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

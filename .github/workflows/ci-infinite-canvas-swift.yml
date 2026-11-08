@@ -23,6 +23,7 @@ name: "CI: infinite-canvas (Swift)"
 
 on:
   pull_request:
+  merge_group:
   push:
     branches: [main]
   # Drift check: the full build on main, whatever changed.
@@ -47,12 +48,12 @@ env:
 jobs:
   quick:
     name: quick
-    if: github.event_name == 'pull_request'
+    if: (github.event_name == 'pull_request' || github.event_name == 'merge_group')
     uses: ./.github/workflows/ci-quick.yml
 
   changes:
     needs: quick
-    if: ${{ !failure() && !cancelled() }}
+    if: ${{ !failure() && !cancelled() && needs.quick.outputs.skip != 'true' }}
     name: scope (macOS Swift sample)
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -85,11 +86,11 @@ jobs:
           python3 .github/scripts/ci_swift_samples_scope.py scope infinite-canvas <<< "$files" | tee -a "$GITHUB_STEP_SUMMARY"
 
   swift:
-    needs: changes
+    needs: [quick, changes]
     # The status functions matter: `quick` is skipped on push and schedule, and
     # without them the implicit success() skips this job too, so main never ran
     # it or saved the SDK build cache and every pull request built cold (56 minutes).
-    if: ${{ !failure() && !cancelled() && needs.changes.outputs.run == 'true' && !startsWith(github.head_ref, 'release-please--branches--') }}
+    if: ${{ !failure() && !cancelled() && needs.changes.outputs.run == 'true' && !startsWith(github.head_ref, 'release-please--branches--') && needs.quick.outputs.skip != 'true' }}
     name: infinite-canvas-swift (swift test)
     runs-on: macos-26
     # A cold SDK build takes 25 to 56 minutes; main's cache makes it a few.
@@ -123,8 +124,8 @@ jobs:
   # Not a gate and never on pull requests: records the headless hot-path numbers
   # on main and nightly, with its own limit. Nothing in ci-gate reads it.
   bench:
-    needs: changes
-    if: ${{ !failure() && !cancelled() && github.event_name != 'pull_request' && needs.changes.outputs.run == 'true' }}
+    needs: [quick, changes]
+    if: ${{ !failure() && !cancelled() && github.event_name != 'pull_request' && needs.changes.outputs.run == 'true' && needs.quick.outputs.skip != 'true' }}
     name: infinite-canvas-bench (headless hot paths)
     runs-on: macos-26
     timeout-minutes: 60

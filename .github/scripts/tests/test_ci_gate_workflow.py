@@ -39,13 +39,15 @@ def test_gate_wiring():
     # still leaves headroom over the longest gate run observed on main.
     assert GATE['jobs']['ci-gate']['timeout-minutes'] == 180
     assert '.workflow_id != $GITHUB_WORKFLOW_ID' in SCRIPT
-    assert '(.event == \\"pull_request\\" or .event == \\"pull_request_target\\")' in SCRIPT
+    assert 'list_runs "$sha" \'.event == "pull_request" or .event == "pull_request_target"\'' in SCRIPT
+    assert 'list_runs "$queue_sha" \'.event == "merge_group" and .conclusion != "skipped"\'' in SCRIPT
     assert 'claude-auto-fix|ci-release-reminder|review-cua-perception-candidates|/cla[.]yml($|@)' in SCRIPT
 
 
 def filtered_runs(ignore_re):
     runs_src = SCRIPT[SCRIPT.index('scope_jq='):]
-    runs_src = runs_src[:runs_src.index('\n}\n') + len('\n}\n')]
+    end = runs_src.index('\n}\n', runs_src.index('\nruns() {')) + len('\n}\n')  # list_runs() and runs()
+    runs_src = runs_src[:end]
     paths = [
         ('.github/workflows/cla.yml', 'failure', 'completed'),
         ('.github/workflows/cla.yml@refs/pull/1/merge', '', 'in_progress'),
@@ -62,7 +64,7 @@ def filtered_runs(ignore_re):
     out = subprocess.run(
         ['bash', '-e', '-c', script],
         env={**os.environ, 'RUNS_JSON': runs_json, 'IGNORE_RE': ignore_re,
-             'GITHUB_WORKFLOW_ID': '0', 'sha': 'abc', 'GITHUB_REPOSITORY': 'test/repo'},
+             'GITHUB_WORKFLOW_ID': '0', 'sha': 'abc', 'queue_sha': '', 'GITHUB_REPOSITORY': 'test/repo'},
         capture_output=True, text=True, timeout=10, check=True,
     ).stdout
     return out.strip().splitlines()
@@ -308,18 +310,39 @@ HEAVY_WORKFLOWS = sorted(
 def test_quick_stage_is_wired_into_heavy_workflows():
     assert HEAVY_WORKFLOWS
     for path in HEAVY_WORKFLOWS:
-        jobs = yaml.safe_load(path.read_text())['jobs']
+        workflow = yaml.safe_load(path.read_text())
+        jobs = workflow['jobs']
         assert jobs['quick']['uses'] == './.github/workflows/ci-quick.yml', path.name
+        # The stage starts on pull requests and merge queue entries (CUA-3856).
+        assert 'merge_group' in workflow[True], path.name
+        assert jobs['quick']['if'] == "(github.event_name == 'pull_request' || github.event_name == 'merge_group')"
         for name, job in jobs.items():
             if name == 'quick':
                 continue
             needs = job.get('needs', [])
             needs = [needs] if isinstance(needs, str) else needs
-            # Every job waits for `quick`, directly or through the job it needs.
-            assert needs, f'{path.name}: {name} does not wait for quick'
-            if 'quick' in needs:
-                # Still runs on push and manual runs, where `quick` is skipped.
-                assert '!failure() && !cancelled()' in str(job['if']), f'{path.name}: {name}'
+            # Every job waits for `quick` directly, so it can read the scope decision: a job that only
+            # waited through another job could still start (`!cancelled()`) when that job was skipped.
+            assert 'quick' in needs, f'{path.name}: {name} does not wait for quick'
+            assert "needs.quick.outputs.skip != 'true'" in str(job['if']), f'{path.name}: {name} ignores the scope'
+            # Still runs on push and manual runs, where `quick` is skipped: a status function other than
+            # the implicit success() decides.
+            assert any(f in str(job['if']) for f in ('!cancelled()', 'always()', 'failure()')), f'{path.name}: {name}'
+
+
+def test_quick_stage_decides_the_scope_from_the_base_commit_and_fails_closed():
+    quick = yaml.safe_load((WORKFLOWS / 'ci-quick.yml').read_text())
+    assert quick[True]['workflow_call']['outputs']['skip']['value'] == '${{ jobs.scope.outputs.skip }}'
+    scope = quick['jobs']['scope']
+    steps = {s.get('name'): s for s in scope['steps']}
+    base = steps['Check out the selector from the base commit']['with']
+    assert base['ref'] == '${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}'
+    assert '/.github/ci-areas.json' in base['sparse-checkout']
+    decide = steps['Decide whether this workflow runs']['run']
+    assert 'set -euo pipefail' in decide
+    assert 'python3 base/.github/scripts/ci_gate_scope.py --workflow' in decide
+    # Merge queue runs stay off (and ci-gate reads the pull request's results) until the switch is on.
+    assert '"${QUEUE_RUNS:-}" != true' in decide and 'skip=true' in decide
 
 
 LOCAL_CI_FAST = STEPS['Check the sign-off on the pull request (fail fast)']['run']
@@ -420,3 +443,36 @@ def test_quick_stage_runs_once_per_commit():
         assert step['if'] == "steps.marker.outputs.cache-hit != 'true'", step.get('name', step.get('uses'))
     assert steps[-1] is save
     assert any('bin/ci --quick' in str(s.get('run', '')) for s in middle)
+
+
+# Merge queue runs (CUA-3856): the listing for the queue commit answers QROWS, the pull request head ROWS.
+QUEUE_MOCK = MOCK.replace("""    *'head_sha='*)""", """    *'head_sha=queue'*) printf '%s' "$QROWS" ;;
+    *'head_sha='*)""")
+
+
+def run_queue_gate(rows, qrows, queue_runs, jobs='test\tsuccess'):
+    return subprocess.run(
+        ['bash', '-e', '-c', QUEUE_MOCK + SCRIPT[SCRIPT.index('sha=$PR_SHA'):]],
+        env={**os.environ, 'PR_SHA': '', 'QUEUE_REF': 'refs/heads/gh-readonly-queue/main/pr-7-abc',
+             'QUEUE_SHA': 'queue', 'QUEUE_RUNS': queue_runs, 'GITHUB_REPOSITORY': 'test/repo',
+             'GITHUB_RUN_ID': '99', 'ROWS': rows, 'QROWS': qrows, 'JOBS': jobs, 'OLDER_JOBS': jobs,
+             'ROWS_DIR': '', 'MAX_SLEEPS': '6', 'MAX_SECONDS': str(10**9)},
+        capture_output=True, text=True, timeout=10,
+    )
+
+
+def test_merge_queue_judges_a_workflow_by_its_queue_run_when_queue_runs_are_on():
+    pr = '1\t11\tbuild\tsuccess\tcompleted\n2\t21\tlint\tsuccess\tcompleted'
+    queue = '1\t12\tbuild\tfailure\tcompleted'
+    on = run_queue_gate(pr, queue, 'true', jobs='test\tfailure')
+    assert on.returncode == 1 and 'build: fail' in on.stdout
+    # `lint` has no queue run, so its pull request result still counts.
+    assert 'lint:' in on.stdout
+    off = run_queue_gate(pr, queue, '')
+    assert off.returncode == 0 and 'build: pass' in off.stdout
+
+
+def test_merge_queue_passes_on_green_queue_runs():
+    completed = run_queue_gate('1\t11\tbuild\tsuccess\tcompleted', '1\t12\tbuild\tsuccess\tcompleted', 'true')
+    assert completed.returncode == 0, completed.stderr
+    assert 'build: pass' in completed.stdout

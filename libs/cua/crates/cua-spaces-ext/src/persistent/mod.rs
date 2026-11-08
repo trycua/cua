@@ -2321,10 +2321,16 @@ impl Persistent {
             if text.is_empty() {
                 continue;
             }
-            // Already in the thread word for word (the agent posted it itself with `thread_reply`).
-            if recent.iter().any(|e| {
-                e.author.id == me.id && e.kind == EntryKind::Message && e.text.trim() == text
-            }) {
+            // Already in the thread word for word: the agent posted it itself with `thread_reply` in this
+            // turn. That is its latest message after the task it is answering; an identical message
+            // from an earlier task (or with other words said since) is a different message.
+            let floor = reply_to.unwrap_or(0);
+            if recent
+                .iter()
+                .rev()
+                .find(|e| e.seq > floor && e.author.id == me.id && e.kind == EntryKind::Message)
+                .is_some_and(|e| e.text.trim() == text)
+            {
                 continue;
             }
             let text = if check_text(&text).is_ok() {

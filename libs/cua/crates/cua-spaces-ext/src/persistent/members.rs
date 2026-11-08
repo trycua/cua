@@ -2735,8 +2735,10 @@ impl Thread {
         let t = self.task(seq)?;
         let name = self.agent_of(None, &t)?;
         self.may_steer(&t)?;
-        // The same words already said under this task by the same author (a retry, or a tool
-        // call a restarted bridge ran again): that entry is the answer, nothing is added twice.
+        // The same words said again at once under this task by the same author (a retry, or a tool call
+        // a restarted bridge ran again): that entry is the answer, nothing is added twice. Only the
+        // author's latest message under the task can be the one retried, so a later "Done." after other
+        // words is a new reply, not the earlier one.
         if attachments.is_empty() {
             let last = self.store.last_seq()?;
             let me = self.author().id;
@@ -2746,11 +2748,9 @@ impl Thread {
                 .into_iter()
                 .rev()
                 .find(|e| {
-                    e.kind == EntryKind::Message
-                        && e.reply_to == Some(seq)
-                        && e.author.id == me
-                        && e.text.trim() == text.trim()
+                    e.kind == EntryKind::Message && e.reply_to == Some(seq) && e.author.id == me
                 })
+                .filter(|e| e.text.trim() == text.trim())
             {
                 return Ok((same.clone(), same));
             }

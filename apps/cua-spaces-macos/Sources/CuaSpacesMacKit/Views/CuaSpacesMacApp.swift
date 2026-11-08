@@ -310,6 +310,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
         start(Self.model)
+        // Back from "Quit & Reopen" in System Settings: the permission guide
+        // picks up where it was.
+        PermissionGuide.resumeAfterRelaunch()
         // The menu bar's low-disk warning: read now, then every 5 minutes.
         LowDiskMonitor.shared.start()
     }

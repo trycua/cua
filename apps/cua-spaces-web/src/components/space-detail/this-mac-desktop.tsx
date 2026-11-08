@@ -51,7 +51,7 @@ export function DesktopStage({ shared, nudge }: { shared: boolean; nudge?: boole
       <div>
         <h2 className="text-[15px] font-semibold">{shared ? "You're sharing your desktop as a Space" : "You aren't sharing your desktop as a Space"}</h2>
         <p className="mt-1 text-[13px] text-muted-foreground">
-          {shared ? `Your other machines can see and control the screen of ${here}. It isn't shown here.` : `Turn this on to see and control the screen of ${here} from your other machines.`}
+          {shared ? `Your other computers can see and control the screen of ${here}. It isn't shown here.` : `Turn this on to see and control the screen of ${here} from your other machines.`}
         </p>
       </div>
       {toggle ? (

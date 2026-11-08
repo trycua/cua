@@ -281,17 +281,13 @@ export {
   type UpsellPrompt,
   type UpsellSurface,
 } from "./upsell";
-export { flagOn, newOnboardingOn, setFlagOverride, useFlag, useNewOnboarding, useSpacesTree, type FlagName } from "./flags";
+// Clears the overrides of retired flags once, on load.
+import "./flags";
 export type { CreateReport, ReportPart, ReportSend } from "./diagnostic-report";
 export {
-  FIRST_RUN_POLL_MS,
   TEAMMATES_KEY,
   UPSELL_DISMISSED_KEY,
-  firstRunPermissions,
-  firstRunTodos,
-  firstRunView,
   firstRunCliView,
-  firstRunSteps,
   cliMissing,
   cliPresent,
   useCliInstall,
@@ -299,13 +295,8 @@ export {
   noteTeammates,
   readFirstRun,
   resetFirstRunCache,
-  useFirstRun,
   useFirstRunSaved,
-  useScreenPermissions,
   writeFirstRun,
-  type FirstRunHook,
-  type ScreenPermissions,
-  type FirstRunUsage,
   type FirstRunSaved,
 } from "./first-run";
 export type * from "./contracts/first-run";

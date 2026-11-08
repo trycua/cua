@@ -192,9 +192,11 @@ try {
   // Agents opens, without reloading the page.
   await page.evaluate(() => window.__demoRewind());
 
-  // Machines: This machine.
+  // Computers, then This Mac's page.
   await nav("Computers");
   await pause(2200);
+  await page.locator('[data-tree-kind="computer"] [data-tree-name]').first().click();
+  await pause(1200);
   await scrollTo(page.locator("[data-host-action]").first());
   await pause(2600);
 

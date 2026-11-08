@@ -2,12 +2,12 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 import { createMemoryHistory, createRootRoute, createRouter, RouterProvider } from "@tanstack/react-router";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { BridgeProvider, pointerChange, pointerSettings } from "@/bridge";
-import { UnsupportedOperationError, type DataAdapter } from "@/bridge/adapter";
+import type { DataAdapter } from "@/bridge/adapter";
 import { createDemoAdapter } from "@/bridge/adapters/demo";
 import { unavailableCore } from "@/bridge/core";
 import { DriverPage } from "@/components/driver/driver-page";
@@ -25,15 +25,6 @@ function mount(adapter: DataAdapter, ui: () => ReactNode) {
       </ToastProvider>
     </BridgeProvider>,
   );
-}
-
-/** A host with no driver operations (Electron, Tauri). */
-function withoutDriver(): DataAdapter {
-  const base = createDemoAdapter({ latencyMs: 0, stepMs: 0 });
-  return Object.assign(Object.create(base) as DataAdapter, {
-    call: ((op: string, args: unknown) =>
-      op.startsWith("driver.") ? Promise.reject(new UnsupportedOperationError("webkit", op)) : (base.call as (o: string, a: unknown) => Promise<unknown>).call(base, op, args)) as DataAdapter["call"],
-  });
 }
 
 function NavLabels() {
@@ -64,16 +55,10 @@ describe("pointer settings from the driver's get_config", () => {
 });
 
 describe("Cua Driver in the app", () => {
-  it("shows the sidebar item under Machines only where the host runs the driver", async () => {
+  it("is no sidebar item: it is one of This Mac's settings, under Computers (CUA-3551)", async () => {
     mount(createDemoAdapter({ latencyMs: 0, stepMs: 0 }), () => <NavLabels />);
-    await waitFor(() => expect(document.querySelector("[data-nav]")?.textContent).toContain("Machines,Cua Driver,Agents"));
-    cleanup();
-
-    mount(withoutDriver(), () => <NavLabels />);
-    await act(async () => {
-      await new Promise((r) => setTimeout(r, 20));
-    });
-    expect(document.querySelector("[data-nav]")?.textContent).not.toContain("Cua Driver");
+    await waitFor(() => expect(document.querySelector("[data-nav]")?.textContent).toMatch(/^Home,Computers,Agents/));
+    expect(document.querySelector("[data-nav]")?.textContent).not.toMatch(/Cua Driver|Machines/);
   });
 
   it("draws the page: state, version, Repair, Test now, the switch, pointer rows, agents and permissions", async () => {
@@ -146,7 +131,7 @@ describe("Cua Driver in the app", () => {
     });
     mount(spy, () => <DriverPage machine={null} />);
     expect(await screen.findByText("A permission is missing. Allow it below.")).toBeTruthy();
-    await waitFor(() => expect(document.querySelector("[data-app-permission=screen]")?.textContent).toContain("Missing"));
+    await waitFor(() => expect(document.querySelector("[data-app-permission=screen]")?.textContent).toContain("Off"));
     // The app the grant goes to, by name, and that the driver needs no second one.
     expect(document.querySelector("[data-app-permission=screen]")?.textContent).toContain("Screen Recording, given to Cua Spaces");
     expect(document.body.textContent).toContain("Cua Driver uses the permissions you give Cua Spaces. It never asks for its own.");

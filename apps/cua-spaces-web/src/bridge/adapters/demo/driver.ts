@@ -78,7 +78,9 @@ export function demoDriverHandlers({ state, now, wait, emit, stepMs }: DemoConte
   const permissions = (): DriverPermission[] =>
     (["screen-recording", "accessibility"] as const).map((id) => {
       const p = state.host.permissions.find((x) => x.id === id);
-      return { id: id === "screen-recording" ? "screen" : "accessibility", granted: p ? Boolean(p.granted) : true, settingsUrl: p?.settingsUrl ?? null };
+      const granted = p ? Boolean(p.granted) : true;
+      // The demo's Mac has the app in the list, switched off, until it is granted.
+      return { id: id === "screen-recording" ? "screen" : "accessibility", granted, state: granted ? "on" : "off", settingsUrl: p?.settingsUrl ?? null };
     });
   const remote = (machine: string | null | undefined) => (machine && machine !== "this-mac" ? d().others.find((m) => m.machineId === machine) : undefined);
   const status = (): DriverStatus => {

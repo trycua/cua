@@ -11,7 +11,7 @@ import { Button } from "@/components/ui/button";
 import { thisComputerText } from "@/lib/host-labels";
 
 const MAIN_PROMPT = "Reproduce the crash from issue #4821 on a fresh Windows 11 Space and show me a recording.";
-const MORE_PROMPTS = ["Run our tests on Ubuntu and macOS at the same time and tell me which ones fail.", "Check that the installer works on a clean Windows machine."];
+const MORE_PROMPTS = ["Run our tests on Ubuntu and macOS at the same time and tell me which ones fail.", "Check that the installer works on a clean Windows computer."];
 
 /** "Claude Code, Codex and Cursor". */
 export function nameList(names: string[]): string {

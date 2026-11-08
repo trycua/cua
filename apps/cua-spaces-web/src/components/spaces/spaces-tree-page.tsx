@@ -5,8 +5,13 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { ChevronRightIcon, HardDriveIcon, MoreHorizontalIcon, PlusIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
-import { useMachines, useSpaces, useSpacesDefault } from "@/bridge";
+import { listView, useBridge, useMachines, useNotchPins, useResources, useSpaces, useSpacesDefault, type CreatingElsewhere, type SpaceOs } from "@/bridge";
 import { AddComputerSheet } from "@/components/add-computer-sheet";
+import { NewSpaceButton } from "@/components/new-space/new-space-button";
+import { ComputerWarnings } from "@/components/resources/computer-resources";
+import { EnrollSheet, useMachinesAccount, usePendingActions } from "@/components/machines/account-parts";
+import { PageTip } from "@/components/tips";
+import { UpsellPrompt } from "@/components/upsell-prompt";
 import { Page, PageHeader } from "@/components/page";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/alert-dialog";
@@ -18,9 +23,14 @@ import { Menu, type MenuItem } from "@/components/ui/menu";
 import { toast, toastError } from "@/components/ui/toast";
 import { useNewSpace } from "@/hooks/use-new-space";
 import { plural } from "@/lib/plural";
+import { THIS_COMPUTER, computerParam } from "@/lib/machines";
+import type { ComputersSearch } from "@/lib/old-links";
 import { foldOffline, treeSummary, type TreeNode } from "@/lib/spaces-tree";
+import { createProgress, spaceState } from "@/lib/spaces";
 import { cn } from "@/lib/utils";
 
+import { HomeTag, PinnedMark } from "./space-tile";
+import { CloudsSection, DevicesSection, PendingSection, RemoveOldButton } from "./tree-extras";
 import { PeopleFaces, TreeDot, TreeIcon, toggleCollapsed, useCollapsed } from "./tree-parts";
 import { useRunningBySpace, useSpacesTreeData } from "./use-spaces-tree";
 import { thisComputerLabel, thisComputerText } from "@/lib/host-labels";
@@ -47,8 +57,8 @@ export function removeText(
   const n = node.children.length;
   const lead =
     n === 0
-      ? "It leaves your Spaces list, and your team can't use it any more."
-      : `It leaves your Spaces list, and your team can't use it any more. The ${plural(n, "Space")} made on it leave${n === 1 ? "s" : ""} the list with it:`;
+      ? "It leaves your list of computers, and your team can't use it any more."
+      : `It leaves your list of computers, and your team can't use it any more. The ${plural(n, "Space")} made on it leave${n === 1 ? "s" : ""} the list with it:`;
   const back = n === 0 ? "" : n === 1 ? " Add it again and it comes back." : ` Add it again and all ${n} come back.`;
   // A computer is removed while it is offline (CUA-3479): ticked, its Spaces leave the account now, and the relay keeps
   // them as pending deletions that the computer carries out, files included, the next time it comes online.
@@ -66,19 +76,34 @@ export function removeText(
 }
 
 /**
- * The Spaces page as one list (Labs "Spaces as a tree", CUA-3413): each
- * computer you added, the Spaces made on it under it, and for every row its
- * status, who's on it and its running agent tasks.
+ * Your computers as one list (CUA-3413, CUA-3551): each computer you added,
+ * the Spaces made on it under it, and for every row its status, who's on it
+ * and its running agent tasks. A computer opens its own page, a Space its
+ * own. Around the list: computers waiting to be added, the clouds you
+ * connected and the other devices signed in to your account.
  */
-export function SpacesTreePage() {
+export function SpacesTreePage({ search = {}, onSearchDone }: { search?: ComputersSearch; onSearchDone?: () => void }) {
   const running = useRunningBySpace();
   const { tree, loaded, defaults } = useSpacesTreeData(running);
-  const { renameSpace, deleteSpace } = useSpaces();
+  const { data: spaces = [], listStatus, renameSpace, deleteSpace, creatingElsewhere } = useSpaces();
+  const { core } = useBridge();
   const machines = useMachines();
+  const resources = useResources();
+  const pins = useNotchPins();
   const navigate = useNavigate();
   const newSpace = useNewSpace();
   const collapsed = useCollapsed();
-  const [adding, setAdding] = useState(false);
+  const { pending, account, devices } = useMachinesAccount();
+  const pendingActions = usePendingActions();
+  const asked = search.add === true || search.join !== undefined;
+  const [adding, setAddingState] = useState(asked);
+  const setAdding = (open: boolean) => {
+    setAddingState(open);
+    if (!open && asked) onSearchDone?.();
+  };
+  useEffect(() => {
+    if (asked) setAddingState(true);
+  }, [asked]);
   const [editing, setEditing] = useState<{ key: string; name: string } | null>(null);
   const [removing, setRemoving] = useState<TreeNode | null>(null);
   const [deleting, setDeleting] = useState<TreeNode | null>(null);
@@ -92,24 +117,51 @@ export function SpacesTreePage() {
   };
   useEffect(() => cancelClick, []);
 
-  if (!tree || !loaded) return <Page><div aria-busy="true" aria-label="Loading Spaces" /></Page>;
-
-  const addButton = (
-    <Button onClick={() => setAdding(true)} data-tree-add-computer="">
-      <PlusIcon /> Add a computer
-    </Button>
-  );
-  const sheet = <AddComputerSheet open={adding} onOpenChange={setAdding} />;
-
-  // f6: nothing yet. A Space is a computer you own; a new one on this Mac is the second choice.
-  if (tree.roots.length === 0) {
+  // The core decides: the empty list only for a complete list with nothing on it. A daemon still starting (an app update)
+  // or computers still answering show what is known and one quiet line instead.
+  const listed = listView(core, listStatus, spaces.length);
+  // The "Waiting for you" section sits above the list, so hold the page until the account answered: a late
+  // answer would push the whole list down (layout shift, CUA-1951).
+  if (!tree || !loaded || devices.isLoading)
     return (
       <Page>
+        <div aria-busy="true" aria-label="Loading your computers">
+          {listed.reachingLine ? (
+            <p className="text-[13px] text-muted-foreground" data-spaces-reaching="">
+              {listed.reachingLine}
+            </p>
+          ) : null}
+        </div>
+      </Page>
+    );
+
+  const addButton = (
+    <>
+      <Button variant="outline" onClick={() => setAdding(true)} data-tree-add-computer="">
+        <PlusIcon /> Add a computer
+      </Button>
+      <NewSpaceButton />
+    </>
+  );
+  const sheets = (
+    <>
+      <AddComputerSheet open={adding} onOpenChange={setAdding} initialView={search.join !== undefined ? "enter" : "pick"} initialCode={search.join ?? ""} initialRelay={search.relay ?? null} />
+      <EnrollSheet />
+      {pendingActions.notMeDialog((machine) => machines.remove(machine, null))}
+    </>
+  );
+  const waiting = <PendingSection pending={pending} title={account?.pendingTitle ?? "Waiting for you"} actions={pendingActions} />;
+
+  // f6: nothing yet. Agents work on a computer you own; a new Space on this Mac is the second choice.
+  if (tree.roots.length === 0 && creatingElsewhere.length === 0 && listed.empty) {
+    return (
+      <Page>
+        {waiting}
         <div className="mx-auto max-w-xl pt-24" data-tree-empty="">
-          <h1 className="font-heading text-[32px] font-semibold tracking-tight">No Spaces yet</h1>
-          <p className="mt-3 text-[15px] text-muted-foreground">A Space is a computer your agents can work on. Add {thisComputerText()}, or another computer you own, and agents run there while you keep working.</p>
+          <h1 className="font-heading text-[32px] font-semibold tracking-tight">No computers yet</h1>
+          <p className="mt-3 text-[15px] text-muted-foreground">Add {thisComputerText()}, or another computer you own, and agents work there while you keep working.</p>
           <div className="mt-6 flex flex-wrap gap-2">
-            <Button size="lg" render={<Link to="/machines" />} data-tree-add-this-mac="">
+            <Button size="lg" render={<Link to="/spaces/computer/$computerId" params={{ computerId: THIS_COMPUTER }} />} data-tree-add-this-mac="">
               Add {thisComputerText()}
             </Button>
             <Button size="lg" variant="outline" onClick={() => setAdding(true)}>
@@ -119,17 +171,23 @@ export function SpacesTreePage() {
           <p className="mt-5 text-[13px] text-muted-foreground">
             Or{" "}
             <button type="button" className="underline underline-offset-2 hover:text-foreground" onClick={newSpace} data-tree-new-local="">
-              make a new Linux or Mac computer on {thisComputerText()}
+              make a new Linux or Mac Space on {thisComputerText()}
             </button>
             .
           </p>
         </div>
-        {sheet}
+        {sheets}
       </Page>
     );
   }
 
-  const open = (n: TreeNode) => (n.space ? void navigate({ to: "/spaces/$spaceId", params: { spaceId: n.space.id } }) : void navigate({ to: "/machines" }));
+  // A computer opens its own page (its switches, Spaces, details and Remove), a Space its own.
+  const open = (n: TreeNode) =>
+    n.kind === "computer" && n.machine
+      ? void navigate({ to: "/spaces/computer/$computerId", params: { computerId: computerParam(n.machine) } })
+      : n.space
+        ? void navigate({ to: "/spaces/$spaceId", params: { spaceId: n.space.id } })
+        : undefined;
   // A click on a name opens it, a double-click renames it. A real double-click starts with a click, so a click waits out
   // the double-click time before opening, and a double-click cancels it. A keyboard press (detail 0) opens at once.
   const clickName = (n: TreeNode, detail: number) => {
@@ -149,6 +207,8 @@ export function SpacesTreePage() {
     const done = n.kind === "computer" ? machines.rename(n.current ? "this-mac" : n.machine!.id, name) : renameSpace(n.space!.id, name);
     void done.then(() => toast(`Renamed to ${name}`, { type: "success" }), toastError(`Couldn't rename ${n.name}`));
   };
+  // A Space, or another computer's shared desktop, can be pinned to the notch; This Mac's own desktop never is.
+  const pinnable = (n: TreeNode) => pins.canPin && Boolean(n.space) && !n.current;
   const viewRemove = (n: TreeNode) => machines.view?.machines.find((m) => m.id === n.machine?.id)?.remove ?? null;
   const menu = (n: TreeNode): MenuItem[] => {
     const items: MenuItem[] = [{ label: "Open", onSelect: () => open(n) }];
@@ -161,15 +221,33 @@ export function SpacesTreePage() {
       // machines list that lags; the relay still refuses a computer that is connected.
       items.push({ label: `Remove ${n.name}`, destructive: true, disabled: r ? !r.enabled && n.online : false, onSelect: () => setRemoving(n) });
     }
+    if (pinnable(n)) {
+      const id = n.space!.id;
+      items.push({ label: pins.pinned.has(id) ? "Unpin from notch" : "Pin to notch", onSelect: () => void pins.toggle(id).catch(toastError("Couldn't change the notch")) });
+    }
     if (n.kind === "space" && n.space?.access?.canDelete !== false) items.push({ label: "Delete", destructive: true, onSelect: () => setDeleting(n) });
     return items;
   };
 
   const rowFor = (n: TreeNode, depth: 0 | 1) => {
     const folded = collapsed.has(n.key);
+    const state = n.space ? spaceState(n.space) : null;
     const isEditing = editing?.key === n.key;
     return (
-      <div key={n.key} role="row" data-tree-row={n.key} data-tree-kind={n.kind} data-dim={n.dim ? "" : undefined} className={cn(COLS, "min-h-12 px-4 py-1.5 text-[14px]", n.dim && "text-muted-foreground")}>
+      <div
+        key={n.key}
+        role="row"
+        data-tree-row={n.key}
+        data-tree-kind={n.kind}
+        data-dim={n.dim ? "" : undefined}
+        // The core's rows, for the parity flows: a computer's machine, and the Space a row opens.
+        data-machine-id={n.kind === "computer" && n.machine ? n.machine.id : undefined}
+        data-machine-name={n.kind === "computer" && n.machine ? n.machine.name : undefined}
+        data-online={n.kind === "computer" && n.machine ? String(n.online) : undefined}
+        data-space-id={n.space?.id}
+        data-state={state ?? undefined}
+        className={cn(COLS, "min-h-12 px-4 py-1.5 text-[14px]", n.dim && "text-muted-foreground")}
+      >
         <div role="cell" className={cn("flex min-w-0 items-center gap-2.5", depth === 1 && "pl-8", isEditing && "col-span-2")}>
           {depth === 0 && n.children.length > 0 ? (
             <button
@@ -210,10 +288,13 @@ export function SpacesTreePage() {
               }}
               className={cn("min-w-0 truncate text-left outline-none hover:underline focus-visible:underline", n.kind === "computer" && "font-semibold")}
               data-tree-name={n.key}
+              data-space-name={n.kind === "space" ? "" : undefined}
             >
               {n.name}
             </button>
           )}
+          {n.kind === "space" && n.space && !isEditing ? <HomeTag spaceId={n.space.id} /> : null}
+          {pinnable(n) && !isEditing ? <PinnedMark id={n.space!.id} /> : null}
         </div>
         {isEditing ? (
           <div role="cell" className="col-span-3 text-right text-[13px] text-muted-foreground">
@@ -223,7 +304,19 @@ export function SpacesTreePage() {
           <>
             <div role="cell" className="flex min-w-0 items-center gap-2 text-[13px] text-muted-foreground" data-tree-status={n.key}>
               <TreeDot tone={n.tone} />
-              <span className="truncate">{n.status}</span>
+              {/* A Space being made says its step ("Downloading macOS (first time only)…") and how far it got, as the
+                  sidebar's Making card does. */}
+              <span className="truncate">{state === "creating" && n.space?.progress?.label ? n.space.progress.label : n.status}</span>
+              {state === "creating" && n.space ? (
+                <span className="h-1 w-12 shrink-0 overflow-hidden rounded-full bg-foreground/10" aria-hidden>
+                  <span data-create-progress="" className="block h-full rounded-full bg-brand" style={{ width: `${Math.round(createProgress(n.space) * 100)}%` }} />
+                </span>
+              ) : null}
+              {state === "creating" && n.space?.progress?.transfer ? (
+                <span className="truncate" data-create-transfer="">
+                  {n.space.progress.transfer}
+                </span>
+              ) : null}
             </div>
             <div role="cell">
               <PeopleFaces people={n.people} />
@@ -247,9 +340,56 @@ export function SpacesTreePage() {
     );
   };
 
+  // This Mac before it is set up, with no Space on it, is no computer of the list yet; its row still opens its page,
+  // where it's set up and where its settings (Cua Driver) live.
+  const here = (machines.data ?? []).find((m) => m.current && !m.device);
+  const hereRow =
+    here && !tree.roots.some((r) => r.current) ? (
+      <div
+        key="this-mac-not-set-up"
+        role="row"
+        data-tree-row="this-mac"
+        data-tree-kind="computer"
+        data-tree-not-set-up=""
+        data-machine-id={here.id}
+        data-machine-name={here.name}
+        data-online={String(here.online)}
+        className={cn(COLS, "min-h-12 px-4 py-1.5 text-[14px]")}
+      >
+        <div role="cell" className="flex min-w-0 items-center gap-2.5">
+          <TreeIcon node={{ kind: "computer", current: true, os: null }} />
+          <Link to="/spaces/computer/$computerId" params={{ computerId: THIS_COMPUTER }} className="min-w-0 truncate font-semibold outline-none hover:underline focus-visible:underline" data-tree-name="this-mac">
+            {thisComputerLabel()}
+          </Link>
+        </div>
+        <div role="cell" className="flex min-w-0 items-center gap-2 text-[13px] text-muted-foreground" data-tree-status="this-mac">
+          <TreeDot tone="offline" />
+          <span className="truncate">Not set up</span>
+        </div>
+        <div role="cell" />
+        <div role="cell" />
+        <div role="cell" className="flex justify-end">
+          <Menu
+            items={[{ label: "Open", onSelect: () => void navigate({ to: "/spaces/computer/$computerId", params: { computerId: THIS_COMPUTER } }) }]}
+            trigger={
+              <button type="button" aria-label={`More for ${thisComputerLabel()}`} className="flex size-7 items-center justify-center rounded-lg text-muted-foreground hover:bg-foreground/5 hover:text-foreground" data-tree-menu="this-mac">
+                <MoreHorizontalIcon className="size-4" />
+              </button>
+            }
+          />
+        </div>
+      </div>
+    ) : null;
   const single = tree.computers === 1 && tree.spaces === 0;
   const { shown, folded } = foldOffline(tree.roots);
-  const branch = (r: TreeNode) => [rowFor(r, 0), ...(collapsed.has(r.key) ? [] : r.children.map((c) => rowFor(c, 1)))];
+  // Spaces another of your computers is making (CUA-2349) sit under it until they are listed; any whose computer
+  // isn't in the list come last.
+  const elsewhereOn = (r: TreeNode) => creatingElsewhere.filter((c) => r.machine && c.machineId === r.machine.id);
+  const strays = creatingElsewhere.filter((c) => !tree.roots.some((r) => r.machine?.id === c.machineId));
+  const branch = (r: TreeNode) => [
+    rowFor(r, 0),
+    ...(collapsed.has(r.key) ? [] : [...r.children.map((c) => rowFor(c, 1)), ...elsewhereOn(r).map((c) => <ElsewhereRow key={`elsewhere:${c.machineId}/${c.name}`} creating={c} nested />)]),
+  ];
   const offlineRow =
     folded.length > 0 ? (
       <div key="offline" role="row" data-tree-offline-fold="" className={cn(COLS, "min-h-12 px-4 py-1.5 text-[14px] text-muted-foreground")}>
@@ -265,13 +405,17 @@ export function SpacesTreePage() {
             <span className="shrink-0 font-medium text-foreground">{folded.length} offline</span>
             {showOffline ? null : <span className="min-w-0 truncate">{folded.map((n) => n.name).join(", ")}</span>}
           </button>
+          <RemoveOldButton />
         </div>
       </div>
     ) : null;
   return (
     <Page>
-      <PageHeader title="Spaces" description={editing ? "Double-click a name, or pick Rename from its menu." : treeSummary(tree)} actions={addButton} />
-      <div role="table" aria-label="Your Spaces" data-spaces-tree="">
+      <PageHeader title="Computers" description={editing ? "Double-click a name, or pick Rename from its menu." : treeSummary(tree)} actions={addButton} />
+      <PageTip place="spaces" />
+      {waiting}
+      <ComputerWarnings snapshot={resources} machines={machines.data ?? []} />
+      <div role="table" aria-label="Your computers" data-spaces-tree="">
         <div role="row" className={cn(COLS, "px-4 pb-2 text-[13px] text-muted-foreground")}>
           <div role="columnheader">Name</div>
           <div role="columnheader">Status</div>
@@ -280,11 +424,20 @@ export function SpacesTreePage() {
           <div role="columnheader" aria-label="Actions" />
         </div>
         <GroupedSection role="rowgroup">
+          {hereRow}
           {shown.flatMap(branch)}
           {offlineRow}
           {showOffline ? folded.map((r) => rowFor(r, 0)) : null}
+          {strays.map((c) => (
+            <ElsewhereRow key={`elsewhere:${c.machineId}/${c.name}`} creating={c} />
+          ))}
         </GroupedSection>
       </div>
+      {listed.reachingLine ? (
+        <p className="mt-3 px-4 text-[13px] text-muted-foreground" data-spaces-reaching="">
+          {listed.reachingLine}
+        </p>
+      ) : null}
       {editing ? <p className="mt-4 text-[13px] text-muted-foreground">{RENAME_NOTE}</p> : null}
       {single ? (
         // f7: only This Mac. Agents are better off on a computer you're not using.
@@ -301,7 +454,10 @@ export function SpacesTreePage() {
           </div>
         </GroupedSection>
       ) : null}
-      {sheet}
+      <UpsellPrompt surface="machine" active={(machines.data ?? []).length >= 2 && (machines.data ?? []).some((m) => m.via === "relay")} className="mt-4" />
+      <CloudsSection />
+      <DevicesSection />
+      {sheets}
       {removing ? <RemoveComputerDialog node={removing} onClose={() => setRemoving(null)} /> : null}
       <ConfirmDialog
         open={deleting !== null}
@@ -318,6 +474,33 @@ export function SpacesTreePage() {
         }}
       />
     </Page>
+  );
+}
+
+/** A Space another computer is making: its name, Getting ready and how far it got. Nothing to open yet. */
+function ElsewhereRow({ creating: c, nested }: { creating: CreatingElsewhere; nested?: boolean }) {
+  const os: SpaceOs = c.os === "macos" || c.os === "linux" || c.os === "windows" ? c.os : "unknown";
+  const percent = `${Math.min(100, Math.max(0, Math.round(c.percent)))}%`;
+  return (
+    <div role="row" data-creating-elsewhere={c.machineId} aria-label={`${c.name}: Getting ready on ${c.machineName.trim() || "another computer"}, ${percent}`} className={cn(COLS, "min-h-12 px-4 py-1.5 text-[14px]")}>
+      <div role="cell" className={cn("flex min-w-0 items-center gap-2.5", nested && "pl-8")}>
+        <TreeIcon node={{ kind: "space", current: false, os }} />
+        <span className="min-w-0 truncate">{c.name}</span>
+      </div>
+      <div role="cell" className="flex min-w-0 items-center gap-2 text-[13px] text-muted-foreground">
+        <TreeDot tone="busy" />
+        <span className="truncate">Getting ready</span>
+        <span className="h-1 w-12 shrink-0 overflow-hidden rounded-full bg-foreground/10" aria-hidden>
+          <span className="block h-full rounded-full bg-brand" style={{ width: percent }} />
+        </span>
+        <span className="tabular-nums" data-state-label="">
+          {percent}
+        </span>
+      </div>
+      <div role="cell" />
+      <div role="cell" />
+      <div role="cell" />
+    </div>
   );
 }
 

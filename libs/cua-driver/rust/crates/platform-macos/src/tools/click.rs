@@ -8,8 +8,8 @@
 //! * **AX path** (`element_token`): performs AXAction on the cached
 //!   element. Fires via AX RPC — the target app never needs to be frontmost.
 //!   Extra behaviors vs. the naive dispatch:
-//!   - AXTextField / AXTextArea inside web content (AXWebArea): 800 ms post-click delay
-//!     for DOM focus settle. Native text inputs return without it.
+//!   - AXTextField / AXTextArea inside web content (AXWebArea): wait for DOM focus
+//!     (event driven, capped at 800 ms by `CUA_DRIVER_WEBKIT_SETTLE_MS`). Native text inputs return without it.
 //!   - AXPopUpButton: appends the list of available options and redirects to set_value.
 //!   - Advertised-action warning if the element didn't list the requested action.
 //!
@@ -879,6 +879,7 @@ impl ClickTool {
             // and stomp default for a non-default session).
             let ck = cursor_key.clone();
             let selection_modifiers = modifiers.clone();
+            let settle_guard = element_guard.clone();
             let result = focus_guard::with_focus_suppressed(
                 if foreground { None } else { Some(pid) },
                 prior_front,
@@ -953,55 +954,35 @@ impl ClickTool {
                     ),
                     fronted,
                 ))) => {
-                    // For text inputs, wait 800ms for WebKit DOM focus to settle
-                    // before returning — matches the Swift reference behaviour.
-                    // The window watch above already used part of it.
+                    // For text inputs in web content, wait for the page to move
+                    // DOM focus onto the field. The wait ends as soon as AX
+                    // reports the field focused and stable, and is capped by
+                    // `CUA_DRIVER_WEBKIT_SETTLE_MS` (default 800, the old fixed
+                    // wait). The window watch above already used part of it.
                     if needs_webkit_delay {
-                        let settle = std::time::Duration::from_millis(800)
-                            .saturating_sub(acted_at.elapsed());
-                        tokio::time::sleep(settle).await;
+                        let total = cua_driver_core::input_pacing::webkit_settle_cap();
+                        if !total.is_zero() {
+                            wait_for_web_focus(
+                                settle_guard,
+                                total.saturating_sub(acted_at.elapsed()),
+                            )
+                            .await;
+                        }
                     }
                     msg.push_str(&changes.result_suffix());
-                    // AX dispatch went through, but AXPerformAction returning
-                    // success does not confirm the on-screen effect (many elements
-                    // no-op silently). A click is never driver-verifiable (no
-                    // read-back) → verified:false stays for back-compat. The
-                    // tri-state `effect` is the richer signal:
-                    //   * suspected_noop — the element didn't advertise the action,
-                    //     so the press likely did nothing → cross to vision/pixel.
-                    //   * unverifiable — dispatched fine, driver just can't confirm;
-                    //     the caller verifies via screenshot.
-                    let mut structured = serde_json::json!({
-                        "path": if selection_via_pixel {
-                            if fronted { "cgevent_fg" } else { "cgevent" }
-                        } else if fronted {
-                            "ax_fg"
+                    let path = if selection_via_pixel {
+                        if fronted {
+                            "cgevent_fg"
                         } else {
-                            "ax"
-                        },
-                        "verified": selection_verified,
-                        "effect": if selection_verified {
-                            "confirmed"
-                        } else if suspected_noop {
-                            "suspected_noop"
-                        } else {
-                            "unverifiable"
-                        },
-                    });
-                    if selection_verified {
-                        structured["evidence"] = serde_json::json!([
-                            { "kind": "accessibility_readback" }
-                        ]);
-                    }
-                    if suspected_noop {
-                        structured["escalation"] = serde_json::json!({
-                            "recommended": "px",
-                            "reason": "element does not advertise this action — the \
-                                       AX press likely no-op'd. Do an element px \
-                                       action: click by pixel (x,y) off the \
-                                       screenshot from get_window_state."
-                        });
-                    }
+                            "cgevent"
+                        }
+                    } else if fronted {
+                        "ax_fg"
+                    } else {
+                        "ax"
+                    };
+                    let structured =
+                        ax_click_structured(path, selection_verified, suspected_noop, &changes);
                     ToolResult::text(msg).with_structured(structured)
                 }
                 Ok(Err(e)) => match e.downcast_ref::<crate::input::ax_actions::ElementDisabled>() {
@@ -1557,17 +1538,19 @@ impl ClickTool {
                     } else {
                         format!("to pid {pid}")
                     };
+                    let mut structured = serde_json::json!({
+                        "path": super::pixel_route::path_label(route),
+                        "verified": false,
+                        "effect": "unverifiable",
+                        "focus_without_raise": focus_without_raise
+                    });
+                    changes.add_window_identity(&mut structured);
                     ToolResult::text(format!(
                         "✅ Posted {button_label} {target} ({}).{}",
                         super::pixel_route::delivery_note(route),
                         changes.result_suffix()
                     ))
-                    .with_structured(serde_json::json!({
-                        "path": super::pixel_route::path_label(route),
-                        "verified": false,
-                        "effect": "unverifiable",
-                        "focus_without_raise": focus_without_raise
-                    }))
+                    .with_structured(structured)
                 }
                 Ok(Err(e)) if route == PixelClickRoute::ForegroundHid => {
                     super::pixel_route::foreground_unavailable(
@@ -1623,8 +1606,81 @@ fn prime_key_window_for_background_press(pid: i32, window_id: u32, action: &str)
     }
 }
 
+/// Quiet time after an `AXPress` before the driver asks a web field for focus.
+/// An `AXFocused` write made while WebKit is still handling the press fails
+/// or is dropped, so the first request waits this long.
+const FOCUS_REQUEST_GRACE: std::time::Duration = std::time::Duration::from_millis(40);
+/// Gap between focus requests when the field still does not report focus.
+const FOCUS_REQUEST_RETRY: std::time::Duration = std::time::Duration::from_millis(60);
+/// How many times the driver asks a web field for focus before giving up.
+const FOCUS_REQUEST_ATTEMPTS: u32 = 4;
+/// The least time an enabled settle wait may have left, so the focus requests
+/// above still run when the window watch already used the configured cap.
+const FOCUS_REQUEST_FLOOR: std::time::Duration = std::time::Duration::from_millis(250);
+
+/// Whether the next `AXFocused` request is due. `elapsed` is the time since the
+/// press, `last_attempt` the elapsed time of the previous request. Pure.
+fn focus_request_due(
+    elapsed: std::time::Duration,
+    attempts: u32,
+    last_attempt: Option<std::time::Duration>,
+) -> bool {
+    if attempts >= FOCUS_REQUEST_ATTEMPTS {
+        return false;
+    }
+    match last_attempt {
+        None => elapsed >= FOCUS_REQUEST_GRACE,
+        Some(at) => elapsed >= at + FOCUS_REQUEST_RETRY,
+    }
+}
+
+/// Wait, off the async executor, until `element` reports `AXFocused` on two
+/// reads a few milliseconds apart, or the wait runs out.
+///
+/// WebKit does not move DOM focus for an AX press on every text input: a
+/// `<textarea>` (AXTextArea) takes the press without focusing, so the text
+/// typed next goes to whichever field was focused before (in Safari, often the
+/// address bar). When the field does not report focus shortly after the press,
+/// the driver asks for it with `AXFocused = true` and keeps polling. A field
+/// that focuses itself returns as soon as focus is stable; a page that never
+/// reports focus costs no more than `cap` (at least [`FOCUS_REQUEST_FLOOR`]).
+/// `cap` is the time left of `CUA_DRIVER_WEBKIT_SETTLE_MS`; the caller skips
+/// the wait when that knob is `0`.
+async fn wait_for_web_focus(
+    element: crate::ax::snapshot::RetainedElement,
+    cap: std::time::Duration,
+) {
+    let cap = cap.max(FOCUS_REQUEST_FLOOR);
+    let _ = tokio::task::spawn_blocking(move || {
+        let el = element.as_ptr() as AXUIElementRef;
+        let start = std::time::Instant::now();
+        let mut attempts = 0u32;
+        let mut last_attempt = None;
+        let _ = cua_driver_core::input_pacing::wait_until_stable(
+            cap,
+            std::time::Duration::from_millis(4),
+            std::time::Duration::from_millis(8),
+            || {
+                if unsafe { copy_bool_attr(el, "AXFocused") } == Some(true) {
+                    return true;
+                }
+                let elapsed = start.elapsed();
+                if focus_request_due(elapsed, attempts, last_attempt) {
+                    attempts += 1;
+                    last_attempt = Some(elapsed);
+                    let _ = crate::input::ax_actions::focus_element(el as usize);
+                }
+                false
+            },
+            || start.elapsed(),
+            std::thread::sleep,
+        );
+    })
+    .await;
+}
+
 /// Whether an AX press on a text input must wait for the page to move DOM
-/// focus (800 ms). Only text inputs inside web content (an `AXWebArea`
+/// focus (until AX reports focus, capped at 800 ms). Only text inputs inside web content (an `AXWebArea`
 /// ancestor) have a DOM focus to settle; waiting on a native field only
 /// delays the result. `ancestor_roles` is read only for a text input pressed
 /// with `AXPress`.
@@ -1957,11 +2013,33 @@ fn perform_ax_click(
 
 #[cfg(test)]
 mod web_focus_settle_tests {
-    use super::needs_web_focus_settle;
+    use super::{focus_request_due, needs_web_focus_settle};
+    use std::time::Duration;
 
     fn roles(list: &[&str]) -> impl FnOnce() -> Vec<String> {
         let list: Vec<String> = list.iter().map(|role| (*role).to_owned()).collect();
         move || list
+    }
+
+    fn ms(n: u64) -> Duration {
+        Duration::from_millis(n)
+    }
+
+    /// A press on a web textarea leaves focus where it was; the driver has to
+    /// ask for it, but not while WebKit is still handling the press.
+    #[test]
+    fn the_first_focus_request_waits_out_the_press() {
+        assert!(!focus_request_due(ms(0), 0, None));
+        assert!(!focus_request_due(ms(39), 0, None));
+        assert!(focus_request_due(ms(40), 0, None));
+    }
+
+    #[test]
+    fn a_missed_focus_request_is_retried_a_few_times_then_dropped() {
+        assert!(!focus_request_due(ms(80), 1, Some(ms(40))));
+        assert!(focus_request_due(ms(100), 1, Some(ms(40))));
+        assert!(focus_request_due(ms(300), 3, Some(ms(240))));
+        assert!(!focus_request_due(ms(900), 4, Some(ms(240))));
     }
 
     #[test]
@@ -2033,6 +2111,49 @@ mod selection_fallback_tests {
 
 // ── Tests ────────────────────────────────────────────────────────────────────
 
+/// Structured result of a dispatched AX click. AXPerformAction returning
+/// success does not confirm the on-screen effect, so `verified` stays false
+/// without a read-back and the tri-state `effect` is the signal:
+///   * suspected_noop: the element didn't advertise the action and this
+///     press opened no window, so it likely did nothing; escalate to pixel.
+///   * unverifiable: dispatched fine, the caller verifies via screenshot.
+///
+/// A window the previous action's detached tail saw says nothing about this
+/// press, so only `changes.new_windows` lifts a suspected no-op.
+fn ax_click_structured(
+    path: &str,
+    selection_verified: bool,
+    suspected_noop: bool,
+    changes: &crate::window_change_detector::Changes,
+) -> Value {
+    let suspected_noop = !selection_verified && suspected_noop && changes.new_windows.is_empty();
+    let mut structured = serde_json::json!({
+        "path": path,
+        "verified": selection_verified,
+        "effect": if selection_verified {
+            "confirmed"
+        } else if suspected_noop {
+            "suspected_noop"
+        } else {
+            "unverifiable"
+        },
+    });
+    changes.add_window_identity(&mut structured);
+    if selection_verified {
+        structured["evidence"] = serde_json::json!([{ "kind": "accessibility_readback" }]);
+    }
+    if suspected_noop {
+        structured["escalation"] = serde_json::json!({
+            "recommended": "px",
+            "reason": "element does not advertise this action — the \
+                       AX press likely no-op'd. Do an element px \
+                       action: click by pixel (x,y) off the \
+                       screenshot from get_window_state."
+        });
+    }
+    structured
+}
+
 /// Check `click`'s `action` before any dispatch. Element clicks take the
 /// AX action names `map_action` knows. A pixel click also takes `focus`: the
 /// background focus rung that pixel `type_text`, `press_key` and `scroll`
@@ -2058,6 +2179,52 @@ mod tests {
         assert!(validate_click_action("show_alternate_ui", true).is_ok());
         assert!(validate_click_action("focus", true).is_err());
         assert!(validate_click_action("hover", false).is_err());
+    }
+
+    fn window(window_id: u32) -> crate::window_change_detector::WindowEvent {
+        crate::window_change_detector::WindowEvent {
+            window_id,
+            pid: 1,
+            app_name: "App".into(),
+            title: String::new(),
+        }
+    }
+
+    /// A late window from the previous action must not turn this press's
+    /// suspected no-op into `unverifiable` and drop the pixel escalation.
+    #[test]
+    fn ax_click_result_ignores_the_previous_actions_late_window() {
+        use crate::window_change_detector::Changes;
+        let earlier_only = Changes {
+            earlier_new_windows: vec![window(7)],
+            ..Changes::no_change()
+        };
+        let r = ax_click_structured("ax", false, true, &earlier_only);
+        assert_eq!(r["effect"], "suspected_noop");
+        assert_eq!(r["escalation"]["recommended"], "px");
+        assert!(r.get("new_windows").is_none());
+        assert_eq!(r["earlier_new_windows"][0]["window_id"], 7);
+
+        let opened_now = Changes {
+            new_windows: vec![window(8)],
+            ..Changes::no_change()
+        };
+        let r = ax_click_structured("ax", false, true, &opened_now);
+        assert_eq!(r["effect"], "unverifiable");
+        assert!(r.get("escalation").is_none());
+        assert_eq!(r["new_windows"][0]["window_id"], 8);
+        assert!(r.get("earlier_new_windows").is_none());
+
+        let r = ax_click_structured("ax", false, true, &Changes::no_change());
+        assert_eq!(r["effect"], "suspected_noop");
+        assert!(r.get("new_windows").is_none());
+        let r = ax_click_structured("ax", false, false, &Changes::no_change());
+        assert_eq!(r["effect"], "unverifiable");
+        assert!(r.get("escalation").is_none());
+        let r = ax_click_structured("cgevent", true, true, &opened_now);
+        assert_eq!(r["effect"], "confirmed");
+        assert_eq!(r["evidence"][0]["kind"], "accessibility_readback");
+        assert!(r.get("escalation").is_none());
     }
 
     /// #3835: Finder's toolbar view switcher applies an AXPress and returns

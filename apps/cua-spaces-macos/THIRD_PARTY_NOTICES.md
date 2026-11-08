@@ -33,7 +33,8 @@ SOFTWARE.
 ## PermissionFlow
 
 The app links [PermissionFlow](https://github.com/jaywcjlove/PermissionFlow)
-2.11.4 (pinned in `Package.resolved`), unmodified, with its
+2.11.4, vendored in `Vendor/PermissionFlow` with two additions (the panel's
+words set by the app, and its placement on screen; see `Vendor/PermissionFlow/README.md`), with its
 `PermissionFlow_PermissionFlow.bundle` strings in `Contents/Resources`: the
 guide to Screen Recording and Accessibility in System Settings
 (`Sources/CuaSpacesMacKit/Models/PermissionGuide.swift`). Copyright (c) 2026

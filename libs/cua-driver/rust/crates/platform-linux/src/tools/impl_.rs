@@ -1975,17 +1975,18 @@ pub(crate) fn background_virtual_text(
     pid: u32,
     xid: u64,
     text: &str,
+    pacing: crate::input::TypePacing,
 ) -> anyhow::Result<crate::input::KeyboardDeliveryReport> {
     if let Some(popup) = crate::input::popup_of_pid(pid) {
-        match crate::input::send_popup_keyboard_text(popup.window, text) {
+        match crate::input::send_popup_keyboard_text_paced(popup.window, text, pacing) {
             Err(error) if error.is::<crate::input::PopupOwnerGone>() => {}
             delivered => return delivered,
         }
         return crate::input::send_keys_under_popup_grab(pid, popup, || {
-            crate::input::send_type_text_xtest(text)
+            crate::input::send_type_text_xtest_paced(text, pacing)
         });
     }
-    crate::input::send_virtual_keyboard_text(cursor_id, xid, text)
+    crate::input::send_virtual_keyboard_text_paced(cursor_id, xid, text, pacing)
 }
 
 pub(crate) fn is_popup_keyboard_grab(error: &anyhow::Error) -> bool {

@@ -8,7 +8,6 @@ import type { SpacesSettings } from "@/bridge";
 import { SettingsGroup, SettingsRow } from "@/components/settings-group";
 import { TreeIcon } from "@/components/spaces/tree-parts";
 import { useSpacesTreeData } from "@/components/spaces/use-spaces-tree";
-import { NEVER_MADE } from "@/components/ask-first/tree-where";
 import { Select } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { toastError } from "@/components/ui/toast";
@@ -37,14 +36,14 @@ export function moved<T>(list: readonly T[], from: number, to: number): T[] {
 }
 
 /**
- * Settings, General (Labs "Spaces as a tree", f3): where new agent tasks run.
+ * Settings, General: where new agent tasks run.
  * The same setting as "Make this my default" in Home's picker; the relay
  * keeps it for the account, so every computer and the CLI agree.
  */
 export function DefaultSpaceGroup() {
-  const { on, tree, defaults } = useSpacesTreeData();
+  const { tree, defaults } = useSpacesTreeData();
   const [dragging, setDragging] = useState<number | null>(null);
-  if (!on || !tree || defaults.unsupported || tree.roots.length === 0) return null;
+  if (!tree || defaults.unsupported || tree.roots.length === 0) return null;
   const settings = defaults.settings;
   const defaultKey = settings?.defaultSpace ?? tree.defaultKey;
   const choices = treeRows(tree).filter((n) => n.settingsId);
@@ -69,10 +68,10 @@ export function DefaultSpaceGroup() {
     e.preventDefault();
   };
   return (
-    <SettingsGroup title="Where new agent tasks run" footer={NEVER_MADE} data-default-space-group="">
+    <SettingsGroup title="Where new agent tasks run" footer="A new computer is never made unless you pick one." data-default-space-group="">
       <SettingsRow
         label="Default Space"
-        description="New tasks from Home run here unless you pick another."
+        description="Agents run here when a task doesn't name a computer."
         control={
           <Select
             aria-label="Default Space"

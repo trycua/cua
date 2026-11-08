@@ -7,7 +7,6 @@
 import { cleanup, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { setFlagOverride } from "@/bridge";
 import { wasmBuilt } from "@/bridge/__tests__/testCore";
 import { resetConnectedAppsState } from "@/hooks/use-connected-apps";
 import { resetConnectState } from "@/hooks/use-connectors";
@@ -24,11 +23,9 @@ beforeEach(() => {
   resetRepos();
   resetConnectState();
   resetConnectedAppsState();
-  setFlagOverride("spaces_ask_first_home", true);
 });
 afterEach(() => {
   cleanup();
-  setFlagOverride("spaces_ask_first_home", null);
 });
 
 const q = (s: string) => document.querySelector<HTMLElement>(s);

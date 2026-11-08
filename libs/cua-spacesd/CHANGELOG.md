@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.7](https://github.com/trycua/cua/compare/cua-spacesd-v0.12.6...cua-spacesd-v0.12.7) (2026-11-07)
+
+
+### Bug Fixes
+
+* **cua-driver:** give KWin windows exact bounds, stacking, capture and bring_to_front ([#6820](https://github.com/trycua/cua/issues/6820)) ([5ee57ab](https://github.com/trycua/cua/commit/5ee57ab5bba333f33e48df787b77d997cc1e8019))
+
 ## [0.12.6](https://github.com/trycua/cua/compare/cua-spacesd-v0.12.5...cua-spacesd-v0.12.6) (2026-11-07)
 
 

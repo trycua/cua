@@ -891,7 +891,7 @@
     "additionalProperties": false,
     "properties": {
      "delay_ms": {
-      "description": "Ms between characters in the CGEvent fallback. Default 30.",
+      "description": "Ms between characters in the CGEvent fallback. Default 0: characters go in batched key events, fast. Set a positive value for one paced key per character (debounced search boxes).",
       "maximum": 200,
       "minimum": 0,
       "type": "integer"

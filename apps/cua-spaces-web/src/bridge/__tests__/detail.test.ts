@@ -179,7 +179,7 @@ describe("this machine on the relay (CUA-1527)", () => {
   it("lists the machine that is set up for access once, as This machine, with its Spaces", () => {
     const spaces = { spaces: [wkSpace("relay:space-16dec1e7810d08b6", "remote-from-wl", HOST), wkSpace(`relay:${HOST}`, "lg-x11")] };
     const rows = toMachineRows(spaces as never, { devices: null, signedIn: true, host: status } as never, "linux");
-    expect(rows.map((r) => r.name)).toEqual(["This machine"]);
+    expect(rows.map((r) => r.name)).toEqual(["This computer"]);
     const machines = toMachines(rows, []);
     expect(machines).toHaveLength(1);
   });
@@ -192,12 +192,12 @@ describe("this machine on the relay (CUA-1527)", () => {
 
   it("does not list a Space registered on the relay as a machine", () => {
     const rows = toMachineRows({ spaces: [wkSpace("relay:space-32179dffc4bd8902", "lin-local")] } as never, { devices: null, signedIn: true } as never, "linux");
-    expect(rows.map((r) => r.name)).toEqual(["This machine"]);
+    expect(rows.map((r) => r.name)).toEqual(["This computer"]);
   });
 
   it("still lists another machine's Spaces under that machine", () => {
     const rows = toMachineRows({ spaces: [wkSpace("relay:space-aaaa", "job", "feedfacefeedfacefeedfacefeedface")] } as never, { devices: null, signedIn: true, host: status } as never, "linux");
-    expect(rows.map((r) => r.name)).toEqual(["This machine", "lg-x11"]);
+    expect(rows.map((r) => r.name)).toEqual(["This computer", "lg-x11"]);
   });
 });
 

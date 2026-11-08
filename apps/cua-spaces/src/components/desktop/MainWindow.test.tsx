@@ -395,7 +395,7 @@ describe("MainWindow", () => {
     ]);
     fireEvent.click(within(screen.getAllByRole("listbox", { name: "This Mac" })[0]!).getByRole("option"));
     fireEvent.click(await screen.findByRole("button", { name: "Turn on remote access" }));
-    expect(await screen.findByText("Set up this machine")).toBeInTheDocument();
+    expect(await screen.findByText("Set up this computer")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Turn on remote access" }));
     expect(await screen.findByRole("button", { name: "Stop sharing" })).toBeInTheDocument();
     await waitFor(() =>

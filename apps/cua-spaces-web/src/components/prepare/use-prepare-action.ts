@@ -13,7 +13,7 @@ export function usePrepareAction(): () => void {
   const prep = usePrepare();
   const navigate = useNavigate();
   return () => {
-    if (prep.view?.action?.id === ADD_COMPUTER_ACTION) void navigate({ to: "/machines", search: { add: true } });
+    if (prep.view?.action?.id === ADD_COMPUTER_ACTION) void navigate({ to: "/spaces", search: { add: true } });
     else prep.driver?.retry();
   };
 }

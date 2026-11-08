@@ -9,13 +9,14 @@ import { SettingRow } from "@/components/ui/grouped";
 import { Switch } from "@/components/ui/switch";
 import { toast } from "@/components/ui/toast";
 import { showDesktop } from "@/lib/hidden-desktops";
+import { THIS_COMPUTER } from "@/lib/machines";
 
 const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /**
- * This Mac's "Let other machines control this desktop" switch, as the machine page draws it
+ * This Mac's "Let other computers control this desktop" switch, as its computer page draws it
  * (the core's `machines.view` toggle), for the page of its desktop row. Turning it on also
- * brings a hidden desktop row back. Before this Mac is set up, it opens the setup on Machines.
+ * brings a hidden desktop row back. Before this Mac is set up, it opens the setup on its page.
  */
 export function useDesktopSwitch(): { toggle: MachinesViewToggle | undefined; busy: boolean; flip: () => void } {
   const { view } = useMachines();
@@ -28,7 +29,7 @@ export function useDesktopSwitch(): { toggle: MachinesViewToggle | undefined; bu
     if (!toggle) return;
     if (toggle.setup) {
       host.openForm(toggle.setup);
-      void navigate({ to: "/machines" });
+      void navigate({ to: "/spaces/computer/$computerId", params: { computerId: THIS_COMPUTER } });
       return;
     }
     const turningOn = !toggle.on;

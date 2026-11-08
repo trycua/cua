@@ -278,7 +278,7 @@ export function createDemoSettings(ctx: DemoSettingsContext): Handlers {
     },
 
     "devices.get": () => {
-      if (!ctx.signedIn()) throw new HostError("Sign in to Cua to see your machines", "signed_out");
+      if (!ctx.signedIn()) throw new HostError("Sign in to Cua to see your computers", "signed_out");
       return structuredClone(devices);
     },
     // Signing in again enrolls this device at once.

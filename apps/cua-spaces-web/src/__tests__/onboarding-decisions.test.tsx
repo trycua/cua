@@ -231,7 +231,7 @@ describe("Cua Driver in setup (A, CUA-2706): the permissions step is the Cua Dri
     note();
     await waitFor(() => expect(all("[data-app-permission]").length).toBe(2));
     fireEvent.click(q("[data-new-run-permissions-next=Later]")!);
-    await waitFor(() => expect(heading()).toBe("Your agents will use Codex"), { timeout: 15_000 });
+    await waitFor(() => expect(heading()).toBe("Use Codex on all your computers"), { timeout: 15_000 });
     note();
     fireEvent.click(q("[data-onboarding-primary]")!);
     await waitFor(() => expect(heading()).toBe("Codex can now use this Mac"), { timeout: 15_000 });

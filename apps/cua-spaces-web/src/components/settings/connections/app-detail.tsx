@@ -7,6 +7,7 @@ import { CheckIcon, ChevronLeftIcon, Loader2Icon } from "lucide-react";
 import { HarnessMark } from "@/components/agents/harness-mark";
 import { useThisAndOthers } from "@/components/agents/other-machine-block";
 import { SettingsGroup, SettingsRow } from "@/components/settings-group";
+import { AgentSignIns } from "@/components/settings/connections/agent-sign-ins";
 import { UsesRow } from "@/components/settings/connections/uses-row";
 import { Snippet } from "@/components/settings/snippet";
 import { Button } from "@/components/ui/button";
@@ -114,6 +115,8 @@ export function ConnectorAppPage({ agent }: { agent: string }) {
           <GroupedRow className="text-muted-foreground">{d.signInNote}</GroupedRow>
         )}
       </SettingsGroup>
+
+      <AgentSignIns agent={agent} c={c} />
 
       {d.settingsFile || snippet ? (
         <DetailsDisclosure title="Advanced" className="mb-8">

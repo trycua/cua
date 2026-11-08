@@ -102,7 +102,7 @@ describe.skipIf(!wasmBuilt)("Ask first: nothing connected", () => {
   it("has no agent to start with: the box says to sign in and Start waits", { timeout: 40000 }, async () => {
     await mountApp("/home", { failsCreates: false, listsGhost: false, demo: { keys: "none" } });
     fireEvent.change(await screen.findByLabelText("What should it do?"), { target: { value: "fix the build" } });
-    expect(q("[data-ask-agent]")!.textContent).toBe("Sign in to an agent");
+    expect(q("[data-ask-agent]")!.textContent).toBe("Choose an agent");
     expect((screen.getByRole("button", { name: "Start" }) as HTMLButtonElement).disabled).toBe(true);
   });
 });

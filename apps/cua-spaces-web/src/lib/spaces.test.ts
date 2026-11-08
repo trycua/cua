@@ -4,7 +4,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { Machine, Space } from "@/bridge";
-import { busyMacosSpaces, canDelete, canPower, countedSpaces, createError, isUnsharedDesktop, listedSpaces, machineName, macosLimitText, orderSpaces, osLabel, powerButton, powerPending, realSpaces, spacePlace, spaceState, visibleSpaces, isMachineDesktop } from "./spaces";
+import { busyMacosSpaces, canDelete, canPower, countedSpaces, createError, createLine, isUnsharedDesktop, listedSpaces, machineName, macosLimitText, orderSpaces, osLabel, powerButton, powerPending, realSpaces, spacePlace, spaceState, visibleSpaces, isMachineDesktop } from "./spaces";
 
 const space = (id: string, status: Space["status"], lastUsedAt: number, extra: Partial<Space> = {}): Space => ({
   id,
@@ -49,6 +49,17 @@ describe("a failed create", () => {
     // A stopped Space has no create error.
     expect(createError(SPACES[0]!)).toBeNull();
     expect(spaceState(space("pending:x", "provisioning", 1, { progress: progress() }))).toBe("creating");
+  });
+});
+
+// Regression (first run): the Making row showed "201 of 456 MB", then "0.9 of 1.2 GB" with nothing to say a second
+// download (the image, after the Linux runtime) had started.
+describe("createLine", () => {
+  it("names the step before its bytes, so a second download reads as a new step", () => {
+    expect(createLine({ label: "Setting up Linux runtime…", transfer: "201 of 456 MB · 57 MB/s" })).toBe("Setting up Linux runtime… · 201 of 456 MB · 57 MB/s");
+    expect(createLine({ label: "Downloading the image…", transfer: "0.9 of 1.2 GB" })).toBe("Downloading the image… · 0.9 of 1.2 GB");
+    expect(createLine({ label: "Booting Linux…" })).toBe("Booting Linux…");
+    expect(createLine(undefined)).toBeNull();
   });
 });
 

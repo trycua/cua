@@ -157,6 +157,12 @@ export function createError(space: Pick<Space, "status" | "progress">): string |
   return space.status === "suspended" ? (space.progress?.error ?? null) : null;
 }
 
+/** A create's one line: its step, then its bytes. A first Linux create downloads the runtime and then the image,
+ * two totals, so the bytes alone read as one total that jumps. */
+export function createLine(progress: Pick<NonNullable<Space["progress"]>, "label" | "transfer"> | undefined): string | null {
+  return [progress?.label, progress?.transfer].filter(Boolean).join(" \u00b7 ") || null;
+}
+
 /** 0..1 while a Space is being created. */
 export function createProgress(space: Pick<Space, "progress">): number {
   return (space.progress?.permille ?? 0) / 1000;

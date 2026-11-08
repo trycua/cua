@@ -15,7 +15,7 @@ import { Button } from "@/components/ui/button";
 import { toastError } from "@/components/ui/toast";
 import { useConnectors } from "@/hooks/use-connectors";
 import { keepTranscript, postToSpaceThread, retryTarget, startErrorView, taskState, TASK_STATE_TEXT, taskTitle, updateAskTask, useAskTasks, type AskTask, type TaskState, type TaskWhere } from "@/lib/ask-first";
-import { createProgress, spaceState } from "@/lib/spaces";
+import { createLine, createProgress, spaceState } from "@/lib/spaces";
 import { cn } from "@/lib/utils";
 
 import { agentName, AppMark, TASK_AGENTS, WherePicker } from "./ask-box";
@@ -267,8 +267,11 @@ function Starting({ pending, space, name, onHost }: { pending: Space | undefined
           <div className="text-[13px] text-muted-foreground">
             {onHost
               ? "It works with your own files and apps."
-              : (making?.transfer ??
-                (making ? `${making.label} ${Math.round(createProgress({ progress: making }) * 100)}%` : "Usually under a minute. The first one takes a few minutes."))}
+              : making?.transfer
+                ? createLine(making)
+                : making
+                  ? `${making.label} ${Math.round(createProgress({ progress: making }) * 100)}%`
+                  : "Usually under a minute. The first one takes a few minutes."}
           </div>
         </div>
       </div>

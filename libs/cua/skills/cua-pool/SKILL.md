@@ -58,6 +58,13 @@ parameter `cluster` (or annotate it `cua.Cluster`) to receive the cluster (rank,
 goes with it: `*.py`, `*.json`, `*.csv`, `*.yaml`, `*.png`, `*.npz` and similar small files (at most 1 MiB in all);
 download anything bigger inside the function.
 
+## Size a demo to the person waiting
+
+Someone is watching. Make the first run about 60-90 seconds (a small model, fewer steps), show what it made, and say
+what a longer run would add; train longer only when they ask. The first run on a computer installs the packages
+(a minute or two); later runs reuse them. Report the final state in one short message: what you made, where it is
+open, and anything that did not work.
+
 ## Follow and finish
 
 ```bash

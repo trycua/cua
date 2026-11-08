@@ -45,7 +45,7 @@ describe.skipIf(!wasmBuilt)("Agents, a persistent agent's detail", () => {
 
     fireEvent.click(tab("access")!);
     const access = await waitFor(() => panel("access")!);
-    expect(within(access).getByText("This machine")).toBeTruthy();
+    expect(within(access).getByText("This computer")).toBeTruthy();
     expect(within(access).getByRole("button", { name: "Revoke" })).toBeTruthy();
     expect(within(access).getByText("Audit")).toBeTruthy();
     expect(within(access).getByText("Used relay:this-mac")).toBeTruthy();

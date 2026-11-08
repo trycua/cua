@@ -307,6 +307,9 @@ try {
     # (CuaChannel::path_is_local). A copy, not a link: no privilege, and PATH never names cua.exe.
     $nativeCli = Join-Path $StageDir 'resources\native\cua.exe'
     Copy-Item -LiteralPath $nativeCli -Destination (Join-Path $stageBin $Local.CliExeName)
+    # The guest init of Windows microVMs sits next to the CLI too (the daemon looks beside its own executable).
+    $nativeInit = Join-Path $StageDir 'resources\native\cua-microvm-init'
+    if (Test-Path $nativeInit) { Copy-Item -LiteralPath $nativeInit -Destination (Join-Path $stageBin 'cua-microvm-init') }
 
     $problems = @()
     foreach ($f in @($Local.ExeName, 'resources\app.asar', 'resources\native\cua_spaces_ffi.dll', 'resources\native\cua_node_runtime.node', 'resources\web\index.html', "bin\$($Local.CliExeName)")) {

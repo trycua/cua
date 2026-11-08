@@ -337,6 +337,12 @@ impl QemuPackageManager {
     }
 }
 
+/// Lume runs macOS VMs on an Apple silicon Mac that is not itself a virtual
+/// machine: Apple's framework has no nested virtualization there.
+fn lume_host_supported(os: HostOs, arch: Arch, mac_is_vm: bool) -> bool {
+    os == HostOs::Macos && arch == Arch::Aarch64 && !mac_is_vm
+}
+
 /// Inspect the host. Read-only: never installs or starts anything.
 pub async fn doctor() -> DoctorReport {
     let host_os = HostOs::current();
@@ -419,8 +425,11 @@ pub async fn doctor() -> DoctorReport {
     note_kvm(&mut qemu_status, host_os, &kvm);
 
     // Lume.
+    // Apple silicon cannot nest macOS VMs: a Mac that is itself a virtual
+    // machine (`kern.hv_vmm_present`, so `kern.hv_support` is 0) cannot run Lume.
+    let mac_is_vm = host::mac_virtualization_supported() == Some(false);
     let mut lume = LumeReport {
-        supported_host: host_os == HostOs::Macos && host_arch == Arch::Aarch64,
+        supported_host: lume_host_supported(host_os, host_arch, mac_is_vm),
         binary: lume_binary(),
         url: crate::local_network::lume_base(),
         ..Default::default()
@@ -448,7 +457,9 @@ pub async fn doctor() -> DoctorReport {
         provisionable: lume.supported_host
             && !lume.serving
             && (lume.binary.is_some() || builtin_ok),
-        detail: if !lume.supported_host {
+        detail: if mac_is_vm && host_os == HostOs::Macos {
+            "Lume cannot run inside a virtual Mac (no nested virtualization)".into()
+        } else if !lume.supported_host {
             "Lume needs a macOS Apple Silicon host".into()
         } else if lume.serving {
             format!("lume serve answering at {}", lume.url)
@@ -727,6 +738,9 @@ pub fn containerization_backend(r: &ContainerizationReport) -> BackendStatus {
 /// firecracker` does; passt is the host's to install ([`crate::microvm::assets::PASTA_HINT`]).
 #[cfg(feature = "microvm")]
 async fn microvm_status() -> Option<(BackendStatus, MicroVmReport)> {
+    if HostOs::current() == HostOs::Windows {
+        return Some(windows_microvm_status().await);
+    }
     if HostOs::current() != HostOs::Linux {
         return None;
     }
@@ -774,6 +788,122 @@ async fn microvm_status() -> Option<(BackendStatus, MicroVmReport)> {
         provisioning,
     };
     Some((status, r))
+}
+
+/// microVMs on Windows (QEMU on the Windows Hypervisor Platform, hardware
+/// acceleration only) for `doctor`: ready when WHPX answers, QEMU 9 or later
+/// and the static guest init are there; installable when only what cua can
+/// fetch or turn on is missing (QEMU through winget, the kernel, the
+/// Windows feature through one administrator prompt).
+#[cfg(feature = "microvm")]
+async fn windows_microvm_status() -> (BackendStatus, MicroVmReport) {
+    use crate::microvm::{assets, whpx};
+    let root = crate::microvm::MicroVmConfig::default().root;
+    let w = whpx::status();
+    let qemu = whpx::qemu_bin();
+    let version = match &qemu {
+        Some(q) => host::run(q, &["--version"])
+            .await
+            .ok()
+            .and_then(|s| s.lines().next().map(|l| l.trim().to_string())),
+        None => None,
+    };
+    let old_qemu = version
+        .as_deref()
+        .and_then(whpx::qemu_major)
+        .is_some_and(|m| m < whpx::MIN_QEMU_MAJOR);
+    let init = assets::init_bin();
+    let init_static = init
+        .as_ref()
+        .and_then(|p| std::fs::read(p).ok())
+        .and_then(|b| crate::microvm::rootfs::elf_interpreter(&b))
+        .is_some_and(|interp| interp.is_none());
+    let kernel_cached = assets::kernel_path(&root).is_file();
+    let mut missing = Vec::new();
+    if w != whpx::Whpx::Ready {
+        missing.push("Windows Hypervisor Platform".to_string());
+    }
+    if qemu.is_none() {
+        missing.push("QEMU".into());
+    } else if old_qemu {
+        missing.push(format!("QEMU {} or later", whpx::MIN_QEMU_MAJOR));
+    }
+    if init.is_none() {
+        missing.push("cua-microvm-init".into());
+    } else if !init_static {
+        missing.push("a static cua-microvm-init".into());
+    }
+    let mut provisioning = Vec::new();
+    if w == whpx::Whpx::FeatureOff {
+        provisioning.push(
+            "turn on the Windows feature Windows Hypervisor Platform (one administrator prompt), \
+             then restart this PC"
+                .to_string(),
+        );
+    }
+    if qemu.is_none() || old_qemu {
+        provisioning.push("install QEMU with winget (SoftwareFreedomConservancy.QEMU)".into());
+    }
+    if !kernel_cached {
+        provisioning.push(format!(
+            "download the guest kernel {} (pinned, about 44 MB)",
+            assets::KERNEL_VERSION
+        ));
+    }
+    // Hardware only: a PC whose firmware has virtualization off, or that needs a
+    // restart, is told so and is not offered a setup that cannot finish.
+    let hardware_ok = matches!(w, whpx::Whpx::Ready | whpx::Whpx::FeatureOff);
+    let guest_ok = init.is_some() && init_static;
+    // The microVM's disk and downloads go under the cua home: say so now, not
+    // midway, when that drive has no room.
+    let disk = crate::disk::ensure_space(&root, 2 << 30, "set up microVMs").err();
+    let ready = missing.is_empty() && disk.is_none();
+    let detail = if let Some(d) = &disk {
+        missing.push("disk space".into());
+        d.to_string()
+    } else if let Some(why) = whpx::unsupported_reason(&w) {
+        why
+    } else if qemu.is_none() {
+        "microVMs run in QEMU on the Windows Hypervisor Platform: QEMU is set up on first use \
+         (winget)"
+            .into()
+    } else if missing.is_empty() {
+        format!(
+            "{} on the Windows Hypervisor Platform{}",
+            version.clone().unwrap_or_else(|| "QEMU".into()),
+            if kernel_cached {
+                ""
+            } else {
+                "; the guest kernel downloads on first use"
+            }
+        )
+    } else {
+        format!("microVMs are not set up: {}", missing.join(", "))
+    };
+    // The VMs' disks are sparse files that grow with use: warn while the drive fills.
+    let detail = match crate::managed::wsl::low_space_note(&nearest_existing(&root)) {
+        Some(note) if ready => format!("{detail}; {note}"),
+        _ => detail,
+    };
+    let status = BackendStatus {
+        backend: BackendKind::Firecracker,
+        ready,
+        provisionable: !ready && hardware_ok && guest_ok && disk.is_none(),
+        detail,
+        missing: missing.clone(),
+        provisioning,
+    };
+    let report = MicroVmReport {
+        kvm: w == whpx::Whpx::Ready,
+        firecracker: qemu,
+        firecracker_version: version,
+        init,
+        init_static,
+        kernel_cached,
+        userns: true,
+        ..Default::default()
+    };
+    (status, report)
 }
 
 #[cfg(not(feature = "microvm"))]
@@ -860,7 +990,7 @@ fn managed_status(
         };
     }
     let running = picked && managed::running();
-    BackendStatus {
+    let mut status = BackendStatus {
         backend: BackendKind::Managed,
         ready: running,
         provisionable: picked && !running,
@@ -869,9 +999,17 @@ fn managed_status(
         } else if source == LinuxSource::System {
             "Linux Spaces are set to use this Mac's own container engine".into()
         } else if running && cfg!(windows) {
-            "built-in Linux runtime running (WSL 2, runc)".into()
+            format!(
+                "built-in Linux runtime running (WSL 2, runc); {}",
+                crate::egress::BRIDGE_FAMILY_LIMITS
+            )
         } else if running {
             "built-in Linux runtime running (gVisor)".into()
+        } else if picked && managed::exists() && cfg!(windows) {
+            format!(
+                "built-in Linux runtime, started on demand; {}",
+                crate::egress::BRIDGE_FAMILY_LIMITS
+            )
         } else if picked && managed::exists() {
             "built-in Linux runtime, started on demand".into()
         } else if picked && cfg!(windows) {
@@ -900,7 +1038,17 @@ fn managed_status(
         } else {
             vec![]
         },
+    };
+    // Windows: the runtime's disk is a sparse VHDX that grows with images and
+    // Spaces. Say so while the drive is filling up, before Docker fails midway.
+    if cfg!(windows)
+        && picked
+        && managed::exists()
+        && let Some(note) = managed::wsl::low_space_note(&nearest_existing(&managed::root()))
+    {
+        status.detail = format!("{}; {note}", status.detail);
     }
+    status
 }
 
 /// `path`, or its nearest ancestor that exists (a volume to ask about).
@@ -1271,6 +1419,14 @@ mod tests {
     }
 
     /// The report `cua runtime doctor --json` prints round-trips.
+    #[test]
+    fn lume_needs_a_real_apple_silicon_mac_not_a_virtual_one() {
+        assert!(lume_host_supported(HostOs::Macos, Arch::Aarch64, false));
+        assert!(!lume_host_supported(HostOs::Macos, Arch::Aarch64, true));
+        assert!(!lume_host_supported(HostOs::Macos, Arch::X86_64, false));
+        assert!(!lume_host_supported(HostOs::Linux, Arch::Aarch64, false));
+    }
+
     #[test]
     fn doctor_report_serialises() {
         let r = report(true, false, true, false, HostOs::Macos);

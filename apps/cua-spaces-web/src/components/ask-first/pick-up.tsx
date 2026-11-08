@@ -10,8 +10,10 @@ export const PICK_UP_LIMIT = 4;
 
 /**
  * The recent Claude Code, Codex and Hermes chats on this computer
- * (`agents.recentThreads`), newest first. Null until the host answered;
- * empty when there are none or the host can't list them.
+ * (`agents.recentThreads`), newest first, never more than `limit` (a host
+ * that answers with more is cut here). Null until the host answered; empty
+ * when there are none or the host can't list them. Only kept in this hook's
+ * state: nothing here caches or sends the titles.
  */
 export function useRecentThreads(limit = PICK_UP_LIMIT): RecentThread[] | null {
   const { data } = useBridge();
@@ -21,7 +23,7 @@ export function useRecentThreads(limit = PICK_UP_LIMIT): RecentThread[] | null {
     if (!data) return;
     data
       .call("agents.recentThreads", { limit })
-      .then((rows) => live && setThreads(rows))
+      .then((rows) => live && setThreads(rows.slice(0, limit)))
       .catch((e: unknown) => {
         // A host or daemon without the list, or a store it couldn't read: the section stays hidden.
         if (live) setThreads([]);

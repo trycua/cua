@@ -1239,6 +1239,8 @@ pub const WHY_CONTAINERIZATION: &str = "Apple's Containerization can't protect y
      or choose No protection.";
 const WHY_QEMU_DOCKER: &str = "QEMU in a container isn't supported by this build";
 const WHY_FIRECRACKER_OS: &str = "Firecracker microVMs run on Linux only";
+/// A Windows microVM runs in QEMU's user-mode network, which has no rules.
+const WHY_MICROVM_WINDOWS: &str = "microVMs on this PC can't protect your network yet (QEMU's      user-mode network has no rules). Choose No protection to start one with a network, or no      network.";
 const WHY_VZ_OS: &str = "Apple microVMs run on a Mac only";
 const WHY_MAC_OS: &str = "this runtime runs on a Mac only";
 const WHY_PROVIDER: &str = "Spaces in your cloud account can't protect your network yet. \
@@ -1274,6 +1276,9 @@ pub fn network_support(kind: BackendKind, os: &str, placement: Placement) -> Net
             point: ENGINE_POINT,
         },
         BackendKind::Firecracker if linux => Enforced { point: NS_POINT },
+        BackendKind::Firecracker if os == "windows" => NoNetworkOnly {
+            why: WHY_MICROVM_WINDOWS,
+        },
         BackendKind::Firecracker => Refuse {
             why: WHY_FIRECRACKER_OS,
         },

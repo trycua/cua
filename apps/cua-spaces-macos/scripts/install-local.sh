@@ -382,6 +382,21 @@ if [ "$SKIP_RUST_BUILD" = 0 ]; then
     log "building cua-spacesd from this checkout (cargo, release)"
     (cd "$SPACESD_DIR" && CARGO_TARGET_DIR="$SPACESD_TARGET_DIR" cargo build --locked --release -p cua-spacesd --bin cua-spacesd)
 fi
+# The network gateway (cua-netgw, Go): VM Spaces behind the secure default network, and every
+# child Space of a VM tree, need it next to `cua`. Without it a child Space an agent makes
+# inside a Space is refused ("cua-netgw is not installed"). Built when Go is installed.
+if [ -z "${CUA_NETGW_BIN:-}" ]; then
+    if command -v go >/dev/null 2>&1; then
+        log "building the network gateway (cua-netgw)"
+        if "$REPO_ROOT/libs/cua/netgw/build.sh" "$BUILD_OUT/.netgw" >/dev/null; then
+            export CUA_NETGW_BIN="$BUILD_OUT/.netgw/cua-netgw"
+        else
+            err "the network gateway did not build: VM Spaces and child Spaces will be refused in this build."
+        fi
+    else
+        err "Go is not installed, so cua-netgw is not bundled: VM Spaces and child Spaces will be refused in this build (brew install go)."
+    fi
+fi
 wait_for_web_ui
 if [ ! -f "$WEBUI_DIST/index.html" ]; then
     web_ui_missing

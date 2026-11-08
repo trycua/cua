@@ -72,7 +72,7 @@ describe("the Space page header", () => {
     await waitFor(() => expect(q("[data-call-header] [data-header-power]")).not.toBeNull(), { timeout: 4000 });
     const head = q("[data-call-header]")!;
     // "‹ Spaces" is on a row of its own, above the title's row.
-    const back = within(head).getByRole("link", { name: /Spaces/ });
+    const back = within(head).getByRole("link", { name: /Computers/ });
     expect(back.closest("div")!.contains(head.querySelector("[data-detail-title]"))).toBe(false);
     const power = within(head).getByRole("button", { name: "Turn off" });
     expect(power.dataset.headerPower).toBe("on");

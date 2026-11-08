@@ -30,7 +30,7 @@ describe.skipIf(!wasmBuilt)("the core's words and states (wasm core)", () => {
     expect(container.textContent).toBe("Suspended");
   });
 
-  it("shows a creating card's line as the core's pending row says it", async () => {
+  it("shows a creating row's step as the core's pending row says it", async () => {
     let release!: () => void;
     const hold = new Promise<void>((r) => (release = r));
     const { hooks } = await mountApp("/spaces", { failsCreates: false, listsGhost: false, hold });
@@ -47,7 +47,8 @@ describe.skipIf(!wasmBuilt)("the core's words and states (wasm core)", () => {
       return c!;
     });
     expect(row.detail).toMatch(/^This Mac · /);
-    expect(card.textContent).toContain(row.detail);
+    // Under This Mac in the list, its row says the step.
+    expect(card.textContent).toContain(row.detail!.replace(/^This Mac · /, ""));
     release();
   });
 

@@ -206,7 +206,7 @@ export interface ProBannerInput {
 
 export interface ProBanner {
   visible: boolean;
-  /** "Run more Spaces at once with Pro". */
+  /** "Use more computers at once with Pro". */
   text: string;
   /** "Upgrade". */
   button: string;

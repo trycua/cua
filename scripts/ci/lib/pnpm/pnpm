@@ -1,0 +1,87 @@
+#!/bin/sh
+# pnpm at the version the package pins, whatever pnpm is installed on this machine.
+#
+# bin/ci and scripts/ci/check-lockfiles.sh put this directory first on PATH, so
+# every `pnpm` they (or the commands they print) run goes through here. It finds
+# the nearest package.json with a "packageManager": "pnpm@x.y.z" field (from the
+# current directory, or from --dir/-C), then runs exactly that version through
+# corepack (`corepack pnpm@x.y.z`), the same version CI's pnpm/action-setup uses.
+# A machine pnpm of another major (pnpm 11 vs a pnpm 9 lockfile) cannot rewrite
+# the lockfile. Without a pin, or when the pinned version cannot be activated,
+# it fails with a message instead of running some other pnpm.
+#
+# corepack comes from PATH, else from `npx corepack@$COREPACK_FALLBACK` (Node
+# 25+ and some Homebrew installs no longer ship it).
+
+COREPACK_FALLBACK="${CUA_CI_COREPACK_VERSION:-0.36.0}"
+
+die() { echo "pnpm shim (scripts/ci/lib/pnpm): $*" >&2; exit 127; }
+
+# Where to look for the pin: --dir/-C (what pnpm itself would use), else $PWD.
+start="$PWD"
+prev=""
+for a in "$@"; do
+  case "$prev" in --dir|-C) start="$a"; break ;; esac
+  case "$a" in --dir=*) start="${a#--dir=}"; break ;; esac
+  [ "$a" = "--" ] && break
+  prev="$a"
+done
+case "$start" in /*) ;; *) start="$PWD/$start" ;; esac
+[ -d "$start" ] || die "directory not found: $start"
+start="$(cd "$start" && pwd)"
+
+command -v node >/dev/null 2>&1 || die "node not found; install Node.js (the pinned pnpm is activated through corepack)"
+
+# nearest package.json that has a packageManager field
+dir="$start"
+pin=""
+pin_file=""
+while :; do
+  if [ -f "$dir/package.json" ]; then
+    pin="$(node -e 'try{process.stdout.write(String(require(process.argv[1]).packageManager||""))}catch{}' "$dir/package.json" 2>/dev/null)"
+    if [ -n "$pin" ]; then pin_file="$dir/package.json"; break; fi
+  fi
+  [ "$dir" = "/" ] && break
+  dir="$(dirname "$dir")"
+done
+[ -n "$pin" ] || die "no \"packageManager\" pin found from $start upward. Add e.g. \"packageManager\": \"pnpm@9.0.4\" to the package's package.json (every package with a pnpm-lock.yaml must pin one)."
+case "$pin" in
+  pnpm@*) ;;
+  *) die "$pin_file pins \"$pin\", not pnpm; this lockfile tool only runs pnpm" ;;
+esac
+ver="${pin#pnpm@}"
+ver="${ver%%+*}"
+case "$ver" in
+  [0-9]*.[0-9]*.[0-9]*) ;;
+  *) die "$pin_file pins \"$pin\": use an exact version like pnpm@9.0.4" ;;
+esac
+
+export COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+export COREPACK_ENABLE_AUTO_PIN=0
+
+if command -v corepack >/dev/null 2>&1; then
+  use_corepack() { corepack "$@"; }
+elif command -v npx >/dev/null 2>&1; then
+  use_corepack() { npx --yes "corepack@$COREPACK_FALLBACK" "$@"; }
+else
+  die "neither corepack nor npx found; install Node.js with corepack (brew install corepack)"
+fi
+
+# Fail fast and clearly when the pinned version cannot be activated (offline,
+# bad hash, ...). Checked once per version for this process tree.
+marker="CUA_PNPM_SHIM_OK_$(printf '%s' "$ver" | tr -c 'A-Za-z0-9' '_')"
+eval "ok=\${$marker:-}"
+if [ -z "$ok" ]; then
+  err="$(mktemp "${TMPDIR:-/tmp}/pnpm-shim.XXXXXX")"
+  got="$(use_corepack "pnpm@$ver" --version 2>"$err" </dev/null)"
+  if [ "$got" != "$ver" ]; then
+    detail="$(tail -n 5 "$err")"
+    rm -f "$err"
+    die "cannot activate pnpm@$ver (pinned in $pin_file; got '${got:-nothing}'). ${detail}"
+  fi
+  rm -f "$err"
+  export "$marker=1"
+fi
+
+
+use_corepack "pnpm@$ver" "$@"

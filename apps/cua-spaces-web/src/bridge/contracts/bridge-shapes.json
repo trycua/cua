@@ -2106,6 +2106,15 @@
         "granted": {
           "type": "boolean"
         },
+        "state": {
+          "enum": [
+            "on",
+            "off",
+            "absent",
+            "unknown",
+            null
+          ]
+        },
         "settingsUrl": {
           "type": [
             "string",
@@ -6608,6 +6617,104 @@
             "kind",
             "member",
             "by"
+          ]
+        },
+        "child": {
+          "anyOf": [
+            {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "enum": [
+                        "subagent"
+                      ]
+                    },
+                    "id": {
+                      "type": "string"
+                    },
+                    "agent": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "state": {
+                      "enum": [
+                        "running",
+                        "done",
+                        "failed"
+                      ]
+                    },
+                    "steps": {
+                      "type": "number"
+                    },
+                    "result": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "startedMs": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    },
+                    "endedMs": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "id",
+                    "agent",
+                    "title",
+                    "state",
+                    "steps",
+                    "result",
+                    "startedMs",
+                    "endedMs"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "enum": [
+                        "child_space"
+                      ]
+                    },
+                    "space": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "os": {
+                      "type": "string"
+                    },
+                    "agent": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "space",
+                    "name",
+                    "os",
+                    "agent"
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
           ]
         },
         "joinRequest": {
@@ -11216,6 +11323,38 @@
                   },
                   "text": {
                     "type": "string"
+                  },
+                  "children": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "title": {
+                          "type": "string"
+                        },
+                        "steps": {
+                          "type": "number"
+                        },
+                        "step": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "sinceMs": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "title",
+                        "steps",
+                        "step"
+                      ]
+                    }
                   }
                 },
                 "required": [

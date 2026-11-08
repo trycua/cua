@@ -149,7 +149,7 @@ pub fn issues(
             out.push(issue(
                 "service",
                 "fail",
-                "The Cua service isn\u{2019}t running, so your other machines can\u{2019}t reach \
+                "The Cua service isn\u{2019}t running, so your other computers can\u{2019}t reach \
                  this Mac."
                     .into(),
                 Some(MachinesViewIssueAction {
@@ -163,7 +163,7 @@ pub fn issues(
             out.push(issue(
                 "relay",
                 "warn",
-                "This Mac can\u{2019}t reach the Cua relay, so your other machines can\u{2019}t \
+                "This Mac can\u{2019}t reach the Cua relay, so your other computers can\u{2019}t \
                  reach it. Check its internet connection."
                     .into(),
                 None,

@@ -1830,6 +1830,7 @@ pub(crate) fn capture_cli_completed(
         "diagnose" => "diagnose",
         "permissions" => "permissions",
         "autostart" => "autostart",
+        "kwin_capture" => "kwin_capture",
         "skills" => "skills",
         "extension" => "extension",
         "config" => "config",
@@ -1986,6 +1987,7 @@ fn fixed_cli_command(command: &str) -> &'static str {
         "diagnose" => "diagnose",
         "permissions" => "permissions",
         "autostart" => "autostart",
+        "kwin_capture" => "kwin_capture",
         "skills" => "skills",
         "extension" => "extension",
         "config" => "config",
@@ -2047,6 +2049,12 @@ fn fixed_cli_operation(command: &str, operation: &str) -> &'static str {
             "disable" => "disable",
             "status" => "status",
             "kick" => "kick",
+            _ => "other",
+        },
+        "kwin_capture" => match operation {
+            "status" => "status",
+            "on" => "on",
+            "off" => "off",
             _ => "other",
         },
         "skills" => match operation {

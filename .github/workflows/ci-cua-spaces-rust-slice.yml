@@ -66,3 +66,15 @@ jobs:
           # The producer is where a key that misses an input is found: it
           # fails here, on main, instead of serving a stale library later.
           verify-key: "true"
+      # Hand the slice to the stages of the same run as a workflow artifact:
+      # an Actions cache entry can be evicted (the repository's cache is
+      # shared by every workflow) or not be saved at all, an artifact of the
+      # run cannot. The cache stays for later runs and for the release.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: swiftui-rust-slice-${{ matrix.arch }}
+          path: |
+            libs/cua/target/${{ matrix.triple }}/release/libcua_spaces_ffi.dylib
+            libs/cua/target/${{ matrix.triple }}/release/cua-spaces-cli
+          if-no-files-found: error
+          retention-days: 1

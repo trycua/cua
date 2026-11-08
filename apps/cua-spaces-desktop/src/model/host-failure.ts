@@ -133,7 +133,7 @@ export function failureWords(kind: HostFailureKind, platform: NodeJS.Platform = 
       return [
         "Confirm it’s you",
         `To add ${here} to your account, enter a code from a computer you already added. ` +
-          "On that computer, open Cua Spaces, go to Machines and click Add machine.",
+          "On that computer, open Cua Spaces, go to Computers and click Add a computer.",
       ];
     case "other":
       return [`Couldn’t set up ${here} for access`, "Something went wrong. Try again, or open Details to see what happened."];

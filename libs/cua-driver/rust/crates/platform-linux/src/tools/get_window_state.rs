@@ -49,6 +49,16 @@ fn megapixel_long_edge_cap(w: u32, h: u32, max_pixels: u64) -> Option<u32> {
     Some(edge)
 }
 
+/// The pid's topmost window when the KWin adapter listed it. Other compositors,
+/// and a KWin that doesn't let this executable enumerate, keep the existing choice.
+fn kwin_topmost_window(pid: u32) -> Option<u64> {
+    if !crate::wayland::is_wayland() || !crate::wayland::kwin_capture::may_be_session() {
+        return None;
+    }
+    super::impl_::pid_fallback_window_resolver()(i64::from(pid))
+        .filter(|window| crate::wayland::kwin_capture::knows_window(*window))
+}
+
 /// The window a pid-only read means when the input resolver chose none.
 #[derive(Debug, PartialEq)]
 enum PidRead {
@@ -408,13 +418,17 @@ impl Tool for GetWindowStateTool {
             Ok(v) => v,
             Err(e) => return e,
         };
-        // `window_id` omitted: the open popup menu of this pid when one is
-        // mapped (a context menu the caller wants to read), else the pid's
-        // focused / dialog / active / largest window.
+        // `window_id` omitted: on KWin the pid's topmost window, else the open
+        // popup menu of this pid when one is mapped (a context menu the caller
+        // wants to read), else its focused / dialog / active / largest window.
         let xid = match args.opt_u64("window_id") {
             Some(v) => v,
             None => {
                 let chosen = tokio::task::spawn_blocking(move || {
+                    // A KWin handle first: X11's popup and focus reads can't choose among them.
+                    if let Some(window) = kwin_topmost_window(pid) {
+                        return PidRead::Window(window);
+                    }
                     if let Some(popup) = crate::input::mapped_popup_windows()
                         .into_iter()
                         .rev()

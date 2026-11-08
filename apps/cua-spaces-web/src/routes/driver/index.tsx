@@ -1,20 +1,14 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, redirect } from "@tanstack/react-router";
 
-import { DriverPage } from "@/components/driver/driver-page";
+import { driverLinkTarget } from "@/lib/old-links";
 
-/**
- * Cua Driver (CUA-2706): this Mac's, or another computer's with
- * `?machine=<id>`. The page says so when this Cua Spaces carries no driver.
- */
+/** The old Cua Driver page: it is one of a computer's settings now (CUA-3551). Kept only so old links land there. */
 export const Route = createFileRoute("/driver/")({
-  validateSearch: (s: Record<string, unknown>): { machine?: string } => (typeof s.machine === "string" && s.machine ? { machine: s.machine } : {}),
-  component: DriverRoute,
+  validateSearch: (s: Record<string, unknown>) => s,
+  beforeLoad: ({ search }) => {
+    throw redirect({ ...driverLinkTarget(search), replace: true });
+  },
 });
-
-function DriverRoute() {
-  const { machine } = Route.useSearch();
-  return <DriverPage key={machine ?? ""} machine={machine ?? null} />;
-}

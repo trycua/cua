@@ -77,7 +77,7 @@ describe("Add a machine: the methods", () => {
     expect([...document.querySelectorAll("[data-add-method]")].map((b) => b.textContent)).toEqual(["Sign in there", "Open a link", "Scan a QR code", "Run a command", "Enter a code"]);
     expect(METHODS[0]!.view).toBe("signin");
     expect(prompt().readOnly).toBe(true);
-    expect(prompt().value).toMatch(/^Add this machine to my Cua Spaces: https:\/\/cua\.ai\/add\/K7QM-4XPB-[0-9A-Z]{4}$/);
+    expect(prompt().value).toMatch(/^Add this computer to my Cua Spaces: https:\/\/cua\.ai\/add\/K7QM-4XPB-[0-9A-Z]{4}$/);
     expect(screen.getByLabelText("Copy prompt")).toBeTruthy();
     expect(screen.getByText("Enter it")).toBeTruthy();
     // No desktop-or-private choice, no by-hand steps on the sheet.
@@ -100,7 +100,7 @@ describe("Add a machine: the methods", () => {
     expect(view()).toBe("signin");
     expect(screen.getByText("https://cua.ai/install")).toBeTruthy();
     expect(document.querySelector("[data-add-signin]")?.textContent).toMatch(/sign in as ada@example\.com/);
-    expect(status()).toBe("Waiting for a new machine…");
+    expect(status()).toBe("Waiting for a new computer…");
     // No code here, so no menu.
     expect(document.querySelector("[data-add-more]")).toBeNull();
     // The computers known on opening are read first (they are not new).
@@ -124,7 +124,7 @@ describe("Add a machine: the methods", () => {
     fireEvent.click(method("signin"));
     late = true;
     await act(() => new Promise((r) => setTimeout(r, 600)));
-    expect(status()).toBe("Waiting for a new machine…");
+    expect(status()).toBe("Waiting for a new computer…");
   });
 
   it("Open a link: the one-time link to copy", async () => {
@@ -134,7 +134,7 @@ describe("Add a machine: the methods", () => {
     fireEvent.click(method("link"));
     expect(document.querySelector("[data-add-link] code")?.textContent).toMatch(/^https:\/\/cua\.ai\/add\/K7QM-4XPB-[0-9A-Z]{4}$/);
     expect(screen.getByLabelText("Copy link")).toBeTruthy();
-    expect(status()).toBe("Waiting for the machine…");
+    expect(status()).toBe("Waiting for the computer…");
   });
 
   it("Scan a QR code: the same link, big", async () => {
@@ -192,7 +192,7 @@ describe("Add a machine: states", () => {
       "machines.list": async () => ((await base.call("machines.list", {})) as { id: string }[]).filter((r) => !hide || r.id !== "m_pair_demo"),
     }));
     await mount(adapter);
-    await waitFor(() => expect(status()).toBe("Added: the machine"), { timeout: 3000 });
+    await waitFor(() => expect(status()).toBe("Added: the computer"), { timeout: 3000 });
     hide = false;
     await waitFor(() => expect(status()).toBe("Added: Office PC"));
   });
@@ -417,13 +417,13 @@ describe("Have a code? Enter it (this machine joins)", () => {
     fireEvent.click(document.querySelector("[data-add-enter]")!);
     expect(view()).toBe("enter");
     const submit = document.querySelector<HTMLButtonElement>("[data-join-submit]")!;
-    expect(submit.textContent).toBe("Add this machine");
+    expect(submit.textContent).toBe("Add this computer");
     fireEvent.change(screen.getByLabelText("Code"), { target: { value: "k7qm 4xpb" } });
     expect(submit.disabled).toBe(true);
     fireEvent.change(screen.getByLabelText("Code"), { target: { value: "https://cua.ai/add/k7qm-4xpb-2rhd?relay=https://relay.example.com" } });
     expect(submit.disabled).toBe(false);
     fireEvent.click(submit);
-    await waitFor(() => expect(document.querySelector("[data-join-joined]")?.textContent).toBe("Added this machine"));
+    await waitFor(() => expect(document.querySelector("[data-join-joined]")?.textContent).toBe("Added this computer"));
     expect(joined[0]).toMatchObject({ code: "K7QM4XPB2RHD", relay: "https://relay.example.com" });
   });
 
@@ -447,9 +447,9 @@ describe("Have a code? Enter it (this machine joins)", () => {
 
 describe("agentPrompt and expiresInText", () => {
   it("words the prompt as one line with the add link", () => {
-    expect(agentPrompt("K7QM-4XPB-2RHD")).toBe("Add this machine to my Cua Spaces: https://cua.ai/add/K7QM-4XPB-2RHD");
+    expect(agentPrompt("K7QM-4XPB-2RHD")).toBe("Add this computer to my Cua Spaces: https://cua.ai/add/K7QM-4XPB-2RHD");
     expect(agentPrompt("K7QM-4XPB-2RHD", "https://cua.ai/add/K7QM-4XPB-2RHD?relay=https%3A%2F%2Fr.example")).toBe(
-      "Add this machine to my Cua Spaces: https://cua.ai/add/K7QM-4XPB-2RHD?relay=https%3A%2F%2Fr.example",
+      "Add this computer to my Cua Spaces: https://cua.ai/add/K7QM-4XPB-2RHD?relay=https%3A%2F%2Fr.example",
     );
   });
   it("rounds minutes up, and counts seconds in the last minute", () => {

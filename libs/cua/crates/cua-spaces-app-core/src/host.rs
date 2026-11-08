@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-//! "This machine": the roster entry that is always present, its one-line
+//! "This computer": the roster entry that is always present, its one-line
 //! sharing summary, its page (how it is shared, who is connected, the
 //! permissions left to grant, the buttons), and the host setup form (state,
 //! fields, copy, validation). Both shells validate a setup request here
@@ -11,7 +11,7 @@ use crate::model::{Space, SpaceOs, SpaceStatus};
 use crate::spaces::scene_for_os;
 use serde::{Deserialize, Serialize};
 
-/// Id of the "This machine" roster entry.
+/// Id of the "This computer" roster entry.
 pub const THIS_MACHINE_ID: &str = "this-mac";
 
 /// The parts of the host status the summary reads (`cua-host`'s status).
@@ -90,7 +90,7 @@ const CONNECTED_PREFIX: &str = "Sharing \u{b7} ";
 const CONNECTED_SUFFIX: &str = " connected";
 
 /// How many are connected to this machine right now, read back from the
-/// "This machine" roster entry the core built ([`connected_detail`]); 0 for
+/// "This computer" roster entry the core built ([`connected_detail`]); 0 for
 /// any other Space. The notch indicator uses it, so it needs no wiring in
 /// either shell beyond the roster they already pass.
 pub fn connected_now(space: &Space) -> u32 {
@@ -340,14 +340,14 @@ pub fn validate_setup(mut request: HostSetupRequest) -> Result<HostSetupRequest,
 
 /// The switch that lets other machines create Spaces on this one (a
 /// Settings row on this Mac, read-only on a machine's page).
-pub const SPACES_SWITCH: &str = "Let other machines create Spaces here";
+pub const SPACES_SWITCH: &str = "Let other computers create Spaces here";
 /// One line under [`SPACES_SWITCH`].
-pub const SPACES_HELP: &str = "Your other machines can create Spaces here.";
+pub const SPACES_HELP: &str = "Your other computers can create Spaces here.";
 /// The switch that shows this machine's own desktop as a Space on the
 /// others.
-pub const DESKTOP_SWITCH: &str = "Let other machines control this desktop";
+pub const DESKTOP_SWITCH: &str = "Let other computers control this desktop";
 /// One line under [`DESKTOP_SWITCH`].
-pub const DESKTOP_HELP: &str = "Your other machines can see and control this screen.";
+pub const DESKTOP_HELP: &str = "Your other computers can see and control this screen.";
 
 /// The production relay. Host setup joins [`default_relay_url`] unless the
 /// form names another.
@@ -372,7 +372,7 @@ fn listen_on(channel: cua_home::channel::CuaChannel) -> String {
     format!("0.0.0.0:{}", channel.ports().tcp)
 }
 
-/// Adds the "This machine" entry to a roster, first (it is always present
+/// Adds the "This computer" entry to a roster, first (it is always present
 /// in the live app; `status` is `None` until the host answers).
 pub fn with_this_machine(
     spaces: &[Space],
@@ -436,7 +436,7 @@ pub struct HostPermissionInput {
     pub granted: bool,
 }
 
-/// The host's state as the "This machine" page reads it (the cua SDK's
+/// The host's state as the "This computer" page reads it (the cua SDK's
 /// `HostStatus`, flattened).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -541,7 +541,7 @@ pub struct HostState {
     pub account: Option<HostAccount>,
 }
 
-/// The account signed in to Cua in the app, as far as "This machine"
+/// The account signed in to Cua in the app, as far as "This computer"
 /// needs it.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -684,7 +684,7 @@ impl HostState {
     }
 }
 
-/// What a "This machine" button does.
+/// What a "This computer" button does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum HostActionId {
@@ -801,7 +801,7 @@ pub struct HostConfirm {
     pub cancel_label: String,
 }
 
-/// A "This machine" button.
+/// A "This computer" button.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HostAction {
     /// What it does.
@@ -827,7 +827,7 @@ pub fn remove_confirm() -> HostConfirm {
     HostConfirm {
         title: "Remove host setup?".into(),
         message: "Everyone connected is disconnected, the host service is \
-                  uninstalled and this machine leaves your machines on the \
+                  uninstalled and this computer leaves your computers on the \
                   relay. Setting it up again is needed to share it."
             .into(),
         confirm_label: "Remove".into(),
@@ -845,7 +845,7 @@ pub struct HostAccessRow {
     pub at_ms: i64,
 }
 
-/// Rows a "This machine" log section shows before "Show All…".
+/// Rows a "This computer" log section shows before "Show All…".
 pub const LOG_PREVIEW_ROWS: usize = 5;
 /// The button under a log section with more rows than it shows.
 pub const SHOW_ALL_LABEL: &str = "Show All\u{2026}";
@@ -1035,11 +1035,11 @@ pub struct PermissionRow {
     pub settings_url: Option<String>,
 }
 
-/// The "This machine" page.
+/// The "This computer" page.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HostPanelView {
-    /// "This machine".
+    /// "This computer".
     pub title: String,
     /// One line: how it is shared, or that it is not.
     pub summary: String,
@@ -1146,14 +1146,14 @@ pub struct HostSetupChoice {
 }
 
 /// The intro over the setup choices.
-pub const HOST_INTRO: &str = "This is the machine you\u{2019}re using now. Set \
-it up so you, your teammates and your AI agents can use it from other machines. \
+pub const HOST_INTRO: &str = "This is the computer you\u{2019}re using now. Set \
+it up so you, your teammates and your AI agents can use it from other computers. \
 Cua connects them for you, with no network setup.";
 
 /// The "Use it to" option that lets other machines create Spaces here and control this desktop.
-pub const DESKTOP_CHOICE: &str = "Let other machines create Spaces and control this desktop";
+pub const DESKTOP_CHOICE: &str = "Let other computers create Spaces and control this desktop";
 /// The "Use it to" option for a spare computer that only runs Spaces.
-pub const SPARE_CHOICE: &str = "Let other machines create Spaces here";
+pub const SPARE_CHOICE: &str = "Let other computers create Spaces here";
 /// The button that sets this computer up (shares its screen).
 pub const SET_UP_LABEL: &str = "Turn on remote access";
 /// The form's button for a spare computer.
@@ -1162,7 +1162,7 @@ pub const SPARE_SUBMIT: &str = "Start running Spaces";
 /// What the desktop setup also turns on, in the form's words (it says
 /// "this computer" on every system, like the rest of the form, so every
 /// shell draws the same text).
-pub const PROVIDES_SPACES_NOTE: &str = "You and the people you share with can create Spaces on this machine, and see and control its screen if you turn that on, from other machines. Cua connects them for you, with no network setup.";
+pub const PROVIDES_SPACES_NOTE: &str = "You and the people you share with can create Spaces on this computer, and see and control its screen if you turn that on, from other computers. Cua connects them for you, with no network setup.";
 
 /// The setup choices (the form's "Use for" options).
 pub fn setup_choices() -> Vec<HostSetupChoice> {
@@ -1199,11 +1199,11 @@ pub const PERMISSIONS_TITLE: &str = "Grant in System Settings";
 /// Their button.
 pub const OPEN_SETTINGS_LABEL: &str = "Open Settings";
 
-/// The "This machine" page for `state` (`None` while it loads).
+/// The "This computer" page for `state` (`None` while it loads).
 pub fn panel(state: Option<&HostState>) -> HostPanelView {
     use crate::spaces::sidebar::Fact;
     let mut v = HostPanelView {
-        title: "This machine".into(),
+        title: "This computer".into(),
         summary: "Checking\u{2026}".into(),
         notice: None,
         notice_action: None,
@@ -1240,7 +1240,7 @@ pub fn panel(state: Option<&HostState>) -> HostPanelView {
         return v;
     };
     if !s.configured {
-        v.summary = "Your other machines can\u{2019}t reach this machine yet.".into();
+        v.summary = "Your other computers can\u{2019}t reach this computer yet.".into();
         v.intro = Some(HOST_INTRO.into());
         v.setup_choices = setup_choices();
         v.actions = vec![HostAction {
@@ -1261,7 +1261,7 @@ pub fn panel(state: Option<&HostState>) -> HostPanelView {
             s.direct_url
                 .as_deref()
                 .filter(|u| !u.is_empty())
-                .unwrap_or("this machine\u{2019}s address")
+                .unwrap_or("this computer\u{2019}s address")
         )
     } else {
         match s.relay_url.as_deref().filter(|u| !u.is_empty()) {
@@ -1283,7 +1283,7 @@ pub fn panel(state: Option<&HostState>) -> HostPanelView {
                 .name
                 .clone()
                 .filter(|n| !n.is_empty())
-                .unwrap_or_else(|| "This machine".into()),
+                .unwrap_or_else(|| "This computer".into()),
             copy: None,
             help: None,
             warning: None,
@@ -1383,7 +1383,7 @@ pub fn panel(state: Option<&HostState>) -> HostPanelView {
     if s.provide_spaces {
         v.limits = Some(limits_line(s.max_spaces, s.max_macos_vms));
         v.limit_rows = limit_rows(s);
-        v.provided_title = Some("Spaces from your other machines".into());
+        v.provided_title = Some("Spaces from your other computers".into());
         v.provided = provided_rows(&s.provided_spaces);
         v.provided_empty = s.provided_spaces.is_empty().then(|| "None yet".into());
     }
@@ -1484,7 +1484,7 @@ pub fn panel(state: Option<&HostState>) -> HostPanelView {
 }
 
 /// Resume sharing's tooltip while both settings are off.
-pub const NOTHING_TO_SHARE_HELP: &str = "Turn on one of the two switches to share this machine.";
+pub const NOTHING_TO_SHARE_HELP: &str = "Turn on one of the two switches to share this computer.";
 
 /// The page's line while another account is signed in and this machine's
 /// relay sharing (registered to the account that signed out) is paused.
@@ -1536,7 +1536,7 @@ pub fn limit_rows(s: &HostState) -> Vec<HostLimitRow> {
         row(
             "max-spaces",
             "Most Spaces at once",
-            "Spaces other machines create here. Yours don\u{2019}t count.",
+            "Spaces other computers create here. Yours don\u{2019}t count.",
             s.max_spaces,
             "Spaces",
             Some(spaces_used),
@@ -1545,7 +1545,7 @@ pub fn limit_rows(s: &HostState) -> Vec<HostLimitRow> {
         row(
             "max-memory",
             "Most memory in total",
-            "What the Spaces other machines create here may use together.",
+            "What the Spaces other computers create here may use together.",
             s.max_memory_gb,
             "GB",
             Some(s.used_memory_gb),
@@ -1554,7 +1554,7 @@ pub fn limit_rows(s: &HostState) -> Vec<HostLimitRow> {
         row(
             "max-disk",
             "Most disk in total",
-            "What the Spaces other machines create here may use together.",
+            "What the Spaces other computers create here may use together.",
             s.max_disk_gb,
             "GB",
             Some(s.used_disk_gb),
@@ -1563,7 +1563,7 @@ pub fn limit_rows(s: &HostState) -> Vec<HostLimitRow> {
         row(
             "max-run",
             "Longest a Space may run",
-            "A Space made here by another machine stops after this long. Empty: no limit.",
+            "A Space made here by another computer stops after this long. Empty: no limit.",
             s.max_run_minutes,
             "minutes",
             None,
@@ -1798,7 +1798,7 @@ pub struct HostFormChoice {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HostFormView {
-    /// "Set up this machine".
+    /// "Set up this computer".
     pub title: String,
     /// One line: what setting up does.
     pub lede: String,
@@ -1922,7 +1922,7 @@ pub fn form_view(s: &HostFormState, identity: Option<&str>) -> HostFormView {
     let mut fields = vec![text(
         "name",
         "Name",
-        "How it shows on your other machines",
+        "How it shows on your other computers",
         &s.name,
         false,
         false,
@@ -1992,10 +1992,10 @@ pub fn form_view(s: &HostFormState, identity: Option<&str>) -> HostFormView {
         }
     }
     let lede = if s.direct {
-        "Other machines on your network connect to this address with an access token.".to_string()
+        "Other computers on your network connect to this address with an access token.".to_string()
     } else {
         let what = if s.spare {
-            "This machine runs Spaces, separate computers inside it, that you and your team open from your other machines. Its own screen stays private.".to_string()
+            "This computer runs Spaces, separate computers inside it, that you and your team open from your other computers. Its own screen stays private.".to_string()
         } else {
             PROVIDES_SPACES_NOTE.to_string()
         };
@@ -2017,7 +2017,7 @@ pub fn form_view(s: &HostFormState, identity: Option<&str>) -> HostFormView {
     };
     let request = form_request(s).ok();
     HostFormView {
-        title: "Set up this machine".into(),
+        title: "Set up this computer".into(),
         lede,
         fields,
         advanced_label: "Advanced".into(),
@@ -2103,7 +2103,7 @@ mod tests {
         // The row is named for the system it runs on, never "computer".
         assert_eq!(
             this_machine_space(None, 0, SpaceOs::Linux).name,
-            "This machine"
+            "This computer"
         );
         assert_eq!(this_machine_space(None, 0, SpaceOs::Macos).name, "This Mac");
     }
@@ -2520,7 +2520,7 @@ mod tests {
             SpaceOs::Macos,
         );
         assert_eq!(connected_now(&idle), 0);
-        // Only the "This machine" entry counts.
+        // Only the "This computer" entry counts.
         let mut other = me.clone();
         other.id = "local:x".into();
         assert_eq!(connected_now(&other), 0);
@@ -2803,7 +2803,7 @@ mod tests {
         let desktop = &v.toggles[0];
         assert_eq!(
             (desktop.label.as_str(), desktop.on),
-            ("Let other machines control this desktop", true)
+            ("Let other computers control this desktop", true)
         );
         assert!(desktop.enabled, "the only setting on can be turned off too");
         assert_eq!(v.toggles[1].action, HostActionId::ProvideSpaces);
@@ -2906,7 +2906,7 @@ mod tests {
         let v = panel(Some(&s));
         assert_eq!(
             v.provided_title.as_deref(),
-            Some("Spaces from your other machines")
+            Some("Spaces from your other computers")
         );
         assert_eq!(v.provided[0].text, "mac-1 \u{b7} macOS \u{b7} Ada");
         assert!(v.provided_empty.is_none());
@@ -3036,8 +3036,8 @@ mod tests {
         assert_eq!(desktop.new_setup_settings(), (true, true));
         // Both off is only refused when asked for outright (the switches
         // themselves never error: the machine just is not shared).
-        assert_eq!(SPACES_SWITCH, "Let other machines create Spaces here");
-        assert_eq!(DESKTOP_SWITCH, "Let other machines control this desktop");
+        assert_eq!(SPACES_SWITCH, "Let other computers create Spaces here");
+        assert_eq!(DESKTOP_SWITCH, "Let other computers control this desktop");
         let direct = validate_setup(HostSetupRequest {
             mode: "direct".into(),
             direct: Some("0.0.0.0:3211".into()),

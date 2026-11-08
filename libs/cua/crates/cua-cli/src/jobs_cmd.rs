@@ -1189,7 +1189,7 @@ async fn finish(
             line(out, format!("result: {} ({} KB)", p.display(), size / 1024));
         }
         if state == "succeeded" && saved.is_empty() {
-            line(out, NO_RESULT.to_string());
+            line(out, NO_RESULT);
         }
         line(
             out,

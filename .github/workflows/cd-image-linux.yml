@@ -308,6 +308,8 @@ jobs:
         with:
           name: cua-cli-linux-${{ matrix.arch }}
           path: ${{ runner.temp }}/bin
+      - name: Set up pasta (secure network)
+        uses: ./.github/actions/setup-pasta
       - name: Host tools (QEMU, firmware, gVisor, crane)
         run: |
           set -euo pipefail
@@ -371,6 +373,8 @@ jobs:
           name: artifacts-linux-docker-amd64
           path: ${{ runner.temp }}/docker-tier
       - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+      - name: Set up pasta (secure network)
+        uses: ./.github/actions/setup-pasta
       - name: Host tools (QEMU, firmware, KVM)
         run: |
           set -euo pipefail
@@ -422,6 +426,8 @@ jobs:
         with:
           name: cua-cli-linux-${{ matrix.arch }}
           path: ${{ runner.temp }}/bin
+      - name: Set up pasta (secure network)
+        uses: ./.github/actions/setup-pasta
       - name: Install QEMU, firmware and gVisor
         run: |
           set -euo pipefail
@@ -743,6 +749,8 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Set up pasta (secure network)
+        uses: ./.github/actions/setup-pasta
       - name: Host tools
         run: scripts/images/install-release-tools.sh --free-disk
       - name: The published disk

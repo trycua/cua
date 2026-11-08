@@ -6985,17 +6985,9 @@ pub type AppExperiments = core::experiments::Experiments;
 pub struct AppExperiments {
     /// Cua Volume in the first run and Settings, Storage.
     pub cua_volume: bool,
-    /// Secure Spaces: a Space reaches the internet and nothing else on the
-    /// network unless it is opened. Off unless turned on; the daemon enforces
-    /// it (the switch is kept in the cua home).
-    pub secure_spaces: bool,
     /// Child Spaces: a Space may make Spaces of its own. Off unless turned
     /// on; the daemon enforces it (the switch is kept in the cua home).
     pub child_spaces: bool,
-    /// Ask first: an agent asks on a card before something leaves its Space
-    /// (a push to GitHub). Off unless turned on; the daemon enforces it (the
-    /// switch is kept in the cua home).
-    pub ask_first: bool,
     /// CI runners: GitHub Actions jobs run in a fresh Space each (`cua ci`
     /// and the CI Runners page). Off unless turned on; the daemon and the
     /// `cua` command enforce it (the switch is kept in the cua home).

@@ -274,9 +274,7 @@ pub const HOST_ONLY_KEYS: &[&str] = &[
 
 /// The refusal for a host-only key named in `env_from_host`.
 pub fn refuse_host_only(name: &str) -> Result<()> {
-    // Only while Ask first is on: a build or a person that never turned it on keeps
-    // forwarding a saved key into a Space as before.
-    if github_auth::enabled() && HOST_ONLY_KEYS.contains(&name) {
+    if HOST_ONLY_KEYS.contains(&name) {
         return Err(Error::InvalidArgument(format!(
             "{name} is the host's own connection and never goes into a Space; \
              an agent asks the host for what it needs (for example with repo_push)"

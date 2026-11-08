@@ -708,6 +708,9 @@ fn focused_document_tool_result(
 
     match outcome {
         FocusedDocumentTypeOutcome::NotApplicable => None,
+        FocusedDocumentTypeOutcome::Unanswered => Some(ToolResult::error(
+            "The target did not answer UI Automation in time; nothing was written and no keys were sent. Retry when the app responds.",
+        )),
         FocusedDocumentTypeOutcome::Confirmed => Some(
             ToolResult::text(format!(
                 "Wrote and verified {text_len} character(s) in the focused Document; caret is after the typed text."
@@ -768,6 +771,10 @@ mod focused_document_result_tests {
         let confirmed = normalize(confirmed);
         assert_eq!(confirmed.route, ActionRoute::Accessibility);
         assert_eq!(confirmed.effect, ActionEffect::Confirmed);
+
+        let unanswered = focused_document_tool_result(FocusedDocumentTypeOutcome::Unanswered, 12)
+            .expect("unanswered focused-document output");
+        assert_eq!(unanswered.is_error, Some(true));
 
         let unknown = focused_document_tool_result(
             FocusedDocumentTypeOutcome::Unknown("value read-back failed"),

@@ -210,7 +210,7 @@ export interface WhereView {
    * A separate computer on this one. Null where this computer can't make one (CUA-3150, idea D: offer only what
    * it can run), unless the person already asked and the create was refused: then the one sentence says why.
    */
-  separate: { title: string; sub: string; disabled: boolean; state: "offer" | "checking" | "explain" | "making" | "ready" | "failed"; action: string | null } | null;
+  separate: { title: string; sub: string; disabled: boolean; state: "offer" | "checking" | "making" | "ready" | "failed"; action: string | null } | null;
   continueEnabled: boolean;
 }
 
@@ -234,7 +234,7 @@ export interface WhereInput {
   separateRefused?: boolean;
   /** Why not, in the host's words (used where the frame's sentence doesn't fit: not a Mac). */
   separateBlocked: string | null;
-  separate: { phase: "none" | "explain" | "making" | "ready" | "failed"; name: string | null; error: string | null };
+  separate: { phase: "none" | "making" | "ready" | "failed"; name: string | null; error: string | null };
   now: number;
 }
 
@@ -283,14 +283,6 @@ export function whereView(input: WhereInput): WhereView {
       return { title, sub, disabled: true, state: "offer" as const, action: null };
     }
     const s = input.separate;
-    if (s.phase === "explain")
-      return {
-        title,
-        sub: "If macOS asks to let Cua Spaces find devices on your local network, choose Allow. Cua uses it to reach the new computer.",
-        disabled: false,
-        state: "explain" as const,
-        action: "Make it",
-      };
     if (s.phase === "making") return { title, sub: `Making ${s.name ?? "it"} now. You can continue; it keeps going.`, disabled: false, state: "making" as const, action: null };
     if (s.phase === "ready") return { title, sub: `${s.name ?? "It"} is ready.`, disabled: false, state: "ready" as const, action: null };
     if (s.phase === "failed") return { title, sub: `Couldn't make it. ${s.error ?? ""}`.trim(), disabled: false, state: "failed" as const, action: "Try again" };

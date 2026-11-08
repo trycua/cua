@@ -215,12 +215,7 @@ describe("screen 2, this Mac can't make a separate computer", () => {
     expect(v.separate?.sub).toBe("Docker Desktop isn't running. Your agents can still work on this PC or on another computer you add.");
   });
 
-  it("explains the Local Network ask before the create, then follows it", () => {
-    expect(whereView({ ...base, separate: { phase: "explain", name: null, error: null } }).separate).toMatchObject({
-      state: "explain",
-      action: "Make it",
-      sub: "If macOS asks to let Cua Spaces find devices on your local network, choose Allow. Cua uses it to reach the new computer.",
-    });
+  it("follows the create", () => {
     expect(whereView({ ...base, separate: { phase: "making", name: "Linux 1", error: null } }).separate?.sub).toBe("Making Linux 1 now. You can continue; it keeps going.");
     expect(whereView({ ...base, separate: { phase: "failed", name: "Linux 1", error: "Not enough memory." } }).separate).toMatchObject({ sub: "Couldn't make it. Not enough memory.", action: "Try again" });
   });
@@ -880,7 +875,7 @@ describe.skipIf(!wasmBuilt)("the new first run on its route", () => {
     expect(document.body.textContent).toContain("Add another computer you own");
     expect(readFirstRun().newRun?.addedInRun).toBe(true);
   });
-  it("a Mac that can't run virtual computers: the explainer, the create, then only the separate-computer option turns grey", { timeout: 60_000 }, async () => {
+  it("a Mac that can't run virtual computers: the create, then only the separate-computer option turns grey", { timeout: 60_000 }, async () => {
     const calls: Calls = [];
     await mountApp("/onboarding", {
       failsCreates: false,
@@ -891,11 +886,11 @@ describe.skipIf(!wasmBuilt)("the new first run on its route", () => {
     await waitFor(() => expect(heading()).toBe("Combine your existing computers into one supercomputer."));
     click("[data-onboarding-later]");
     await waitFor(() => expect(document.querySelector("[data-new-run-separate-open]")).not.toBeNull(), { timeout: 15_000 });
+    // Regression (first run): a Linux computer needs no Local Network access, so the Mac's open makes it at
+    // once, with no line about macOS's Local Network prompt first.
     click("[data-new-run-separate-open]");
-    // Our one line comes first; nothing is made until "Make it".
-    await waitFor(() => expect(document.querySelector("[data-new-run-separate=explain]")).not.toBeNull());
-    expect(calls.some((c) => c.op === "spaces.create")).toBe(false);
-    click("[data-new-run-separate-action]");
+    await waitFor(() => expect(calls.some((c) => c.op === "spaces.create")).toBe(true));
+    expect(document.body.textContent).not.toMatch(/local network/i);
     await waitFor(() => expect(document.querySelector("[data-new-run-separate]")!.textContent).toContain("This Mac can't make one."), { timeout: 15_000 });
     expect((document.querySelector("[data-new-run-separate]") as HTMLElement).dataset.disabled).toBe("");
     expect(document.body.textContent).not.toMatch(/local runtime:|exit status/i);

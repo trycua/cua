@@ -4085,18 +4085,30 @@ mod tests {
     #[test]
     fn an_app_signed_in_on_this_mac_runs_here_without_a_sign_in() {
         let mut i = with_keys(vec![], vec![]);
-        for (agent, name) in [("codex", "OpenAI Codex"), ("claude-code", "Claude Code"), ("hermes", "Hermes")] {
+        for (agent, name) in [
+            ("codex", "OpenAI Codex"),
+            ("claude-code", "Claude Code"),
+            ("hermes", "Hermes"),
+        ] {
             i.apps.retain(|a| a.agent != agent);
             let mut a = app(agent, name, true);
             a.signed_in = true;
             i.apps.push(a);
         }
         let v = agents_view(&i);
-        for (app, env) in [("codex", "CODEX_AUTH_JSON"), ("claude-code", "CLAUDE_CODE_OAUTH_TOKEN")] {
+        for (app, env) in [
+            ("codex", "CODEX_AUTH_JSON"),
+            ("claude-code", "CLAUDE_CODE_OAUTH_TOKEN"),
+        ] {
             let g = group(&v, app);
             assert_eq!(g.state, "connected", "{app}");
-            let [a] = g.accounts.as_slice() else { panic!("{app}: {:?}", g.accounts) };
-            assert_eq!((a.line.as_str(), a.via.as_str(), a.env.as_str()), ("Signed in on This Mac", "this-mac", env));
+            let [a] = g.accounts.as_slice() else {
+                panic!("{app}: {:?}", g.accounts)
+            };
+            assert_eq!(
+                (a.line.as_str(), a.via.as_str(), a.env.as_str()),
+                ("Signed in on This Mac", "this-mac", env)
+            );
             assert!(a.selected && a.default_model.is_some(), "{app}");
         }
         // Hermes runs on provider keys: its own sign-in is not an account of the menu.
@@ -4105,7 +4117,10 @@ mod tests {
         // A sign-in saved in Cua is listed instead of This Mac's.
         let v = agents_view(&{
             let mut j = i.clone();
-            j.keys.keys = vec![named("CODEX_AUTH_JSON", "Signed in with ChatGPT as ada@example.com")];
+            j.keys.keys = vec![named(
+                "CODEX_AUTH_JSON",
+                "Signed in with ChatGPT as ada@example.com",
+            )];
             j
         });
         assert_eq!(group(&v, "codex").accounts.len(), 1);

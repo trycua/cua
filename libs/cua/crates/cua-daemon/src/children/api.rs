@@ -245,7 +245,14 @@ impl Scoped {
                     .map(|d| d.as_secs())
                     .unwrap_or(0);
                 let (space, root) = (self.space.clone(), root.to_string());
-                let ok = super::runs::Ledger::update(&home, |l| l.claim(&run, &space, &root, now));
+                let (jname, jgpu) = super::runs::job_facts(&params);
+                let ok = super::runs::Ledger::update(&home, |l| {
+                    let ok = l.claim(&run, &space, &root, now);
+                    if ok {
+                        l.describe(&run, &jname, jgpu);
+                    }
+                    ok
+                });
                 if !ok {
                     return Err(not_found(&run));
                 }

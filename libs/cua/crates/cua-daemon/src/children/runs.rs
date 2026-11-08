@@ -28,6 +28,12 @@ pub struct Owned {
     pub root: String,
     /// When (unix seconds).
     pub at: u64,
+    /// The name its row shows (a pet-name shape, never an id).
+    #[serde(default)]
+    pub name: String,
+    /// It asks for a GPU (its row shows the GPU icon).
+    #[serde(default)]
+    pub gpu: bool,
 }
 
 /// The runs of every tree on this computer.
@@ -87,10 +93,20 @@ impl Ledger {
                         space: space.into(),
                         root: root.into(),
                         at: now,
+                        name: String::new(),
+                        gpu: false,
                     },
                 );
                 true
             }
+        }
+    }
+
+    /// Records what the run's row shows.
+    pub fn describe(&mut self, run: &str, name: &str, gpu: bool) {
+        if let Some(o) = self.runs.get_mut(run) {
+            o.name = name.to_string();
+            o.gpu = gpu;
         }
     }
 
@@ -206,6 +222,102 @@ pub fn confine_submit(
     Ok(())
 }
 
+/// The name and GPU mark of a stamped submit ([`confine_submit`] ran first).
+pub fn job_facts(params: &Value) -> (String, bool) {
+    let name = params["env"][cua_cluster::model::ENV_JOB_NAME]
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
+    let wants = |v: &Value| {
+        v["accelerator"]
+            .as_str()
+            .is_some_and(|a| !a.trim().is_empty() && a.trim() != "none")
+    };
+    let gpu = wants(params)
+        || params["jobs"]
+            .as_array()
+            .is_some_and(|j| j.iter().any(|x| wants(&x["spec"])));
+    (name, gpu)
+}
+
+/// One job row of the child Spaces list: ONE per run, wherever it runs (a Space on this
+/// computer, another computer, a native machine job with no Space at all, a gang of
+/// several members: one row with the member count).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct JobRowOut {
+    /// `job:<run>`.
+    pub id: String,
+    pub run: String,
+    /// The Space that submitted it.
+    pub parent: String,
+    pub name: String,
+    pub gpu: bool,
+    /// Where it runs, in words; empty while it waits for a computer.
+    pub host: String,
+    /// `queued`, `starting`, `running`, `failed`.
+    pub state: String,
+    /// Members of a gang (1: a plain job).
+    pub members: u32,
+    /// Why it failed, when it did.
+    #[serde(default)]
+    pub error: String,
+}
+
+/// The row of `owned`'s run from the pool's own answer for it (`None`: the pool does not
+/// know the run yet, so it is queued). A run that ended well or was canceled has no row
+/// (its parent's list is clean again); a failed one keeps its row, with why.
+pub fn job_row(run: &str, owned: &Owned, pool: Option<&Value>) -> Option<JobRowOut> {
+    let name = if owned.name.is_empty() {
+        cua_cluster::model::pet_name(run)
+    } else {
+        owned.name.clone()
+    };
+    let members = pool.and_then(|p| p["total"].as_u64()).unwrap_or(1).max(1) as u32;
+    let hosts: Vec<&str> = pool
+        .and_then(|p| p["gang"]["hosts"].as_array())
+        .map(|h| h.iter().filter_map(Value::as_str).collect())
+        .unwrap_or_default();
+    let host = match hosts.as_slice() {
+        [] => String::new(),
+        ["local"] => "this computer".to_string(),
+        [one] => (*one).to_string(),
+        many => format!("{} computers", many.len()),
+    };
+    let word = pool.and_then(|p| p["state"].as_str()).unwrap_or("queued");
+    let waiting = pool
+        .and_then(|p| p["gang"]["waiting"].as_str())
+        .is_some_and(|w| !w.is_empty());
+    let state = match word {
+        // A host that died mid-job puts the run back in the queue: never "Running".
+        _ if waiting => "queued",
+        "queued" | "waiting" | "pending" | "submitted" | "placing" => "queued",
+        "starting" | "creating" | "preparing" => "starting",
+        "running" => "running",
+        "failed" | "error" | "timed_out" | "lost" => "failed",
+        // Succeeded, canceled, canceling and anything over: no row.
+        _ => return None,
+    };
+    let error = if state == "failed" {
+        pool.and_then(|p| p["gang"]["error"].as_str())
+            .filter(|e| !e.is_empty())
+            .unwrap_or("the run did not finish")
+            .to_string()
+    } else {
+        String::new()
+    };
+    Some(JobRowOut {
+        id: format!("job:{run}"),
+        run: run.to_string(),
+        parent: owned.space.clone(),
+        name,
+        gpu: owned.gpu,
+        host,
+        state: state.into(),
+        members,
+        error,
+    })
+}
+
 /// Runs whose submitting Space is gone or turned off: the ones to cancel.
 /// `alive` says whether a Space id is registered and on.
 pub fn orphaned(l: &Ledger, alive: impl Fn(&str) -> bool) -> Vec<String> {
@@ -311,6 +423,90 @@ mod tests {
         // A host of the owner's by name, and a container job, are fine.
         let ok = json!({"on": "host:mac1", "kind": "container", "command": ["x"]});
         assert!(confine_submit(&mut ok.clone(), "p-1", "local:a", "local:r", 0, &closed).is_ok());
+    }
+
+    fn owned(gpu: bool) -> Owned {
+        Owned {
+            space: "local:me".into(),
+            root: "local:root".into(),
+            at: 1,
+            name: "logo-grower".into(),
+            gpu,
+        }
+    }
+
+    #[test]
+    fn a_run_is_one_job_row_wherever_it_runs() {
+        use serde_json::json;
+        // On this computer.
+        let here = json!({"state": "running", "total": 1, "gang": {"hosts": ["local"]}});
+        let r = job_row("p-1", &owned(true), Some(&here)).unwrap();
+        assert_eq!(
+            (r.state.as_str(), r.host.as_str(), r.gpu, r.members),
+            ("running", "this computer", true, 1)
+        );
+        assert_eq!(r.id, "job:p-1");
+        assert_eq!(r.name, "logo-grower");
+        // On another computer, Apple GPU (a native machine job has no Space at all: the row still shows).
+        let mac = json!({"state": "running", "total": 1, "gang": {"hosts": ["mac-m2max"]}});
+        let r = job_row("p-2", &owned(true), Some(&mac)).unwrap();
+        assert_eq!(
+            (r.host.as_str(), r.state.as_str()),
+            ("mac-m2max", "running")
+        );
+        // A gang of several members is ONE row with a count.
+        let gang = json!({"state": "running", "total": 3, "gang": {"hosts": ["a", "b", "c"]}});
+        let r = job_row("p-3", &owned(true), Some(&gang)).unwrap();
+        assert_eq!((r.members, r.host.as_str()), (3, "3 computers"));
+        // Not yet known to the pool, or waiting: queued, with no host.
+        assert_eq!(job_row("p-4", &owned(false), None).unwrap().state, "queued");
+        let wait = json!({"state": "queued", "total": 1, "gang": {"hosts": [], "waiting": "no computer has a free GPU"}});
+        assert_eq!(
+            job_row("p-4", &owned(false), Some(&wait)).unwrap().state,
+            "queued"
+        );
+    }
+
+    #[test]
+    fn a_host_that_dies_mid_job_puts_the_row_back_to_queued_not_stuck_at_running() {
+        use serde_json::json;
+        let lost = json!({"state": "running", "total": 1, "gang": {"hosts": ["mac-m2max"], "waiting": "placing again: its computer was lost"}});
+        assert_eq!(
+            job_row("p-5", &owned(true), Some(&lost)).unwrap().state,
+            "queued"
+        );
+        let dead = json!({"state": "lost", "total": 1, "gang": {"hosts": ["mac-m2max"], "error": "its computer was lost"}});
+        let r = job_row("p-5", &owned(true), Some(&dead)).unwrap();
+        assert_eq!(r.state, "failed");
+        assert_eq!(r.error, "its computer was lost");
+    }
+
+    #[test]
+    fn a_finished_run_leaves_no_row_and_a_failed_one_keeps_it() {
+        use serde_json::json;
+        for done in ["succeeded", "canceled", "canceling"] {
+            let p = json!({"state": done, "total": 1, "gang": {"hosts": ["local"]}});
+            assert!(job_row("p-6", &owned(false), Some(&p)).is_none(), "{done}");
+        }
+        let f =
+            json!({"state": "failed", "total": 1, "gang": {"hosts": ["local"], "error": "exit 1"}});
+        assert_eq!(
+            job_row("p-6", &owned(false), Some(&f)).unwrap().state,
+            "failed"
+        );
+    }
+
+    #[test]
+    fn a_runs_name_and_gpu_come_from_the_stamped_submit() {
+        use serde_json::json;
+        let net = cua_spaces::network::NetworkSettings::internet();
+        let mut p = json!({"command": ["x"], "accelerator": "apple", "env": {}});
+        confine_submit(&mut p, "p-7", "local:a", "local:r", 0, &net).unwrap();
+        let (name, gpu) = job_facts(&p);
+        assert!(gpu && !name.is_empty() && !name.starts_with("p-"), "{name}");
+        let mut q = json!({"command": ["x"], "env": {}});
+        confine_submit(&mut q, "p-8", "local:a", "local:r", 0, &net).unwrap();
+        assert!(!job_facts(&q).1, "no accelerator: the OS icon");
     }
 
     #[test]

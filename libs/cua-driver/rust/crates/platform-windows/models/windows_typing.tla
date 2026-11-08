@@ -35,8 +35,9 @@ vars == <<front, sent, pending, reader, turn, done, userGot, stolen>>
 Init == /\ front = "T" /\ sent = 0 /\ pending = 0 /\ reader = "live"
         /\ turn = "sending" /\ done = FALSE /\ userGot = FALSE /\ stolen = FALSE
 
-\* SendInput of b events. Text sends one unit (b = 1) after checking the
-\* foreground; a key chord sends all of its events at once (b = N).
+\* SendInput of b events after checking the foreground. Paced text sends one
+\* unit (b = 1); zero-delay text sends a batch (#6892); a key chord sends all
+\* of its events at once (b = N).
 Send(b) == /\ turn = "sending" /\ front = "T" /\ pending = 0 /\ sent + b <= N
            /\ sent' = sent + b /\ pending' = b
            /\ UNCHANGED <<front, reader, turn, done, userGot, stolen>>
@@ -53,8 +54,9 @@ Timeout == /\ turn = "sending" /\ pending > 0 /\ turn' = "undrained"
 \* The final drain sees every inserted event read.
 Drained == /\ turn = "sending" /\ pending = 0 /\ sent = N /\ turn' = "drained"
            /\ UNCHANGED <<front, sent, pending, reader, done, userGot, stolen>>
-\* foreground_lost: before the next text unit, the foreground is not the target.
-Lost == /\ turn = "sending" /\ pending = 0 /\ 0 < sent /\ sent < N /\ front # "T"
+\* foreground_lost: before any text batch, the first included, the foreground
+\* is not the target (src/input/keyboard.rs:650-660).
+Lost == /\ turn = "sending" /\ pending = 0 /\ sent < N /\ front # "T"
         /\ turn' = "lost"
         /\ UNCHANGED <<front, sent, pending, reader, done, userGot, stolen>>
 \* The target's input thread reads one event in whichever window is in front.

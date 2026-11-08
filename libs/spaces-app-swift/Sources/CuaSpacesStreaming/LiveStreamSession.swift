@@ -150,6 +150,9 @@ public final class LiveStreamSession: ObservableObject {
     /// stream was "working" in that case. This one would not.
     public let presentation = StreamPresentation()
 
+    /// The `stream.open` span of the latest open (see `StreamOpenClock`).
+    public private(set) var openClock = StreamOpenClock()
+
     public init(provider: SpaceStreamSourceProviding) {
         self.provider = provider
     }
@@ -167,6 +170,19 @@ public final class LiveStreamSession: ObservableObject {
     }
 
     // MARK: - Lifecycle
+
+    /// Stamps a hop of the `stream.open` span that happened before this
+    /// session existed (the click, the resolved source) or after it opened
+    /// (the first painted frame). Logs the span once, at the first paint.
+    public func stampOpen(_ hop: StreamOpenClock.Hop, at time: TimeInterval = ProcessInfo.processInfo.systemUptime,
+                          space: String = "", tier: String = "") {
+        openClock.mark(hop, at: time)
+        if hop == .painted, !openReported {
+            openReported = true
+            openClock.report(space: space, tier: tier)
+        }
+    }
+    private var openReported = false
 
     public func refreshWindows() async {
         do {
@@ -218,6 +234,11 @@ public final class LiveStreamSession: ObservableObject {
         let generation = generation
         status = .connecting
         frame = nil
+        let carried = openClock
+        openClock = StreamOpenClock()
+        for hop in [StreamOpenClock.Hop.slot, .resolved] { if let t = carried.marks[hop] { openClock.mark(hop, at: t) } }
+        openReported = false
+        openClock.mark(.begun)
         let source = source
         let task = Task { @MainActor [weak self] in
             guard let self else { return }
@@ -345,7 +366,8 @@ public final class LiveStreamSession: ObservableObject {
             // viewer's participant when it opens the media session, so the
             // Space attributes this viewer's input to its own presence cursor
             // (never an agent's) and draws no agent cursor for it.
-            if let presenceName, presence == nil { await startPresence(presenceName, color: nil) }
+            if let presenceName, presence == nil { await startPresence(presenceName, color: nil, upTo: Self.presenceWait) }
+            openClock.mark(.presence)
             guard self.generation == generation else { return }
             let policy = activatesOnInput ? "allow_activation" : SpaceStreamProvider.inputPolicy(for: source)
             let media = try await provider.openSession(source, policy: policy, frames: relay, audio: nil)
@@ -355,6 +377,7 @@ public final class LiveStreamSession: ObservableObject {
                 _ = try? await media.close()
                 return
             }
+            openClock.mark(.opened)
             self.decoder = decoder
             self.relay = relay
             self.media = media
@@ -450,6 +473,29 @@ public final class LiveStreamSession: ObservableObject {
         presenceName = name
         guard presence == nil, media != nil else { return }
         await startPresence(name, color: color)
+    }
+
+    /// The longest a stream's open waits for presence to join before it opens
+    /// without it (the join goes on behind the open). A join takes a few
+    /// milliseconds; one that does not (a daemon or Space slow to answer) must
+    /// never hold the picture back for its whole timeout.
+    static let presenceWait: Duration = .milliseconds(500)
+
+    /// Joins presence, waiting at most `limit` for it (nil: until it is done).
+    private func startPresence(_ name: String, color: String?, upTo limit: Duration?) async {
+        guard let limit else { return await startPresence(name, color: color) }
+        let gate = ResumeOnce()
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            gate.set(continuation)
+            Task { @MainActor [weak self] in
+                await self?.startPresence(name, color: color)
+                gate.resume()
+            }
+            Task {
+                try? await Task.sleep(for: limit)
+                gate.resume()
+            }
+        }
     }
 
     private func startPresence(_ name: String, color: String?) async {
@@ -579,6 +625,7 @@ public final class LiveStreamSession: ObservableObject {
 
     private func ingest(_ buffer: CVPixelBuffer, descriptor: VideoFrameDescriptor, skipped: Int = 0) {
         lastFrameReceivedAt = descriptor.receivedAt
+        openClock.mark(.decoded)
         frame = buffer
         // Every assignment to a `@Published` property re-renders each view
         // observing the session, equal or not: set only what changed, so a
@@ -757,5 +804,23 @@ final class FrameRelay: FrameSink, @unchecked Sendable {
 
     func onEvent(event: MediaEvent) {
         onEvent(event)
+    }
+}
+
+/// Resumes a continuation once, from whichever of two tasks gets there first.
+private final class ResumeOnce: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<Void, Never>?
+
+    func set(_ c: CheckedContinuation<Void, Never>) {
+        lock.lock(); continuation = c; lock.unlock()
+    }
+
+    func resume() {
+        lock.lock()
+        let c = continuation
+        continuation = nil
+        lock.unlock()
+        c?.resume()
     }
 }

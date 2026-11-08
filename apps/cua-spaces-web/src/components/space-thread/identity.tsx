@@ -37,6 +37,19 @@ export function AiTag({ className }: { className?: string }) {
   );
 }
 
+/** After a job's name in the child Spaces list: says it is a job. Exactly the AI tag's look. */
+export function JobTag({ className }: { className?: string }) {
+  return (
+    <span
+      data-job-tag=""
+      aria-label="Job"
+      className={cn("inline-flex h-[15px] shrink-0 items-center rounded-[4px] bg-foreground/[0.08] px-1 text-[9.5px] font-bold tracking-[0.04em] text-foreground/60", className)}
+    >
+      JOB
+    </span>
+  );
+}
+
 /** One agent across Spaces (the Agents tab's row): the same owner, harness and name (`chatKey` in the bridge). */
 export const identityKey = (i: MemberIdentity) => `${i.owner.id}/${i.harness.id || "other"}/${i.displayName.trim().toLowerCase()}`;
 

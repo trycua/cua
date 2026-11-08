@@ -586,7 +586,7 @@ export function PickUpWhereYouLeftOff({ onContinue, agents, place = thisComputer
   );
 }
 
-export function ReadyScreen({ view, agent, onDone, onContinueChat, onCopied, place }: { view: ReadyView; agent: string; onDone: () => void; onContinueChat?: (task: AskTask) => void; onCopied?: () => void; place?: string }) {
+export function ReadyScreen({ view, agent, agents, onDone, onContinueChat, onCopied, place }: { view: ReadyView; agent: string; agents?: readonly string[]; onDone: () => void; onContinueChat?: (task: AskTask) => void; onCopied?: () => void; place?: string }) {
   const [copied, setCopied] = useState(false);
   const copy = () => {
     onCopied?.();
@@ -611,7 +611,7 @@ export function ReadyScreen({ view, agent, onDone, onContinueChat, onCopied, pla
         </button>
       </div>
       {/* The person's own recent chats with the agent they picked (CUA-3319), hidden when there are none. */}
-      {onContinueChat ? <PickUpWhereYouLeftOff className="mt-[min(28px,3vh)]" agents={[agent]} place={place} onContinue={onContinueChat} /> : null}
+      {onContinueChat ? <PickUpWhereYouLeftOff className="mt-[min(28px,3vh)]" agents={agents?.length ? agents : [agent]} place={place} onContinue={onContinueChat} /> : null}
       <Actions>
         <button type="button" className={WHITE_BUTTON} onClick={onDone} data-onboarding-primary="">
           {view.done}
@@ -1075,6 +1075,7 @@ export function NewFirstRun() {
         <ReadyScreen
           view={readyView({ os, agent: s.agent, agents: s.connected, computers: pickedNames(), canMakeSeparate })}
           agent={s.agent}
+          agents={s.connected}
           place={placeName(os)}
           onDone={() => {
             funnel("step_completed", agentWord(s.agent));

@@ -712,6 +712,11 @@ describe.skipIf(!wasmBuilt)("the new first run on its route", () => {
     await waitFor(() => expect(heading()).toBe("Claude Code and Codex can now use this Mac"), { timeout: 15_000 });
     const connect = calls.find((c) => c.op === "agents.connect" || c.op === "agents.configure");
     expect((connect!.args as { agents: string[] }).agents).toEqual(["claude-code", "codex"]);
+    // Both agents' chats are read while connecting; the sign-ins are kept after Ready shows.
+    const connects = () => calls.filter((c) => c.op === "agents.connect").map((c) => c.args);
+    expect(connects()[0]).toEqual({ agents: ["claude-code", "codex"], signIn: false });
+    await waitFor(() => expect(connects()).toContainEqual({ agents: ["claude-code", "codex"], signIn: true }));
+    expect(calls.find((c) => c.op === "agents.recentThreads")!.args).toEqual({ limit: 4, agents: ["claude-code", "openai-codex"] });
   });
 
   it("Choose later: setup ends on Home and no agent's settings are touched", { timeout: 60_000 }, async () => {

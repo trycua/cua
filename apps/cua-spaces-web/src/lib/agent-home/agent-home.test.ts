@@ -117,14 +117,24 @@ describe("the agent's prompt", () => {
   it("says where it is, what it can do and how to ask", () => {
     const p = homePrompt("test https://github.com/acme/app", setup, containerHome.abilities());
     expect(p).toContain("your own small Linux Space");
-    expect(p).toContain("posted to the thread, in order, as its own message, and none is replaced");
+    expect(p).toContain("posted to the thread as its own message");
     expect(p).toContain("cua spaces ls");
     // GPU work goes to the person's computers through the pool.
-    expect(p).toContain("@app.function(gpu=...)");
+    expect(p).toContain("@app.function(gpu=");
     expect(p).toContain("cua run file.py::fn");
+    // What it needs is in the brief: nothing sends it to read a skill in the thread.
+    expect(p).not.toMatch(/read the .* skill/i);
     expect(p).toContain(approvalAction("machines.use"));
     expect(p).toContain("Unless the person says where");
     expect(p.endsWith("test https://github.com/acme/app")).toBe(true);
+  });
+  it("makes the agent speak as the person's supercomputer, not narrate its process", () => {
+    const p = homePrompt("train a model", setup, containerHome.abilities());
+    expect(p).toContain("You are the person's supercomputer");
+    expect(p).toContain("one short final message");
+    expect(p).toContain("no narration of steps, tools, skills, files, commands, plans or checks");
+    expect(p).toContain("Do not ask the person which computer or tool to use");
+    expect(p).toContain("stream_space_window");
   });
   it("treats a named Space or machine as the grant", () => {
     const p = homePrompt("x", { ...setup, mentions: { spaces: [], machines: [{ id: "m-air", name: "my Air" }] } }, containerHome.abilities());

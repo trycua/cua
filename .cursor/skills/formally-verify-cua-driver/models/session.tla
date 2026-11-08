@@ -1,7 +1,7 @@
 \* SPDX-License-Identifier: MIT
 \* Copyright (c) 2026 Cua AI, Inc.
 ---- MODULE session ----
-\* One lifecycle session id in src/session.rs: calls (one at a time), an
+\* One lifecycle session id in cua-driver-core/src/session.rs: calls (one at a time), an
 \* explicit end (end_session, transport EOF, revoke), the idle sweep, cleanup
 \* hooks and start_session revival. The session's state is spread over
 \* LIFECYCLE_RECORDS (rec, inflight, pending, fresh), ENDED_SESSIONS and

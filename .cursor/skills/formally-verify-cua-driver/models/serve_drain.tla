@@ -1,7 +1,7 @@
 \* SPDX-License-Identifier: MIT
 \* Copyright (c) 2026 Cua AI, Inc.
 ---- MODULE serve_drain ----
-\* Daemon shutdown in src/serve.rs run_serve: the accept loop breaks, the
+\* Daemon shutdown in cua-driver/src/serve.rs run_serve: the accept loop breaks, the
 \* daemon drains its connections, gives up its name, and tears down the SDK.
 \* One client connection is mid-call when shutdown starts; a successor daemon
 \* may launch as soon as the name lock is free.

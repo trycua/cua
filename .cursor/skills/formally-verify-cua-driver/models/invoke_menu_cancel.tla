@@ -3,7 +3,7 @@
 ---- MODULE invoke_menu_cancel ----
 \* A background invoke_menu call whose caller goes away (a timeout, or the
 \* client drops the request) while its worker still runs:
-\* run_in_background and run_admitted in src/tools/invoke_menu.rs, and the
+\* run_in_background and run_admitted in platform-macos/src/tools/invoke_menu.rs, and the
 \* desktop lane in cua-driver-core/src/tool.rs.
 \*
 \* Actors: the call (the dispatch future), its blocking worker, and the next

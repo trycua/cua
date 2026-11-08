@@ -11,18 +11,18 @@ Tests check the interleavings someone wrote down. These TLA+ models check every 
 
 Match the diff against the **Code** column below. If a covered function changed, rerun its rows and reread the model actions that cite it. If you add a lock, a flag, a background worker or a new end state to one of these machines, the model needs the same step.
 
-Paths are relative to `libs/cua-driver/rust/crates/`. Each spec lives in `<crate>/models/` beside the code it describes, and its header comment lists each config and what it shows.
+Every spec and config lives in this skill's [`models/`](models/) directory. Code paths below are relative to `libs/cua-driver/rust/crates/`. Each spec's header comment names the code it mirrors (paths relative to the same crates directory) and lists its configs and what each one shows.
 
 | Machine | Spec | Code it mirrors | Rules (invariants) | Harm when a rule breaks |
 | --- | --- | --- | --- | --- |
-| Element token | `cua-driver-core/models/token.tla` | `cua-driver-core/src/snapshot_store.rs` `publish_snapshot`, `row_snapshot`, `remember_retired`, `resolve`, `token_owner`, `set_zoom`; `element_token.rs` `fill_pid_from_token`, `LRU_CAP_PER_PID` | R1 acts only on a current snapshot. R2 one current snapshot per window. R3 acts on the snapshot the caller named. R4 a refusal names the current snapshots. R6 a zoom binds only to a current snapshot | a click or a typed value lands on a different element than the agent read, and is reported as a success |
-| Session lifecycle | `cua-driver-core/models/session.tla` | `cua-driver-core/src/session.rs` `begin_session_dispatch_inner`, `SessionDispatchGuard::drop`, `end_session_with_reason`, `finish_session_end`, `mark_session_ended`, `evict_idle_matching`, `retry_session_cleanup`, `activate_or_revive_session_for_owner` | SE1 never live and ended at once. SE2 the idle sweep never ends a session used after it was picked. SE3 a live session has no unfinished cleanup. SE4 a deferred end exists only behind a call. SE5 cleanup never starts while an admitted call runs | an agent's session ends under it, or a recording, cursor or grant is torn down mid-action |
-| Permission admission | `cua-driver-sdk/models/admission.tla` | `cua-driver-sdk/src/runtime.rs` `Admission`, `set_awaiting_permissions`, `invoke_with_context_and_evidence`, `RuntimeSession::invoke`, `shutdown`; `cua-driver/src/serve.rs` `settle_permission_gate`; `cua-driver/src/main.rs` serve startup | PG1 no tool runs while the gate is pending. PG2 (temporal) once you grant the permissions, tools open without a restart, assuming a fresh permission probe eventually sees the grant. PG3 a closed runtime never opens again | the daemon runs a desktop tool without Accessibility or Screen Recording, and macOS caches the negative TCC answer |
-| macOS foreground restore | `platform-macos/models/foreground_restore.tla` | `platform-macos/src/input/skylight.rs` `foreground_turn`, `with_foreground_assist`, `with_foreground_hid_activation`; the same shape in `tools/type_text.rs` (`reactivate_application`) and `tools/invoke_menu.rs` (foreground restore); `focus_arbiter.rs` `UndoWatch::decide` | FR1 the turn's restore never undoes an app switch you made during the turn. FR2 an uninterrupted turn gives your app back | the driver yanks you back to the app you just left |
-| invoke_menu cancel | `platform-macos/models/invoke_menu_cancel.tla` | `platform-macos/src/tools/invoke_menu.rs` `PressAdmission`, `CancelOnDrop`, `run_admitted`, `invoke_path_in_background`, `run_in_background`; `cua-driver-core/src/tool.rs` `DesktopLane`, `DesktopCall`, `DesktopLease`; `platform-macos/src/background_mutation.rs` | MC1 a worker whose call was already cancelled does not press. MC2 no other desktop action runs while a menu press is in flight | a menu command fires for a call that already returned, or overlaps the next action's input |
-| Recording | `cua-driver-core/models/recording.tla` | `cua-driver-core/src/recording.rs` `Recorder`, `start_with_redactions`, `stop`, `finalize`, `begin_turn`, `finish_turn`; the idle TTL stop in `cua-driver-sdk/src/runtime.rs` | RC1 a turn is written into the recording it was reserved under. RC2 no live recording belongs to an ended session. RC3 a finished directory has a final `session.json`. RC4 a failed start leaves no half-torn recording. RC5 an idle stop never stops a later recording | evidence is written to the wrong recording, or a recording directory is left without its final metadata |
-| Windows typing | `platform-windows/models/windows_typing.tla` | `platform-windows/src/input/keyboard.rs` `with_confirmed_foreground`, `send_text_synthesized_paced_after_focus`; `platform-windows/src/typing_turn.rs` `restores_previous` | NoLateKeystroke no keystroke meant for the target lands in your window. NoSteal no taking the front back from a window that took it. GivesWindowBack a drained turn gives your window back | typed text lands in the window you were using |
-| Serve drain | `cua-driver/models/serve_drain.tla` | `cua-driver/src/serve.rs` both `run_serve` functions (Unix and Windows), `release_active_proxy_sessions`, `claim_standalone_socket`, `claim_daemon_lock` | SD1 a successor daemon never serves while the old one still runs a call. SD2 shutdown clears the proxy-session registry before the SDK goes down | two daemons drive the desktop at once, or a stale proxy entry outlives the runtime it named |
+| Element token | `models/token.tla` | `cua-driver-core/src/snapshot_store.rs` `publish_snapshot`, `row_snapshot`, `remember_retired`, `resolve`, `token_owner`, `set_zoom`; `element_token.rs` `fill_pid_from_token`, `LRU_CAP_PER_PID` | R1 acts only on a current snapshot. R2 one current snapshot per window. R3 acts on the snapshot the caller named. R4 a refusal names the current snapshots. R6 a zoom binds only to a current snapshot | a click or a typed value lands on a different element than the agent read, and is reported as a success |
+| Session lifecycle | `models/session.tla` | `cua-driver-core/src/session.rs` `begin_session_dispatch_inner`, `SessionDispatchGuard::drop`, `end_session_with_reason`, `finish_session_end`, `mark_session_ended`, `evict_idle_matching`, `retry_session_cleanup`, `activate_or_revive_session_for_owner` | SE1 never live and ended at once. SE2 the idle sweep never ends a session used after it was picked. SE3 a live session has no unfinished cleanup. SE4 a deferred end exists only behind a call. SE5 cleanup never starts while an admitted call runs | an agent's session ends under it, or a recording, cursor or grant is torn down mid-action |
+| Permission admission | `models/admission.tla` | `cua-driver-sdk/src/runtime.rs` `Admission`, `set_awaiting_permissions`, `invoke_with_context_and_evidence`, `RuntimeSession::invoke`, `shutdown`; `cua-driver/src/serve.rs` `settle_permission_gate`; `cua-driver/src/main.rs` serve startup | PG1 no tool runs while the gate is pending. PG2 (temporal) once you grant the permissions, tools open without a restart, assuming a fresh permission probe eventually sees the grant. PG3 a closed runtime never opens again | the daemon runs a desktop tool without Accessibility or Screen Recording, and macOS caches the negative TCC answer |
+| macOS foreground restore | `models/foreground_restore.tla` | `platform-macos/src/input/skylight.rs` `foreground_turn`, `with_foreground_assist`, `with_foreground_hid_activation`; the same shape in `tools/type_text.rs` (`reactivate_application`) and `tools/invoke_menu.rs` (foreground restore); `focus_arbiter.rs` `UndoWatch::decide` | FR1 the turn's restore never undoes an app switch you made during the turn. FR2 an uninterrupted turn gives your app back | the driver yanks you back to the app you just left |
+| invoke_menu cancel | `models/invoke_menu_cancel.tla` | `platform-macos/src/tools/invoke_menu.rs` `PressAdmission`, `CancelOnDrop`, `run_admitted`, `invoke_path_in_background`, `run_in_background`; `cua-driver-core/src/tool.rs` `DesktopLane`, `DesktopCall`, `DesktopLease`; `platform-macos/src/background_mutation.rs` | MC1 a worker whose call was already cancelled does not press. MC2 no other desktop action runs while a menu press is in flight | a menu command fires for a call that already returned, or overlaps the next action's input |
+| Recording | `models/recording.tla` | `cua-driver-core/src/recording.rs` `Recorder`, `start_with_redactions`, `stop`, `finalize`, `begin_turn`, `finish_turn`; the idle TTL stop in `cua-driver-sdk/src/runtime.rs` | RC1 a turn is written into the recording it was reserved under. RC2 no live recording belongs to an ended session. RC3 a finished directory has a final `session.json`. RC4 a failed start leaves no half-torn recording. RC5 an idle stop never stops a later recording | evidence is written to the wrong recording, or a recording directory is left without its final metadata |
+| Windows typing | `models/windows_typing.tla` | `platform-windows/src/input/keyboard.rs` `with_confirmed_foreground`, `send_text_synthesized_paced_after_focus`; `platform-windows/src/typing_turn.rs` `restores_previous` | NoLateKeystroke no keystroke meant for the target lands in your window. NoSteal no taking the front back from a window that took it. GivesWindowBack a drained turn gives your window back | typed text lands in the window you were using |
+| Serve drain | `models/serve_drain.tla` | `cua-driver/src/serve.rs` both `run_serve` functions (Unix and Windows), `release_active_proxy_sessions`, `claim_standalone_socket`, `claim_daemon_lock` | SD1 a successor daemon never serves while the old one still runs a call. SD2 shutdown clears the proxy-session registry before the SDK goes down | two daemons drive the desktop at once, or a stale proxy entry outlives the runtime it named |
 
 Each action in a spec carries a comment naming the function and `file:line` it mirrors. The line numbers were right at the sync commit below. After that, find the code by function name.
 
@@ -32,7 +32,7 @@ From the repository root:
 
 ```sh
 .cursor/skills/formally-verify-cua-driver/scripts/check-models.sh          # every row, under a minute
-.cursor/skills/formally-verify-cua-driver/scripts/check-models.sh session  # rows whose config path contains "session"
+.cursor/skills/formally-verify-cua-driver/scripts/check-models.sh session  # rows whose config name contains "session"
 ```
 
 It needs Java 11 or later (`JAVA=/path/to/java` if it is not on `PATH`) and `curl`. The first run downloads `tla2tools.jar` v1.7.4 into `~/.cache/cua-driver-tla` and checks its sha256. Set `TLA2TOOLS=/path/to/tla2tools.jar` to use a copy you already have. Each TLC run gets 300 s (`TLC_SECONDS`), and every model here finishes in under 5 s.
@@ -40,11 +40,20 @@ It needs Java 11 or later (`JAVA=/path/to/java` if it is not on `PATH`) and `cur
 [`models.tsv`](models.tsv) lists every config with the result it must give: `pass`, or the one invariant or property that must fail first. The script prints `ok` or `FAIL` per row, keeps TLC's output in the printed temp directory, and exits non-zero on any mismatch. To run one config by hand:
 
 ```sh
-cd libs/cua-driver/rust/crates/cua-driver-core/models
+cd .cursor/skills/formally-verify-cua-driver/models
 java -XX:+UseParallelGC -cp ~/.cache/cua-driver-tla/tla2tools-1.7.4.jar tlc2.TLC -workers 1 -config session.cfg session.tla
 ```
 
 Read every counterexample, and draw every model you change, with the `/statechart` skill. It gives each broken rule's shortest path in plain steps, and when the model passes it draws a chart of the machine.
+
+## Where the specs used to live
+
+The two models that were loose in crate directories moved here unchanged in what they check. Every invariant and every config still runs:
+
+| Old path (relative to `libs/cua-driver/rust/crates/`) | New path (relative to this skill) | Rows |
+| --- | --- | --- |
+| `cua-driver-core/models/recording.tla` and `recording{,_restart,_dirfail,_idle}.cfg` | `models/recording.tla` and the same four configs | RC1-RC5 pass on main; RC3, RC4, RC5 each fail on their old-behaviour config |
+| `platform-windows/models/windows_typing.tla` and `windows_typing{,_always}.cfg` | `models/windows_typing.tla` and the same two configs | TypeOK, NoLateKeystroke, NoSteal, GivesWindowBack pass; NoLateKeystroke fails on the old restore rule |
 
 ## What each row means
 
@@ -79,7 +88,7 @@ Never weaken a rule or delete an action to make a row pass. If the code changed 
 - Give each switch a comment saying what TRUE and FALSE mean in the code. Add an able-to-fail config for each guard the rules depend on, and see it fail before you trust a pass.
 - Keep the state space small: two or three actors and bounds of 1 to 3. If TLC runs past a minute, add a bound and say in the spec header what it leaves out.
 - Every `.tla` and `.cfg` starts with the MIT SPDX header (`\* SPDX-License-Identifier: MIT`) the neighbouring Rust files use.
-- Add the rows to `models.tsv` and the machine to the coverage table.
+- Put the spec and its configs in `models/`, add the rows to `models.tsv`, and add the machine to the coverage table.
 
 ## What is not covered
 
@@ -100,8 +109,7 @@ git log --oneline cc67e715d1..HEAD -- \
   platform-macos/src/input/skylight.rs platform-macos/src/focus_arbiter.rs \
   platform-macos/src/tools/invoke_menu.rs platform-macos/src/tools/type_text.rs \
   platform-macos/src/background_mutation.rs \
-  platform-windows/src/input/keyboard.rs platform-windows/src/typing_turn.rs \
-  '*/models/*'
+  platform-windows/src/input/keyboard.rs platform-windows/src/typing_turn.rs
 ```
 
 When you have reread each changed function against its model actions and the rows give their expected results, move the sync commit forward to the commit you checked. Do not move it on a green run alone.

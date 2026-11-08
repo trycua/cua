@@ -2,7 +2,7 @@
 \* Copyright (c) 2026 Cua AI, Inc.
 ---- MODULE admission ----
 \* Runtime admission and the macOS permission gate: enum Admission in
-\* src/runtime.rs, set by cua-driver/src/main.rs and cua-driver/src/serve.rs
+\* cua-driver-sdk/src/runtime.rs, set by cua-driver/src/main.rs and cua-driver/src/serve.rs
 \* (set_permission_gate_pending, settle_permission_gate).
 \* Every route (daemon socket call, trusted socket session, MCP HTTP, MCP
 \* envelopes, SDK) reaches a tool through invoke_with_context_and_evidence

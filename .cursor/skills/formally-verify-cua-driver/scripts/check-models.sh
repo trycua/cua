@@ -7,8 +7,7 @@
 # into $TLA2TOOLS_CACHE (default ~/.cache/cua-driver-tla) and checks its sha256.
 set -euo pipefail
 SKILL="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-ROOT="$(cd "$SKILL/../../.." && pwd)"
-CRATES="$ROOT/libs/cua-driver/rust/crates"
+MODELS="$SKILL/models"
 FILTER="${1:-}"
 JAVA="${JAVA:-java}"
 JAR_VERSION=1.7.4
@@ -34,12 +33,12 @@ while IFS=$'\t' read -r spec cfg expect; do
   [[ -z "$spec" || "$spec" == \#* ]] && continue
   [[ -n "$FILTER" && "$cfg" != *"$FILTER"* ]] && continue
   selected=$((selected + 1))
-  dir="$CRATES/$(dirname "$cfg")"
+  dir="$MODELS"
   name="$(basename "$cfg" .cfg)"
   log="$OUT/$name.out"
   set +e
   ( cd "$dir" && "$JAVA" -XX:+UseParallelGC -cp "$JAR" tlc2.TLC -workers 1 \
-      -metadir "$OUT/$name.states" -config "$name.cfg" "$(basename "$spec")" ) >"$log" 2>&1 &
+      -metadir "$OUT/$name.states" -config "$name.cfg" "$spec" ) >"$log" 2>&1 &
   pid=$!
   ( sleep "$PER_RUN_SECONDS"; kill "$pid" 2>/dev/null ) >/dev/null 2>&1 &
   watchdog=$!
@@ -53,7 +52,7 @@ while IFS=$'\t' read -r spec cfg expect; do
     # TLC does not name the temporal property that failed; a config that
     # checks one names it on its PROPERTIES line.
     if [[ "$got" == temporal ]]; then
-      got="$(sed -n 's/^PROPERTIES* *\([A-Za-z0-9_]*\) *$/\1/p' "$CRATES/$cfg" | head -1)"
+      got="$(sed -n 's/^PROPERTIES* *\([A-Za-z0-9_]*\) *$/\1/p' "$MODELS/$cfg" | head -1)"
       [[ -n "$got" ]] || got="a temporal property"
     fi
     :
@@ -61,9 +60,9 @@ while IFS=$'\t' read -r spec cfg expect; do
     got="error"
   fi
   if [[ "$got" == "$expect" ]]; then
-    printf 'ok    %-52s %-16s %s states\n' "$cfg" "$got" "${states:-?}"
+    printf 'ok    %-36s %-16s %s states\n' "$cfg" "$got" "${states:-?}"
   else
-    printf 'FAIL  %-52s expected %-8s got %-8s (%s)\n' "$cfg" "$expect" "$got" "$log"
+    printf 'FAIL  %-36s expected %-8s got %-8s (%s)\n' "$cfg" "$expect" "$got" "$log"
     failures=$((failures + 1))
   fi
 done <"$SKILL/models.tsv"

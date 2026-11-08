@@ -2,10 +2,10 @@
 \* Copyright (c) 2026 Cua AI, Inc.
 ---- MODULE foreground_restore ----
 \* One macOS foreground turn: with_foreground_assist and
-\* with_foreground_hid_activation in src/input/skylight.rs. The same
+\* with_foreground_hid_activation in platform-macos/src/input/skylight.rs. The same
 \* save-front, act, put-it-back shape is in type_text's browser path
-\* (src/tools/type_text.rs, reactivate_application) and the foreground
-\* invoke_menu restore (src/tools/invoke_menu.rs).
+\* (platform-macos/src/tools/type_text.rs, reactivate_application) and the foreground
+\* invoke_menu restore (platform-macos/src/tools/invoke_menu.rs).
 \* Apps: U (in front before the turn), T (the target), O (another app).
 \*
 \* One switch selects the code:

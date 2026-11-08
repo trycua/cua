@@ -1,7 +1,7 @@
 \* SPDX-License-Identifier: MIT
 \* Copyright (c) 2026 Cua AI, Inc.
 ---- MODULE token ----
-\* The life of an element token in src/snapshot_store.rs and src/element_token.rs.
+\* The life of an element token in cua-driver-core/src/snapshot_store.rs and element_token.rs.
 \* One pid, two windows, one session, a bounded number of reads.
 \*   publish_snapshot (snapshot_store.rs:557-635) mints a snapshot id and retires the
 \*     window's previous snapshot, plus the oldest one once the pid's lane holds

@@ -789,6 +789,56 @@ describe.skipIf(!wasmBuilt)("the new first run on its route", () => {
     expect(heading()).toMatch(/^Codex can now use this Mac(, | and )/);
   });
 
+  it("Add this computer waits for the browser: nothing is set up or registered while it waits", { timeout: 60_000 }, async () => {
+    const calls: Calls = [];
+    await mountApp("/onboarding", {
+      failsCreates: false,
+      listsGhost: false,
+      demo: { signedIn: false, onboarded: false, noSpaces: true, signIn: "wait" },
+      intercept: (op, args) => (calls.push({ op, args }), undefined),
+    });
+    await waitFor(() => expect(heading()).toBe("Combine all your computers into one supercomputer."));
+    click("[data-onboarding-primary]");
+    await waitFor(() => expect(heading()).toBe("Finish signing in in your browser"));
+    expect(screen.getByRole("status").textContent).toContain("Waiting for your browser");
+    await new Promise((r) => setTimeout(r, 500));
+    // The browser hasn't confirmed: this computer isn't set up, registered or asked about, and the run stays on 1b.
+    expect(calls.some((c) => c.op === "host.setUp")).toBe(false);
+    expect(heading()).toBe("Finish signing in in your browser");
+    expect(readFirstRun().newRun?.screen).toBe("signin");
+  });
+
+  it("an app restarted mid-sign-in starts the sign-in again and sets nothing up until it finishes", { timeout: 60_000 }, async () => {
+    writeFirstRunForTest({ newRun: { screen: "signin", reached: 0 } });
+    const calls: Calls = [];
+    await mountApp("/onboarding", {
+      failsCreates: false,
+      listsGhost: false,
+      demo: { signedIn: false, onboarded: false, noSpaces: true, signIn: "wait" },
+      intercept: (op, args) => (calls.push({ op, args }), undefined),
+    });
+    await waitFor(() => expect(heading()).toBe("Finish signing in in your browser"), { timeout: 15_000 });
+    await waitFor(() => expect(calls.some((c) => c.op === "session.signIn")).toBe(true));
+    await new Promise((r) => setTimeout(r, 500));
+    expect(calls.some((c) => c.op === "host.setUp")).toBe(false);
+  });
+
+  it("already signed in (Reset & Show): Add this computer opens no second browser sign-in, adds this Mac, then goes on", { timeout: 60_000 }, async () => {
+    const calls: Calls = [];
+    await mountApp("/onboarding", {
+      failsCreates: false,
+      listsGhost: false,
+      demo: { signedIn: true, onboarded: false, noSpaces: true },
+      intercept: (op, args) => (calls.push({ op, args }), undefined),
+    });
+    await waitFor(() => expect(heading()).toBe("Combine all your computers into one supercomputer."));
+    click("[data-onboarding-primary]");
+    await waitFor(() => expect(heading()).toBe("Let Cua Spaces see and use apps"), { timeout: 15_000 });
+    // A browser sign-in started here would finish later, after the run had already gone on (8 Nov, Francesco's test).
+    expect(calls.some((c) => c.op === "session.signIn")).toBe(false);
+    expect(calls.some((c) => c.op === "host.status")).toBe(true);
+  });
+
   it("a run saved on the removed step goes on from the step after the sign-in", { timeout: 60_000 }, async () => {
     writeFirstRunForTest({ newRun: { screen: "where", reached: 1 } });
     await mountApp("/onboarding", { failsCreates: false, listsGhost: false, demo: { signedIn: true, onboarded: false, noSpaces: true } });

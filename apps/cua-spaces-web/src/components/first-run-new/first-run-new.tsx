@@ -567,6 +567,10 @@ export function NewFirstRun() {
 
   const signedIn = Boolean(session.data?.signedIn);
   const phase: SignInPhase = session.data?.signIn ?? { kind: "idle" };
+  // Signed in, with no browser sign-in under way: only then may this computer join the account. A sign-in that
+  // runs (the browser hasn't confirmed yet) is waited for, even when an older session still says signed in.
+  const signingIn = phase.kind === "starting" || phase.kind === "waiting";
+  const authed = signedIn && !signingIn;
   const [found, setFound] = useState<string[] | null>(null);
   const [connecting, setConnecting] = useState(false);
   const [connectError, setConnectError] = useState<string | null>(null);
@@ -634,7 +638,7 @@ export function NewFirstRun() {
 
   // Back from the browser: read the sign-in again at once, so one that finished
   // (or failed) there shows now, not on the next host push.
-  const waitingOnSignIn = s.screen === "signin" && (phase.kind === "starting" || phase.kind === "waiting");
+  const waitingOnSignIn = s.screen === "signin" && signingIn;
   const refreshSession = useRef(session.refresh);
   refreshSession.current = session.refresh;
   useEffect(() => {
@@ -669,11 +673,11 @@ export function NewFirstRun() {
     }
   };
   useEffect(() => {
-    if (s.screen !== "signin" || !signedIn) return;
+    if (s.screen !== "signin" || !authed) return;
     if (thisState === "idle") void addThis();
     else if (thisState === "added") go(afterSignIn(os));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [s.screen, signedIn, thisState]);
+  }, [s.screen, authed, thisState]);
 
   // A run saved on the removed "Pick where your agents work" step goes on from the step after the sign-in.
   useEffect(() => {
@@ -824,10 +828,12 @@ export function NewFirstRun() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [s.screen]);
 
+  // Add this computer: the browser sign-in, waited for on 1b. Already signed in (Reset & Show, a session kept
+  // from before): no second sign-in in the browser; 1b adds this computer with the session there is.
   const startSignIn = () => {
     started.current = true;
     go("signin");
-    void session.signIn().catch(() => {});
+    if (!signedIn) void session.signIn().catch(() => {});
   };
 
   const dots = stepDots(s.screen, reachedAfter(s.reached, s.screen));
@@ -848,15 +854,15 @@ export function NewFirstRun() {
     case "signin":
       body = (
         <SignInScreen
-          view={signedIn ? addingView({ os, state: thisState === "failed" ? "failed" : "adding", error: addError, needsProof: addNeedsProof }) : signInView(phase, session.data?.signInUrl ?? null)}
+          view={authed ? addingView({ os, state: thisState === "failed" ? "failed" : "adding", error: addError, needsProof: addNeedsProof }) : signInView(phase, session.data?.signInUrl ?? null)}
           onTryAgain={() => {
-            if (signedIn) return void addThis();
+            if (authed) return void addThis();
             session.cancelSignIn();
             void session.signIn().catch(() => {});
           }}
           onUseCode={() => {
             // Adding this computer wants a code from another computer: the sheet opens on "Enter a code".
-            if (signedIn) {
+            if (authed) {
               setAddEnter(true);
               setAddOpen(true);
               return;

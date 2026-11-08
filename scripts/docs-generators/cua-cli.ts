@@ -97,7 +97,7 @@ export const CLI_GROUPS: CliGroup[] = [
     slug: 'spaces-and-computers',
     title: 'Spaces',
     summary: 'Your Spaces, and a cua-spacesd by URL',
-    commands: ['spaces', 'spacesd'],
+    commands: ['spaces', 'keepawake', 'spacesd'],
   },
   {
     slug: 'computers-and-teams',

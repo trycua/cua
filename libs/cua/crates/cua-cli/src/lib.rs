@@ -347,6 +347,26 @@ enum Command {
     /// Spaces: registered ones and your computers on the relay.
     #[command(subcommand)]
     Spaces(host::SpacesCmd),
+    /// Keep this Space from going to sleep for a while (at most 2 hours).
+    /// Inside a Space it means itself; give a Space to keep another one awake
+    /// from outside. Tell it why: the person sees the reason on the Space.
+    #[command(after_help = "Examples:
+  cua keepawake --for 10m --reason \"waiting for the build\"
+  cua keepawake --clear")]
+    Keepawake {
+        /// How long (`10m`, `2h`; at most 2h).
+        #[arg(long = "for", value_name = "DURATION", conflicts_with = "clear")]
+        duration: Option<String>,
+        /// Why; shown on the Space.
+        #[arg(long, default_value = "")]
+        reason: String,
+        /// End the keep-awake now.
+        #[arg(long)]
+        clear: bool,
+        /// The Space (default: this one, from inside it).
+        #[arg(long)]
+        space: Option<String>,
+    },
     /// Spaces in your own cloud account (AWS, Google Cloud, Hetzner, Modal):
     /// connect, status, test, disconnect, sweep; and pool hosts there
     /// (`cua cloud add aws`).
@@ -1788,6 +1808,25 @@ async fn run(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
     {
         return remove_computer(cli, &space, delete_spaces, yes, json, out).await;
     }
+    let cli = if let Command::Keepawake {
+        duration,
+        reason,
+        clear,
+        space,
+    } = &cli.command
+    {
+        Cli {
+            command: Command::Spaces(host::SpacesCmd::Keepawake {
+                space: space.clone().unwrap_or_else(|| "self".into()),
+                duration: duration.clone(),
+                reason: reason.clone(),
+                clear: *clear,
+            }),
+            ..cli
+        }
+    } else {
+        cli
+    };
     match cli.command {
         Command::Run(a) => return jobs_cmd::run(a, json, out).await,
         Command::Jobs(a) => return jobs_cmd::jobs(a, json, out).await,
@@ -2411,6 +2450,7 @@ async fn run_sdk(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
         | Command::Jobs(_)
         | Command::Computers
         | Command::Machines(_)
+        | Command::Keepawake { .. }
         | Command::Spaces(_)
         | Command::Cloud(_)
         | Command::Devices(_)

@@ -35,6 +35,7 @@ Full entries: [Space lifecycle](/spaces/reference/spaces#space-lifecycle).
 | <span id="network_set"></span>[`network_set`](/spaces/reference/spaces#network_set) | Tighten a Space's network: internet, none or custom lists. |
 | <span id="delete_space"></span>[`delete_space`](/spaces/reference/spaces#delete_space) | Delete a Space's sandbox and forget it. |
 | <span id="stop_space"></span>[`stop_space`](/spaces/reference/spaces#stop_space) | Turn a Space off: stop it (disk kept, memory freed) or, with suspend, suspend it (memory kept). |
+| <span id="keep_awake"></span>[`keep_awake`](/spaces/reference/spaces#keep_awake) | Keep a Space awake for a while (at most two hours), or end it. |
 | <span id="resize_space"></span>[`resize_space`](/spaces/reference/spaces#resize_space) | Change a Space's vCPUs, memory or disk size. |
 | <span id="start_space"></span>[`start_space`](/spaces/reference/spaces#start_space) | Turn a Space back on: resume or boot it. |
 
@@ -1221,5 +1222,5 @@ Tools are gated by `--permissions` (or `CUA_MCP_PERMISSIONS`), a comma-separated
 | `sandbox:all` | 11 permissions | `sandbox:list`, `sandbox:get` |
 | `share:all` | `share:create`, `share:read`, `share:stop` | `share:read` |
 | `skills:all` | `skills:list`, `skills:read`, `skills:record`, `skills:delete` | `skills:list`, `skills:read` |
-| `spaces:all` | 118 permissions | 38 permissions |
+| `spaces:all` | 119 permissions | 38 permissions |
 | `teleport:all` | `teleport:browser` | none |

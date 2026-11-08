@@ -438,8 +438,8 @@ impl Scoped {
     /// names the child.
     fn tool_target(name: &str) -> Option<&'static str> {
         Some(match name {
-            "stop_space" | "start_space" | "space_bash" | "space_write" | "upload" | "download"
-            | "list_tools" | "call_tool" | "list_space_windows" => "space",
+            "stop_space" | "start_space" | "keep_awake" | "space_bash" | "space_write"
+            | "upload" | "download" | "list_tools" | "call_tool" | "list_space_windows" => "space",
             _ => return None,
         })
     }
@@ -1000,7 +1000,15 @@ impl SpaceService for Scoped {
         if r.sleep.is_some() {
             return deny();
         }
-        let space = self.resolve(&r.space)?;
+        // "self" (or no name) is the caller; anything else is a child of it.
+        let q = r.space.trim();
+        let space = if q.is_empty() || q == "self" || q == self.space {
+            let mut own = pb::Space::default();
+            own.id = self.space.clone();
+            own
+        } else {
+            self.resolve(q)?
+        };
         let mut capped = false;
         if r.clear_keep_awake {
             self.spaces()

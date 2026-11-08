@@ -447,6 +447,7 @@ pub fn tool_row(name: &str, kind: &str, title: &str, input: &Value, location: &s
         "create_space" => row(Cat::Other, "Created a Space", ""),
         "start_space" => row(Cat::Other, "Started a Space", ""),
         "stop_space" => row(Cat::Other, "Stopped a Space", ""),
+        "keep_awake" => row(Cat::Other, "Kept a Space awake", ""),
         "delete_space" | "remove_space" => row(Cat::Other, "Deleted a Space", ""),
         "list_spaces" => row(Cat::Other, "Listed Spaces", ""),
         // Computer use (cua-driver and the Space computer tools).

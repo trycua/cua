@@ -15084,6 +15084,22 @@
        "aliases": [],
        "default_value": null,
        "env": null,
+       "help": "When it goes to sleep on its own: `never` (the default: it keeps running), `auto` (once nothing in it runs, and it wakes when something needs it) or a duration such as `10m`. Change it later with `cua spaces set`",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "sleep",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": "never|auto|DURATION"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
        "help": "Its network: `internet` (the default: the internet and its own tree; this computer, your local network, cloud metadata and other trees are blocked), `none`, `localhost:5432,3000` (also this computer's localhost on those ports), `lan` (also your local network), `custom` / `custom:none` (with --allow/--deny), or `unprotected` (No protection). Enforced by the host, outside the guest. See `cua network`",
        "hidden": false,
        "is_optional": true,
@@ -15405,6 +15421,76 @@
      "subcommand_optional": false,
      "subcommands": [],
      "usage": "cua spaces egress [OPTIONS] <SPACE>"
+    },
+    {
+     "abstract": "Keep a Space awake for a while, whatever its sleep setting says (at most 2 hours). `--clear` ends it",
+     "after_help": "Examples:\n  cua spaces keepawake studio --for 30m --reason \"long build\"\n  cua spaces keepawake studio --clear",
+     "aliases": [],
+     "arguments": [
+      {
+       "default_value": null,
+       "help": "Space id or name",
+       "hidden": false,
+       "is_optional": false,
+       "name": "SPACE",
+       "possible_values": [],
+       "repeatable": false,
+       "type": "string"
+      }
+     ],
+     "flags": [
+      {
+       "aliases": [],
+       "default_value": false,
+       "env": null,
+       "help": "End the keep-awake now",
+       "hidden": false,
+       "name": "clear",
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": false
+      }
+     ],
+     "hidden": false,
+     "hidden_aliases": [],
+     "name": "keepawake",
+     "options": [
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "How long (`10m`, `2h`; at most 2h)",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "for",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": "DURATION"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "Why; shown on the Space",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "reason",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": "REASON"
+      }
+     ],
+     "subcommand_optional": false,
+     "subcommands": [],
+     "usage": "cua spaces keepawake [OPTIONS] <SPACE>"
     },
     {
      "abstract": "Let a Space make child Spaces of its own, or stop it. While on, `cua`, the SDKs and the agent's tools inside it create, list and delete Spaces that belong to it: on this computer, with its egress rules, ending no later than it, through a channel only it can reach. Off ends its capability at once; children it made keep running until deleted or their lifetime ends",
@@ -16381,7 +16467,7 @@
     },
     {
      "abstract": "Change a setting of a Space. `--clipboard` says when its viewers may move the clipboard between this computer and the Space: `viewing` (the default) only while a viewer window is focused, when you paste or copy in it; `ask` asks for every transfer; `off` never. Viewers opened afterwards use it. An agent's own `computer_clipboard_*` tools act inside the Space and are not affected. `--volume` says what it sees of the Cua Volume: `own` (its own folder, the default) or `off`; it applies at once",
-     "after_help": "Examples:\n  cua spaces set local:studio --clipboard off\n  cua spaces set local:studio --clipboard viewing\n  cua spaces set local:studio --volume off",
+     "after_help": "Examples:\n  cua spaces set local:studio --clipboard off\n  cua spaces set local:studio --clipboard viewing\n  cua spaces set local:studio --volume off\n  cua spaces set local:studio --sleep auto",
      "aliases": [],
      "arguments": [
       {
@@ -16431,6 +16517,22 @@
        "takes_value": true,
        "type": "string",
        "value_name": "own|off"
+      },
+      {
+       "aliases": [],
+       "default_value": null,
+       "env": null,
+       "help": "When it goes to sleep on its own: `never` (it keeps running), `auto` (once nothing in it runs; it wakes when something needs it) or a duration such as `10m`. A sleeping Space keeps its disk and gives its memory back",
+       "hidden": false,
+       "is_optional": true,
+       "multiple_values": false,
+       "name": "sleep",
+       "possible_values": [],
+       "repeatable": false,
+       "short_name": null,
+       "takes_value": true,
+       "type": "string",
+       "value_name": "never|auto|DURATION"
       }
      ],
      "subcommand_optional": false,
@@ -16628,6 +16730,81 @@
     }
    ],
    "usage": "cua spaces [OPTIONS] <COMMAND>"
+  },
+  {
+   "abstract": "Keep this Space from going to sleep for a while (at most 2 hours). Inside a Space it means itself; give a Space to keep another one awake from outside. Tell it why: the person sees the reason on the Space",
+   "after_help": "Examples:\n  cua keepawake --for 10m --reason \"waiting for the build\"\n  cua keepawake --clear",
+   "aliases": [],
+   "arguments": [],
+   "flags": [
+    {
+     "aliases": [],
+     "default_value": false,
+     "env": null,
+     "help": "End the keep-awake now",
+     "hidden": false,
+     "name": "clear",
+     "repeatable": false,
+     "short_name": null,
+     "takes_value": false
+    }
+   ],
+   "hidden": false,
+   "hidden_aliases": [],
+   "name": "keepawake",
+   "options": [
+    {
+     "aliases": [],
+     "default_value": null,
+     "env": null,
+     "help": "How long (`10m`, `2h`; at most 2h)",
+     "hidden": false,
+     "is_optional": true,
+     "multiple_values": false,
+     "name": "for",
+     "possible_values": [],
+     "repeatable": false,
+     "short_name": null,
+     "takes_value": true,
+     "type": "string",
+     "value_name": "DURATION"
+    },
+    {
+     "aliases": [],
+     "default_value": null,
+     "env": null,
+     "help": "Why; shown on the Space",
+     "hidden": false,
+     "is_optional": true,
+     "multiple_values": false,
+     "name": "reason",
+     "possible_values": [],
+     "repeatable": false,
+     "short_name": null,
+     "takes_value": true,
+     "type": "string",
+     "value_name": "REASON"
+    },
+    {
+     "aliases": [],
+     "default_value": null,
+     "env": null,
+     "help": "The Space (default: this one, from inside it)",
+     "hidden": false,
+     "is_optional": true,
+     "multiple_values": false,
+     "name": "space",
+     "possible_values": [],
+     "repeatable": false,
+     "short_name": null,
+     "takes_value": true,
+     "type": "string",
+     "value_name": "SPACE"
+    }
+   ],
+   "subcommand_optional": false,
+   "subcommands": [],
+   "usage": "cua keepawake [OPTIONS]"
   },
   {
    "abstract": "Spaces in your own cloud account (AWS, Google Cloud, Hetzner, Modal): connect, status, test, disconnect, sweep; and pool hosts there (`cua cloud add aws`)",

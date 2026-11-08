@@ -9,7 +9,7 @@
     "mcp_stdio",
     "mcp_streamable_http"
   ],
-  "tool_count": 121,
+  "tool_count": 122,
   "categories": [
     {
       "id": "lifecycle",
@@ -578,6 +578,10 @@
             "description": "Named services (name to guest port), for example `{\"mcp\": 8765}`.\nEach is probed for readiness and reachable with `list_tools` /\n`call_tool` (`service=<name>`).",
             "type": "object"
           },
+          "sleep": {
+            "description": "When it goes to sleep on its own: `never` (default: it keeps\nrunning), `auto` (once nothing in it runs; it wakes when something\nneeds it) or a duration such as `10m`. A Space you make to run a task\ncan use `auto`; a Space the user will come back to should not.",
+            "type": "string"
+          },
           "spacesd": {
             "description": "Whether the image runs cua-spacesd. Default: true for the canonical\nimages (and no image) and, on this machine's containers and microVMs,\nfor any other image (a static cua-spacesd is put into it); false\nelsewhere. false runs the image as it is. A Space without it has an\nempty capability set: only its services work.",
             "type": "boolean"
@@ -872,6 +876,69 @@
           "suspend": {
             "description": "Suspend it instead: keep its memory so it resumes where it was (a\nlocal container or QEMU VM). Default false: stop it, keeping its\ndisk and giving its memory back to the machine.",
             "type": "boolean"
+          }
+        },
+        "required": [
+          "space"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "keep_awake",
+      "category": "lifecycle",
+      "description": "Keep a Space awake for a while (at most two hours), or end it.",
+      "instructions": "Keeps a Space from going to sleep for `seconds` (at most two hours), whatever its sleep setting says, and shows `reason` to the person. Call it before you start something long that the Space cannot see is busy, for example a build left running in the background after your turn ends; nothing else you do needs it, because a Space is never put to sleep while a turn, a foreground command or a registered job runs. Ask for what you need and no more: a new call replaces the last, `clear` ends it. A sleeping Space keeps its disk and its memory goes back to the computer.",
+      "platforms": [
+        "macos",
+        "windows",
+        "linux"
+      ],
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free",
+      "capabilities": [
+        "space.power"
+      ],
+      "requires": [],
+      "host_requires": [],
+      "annotations": {
+        "read_only": false,
+        "destructive": false,
+        "idempotent": true,
+        "open_world": true
+      },
+      "sdk_symbol": "Spaces.keep_awake(space, seconds, reason)",
+      "rust_symbol": "Spaces::keep_awake",
+      "notes": [],
+      "result": "JSON: `space`, `until_unix` (when it ends; 0 when none holds), `capped` (the ask was cut to two hours) and `message`.",
+      "errors": [
+        "invalid_argument",
+        "not_found"
+      ],
+      "input_schema": {
+        "properties": {
+          "clear": {
+            "description": "End a keep-awake now.",
+            "type": "boolean"
+          },
+          "reason": {
+            "description": "Why, in plain words; shown to the person on the Space.",
+            "type": "string"
+          },
+          "seconds": {
+            "description": "How long, in seconds (at most 7200: a longer ask is cut to two\nhours). A new call replaces the earlier one.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "space": {
+            "description": "Space id or name. Inside a Space: itself.",
+            "type": "string"
           }
         },
         "required": [

@@ -17,6 +17,7 @@ tools below are missing, ask the user to run `cua agents setup` or
 | `create_space` | A new Space: `on` = `local` (free, the user's machine), `aws`, `gcp` or `modal` (the user's own cloud account, billed there), or `host:<name>` (one of the user's machines set up with `cua host setup`); `reuse: true` returns a reachable one first. |
 | `add_space` / `remove_space` | Register an existing machine by URL and token, or forget one without deleting it. |
 | `delete_space` | Delete a Space's sandbox and stop its cost. |
+| `keep_awake` | Keep a Space from sleeping for up to 2 hours (`seconds`, `reason`; `clear` ends it). Use it before something long that runs after your turn, such as a background build; a turn, a foreground command or a registered job never needs it. |
 | `stop_space` / `start_space` | Turn a local Space (or one your machines provide) off and back on: suspended or stopped, as `power` in `list_spaces` says. |
 
 Prefer an existing Space. A Space in the user's own cloud account costs money: delete the ones you

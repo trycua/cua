@@ -272,6 +272,18 @@ async fn dispatch(
                     Some(s)
                 }
             };
+            // `sleep` is checked here so a typo is refused, not kept as a label.
+            let sleep = a
+                .sleep
+                .as_deref()
+                .map(|w| {
+                    crate::sleep::Sleep::parse(w).map(|s| s.word()).ok_or_else(|| {
+                        Error::invalid(format!(
+                            "{w:?} is not a sleep setting: use never, auto or a duration such as 10m"
+                        ))
+                    })
+                })
+                .transpose()?;
             let one = |name: Option<String>| SpaceCreate {
                 network_settings: network_settings.clone(),
                 parent: a.parent.clone(),
@@ -290,7 +302,13 @@ async fn dispatch(
                 durable: a.durable.unwrap_or(false),
                 instance_type: a.instance_type.clone(),
                 region: a.region.clone(),
-                labels: a.labels.clone().unwrap_or_default(),
+                labels: {
+                    let mut labels = a.labels.clone().unwrap_or_default();
+                    if let Some(word) = &sleep {
+                        labels.insert(crate::sleep::LABEL_SLEEP.to_string(), word.clone());
+                    }
+                    labels
+                },
                 ..Default::default()
             };
             let row = |created: SpaceCreated| match created {
@@ -363,6 +381,36 @@ async fn dispatch(
             } else {
                 Ok(ToolOutcome::json(&spaces.stop(&a.space).await?))
             }
+        }
+        "keep_awake" => {
+            let a: i::KeepAwake = args(tool, a)?;
+            if a.clear.unwrap_or(false) {
+                spaces.clear_keep_awake(&a.space)?;
+                return Ok(ToolOutcome::json(&json!({
+                    "space": a.space.to_string(),
+                    "until_unix": 0,
+                    "capped": false,
+                    "message": "The Space may sleep again."
+                })));
+            }
+            let secs = a
+                .seconds
+                .ok_or_else(|| Error::invalid("say how long: seconds (at most 7200)"))?;
+            let k = spaces.keep_awake(
+                &a.space,
+                Duration::from_secs(secs),
+                a.reason.as_deref().unwrap_or(""),
+            )?;
+            Ok(ToolOutcome::json(&json!({
+                "space": a.space.to_string(),
+                "until_unix": k.until_unix,
+                "capped": k.capped,
+                "message": if k.capped {
+                    "Kept awake for two hours, the most a request can ask."
+                } else {
+                    "Kept awake."
+                }
+            })))
         }
         "resize_space" => {
             let a: i::ResizeSpace = args(tool, a)?;

@@ -884,6 +884,18 @@ pub fn tools() -> Vec<Tool> {
         .with::<i::StopSpace>(),
         Spec {
             category: Category::Lifecycle,
+            result: "JSON: `space`, `until_unix` (when it ends; 0 when none holds), `capped` (the ask was cut to two hours) and `message`.",
+            errors: &["invalid_argument", "not_found"],
+            instructions: "Keeps a Space from going to sleep for `seconds` (at most two hours), whatever its sleep setting says, and shows `reason` to the person. Call it before you start something long that the Space cannot see is busy, for example a build left running in the background after your turn ends; nothing else you do needs it, because a Space is never put to sleep while a turn, a foreground command or a registered job runs. Ask for what you need and no more: a new call replaces the last, `clear` ends it. A sleeping Space keeps its disk and its memory goes back to the computer.",
+            capabilities: &["space.power"],
+            annotations: Annotations::mutating_idempotent(),
+            sdk_symbol: "Spaces.keep_awake(space, seconds, reason)",
+            rust_symbol: "Spaces::keep_awake",
+            ..Spec::new("keep_awake", "Keep a Space awake for a while (at most two hours), or end it.")
+        }
+        .with::<i::KeepAwake>(),
+        Spec {
+            category: Category::Lifecycle,
             result: "JSON: `space`, `cpus`, `memory_mb`, `disk_gb` (what it has now) and `message`.",
             errors: &["wrong_provider", "sandbox", "invalid_argument", "timeout"],
             instructions: "Gives a local VM Space (QEMU) another shape: `cpus` vCPUs, `memory_mb` MiB of memory, a disk grown to `disk_gb` GiB; what you leave out stays. The VM shuts down and boots again from its own disk, so its files stay but its memory and running processes do not; a stopped one boots. A disk never shrinks. Returns once it is ready again. Containers, Lume VMs and Spaces on other computers are refused (wrong_provider).",

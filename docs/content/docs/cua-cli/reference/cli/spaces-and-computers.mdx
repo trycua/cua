@@ -18,6 +18,7 @@ description: "Your Spaces, and a cua-spacesd by URL."
 | [`cua spaces create`](#cua-spaces-create) | Create Spaces: on this computer, on one of your computers that provides Spaces (`cua host setup --share spaces` there), or in your own cloud account. |
 | [`cua spaces prewarm`](#cua-spaces-prewarm) | Keep Spaces of one image ready where the elastic pool puts them, so the next creates of that shape start in a fraction of a second (`--list` shows the prewarms, `--remove ID` ends one). |
 | [`cua spaces egress`](#cua-spaces-egress) | Choose which destinations a Space may reach: block some, or block everything except a few. |
+| [`cua spaces keepawake`](#cua-spaces-keepawake) | Keep a Space awake for a while, whatever its sleep setting says (at most 2 hours). |
 | [`cua spaces children`](#cua-spaces-children) | Let a Space make child Spaces of its own, or stop it. |
 | [`cua spaces budget`](#cua-spaces-budget) | Show or set a tree's budget: how many child Spaces, vCPUs and memory its children may hold at once, and what they may cost. |
 | [`cua spaces orphans`](#cua-spaces-orphans) | List child Spaces whose parent is gone or out of reach. |
@@ -45,6 +46,7 @@ description: "Your Spaces, and a cua-spacesd by URL."
 | [`cua spaces shares`](#cua-spaces-shares) | Who a Space is shared with, and who of them is connected now. |
 | [`cua spaces relay-register`](#cua-spaces-relay-register) | Publish a Space on the relay for your other devices (a phone off this network): its own driver dials out, as `cua host setup` does for this computer. |
 | [`cua spaces relay-unregister`](#cua-spaces-relay-unregister) | Take a Space off the relay (every share with it ends). |
+| [`cua keepawake`](#cua-keepawake) | Keep this Space from going to sleep for a while (at most 2 hours). |
 | [`cua spacesd`](#cua-spacesd) | Talk to a cua-spacesd directly by URL. |
 | [`cua spacesd caps`](#cua-spacesd-caps) | Print capabilities. |
 | [`cua spacesd exec`](#cua-spacesd-exec) | Run a command (argv, no shell). |
@@ -151,6 +153,7 @@ cua spaces create [OPTIONS] [IMAGE]
 | <span id="cua-spaces-create--region"></span>`--region` | string |  | The cloud region or location of that host (default: the pool picks, near you). |
 | <span id="cua-spaces-create--volume"></span>`--volume` | string |  | Mount a named volume of Cua Volume in the Space: `NAME:PATH[:ro\|:rw]`, or `NAME/SUBFOLDER:PATH[:ro\|:rw]` for a folder of it. With Secure Spaces on it is read-only unless you add `:rw`. Repeat for several. Make one with `cua volume named create`. Repeatable. |
 | <span id="cua-spaces-create--label"></span>`--label` | string |  | A label to keep with the Space (`key=value`; repeat for more; up to 64, keys up to 63 bytes, values up to 256, none empty). Not with `--durable`. Repeatable. |
+| <span id="cua-spaces-create--sleep"></span>`--sleep` | string |  | When it goes to sleep on its own: `never` (the default: it keeps running), `auto` (once nothing in it runs, and it wakes when something needs it) or a duration such as `10m`. Change it later with `cua spaces set`. |
 | <span id="cua-spaces-create--network"></span>`--network` | string |  | Its network: `internet` (the default: the internet and its own tree; this computer, your local network, cloud metadata and other trees are blocked), `none`, `localhost:5432,3000` (also this computer's localhost on those ports), `lan` (also your local network), `custom` / `custom:none` (with --allow/--deny), or `unprotected` (No protection). Enforced by the host, outside the guest. See `cua network`. |
 | <span id="cua-spaces-create--deny"></span>`--deny` | string |  | Block this destination (IP, CIDR or `all`; repeat for more). Alias: `--egress-deny`. Repeatable. |
 | <span id="cua-spaces-create--allow"></span>`--allow` | string |  | Allow this destination, also where a block covers it (IP or CIDR; repeat for more). This computer itself opens only with `--network localhost:<ports>`. Alias: `--egress-allow`. Repeatable. |
@@ -250,6 +253,31 @@ cua spaces egress studio --deny all --allow 1.1.1.1 --allow 203.0.113.0/24
 
 # Back to unrestricted
 cua spaces egress studio --clear
+```
+
+### `cua spaces keepawake`
+
+Keep a Space awake for a while, whatever its sleep setting says (at most 2 hours). `--clear` ends it.
+
+```text output
+cua spaces keepawake [OPTIONS] <SPACE>
+```
+
+| Argument | Type | Default | Description |
+| --- | --- | --- | --- |
+| `<SPACE>` | string | required | Space id or name. |
+
+| Flag | Type | Default | Description |
+| --- | --- | --- | --- |
+| <span id="cua-spaces-keepawake--for"></span>`--for` | string |  | How long (`10m`, `2h`; at most 2h). |
+| <span id="cua-spaces-keepawake--reason"></span>`--reason` | string |  | Why; shown on the Space. |
+| <span id="cua-spaces-keepawake--clear"></span>`--clear` | boolean | `false` | End the keep-awake now. |
+
+**Examples**
+
+```bash test="cli-shape" id="ref-cua-spaces-keepawake"
+cua spaces keepawake studio --for 30m --reason "long build"
+cua spaces keepawake studio --clear
 ```
 
 ### `cua spaces children`
@@ -712,6 +740,7 @@ cua spaces set [OPTIONS] <SPACE>
 | --- | --- | --- | --- |
 | <span id="cua-spaces-set--clipboard"></span>`--clipboard` | string |  | When viewers may move the clipboard: viewing, ask or off. |
 | <span id="cua-spaces-set--volume"></span>`--volume` | string |  | What it sees of the Cua Volume: own or off. |
+| <span id="cua-spaces-set--sleep"></span>`--sleep` | string |  | When it goes to sleep on its own: `never` (it keeps running), `auto` (once nothing in it runs; it wakes when something needs it) or a duration such as `10m`. A sleeping Space keeps its disk and gives its memory back. |
 
 **Examples**
 
@@ -719,6 +748,7 @@ cua spaces set [OPTIONS] <SPACE>
 cua spaces set local:studio --clipboard off
 cua spaces set local:studio --clipboard viewing
 cua spaces set local:studio --volume off
+cua spaces set local:studio --sleep auto
 ```
 
 ### `cua spaces share`
@@ -831,6 +861,28 @@ cua spaces relay-unregister [OPTIONS] <SPACE>
 ```bash test="cli-shape" id="ref-cua-spaces-relay-unregister"
 cua spaces relay-unregister local:studio
 cua spaces relay-unregister relay:space-0123abcd4567ef89
+```
+
+## `cua keepawake`
+
+Keep this Space from going to sleep for a while (at most 2 hours). Inside a Space it means itself; give a Space to keep another one awake from outside. Tell it why: the person sees the reason on the Space.
+
+```text output
+cua keepawake [OPTIONS]
+```
+
+| Flag | Type | Default | Description |
+| --- | --- | --- | --- |
+| <span id="cua-keepawake--for"></span>`--for` | string |  | How long (`10m`, `2h`; at most 2h). |
+| <span id="cua-keepawake--reason"></span>`--reason` | string |  | Why; shown on the Space. |
+| <span id="cua-keepawake--space"></span>`--space` | string |  | The Space (default: this one, from inside it). |
+| <span id="cua-keepawake--clear"></span>`--clear` | boolean | `false` | End the keep-awake now. |
+
+**Examples**
+
+```bash test="cli-shape" id="ref-cua-keepawake"
+cua keepawake --for 10m --reason "waiting for the build"
+cua keepawake --clear
 ```
 
 ## `cua spacesd`

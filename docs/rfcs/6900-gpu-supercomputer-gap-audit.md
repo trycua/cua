@@ -92,3 +92,42 @@ How it was checked: code reading of every handler the scoped channel serves (`Sp
 | In-Space `cua`/SDK with no spawn channel | Fell back to finding or starting a daemon of its own (G11) | Availability bug; a Space-local daemon only has what the Space has | `ensure_daemon` refuses inside a Space (`CUA_SPACE`) with a clear message. Client-side courtesy: the guarantee is the scoped channel |
 | Raw routes: engine socket, WSL interop, the host's addresses and the daemon, relay, SMB and RPC ports, credentials, the daemon's token files | Not reachable (probe) | No | Kept by `space-escape-probe.py` (gateway and LAN address time out even for listening ports; no `docker.sock`, `/mnt/c`, `/run/WSL`; no daemon token or key in the Space; `get_info` returns none) |
 | Not individually tested | prewarm, checkpoint/restore, teleport (refused by the allowlist, covered only by the by-name test of other owner tools); persistent agents (`agent_start` refused) | | Follow-up |
+
+## Model: the tree is logical; placement is physical
+
+A Space, a run or a job is a **child of the Space that made it, wherever it runs**. The tree the person sees (child list, "In this Space", counts, search, budgets) is the *logical* tree; the computer it executes on is a secondary detail ("on mac-m2max"), never a different place in the tree.
+
+**Fields (carried on every record wherever it lives):** `parent` (the id of the Space that made it, by id never by name), `root` (the top-level Space of the tree), `depth`, `origin` (`child`, `job`, ...). A Space record keeps them in `SpaceMeta` (and mirrors `cua.parent`/`cua.root`/`cua.depth` labels so another computer that holds only the labels can see them); a run keeps them in the **run ledger** of the computer that holds the parent (`spawn/runs.json`: `space`, `root`, name, GPU), and the job's environment carries `CUA_PARENT_SPACE`, `CUA_ROOT_SPACE`, `CUA_TREE_DEPTH`, `CUA_PARENT_NETWORK` to whichever host executes it.
+
+**Who owns the truth.** The computer that holds the *parent* owns the tree: its registry and its run ledger decide what is a child. Another computer owns only the execution of a child and records the labels it was given. The child list is built by merging, in this order: (1) local Space records with a parent link, (2) the run ledger (`job-rows.json`: one row per run, from the ledger and the pool's own state for the run; no Space record is needed, so a job on another computer or a native machine job still shows), (3) remote hosts' records for children made with `create_space --on host:...` (labels `cua.parent`). One row per run: if a job's own Space also exists locally for the same run label, it is the same row. A gang is one row with a member count.
+
+**Policy crosses hosts by value.** The child's network is the parent's, cut down (`intersect`), computed on the parent's computer and sent with the request (`CUA_PARENT_NETWORK` for jobs, the request's `network_settings` for Spaces) and enforced by the *executing* host's egress layer. A host that cannot enforce it refuses (never runs the child open). A native machine job runs outside every network rule, so a Space with rules cannot start one (refused with the reason).
+
+**Cleanup crosses hosts.** Deleting or stopping the parent cancels its runs wherever they run (`reap_runs`, from the ledger) and deletes remote children by the label link. If the parent's computer sleeps or leaves, children keep their durable parent link; after a grace period an orphan sweep on the executing host ends children whose parent has not been seen (open: the cross-host sweep, below), never silently losing results (a result is kept with the run for 7 days).
+
+**Failure cases.** Host dies mid-job: the pool places the run again and the row shows Queued, then Running, never stuck at Running (`job_row` treats a waiting gang as queued); the parent's host sleeps: the run continues, the row is gone from view until it wakes (ledger on disk); relay or tunnel flaps: rows keep the last state and the pool answers again; the executing host leaves for good: the run fails with "its computer was lost" and the row shows Failed with why.
+
+Implementation here: `children/runs.rs` (`job_row`, `job_facts`, `JobRowOut`; tests for this PC, another host, a native machine job, a gang, a host lost mid-job, a finished/failed run), `children/bridge.rs` (`write_job_rows`), the app's `spaces.tree` (jobs as nodes with `job`), `child-spaces-section.tsx` (the row).
+
+## Second pass (after the recordings): current status and what is left, ranked
+
+Re-tested against the current builds (PC and Mac):
+
+| # | Item | Status |
+|---|---|---|
+| G1-G3, G10-G14 | pool from a Space, children tagged, skill and brief, windows, memory, mounts | working (end to end on both computers; NCA on CUDA and MLX) |
+| G5 | VRAM admission | working for NVIDIA (PC); Apple reports no free memory (unified), noted |
+| G7 | UI: job row | working for a job's Space on this computer; this pass adds the ledger-driven row for any host (tests; real-app check on the Mac run pending a native rebuild) |
+| N1 | The thread said "Let me look at it" (process narration) in the MLX run. Cause: the model's habit before a tool call; the brief alone does not hold. | fixed structurally: later stretches that narrate a plan are held back (`is_process_narration`), plus the brief |
+| N2 | An outsized event line in an agent's log made the reader stall and the final message never reach the chat | fixed (#7004) |
+| N3 | F: full corrupted the runtime distro; no guard in the daemon | OPEN, high: refuse to start Spaces under a free-space floor and say so; ranked first below |
+| N4 | `cua run` followed in the foreground is killed by the agent shell after ~2 min and cancels the run | OPEN: the brief now says `--detach`; the CLI should detach itself when stdout is not a terminal |
+| N5 | The agent retrains to "polish" (3 runs, 15 min) | mitigated by the brief and a 3-minute limit; the quality check is still the agent's own |
+| N6 | Remote children made with `create_space --on host:...` carry the labels but the cross-host orphan sweep and the child list for them are not verified across two hosts | OPEN: test with the PC and the Mac using a non-GPU Space |
+| N7 | A host leaving mid-job: row logic and tests exist; not yet exercised live (needs a fault test with the Mac host stopped) | OPEN |
+| N8 | 10 concurrent agents: 10 jobs ran with VRAM admission earlier; not re-run on this build | OPEN (re-run on the Mac, CPU/MLX only) |
+| N9 | The relay/tunnel is an SSH tunnel to the Mac; a flap makes `cua computers` time out and agents' submits fail | OPEN: the client should retry and say plainly |
+| N10 | Windows native member (`kind=machine`) has no pinned uv, `member_env` joins PATH with `:` | OPEN (OS invariance) |
+| N11 | Stream/log/command routing to a remote child through the mesh | OPEN: a window of a job running on another computer is not streamed (the NCA window opened in the agent's own Space by design) |
+
+Ranked next: N3, N4, N6, N7, N9, N11, N8, N10.

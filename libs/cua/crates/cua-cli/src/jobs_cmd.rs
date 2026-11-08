@@ -785,7 +785,9 @@ pub async fn run(a: RunArgs, json: bool, out: &mut dyn Write) -> Result<i32, Cua
         line(out, what);
     }
     let started = Instant::now();
-    let summary = follow(&run_id, None, json, out).await?;
+    let Some(summary) = follow_or_leave(&run_id, json, out).await? else {
+        return Ok(0);
+    };
     finish(&run_id, &summary, started.elapsed(), None, json, out).await
 }
 
@@ -1172,8 +1174,56 @@ async fn run_command(a: RunArgs, json: bool, out: &mut dyn Write) -> Result<i32,
         line(out, what);
     }
     let started = Instant::now();
-    let summary = follow(&run_id, None, json, out).await?;
+    let Some(summary) = follow_or_leave(&run_id, json, out).await? else {
+        return Ok(0);
+    };
     finish(&run_id, &summary, started.elapsed(), None, json, out).await
+}
+
+/// How long `cua run` follows a run before it lets go of it: only when nothing is watching a
+/// terminal (an agent's captured shell, a pipe), whose tool call is cut off after a couple of
+/// minutes and would otherwise take the follower, and the person's view of the run, with it.
+/// `None` follows to the end (a terminal, `--json`, or `CUA_RUN_FOLLOW_SECS=0`).
+fn follow_window(json: bool, tty: bool, secs: Option<&str>) -> Option<Duration> {
+    if json || tty {
+        return None;
+    }
+    match secs.and_then(|s| s.trim().parse::<u64>().ok()) {
+        Some(0) => None,
+        Some(n) => Some(Duration::from_secs(n)),
+        None => Some(Duration::from_secs(100)),
+    }
+}
+
+/// Follows the run to its end, or, when nothing watches a terminal and it takes longer than
+/// [`follow_window`], says plainly that the run keeps going and how to follow it, and returns
+/// `None` (the same ending as `--detach`).
+async fn follow_or_leave(
+    run_id: &str,
+    json: bool,
+    out: &mut dyn Write,
+) -> Result<Option<Value>, CuaError> {
+    use std::io::IsTerminal as _;
+    let secs = std::env::var("CUA_RUN_FOLLOW_SECS").ok();
+    let window = follow_window(json, std::io::stdout().is_terminal(), secs.as_deref());
+    let Some(window) = window else {
+        return follow(run_id, None, json, out).await.map(Some);
+    };
+    match tokio::time::timeout(window, follow(run_id, None, json, out)).await {
+        Ok(done) => done.map(Some),
+        Err(_) => {
+            line(
+                out,
+                format!(
+                    "{run_id}: still running after {} s. Not following it any longer here (this output is not a terminal); the run keeps going.",
+                    window.as_secs()
+                ),
+            );
+            hint_line(out, format!("Follow it: cua jobs logs -f {run_id}"));
+            hint_line(out, format!("Cancel it: cua jobs cancel {run_id}"));
+            Ok(None)
+        }
+    }
 }
 
 /// What `cua run` prints before it follows a run: short lines, so a
@@ -1748,6 +1798,28 @@ pub fn run_table(r: &Value) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_run_is_followed_to_the_end_only_where_someone_is_watching() {
+        // A terminal, or machine-readable output: to the end.
+        assert_eq!(follow_window(false, true, None), None);
+        assert_eq!(follow_window(true, false, None), None);
+        // A captured shell: a bounded follow, then the run is left going.
+        assert_eq!(
+            follow_window(false, false, None),
+            Some(Duration::from_secs(100))
+        );
+        assert_eq!(
+            follow_window(false, false, Some("30")),
+            Some(Duration::from_secs(30))
+        );
+        // The variable can turn the bound off, and nonsense is ignored.
+        assert_eq!(follow_window(false, false, Some("0")), None);
+        assert_eq!(
+            follow_window(false, false, Some("soon")),
+            Some(Duration::from_secs(100))
+        );
+    }
     #[test]
     fn the_follow_hint_fits_a_narrow_terminal() {
         let h = follow_hint("p-finetune-55704e0f");

@@ -31,6 +31,8 @@ export function homeBrief(setup: HomeSetup, abilities: readonly AbilityDescripto
     "What you can do:",
     ...abilities.map((a) => `- ${a.summary} Run: ${a.call}`),
     "",
+    "When the person should see an app or window you opened in a child Space, show it live instead of sending a screenshot: call the stream_space_window tool (space=<the child>, app_name=<the app>, for example Firefox). The window appears in this Space's Stream list and opens by itself, streamed straight from the child. Leave the child running until the person has looked, and say that you did; clean it up when they are done.",
+    "",
     "Before an ability that needs the person's OK, ask with the thread_post tool: give it an approval whose action is the ability and whose details say what for, for example",
     `${approvalAction("spaces.list")} (to see all their Spaces) or ${approvalAction("machines.use")} with the computer's name in the details. That puts a card in front of the person; asking in plain words does not, and nothing will answer it. Do not look for another way around a refusal.`,
     "After you ask, end your turn: the person's answer arrives as a new message to you, so do not poll for it. If it says no, do not ask again or work around it; say what you will do instead. If it says yes, do the thing, then say plainly how it went. If making a Space fails, tell the person the reason the command printed, in your own words, and offer a real next step.",

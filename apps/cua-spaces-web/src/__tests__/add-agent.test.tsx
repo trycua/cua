@@ -85,6 +85,28 @@ describe("Add an agent", () => {
     await found("[data-member-note='joined'][data-member-handle='openclaw']");
   });
 
+  // Regression (first run): Start succeeded on a new account, and the first task failed with "Hermes
+  // needs a connected provider". The sheet says so before Start, in the core's words; with a key it says nothing.
+  it("says before Start that the agent needs a provider when none is connected", async () => {
+    await app({ joinRedeemMs: null, keys: "none" });
+    await openSheet("start");
+    const note = (await found("[data-start-needs-key]")).textContent ?? "";
+    expect(note).toMatch(/^Hermes Agent needs .* to work here\./);
+    cleanup();
+    await app({ joinRedeemMs: null, keys: "several" });
+    await openSheet("start");
+    await found("[data-start-harness='hermes']");
+    await new Promise((r) => setTimeout(r, 200));
+    expect(q("[data-start-needs-key]")).toBeNull();
+    // Keys not read yet: nothing said, rather than a guess.
+    cleanup();
+    await mountApp(path, { failsCreates: false, listsGhost: false, demo: { joinRedeemMs: null, keys: "none" }, intercept: (op) => (op === "agentKeys.list" ? new Promise(() => {}) : undefined) });
+    await openSheet("start");
+    await found("[data-start-harness='hermes']");
+    await new Promise((r) => setTimeout(r, 200));
+    expect(q("[data-start-needs-key]")).toBeNull();
+  });
+
   it("Start refuses a name that is taken, in one line", async () => {
     await app({ joinRedeemMs: null });
     await openSheet("start");

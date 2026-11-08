@@ -83,16 +83,26 @@ frontmost is true'`). Mutating it is not.
 **Corollary: the AXMenuBar rule.** Do not manually drive a background
 application's `AXMenuBarItem`: the visible macOS menu bar belongs to the
 frontmost app, and command items may be disabled otherwise. Use `invoke_menu`
-for a known application-menu path. With the app in the background it resolves
-the whole path without opening a menu and never activates the app. Both the
-app's focused and main window must identify the requested window before menu
-lookup and again before dispatch; a sibling or unreadable context is refused
-with `window_not_key`. A requested window ID alone does not bind the app-wide
-menu. The tool does not silently change documents to satisfy this check. If macOS
-keeps the item unavailable to a background app it refuses with
+for a known application-menu path. With the app in the background it never
+brings the app to the front. It first makes the requested window the app's key
+window inside the app (in-app key-window records, no raise), as `hotkey` does,
+and leaves it key afterwards. Both the app's focused and main window must then
+identify the requested window before menu lookup and again before dispatch;
+when that cannot be confirmed the call is refused with `window_not_key`, and
+the refusal names the app's key window, when it can be read, as
+`key_window_id`. Retry an app-wide command (View, Window, Help) in the
+background bound to that window; use the foreground only for a command about
+the requested window's own document. The tool does not silently change
+documents to satisfy this check. An enabled item is pressed without opening its
+menu. An item the app disables only because it is inactive (TextEdit's Edit >
+Paste) is pressed after the app is told the window is key and the menu levels
+above the item are opened, so AppKit re-validates it; any menu left open is
+closed and the app is told it is no longer active. The menu is on screen for a
+moment. If macOS still keeps the item unavailable it refuses with
 `background_unavailable` (then, if the user allows it, `bring_to_front` first).
-One exception: a disabled Save (the ⌘S item) of a document window is saved
-through the app's scripting interface instead, still in the background, and the
+One exception: a Save (the ⌘S item) of a document window that stays disabled is
+saved through the app's scripting interface instead, still in the background,
+and the
 result says so; TextEdit disables Save whenever it is behind the user's window.
 A Save is verified on disk. A background `hotkey` whose combo is a menu item's
 key equivalent (⌘S, ⌘W, ⌘C, ...) in a native app takes the same route, because

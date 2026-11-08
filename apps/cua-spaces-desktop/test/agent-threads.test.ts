@@ -22,6 +22,13 @@ describe("agents.recentThreads / agents.threadHistory", () => {
     expect(recentThreadsFromTool(r)[0]!.title).toBe("Kettle timer");
   });
 
+  it("passes the picked agents on, for the daemon to read only theirs", async () => {
+    const tool = vi.fn(async () => LIST);
+    const m = agentThreadsMethods(ctx, () => tool);
+    await m["agents.recentThreads"]!({ limit: 4, agents: ["claude-code"] }, {});
+    expect(tool).toHaveBeenCalledWith("agent_threads", { limit: 4, agents: ["claude-code"] });
+  });
+
   it("reads one chat by its agent and id", async () => {
     const tool = vi.fn(async () => ({}));
     const m = agentThreadsMethods(ctx, () => tool);

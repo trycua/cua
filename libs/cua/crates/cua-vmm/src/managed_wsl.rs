@@ -278,6 +278,16 @@ fn args(a: &[&str]) -> Vec<String> {
     a.iter().map(|s| s.to_string()).collect()
 }
 
+/// Runs `program` as root in `distro` (`wsl.exe -d <distro> -u root --exec`).
+pub async fn run_in(
+    wsl: &dyn Wsl,
+    distro: &str,
+    program: &[&str],
+    secs: u64,
+) -> std::io::Result<WslOutput> {
+    wsl.run(&exec_args(distro, program), secs).await
+}
+
 /// `wsl.exe -d <distro> -u root --exec <program> <args...>`.
 fn exec_args(distro: &str, program: &[&str]) -> Vec<String> {
     let mut v = args(&["-d", distro, "-u", "root", "--exec"]);

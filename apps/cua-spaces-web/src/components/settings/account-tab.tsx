@@ -33,11 +33,15 @@ function teamLine(teams: SettingsSection | undefined): string | null {
 }
 
 /** One bar of the usage meter: `used` of `limit` (no bar without a limit). */
-function UsageBar({ id, label, text, used, limit }: { id: string; label: string; text: string; used: number; limit: number | null }) {
+/** What remote hours are (the core's `relay_usage::REMOTE_HOURS_MEANING`): a tooltip on the bar, not a paragraph. */
+const REMOTE_HOURS_MEANING =
+  "Remote hours: time spent using your computers from somewhere else (your laptop, phone or an agent on another computer). Using a computer from itself is free.";
+
+function UsageBar({ id, label, text, used, limit, help }: { id: string; label: string; text: string; used: number; limit: number | null; help?: string }) {
   if (!limit || limit <= 0) return null;
   const share = Math.min(1, used / limit);
   return (
-    <div className="px-4 py-3" data-usage-line={id}>
+    <div className="px-4 py-3" data-usage-line={id} title={help}>
       <div className="mb-2 flex items-baseline justify-between gap-4 text-[13px]">
         <span>{label}</span>
         <span className="text-muted-foreground">{text}</span>
@@ -128,6 +132,7 @@ export function AccountTab() {
             <UsageBar
               id="Remote hours"
               label="Time away from this computer"
+              help={REMOTE_HOURS_MEANING}
               text={`${hours(usage.hoursUsed)} of ${usage.hoursLimit ?? 0} hours`}
               used={usage.hoursUsed}
               limit={usage.hoursLimit}
@@ -169,7 +174,6 @@ export function AccountTab() {
           Manage account on the web
         </Button>
       </div>
-      <p className="mt-3 px-1 text-xs text-muted-foreground">Teams, invites, billing and plans open on app.cua.ai.</p>
     </div>
   );
 }

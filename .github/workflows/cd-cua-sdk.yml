@@ -431,15 +431,12 @@ jobs:
           python -m pip install --upgrade pip build hatchling
           DIR="../../../native/native-${{ matrix.native }}"
           EXE=cua; [ "${{ matrix.platform }}" = windows ] && EXE=cua.exe
-          # Linux wheels carry the static cua-spacesd the native job bundled.
-          SPACESD=()
-          if [ "${{ matrix.platform }}" = linux ]; then
-            A=x86_64; [ "${{ matrix.arch }}" = arm64 ] && A=aarch64
-            SPACESD=(--spacesd "$DIR/cua-spacesd-linux-$A")
-          fi
-          # Two wheels: `cua` (the SDK library, plus the static cua-spacesd
-          # on Linux) and its dependency `cua-cli` (the `cua` binary).
-          python build_wheel.py --library "$DIR/${{ matrix.lib }}" --cli "$DIR/$EXE" "${SPACESD[@]}" --platform ${{ matrix.platform }} --arch ${{ matrix.arch }}
+          # Every wheel carries the static Linux cua-spacesd the native job
+          # bundled: the guest of a local container is Linux on any host.
+          A=x86_64; [ "${{ matrix.arch }}" = arm64 ] && A=aarch64
+          # Two wheels: `cua` (the SDK library plus the static cua-spacesd)
+          # and its dependency `cua-cli` (the `cua` binary).
+          python build_wheel.py --library "$DIR/${{ matrix.lib }}" --cli "$DIR/$EXE" --spacesd "$DIR/cua-spacesd-linux-$A" --platform ${{ matrix.platform }} --arch ${{ matrix.arch }}
       # PyPI rejects a file over 100 MB (HTTP 400) only at upload, after the
       # whole build: fail here, with margin, instead.
       - name: Check every wheel is under 95 MB
@@ -473,7 +470,6 @@ jobs:
           print(pins[0])
           PY
       - name: Check the wheel ships the static cua-spacesd in cua/bin/
-        if: matrix.platform == 'linux'
         run: .github/scripts/check_static_spacesd_packaged.sh libs/cua/python/dist
       - name: Import the wheel
         working-directory: libs/cua/python

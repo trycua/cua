@@ -246,5 +246,34 @@ class Dedup(unittest.TestCase):
                 _store.check_rel(bad)
 
 
+class CrossPlatformLock(unittest.TestCase):
+    """The store's file lock works where there is no fcntl (Windows) too."""
+
+    def test_exclusive_is_reentrant_across_calls_and_threads(self):
+        import tempfile
+        import threading
+        from pathlib import Path
+        from cua import _store
+
+        with tempfile.TemporaryDirectory() as d:
+            lock = Path(d) / "x.lock"
+            seen = []
+
+            def work(n):
+                with _store._exclusive(lock):
+                    seen.append(("in", n))
+                    seen.append(("out", n))
+
+            threads = [threading.Thread(target=work, args=(i,)) for i in range(4)]
+            for th in threads:
+                th.start()
+            for th in threads:
+                th.join()
+            # Every enter is followed by its own exit: the lock never overlapped.
+            for i in range(0, len(seen), 2):
+                self.assertEqual(seen[i][0], "in")
+                self.assertEqual(seen[i + 1], ("out", seen[i][1]))
+
+
 if __name__ == "__main__":
     unittest.main()

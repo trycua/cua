@@ -157,7 +157,7 @@ describe("ThisMachinePanel: a spare machine", () => {
     render(<ThisMachinePanel host={host} />);
     fireEvent.click(await screen.findByRole("button", { name: "Turn on remote access" }));
     fireEvent.click(screen.getByRole("radio", { name: "Let other computers create Spaces here" }));
-    expect(screen.getByText(/Its own screen stays private/)).toBeInTheDocument();
+    expect(screen.getByText(/Its screen stays private/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Start running Spaces" }));
     const desktop = await screen.findByRole("switch", { name: /Let other computers control this desktop/ });
     expect(desktop).not.toBeChecked();

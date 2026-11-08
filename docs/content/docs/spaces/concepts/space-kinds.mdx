@@ -62,7 +62,10 @@ The microVM runtimes:
 `containerization`) that says whether it is ready and what is missing.
 
 An [egress policy](/cua-sdk/guides/egress) is enforced on Firecracker
-microVMs. On `vz` and Containerization microVMs it is refused.
+microVMs. On `vz` microVMs it is refused while Secure Spaces is off, and
+enforced by the Cua network gateway on the host while it is on (see
+[A Space's network](/cua-sdk/guides/egress)). On Containerization microVMs it
+is refused.
 
 ### Your own cloud and your other computers
 

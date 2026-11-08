@@ -18,8 +18,8 @@ use crate::teleport::{drag, flow, grid, transfer, windows};
 use crate::{
     CoreError, about, account, agent_keys, agent_menu, agents, bulk_confirm, checklist, ci_runners,
     cloud_connect, cloud_page, cloud_sheet, connectors, devices, diagnostics, drive_mount_preview,
-    drive_page, drive_settings, driver_preview, experiments, github_connection, host,
-    local_network, login_item, machines, notch, notifications, nudges, onboarding,
+    drive_page, drive_settings, driver_preview, environment_tag, experiments, github_connection,
+    host, local_network, login_item, machines, notch, notifications, nudges, onboarding,
     onboarding_preview, palette, paths, persistent, prepare, presence, relay_usage, resources,
     runtimes, settings, share, sign_in, space_menu, summon, telemetry, thread_cards, tips, upsell,
     window, wizard,
@@ -353,6 +353,7 @@ pub const METHODS: &[&str] = &[
     "experiments.choose",
     "wizard.placementOptions",
     "relayUsage.view",
+    "environment.tag",
     "relayUsage.planLimit",
     "resources.view",
     "resources.thisMac",
@@ -618,6 +619,13 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
             a.get::<Option<SpaceOs>>("hostOs")?
                 .unwrap_or(SpaceOs::Macos),
         )),
+        // The title bar's "Local · Staging" tag: the host resolves the
+        // channel and environment (`settings.get`'s `target`, from
+        // `app_target`); null for the released app on production.
+        "environment.tag" => out(environment_tag::view(
+            &a.get("target")?,
+            a.get("updateChannel")?,
+        )),
         // The page's core has no environment: the host names its account app
         // (`settings.get`'s `accountUrl`), the Upgrade fallback's billing page.
         "relayUsage.view" => {
@@ -756,7 +764,16 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
             &a.get::<String>("row")?,
             &a.get::<Option<String>>("option")?.unwrap_or_default(),
         )),
-        "upsell.proBanner" => out(upsell::pro_banner(&a.all()?)),
+        // With `usage` (the relay's answer): only near a limit, saying how close.
+        "upsell.proBanner" => match a.get::<Option<crate::relay_usage::RelayUsage>>("usage")? {
+            Some(usage) => out(upsell::pro_banner_near(
+                &upsell::ProBannerInput {
+                    plan: a.get::<Option<String>>("plan")?.unwrap_or_default(),
+                },
+                &usage,
+            )),
+            None => out(upsell::pro_banner(&a.all()?)),
+        },
         "account.menu" => out(account::menu(&a.all()?)),
         "upgrade.link" => out(telemetry::upgrade_link(
             &a.get::<String>("url")?,
@@ -1738,6 +1755,29 @@ mod tests {
             call("nope.nope", "{}"),
             Err(CoreError::Invalid(e)) if e.starts_with("unknown method")
         ));
+    }
+
+    /// The title bar's tag over the wire: null for the released app on
+    /// production, words and a tint for Local.
+    #[test]
+    fn environment_tag_over_the_wire() {
+        let tag = |args: Value| call_value("environment.tag", args).unwrap();
+        assert_eq!(
+            tag(json!({"target": {"channel": "stable", "env": "prod"}})),
+            Value::Null
+        );
+        assert_eq!(
+            tag(
+                json!({"target": {"channel": "local", "env": "staging", "authHost": "auth.staging.cua.ai"}, "updateChannel": "nightly"})
+            ),
+            json!({"label": "Local · Staging", "env": "staging", "description": "This app uses Cua Staging (auth.staging.cua.ai)"})
+        );
+        assert_eq!(
+            tag(
+                json!({"target": {"channel": "stable", "env": "staging"}, "updateChannel": "nightly"})
+            )["label"],
+            "Nightly · Staging"
+        );
     }
 
     /// The page's core has no environment: Upgrade's checkout is on the

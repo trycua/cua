@@ -266,7 +266,7 @@ function thisComputer(os: HostOs): string {
 
 function fallbackView(s: OnboardingFlowState, os: HostOs): OnboardingView {
   const pages: Partial<Record<OnboardingStep, [string, string, string]>> = {
-    welcome: ["Welcome to Cua Spaces", "Computers for you and your AI agents. Setup takes about a minute.", "Get started"],
+    welcome: ["Welcome to Cua Spaces", "Computers for you and your AI agents.", "Get started"],
     signin: ["Sign in", "Sign in to reach your computers and Spaces from any of your computers. You can skip this and sign in later.", "Continue"],
     presentation: ["Where should Cua Spaces show up?", "You can change this in Settings.", "Continue"],
     mode: [`How do you want to use ${thisComputer(os)}?`, "Use it only to open your other computers, or let your other computers reach it too. You can change this later.", "Continue"],
@@ -319,7 +319,7 @@ function fallbackView(s: OnboardingFlowState, os: HostOs): OnboardingView {
             { menuBar: true, title: "Menu bar only", id: "onboarding-menu-bar", imageLabel: "The menu bar menu alone", selected: s.menuBar },
           ]
         : [],
-    notice: s.step === "welcome" ? "Cua collects usage data, like which features you use and when something goes wrong. When you're signed in, it's linked to your account through a random ID. Never your files, what you type or your screen. Change this here or in Settings, Privacy." : null,
+    notice: s.step === "welcome" ? "Features you use and errors, linked to your account. Never your files, typing or screen." : null,
     noticeLinkLabel: s.step === "welcome" ? "What is collected" : null,
     noticeLinkUrl: s.step === "welcome" ? "https://cua.ai/docs/cua-sdk/concepts/telemetry" : null,
     usage:

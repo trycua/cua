@@ -422,6 +422,18 @@ struct WebUIHostTests {
         #expect(s?["accountUrl"] as? String == appAccountAppUrl())
     }
 
+    /// Settings carry the channel and environment the app resolved, for the
+    /// title bar's "Local · Staging" tag.
+    @Test func settingsNameTheTarget() async throws {
+        let (bridge, _) = bridge()
+        let s = try await bridge.handle("settings.get", [:]) as? [String: Any]
+        let target = s?["target"] as? [String: Any]
+        let expected = appTarget()
+        #expect(target?["channel"] as? String == expected.channel)
+        #expect(target?["env"] as? String == expected.env)
+        #expect(target?["authHost"] as? String == expected.authHost)
+    }
+
     /// Settings, Advanced's rows come with the page's first `settings.get`,
     /// before New Space ever probed: every kind's runtime row, and overflow
     /// (they were missing: only New Space's probe read the settings).

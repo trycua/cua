@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.15.1](https://github.com/trycua/cua/compare/cua-sdk-v0.15.0...cua-sdk-v0.15.1) (2026-11-08)
+
+
+### Bug Fixes
+
+* **cua:** ship the static cua-spacesd in every platform wheel ([#6959](https://github.com/trycua/cua/issues/6959)) ([16ac156](https://github.com/trycua/cua/commit/16ac1561354530107bd86cc721b044587d448f6c))
+
 ## [0.15.0](https://github.com/trycua/cua/compare/cua-sdk-v0.14.0...cua-sdk-v0.15.0) (2026-11-08)
 
 

@@ -3048,9 +3048,10 @@ fn apply_wsl_gpu(body: &mut ContainerCreateBody) {
                 path_in_container: Some("/dev/dxg".into()),
                 cgroup_permissions: Some("rwm".into()),
             });
-        hc.binds
-            .get_or_insert_with(Vec::new)
-            .push("/usr/lib/wsl:/usr/lib/wsl:ro".into());
+        let binds = hc.binds.get_or_insert_with(Vec::new);
+        binds.push("/usr/lib/wsl:/usr/lib/wsl:ro".into());
+        // A job's member runs with its own PATH: `nvidia-smi` is on it.
+        binds.push("/usr/lib/wsl/lib/nvidia-smi:/usr/local/bin/nvidia-smi:ro".into());
     }
 }
 
@@ -3635,10 +3636,13 @@ mod tests {
             hc.devices.unwrap()[0].path_on_host.as_deref(),
             Some("/dev/dxg")
         );
+        let binds = hc.binds.unwrap();
+        assert!(binds.contains(&"/usr/lib/wsl:/usr/lib/wsl:ro".to_string()));
         assert!(
-            hc.binds
-                .unwrap()
-                .contains(&"/usr/lib/wsl:/usr/lib/wsl:ro".to_string())
+            binds
+                .iter()
+                .any(|b| b.ends_with(":/usr/local/bin/nvidia-smi:ro")),
+            "a member's own PATH still finds nvidia-smi"
         );
         assert!(
             body.env

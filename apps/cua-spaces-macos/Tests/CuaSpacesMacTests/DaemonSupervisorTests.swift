@@ -140,7 +140,7 @@ import Testing
         #expect(supervisor.yieldsTo(pid: UInt32(back.processIdentifier)) == "/bin/sleep")
         #expect(supervisor.yieldsTo(pid: UInt32(getpid())) == nil)
         let notice = DaemonSupervisor.yieldNotice(executable: "/Applications/Cua Spaces.app/Contents/MacOS/cua", version: "0.4.0")
-        #expect(notice.hasPrefix("Another Cua Spaces app (/Applications/Cua Spaces.app, cua 0.4.0) is running and keeps starting its own daemon"))
+        #expect(notice.hasPrefix("Another Cua Spaces app (/Applications/Cua Spaces.app, cua 0.4.0) is running and keeps starting its own background service"))
         #expect(notice.contains("Quit the other app, then reopen Cua Spaces"))
     }
 

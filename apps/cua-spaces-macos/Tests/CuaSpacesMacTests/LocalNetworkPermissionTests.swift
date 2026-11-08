@@ -240,6 +240,32 @@ struct LocalNetworkWhenProvidingTests {
         #expect(shown.steps.count == 1)
     }
 
+    /// A local macOS create while the hosting ask is open waits for its
+    /// answer: one explanation, not two.
+    @Test func aCreateDuringTheHostingAskExplainsOnce() async throws {
+        let host = FixtureHost()
+        let probe = LocalNetworkPermissionTests.FakeProbe([.blocked, .allowed], prompts: [0, 1, 1])
+        let defaults = UserDefaults(suiteName: "cua-ln-\(UUID().uuidString)")!
+        var explained = 0
+        let gate = LocalNetworkGate(probe: probe, present: { _ in
+            explained += 1
+            try? await Task.sleep(for: .milliseconds(100))
+            return true
+        }, open: { _ in }, defaults: defaults)
+        gate.poll = .milliseconds(1)
+        gate.promptAppears = 0.05
+        let backend = FixtureSpacesBackend(rows: [])
+        let m = ViewModelTests().makeModel(backend, host: host)
+        m.localNetworkGate = gate
+        m.onboarding.finish()
+        try await m.host.setUp(request(nil), on: host)
+        #expect(m.hostingLocalNetworkCheck != nil)
+        let args = AppCreateSpaceArgs(image: "ghcr.io/trycua/macos:26", on: "local", kind: .vm, runtime: .auto,
+                                      name: nil, cpus: nil, memoryMb: nil, diskGb: nil, spacesd: true, gpu: nil)
+        _ = try? await m.runCreate(args, os: .macos, pendingId: "pending:mac")
+        #expect(explained == 1)
+    }
+
     /// A sign-in after the first run (Settings) that sets this Mac up asks
     /// nothing either.
     @Test func aLaterSignInsSetupAsksNothing() async throws {

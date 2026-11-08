@@ -1369,6 +1369,8 @@ public final class AppModel {
         // for now, or the create fails at once with the fix (never retried).
         if let gate = localNetworkGate,
            appLocalNetworkApplies(provider: args.on == "local" ? .local : .relay, os: os, hostIsMac: true) {
+            // The hosting ask still open: its answer first, never a second sheet.
+            await hostingLocalNetworkCheck?.value
             do {
                 try await gate.check()
             } catch where isCancelled(error) {

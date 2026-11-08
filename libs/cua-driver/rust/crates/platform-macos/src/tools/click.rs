@@ -970,42 +970,19 @@ impl ClickTool {
                         }
                     }
                     msg.push_str(&changes.result_suffix());
-                    // AX dispatch went through, but AXPerformAction returning
-                    // success does not confirm the on-screen effect (many elements
-                    // no-op silently). A click is never driver-verifiable (no
-                    // read-back) → verified:false stays for back-compat. The
-                    // tri-state `effect` is the richer signal:
-                    //   * suspected_noop — the element didn't advertise the action,
-                    //     so the press likely did nothing → cross to vision/pixel.
-                    //   * unverifiable — dispatched fine, driver just can't confirm;
-                    //     the caller verifies via screenshot.
-                    let effect = ax_click_effect(selection_verified, suspected_noop, &changes);
-                    let mut structured = serde_json::json!({
-                        "path": if selection_via_pixel {
-                            if fronted { "cgevent_fg" } else { "cgevent" }
-                        } else if fronted {
-                            "ax_fg"
+                    let path = if selection_via_pixel {
+                        if fronted {
+                            "cgevent_fg"
                         } else {
-                            "ax"
-                        },
-                        "verified": selection_verified,
-                        "effect": effect,
-                    });
-                    changes.add_window_identity(&mut structured);
-                    if selection_verified {
-                        structured["evidence"] = serde_json::json!([
-                            { "kind": "accessibility_readback" }
-                        ]);
-                    }
-                    if effect == "suspected_noop" {
-                        structured["escalation"] = serde_json::json!({
-                            "recommended": "px",
-                            "reason": "element does not advertise this action — the \
-                                       AX press likely no-op'd. Do an element px \
-                                       action: click by pixel (x,y) off the \
-                                       screenshot from get_window_state."
-                        });
-                    }
+                            "cgevent"
+                        }
+                    } else if fronted {
+                        "ax_fg"
+                    } else {
+                        "ax"
+                    };
+                    let structured =
+                        ax_click_structured(path, selection_verified, suspected_noop, &changes);
                     ToolResult::text(msg).with_structured(structured)
                 }
                 Ok(Err(e)) => match e.downcast_ref::<crate::input::ax_actions::ElementDisabled>() {
@@ -2134,29 +2111,54 @@ mod selection_fallback_tests {
 
 // ── Tests ────────────────────────────────────────────────────────────────────
 
+/// Structured result of a dispatched AX click. AXPerformAction returning
+/// success does not confirm the on-screen effect, so `verified` stays false
+/// without a read-back and the tri-state `effect` is the signal:
+///   * suspected_noop: the element didn't advertise the action and this
+///     press opened no window, so it likely did nothing; escalate to pixel.
+///   * unverifiable: dispatched fine, the caller verifies via screenshot.
+///
+/// A window the previous action's detached tail saw says nothing about this
+/// press, so only `changes.new_windows` lifts a suspected no-op.
+fn ax_click_structured(
+    path: &str,
+    selection_verified: bool,
+    suspected_noop: bool,
+    changes: &crate::window_change_detector::Changes,
+) -> Value {
+    let suspected_noop = !selection_verified && suspected_noop && changes.new_windows.is_empty();
+    let mut structured = serde_json::json!({
+        "path": path,
+        "verified": selection_verified,
+        "effect": if selection_verified {
+            "confirmed"
+        } else if suspected_noop {
+            "suspected_noop"
+        } else {
+            "unverifiable"
+        },
+    });
+    changes.add_window_identity(&mut structured);
+    if selection_verified {
+        structured["evidence"] = serde_json::json!([{ "kind": "accessibility_readback" }]);
+    }
+    if suspected_noop {
+        structured["escalation"] = serde_json::json!({
+            "recommended": "px",
+            "reason": "element does not advertise this action — the \
+                       AX press likely no-op'd. Do an element px \
+                       action: click by pixel (x,y) off the \
+                       screenshot from get_window_state."
+        });
+    }
+    structured
+}
+
 /// Check `click`'s `action` before any dispatch. Element clicks take the
 /// AX action names `map_action` knows. A pixel click also takes `focus`: the
 /// background focus rung that pixel `type_text`, `press_key` and `scroll`
 /// use to put the keyboard focus on a point (`focus_by_pixel`). It sets
 /// AXFocused on the element under the point instead of pressing it.
-/// The AX click's `effect`. A window this action opened is evidence the
-/// press did something, so it lifts `suspected_noop` to `unverifiable`. A
-/// window the previous action's detached tail saw says nothing about this
-/// press and leaves the classification alone.
-fn ax_click_effect(
-    selection_verified: bool,
-    suspected_noop: bool,
-    changes: &crate::window_change_detector::Changes,
-) -> &'static str {
-    if selection_verified {
-        "confirmed"
-    } else if suspected_noop && changes.new_windows.is_empty() {
-        "suspected_noop"
-    } else {
-        "unverifiable"
-    }
-}
-
 fn validate_click_action(action: &str, element_target: bool) -> anyhow::Result<()> {
     if !element_target && action == "focus" {
         return Ok(());
@@ -2191,31 +2193,38 @@ mod tests {
     /// A late window from the previous action must not turn this press's
     /// suspected no-op into `unverifiable` and drop the pixel escalation.
     #[test]
-    fn ax_click_effect_ignores_the_previous_actions_late_window() {
+    fn ax_click_result_ignores_the_previous_actions_late_window() {
         use crate::window_change_detector::Changes;
         let earlier_only = Changes {
             earlier_new_windows: vec![window(7)],
             ..Changes::no_change()
         };
-        assert_eq!(
-            ax_click_effect(false, true, &earlier_only),
-            "suspected_noop"
-        );
+        let r = ax_click_structured("ax", false, true, &earlier_only);
+        assert_eq!(r["effect"], "suspected_noop");
+        assert_eq!(r["escalation"]["recommended"], "px");
+        assert!(r.get("new_windows").is_none());
+        assert_eq!(r["earlier_new_windows"][0]["window_id"], 7);
 
         let opened_now = Changes {
             new_windows: vec![window(8)],
             ..Changes::no_change()
         };
-        assert_eq!(ax_click_effect(false, true, &opened_now), "unverifiable");
-        assert_eq!(
-            ax_click_effect(false, true, &Changes::no_change()),
-            "suspected_noop"
-        );
-        assert_eq!(
-            ax_click_effect(false, false, &Changes::no_change()),
-            "unverifiable"
-        );
-        assert_eq!(ax_click_effect(true, true, &opened_now), "confirmed");
+        let r = ax_click_structured("ax", false, true, &opened_now);
+        assert_eq!(r["effect"], "unverifiable");
+        assert!(r.get("escalation").is_none());
+        assert_eq!(r["new_windows"][0]["window_id"], 8);
+        assert!(r.get("earlier_new_windows").is_none());
+
+        let r = ax_click_structured("ax", false, true, &Changes::no_change());
+        assert_eq!(r["effect"], "suspected_noop");
+        assert!(r.get("new_windows").is_none());
+        let r = ax_click_structured("ax", false, false, &Changes::no_change());
+        assert_eq!(r["effect"], "unverifiable");
+        assert!(r.get("escalation").is_none());
+        let r = ax_click_structured("cgevent", true, true, &opened_now);
+        assert_eq!(r["effect"], "confirmed");
+        assert_eq!(r["evidence"][0]["kind"], "accessibility_readback");
+        assert!(r.get("escalation").is_none());
     }
 
     /// #3835: Finder's toolbar view switcher applies an AXPress and returns

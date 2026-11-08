@@ -22,19 +22,21 @@ EXTENDS Naturals
 CONSTANTS AskArbiter
 VARIABLES front, pc, saved, userMoved, undidUser
 vars == <<front, pc, saved, userMoved, undidUser>>
-\* pc: "idle" | "fronted" (T activated, body running) | "restored"
+\* pc: "idle" | "saved" (front read) | "fronted" (T activated, body running) | "restored"
 \* userMoved: the user switched apps with mouse or keyboard during the turn
 
 Init == /\ front = "U" /\ pc = "idle" /\ saved = "none"
         /\ userMoved = FALSE /\ undidUser = FALSE
 
-\* foreground_turn() bumps the epoch and takes FOREGROUND_LOCK (:1302-1316);
-\* the turn reads the front process (:1359), set_front(T) (:1369),
-\* waits for the activation (:1376), then runs the body.
-Front == /\ pc = "idle" /\ pc' = "fronted" /\ saved' = front /\ front' = "T"
-         /\ UNCHANGED <<userMoved, undidUser>>
+\* foreground_turn() bumps the epoch and takes FOREGROUND_LOCK (:1302-1316),
+\* then the turn reads the front process (:1359) ...
+Save == /\ pc = "idle" /\ pc' = "saved" /\ saved' = front
+        /\ UNCHANGED <<front, userMoved, undidUser>>
+\* ... and set_front(T) (:1369), waits for the activation (:1376), runs the body.
+Front == /\ pc = "saved" /\ pc' = "fronted" /\ front' = "T"
+         /\ UNCHANGED <<saved, userMoved, undidUser>>
 \* You click another window or press Cmd-Tab while the keys are posted.
-UserSwitches == /\ pc = "fronted" /\ \E a \in {"U", "O"} : a # front /\ front' = a
+UserSwitches == /\ pc \in {"saved", "fronted"} /\ \E a \in {"U", "O"} : a # front /\ front' = a
                 /\ userMoved' = TRUE
                 /\ UNCHANGED <<pc, saved, undidUser>>
 \* Another app activates itself (a notification, a dialog).
@@ -52,7 +54,7 @@ Restore ==
   /\ UNCHANGED <<saved, userMoved>>
 Done == pc = "restored" /\ UNCHANGED vars
 
-Next == Front \/ UserSwitches \/ OtherActivates \/ Restore \/ Done
+Next == Save \/ Front \/ UserSwitches \/ OtherActivates \/ Restore \/ Done
 Spec == Init /\ [][Next]_vars
 
 \* FR1. The driver never undoes an app switch you made during its turn.

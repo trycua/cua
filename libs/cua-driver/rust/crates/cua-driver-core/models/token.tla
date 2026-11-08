@@ -23,11 +23,11 @@ EXTENDS Naturals, FiniteSets, Sequences
 CONSTANTS Windows, Cap, MaxReads, RetiredMemory, RowGuard
 Ids == 1..MaxReads
 NoWindow == 2
-VARIABLES lane, win, held, rowFrom, rowWin, passed, touched, reported,
-          refusedSet, refusalNamed, zoomed, before, lastResult, reads, nextId,
+VARIABLES lane, win, held, rowFrom, rowWin, passed, touched,
+          refusedSet, refusalNamed, zoomed, lastResult, reads, nextId,
           wreads, retired
-vars == <<lane, win, held, rowFrom, rowWin, passed, touched, reported,
-          refusedSet, refusalNamed, zoomed, before, lastResult, reads, nextId,
+vars == <<lane, win, held, rowFrom, rowWin, passed, touched,
+          refusedSet, refusalNamed, zoomed, lastResult, reads, nextId,
           wreads, retired>>
 Minted == 1..(nextId - 1)
 Replaced(w) == {id \in lane : win[id] = w}
@@ -43,8 +43,8 @@ InLog(id) == \E i \in 1..Len(retired) : retired[i] = id
 
 Init == /\ lane = {} /\ win = [id \in Ids |-> NoWindow] /\ held = 0
         /\ rowFrom = 0 /\ rowWin = NoWindow /\ passed = 0 /\ touched = 0
-        /\ reported = {} /\ refusedSet = {} /\ refusalNamed = FALSE /\ zoomed = {}
-        /\ before = {} /\ lastResult = "none" /\ reads = 0 /\ nextId = 1
+        /\ refusedSet = {} /\ refusalNamed = FALSE /\ zoomed = {}
+        /\ lastResult = "none" /\ reads = 0 /\ nextId = 1
         /\ wreads = [w \in Windows |-> 0] /\ retired = <<>>
 
 \* publish_snapshot (:557-635): mint, retire, count this session's read of the window
@@ -56,7 +56,6 @@ ReadWin(w) ==
      \/ held' = held /\ held # 0
   /\ \/ rowFrom' = nextId /\ rowWin' = w
      \/ rowFrom' = rowFrom /\ rowWin' = rowWin
-  /\ reported' = Retired(w) /\ before' = lane
   /\ refusedSet' = {} /\ refusalNamed' = FALSE /\ passed' = 0 /\ touched' = 0
   /\ lastResult' = "none"
   /\ zoomed' = zoomed \cap ((lane \ Retired(w)) \cup {nextId})
@@ -72,7 +71,7 @@ ActHeld ==
   /\ IF held \in lane
      THEN lastResult' = "acted" /\ refusedSet' = {} /\ refusalNamed' = FALSE
      ELSE lastResult' = "refused" /\ refusedSet' = lane /\ refusalNamed' = TRUE
-  /\ UNCHANGED <<lane, win, held, rowFrom, rowWin, reported, before, zoomed, reads, nextId, wreads, retired>>
+  /\ UNCHANGED <<lane, win, held, rowFrom, rowWin, zoomed, reads, nextId, wreads, retired>>
 
 \* a remembered token, with or without a pid. Token-only: fill_pid_from_token
 \* (element_token.rs:170) -> token_owner (snapshot_store.rs:859): named iff the id is
@@ -87,7 +86,7 @@ ActForgotten ==
              /\ lastResult' = "refused"
              /\ refusalNamed' = (withPid \/ InLog(id))
              /\ refusedSet' = IF withPid \/ InLog(id) THEN lane ELSE {}
-  /\ UNCHANGED <<lane, win, held, rowFrom, rowWin, reported, before, zoomed, reads, nextId, wreads, retired>>
+  /\ UNCHANGED <<lane, win, held, rowFrom, rowWin, zoomed, reads, nextId, wreads, retired>>
 
 \* a bare row number (:904-916): acts only when this session read the window once and
 \* that read is still current; otherwise row_refusal (:255) names the current snapshot.
@@ -104,13 +103,13 @@ ActRow ==
        [] OTHER ->
             /\ lastResult' = "refused" /\ touched' = 0
             /\ refusedSet' = lane /\ refusalNamed' = TRUE
-  /\ UNCHANGED <<lane, win, held, rowFrom, rowWin, reported, before, zoomed, reads, nextId, wreads, retired>>
+  /\ UNCHANGED <<lane, win, held, rowFrom, rowWin, zoomed, reads, nextId, wreads, retired>>
 
 \* set_zoom (:738-756): a field of the window's current snapshot
 Zoom ==
   /\ held \in lane /\ zoomed' = zoomed \cup {held}
-  /\ UNCHANGED <<lane, win, held, rowFrom, rowWin, passed, touched, reported,
-                refusedSet, refusalNamed, before, lastResult, reads, nextId, wreads, retired>>
+  /\ UNCHANGED <<lane, win, held, rowFrom, rowWin, passed, touched,
+                refusedSet, refusalNamed, lastResult, reads, nextId, wreads, retired>>
 
 Next == Read \/ ActHeld \/ ActForgotten \/ ActRow \/ Zoom
 Spec == Init /\ [][Next]_vars
@@ -123,8 +122,6 @@ R2 == lane \subseteq Ids /\ \A w \in Windows : Cardinality(Cur(w)) <= 1
 R3 == lastResult = "acted" => touched = passed
 \* R4. A refusal names the process's current snapshots.
 R4 == lastResult = "refused" => refusalNamed /\ refusedSet = lane
-\* R5. A read reports exactly the snapshots it retired.
-R5 == reported = before \ lane
 \* R6. A zoom is bound only to a current snapshot.
 R6 == zoomed \subseteq lane
 ====

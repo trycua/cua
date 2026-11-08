@@ -29,9 +29,11 @@ fi
 
 OUT="$(mktemp -d "${TMPDIR:-/tmp}/cua-driver-tla.XXXXXX")"
 failures=0
+selected=0
 while IFS=$'\t' read -r spec cfg expect; do
   [[ -z "$spec" || "$spec" == \#* ]] && continue
   [[ -n "$FILTER" && "$cfg" != *"$FILTER"* ]] && continue
+  selected=$((selected + 1))
   dir="$CRATES/$(dirname "$cfg")"
   name="$(basename "$cfg" .cfg)"
   log="$OUT/$name.out"
@@ -47,7 +49,13 @@ while IFS=$'\t' read -r spec cfg expect; do
   states="$(sed -n 's/.* \([0-9][0-9]*\) distinct states found.*/\1/p' "$log" | tail -1)"
   if grep -q '^Model checking completed. No error has been found.' "$log"; then
     got=pass
-  elif got="$(sed -n 's/^Error: Invariant \([A-Za-z0-9_]*\) is violated.*/\1/p' "$log" | head -1)"; [[ -n "$got" ]]; then
+  elif got="$(sed -n 's/^Error: Invariant \([A-Za-z0-9_]*\) is violated.*/\1/p; s/^Error: Temporal properties were violated.*/temporal/p' "$log" | head -1)"; [[ -n "$got" ]]; then
+    # TLC does not name the temporal property that failed; a config that
+    # checks one names it on its PROPERTIES line.
+    if [[ "$got" == temporal ]]; then
+      got="$(sed -n 's/^PROPERTIES* *\([A-Za-z0-9_]*\) *$/\1/p' "$CRATES/$cfg" | head -1)"
+      [[ -n "$got" ]] || got="a temporal property"
+    fi
     :
   else
     got="error"
@@ -60,4 +68,5 @@ while IFS=$'\t' read -r spec cfg expect; do
   fi
 done <"$SKILL/models.tsv"
 echo "TLC output: $OUT"
+[[ "$selected" -gt 0 ]] || { echo "no row in models.tsv matches '$FILTER'" >&2; exit 2; }
 [[ "$failures" == 0 ]]

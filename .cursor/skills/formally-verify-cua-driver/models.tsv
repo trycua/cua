@@ -14,6 +14,7 @@ cua-driver-core/models/recording.tla	cua-driver-core/models/recording_restart.cf
 cua-driver-core/models/recording.tla	cua-driver-core/models/recording_dirfail.cfg	RC4
 cua-driver-core/models/recording.tla	cua-driver-core/models/recording_idle.cfg	RC5
 cua-driver-sdk/models/admission.tla	cua-driver-sdk/models/admission.cfg	pass
+cua-driver-sdk/models/admission.tla	cua-driver-sdk/models/admission_pre6739.cfg	PG2
 cua-driver-sdk/models/admission.tla	cua-driver-sdk/models/admission_pre6802.cfg	PG1
 cua-driver-sdk/models/admission.tla	cua-driver-sdk/models/admission_regate.cfg	PG1
 cua-driver/models/serve_drain.tla	cua-driver/models/serve_drain.cfg	pass

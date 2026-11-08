@@ -353,6 +353,17 @@ describe("screen 4, Ready", () => {
     expect(text()).not.toContain("Pick up where you left off");
   });
 
+  it("reports Copy, Continue in Cua and Done, and nothing else", () => {
+    const v = readyView({ os: "macos", agent: "claude-code", computers: ["this"] });
+    const onCopied = vi.fn();
+    const onDone = vi.fn();
+    render(<ReadyScreen view={v} agent="claude-code" onDone={onDone} onCopied={onCopied} />);
+    fireEvent.click(screen.getByRole("button", { name: "Copy" }));
+    expect(onCopied).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole("button", { name: v.done }));
+    expect(onDone).toHaveBeenCalledTimes(1);
+  });
+
   it("with only this Mac picked, says this Mac", () => {
     expect(readyView({ os: "macos", agent: "codex", computers: ["this"] })).toMatchObject({
       title: "Codex can now use this Mac",

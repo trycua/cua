@@ -562,9 +562,10 @@ export function PickUpWhereYouLeftOff({ onContinue, place = thisComputerText(), 
   );
 }
 
-export function ReadyScreen({ view, agent, onDone, onContinueChat, place }: { view: ReadyView; agent: string; onDone: () => void; onContinueChat?: (task: AskTask) => void; place?: string }) {
+export function ReadyScreen({ view, agent, onDone, onContinueChat, onCopied, place }: { view: ReadyView; agent: string; onDone: () => void; onContinueChat?: (task: AskTask) => void; onCopied?: () => void; place?: string }) {
   const [copied, setCopied] = useState(false);
   const copy = () => {
+    onCopied?.();
     void navigator.clipboard?.writeText(view.command).catch(() => {});
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
@@ -627,7 +628,11 @@ const FUNNEL_STEP: Partial<Record<NewRunScreenName, string>> = {
   where: "create_space",
   permissions: "permissions",
   agent: "connect_agent",
+  ready: "ready",
 };
+
+/** The picked agent as a usage-event word (`claude-code` is sent as `claude_code`); the core drops any it doesn't know. */
+const agentWord = (agent: string | null) => (agent ?? "none").replaceAll("-", "_");
 
 /** Usage events never get in the way of the run. */
 function track(send: () => void): void {
@@ -695,7 +700,8 @@ export function NewFirstRun() {
   }, [store, core, telemetry]);
   useEffect(() => {
     const step = FUNNEL_STEP[s.screen];
-    if (store && step) track(() => store.trackFirstRunStep(step, "step_viewed"));
+    // The Ready screen's events name the picked agent (a fixed word; the core drops anything else).
+    if (store && step) track(() => store.trackFirstRunStep(step, "step_viewed", s.screen === "ready" ? agentWord(s.agent) : "none"));
   }, [store, s.screen]);
   const funnel = (action: string, detail = "none") => {
     const step = FUNNEL_STEP[s.screen];
@@ -1017,7 +1023,20 @@ export function NewFirstRun() {
       break;
     case "ready":
       body = s.agent ? (
-        <ReadyScreen view={readyView({ os, agent: s.agent, computers: pickedNames(), canMakeSeparate })} agent={s.agent} place={placeName(os)} onDone={() => void finish()} onContinueChat={(task) => void continueChat(task)} />
+        <ReadyScreen
+          view={readyView({ os, agent: s.agent, computers: pickedNames(), canMakeSeparate })}
+          agent={s.agent}
+          place={placeName(os)}
+          onDone={() => {
+            funnel("step_completed", agentWord(s.agent));
+            void finish();
+          }}
+          onContinueChat={(task) => {
+            funnel("step_chat_picked_up", agentWord(s.agent));
+            void continueChat(task);
+          }}
+          onCopied={() => funnel("step_command_copied", agentWord(s.agent))}
+        />
       ) : null;
       break;
   }

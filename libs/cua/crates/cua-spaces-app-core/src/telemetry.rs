@@ -2462,6 +2462,75 @@ mod tests {
         }
     }
 
+    /// The Ready screen's four events are recorded with the agent only, and
+    /// nothing at all while the usage-data switch is off.
+    #[cfg(feature = "telemetry")]
+    #[test]
+    fn ready_screen_signals_are_recorded_and_respect_the_switch() {
+        use std::sync::Arc;
+        let sig = |action: &str, agent: &str| TelemetrySignal::OnboardingPage {
+            page: "ready".into(),
+            action: action.into(),
+            choice: agent.into(),
+        };
+        let signals = [
+            sig("step_viewed", "codex"),
+            sig("step_command_copied", "codex"),
+            sig("step_chat_picked_up", "codex"),
+            sig("step_completed", "codex"),
+        ];
+        let client = |home: &std::path::Path, off: bool| {
+            let sink = Arc::new(cua_telemetry::sink::MemorySink::new());
+            let t = cua_telemetry::Telemetry::builder()
+                .env(move |k| match k {
+                    "CUA_TELEMETRY_FORBID_NETWORK" => Some("1".into()),
+                    "DO_NOT_TRACK" if off => Some("1".into()),
+                    _ => None,
+                })
+                .home(home)
+                .sink(sink.clone())
+                .product("spaces_app", "0.12.0")
+                .foreground()
+                .build();
+            t.acknowledge_notice();
+            (t, sink)
+        };
+        let on = tempfile::tempdir().unwrap();
+        let (t, sink) = client(on.path(), false);
+        assert_eq!(record(&t, &signals), 4);
+        t.flush(std::time::Duration::from_secs(2));
+        let events = sink.events();
+        let names: Vec<&str> = events
+            .iter()
+            .filter_map(|e| e["event"].as_str())
+            .filter(|n| n.starts_with("cua_onboarding"))
+            .collect();
+        assert_eq!(
+            names,
+            [
+                "cua_onboarding_step_viewed",
+                "cua_onboarding_command_copied",
+                "cua_onboarding_chat_picked_up",
+                "cua_onboarding_step_completed"
+            ]
+        );
+        for e in events.iter().filter(|e| {
+            e["event"]
+                .as_str()
+                .is_some_and(|n| n.starts_with("cua_onboarding"))
+        }) {
+            assert_eq!(e["properties"]["agent"], "codex");
+            assert_eq!(e["properties"]["step_index"], 7);
+        }
+
+        // Usage data off: nothing is queued or sent.
+        let off = tempfile::tempdir().unwrap();
+        let (t, sink) = client(off.path(), true);
+        assert_eq!(record(&t, &signals), 0);
+        t.flush(std::time::Duration::from_secs(2));
+        assert!(sink.events().is_empty(), "{:?}", sink.events());
+    }
+
     /// Welcome's usage-data switch: off sends nothing across a whole first
     /// run (not the held launch, not a page, not an event recorded
     /// directly), and writes the machine's setting; on sends the funnel,

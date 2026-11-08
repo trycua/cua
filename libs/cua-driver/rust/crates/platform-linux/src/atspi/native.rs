@@ -990,10 +990,10 @@ fn frame_geometry_distance(
 /// AND beat the runner-up by [`FRAME_MATCH_MARGIN_PX`].
 const FRAME_MATCH_TOLERANCE_PX: u64 = 160;
 
-/// How decisively the best frame must beat the second-best. Two windows of
-/// genuinely similar geometry are not disambiguated by this heuristic, and a
-/// caller that needs proof of window identity must get a refusal instead of a
-/// coin flip.
+/// How decisively the best frame must beat the second-best, unless it alone
+/// matches the window exactly. Two windows of genuinely similar geometry are
+/// not disambiguated by this heuristic, and a caller that needs proof of
+/// window identity must get a refusal instead of a coin flip.
 const FRAME_MATCH_MARGIN_PX: u64 = 24;
 
 /// Pick the unique application top-level that corresponds to native window
@@ -1023,8 +1023,9 @@ fn correlate_frame_to_window(
     if best_distance > FRAME_MATCH_TOLERANCE_PX {
         return None;
     }
-    if let Some((runner_up, _)) = scored.get(1) {
-        if runner_up.saturating_sub(best_distance) < FRAME_MATCH_MARGIN_PX {
+    if let Some(&(runner_up, _)) = scored.get(1) {
+        let exact = best_distance == 0 && runner_up > 0;
+        if !exact && runner_up.saturating_sub(best_distance) < FRAME_MATCH_MARGIN_PX {
             return None;
         }
     }
@@ -7405,6 +7406,23 @@ mod frame_correlation_tests {
         let candidates = [(0usize, (438, 80, 1050, 953)), (1, (438, 80, 1050, 953))];
         assert_eq!(
             correlate_frame_to_window(&candidates, &window(438, 80, 1050, 953)),
+            None
+        );
+    }
+
+    #[test]
+    fn an_exact_match_resolves_among_cascaded_windows_of_one_size() {
+        let candidates = [(0usize, (10, 37, 1050, 753)), (1, (20, 47, 1050, 753))];
+        assert_eq!(
+            correlate_frame_to_window(&candidates, &window(10, 37, 1050, 753)),
+            Some(0)
+        );
+        assert_eq!(
+            correlate_frame_to_window(&candidates, &window(20, 47, 1050, 753)),
+            Some(1)
+        );
+        assert_eq!(
+            correlate_frame_to_window(&candidates, &window(15, 42, 1050, 753)),
             None
         );
     }

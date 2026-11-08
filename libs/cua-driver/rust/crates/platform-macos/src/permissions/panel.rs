@@ -412,14 +412,8 @@ unsafe fn run_window(machine: GuideMachine, hooks: PanelHooks) -> Option<PanelOu
         })
     });
 
-    // Top right of the screen, clear of System Settings, which opens in the
-    // middle.
     let visible: NSRect = msg_send![main_screen, visibleFrame];
-    let origin = NSPoint {
-        x: visible.origin.x + visible.size.width - WIN_W - 24.0,
-        y: visible.origin.y + visible.size.height - WIN_H - 48.0,
-    };
-    let _: () = msg_send![window, setFrameOrigin: origin];
+    let _: () = msg_send![window, setFrameOrigin: guide_origin(visible)];
     let _: () = msg_send![window, makeKeyAndOrderFront: std::ptr::null::<AnyObject>()];
     let _: () = msg_send![window, orderFrontRegardless];
     let _: () = msg_send![app, activateIgnoringOtherApps: true];
@@ -440,6 +434,13 @@ unsafe fn run_window(machine: GuideMachine, hooks: PanelHooks) -> Option<PanelOu
     TILE_BUNDLE.with(|cell| *cell.borrow_mut() = None);
     let _: () = msg_send![window, orderOut: std::ptr::null::<AnyObject>()];
     Some(outcome)
+}
+
+fn guide_origin(visible: NSRect) -> NSPoint {
+    NSPoint {
+        x: visible.origin.x + 24.0,
+        y: visible.origin.y + visible.size.height - WIN_H - 48.0,
+    }
 }
 
 /// Draw `step`: the step's words, or the finished view.
@@ -958,6 +959,26 @@ mod tests {
             );
         }
         std::env::remove_var("CUA_DRIVER_RS_PERMISSIONS_PANEL");
+    }
+
+    #[test]
+    fn the_guide_leaves_a_centred_settings_list_and_its_switches_uncovered() {
+        let settings_width = 723.0;
+        let settings_sidebar = 243.0;
+        for (width, height) in [(1280.0, 775.0), (1440.0, 875.0), (1920.0, 1055.0)] {
+            let visible = NSRect {
+                origin: NSPoint { x: 0.0, y: 0.0 },
+                size: NSSize { width, height },
+            };
+            let at = guide_origin(visible);
+            let list_left = (width - settings_width) / 2.0 + settings_sidebar;
+            assert!(
+                at.x + WIN_W <= list_left,
+                "{width}: guide ends at {}",
+                at.x + WIN_W
+            );
+            assert!(at.x >= 0.0 && at.y >= 0.0 && at.y + WIN_H <= height);
+        }
     }
 
     #[test]

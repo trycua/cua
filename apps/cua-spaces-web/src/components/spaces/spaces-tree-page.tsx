@@ -437,13 +437,13 @@ export function SpacesTreePage({ search = {}, onSearchDone }: { search?: Compute
         </p>
       ) : null}
       {single ? (
-        // f7: only This Mac. Agents are better off on a computer you're not using.
+        // f7: only This Mac. Offer to add another computer they own.
         <GroupedSection className="mt-8" data-tree-single="">
           <div className="flex items-center gap-4 px-5 py-4">
             <HardDriveIcon className="size-6 shrink-0 text-muted-foreground" strokeWidth={1.5} />
             <div className="min-w-0 flex-1">
-              <div className="text-[15px] font-medium">Add a computer you're not using</div>
-              <div className="text-[13px] text-muted-foreground">A Mac mini or PC you own.</div>
+              <div className="text-[15px] font-medium">Add another computer</div>
+              <div className="text-[13px] text-muted-foreground">Any Mac or PC you have, so your agents can work there too.</div>
             </div>
             <Button variant="outline" onClick={() => setAdding(true)}>
               Add a computer

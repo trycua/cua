@@ -6529,16 +6529,20 @@ resources:
             ]
         );
         assert_eq!(structured["effect"], "unverifiable");
-        // An unconfirmed click says what to read next, built from the request.
+        // An unconfirmed coordinate click says what to read next, built from
+        // the request: a zoom of the spot that was clicked.
         assert_eq!(
             structured["next_call"],
             serde_json::json!({
-                "tool": "get_window_state",
+                "tool": "zoom",
                 "arguments": {
                     "pid": 42,
                     "window_id": 7,
                     "session": "projection",
-                    "since": "latest",
+                    "x1": 0.0,
+                    "y1": 0.0,
+                    "x2": 130.0,
+                    "y2": 80.0,
                 },
             })
         );

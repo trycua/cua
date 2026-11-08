@@ -847,3 +847,45 @@ fn a_desktop_scope_action_points_at_the_window_target() {
         .contains("Foreground only if the user allows the pointer to move."));
     assert!(hint.next_call.is_none(), "no window is known");
 }
+
+#[test]
+fn unverifiable_coordinate_click_points_at_a_zoom_of_the_clicked_spot() {
+    let seed = seed(json!({"pid": 4242, "window_id": 17, "x": 585, "y": 188, "session": "run-1"}));
+    let hint = hint_for("click", &seed, false, json!({"effect": "unverifiable"}));
+    assert!(hint.hint.contains("not by clicking again"));
+    assert!(hint.hint.chars().count() <= MAX_HINT_CHARS);
+    assert_eq!(
+        call_value(&hint),
+        json!({
+            "tool": "zoom",
+            "arguments": {
+                "pid": 4242, "window_id": 17, "session": "run-1",
+                "x1": 465.0, "y1": 128.0, "x2": 705.0, "y2": 248.0,
+            },
+        })
+    );
+}
+
+#[test]
+fn a_click_near_the_window_edge_clamps_the_zoom_region_and_element_clicks_keep_the_read() {
+    let near_edge = seed(json!({"pid": 1, "window_id": 2, "x": 10, "y": 5}));
+    let hint = hint_for(
+        "double_click",
+        &near_edge,
+        false,
+        json!({"effect": "unverifiable"}),
+    );
+    let call = call_value(&hint);
+    assert_eq!(call["arguments"]["x1"], json!(0.0));
+    assert_eq!(call["arguments"]["y1"], json!(0.0));
+    let element = seed(json!({"pid": 1, "window_id": 2, "x": 10, "y": 5, "element_token": "s1:3"}));
+    let hint = hint_for("click", &element, false, json!({"effect": "unverifiable"}));
+    assert_eq!(call_value(&hint)["tool"], "get_window_state");
+    let noop = hint_for(
+        "click",
+        &near_edge,
+        false,
+        json!({"effect": "suspected_noop"}),
+    );
+    assert_eq!(call_value(&noop)["tool"], "get_window_state");
+}

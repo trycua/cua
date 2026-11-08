@@ -139,12 +139,23 @@ impl Tool for ZoomTool {
                     return refusal;
                 }
                 let (w, h) = (crop.out_w, crop.out_h);
+                // A crop shrunk well below native size cannot show small text
+                // or one-letter flags; say so and how to fix it.
+                let shrunk_note = if crop.scale_inv > 1.25 {
+                    format!(
+                        " Shrunk {:.1}x to fit 500 px, so small text may be unreadable; zoom a \
+                         narrower region (about 400 px wide or less) to magnify it.",
+                        crop.scale_inv
+                    )
+                } else {
+                    String::new()
+                };
                 let b64 = BASE64.encode(&crop.jpeg_bytes);
                 ToolResult {
                     content: vec![
                         Content::image_jpeg(b64),
                         Content::text(format!(
-                            "Zoom region ({x1:.0},{y1:.0})–({x2:.0},{y2:.0}) → {w}×{h} px JPEG."
+                            "Zoom region ({x1:.0},{y1:.0})–({x2:.0},{y2:.0}) → {w}×{h} px JPEG.{shrunk_note}"
                         )),
                     ],
                     is_error: None,
@@ -155,7 +166,8 @@ impl Tool for ZoomTool {
                         // don't have to translate "jpeg" → "image/jpeg" or
                         // sniff base64 magic bytes.
                         "width": w, "height": h, "format": "jpeg",
-                        "mime_type": "image/jpeg"
+                        "mime_type": "image/jpeg",
+                        "scale": 1.0 / crop.scale_inv
                     })),
                     action_record: None,
                 }

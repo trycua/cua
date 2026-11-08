@@ -78,6 +78,8 @@ pub struct Seed {
     target_id: Option<String>,
     tab_id: Option<String>,
     desktop_target: bool,
+    /// Window-pixel point of a coordinate click (no `element_token`).
+    point: Option<(f64, f64)>,
 }
 
 impl Seed {
@@ -104,6 +106,14 @@ impl Seed {
             desktop_target: target
                 .is_some_and(|t| t.get("kind").and_then(Value::as_str) == Some("desktop"))
                 || args.get("scope").and_then(Value::as_str) == Some("desktop"),
+            point: match (
+                args.get("x").and_then(Value::as_f64),
+                args.get("y").and_then(Value::as_f64),
+                args.get("element_token").is_some(),
+            ) {
+                (Some(x), Some(y), false) => Some((x, y)),
+                _ => None,
+            },
         }
     }
 }
@@ -192,6 +202,30 @@ impl<'a> Ctx<'a> {
         arguments.insert("include_accessibility_tree".into(), json!(false));
         Some(NextCall {
             tool: "get_window_state",
+            arguments,
+        })
+    }
+
+    /// `zoom` on the spot a coordinate click landed. Surfaces drawn by their
+    /// own toolkit (a GnuCash register, a canvas) expose no cell to read back, so
+    /// the picture of the clicked spot is the readback; the crop is small enough
+    /// to read a one-letter flag.
+    fn look_at_click_point(&self) -> Option<NextCall> {
+        if self.seed.desktop_target {
+            return None;
+        }
+        let (x, y) = self.seed.point?;
+        let mut arguments = self.window_args()?;
+        let (x1, y1) = (
+            (x - CLICK_ZOOM_RADIUS).max(0.0),
+            (y - CLICK_ZOOM_RADIUS / 2.0).max(0.0),
+        );
+        arguments.insert("x1".into(), json!(x1.round()));
+        arguments.insert("y1".into(), json!(y1.round()));
+        arguments.insert("x2".into(), json!((x + CLICK_ZOOM_RADIUS).round()));
+        arguments.insert("y2".into(), json!((y + CLICK_ZOOM_RADIUS / 2.0).round()));
+        Some(NextCall {
+            tool: "zoom",
             arguments,
         })
     }
@@ -896,6 +930,9 @@ const ACTION_TOOLS: &[&str] = &[
     "browser_set_input_files",
 ];
 
+/// Half-width, in window pixels, of the crop `look_at_click_point` suggests.
+const CLICK_ZOOM_RADIUS: f64 = 120.0;
+
 /// The hint for an action that ran but was not confirmed. `effect` is
 /// `unverifiable` (nothing could prove it) or `suspected_noop` (the evidence
 /// says nothing changed).
@@ -920,6 +957,17 @@ fn effect_hint(c: &Ctx, effect: &str) -> Option<RecoveryHint> {
             }
         };
         return Some(RecoveryHint::new(text).call(c.read_page()));
+    }
+    if !noop && matches!(c.tool, "click" | "double_click" | "right_click") {
+        if let Some(look) = c.look_at_click_point() {
+            return Some(
+                RecoveryHint::new(
+                    "The click was sent but the app exposes nothing to confirm it. Check the spot with \
+                     this zoom, not by clicking again: a repeat toggles checkboxes and flags back.",
+                )
+                .call(Some(look)),
+            );
+        }
     }
     let text = match (c.tool, noop) {
         ("click" | "double_click" | "right_click", false) => {

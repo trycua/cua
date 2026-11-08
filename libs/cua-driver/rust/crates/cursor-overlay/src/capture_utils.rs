@@ -22,7 +22,8 @@ pub struct CropResult {
     pub origin_y: f64,
     /// Inverse of the resize scale: `cw / out_w`.
     /// Multiply a zoom-image X coordinate by this to get the full-window offset from origin.
-    /// Equal to 1.0 when no downscale was applied.
+    /// Equal to 1.0 when no resize was applied, above 1.0 when the crop was
+    /// shrunk to fit `max_width`, below 1.0 when a narrow crop was enlarged.
     pub scale_inv: f64,
 }
 
@@ -35,6 +36,9 @@ impl CropResult {
         )
     }
 }
+
+/// Largest enlargement applied to a narrow crop.
+pub const MAX_UPSCALE: f64 = 4.0;
 
 /// Decode a PNG, crop to the given region with 20% padding on all sides,
 /// optionally scale down to `max_width`, and re-encode as JPEG.
@@ -67,11 +71,20 @@ pub fn crop_png_to_jpeg(
 
     let cropped = img.crop_imm(cx1, cy1, cw, ch);
 
-    // Scale down if the crop is wider than max_width.
-    let out: DynamicImage = if cw > max_width {
-        let scale = max_width as f64 / cw as f64;
+    // Scale down if the crop is wider than max_width. Scale a narrow crop up
+    // (at most MAX_UPSCALE times) so a one-letter flag in a small region is
+    // legible instead of a few pixels wide.
+    let target_w = if cw > max_width {
+        max_width
+    } else {
+        ((cw as f64 * MAX_UPSCALE).round() as u32)
+            .min(max_width)
+            .max(cw)
+    };
+    let out: DynamicImage = if target_w != cw {
+        let scale = target_w as f64 / cw as f64;
         let new_h = ((ch as f64) * scale).round().max(1.0) as u32;
-        cropped.resize_exact(max_width, new_h, FilterType::Lanczos3)
+        cropped.resize_exact(target_w, new_h, FilterType::Lanczos3)
     } else {
         cropped
     };
@@ -94,4 +107,43 @@ pub fn crop_png_to_jpeg(
         origin_y: cy1 as f64,
         scale_inv,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn png(w: u32, h: u32) -> Vec<u8> {
+        let img = DynamicImage::new_rgb8(w, h);
+        let mut buf = Vec::new();
+        img.write_to(&mut std::io::Cursor::new(&mut buf), image::ImageFormat::Png)
+            .unwrap();
+        buf
+    }
+
+    #[test]
+    fn a_wide_region_is_shrunk_and_reports_the_shrink() {
+        let crop = crop_png_to_jpeg(&png(1600, 800), 100.0, 100.0, 900.0, 300.0, 500).unwrap();
+        assert_eq!(crop.out_w, 500);
+        assert!(crop.scale_inv > 2.0, "{}", crop.scale_inv);
+    }
+
+    #[test]
+    fn a_narrow_region_is_enlarged_up_to_the_cap_and_maps_back() {
+        let crop = crop_png_to_jpeg(&png(800, 600), 300.0, 200.0, 400.0, 240.0, 500).unwrap();
+        // 100 px + 20% padding each side = 140 px, enlarged 3.57x to the 500 px cap.
+        assert_eq!(crop.out_w, 500);
+        assert!(crop.scale_inv < 1.0);
+        let (x, y) = crop.zoom_to_window(250.0, 100.0);
+        assert!((x - (280.0 + 250.0 * crop.scale_inv)).abs() < 1e-6);
+        assert!(y > 200.0);
+    }
+
+    #[test]
+    fn a_tiny_region_is_enlarged_at_most_four_times() {
+        let crop = crop_png_to_jpeg(&png(800, 600), 300.0, 200.0, 330.0, 220.0, 500).unwrap();
+        // 30 px + padding = 42 px, capped at 4x = 168 px.
+        assert!(crop.out_w <= (42.0 * MAX_UPSCALE).round() as u32 + 1);
+        assert!(crop.out_w > 42);
+    }
 }

@@ -186,18 +186,65 @@ fn setting_path() -> Option<PathBuf> {
     pip_preview::default_config_path().map(|config| config.with_file_name(SETTING_FILE))
 }
 
+/// The switch, whether a saved portal Deny keeps it off, and what the desktop
+/// entry names: what `cua-driver kwin-capture status`, the installer and the
+/// health report all read, so none of them guesses.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Status {
+    pub setting: Setting,
+    /// Switched on, but a saved screenshot Deny (or a portal permission store
+    /// that did not answer) keeps the adapter off.
+    pub kept_off: bool,
+    pub entry: Entry,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Entry {
+    None,
+    /// Names this executable: KWin 6.7 and older grant it.
+    Current(PathBuf),
+    /// Names another executable: KWin 6.7 and older refuse this one.
+    Other(PathBuf),
+}
+
+impl Status {
+    /// Whether the KWin adapter runs: the same answer as [`allowed`].
+    pub fn on(&self) -> bool {
+        self.setting != Setting::Off && !self.kept_off
+    }
+}
+
+pub fn status() -> Status {
+    let setting = Setting::saved();
+    let kept_off = setting == Setting::On && portal_denies_screenshots();
+    let entry = match desktop_entry_path().filter(|path| path.exists()) {
+        None => Entry::None,
+        Some(path) => {
+            let exe = entry_exe();
+            let text = std::fs::read_to_string(&path);
+            let current = matches!((exe, text), (Ok(exe), Ok(text)) if desktop_entry(&exe).is_ok_and(|entry| entry == text));
+            if current {
+                Entry::Current(path)
+            } else {
+                Entry::Other(path)
+            }
+        }
+    };
+    Status {
+        setting,
+        kept_off,
+        entry,
+    }
+}
+
 /// What `cua-driver kwin-capture status` prints.
 pub fn report() -> String {
-    let setting = Setting::saved();
-    let denied = setting == Setting::On && portal_denies_screenshots();
-    let entry = desktop_entry_path().filter(|path| path.exists());
-    let current = entry.as_deref().is_some_and(|path| {
-        let exe = entry_exe();
-        let text = std::fs::read_to_string(path);
-        matches!((exe, text), (Ok(exe), Ok(text)) if desktop_entry(&exe).is_ok_and(|entry| entry == text))
-    });
-    let mut lines = vec![format!("kwin window capture: {}", setting.as_str())];
-    if denied {
+    describe(&status())
+}
+
+fn describe(status: &Status) -> String {
+    let mut lines = vec![format!("kwin window capture: {}", status.setting.as_str())];
+    if status.kept_off {
         lines.push(
             "kept off: the desktop portal has a saved screenshot Deny, or its permission \
              store did not answer; run `cua-driver kwin-capture on --override-portal-deny` \
@@ -205,13 +252,13 @@ pub fn report() -> String {
                 .into(),
         );
     }
-    lines.push(match (entry, current) {
-        (Some(path), true) => format!("desktop entry: {}", path.display()),
-        (Some(path), false) => format!(
+    lines.push(match &status.entry {
+        Entry::Current(path) => format!("desktop entry: {}", path.display()),
+        Entry::Other(path) => format!(
             "desktop entry: {} names another executable; run `cua-driver kwin-capture on` again",
             path.display()
         ),
-        (None, _) => "desktop entry: none".into(),
+        Entry::None => "desktop entry: none".into(),
     });
     lines.join("\n") + "\n"
 }
@@ -275,6 +322,51 @@ mod tests {
         for setting in [Setting::Off, Setting::On, Setting::OverridePortalDeny] {
             assert_eq!(Setting::parse(setting.as_str()), Some(setting));
         }
+    }
+
+    #[test]
+    fn the_status_names_the_switch_a_kept_off_deny_and_the_entry() {
+        let entry = PathBuf::from("/home/u/.local/share/applications/ai.cua.driver.desktop");
+        let on = Status {
+            setting: Setting::On,
+            kept_off: false,
+            entry: Entry::Current(entry.clone()),
+        };
+        assert!(on.on());
+        assert_eq!(
+            describe(&on),
+            format!(
+                "kwin window capture: on\ndesktop entry: {}\n",
+                entry.display()
+            )
+        );
+        let kept_off = Status {
+            kept_off: true,
+            ..on.clone()
+        };
+        assert!(!kept_off.on());
+        assert!(describe(&kept_off).contains("\nkept off: the desktop portal"));
+        let other = Status {
+            entry: Entry::Other(entry.clone()),
+            ..on.clone()
+        };
+        assert!(other.on());
+        assert!(describe(&other).contains("names another executable"));
+        let off = Status {
+            setting: Setting::Off,
+            kept_off: false,
+            entry: Entry::None,
+        };
+        assert!(!off.on());
+        assert_eq!(
+            describe(&off),
+            "kwin window capture: off\ndesktop entry: none\n"
+        );
+        let overridden = Status {
+            setting: Setting::OverridePortalDeny,
+            ..off
+        };
+        assert!(overridden.on());
     }
 
     #[test]

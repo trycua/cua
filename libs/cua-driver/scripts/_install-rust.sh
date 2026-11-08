@@ -1530,7 +1530,19 @@ else
     ln -s "$CURRENT_LINK/$BINARY_NAME" "$BIN_LINK"
     log "symlinked $BIN_LINK -> $CURRENT_LINK/$BINARY_NAME"
     if command -v kwin_wayland >/dev/null 2>&1; then
-        log "KWin window capture is off; \`cua-driver kwin-capture on\` turns it on"
+        # Ask the installed driver: the switch survives updates, so a user who
+        # turned it on must not read that it is off.
+        KWIN_STATUS="$("$CURRENT_LINK/$BINARY_NAME" kwin-capture status 2>/dev/null || true)"
+        case "$KWIN_STATUS" in
+            "kwin window capture: on"*|"kwin window capture: override-portal-deny"*)
+                while IFS= read -r line; do
+                    [[ -n "$line" ]] && log "$line"
+                done <<<"$KWIN_STATUS"
+                ;;
+            *)
+                log "KWin window capture is off; \`cua-driver kwin-capture on\` turns it on"
+                ;;
+        esac
     fi
 
     # Post-install GC of old per-version release dirs. Runs AFTER the

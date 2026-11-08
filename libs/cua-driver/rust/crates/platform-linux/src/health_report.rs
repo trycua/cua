@@ -180,6 +180,14 @@ async fn check_screen_capture_capability() -> CheckEntry {
     // misleading "screen capture will fail" just because wlroots isn't
     // present.
     if is_wayland_session() {
+        // Tier order follows `screenshot_display_dispatch`: the KWin adapter,
+        // when the operator switched it on, comes before the native tiers.
+        let kwin = tokio::task::spawn_blocking(kwin_switch)
+            .await
+            .unwrap_or(KwinSwitch::Off);
+        if let Some(entry) = kwin_capture_first(&kwin) {
+            return entry;
+        }
         let snap = tokio::task::spawn_blocking(probe_wayland_managers)
             .await
             .ok()
@@ -253,6 +261,58 @@ async fn check_screen_capture_capability() -> CheckEntry {
         "X11 is not reachable; screen capture will fail.",
         hint,
     )
+}
+
+/// The KWin adapter's switch, as the capture dispatch reads it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum KwinSwitch {
+    /// Off, kept off by a saved portal Deny, or not a KWin session: the native
+    /// tiers decide.
+    Off,
+    /// On. `other_entry` is a desktop entry naming another executable, which
+    /// KWin 6.7 and older hold against this one.
+    On { other_entry: Option<String> },
+}
+
+#[cfg(target_os = "linux")]
+fn kwin_switch() -> KwinSwitch {
+    use crate::wayland::{kwin_access, kwin_capture};
+    if !kwin_capture::may_be_session() {
+        return KwinSwitch::Off;
+    }
+    let status = kwin_access::status();
+    if !status.on() {
+        return KwinSwitch::Off;
+    }
+    let other_entry = match status.entry {
+        kwin_access::Entry::Other(path) => Some(path.display().to_string()),
+        _ => None,
+    };
+    KwinSwitch::On { other_entry }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn kwin_switch() -> KwinSwitch {
+    KwinSwitch::Off
+}
+
+/// With the KWin adapter on, desktop capture asks KWin's ScreenShot2 first.
+fn kwin_capture_first(kwin: &KwinSwitch) -> Option<CheckEntry> {
+    let KwinSwitch::On { other_entry } = kwin else {
+        return None;
+    };
+    let mut message = "KWin capture is on (`cua-driver kwin-capture on`): screenshots go \
+         through KWin ScreenShot2 first, with no portal request; the native tiers \
+         and the Screenshot portal are the fallback."
+        .to_owned();
+    if let Some(path) = other_entry {
+        message.push_str(&format!(
+            " The desktop entry {path} names another executable, so KWin 6.7 and \
+             older refuse this one and capture falls back; run \
+             `cua-driver kwin-capture on` again."
+        ));
+    }
+    Some(CheckEntry::pass(NAME_SCREEN_CAPTURE_CAPABILITY, message))
 }
 
 /// `wayland_backend` doctor entry — surfaces which wlroots manager globals
@@ -661,6 +721,46 @@ mod tests {
     use cua_driver_core::health_report::{CheckStatus, HealthReportTool};
     use cua_driver_core::tool::Tool;
     use std::sync::Arc;
+
+    #[test]
+    fn kwin_capture_on_is_reported_as_the_first_capture_tier() {
+        let entry = kwin_capture_first(&KwinSwitch::On { other_entry: None }).unwrap();
+        assert_eq!(entry.status, CheckStatus::Pass);
+        assert!(
+            entry.message.contains("KWin ScreenShot2 first"),
+            "{}",
+            entry.message
+        );
+        assert!(
+            !entry.message.contains("another executable"),
+            "{}",
+            entry.message
+        );
+    }
+
+    #[test]
+    fn kwin_capture_on_with_another_executables_entry_says_to_turn_it_on_again() {
+        let kwin = KwinSwitch::On {
+            other_entry: Some("/home/u/.local/share/applications/ai.cua.driver.desktop".into()),
+        };
+        let entry = kwin_capture_first(&kwin).unwrap();
+        assert_eq!(entry.status, CheckStatus::Pass);
+        assert!(
+            entry.message.contains("names another executable"),
+            "{}",
+            entry.message
+        );
+        assert!(
+            entry.message.contains("cua-driver kwin-capture on` again"),
+            "{}",
+            entry.message
+        );
+    }
+
+    #[test]
+    fn kwin_capture_off_leaves_capture_to_the_native_tiers() {
+        assert!(kwin_capture_first(&KwinSwitch::Off).is_none());
+    }
 
     #[test]
     fn wayland_backend_passes_on_non_wlroots_when_portal_libei_backend_is_reachable() {

@@ -2892,6 +2892,25 @@ impl LocalRuntime for VmmLocal {
         Ok(out)
     }
 
+    /// A Lume VM behind a network gateway that ended is restarted behind a
+    /// new one ([`cua_vmm::Runtime::mend`]); other engines have nothing to
+    /// repair.
+    async fn mend(&self, name: &str, runtime_type: &str) -> RuntimeResult<Option<LocalInstance>> {
+        if !runtime_type.trim().eq_ignore_ascii_case("lume") {
+            return Ok(None);
+        }
+        let (_, rt) = self.owner(name).await?;
+        let Some(inst) = rt.mend(name).await.map_err(rt_err)? else {
+            return Ok(None);
+        };
+        Ok(Some(LocalInstance {
+            backend: runtime_label(&inst),
+            name: inst.name,
+            status: status_of(inst.status),
+            endpoints: endpoints_of(inst.endpoints),
+        }))
+    }
+
     /// A container's exit record (its code and `OOMKilled`), read from the
     /// engine only while it is up: the built-in Linux runtime is never
     /// booted for it. Other runtimes keep no such record.

@@ -77,8 +77,10 @@ CallEnds == /\ call = "running" /\ call' = "idle"
 
 Next == \/ UserGrants \/ UserRevokes \/ GatePasses \/ GateTimesOut \/ SlowPollOpens
         \/ Regated \/ Shutdown \/ CallChecks \/ CallRefused \/ CallRuns \/ CallEnds
-\* The gate's probe and the slow poll run on their own threads, so each one
-\* that stays able to act does act.
+\* Fairness: the gate's probe and the slow poll run on their own threads, and
+\* a fresh child probe made after you grant sees the grant. A probe that keeps
+\* failing reads as "missing" (platform-macos/src/permissions/gate.rs:122-150)
+\* and keeps the gate closed; PG2 assumes that does not go on forever.
 Spec == Init /\ [][Next]_vars /\ WF_vars(GatePasses) /\ WF_vars(SlowPollOpens)
 
 \* PG1. No tool runs while the permission gate is pending.

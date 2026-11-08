@@ -57,7 +57,10 @@ Done == pc = "restored" /\ UNCHANGED vars
 Next == Save \/ Front \/ UserSwitches \/ OtherActivates \/ Restore \/ Done
 Spec == Init /\ [][Next]_vars
 
-\* FR1. The driver never undoes an app switch you made during its turn.
+\* FR1. The turn's restore never undoes an app switch you made during the turn.
+\* Not covered: a switch you make between the front read and set_front(T)
+\* (Save, then Front) is overridden by the activation itself; that is the
+\* foreground delivery you asked for, and FR1 does not count it.
 FR1 == ~undidUser
 \* FR2. A turn nobody interrupted gives your app back.
 FR2 == (pc = "restored" /\ ~userMoved /\ saved = "U" /\ front # "O") => front = "U"

@@ -490,6 +490,16 @@ pub async fn provision(
 ) -> Result<()> {
     std::fs::create_dir_all(dir)?;
     let disk = dir.join("disk");
+    // A distribution of this name is registered already: its disk is the one
+    // in use (a failed import must never delete it).
+    if list(wsl, false)
+        .await
+        .is_ok_and(|names| names.iter().any(|n| n == name))
+    {
+        return Err(VmmError::other(format!(
+            "the Linux runtime {name} is already registered with WSL (its disk is kept);              remove it with `wsl --unregister {name}` to set it up again"
+        )));
+    }
     let _ = std::fs::remove_dir_all(&disk);
     std::fs::create_dir_all(&disk)?;
     report("Importing the Linux runtime", 0.05);

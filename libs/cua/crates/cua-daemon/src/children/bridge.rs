@@ -102,6 +102,61 @@ pub(crate) fn reap(shared: &Arc<Shared>) {
     }
 }
 
+/// Cancels the pool runs whose submitting Space is gone or turned off: a
+/// deleted or stopped parent leaves no job running ([`super::runs`]).
+pub(crate) fn reap_runs(shared: &Arc<Shared>) {
+    let spaces = shared.runtime.spaces();
+    let home = spaces.home_dir().to_path_buf();
+    let ledger = super::runs::Ledger::load(&home);
+    if ledger.runs.is_empty() {
+        return;
+    }
+    // A registry that cannot be read decides nothing.
+    let Ok(records) = spaces.registry().list() else {
+        return;
+    };
+    let ids: std::collections::BTreeSet<String> = records.into_iter().map(|r| r.id).collect();
+    let alive = |id: &str| {
+        if !ids.contains(id) {
+            return false;
+        }
+        let (_, state) = spaces.power_of(id);
+        !matches!(state.as_str(), "stopped" | "suspended")
+    };
+    for run in super::runs::orphaned(&ledger, alive) {
+        let shared = shared.clone();
+        let home = home.clone();
+        tokio::spawn(async move {
+            use cua_proto::daemon::v1::space_service_server::SpaceService as _;
+            let target = if run.starts_with("l-") {
+                "local"
+            } else {
+                "pool"
+            };
+            let owner = crate::server::Svc(shared);
+            let r = owner
+                .pool_request(tonic::Request::new(
+                    cua_proto::daemon::v1::PoolRequestRequest {
+                        target: target.into(),
+                        method: "cancel_run".into(),
+                        params_json: serde_json::json!({ "run": run }).to_string(),
+                    },
+                ))
+                .await;
+            match r {
+                // Canceled, or no such run any more: done either way.
+                Ok(_) => {
+                    tracing::info!(%run, "canceled a run whose Space is gone");
+                    super::runs::Ledger::update(&home, |l| {
+                        l.runs.remove(&run);
+                    });
+                }
+                Err(e) => tracing::warn!(%run, error = %e, "could not cancel an orphaned run"),
+            }
+        });
+    }
+}
+
 /// Only Spaces this computer runs itself hold a channel to it.
 fn runs_here(id: &str) -> bool {
     id.starts_with("local:")
@@ -117,6 +172,7 @@ pub(crate) fn spawn(shared: Arc<Shared>, mut shutdown: watch::Receiver<bool>) ->
         let mut last_reap = std::time::Instant::now() - REAP_EVERY;
         loop {
             reconcile(&shared, &mut bridges);
+            reap_runs(&shared);
             if last_reap.elapsed() >= REAP_EVERY {
                 last_reap = std::time::Instant::now();
                 reap(&shared);

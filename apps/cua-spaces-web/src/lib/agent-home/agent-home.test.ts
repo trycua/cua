@@ -119,6 +119,9 @@ describe("the agent's prompt", () => {
     expect(p).toContain("your own small Linux Space");
     expect(p).toContain("posted to the thread, in order, as its own message, and none is replaced");
     expect(p).toContain("cua spaces ls");
+    // GPU work goes to the person's computers through the pool.
+    expect(p).toContain("@app.function(gpu=...)");
+    expect(p).toContain("cua run file.py::fn");
     expect(p).toContain(approvalAction("machines.use"));
     expect(p).toContain("Unless the person says where");
     expect(p.endsWith("test https://github.com/acme/app")).toBe(true);

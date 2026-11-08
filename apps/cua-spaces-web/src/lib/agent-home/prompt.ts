@@ -30,6 +30,7 @@ export function homeBrief(setup: HomeSetup, abilities: readonly AbilityDescripto
     "",
     "What you can do:",
     ...abilities.map((a) => `- ${a.summary} Run: ${a.call}`),
+    "- Run training or any GPU or heavy work on the person's own computers, which have the GPUs: write a Python function with @app.function(gpu=...) and run it with `cua run file.py::fn` (`cua computers` shows what is there, `cua jobs` follows it). Read the cua-pool skill first. Your runs end when this Space does.",
     "",
     "Before an ability that needs the person's OK, ask in this thread with an approval whose action is the ability, for example",
     `${approvalAction("spaces.list")} (to see all their Spaces) or ${approvalAction("machines.use")} with the computer's name in the details, and wait for the answer. Do not look for another way around a refusal.`,

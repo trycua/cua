@@ -68,3 +68,27 @@ G7 (UI), G8 (budgets). After each fix the real prompt runs in the real app and
 the run is recorded; a run passes only if the agent is not confused or verbose,
 nothing errors, nothing is left behind, the job used the GPU and produced a
 trained ~1B classifier with an evaluation report.
+
+## Audit: every way a Space can make or run another Space
+
+Invariant: anything a Space creates or runs is its **child**: tagged with its parent, listed under it, cleaned up with it, and bound by its network and egress rules (never wider). Enforcement is in the daemon's scoped channel (`children/api.rs`, authorized by the Space's capability), not in the client library.
+
+How it was checked: code reading of every handler the scoped channel serves (`SpaceService`, `DaemonService`, `ShareService`), the existing in-process red-team suite (`children/tests.rs`), the new test for runs, and a probe run from inside a real Space (`libs/cua/scripts/space-escape-probe.py`).
+
+| Pathway (from inside a Space) | Before | Escaped? | Now |
+|---|---|---|---|
+| `create_space`, `sandbox_create`, `cua sb create` | `child_request`: parent forced to the caller, network cut to the caller's, egress the caller's, `widen`, forged `cua.parent` labels, `parent`, `reuse`, `durable` refused, depth and budget checked | No | Unchanged, covered by `a_create_becomes_a_child_or_a_plain_refusal` |
+| Create on another computer or a cloud (`location`) | Allowed within budget; the network goes with the request cut to the caller's; labels carry the tree | No | Unchanged |
+| `add_space`, `remove_space`, `leave_spaces`, `provision_local_space`, `release_space`, volumes (`list/create/delete_volume`), `list_hosts`, `get_gpu_support`, `list_orphans`, builds | Denied | No | Unchanged (`owner_calls_are_refused...`) |
+| `fork_space` | Own subtree only, depth checked | No | Unchanged |
+| `set_space_network/egress/clipboard/volume`, `get_space_network(_log)`, tree budget | Denied or read-only; "the owner's, never an agent's" | No | Unchanged |
+| `call_space_tool` / `cua mcp` tools | Allowlist (`tool_target`): stop/start/keep_awake, bash, write, upload/download, list/call tool, window streaming; everything else (share_space, cloud_connect, create_space, agent_start, teleport, prewarm, checkpoint) refused by name | No | Unchanged |
+| `create_share` | TCP port of itself or its children only, no consent, own shares listed | No | Unchanged |
+| **`cua run` / jobs / gangs** (`pool_request submit`) | The job's Space was created with the default `internet` network and **no parent**: a Space with `none` ran a job with the internet, and the job never showed under it | **Yes, high** | Daemon stamps parent, root, depth and the parent's network over the request (also `jobs[].spec`); the host records a child (tree record on this computer, labels and the cut-down network on another). Refused with a reason: a run deeper than the tree allows |
+| **`kind=machine` jobs** | Run natively on a dedicated host, outside every network rule | **Yes, high** | Refused from a Space with network rules; allowed from a plain `internet` Space |
+| **Job `services`** (host services such as `compat:e2b`, which create Spaces on the host's own terms) | Accepted from a Space | **Yes, medium** | Refused |
+| **Job `on` = a cloud provider** (`modal`, `aws`, ...) | Accepted: spends the owner's cloud outside the tree's budget | **Yes, medium** | Refused |
+| `cua compat` e2b/daytona/modal shims | A gateway process in the Space calling the SDK: goes through the scoped channel, so its sandboxes are children | No | Unchanged; the host-side service form is refused above |
+| In-Space `cua`/SDK with no spawn channel | Fell back to finding or starting a daemon of its own (G11) | Availability bug; a Space-local daemon only has what the Space has | `ensure_daemon` refuses inside a Space (`CUA_SPACE`) with a clear message. Client-side courtesy: the guarantee is the scoped channel |
+| Raw routes: engine socket, WSL interop, the host's addresses and the daemon, relay, SMB and RPC ports, credentials, the daemon's token files | Not reachable (probe) | No | Kept by `space-escape-probe.py` (gateway and LAN address time out even for listening ports; no `docker.sock`, `/mnt/c`, `/run/WSL`; no daemon token or key in the Space; `get_info` returns none) |
+| Not individually tested | prewarm, checkpoint/restore, teleport (refused by the allowlist, covered only by the by-name test of other owner tools); persistent agents (`agent_start` refused) | | Follow-up |

@@ -16,7 +16,8 @@
 import { CheckIcon, ChevronLeftIcon, ChevronRightIcon, LinkIcon, Loader2Icon, PlayIcon, UserPlusIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
-import { threadOpAvailable, useBridge, type ThreadRole } from "@/bridge";
+import { setupCard, threadOpAvailable, useBridge, type ThreadRole } from "@/bridge";
+import { TASK_AGENTS } from "@/components/ask-first/task-agents";
 import { HarnessMark, HARNESSES, harnessInfo } from "@/components/space-thread/harness-marks";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogDescription, DialogPopup, DialogTitle } from "@/components/ui/dialog";
@@ -25,6 +26,7 @@ import { PromptBox } from "@/components/ui/prompt-box";
 import { Select } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { toast } from "@/components/ui/toast";
+import { useConnectors } from "@/hooks/use-connectors";
 import { cn } from "@/lib/utils";
 
 import { useJoinCode, type JoinSettings } from "./use-join-code";
@@ -210,7 +212,8 @@ const PICK = "h-7 min-w-0 border-0 bg-muted px-2.5 text-[12.5px] shadow-none dar
 
 /** Start an agent here: today's agent_add, in the Space on your keys. */
 function StartAgent({ space, taken, title, onDone }: { space: AddAgentSpace; taken: readonly string[]; title: ReactNode; onDone: () => void }) {
-  const { data } = useBridge();
+  const { core, data } = useBridge();
+  const connectors = useConnectors();
   const [harness, setHarness] = useState<string>(START_HARNESSES[0]);
   const [name, setName] = useState(() => freeHandle(HANDLE[START_HARNESSES[0]]!, taken));
   const [edited, setEdited] = useState(false);
@@ -221,6 +224,11 @@ function StartAgent({ space, taken, title, onDone }: { space: AddAgentSpace; tak
     setError(null);
     if (!edited) setName(freeHandle(HANDLE[h]!, taken));
   };
+  // Before Start, not after the first task: no connected provider works with this agent (keys read).
+  const setupId = TASK_AGENTS.find((a) => a.id === harness)?.setupId ?? harness;
+  const providers = connectors.view?.providers ?? [];
+  const hasProvider = providers.some((p) => p.state === "connected" && p.worksWith.some((w) => w.agent === setupId));
+  const needsKey = connectors.keysReady && !hasProvider ? (setupCard(core, connectors.input, setupId, START_NAMES[harness] ?? harness)?.body ?? null) : null;
   const start = () => {
     if (!data || !name.trim()) return;
     setBusy(true);
@@ -275,6 +283,11 @@ function StartAgent({ space, taken, title, onDone }: { space: AddAgentSpace; tak
           className="h-7 w-40 border-0 bg-muted text-[12.5px] shadow-none dark:bg-muted"
         />
       </Setting>
+      {needsKey ? (
+        <p data-start-needs-key="" className="mt-1 text-xs text-muted-foreground">
+          {needsKey}
+        </p>
+      ) : null}
       {error ? (
         <p data-start-error="" className="mt-1 text-xs text-destructive">
           {error}

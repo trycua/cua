@@ -956,7 +956,7 @@ fn remove_master_pointer(display: *mut x11::xlib::Display, pointer_id: i32) -> R
 /// Recover only versioned masters whose local owner is provably gone. A PID
 /// alone cannot identify an owner on a shared/remote X server or across restarts.
 pub(crate) fn reap_orphaned_master_pointers() {
-    if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+    if crate::desktop::desktop() != crate::desktop::Desktop::X11 {
         return;
     }
     let Ok(owner) = mpx_owner::Owner::current() else {

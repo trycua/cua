@@ -417,9 +417,13 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
             if model.host.state == nil, model.servicesIn { await model.host.refresh() }
             // The permissions page also asks for Local Network: the daemon
             // checks it in the background (its connect makes macOS ask), and
-            // the page reads the answer on its next poll.
+            // the page reads the answer on its next poll. The first run lists
+            // the row first and checks only once the person pressed Allow
+            // (`localNetworkCheck: false` until then), so macOS's prompt comes
+            // right after the step's explanation, not before it.
             let localNetwork = (args["localNetwork"] as? Bool) == true
-            if localNetwork, model.servicesIn {
+            let check = (args["localNetworkCheck"] as? Bool) ?? localNetwork
+            if localNetwork, check, model.servicesIn {
                 Task { @MainActor [model] in await model.checkLocalNetworkFromDaemon() }
             }
             return hostStatus(localNetwork: localNetwork)

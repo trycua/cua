@@ -23,9 +23,11 @@ import { plural } from "@/lib/plural";
 import { parentIdOf } from "@/lib/space-tree";
 import { createError, spaceState } from "@/lib/spaces";
 
-/** The Spaces made under `parentId`, in the order the list has them. */
+/** The Spaces made under `parentId`, by name (kid-a before kid-b), as the Computers tree lists them. */
 export function childrenOfSpace(spaces: readonly Space[], parentId: string, tree: Parameters<typeof parentIdOf>[1]): Space[] {
-  return spaces.filter((s) => s.id !== parentId && parentIdOf(s, tree) === parentId);
+  return spaces
+    .filter((s) => s.id !== parentId && parentIdOf(s, tree) === parentId)
+    .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
 }
 
 /** How many Spaces sit under `parentId` at any depth (what deleting it would take along). */

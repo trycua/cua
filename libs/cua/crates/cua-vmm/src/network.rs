@@ -1094,6 +1094,20 @@ pub fn compile_mode(
         return Ok(rules);
     }
     let mut r: Vec<Rule> = Vec::new();
+    // 1a. A cloud platform's own resolver (Azure's wireserver, GCP's
+    //     metadata server) is also a metadata endpoint. It is opened on
+    //     port 53 only, ahead of the metadata deny, so private DNS zones
+    //     resolve while its HTTP stays closed.
+    if settings.preset != NetworkPreset::None {
+        for ip in dedup(ctx.resolvers.iter().copied()) {
+            if crate::resolver::is_platform_resolver(ip) {
+                r.push(Rule {
+                    ports: Some(vec![53]),
+                    ..Rule::net(Net::host(ip), true, Reason::Resolver)
+                });
+            }
+        }
+    }
     // 1. Platform denies.
     for n in nets(&METADATA) {
         r.push(Rule::net(n, false, Reason::PlatformMetadata));

@@ -122,7 +122,7 @@ describe("InstallerFlow", () => {
 
   it("Welcome has one clear action: a plain line, and Get started has focus so Enter works (CUA-1959)", () => {
     render(<InstallerFlow installer={createFakeInstallerBridge()} host={createFakeHostBridge()} onDone={vi.fn()} />);
-    expect(screen.getByText("Computers for you and your AI agents. Setup takes about a minute.")).toBeInTheDocument();
+    expect(screen.getByText("Computers for you and your AI agents.")).toBeInTheDocument();
     const start = screen.getByRole("button", { name: "Get started" });
     expect(start).toHaveFocus();
     // The only button on the page; the usage switch never blocks it.
@@ -152,7 +152,7 @@ describe("InstallerFlow", () => {
     expect(screen.getByText("Welcome to Cua Spaces")).toBeInTheDocument();
     // The telemetry notice is on Welcome: it is recorded as shown before
     // anything is recorded.
-    expect(screen.getByTestId("telemetry-notice")).toHaveTextContent("Change this here or in Settings, Privacy.");
+    expect(screen.getByTestId("telemetry-notice")).toHaveTextContent("Features you use and errors, linked to your account. Never your files, typing or screen.");
     expect(screen.getByRole("link", { name: "What is collected" })).toHaveAttribute(
       "href",
       "https://cua.ai/docs/cua-sdk/concepts/telemetry",

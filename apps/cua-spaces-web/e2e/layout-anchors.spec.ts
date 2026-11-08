@@ -93,7 +93,6 @@ for (const [width, height] of SIZES) {
         await primary.click();
       }
       await page.locator("[data-new-run='agent']:not([data-state='looking'])").waitFor({ timeout: 30_000 });
-      if (await primary.isDisabled()) await page.locator("[data-new-run-agent][role=checkbox]").first().click();
       await measure("agent");
       await primary.click();
       // Ready is setup's last screen: Done goes to Home, where the rest is asked for after the first job (CUA-3150).

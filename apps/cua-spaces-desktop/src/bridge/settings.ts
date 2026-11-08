@@ -112,6 +112,9 @@ export function settingsState(model: AppModel, parts: HostParts) {
     // The account app (CUA_ENV, CUA_ACCOUNT_APP_URL): the page's core has no
     // environment, so Upgrade's billing fallback names this one.
     accountUrl: model.native.appAccountAppUrl(),
+    // The channel and environment this app runs as (CUA_CHANNEL, CUA_ENV, as cua-home resolves
+    // them): the page's title bar tag ("Local · Staging", the core's `environment.tag`).
+    target: model.native.appTarget(),
     // The CLI this app installs and whether it is here (`cli.ts`).
     cli: cliSetting(model),
     // Settings, Advanced's runtimes as read (`runtimes::RuntimesInput`): the page's core lays out every kind's row.

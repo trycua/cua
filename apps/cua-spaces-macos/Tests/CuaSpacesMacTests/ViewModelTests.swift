@@ -1389,7 +1389,7 @@ struct ViewModelTests {
         await w.submitAddress { _, _, _ in throw TimeoutError.timedOut }
         #expect(w.view.address.error != nil)
         w.send(.addressFailed(error: "status: Unauthenticated"))
-        #expect(w.view.address.error?.hasPrefix("The Space rejected the token") == true)
+        #expect(w.view.address.error?.hasPrefix("This Space didn\u{2019}t accept the access token") == true)
     }
 
     func unlockCase(_ name: String) throws -> KeyvaultOverview { try keyvaultUnlockCase(name) }

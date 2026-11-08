@@ -32,7 +32,7 @@ public final class AgentKeysModel {
     /// after it) replaces the shown one, and is returned as is.
     @discardableResult
     func call(_ method: String, _ args: [String: Any] = [:]) async throws -> Any {
-        guard let tools else { throw AgentsToolError(message: "Agent keys need the cua daemon") }
+        guard let tools else { throw AgentsToolError(message: serviceDownMessage) }
         let r = try await tools.agentsTool(method, args)
         // Every method answers the list after it, except agent_keys.shell (names your shell has).
         if method != "agent_keys.shell", let r = r as? [String: Any] {
@@ -68,7 +68,7 @@ public final class AgentKeysModel {
 
     /// The core's input for the daemon's answer.
     public var input: AppAgentKeysInput {
-        Self.input(report: report, error: error ?? (available ? nil : "Agent keys need the cua daemon"))
+        Self.input(report: report, error: error ?? (available ? nil : serviceDownMessage))
     }
 
     static func input(report: [String: Any]?, error: String?) -> AppAgentKeysInput {

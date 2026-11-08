@@ -214,7 +214,7 @@ export function StreamSurface({ spaceId, os, aspectRatio = 16 / 10, canStream, p
           data-video-hole=""
           className="glass absolute bottom-2 left-1/2 max-w-[calc(100%-1rem)] -translate-x-1/2 truncate rounded-lg px-3 py-1 text-xs text-muted-foreground shadow-float"
         >
-          View only. You can watch, but not control this Space.
+          View only
         </p>
       ) : slot?.phase === "live" && slot.focused ? (
         // While the desktop has the keyboard: how to give it back, over the

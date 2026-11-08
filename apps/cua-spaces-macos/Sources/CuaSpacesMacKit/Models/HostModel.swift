@@ -267,11 +267,6 @@ public final class HostModel {
         "Sign in to Cua in your browser to continue. Setup finishes on its own after that."
     /// Called whenever the state changes (the roster's entry follows it).
     public var onChange: (() -> Void)?
-    /// Called when a setup, the Provide Spaces switch or joining with a code
-    /// turned providing Spaces on here (never for a Mac that already
-    /// provided them): the app asks for Local Network access then, on this
-    /// Mac, so macOS Spaces your other devices create here can connect.
-    public var onStartedProvidingSpaces: (() -> Void)?
     /// This Mac provides Spaces now (as of the last status).
     public var providesSpaces: Bool { status.map { $0.configured && $0.provideSpaces } ?? false }
     /// The host's last status, as the SDK reported it.
@@ -299,12 +294,6 @@ public final class HostModel {
     public var formView: AppHostFormView? { form.map { appHostFormView(state: $0, identity: identity) } }
     /// What the roster's This machine entry reads.
     public var summaryInput: AppHostSummaryInput? { state.map { appHostSummaryInput(state: $0) } }
-
-    /// Calls `onStartedProvidingSpaces` when providing Spaces went from off
-    /// (`was`) to on with the last status.
-    func followProviding(from was: Bool) {
-        if !was && providesSpaces { onStartedProvidingSpaces?() }
-    }
 
     func apply(_ status: HostStatus) {
         self.status = status
@@ -470,13 +459,11 @@ public final class HostModel {
     /// form's submit, and the web UI's): relay setup with the account token.
     func setUp(_ request: AppHostSetupRequest, on host: HostRunning) async throws {
         defer { progress = nil }
-        let was = providesSpaces
         let status = request.mode == "relay"
             ? try await setUpRelay(host, request)
             : try await host.setupRequest(request: request, accountToken: nil)
         setupFailure = nil
         apply(status)
-        followProviding(from: was)
     }
 
     /// Relay setup always runs with a valid account token: signed out (or a
@@ -675,10 +662,8 @@ public final class HostModel {
     private func perform(_ id: AppHostActionId, on host: HostRunning) async throws {
         // The two settings: the core says what each switch changes.
         if let change = appHostSettingChange(id: id) {
-            let was = providesSpaces
             apply(try await host.configure(change: HostSettingsChange(
                 shareDesktop: change.shareDesktop, provideSpaces: change.provideSpaces)))
-            followProviding(from: was)
             return
         }
         switch id {

@@ -199,11 +199,40 @@ pub fn write_shim(dir: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
+/// The Python that reads the decorator: `python3` where it is the name, else
+/// the first of `python3`, `python` and `py` (Windows launchers) that runs
+/// and says it is Python 3 (the Microsoft Store stub does not).
+pub fn default_python() -> String {
+    if !cfg!(windows) {
+        return "python3".into();
+    }
+    for name in ["python3", "python", "py"] {
+        let ok = std::process::Command::new(name)
+            .args(if name == "py" {
+                vec!["-3", "--version"]
+            } else {
+                vec!["--version"]
+            })
+            .stdin(std::process::Stdio::null())
+            .output()
+            .is_ok_and(|o| {
+                o.status.success()
+                    && String::from_utf8_lossy(&o.stdout)
+                        .trim_start()
+                        .starts_with("Python 3")
+            });
+        if ok {
+            return name.into();
+        }
+    }
+    "python3".into()
+}
+
 /// The decorator's spec of `func` in `file`, from the local Python.
 pub fn read_spec(file: &Path, func: &str) -> Result<Value, CuaError> {
     let tmp = tempfile::tempdir().map_err(|e| CuaError::Internal(e.to_string()))?;
     write_shim(tmp.path()).map_err(|e| CuaError::Internal(e.to_string()))?;
-    let python = std::env::var("CUA_PYTHON").unwrap_or_else(|_| "python3".into());
+    let python = std::env::var("CUA_PYTHON").unwrap_or_else(|_| default_python());
     let dir = file
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
@@ -1189,7 +1218,7 @@ async fn finish(
             line(out, format!("result: {} ({} KB)", p.display(), size / 1024));
         }
         if state == "succeeded" && saved.is_empty() {
-            line(out, NO_RESULT.to_string());
+            line(out, NO_RESULT);
         }
         line(
             out,

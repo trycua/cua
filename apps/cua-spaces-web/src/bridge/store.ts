@@ -11,7 +11,6 @@
 
 import { hiddenSpaceIdsNow, onHiddenSpacesChange } from "../lib/prepare/store";
 import { cloudsInput, cloudsView } from "./clouds";
-import { hostOs } from "./host-os";
 import { spokenName } from "./space-names";
 import { isUnsupported, type DataAdapter } from "./adapter";
 import type { AgentMessageSent, AgentRunStatus, AgentSetupRow, AgentStarted, AgentStartRequest, PersistentAgent, SpaceAgentRun } from "./contracts/agents";
@@ -681,11 +680,10 @@ export class BridgeStore {
       this.createRequests.delete(pendingId);
       await this.refresh("spaces");
       const space = (this.resources.spaces.data as Space[] | undefined)?.find((s) => s.id === row.id) ?? rowsToSpaces(this.core, [row], this.now())[0]!;
-      // Plain words: a fresh computer inside this one (never "VM" or "container").
-      const system = space.os === "macos" ? "macOS" : space.os === "windows" ? "Windows" : space.os === "linux" ? "Linux" : null;
-      const body = system ? `A fresh ${system} computer inside ${({ macos: "this Mac", windows: "this PC", linux: "this machine" } as const)[hostOs()]}. Your agent can use it now.` : undefined;
+      // The title names it; what a Space is was said once, in setup.
+      const body = "Ready for your agent.";
       // Nor is the warming home "ready" news until a person wrote into it.
-      if (!hiddenSpaceIdsNow(this.core).some((h) => h === space.id || h === pendingId)) this.extras.record({ kind: "message", title: `${spokenName(space.name)} is ready`, ...(body && !machine ? { body } : {}), space: space.id });
+      if (!hiddenSpaceIdsNow(this.core).some((h) => h === space.id || h === pendingId)) this.extras.record({ kind: "message", title: `${spokenName(space.name)} is ready`, ...(!machine ? { body } : {}), space: space.id });
       return space;
     } catch (e) {
       const message = toError(e).message;

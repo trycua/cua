@@ -112,7 +112,6 @@ export function RepoCacheGroup() {
           <SettingsRow
             label="Size limit"
             htmlFor="repo-cache-size"
-            description="The least recently used repositories go first. Empty is automatic: the smaller of 5 GB and a tenth of the free disk."
             control={
               <span className="flex items-center gap-2">
                 <Input
@@ -123,6 +122,7 @@ export function RepoCacheGroup() {
                   min={0}
                   className="w-28 text-right"
                   placeholder="Automatic"
+                  title="The least recently used repositories go first. Empty is automatic: the smaller of 5 GB and a tenth of the free disk."
                   value={draft}
                   disabled={busy}
                   onValueChange={setDraft}

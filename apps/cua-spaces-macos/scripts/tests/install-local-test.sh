@@ -99,6 +99,12 @@ int main(int argc, char **argv) {
         const char *status = getenv("STUB_HELPER_STATUS");
         printf("{\"status\":\"%s\"}\n", status ? status : "enabled");
     }
+    // `--driver-helper status`: STUB_DRIVER_STATUS, or nothing at all (an
+    // app that could not run) when it is "unreadable".
+    if (argc >= 3 && strcmp(argv[1], "--driver-helper") == 0 && strcmp(argv[2], "status") == 0) {
+        const char *status = getenv("STUB_DRIVER_STATUS");
+        if (!(status && strcmp(status, "unreadable") == 0)) printf("{\"status\":\"%s\"}\n", status ? status : "enabled");
+    }
     FILE *f = log ? fopen(log, "a") : NULL;
     if (f) {
         const char *channel = getenv("CUA_CHANNEL");
@@ -195,6 +201,11 @@ if [ "${FAKE_BUILD_ASSOCIATED_SCALAR:-0}" = 1 ]; then
   assoc_xml="<key>AssociatedBundleIdentifiers</key><string>$associated</string>"
 else
   assoc_xml="<key>AssociatedBundleIdentifiers</key><array><string>$associated</string></array>"
+fi
+# Cua Driver's login item, as build-app.sh adds it (an app from before it has
+# none: FAKE_BUILD_NO_DRIVER=1).
+if [ "${FAKE_BUILD_NO_DRIVER:-0}" != 1 ]; then
+  echo '<plist/>' > "$app/Contents/Library/LaunchAgents/${helper%.helper}.driver.plist"
 fi
 cat > "$app/Contents/Library/LaunchAgents/$helper.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -1408,8 +1419,9 @@ check "and it was the Local CLI only: the released app's cua was never run, so i
     '! grep >/dev/null "^$FAKE_HOME/.local/bin/cua " "$STUB_LOG" && ! grep >/dev/null -e "cua-driver" -e "agents setup" "$LOCAL_CUA_LOG"'
 check "the Local host runner job file is gone" '[ ! -e "$FAKE_HOME/Library/LaunchAgents/com.trycua.spacesd.host.local.plist" ]'
 check "the helper login item was unregistered by the Local app itself" 'grep >/dev/null -- "--service-helper unregister \[CUA_CHANNEL=local\]" "$STUB_LOG"'
-check "launchctl was asked about the two Local labels only" \
-    'grep >/dev/null "bootout gui/[0-9]*/com.trycua.spaces.local.helper$" "$SHIM_LOG" && grep >/dev/null "bootout gui/[0-9]*/com.trycua.spacesd.host.local$" "$SHIM_LOG" && [ "$(grep -c "^launchctl" "$SHIM_LOG")" = 2 ]'
+check "and so was Cua Driver's login item (it re-created ~/.cua-local when left), with no status asked once that worked" 'grep >/dev/null -- "--driver-helper unregister \[CUA_CHANNEL=local\]" "$STUB_LOG" && ! grep >/dev/null -- "--driver-helper status" "$STUB_LOG"'
+check "launchctl was asked about the three Local labels only" \
+    'grep >/dev/null "bootout gui/[0-9]*/com.trycua.spaces.local.helper$" "$SHIM_LOG" && grep >/dev/null "bootout gui/[0-9]*/com.trycua.spaces.local.driver$" "$SHIM_LOG" && grep >/dev/null "bootout gui/[0-9]*/com.trycua.spacesd.host.local$" "$SHIM_LOG" && [ "$(grep -c "^launchctl" "$SHIM_LOG")" = 3 ]'
 check "only the Local Keychain services were deleted (both of them)" \
     'grep >/dev/null "^security delete-generic-password -s ai.cua.session.local\$" "$SHIM_LOG" && grep >/dev/null "^security delete-generic-password -s ai.cua.session.local.staging\$" "$SHIM_LOG" && ! grep "^security" "$SHIM_LOG" | grep -v -e "-s ai.cua.session.local\$" -e "-s ai.cua.session.local.staging\$"'
 check "the Local volume folder is kept" '[ "$(cat "$FAKE_HOME/Cua Volume Local/keep.txt")" = mine ]'
@@ -1436,6 +1448,29 @@ install
 run env STUB_UNREGISTER_FAIL=1 STUB_HELPER_STATUS=enabled "$FAKE_SCRIPTS/uninstall-local.sh" --yes
 check "a login item that is still enabled after the retry is reported, and the uninstall goes on" \
     '[ "$RC" = 0 ] && [ ! -e "$LOCAL_APP" ] && printf "%s" "$OUT" | grep >/dev/null "could not unregister its helper"'
+# An app from before Cua Driver's login item is never asked about it (it has no
+# --driver-helper and would open its window).
+reset_fixture
+FAKE_BUILD_NO_DRIVER=1 install
+: > "$STUB_LOG"
+uninstall --yes
+check "an app without the driver login item is not asked to remove it (status $RC)" \
+    '[ "$RC" = 0 ] && [ ! -e "$LOCAL_APP" ] && ! grep >/dev/null -- "--driver-helper" "$STUB_LOG"'
+# Cua Driver's login item: an unregister that fails is reported unless the
+# app says the item is gone; a status it can't read counts as still there.
+for case in "not-registered:no" "not-found:no" "enabled:yes" "unreadable:yes"; do
+    reset_fixture
+    install
+    : > "$STUB_LOG"
+    run env STUB_UNREGISTER_FAIL=1 STUB_HELPER_STATUS=not-registered STUB_DRIVER_STATUS="${case%%:*}" "$FAKE_SCRIPTS/uninstall-local.sh" --yes
+    if [ "${case##*:}" = yes ]; then
+        check "a driver item that is ${case%%:*} after a failed unregister is reported, and the uninstall goes on" \
+            '[ "$RC" = 0 ] && [ ! -e "$LOCAL_APP" ] && printf "%s" "$OUT" | grep >/dev/null "could not unregister Cua Driver"'
+    else
+        check "a driver item that is ${case%%:*} after a failed unregister raises no warning" \
+            '[ "$RC" = 0 ] && ! printf "%s" "$OUT" | grep >/dev/null "could not unregister Cua Driver"'
+    fi
+done
 
 echo "== uninstall and the old Local id =="
 reset_fixture
@@ -1444,8 +1479,8 @@ STABLE_BEFORE="$(snap_stable)"
 : > "$SHIM_LOG"; : > "$STUB_LOG"
 uninstall --yes
 check "uninstall removes an old-id app at the Local path (status $RC)" '[ "$RC" = 0 ] && [ ! -e "$LOCAL_APP" ] && printf "%s" "$OUT" | grep >/dev/null "found the old"'
-check "the old app unregistered its login item, and launchd was asked about the two Local labels only" \
-    'grep >/dev/null -- "--service-helper unregister \[CUA_CHANNEL=local\]" "$STUB_LOG" && [ "$(grep -c "^launchctl" "$SHIM_LOG")" = 2 ] && grep >/dev/null "bootout gui/[0-9]*/com.trycua.spaces.local.helper$" "$SHIM_LOG" && grep >/dev/null "bootout gui/[0-9]*/com.trycua.spacesd.host.local$" "$SHIM_LOG"'
+check "the old app unregistered its login items, and launchd was asked about the three Local labels only" \
+    'grep >/dev/null -- "--service-helper unregister \[CUA_CHANNEL=local\]" "$STUB_LOG" && [ "$(grep -c "^launchctl" "$SHIM_LOG")" = 3 ] && grep >/dev/null "bootout gui/[0-9]*/com.trycua.spaces.local.driver$" "$SHIM_LOG" && grep >/dev/null "bootout gui/[0-9]*/com.trycua.spaces.local.helper$" "$SHIM_LOG" && grep >/dev/null "bootout gui/[0-9]*/com.trycua.spacesd.host.local$" "$SHIM_LOG"'
 check "its settings, preferences, caches, web view data, cookies and window state are gone" 'legacy_data_gone'
 check "the Local home is gone, Cua Volume Local is kept" '[ ! -e "$FAKE_HOME/.cua-local" ] && [ "$(cat "$FAKE_HOME/Cua Volume Local/note.txt")" = "my local files" ]'
 check "Stable files are byte-identical" '[ "$(snap_stable)" = "$STABLE_BEFORE" ]'

@@ -98,7 +98,7 @@ export function RunAgentDialog({ open, space, onOpenChange, onManual, onConnecte
           ) : toSet ? (
             <>
               <DialogDescription className="mt-1.5 text-[13px] leading-relaxed text-muted-foreground">
-                To let an agent work in {space.name}, connect it to Cua first. This takes a few seconds and changes nothing else about {toSet.name}.
+                Connect {toSet.name} to Cua first. It takes a few seconds.
               </DialogDescription>
               <ul className="mt-4 divide-y rounded-lg border">
                 {pending.map((r) => (

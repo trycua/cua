@@ -5,9 +5,10 @@ import { Link } from "@tanstack/react-router";
 import { ArrowLeftIcon, ArrowUpIcon, CheckIcon, ChevronDownIcon, EyeIcon, HandIcon, Loader2Icon, Maximize2Icon, Minimize2Icon, RotateCwIcon, Trash2Icon, TriangleAlertIcon, UserPlusIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
-import { setupCard, useAgents, useAgentTimeline, useBridge, useSession, useShareSheet, useSpaceDetail, useSpaces, type AgentTimeline, type Space } from "@/bridge";
+import { createReport, reportMailto, setupCard, useAgents, useAgentTimeline, useBridge, useSession, useShareSheet, useSpaceDetail, useSpaces, type AgentTimeline, type Space } from "@/bridge";
 import { Timeline } from "@/components/agents/timeline";
 import { CuaKey } from "@/components/cua-key";
+import { DiagnosticReportDialog } from "@/components/diagnostic-report-dialog";
 import { OsIcon } from "@/components/os-icon";
 import { StreamSurface } from "@/components/space-detail/stream-surface";
 import { ConfirmDialog } from "@/components/ui/alert-dialog";
@@ -306,6 +307,13 @@ export function StartFailed({ error, name, agent, host, onRetry }: { error: stri
   const { kinds, spaces } = useWhereOptions();
   const [open, setOpen] = useState(false);
   const pick = useWherePick(name);
+  // No known cause: Send a report, reviewed in the same sheet a failed Space uses; nothing goes until Send there.
+  const { openExternal } = useSession();
+  const report = useMemo(
+    () => (view.report ? createReport(core, { error, phase: "start", os: host ? hostOs() : "", provider: "local", gpu: false, names: [] }) : null),
+    [core, error, host, view.report],
+  );
+  const [reporting, setReporting] = useState(false);
   return (
     <CuaLine>
       <div data-ask-start-failed={view.action}>
@@ -330,6 +338,11 @@ export function StartFailed({ error, name, agent, host, onRetry }: { error: stri
               <RotateCwIcon /> Try again
             </Button>
           ) : null}
+          {report ? (
+            <Button variant="outline" className="h-10 px-4" data-send-report="" onClick={() => setReporting(true)}>
+              Send a report…
+            </Button>
+          ) : null}
           <WherePicker
             where={null}
             onWhere={(w) => pick.choose(w, onRetry, () => setOpen(true))}
@@ -350,6 +363,18 @@ export function StartFailed({ error, name, agent, host, onRetry }: { error: stri
         </details>
       </div>
       {pick.dialog}
+      {report ? (
+        <DiagnosticReportDialog
+          open={reporting}
+          onOpenChange={setReporting}
+          report={report}
+          onSend={async (subject, parts) => {
+            const link = reportMailto(core, { subject, parts }, []);
+            if (!link) throw new Error("The report could not be prepared. Try again.");
+            await openExternal(link);
+          }}
+        />
+      ) : null}
     </CuaLine>
   );
 }
@@ -426,14 +451,12 @@ function ThreadFooter({
             <CheckIcon className="mt-0.5 size-5 text-success" />
             <div>
               <div className="text-[15px] font-semibold">{name} finished</div>
-              <div className="mt-1 text-[13px] text-muted-foreground">
-                {task.onHost ? "Ask a follow-up below." : "Ask a follow-up below, or decide what happens to the computer."}
-              </div>
+              {task.onHost ? <div className="mt-1 text-[13px] text-muted-foreground">Ask a follow-up below.</div> : null}
             </div>
           </div>
           {task.onHost ? null : (
           <div className="flex flex-wrap items-center gap-3 border-t px-5 py-3">
-            <span className="flex-1 text-[13px] text-muted-foreground">The computer is still on. What should happen to it?</span>
+            <span className="flex-1 text-[13px] text-muted-foreground">The computer is still on. Keep it or throw it away?</span>
             <Button variant="outline" className="h-11 px-4" onClick={onKeep}>
               Keep it
             </Button>
@@ -444,9 +467,8 @@ function ThreadFooter({
           )}
         </div>
       ) : null}
-      {state === "done" && !task.onHost ? <p className="text-[12px] text-muted-foreground">Throwing it away deletes the computer. This conversation stays.</p> : null}
-      {state === "kept" ? <p className="text-[12px] text-muted-foreground">You kept the computer. It's with your Spaces.</p> : null}
-      {state === "thrown" ? <p className="text-[12px] text-muted-foreground">You threw the computer away. This is the conversation as it was.</p> : null}
+      {state === "kept" ? <p className="text-[12px] text-muted-foreground">Kept. It's in Spaces.</p> : null}
+      {state === "thrown" ? <p className="text-[12px] text-muted-foreground">Thrown away.</p> : null}
     </div>
   );
 }
@@ -501,9 +523,13 @@ function Screen({
           className="aspect-[16/10] w-full rounded-none border-0"
         />
       ) : (
-        <div className="flex aspect-[16/10] items-center justify-center bg-thumb text-[13px] text-muted-foreground">
-          <OsIcon os={task.os} className="mr-2 size-5" />
-          {caption}
+        <div className="flex aspect-[16/10] flex-col items-center justify-center gap-1 bg-thumb text-[13px] text-muted-foreground">
+          <span className="flex items-center">
+            <OsIcon os={task.os} className="mr-2 size-5" />
+            {caption}
+          </span>
+          {/* On this Mac the agent doesn't stop to ask: the one-time confirm said so, this keeps it in view. */}
+          {!space && task.onHost && (state === "working" || state === "stuck") ? <span data-ask-no-asking="">It won't ask before each step.</span> : null}
         </div>
       )}
       <div className="flex min-h-12 items-center gap-2 px-3">
@@ -541,7 +567,7 @@ function Screen({
 function ComputerCard({ task, space }: { task: AskTask; space: Space | undefined }) {
   const os = task.os === "macos" ? "Mac" : task.os === "windows" ? "Windows" : "Linux";
   const line = task.onHost
-    ? `Your own ${{ macos: "Mac", windows: "PC", linux: "computer" }[hostOs()]}, with your files and apps`
+    ? thisComputerLabel()
     : !space
       ? task.ending === "thrown"
         ? "Thrown away"

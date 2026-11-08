@@ -174,11 +174,8 @@ struct FirstRunTests {
     @Test func theNotificationSaysWhatIsReadyAndWhereAClickGoes() {
         let linux = SpaceReadyNote(spaceId: "local:aurora", name: "aurora", os: .linux)
         #expect(linux.title == "aurora is ready")
-        #expect(linux.body == "A fresh Linux computer inside this Mac. Your agent can use it now.")
-        #expect(SpaceReadyNote(spaceId: "x", name: "x", os: .macos).body.hasPrefix("A fresh macOS computer"))
-        #expect(SpaceReadyNote(spaceId: "x", name: "x", os: .windows).body.hasPrefix("A fresh Windows computer"))
-        #expect(SpaceReadyNote(spaceId: "x", name: "x", os: .unknown).body
-                == "A fresh computer inside this Mac. Your agent can use it now.")
+        #expect(linux.body == "Ready for your agent.")
+        #expect(SpaceReadyNote(spaceId: "x", name: "x", os: .unknown).body == "Ready for your agent.")
         #expect(linux.identifier == "space-ready-local:aurora")
         #expect(SpaceReadyNote.spaceId(fromIdentifier: linux.identifier) == "local:aurora")
         #expect(SpaceReadyNote.spaceId(fromIdentifier: "agent-1") == nil)

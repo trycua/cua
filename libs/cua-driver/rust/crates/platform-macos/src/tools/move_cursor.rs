@@ -12,7 +12,6 @@ use serde_json::Value;
 use std::sync::Arc;
 
 use super::ToolState;
-use crate::apps;
 
 pub struct MoveCursorTool {
     state: Arc<ToolState>,
@@ -33,13 +32,10 @@ fn def() -> &'static ToolDef {
             x/y are window screenshot pixels (as for click) and only the agent cursor moves \
             there; in a background app it also hovers through a route that leaves the real \
             pointer alone where one exists (AXShowAlternateUI on the element under the point, \
-            or an Electron page) and says so. Otherwise it posts mouseMoved events to the window and \
-            rests on the point for about a second, still without the real pointer, focus or raise; \
-            the result is not verified, so read the window again to see whether a hover-only \
-            control appeared, and check list_windows for a new window (a tooltip). Native tooltips \
-            and hover can follow the real pointer only, in which case the app sees no hover. \
-            Without a target, moves only the agent cursor overlay, in screen points. For a web \
-            page in Chrome, Edge or Brave use browser_pointer hover instead. With scope=desktop, moves the user's real OS pointer \
+            or an Electron page) and says so. Without a target, moves only the agent cursor \
+            overlay, in screen points. Other macOS hover and tooltips follow the real pointer, \
+            so most background apps see no hover; for a web page in Chrome, Edge or Brave use \
+            browser_pointer hover instead. With scope=desktop, moves the user's real OS pointer \
             in native get_desktop_state screenshot coordinates; over a window of an app that is \
             not in front it refuses unless delivery_mode is \"foreground\".".into(),
         input_schema: serde_json::json!({
@@ -278,12 +274,6 @@ impl MoveCursorTool {
         if chromium {
             return browser_hover_result(&cursor_id, pid, wid, x, y, screen_x, screen_y);
         }
-        if let Some(result) = self
-            .post_background_hover(&cursor_id, pid, wid, (x, y), (screen_x, screen_y))
-            .await
-        {
-            return result;
-        }
         ToolResult::text(format!(
             "Agent cursor '{cursor_id}' moved over window {wid} at ({x:.0}, {y:.0}); the real \
              pointer did not move.{BACKGROUND_HOVER_NOTE}"
@@ -302,122 +292,6 @@ impl MoveCursorTool {
 /// hover, and the browser tools are the route that delivers one without the
 /// user's pointer. Bench v2 PR-03 agents read the generic note's desktop
 /// option as the way forward and moved the user's pointer.
-impl MoveCursorTool {
-    /// Last background hover route for a native app: stamped `mouseMoved`
-    /// events posted to the window's pid (the route background clicks use),
-    /// with the window made AppKit-key without raising it. The user's real
-    /// pointer, frontmost app and key window are left alone and any focus the
-    /// app takes is undone. Returns `None` when the window server refuses
-    /// the focus-without-raise step, so the caller reports the plain note.
-    async fn post_background_hover(
-        &self,
-        cursor_id: &str,
-        pid: i32,
-        wid: u32,
-        window_px: (f64, f64),
-        screen: (f64, f64),
-    ) -> Option<ToolResult> {
-        let prior_front = apps::frontmost_pid();
-        let undo = crate::focus_arbiter::UndoWatch::arm();
-        let prior_key_wid = match prior_front {
-            Some(prior) if prior != pid => tokio::task::spawn_blocking(move || {
-                crate::input::skylight::key_window_of_pid(prior)
-            })
-            .await
-            .ok()
-            .flatten(),
-            _ => None,
-        };
-        let _key_focus = tokio::task::spawn_blocking(move || crate::key_focus_guard::protect(pid))
-            .await
-            .ok()
-            .flatten();
-        let focus_without_raise = tokio::task::spawn_blocking(move || {
-            crate::input::mouse::prepare_background_pixel_click(pid, wid)
-        })
-        .await
-        .unwrap_or(false);
-        crate::cursor::overlay::send_command(
-            cursor_id.to_string(),
-            cursor_overlay::OverlayCommand::PinAbove(wid as u64),
-        );
-        let (sx, sy) = screen;
-        let posted = tokio::task::spawn_blocking(move || {
-            let before: std::collections::HashSet<u32> =
-                crate::windows::pid_on_screen_windows_any_layer(pid)
-                    .into_iter()
-                    .map(|w| w.window_id)
-                    .collect();
-            crate::input::mouse::hover_at_xy_background(
-                pid,
-                (sx, sy),
-                wid,
-                HOVER_DWELL_MS,
-                |_, _| {},
-            )?;
-            // A tooltip is a small window of the app that appears after the
-            // pointer rests; report it so the caller can read its text.
-            Ok::<_, anyhow::Error>(
-                crate::windows::pid_on_screen_windows_any_layer(pid)
-                    .into_iter()
-                    .filter(|w| !before.contains(&w.window_id))
-                    .map(|w| (w.window_id, w.layer, w.bounds.width, w.bounds.height))
-                    .collect::<Vec<_>>(),
-            )
-        })
-        .await;
-        super::click::restore_user_focus_after_background_pixel(
-            undo,
-            pid,
-            prior_front,
-            prior_key_wid,
-            Some(wid),
-            focus_without_raise,
-        )
-        .await;
-        let Ok(Ok(new_windows)) = posted else {
-            return None;
-        };
-        let (x, y) = window_px;
-        let appeared = if new_windows.is_empty() {
-            String::new()
-        } else {
-            let ids: Vec<String> = new_windows.iter().map(|w| w.0.to_string()).collect();
-            format!(
-                " A new window of the app appeared ({}): it may be the tooltip, so call \
-                 get_window_state on that window_id to read its text.",
-                ids.join(", ")
-            )
-        };
-        Some(
-            ToolResult::text(format!(
-                "Agent cursor '{cursor_id}' moved over window {wid} at ({x:.0}, {y:.0}). Posted \
-                 mouseMoved events to the app and held them for {HOVER_DWELL_MS} ms, without \
-                 the real pointer, focus or raise. Not verified: call get_window_state to see \
-                 whether a hover-only control appeared.{appeared} Native tooltips follow the pointer \
-                 the window server tracks, so they may not show; if the text is also in the \
-                 accessibility tree (AXHelp, AXDescription, AXTitle) read it there instead, and \
-                 if it is not, a tooltip on a custom-drawn view cannot be read without the \
-                 user's pointer or the app in front."
-            ))
-            .with_structured(serde_json::json!({
-                "scope": "window",
-                "window_id": wid,
-                "screen_point": [screen.0, screen.1],
-                "hover_delivered": true,
-                "hover_route": "synthetic_mouse_moved",
-                "focus_without_raise": focus_without_raise,
-                "new_window_ids": new_windows.iter().map(|w| w.0).collect::<Vec<_>>(),
-                "effect": "unverifiable"
-            })),
-        )
-    }
-}
-
-/// How long the background hover keeps the pointer resting on the point, so
-/// hover timers (tooltips, hide delays) see a resting pointer.
-const HOVER_DWELL_MS: u64 = 1200;
-
 fn browser_hover_result(
     cursor_id: &str,
     pid: i32,
@@ -455,12 +329,17 @@ const BROWSER_HOVER_NOTE: &str = "This is a web browser page: hover it with the 
 /// What a window-target move does not do for a background app.
 const BACKGROUND_HOVER_NOTE: &str = " The app is in the background, so it sees no hover: \
      macOS apps track hover and show tooltips from the real pointer, and nothing under this \
-     point offers a background route (no AXShowAlternateUI, not an Electron page). For a web \
-     page in Chrome use browser_pointer hover. A control that only appears on hover, or a \
-     tooltip, cannot be revealed without the user's pointer (scope:\"desktop\") or the app in \
-     front (bring_to_front); use either only if the user allows it. Look first for the same \
-     command elsewhere: a menu item, a context menu, a keyboard shortcut, or help text in \
-     get_window_state.";
+     point offers a background route (no AXShowAlternateUI, not an Electron page). Posting \
+     mouseMoved events to the window does not change that: a VM check on macOS 26.5.2 (a \
+     tracking-area toolbar and a rect tooltip, with the window made key without raising it) \
+     showed no hover and no tooltip. For a web page in Chrome use browser_pointer hover. Read \
+     the text from the accessibility tree instead where the app has it: get_window_state with \
+     a query for the control, and look at its description, help= or title. A control that only \
+     appears on hover, or a tooltip on a custom-drawn view, cannot be revealed without the \
+     user's pointer (scope:\"desktop\") or the app in front (bring_to_front), which disturbs \
+     the user: use either only if the user allows it, otherwise stop and tell them which step \
+     needs it. Look first for the same command elsewhere: a menu item, a context menu, a \
+     keyboard shortcut, or help text in get_window_state.";
 
 /// The app that owns the frontmost ordinary window under a desktop point,
 /// when that app is not the active one. The driver's own windows (cursor
@@ -482,9 +361,11 @@ fn inactive_app_under_point(x: f64, y: f64) -> Option<String> {
 /// only in the active one (VM check: 3/3 with the app active, 0/3 without).
 fn inactive_app_note(app: &str) -> String {
     format!(
-        " {app} is not the active app: hover effects update, but native tooltips only \
-         appear in the active app. To read a tooltip, bring_to_front its window first, \
-         move the pointer onto the control and wait about a second before looking."
+        " {app} is not the active app, but hover effects update and a native tooltip still \
+         appears after about a second, as a small window of the app (macOS 26.5.2 VM check). \
+         List the windows of the app for the new one and call get_window_state on its \
+         window_id: its screenshot is the tooltip (the accessibility tree comes back empty). The \
+         real pointer moved, so this is not a background route."
     )
 }
 
@@ -532,6 +413,9 @@ mod tests {
     fn the_inactive_app_note_names_the_route_to_a_tooltip() {
         let note = super::inactive_app_note("BenchLab");
         assert!(note.starts_with(" BenchLab is not the active app"));
-        assert!(note.contains("bring_to_front"));
+        assert!(note.contains("list the windows") || note.contains("List the windows"));
+        assert!(note.contains("get_window_state"));
+        assert!(note.contains("screenshot"));
+        assert!(note.contains("not a background route"));
     }
 }

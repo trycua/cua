@@ -486,7 +486,7 @@ impl Tool for DragTool {
                         observe,
                         || {
                             session_seen = !drag_image_windows(pid).is_subset(&before);
-                            !session_seen || keep_dragging_through_session()
+                            !session_seen
                         },
                     )?;
                     let session = session_seen
@@ -836,13 +836,6 @@ const ELECTRON_BACKGROUND_DRAG_UNAVAILABLE: &str = "Background drag is unavailab
      (Chromium reads it from the hardware), and the app's main process did not take the drag. \
      Use the app's own controls (a button, menu item or keyboard route) or, if the user allows \
      the window to come forward, retry with delivery_mode:\"foreground\".";
-
-/// Probe switch (CUA-3763 round 3): keep posting the drag to the end of its
-/// path even after a drag-and-drop session began, instead of releasing at once,
-/// to find out whether the session follows posted events. Off by default.
-fn keep_dragging_through_session() -> bool {
-    std::env::var_os("CUA_DRAG_CONTINUE_SESSION").is_some()
-}
 
 fn drag_image_windows(pid: i32) -> std::collections::HashSet<u32> {
     crate::windows::pid_on_screen_windows_any_layer(pid)

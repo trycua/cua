@@ -8,11 +8,12 @@
 //! you must call TIS/TSM API on the main thread. If you are a non-UI
 //! application (such as a cmd-line tool or a launchagent that does not run an
 //! event loop), you must not call TIS/TSM API from multiple threads
-//! concurrently." Breaking it aborts the process: macOS 26.4 aborts when a
-//! worker's call overlaps AppKit's own TSM work on the main thread or another
-//! worker's call, and macOS 26.5 asserts the main queue
-//! (`_dispatch_assert_queue_fail`, SIGTRAP) on any off-main call in a process
-//! that runs AppKit.
+//! concurrently." Breaking it kills the process. macOS 26.4 and 26.6 abort
+//! when a worker's call overlaps TSM work on another thread. macOS 26.5
+//! asserts the main queue (`_dispatch_assert_queue_fail`, SIGTRAP) whenever
+//! HIToolbox has to rebuild its input-source list off the main thread, which
+//! a daemon started as a plain child process (by a shell or an MCP client,
+//! not by LaunchServices) does on its first lookup.
 //!
 //! Every TIS call in this crate goes through [`run`]:
 //! - in a process whose main thread runs an AppKit event loop (the daemon's

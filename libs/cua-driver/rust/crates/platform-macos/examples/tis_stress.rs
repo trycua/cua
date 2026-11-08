@@ -10,6 +10,7 @@
 //!     [--threads 8] [--calls 500] [--switch com.apple.keylayout.French] \
 //!     [--switch-every 25] [--no-appkit] [--raw]
 //! tis_stress --switch-only --switch <layout id> [--switch-count 40] [--interval-ms 250]
+//!     [--until-file <path>]   (stop early once the file exists)
 //! ```
 //!
 //! `--raw` calls Text Input Sources directly on the workers, as the driver
@@ -155,7 +156,11 @@ fn main() {
         );
         let original = input_source::run(current_source_id).unwrap_or_default();
         let mut switches = 0;
+        let until = arg(&args, "--until-file").map(std::path::PathBuf::from);
         for i in 0..count {
+            if until.as_ref().is_some_and(|path| path.exists()) {
+                break;
+            }
             let id = if i.is_multiple_of(2) {
                 target.clone()
             } else {

@@ -3323,7 +3323,6 @@ mod permission_gate_tests {
     fn socket_trusted_session_call_waits_for_the_permission_gate() {
         use std::io::{BufRead as _, BufReader, Write as _};
         const CHILD_SOCKET_ENV: &str = "CUA_DRIVER_TRUSTED_GATE_TEST_SOCKET";
-        const OPENED: &str = "trusted-gate-test: gate open";
 
         if let Some(socket) = std::env::var_os(CHILD_SOCKET_ENV) {
             let socket = socket.into_string().expect("UTF-8 socket path");
@@ -3336,9 +3335,6 @@ mod permission_gate_tests {
                     for line in std::io::stdin().lock().lines() {
                         if line.as_deref().is_ok_and(|line| line == "open") {
                             opener.set_awaiting_permissions(false);
-                            let mut stdout = std::io::stdout().lock();
-                            let _ = writeln!(stdout, "{OPENED}");
-                            let _ = stdout.flush();
                         }
                     }
                 });
@@ -3360,7 +3356,15 @@ mod permission_gate_tests {
             .tempdir_in("/tmp")
             .expect("socket directory");
         let socket = directory.path().join("d.sock");
-        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+        struct Reaped(std::process::Child);
+        impl Drop for Reaped {
+            fn drop(&mut self) {
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+            }
+        }
+        let mut child = Reaped(
+            std::process::Command::new(std::env::current_exe().unwrap())
             .args([
                 "--exact",
                 "serve::permission_gate_tests::socket_trusted_session_call_waits_for_the_permission_gate",
@@ -3370,14 +3374,16 @@ mod permission_gate_tests {
             .env(CHILD_SOCKET_ENV, &socket)
             .env(cua_driver_core::EMBEDDED_ENV, "1")
             .env_remove(cua_driver_core::PARENT_LIVENESS_STDIN_ENV)
+            .env_remove("CUA_DRIVER_RS_MCP_HTTP_PORT")
+            .env_remove("CUA_DRIVER_ENVELOPE_HTTP_PORT")
             .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
             .spawn()
-            .expect("spawn embedded daemon");
+            .expect("spawn embedded daemon"),
+        );
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
         while !socket.exists() {
             assert!(
-                std::time::Instant::now() < deadline && child.try_wait().unwrap().is_none(),
+                std::time::Instant::now() < deadline && child.0.try_wait().unwrap().is_none(),
                 "embedded daemon never bound {}",
                 socket.display()
             );
@@ -3435,21 +3441,22 @@ mod permission_gate_tests {
         ));
         assert_eq!(refusal_code(&pending), Some("permissions_pending"));
 
-        let mut stdin = child.stdin.take().unwrap();
+        let mut stdin = child.0.stdin.take().unwrap();
         writeln!(stdin, "open").unwrap();
-        let mut stdout = BufReader::new(child.stdout.take().unwrap());
-        let mut line = String::new();
-        // libtest prints `test <name> ... ` without a newline before the body.
-        while !line.contains(OPENED) {
-            line.clear();
-            assert_ne!(stdout.read_line(&mut line).unwrap(), 0, "child exited");
-        }
-
-        let opened = tool_result(send(
-            "trusted_session_call",
-            Some("get_screen_size"),
-            probe(),
-        ));
+        // A refused call never reaches the tool, so polling keeps the
+        // child's exactly-once count meaningful.
+        let opened = loop {
+            let result = tool_result(send(
+                "trusted_session_call",
+                Some("get_screen_size"),
+                probe(),
+            ));
+            if refusal_code(&result) != Some("permissions_pending") {
+                break result;
+            }
+            assert!(std::time::Instant::now() < deadline, "gate never opened");
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        };
         assert_eq!(refusal_code(&opened), None, "{opened}");
         assert_eq!(opened["content"][0]["text"], "probe ran");
 
@@ -3469,13 +3476,13 @@ mod permission_gate_tests {
         );
         drop(stdin);
         let status = loop {
-            if let Some(status) = child.try_wait().unwrap() {
+            if let Some(status) = child.0.try_wait().unwrap() {
                 break status;
             }
-            if std::time::Instant::now() >= deadline {
-                let _ = child.kill();
-                panic!("embedded daemon did not exit after shutdown");
-            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "embedded daemon did not exit after shutdown"
+            );
             std::thread::sleep(std::time::Duration::from_millis(20));
         };
         assert!(status.success(), "embedded daemon child failed: {status}");

@@ -279,6 +279,17 @@ fn element_token_by_id(snapshot: &ToolResponse, identifier: &str) -> String {
         .to_owned()
 }
 
+/// The AppKit harness's `activations=` count (`disabled_control` scenario).
+fn activations(snapshot: &ToolResponse) -> u64 {
+    snapshot
+        .tree_text()
+        .split("activations=")
+        .nth(1)
+        .and_then(|rest| rest.split(|c: char| !c.is_ascii_digit()).next())
+        .and_then(|count| count.parse().ok())
+        .unwrap_or_else(|| panic!("no activations= label:\n{}", snapshot.tree_text()))
+}
+
 fn element_pixel_frame(snapshot: &ToolResponse, identifier: &str) -> (f64, f64, f64, f64) {
     let index = element_index_by_id(snapshot.tree_text(), identifier)
         .unwrap_or_else(|| panic!("{identifier} element_index not found"));
@@ -1978,14 +1989,16 @@ fn harness_appkit_disabled_control_is_published_and_its_press_refused() {
 }
 
 /// A foreground call into a background app skips the early `AXEnabled` read so
-/// activation can enable the control, and must read it again before input: a
-/// control that is still disabled is refused, not double-clicked or typed into.
+/// activation can enable the control, and reads it again before input. A
+/// control enabled only while its app is active reads `enabled: false` from
+/// behind another app and is acted on; one that stays disabled is refused as
+/// `element_disabled`, not clicked, double-clicked or typed into.
 #[test]
 #[ignore]
-fn harness_appkit_disabled_control_is_refused_in_foreground_from_the_background() {
+fn harness_appkit_foreground_from_the_background_rereads_enablement_after_activation() {
     let case = native_foreground_case(
         "appkit",
-        "disabled_control_foreground",
+        "activation_enablement",
         Targeting::Ax,
         DriverRoute::MacosAxAction,
     );
@@ -2006,30 +2019,111 @@ fn harness_appkit_disabled_control_is_refused_in_foreground_from_the_background(
         let sentinel = ForegroundSentinel::launch(&mut driver);
         driver.start_behavior_recording();
 
-        let writers = [
-            ("double_click", serde_json::json!({})),
-            ("click", serde_json::json!({ "button": "middle" })),
-            ("type_text", serde_json::json!({ "text": "x" })),
+        // (tool, target id, extra args, fixture label after delivery, or None
+        // when the target stays disabled and the call must be refused)
+        let calls = [
+            (
+                "click",
+                "btn-active-only",
+                serde_json::json!({}),
+                Some("active_only=click"),
+            ),
+            (
+                "double_click",
+                "btn-active-only",
+                serde_json::json!({}),
+                Some("active_only=double_click"),
+            ),
+            (
+                "type_text",
+                "txt-active-only",
+                serde_json::json!({ "text": "ok" }),
+                Some("active_only=text:ok"),
+            ),
+            ("double_click", "chk-disabled", serde_json::json!({}), None),
+            (
+                "click",
+                "chk-disabled",
+                serde_json::json!({ "button": "middle" }),
+                None,
+            ),
+            (
+                "type_text",
+                "chk-disabled",
+                serde_json::json!({ "text": "x" }),
+                None,
+            ),
         ];
-        for (tool, mut args) in writers {
+        for (tool, id, mut args, delivered) in calls {
             // Each call starts with the harness behind another app, the case
             // in which the early read is skipped.
             sentinel
                 .prepare_background_observation(&mut driver, target)
                 .unwrap_or_else(|error| panic!("put the harness in the background: {error}"));
             let snapshot = snapshot_elements(&mut driver, pid, wid);
+            let index = element_index_by_id(snapshot.tree_text(), id)
+                .unwrap_or_else(|| panic!("{id} has no element_index:\n{}", snapshot.tree_text()));
+            let element = snapshot.structured()["elements"]
+                .as_array()
+                .and_then(|elements| {
+                    elements
+                        .iter()
+                        .find(|element| element["element_index"].as_u64() == Some(index))
+                })
+                .cloned()
+                .unwrap_or_else(|| panic!("{id} is missing from elements"));
+            assert_eq!(
+                element["enabled"], false,
+                "{id} is not disabled while its app is in the background: {element}"
+            );
+            let activations_before = activations(&snapshot);
             args["pid"] = serde_json::json!(pid as i64);
             args["window_id"] = serde_json::json!(wid);
-            args["element_token"] =
-                serde_json::json!(element_token_by_id(&snapshot, "chk-disabled"));
+            args["element_token"] = element["element_token"].clone();
             args["delivery_mode"] = serde_json::json!("foreground");
-            let refused = driver.call(tool, args);
+            let response = driver.call(tool, args);
+            let Some(expected) = delivered else {
+                assert!(
+                    response.is_error() && response.structured()["code"] == "element_disabled",
+                    "foreground {tool} on {id}, which stays disabled, was not refused as \
+                     element_disabled: {}",
+                    response.raw
+                );
+                // An early refusal returns the same code; the activation count
+                // shows this one came from the read after activation.
+                let deadline = Instant::now() + Duration::from_secs(3);
+                loop {
+                    let after = snapshot_elements(&mut driver, pid, wid);
+                    if activations(&after) > activations_before {
+                        break;
+                    }
+                    assert!(
+                        Instant::now() < deadline,
+                        "foreground {tool} on {id} was refused without activating the app:\n{}",
+                        after.tree_text()
+                    );
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+                continue;
+            };
             assert!(
-                refused.is_error() && refused.structured()["code"] == "element_disabled",
-                "foreground {tool} on a disabled control in a background app was not \
-                 refused as element_disabled: {}",
-                refused.raw
+                !response.is_error(),
+                "foreground {tool} on {id}, which activation enables, failed: {}",
+                response.raw
             );
+            let deadline = Instant::now() + Duration::from_secs(3);
+            loop {
+                let after = snapshot_elements(&mut driver, pid, wid);
+                if after.tree_text().contains(expected) {
+                    break;
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "foreground {tool} on {id} did not record {expected}:\n{}",
+                    after.tree_text()
+                );
+                std::thread::sleep(Duration::from_millis(100));
+            }
         }
 
         std::thread::sleep(Duration::from_millis(200));

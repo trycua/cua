@@ -477,9 +477,29 @@ impl AgentTools {
                 "{target:?} is not a child Space of yours: you can only open apps in Spaces you made"
             )));
         }
-        Ok(McpServer::new(spaces.clone())
-            .call("computer_launch", json!({"app": app, "sandbox": id, "args": a.get("args").cloned().unwrap_or(json!([]))}))
-            .await)
+        // The child's own driver tool (the same one `computer_launch` calls), on its desktop.
+        let child = spaces.space(&id).await?;
+        let mut arguments = Map::new();
+        arguments.insert("name".into(), json!(app));
+        if let Some(args) = a.get("args").filter(|v| v.as_array().is_some_and(|l| !l.is_empty())) {
+            arguments.insert("args".into(), args.clone());
+        }
+        let out = child
+            .call_tool(None, "launch_app", arguments, Some(std::time::Duration::from_secs(30)))
+            .await?;
+        let text = out
+            .content
+            .iter()
+            .filter_map(|c| c["text"].as_str().map(str::to_string))
+            .collect::<Vec<_>>()
+            .join("\n");
+        if out.is_error {
+            return Err(Error::invalid(format!(
+                "{app} did not open in {target}: {}",
+                if text.is_empty() { "the Space's desktop refused" } else { &text }
+            )));
+        }
+        Ok(ToolOutcome::json(&json!({"opened": app, "space": target, "detail": text})))
     }
 
     /// `space_job` in this agent's own Space (whatever `space` says). With

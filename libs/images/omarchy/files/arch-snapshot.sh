@@ -15,7 +15,7 @@ archive=https://archive.archlinux.org/repos
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
-curl -fsSL --retry 5 -o "$work/omarchy.db" "$edge/omarchy.db"
+curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 -o "$work/omarchy.db" "$edge/omarchy.db"
 mkdir "$work/omarchy"
 bsdtar -xf "$work/omarchy.db" -C "$work/omarchy"
 desc=

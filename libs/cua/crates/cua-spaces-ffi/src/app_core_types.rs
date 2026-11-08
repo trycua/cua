@@ -10707,7 +10707,8 @@ pub struct AppMachinesViewMachine {
     pub current: bool,
     /// Someone shares it with you (a team machine).
     pub team: bool,
-    /// The page's status line ("Online", "Offline").
+    /// The page's status line ("Online", "Offline"; "Online, 1 thing to
+    /// fix" when it has issues, so the words agree with the dot).
     pub status: String,
     /// After the status: who shares it ("Shared by your team").
     pub shared_by: Option<String>,

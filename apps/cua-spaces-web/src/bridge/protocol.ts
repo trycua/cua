@@ -347,8 +347,10 @@ export interface HostOperations
 
   "machines.list": { args: Record<string, never>; result: MachineRow[] };
   /** `localNetwork`: the permissions page is asking, so a Mac that runs macOS Spaces also lists its
-   * Local Network access ("local-network", granted or not) and checks it from the daemon. */
-  "host.status": { args: { localNetwork?: boolean }; result: HostStatus };
+   * Local Network access ("local-network", granted or not) and checks it from the daemon (the check makes macOS ask
+   * the first time). `localNetworkCheck: false` lists the row without checking: the first run checks only once the
+   * person pressed Allow, right after the step explains why. */
+  "host.status": { args: { localNetwork?: boolean; localNetworkCheck?: boolean }; result: HostStatus };
 
   "settings.get": { args: Record<string, never>; result: SettingsSnapshot };
   "settings.set": { args: { key: SettingKey; value: SettingsValues[SettingKey] }; result: SettingsSnapshot };

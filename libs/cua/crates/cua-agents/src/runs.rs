@@ -673,6 +673,71 @@ impl Agents {
             .await
     }
 
+    /// The agent's own sign-in on this computer ([`crate::remote_login`]):
+    /// where it stands, or start it, hand it the pasted code, or stop it.
+    /// `after_refusal`: the agent's last run here was refused its sign-in.
+    /// Starting installs the agent first when it is missing, then waits up to
+    /// 20 seconds for the link; a pasted code waits up to 20 seconds for the
+    /// answer.
+    pub async fn sign_in(
+        &self,
+        harness: &str,
+        action: crate::remote_login::Action,
+        after_refusal: bool,
+    ) -> Result<crate::remote_login::LoginState> {
+        use crate::remote_login::{self as rl, Action, LoginState};
+        let h = harness::harness(harness)
+            .filter(|h| rl::supported(h.id))
+            .ok_or_else(|| {
+                Error::Invalid(format!(
+                    "{harness} has no sign-in Cua can start on the computer (claude-code, openai-codex do)"
+                ))
+            })?;
+        let status = || async {
+            let out = self
+                .sh(&rl::status_script(h), Duration::from_secs(30))
+                .await?;
+            Ok::<_, Error>(rl::decide(h.id, &rl::parse_probe(&out), after_refusal))
+        };
+        let wait_for = |done: fn(&LoginState) -> bool| async move {
+            let mut last = status().await?;
+            for _ in 0..40 {
+                if done(&last) {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(500)).await;
+                last = status().await?;
+            }
+            Ok::<_, Error>(last)
+        };
+        match action {
+            Action::Status => status().await,
+            Action::Start => {
+                if !self.tools_in_place(h).await {
+                    self.ensure(h.installs, |_| {}).await?;
+                }
+                let script = rl::start_script(h).expect("supported");
+                self.sh(&script, Duration::from_secs(30)).await?;
+                wait_for(|s| !matches!(s, LoginState::SigningIn { url: None, .. })).await
+            }
+            Action::Code(code) => {
+                if code.trim().is_empty() || code.len() > 4096 {
+                    return Err(Error::Invalid(
+                        "paste the code the sign-in page shows".into(),
+                    ));
+                }
+                self.sh(&rl::code_script(h, &code), Duration::from_secs(30))
+                    .await?;
+                wait_for(|s| !matches!(s, LoginState::SigningIn { .. })).await
+            }
+            Action::Cancel => {
+                self.sh(&rl::cancel_script(h), Duration::from_secs(30))
+                    .await?;
+                status().await
+            }
+        }
+    }
+
     /// The guest's spacesd client.
     pub fn guest(&self) -> &SpacesdClient {
         &self.guest

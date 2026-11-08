@@ -298,6 +298,7 @@ struct BridgeContractTests {
             ("agentKeys.use", ["app": "hermes", "env": "ANTHROPIC_API_KEY"]),
             ("agentKeys.rename", ["env": "ANTHROPIC_API_KEY", "label": "Work key"]),
             ("agentKeys.shell", [:]), ("agentKeys.fromShell", ["env": "ANTHROPIC_API_KEY"]),
+            ("agentKeys.copySignIn", ["on": false]),
             ("github.status", [:]), ("github.rescan", [:]), ("github.use", ["host": "github.com", "login": "ada"]),
             ("github.enable", ["host": "github.com", "enabled": false]),
             ("clouds.status", [:]), ("clouds.test", ["target": ["provider": "aws", "region": "us-west-2"]]),
@@ -366,6 +367,7 @@ struct BridgeContractTests {
         "agents.message": "as agents.start (the daemon's agent_message)",
         "agents.recentThreads": "needs the daemon's agent_threads; WebUIHostTests checks it is unsupported without it",
         "agents.threadHistory": "as agents.recentThreads (the daemon's agent_thread_read)",
+        "agents.computerSignIn": "needs the daemon's agent_sign_in and a Space to sign in on; ops/agent-sign-in.ts and the Rust remote_login tests cover it",
         "agents.pause": "changes the fake's state for agents.list", "agents.resume": "as agents.pause",
         "agents.setupDriver": "writes the coding agents' configs on the fixture setup",
         // Teleport needs the SDK's handle and a reachable Space; its answers

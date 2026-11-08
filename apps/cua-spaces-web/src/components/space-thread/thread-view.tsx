@@ -18,7 +18,7 @@ import { cn, isMacPlatform } from "@/lib/utils";
 
 import { AgentTile, MemberAvatar } from "./avatar";
 import { ChildSpaceRow, SubagentRow } from "./child-rows";
-import { FailureNote } from "./failure-note";
+import { FailureComputerContext, FailureNote, type FailureComputer } from "./failure-note";
 import { AgentName, AiTag, holderNames, MemberEventNote } from "./identity";
 import { MentionChip, ProfileTrigger } from "./profile-card";
 import { waitingFor } from "./rights";
@@ -57,8 +57,11 @@ export function ThreadView({
   endInset = 0,
   after,
   tail,
+  computer,
 }: {
   items: ThreadItem[];
+  /** The computer this thread's agents run on (a failed sign-in offers to sign in there). */
+  computer?: FailureComputer;
   /** Room kept clear at the end (px): thread mode's mini-player sits there, never over the newest message. */
   endInset?: number;
   /** Drawn under the item that posted entry `seq` (a summon's "can't be woken" note). */
@@ -152,6 +155,7 @@ export function ThreadView({
       {items.length === 0 ? (
         <div className="flex h-full items-end px-8 pb-4">{empty}</div>
       ) : (
+        <FailureComputerContext.Provider value={computer}>
         <div ref={body} className="flex min-h-full flex-col justify-end gap-1 px-8 pt-5 pb-4" style={endInset ? { paddingBottom: endInset + 16 } : undefined}>
           {items.map((item, i) => (
             <Fragment key={item.key}>
@@ -161,6 +165,7 @@ export function ThreadView({
           ))}
           {tail}
         </div>
+        </FailureComputerContext.Provider>
       )}
     </div>
   );

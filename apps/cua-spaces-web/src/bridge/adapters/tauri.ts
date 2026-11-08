@@ -60,6 +60,7 @@ import { STREAM_OPERATIONS } from "../ops/stream";
 import { RELAY_USAGE_OPERATIONS } from "../ops/relay-usage";
 import { NUDGES_OPERATIONS } from "../ops/nudges";
 import { AGENT_THREADS_OPERATIONS } from "../ops/agent-threads";
+import { AGENT_SIGN_IN_OPERATIONS } from "../ops/agent-sign-in";
 import { RESOURCES_OPERATIONS } from "../ops/resources";
 import { MACHINES_OPERATIONS } from "../ops/machines";
 import { SPACES_SETTINGS_OPERATIONS } from "../ops/spaces-settings";
@@ -129,6 +130,7 @@ export const TAURI_UNSUPPORTED: readonly OpName[] = [
   ...RELAY_USAGE_OPERATIONS,
   ...NUDGES_OPERATIONS,
   ...AGENT_THREADS_OPERATIONS,
+  ...AGENT_SIGN_IN_OPERATIONS,
   ...RESOURCES_OPERATIONS,
   ...MACHINES_OPERATIONS,
   ...SPACES_SETTINGS_OPERATIONS,

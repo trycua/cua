@@ -9,6 +9,7 @@
 
 import type { RiskyRequest } from "../ops/nudges";
 import { demoAgentThreads } from "./demo/agent-threads";
+import { demoAgentSignIn } from "./demo/agent-sign-in";
 import { Emitter, HostError, UnsupportedOperationError, type DataAdapter } from "../adapter";
 import type { AgentSetupRow, ConnectionReport, PersistentAgent } from "../contracts/agents";
 import type { MachineRow, OnboardingState } from "../contracts/host";
@@ -1091,6 +1092,7 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
       return options.threadSlow ? hangingSpace(h, DEMO_THREAD_SPACE) : h;
     })(),
     ...demoAgentThreads(now, options.noChats ?? false),
+    ...demoAgentSignIn(now),
     "nudges.pending": () => risky.filter((r) => r.expiresMs > now()).map((r) => ({ ...r })),
     "nudges.answer": ({ id }) => {
       risky = risky.filter((r) => r.id !== id);

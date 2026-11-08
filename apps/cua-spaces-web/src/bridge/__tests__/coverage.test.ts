@@ -28,6 +28,7 @@ import { THREAD_ARGS } from "../ops/thread";
 import { PRESENCE_ARGS } from "../ops/presence";
 import { CLOUD_APPROVE_ARGS } from "../ops/cloud-approve";
 import { AGENT_THREADS_ARGS } from "../ops/agent-threads";
+import { AGENT_SIGN_IN_ARGS } from "../ops/agent-sign-in";
 import { RUNTIME_FIX_ARGS } from "../ops/runtime-fix";
 import { DRIVER_ARGS } from "../ops/driver";
 import type { HostWindow } from "../detect";
@@ -187,6 +188,7 @@ const ARGS: { [K in OpName]: OpArgs<K> } = {
   ...PRESENCE_ARGS,
   ...CLOUD_APPROVE_ARGS,
   ...AGENT_THREADS_ARGS,
+  ...AGENT_SIGN_IN_ARGS,
   ...RUNTIME_FIX_ARGS,
   ...DRIVER_ARGS,
 };

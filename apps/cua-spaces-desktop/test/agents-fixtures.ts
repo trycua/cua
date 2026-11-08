@@ -89,6 +89,7 @@ export class FakeAgentKeysTools {
   available = true;
   /** A Local development build keeping keys in an unencrypted file: the daemon's warning. */
   insecure: string | null = null;
+  copySignIn = false;
 
   run: ToolRunner = async (tool, args) => {
     this.calls.push([tool, args]);
@@ -124,6 +125,9 @@ export class FakeAgentKeysTools {
         k.label = String(args.label ?? "");
         break;
       }
+      case "agent_keys.copy_sign_in":
+        this.copySignIn = args.on === true;
+        break;
       case "agent_keys.use": {
         const app = String(args.app ?? "");
         if (typeof args.env === "string") this.uses[app] = { provider: "anthropic", env: args.env, ...(typeof args.slot === "string" ? { slot: args.slot } : {}) };
@@ -133,7 +137,7 @@ export class FakeAgentKeysTools {
       default:
         throw new ToolError(`unknown tool ${tool}`);
     }
-    const report: Record<string, unknown> = { keys: this.keys, providers: [], available: this.available, ...(Object.keys(this.uses).length ? { uses: this.uses } : {}) };
+    const report: Record<string, unknown> = { keys: this.keys, providers: [], available: this.available, copy_sign_in: this.copySignIn, ...(Object.keys(this.uses).length ? { uses: this.uses } : {}) };
     if (!this.available) report.unavailable = "this build keeps credentials in a file";
     if (this.insecure) report.insecure = this.insecure;
     return report;
@@ -260,7 +264,9 @@ export const AGENT_METHODS = [
   "agents.status", "agents.connect", "agents.disconnect", "agents.signInStart", "agents.signInWait",
   // "Pick up where you left off" (test/agent-threads.test.ts): the daemon's person-only tools agent_threads and agent_thread_history.
   "agents.recentThreads", "agents.threadHistory",
-  "agentKeys.list", "agentKeys.check", "agentKeys.set", "agentKeys.remove", "agentKeys.use", "agentKeys.rename", "agentKeys.shell", "agentKeys.fromShell",
+  // An agent's own sign-in on another computer (test/agent-sign-in.test.ts): the daemon's person-only tool agent_sign_in.
+  "agents.computerSignIn",
+  "agentKeys.list", "agentKeys.check", "agentKeys.set", "agentKeys.remove", "agentKeys.use", "agentKeys.rename", "agentKeys.shell", "agentKeys.fromShell", "agentKeys.copySignIn",
   // Settings, Connections, GitHub (test/github.test.ts): answered by the daemon's tools.
   "github.status", "github.rescan", "github.use", "github.enable",
 ];

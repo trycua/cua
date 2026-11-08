@@ -23,6 +23,8 @@ export interface DemoKeyStore {
   uses: Record<string, AgentKeyUse>;
   /** Variables the provider refuses: a check marks them `expired` (needs a reconnect). `?demo=rejected-key`. */
   rejected: string[];
+  /** "Copy my sign-in to my other computers" (off unless turned on). */
+  copySignIn?: boolean;
 }
 
 const DAY = 24 * 3600_000;
@@ -67,9 +69,9 @@ export function demoAgentKeysHandlers({
   stepMs: number;
   now: () => number;
   store?: DemoKeyStore;
-}): DemoHandlers<"agentKeys.list" | "agentKeys.check" | "agentKeys.set" | "agentKeys.remove" | "agentKeys.use" | "agentKeys.rename" | "agentKeys.shell" | "agentKeys.fromShell"> {
+}): DemoHandlers<"agentKeys.list" | "agentKeys.check" | "agentKeys.set" | "agentKeys.remove" | "agentKeys.use" | "agentKeys.rename" | "agentKeys.shell" | "agentKeys.fromShell" | "agentKeys.copySignIn"> {
   const keys = () => store.keys;
-  const report = (): AgentKeysReport => ({ keys: keys().map((k) => ({ ...k })), ...(Object.keys(store.uses).length ? { uses: { ...store.uses } } : {}), providers: PROVIDERS, available: true, unavailable: null });
+  const report = (): AgentKeysReport => ({ keys: keys().map((k) => ({ ...k })), ...(Object.keys(store.uses).length ? { uses: { ...store.uses } } : {}), providers: PROVIDERS, available: true, unavailable: null, copySignIn: store.copySignIn ?? false });
   return {
     "agentKeys.list": () => report(),
     // The providers answer: the keys they refuse need a reconnect, and a key saved again is not refused.
@@ -112,6 +114,11 @@ export function demoAgentKeysHandlers({
     "agentKeys.shell": async () => {
       await wait(stepMs);
       return { names: ["ANTHROPIC_API_KEY"] };
+    },
+    "agentKeys.copySignIn": async ({ on }) => {
+      await wait(stepMs / 2);
+      store.copySignIn = on;
+      return report();
     },
     "agentKeys.fromShell": async ({ env }) => {
       if (env !== "ANTHROPIC_API_KEY") throw new HostError(`${env} isn't set in your shell`);

@@ -218,12 +218,12 @@ struct LocalNetworkWhenProvidingTests {
         #expect(probe.connects == 2, "macOS asked from this app's own process")
     }
 
+    /// The switch asks, also before the first run is done ("Skip for now").
     @Test func turningProvidingOnAsksOnce() async throws {
         let host = FixtureHost()
         let shown = LocalNetworkPermissionTests.Shown()
         let probe = LocalNetworkPermissionTests.FakeProbe([.blocked, .allowed], prompts: [0, 1, 1])
         let m = model(host, probe: probe, shown: shown)
-        m.onboarding.finish()
         try await m.host.setUp(request(false), on: host)
         #expect(!host.current.provideSpaces)
         #expect(m.hostingLocalNetworkCheck == nil, "not providing Spaces: nothing asked")

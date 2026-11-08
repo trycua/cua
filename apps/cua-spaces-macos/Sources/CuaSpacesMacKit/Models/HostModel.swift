@@ -269,8 +269,8 @@ public final class HostModel {
     public var onChange: (() -> Void)?
     /// Called when the setup form, the Provide Spaces switch or joining with
     /// a code turned providing Spaces on here (never the sign-in's own setup,
-    /// never for a Mac that already provided them).
-    public var onStartedProvidingSpaces: (() -> Void)?
+    /// never for a Mac that already provided them); `bySetup` for a setup.
+    public var onStartedProvidingSpaces: ((_ bySetup: Bool) -> Void)?
     /// This Mac provides Spaces now (as of the last status).
     public var providesSpaces: Bool { status.map { $0.configured && $0.provideSpaces } ?? false }
     /// The host's last status, as the SDK reported it.
@@ -301,8 +301,8 @@ public final class HostModel {
 
     /// Calls `onStartedProvidingSpaces` when providing Spaces went from off
     /// (`was`) to on with the last status.
-    func followProviding(from was: Bool) {
-        if !was && providesSpaces { onStartedProvidingSpaces?() }
+    func followProviding(from was: Bool, bySetup: Bool = false) {
+        if !was && providesSpaces { onStartedProvidingSpaces?(bySetup) }
     }
 
     func apply(_ status: HostStatus) {
@@ -476,7 +476,7 @@ public final class HostModel {
             : try await host.setupRequest(request: request, accountToken: nil)
         setupFailure = nil
         apply(status)
-        if !signingIn { followProviding(from: was) }
+        if !signingIn { followProviding(from: was, bySetup: true) }
     }
 
     /// Relay setup always runs with a valid account token: signed out (or a

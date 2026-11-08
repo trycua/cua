@@ -250,7 +250,7 @@ public final class AppModel {
         // This Mac started accepting Spaces from your other computers: ask
         // for Local Network now, while someone is here to answer, not when a
         // peer's macOS create later meets macOS's bare prompt.
-        self.host.onStartedProvidingSpaces = { [weak self] in self?.askLocalNetworkForHosting() }
+        self.host.onStartedProvidingSpaces = { [weak self] in self?.askLocalNetworkForHosting(bySetup: $0) }
         followChecklist()
         // No notification prompt before the first run is done.
         PermissionRequester.firstRunDone = { [weak onboarding] in onboarding?.completed ?? false }
@@ -1301,12 +1301,13 @@ public final class AppModel {
 
     /// The Local Network steps for a Mac that accepts Spaces from your other
     /// computers: the explanation, then macOS's prompt, or the fix when access
-    /// was turned off. Never during the first run or a sign-in (both set this
-    /// Mac up to provide Spaces): finishing the first run asks instead
-    /// (`onboarding.complete`). Cancel or a refusal changes nothing else; a
-    /// local macOS create asks again.
-    func askLocalNetworkForHosting() {
-        guard onboarding.completed, hostingLocalNetworkCheck == nil, let gate = localNetworkGate,
+    /// was turned off. Never for a sign-in's setup, nor a setup during the
+    /// first run (its page sets this Mac up as it signs in): finishing the
+    /// first run asks instead (`onboarding.complete`). The switch and a join
+    /// code always ask. Cancel or a refusal changes nothing else; a local
+    /// macOS create asks again.
+    func askLocalNetworkForHosting(bySetup: Bool = false) {
+        guard onboarding.completed || !bySetup, hostingLocalNetworkCheck == nil, let gate = localNetworkGate,
               appLocalNetworkApplies(provider: .local, os: .macos, hostIsMac: true) else { return }
         hostingLocalNetworkCheck = Task { @MainActor [weak self] in
             try? await gate.check()

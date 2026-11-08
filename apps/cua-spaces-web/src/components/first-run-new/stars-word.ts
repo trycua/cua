@@ -19,6 +19,8 @@ const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
 const inOut = (t: number) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
 
 export function starsWord(word: HTMLElement, host: HTMLElement): () => void {
+  // No Web Animations (an older web view, a test page): the word is simply there.
+  if (typeof word.animate !== "function") return () => {};
   const rest = getComputedStyle(word).filter.replace(/^none$/, "");
   const fade = word.animate([{ opacity: 0, filter: `blur(6px) ${rest}` }, { opacity: 1, filter: `blur(0px) ${rest}` }],
     { duration: WORD_DUR * 1000, delay: (SETTLE + WORD_IN) * 1000, easing: "cubic-bezier(0.33, 1, 0.68, 1)", fill: "backwards" });

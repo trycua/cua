@@ -16,6 +16,10 @@ const EXAMPLE_PROMPT: &str = "Use Cua Driver to open Calculator and work out 17 
 
 /// What the steps need from the machine. The real one talks to the daemon.
 pub trait Backend {
+    /// True when the OS gates Cua Driver behind grants the user turns on
+    /// (macOS Accessibility and Screen Recording). Linux and Windows have none:
+    /// the screen read and pointer steps are the proof there.
+    fn asks_for_permission_grants(&self) -> bool;
     /// True when this machine can run the Mac text-editor check.
     fn runs_text_editor_check(&self) -> bool;
     /// True when the app (or a running daemon) is there to talk to.
@@ -159,9 +163,11 @@ pub fn run(backend: &mut dyn Backend) -> Report {
     let mut steps: Vec<Step> = Vec::new();
     let mut note = None;
 
+    let grants = backend.asks_for_permission_grants();
     let grant = "run `cua-driver permissions grant`";
+    let doctor = "Run `cua-driver doctor` and send us what it prints.";
 
-    // 1. Make sure Cua Driver is up, then ask what it may do.
+    // 1. Make sure Cua Driver is up, then, where the OS has grants, ask what it may do.
     if !backend.daemon_running() {
         if !backend.app_installed() {
             steps.push(fail(
@@ -172,42 +178,49 @@ pub fn run(backend: &mut dyn Backend) -> Report {
             return Report { steps, note };
         }
         if let Err(error) = backend.start_daemon() {
+            let fix = if grants {
+                format!("Start Cua Driver and turn on its access: {grant}")
+            } else {
+                doctor.to_owned()
+            };
             steps.push(fail(
                 "permissions",
                 &format!("Cua Driver would not start ({error})"),
-                &format!("Start Cua Driver and turn on its access: {grant}"),
+                &fix,
             ));
             return Report { steps, note };
         }
     }
-    let perms = backend.permissions();
-    let (ax, sr) = match &perms {
-        Ok(p) => (flag(p, "accessibility"), flag(p, "screen_recording")),
-        Err(_) => (false, false),
-    };
-    steps.push(if ax {
-        pass(
-            "accessibility",
-            "Cua Driver can use your mouse and keyboard",
-        )
-    } else {
-        fail(
-            "accessibility",
-            "Cua Driver can't use your mouse and keyboard yet",
-            &format!("Turn on Accessibility for Cua Driver: {grant}"),
-        )
-    });
-    steps.push(if sr {
-        pass("screen_recording", "Cua Driver can see your screen")
-    } else {
-        fail(
-            "screen_recording",
-            "Cua Driver can't see your screen yet",
-            &format!("Turn on Screen Recording for Cua Driver: {grant}"),
-        )
-    });
-    if !(ax && sr) {
-        return Report { steps, note };
+    if grants {
+        let perms = backend.permissions();
+        let (ax, sr) = match &perms {
+            Ok(p) => (flag(p, "accessibility"), flag(p, "screen_recording")),
+            Err(_) => (false, false),
+        };
+        steps.push(if ax {
+            pass(
+                "accessibility",
+                "Cua Driver can use your mouse and keyboard",
+            )
+        } else {
+            fail(
+                "accessibility",
+                "Cua Driver can't use your mouse and keyboard yet",
+                &format!("Turn on Accessibility for Cua Driver: {grant}"),
+            )
+        });
+        steps.push(if sr {
+            pass("screen_recording", "Cua Driver can see your screen")
+        } else {
+            fail(
+                "screen_recording",
+                "Cua Driver can't see your screen yet",
+                &format!("Turn on Screen Recording for Cua Driver: {grant}"),
+            )
+        });
+        if !(ax && sr) {
+            return Report { steps, note };
+        }
     }
 
     // 2. Read the screen.
@@ -223,7 +236,11 @@ pub fn run(backend: &mut dyn Backend) -> Report {
             steps.push(fail(
                 "screen_read",
                 "Cua Driver got a blank picture of your screen",
-                &format!("Check Screen Recording is on for Cua Driver, then run `cua-driver test` again: {grant}"),
+                &if grants {
+                    format!("Check Screen Recording is on for Cua Driver, then run `cua-driver test` again: {grant}")
+                } else {
+                    doctor.to_owned()
+                },
             ));
             return Report { steps, note };
         }
@@ -231,7 +248,11 @@ pub fn run(backend: &mut dyn Backend) -> Report {
             steps.push(fail(
                 "screen_read",
                 &format!("Cua Driver couldn't read your screen ({})", short(&error)),
-                &format!("Check Screen Recording is on for Cua Driver: {grant}"),
+                &if grants {
+                    format!("Check Screen Recording is on for Cua Driver: {grant}")
+                } else {
+                    doctor.to_owned()
+                },
             ));
             return Report { steps, note };
         }
@@ -247,7 +268,7 @@ pub fn run(backend: &mut dyn Backend) -> Report {
             steps.push(fail(
                 "pointer",
                 &format!("Cua Driver couldn't move its pointer ({})", short(&error)),
-                "Run `cua-driver doctor` and send us what it prints.",
+                doctor,
             ));
             return Report { steps, note };
         }
@@ -505,6 +526,10 @@ impl DaemonBackend {
 }
 
 impl Backend for DaemonBackend {
+    fn asks_for_permission_grants(&self) -> bool {
+        cfg!(target_os = "macos")
+    }
+
     fn runs_text_editor_check(&self) -> bool {
         cfg!(target_os = "macos")
     }
@@ -642,6 +667,7 @@ mod tests {
         running: bool,
         start_ok: bool,
         perms: Value,
+        grants: bool,
         text_editor: bool,
         calls: Vec<String>,
         closed: bool,
@@ -658,6 +684,7 @@ mod tests {
                 running: true,
                 start_ok: true,
                 perms: json!({ "accessibility": true, "screen_recording": true }),
+                grants: true,
                 text_editor: true,
                 calls: vec![],
                 closed: false,
@@ -675,6 +702,9 @@ mod tests {
     }
 
     impl Backend for Fake {
+        fn asks_for_permission_grants(&self) -> bool {
+            self.grants
+        }
         fn runs_text_editor_check(&self) -> bool {
             self.text_editor
         }
@@ -867,6 +897,9 @@ mod tests {
     fn text_that_never_shows_up_fails_and_still_cleans_up() {
         struct NoText(Fake);
         impl Backend for NoText {
+            fn asks_for_permission_grants(&self) -> bool {
+                true
+            }
             fn runs_text_editor_check(&self) -> bool {
                 true
             }
@@ -909,15 +942,65 @@ mod tests {
         );
     }
 
+    /// Linux and Windows: no grants to check, and no Mac text editor.
+    fn without_grants() -> Fake {
+        let mut fake = Fake::good();
+        fake.grants = false;
+        fake.text_editor = false;
+        // What Linux `check_permissions` answers: no macOS grant keys.
+        fake.perms = json!({ "atspi": true, "wayland": true, "x11": true, "xsend_event": true });
+        fake
+    }
+
     #[test]
     fn linux_skips_the_text_editor_and_says_so() {
-        let mut fake = Fake::good();
-        fake.text_editor = false;
+        let mut fake = without_grants();
         let report = run(&mut fake);
-        assert!(report.ok());
+        assert!(report.ok(), "{}", report.to_text());
         assert!(report.to_text().contains("only checked on a Mac"));
         assert!(!fake.calls.contains(&"launch_app".to_owned()));
-        assert_eq!(report.to_json()["steps"].as_array().unwrap().len(), 4);
+        let json = report.to_json();
+        let ids: Vec<&str> = json["steps"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|step| step["id"].as_str().unwrap())
+            .collect();
+        assert_eq!(ids, ["screen_read", "pointer"]);
+    }
+
+    #[test]
+    fn without_grants_no_step_names_macos_settings() {
+        let mut fake = without_grants();
+        let text = run(&mut fake).to_text();
+        assert!(!text.contains("Accessibility"), "{text}");
+        assert!(!text.contains("Screen Recording"), "{text}");
+        assert!(!text.contains("mouse and keyboard"), "{text}");
+    }
+
+    #[test]
+    fn without_grants_a_blank_screen_read_points_to_doctor() {
+        let mut fake = without_grants();
+        fake.screen_blank = true;
+        let report = run(&mut fake);
+        assert_eq!(report.exit_code(), 1);
+        let text = report.to_text();
+        assert!(text.contains("blank picture"), "{text}");
+        assert!(text.contains("cua-driver doctor"), "{text}");
+        assert!(!text.contains("permissions grant"), "{text}");
+        assert!(!text.contains("Screen Recording"), "{text}");
+    }
+
+    #[test]
+    fn without_grants_a_start_that_fails_points_to_doctor() {
+        let mut fake = without_grants();
+        fake.running = false;
+        fake.start_ok = false;
+        let report = run(&mut fake);
+        assert_eq!(report.exit_code(), 1);
+        let text = report.to_text();
+        assert!(text.contains("cua-driver doctor"), "{text}");
+        assert!(!text.contains("permissions grant"), "{text}");
     }
 
     #[test]

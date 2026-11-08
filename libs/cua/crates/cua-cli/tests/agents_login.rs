@@ -1212,7 +1212,7 @@ async fn interactive_login_onboarding_prompts() {
         p.send("y\r");
         let at = p.expect("✓ Claude Code", at);
         let at = p.expect("✗ Cursor", at);
-        let at = p.expect("Install 5 default cua skills? [Y/n]", at);
+        let at = p.expect("Install 6 default cua skills? [Y/n]", at);
         p.send("\r");
         let at = p.expect("[1/6] ✓ cua-driver (installed, 2 locations)", at);
         let at = p.expect("[6/6]", at);

@@ -1,0 +1,27 @@
+# Every TLA+ check, one row each. check-models.sh runs them all and compares.
+# expect: "pass", or the one invariant that must fail first. A row that names
+# an invariant is either a finding on main or an able-to-fail variant (the
+# code with one guard removed); the SKILL.md table says which.
+# spec	config (both relative to libs/cua-driver/rust/crates)	expect
+cua-driver-core/models/token.tla	cua-driver-core/models/token.cfg	pass
+cua-driver-core/models/token.tla	cua-driver-core/models/token_agedout.cfg	R4
+cua-driver-core/models/token.tla	cua-driver-core/models/token_rowrepoint.cfg	R3
+cua-driver-core/models/session.tla	cua-driver-core/models/session.cfg	SE5
+cua-driver-core/models/session.tla	cua-driver-core/models/session_fixed.cfg	pass
+cua-driver-core/models/session.tla	cua-driver-core/models/session_pre6773.cfg	SE2
+cua-driver-core/models/recording.tla	cua-driver-core/models/recording.cfg	pass
+cua-driver-core/models/recording.tla	cua-driver-core/models/recording_restart.cfg	RC3
+cua-driver-core/models/recording.tla	cua-driver-core/models/recording_dirfail.cfg	RC4
+cua-driver-core/models/recording.tla	cua-driver-core/models/recording_idle.cfg	RC5
+cua-driver-sdk/models/admission.tla	cua-driver-sdk/models/admission.cfg	pass
+cua-driver-sdk/models/admission.tla	cua-driver-sdk/models/admission_pre6802.cfg	PG1
+cua-driver-sdk/models/admission.tla	cua-driver-sdk/models/admission_regate.cfg	PG1
+cua-driver/models/serve_drain.tla	cua-driver/models/serve_drain.cfg	pass
+cua-driver/models/serve_drain.tla	cua-driver/models/serve_drain_windows.cfg	SD1
+platform-macos/models/foreground_restore.tla	platform-macos/models/foreground_restore.cfg	FR1
+platform-macos/models/foreground_restore.tla	platform-macos/models/foreground_restore_fixed.cfg	pass
+platform-macos/models/invoke_menu_cancel.tla	platform-macos/models/invoke_menu_cancel.cfg	MC2
+platform-macos/models/invoke_menu_cancel.tla	platform-macos/models/invoke_menu_cancel_fixed.cfg	pass
+platform-macos/models/invoke_menu_cancel.tla	platform-macos/models/invoke_menu_cancel_pre6953.cfg	MC1
+platform-windows/models/windows_typing.tla	platform-windows/models/windows_typing.cfg	pass
+platform-windows/models/windows_typing.tla	platform-windows/models/windows_typing_always.cfg	NoLateKeystroke

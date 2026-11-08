@@ -15,7 +15,7 @@ import { Button } from "@/components/ui/button";
 import { toast } from "@/components/ui/toast";
 import { bindingFor } from "@/lib/keybindings";
 import { useHiddenSpaceIds } from "@/lib/prepare/store";
-import { spaceState } from "@/lib/spaces";
+import { createLine, spaceState } from "@/lib/spaces";
 import { cn } from "@/lib/utils";
 import { SIDEBAR_DEFAULT, useUiStore } from "@/stores/ui";
 import { Shortcut } from "@/components/ui/kbd";
@@ -122,7 +122,7 @@ function SidebarCreating({ spaces }: { spaces: Space[] }) {
           >
             <div className="text-2xs font-medium text-muted-foreground">Making</div>
             <div className="truncate text-xs font-medium">{spokenName(s.name)}</div>
-            <div className="truncate text-2xs text-muted-foreground">{p?.transfer ?? p?.label ?? "Starting…"}</div>
+            <div className="truncate text-2xs text-muted-foreground">{createLine(p) ?? "Starting…"}</div>
             <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-foreground/10" role="progressbar" aria-label={`Making ${s.name}`} aria-valuenow={Math.round(fraction * 100)} aria-valuemin={0} aria-valuemax={100}>
               <div className="h-full rounded-full bg-brand transition-[width]" style={{ width: `${Math.round(fraction * 100)}%` }} />
             </div>

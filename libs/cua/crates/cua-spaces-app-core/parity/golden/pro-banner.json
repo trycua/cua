@@ -2,7 +2,7 @@
   "flow": "pro-banner",
   "frames": [
     {
-      "banner": "Run more Spaces at once with Pro [Upgrade]",
+      "banner": "Use more computers at once with Pro [Upgrade]",
       "menu": [
         "settings: Settings",
         "plan: Plan = Free",
@@ -29,7 +29,7 @@
       "step": "Teams"
     },
     {
-      "banner": "Run more Spaces at once with Pro [Upgrade]",
+      "banner": "Use more computers at once with Pro [Upgrade]",
       "menu": [
         "settings: Settings",
         "plan: Plan = Free"

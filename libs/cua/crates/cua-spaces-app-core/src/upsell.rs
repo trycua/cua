@@ -125,7 +125,7 @@ pub fn prompt(
 // ---- The Pro banner (the sidebar's foot) -----------------------------------
 
 /// The Pro banner's line.
-pub const PRO_BANNER_TEXT: &str = "Run more Spaces at once with Pro";
+pub const PRO_BANNER_TEXT: &str = "Use more computers at once with Pro";
 
 /// What the Pro banner reads.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -376,7 +376,7 @@ mod tests {
     fn the_pro_banner_shows_on_free_only_and_cannot_be_closed() {
         let b = banner("free");
         assert!(b.visible);
-        assert_eq!(b.text, "Run more Spaces at once with Pro");
+        assert_eq!(b.text, "Use more computers at once with Pro");
         assert_eq!(b.button, "Upgrade");
         assert!(banner("Free").visible);
         for paid in ["pro", "team", "teams", "", "enterprise"] {

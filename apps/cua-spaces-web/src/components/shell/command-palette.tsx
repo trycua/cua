@@ -9,6 +9,7 @@ import {
   LogOutIcon,
   MonitorIcon,
   MoonIcon,
+  MousePointer2Icon,
   PanelLeftIcon,
   PlusIcon,
   SearchIcon,
@@ -19,7 +20,7 @@ import {
 } from "lucide-react";
 import { useMemo, useState, type KeyboardEvent } from "react";
 
-import { useBridge, useKeyvault, useMachines, useSession, useSpaces } from "@/bridge";
+import { useBridge, useDriver, useKeyvault, useMachines, useSession, useSpaces } from "@/bridge";
 import { OsIcon } from "@/components/os-icon";
 import { useHiddenSpaceIds } from "@/lib/prepare/store";
 import { Dialog, DialogPopup, DialogTitle } from "@/components/ui/dialog";
@@ -28,6 +29,7 @@ import { toast, toastError } from "@/components/ui/toast";
 import { filterCommands, type PaletteCommand } from "@/lib/commands";
 import { machineName, orderSpaces, osLabel, paletteKeywords, realSpaces, spaceState } from "@/lib/spaces";
 import { bindingFor } from "@/lib/keybindings";
+import { THIS_COMPUTER } from "@/lib/machines";
 import { SETTINGS_TABS } from "@/lib/settings-tabs";
 import { useTheme } from "@/lib/theme";
 import { cn } from "@/lib/utils";
@@ -75,6 +77,7 @@ function PaletteBody({ onClose }: { onClose: () => void }) {
   const other = resolved === "dark" ? "light" : "dark";
 
   const navItems = useNavItems();
+  const driverAvailable = useDriver().available;
   const commands: Command[] = [
     {
       id: "space:new",
@@ -133,7 +136,8 @@ function PaletteBody({ onClose }: { onClose: () => void }) {
       id: `nav:${n.to}`,
       group: "Go to",
       label: n.label,
-      keywords: "page",
+      // Computers is where Machines and the Spaces list were (CUA-3551): either old word finds it.
+      keywords: n.to === "/spaces" ? "page machines spaces devices" : "page",
       shortcut: n.command ? bindingFor(n.command) : undefined,
       icon: icon(n.icon),
       run: () => void navigate({ to: n.to }),
@@ -147,6 +151,19 @@ function PaletteBody({ onClose }: { onClose: () => void }) {
       icon: icon(SettingsIcon),
       run: () => void navigate({ to: t.to }),
     })),
+    // Cua Driver is one of This Mac's settings, where this Cua Spaces carries it.
+    ...(driverAvailable
+      ? [
+          {
+            id: "nav:driver",
+            group: "Go to",
+            label: "Cua Driver",
+            keywords: "pointer cursor computer use",
+            icon: icon(MousePointer2Icon),
+            run: () => void navigate({ to: "/spaces/computer/$computerId/driver", params: { computerId: THIS_COMPUTER } }),
+          },
+        ]
+      : []),
     { id: "nav:onboarding", group: "Go to", label: "Onboarding", keywords: "welcome setup", icon: icon(SparklesIcon), run: () => void navigate({ to: "/onboarding" }) },
     ...orderSpaces(realSpaces(spaces)).flatMap((s): Command[] => {
       const state = spaceState(s);

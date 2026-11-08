@@ -111,18 +111,20 @@ extension WebUIBridge {
     /// keeps the Screen Recording answer it had at launch) starts again,
     /// once.
     func appPermissions() async -> [String: Any] {
-        let granted = await PermissionGuide.readGranted()
+        let states = await PermissionGuide.readStates()
+        let granted = PermissionGuide.granted(in: states)
         if granted.contains(.screenRecording), granted.contains(.accessibility), let driver = EmbeddedDriver.current() {
             await restartDriverIfStale(driver, force: false)
         }
-        return ["appName": PermissionGuide.appName(), "permissions": PermissionGuide.rows(granted: granted)]
+        return ["appName": PermissionGuide.appName(), "permissions": PermissionGuide.rows(states: states)]
     }
 
     /// `DriverStatus`.
     func driverStatus(_ driver: EmbeddedDriver) async -> [String: Any] {
         let paused = FileManager.default.fileExists(atPath: driver.pausedMarker)
         let meta = await Task.detached { driver.metadata() }.value
-        let granted = await PermissionGuide.readGranted()
+        let states = await PermissionGuide.readStates()
+        let granted = PermissionGuide.granted(in: states)
         let screen = granted.contains(.screenRecording), accessibility = granted.contains(.accessibility)
         var lastError: String?
         let state: String
@@ -151,7 +153,7 @@ extension WebUIBridge {
             "update": NSNull(),
             "lastTest": orNull(DriverPageState.shared.lastTest),
             "lastError": orNull(lastError),
-            "permissions": PermissionGuide.rows(granted: granted),
+            "permissions": PermissionGuide.rows(states: states),
             "appName": PermissionGuide.appName(),
             "activity": [Any](),
             "canPause": true,

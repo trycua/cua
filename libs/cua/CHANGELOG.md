@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.14.0](https://github.com/trycua/cua/compare/cua-sdk-v0.13.0...cua-sdk-v0.14.0) (2026-11-07)
+
+
+### Features
+
+* **spaces:** setup says what Spaces is for, asks for the rest after the first job, offers only what this computer can make ([#6787](https://github.com/trycua/cua/issues/6787)) ([7ecb202](https://github.com/trycua/cua/commit/7ecb202e25329e41985b19b66025f9c02480e25d))
+
+
+### Bug Fixes
+
+* **spaces:** Home's apps row opens again after a relaunch and shows each switch live (CUA-3551) ([#6872](https://github.com/trycua/cua/issues/6872)) ([26858cd](https://github.com/trycua/cua/commit/26858cd5050728f64aaa1ef78a9bf3a248fdccc8))
+
 ## [0.13.0](https://github.com/trycua/cua/compare/cua-sdk-v0.12.1...cua-sdk-v0.13.0) (2026-11-07)
 
 

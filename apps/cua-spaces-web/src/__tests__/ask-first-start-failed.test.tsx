@@ -11,7 +11,6 @@
 import { act, cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { setFlagOverride } from "@/bridge";
 import { wasmBuilt } from "@/bridge/__tests__/testCore";
 import { addAskTask, askTask, askTasks, resetAskTasks, setThisMacConfirmed, thisMacConfirmed } from "@/lib/ask-first";
 
@@ -30,7 +29,6 @@ stubBrowserApis();
 beforeEach(() => {
   localStorage.clear();
   resetAskTasks();
-  setFlagOverride("spaces_ask_first_home", true);
 });
 
 async function pickThisMac() {
@@ -51,7 +49,7 @@ async function startJob(text: string) {
 describe.skipIf(!wasmBuilt)("This Mac as a task's computer (real routes, wasm core)", () => {
   it("defaults to This Mac once it's in the account, asks once on the first Start, then starts on this Mac's Space id", async () => {
     await mountApp("/home", HOST);
-    await screen.findByText("What do you want to do?");
+    await waitFor(() => expect(document.querySelector("[data-ask-box]")).not.toBeNull());
     await waitFor(() => expect(document.querySelector('[data-picker="where"]')!.textContent).toContain("This Mac"));
     await startJob("Tidy my Downloads folder");
     await screen.findByText("Work on this Mac?");
@@ -69,7 +67,7 @@ describe.skipIf(!wasmBuilt)("This Mac as a task's computer (real routes, wasm co
   it("opens the task's own page, never the unlisted relay Space (trycua/cua#6363)", async () => {
     setThisMacConfirmed(true);
     await mountApp("/home", HOST);
-    await screen.findByText("What do you want to do?");
+    await waitFor(() => expect(document.querySelector("[data-ask-box]")).not.toBeNull());
     await pickThisMac();
     await startJob("hi");
     const id = askTasks()[0]!.id;
@@ -80,7 +78,7 @@ describe.skipIf(!wasmBuilt)("This Mac as a task's computer (real routes, wasm co
 
   it("Pick another starts nothing and reopens the picker", async () => {
     await mountApp("/home", HOST);
-    await screen.findByText("What do you want to do?");
+    await waitFor(() => expect(document.querySelector("[data-ask-box]")).not.toBeNull());
     await waitFor(() => expect(document.querySelector('[data-picker="where"]')!.textContent).toContain("This Mac"));
     await startJob("Tidy my Downloads folder");
     await act(async () => {
@@ -94,7 +92,7 @@ describe.skipIf(!wasmBuilt)("This Mac as a task's computer (real routes, wasm co
   it("doesn't ask again once answered on this device", async () => {
     setThisMacConfirmed(true);
     await mountApp("/home", HOST);
-    await screen.findByText("What do you want to do?");
+    await waitFor(() => expect(document.querySelector("[data-ask-box]")).not.toBeNull());
     await pickThisMac();
     await waitFor(() => expect(document.querySelector('[data-picker="where"]')!.textContent).toContain("This Mac"));
     expect(screen.queryByText("Work on this Mac?")).toBeNull();

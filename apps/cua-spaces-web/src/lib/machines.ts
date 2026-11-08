@@ -4,7 +4,6 @@
 import type { Machine, SpaceOs } from "@/bridge";
 import { machineSpacesLabel } from "@/bridge/derive";
 import { OS_NAME } from "@/components/os-icon";
-import { plural } from "@/lib/plural";
 import { relativeTime } from "@/lib/utils";
 
 /** The machine's OS as one of the three the app draws, or null when the host did not say. */
@@ -79,16 +78,6 @@ export function spacesLabel(m: Pick<Machine, "spacesLabel">, n: number, desktop 
   return m.spacesLabel ?? machineSpacesLabel(desktop, n);
 }
 
-/** The selected machine: the chosen one if it is still listed, else the first. */
-export function selectedMachine<T extends Pick<Machine, "id">>(machines: readonly T[], id: string | null): T | undefined {
-  return machines.find((m) => m.id === id) ?? machines[0];
-}
-
-/** The Machines header: "1 machine, 1 online", "3 machines, 2 online". */
-export function machinesSummary(total: number, online: number): string {
-  return `${plural(total, "machine")}, ${online} online`;
-}
-
 /**
  * The computers a chat could carry on on ("Continue on"): your other
  * computers that are online and shared, each once. Signed-in devices that
@@ -105,4 +94,18 @@ export function chatComputers(machines: readonly Machine[]): { computers: Machin
   }
   const computers = others.filter(reachable);
   return { computers, offline: others.length - computers.length };
+}
+
+/** The id `/spaces/computer/$computerId` takes for this computer, whatever the relay calls it. */
+export const THIS_COMPUTER = "this-mac";
+
+/** The computer a page id names: `this-mac` for this one, else its own id. */
+export function computerFor<T extends { id: string; current: boolean }>(machines: readonly T[], id: string): T | undefined {
+  if (id === THIS_COMPUTER) return machines.find((m) => m.current);
+  return machines.find((m) => m.id === id);
+}
+
+/** The page path for a computer in your list. */
+export function computerParam(m: Pick<Machine, "id" | "current">): string {
+  return m.current ? THIS_COMPUTER : m.id;
 }

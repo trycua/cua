@@ -12,7 +12,6 @@
 import { act, cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { setFlagOverride } from "@/bridge";
 import { wasmBuilt } from "@/bridge/__tests__/testCore";
 import { DEMO_THREAD_SPACE } from "@/bridge/adapters/demo/thread";
 import { resetWakeNotes } from "@/components/space-thread/summon";
@@ -28,7 +27,6 @@ beforeEach(() => {
   resetWakeNotes();
   resetConnectState();
   resetConnectedAppsState();
-  setFlagOverride("spaces_ask_first_home", true);
 });
 afterEach(() => {
   cleanup();
@@ -227,7 +225,6 @@ describe.skipIf(!wasmBuilt)("notes only you see", () => {
 
 describe.skipIf(!wasmBuilt)("@ any agent in a Space ", () => {
   it("offers the agents that can start here and adds one on send", async () => {
-    setFlagOverride("spaces_ask_first_home", null);
     const calls: { op: string; args: Record<string, unknown> }[] = [];
     await mountApp(`/spaces/${encodeURIComponent(DEMO_THREAD_SPACE)}`, {
       failsCreates: false,

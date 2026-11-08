@@ -2862,19 +2862,34 @@ struct EditableFlags {
     in_web_doc: bool,
 }
 
+/// Index of the sole editable node, or `None` when there are none or several.
+fn only_editable(nodes: impl Iterator<Item = EditableFlags>) -> Option<usize> {
+    let mut editables = nodes.enumerate().filter(|(_, n)| n.editable);
+    match (editables.next(), editables.next()) {
+        (Some((index, _)), None) => Some(index),
+        _ => None,
+    }
+}
+
 /// Index of the editable to write into, by priority:
 ///   1. the focused editable (if the toolkit exposes focus),
 ///   2. an editable inside web/document content — for a browser this is the
 ///      page's field, not the address bar (which sorts first in the tree but is
 ///      chrome),
-///   3. the first editable anywhere (covers single-field apps like a GTK dialog
-///      entry, or a GTK4 GtkEntry).
+///   3. the *only* editable, when the app has exactly one (covers single-field
+///      apps like a GTK dialog entry, or a GTK4 GtkEntry).
+///
+/// Rule 3 used to take the first editable in tree order. In Geany that is the
+/// toolbar search entry, several nodes above the document, so text written
+/// while nothing reported focus landed in the search box and the write was
+/// still reported as confirmed. With more than one candidate and no focus to
+/// choose between them, no pick is safe, so this returns `None` and the caller
+/// falls through to a route that follows the app's real focus.
 ///
 /// `complete` says whether the nodes are the whole tree. A *partial* walk keeps
 /// only rule 1: the focused field may not have been reached yet, and rules 2
 /// and 3 would then write into an earlier field (a second page input, a search
-/// box), a silent misdelivery. The caller falls through to a route that
-/// follows the app's real focus instead.
+/// box), a silent misdelivery.
 fn pick_editable_index(
     nodes: impl Iterator<Item = EditableFlags> + Clone,
     complete: bool,
@@ -2883,7 +2898,7 @@ fn pick_editable_index(
         |rule: fn(&EditableFlags) -> bool| nodes.clone().position(|n| n.editable && rule(&n));
     first(|n| n.focused).or_else(|| {
         complete
-            .then(|| first(|n| n.in_web_doc).or_else(|| first(|_| true)))
+            .then(|| first(|n| n.in_web_doc).or_else(|| only_editable(nodes.clone())))
             .flatten()
     })
 }
@@ -8871,10 +8886,18 @@ mod pick_editable_tests {
     }
 
     #[test]
-    fn a_complete_walk_without_focus_prefers_page_content_then_any_editable() {
+    fn a_complete_walk_without_focus_prefers_page_content_then_the_only_editable() {
         assert_eq!(pick(&[ENTRY, LABEL, PAGE_FIELD], true), Some(2));
-        assert_eq!(pick(&[LABEL, ENTRY, ENTRY], true), Some(1));
+        assert_eq!(pick(&[LABEL, ENTRY, LABEL], true), Some(1));
         assert_eq!(pick(&[LABEL], true), None);
+    }
+
+    #[test]
+    fn several_editables_with_no_focus_and_no_page_content_pick_nothing() {
+        // Geany: the toolbar search entry sorts above the document, and tree
+        // order is not a reason to write into it.
+        assert_eq!(pick(&[LABEL, ENTRY, ENTRY], true), None);
+        assert_eq!(pick(&[ENTRY, ENTRY], true), None);
     }
 
     #[test]

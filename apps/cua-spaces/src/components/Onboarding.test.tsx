@@ -39,7 +39,7 @@ describe("Onboarding", () => {
     render(<Onboarding host={host} onDone={onDone} identity="ada@example.com" />);
     fireEvent.click(screen.getByText("Let my other computers reach this Mac"));
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
-    expect(screen.getByText("You and the people you share with can create Spaces on this machine, and see and control its screen if you turn that on, from other machines. Cua connects them for you, with no network setup. Signed in as ada@example.com.")).toBeInTheDocument();
+    expect(screen.getByText("You and the people you share with can create Spaces on this computer, and see and control its screen if you turn that on, from other computers. Cua connects them for you, with no network setup. Signed in as ada@example.com.")).toBeInTheDocument();
     // Direct ip:port is hidden until Advanced is opened.
     expect(screen.queryByText(/Direct connection/)).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Turn on remote access" }));

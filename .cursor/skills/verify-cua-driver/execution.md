@@ -1,10 +1,10 @@
-# Linux execution outcome
+# Linux execution
 
-## CI proof pending
+## CI proof
 
-The end-to-end proof runs in `.github/workflows/e2e-rust-linux.yml`, job `verify-skill`, on pull requests touching `.cursor/skills/verify-cua-driver/**`, `libs/cua-driver/**`, or that workflow. For a manual run, use `workflow_dispatch` with `lane=verify` and optionally a full source SHA in `ref`. Release-call certification lanes are unchanged.
+The end-to-end proof runs in `.github/workflows/e2e-rust-linux.yml`, job `verify-skill` ("Linux / verification skill proof"), on pull requests touching `.cursor/skills/verify-cua-driver/**`, `libs/cua-driver/**`, or that workflow. For a manual run, use `workflow_dispatch` with `lane=verify` and optionally a full source SHA in `ref`. Release-call certification lanes are unchanged.
 
-The job has a 25-minute bound, shares the Rust build cache, disables retries, and runs the offline checker regressions before invoking the helper. The canonical runner stages Electron from the registry; no runtime is vendored. Evidence is uploaded after cleanup as `verify-cua-driver-evidence`, including failed attempts. Missing artifacts or incomplete evidence fail the job.
+The job has a 25-minute bound, shares the Rust build cache, disables retries, and runs the offline checker regressions before invoking the helper. The canonical runner stages Electron from the registry; no runtime is vendored. Evidence is uploaded after cleanup as `verify-cua-driver-evidence`, including failed attempts. Missing artifacts or incomplete evidence fail the job. The first recorded pass is [run 42399619203](https://github.com/trycua/cua/actions/runs/42399619203).
 
 On a networked Linux host with the dependencies and toolchain listed in [the skill](SKILL.md), run from the repository root:
 
@@ -18,20 +18,12 @@ The helper automatically checks its printed evidence directory after desktop tea
 .cursor/skills/verify-cua-driver/scripts/check-evidence.sh /absolute/printed/evidence/directory
 ```
 
-The checker requires both exact delivered/pass summary rows, current-attempt per-cell evidence, preflight diagnostics, and at least one recorded owned PID with none still alive. A helper timeout in CI is a defect to fix under requirement (3), for example by raising its internal bound if build/staging exhausts it; do not add a second pre-build harness.
-
-No successful CI run has been observed yet. Record the run URL and source SHA here only after that job succeeds. No end-to-end attempt was made in the offline sandbox for this change.
-
-## Historical offline attempts
-
-The documented `timeout 1260 .cursor/skills/verify-cua-driver/scripts/verify-linux.sh x11` invocation was retried. X11 session setup and the release driver build succeeded, but Electron dependency staging failed. A fresh-lockfile installation retry also failed; the npm registry was unreachable and no cached Electron runtime was available.
-
-Setup logs survived cleanup. Doctor, preflight and both click cells did not run: there are no delivered summary rows, daemon diagnostics, transcripts, fixture-state snapshots, sentinel/native observations, screenshots or videos. No surviving-owned-PID warning was printed, but there were no recorded daemon/fixture PIDs to check. The transcript PID extraction, live-process cleanup check and fixture snapshot-on-drop paths remain unverified on real output. This is not an end-to-end proof; the CI job above is the pending proof location.
+The checker requires both exact delivered/pass summary rows, current-attempt per-cell evidence, preflight diagnostics, and at least one recorded owned PID with none still alive. A helper timeout in CI is a defect to fix, for example by raising its internal bound if build/staging exhausts it; do not add a second pre-build harness.
 
 ## Stand-ins
 
 - Xvfb instead of a physical desktop session.
-- The real Electron fixture instead of a user's application; it did not launch in these attempts.
+- The real Electron fixture instead of a user's application.
 - Electron sandbox/GPU disabled, forced accessibility and a fixture CDP port.
 - Disposable driver HOME/XDG state, disabled overlay/permissions gate and testkit unrestricted GUI authorization/approval bypass.
 - Fixture control only establishes sentinel posture; it does not set the target action result.

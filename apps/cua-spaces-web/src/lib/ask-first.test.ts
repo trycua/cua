@@ -3,7 +3,6 @@
 
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { flagOn, setFlagOverride } from "@/bridge";
 
 import type { Space } from "@/bridge";
 
@@ -36,16 +35,6 @@ import {
 beforeEach(() => {
   localStorage.clear();
   resetAskTasks();
-});
-
-describe("the spaces_ask_first_home flag", () => {
-  it("is off unless this device turns it on", () => {
-    expect(flagOn("spaces_ask_first_home")).toBe(false);
-    setFlagOverride("spaces_ask_first_home", true);
-    expect(flagOn("spaces_ask_first_home")).toBe(true);
-    setFlagOverride("spaces_ask_first_home", null);
-    expect(flagOn("spaces_ask_first_home")).toBe(false);
-  });
 });
 
 describe("Ask-first tasks", () => {
@@ -93,7 +82,7 @@ describe("Ask-first tasks", () => {
 });
 
 const row = (id: string, more: Partial<Space> = {}): Space => ({ id, name: id, os: "linux", status: "running", detail: "", lastUsedAt: 0, scene: "linux-terminal", ...more });
-const thisMac = row("this-mac", { name: "This machine", os: "macos", status: "local", provider: "local" });
+const thisMac = row("this-mac", { name: "This computer", os: "macos", status: "local", provider: "local" });
 const LINUX: NewKind = { os: "linux", note: "Free.", blocked: null };
 const MAC: NewKind = { os: "macos", note: "Free.", blocked: null };
 const shared = { configured: true, mode: "relay" as const, machineId: "m-ada-mbp", sharing: true, shareDesktop: true };

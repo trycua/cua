@@ -19,7 +19,12 @@ import { toastError } from "@/components/ui/toast";
 import { cn } from "@/lib/utils";
 
 import { canPinToNotch, type SpaceItem } from "./model";
-import { MENU_ITEM, MENU_POPUP } from "./spaces-toolbar";
+
+/** A popup menu's look, shared by the Spaces' "⋯" menus. */
+export const MENU_POPUP =
+  "glass min-w-44 origin-(--transform-origin) rounded-lg p-1 text-popover-foreground shadow-float outline-none transition-[opacity,scale] data-ending-style:scale-95 data-ending-style:opacity-0 data-starting-style:scale-95 data-starting-style:opacity-0";
+export const MENU_ITEM =
+  "flex cursor-default items-center gap-2 rounded-lg px-2 py-1 text-[13px] outline-none data-disabled:opacity-40 data-highlighted:bg-brand data-highlighted:text-white";
 
 /**
  * What the core's menu reads for this Space. `pinned`: the notch's pins, when the host can keep
@@ -204,7 +209,7 @@ export function MachineRowMenu({ id, name }: { id: string; name: string }) {
   };
   return (
     <MenuPrimitive.Root>
-      <MenuPrimitive.Trigger aria-label={`More for ${name}`} data-space-more={id} className={cn(MORE_BUTTON, "absolute top-1/2 right-[-6px] -translate-y-1/2")}>
+      <MenuPrimitive.Trigger aria-label={`More for ${name}`} data-space-more={id} className={cn(MORE_BUTTON, "absolute top-1/2 right-2 -translate-y-1/2")}>
         <MoreHorizontalIcon className="size-4" />
       </MenuPrimitive.Trigger>
       <MenuPrimitive.Portal>

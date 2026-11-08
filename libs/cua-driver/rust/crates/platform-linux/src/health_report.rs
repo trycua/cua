@@ -158,7 +158,7 @@ async fn check_ax_capability() -> CheckEntry {
          cookie isn't discoverable, so X11 connects fail 'Authorization required'. \
          Point XAUTHORITY at the Xwayland '-auth' cookie file, or restart the \
          cua-driver daemon — it auto-discovers the cookie from /proc at startup."
-    } else if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+    } else if crate::desktop::desktop() != crate::desktop::Desktop::X11 {
         "Pure Wayland session: opt into the experimental Wayland backend by \
          setting CUA_DRIVER_RS_ENABLE_WAYLAND=1, or run the target under XWayland."
     } else {
@@ -242,7 +242,7 @@ async fn check_screen_capture_capability() -> CheckEntry {
             "X11 reachable; screen capture path is functional.",
         );
     }
-    let hint = if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+    let hint = if crate::desktop::desktop() != crate::desktop::Desktop::X11 {
         "Pure Wayland session: opt into the experimental Wayland backend by \
          setting CUA_DRIVER_RS_ENABLE_WAYLAND=1, or run the target under XWayland."
     } else {
@@ -260,7 +260,7 @@ async fn check_screen_capture_capability() -> CheckEntry {
 /// when the experimental Wayland backend isn't opted into, so X11 users see
 /// a neutral skip rather than a confusing failure.
 async fn check_wayland_backend() -> CheckEntry {
-    if std::env::var_os("WAYLAND_DISPLAY").is_none() {
+    if crate::desktop::desktop() == crate::desktop::Desktop::X11 {
         return CheckEntry::skip(
             NAME_WAYLAND_BACKEND.to_owned(),
             "No WAYLAND_DISPLAY in the environment — not a Wayland session.",

@@ -1891,6 +1891,10 @@ impl ToolRegistry {
         evidence: &TrustedInvocationEvidence,
     ) -> ToolResult {
         let seed = crate::recovery_hint::Seed::from_args(&args);
+        let nudge_args = serde_json::json!({
+            "pid": args.get("pid"),
+            "window_id": args.get("window_id"),
+        });
         let session = args
             .get("session")
             .and_then(Value::as_str)
@@ -1934,7 +1938,7 @@ impl ToolRegistry {
             crate::fast_path::wire::attach_delta(&mut result, delta);
         }
         crate::recovery_hint::annotate(tool, &seed, &mut result);
-        crate::batch_nudge::annotate(tool, session.as_deref(), in_batch, &mut result);
+        crate::batch_nudge::annotate(tool, session.as_deref(), in_batch, &nudge_args, &mut result);
         result
     }
 
@@ -7722,7 +7726,13 @@ mod capability_tests {
         // Keys old consumers (Swift Hermes, the .NET driver, etc.)
         // already read — must still be present.
         assert_eq!(entry["name"], "click");
-        assert_eq!(entry["description"], "Click an element.");
+        // `click` also carries the one-line batching pointer.
+        let description = entry["description"].as_str().unwrap();
+        assert!(
+            description.starts_with("Click an element."),
+            "{description}"
+        );
+        assert!(description.contains("run_steps"), "{description}");
         assert!(entry["inputSchema"].is_object());
         assert_eq!(entry["annotations"]["readOnlyHint"], false);
         assert_eq!(entry["annotations"]["destructiveHint"], true);

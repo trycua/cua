@@ -1657,8 +1657,7 @@ fn native_hyprland_semantic_input_available() -> bool {
     {
         // AT-SPI does not need an input-plugin socket. DISPLAY can coexist
         // with native Wayland for XWayland clients in the same desktop.
-        platform_linux::wayland::wayland_input_enabled()
-            && platform_linux::wayland::hyprland::is_session()
+        platform_linux::wayland::is_wayland() && platform_linux::wayland::hyprland::is_session()
     }
     #[cfg(not(target_os = "linux"))]
     {
@@ -2279,8 +2278,7 @@ fn embedded_browser_refusal(spec: &HostSpec) -> Option<RefusalCode> {
 fn niri_session() -> bool {
     #[cfg(target_os = "linux")]
     {
-        platform_linux::wayland::wayland_input_enabled()
-            && platform_linux::wayland::niri::is_session()
+        platform_linux::wayland::is_wayland() && platform_linux::wayland::niri::is_session()
     }
     #[cfg(not(target_os = "linux"))]
     {

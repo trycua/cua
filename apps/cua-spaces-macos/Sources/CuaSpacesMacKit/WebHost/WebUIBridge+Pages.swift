@@ -449,6 +449,8 @@ extension WebUIBridge {
             // dialog of its own); the pane opens only when it stays blocked
             // and no macOS prompt is waiting for an answer.
             if url.contains("Privacy_LocalNetwork") {
+                // Explained here, so a later macOS Space create does not explain it again.
+                UserDefaults.standard.set(true, forKey: LocalNetworkGate.askedKey)
                 await model.checkLocalNetworkFromDaemon(every: 0)
                 if model.daemonLocalNetworkAllowed != true, LiveLocalNetworkProbe().promptsShowing() == 0 {
                     NSWorkspace.shared.open(u)

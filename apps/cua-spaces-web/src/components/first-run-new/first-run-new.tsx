@@ -16,13 +16,14 @@ import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type
 import { folderLabel, isNeedsProof, newPendingId, useMachines, useSession, useSettings, useSpaces, type SignInPhase } from "@/bridge";
 import { BridgeContext } from "@/bridge/BridgeProvider";
 import { useAppPermissions } from "@/bridge/app-permissions";
+import { useLocalNetwork, type LocalNetworkState } from "@/bridge/local-network";
 import { readFirstRun, useFirstRunSaved, writeFirstRun } from "@/bridge/first-run";
 import { hostOs } from "@/bridge/host-os";
 import { useFirstSpaceOffers } from "@/bridge/new-space-hooks";
 import { onboardingInitial, onboardingTelemetry, onboardingView, readSavedOnboarding, writeSavedOnboarding } from "@/bridge/onboarding";
 import { extraName, spokenName } from "@/bridge/space-names";
 import { AddComputerSheet } from "@/components/add-computer-sheet";
-import { AppPermissionList, type PermissionsView } from "@/components/app-permissions";
+import { AppPermissionList, LocalNetworkRow, type PermissionsView } from "@/components/app-permissions";
 import { AppMarkImage } from "@/components/agents/harness-mark";
 import { agoLabel, PICK_UP_LIMIT, recentThreads, useRecentThreads } from "@/components/ask-first/pick-up";
 import { CuaLogo } from "@/components/cua-logo";
@@ -621,13 +622,17 @@ export function ReadyScreen({ view, agent, agents, onDone, onContinueChat, onCop
   );
 }
 
-/** 2b, on a Mac: Cua Spaces' two permissions (the same rows as the Cua Driver page), each with Allow, and Later. Never blocks the run. */
-export function PermissionsScreen({ view, perms, onContinue }: { view: PermissionsStepView; perms: PermissionsView; onContinue: () => void }) {
+/**
+ * 2b, on a Mac: Cua Spaces' two permissions (the same rows as the Cua Driver page), each with Allow, and Later. A Mac
+ * that runs macOS Spaces also gets Local Network (`net`), asked here so the first macOS Space just starts. Never blocks
+ * the run.
+ */
+export function PermissionsScreen({ view, perms, net, appName, onContinue }: { view: PermissionsStepView; perms: PermissionsView; net?: LocalNetworkState | null; appName?: string; onContinue: () => void }) {
   return (
     <div data-new-run="permissions">
       <Title>{view.title}</Title>
       <Line>{view.line}</Line>
-      <AppPermissionList perms={perms} variant="hero" className="mt-[min(28px,3vh)]" footer={view.note} />
+      <AppPermissionList perms={perms} variant="hero" className="mt-[min(28px,3vh)]" footer={view.note} extra={net?.available ? <LocalNetworkRow net={net} appName={appName ?? "Cua Spaces"} /> : null} />
       <Actions>
         <button type="button" className={view.primary.white ? WHITE_BUTTON : GLASS_BUTTON} onClick={onContinue} data-onboarding-primary="" data-new-run-permissions-next={view.primary.label}>
           {view.primary.label}
@@ -832,6 +837,9 @@ export function NewFirstRun() {
   // 2b: Cua Spaces' permissions, read while the step shows. A host with none to give (not a Mac, an older app) has
   // no step: it goes on to the coding agent.
   const perms = useAppPermissions(s.screen === "permissions");
+  // A Mac that runs macOS Spaces (set up on screen 2) also needs Local Network: asked on the same step, so the issue
+  // never shows up later on its page, and its first macOS Space just starts.
+  const net = useLocalNetwork(s.screen === "permissions");
   useEffect(() => {
     if (s.screen === "permissions" && !perms.loading && !perms.available) go("agent");
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1056,7 +1064,19 @@ export function NewFirstRun() {
       );
       break;
     case "permissions":
-      body = <PermissionsScreen view={permissionsStepView({ appName: perms.data?.appName ?? "Cua Spaces", allGranted: perms.allGranted })} perms={perms} onContinue={() => go("agent")} />;
+      body = (
+        <PermissionsScreen
+          view={permissionsStepView({
+            appName: perms.data?.appName ?? "Cua Spaces",
+            allGranted: perms.allGranted,
+            localNetwork: !net.available ? "none" : net.granted ? "on" : net.denied ? "denied" : "off",
+          })}
+          perms={perms}
+          net={net}
+          appName={perms.data?.appName ?? "Cua Spaces"}
+          onContinue={() => go("agent")}
+        />
+      );
       break;
     case "agent":
       body = (

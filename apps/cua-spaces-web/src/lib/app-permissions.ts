@@ -64,6 +64,37 @@ export function homeAppsRowLine(permissions: readonly Pick<DriverPermission, "gr
   return off === 1 ? "One switch in System Settings is still off." : "Two switches in System Settings are still off.";
 }
 
+/** Local Network, on a Mac that runs macOS Spaces: its row's words, the same wherever it shows. */
+export function localNetworkWords(appName: string): PermissionWords {
+  return { title: "Run macOS Spaces on this Mac", sub: `Local Network, given to ${appName}` };
+}
+
+/**
+ * The Local Network row's live status: On once allowed; after Allow, while macOS's question waits for an answer;
+ * Off once the person said no; nothing before Allow (nothing was checked, so nothing is known).
+ */
+export function localNetworkStatus(input: { granted: boolean; waiting: boolean; denied: boolean }): { label: string; done: boolean; checking: boolean } | null {
+  if (input.granted) return { label: "On", done: true, checking: false };
+  if (input.waiting) return { label: "Waiting for your answer", done: false, checking: true };
+  if (input.denied) return { label: "Off", done: false, checking: false };
+  return null;
+}
+
+/** The Local Network row's button: Allow makes macOS ask; once it said no, the button opens the settings instead. */
+export function localNetworkButton(denied: boolean): string {
+  return denied ? "Open Settings" : "Allow";
+}
+
+/**
+ * Said just before macOS asks (under the rows), so its question is no surprise; once it said no, where to turn it on.
+ * Plain words: macOS's own question says "find and connect to devices on your local network".
+ */
+export function localNetworkNote(appName: string, denied: boolean): string {
+  return denied
+    ? `macOS Spaces can't start until you turn on ${appName} in System Settings, under Privacy & Security, Local Network.`
+    : `macOS Spaces run on a small network inside this Mac. After Allow, macOS asks if ${appName} can find devices on your local network. Click Allow there too.`;
+}
+
 /** The first run's permissions step. */
 export interface PermissionsStepView {
   title: string;
@@ -74,12 +105,30 @@ export interface PermissionsStepView {
   primary: { label: "Continue" | "Later"; white: boolean };
 }
 
-export function permissionsStepView(input: { appName: string; allGranted: boolean }): PermissionsStepView {
+/**
+ * `localNetwork`: this Mac runs macOS Spaces, so the step also asks for Local Network (`off` until allowed, `denied`
+ * once macOS was told no); `none` on any other computer.
+ */
+export function permissionsStepView(input: { appName: string; allGranted: boolean; localNetwork?: "none" | "off" | "denied" | "on" }): PermissionsStepView {
+  const ln = input.localNetwork ?? "none";
+  if (ln === "none") {
+    return {
+      title: `Let ${input.appName} see and use apps`,
+      line: "Agents can then use the apps on this Mac. Your own pointer never moves.",
+      note: input.allGranted ? allowHint(input.appName, true) : `${allowHint(input.appName)} You can also do this later on the Cua Driver page.`,
+      primary: input.allGranted ? { label: "Continue", white: true } : { label: "Later", white: false },
+    };
+  }
+  const done = input.allGranted && ln === "on";
   return {
-    title: `Let ${input.appName} see and use apps`,
-    line: "Agents can then use the apps on this Mac. Your own pointer never moves.",
-    note: input.allGranted ? allowHint(input.appName, true) : `${allowHint(input.appName)} You can also do this later on the Cua Driver page.`,
-    primary: input.allGranted ? { label: "Continue", white: true } : { label: "Later", white: false },
+    title: `Let ${input.appName} use this Mac`,
+    line: "Agents can then use the apps on this Mac, and macOS Spaces can run here. Your own pointer never moves.",
+    note: done
+      ? "All on. Agents can use apps on this Mac, and macOS Spaces can run here."
+      : ln === "on"
+        ? `${allowHint(input.appName)} You can also do this later on the Cua Driver page.`
+        : localNetworkNote(input.appName, ln === "denied"),
+    primary: done ? { label: "Continue", white: true } : { label: "Later", white: false },
   };
 }
 

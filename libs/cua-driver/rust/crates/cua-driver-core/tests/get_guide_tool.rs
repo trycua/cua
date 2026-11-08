@@ -155,6 +155,7 @@ fn tools_that_most_need_a_guide_point_at_it() {
             described(tool)
         );
     }
-    assert_eq!(described("click"), "Clicks.");
+    assert!(described("click").starts_with("Clicks. "));
+    assert!(described("click").contains("get_guide({topic:\"batching\"})"));
     assert!(described("drag").starts_with("Does the thing. "));
 }

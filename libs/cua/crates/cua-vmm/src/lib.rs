@@ -65,6 +65,7 @@ pub mod qemu;
 pub mod resolver;
 pub mod runtime;
 pub mod screen;
+pub mod stack;
 pub mod storage;
 pub mod tree;
 pub mod types;

@@ -31,10 +31,13 @@ import { permissionsStepView, type PermissionsStepView } from "@/lib/app-permiss
 import { addImportedTask, type AskTask } from "@/lib/ask-first";
 import {
   afterWhere,
+  agentInfo,
   agentView,
-  chosenAgent,
+  chosenAgents,
+  toggleAgentOff,
   dotStep,
   INSTALL_PAGES,
+  listNames,
   NEW_RUN_EMPTY,
   placeName,
   reachedAfter,
@@ -470,7 +473,12 @@ export function WhereScreen({
   );
 }
 
-export function AgentScreen({ view, onPick, onContinue, onInstall, busy }: { view: AgentView; onPick: (id: string) => void; onContinue: () => void; onInstall: (agent: "claude-code" | "codex") => void; busy: boolean }) {
+export function AgentScreen({ view, onPick, onContinue, onLater, onInstall, busy }: { view: AgentView; onPick: (id: string) => void; onContinue: () => void; onLater: () => void; onInstall: (agent: "claude-code" | "codex") => void; busy: boolean }) {
+  const later = view.later ? (
+    <button type="button" className={cn(LINK, "text-[15px]")} disabled={busy} onClick={onLater} data-new-run-agent-later="">
+      {view.later}
+    </button>
+  ) : null;
   return (
     <div data-new-run="agent" data-state={view.state}>
       <Title>{view.title}</Title>
@@ -488,12 +496,13 @@ export function AgentScreen({ view, onPick, onContinue, onInstall, busy }: { vie
               name={a.name}
               sub={a.maker}
               picked={a.picked}
-              onClick={view.state === "several" ? () => onPick(a.id) : undefined}
+              onClick={() => onPick(a.id)}
               data-new-run-agent={a.id}
             />
           ))}
         </div>
       ) : null}
+      {view.note ? <p className={cn("mt-3 max-w-[480px] text-[13.5px] font-medium", GREY)} data-new-run-agent-note="">{view.note}</p> : null}
       {view.error ? (
         <p role="alert" className="mt-3 max-w-[480px] text-[13.5px] font-medium text-white" data-new-run-agent-error="">
           {view.error}
@@ -509,14 +518,16 @@ export function AgentScreen({ view, onPick, onContinue, onInstall, busy }: { vie
             <button type="button" className={cn(LINK, "text-[15px]")} onClick={() => onInstall("codex")} data-new-run-install="codex">
               {view.install.secondary}
             </button>
+            {later}
           </Actions>
         </>
       ) : (
         // Shown (greyed) while the agents are still being looked for, so it doesn't pop in once they're found.
-        <Actions>
+        <Actions className="flex flex-wrap items-center gap-6">
           <button type="button" className={WHITE_BUTTON} disabled={!view.continueEnabled || busy} onClick={onContinue} data-onboarding-primary="">
             {busy ? "Setting up…" : "Continue"}
           </button>
+          {later}
         </Actions>
       )}
     </div>
@@ -668,7 +679,6 @@ export function NewFirstRun() {
   const phase: SignInPhase = session.data?.signIn ?? { kind: "idle" };
   const [now, setNow] = useState(() => Date.now());
   const [found, setFound] = useState<string[] | null>(null);
-  const [agentPick, setAgentPick] = useState<string | null>(s.agent);
   const [connecting, setConnecting] = useState(false);
   const [connectError, setConnectError] = useState<string | null>(null);
   const [thisState, setThisState] = useState<"adding" | "added" | "failed">("adding");
@@ -879,30 +889,45 @@ export function NewFirstRun() {
     return out.length ? out : ["this"];
   };
 
-  const agent = chosenAgent(found, agentPick);
-  const agentScreen = agentView({ os, found, picked: agentPick, error: connectError });
+  const agentsOff = s.agentsOff ?? [];
+  const agentScreen = agentView({ os, found, off: agentsOff, error: connectError });
   const continueAgent = async () => {
-    if (!agent || !adapter || connecting) return;
+    const agents = chosenAgents(found, agentsOff);
+    if (!adapter || connecting) return;
+    // Nothing ticked: the same as Choose later.
+    if (!agents.length) return void agentsLater();
     setConnecting(true);
     setConnectError(null);
     try {
-      // The same connect as Settings and the old first run: Cua's tools in the agent's settings, and its sign-in kept.
-      const viaConnect = await adapter.call("agents.connect", { agents: [agent], signIn: true }).then(
+      // The same connect as Settings and the old first run: Cua's tools in each agent's settings, and their sign-ins kept.
+      const viaConnect = await adapter.call("agents.connect", { agents, signIn: true }).then(
         () => true,
         () => false,
       );
-      const rows = viaConnect ? await adapter.call("agents.setup", {}) : await adapter.call("agents.configure", { agents: [agent] });
-      const row = rows.find((r) => r.agent === agent);
-      if (!row?.configured) {
-        setConnectError(`Cua couldn't add itself to ${row?.name ?? "the agent"}'s settings.${row?.detail ? ` ${row.detail}` : ""}`);
+      const rows = viaConnect ? await adapter.call("agents.setup", {}) : await adapter.call("agents.configure", { agents });
+      const failed = agents.map((id) => rows.find((r) => r.agent === id) ?? { agent: id, name: agentInfo(id).name, configured: false, detail: null }).filter((r) => !r.configured);
+      if (failed.length) {
+        const one = failed.length === 1 ? failed[0]! : null;
+        setConnectError(
+          one
+            ? `Cua couldn't add itself to ${one.name ?? "the agent"}'s settings.${one.detail ? ` ${one.detail}` : ""}`
+            : `Cua couldn't add itself to the settings of ${listNames(failed.map((r) => r.name ?? r.agent))}.`,
+        );
         return;
       }
-      save({ agent, screen: "ready" });
+      // Ready's line to try uses the first one that has a command to type.
+      const primary = agents.find((id) => agentInfo(id).command) ?? agents[0]!;
+      save({ agent: primary, connected: agents, screen: "ready" });
     } catch (e) {
       setConnectError(e instanceof Error ? e.message : String(e));
     } finally {
       setConnecting(false);
     }
+  };
+  // Choose later: setup is done without connecting an agent; Settings, Connections does it any time.
+  const agentsLater = () => {
+    funnel("step_skipped", "later");
+    void finish();
   };
 
   const open = (url: string) => void session.openExternal(url).catch(() => {});
@@ -1012,11 +1037,9 @@ export function NewFirstRun() {
         <AgentScreen
           view={agentScreen}
           busy={connecting}
-          onPick={(id) => {
-            setAgentPick(id);
-            save({ agent: id });
-          }}
+          onPick={(id) => save({ agentsOff: toggleAgentOff(agentsOff, id) })}
           onContinue={() => void continueAgent()}
+          onLater={agentsLater}
           onInstall={(a) => open(INSTALL_PAGES[a])}
         />
       );
@@ -1024,7 +1047,7 @@ export function NewFirstRun() {
     case "ready":
       body = s.agent ? (
         <ReadyScreen
-          view={readyView({ os, agent: s.agent, computers: pickedNames(), canMakeSeparate })}
+          view={readyView({ os, agent: s.agent, agents: s.connected, computers: pickedNames(), canMakeSeparate })}
           agent={s.agent}
           place={placeName(os)}
           onDone={() => {

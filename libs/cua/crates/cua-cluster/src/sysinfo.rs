@@ -41,7 +41,10 @@ fn win_memory() -> Option<(u64, u64)> {
     if unsafe { GlobalMemoryStatusEx(&mut m) } == 0 {
         return None;
     }
-    Some((m.ullTotalPhys / (1024 * 1024), m.ullAvailPhys / (1024 * 1024)))
+    Some((
+        m.ullTotalPhys / (1024 * 1024),
+        m.ullAvailPhys / (1024 * 1024),
+    ))
 }
 
 /// Memory pressure: 0 normal, 1 warn (compressing or swapping), 2 critical

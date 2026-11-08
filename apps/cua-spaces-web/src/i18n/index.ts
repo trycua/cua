@@ -14,6 +14,7 @@ import i18next, { type PostProcessorModule, type TOptions } from "i18next";
 import ICU from "i18next-icu";
 import { initReactI18next, useTranslation } from "react-i18next";
 
+import { ENGLISH_FILES } from "./english-files";
 import { hostLanguages } from "./host-languages";
 import { FALLBACK_LOCALE, LANGUAGES, LOCALE_STORAGE_KEY, PSEUDO_LOCALE, detectLocale } from "./languages";
 import { pseudoLocalize } from "./pseudo";
@@ -22,8 +23,10 @@ export { FALLBACK_LOCALE, LANGUAGES, PSEUDO_LOCALE } from "./languages";
 
 type Catalog = Record<string, string>;
 
-const english = import.meta.glob<Catalog>("./locales/en/*.json", { eager: true, import: "default" });
-const others = import.meta.glob<Catalog>(["./locales/*/*.json", "!./locales/en/*.json"], { import: "default" });
+// Vite (the page, Electron, Vitest) defines `import.meta.env`; Playwright's loader does not, and has no `glob`.
+const underVite = typeof import.meta.env !== "undefined";
+const english: Record<string, Catalog> = underVite ? import.meta.glob<Catalog>("./locales/en/*.json", { eager: true, import: "default" }) : ENGLISH_FILES;
+const others: Record<string, () => Promise<Catalog>> = underVite ? import.meta.glob<Catalog>(["./locales/*/*.json", "!./locales/en/*.json"], { import: "default" }) : {};
 
 const fileOf = (path: string) => /\/locales\/([^/]+)\/([^/]+)\.json$/.exec(path);
 

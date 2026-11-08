@@ -3,7 +3,8 @@
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { changeLocale, currentLocale, t, tMsg } from "./index";
+import { ENGLISH_FILES } from "./english-files";
+import { changeLocale, currentLocale, NAMESPACES, t, tMsg } from "./index";
 
 afterEach(() => changeLocale("en"));
 
@@ -26,5 +27,11 @@ describe("t", () => {
     await changeLocale("en");
     expect(t("settings.general.language")).toBe("Language");
     expect(document.documentElement.lang).toBe("en");
+  });
+});
+
+describe("english-files", () => {
+  it("lists every English catalog file, for code that runs outside Vite", () => {
+    expect(Object.keys(ENGLISH_FILES).map((p) => /([^/]+)\.json$/.exec(p)![1]).sort()).toEqual([...NAMESPACES]);
   });
 });

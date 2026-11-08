@@ -1672,7 +1672,10 @@ mod tests {
 
     #[test]
     fn a_missing_cell_address_points_to_the_name_box() {
-        let read = read(vec![element(3, "AXTextField", "A1")], "- [0] AXWindow \"Doc\"\n");
+        let read = read(
+            vec![element(3, "AXTextField", "A1")],
+            "- [0] AXWindow \"Doc\"\n",
+        );
         let spec = ElementSpec {
             role: Some("AXTextField".into()),
             name: Some("A8".into()),
@@ -1685,7 +1688,10 @@ mod tests {
             name: Some("Save".into()),
             ..Default::default()
         };
-        assert!(!pick(&read, &other).unwrap_err().message.contains("Name Box"));
+        assert!(!pick(&read, &other)
+            .unwrap_err()
+            .message
+            .contains("Name Box"));
         assert!(is_cell_address("AB120") && !is_cell_address("A0") && !is_cell_address("Q3 plan"));
     }
 

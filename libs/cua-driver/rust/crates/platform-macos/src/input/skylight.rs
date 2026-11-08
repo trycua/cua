@@ -1725,10 +1725,16 @@ mod key_prime_tests {
     fn a_refused_key_names_the_window_that_holds_focus() {
         let base = "window 5 could not be confirmed".to_string();
         let named = super::with_blocker_hint(base.clone(), Some((9, "Tip of the Day")));
-        assert!(named.contains("\"Tip of the Day\" (window_id 9)"), "{named}");
+        assert!(
+            named.contains("\"Tip of the Day\" (window_id 9)"),
+            "{named}"
+        );
         assert!(named.contains("answer it"), "{named}");
         let untitled = super::with_blocker_hint(base.clone(), Some((9, "")));
-        assert!(untitled.contains("untitled window (window_id 9)"), "{untitled}");
+        assert!(
+            untitled.contains("untitled window (window_id 9)"),
+            "{untitled}"
+        );
         assert_eq!(super::with_blocker_hint(base.clone(), None), base);
     }
 

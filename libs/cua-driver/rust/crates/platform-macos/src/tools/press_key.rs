@@ -111,19 +111,46 @@ fn dispatch_with_ax_oracle(
     let before = element_ptr.and_then(|ptr| read_ax_key_state(pid, window_id, ptr));
     let result = dispatch();
     // Native controls normally publish their new value/selection on the next
-    // run-loop turn. Keep this bounded and reuse the exact retained element so
-    // a focus move cannot become false confirmation from a different control.
-    if before.is_some() {
-        std::thread::sleep(std::time::Duration::from_millis(60));
-    }
-    let after = element_ptr.and_then(|ptr| read_ax_key_state(pid, window_id, ptr));
+    // run-loop turn. Read the exact retained element until it changes, so a
+    // focus move cannot become false confirmation from a different control,
+    // and give up after the bound.
+    let changed = match (&before, element_ptr) {
+        (Some(before), Some(ptr)) => poll_until(AX_ORACLE_WAIT, AX_ORACLE_POLL, || {
+            read_ax_key_state(pid, window_id, ptr)
+                .is_some_and(|after| ax_state_changed(before, &after))
+        }),
+        _ => false,
+    };
     if owns_element {
         if let Some(ptr) = element_ptr {
             unsafe { CFRelease(ptr as _) };
         }
     }
     result?;
-    Ok(matches!((before, after), (Some(before), Some(after)) if ax_state_changed(&before, &after)))
+    Ok(changed)
+}
+
+/// Longest the oracle waits for the element to publish the key's effect.
+const AX_ORACLE_WAIT: std::time::Duration = std::time::Duration::from_millis(60);
+/// Interval between the oracle's reads of the element.
+const AX_ORACLE_POLL: std::time::Duration = std::time::Duration::from_millis(5);
+
+/// Read `done` every `poll` until it holds or `wait` passes; whether it held.
+fn poll_until(
+    wait: std::time::Duration,
+    poll: std::time::Duration,
+    mut done: impl FnMut() -> bool,
+) -> bool {
+    let deadline = std::time::Instant::now() + wait;
+    loop {
+        std::thread::sleep(poll.min(deadline.saturating_duration_since(std::time::Instant::now())));
+        if done() {
+            return true;
+        }
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
+    }
 }
 
 fn ax_state_changed(before: &AxKeyState, after: &AxKeyState) -> bool {
@@ -540,6 +567,24 @@ impl Tool for PressKeyTool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_oracle_returns_on_the_first_changed_read() {
+        let mut reads = 0;
+        let started = std::time::Instant::now();
+        assert!(poll_until(AX_ORACLE_WAIT, AX_ORACLE_POLL, || {
+            reads += 1;
+            reads == 2
+        }));
+        assert!(started.elapsed() < AX_ORACLE_WAIT);
+    }
+
+    #[test]
+    fn the_oracle_gives_up_at_its_bound() {
+        let started = std::time::Instant::now();
+        assert!(!poll_until(AX_ORACLE_WAIT, AX_ORACLE_POLL, || false));
+        assert!(started.elapsed() >= AX_ORACLE_WAIT);
+    }
 
     #[test]
     fn targeted_key_requires_focus_readback_before_dispatch() {

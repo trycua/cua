@@ -19,6 +19,12 @@ use serde_json::{json, Value};
 
 const TIMEOUT: Duration = Duration::from_secs(3);
 const CANCELLATION_POLL: Duration = Duration::from_millis(25);
+/// Gap between acknowledged `type_text` characters. The plugin's
+/// acknowledgement says the compositor delivered the key, not that the client
+/// read it, and Wayland gives a compositor no fence on a client's event
+/// processing. Measured in #3901 on Hyprland 0.56.2: 10 ms dropped keys from a
+/// native GTK burst, 25 ms passed `type_text("abc")`, Return, save and
+/// document read-back.
 const TEXT_ACTION_GAP: Duration = Duration::from_millis(25);
 const MAX_PACKET: usize = 2048;
 const MAX_LANES: usize = 2;

@@ -44,9 +44,12 @@
 //!
 //! 1. A "is target already frontmost?" check so we don't arm a useless
 //!    self→self suppressor (matches Swift's `isTargetFrontmost` guard).
-//! 2. A 50ms post-action sleep that gives any in-flight focus-grab
+//! 2. A 50ms post-action settle that gives any in-flight focus-grab
 //!    reflex time to fire and be observed by the suppressor before the
-//!    lease is dropped. Matches Swift's `Task.sleep(nanoseconds: 50ms)`.
+//!    lease is dropped (Swift's `Task.sleep(nanoseconds: 50ms)`). Only
+//!    callers without a window-change snapshot pay it: a snapshot's
+//!    wildcard lease stays armed for the whole observation deadline,
+//!    detached after the result returns, and reverts the same activations.
 //! 3. A static `origin` label for tracing — call sites pass a short
 //!    string like `"click.AXPress"` so leaked leases / late-firing
 //!    observers can be traced back to the caller.
@@ -68,9 +71,11 @@ use crate::focus_steal;
 /// - `origin` — short static label for tracing, e.g. `"click.AXPress"`.
 /// - `f` — the action to run with suppression armed.
 ///
-/// Returns whatever `f` returns. Drops the lease ~50ms after `f`
-/// resolves so any in-flight reflex activation is observed before
-/// suppression ends.
+/// Returns whatever `f` returns. Every caller holds a
+/// [`WindowChangeDetector`](crate::window_change_detector) snapshot whose
+/// wildcard lease outlives this one, so the lease drops as soon as `f`
+/// resolves; only a host deadline shorter than [`REFLEX_SETTLE`] keeps the
+/// settle.
 ///
 /// If `target_pid` is already the frontmost app (no point fighting
 /// ourselves) or `prior_frontmost` is `None` (no app to restore to),
@@ -124,16 +129,23 @@ where
 
     let result = f().await;
 
-    // Post-action settle — give the reactive observer time to fire on
-    // any side-effect activation before we drop the lease. Matches
-    // Swift's 50ms sleep in `FocusGuard.withFocusSuppressed`.
-    if _lease.is_some() {
-        tokio::time::sleep(Duration::from_millis(50)).await;
+    // The snapshot's wildcard lease reverts a late reflex activation for the
+    // rest of its observation deadline. A host that shortened that deadline
+    // below the settle still gets the settle.
+    let wildcard_covers =
+        crate::window_change_detector::host_observation_bounds().timeout >= REFLEX_SETTLE;
+    if _lease.is_some() && !wildcard_covers {
+        tokio::time::sleep(REFLEX_SETTLE).await;
     }
 
     // _lease drops here (RAII end_suppression).
     result
 }
+
+/// How long the targeted lease stays armed after the action when nothing
+/// else covers a late reflex activation. Matches Swift's 50ms sleep in
+/// `FocusGuard.withFocusSuppressed`.
+const REFLEX_SETTLE: Duration = Duration::from_millis(50);
 
 /// Convenience wrapper that captures the current frontmost via
 /// `apps::frontmost_pid()` at call time. Use when the caller doesn't
@@ -154,5 +166,11 @@ where
     Fut: std::future::Future<Output = R>,
 {
     let prior = apps::frontmost_pid();
-    with_focus_suppressed(target_pid, prior, origin, f).await
+    // No snapshot here, so no wildcard lease covers the time after `f`.
+    with_focus_suppressed(target_pid, prior, origin, || async move {
+        let result = f().await;
+        tokio::time::sleep(REFLEX_SETTLE).await;
+        result
+    })
+    .await
 }

@@ -671,14 +671,13 @@ pub(crate) async fn focus_by_pixel(
     if focus.is_error != Some(true) {
         // AXFocused is non-destructive: unlike a second real click, it keeps a
         // Cmd+A selection intact before a follow-up type_text or Cmd+V.
-        tokio::time::sleep(std::time::Duration::from_millis(120)).await;
         // A background focus-click is `effect:"unverifiable"` by construction:
         // it cannot prove the renderer moved its first responder. Returning on
         // "it didn't error" therefore skipped the real-click fallback below
         // whenever the click was a silent no-op — advancing on transport
         // success alone, which is exactly what the ladder forbids. Confirm the
         // focus actually moved before claiming this rung worked.
-        if !foreground || pixel_focus_landed(pid, window_id, x, y).await {
+        if await_pixel_focus(pid, window_id, x, y).await || !foreground {
             return Ok(());
         }
     } else if !foreground {
@@ -714,9 +713,29 @@ pub(crate) async fn focus_by_pixel(
             "focus pixel-click at ({x:.0},{y:.0}) failed."
         )));
     }
-    // Brief settle so the renderer registers focus before the keystrokes.
-    tokio::time::sleep(std::time::Duration::from_millis(120)).await;
+    // Let the renderer register focus before the keystrokes.
+    await_pixel_focus(pid, window_id, x, y).await;
     Ok(())
+}
+
+/// Longest a pixel focus-click waits for the focused element to cover its
+/// point before the keystrokes go out.
+const PX_FOCUS_SETTLE: std::time::Duration = std::time::Duration::from_millis(120);
+const PX_FOCUS_POLL: std::time::Duration = std::time::Duration::from_millis(10);
+
+/// Wait up to [`PX_FOCUS_SETTLE`] for the focus-click to land on the point;
+/// whether it did.
+async fn await_pixel_focus(pid: i32, window_id: Option<u32>, x: f64, y: f64) -> bool {
+    let deadline = std::time::Instant::now() + PX_FOCUS_SETTLE;
+    loop {
+        tokio::time::sleep(PX_FOCUS_POLL).await;
+        if pixel_focus_landed(pid, window_id, x, y).await {
+            return true;
+        }
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
+    }
 }
 
 /// Confirm that a focus pixel-click actually moved the application's focused

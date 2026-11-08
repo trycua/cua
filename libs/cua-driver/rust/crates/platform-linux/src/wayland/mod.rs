@@ -1410,13 +1410,15 @@ fn crop_png_to_rect(
 /// Display-level capture dispatcher. Cascade:
 /// 1. Opt-in GNOME compositor helper. If available, capture failure is
 ///    terminal rather than cascading into GNOME's portal implementation.
-/// 2. Native Wayland on wlroots: zwlr_screencopy_manager_v1 (fast, zero
+/// 2. KWin's ScreenShot2, only while `cua-driver kwin-capture` is on. A Deny
+///    saved in the portal keeps it off unless the operator overrode it.
+/// 3. Native Wayland on wlroots: zwlr_screencopy_manager_v1 (fast, zero
 ///    consent).
-/// 3. ext-image-copy-capture-v1 on supported compositors.
-/// 4. xdg-desktop-portal Screenshot via ashpd. Triggers a consent prompt on
-///    first use per session. A refusal from the portal is terminal; the
-///    request has a 30-second deadline, after which the cascade continues.
-/// 5. X11: existing root-window path.
+/// 4. ext-image-copy-capture-v1 on supported compositors.
+/// 5. xdg-desktop-portal Screenshot via ashpd. Asks once and saves the answer. A
+///    refusal from the portal is terminal; the request has a 30-second deadline,
+///    after which the cascade continues.
+/// 6. X11: existing root-window path.
 pub fn screenshot_display_dispatch() -> anyhow::Result<Vec<u8>> {
     if niri::is_session() {
         return niri_display_capture().map(|capture| capture.png);
@@ -1441,7 +1443,15 @@ pub fn screenshot_display_dispatch() -> anyhow::Result<Vec<u8>> {
         ) {
             return result;
         }
-        // Tier 2: native wlroots screencopy (fast, zero consent).
+        // Tier 2: every output from KWin, with no portal request to wait on.
+        if let Some(bytes) = kwin_workspace_capture(
+            kwin_capture::may_be_session(),
+            kwin_access::allowed,
+            kwin_capture::capture_workspace,
+        ) {
+            return Ok(bytes);
+        }
+        // Tier 3: native wlroots screencopy (fast, zero consent).
         match screenshot_bytes() {
             Ok(bytes) => return orient_display_png(bytes),
             Err(e) => {
@@ -1450,7 +1460,7 @@ pub fn screenshot_display_dispatch() -> anyhow::Result<Vec<u8>> {
                 );
             }
         }
-        // Tier 3: ext-image-copy-capture-v1 (sway 1.10+, labwc 0.8+,
+        // Tier 4: ext-image-copy-capture-v1 (sway 1.10+, labwc 0.8+,
         // hyprland, KDE 6.2+, GNOME 47+).
         match ext_screencopy::screenshot_via_ext_copy() {
             Ok(bytes) => return orient_display_png(bytes),
@@ -1460,7 +1470,7 @@ pub fn screenshot_display_dispatch() -> anyhow::Result<Vec<u8>> {
                 );
             }
         }
-        // Tier 4: xdg-desktop-portal (GNOME, KDE, COSMIC fallback), then X11.
+        // Tier 5: xdg-desktop-portal (GNOME, KDE, COSMIC fallback), then X11.
         return portal_or_x11(
             portal_screenshot::screenshot_via_portal,
             crate::capture::screenshot_display_bytes_x11,
@@ -1533,6 +1543,23 @@ fn checked_shell_helper_capture(
 ) -> Option<anyhow::Result<Vec<u8>>> {
     available
         .then(|| capture().ok_or_else(|| anyhow::anyhow!("GNOME compositor helper capture failed")))
+}
+
+/// The KWin tier. It never runs past the operator's switch, which also keeps a
+/// saved portal Deny: ScreenShot2 doesn't ask the portal, so skipping the switch
+/// would capture a desktop the user refused. A failure falls through to the
+/// tiers below.
+fn kwin_workspace_capture(
+    may_be_kwin: bool,
+    allowed: impl FnOnce() -> bool,
+    capture: impl FnOnce() -> anyhow::Result<Vec<u8>>,
+) -> Option<Vec<u8>> {
+    if !may_be_kwin || !allowed() {
+        return None;
+    }
+    capture()
+        .inspect_err(|e| tracing::debug!("KWin workspace capture unavailable: {e:#}"))
+        .ok()
 }
 
 /// The cascade tail: the portal tier, then the X11 root window. A portal
@@ -5280,6 +5307,23 @@ mod tests {
             result.unwrap_err().to_string(),
             "GNOME compositor helper capture failed"
         );
+    }
+
+    #[test]
+    fn kwin_desktop_capture_runs_only_on_kwin_with_the_switch_on() {
+        let unasked = || -> bool { panic!("the switch is not read") };
+        let uncaptured = || -> anyhow::Result<Vec<u8>> { panic!("KWin is not asked") };
+        assert_eq!(kwin_workspace_capture(false, unasked, uncaptured), None);
+        // Off, or on with a saved portal Deny: the portal tier decides.
+        assert_eq!(kwin_workspace_capture(true, || false, uncaptured), None);
+        let shot = || Ok(b"kwin".to_vec());
+        assert_eq!(
+            kwin_workspace_capture(true, || true, shot),
+            Some(b"kwin".to_vec())
+        );
+        // A KWin that refuses leaves the rest of the cascade to run.
+        let refused = || anyhow::bail!("not authorized");
+        assert_eq!(kwin_workspace_capture(true, || true, refused), None);
     }
 
     #[test]

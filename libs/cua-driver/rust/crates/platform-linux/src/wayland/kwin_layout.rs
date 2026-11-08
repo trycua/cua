@@ -447,6 +447,37 @@ mod tests {
     }
 
     #[test]
+    fn window_records_land_on_the_pixels_of_a_logical_workspace_capture() {
+        // KWin's CaptureWorkspace without native resolution is the union of the
+        // outputs' logical rectangles at one pixel per logical pixel, with pixel
+        // (0, 0) at its top-left layout point. Here: a 1x output above and left
+        // of the origin, a 2x output at it, and a 1.25x one off to the right.
+        let frame = frame_of(&[
+            output(-1920, -200, 1920, 1080, (1920, 1080)),
+            output(0, 0, 1280, 720, (2560, 1440)),
+            output(1280, 100, 2048, 1152, (2560, 1440)),
+        ])
+        .unwrap();
+        assert_eq!((frame.width, frame.height), (5248, 1452));
+        let window = |x, y| crate::x11::WindowInfo {
+            xid: 0,
+            pid: None,
+            app_name: String::new(),
+            title: String::new(),
+            is_on_screen: true,
+            z_index: None,
+            x,
+            y,
+            width: 100,
+            height: 100,
+        };
+        let mut windows = [window(-1920, -200), window(0, 0), window(1290, 110)];
+        frame.rebase_windows(&mut windows);
+        let corners: Vec<_> = windows.iter().map(|w| (w.x, w.y)).collect();
+        assert_eq!(corners, [(0, 0), (1920, 200), (3210, 310)]);
+    }
+
+    #[test]
     fn scale_is_the_largest_output_scale_in_any_announcement_order() {
         let low = output(0, 0, 1920, 1080, (1920, 1080));
         let high = output(1920, 0, 960, 540, (1920, 1080));

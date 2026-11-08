@@ -9,12 +9,12 @@
  */
 
 import { Link } from "@tanstack/react-router";
-import { MicrochipIcon, MoreHorizontalIcon } from "lucide-react";
+import { MoreHorizontalIcon } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { useSpaces, type Space } from "@/bridge";
 import { useChildren } from "@/components/children/use-children";
-import { OsIcon } from "@/components/os-icon";
+import { SpaceIcon } from "@/components/gpu-icon";
 import { JobTag } from "@/components/space-thread/identity";
 import { StateLabel } from "@/components/state-dot";
 import { ConfirmDialog } from "@/components/ui/alert-dialog";

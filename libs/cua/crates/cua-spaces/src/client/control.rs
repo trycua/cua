@@ -669,6 +669,16 @@ impl Space {
         self.call_object("stop_space", self.arguments(json!({ "suspend": true })))
     }
 
+    /// `keep_awake`: holds this Space awake for `seconds` (at most 7200),
+    /// showing `reason` to the person. Returns `space`, `until_unix`,
+    /// `capped` and `message`.
+    pub fn keep_awake(&self, seconds: u64, reason: &str) -> Result<Map<String, Value>> {
+        self.call_object(
+            "keep_awake",
+            self.arguments(json!({ "seconds": seconds, "reason": reason })),
+        )
+    }
+
     /// `resize_space`: gives this local VM Space `cpus` vCPUs, `memory_mb`
     /// MiB of memory or a disk grown to `disk_gb` GiB; it boots again from
     /// its own disk. Returns `space`, `cpus`, `memory_mb`, `disk_gb` and

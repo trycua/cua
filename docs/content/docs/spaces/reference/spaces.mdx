@@ -25,6 +25,7 @@ Register, provision, list and release Spaces.
 | [`network_set`](#network_set) | Tighten a Space's network: internet, none or custom lists. Opening more is the user's to do. |
 | [`delete_space`](#delete_space) | Delete a Space's sandbox and forget it. |
 | [`stop_space`](#stop_space) | Turn a Space off: stop it (disk kept, memory freed) or, with suspend, suspend it (memory kept). |
+| [`keep_awake`](#keep_awake) | Keep a Space awake for a while (at most two hours), or end it. |
 | [`resize_space`](#resize_space) | Change a Space's vCPUs, memory or disk size. |
 | [`start_space`](#start_space) | Turn a Space back on: resume or boot it. |
 
@@ -155,6 +156,7 @@ Creates a new sandbox where `on` says (local: this computer, free; aws, azure, g
 | `reuse` | `boolean` | `false` | Return a reachable registered Space in the same location that has the requested services instead of creating one (get-or-create). Default false. |
 | `runtime` | `string` | `auto` | Which engine. Default `auto`: the safest one for the location and kind. Local: `gvisor` or `runc` (containers), `qemu` or `lume` (VMs). Cloud: `gvisor` (containers), `kubevirt` (VMs). Anything else fails with `invalid_placement`, listing the valid values. |
 | `services` | `map of integer` | none | Named services (name to guest port), for example `{"mcp": 8765}`. Each is probed for readiness and reachable with `list_tools` / `call_tool` (`service=<name>`). |
+| `sleep` | `string` | none | When it goes to sleep on its own: `never` (default: it keeps running), `auto` (once nothing in it runs; it wakes when something needs it) or a duration such as `10m`. A Space you make to run a task can use `auto`; a Space the user will come back to should not. |
 | `spacesd` | `boolean` | `true` | Whether the image runs cua-spacesd. Default: true for the canonical images (and no image) and, on this machine's containers and microVMs, for any other image (a static cua-spacesd is put into it); false elsewhere. false runs the image as it is. A Space without it has an empty capability set: only its services work. |
 | `timeout` | `integer` | `600` | Seconds to wait for readiness (local). Default 600. At least 0. |
 | `wait` | `boolean` | `true` | Wait until the Space is ready (its spacesd, or its declared services). Default true. |
@@ -325,6 +327,38 @@ JSON: `space`, `state` (`suspended` or `stopped`), `power` (`suspend` or `stop`)
 #### Notes
 
 - list_spaces says which Spaces turn off (`power`: `suspend` or `stop`; absent when it cannot) and how they were left (`power_state`).
+
+### keep_awake
+
+Keep a Space awake for a while (at most two hours), or end it.
+
+Keeps a Space from going to sleep for `seconds` (at most two hours), whatever its sleep setting says, and shows `reason` to the person. Call it before you start something long that the Space cannot see is busy, for example a build left running in the background after your turn ends; nothing else you do needs it, because a Space is never put to sleep while a turn, a foreground command or a registered job runs. Ask for what you need and no more: a new call replaces the last, `clear` ends it. A sleeping Space keeps its disk and its memory goes back to the computer.
+
+| | |
+| --- | --- |
+| Providers | all (cloud, local, direct, relay) |
+| Platforms | all (macos, windows, linux) |
+| Metering | free |
+| Approval | permission `spaces:keep_awake`; mutating, idempotent |
+| Swift SDK | `Spaces.keep_awake(space, seconds, reason)` |
+| Rust | `Spaces::keep_awake` |
+
+#### Parameters
+
+| Parameter | Type | Default | Description |
+| --- | --- | --- | --- |
+| `clear` | `boolean` | none | End a keep-awake now. |
+| `reason` | `string` | none | Why, in plain words; shown to the person on the Space. |
+| `seconds` | `integer` | none | How long, in seconds (at most 7200: a longer ask is cut to two hours). A new call replaces the earlier one. At least 0. |
+| `space` | `string` | required | Space id or name. Inside a Space: itself. |
+
+#### Result
+
+JSON: `space`, `until_unix` (when it ends; 0 when none holds), `capped` (the ask was cut to two hours) and `message`.
+
+#### Errors
+
+[`invalid_argument`](/spaces/reference#invalid_argument), [`not_found`](/spaces/reference#not_found), [`ambiguous_sandbox`](/spaces/reference#ambiguous_sandbox)
 
 ### resize_space
 

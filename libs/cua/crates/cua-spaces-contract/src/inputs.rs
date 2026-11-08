@@ -213,6 +213,12 @@ pub struct CreateSpace {
     /// values up to 256. Not with `durable` or `reuse`.
     #[serde(default)]
     pub labels: Option<std::collections::BTreeMap<String, String>>,
+    /// When it goes to sleep on its own: `never` (default: it keeps
+    /// running), `auto` (once nothing in it runs; it wakes when something
+    /// needs it) or a duration such as `10m`. A Space you make to run a task
+    /// can use `auto`; a Space the user will come back to should not.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sleep: Option<String>,
     /// Its network: `internet` (default: the internet and its own tree;
     /// this computer, the local network, cloud metadata and other trees are
     /// blocked), `none`, or `custom` / `custom:none` with `allow` and
@@ -292,6 +298,23 @@ pub struct StopSpace {
     /// disk and giving its memory back to the machine.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub suspend: Option<bool>,
+}
+
+/// `keep_awake`: hold a Space awake for a while.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct KeepAwake {
+    /// Space id or name. Inside a Space: itself.
+    pub space: SpaceArg,
+    /// How long, in seconds (at most 7200: a longer ask is cut to two
+    /// hours). A new call replaces the earlier one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seconds: Option<u64>,
+    /// Why, in plain words; shown to the person on the Space.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    /// End a keep-awake now.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub clear: Option<bool>,
 }
 
 /// `resize_space`: give a Space more or fewer vCPUs, more or less memory,

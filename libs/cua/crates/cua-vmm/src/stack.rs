@@ -17,10 +17,15 @@ use std::pin::Pin;
 /// Builds the future `make` returns on the heap, outside the caller's
 /// stack frame: `boxed(|| self.create(spec)).await`.
 #[inline(never)]
-pub fn boxed<F, Fut>(make: F) -> Pin<Box<Fut>>
+///
+/// The result is a `dyn Future + Send`, not `Pin<Box<Fut>>`: erasing the
+/// type keeps the compiler from walking the whole nested async state
+/// machine for every auto-trait check (E0275 through uniffi's `Send`
+/// requirement on exported async fns).
+pub fn boxed<'a, F, Fut>(make: F) -> Pin<Box<dyn Future<Output = Fut::Output> + Send + 'a>>
 where
     F: FnOnce() -> Fut,
-    Fut: Future,
+    Fut: Future + Send + 'a,
 {
     Box::pin(make())
 }

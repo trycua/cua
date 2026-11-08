@@ -2699,7 +2699,7 @@ impl Spaces {
         let run = Box::pin(crate::creating::scope(
             journal.clone(),
             Box::pin(async move {
-                let created = boxed(move || self.create_inner(opts)).await?;
+                let created = self.create_inner(opts).await?;
                 // Mounts were asked for: the Space is only ready once they
                 // are in place (a Space that cannot have them is removed).
                 if wants_volumes
@@ -2847,7 +2847,18 @@ impl Spaces {
         result
     }
 
-    pub(crate) async fn create_inner(&self, mut opts: SpaceCreate) -> Result<SpaceCreated> {
+    /// The create, off the caller's frame. A named return type, not an
+    /// `async fn`: the body awaits this again (the overflow retry), and an
+    /// opaque future cannot be asked for `Send` while it is being defined.
+    pub(crate) fn create_inner(
+        &self,
+        opts: SpaceCreate,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<SpaceCreated>> + Send + '_>>
+    {
+        boxed(move || self.create_inner_body(opts))
+    }
+
+    async fn create_inner_body(&self, mut opts: SpaceCreate) -> Result<SpaceCreated> {
         use cua_sandbox_core::placement;
         let omitted = opts.on.is_none();
         // A child made on another of your computers joins its parent's tree
@@ -2872,7 +2883,7 @@ impl Spaces {
         {
             let mut local = opts.clone();
             local.on = Some(On::Local);
-            return match boxed(move || self.create_inner(local)).await {
+            return match self.create_inner(local).await {
                 Err(e) if overflows(&e) => {
                     tracing::info!("this machine is full ({e}); overflowing into your clouds");
                     boxed(move || self.create_overflow(opts))

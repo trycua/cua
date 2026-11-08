@@ -1035,13 +1035,15 @@ quit_local_app "$APP_DEST"
 mkdir -p "$APP_PARENT"
 APP_BACKUP="$APP_DEST.install-backup.$$"
 rm -rf "$APP_BACKUP"
-if [ -d "$APP_DEST" ]; then
-    mv "$APP_DEST" "$APP_BACKUP"
-fi
+# Copy next to the destination first and rename it into place: a rename is atomic, so launchd, which
+# restarts the app's KeepAlive background items as soon as they exit, never starts a half-copied bundle
+# (dyld "Library missing: Sparkle" crash reports on every rebuild).
+APP_INCOMING="$APP_DEST.installing.$$"
+rm -rf "$APP_INCOMING"
 install_valid=false
 INSTALLED_REQUIREMENT=""
 INSTALLED_CLASS=""
-if ditto "$STAGE_APP" "$APP_DEST" && verify_local_bundle "$APP_DEST"; then
+if ditto "$STAGE_APP" "$APP_INCOMING"     && { [ ! -d "$APP_DEST" ] || mv "$APP_DEST" "$APP_BACKUP"; }     && mv "$APP_INCOMING" "$APP_DEST" && verify_local_bundle "$APP_DEST"; then
     INSTALLED_REQUIREMENT="$(designated_requirement "$APP_DEST")"
     INSTALLED_CLASS="$(classify_designated_requirement "$INSTALLED_REQUIREMENT")"
     if [ "$INSTALLED_REQUIREMENT" = "$STAGED_REQUIREMENT" ] \
@@ -1059,15 +1061,18 @@ if [ "$install_valid" = true ]; then
     fi
     rm -rf "$APP_BACKUP"
 else
-    rm -rf "$APP_DEST"
+    rm -rf "$APP_INCOMING"
+    # Only remove what is at the destination when the old app was moved aside; if the copy itself
+    # failed, the old app is still in place and stays.
     if [ -d "$APP_BACKUP" ]; then
+        rm -rf "$APP_DEST"
         mv "$APP_BACKUP" "$APP_DEST"
         if [ "$REPLACING_LEGACY_LOCAL" = 1 ]; then
             restore_retired_local_app "$APP_DEST" "$LEGACY_HELPER_WAS_ENABLED"
         fi
         die "the installed copy did not verify; restored the previous $LOCAL_APP_DIR_NAME."
     fi
-    die "the installed copy did not verify and was removed."
+    die "the new copy could not be put in place; the installed app was not changed."
 fi
 ok "installed $APP_DEST"
 if [ "$REPLACING_LEGACY_LOCAL" = 1 ]; then

@@ -500,9 +500,10 @@ impl RenderStateCore {
     }
 
     /// The action whose theme animation is painted: the current action with
-    /// `cursor.marks` on, the idle frame otherwise.
+    /// `cursor.marks` on, the idle frame otherwise. Clicks always use the plain
+    /// arrow, including for users with an older saved marks-on preference.
     pub fn painted_action(&self) -> CursorAction {
-        if self.options().marks {
+        if self.options().marks && self.visual.resolved_action != CursorAction::Click {
             self.visual.resolved_action
         } else {
             CursorAction::Idle
@@ -3452,6 +3453,29 @@ mod plain_cursor_tests {
             true,
         );
         assert_eq!(marked.visual.resolved_action, CursorAction::Navigate);
+    }
+
+    #[test]
+    fn clicks_paint_no_mark_even_with_a_saved_marks_on_preference() {
+        let options = CursorOptions {
+            marks: true,
+            ..CursorOptions::NONE
+        };
+        let idle = paint(&core(options), None);
+        let mut clicked = core(options);
+        clicked.apply_command_base(
+            OverlayCommand::BeginAction {
+                action: CursorAction::Click,
+                delivery: None,
+                target: None,
+            },
+            false,
+            false,
+        );
+        for elapsed in [0.0, 0.1, 0.6] {
+            clicked.visual.elapsed_secs = elapsed;
+            assert_eq!(paint(&clicked, None), idle, "click mark at {elapsed}s");
+        }
     }
 
     #[test]

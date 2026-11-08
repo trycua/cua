@@ -291,7 +291,10 @@ export function WelcomeScreen({ onAdd, usage, onUsage, onUsageLink }: { onAdd: (
       {usage ? (
         // Before anything is sent: the hosts hold every usage event until the run leaves this screen.
         <div className={cn("mt-6 flex max-w-[520px] items-start gap-3 text-[13px] leading-[19px] font-medium", GREY)} data-new-run-usage={usage.on ? "on" : "off"}>
-          <Switch className="mt-px shrink-0" checked={usage.on} disabled={!usage.enabled} onCheckedChange={(on) => onUsage?.(on)} aria-label={usage.label} data-new-run-usage-switch="" />
+          {/* The switch sits in a box one text line tall, so it centres on the label line whatever the font metrics. */}
+          <span className="flex h-[19px] shrink-0 items-center">
+            <Switch checked={usage.on} disabled={!usage.enabled} onCheckedChange={(on) => onUsage?.(on)} aria-label={usage.label} data-new-run-usage-switch="" />
+          </span>
           <span className="min-w-0">
             <span className="block text-white">{usage.label}</span>
             <span className="block" data-new-run-usage-notice="">

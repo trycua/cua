@@ -59,7 +59,7 @@ Open findings on main at the sync commit:
 | Row | Rule that breaks | Shortest path in the code's terms |
 | --- | --- | --- |
 | `session.cfg` | SE5 | 1. a call is admitted, runs and ends. 2. `end_session` sees `in_flight == 0` and releases the records lock (`end_session_with_reason`). 3. a new call is admitted (`begin_session_dispatch_inner`). 4. the end runs `mark_session_ended`, which removes the record without reading `in_flight`, and the cleanup hooks run while that call is still in flight. Its guard drop then finds no record. |
-| `foreground_restore.cfg` | FR1 | 1. a foreground turn fronts the target. 2. you Cmd-Tab to another app. 3. `if prev_ok { set_front(prev_psn) }` pulls the old app back over the one you chose. |
+| `foreground_restore.cfg` | FR1 | 1. a foreground turn fronts the target. 2. you Cmd-Tab to another app. 3. `if prev_ok { set_front(prev_psn) }` pulls the old app back over the one you chose. `foreground_restore_fixed.cfg` restores only while the target is still the front process. |
 | `invoke_menu_cancel.cfg` | MC2 | 1. the worker passes `PressAdmission::admit`. 2. the caller's future is dropped, so `CancelOnDrop` fires and the call's `DesktopCall` and per-pid lease drop with it. 3. the worker is in `AXPerformAction`. 4. the next desktop action takes the lane and the pid lease and runs during the press. The worker holds neither a `DesktopLease` clone nor the pid lease, unlike `bring_to_front`'s worker. |
 | `serve_drain_windows.cfg` | SD1 (SD2 too) | 1. shutdown starts while a call is in flight. 2. the Windows loop drops the pipe lock before `sdk.shutdown` and never joins its detached connection tasks. 3. a new daemon takes the name and serves while the old call still runs. SD2: the proxy-session registry is never cleared (the sessions themselves are revoked by `sdk.shutdown`). |
 
@@ -83,7 +83,7 @@ Never weaken a rule or delete an action to make a row pass. If the code changed 
 
 ## What is not covered
 
-These are models. A pass covers the model at its bounds, not the code. They leave out: more than one session, call or caller at a time (except where a row says so); real time, so deadlines and TTLs are only orderings; cleanup hooks that keep failing; the unattached Windows typing path (`TypingTurn::Settled`, a 40 ms sleep); the Linux foreground table and desktop identity; the macOS key-focus guard's order watch; a switch you make between a foreground turn's front read and its `set_front` (the activation overrides it); per-turn recording content; and the daemon's launch race, which is fixed by the lock files and not modelled here.
+These are models. A pass covers the model at its bounds, not the code. They leave out: more than one session, call or caller at a time (except where a row says so); real time, so deadlines and TTLs are only orderings; cleanup hooks that keep failing; the unattached Windows typing path (`TypingTurn::Settled`, a 40 ms sleep); the Linux foreground table and desktop identity; the macOS key-focus guard's order watch; a switch you make between a foreground turn's front read and its `set_front` (the activation overrides it), or back to the target during the turn; per-turn recording content; and the daemon's launch race, which is fixed by the lock files and not modelled here.
 
 ## Keeping it in sync
 

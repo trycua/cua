@@ -24,7 +24,7 @@ import { toastError } from "@/components/ui/toast";
 import { useAttemptAction } from "@/hooks/use-agent-attempts";
 import { accessOf, isMine } from "@/lib/space-access";
 import { useListedSpaces } from "@/components/spaces/listed";
-import { hideDesktop } from "@/lib/hidden-desktops";
+import { useHiddenDesktops } from "@/lib/hidden-desktops";
 import { machineName, orderSpaces, spaceState } from "@/lib/spaces";
 import { cn } from "@/lib/utils";
 
@@ -129,7 +129,8 @@ export function YourSpaces() {
   const { data: machines = [] } = useMachines();
   const resources = useResources();
   // Running Spaces first, then the most recently used; This Mac's unshared desktop never counts.
-  const { listed, counted } = useListedSpaces(data);
+  const { listed, counted, hiddenCount } = useListedSpaces(data);
+  const desktops = useHiddenDesktops();
   const spaces = useMemo(() => orderSpaces(listed), [listed]);
   const items = useMemo(
     () =>
@@ -142,10 +143,11 @@ export function YourSpaces() {
   );
   const present = useMemo(() => new Set(spaces.map((s) => s.id)), [spaces]);
   const bulk = useBulkRemove(present, () => {});
-  if (counted.length === 0) return null;
+  // With everything hidden, the way back still shows.
+  if (counted.length === 0 && hiddenCount === 0) return null;
   const running = items.filter((it) => it.state === "running" && it.desktop !== "off").length;
   const actions: MenuActions = {
-    hide: (it) => hideDesktop(it.space.id),
+    hide: (it) => desktops.hide(it.space.id),
     power: (it, on) => void (on ? startSpace : stopSpace)(it.space.id).catch(toastError(`Couldn't turn ${on ? "on" : "off"} ${it.space.name}`)),
     remove: (it) => bulk.ask([it]),
   };
@@ -159,6 +161,15 @@ export function YourSpaces() {
           </li>
         ))}
       </ul>
+      {hiddenCount > 0 ? (
+        <p className="mt-3 flex items-center gap-1.5 text-[13px] text-muted-foreground" data-home-hidden={hiddenCount}>
+          {hiddenCount} hidden
+          <span aria-hidden>·</span>
+          <button type="button" onClick={desktops.showAll} className="text-foreground underline-offset-2 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring/60" data-home-show-hidden="">
+            Show
+          </button>
+        </p>
+      ) : null}
       {bulk.view ? <BulkConfirmDialog view={bulk.view} items={bulk.asked} onCancel={bulk.cancel} onConfirm={() => void bulk.confirm()} /> : null}
     </section>
   );

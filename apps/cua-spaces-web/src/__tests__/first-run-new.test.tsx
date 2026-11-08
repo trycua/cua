@@ -21,7 +21,7 @@ import { placeKeys } from "@/components/first-run-new/float-keys";
 import { resetConnectedAppsState } from "@/hooks/use-connected-apps";
 import type { AppPermissions } from "@/bridge/app-permissions";
 import { permissionsStepView } from "@/lib/app-permissions";
-import { afterWhere, agentView, bringRestView, chosenAgent, dotFor, dotStep, firstJobDone, NEW_RUN_SCREENS, reachedAfter, readyView, signInView, stepDots, togglePick, welcomeUsage, whereView, type WhereInput } from "@/lib/first-run-new";
+import { afterWhere, agentView, bringRestView, chosenAgents, dotFor, dotStep, firstJobDone, NEW_RUN_SCREENS, reachedAfter, readyView, signInView, stepDots, toggleAgentOff, togglePick, welcomeUsage, whereView, type WhereInput } from "@/lib/first-run-new";
 import { addAskTask, resetAskTasks } from "@/lib/ask-first";
 import { getDriver, resetPrepare } from "@/lib/prepare/store";
 import { mountApp, stubBrowserApis } from "./app-harness";
@@ -59,7 +59,7 @@ describe("screen 2, signed in", () => {
   it("says this Mac was added just now, lists the account's other computers and Add another computer you own", () => {
     drawWhere(base);
     expect(screen.getByRole("heading").textContent).toBe("Pick where your agents work");
-    expect(text()).toContain("You're signed in, and this Mac is now in your account. Your agents can start here, or on your other computers while you keep working on this one.");
+    expect(text()).toContain("Pick the computers your agents can use.");
     expect(document.querySelector("[data-new-run-this-status]")!.textContent).toBe("Added to your account just now");
     expect(document.querySelector("[data-new-run-computer=this]")!.textContent).toContain("MacBook Pro");
     expect(text()).toContain("Other computers in your account");
@@ -173,7 +173,7 @@ describe("screen 2, signed out (after Skip for now)", () => {
     const onAddThis = vi.fn();
     const onSignIn = vi.fn();
     drawWhere({ ...base, signedIn: false, thisState: "signed-out" }, { onAddThis, onSignIn });
-    expect(text()).toContain("Your agents can work on this Mac without an account. Add this Mac to an account when you want them on your other computers too.");
+    expect(text()).toContain("No account needed for this Mac. Sign in to use your other computers too.");
     expect(document.querySelector("[data-new-run-this-status]")!.textContent).toBe("not added yet");
     expect(document.querySelector("[data-new-run-sign-in-line]")!.textContent).toBe("Sign in to see your other computers.");
     expect(text()).not.toContain("Other computers in your account");
@@ -204,7 +204,7 @@ describe("screen 2, this Mac can't make a separate computer", () => {
     drawWhere({ ...base, canMakeSeparate: false, separateRefused: true, separateBlocked: "Needs Apple silicon." });
     const sep = document.querySelector<HTMLElement>("[data-new-run-separate]")!;
     expect(sep.dataset.disabled).toBe("");
-    expect(sep.textContent).toContain("This Mac can't make one. Older Intel Macs can't, for example. Your agents can still work on this Mac or on another computer you add.");
+    expect(sep.textContent).toContain("This Mac can't make one (older Intel Macs can't).");
     expect(document.querySelector("[data-new-run-separate-open]")).toBeNull();
     expect(screen.getByRole("button", { name: "Continue" }).hasAttribute("disabled")).toBe(false);
     expect(document.querySelector("[data-new-run-computer=mini]")!.getAttribute("aria-disabled")).toBeNull();
@@ -215,12 +215,7 @@ describe("screen 2, this Mac can't make a separate computer", () => {
     expect(v.separate?.sub).toBe("Docker Desktop isn't running. Your agents can still work on this PC or on another computer you add.");
   });
 
-  it("explains the Local Network ask before the create, then follows it", () => {
-    expect(whereView({ ...base, separate: { phase: "explain", name: null, error: null } }).separate).toMatchObject({
-      state: "explain",
-      action: "Make it",
-      sub: "If macOS asks to let Cua Spaces find devices on your local network, choose Allow. Cua uses it to reach the new computer.",
-    });
+  it("follows the create", () => {
     expect(whereView({ ...base, separate: { phase: "making", name: "Linux 1", error: null } }).separate?.sub).toBe("Making Linux 1 now. You can continue; it keeps going.");
     expect(whereView({ ...base, separate: { phase: "failed", name: "Linux 1", error: "Not enough memory." } }).separate).toMatchObject({ sub: "Couldn't make it. Not enough memory.", action: "Try again" });
   });
@@ -267,7 +262,7 @@ describe("1b, sign-in", () => {
     const v = signInView({ kind: "waiting" }, null);
     render(<SignInScreen view={v} onTryAgain={noop} onUseCode={noop} onOpen={noop} />);
     expect(screen.getByRole("heading").textContent).toBe("Finish signing in in your browser");
-    expect(text()).toContain("Cua opened in your browser. Create your account there, or sign in if you already have one. This window moves on by itself when you're done.");
+    expect(text()).toContain("Create your account or sign in there. This window moves on when you're done.");
     expect(screen.getByRole("status").textContent).toBe("Waiting for your browser");
     expect(screen.getByRole("button", { name: "Try again" })).not.toBeNull();
     expect(screen.getByRole("button", { name: "Use a code instead" })).not.toBeNull();
@@ -300,44 +295,63 @@ describe("1b, sign-in", () => {
   });
 });
 
-describe("screen 3, the coding agent", () => {
-  const draw = (found: string[] | null, picked: string | null = null) => {
+describe("screen 3, the coding agents", () => {
+  const draw = (found: string[] | null, off: string[] = []) => {
     const onInstall = vi.fn();
     const onPick = vi.fn();
-    render(<AgentScreen view={agentView({ os: "macos", found, picked, error: null })} onPick={onPick} onContinue={noop} onInstall={onInstall} busy={false} />);
-    return { onInstall, onPick };
+    const onContinue = vi.fn();
+    const onLater = vi.fn();
+    render(<AgentScreen view={agentView({ os: "macos", found, off, error: null })} onPick={onPick} onContinue={onContinue} onLater={onLater} onInstall={onInstall} busy={false} />);
+    return { onInstall, onPick, onContinue, onLater };
   };
 
-  it("one found: it is picked", () => {
+  it("one found: says why (it can run jobs on your other computers), ticked, and Continue works", () => {
     draw(["claude-code", "cursor"]);
-    expect(screen.getByRole("heading").textContent).toBe("Your agents will use Claude Code");
-    expect(text()).toContain("We found Claude Code on this Mac. Your agents will use it to do the work while you keep working on other things.");
+    expect(screen.getByRole("heading").textContent).toBe("Use Claude Code on all your computers");
+    expect(text()).toContain("Cua has no AI of its own. Claude Code does the work, on your own plan.");
     expect(text()).toContain("Found on this Mac");
     expect(document.querySelector("[data-new-run-agent=claude-code]")!.textContent).toContain("By Anthropic");
     expect(document.querySelector("[data-new-run-agent=claude-code] [data-check=on]")).not.toBeNull();
-    expect(chosenAgent(["claude-code"], null)).toBe("claude-code");
+    expect(screen.getByRole("button", { name: "Continue" }).hasAttribute("disabled")).toBe(false);
+    expect(chosenAgents(["claude-code"])).toEqual(["claude-code"]);
   });
 
-  it("several found: nothing is picked for them, and Continue waits", () => {
-    const { onPick } = draw(["claude-code", "codex"]);
-    expect(screen.getByRole("heading").textContent).toBe("Pick the coding agent to use");
-    expect(text()).toContain("We found two on this Mac.");
-    expect(document.querySelectorAll("[data-check=on]").length).toBe(0);
-    expect(screen.getByRole("button", { name: "Continue" }).hasAttribute("disabled")).toBe(true);
+  it("several found: all ticked, nothing to pick before Continue, and a quiet Choose later", () => {
+    const { onPick, onContinue, onLater } = draw(["codex", "claude-code", "hermes"]);
+    expect(screen.getByRole("heading").textContent).toBe("Use your coding agents on all your computers");
+    expect(text()).toContain("Cua has no AI of its own. Claude Code, Codex and Hermes do the work, each on your own plan.");
+    expect(text()).toContain("You pick the agent for each job.");
+    expect(text()).not.toContain("Pick the coding agent");
+    expect(document.querySelectorAll("[data-check=on]").length).toBe(3);
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    expect(onContinue).toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Choose later" }));
+    expect(onLater).toHaveBeenCalled();
     fireEvent.click(document.querySelector("[data-new-run-agent=codex]")!);
     expect(onPick).toHaveBeenCalledWith("codex");
-    expect(chosenAgent(["claude-code", "codex"], null)).toBeNull();
-    expect(chosenAgent(["claude-code", "codex"], "codex")).toBe("codex");
+    // Connected in the app's order, leaving out the unticked ones.
+    expect(chosenAgents(["hermes", "codex", "claude-code"])).toEqual(["claude-code", "codex", "hermes"]);
+    expect(chosenAgents(["hermes", "codex", "claude-code"], ["codex"])).toEqual(["claude-code", "hermes"]);
+    expect(toggleAgentOff(["codex"], "codex")).toEqual([]);
+    expect(toggleAgentOff([], "codex")).toEqual(["codex"]);
   });
 
-  it("none found: Install Claude Code, or Install Codex instead (the official pages)", () => {
-    const { onInstall } = draw([]);
+  it("an unticked agent stays unticked; Continue still works with none ticked", () => {
+    draw(["claude-code", "codex"], ["claude-code", "codex"]);
+    expect(document.querySelectorAll("[data-check=on]").length).toBe(0);
+    expect(screen.getByRole("button", { name: "Continue" }).hasAttribute("disabled")).toBe(false);
+  });
+
+  it("none found: Install Claude Code, or Install Codex instead (the official pages), or Install later", () => {
+    const { onInstall, onLater } = draw([]);
     expect(screen.getByRole("heading").textContent).toBe("Install a coding agent");
-    expect(text()).toContain("Cua doesn't come with its own, and we didn't find one on this Mac. Install Claude Code, then sign in to it once.");
+    expect(text()).toContain("Cua has no AI of its own. We didn't find a coding agent on this Mac. Install Claude Code, then sign in to it once.");
     expect(screen.queryByRole("button", { name: "Continue" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Install Claude Code" }));
     fireEvent.click(screen.getByRole("button", { name: "Install Codex instead" }));
     expect(onInstall.mock.calls).toEqual([["claude-code"], ["codex"]]);
+    fireEvent.click(screen.getByRole("button", { name: "Install later" }));
+    expect(onLater).toHaveBeenCalled();
   });
 });
 
@@ -362,6 +376,13 @@ describe("screen 4, Ready", () => {
     expect(onCopied).toHaveBeenCalledTimes(1);
     fireEvent.click(screen.getByRole("button", { name: v.done }));
     expect(onDone).toHaveBeenCalledTimes(1);
+  });
+
+  it("names every agent connected, and the line to try uses the first", () => {
+    expect(readyView({ os: "macos", agent: "claude-code", agents: ["claude-code", "codex", "hermes"], computers: ["Mac mini"] })).toMatchObject({
+      title: "Claude Code, Codex and Hermes can now use Mac mini",
+      command: 'claude "Build this branch on Mac mini"',
+    });
   });
 
   it("with only this Mac picked, says this Mac", () => {
@@ -408,8 +429,8 @@ describe("2b, Cua Spaces' permissions (a Mac only)", () => {
   it("asks for both for Cua Spaces itself, says Cua Driver uses the same ones, and offers Later", () => {
     const { allow, onContinue } = draw(data(false, false));
     expect(screen.getByRole("heading").textContent).toBe("Let Cua Spaces see and use apps");
-    expect(text()).toContain("This lets your agents work in the apps on this Mac, in the background.");
-    expect(text()).toContain("Cua Driver uses these same permissions, so there's no second app to allow.");
+    expect(text()).toContain("Agents can then use the apps on this Mac. Your own pointer never moves.");
+    expect(text()).not.toContain("Cua Driver uses these same permissions");
     const rows = [...document.querySelectorAll<HTMLElement>("[data-app-permission]")];
     expect(rows.map((r) => r.dataset.appPermission)).toEqual(["screen", "accessibility"]);
     expect(rows[0]!.textContent).toContain("See the screen");
@@ -513,7 +534,7 @@ describe("after the first job, on Home: the rest of setup", () => {
 
 describe("screen 1, usage data", () => {
   const core = {
-    notice: "Cua collects usage data, like which features you use and when something goes wrong. Never your files, what you type or your screen.",
+    notice: "Features you use and errors, linked to your account. Never your files, typing or screen.",
     noticeLinkLabel: "What is collected",
     noticeLinkUrl: "https://cua.ai/docs/cua-sdk/concepts/telemetry",
     usage: { label: "Share usage data to help improve Cua", on: true, enabled: true, help: null },
@@ -526,7 +547,7 @@ describe("screen 1, usage data", () => {
     const line = document.querySelector<HTMLElement>("[data-new-run-usage]")!;
     expect(line.getAttribute("data-new-run-usage")).toBe("on");
     expect(line.textContent).toContain("Share usage data to help improve Cua");
-    expect(line.textContent).toContain("Never your files, what you type or your screen.");
+    expect(line.textContent).toContain("Never your files, typing or screen.");
     const sw = screen.getByRole("switch", { name: "Share usage data to help improve Cua" });
     fireEvent.click(sw);
     expect(onUsage).toHaveBeenCalledWith(false);
@@ -553,7 +574,7 @@ describe("screen 1, usage data", () => {
 describe("the step dots", () => {
   it("name each step and go back to any earlier one, but forward only to a step already reached", () => {
     const where = stepDots("where", 1)!;
-    expect(where.map((d) => d.label)).toEqual(["Step 1 of 3: Combine your existing computers into one supercomputer.", "Step 2 of 3: Pick where your agents work", "Step 3 of 3: Pick your coding agent"]);
+    expect(where.map((d) => d.label)).toEqual(["Step 1 of 3: Combine your existing computers into one supercomputer.", "Step 2 of 3: Pick where your agents work", "Step 3 of 3: Connect your coding agents"]);
     expect(where.map((d) => d.to)).toEqual(["welcome", null, null]);
     expect(where.map((d) => d.current)).toEqual([false, true, false]);
     // Back on screen 1 after reaching screen 3: both later steps open again.
@@ -582,7 +603,7 @@ describe("the step dots", () => {
     render(<StepDots dots={stepDots("where", 1)!} onGo={onGo} />);
     const first = screen.getByRole("button", { name: "Step 1 of 3: Combine your existing computers into one supercomputer." });
     const second = screen.getByRole("button", { name: "Step 2 of 3: Pick where your agents work" });
-    const third = screen.getByRole("button", { name: "Step 3 of 3: Pick your coding agent" });
+    const third = screen.getByRole("button", { name: "Step 3 of 3: Connect your coding agents" });
     expect(second.getAttribute("aria-current")).toBe("step");
     expect(third.hasAttribute("disabled")).toBe(true);
     fireEvent.click(third);
@@ -650,10 +671,19 @@ describe.skipIf(!wasmBuilt)("the new first run on its route", () => {
     await waitFor(() => expect(document.querySelectorAll("[data-app-permission]").length).toBe(2));
     expect(calls.some((c) => c.op === "driver.permissions")).toBe(true);
     click("[data-new-run-permissions-next=Later]");
-    await waitFor(() => expect(heading()).toBe("Your agents will use Codex"), { timeout: 15_000 });
+    await waitFor(() => expect(heading()).toBe("Use Codex on all your computers"), { timeout: 15_000 });
     click("[data-onboarding-primary]");
     await waitFor(() => expect(heading()).toBe("Codex can now use this Mac"), { timeout: 15_000 });
-    expect(calls.some((c) => c.op === "agents.connect" || c.op === "agents.configure")).toBe(true);
+    // Only Cua's tools were waited for; the sign-in is kept after Ready shows, and the chats listed are Codex's,
+    // asked for while Codex was being connected.
+    const connects = () => calls.filter((c) => c.op === "agents.connect").map((c) => c.args);
+    expect(connects()[0]).toEqual({ agents: ["codex"], signIn: false });
+    await waitFor(() => expect(connects()).toContainEqual({ agents: ["codex"], signIn: true }));
+    const listed = calls.findIndex((c) => c.op === "agents.recentThreads");
+    expect(calls[listed]!.args).toEqual({ limit: 4, agents: ["openai-codex"] });
+    expect(listed).toBeLessThan(calls.findIndex((c) => c.op === "agents.connect"));
+    await waitFor(() => expect(document.querySelectorAll("[data-pick-up-row]").length).toBeGreaterThan(0));
+    expect([...document.querySelectorAll<HTMLElement>("[data-pick-up-row]")].every((r) => r.dataset.pickUpRow === "openai-codex")).toBe(true);
     // No Space was made while the first run showed.
     expect(calls.some((c) => c.op === "spaces.create")).toBe(false);
     expect(getDriver()?.state?.wanted ?? false).toBe(false);
@@ -664,6 +694,45 @@ describe.skipIf(!wasmBuilt)("the new first run on its route", () => {
     // The rest is asked for once the first job is done, not now.
     expect(readFirstRun().restOffer).toBe("waiting");
     expect(document.querySelector("[data-bring-rest]")).toBeNull();
+  });
+
+  it("several agents found: Continue connects all of them at once, with nothing to pick", { timeout: 60_000 }, async () => {
+    const calls: Calls = [];
+    const twoFound = (rows: AgentSetupRow[]) => rows.map((r) => ({ ...r, installed: r.agent === "codex" || r.agent === "claude-code" }));
+    await mountApp("/onboarding", {
+      failsCreates: false,
+      listsGhost: false,
+      demo: { signedIn: false, onboarded: false, noSpaces: true },
+      intercept: (op, args) => (calls.push({ op, args }), undefined),
+      answer: (op, out) => (op === "agents.setup" || op === "agents.configure" ? twoFound(out as AgentSetupRow[]) : out),
+    });
+    writeFirstRunForTest({ newRun: { screen: "agent", reached: 2 } });
+    await waitFor(() => expect(heading()).toBe("Use your coding agents on all your computers"), { timeout: 15_000 });
+    click("[data-onboarding-primary]");
+    await waitFor(() => expect(heading()).toBe("Claude Code and Codex can now use this Mac"), { timeout: 15_000 });
+    const connect = calls.find((c) => c.op === "agents.connect" || c.op === "agents.configure");
+    expect((connect!.args as { agents: string[] }).agents).toEqual(["claude-code", "codex"]);
+    // Both agents' chats are read while connecting; the sign-ins are kept after Ready shows.
+    const connects = () => calls.filter((c) => c.op === "agents.connect").map((c) => c.args);
+    expect(connects()[0]).toEqual({ agents: ["claude-code", "codex"], signIn: false });
+    await waitFor(() => expect(connects()).toContainEqual({ agents: ["claude-code", "codex"], signIn: true }));
+    expect(calls.find((c) => c.op === "agents.recentThreads")!.args).toEqual({ limit: 4, agents: ["claude-code", "openai-codex"] });
+  });
+
+  it("Choose later: setup ends on Home and no agent's settings are touched", { timeout: 60_000 }, async () => {
+    const calls: Calls = [];
+    const { router } = await mountApp("/onboarding", {
+      failsCreates: false,
+      listsGhost: false,
+      demo: { signedIn: false, onboarded: false, noSpaces: true },
+      intercept: (op, args) => (calls.push({ op, args }), undefined),
+    });
+    writeFirstRunForTest({ newRun: { screen: "agent", reached: 2 } });
+    await waitFor(() => expect(document.querySelector("[data-new-run-agent-later]")).not.toBeNull(), { timeout: 15_000 });
+    click("[data-new-run-agent-later]");
+    await waitFor(() => expect(router.state.location.pathname).toBe("/home"), { timeout: 15_000 });
+    expect(calls.some((c) => c.op === "agents.connect" || c.op === "agents.configure")).toBe(false);
+    expect(calls.some((c) => c.op === "session.completeOnboarding")).toBe(true);
   });
 
   it("a run saved on the old last screen finishes on Home", { timeout: 60_000 }, async () => {
@@ -820,7 +889,7 @@ describe.skipIf(!wasmBuilt)("the new first run on its route", () => {
     expect(document.body.textContent).toContain("Add another computer you own");
     expect(readFirstRun().newRun?.addedInRun).toBe(true);
   });
-  it("a Mac that can't run virtual computers: the explainer, the create, then only the separate-computer option turns grey", { timeout: 60_000 }, async () => {
+  it("a Mac that can't run virtual computers: the create, then only the separate-computer option turns grey", { timeout: 60_000 }, async () => {
     const calls: Calls = [];
     await mountApp("/onboarding", {
       failsCreates: false,
@@ -831,12 +900,12 @@ describe.skipIf(!wasmBuilt)("the new first run on its route", () => {
     await waitFor(() => expect(heading()).toBe("Combine your existing computers into one supercomputer."));
     click("[data-onboarding-later]");
     await waitFor(() => expect(document.querySelector("[data-new-run-separate-open]")).not.toBeNull(), { timeout: 15_000 });
+    // Regression (first run): a Linux computer needs no Local Network access, so the Mac's open makes it at
+    // once, with no line about macOS's Local Network prompt first.
     click("[data-new-run-separate-open]");
-    // Our one line comes first; nothing is made until "Make it".
-    await waitFor(() => expect(document.querySelector("[data-new-run-separate=explain]")).not.toBeNull());
-    expect(calls.some((c) => c.op === "spaces.create")).toBe(false);
-    click("[data-new-run-separate-action]");
-    await waitFor(() => expect(document.querySelector("[data-new-run-separate]")!.textContent).toContain("This Mac can't make one."), { timeout: 15_000 });
+    await waitFor(() => expect(calls.some((c) => c.op === "spaces.create")).toBe(true));
+    expect(document.body.textContent).not.toMatch(/local network/i);
+    await waitFor(() => expect(document.querySelector("[data-new-run-separate]")!.textContent).toContain("This Mac can't make one (older Intel Macs can't)."), { timeout: 15_000 });
     expect((document.querySelector("[data-new-run-separate]") as HTMLElement).dataset.disabled).toBe("");
     expect(document.body.textContent).not.toMatch(/local runtime:|exit status/i);
     expect(screen.getByRole("button", { name: "Continue" }).hasAttribute("disabled")).toBe(false);
@@ -862,6 +931,6 @@ describe.skipIf(!wasmBuilt)("the new first run on its route", () => {
     await waitFor(() => expect(heading()).toBe("Combine your existing computers into one supercomputer."));
     fireEvent.click(screen.getByRole("button", { name: "Step 2 of 3: Pick where your agents work" }));
     await waitFor(() => expect(heading()).toBe("Pick where your agents work"));
-    expect(screen.getByRole("button", { name: "Step 3 of 3: Pick your coding agent" }).hasAttribute("disabled")).toBe(true);
+    expect(screen.getByRole("button", { name: "Step 3 of 3: Connect your coding agents" }).hasAttribute("disabled")).toBe(true);
   });
 });

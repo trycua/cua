@@ -430,7 +430,7 @@ describe("Connect by address", () => {
 describe("friendlyAddError", () => {
   it("names a rejected token and keeps the raw detail", () => {
     const text = friendlyAddError("unauthenticated: missing or invalid bearer token (Unauthenticated)");
-    expect(text).toMatch(/^The Space rejected the token/);
+    expect(text).toMatch(/^This Space didn’t accept the access token/);
     expect(text).toContain("invalid bearer token");
   });
   it("passes other errors through", () => {

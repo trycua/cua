@@ -111,7 +111,7 @@ describe.skipIf(!wasmBuilt)("the box with an agent home", () => {
       fireEvent.click(await waitFor(() => q('[data-picker="where"]')!));
     });
     await act(async () => {
-      fireEvent.click(await screen.findByText("Let the agent decide, in your existing Home"));
+      fireEvent.click(await screen.findByText("Agent decides, same Home"));
     });
     fireEvent.change(box2, { target: { value: "run the tests again" } });
     await act(async () => {

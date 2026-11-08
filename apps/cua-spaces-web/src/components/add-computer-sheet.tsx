@@ -287,7 +287,7 @@ function Pick({ pairing, noCode, onPick }: { pairing: PairingHook; noCode: boole
       </nav>
       {pairing.phase === "error" && pairing.error ? (
         <p className="mt-3 text-xs text-muted-foreground" data-add-code-error="">
-          {pairing.error.unsupported ? "Your Cua relay can't make codes yet, so only Sign in there works." : `${pairing.error.message} `}
+          {pairing.error.unsupported ? "Codes don't work with your account yet. Use Sign in there." : `${pairing.error.message} `}
           {pairing.error.unsupported ? null : (
             <button type="button" className="text-brand outline-none hover:underline" onClick={pairing.renew} data-add-retry="">
               Try again
@@ -341,7 +341,7 @@ function CodeMethod({ view, pairing, noCode, done }: { view: AddView; pairing: P
     return (
       <p className="mt-1 text-[13px] text-muted-foreground" data-add-no-code="">
         {pairing.error?.unsupported
-          ? "Your Cua relay can't make codes yet. Use Sign in there instead."
+          ? "Codes don't work with your account yet. Use Sign in there."
           : pairing.error
             ? `${pairing.error.message} Use Sign in there instead.`
             : "This computer can't make a code. Use Sign in there instead."}
@@ -359,7 +359,7 @@ function CodeMethod({ view, pairing, noCode, done }: { view: AddView; pairing: P
   if (view === "link") {
     return (
       <div data-add-link="">
-        <DialogDescription className="mt-1 text-[13px] text-muted-foreground">Open this link on the other computer. It shows the command that installs Cua Spaces and adds the computer here.</DialogDescription>
+        <DialogDescription className="mt-1 text-[13px] text-muted-foreground">Open this on the other computer.</DialogDescription>
         {code.url ? <CopyLine text={code.url} label="Copy link" dim={dim} /> : null}
       </div>
     );
@@ -367,7 +367,7 @@ function CodeMethod({ view, pairing, noCode, done }: { view: AddView; pairing: P
   if (view === "qr") {
     return (
       <div data-add-qr="">
-        <DialogDescription className="mt-1 text-[13px] text-muted-foreground">Scan it with the other computer's camera to open the same one-time link.</DialogDescription>
+        <DialogDescription className="mt-1 text-[13px] text-muted-foreground">Scan with the other computer's camera.</DialogDescription>
         {code.url ? (
           <div className={cn("mt-4 flex justify-center", dim && "opacity-45")}>
             <QrCode text={code.url} size={208} />
@@ -380,7 +380,7 @@ function CodeMethod({ view, pairing, noCode, done }: { view: AddView; pairing: P
     const command = shell === "sh" ? code.installSh : code.installPowershell;
     return (
       <div data-add-command="">
-        <DialogDescription className="mt-1 text-[13px] text-muted-foreground">Run this on the other computer. It installs Cua Spaces and adds the computer here.</DialogDescription>
+        <DialogDescription className="mt-1 text-[13px] text-muted-foreground">Run this on the other computer.</DialogDescription>
         <Segmented className="mt-3" aria-label="The other computer's system" value={shell} options={SHELLS} onValueChange={setShell} disabled={done} />
         {command ? <CopyLine text={command} label="Copy command" mono dim={dim} /> : null}
       </div>
@@ -629,7 +629,7 @@ function EnterCode({
           Enter a code
         </DialogTitle>
         <DialogDescription className="mt-1 text-[13px] text-muted-foreground">
-          From Add a computer on your other device. This computer joins that account. Only use a code you made or got from someone you trust.
+          Only use a code you made or got from someone you trust.
         </DialogDescription>
         {relay ? (
           <p className="mt-2 text-xs text-muted-foreground" data-join-relay="">

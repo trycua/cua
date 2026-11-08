@@ -247,11 +247,6 @@ public final class AppModel {
             self.saveSettings()
         }
         self.host.onChange = { [weak self] in self?.recompose() }
-        // Providing Spaces turned on: ask for Local Network access now, on
-        // this Mac's screen (the same steps as before a macOS Space is
-        // created here), so a macOS Space another device creates here
-        // connects instead of failing with "No route to host".
-        self.host.onStartedProvidingSpaces = { [weak self] in self?.askLocalNetworkForHosting() }
         followChecklist()
         // No notification prompt before the first run is done.
         PermissionRequester.firstRunDone = { [weak onboarding] in onboarding?.completed ?? false }
@@ -1296,23 +1291,6 @@ public final class AppModel {
     /// on this Mac (the core's steps; nil in fixtures and tests that do not
     /// set one).
     public var localNetworkGate: LocalNetworkGate?
-
-    /// The Local Network steps run when this Mac started providing Spaces
-    /// (tests await it).
-    @ObservationIgnored var hostingLocalNetworkCheck: Task<Void, Never>?
-
-    /// Runs the Local Network steps for a Mac that just started providing
-    /// Spaces: the explanation, then macOS's own prompt (the person answers
-    /// it), or the fix when access was turned off. Setup already finished,
-    /// so Cancel or a refusal changes nothing else; the next local macOS
-    /// create asks again.
-    func askLocalNetworkForHosting() {
-        guard let gate = localNetworkGate,
-              appLocalNetworkApplies(provider: .local, os: .macos, hostIsMac: true) else { return }
-        hostingLocalNetworkCheck = Task { @MainActor in
-            try? await gate.check()
-        }
-    }
 
     /// What the daemon found when it last tried this Mac's local network:
     /// true allowed, false blocked, nil not known yet. The daemon is the

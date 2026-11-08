@@ -54,7 +54,7 @@ describe("Home's apps row on its own (CUA-3551)", () => {
   it("says how many switches are still off", () => {
     expect(homeAppsRowLine([{ granted: false }, { granted: false }])).toBe("Two switches in System Settings are still off.");
     expect(homeAppsRowLine([{ granted: true }, { granted: false }])).toBe("One switch in System Settings is still off.");
-    expect(homeAppsRowLine([{ granted: true }, { granted: true }])).toContain("Both switches are on.");
+    expect(homeAppsRowLine([{ granted: true }, { granted: true }])).toContain("Both are on.");
   });
 
   it("draws each switch live, with Allow only where it is off, and On once both are", () => {

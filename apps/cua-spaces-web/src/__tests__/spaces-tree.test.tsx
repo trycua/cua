@@ -73,7 +73,7 @@ const doubleClick = (el: HTMLElement) => {
 
 
 describe.skipIf(!wasmBuilt)("your computers as a tree", () => {
-  it("is the only view: no switch, no Machines and no Cua Driver in the nav, and an old Spaces as a tree override is gone", { timeout: 30000 }, async () => {
+  it("is the only view: no switch and no Machines in the nav, Cua Driver as a line under Computers, and an old Spaces as a tree override is gone", { timeout: 30000 }, async () => {
     // A device that turned the Labs switch off before it was deleted.
     localStorage.setItem("cua.flag.spaces_tree", "0");
     clearRetiredFlagOverrides();
@@ -82,10 +82,12 @@ describe.skipIf(!wasmBuilt)("your computers as a tree", () => {
     await router.load();
     await waitFor(() => expect(q("[data-spaces-tree]")).not.toBeNull());
     const sidebar = q("aside[aria-label=Sidebar]")!;
-    const nav = [...sidebar.querySelectorAll("nav a")].map((a) => a.textContent ?? "");
+    const nav = [...sidebar.querySelectorAll("nav a:not([data-sidebar-driver])")].map((a) => a.textContent ?? "");
     expect(nav[0]).toMatch(/^Home/);
     expect(nav[1]).toMatch(/^Computers/);
     expect(nav.some((t) => /Machines|Spaces|Cua Driver/.test(t))).toBe(false);
+    // Cua Driver is no nav item of its own, but This Mac's setting, one line under Computers (CUA-3551).
+    await waitFor(() => expect(sidebar.querySelector("nav a:nth-of-type(2) + [data-sidebar-driver]")?.textContent).toBe("Cua Driver"));
     expect(document.querySelector("h1")?.textContent).toBe("Computers");
   });
 
@@ -144,7 +146,7 @@ describe.skipIf(!wasmBuilt)("your computers as a tree", () => {
     const name = await found('[data-tree-name="relay:linux-box/ubuntu-build"]');
     doubleClick(name);
     const input = (await found("[data-tree-rename-input]")) as HTMLInputElement;
-    expect(document.body.textContent).toContain("Renaming changes the name only.");
+    expect(document.body.textContent).not.toContain("Renaming changes the name only.");
     fireEvent.change(input, { target: { value: "nightly-builds" } });
     fireEvent.keyDown(input, { key: "Escape" });
     expect(q("[data-tree-rename-input]")).toBeNull();

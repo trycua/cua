@@ -12,10 +12,10 @@ import { countedSpaces, listedSpaces } from "@/lib/spaces";
  * What the Spaces list, Home's strip and the sidebar show from the roster: your Spaces and the
  * machines' desktops that are shared, plus This Mac's desktop ("Not sharing") once something else is
  * listed. `counted` leaves that unshared desktop out (the count, "N running", the empty state);
- * `hiddenCount` is how many desktop rows "Show hidden" brings back.
+ * `hiddenCount` is how many desktop rows are hidden (Home's "N hidden · Show" brings them back).
  */
 export function useListedSpaces(all: readonly Space[] | undefined): { listed: Space[]; counted: Space[]; hiddenCount: number } {
-  const hidden = useHiddenDesktops();
+  const { hidden } = useHiddenDesktops();
   const { core } = useBridge();
   // The home warming in the background is not on any list until a person wrote into it.
   const warming = useHiddenSpaceIds(core);

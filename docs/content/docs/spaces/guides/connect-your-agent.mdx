@@ -344,7 +344,7 @@ says to add the key in Settings, Connections or to set it for the Cua daemon.
 ### Where the keys are kept
 
 The Cua daemon keeps the keys in one item of your login Keychain (service
-`run.cua.ai`, next to your Cua sign-in). The item trusts the Cua apps of this
+`ai.cua.session`, the same item service as your Cua sign-in). The item trusts the Cua apps of this
 Mac, so the app, the daemon and the `cua` CLI read it without a prompt, and
 agents started at night by a routine still get their key.
 
@@ -361,12 +361,15 @@ vault to set up first.
   go to logs or usage data.
 </Callout>
 
-A build of cua that keeps its session in a file (an unsigned development build,
-or Linux today) can't save agent keys: they are never written to a plain file.
-Set the key in the Cua daemon's environment there instead
-(`export ANTHROPIC_API_KEY=...`, then `cua daemon stop` and `cua daemon start`)
-and name it in `env_from_host`. Windows uses the Credential Manager the same way
-as the macOS Keychain.
+A build of cua that keeps its session in a file can't save agent keys, with one
+exception, the Local development channel. On the Stable channel (Linux today,
+or an unsigned build) agent keys are never written to a plain file. Set the key
+in the Cua daemon's environment there instead (`export ANTHROPIC_API_KEY=...`,
+then `cua daemon stop` and `cua daemon start`) and name it in `env_from_host`.
+The Local channel, used to develop Cua itself, does save them: it writes an
+`agent-keys` file with mode 0600, unencrypted, and warns you. Don't put real
+production keys in it. Windows uses the Credential Manager the same way as the
+macOS Keychain.
 
 ## If it doesn't work
 

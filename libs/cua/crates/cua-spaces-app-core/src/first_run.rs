@@ -1086,13 +1086,11 @@ fn default_or(name: &str, id: &str) -> String {
     }
 }
 
-fn welcome_view(input: &FirstRunInput) -> WelcomeView {
-    let place = this_computer(&input.host_os);
+fn welcome_view(_input: &FirstRunInput) -> WelcomeView {
     WelcomeView {
         title: "Combine your existing computers into one supercomputer.".into(),
-        lede: format!(
-            "Your computers, shared by your team and its agents. Run agents in Spaces on {place}, or on any computer your team connects."
-        ),
+        // The shipped welcome (first-run-new) carries the product line; this one says nothing twice.
+        lede: String::new(),
         primary: button("start", "Get started"),
     }
 }
@@ -1691,7 +1689,7 @@ fn setup_view(input: &FirstRunInput) -> SetupView {
     let Some(lead) = lead_of(input) else {
         return SetupView {
             title: "Try a first Space.".into(),
-            lede: format!("Spaces run on {place}, away from your files and your mouse."),
+            lede: format!("Spaces run on {place}."),
             prompt: None,
             status: None,
             extra: Some(extra_view(input)),
@@ -1767,7 +1765,7 @@ pub fn upsell(plan: &FirstRunPlan, agent_used: bool) -> Option<UpsellCard> {
     if plan.teammates && kind != "teams" {
         return Some(UpsellCard {
             plan: "teams".into(),
-            title: "Working with others?".into(),
+            title: "Teams".into(),
             lines: vec![
                 "Teams gives your team computers you share, with roles and device approval.".into(),
             ],
@@ -1994,7 +1992,7 @@ pub fn todos(input: &FirstRunInput) -> FirstRunTodos {
     items.push(FirstRunTodo {
         id: "extra".into(),
         title: "Make a first Space (optional)".into(),
-        note: format!("A separate computer on {place}, away from your files and your mouse."),
+        note: format!("A separate computer on {place}."),
         done: extra_done,
         optional: true,
         action: (!extra_done).then(|| button("add", "Add a Space")),

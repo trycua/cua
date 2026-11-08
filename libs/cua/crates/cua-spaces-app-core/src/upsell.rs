@@ -159,6 +159,37 @@ pub fn pro_banner(input: &ProBannerInput) -> ProBanner {
     }
 }
 
+/// The share of an allowance at which the sidebar's Pro line shows (80%).
+pub const BANNER_NEAR: f64 = 0.8;
+
+/// The sidebar's Pro line with the month's usage: on Free only, and only near
+/// a limit (80% or more of the computers in use at once or of the remote
+/// hours), saying how close: "2 of 2 computers in use. Pro allows 5." A
+/// permanent banner was marketing on a screen the person already chose.
+pub fn pro_banner_near(input: &ProBannerInput, usage: &RelayUsage) -> ProBanner {
+    let mut banner = pro_banner(input);
+    let near =
+        |used: f64, limit: Option<f64>| limit.is_some_and(|l| l > 0.0 && used >= l * BANNER_NEAR);
+    let sessions_limit = usage.live_sessions_limit.map(f64::from);
+    banner.text = if near(f64::from(usage.live_sessions), sessions_limit) {
+        format!(
+            "{} of {} computers in use. Pro allows {PRO_SESSIONS}.",
+            usage.live_sessions,
+            usage.live_sessions_limit.unwrap_or_default()
+        )
+    } else if near(usage.hours_used, usage.hours_limit) {
+        format!(
+            "{} of {} remote hours used. Pro allows {PRO_HOURS}.",
+            hours(usage.hours_used),
+            hours(usage.hours_limit.unwrap_or_default())
+        )
+    } else {
+        banner.visible = false;
+        banner.text
+    };
+    banner
+}
+
 /// Where a limit card can show, and what it is about (`card`). The matching
 /// usage events are `upsell_card_<reason>_<action>`.
 pub const CARD_REASONS: [&str; 5] = ["hours", "sessions", "invite", "seats", "machines"];
@@ -278,6 +309,29 @@ pub fn card(reason: &str, usage: &RelayUsage, account_app: &str) -> Option<Upsel
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_pro_line_shows_only_near_a_limit_and_says_how_close() {
+        let free = ProBannerInput {
+            plan: "free".into(),
+        };
+        let usage = |live: u32, hours_used: f64| RelayUsage {
+            plan: "free".into(),
+            live_sessions: live,
+            live_sessions_limit: Some(2),
+            hours_used,
+            hours_limit: Some(20.0),
+            ..RelayUsage::default()
+        };
+        assert!(!pro_banner_near(&free, &usage(1, 2.0)).visible);
+        let b = pro_banner_near(&free, &usage(2, 2.0));
+        assert!(b.visible);
+        assert_eq!(b.text, "2 of 2 computers in use. Pro allows 5.");
+        let h = pro_banner_near(&free, &usage(0, 16.0));
+        assert_eq!(h.text, "16 of 20 remote hours used. Pro allows 200.");
+        // Paid plans never see it.
+        assert!(!pro_banner_near(&ProBannerInput { plan: "pro".into() }, &usage(2, 20.0)).visible);
+    }
 
     const APP: &str = "https://app.cua.ai";
     const NOW: u64 = 100 * DAY_MS;

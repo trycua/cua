@@ -130,4 +130,36 @@ describe.skipIf(!wasmBuilt)("Home's Your Spaces", () => {
     expect(screen.getAllByText("Computers").length).toBeGreaterThan(0);
     expect(screen.queryByText("Machines")).toBeNull();
   });
+
+  it("hidden from Home, it says how many are hidden with Show, and comes back from there or from its page", async () => {
+    const { router } = await mountApp("/home", withDesktop(true, true));
+    const tile = () => document.querySelector('[data-home-spaces] [data-space-id="this-mac"]');
+    await waitFor(() => expect(tile()).not.toBeNull(), { timeout: 15_000 });
+    await act(async () => void fireEvent.click(tile()!.querySelector<HTMLElement>("[data-tile-hide]") ?? document.querySelector<HTMLElement>("[data-home-spaces] [data-tile-hide]")!));
+    await waitFor(() => expect(tile()).toBeNull());
+    // Never gone for good: "1 hidden · Show" stays under Home's computers.
+    const line = await waitFor(() => {
+      const el = document.querySelector<HTMLElement>("[data-home-hidden]");
+      expect(el).not.toBeNull();
+      return el!;
+    });
+    expect(line.textContent).toBe("1 hidden·Show");
+    await act(async () => void fireEvent.click(document.querySelector<HTMLElement>("[data-home-show-hidden]")!));
+    await waitFor(() => expect(tile()).not.toBeNull());
+    expect(document.querySelector("[data-home-hidden]")).toBeNull();
+
+    // Hidden again, its own page has the switch that shows it on Home.
+    await act(async () => void fireEvent.click(document.querySelector<HTMLElement>("[data-home-spaces] [data-tile-hide]")!));
+    await waitFor(() => expect(tile()).toBeNull());
+    await act(async () => void router.navigate({ to: "/spaces/computer/$computerId", params: { computerId: "this-mac" } }));
+    const row = await waitFor(() => {
+      const el = document.querySelector<HTMLElement>("[data-machine-on-home]");
+      expect(el).not.toBeNull();
+      return el!;
+    }, { timeout: 15_000 });
+    expect(row.getAttribute("data-machine-on-home")).toBe("off");
+    expect(row.textContent).toContain("Hidden from Home");
+    await act(async () => void fireEvent.click(row.querySelector<HTMLElement>("[role=switch]")!));
+    await waitFor(() => expect(document.querySelector("[data-machine-on-home]")!.getAttribute("data-machine-on-home")).toBe("on"));
+  });
 });

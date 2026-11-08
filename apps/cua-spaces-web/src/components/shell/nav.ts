@@ -34,7 +34,8 @@ const HOME_ITEM: NavItem = { to: "/home", label: "Home", icon: HouseIcon };
 
 /**
  * The nav: Home first, then the rest, with Volume while the Cua Volume experiment is on and CI Runners while its
- * experiment is. Cua Driver is one of This Mac's settings, on its page under Computers.
+ * experiment is. Cua Driver is one of This Mac's settings, on its page; the sidebar draws its line under Computers
+ * (`SidebarDriverLine`).
  */
 export function useNavItems(): NavItem[] {
   const experiments = useExperimentFlags();

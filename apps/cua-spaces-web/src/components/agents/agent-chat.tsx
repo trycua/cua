@@ -337,7 +337,7 @@ export function AgentDmView({ chat, space, onSpace, identity, onInfo, me }: { ch
         <div className="flex min-h-full flex-col justify-end gap-1 px-6 pt-4 pb-3">
           {dm.status === "loading" && !dm.items.length ? null : dm.items.length === 0 ? (
             <p data-dm-empty="" className="text-center text-xs text-muted-foreground">
-              Nothing between you and {chat.label} yet. A message here is a task for it in {to.spaceName}.
+              Send {chat.label} a task in {to.spaceName}.
             </p>
           ) : (
             <>

@@ -53,6 +53,7 @@ on:
       - "CI: Image doctor with the driver and daemon under test"
       - "CI: cua SDK"
       - "CI: Cua Spaces desktop install smoke"
+      - "CI: Cua Spaces driver pin is current"
       - "CI: Cua Spaces for macOS (SwiftUI)"
       - "CI: Cua Spaces SwiftUI Rust slice (producer)"
       - "CI: Cua Spaces web UI and Electron shell"

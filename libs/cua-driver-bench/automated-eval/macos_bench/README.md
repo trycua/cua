@@ -68,7 +68,9 @@ bash launch/linux_session.sh --evidence "$HOME/cua-session" \
 
 `doctor` needs no pins, agent or ledger. Without `--socket` it starts a private driver
 daemon and always stops it; with `--socket` it only probes that socket. The pins writer
-refuses to write inside a git checkout or over an existing file. `--check-run` runs
+refuses to write inside a git checkout or over a different existing file. Rerunning it with the
+same build changes nothing, so the whole command above can be rerun to resume a stopped run
+([`RUNNER.md`](RUNNER.md#interrupts-and-resume)). `--check-run` runs
 `tools/check_run_evidence.py` on a run directory after teardown. That check covers
 evidence completeness only; it is separate from task success and from run completion
 (`DONE`). `--disk-floor-gb` sets the free-space floor for preflight and every trial

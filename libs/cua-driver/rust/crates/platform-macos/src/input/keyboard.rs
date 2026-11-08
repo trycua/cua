@@ -933,7 +933,59 @@ const TYPING_KEY_CODES: std::ops::RangeInclusive<u16> = 0..=50;
 
 /// The current keyboard layout, read with `UCKeyTranslate`, or `None` when it
 /// has no Unicode layout data.
+///
+/// The Text Input Sources calls assert that they run on the main dispatch queue: macOS 26 traps with
+/// `dispatch_assert_queue_fail`, which killed the daemon on every `press_key`. A call from a tool worker
+/// thread is therefore handed to the main queue and waited for. When the main queue is not serviced (a host
+/// that never runs AppKit on its main thread) the wait times out and the key code comes from the fixed ANSI map.
 fn current_layout() -> Option<KeyLayout> {
+    on_main_queue(read_current_layout, std::time::Duration::from_secs(2)).flatten()
+}
+
+/// Run `work` on the main dispatch queue and return its result, or `None` if the main queue did not run it
+/// within `timeout`. On the main thread it runs inline.
+fn on_main_queue<T: Send + 'static>(work: fn() -> T, timeout: std::time::Duration) -> Option<T> {
+    use std::ffi::{c_int, c_void};
+    use std::sync::{mpsc, Arc, Mutex};
+
+    extern "C" {
+        static _dispatch_main_q: c_void;
+        fn dispatch_async_f(
+            queue: *const c_void,
+            context: *mut c_void,
+            work: unsafe extern "C" fn(*mut c_void),
+        );
+        fn pthread_main_np() -> c_int;
+    }
+    type Job = (Box<dyn FnOnce() + Send>, mpsc::Sender<()>);
+    unsafe extern "C" fn run(context: *mut c_void) {
+        // SAFETY: `context` is the `Box<Job>` leaked below; the main queue runs this callback once.
+        let (job, done) = *unsafe { Box::from_raw(context as *mut Job) };
+        job();
+        let _ = done.send(());
+    }
+
+    // SAFETY: plain libc call with no arguments.
+    if unsafe { pthread_main_np() } != 0 {
+        return Some(work());
+    }
+    let slot = Arc::new(Mutex::new(None::<T>));
+    let (done_tx, done_rx) = mpsc::channel();
+    let slot_for_job = slot.clone();
+    let job: Box<dyn FnOnce() + Send> = Box::new(move || {
+        *slot_for_job.lock().unwrap() = Some(work());
+    });
+    let context = Box::into_raw(Box::new((job, done_tx) as Job));
+    // SAFETY: `_dispatch_main_q` is libdispatch's main queue; `run` takes ownership of `context`.
+    unsafe {
+        dispatch_async_f(&raw const _dispatch_main_q, context as *mut c_void, run);
+    }
+    done_rx.recv_timeout(timeout).ok()?;
+    let result = slot.lock().unwrap().take();
+    result
+}
+
+fn read_current_layout() -> Option<KeyLayout> {
     use core_foundation::base::{CFRelease, CFTypeRef};
     use core_foundation::data::{CFDataGetBytePtr, CFDataRef};
     use core_foundation::string::CFStringRef;

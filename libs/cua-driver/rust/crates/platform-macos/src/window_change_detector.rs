@@ -278,6 +278,9 @@ static LATE: Mutex<Option<Late>> = Mutex::new(None);
 /// What the running detached watch compares against, so the next action's
 /// snapshot can report a change the watch had not read yet when it ended.
 struct Watched {
+    /// The detached lease id of the watch; only that watch may publish or
+    /// clear this entry.
+    id: u64,
     window_ids: HashSet<u32>,
     front_pid: Option<i32>,
     deadline: Instant,
@@ -391,7 +394,11 @@ impl WindowChangeDetector {
         allowed_pid: Option<i32>,
     ) -> Snapshot {
         // A new action supersedes the previous action's detached observation.
-        let watched = lock(&WATCHED).take();
+        // Taking the entry under its lock ends the watch's right to publish;
+        // a watch an intentional activation already ended says nothing.
+        let watched = lock(&WATCHED)
+            .take()
+            .filter(|w| focus_arbiter::holds_detached(w.id));
         focus_arbiter::end_detached();
         let current = host_windows();
         let window_ids: HashSet<u32> = current.iter().map(|w| w.window_id).collect();
@@ -615,6 +622,7 @@ impl Snapshot {
         }
         let id = focus_arbiter::detach(self._lease.take());
         *lock(&WATCHED) = Some(Watched {
+            id,
             window_ids: self.window_ids.clone(),
             front_pid: self.front_pid,
             deadline,
@@ -629,7 +637,11 @@ impl Snapshot {
                         return;
                     }
                     if let Some(changes) = self.observe_once(&mut observe) {
-                        if !still_mine() {
+                        // Publish under the WATCHED lock, so the next action's
+                        // capture either sees this report or ended the watch
+                        // first and this one says nothing.
+                        let mut watched = lock(&WATCHED);
+                        if !watched.as_ref().is_some_and(|w| w.id == id) || !still_mine() {
                             return;
                         }
                         *lock(&LATE) = Some(Late {
@@ -637,7 +649,8 @@ impl Snapshot {
                             new_windows: changes.new_windows,
                             foreground_changed: changes.foreground_changed,
                         });
-                        lock(&WATCHED).take();
+                        watched.take();
+                        drop(watched);
                         // Keep the lease until the deadline: the change may be
                         // an activation it is still reverting.
                         break;
@@ -654,6 +667,7 @@ impl Snapshot {
             });
         if spawned.is_err() {
             // No thread: release the lease now rather than holding it forever.
+            lock(&WATCHED).take_if(|w| w.id == id);
             focus_arbiter::release_detached(id);
         }
     }
@@ -1338,7 +1352,12 @@ mod tests {
         let watched = lock(&WATCHED)
             .take()
             .expect("the detached watch is recorded");
+        assert!(focus_arbiter::holds_detached(watched.id));
         focus_arbiter::end_detached();
+        assert!(
+            !focus_arbiter::holds_detached(watched.id),
+            "an ended watch is filtered out at the next capture"
+        );
         let now = [win(1, 7, "App", "Main"), win(2, 7, "App", "Save")];
         let late = watched.late_change(&now, Some(7)).expect("the new window");
         assert_eq!(late.new_windows.len(), 1);

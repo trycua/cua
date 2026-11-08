@@ -776,6 +776,13 @@ jobs:
             flags+=(--title "cua SDK $VERSION ($label)" --notes-file notes.md)
           fi
           gh release edit "$TAG" "${flags[@]}" --repo "$GITHUB_REPOSITORY"
+          # Release Please's own draft is listed as untagged-<hash>, which the
+          # tag lookup above never sees; drop it now that the tagged release is
+          # published, or it piles up for good (42 drafts on 8 Nov 2026).
+          for id in $(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+            --jq ".[] | select(.draft and (.tag_name | startswith(\"untagged-\")) and .name == \"cua-sdk: v${VERSION}\") | .id"); do
+            gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/$id"
+          done
       # Publishing a draft can still hand this component the repo-wide "Latest"
       # (cua-spacesd 0.12.1 and 0.12.2 did, despite --latest=false). Put it back
       # on Cua Spaces; the release-latest-guard schedule is the backstop.

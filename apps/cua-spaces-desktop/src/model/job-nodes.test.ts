@@ -23,6 +23,7 @@ describe("jobNodes: one logical child per run, wherever it runs", () => {
       { run: "p-1", parent: "local:home", name: "quiet-orca", gpu: true, host: "mac-m2max", state: "running", members: 1 },
     ]);
     const [n] = jobNodes([parent], home);
+    if (!n) throw new Error("no job node");
     expect(n).toMatchObject({ id: "job:p-1", parent: "local:home", depth: 2, children: false });
     expect(n.job).toMatchObject({ name: "quiet-orca", gpu: true, host: "mac-m2max", state: "running", members: 1 });
   });
@@ -33,8 +34,8 @@ describe("jobNodes: one logical child per run, wherever it runs", () => {
     ]);
     const nodes = jobNodes([parent], home);
     expect(nodes.map((n) => n.id)).toEqual(["job:g-1", "job:f-1"]);
-    expect(nodes[0].job?.members).toBe(3);
-    expect(nodes[1].job).toMatchObject({ state: "failed", error: "its computer was lost" });
+    expect(nodes[0]?.job?.members).toBe(3);
+    expect(nodes[1]?.job).toMatchObject({ state: "failed", error: "its computer was lost" });
   });
   it("shows nothing for a missing, broken or orphaned ledger", () => {
     expect(jobNodes([parent], path.join(os.tmpdir(), "no-such-home"))).toEqual([]);

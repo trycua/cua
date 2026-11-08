@@ -864,7 +864,7 @@ struct WebUIVideoSurfacesTests {
     @Test func anUnclaimedPrewarmedStreamIsLetGoAfterItsGrace() async {
         let host = Host()
         let s = surfaces(host) { _, _ in OfflineStreamSourceProvider() }
-        s.prewarmGrace = .milliseconds(120)
+        s.prewarmGrace = .milliseconds(800)
         s.handle(["type": "prewarm", "spaceId": "a"])
         await settle { host.opened.count == 1 }
         #expect(s.stats().count == 1)

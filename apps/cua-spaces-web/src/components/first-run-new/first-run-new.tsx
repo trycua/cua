@@ -674,7 +674,6 @@ export function NewFirstRun() {
   const [thisState, setThisState] = useState<"adding" | "added" | "failed">("adding");
   const [addError, setAddError] = useState<string | null>(null);
   const [addNeedsProof, setAddNeedsProof] = useState(false);
-  const [explain, setExplain] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   // "Use a code from another computer": the sheet opens on "Enter a code".
   const [addEnter, setAddEnter] = useState(false);
@@ -818,7 +817,6 @@ export function NewFirstRun() {
   // The separate computer: this page's create, followed in the Spaces list.
   const linux = offers.offers.find((o) => o.id === "linux") ?? null;
   const made = useMemo(() => {
-    if (explain) return { phase: "explain" as const, name: null, error: null, id: null };
     if (!s.separatePendingId) return { phase: "none" as const, name: null, error: null, id: null };
     const id = store?.createdId(s.separatePendingId) ?? s.separatePendingId;
     const row = spaces.data?.find((x) => x.id === id);
@@ -827,7 +825,7 @@ export function NewFirstRun() {
     const name = spokenName(row.name);
     if (st === "failed") return { phase: "failed" as const, name, error: row.progress?.error ?? null, id: row.id };
     return { phase: st === "creating" ? ("making" as const) : ("ready" as const), name, error: null, id: row.id };
-  }, [explain, s.separatePendingId, spaces.data, store]);
+  }, [s.separatePendingId, spaces.data, store]);
   // A Mac that can't run virtual computers is only known when the daemon refuses the create (#6323): then
   // the option turns grey with the plain sentence, instead of a failure.
   const cantRun = made.phase === "failed" && CANT_RUN.test(made.error ?? "");
@@ -836,9 +834,7 @@ export function NewFirstRun() {
 
   const makeSeparate = () => {
     if (!linux || linux.blocked) return;
-    // On a Mac, our one line first; the ask itself is the daemon's, before the create (#6009).
-    if (os === "macos" && !explain && separate.phase !== "failed") return setExplain(true);
-    setExplain(false);
+    // A Linux computer needs no Local Network access (only a macOS Space here does), so nothing is asked first.
     const pendingId = newPendingId();
     save({ separatePendingId: pendingId, picks: [...new Set([...s.picks, `pending:${pendingId}`])] });
     spaces.createSpace({ ...linux.args, name: extraName("linux", spaces.data ?? []), os: linux.os, notifyWhenReady: true }, pendingId).catch(() => {

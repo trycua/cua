@@ -8394,6 +8394,9 @@
         "lastUsedAt": {
           "type": "number"
         },
+        "hidden": {
+          "type": "boolean"
+        },
         "startedAt": {
           "type": [
             "number",

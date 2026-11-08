@@ -138,6 +138,8 @@ export function spaceToRow(s: WkSpace): SpaceRow {
     host: opt(s.host),
     hostName: opt(s.hostName),
     parent: opt(s.parent),
+    // The home warming for Home's box (`cua.hidden`): the lists, counts and the tree leave it out.
+    ...(s.hidden ? { hidden: true } : {}),
     power: s.power?.control,
     powerState: running ? "running" : powerState,
     stopReason: off ? opt(s.power?.stopReason) : undefined,

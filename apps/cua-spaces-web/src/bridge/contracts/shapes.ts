@@ -1868,6 +1868,7 @@ const WkSpaceShape = ref(
     status: oneOf("local", "running", "approval", "suspended", "provisioning", "deleting"),
     detail: str,
     lastUsedAt: num,
+    hidden: opt(bool),
     startedAt: optNull(num),
     provider: optNull(oneOf("local", "direct", "relay")),
     sdk: optNull(object({ features: strings, spacesdVersion: str, reachable: bool, error: optNull(str) })),

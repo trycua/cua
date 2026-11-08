@@ -1573,6 +1573,8 @@ external fun uniffi_cua_sdk_checksum_method_spaces_call_tool_json(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_spaces_cancel_create(
 ): Short
+external fun uniffi_cua_sdk_checksum_method_spaces_clear_keep_awake(
+): Short
 external fun uniffi_cua_sdk_checksum_method_spaces_create(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_spaces_create_volume(
@@ -1592,6 +1594,8 @@ external fun uniffi_cua_sdk_checksum_method_spaces_fork(
 external fun uniffi_cua_sdk_checksum_method_spaces_gpu_support(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_spaces_hosts(
+): Short
+external fun uniffi_cua_sdk_checksum_method_spaces_keep_awake(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_spaces_leave_many(
 ): Short
@@ -1634,6 +1638,8 @@ external fun uniffi_cua_sdk_checksum_method_spaces_set_egress(
 external fun uniffi_cua_sdk_checksum_method_spaces_set_lifetime(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_spaces_set_network(
+): Short
+external fun uniffi_cua_sdk_checksum_method_spaces_set_sleep(
 ): Short
 external fun uniffi_cua_sdk_checksum_method_spaces_set_tree_budget(
 ): Short
@@ -2680,6 +2686,8 @@ external fun uniffi_cua_sdk_fn_method_spaces_call_tool_json(`ptr`: Long,`tool`: 
 ): Long
 external fun uniffi_cua_sdk_fn_method_spaces_cancel_create(`ptr`: Long,`space`: RustBuffer.ByValue,
 ): Long
+external fun uniffi_cua_sdk_fn_method_spaces_clear_keep_awake(`ptr`: Long,`space`: RustBuffer.ByValue,
+): Long
 external fun uniffi_cua_sdk_fn_method_spaces_create(`ptr`: Long,`options`: RustBuffer.ByValue,
 ): Long
 external fun uniffi_cua_sdk_fn_method_spaces_create_volume(`ptr`: Long,`name`: RustBuffer.ByValue,
@@ -2699,6 +2707,8 @@ external fun uniffi_cua_sdk_fn_method_spaces_fork(`ptr`: Long,`source`: RustBuff
 external fun uniffi_cua_sdk_fn_method_spaces_gpu_support(`ptr`: Long,`on`: RustBuffer.ByValue,
 ): Long
 external fun uniffi_cua_sdk_fn_method_spaces_hosts(`ptr`: Long,
+): Long
+external fun uniffi_cua_sdk_fn_method_spaces_keep_awake(`ptr`: Long,`space`: RustBuffer.ByValue,`seconds`: Long,`reason`: RustBuffer.ByValue,
 ): Long
 external fun uniffi_cua_sdk_fn_method_spaces_leave_many(`ptr`: Long,`ids`: RustBuffer.ByValue,
 ): Long
@@ -2741,6 +2751,8 @@ external fun uniffi_cua_sdk_fn_method_spaces_set_egress(`ptr`: Long,`space`: Rus
 external fun uniffi_cua_sdk_fn_method_spaces_set_lifetime(`ptr`: Long,`space`: RustBuffer.ByValue,`seconds`: Long,`onExpire`: RustBuffer.ByValue,
 ): Long
 external fun uniffi_cua_sdk_fn_method_spaces_set_network(`ptr`: Long,`space`: RustBuffer.ByValue,`settings`: RustBuffer.ByValue,`widen`: Byte,`tree`: Byte,
+): Long
+external fun uniffi_cua_sdk_fn_method_spaces_set_sleep(`ptr`: Long,`space`: RustBuffer.ByValue,`sleep`: RustBuffer.ByValue,
 ): Long
 external fun uniffi_cua_sdk_fn_method_spaces_set_tree_budget(`ptr`: Long,`space`: RustBuffer.ByValue,`limits`: RustBuffer.ByValue,
 ): Long
@@ -4376,6 +4388,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_cua_sdk_checksum_method_spaces_cancel_create() != 14647.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_cua_sdk_checksum_method_spaces_clear_keep_awake() != 32046.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_cua_sdk_checksum_method_spaces_create() != 2097.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -4404,6 +4419,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cua_sdk_checksum_method_spaces_hosts() != 23309.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cua_sdk_checksum_method_spaces_keep_awake() != 12612.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cua_sdk_checksum_method_spaces_leave_many() != 34815.toShort()) {
@@ -4467,6 +4485,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cua_sdk_checksum_method_spaces_set_network() != 64671.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cua_sdk_checksum_method_spaces_set_sleep() != 40921.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cua_sdk_checksum_method_spaces_set_tree_budget() != 8418.toShort()) {
@@ -21517,6 +21538,11 @@ public interface SpacesInterface {
     suspend fun `cancelCreate`(`space`: kotlin.String): SpaceCancelOutcome
 
     /**
+     * Ends a keep-awake of `space` now.
+     */
+    suspend fun `clearKeepAwake`(`space`: kotlin.String)
+
+    /**
      * Creates a Space where `options.on` says (the user default when
      * unset): a new sandbox registered as a Space. An existing machine is
      * added with [`Spaces::add`].
@@ -21592,6 +21618,13 @@ public interface SpacesInterface {
      * not answer is listed offline when it provided a Space before.
      */
     suspend fun `hosts`(): List<SpacesHost>
+
+    /**
+     * Keeps `space` awake for `seconds` (at most two hours; a longer ask is
+     * cut and `capped` says so), whatever its sleep setting says. `reason`
+     * is shown to the person.
+     */
+    suspend fun `keepAwake`(`space`: kotlin.String, `seconds`: kotlin.ULong, `reason`: kotlin.String): KeepAwakeInfo
 
     /**
      * Takes this account off Spaces shared with it (through the relay): a
@@ -21760,6 +21793,13 @@ public interface SpacesInterface {
      * (`applied`). A Space another computer runs is `Unsupported`.
      */
     suspend fun `setNetwork`(`space`: kotlin.String, `settings`: NetworkSettings, `widen`: kotlin.Boolean, `tree`: kotlin.Boolean): SetNetworkResult
+
+    /**
+     * Sets when `space` goes to sleep on its own: `never` (Keep running),
+     * `auto` (once nothing in it runs) or a duration such as `10m`. A Space
+     * with no setting is `never`, except a home an agent works in (`auto`).
+     */
+    suspend fun `setSleep`(`space`: kotlin.String, `sleep`: kotlin.String)
 
     /**
      * Sets the budget of `space`'s tree: how many child Spaces, vCPUs and
@@ -23118,6 +23158,31 @@ open class Spaces: Disposable, AutoCloseable, SpacesInterface
 
 
     /**
+     * Ends a keep-awake of `space` now.
+     */
+    @Throws(CuaException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `clearKeepAwake`(`space`: kotlin.String) {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cua_sdk_fn_method_spaces_clear_keep_awake(
+                uniffiHandle,
+                FfiConverterString.lower(`space`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cua_sdk_rust_future_poll_void(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cua_sdk_rust_future_complete_void(future, continuation) },
+        { future -> UniffiLib.ffi_cua_sdk_rust_future_free_void(future) },
+        // lift function
+        { Unit },
+
+        // Error FFI converter
+        CuaException.ErrorHandler,
+    )
+    }
+
+
+    /**
      * Creates a Space where `options.on` says (the user default when
      * unset): a new sandbox registered as a Space. An existing machine is
      * added with [`Spaces::add`].
@@ -23378,6 +23443,32 @@ open class Spaces: Disposable, AutoCloseable, SpacesInterface
         { future -> UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer(future) },
         // lift function
         { FfiConverterSequenceTypeSpacesHost.lift(it) },
+        // Error FFI converter
+        CuaException.ErrorHandler,
+    )
+    }
+
+
+    /**
+     * Keeps `space` awake for `seconds` (at most two hours; a longer ask is
+     * cut and `capped` says so), whatever its sleep setting says. `reason`
+     * is shown to the person.
+     */
+    @Throws(CuaException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `keepAwake`(`space`: kotlin.String, `seconds`: kotlin.ULong, `reason`: kotlin.String) : KeepAwakeInfo {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cua_sdk_fn_method_spaces_keep_awake(
+                uniffiHandle,
+                FfiConverterString.lower(`space`),FfiConverterULong.lower(`seconds`),FfiConverterString.lower(`reason`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypeKeepAwakeInfo.lift(it) },
         // Error FFI converter
         CuaException.ErrorHandler,
     )
@@ -23949,6 +24040,33 @@ open class Spaces: Disposable, AutoCloseable, SpacesInterface
         { future -> UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer(future) },
         // lift function
         { FfiConverterTypeSetNetworkResult.lift(it) },
+        // Error FFI converter
+        CuaException.ErrorHandler,
+    )
+    }
+
+
+    /**
+     * Sets when `space` goes to sleep on its own: `never` (Keep running),
+     * `auto` (once nothing in it runs) or a duration such as `10m`. A Space
+     * with no setting is `never`, except a home an agent works in (`auto`).
+     */
+    @Throws(CuaException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `setSleep`(`space`: kotlin.String, `sleep`: kotlin.String) {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cua_sdk_fn_method_spaces_set_sleep(
+                uniffiHandle,
+                FfiConverterString.lower(`space`),FfiConverterString.lower(`sleep`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cua_sdk_rust_future_poll_void(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cua_sdk_rust_future_complete_void(future, continuation) },
+        { future -> UniffiLib.ffi_cua_sdk_rust_future_free_void(future) },
+        // lift function
+        { Unit },
+
         // Error FFI converter
         CuaException.ErrorHandler,
     )
@@ -38723,6 +38841,53 @@ public object FfiConverterTypeImageInfo: FfiConverterRustBuffer<ImageInfo> {
             FfiConverterString.write(value.`os`, buf)
             FfiConverterBoolean.write(value.`emulated`, buf)
             FfiConverterOptionalBoolean.write(value.`spacesd`, buf)
+    }
+}
+
+
+
+/**
+ * A keep-awake that holds ([`Spaces::keep_awake`]).
+ */
+data class KeepAwakeInfo (
+    /**
+     * When it ends, Unix seconds; 0 when none holds.
+     */
+    var `untilUnix`: kotlin.Long
+    ,
+    /**
+     * The ask was longer than the two-hour limit and was cut.
+     */
+    var `capped`: kotlin.Boolean
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeKeepAwakeInfo: FfiConverterRustBuffer<KeepAwakeInfo> {
+    override fun read(buf: ByteBuffer): KeepAwakeInfo {
+        return KeepAwakeInfo(
+            FfiConverterLong.read(buf),
+            FfiConverterBoolean.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: KeepAwakeInfo) = (
+            FfiConverterLong.allocationSize(value.`untilUnix`) +
+            FfiConverterBoolean.allocationSize(value.`capped`)
+    )
+
+    override fun write(value: KeepAwakeInfo, buf: ByteBuffer) {
+            FfiConverterLong.write(value.`untilUnix`, buf)
+            FfiConverterBoolean.write(value.`capped`, buf)
     }
 }
 

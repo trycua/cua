@@ -1038,6 +1038,52 @@ pub(crate) mod imp {
             })
         }
 
+        async fn set_space_sleep(
+            &self,
+            req: tonic::Request<pb::SetSpaceSleepRequest>,
+        ) -> R<pb::SetSpaceSleepResponse> {
+            let r = req.into_inner();
+            let id = self
+                .spaces()
+                .resolve(&r.space)
+                .map_err(|e| st(e.into()))?
+                .to_string();
+            if let Some(word) = &r.sleep {
+                let sleep = cua_spaces::sleep::Sleep::parse(word).ok_or_else(|| {
+                    st(cua_spaces::Error::invalid(format!(
+                        "{word:?} is not a sleep setting: use never, auto or a duration such as 10m"
+                    ))
+                    .into())
+                })?;
+                self.spaces()
+                    .set_sleep(&id, sleep)
+                    .map_err(|e| st(e.into()))?;
+            }
+            let mut capped = false;
+            if r.clear_keep_awake {
+                self.spaces()
+                    .clear_keep_awake(&id)
+                    .map_err(|e| st(e.into()))?;
+            } else if let Some(secs) = r.keep_awake_secs {
+                capped = self
+                    .spaces()
+                    .keep_awake(
+                        &id,
+                        std::time::Duration::from_secs(secs),
+                        &r.keep_awake_reason,
+                    )
+                    .map_err(|e| st(e.into()))?
+                    .capped;
+            }
+            let space = record(self.spaces(), &id).await.map_err(st)?;
+            let until = self.spaces().keep_awake_of(&id).map_or(0, |k| k.until_unix);
+            ok(pb::SetSpaceSleepResponse {
+                space: Some(space),
+                keep_awake_until_unix: until,
+                keep_awake_capped: capped,
+            })
+        }
+
         async fn set_space_children(
             &self,
             req: tonic::Request<pb::SetSpaceChildrenRequest>,
@@ -1580,6 +1626,12 @@ mod imp {
             &self,
             _: tonic::Request<pb::SetSpaceChildrenRequest>,
         ) -> R<pb::SetSpaceChildrenResponse> {
+            off()
+        }
+        async fn set_space_sleep(
+            &self,
+            _: tonic::Request<pb::SetSpaceSleepRequest>,
+        ) -> R<pb::SetSpaceSleepResponse> {
             off()
         }
         async fn get_tree_budget(

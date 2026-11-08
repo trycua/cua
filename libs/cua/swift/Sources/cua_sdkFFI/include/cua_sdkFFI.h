@@ -2354,6 +2354,11 @@ uint64_t uniffi_cua_sdk_fn_method_spaces_call_tool_json(uint64_t ptr, RustBuffer
 uint64_t uniffi_cua_sdk_fn_method_spaces_cancel_create(uint64_t ptr, RustBuffer space
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_CLEAR_KEEP_AWAKE
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_CLEAR_KEEP_AWAKE
+uint64_t uniffi_cua_sdk_fn_method_spaces_clear_keep_awake(uint64_t ptr, RustBuffer space
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_CREATE
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_CREATE
 uint64_t uniffi_cua_sdk_fn_method_spaces_create(uint64_t ptr, RustBuffer options
@@ -2402,6 +2407,11 @@ uint64_t uniffi_cua_sdk_fn_method_spaces_gpu_support(uint64_t ptr, RustBuffer on
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_HOSTS
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_HOSTS
 uint64_t uniffi_cua_sdk_fn_method_spaces_hosts(uint64_t ptr
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_KEEP_AWAKE
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_KEEP_AWAKE
+uint64_t uniffi_cua_sdk_fn_method_spaces_keep_awake(uint64_t ptr, RustBuffer space, uint64_t seconds, RustBuffer reason
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_LEAVE_MANY
@@ -2507,6 +2517,11 @@ uint64_t uniffi_cua_sdk_fn_method_spaces_set_lifetime(uint64_t ptr, RustBuffer s
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_SET_NETWORK
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_SET_NETWORK
 uint64_t uniffi_cua_sdk_fn_method_spaces_set_network(uint64_t ptr, RustBuffer space, RustBuffer settings, int8_t widen, int8_t tree
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_SET_SLEEP
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_SET_SLEEP
+uint64_t uniffi_cua_sdk_fn_method_spaces_set_sleep(uint64_t ptr, RustBuffer space, RustBuffer sleep
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_FN_METHOD_SPACES_SET_TREE_BUDGET
@@ -6004,6 +6019,12 @@ uint16_t uniffi_cua_sdk_checksum_method_spaces_cancel_create(void
 
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_CLEAR_KEEP_AWAKE
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_CLEAR_KEEP_AWAKE
+uint16_t uniffi_cua_sdk_checksum_method_spaces_clear_keep_awake(void
+
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_CREATE
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_CREATE
 uint16_t uniffi_cua_sdk_checksum_method_spaces_create(void
@@ -6061,6 +6082,12 @@ uint16_t uniffi_cua_sdk_checksum_method_spaces_gpu_support(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_HOSTS
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_HOSTS
 uint16_t uniffi_cua_sdk_checksum_method_spaces_hosts(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_KEEP_AWAKE
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_KEEP_AWAKE
+uint16_t uniffi_cua_sdk_checksum_method_spaces_keep_awake(void
 
 );
 #endif
@@ -6187,6 +6214,12 @@ uint16_t uniffi_cua_sdk_checksum_method_spaces_set_lifetime(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_SET_NETWORK
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_SET_NETWORK
 uint16_t uniffi_cua_sdk_checksum_method_spaces_set_network(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_SET_SLEEP
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SDK_CHECKSUM_METHOD_SPACES_SET_SLEEP
+uint16_t uniffi_cua_sdk_checksum_method_spaces_set_sleep(void
 
 );
 #endif

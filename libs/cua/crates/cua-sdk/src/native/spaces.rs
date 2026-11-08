@@ -1530,6 +1530,15 @@ pub struct SpaceWriteReport {
     pub sha256: String,
 }
 
+/// A keep-awake that holds ([`Spaces::keep_awake`]).
+#[derive(Debug, Clone, Default, PartialEq, uniffi::Record)]
+pub struct KeepAwakeInfo {
+    /// When it ends, Unix seconds; 0 when none holds.
+    pub until_unix: i64,
+    /// The ask was longer than the two-hour limit and was cut.
+    pub capped: bool,
+}
+
 /// What a tree's children may hold and cost ([`Spaces::set_tree_budget`]).
 /// `None`: the default.
 #[derive(Debug, Clone, Default, PartialEq, uniffi::Record)]
@@ -4752,6 +4761,99 @@ impl Spaces {
                             ),
                             _ => daemon_err(e),
                         })?;
+                }
+            }
+            Ok(())
+        })
+        .await
+    }
+
+    /// Sets when `space` goes to sleep on its own: `never` (Keep running),
+    /// `auto` (once nothing in it runs) or a duration such as `10m`. A Space
+    /// with no setting is `never`, except a home an agent works in (`auto`).
+    pub async fn set_sleep(&self, space: String, sleep: String) -> Result<()> {
+        let parsed = cua_spaces::sleep::Sleep::parse(&sleep).ok_or_else(|| {
+            CuaError::InvalidArgument(format!(
+                "{sleep:?} is not a sleep setting: use never, auto or a duration such as 10m"
+            ))
+        })?;
+        let host = self.host.clone();
+        run(async move {
+            match &host {
+                Host::Embedded(s) => s.set_sleep(&space, parsed)?,
+                Host::Daemon(d) => {
+                    d.spaces()
+                        .set_space_sleep(dpb::SetSpaceSleepRequest {
+                            space,
+                            sleep: Some(parsed.word()),
+                            ..Default::default()
+                        })
+                        .await
+                        .map_err(daemon_err)?;
+                }
+            }
+            Ok(())
+        })
+        .await
+    }
+
+    /// Keeps `space` awake for `seconds` (at most two hours; a longer ask is
+    /// cut and `capped` says so), whatever its sleep setting says. `reason`
+    /// is shown to the person.
+    pub async fn keep_awake(
+        &self,
+        space: String,
+        seconds: u64,
+        reason: String,
+    ) -> Result<KeepAwakeInfo> {
+        let host = self.host.clone();
+        run(async move {
+            match &host {
+                Host::Embedded(s) => {
+                    let k =
+                        s.keep_awake(&space, std::time::Duration::from_secs(seconds), &reason)?;
+                    Ok(KeepAwakeInfo {
+                        until_unix: i64::try_from(k.until_unix).unwrap_or(0),
+                        capped: k.capped,
+                    })
+                }
+                Host::Daemon(d) => {
+                    let r = d
+                        .spaces()
+                        .set_space_sleep(dpb::SetSpaceSleepRequest {
+                            space,
+                            keep_awake_secs: Some(seconds),
+                            keep_awake_reason: reason,
+                            ..Default::default()
+                        })
+                        .await
+                        .map_err(daemon_err)?
+                        .into_inner();
+                    Ok(KeepAwakeInfo {
+                        until_unix: i64::try_from(r.keep_awake_until_unix).unwrap_or(0),
+                        capped: r.keep_awake_capped,
+                    })
+                }
+            }
+        })
+        .await
+    }
+
+    /// Ends a keep-awake of `space` now.
+    pub async fn clear_keep_awake(&self, space: String) -> Result<()> {
+        let host = self.host.clone();
+        run(async move {
+            match &host {
+                Host::Embedded(s) => s.clear_keep_awake(&space)?,
+                Host::Daemon(d) => {
+                    d.spaces()
+                        .set_space_sleep(dpb::SetSpaceSleepRequest {
+                            space,
+                            clear_keep_awake: true,
+                            ..Default::default()
+                        })
+                        .await
+                        .map_err(daemon_err)?;
                 }
             }
             Ok(())

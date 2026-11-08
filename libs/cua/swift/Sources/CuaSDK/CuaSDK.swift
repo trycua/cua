@@ -11825,6 +11825,11 @@ public protocol SpacesProtocol: AnyObject, Sendable {
     func cancelCreate(space: String) async throws  -> SpaceCancelOutcome
 
     /**
+     * Ends a keep-awake of `space` now.
+     */
+    func clearKeepAwake(space: String) async throws
+
+    /**
      * Creates a Space where `options.on` says (the user default when
      * unset): a new sandbox registered as a Space. An existing machine is
      * added with [`Spaces::add`].
@@ -11900,6 +11905,13 @@ public protocol SpacesProtocol: AnyObject, Sendable {
      * not answer is listed offline when it provided a Space before.
      */
     func hosts() async throws  -> [SpacesHost]
+
+    /**
+     * Keeps `space` awake for `seconds` (at most two hours; a longer ask is
+     * cut and `capped` says so), whatever its sleep setting says. `reason`
+     * is shown to the person.
+     */
+    func keepAwake(space: String, seconds: UInt64, reason: String) async throws  -> KeepAwakeInfo
 
     /**
      * Takes this account off Spaces shared with it (through the relay): a
@@ -12068,6 +12080,13 @@ public protocol SpacesProtocol: AnyObject, Sendable {
      * (`applied`). A Space another computer runs is `Unsupported`.
      */
     func setNetwork(space: String, settings: NetworkSettings, widen: Bool, tree: Bool) async throws  -> SetNetworkResult
+
+    /**
+     * Sets when `space` goes to sleep on its own: `never` (Keep running),
+     * `auto` (once nothing in it runs) or a duration such as `10m`. A Space
+     * with no setting is `never`, except a home an agent works in (`auto`).
+     */
+    func setSleep(space: String, sleep: String) async throws
 
     /**
      * Sets the budget of `space`'s tree: how many child Spaces, vCPUs and
@@ -13218,6 +13237,26 @@ open func cancelCreate(space: String)async throws  -> SpaceCancelOutcome  {
 }
 
     /**
+     * Ends a keep-awake of `space` now.
+     */
+open func clearKeepAwake(space: String)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_spaces_clear_keep_awake(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(space)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_void,
+            completeFunc: ffi_cua_sdk_rust_future_complete_void,
+            freeFunc: ffi_cua_sdk_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
      * Creates a Space where `options.on` says (the user default when
      * unset): a new sandbox registered as a Space. An existing machine is
      * added with [`Spaces::add`].
@@ -13440,6 +13479,28 @@ open func hosts()async throws  -> [SpacesHost]  {
             completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
             freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
             liftFunc: FfiConverterSequenceTypeSpacesHost.lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * Keeps `space` awake for `seconds` (at most two hours; a longer ask is
+     * cut and `capped` says so), whatever its sleep setting says. `reason`
+     * is shown to the person.
+     */
+open func keepAwake(space: String, seconds: UInt64, reason: String)async throws  -> KeepAwakeInfo  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_spaces_keep_awake(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(space),FfiConverterUInt64.lower(seconds),FfiConverterString.lower(reason)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeKeepAwakeInfo_lift,
             errorHandler: FfiConverterTypeCuaError_lift
         )
 }
@@ -13923,6 +13984,28 @@ open func setNetwork(space: String, settings: NetworkSettings, widen: Bool, tree
             completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
             freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeSetNetworkResult_lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * Sets when `space` goes to sleep on its own: `never` (Keep running),
+     * `auto` (once nothing in it runs) or a duration such as `10m`. A Space
+     * with no setting is `never`, except a home an agent works in (`auto`).
+     */
+open func setSleep(space: String, sleep: String)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_spaces_set_sleep(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(space),FfiConverterString.lower(sleep)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_void,
+            completeFunc: ffi_cua_sdk_rust_future_complete_void,
+            freeFunc: ffi_cua_sdk_rust_future_free_void,
+            liftFunc: { $0 },
             errorHandler: FfiConverterTypeCuaError_lift
         )
 }
@@ -30709,6 +30792,75 @@ public func FfiConverterTypeImageInfo_lift(_ buf: RustBuffer) throws -> ImageInf
 #endif
 public func FfiConverterTypeImageInfo_lower(_ value: ImageInfo) -> RustBuffer {
     return FfiConverterTypeImageInfo.lower(value)
+}
+
+
+/**
+ * A keep-awake that holds ([`Spaces::keep_awake`]).
+ */
+public struct KeepAwakeInfo: Equatable, Hashable {
+    /**
+     * When it ends, Unix seconds; 0 when none holds.
+     */
+    public var untilUnix: Int64
+    /**
+     * The ask was longer than the two-hour limit and was cut.
+     */
+    public var capped: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * When it ends, Unix seconds; 0 when none holds.
+         */untilUnix: Int64,
+        /**
+         * The ask was longer than the two-hour limit and was cut.
+         */capped: Bool) {
+        self.untilUnix = untilUnix
+        self.capped = capped
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension KeepAwakeInfo: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeKeepAwakeInfo: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> KeepAwakeInfo {
+        return
+            try KeepAwakeInfo(
+                untilUnix: FfiConverterInt64.read(from: &buf),
+                capped: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: KeepAwakeInfo, into buf: inout [UInt8]) {
+        FfiConverterInt64.write(value.untilUnix, into: &buf)
+        FfiConverterBool.write(value.capped, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeKeepAwakeInfo_lift(_ buf: RustBuffer) throws -> KeepAwakeInfo {
+    return try FfiConverterTypeKeepAwakeInfo.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeKeepAwakeInfo_lower(_ value: KeepAwakeInfo) -> RustBuffer {
+    return FfiConverterTypeKeepAwakeInfo.lower(value)
 }
 
 
@@ -55477,6 +55629,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_method_spaces_cancel_create() != 14647) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cua_sdk_checksum_method_spaces_clear_keep_awake() != 32046) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cua_sdk_checksum_method_spaces_create() != 2097) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -55505,6 +55660,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_spaces_hosts() != 23309) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_spaces_keep_awake() != 12612) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_spaces_leave_many() != 34815) {
@@ -55568,6 +55726,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_spaces_set_network() != 64671) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_spaces_set_sleep() != 40921) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_spaces_set_tree_budget() != 8418) {

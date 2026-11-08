@@ -503,6 +503,12 @@ Examples:
         /// follows its parent. Same as `--label cua.relay=off`.
         #[arg(long)]
         no_relay: bool,
+        /// When it goes to sleep on its own: `never` (the default: it keeps
+        /// running), `auto` (once nothing in it runs, and it wakes when
+        /// something needs it) or a duration such as `10m`. Change it later
+        /// with `cua spaces set`.
+        #[arg(long, value_name = "never|auto|DURATION")]
+        sleep: Option<String>,
         /// Its network: `internet` (the default: the internet and its own
         /// tree; this computer, your local network, cloud metadata and other
         /// trees are blocked), `none`, `localhost:5432,3000` (also this
@@ -618,6 +624,24 @@ Examples:
         allow: Vec<String>,
         /// Remove the policy.
         #[arg(long, conflicts_with_all = ["deny", "allow"])]
+        clear: bool,
+    },
+    /// Keep a Space awake for a while, whatever its sleep setting says (at
+    /// most 2 hours). `--clear` ends it.
+    #[command(after_help = "Examples:
+  cua spaces keepawake studio --for 30m --reason \"long build\"
+  cua spaces keepawake studio --clear")]
+    Keepawake {
+        /// Space id or name.
+        space: String,
+        /// How long (`10m`, `2h`; at most 2h).
+        #[arg(long = "for", value_name = "DURATION", conflicts_with = "clear")]
+        duration: Option<String>,
+        /// Why; shown on the Space.
+        #[arg(long, default_value = "")]
+        reason: String,
+        /// End the keep-awake now.
+        #[arg(long)]
         clear: bool,
     },
     /// Let a Space make child Spaces of its own, or stop it. While on,
@@ -853,7 +877,8 @@ Examples:
     #[command(after_help = "Examples:
   cua spaces set local:studio --clipboard off
   cua spaces set local:studio --clipboard viewing
-  cua spaces set local:studio --volume off")]
+  cua spaces set local:studio --volume off
+  cua spaces set local:studio --sleep auto")]
     Set {
         /// Space id or name (as `cua spaces ls` shows).
         space: String,
@@ -863,6 +888,12 @@ Examples:
         /// What it sees of the Cua Volume: own or off.
         #[arg(long, value_name = "own|off")]
         volume: Option<String>,
+        /// When it goes to sleep on its own: `never` (it keeps running),
+        /// `auto` (once nothing in it runs; it wakes when something needs
+        /// it) or a duration such as `10m`. A sleeping Space keeps its disk
+        /// and gives its memory back.
+        #[arg(long, value_name = "never|auto|DURATION")]
+        sleep: Option<String>,
     },
     /// Let someone in your team watch (viewer) or use (editor) a Space,
     /// through the relay. They open it as `relay:<computer>`. Sharing is for
@@ -1271,13 +1302,29 @@ pub async fn run_spaces_sdk(
             space,
             clipboard,
             volume,
+            sleep,
         } => {
-            if clipboard.is_none() && volume.is_none() {
+            if clipboard.is_none() && volume.is_none() && sleep.is_none() {
                 return Err(CuaError::InvalidArgument(
-                    "name what to set: --clipboard viewing|ask|off or --volume own|off".into(),
+                    "name what to set: --clipboard viewing|ask|off, --volume own|off or --sleep never|auto|10m"
+                        .into(),
                 ));
             }
             let mut done = serde_json::json!({"space": space});
+            if let Some(word) = sleep {
+                spaces.set_sleep(space.clone(), word.clone()).await?;
+                if !json {
+                    if word.trim().eq_ignore_ascii_case("never") {
+                        line(out, format!("{space} keeps running."));
+                    } else {
+                        line(
+                            out,
+                            format!("{space} sleeps when nothing in it runs ({}).", word.trim()),
+                        );
+                    }
+                }
+                done["sleep"] = word.trim().to_ascii_lowercase().into();
+            }
             if let Some(clipboard) = clipboard {
                 spaces
                     .set_clipboard(space.clone(), clipboard.clone())
@@ -1587,6 +1634,44 @@ pub async fn run_spaces_sdk(
                 }
             }
         }
+        SpacesCmd::Keepawake {
+            space,
+            duration,
+            reason,
+            clear,
+        } => {
+            if clear {
+                spaces.clear_keep_awake(space.clone()).await?;
+                line(out, format!("{space} may sleep again."));
+            } else {
+                let word = duration.ok_or_else(|| {
+                    CuaError::InvalidArgument("say how long: --for 30m (at most 2h)".into())
+                })?;
+                let secs = cua_spaces::sleep::Sleep::parse(&word)
+                    .and_then(|s| match s {
+                        cua_spaces::sleep::Sleep::After(d) => Some(d.as_secs()),
+                        _ => None,
+                    })
+                    .ok_or_else(|| {
+                        CuaError::InvalidArgument(format!("{word:?} is not a duration such as 30m"))
+                    })?;
+                let k = spaces.keep_awake(space.clone(), secs, reason).await?;
+                if json {
+                    line(
+                        out,
+                        serde_json::json!({"space": space, "until_unix": k.until_unix, "capped": k.capped})
+                            .to_string(),
+                    );
+                } else if k.capped {
+                    line(
+                        out,
+                        format!("{space} stays awake for 2h (the most a request can ask)."),
+                    );
+                } else {
+                    line(out, format!("{space} stays awake for {word}."));
+                }
+            }
+        }
         SpacesCmd::Children { space, state } => {
             let on = state == "on";
             spaces.set_children(space.clone(), on).await?;
@@ -1718,6 +1803,7 @@ pub async fn run_spaces_sdk(
             volumes,
             label,
             no_relay,
+            sleep,
             network,
             egress_deny,
             egress_allow,
@@ -1726,6 +1812,14 @@ pub async fn run_spaces_sdk(
         } => {
             let volumes = parse_volumes(&volumes)?;
             let mut labels = parse_labels(&label)?;
+            if let Some(word) = &sleep {
+                let parsed = cua_spaces::sleep::Sleep::parse(word).ok_or_else(|| {
+                    CuaError::InvalidArgument(format!(
+                        "{word:?} is not a sleep setting: use never, auto or a duration such as 10m"
+                    ))
+                })?;
+                labels.insert(cua_spaces::sleep::LABEL_SLEEP.to_string(), parsed.word());
+            }
             if no_relay {
                 labels.insert(
                     cua_spaces::registry::RELAY_LABEL.to_string(),
@@ -5262,6 +5356,28 @@ mod tests {
             other => panic!("{other:?}"),
         }
         assert!(parse_spaces(&["rename", "local:studio"]).is_err());
+    }
+
+    #[test]
+    fn spaces_set_takes_a_sleep_word_and_keepawake_a_duration() {
+        match parse_spaces(&["set", "local:studio", "--sleep", "auto"]).unwrap() {
+            SpacesCmd::Set { sleep, .. } => assert_eq!(sleep.as_deref(), Some("auto")),
+            other => panic!("{other:?}"),
+        }
+        match parse_spaces(&["keepawake", "studio", "--for", "30m", "--reason", "build"]).unwrap() {
+            SpacesCmd::Keepawake {
+                duration, reason, ..
+            } => assert_eq!(
+                (duration.as_deref(), reason.as_str()),
+                (Some("30m"), "build")
+            ),
+            other => panic!("{other:?}"),
+        }
+        assert!(parse_spaces(&["keepawake", "studio", "--for", "1h", "--clear"]).is_err());
+        match parse_spaces(&["create", "linux", "--sleep", "10m"]).unwrap() {
+            SpacesCmd::Create { sleep, .. } => assert_eq!(sleep.as_deref(), Some("10m")),
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]

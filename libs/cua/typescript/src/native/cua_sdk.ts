@@ -13236,6 +13236,58 @@ const FfiConverterTypeImageInfo = (() => {
 })();
 
 /**
+ * A keep-awake that holds ([`Spaces::keep_awake`]).
+ */
+export type KeepAwakeInfo = {
+    /**
+     * When it ends, Unix seconds; 0 when none holds.
+     */
+    untilUnix: bigint,
+    /**
+     * The ask was longer than the two-hour limit and was cut.
+     */
+    capped: boolean
+}
+
+/**
+ * Generated factory for {@link KeepAwakeInfo} record objects.
+ */
+export const KeepAwakeInfo = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<KeepAwakeInfo, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<KeepAwakeInfo>,
+    });
+})();
+
+const FfiConverterTypeKeepAwakeInfo = (() => {
+    type TypeName = KeepAwakeInfo;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                untilUnix: FfiConverterInt64.read(from),
+                capped: FfiConverterBool.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterInt64.write(value.untilUnix, into);
+            FfiConverterBool.write(value.capped, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterInt64.allocationSize(value.untilUnix) +
+             FfiConverterBool.allocationSize(value.capped);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+/**
  * A local image.
  */
 export type LocalImage = {
@@ -42440,6 +42492,10 @@ export interface SpacesLike {
  */
     cancelCreate(space: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<SpaceCancelOutcome>;
 /**
+ * Ends a keep-awake of `space` now.
+ */
+    clearKeepAwake(space: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<void>;
+/**
  * Adds `count` hosts of `instance_type` in a linked cloud by hand
  * (the scaler never removes them); each ends at its TTL.
  */
@@ -42606,6 +42662,12 @@ export interface SpacesLike {
  * not answer is listed offline when it provided a Space before.
  */
     hosts(asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Array<SpacesHost>>;
+/**
+ * Keeps `space` awake for `seconds` (at most two hours; a longer ask is
+ * cut and `capped` says so), whatever its sleep setting says. `reason`
+ * is shown to the person.
+ */
+    keepAwake(space: string, seconds: bigint, reason: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<KeepAwakeInfo>;
 /**
  * Takes this account off Spaces shared with it (through the relay): a
  * direct share ends, a team's Space leaves this account's list. Your
@@ -42819,6 +42881,12 @@ export interface SpacesLike {
  * (`applied`). A Space another computer runs is `Unsupported`.
  */
     setNetwork(space: string, settings: NetworkSettings, widen: boolean, tree: boolean, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<SetNetworkResult>;
+/**
+ * Sets when `space` goes to sleep on its own: `never` (Keep running),
+ * `auto` (once nothing in it runs) or a duration such as `10m`. A Space
+ * with no setting is `never`, except a home an agent works in (`auto`).
+ */
+    setSleep(space: string, sleep: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<void>;
 /**
  * Sets the budget of `space`'s tree: how many child Spaces, vCPUs and
  * memory its children may hold at once, and what they may cost. A child
@@ -43414,6 +43482,36 @@ private constructor(pointer: UniffiHandle) {
             // export. The bytes the runtime hands back must be deserialized
             // here using the per-callable return-type converter.
             /*liftFunc:*/ FfiConverterTypeSpaceCancelOutcome.lift.bind(FfiConverterTypeSpaceCancelOutcome),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
+    }
+
+/**
+ * Ends a keep-awake of `space` now.
+ */
+    async clearKeepAwake(space: string, asyncOpts_?: { signal: AbortSignal }): Promise<void> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_cua_sdk_fn_method_spaces_clear_keep_awake(
+                    uniffiTypeSpacesObjectFactory.clonePointer(this),FfiConverterString.lower(space, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_cua_sdk_rust_future_poll_void,
+            /*cancelFunc:*/ nativeModule().ffi_cua_sdk_rust_future_cancel_void,
+            /*completeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_complete_void,
+            /*freeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_free_void,
+            /*liftFunc:*/ (_v) => {},
             /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
             /*asyncOpts:*/ asyncOpts_,
             /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
@@ -44449,6 +44547,43 @@ private constructor(pointer: UniffiHandle) {
             // export. The bytes the runtime hands back must be deserialized
             // here using the per-callable return-type converter.
             /*liftFunc:*/ FfiConverterSequenceTypeSpacesHost.lift.bind(FfiConverterSequenceTypeSpacesHost),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
+    }
+
+/**
+ * Keeps `space` awake for `seconds` (at most two hours; a longer ask is
+ * cut and `capped` says so), whatever its sleep setting says. `reason`
+ * is shown to the person.
+ */
+    async keepAwake(space: string, seconds: bigint, reason: string, asyncOpts_?: { signal: AbortSignal }): Promise<KeepAwakeInfo> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_cua_sdk_fn_method_spaces_keep_awake(
+                    uniffiTypeSpacesObjectFactory.clonePointer(this),FfiConverterString.lower(space, nativeModule().rustbuffer_alloc),FfiConverterUInt64.lower(seconds, nativeModule().rustbuffer_alloc),FfiConverterString.lower(reason, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_cua_sdk_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ffi_cua_sdk_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterTypeKeepAwakeInfo.lift.bind(FfiConverterTypeKeepAwakeInfo),
             /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
             /*asyncOpts:*/ asyncOpts_,
             /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
@@ -45753,6 +45888,38 @@ private constructor(pointer: UniffiHandle) {
             // export. The bytes the runtime hands back must be deserialized
             // here using the per-callable return-type converter.
             /*liftFunc:*/ FfiConverterTypeSetNetworkResult.lift.bind(FfiConverterTypeSetNetworkResult),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
+    }
+
+/**
+ * Sets when `space` goes to sleep on its own: `never` (Keep running),
+ * `auto` (once nothing in it runs) or a duration such as `10m`. A Space
+ * with no setting is `never`, except a home an agent works in (`auto`).
+ */
+    async setSleep(space: string, sleep: string, asyncOpts_?: { signal: AbortSignal }): Promise<void> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_cua_sdk_fn_method_spaces_set_sleep(
+                    uniffiTypeSpacesObjectFactory.clonePointer(this),FfiConverterString.lower(space, nativeModule().rustbuffer_alloc),FfiConverterString.lower(sleep, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_cua_sdk_rust_future_poll_void,
+            /*cancelFunc:*/ nativeModule().ffi_cua_sdk_rust_future_cancel_void,
+            /*completeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_complete_void,
+            /*freeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_free_void,
+            /*liftFunc:*/ (_v) => {},
             /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
             /*asyncOpts:*/ asyncOpts_,
             /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
@@ -50403,6 +50570,9 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_sdk_checksum_method_spaces_cancel_create() !== 14647) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_spaces_cancel_create");
     }
+    if (nativeModule().uniffi_cua_sdk_checksum_method_spaces_clear_keep_awake() !== 32046) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_spaces_clear_keep_awake");
+    }
     if (nativeModule().uniffi_cua_sdk_checksum_method_spaces_cloud_add_host() !== 59195) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_spaces_cloud_add_host");
     }
@@ -50486,6 +50656,9 @@ function uniffiEnsureInitialized() {
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_spaces_hosts() !== 23309) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_spaces_hosts");
+    }
+    if (nativeModule().uniffi_cua_sdk_checksum_method_spaces_keep_awake() !== 12612) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_spaces_keep_awake");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_spaces_leave_many() !== 34815) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_spaces_leave_many");
@@ -50594,6 +50767,9 @@ function uniffiEnsureInitialized() {
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_spaces_set_network() !== 64671) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_spaces_set_network");
+    }
+    if (nativeModule().uniffi_cua_sdk_checksum_method_spaces_set_sleep() !== 40921) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_spaces_set_sleep");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_spaces_set_tree_budget() !== 8418) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_spaces_set_tree_budget");
@@ -51055,6 +51231,7 @@ export default Object.freeze({
     FfiConverterTypeImageFormat,
     FfiConverterTypeImageInfo,
     FfiConverterTypeImageLayer,
+    FfiConverterTypeKeepAwakeInfo,
     FfiConverterTypeLocal,
     FfiConverterTypeLocalImage,
     FfiConverterTypeLocalStorage,

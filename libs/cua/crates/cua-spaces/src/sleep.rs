@@ -146,8 +146,8 @@ impl Spaces {
         Ok(())
     }
 
-    /// The sleep setting of the Space `id`: what `set_sleep` stored for this
-    /// very Space, else the label it was created with, else `never`.
+    /// The sleep setting of the Space `id`: its `cua.sleep` label, else the
+    /// default for a helper-made Space ([`Sleep::from_labels`]).
     pub fn sleep_of(&self, id: &str) -> Sleep {
         let labels = self
             .list()
@@ -155,22 +155,21 @@ impl Spaces {
             .and_then(|l| l.into_iter().find(|s| s.id == id))
             .map(|s| s.labels)
             .unwrap_or_default();
-        self.sleep_with_labels(id, &labels)
+        Sleep::from_labels(&labels)
     }
 
     /// [`Self::sleep_of`] when the caller already has the Space's labels.
-    pub fn sleep_with_labels(&self, id: &str, labels: &BTreeMap<String, String>) -> Sleep {
-        match self.stored(id).and_then(|e| e.sleep) {
-            Some(w) => Sleep::parse(&w).unwrap_or_default(),
-            None => Sleep::from_labels(labels),
-        }
+    pub fn sleep_with_labels(&self, _id: &str, labels: &BTreeMap<String, String>) -> Sleep {
+        Sleep::from_labels(labels)
     }
 
-    /// Changes the sleep setting of a registered Space. `never` is stored
-    /// too, so it wins over a label that said `auto`.
+    /// Changes the sleep setting of a registered Space (its `cua.sleep`
+    /// label). `never` is stored too, so it wins over the helper default.
     pub fn set_sleep(&self, id: &str, sleep: Sleep) -> Result<()> {
         let id = self.resolve(id)?.to_string();
-        self.update_stored(&id, |e| e.sleep = Some(sleep.word()))
+        self.registry().update_meta(&id, |m| {
+            m.labels.insert(LABEL_SLEEP.into(), sleep.word());
+        })
     }
 
     /// Keeps a Space awake for `dur` (at most [`MAX_KEEP_AWAKE`] from now),
@@ -181,9 +180,9 @@ impl Spaces {
         let capped = dur > MAX_KEEP_AWAKE;
         let until = now_unix() + dur.min(MAX_KEEP_AWAKE).as_secs();
         let reason: String = reason.chars().take(200).collect();
-        self.update_stored(&id, |e| {
-            e.keep_until_unix = Some(until);
-            e.keep_reason = Some(reason.clone());
+        self.registry().update_meta(&id, |m| {
+            m.labels.insert(LABEL_KEEP.into(), until.to_string());
+            m.labels.insert(LABEL_KEEP_REASON.into(), reason.clone());
         })?;
         Ok(KeepAwake {
             until_unix: until,
@@ -195,57 +194,26 @@ impl Spaces {
     /// Ends a keep-awake early.
     pub fn clear_keep_awake(&self, id: &str) -> Result<()> {
         let id = self.resolve(id)?.to_string();
-        self.update_stored(&id, |e| {
-            e.keep_until_unix = None;
-            e.keep_reason = None;
+        self.registry().update_meta(&id, |m| {
+            m.labels.remove(LABEL_KEEP);
+            m.labels.remove(LABEL_KEEP_REASON);
         })
     }
 
     /// The keep-awake of `id` while it holds.
     pub fn keep_awake_of(&self, id: &str) -> Option<KeepAwake> {
-        let e = self.stored(id)?;
-        let until = e.keep_until_unix.filter(|u| *u > now_unix())?;
-        Some(KeepAwake {
-            until_unix: until,
-            reason: e.keep_reason.unwrap_or_default(),
-            capped: false,
-        })
-    }
-
-    fn stored(&self, id: &str) -> Option<Entry> {
-        let at = self.sleep_created_at(id);
-        let mut all = load(self.home_dir());
-        all.spaces.remove(id).filter(|e| e.created == at)
-    }
-
-    fn sleep_created_at(&self, id: &str) -> u64 {
-        self.registry()
-            .meta(id)
-            .map(|m| m.created_at_unix)
-            .unwrap_or(0)
-    }
-
-    fn update_stored(&self, id: &str, f: impl FnOnce(&mut Entry)) -> Result<()> {
-        let at = self.sleep_created_at(id);
-        let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let mut all = load(self.home_dir());
-        let mut e = all
-            .spaces
-            .remove(id)
-            .filter(|e| e.created == at)
-            .unwrap_or(Entry {
-                created: at,
-                ..Default::default()
-            });
-        f(&mut e);
-        all.spaces.insert(id.to_owned(), e);
-        save(self.home_dir(), &all)
-            .map_err(|e| Error::invalid(format!("could not save the sleep setting: {e}")))
+        let labels = self.registry().meta(id)?.labels;
+        KeepAwake::from_labels(&labels)
     }
 }
 
 /// The longest a keep-awake lasts.
 pub const MAX_KEEP_AWAKE: Duration = Duration::from_secs(2 * 3600);
+
+/// The label that holds a keep-awake's end (Unix seconds).
+pub const LABEL_KEEP: &str = "cua.keepawake";
+/// The label that holds a keep-awake's reason.
+pub const LABEL_KEEP_REASON: &str = "cua.keepawake.reason";
 
 /// A keep-awake that holds.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
@@ -258,46 +226,16 @@ pub struct KeepAwake {
     pub capped: bool,
 }
 
-#[derive(Default, serde::Serialize, serde::Deserialize)]
-struct Entry {
-    /// When the Space was created: a Space of the same name made later does
-    /// not inherit the setting.
-    created: u64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    sleep: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    keep_until_unix: Option<u64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    keep_reason: Option<String>,
-}
-
-#[derive(Default, serde::Serialize, serde::Deserialize)]
-struct File {
-    #[serde(default)]
-    spaces: BTreeMap<String, Entry>,
-}
-
-static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-fn path(home: &std::path::Path) -> std::path::PathBuf {
-    home.join("sleep.json")
-}
-
-fn load(home: &std::path::Path) -> File {
-    std::fs::read(path(home))
-        .ok()
-        .and_then(|b| serde_json::from_slice(&b).ok())
-        .unwrap_or_default()
-}
-
-fn save(home: &std::path::Path, f: &File) -> std::io::Result<()> {
-    let p = path(home);
-    if let Some(d) = p.parent() {
-        std::fs::create_dir_all(d)?;
+impl KeepAwake {
+    /// The keep-awake the labels carry, while it holds.
+    pub fn from_labels(labels: &BTreeMap<String, String>) -> Option<KeepAwake> {
+        let until: u64 = labels.get(LABEL_KEEP)?.parse().ok()?;
+        (until > now_unix()).then(|| KeepAwake {
+            until_unix: until,
+            reason: labels.get(LABEL_KEEP_REASON).cloned().unwrap_or_default(),
+            capped: false,
+        })
     }
-    let tmp = p.with_extension(format!("tmp-{}", std::process::id()));
-    std::fs::write(&tmp, serde_json::to_vec_pretty(f).unwrap_or_default())?;
-    std::fs::rename(&tmp, &p)
 }
 
 fn now_unix() -> u64 {

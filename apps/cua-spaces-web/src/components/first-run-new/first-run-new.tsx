@@ -1109,7 +1109,7 @@ export function NewFirstRun() {
           centred one moved the title and the button between steps). The screen fills the area, so its action row
           (`Actions`) sits at the bottom of it; content longer than the window scrolls above that row. On windows taller
           than 1000px the area stops at 860px, so the button stays near the text instead of the far bottom edge. */}
-      <main ref={mainRef} className="relative z-20 flex min-h-0 flex-1 flex-col overflow-y-auto px-16" data-new-run-main="">
+      <main ref={mainRef} className="relative z-20 flex min-h-0 flex-1 flex-col scroll-y-stable px-16" data-new-run-main="">
         <div className="flex w-full max-w-[600px] shrink-0 grow flex-col pt-[clamp(16px,8vh,96px)] *:flex *:grow *:flex-col [@media(min-height:1000px)]:max-h-[860px]">{body}</div>
       </main>
       {/* The dots' row keeps its height on the screens without dots, so the area above it keeps its height too. */}

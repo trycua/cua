@@ -205,10 +205,10 @@ pub fn parse_probe(text: &str) -> Probe {
 
 /// The link and Codex's one-time code in what a login printed.
 pub fn find_link(harness: &str, out: &str) -> (Option<String>, Option<String>) {
-    if harness == "openai-codex" {
-        if let Some((url, code)) = crate::signin::find_device_code(out) {
-            return (Some(url), Some(code));
-        }
+    if harness == "openai-codex"
+        && let Some((url, code)) = crate::signin::find_device_code(out)
+    {
+        return (Some(url), Some(code));
     }
     let url = out
         .split_whitespace()

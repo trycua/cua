@@ -317,6 +317,12 @@ export function WelcomeScreen({ onAdd, usage, onUsage, onUsageLink }: { onAdd: (
 }
 
 export function SignInScreen({ view, onTryAgain, onUseCode, onOpen }: { view: SignInView; onTryAgain: () => void; onUseCode: () => void; onOpen: (url: string) => void }) {
+  // The code line waits 12 s: most sign-ins finish in the browser before then.
+  const [codeHint, setCodeHint] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setCodeHint(true), 12_000);
+    return () => clearTimeout(t);
+  }, []);
   return (
     <div data-new-run="signin" data-state={view.state}>
       <Title>{view.title}</Title>
@@ -337,11 +343,21 @@ export function SignInScreen({ view, onTryAgain, onUseCode, onOpen }: { view: Si
           {view.waiting}
         </div>
       ) : null}
+      {/* While the browser is still the way in, the code is only for a browser on another device: a quiet
+          line that shows after a while, not a second button. Once sign-in failed it is a button again. */}
+      {view.useCode && view.state !== "failed" && codeHint ? (
+        <p className={cn("mt-4 text-[14px]", GREY)} data-new-run-code-hint="">
+          Browser on another device?{" "}
+          <button type="button" className="underline underline-offset-2 hover:text-white" onClick={onUseCode} data-new-run-use-code="">
+            Use a code instead
+          </button>
+        </p>
+      ) : null}
       <Actions className="flex flex-wrap items-center gap-3">
         <button type="button" className={view.tryAgainPrimary ? WHITE_BUTTON : GLASS_BUTTON} onClick={onTryAgain} data-new-run-try-again="">
           {view.tryAgain}
         </button>
-        {view.useCode ? (
+        {view.useCode && view.state === "failed" ? (
           <button type="button" className={GLASS_BUTTON} onClick={onUseCode} data-new-run-use-code="">
             {view.useCode}
           </button>

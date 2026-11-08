@@ -56,7 +56,7 @@ import { demoAgentSetup, demoConnections, demoPersistentAgents, demoReply, demoR
 import { demoVolumeHandlers, demoVolumeState, type DemoVolumeState } from "./demo/volume";
 import { demoGithubHandlers, demoGithubState, type DemoGithubStart } from "./demo/github";
 import { demoCiHandlers, demoCiState, type DemoCiStart } from "./demo/ci";
-import { demoHostSetupHandlers, demoHostSetupState, type DemoHostSetupState } from "./demo/host-setup";
+import { demoHostSetupHandlers, demoHostSetupState, demoHostStatusFor, type DemoHostSetupState } from "./demo/host-setup";
 import { demoSpaceDetailHandlers, demoSpaceDetailState, type DemoSpaceDetailState } from "./demo/space-detail";
 import { demoTelemetryHandlers, demoTelemetryState, type DemoTelemetryState } from "./demo/telemetry";
 import { demoLinksHandlers, demoLinksState, type DemoLinksState, type DemoSharesPreset } from "./demo/links";
@@ -781,7 +781,7 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
       emit({ type: "machines.changed" });
       return null;
     },
-    "host.status": () => ({ ...state.host }),
+    "host.status": (args) => demoHostStatusFor(state, args),
 
     "settings.get": () => settingsSnapshot(),
     "settings.set": ({ key, value }) => {

@@ -21,7 +21,8 @@
 //   disabled_control — opt-in (CUA_APPKIT_DISABLED_CONTROL=1): a disabled
 //                    checkbox (disabled_checked=) for enablement reads (#3949),
 //                    and a button and field enabled only while the app is
-//                    active (active_only=) for the post-activation re-read
+//                    active (active_only=, activations=) for the
+//                    post-activation re-read
 //   context_menu   — NSButton + NSMenu (Cut/Copy/Paste → menu_action=)
 //   popup_select   — NSPopUpButton (Design/Research/Finance → popup_value=)
 //   scroll_target  — NSScrollView with a tall body and offset label
@@ -70,6 +71,7 @@ let kDisabledStateAID = "lbl-disabled-state"
 let kActiveOnlyButtonAID = "btn-active-only"
 let kActiveOnlyFieldAID = "txt-active-only"
 let kActiveOnlyStateAID = "lbl-active-only"
+let kActivationsAID = "lbl-activations"
 let kSelectionStateAID = "lbl-selection-state"
 let kContextButtonAID = "btn-context"
 let kMenuActionAID = "lbl-menu-action"
@@ -155,6 +157,8 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate, NSTableViewD
     let activeOnlyButton = ActiveOnlyButton(title: "Active only", target: nil, action: nil)
     let activeOnlyField = NSTextField(string: "")
     let activeOnlyLabel = NSTextField(labelWithString: "active_only=none")
+    let activationsLabel = NSTextField(labelWithString: "activations=0")
+    var activations = 0
     let selectionItems = ["alpha", "beta", "gamma"]
     let selectionTable = NSTableView()
     let selectionStateLabel = NSTextField(labelWithString: "selection=none")
@@ -575,23 +579,32 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate, NSTableViewD
         activeRow.addArrangedSubview(activeOnlyButton)
         activeRow.addArrangedSubview(activeOnlyField)
         activeRow.addArrangedSubview(activeOnlyLabel)
+        activationsLabel.setAccessibilityIdentifier(kActivationsAID)
+        activationsLabel.font = NSFont.monospacedSystemFont(ofSize: 14, weight: .regular)
+        activeRow.addArrangedSubview(activationsLabel)
         NSLayoutConstraint.activate([activeOnlyField.widthAnchor.constraint(equalToConstant: 160)])
         content.addArrangedSubview(activeRow)
         for name in [NSApplication.didBecomeActiveNotification,
                      NSApplication.didResignActiveNotification] {
             NotificationCenter.default.addObserver(
-                self, selector: #selector(syncActiveOnly), name: name, object: nil)
+                self, selector: #selector(syncActiveOnly(_:)), name: name, object: nil)
         }
-        syncActiveOnly()
+        syncActiveOnly(nil)
     }
 
     @objc private func onDisabledCheckbox() {
         disabledStateLabel.stringValue = "disabled_checked=\(disabledCheckbox.state == .on)"
     }
 
-    @objc private func syncActiveOnly() {
+    /// Also counts activations, so a refused call can show it activated the
+    /// app before refusing rather than refusing up front.
+    @objc private func syncActiveOnly(_ note: Notification?) {
         activeOnlyButton.isEnabled = NSApp.isActive
         activeOnlyField.isEnabled = NSApp.isActive
+        if note?.name == NSApplication.didBecomeActiveNotification {
+            activations += 1
+            activationsLabel.stringValue = "activations=\(activations)"
+        }
     }
 
     @objc private func onActiveOnlyPress() { recordActiveOnly("click") }

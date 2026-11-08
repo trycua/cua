@@ -279,6 +279,17 @@ fn element_token_by_id(snapshot: &ToolResponse, identifier: &str) -> String {
         .to_owned()
 }
 
+/// The AppKit harness's `activations=` count (`disabled_control` scenario).
+fn activations(snapshot: &ToolResponse) -> u64 {
+    snapshot
+        .tree_text()
+        .split("activations=")
+        .nth(1)
+        .and_then(|rest| rest.split(|c: char| !c.is_ascii_digit()).next())
+        .and_then(|count| count.parse().ok())
+        .unwrap_or_else(|| panic!("no activations= label:\n{}", snapshot.tree_text()))
+}
+
 fn element_pixel_frame(snapshot: &ToolResponse, identifier: &str) -> (f64, f64, f64, f64) {
     let index = element_index_by_id(snapshot.tree_text(), identifier)
         .unwrap_or_else(|| panic!("{identifier} element_index not found"));
@@ -2065,6 +2076,7 @@ fn harness_appkit_foreground_from_the_background_rereads_enablement_after_activa
                 element["enabled"], false,
                 "{id} is not disabled while its app is in the background: {element}"
             );
+            let activations_before = activations(&snapshot);
             args["pid"] = serde_json::json!(pid as i64);
             args["window_id"] = serde_json::json!(wid);
             args["element_token"] = element["element_token"].clone();
@@ -2077,6 +2089,21 @@ fn harness_appkit_foreground_from_the_background_rereads_enablement_after_activa
                      element_disabled: {}",
                     response.raw
                 );
+                // An early refusal returns the same code; the activation count
+                // shows this one came from the read after activation.
+                let deadline = Instant::now() + Duration::from_secs(3);
+                loop {
+                    let after = snapshot_elements(&mut driver, pid, wid);
+                    if activations(&after) > activations_before {
+                        break;
+                    }
+                    assert!(
+                        Instant::now() < deadline,
+                        "foreground {tool} on {id} was refused without activating the app:\n{}",
+                        after.tree_text()
+                    );
+                    std::thread::sleep(Duration::from_millis(100));
+                }
                 continue;
             };
             assert!(

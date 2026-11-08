@@ -41,13 +41,26 @@ export function jobRow(labels: Readonly<Record<string, string>> | undefined): Jo
   return { name: sanitizeJobName(labels[JOB_LABELS.name] ?? "") ?? "job", gpu: labels[JOB_LABELS.gpu] === "1" };
 }
 
-/** One row per job: the Spaces that are jobs' collapse to their first Space per run label, so a job with a Space and a run is one row. `key` names the job (its run), `id` the Space. */
-export function oneRowPerJob<T extends { id: string; labels?: Record<string, string> }>(spaces: readonly T[], key: (s: T) => string): T[] {
+/** What a Space says of itself when it is a job's (the wire's `jobName`, `jobGpu`, `jobRun`), or `null`. */
+export interface JobFields {
+  jobName?: string;
+  jobGpu?: boolean;
+  jobRun?: string;
+}
+
+/** The row for a Space's job fields; a job without a usable name shows a neutral one, never its id. */
+export function jobOfSpace(s: JobFields): JobRow | null {
+  if (s.jobName === undefined) return null;
+  return { name: sanitizeJobName(s.jobName) ?? "job", gpu: Boolean(s.jobGpu) };
+}
+
+/** One row per job: the Spaces that are jobs' collapse to the first Space of each run (`jobRun`, else the Space itself), so a job with several Spaces (attempts) is one row. */
+export function oneRowPerJob<T extends { id: string } & JobFields>(spaces: readonly T[]): T[] {
   const seen = new Set<string>();
   const out: T[] = [];
   for (const s of spaces) {
-    if (jobRow(s.labels)) {
-      const k = key(s);
+    if (s.jobName !== undefined) {
+      const k = s.jobRun || s.id;
       if (seen.has(k)) continue;
       seen.add(k);
     }

@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { jobRow, oneRowPerJob, sanitizeJobName } from "./job-space";
+import { jobOfSpace, jobRow, oneRowPerJob, sanitizeJobName } from "./job-space";
 
 describe("a job's name", () => {
   it("takes the shape of a pet name", () => {
@@ -29,11 +29,16 @@ describe("a job's row", () => {
     expect(jobRow(undefined)).toBeNull();
     expect(jobRow({ "cua.home": "1" })).toBeNull();
   });
-  it("is one row for a job, however many Spaces and runs name it", () => {
-    const a = { id: "local:cj-a-1", labels };
-    const b = { id: "local:cj-a-2", labels }; // a second attempt of the same run
+  it("is one row for a job, however many Spaces name its run", () => {
+    const a = { id: "local:cj-a-1", jobName: "logo-grower", jobRun: "p-1" };
+    const b = { id: "local:cj-a-2", jobName: "logo-grower", jobRun: "p-1" }; // a second attempt of the same run
     const other = { id: "local:browser" };
-    const key = (s: { id: string }) => s.id.split("-")[1] ?? s.id;
-    expect(oneRowPerJob([a, b, other], key).map((s) => s.id)).toEqual(["local:cj-a-1", "local:browser"]);
+    expect(oneRowPerJob([a, b, other]).map((s) => s.id)).toEqual(["local:cj-a-1", "local:browser"]);
+  });
+  it("reads a Space's job fields: GPU icon for a GPU job, the OS icon otherwise, never an id", () => {
+    expect(jobOfSpace({ jobName: "logo-grower", jobGpu: true })).toEqual({ name: "logo-grower", gpu: true });
+    expect(jobOfSpace({ jobName: "logo-grower" })).toEqual({ name: "logo-grower", gpu: false });
+    expect(jobOfSpace({ jobName: "cj-0123456789abcdef-1" })?.name).toBe("job");
+    expect(jobOfSpace({})).toBeNull();
   });
 });

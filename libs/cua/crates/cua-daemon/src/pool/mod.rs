@@ -3850,12 +3850,14 @@ mod tests {
                 1,
                 Some(1),
                 None,
-                Some(Duration::from_millis(1)),
+                // Long enough that the first fill (the fake boots at once) lands before the pool
+                // counts as idle; a 1 ms window raced that fill.
+                Some(Duration::from_millis(500)),
                 Some(vec!["claude-code".into()]),
             )
             .unwrap();
         until_ready(&f, &key, 1).await;
-        tokio::time::sleep(Duration::from_millis(20)).await;
+        tokio::time::sleep(Duration::from_millis(600)).await;
         // Idle now: the next tick gives the member back, nothing refills it,
         // and a create never waits for one.
         f.pool.tick().await;

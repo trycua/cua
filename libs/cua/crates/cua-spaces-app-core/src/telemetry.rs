@@ -2244,9 +2244,7 @@ mod tests {
             vec![TelemetrySignal::ExperimentsOn {
                 experiments: vec![
                     "cua_volume".into(),
-                    "secure_spaces".into(),
                     "child_spaces".into(),
-                    "ask_first".into(),
                     "ci_runners".into(),
                     "tcp_shares".into(),
                     "mobile".into(),

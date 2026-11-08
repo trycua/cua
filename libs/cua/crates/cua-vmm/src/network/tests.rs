@@ -272,19 +272,16 @@ fn every_host_address_is_closed_after_the_resolver_and_localhost() {
 }
 
 #[test]
-fn the_old_open_default_is_what_you_get_until_secure_spaces_is_on() {
-    // Off (the experiment is off): the old open default.
-    assert_eq!(Mode::from_value(None, false), Mode::Legacy);
-    assert_eq!(Mode::from_value(Some(""), false), Mode::Legacy);
-    // On: the secure default.
-    assert_eq!(Mode::from_value(None, true), Mode::Secure);
-    // The variable wins over the experiment, either way.
-    assert_eq!(Mode::from_value(Some("1"), false), Mode::Secure);
-    for on in ["true", "ON", " yes "] {
-        assert_eq!(Mode::from_value(Some(on), false), Mode::Secure, "{on}");
+fn the_secure_default_is_always_on_and_only_the_variable_turns_it_off() {
+    // Not set (or anything else): the secure default.
+    assert_eq!(Mode::from_value(None), Mode::Secure);
+    assert_eq!(Mode::from_value(Some("")), Mode::Secure);
+    // The emergency override: the variable forces either mode.
+    for on in ["1", "true", "ON", " yes "] {
+        assert_eq!(Mode::from_value(Some(on)), Mode::Secure, "{on}");
     }
     for off in ["0", "false", "OFF", " no "] {
-        assert_eq!(Mode::from_value(Some(off), true), Mode::Legacy, "{off}");
+        assert_eq!(Mode::from_value(Some(off)), Mode::Legacy, "{off}");
     }
     let r = compile_mode(&NetworkSettings::internet(), &ctx(), Mode::Legacy).unwrap();
     assert!(r.is_empty());
@@ -1269,4 +1266,87 @@ fn vms_forward_localhost_lan_ports_too() {
         vm_localhost_ports(Some(&both(&[3000, 5432]))).unwrap(),
         [3000, 5432]
     );
+}
+
+/// Conformance for every runtime that gives a guest DNS servers: whatever
+/// the engine host's resolver files name, each server the guest is given
+/// ([`crate::resolver`]) is reachable on port 53 under the Secure rules of
+/// every preset that has a network, so a name resolves and a fetch over
+/// HTTPS can follow. The runner case: Azure's DNS behind a systemd stub.
+#[test]
+fn every_server_a_guest_is_given_is_reachable_on_53_under_secure() {
+    let hosts: [&[&str]; 5] = [
+        &["127.0.0.53", "168.63.129.16"],
+        &["168.63.129.16"],
+        &["169.254.169.254", "10.0.2.3"],
+        &["192.168.65.7", "100.100.100.200"],
+        &[],
+    ];
+    let presets = [
+        NetworkSettings::internet(),
+        localhost(&[3000]),
+        NetworkSettings {
+            preset: NetworkPreset::Unprotected,
+            ..Default::default()
+        },
+    ];
+    for host in hosts {
+        let host: Vec<IpAddr> = host.iter().map(|h| ip(h)).collect();
+        let resolvers = crate::resolver::select(None, &host, false);
+        assert!(!resolvers.is_empty(), "{host:?}");
+        for s in &presets {
+            let mut c = ctx();
+            c.resolvers = resolvers.clone();
+            let r = compile_mode(s, &c, Mode::Secure).unwrap();
+            for d in &resolvers {
+                assert!(
+                    r.allows_port(*d, Proto::Udp, 53) && r.allows_port(*d, Proto::Tcp, 53),
+                    "{d} from {host:?} under {:?}",
+                    s.preset
+                );
+            }
+            // And HTTPS to a public address follows.
+            assert!(r.allows_port(ip("1.1.1.1"), Proto::Tcp, 443));
+        }
+    }
+}
+
+#[test]
+fn a_platform_resolver_is_open_on_53_only_and_the_rest_of_metadata_stays_closed() {
+    for (host, other) in [
+        ("168.63.129.16", "169.254.169.254"),   // Azure
+        ("169.254.169.254", "168.63.129.16"),   // GCP
+        ("169.254.169.253", "169.254.169.254"), // AWS
+    ] {
+        let resolvers = crate::resolver::select(None, &[ip(host)], false);
+        assert_eq!(resolvers, [ip(host)], "{host}");
+        for s in [NetworkSettings::internet(), localhost(&[3000])] {
+            let mut c = ctx();
+            c.resolvers = resolvers.clone();
+            let r = compile_mode(&s, &c, Mode::Secure).unwrap();
+            assert!(r.allows_port(ip(host), Proto::Udp, 53), "{host}");
+            assert!(r.allows_port(ip(host), Proto::Tcp, 53), "{host}");
+            // Its HTTP (wireserver 80 and 32526, metadata 80) is closed.
+            for port in [80, 443, 32526] {
+                assert!(!r.allows_port(ip(host), Proto::Tcp, port), "{host}:{port}");
+            }
+            // Other metadata endpoints stay denied on every port.
+            assert!(!r.allows_port(ip(other), Proto::Udp, 53), "{other}");
+            assert!(!r.allows_port(ip(other), Proto::Tcp, 80), "{other}");
+        }
+    }
+}
+
+#[test]
+fn a_loopback_or_made_up_resolver_is_never_opened() {
+    // Not selected: the guest gets the public fallback, and 127.0.0.1 and
+    // an arbitrary metadata address get no port-53 rule.
+    let resolvers = crate::resolver::select(None, &[ip("127.0.0.1"), ip("169.254.170.2")], false);
+    assert_eq!(resolvers, [ip("1.1.1.1"), ip("8.8.8.8")]);
+    let mut c = ctx();
+    c.resolvers = resolvers;
+    let r = compile_mode(&NetworkSettings::internet(), &c, Mode::Secure).unwrap();
+    for a in ["127.0.0.1", "169.254.170.2", "168.63.129.16"] {
+        assert!(!r.allows_port(ip(a), Proto::Udp, 53), "{a}");
+    }
 }

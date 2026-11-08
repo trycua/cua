@@ -630,11 +630,11 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
     expect(model.settings.tips).toEqual({ off: false, done: [] });
   });
 
-  it("offers every experiment, and none of the switches that are gone", async () => {
+  it("offers every experiment that remains, and none of the switches that are gone or always on (Secure Spaces, Ask first)", async () => {
     const s = (await call("settings.get")) as { experiments: { sections: { rows: { id: string }[] }[] } };
     const rows = s.experiments.sections.flatMap((x) => x.rows.map((r) => r.id));
-    expect(rows).toEqual(expect.arrayContaining(["experiment:cua_volume", "experiment:secure_spaces", "experiment:warm_pools"]));
-    for (const gone of ["your_cloud", "sharing", "web_ui", "classic_ui"]) expect(rows).not.toContain(`experiment:${gone}`);
+    expect(rows).toEqual(expect.arrayContaining(["experiment:cua_volume", "experiment:child_spaces", "experiment:ci_runners", "experiment:tcp_shares", "experiment:mobile", "experiment:warm_pools"]));
+    for (const gone of ["your_cloud", "sharing", "web_ui", "classic_ui", "secure_spaces", "ask_first"]) expect(rows).not.toContain(`experiment:${gone}`);
   });
 
   it("New Space's \u201cUse built-in Lume\u201d and Settings' kind rows write the per-kind runtime settings", async () => {

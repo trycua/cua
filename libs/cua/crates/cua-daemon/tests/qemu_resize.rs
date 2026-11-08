@@ -124,6 +124,8 @@ async fn run(rt: &QemuRuntime, disk: &Path) -> Result<(), String> {
 #[tokio::test]
 #[ignore = "boots a QEMU VM; set CUA_VMM_TEST_QEMU=1 and CUA_VMM_TEST_DISK, run with --ignored"]
 async fn a_running_vm_resized_keeps_its_endpoint_and_files() {
+    // A real VM test of the open network: Secure Spaces (on by default) puts a VM behind a gateway.
+    let _open = cua_vmm::network::hold_mode(cua_vmm::network::Mode::Legacy);
     let Some(disk) = gate() else { return };
     let root = tempfile::tempdir().unwrap();
     let rt = QemuRuntime::new(QemuConfig {

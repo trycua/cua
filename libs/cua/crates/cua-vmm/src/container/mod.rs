@@ -358,12 +358,33 @@ impl ContainerRuntime {
     /// NVIDIA GPUs for containers under `runtime` (`container` for runc,
     /// `gvisor`) on this host ([`crate::gpu::container_support`]).
     pub async fn gpu_support_for(&self, runtime: &str) -> crate::gpu::GpuSupport {
-        let nvidia = std::env::consts::OS == "linux"
+        let os = std::env::consts::OS;
+        let nvidia = (os == "linux" || os == "windows")
             && self
                 .runtimes()
                 .await
                 .is_ok_and(|r| r.iter().any(|r| r == "nvidia"));
-        crate::gpu::container_support(std::env::consts::OS, runtime, nvidia)
+        crate::gpu::container_support_wsl(os, runtime, nvidia, self.wsl_gpu().await)
+    }
+
+    /// The engine is a WSL 2 distribution on a PC with an NVIDIA driver: its
+    /// containers reach the GPU through `/dev/dxg` and `/usr/lib/wsl`
+    /// ([`apply_wsl_gpu`]) when the engine has no `nvidia` runtime.
+    pub async fn wsl_gpu(&self) -> bool {
+        if std::env::consts::OS != "windows" || host::which("nvidia-smi").is_none() {
+            return false;
+        }
+        if self
+            .runtimes()
+            .await
+            .is_ok_and(|r| r.iter().any(|r| r == "nvidia"))
+        {
+            return false;
+        }
+        self.docker.info().await.is_ok_and(|i| {
+            i.kernel_version
+                .is_some_and(|k| k.to_lowercase().contains("microsoft"))
+        })
     }
 
     /// OCI runtimes the engine has registered.
@@ -847,6 +868,9 @@ impl ContainerRuntime {
             None => spec,
         };
         let mut body = create_body(name, image, spec, base_labels, engine_runtime);
+        if spec.gpu.as_deref() == Some(crate::gpu::NVIDIA) && self.wsl_gpu().await {
+            apply_wsl_gpu(&mut body);
+        }
         // Its own MAC, so egress rules can be keyed by it before it starts
         // ([`egress`]); no raw sockets under a policy that blocks anything.
         if let Some((net, mac)) = self.mac_config(name).await? {
@@ -3002,6 +3026,34 @@ fn no_healthcheck() -> bollard::models::HealthConfig {
     }
 }
 
+/// A container that reaches the PC's GPU through WSL 2: `/dev/dxg`, the
+/// driver's libraries (`/usr/lib/wsl`, read-only) and their directory on the
+/// library path, in place of the `nvidia` runtime's device request.
+fn apply_wsl_gpu(body: &mut ContainerCreateBody) {
+    const LIB: &str = "/usr/lib/wsl/lib";
+    let env = body.env.get_or_insert_with(Vec::new);
+    match env.iter().position(|e| e.starts_with("LD_LIBRARY_PATH=")) {
+        Some(i) => env[i] = format!("{}:{LIB}", env[i]),
+        None => env.push(format!("LD_LIBRARY_PATH={LIB}")),
+    }
+    env.push(format!(
+        "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:{LIB}"
+    ));
+    if let Some(hc) = body.host_config.as_mut() {
+        hc.device_requests = None;
+        hc.devices
+            .get_or_insert_with(Vec::new)
+            .push(bollard::models::DeviceMapping {
+                path_on_host: Some("/dev/dxg".into()),
+                path_in_container: Some("/dev/dxg".into()),
+                cgroup_permissions: Some("rwm".into()),
+            });
+        hc.binds
+            .get_or_insert_with(Vec::new)
+            .push("/usr/lib/wsl:/usr/lib/wsl:ro".into());
+    }
+}
+
 /// The engine's device requests for [`StartSpec::gpu`]: every NVIDIA GPU
 /// (`--gpus all`) for [`crate::gpu::NVIDIA`].
 fn gpu_requests(spec: &StartSpec) -> Option<Vec<bollard::models::DeviceRequest>> {
@@ -3568,6 +3620,31 @@ mod tests {
         ));
         assert!(!is_port_conflict("no such image: x"));
         assert!(!is_port_conflict("OCI runtime create failed"));
+    }
+
+    #[test]
+    fn a_wsl_gpu_container_gets_dxg_and_the_driver_libraries() {
+        let mut spec = StartSpec::new("sb", ImageSource::Existing);
+        spec.gpu = Some(crate::gpu::NVIDIA.into());
+        let mut body = create_body("sb", "img:1", &spec, HashMap::new(), "runc".into());
+        assert!(body.host_config.as_ref().unwrap().device_requests.is_some());
+        apply_wsl_gpu(&mut body);
+        let hc = body.host_config.unwrap();
+        assert!(hc.device_requests.is_none(), "no nvidia runtime to ask");
+        assert_eq!(
+            hc.devices.unwrap()[0].path_on_host.as_deref(),
+            Some("/dev/dxg")
+        );
+        assert!(
+            hc.binds
+                .unwrap()
+                .contains(&"/usr/lib/wsl:/usr/lib/wsl:ro".to_string())
+        );
+        assert!(
+            body.env
+                .unwrap()
+                .contains(&"LD_LIBRARY_PATH=/usr/lib/wsl/lib".to_string())
+        );
     }
 
     #[test]

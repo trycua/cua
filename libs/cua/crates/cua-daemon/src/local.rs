@@ -2498,8 +2498,15 @@ impl LocalRuntime for VmmLocal {
             // The built-in runtime's VM has no GPU (and is not booted to
             // say so).
             Ok(Engine::Builtin(_)) => {
+                // On a PC the built-in runtime is a WSL 2 distribution: its
+                // containers reach the PC's NVIDIA GPU through /dev/dxg.
+                let wsl = cfg!(windows) && cua_vmm::host::which("nvidia-smi").is_some();
                 for r in ["container", "gvisor"] {
-                    out.push(cua_vmm::gpu::container_support("macos", r, false));
+                    out.push(if cfg!(windows) {
+                        cua_vmm::gpu::container_support_wsl("windows", r, false, wsl)
+                    } else {
+                        cua_vmm::gpu::container_support("macos", r, false)
+                    });
                 }
             }
             Err(e) => {

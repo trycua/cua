@@ -1529,6 +1529,9 @@ else
     rm -f "$BIN_LINK"
     ln -s "$CURRENT_LINK/$BINARY_NAME" "$BIN_LINK"
     log "symlinked $BIN_LINK -> $CURRENT_LINK/$BINARY_NAME"
+    if command -v kwin_wayland >/dev/null 2>&1; then
+        log "KWin window capture is off; \`cua-driver kwin-capture on\` turns it on"
+    fi
 
     # Post-install GC of old per-version release dirs. Runs AFTER the
     # atomic `current` swap above so the about-to-be-active version is

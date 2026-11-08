@@ -200,6 +200,8 @@ jobs:
         with:
           name: cua-cli-linux-amd64
           path: ${{ runner.temp }}/bin
+      - name: Set up pasta (secure network)
+        uses: ./.github/actions/setup-pasta
       - name: Host tools (QEMU, firmware, virtiofsd, crane, oras)
         run: |
           set -euo pipefail

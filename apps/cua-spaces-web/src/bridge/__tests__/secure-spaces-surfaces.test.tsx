@@ -6,13 +6,11 @@ import { createMemoryHistory, createRootRoute, createRouter, RouterProvider } fr
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createDemoAdapter } from "../adapters/demo";
-import { createNetworkStore } from "../network";
 import { BridgeProvider, type DataAdapter } from "..";
 import { SharingSettings } from "@/components/links/sharing-settings";
 import { NetworkSheet } from "@/components/network/network-sheet";
-import { BlockedNotice, ClipboardPrompt, ExitDownNotice, NetworkNotice, NetworkRow, ParentLine, RunsOnMachinesRow, SecurityRows, WithClipboardPrompt } from "@/components/network/space-security";
+import { BlockedNotice, ExitDownNotice, NetworkRow, SecurityRows } from "@/components/network/space-security";
 import { openNetworkSheet } from "@/components/network/use-network";
-import { VolumeGrantDialog } from "@/components/network/volume-grant-dialog";
 import { noCore } from "./testCore";
 
 afterEach(cleanup);
@@ -26,71 +24,16 @@ function inApp(adapter: DataAdapter, ui: React.ReactNode) {
   );
 }
 
-/** `?demo=network&...`, with Labs' Secure Spaces switch as the test says. */
-function networkDemo(on: boolean): DataAdapter {
-  const demo = createDemoAdapter({ latencyMs: 0, network: new Set(["network", "net-blocked", "net-volume", "net-clipboard", "net-exit-down"]) });
-  if (on) return demo;
-  return { ...demo, call: (op, args) => (op === "experiments.get" ? demo.call(op, args).then((e) => ({ ...(e as object), secureSpaces: false })) : demo.call(op, args)) } as DataAdapter;
+/** `?demo=network&...`. */
+function networkDemo(): DataAdapter {
+  return createDemoAdapter({ latencyMs: 0, network: new Set(["network", "net-blocked", "net-volume", "net-clipboard", "net-exit-down"]) });
 }
 
 const WORKER = "local:swarm-worker-1";
 
-const SURFACES = (
-  <>
-    <NetworkRow spaceId={WORKER} />
-    <SecurityRows spaceId={WORKER} />
-    <NetworkNotice spaceId={WORKER} />
-    <BlockedNotice spaceId={WORKER} />
-    <ExitDownNotice spaceId={WORKER} />
-    <ParentLine spaceId={WORKER} />
-    <RunsOnMachinesRow spaceId={WORKER} />
-    <ClipboardPrompt spaceId={WORKER} spaceName="swarm-worker-1" />
-    <VolumeGrantDialog spaceId={WORKER} spaceName="swarm-worker-1" />
-    <NetworkSheet spaceName={(id) => id} />
-  </>
-);
-
-describe("Secure Spaces (Labs) off", () => {
-  it("shows none of the network surfaces, even when the host has the settings", async () => {
-    const a = networkDemo(false);
-    const { container } = inApp(a, SURFACES);
-    act(() => openNetworkSheet(WORKER));
-    // Let the experiments read settle: nothing appears after it either.
-    await act(async () => {
-      await new Promise((r) => setTimeout(r, 30));
-    });
-    expect(container.innerHTML).toBe("");
-    expect(document.querySelector("[data-network-sheet], [data-volume-grant], [data-network-row], [data-security-rows], [data-clipboard-prompt]")).toBeNull();
-    act(() => openNetworkSheet(""));
-  });
-
-  it("leaves the stage as it is, with no wrapper", async () => {
-    const { container } = inApp(networkDemo(false), (
-      <WithClipboardPrompt spaceId={WORKER} spaceName="swarm-worker-1">
-        <i data-stage="" />
-      </WithClipboardPrompt>
-    ));
-    await act(async () => {
-      await new Promise((r) => setTimeout(r, 30));
-    });
-    expect(container.innerHTML).toBe('<i data-stage=""></i>');
-  });
-
-  it("never asks the host for a Space's network", async () => {
-    const demo = networkDemo(false);
-    const call = vi.fn(demo.call.bind(demo));
-    const store = createNetworkStore({ ...demo, call } as DataAdapter);
-    inApp({ ...demo, call, network: store } as DataAdapter, <NetworkRow spaceId={WORKER} />);
-    await act(async () => {
-      await new Promise((r) => setTimeout(r, 30));
-    });
-    expect(call.mock.calls.filter(([op]) => String(op).startsWith("network."))).toEqual([]);
-  });
-});
-
-describe("Secure Spaces (Labs) on", () => {
+describe("Secure Spaces (always on)", () => {
   it("shows the Network row and the Access rows", async () => {
-    inApp(networkDemo(true), (
+    inApp(networkDemo(), (
       <>
         <NetworkRow spaceId={WORKER} />
         <SecurityRows spaceId={WORKER} />
@@ -102,7 +45,7 @@ describe("Secure Spaces (Labs) on", () => {
   });
 
   it("opens the Network sheet from the row", async () => {
-    inApp(networkDemo(true), (
+    inApp(networkDemo(), (
       <>
         <NetworkRow spaceId={WORKER} />
         <NetworkSheet spaceName={(id) => id} />
@@ -119,7 +62,7 @@ describe("Secure Spaces (Labs) on", () => {
   });
 
   it("shows the blocked connection's notice and the exit-down line", async () => {
-    inApp(networkDemo(true), (
+    inApp(networkDemo(), (
       <>
         <BlockedNotice spaceId={WORKER} />
         <ExitDownNotice spaceId="local:research-swarm" />

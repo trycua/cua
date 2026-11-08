@@ -427,8 +427,36 @@ impl AgentTools {
                 self.thread_tool(tool, a).await
             }
             "space_job" => self.space_job(a).await,
+            "stream_space_window" | "list_space_windows" => self.child_windows(tool, a).await,
             other => Err(Error::NotFound(format!("tool {other}"))),
         }
+    }
+
+    /// `list_space_windows` and `stream_space_window` for one of this agent's own child Spaces. The window is shown
+    /// in this agent's Space (`into` is fixed here, whatever the arguments say): its Stream list, where the person
+    /// watches, streamed straight from the child. Any other Space is refused. These tools live here, on the host,
+    /// so a home whose image carries an older `cua` has them too.
+    async fn child_windows(&self, tool: &str, mut a: Value) -> Result<ToolOutcome> {
+        let spaces = &self.persistent.spaces;
+        let target = str_arg(&a, "space")?.to_string();
+        let info = spaces.find(&target).await.map_err(|_| {
+            Error::invalid(format!(
+                "no Space {target:?} among yours: pass the name of a child Space you made"
+            ))
+        })?;
+        let id = info.id.to_string();
+        if !spaces.descendants(&self.space)?.contains(&id) {
+            return Err(Error::invalid(format!(
+                "{target:?} is not a child Space of yours: you can only show windows of Spaces you made"
+            )));
+        }
+        if let Some(o) = a.as_object_mut() {
+            o.insert("space".into(), json!(id));
+            if tool == "stream_space_window" {
+                o.insert("into".into(), json!(self.space));
+            }
+        }
+        Ok(McpServer::new(spaces.clone()).call(tool, a).await)
     }
 
     /// `space_job` in this agent's own Space (whatever `space` says). With
@@ -753,6 +781,8 @@ const NAMES: &[&str] = &[
     "thread_claim",
     "thread_reply",
     "space_job",
+    "stream_space_window",
+    "list_space_windows",
     "repo_push",
 ];
 
@@ -886,6 +916,28 @@ impl ToolExtension for AgentTools {
                 false,
             ),
             space_job_tool(),
+            tool(
+                "list_space_windows",
+                "List the windows open in one of your child Spaces (app, title, handle). Use it to see whether an app's window has opened.",
+                schema(
+                    json!({"space": {"type": "string", "description": "The child Space's name."},
+                              "app_name": {"type": "string", "description": "Only this app's windows (substring)."}}),
+                    &["space"],
+                ),
+                true,
+            ),
+            tool(
+                "stream_space_window",
+                "Show the person a window of one of your child Spaces, live. It appears in this Space's Stream list and opens by itself, streamed straight from the child. This is how to show an app you opened in a child: launch the app there, then call this with the app's name (it waits up to 10 s for the window to appear). Then say in one short line what they are looking at and leave the child running; do not send a screenshot instead, and do not delete the child they asked to see.",
+                schema(
+                    json!({"space": {"type": "string", "description": "The child Space's name."},
+                              "app_name": {"type": "string", "description": "The app whose largest window to show, for example Firefox."},
+                              "window_id": {"type": "string", "description": "An exact handle from list_space_windows (overrides app_name)."},
+                              "title": {"type": "string", "description": "Label for the row (default: the window's title)."}}),
+                    &["space"],
+                ),
+                false,
+            ),
             tool(
                 "thread_inbox",
                 "The open tasks addressed to you, oldest first.",

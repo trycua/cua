@@ -174,6 +174,10 @@ async fn the_bridge_answers_as_the_agent_and_only_with_its_rights() {
         .collect();
     assert!(names.contains(&"notify_user".to_string()), "{names:?}");
     assert!(names.contains(&"volume_write".to_string()), "{names:?}");
+    // Showing a child's window is a host tool: a home whose image carries an older `cua` has it too.
+    for t in ["stream_space_window", "list_space_windows"] {
+        assert!(names.contains(&t.to_string()), "{t} in {names:?}");
+    }
     assert!(
         !names
             .iter()

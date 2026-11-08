@@ -165,7 +165,13 @@ async fn the_bridge_answers_as_the_agent_and_only_with_its_rights() {
     let lines = answers(&srv, &pipe_out, 8).await;
     let refused = by_id(&lines, 9);
     assert_eq!(refused["result"]["isError"], true, "{refused}");
-    assert!(refused["result"]["content"][0]["text"].as_str().unwrap().contains("not a child Space of yours"), "{refused}");
+    assert!(
+        refused["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("not a child Space of yours"),
+        "{refused}"
+    );
 
     let init = by_id(&lines, 1);
     assert_eq!(init["result"]["serverInfo"]["name"], "cua-agent");
@@ -184,7 +190,11 @@ async fn the_bridge_answers_as_the_agent_and_only_with_its_rights() {
     assert!(names.contains(&"notify_user".to_string()), "{names:?}");
     assert!(names.contains(&"volume_write".to_string()), "{names:?}");
     // Showing a child's window is a host tool: a home whose image carries an older `cua` has it too.
-    for t in ["stream_space_window", "list_space_windows", "launch_space_app"] {
+    for t in [
+        "stream_space_window",
+        "list_space_windows",
+        "launch_space_app",
+    ] {
         assert!(names.contains(&t.to_string()), "{t} in {names:?}");
     }
     assert!(

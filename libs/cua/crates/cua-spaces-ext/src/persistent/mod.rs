@@ -2418,7 +2418,8 @@ impl Persistent {
         // A create still under way has no Space id yet (`space` is empty): its child is already in the list of children, and
         // the create's own row will say when it is ready. Without this the child was reported twice, once as "Ready"
         // from here and once as "Ready in 2s" from the create.
-        let asked_names: std::collections::HashSet<&str> = asked.iter().map(|e| e.name.as_str()).collect();
+        let asked_names: std::collections::HashSet<&str> =
+            asked.iter().map(|e| e.name.as_str()).collect();
         for id in kids {
             if covered.contains(id.as_str()) {
                 continue;
@@ -2864,7 +2865,11 @@ enum Activity {
 
 /// Whether a child Space is the one a tracked create (a row with its own steps and time) is making or made: its name is
 /// the create's. Such a child is not announced a second time as "made the computer".
-fn made_by_a_tracked_create(asked: &std::collections::HashSet<&str>, name: &str, display_name: &str) -> bool {
+fn made_by_a_tracked_create(
+    asked: &std::collections::HashSet<&str>,
+    name: &str,
+    display_name: &str,
+) -> bool {
     asked.contains(name) || (!display_name.is_empty() && asked.contains(display_name))
 }
 
@@ -3309,8 +3314,14 @@ mod plain_tool_tests {
 
     #[test]
     fn the_chip_names_what_the_agent_does_not_the_tool() {
-        assert_eq!(plain_tool("mcp__cua__stream_space_window"), Some("showing a window"));
-        assert_eq!(plain_tool("mcp__cua__launch_space_app"), Some("opening an app"));
+        assert_eq!(
+            plain_tool("mcp__cua__stream_space_window"),
+            Some("showing a window")
+        );
+        assert_eq!(
+            plain_tool("mcp__cua__launch_space_app"),
+            Some("opening an app")
+        );
         assert_eq!(plain_tool("ToolSearch"), Some("getting ready"));
         assert_eq!(plain_tool("Terminal"), None);
         assert_eq!(plain_tool("mcp__other__thing"), None);

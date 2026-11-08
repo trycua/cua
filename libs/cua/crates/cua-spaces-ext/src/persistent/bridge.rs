@@ -481,11 +481,19 @@ impl AgentTools {
         let child = spaces.space(&id).await?;
         let mut arguments = Map::new();
         arguments.insert("name".into(), json!(app));
-        if let Some(args) = a.get("args").filter(|v| v.as_array().is_some_and(|l| !l.is_empty())) {
+        if let Some(args) = a
+            .get("args")
+            .filter(|v| v.as_array().is_some_and(|l| !l.is_empty()))
+        {
             arguments.insert("args".into(), args.clone());
         }
         let out = child
-            .call_tool(None, "launch_app", arguments, Some(std::time::Duration::from_secs(30)))
+            .call_tool(
+                None,
+                "launch_app",
+                arguments,
+                Some(std::time::Duration::from_secs(30)),
+            )
             .await?;
         let text = out
             .content
@@ -496,10 +504,16 @@ impl AgentTools {
         if out.is_error {
             return Err(Error::invalid(format!(
                 "{app} did not open in {target}: {}",
-                if text.is_empty() { "the Space's desktop refused" } else { &text }
+                if text.is_empty() {
+                    "the Space's desktop refused"
+                } else {
+                    &text
+                }
             )));
         }
-        Ok(ToolOutcome::json(&json!({"opened": app, "space": target, "detail": text})))
+        Ok(ToolOutcome::json(
+            &json!({"opened": app, "space": target, "detail": text}),
+        ))
     }
 
     /// `space_job` in this agent's own Space (whatever `space` says). With

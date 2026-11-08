@@ -162,3 +162,5 @@ trycua/cua#6546 (CUA-3510) screenshots: the five spaces-1b-*.jpg images above (a
 
 <img width="1104" height="1168" alt="cua3854-computer-narrow" src="https://github.com/user-attachments/assets/ab4aba11-bc33-4832-af26-cef48700c4b3" />
 <img width="3936" height="908" alt="cua3854-onboarding-desktop" src="https://github.com/user-attachments/assets/dee10edc-ac92-4c8a-aedd-9d009e631bf4" />
+<img width="2632" height="908" alt="cua3854-computer-desktop" src="https://github.com/user-attachments/assets/6950300b-4ac8-46ca-a44f-79ef6b0daaa7" />
+<img width="2184" height="1168" alt="cua3854-onboarding-narrow" src="https://github.com/user-attachments/assets/cad4899c-cce7-4c29-97e8-785d265edaaa" />

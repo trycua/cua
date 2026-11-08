@@ -476,7 +476,10 @@ def ensure_agent_daemon(ctx: Ctx, arm: str = "cc-cua-driver") -> None:
         text=True,
         timeout=15,
     )
-    if done.returncode == 0 and ctx.daemon_arm == arm:
+    # A daemon that answers `status` is not necessarily ours: when ours crashed, the MCP proxy of the next trial
+    # starts the installed app's daemon on the same socket. Keep the one we started only while its process lives.
+    ours_alive = ctx.daemon is not None and ctx.daemon.poll() is None
+    if done.returncode == 0 and ctx.daemon_arm == arm and ours_alive:
         return
     if ctx.daemon_arm == arm:
         ctx.log(f"agent daemon of {arm} not answering; restarting")
@@ -2399,7 +2402,7 @@ def preflight(ctx: Ctx, with_models: bool = True) -> list[tuple[str, str, str]]:
                 probe = cdb_adapter.CdbTask(spec, ctx.run_dir)
                 got = probe._digest_hidden() or cdb_adapter.tree_sha256(probe.bundle)
                 ok = got == pins_for.get(spec["pack_task"])
-                add(f"CDB pack {tid} matches its pinned digest", "pass" if ok else "fail", got[:16])
+                add(f"CDB pack {tid} matches its pinned digest", "pass" if ok else "fail", got if not ok else got[:16])
                 kit = cdb_adapter.shared_kit(spec)
                 if kit is not None and str(kit) not in kits_checked:
                     kits_checked.add(str(kit))
@@ -2512,11 +2515,19 @@ def preflight(ctx: Ctx, with_models: bool = True) -> list[tuple[str, str, str]]:
         raw = ctx.recorder.stop() if started else None
         dur = rec.ffprobe_duration(raw) if raw else None
         try:
-            if not raw or not dur or dur <= 0.5:
+            if not raw or not dur:
                 raise RuntimeError(
                     f"{raw} duration={dur} err={getattr(ctx.recorder, 'last_error', None)}"
                 )
-            add("recorder real capture (3 s test)", "pass", rec.capture_detail(raw))
+            if dur <= 0.5:
+                # the recorder only writes a frame when the screen changes: an idle desktop gives a very short file
+                add(
+                    "recorder real capture (3 s test)",
+                    "warn",
+                    f"short file on an idle desktop (duration={dur}); {rec.capture_detail(raw)}",
+                )
+            else:
+                add("recorder real capture (3 s test)", "pass", rec.capture_detail(raw))
         except (OSError, RuntimeError, subprocess.SubprocessError) as error:
             add("recorder real capture (3 s test)", "fail", str(error)[:300])
     else:

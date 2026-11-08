@@ -12,6 +12,7 @@ hash and source commit. Runs with the VM's /usr/bin/python3 (3.9).
 import argparse
 import hashlib
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -56,6 +57,9 @@ def main():
         "skills_tree_sha256": sha256_tree(a.skills),
         "skills_source": "the build's own skill directory",
     }
+    observed = os.environ.get("CDB_OBSERVED_DIGESTS")  # JSON {pack_task: digest} of the VM's own task pack
+    if observed:
+        pins["cdb_pack"]["tree_sha256"].update(json.loads(Path(observed).read_text("utf-8")))
     a.out.write_text(json.dumps(pins, indent=2) + "\n", "utf-8")
     print("wrote", a.out, version_string, digest)
 

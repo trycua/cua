@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: FSL-1.1-MIT
 # Copyright (c) 2026 Cua AI, Inc.
 
-# Assemble the private script-arm app (CuaDriverBenchScript.app, bundle id com.trycua.driver.benchscript) from ANY
+# Assemble the private script-arm app (CuaDriver.app (own directory), bundle id com.trycua.driver.benchscript) from ANY
 # Cua Driver build, so one run can compare two builds (for example the 0.41.3 release and a main build) under the
 # same app identity, daemon socket and TCC grant. Inside the benchmark VM, as user lume.
 #
@@ -17,14 +17,14 @@
 # Env: SIGN_IDENTITY (default "-", ad hoc). Use one persistent identity for every build so the Accessibility and
 # Screen Recording grant of the bundle id survives a swap; an ad-hoc signature changes with every binary and needs a
 # new grant each time. GIT_SHA (source commit the binary was built from, for pins).
-# Output: ~/bench-work/cua-script/CuaDriverBenchScript.app, ~/bench-work/cua-script/skills/cua-driver,
+# Output: ~/bench-work/cua-script/CuaDriver.app, ~/bench-work/cua-script/skills/cua-driver,
 # ~/bench-work/pins-LABEL.json (pins.json with cua_main set to this build; pass it with --pins).
 set -e
 REL=${1:?release app}; BIN=${2:?driver bin}; CUR=${3:?cursor theme bin}; SK=${4:?skills dir}; LABEL=${5:?label}
 SIGN=${SIGN_IDENTITY:--}
 ID=com.trycua.driver.benchscript
 S=~/bench-work/cua-script
-A=$S/CuaDriverBenchScript.app
+A=$S/CuaDriver.app
 HERE=${0:A:h}
 mkdir -p $S; rm -rf $A; mkdir -p $A/Contents/MacOS $A/Contents/Resources
 cp $BIN $A/Contents/MacOS/cua-driver
@@ -49,6 +49,9 @@ codesign --force --sign "$SIGN" --identifier $ID --options runtime --entitlement
 codesign --force --sign "$SIGN" --identifier $ID --options runtime --entitlements $S/ent.plist $A
 codesign --verify --strict $A && echo signed-ok
 rm -rf $S/skills; mkdir -p $S/skills; cp -R $SK $S/skills/cua-driver
+# The VM's own task pack may differ from the pinned public copy; ~/bench-work/cdb-observed-digests.json ({pack_task: digest})
+# records the digests of the pack both builds are run against.
+[ -f ~/bench-work/cdb-observed-digests.json ] && export CDB_OBSERVED_DIGESTS=~/bench-work/cdb-observed-digests.json
 /usr/bin/python3 "$HERE/make_driver_pins.py" --app $A --skills $S/skills/cua-driver --git-sha "${GIT_SHA:?GIT_SHA}" \
   --out ~/bench-work/pins-$LABEL.json
 codesign -d -r- $A 2>&1 | tail -1

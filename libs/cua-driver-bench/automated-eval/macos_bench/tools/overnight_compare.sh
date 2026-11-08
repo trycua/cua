@@ -11,7 +11,7 @@
 # (one trial each; round r draws new task seeds through --run-offset r) with Claude Code + the build prepared as
 # LABEL (tools/vm_main_build/assemble_version.sh; it needs ~/bench-work/versions/LABEL/{app,bin,cursor,skills,git_sha}).
 # The order of the LABELs alternates every round and condition so time of night does not favour one build.
-# No new trial starts after CUTOFF_UTC. Results: ~/bench-work/runs/ov-LABEL-COND-rN/results.jsonl. When it ends it
+# No new trial starts after CUTOFF_UTC. EXTRA_RUN_ARGS (env) is appended to every run_bench.py run (for example --no-recorder). Results: ~/bench-work/runs/ov-LABEL-COND-rN/results.jsonl. When it ends it
 # writes ~/bench-work/overnight/DONE (and, if set, runs $CDB_AT_END), so a babysitter on another machine can collect
 # the results, delete the token and release the VM slot.
 export CDB_BENCH_WORK=$HOME/bench-work CDB_BENCH_DISPOSABLE=1 CDB_TASKPACK=$HOME/cdb-runtime CDB_EVAL_SUDO=1
@@ -44,7 +44,7 @@ for ((r = 0; r < ROUNDS; r++)); do
       $PY run_bench.py run --bench-v2 --condition $cond --arms cc-cua-driver-script --task-set v2 \
         --phase1-runs 1 --phase2-runs 0 --run-offset $r --run-id $RUN \
         --pins $CDB_BENCH_WORK/pins-$ver.json --build-dir $CDB_BENCH_WORK/build \
-        --cutoff-utc "$CUTOFF" >> $CDB_BENCH_WORK/runs-$RUN.log 2>&1
+        --cutoff-utc "$CUTOFF" ${=EXTRA_RUN_ARGS} >> $CDB_BENCH_WORK/runs-$RUN.log 2>&1
       log "run $RUN exit $?"
       ((n++))
     done

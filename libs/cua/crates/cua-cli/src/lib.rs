@@ -23,7 +23,7 @@
 
 #![recursion_limit = "512"]
 
-#[cfg(feature = "byoc")]
+#[cfg(feature = "aws")]
 mod add_aws;
 mod agent_cmd;
 mod agent_keys_cmd;
@@ -2491,8 +2491,8 @@ async fn remove_computer(
     .await
 }
 
-/// `cua cloud add aws` (builds with AWS: the `byoc` feature).
-#[cfg(feature = "byoc")]
+/// `cua cloud add aws` (builds with AWS: the `aws` feature).
+#[cfg(feature = "aws")]
 async fn add_aws(a: onboard::AwsArgs, json: bool, out: &mut dyn Write) -> Result<i32, CuaError> {
     add_aws::run(a, json, out).await
 }
@@ -2519,10 +2519,10 @@ async fn cloud_trust(_cloud: &str, _out: &mut dyn Write) -> Result<i32, CuaError
     ))
 }
 
-#[cfg(not(feature = "byoc"))]
+#[cfg(not(feature = "aws"))]
 async fn add_aws(_a: onboard::AwsArgs, _json: bool, _out: &mut dyn Write) -> Result<i32, CuaError> {
     Err(CuaError::Unsupported(
-        "this cua was built without AWS (the byoc feature); install the Cua Spaces cua".into(),
+        "this build doesn't include AWS support; install the Cua Spaces cua".into(),
     ))
 }
 

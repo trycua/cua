@@ -15,7 +15,7 @@ name = "cua_sdk"
 crate-type = ["rlib", "cdylib", "staticlib"]
 
 [features]
-default = ["local", "spaces", "host", "media", "byoc"]
+default = ["local", "spaces", "host", "media", "byoc", "aws"]
 # `Cua.local()`: local runtimes and images. Placeholder surface that returns
 # `Unsupported` until cua-vmm / cua-image are merged.
 local = []
@@ -30,6 +30,9 @@ media = []
 # Your own cloud account as a location (`on="aws"`, `"gcp"`, `"hetzner"`, `"modal"`) for
 # sandboxes and Spaces: the cua-byoc providers and `cua cloud`.
 byoc = ["cua-daemon/byoc"]
+# AWS (EC2 and S3) in the byoc providers and the checkpoint fallback; see
+# cua-daemon's `aws`.
+aws = ["byoc", "cua-daemon/aws"]
 # Contrib sandbox providers (`on="e2b"`, ...), off by default.
 contrib = ["cua-daemon/contrib"]
 contrib-e2b = ["cua-daemon/contrib-e2b"]

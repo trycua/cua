@@ -2308,13 +2308,7 @@
         "cuaVolume": {
           "type": "boolean"
         },
-        "secureSpaces": {
-          "type": "boolean"
-        },
         "childSpaces": {
-          "type": "boolean"
-        },
-        "askFirst": {
           "type": "boolean"
         },
         "ciRunners": {
@@ -5491,6 +5485,28 @@
             "name",
             "installed"
           ]
+        },
+        "target": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "channel": {
+              "type": "string"
+            },
+            "env": {
+              "type": "string"
+            },
+            "authHost": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "channel",
+            "env",
+            "authHost"
+          ]
         }
       },
       "required": [
@@ -8240,6 +8256,28 @@
           "required": [
             "name",
             "installed"
+          ]
+        },
+        "target": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "channel": {
+              "type": "string"
+            },
+            "env": {
+              "type": "string"
+            },
+            "authHost": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "channel",
+            "env",
+            "authHost"
           ]
         },
         "tips": {

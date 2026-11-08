@@ -155,6 +155,15 @@ export async function mountApp(path: string, host: TestHost = { failsCreates: tr
  * Home's box starts on This Mac once it's in the account (5 Nov 2026). A test about a job that makes
  * a new Space picks that first, as a person would.
  */
+/** The where picker's new Linux Space row (its title is just "Linux", under "New Space on this Mac"). */
+export async function newLinuxRow(): Promise<HTMLElement> {
+  return waitFor(() => {
+    const row = screen.getAllByRole("menuitem").find((e) => e.textContent?.startsWith("LinuxGood for code"));
+    if (!row) throw new Error("no new Linux row yet");
+    return row;
+  });
+}
+
 export async function pickNewLinux(): Promise<void> {
   const trigger = await waitFor(() => {
     const el = document.querySelector<HTMLElement>('[data-picker="where"]');
@@ -164,7 +173,7 @@ export async function pickNewLinux(): Promise<void> {
   await act(async () => {
     fireEvent.click(trigger);
   });
-  const item = await screen.findByRole("menuitem", { name: /A new Linux computer on/ });
+  const item = await newLinuxRow();
   await act(async () => {
     fireEvent.click(item);
   });

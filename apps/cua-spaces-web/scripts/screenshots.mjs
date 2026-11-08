@@ -467,19 +467,19 @@ async function askFirstShots(theme) {
   await page.locator("[data-approval] button", { hasText: "Push and open PR" }).first().click();
   await page.locator("[data-approval-collapsed]").first().waitFor();
   await shot("card-answered");
-  for (const [name, demo] of [["github", "ask-first"], ["github-none", "github-none"], ["github-warning", "github-warning"]]) {
+  for (const [name, demo] of [["github", "github"], ["github-none", "github-none"], ["github-warning", "github-warning"]]) {
     await page.goto(`${base}/settings/connections?demo=${demo}`, { waitUntil: "networkidle" });
     await page.locator("[data-connectors-github]").waitFor();
     await page.locator("[data-connectors-github]").scrollIntoViewIfNeeded();
     await shot(`settings-${name}`);
   }
-  await page.goto(`${base}/settings/connections?demo=ask-first`, { waitUntil: "networkidle" });
+  await page.goto(`${base}/settings/connections`, { waitUntil: "networkidle" });
   await page.locator("[data-github-host='github.com']").click();
   await page.locator("[data-github-detail='github.com']").waitFor();
   await shot("settings-github-open");
   await page.keyboard.press("Escape");
-  await page.goto(`${base}/settings/advanced?demo=ask-first`, { waitUntil: "networkidle" });
-  await page.getByText("Ask first").first().waitFor();
+  await page.goto(`${base}/settings/advanced`, { waitUntil: "networkidle" });
+  await page.getByText("Labs").first().waitFor();
   await shot("settings-labs");
   await context.close();
 }

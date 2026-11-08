@@ -140,22 +140,20 @@ export function AddAgentSheet({
               </DialogTitle>
               <DialogDescription className="mt-1 text-[13px] text-muted-foreground">It joins the thread, reads @mentions and takes tasks.</DialogDescription>
               <div className="mt-3">
-                <Row
-                  data="start"
-                  icon={<PlayIcon className="size-3.5" />}
-                  title="Start an agent here"
-                  detail={canStart ? "Runs inside this Space" : "Comes with the next Cua update"}
-                  disabled={!canStart || !space}
-                  onClick={() => setStage("start")}
-                />
-                <Row
-                  data="connect"
-                  icon={<LinkIcon className="size-3.5" />}
-                  title="Connect your own agent"
-                  detail={canConnect ? "From your computer, with a prompt" : "Comes with the next Cua update"}
-                  disabled={!canConnect || !space}
-                  onClick={() => setStage("connect")}
-                />
+                {/* Only what this build can do: an option that hasn't shipped isn't shown at all. */}
+                {canStart ? (
+                  <Row data="start" icon={<PlayIcon className="size-3.5" />} title="Start an agent here" detail="Runs inside this Space" disabled={!space} onClick={() => setStage("start")} />
+                ) : null}
+                {canConnect ? (
+                  <Row
+                    data="connect"
+                    icon={<LinkIcon className="size-3.5" />}
+                    title="Connect your own agent"
+                    detail="From your computer, with a prompt"
+                    disabled={!space}
+                    onClick={() => setStage("connect")}
+                  />
+                ) : null}
                 {onShare ? <Row data="share" icon={<UserPlusIcon className="size-3.5" />} title="Share with a person" detail="Or with your team" onClick={onShare} /> : null}
               </div>
               <div className="mt-4 flex items-center justify-between gap-4">
@@ -319,7 +317,7 @@ function ConnectAgent({ space, role, open, title, onDone }: { space: AddAgentSpa
     <>
       {title}
       <DialogDescription className="mt-1 text-[13px] text-muted-foreground">
-        Paste this line into Hermes, Claude Code, Codex, Cursor or any other agent. The link tells it what to do.
+        Paste this into your agent.
       </DialogDescription>
       <PromptBox
         className="mt-4"

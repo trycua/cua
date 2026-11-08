@@ -110,8 +110,12 @@ def check_store_url(url: str | None) -> str:
     u = urllib.parse.urlsplit(str(url))
     if u.scheme == "s3" and u.netloc:
         return str(url)
-    if u.scheme == "file" and u.path.startswith("/") and u.netloc in ("", "localhost"):
-        return str(url)
+    if u.scheme == "file":
+        from ._store import file_url_path
+
+        p = file_url_path(str(url))
+        if p and (p.startswith("/") or re.match(r"^[A-Za-z]:[/\\]", p)):
+            return str(url)
     raise ValueError(f"store must be 's3://bucket/prefix' or 'file:///abs/path', got {url!r}")
 
 

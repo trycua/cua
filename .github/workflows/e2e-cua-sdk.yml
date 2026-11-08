@@ -537,6 +537,8 @@ jobs:
         with:
           node-version: "22"
       - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc # v6
+      - name: Set up pasta (secure network)
+        uses: ./.github/actions/setup-pasta
       - name: Build the SDK, fixtures, bindings, images, disks and runtimes
         run: tests/e2e/cua-sdk/ci-setup.sh --images --disks
       # Cua Cloud has ended (CUA-1854): Fleet refuses the old live lane, so

@@ -279,6 +279,12 @@ A red run on `main` is already merged, so it is fixed forward. It alerts through
 (Alertmanager, `#alerts-staging`) and `ci-postmerge-issue-bundles.yml` opens one issue per workflow, labelled
 `ci-postmerge`, comments on it for each later failure and closes it on the next green run.
 
+## Jobs that boot a Linux VM need `setup-pasta`
+
+Secure Spaces is always on, so every Linux QEMU guest runs inside a pasta network namespace. Hosted Ubuntu 24.04 runners block the user namespace pasta needs through AppArmor (`Couldn't write to /proc/self/uid_map`), and the VM then fails to start with a misleading IPv6 error.
+
+Add `- uses: ./.github/actions/setup-pasta` to every job that boots a Linux VM or container through cua (qemu, KVM, `cua run`, image builds, bake-world, doctors). Put it after checkout and before the first VM starts. It installs passt through the cached `apt-install` action, adds the `cua-pasta` AppArmor profile and smoke-tests `pasta --config-net -q -- true`. Do not copy the profile inline into a workflow.
+
 ## Flaky checks
 
 Known flakes are listed in [`.github/flaky/quarantine.json`](../../.github/flaky/quarantine.json) and

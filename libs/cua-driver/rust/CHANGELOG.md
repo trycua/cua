@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.44.2](https://github.com/trycua/cua/compare/cua-driver-rs-v0.44.1...cua-driver-rs-v0.44.2) (2026-11-08)
+
+
+### Bug Fixes
+
+* **cua-driver:** stop Windows stub registry panicking off Windows ([#7011](https://github.com/trycua/cua/issues/7011)) ([e142191](https://github.com/trycua/cua/commit/e142191254c9871ca8f29ba24eb4294829223c4c))
+
+## [0.44.1](https://github.com/trycua/cua/compare/cua-driver-rs-v0.44.0...cua-driver-rs-v0.44.1) (2026-11-08)
+
+
+### Bug Fixes
+
+* **cua-driver:** keep Linux action abandonment in one ActionPhase ([#6968](https://github.com/trycua/cua/issues/6968)) ([da8e73b](https://github.com/trycua/cua/commit/da8e73b9cea4f5e4c34bbc37b40005c78161632b))
+* **cua-driver:** skip a background invoke_menu press after its call is cancelled ([#6953](https://github.com/trycua/cua/issues/6953)) ([6a0b069](https://github.com/trycua/cua/commit/6a0b069a7301eebee0a86876287c949ab0d260c9))
+* **platform-macos:** run bring_to_front activation off the async worker ([#6980](https://github.com/trycua/cua/issues/6980)) ([1252201](https://github.com/trycua/cua/commit/12522016d0a94f5c84f4081cfdfdc233900efa64))
+
 ## [0.44.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.43.2...cua-driver-rs-v0.44.0) (2026-11-08)
 
 

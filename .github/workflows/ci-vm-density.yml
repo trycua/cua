@@ -106,6 +106,8 @@ jobs:
             libs/cua
             libs/cua-spacesd
           shared-key: libs-cua-qemu-tests
+      - name: Set up pasta (secure network)
+        uses: ./.github/actions/setup-pasta
       - name: QEMU, KVM and the Linux reference disk
         run: |
           sudo apt-get update -qq

@@ -431,7 +431,7 @@ struct ViewModelTests {
         let telemetry = FixtureTelemetry()
         let model = makeModel(telemetry: telemetry)
         let toggles = model.experimentsPage.sections.flatMap(\.rows).filter { $0.kind == .toggle }
-        #expect(toggles.map(\.id) == ["experiment:cua_volume", "experiment:secure_spaces", "experiment:child_spaces", "experiment:ask_first", "experiment:ci_runners", "experiment:tcp_shares", "experiment:mobile", "experiment:warm_pools"])
+        #expect(toggles.map(\.id) == ["experiment:cua_volume", "experiment:child_spaces", "experiment:ci_runners", "experiment:tcp_shares", "experiment:mobile", "experiment:warm_pools"])
         #expect(toggles.allSatisfy { r in r.options.first { $0.id == "off" }?.active == true })
         #expect(!model.settingsPageWithStorage.sections.map(\.id).contains("storage"))
         model.chooseExperiment(row: "experiment:cua_volume", option: "on")
@@ -1389,7 +1389,7 @@ struct ViewModelTests {
         await w.submitAddress { _, _, _ in throw TimeoutError.timedOut }
         #expect(w.view.address.error != nil)
         w.send(.addressFailed(error: "status: Unauthenticated"))
-        #expect(w.view.address.error?.hasPrefix("The Space rejected the token") == true)
+        #expect(w.view.address.error?.hasPrefix("This Space didn\u{2019}t accept the access token") == true)
     }
 
     func unlockCase(_ name: String) throws -> KeyvaultOverview { try keyvaultUnlockCase(name) }

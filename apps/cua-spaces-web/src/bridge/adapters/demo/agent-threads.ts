@@ -8,7 +8,7 @@
  */
 
 import { HostError } from "../../adapter";
-import type { PastThread, RecentThread } from "../../ops/agent-threads";
+import { onlyAgents, type PastThread, type RecentThread } from "../../ops/agent-threads";
 
 const MIN = 60_000;
 
@@ -44,7 +44,13 @@ export function demoAgentThreads(now: () => number, none: boolean) {
       ];
   const copy = (t: RecentThread): RecentThread => ({ ...t, resume: [...t.resume] });
   return {
-    "agents.recentThreads": ({ limit }: { limit?: number }) => threads.slice(0, limit ?? 4).map((t) => copy(t.thread)),
+    "agents.recentThreads": ({ limit, agents }: { limit?: number; agents?: string[] }) =>
+      onlyAgents(
+        threads.map((t) => t.thread),
+        agents,
+      )
+        .slice(0, limit ?? 4)
+        .map(copy),
     "agents.threadHistory": ({ agent, id }: { agent: string; id: string }) => {
       const t = threads.find((x) => x.thread.agent === agent && x.thread.id === id);
       if (!t) throw new HostError(`no ${agent} chat ${id} on this computer`, "not_found");

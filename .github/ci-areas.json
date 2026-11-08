@@ -240,6 +240,7 @@
    "workflows": [
     "ci-check-docs-image-refs.yml",
     "ci-check-docs-links.yml",
+    "ci-cua-spaces-driver-pin.yml",
     "ci-cua-spaces-macos.yml",
     "ci-cua-spaces-web.yml",
     "ci-test-scripts.yml",

@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.16.0](https://github.com/trycua/cua/compare/cua-sdk-v0.15.1...cua-sdk-v0.16.0) (2026-11-08)
+
+
+### Features
+
+* **spaces:** show "Local · Staging" or "Local · Prod" in the title bar (CUA-3814) ([#6962](https://github.com/trycua/cua/issues/6962)) ([17b37ef](https://github.com/trycua/cua/commit/17b37ef5775b4b06f0d1483bf0a9db6074a8d2ff))
+
+
+### Bug Fixes
+
+* **cua-agents:** say a lost provider connection in plain words, not raw http2 ([#6963](https://github.com/trycua/cua/issues/6963)) ([a2bbc28](https://github.com/trycua/cua/commit/a2bbc280957e5ca674d5ca5a0422da22be1d6cdf))
+* **spaces:** Ready lists only the picked agent's chats, and shows at once (CUA-3774) ([#6916](https://github.com/trycua/cua/issues/6916)) ([4392fe0](https://github.com/trycua/cua/commit/4392fe0502790f4fdd1d9b9e5bc42c1418281146))
+* **vmm:** the runtime doctor's report makes no Local Network connect, so macOS doesn't ask at launch ([#6969](https://github.com/trycua/cua/issues/6969)) ([e002d4f](https://github.com/trycua/cua/commit/e002d4f29f58a1457fe998874ba4ea2e8dbc3016))
+
 ## [0.15.1](https://github.com/trycua/cua/compare/cua-sdk-v0.15.0...cua-sdk-v0.15.1) (2026-11-08)
 
 

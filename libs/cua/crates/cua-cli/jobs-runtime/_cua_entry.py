@@ -117,8 +117,8 @@ def _result_path(value) -> str | None:
 
 
 def has_nvidia_gpu() -> bool:
-    """A Linux host with a working NVIDIA driver (`nvidia-smi -L` lists a GPU)."""
-    if not sys.platform.startswith("linux") or not shutil.which("nvidia-smi"):
+    """A Linux or Windows host with a working NVIDIA driver (`nvidia-smi -L` lists a GPU)."""
+    if not (sys.platform.startswith("linux") or sys.platform == "win32") or not shutil.which("nvidia-smi"):
         return False
     try:
         out = subprocess.run(["nvidia-smi", "-L"], capture_output=True, text=True, timeout=30)
@@ -455,6 +455,8 @@ def run(fn) -> int:
         if sync is not None and cluster.rank == 0:
             syncer = _Syncer(sync, float(os.environ.get("CUA_SYNC_SECS", "30") or 30)).start()
         signal.signal(signal.SIGTERM, _on_sigterm)
+        if hasattr(signal, "SIGBREAK"):  # Windows: Ctrl-Break is the polite stop
+            signal.signal(signal.SIGBREAK, _on_sigterm)
         sig = inspect.signature(fn.fn)
         try:
             value = fn.fn(cluster) if sig.parameters else fn.fn()

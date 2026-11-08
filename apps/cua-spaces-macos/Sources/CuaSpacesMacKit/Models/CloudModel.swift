@@ -144,14 +144,14 @@ public final class CloudModel {
     /// `provider`: the daemon's person-only `cloud_approve`. Each cloud in
     /// `cloud_status` says whether this person may (`can_approve`).
     public func approve(_ provider: String, approve: Bool) async throws {
-        guard let tools else { throw CuaError.InvalidArgument(message: "Clouds need the cua daemon") }
+        guard let tools else { throw CuaError.InvalidArgument(message: serviceDownMessage) }
         _ = try await tools.cloudTool("cloud_approve", ["provider": provider, "deny": !approve])
         await refresh()
     }
 
     /// Forgets a cloud; with `deleteResources`, deletes what Cua created there first.
     public func disconnect(_ provider: String, deleteResources: Bool) async throws {
-        guard let tools else { throw CuaError.InvalidArgument(message: "Clouds need the cua daemon") }
+        guard let tools else { throw CuaError.InvalidArgument(message: serviceDownMessage) }
         _ = try await tools.cloudTool("cloud_disconnect", ["provider": provider, "delete": deleteResources])
         await refresh()
     }
@@ -215,7 +215,7 @@ public final class CloudModel {
         }
         guard let request = view.request else { return }
         guard let tools else {
-            state = appCloudConnectReduce(input: before, state: state, action: .failed(error: "No cua daemon"))
+            state = appCloudConnectReduce(input: before, state: state, action: .failed(error: serviceDownMessage))
             return
         }
         do {

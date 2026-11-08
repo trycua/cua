@@ -7,8 +7,8 @@ name: "Preview: Cua Spaces for macOS (label preview:mac)"
 # The build is the one a person runs by hand:
 # apps/cua-spaces-macos/scripts/install-local.sh --release. The app installs
 # next to the released Cua Spaces (own bundle id, home, URL scheme and
-# Keychain items, no update feed), points at production (CuaEnv=prod) and is
-# signed ad hoc. There are no signing or notarization secrets here and none
+# Keychain items, no update feed), keeps the Local channel's default
+# deployment (staging, "Local · Staging") and is signed ad hoc by install-local.sh. There are no signing or notarization secrets here and none
 # are needed.
 #
 # Trust: it runs only for pull requests from a branch of this repository
@@ -159,17 +159,14 @@ jobs:
           apps/cua-spaces-macos/scripts/install-local.sh --release --no-launch \
             --prefix "$RUNNER_TEMP/preview"
 
-      # Local builds default to the staging deployment. The preview points at
-      # production (CuaEnv=prod), so it is re-signed ad hoc after the edit.
-      - name: Point the app at production and sign it ad hoc
+      # Local builds point at the staging deployment, and so does the preview:
+      # nothing edits the app after install-local.sh has signed it.
+      - name: Verify the app and zip it
         run: |
           set -euo pipefail
           app="$RUNNER_TEMP/preview/Applications/Cua Spaces Local.app"
           test -d "$app"
-          /usr/libexec/PlistBuddy -c "Set :CuaEnv prod" "$app/Contents/Info.plist"
-          codesign --force --deep -s - "$app"
           codesign --verify --deep --strict "$app"
-          test "$(/usr/libexec/PlistBuddy -c 'Print :CuaEnv' "$app/Contents/Info.plist")" = prod
           mkdir -p "$RUNNER_TEMP/out"
           zip_name="Cua-Spaces-Local-pr${PR_NUMBER}-${HEAD_SHA:0:7}.zip"
           ditto -c -k --keepParent "$app" "$RUNNER_TEMP/out/$zip_name"
@@ -215,7 +212,7 @@ jobs:
           To open it:
           1. Unzip the download, then unzip the zip inside it.
           2. The app is signed ad hoc, so macOS blocks it the first time. Right-click it and choose Open. If macOS only offers Cancel, run \`xattr -dr com.apple.quarantine \"Cua Spaces Local.app\"\` once, or use System Settings > Privacy & Security > Open Anyway.
-          3. It installs as \"Cua Spaces Local\", next to the released Cua Spaces, and keeps its own sign-in and data.
+          3. It installs as \"Cua Spaces Local\", next to the released Cua Spaces, and keeps its own sign-in and data. The app shows \"Local · Staging\": it uses the staging deployment, so sign in with a staging account.
 
           A new push to this branch rebuilds it while the \`preview:mac\` label stays on. [Build log]($RUN_URL)"
           else

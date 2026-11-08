@@ -271,7 +271,7 @@ A maintainer or agent adds the `preview:mac` label to a pull request to get an i
 
 - **Time.** About 30 minutes with a warm Rust cache and up to 90 minutes cold, on a `macos-26` runner.
 - **Download.** A workflow artifact, kept 14 days. You need a GitHub sign-in with access to the repository.
-- **Open it.** Unzip the download, then the zip inside it. The app is signed ad hoc, so macOS blocks it the first time: right-click it and choose Open (or run `xattr -dr com.apple.quarantine "Cua Spaces Local.app"`). It installs next to the released Cua Spaces and keeps its own sign-in and data. It points at production.
+- **Open it.** Unzip the download, then the zip inside it. The app is signed ad hoc, so macOS blocks it the first time: right-click it and choose Open (or run `xattr -dr com.apple.quarantine "Cua Spaces Local.app"`). It installs next to the released Cua Spaces and keeps its own sign-in and data. It is "Local · Staging": it uses the staging deployment, like every Local build.
 - **Who can start it.** Only pull requests from a branch of this repository build. A fork pull request never does, and the workflow holds no signing or notarization secrets. Adding a label needs triage access.
 - **The gate.** `ci-gate` does not wait for this workflow, and a failed preview does not block a merge.
 

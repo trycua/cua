@@ -1011,6 +1011,19 @@ const TYPING_KEY_CODES: std::ops::RangeInclusive<u16> = 0..=50;
 /// The current keyboard layout, read with `UCKeyTranslate`, or `None` when it
 /// has no Unicode layout data.
 fn current_layout() -> Option<KeyLayout> {
+    // Carbon input-source APIs assert that they run on the main queue on
+    // recent macOS versions. Tool handlers execute on Tokio workers.
+    // Reuse the bounded main-queue bridge; never call Carbon on timeout.
+    crate::ax::main_thread::run_ax_mutation(
+        std::process::id() as i32,
+        std::time::Duration::from_secs(2),
+        current_layout_on_main,
+    )
+    .ok()
+    .flatten()
+}
+
+fn current_layout_on_main() -> Option<KeyLayout> {
     use core_foundation::base::{CFRelease, CFTypeRef};
     use core_foundation::data::{CFDataGetBytePtr, CFDataRef};
     use core_foundation::string::CFStringRef;
@@ -1111,6 +1124,16 @@ fn unknown_key_message(key: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn keyboard_layout_worker_without_main_queue_times_out_safely() {
+        // The test harness does not drain the application main queue. Carbon
+        // must never be called on this worker, nor after its request times out.
+        assert!(std::thread::spawn(super::current_layout)
+            .join()
+            .expect("layout lookup must not abort the worker")
+            .is_none());
+    }
+
     use super::*;
     use core_graphics::event::CGEventType;
 

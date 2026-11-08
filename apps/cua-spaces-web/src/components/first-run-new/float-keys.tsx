@@ -144,6 +144,11 @@ export function FloatKeys({ copyRight }: { copyRight: number }) {
         const l = loop(i);
         return (
           <div key={k.src} className="absolute" style={{ left: k.left, top: k.top, width: k.width, height: k.height, zIndex: Math.round(k.depth * 10) }} data-key={k.src} data-mark={k.mark}>
+            {/* The site's entrance timing for this key (FloatEarly.astro). */}
+            <div
+              className="first-run-key-in absolute inset-0"
+              style={{ "--ed": `${(0.85 + k.depth * 0.35).toFixed(2)}s`, "--edl": `${(0.04 + (1 - k.depth) * 0.2 + (i % 4) * 0.04).toFixed(2)}s`, "--fy": `${(24 + k.depth * 70).toFixed(0)}px`, "--fs": (0.86 - k.depth * 0.12).toFixed(2) } as CSSProperties}
+            >
             <div
               className="first-run-key absolute inset-0"
               style={{ "--r": `${k.rot}deg`, "--dx": `${l.dx}px`, "--dy": `${l.dy}px`, "--dr": `${l.dr}deg`, "--dur": `${l.dur}s`, "--delay": `${l.delay}s` } as CSSProperties}
@@ -156,6 +161,7 @@ export function FloatKeys({ copyRight }: { copyRight: number }) {
                   </svg>
                 </div>
               ) : null}
+            </div>
             </div>
           </div>
         );

@@ -192,7 +192,7 @@ mod tests {
         let first = judge(&seen, &mut m, 100);
         assert!(!first.contains_key("local:mine"), "{first:?}");
         assert!(matches!(first["local:kid"], Verdict::Waiting { .. }));
-        assert!(GRACE_SECS <= 60);
+        const _: () = assert!(GRACE_SECS <= 60);
         assert!(matches!(
             judge(&seen, &mut m, 100 + GRACE_SECS)["local:kid"],
             Verdict::End { .. }

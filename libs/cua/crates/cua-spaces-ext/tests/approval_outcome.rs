@@ -105,6 +105,28 @@ fn events(fx: &Fx, k: u32, evs: &[Value]) {
     fx.srv.state.put_file(&path, log.into_bytes());
 }
 
+/// Prompts session `k`'s runner was handed, in order.
+fn inbox(fx: &Fx, k: u32) -> Vec<String> {
+    let prefix = format!("{RUNS}/{}/inbox/", run(k));
+    let mut files: Vec<(String, Vec<u8>)> = fx
+        .srv
+        .state
+        .files()
+        .into_iter()
+        .filter(|(p, _)| p.starts_with(&prefix))
+        .collect();
+    files.sort();
+    files
+        .into_iter()
+        .map(|(_, b)| {
+            serde_json::from_slice::<Value>(&b).unwrap()["text"]
+                .as_str()
+                .unwrap_or("")
+                .to_string()
+        })
+        .collect()
+}
+
 /// A member `ada` with `n` sessions, each with an idle run at turn 1 the
 /// supervisor has seen.
 async fn member(fx: &mut Fx, n: u32) -> Persistent {

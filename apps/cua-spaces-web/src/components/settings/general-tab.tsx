@@ -11,6 +11,7 @@ import { SettingsGroup, SettingsRow } from "@/components/settings-group";
 import { CliSettingsSection } from "@/components/settings/cli-section";
 import { CoreSettingsRow } from "@/components/settings/core-section";
 import { DefaultSpaceGroup } from "@/components/settings/default-space-group";
+import { LanguageRow } from "@/components/settings/language-row";
 import { RepoCacheGroup } from "@/components/settings/repo-cache-group";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -111,6 +112,7 @@ export function GeneralTab() {
           />
         ))}
         <SettingsRow label="Appearance" control={<Segmented aria-label="Appearance" value={preference} options={APPEARANCE} onValueChange={setPreference} />} />
+        <LanguageRow />
         <ShortcutRow shortcut={settings?.globalShortcut} onChange={(accelerator) => chooseSetting("global-shortcut", accelerator)} />
         {telemetryRow ? (
           <CoreSettingsRow

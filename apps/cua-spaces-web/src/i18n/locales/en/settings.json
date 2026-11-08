@@ -1,0 +1,8 @@
+{
+  "settings.general.language": "Language",
+  "settings.general.language_help": "Cua Spaces uses your computer's language unless you pick one here.",
+  "settings.general.language_system": "System ({language})",
+  "settings.general.language_preview": "{language} (Preview)",
+  "settings.general.language_pseudo": "Pseudo (layout test)",
+  "settings.general.language_failed": "Couldn't change the language"
+}

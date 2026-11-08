@@ -154,10 +154,11 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate, NSTableViewD
     let erroringTogglesLabel = NSTextField(labelWithString: "")
     let disabledCheckbox = NSButton(checkboxWithTitle: "Unavailable option", target: nil, action: nil)
     let disabledStateLabel = NSTextField(labelWithString: "")
-    let activeOnlyButton = ActiveOnlyButton(title: "Active only", target: nil, action: nil)
-    let activeOnlyField = NSTextField(string: "")
-    let activeOnlyLabel = NSTextField(labelWithString: "active_only=none")
-    let activationsLabel = NSTextField(labelWithString: "activations=0")
+    // Lazy: an ordinary launch never creates the opt-in active-only controls.
+    lazy var activeOnlyButton = ActiveOnlyButton(title: "Active only", target: nil, action: nil)
+    lazy var activeOnlyField = NSTextField(string: "")
+    lazy var activeOnlyLabel = NSTextField(labelWithString: "active_only=none")
+    lazy var activationsLabel = NSTextField(labelWithString: "activations=0")
     var activations = 0
     let selectionItems = ["alpha", "beta", "gamma"]
     let selectionTable = NSTableView()
@@ -826,7 +827,7 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate, NSTableViewD
         guard let field = obj.object as? NSTextField else { return }
         if field === textInput {
             textInputMirror.stringValue = field.stringValue
-        } else if field === activeOnlyField {
+        } else if field.accessibilityIdentifier() == kActiveOnlyFieldAID {
             recordActiveOnly("text:\(field.stringValue)")
         }
     }

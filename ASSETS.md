@@ -105,3 +105,42 @@ trycua/cua#6546 (CUA-3510) screenshots: the five spaces-1b-*.jpg images above (a
 <img width="2280" height="900" alt="envtag-after-local-staging" src="https://github.com/user-attachments/assets/2d1aa524-c77e-44c5-b12c-807d1cc577f1" />
 <img width="2280" height="900" alt="envtag-after-stable" src="https://github.com/user-attachments/assets/3ba9726c-9c99-4e5f-a1cd-eb61694a0d80" />
 <img width="2280" height="900" alt="envtag-before" src="https://github.com/user-attachments/assets/e3345e70-b719-4a39-996f-2a41dadeadf1" />
+
+
+## trycua/cua#6965 (CUA-3816)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<img width="1440" height="900" alt="cua-3816-before-settings-claude-desktop" src="https://github.com/user-attachments/assets/04c02165-c87e-4799-910f-859edf33ef96" />
+<img width="840" height="1720" alt="cua-3816-before-onboarding-agent-narrow" src="https://github.com/user-attachments/assets/fda0931b-d458-4c4c-9881-dfe2638771a8" />
+<img width="1440" height="900" alt="cua-3816-before-onboarding-agent-desktop" src="https://github.com/user-attachments/assets/ecf6411f-5ac7-43de-bba7-0657ace350af" />
+<img width="840" height="2800" alt="cua-3816-before-home-hidden-narrow" src="https://github.com/user-attachments/assets/ca4ce739-faeb-4d23-b53f-278d424c399e" />
+<img width="1440" height="1000" alt="cua-3816-before-home-hidden-desktop" src="https://github.com/user-attachments/assets/a563cfb1-7ded-4489-99ed-f2d8ea53ab14" />
+<img width="840" height="1720" alt="cua-3816-before-home-agent-menu-narrow" src="https://github.com/user-attachments/assets/fa9f8e2d-433d-475a-97ff-3008038d47e8" />
+<img width="1440" height="900" alt="cua-3816-before-home-agent-menu-desktop" src="https://github.com/user-attachments/assets/f5db09fc-c5e4-4f01-b297-3a217d404507" />
+<img width="840" height="1720" alt="cua-3816-after-settings-claude-narrow" src="https://github.com/user-attachments/assets/db131dcf-fc23-497b-9e5d-1cfcaaecdb6e" />
+<img width="1440" height="1100" alt="cua-3816-after-settings-claude-desktop" src="https://github.com/user-attachments/assets/0b4c173f-8c3b-4305-ad4c-b930a5aa9525" />
+<img width="840" height="1720" alt="cua-3816-after-onboarding-agent-narrow" src="https://github.com/user-attachments/assets/c3200406-d8f2-47be-91df-fc8872d00778" />
+<img width="1440" height="900" alt="cua-3816-after-onboarding-agent-desktop" src="https://github.com/user-attachments/assets/08d159e5-385f-44fb-bcf4-a6ae31af18bf" />
+<img width="840" height="2800" alt="cua-3816-after-home-hidden-narrow" src="https://github.com/user-attachments/assets/2913d0a1-9509-4821-8500-3448fc0e3d23" />
+<img width="1440" height="1000" alt="cua-3816-after-home-hidden-desktop" src="https://github.com/user-attachments/assets/5af4f840-9ce1-44b2-91ef-826a826e897c" />
+<img width="840" height="1720" alt="cua-3816-after-home-agent-menu-narrow" src="https://github.com/user-attachments/assets/a18a1cd5-00b7-4fc2-add7-13b71462472c" />
+<img width="1440" height="900" alt="cua-3816-after-home-agent-menu-desktop" src="https://github.com/user-attachments/assets/dd56ca36-18d7-4ed5-a49f-3b1fb42a603c" />
+<img width="1440" height="900" alt="cua-3816-after-computers-list-hidden" src="https://github.com/user-attachments/assets/8f354564-e94a-4888-a83c-0212bf371f72" />
+<img width="1440" height="900" alt="cua-3816-after-computer-page-hidden" src="https://github.com/user-attachments/assets/c97674fb-98a5-4c5a-91b6-55a0e69608da" />
+<img width="1440" height="900" alt="cua-3816-before-computer-page-hidden" src="https://github.com/user-attachments/assets/bf5c1f08-f9fc-46ae-b3d3-542d42e2db32" />

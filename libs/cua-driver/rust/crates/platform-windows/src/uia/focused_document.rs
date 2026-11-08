@@ -29,6 +29,7 @@ use super::windows_enum::{run_focused_document_uia, UiaDeadlineError};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum FocusedDocumentTypeOutcome {
     NotApplicable,
+    Unanswered,
     Confirmed,
     Unknown(&'static str),
 }
@@ -464,7 +465,12 @@ fn focused_document_worker_error(
         return FocusedDocumentTypeOutcome::Unknown("focused UIA write is still in flight");
     }
     if state == 0 {
-        return FocusedDocumentTypeOutcome::NotApplicable;
+        return match error {
+            UiaDeadlineError::Timeout | UiaDeadlineError::Busy => {
+                FocusedDocumentTypeOutcome::Unanswered
+            }
+            UiaDeadlineError::Unavailable => FocusedDocumentTypeOutcome::NotApplicable,
+        };
     }
     match error {
         UiaDeadlineError::Busy => FocusedDocumentTypeOutcome::NotApplicable,
@@ -568,20 +574,24 @@ mod tests {
         ));
         assert_eq!(
             focused_document_worker_error(UiaDeadlineError::Busy, 0, false),
+            FocusedDocumentTypeOutcome::Unanswered
+        );
+    }
+
+    #[test]
+    fn an_unavailable_worker_before_the_write_allows_native_fallback() {
+        assert_eq!(
+            focused_document_worker_error(UiaDeadlineError::Unavailable, 0, false),
             FocusedDocumentTypeOutcome::NotApplicable
         );
     }
 
     #[test]
-    fn worker_errors_before_write_allow_native_fallback() {
-        for error in [
-            UiaDeadlineError::Busy,
-            UiaDeadlineError::Timeout,
-            UiaDeadlineError::Unavailable,
-        ] {
+    fn a_probe_past_its_deadline_or_still_running_before_the_write_sends_no_keys() {
+        for error in [UiaDeadlineError::Timeout, UiaDeadlineError::Busy] {
             assert_eq!(
                 focused_document_worker_error(error, 0, false),
-                FocusedDocumentTypeOutcome::NotApplicable
+                FocusedDocumentTypeOutcome::Unanswered
             );
         }
     }

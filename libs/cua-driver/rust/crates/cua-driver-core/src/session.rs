@@ -2598,6 +2598,47 @@ mod tests {
         end_session(sid);
     }
 
+    /// An end that found no call in flight and released the records lock
+    /// still loses to a call admitted before it removes the record: the
+    /// removal waits for that call instead of running cleanup under it.
+    #[test]
+    fn an_end_waits_for_a_call_admitted_after_it_decided() {
+        let sid = "test-end-after-admit-SE5";
+        let reasons = Arc::new(Mutex::new(Vec::new()));
+        let seen = reasons.clone();
+        let _hook = register_scoped_session_end_hook(move |id| {
+            if id == sid {
+                seen.lock().unwrap().push(session_end_reason(id));
+            }
+        });
+        use_session(sid).unwrap();
+        let call = begin_session_dispatch(
+            sid,
+            None,
+            sid,
+            false,
+            SessionTransport::Daemon,
+            SessionClientKind::Direct,
+        )
+        .unwrap();
+        // The end's second critical section, reached after its in-flight check.
+        finish_session_end(sid, SessionEndReason::Explicit, None);
+        assert!(
+            !is_session_ended(sid),
+            "the admitted call keeps its session"
+        );
+        assert!(
+            reasons.lock().unwrap().is_empty(),
+            "no cleanup under a live call"
+        );
+        drop(call);
+        assert!(
+            is_session_ended(sid),
+            "the end completes when the call ends"
+        );
+        assert_eq!(*reasons.lock().unwrap(), [Some(SessionEndReason::Explicit)]);
+    }
+
     #[test]
     fn a_terminal_end_overrides_an_idle_end_deferred_behind_a_dispatch() {
         let sid = "__cua_runtime_deferred-idle:named";

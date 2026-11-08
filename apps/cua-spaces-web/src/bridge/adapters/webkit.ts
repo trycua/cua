@@ -356,6 +356,7 @@ export function toSettingsSnapshot(s: WkSettings, page: Pick<SettingsValues, "th
     globalShortcut: s.globalShortcut ? { label: s.globalShortcut.label, registered: s.globalShortcut.registered } : null,
     accountUrl: s.accountUrl ?? null,
     cli: s.cli && s.cli.name ? { name: s.cli.name, installed: Boolean(s.cli.installed) } : null,
+    target: s.target ? { channel: s.target.channel, env: s.target.env, authHost: s.target.authHost ?? "" } : null,
   };
 }
 

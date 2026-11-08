@@ -82,7 +82,7 @@ import type { AgentMember, JoinCode, JoinCodeRow, LiveAgent, LiveChild, MemberId
 import type { PresenceCursorWire, PresenceJoinInfo, PresenceParticipantWire } from "../ops/presence";
 import type { StartupState } from "../ops/startup";
 import type { StreamTicket } from "../ops/stream";
-import type { AgentMenuPrefs, CliInfo, GlobalShortcut, HostSettings, HostSignIn, HostSignInFailure, NetworkEventWire, OpName, ServiceWire, SessionSnapshot, SettingsSnapshot, SettingsValues, SpaceNetworkWire, TreeBudgetLimitsWire, TreeBudgetWire, TreeNodeWire } from "../protocol";
+import type { AgentMenuPrefs, AppTarget, CliInfo, GlobalShortcut, HostSettings, HostSignIn, HostSignInFailure, NetworkEventWire, OpName, ServiceWire, SessionSnapshot, SettingsSnapshot, SettingsValues, SpaceNetworkWire, TreeBudgetLimitsWire, TreeBudgetWire, TreeNodeWire } from "../protocol";
 import type { WebkitMethod, WkHostState, WkMachines, WkOnboarding, WkSession, WkSettings, WkSettingsRow, WkSpace, WkSpaces } from "../webkit-protocol";
 import { Defs, any, bool, dict, list, nul, nullable, num, obj, object, oneOf, opt, optNull, str, union, type Schema } from "./schema";
 
@@ -500,6 +500,7 @@ const SettingsShape = ref(
     globalShortcut: optNull(obj<GlobalShortcut>()({ label: str, registered: bool })),
     accountUrl: optNull(str),
     cli: optNull(obj<CliInfo>()({ name: str, installed: bool })),
+    target: optNull(obj<AppTarget>()({ channel: str, env: str, authHost: str })),
   }),
 );
 
@@ -1917,6 +1918,7 @@ const WkSettingsShape = ref(
     globalShortcut: optNull(object({ label: str, registered: bool })),
     accountUrl: optNull(str),
     cli: optNull(object({ name: str, installed: bool })),
+    target: optNull(object({ channel: str, env: str, authHost: str })),
     tips: opt(TipsStateShape),
     notchPinned: opt(strings),
     agentMenu: opt(AgentMenuPrefsShape),

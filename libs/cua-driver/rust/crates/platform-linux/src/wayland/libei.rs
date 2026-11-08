@@ -652,36 +652,34 @@ impl EisState {
     fn dispatch_eis_event(&mut self, event: reis::ei::Event) {
         use reis::ei::Event;
         match event {
-            Event::Handshake(handshake, ev) => {
-                if let reis::ei::handshake::Event::HandshakeVersion { .. } = ev {
-                    handshake.handshake_version(1);
-                    handshake.name("cua-driver");
-                    handshake.context_type(reis::ei::handshake::ContextType::Sender);
-                    // Advertise the interface set + versions that reis 0.7's own
-                    // EIS client examples use against real compositors. The
-                    // previous list advertised ei_device v2 and omitted
-                    // ei_pingpong, which Mutter rejects — it closes the EIS
-                    // connection immediately after our handshake `finish()`
-                    // (observed: one Handshake event, then read() errors). reis's
-                    // handshaker also requires ei_pingpong / ei_callback /
-                    // ei_connection. See reis 0.7 examples/type-text.rs.
-                    for (iface, ver) in [
-                        ("ei_callback", 1u32),
-                        ("ei_connection", 1),
-                        ("ei_pingpong", 1),
-                        ("ei_seat", 1),
-                        ("ei_device", 1),
-                        ("ei_pointer", 1),
-                        ("ei_pointer_absolute", 1),
-                        ("ei_button", 1),
-                        ("ei_scroll", 1),
-                        ("ei_keyboard", 1),
-                        ("ei_text", 1),
-                    ] {
-                        handshake.interface_version(iface, ver);
-                    }
-                    handshake.finish();
+            Event::Handshake(handshake, reis::ei::handshake::Event::HandshakeVersion { .. }) => {
+                handshake.handshake_version(1);
+                handshake.name("cua-driver");
+                handshake.context_type(reis::ei::handshake::ContextType::Sender);
+                // Advertise the interface set + versions that reis 0.7's own
+                // EIS client examples use against real compositors. The
+                // previous list advertised ei_device v2 and omitted
+                // ei_pingpong, which Mutter rejects — it closes the EIS
+                // connection immediately after our handshake `finish()`
+                // (observed: one Handshake event, then read() errors). reis's
+                // handshaker also requires ei_pingpong / ei_callback /
+                // ei_connection. See reis 0.7 examples/type-text.rs.
+                for (iface, ver) in [
+                    ("ei_callback", 1u32),
+                    ("ei_connection", 1),
+                    ("ei_pingpong", 1),
+                    ("ei_seat", 1),
+                    ("ei_device", 1),
+                    ("ei_pointer", 1),
+                    ("ei_pointer_absolute", 1),
+                    ("ei_button", 1),
+                    ("ei_scroll", 1),
+                    ("ei_keyboard", 1),
+                    ("ei_text", 1),
+                ] {
+                    handshake.interface_version(iface, ver);
                 }
+                handshake.finish();
             }
             Event::Callback(callback, reis::ei::callback::Event::Done { .. }) => {
                 if let Some((reply, _)) = self.pending_sync.remove(&callback) {
@@ -793,14 +791,12 @@ impl EisState {
             Event::Keyboard(
                 _kb,
                 reis::ei::keyboard::Event::Keymap {
-                    keymap_type,
+                    keymap_type: reis::ei::keyboard::KeymapType::Xkb,
                     size,
                     keymap,
                 },
             ) => {
-                if keymap_type == reis::ei::keyboard::KeymapType::Xkb {
-                    self.load_xkb_keymap(keymap, size);
-                }
+                self.load_xkb_keymap(keymap, size);
             }
             _ => {}
         }
@@ -988,7 +984,7 @@ impl EisState {
                 // Bound the interpolation: run_command executes synchronously in
                 // the worker loop, so a huge step count would block EIS event
                 // processing (incl. Ping) and balloon the unflushed request queue.
-                let n = (*steps).max(1).min(500);
+                let n = (*steps).clamp(1, 500);
                 let delay = drag_step_delay(*duration_ms, n);
                 for s in 1..=n {
                     let t = s as f32 / n as f32;
@@ -1281,7 +1277,7 @@ fn device_interface<T: reis::Interface>(
 }
 
 fn drag_step_delay(duration_ms: u64, steps: u32) -> std::time::Duration {
-    let frames = u64::from(steps.max(1).min(500));
+    let frames = u64::from(steps.clamp(1, 500));
     std::time::Duration::from_micros(
         duration_ms
             .min(10_000)

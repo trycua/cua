@@ -1517,7 +1517,7 @@ pub fn with_foreground_hid_activation(
         crate::ax::bindings::raise_exact_window_of_pid(target_pid, target_wid);
     }
     if !await_window_focused(target_pid, target_wid) {
-        if prev_ok {
+        if restores_front(prev_ok, front_psn(), target_psn) {
             unsafe { set_front(prev_psn.as_ptr() as *const c_void, 0, 0x400) };
         }
         anyhow::bail!(

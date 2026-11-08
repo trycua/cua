@@ -449,7 +449,7 @@ pub const ONBOARDING_PAGES: &[&str] = &[
 ];
 /// The first run's screens in the order the app shows them
 /// (`cua-spaces-app-core` `first_run`), as `cua_onboarding_step_*` and
-/// `cua_onboarding_skipped` name them. Its position (1 to 6) is the
+/// `cua_onboarding_skipped` name them. Its position (1 to 7) is the
 /// `step_index`, so a funnel keeps its order whichever screens a machine
 /// skips (no terminal screen once the CLI is installed, no permissions off a Mac).
 pub const FIRST_RUN_STEPS: &[&str] = &[
@@ -459,6 +459,18 @@ pub const FIRST_RUN_STEPS: &[&str] = &[
     "sign_in",
     "permissions",
     "create_space",
+    "ready",
+];
+/// The agent the Ready screen was shown for (the setup's agent ids with `_`
+/// for `-`; anything else is `other`; `none` off the Ready screen). A name, never a path or a command.
+pub const FIRST_RUN_AGENTS: &[&str] = &[
+    "claude_code",
+    "codex",
+    "hermes",
+    "cursor",
+    "openclaw",
+    "other",
+    "none",
 ];
 /// Why a first-run screen failed (fixed words; never the message).
 pub const FIRST_RUN_FAIL_REASONS: &[&str] = &[
@@ -963,13 +975,18 @@ const FIRST_RUN_PROPS: &[Prop] = &[
     p("step", Kind::Enum(FIRST_RUN_STEPS), "The first-run screen."),
     p(
         "step_index",
-        Kind::Count { max: 6 },
-        "Its position, 1 to 6.",
+        Kind::Count { max: 7 },
+        "Its position, 1 to 7.",
     ),
     p(
         "onboarding_version",
         Kind::Count { max: 100 },
         "The first run's version (2).",
+    ),
+    p(
+        "agent",
+        Kind::Enum(FIRST_RUN_AGENTS),
+        "The agent the Ready screen was for (claude_code, codex, hermes, cursor, openclaw, other); none on every other screen.",
     ),
 ];
 
@@ -1143,6 +1160,8 @@ pub mod event {
     pub const ONBOARDING_STEP_COMPLETED: &str = "cua_onboarding_step_completed";
     pub const ONBOARDING_STEP_FAILED: &str = "cua_onboarding_step_failed";
     pub const ONBOARDING_SKIPPED: &str = "cua_onboarding_skipped";
+    pub const ONBOARDING_COMMAND_COPIED: &str = "cua_onboarding_command_copied";
+    pub const ONBOARDING_CHAT_PICKED_UP: &str = "cua_onboarding_chat_picked_up";
     pub const SPACE_WIZARD: &str = "cua_space_wizard";
     pub const SPACE_CREATE: &str = "cua_space_create";
     pub const SPACE_CREATE_STARTED: &str = "cua_space_create_started";
@@ -1867,7 +1886,25 @@ pub const EVENTS: &[EventSpec] = &[
         sample_rate: 1.0,
         products: &["spaces_app"],
         props: FIRST_RUN_PROPS,
-        purpose: "Onboarding v2 funnel: how many installs finish each first-run screen.",
+        purpose: "Onboarding v2 funnel: how many installs finish each first-run screen. For `ready`, finishing is Done.",
+    },
+    EventSpec {
+        name: event::ONBOARDING_COMMAND_COPIED,
+        version: 1,
+        tier: Tier::Usage,
+        sample_rate: 1.0,
+        products: &["spaces_app"],
+        props: FIRST_RUN_PROPS,
+        purpose: "Onboarding v2 funnel: the person pressed Copy on the Ready screen's terminal command (never the command). Says nothing about whether it was pasted.",
+    },
+    EventSpec {
+        name: event::ONBOARDING_CHAT_PICKED_UP,
+        version: 1,
+        tier: Tier::Usage,
+        sample_rate: 1.0,
+        products: &["spaces_app"],
+        props: FIRST_RUN_PROPS,
+        purpose: "Onboarding v2 funnel: the person pressed Continue in Cua on a recent chat on the Ready screen (never the chat's title or path). It also ends the first run.",
     },
     EventSpec {
         name: event::ONBOARDING_STEP_FAILED,
@@ -1879,8 +1916,8 @@ pub const EVENTS: &[EventSpec] = &[
             p("step", Kind::Enum(FIRST_RUN_STEPS), "The first-run screen."),
             p(
                 "step_index",
-                Kind::Count { max: 6 },
-                "Its position, 1 to 6.",
+                Kind::Count { max: 7 },
+                "Its position, 1 to 7.",
             ),
             p(
                 "onboarding_version",
@@ -1905,8 +1942,8 @@ pub const EVENTS: &[EventSpec] = &[
             p("step", Kind::Enum(FIRST_RUN_STEPS), "The first-run screen."),
             p(
                 "step_index",
-                Kind::Count { max: 6 },
-                "Its position, 1 to 6.",
+                Kind::Count { max: 7 },
+                "Its position, 1 to 7.",
             ),
             p(
                 "onboarding_version",

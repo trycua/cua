@@ -21,10 +21,27 @@ pub fn available_memory_mb() -> Option<u64> {
     {
         mac::available_mb()
     }
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    #[cfg(windows)]
+    {
+        win_memory().map(|(_, avail)| avail)
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
     {
         None
     }
+}
+
+/// `(total, available)` physical memory in MiB (`GlobalMemoryStatusEx`).
+#[cfg(windows)]
+fn win_memory() -> Option<(u64, u64)> {
+    use windows_sys::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
+    // SAFETY: a zeroed MEMORYSTATUSEX with its length set, as the call needs.
+    let mut m: MEMORYSTATUSEX = unsafe { std::mem::zeroed() };
+    m.dwLength = std::mem::size_of::<MEMORYSTATUSEX>() as u32;
+    if unsafe { GlobalMemoryStatusEx(&mut m) } == 0 {
+        return None;
+    }
+    Some((m.ullTotalPhys / (1024 * 1024), m.ullAvailPhys / (1024 * 1024)))
 }
 
 /// Memory pressure: 0 normal, 1 warn (compressing or swapping), 2 critical
@@ -741,7 +758,12 @@ mod mac {
     }
 }
 
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+#[cfg(windows)]
+fn imp() -> Option<u64> {
+    win_memory().map(|(total, _)| total)
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
 fn imp() -> Option<u64> {
     None
 }

@@ -164,9 +164,10 @@ checks are in [`.github/workflows/FLAKY.md`](.github/workflows/FLAKY.md).
 
 ## Try a Pull Request Without Building It
 
-Maintainers can add the `preview:mac` label to a pull request from a branch of this repository. CI then builds
-an installable "Cua Spaces Local" macOS app from the pull request head and comments the download link. See
-[CI](../docs/contributing/CI.md#try-a-pull-request-the-previewmac-label). Pull requests from forks are not built.
+Maintainers can add the `preview:mac`, `preview:windows` or `preview:linux` label to a pull request from a branch of this
+repository. CI then builds an installable Cua Spaces for that system from the pull request head (a "Cua Spaces Local"
+macOS app, a portable Windows folder, or the Linux AppImage and deb) and comments the download links. See
+[CI](../docs/contributing/CI.md#try-a-pull-request-the-previewmac-previewwindows-and-previewlinux-labels). Pull requests from forks are not built.
 
 ## Preserve Contributor Authorship
 

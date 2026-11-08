@@ -40,7 +40,7 @@ def test_gate_wiring():
     assert GATE['jobs']['ci-gate']['timeout-minutes'] == 180
     assert '.workflow_id != $GITHUB_WORKFLOW_ID' in SCRIPT
     assert '(.event == \\"pull_request\\" or .event == \\"pull_request_target\\")' in SCRIPT
-    assert 'claude-auto-fix|ci-cua-spaces-preview-mac|ci-release-reminder|review-cua-perception-candidates|/cla[.]yml($|@)' in SCRIPT
+    assert 'claude-auto-fix|ci-cua-spaces-preview-|ci-release-reminder|review-cua-perception-candidates|/cla[.]yml($|@)' in SCRIPT
 
 
 def filtered_runs(ignore_re):

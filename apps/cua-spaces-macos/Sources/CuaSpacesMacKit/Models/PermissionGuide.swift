@@ -344,6 +344,10 @@ public enum PermissionGuide {
                 lastStates = now
                 let state = now[pane] ?? .unknown
                 controller?.setGuidance(guidance(for: pane, state: state, appName: appName(), paneName: paneName(pane)))
+                // Dock again under System Settings as it is now: after a switch
+                // out of a full-screen Cua Spaces, the screen's free area is
+                // only right once System Settings' Space is in front.
+                controller?.refit()
                 if state == .on { granted(pane, others: granted(in: now)); return }
                 try? await Task.sleep(for: pollInterval)
             }

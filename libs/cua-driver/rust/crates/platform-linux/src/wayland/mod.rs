@@ -22,6 +22,8 @@ pub mod hyprland_input;
 pub mod kwin_access;
 pub mod kwin_capture;
 pub mod kwin_helper;
+#[cfg(feature = "portal-input")]
+mod kwin_keystate;
 pub(crate) mod kwin_layout;
 pub mod niri;
 pub use niri::keyboard::call_budget as niri_keyboard_budget;
@@ -35,6 +37,8 @@ mod primary_seat;
 mod region_route;
 pub mod shell_helper;
 pub mod sway_ipc;
+mod text_keys;
+pub(crate) use text_keys::NOTHING_TYPED;
 mod virtual_keyboard;
 // RemoteDesktop/libei input is portable and ships in release binaries.
 #[cfg(feature = "portal-input")]
@@ -1410,13 +1414,15 @@ fn crop_png_to_rect(
 /// Display-level capture dispatcher. Cascade:
 /// 1. Opt-in GNOME compositor helper. If available, capture failure is
 ///    terminal rather than cascading into GNOME's portal implementation.
-/// 2. Native Wayland on wlroots: zwlr_screencopy_manager_v1 (fast, zero
+/// 2. KWin's ScreenShot2, only while `cua-driver kwin-capture` is on. A Deny
+///    saved in the portal keeps it off unless the operator overrode it.
+/// 3. Native Wayland on wlroots: zwlr_screencopy_manager_v1 (fast, zero
 ///    consent).
-/// 3. ext-image-copy-capture-v1 on supported compositors.
-/// 4. xdg-desktop-portal Screenshot via ashpd. Triggers a consent prompt on
-///    first use per session. A refusal from the portal is terminal; the
-///    request has a 30-second deadline, after which the cascade continues.
-/// 5. X11: existing root-window path.
+/// 4. ext-image-copy-capture-v1 on supported compositors.
+/// 5. xdg-desktop-portal Screenshot via ashpd. Asks once and saves the answer. A
+///    refusal from the portal is terminal; the request has a 30-second deadline,
+///    after which the cascade continues.
+/// 6. X11: existing root-window path.
 pub fn screenshot_display_dispatch() -> anyhow::Result<Vec<u8>> {
     if niri::is_session() {
         return niri_display_capture().map(|capture| capture.png);
@@ -1441,7 +1447,15 @@ pub fn screenshot_display_dispatch() -> anyhow::Result<Vec<u8>> {
         ) {
             return result;
         }
-        // Tier 2: native wlroots screencopy (fast, zero consent).
+        // Tier 2: every output from KWin, with no portal request to wait on.
+        if let Some(bytes) = kwin_workspace_capture(
+            kwin_capture::may_be_session(),
+            kwin_access::allowed,
+            kwin_capture::capture_workspace,
+        ) {
+            return Ok(bytes);
+        }
+        // Tier 3: native wlroots screencopy (fast, zero consent).
         match screenshot_bytes() {
             Ok(bytes) => return orient_display_png(bytes),
             Err(e) => {
@@ -1450,7 +1464,7 @@ pub fn screenshot_display_dispatch() -> anyhow::Result<Vec<u8>> {
                 );
             }
         }
-        // Tier 3: ext-image-copy-capture-v1 (sway 1.10+, labwc 0.8+,
+        // Tier 4: ext-image-copy-capture-v1 (sway 1.10+, labwc 0.8+,
         // hyprland, KDE 6.2+, GNOME 47+).
         match ext_screencopy::screenshot_via_ext_copy() {
             Ok(bytes) => return orient_display_png(bytes),
@@ -1460,7 +1474,7 @@ pub fn screenshot_display_dispatch() -> anyhow::Result<Vec<u8>> {
                 );
             }
         }
-        // Tier 4: xdg-desktop-portal (GNOME, KDE, COSMIC fallback), then X11.
+        // Tier 5: xdg-desktop-portal (GNOME, KDE, COSMIC fallback), then X11.
         return portal_or_x11(
             portal_screenshot::screenshot_via_portal,
             crate::capture::screenshot_display_bytes_x11,
@@ -1535,6 +1549,23 @@ fn checked_shell_helper_capture(
         .then(|| capture().ok_or_else(|| anyhow::anyhow!("GNOME compositor helper capture failed")))
 }
 
+/// The KWin tier. It never runs past the operator's switch, which also keeps a
+/// saved portal Deny: ScreenShot2 doesn't ask the portal, so skipping the switch
+/// would capture a desktop the user refused. A failure falls through to the
+/// tiers below.
+fn kwin_workspace_capture(
+    may_be_kwin: bool,
+    allowed: impl FnOnce() -> bool,
+    capture: impl FnOnce() -> anyhow::Result<Vec<u8>>,
+) -> Option<Vec<u8>> {
+    if !may_be_kwin || !allowed() {
+        return None;
+    }
+    capture()
+        .inspect_err(|e| tracing::debug!("KWin workspace capture unavailable: {e:#}"))
+        .ok()
+}
+
 /// The cascade tail: the portal tier, then the X11 root window. A portal
 /// refusal (`Err`) ends the cascade; only an unavailable portal (`Ok(None)`)
 /// falls through to X11.
@@ -1602,7 +1633,7 @@ fn libei_recovery<T>(
                 tracing::info!(
                     "wlroots virtual-pointer unavailable ({e}); falling back to libei/portal"
                 );
-                return fallback();
+                fallback()
             }
             #[cfg(not(feature = "portal-input"))]
             {
@@ -2839,11 +2870,39 @@ pub fn type_text_focused(text: &str) -> anyhow::Result<()> {
     type_into(None, text)
 }
 
+/// [`type_text_focused`] one character at a time, `gap` after each. The whole
+/// text is checked and its line endings made line feeds first, so a character
+/// that can't be typed refuses it with nothing sent, and `\r\n` is one Return.
+pub fn type_text_focused_paced(text: &str, gap: std::time::Duration) -> anyhow::Result<()> {
+    let text = text_keys::typable_text(text)?;
+    let total = text.chars().count();
+    let mut buf = [0u8; 4];
+    for (done, ch) in text.chars().enumerate() {
+        match type_into(None, ch.encode_utf8(&mut buf)) {
+            Err(error) if done > 0 => return Err(stopped_after(done, total, &error)),
+            result => result?,
+        }
+        std::thread::sleep(gap);
+    }
+    Ok(())
+}
+
+/// A stop after `done` characters went out. A refusal of the next one loses its
+/// claim that nothing was typed, which held only for that character.
+fn stopped_after(done: usize, total: usize, error: &anyhow::Error) -> anyhow::Error {
+    let detail = format!("{error:#}");
+    let detail = detail
+        .strip_suffix(text_keys::NOTHING_TYPED)
+        .map_or(detail.as_str(), |rest| rest.trim_end_matches("; "));
+    anyhow::anyhow!("type_text stopped after {done} of {total} characters: {detail}")
+}
+
 /// [`type_text`] into `window`, activated first, or [`type_text_focused`].
 fn type_into(window: Option<u64>, text: &str) -> anyhow::Result<()> {
     if text.is_empty() {
         return Ok(());
     }
+    let text = &*text_keys::typable_text(text)?;
     window.map_or(Ok(()), activate_window_for_input)?;
     if niri::is_session() {
         return niri::keyboard::type_text(window.or_else(niri_expected_window), text);
@@ -2876,6 +2935,7 @@ fn type_into(window: Option<u64>, text: &str) -> anyhow::Result<()> {
 /// headless wlroots seat dropping the first event from a second `wtype`
 /// process after the text has landed.
 pub fn type_text_then_key_focused(text: &str, key: &str) -> anyhow::Result<()> {
+    let text = &*text_keys::typable_text(text)?;
     let keysym = key_to_keysym(key);
     if niri::is_session() {
         niri::keyboard::type_text(niri_expected_window(), text)?;
@@ -2981,14 +3041,14 @@ fn chord_into(window: Option<u64>, keys: &[String]) -> anyhow::Result<()> {
             let stderr = other.map(|o| String::from_utf8_lossy(&o.stderr).into_owned());
             #[cfg(feature = "portal-input")]
             {
-                return with_wtype_libei_fallback(
+                with_wtype_libei_fallback(
                     || {
                         libei::wait_keyboard_ready()?;
                         window.map_or(Ok(()), activate_window_for_input)?;
                         libei_hotkey(&mods, &final_key)
                     },
                     stderr,
-                );
+                )
             }
             #[cfg(not(feature = "portal-input"))]
             {
@@ -3316,6 +3376,19 @@ fn libei_drag(
     )?;
     record_synth_cursor(to_x, to_y);
     Ok(())
+}
+
+/// The time the input route may spend between the parts of `text`, at most.
+pub(crate) fn text_pacing(text: &str) -> std::time::Duration {
+    #[cfg(feature = "portal-input")]
+    {
+        libei::text_pacing(text)
+    }
+    #[cfg(not(feature = "portal-input"))]
+    {
+        let _ = text;
+        std::time::Duration::ZERO
+    }
 }
 
 #[cfg(feature = "portal-input")]
@@ -4555,6 +4628,28 @@ mod output_transform_tests {
 
 #[cfg(test)]
 mod tests {
+    /// Paced text is refused whole, as unpaced text is, so a retry can't type
+    /// its start twice.
+    #[test]
+    fn paced_text_with_a_late_control_character_types_nothing() {
+        let error = super::type_text_focused_paced("abc\u{8}", std::time::Duration::ZERO)
+            .unwrap_err()
+            .to_string();
+        assert_eq!(
+            error,
+            "foreground_unavailable: control character U+0008 cannot be typed; nothing was typed"
+        );
+    }
+
+    #[test]
+    fn a_refusal_after_some_text_went_out_does_not_say_nothing_was_typed() {
+        let refusal = super::text_keys::refused("no keyboard for a line break");
+        assert_eq!(
+            super::stopped_after(1, 2, &refusal).to_string(),
+            "type_text stopped after 1 of 2 characters: foreground_unavailable: no keyboard for a line break"
+        );
+    }
+
     /// A point past the pointer space is clamped onto another pixel; the
     /// niri gate must see that rather than admit the clamped point.
     #[test]
@@ -5280,6 +5375,23 @@ mod tests {
             result.unwrap_err().to_string(),
             "GNOME compositor helper capture failed"
         );
+    }
+
+    #[test]
+    fn kwin_desktop_capture_runs_only_on_kwin_with_the_switch_on() {
+        let unasked = || -> bool { panic!("the switch is not read") };
+        let uncaptured = || -> anyhow::Result<Vec<u8>> { panic!("KWin is not asked") };
+        assert_eq!(kwin_workspace_capture(false, unasked, uncaptured), None);
+        // Off, or on with a saved portal Deny: the portal tier decides.
+        assert_eq!(kwin_workspace_capture(true, || false, uncaptured), None);
+        let shot = || Ok(b"kwin".to_vec());
+        assert_eq!(
+            kwin_workspace_capture(true, || true, shot),
+            Some(b"kwin".to_vec())
+        );
+        // A KWin that refuses leaves the rest of the cascade to run.
+        let refused = || anyhow::bail!("not authorized");
+        assert_eq!(kwin_workspace_capture(true, || true, refused), None);
     }
 
     #[test]

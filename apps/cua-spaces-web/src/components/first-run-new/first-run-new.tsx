@@ -31,10 +31,13 @@ import { permissionsStepView, type PermissionsStepView } from "@/lib/app-permiss
 import { addImportedTask, type AskTask } from "@/lib/ask-first";
 import {
   afterWhere,
+  agentInfo,
   agentView,
-  chosenAgent,
+  chosenAgents,
+  toggleAgentOff,
   dotStep,
   INSTALL_PAGES,
+  listNames,
   NEW_RUN_EMPTY,
   placeName,
   reachedAfter,
@@ -470,7 +473,12 @@ export function WhereScreen({
   );
 }
 
-export function AgentScreen({ view, onPick, onContinue, onInstall, busy }: { view: AgentView; onPick: (id: string) => void; onContinue: () => void; onInstall: (agent: "claude-code" | "codex") => void; busy: boolean }) {
+export function AgentScreen({ view, onPick, onContinue, onLater, onInstall, busy }: { view: AgentView; onPick: (id: string) => void; onContinue: () => void; onLater: () => void; onInstall: (agent: "claude-code" | "codex") => void; busy: boolean }) {
+  const later = view.later ? (
+    <button type="button" className={cn(LINK, "text-[15px]")} disabled={busy} onClick={onLater} data-new-run-agent-later="">
+      {view.later}
+    </button>
+  ) : null;
   return (
     <div data-new-run="agent" data-state={view.state}>
       <Title>{view.title}</Title>
@@ -488,12 +496,13 @@ export function AgentScreen({ view, onPick, onContinue, onInstall, busy }: { vie
               name={a.name}
               sub={a.maker}
               picked={a.picked}
-              onClick={view.state === "several" ? () => onPick(a.id) : undefined}
+              onClick={() => onPick(a.id)}
               data-new-run-agent={a.id}
             />
           ))}
         </div>
       ) : null}
+      {view.note ? <p className={cn("mt-3 max-w-[480px] text-[13.5px] font-medium", GREY)} data-new-run-agent-note="">{view.note}</p> : null}
       {view.error ? (
         <p role="alert" className="mt-3 max-w-[480px] text-[13.5px] font-medium text-white" data-new-run-agent-error="">
           {view.error}
@@ -509,14 +518,16 @@ export function AgentScreen({ view, onPick, onContinue, onInstall, busy }: { vie
             <button type="button" className={cn(LINK, "text-[15px]")} onClick={() => onInstall("codex")} data-new-run-install="codex">
               {view.install.secondary}
             </button>
+            {later}
           </Actions>
         </>
       ) : (
         // Shown (greyed) while the agents are still being looked for, so it doesn't pop in once they're found.
-        <Actions>
+        <Actions className="flex flex-wrap items-center gap-6">
           <button type="button" className={WHITE_BUTTON} disabled={!view.continueEnabled || busy} onClick={onContinue} data-onboarding-primary="">
             {busy ? "Setting up…" : "Continue"}
           </button>
+          {later}
         </Actions>
       )}
     </div>
@@ -562,9 +573,10 @@ export function PickUpWhereYouLeftOff({ onContinue, place = thisComputerText(), 
   );
 }
 
-export function ReadyScreen({ view, agent, onDone, onContinueChat, place }: { view: ReadyView; agent: string; onDone: () => void; onContinueChat?: (task: AskTask) => void; place?: string }) {
+export function ReadyScreen({ view, agent, onDone, onContinueChat, onCopied, place }: { view: ReadyView; agent: string; onDone: () => void; onContinueChat?: (task: AskTask) => void; onCopied?: () => void; place?: string }) {
   const [copied, setCopied] = useState(false);
   const copy = () => {
+    onCopied?.();
     void navigator.clipboard?.writeText(view.command).catch(() => {});
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
@@ -627,7 +639,11 @@ const FUNNEL_STEP: Partial<Record<NewRunScreenName, string>> = {
   where: "create_space",
   permissions: "permissions",
   agent: "connect_agent",
+  ready: "ready",
 };
+
+/** The picked agent as a usage-event word (`claude-code` is sent as `claude_code`); the core drops any it doesn't know. */
+const agentWord = (agent: string | null) => (agent ?? "none").replaceAll("-", "_");
 
 /** Usage events never get in the way of the run. */
 function track(send: () => void): void {
@@ -663,13 +679,11 @@ export function NewFirstRun() {
   const phase: SignInPhase = session.data?.signIn ?? { kind: "idle" };
   const [now, setNow] = useState(() => Date.now());
   const [found, setFound] = useState<string[] | null>(null);
-  const [agentPick, setAgentPick] = useState<string | null>(s.agent);
   const [connecting, setConnecting] = useState(false);
   const [connectError, setConnectError] = useState<string | null>(null);
   const [thisState, setThisState] = useState<"adding" | "added" | "failed">("adding");
   const [addError, setAddError] = useState<string | null>(null);
   const [addNeedsProof, setAddNeedsProof] = useState(false);
-  const [explain, setExplain] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   // "Use a code from another computer": the sheet opens on "Enter a code".
   const [addEnter, setAddEnter] = useState(false);
@@ -695,7 +709,8 @@ export function NewFirstRun() {
   }, [store, core, telemetry]);
   useEffect(() => {
     const step = FUNNEL_STEP[s.screen];
-    if (store && step) track(() => store.trackFirstRunStep(step, "step_viewed"));
+    // The Ready screen's events name the picked agent (a fixed word; the core drops anything else).
+    if (store && step) track(() => store.trackFirstRunStep(step, "step_viewed", s.screen === "ready" ? agentWord(s.agent) : "none"));
   }, [store, s.screen]);
   const funnel = (action: string, detail = "none") => {
     const step = FUNNEL_STEP[s.screen];
@@ -812,7 +827,6 @@ export function NewFirstRun() {
   // The separate computer: this page's create, followed in the Spaces list.
   const linux = offers.offers.find((o) => o.id === "linux") ?? null;
   const made = useMemo(() => {
-    if (explain) return { phase: "explain" as const, name: null, error: null, id: null };
     if (!s.separatePendingId) return { phase: "none" as const, name: null, error: null, id: null };
     const id = store?.createdId(s.separatePendingId) ?? s.separatePendingId;
     const row = spaces.data?.find((x) => x.id === id);
@@ -821,7 +835,7 @@ export function NewFirstRun() {
     const name = spokenName(row.name);
     if (st === "failed") return { phase: "failed" as const, name, error: row.progress?.error ?? null, id: row.id };
     return { phase: st === "creating" ? ("making" as const) : ("ready" as const), name, error: null, id: row.id };
-  }, [explain, s.separatePendingId, spaces.data, store]);
+  }, [s.separatePendingId, spaces.data, store]);
   // A Mac that can't run virtual computers is only known when the daemon refuses the create (#6323): then
   // the option turns grey with the plain sentence, instead of a failure.
   const cantRun = made.phase === "failed" && CANT_RUN.test(made.error ?? "");
@@ -830,9 +844,7 @@ export function NewFirstRun() {
 
   const makeSeparate = () => {
     if (!linux || linux.blocked) return;
-    // On a Mac, our one line first; the ask itself is the daemon's, before the create (#6009).
-    if (os === "macos" && !explain && separate.phase !== "failed") return setExplain(true);
-    setExplain(false);
+    // A Linux computer needs no Local Network access (only a macOS Space here does), so nothing is asked first.
     const pendingId = newPendingId();
     save({ separatePendingId: pendingId, picks: [...new Set([...s.picks, `pending:${pendingId}`])] });
     spaces.createSpace({ ...linux.args, name: extraName("linux", spaces.data ?? []), os: linux.os, notifyWhenReady: true }, pendingId).catch(() => {
@@ -873,30 +885,45 @@ export function NewFirstRun() {
     return out.length ? out : ["this"];
   };
 
-  const agent = chosenAgent(found, agentPick);
-  const agentScreen = agentView({ os, found, picked: agentPick, error: connectError });
+  const agentsOff = s.agentsOff ?? [];
+  const agentScreen = agentView({ os, found, off: agentsOff, error: connectError });
   const continueAgent = async () => {
-    if (!agent || !adapter || connecting) return;
+    const agents = chosenAgents(found, agentsOff);
+    if (!adapter || connecting) return;
+    // Nothing ticked: the same as Choose later.
+    if (!agents.length) return void agentsLater();
     setConnecting(true);
     setConnectError(null);
     try {
-      // The same connect as Settings and the old first run: Cua's tools in the agent's settings, and its sign-in kept.
-      const viaConnect = await adapter.call("agents.connect", { agents: [agent], signIn: true }).then(
+      // The same connect as Settings and the old first run: Cua's tools in each agent's settings, and their sign-ins kept.
+      const viaConnect = await adapter.call("agents.connect", { agents, signIn: true }).then(
         () => true,
         () => false,
       );
-      const rows = viaConnect ? await adapter.call("agents.setup", {}) : await adapter.call("agents.configure", { agents: [agent] });
-      const row = rows.find((r) => r.agent === agent);
-      if (!row?.configured) {
-        setConnectError(`Cua couldn't add itself to ${row?.name ?? "the agent"}'s settings.${row?.detail ? ` ${row.detail}` : ""}`);
+      const rows = viaConnect ? await adapter.call("agents.setup", {}) : await adapter.call("agents.configure", { agents });
+      const failed = agents.map((id) => rows.find((r) => r.agent === id) ?? { agent: id, name: agentInfo(id).name, configured: false, detail: null }).filter((r) => !r.configured);
+      if (failed.length) {
+        const one = failed.length === 1 ? failed[0]! : null;
+        setConnectError(
+          one
+            ? `Cua couldn't add itself to ${one.name ?? "the agent"}'s settings.${one.detail ? ` ${one.detail}` : ""}`
+            : `Cua couldn't add itself to the settings of ${listNames(failed.map((r) => r.name ?? r.agent))}.`,
+        );
         return;
       }
-      save({ agent, screen: "ready" });
+      // Ready's line to try uses the first one that has a command to type.
+      const primary = agents.find((id) => agentInfo(id).command) ?? agents[0]!;
+      save({ agent: primary, connected: agents, screen: "ready" });
     } catch (e) {
       setConnectError(e instanceof Error ? e.message : String(e));
     } finally {
       setConnecting(false);
     }
+  };
+  // Choose later: setup is done without connecting an agent; Settings, Connections does it any time.
+  const agentsLater = () => {
+    funnel("step_skipped", "later");
+    void finish();
   };
 
   const open = (url: string) => void session.openExternal(url).catch(() => {});
@@ -1006,18 +1033,29 @@ export function NewFirstRun() {
         <AgentScreen
           view={agentScreen}
           busy={connecting}
-          onPick={(id) => {
-            setAgentPick(id);
-            save({ agent: id });
-          }}
+          onPick={(id) => save({ agentsOff: toggleAgentOff(agentsOff, id) })}
           onContinue={() => void continueAgent()}
+          onLater={agentsLater}
           onInstall={(a) => open(INSTALL_PAGES[a])}
         />
       );
       break;
     case "ready":
       body = s.agent ? (
-        <ReadyScreen view={readyView({ os, agent: s.agent, computers: pickedNames(), canMakeSeparate })} agent={s.agent} place={placeName(os)} onDone={() => void finish()} onContinueChat={(task) => void continueChat(task)} />
+        <ReadyScreen
+          view={readyView({ os, agent: s.agent, agents: s.connected, computers: pickedNames(), canMakeSeparate })}
+          agent={s.agent}
+          place={placeName(os)}
+          onDone={() => {
+            funnel("step_completed", agentWord(s.agent));
+            void finish();
+          }}
+          onContinueChat={(task) => {
+            funnel("step_chat_picked_up", agentWord(s.agent));
+            void continueChat(task);
+          }}
+          onCopied={() => funnel("step_command_copied", agentWord(s.agent))}
+        />
       ) : null;
       break;
   }

@@ -1608,17 +1608,76 @@ mod engine_impl {
             self.connect(uri).await
         }
 
+        /// On Windows: cua's job directories (a job member's work, data, cache
+        /// and tools) are mounted into the distribution with `drvfs`
+        /// (`/mnt/cua-host/<name>`), and the mounts of `spec` name them there.
+        /// Nothing else of the PC's drives is reachable.
+        #[cfg(windows)]
+        async fn windows_job_mounts(&self, spec: &StartSpec) -> Result<StartSpec> {
+            // The engine (and with it the distribution) is up first.
+            self.engine().await?;
+            let home = host::cua_home();
+            let mut out = spec.clone();
+            for m in &mut out.mounts {
+                let Some((name, rest)) = JOB_SHARES.iter().find_map(|n| {
+                    let root = home.join(n);
+                    m.host
+                        .strip_prefix(&root)
+                        .ok()
+                        .map(|r| (*n, r.to_path_buf()))
+                }) else {
+                    return Err(VmmError::invalid(format!(
+                        "the built-in Linux runtime shares only cua's job directories, not {}",
+                        m.host.display()
+                    )));
+                };
+                let root = home.join(name);
+                let at = format!("{}{name}", crate::types::ENGINE_MOUNT_ROOT);
+                // The caches (uv's wheels and the environments built from them, the
+                // Hugging Face cache) are only used inside the Spaces: they live on the
+                // distribution's own disk, many times faster than a Windows folder for
+                // the thousands of small files of a PyTorch environment. The other
+                // directories the host reads and writes too.
+                let script = if name == "job-cache" {
+                    format!("mkdir -p '{at}' && chmod 777 '{at}'")
+                } else {
+                    std::fs::create_dir_all(&root)?;
+                    format!(
+                        "mountpoint -q '{at}' || {{ mkdir -p '{at}' && \
+                         mount -t drvfs '{}' '{at}' -o metadata,uid=0,gid=0,umask=000; }}",
+                        root.display().to_string().replace('\'', "'\\''")
+                    )
+                };
+                let r = wsl::run_in(&wsl::WslExe, &wsl::distro(), &["sh", "-c", &script], 60)
+                    .await
+                    .map_err(|e| VmmError::other(format!("mounting {}: {e}", root.display())))?;
+                if !r.ok() {
+                    return Err(VmmError::other(format!(
+                        "the built-in Linux runtime could not mount {}: {}",
+                        root.display(),
+                        r.stderr.trim()
+                    )));
+                }
+                let rel = rest.to_string_lossy().replace('\\', "/");
+                m.host = if rel.is_empty() {
+                    PathBuf::from(&at)
+                } else {
+                    PathBuf::from(format!("{at}/{rel}"))
+                };
+            }
+            Ok(out)
+        }
+
         /// Mounts of a job member's directories: the VM shares them at the
         /// same paths (once it booted sharing them; one that did not is
         /// restarted when no Linux Space runs); any other host directory
         /// is not in the VM.
         async fn ready_for_mounts(&self, spec: &StartSpec) -> Result<()> {
             crate::types::check_mounts(crate::BackendKind::Container, &spec.mounts)?;
-            if cfg!(windows) && !spec.mounts.is_empty() {
-                return Err(VmmError::invalid(
-                    "the built-in Linux runtime on Windows cannot mount Windows folders yet \
-                     (its distribution has no access to the Windows drives)",
-                ));
+            if cfg!(windows) {
+                // The job directories are mounted into the distribution by
+                // [`windows_job_mounts`] before the Space is created.
+                return Ok(());
             }
             if let Some(m) = spec.mounts.iter().find(|m| !is_shared(&m.host)) {
                 return Err(VmmError::invalid(format!(
@@ -1808,6 +1867,15 @@ mod engine_impl {
             if !spec.mounts.is_empty() {
                 self.ready_for_mounts(spec).await?;
             }
+            #[cfg(windows)]
+            let translated;
+            #[cfg(windows)]
+            let spec = if spec.mounts.is_empty() {
+                spec
+            } else {
+                translated = self.windows_job_mounts(spec).await?;
+                &translated
+            };
             let started = {
                 let _busy = self.busy();
                 self.engine().await?.start(spec).await

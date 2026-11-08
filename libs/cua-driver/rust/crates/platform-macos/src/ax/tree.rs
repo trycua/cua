@@ -65,6 +65,10 @@ pub struct AXNode {
     /// Kept separate from `title` so `_find_calc_button("2")` can find
     /// Calculator buttons where AXTitle="" but AXDescription="2".
     pub description: Option<String>,
+    /// Raw AXPlaceholderValue, kept separate from the value it may also label.
+    pub placeholder: Option<String>,
+    /// Raw AXSubrole, kept separate from the element's role.
+    pub subrole: Option<String>,
     pub identifier: Option<String>,
     pub help: Option<String>,
     pub actions: Vec<String>,
@@ -119,6 +123,36 @@ where
         read()
     } else {
         ControlState::default()
+    }
+}
+
+/// Raw AXPlaceholderValue and AXSubrole kept beside the display label.
+#[derive(Debug, Default, PartialEq)]
+struct IdentityAttrs {
+    placeholder: Option<String>,
+    subrole: Option<String>,
+}
+
+/// When an app refuses the batched read, each attribute is a synchronous AX
+/// request against the walk's time budget. Display-only rows never reach the
+/// public `elements` array, so they read AXPlaceholderValue only as the
+/// empty-AXValue fallback and skip AXSubrole.
+fn read_identity_attrs(
+    is_actionable: bool,
+    value_is_empty: bool,
+    mut read: impl FnMut(NodeAttr) -> Option<String>,
+) -> IdentityAttrs {
+    IdentityAttrs {
+        placeholder: if is_actionable || value_is_empty {
+            read(NodeAttr::PlaceholderValue)
+        } else {
+            None
+        },
+        subrole: if is_actionable {
+            read(NodeAttr::Subrole)
+        } else {
+            None
+        },
     }
 }
 
@@ -552,10 +586,7 @@ unsafe fn walk_element(
     let value = copied_value
         .as_ref()
         .and_then(|copied| copied.string_value.clone());
-    // AXPlaceholderValue as fallback for empty text fields.
-    let value = value
-        .filter(|v| !v.trim().is_empty())
-        .or_else(|| attrs.string(NodeAttr::PlaceholderValue));
+    let value = value.filter(|v| !v.trim().is_empty());
     let description = attrs.string(NodeAttr::Description);
     let identifier = attrs.string(NodeAttr::Identifier);
     let help = attrs
@@ -563,12 +594,6 @@ unsafe fn walk_element(
         .filter(|h| !h.trim().is_empty());
     let actions = copy_action_names(element);
 
-    let visible_title = title.as_deref().unwrap_or("").trim().to_owned();
-    let visible_description = description.as_deref().unwrap_or("").trim().to_owned();
-    let visible_value = value.as_deref().unwrap_or("").trim().to_owned();
-
-    let has_content =
-        !visible_title.is_empty() || !visible_description.is_empty() || !visible_value.is_empty();
     // Some native controls expose no AX action names but do expose a writable
     // AXValue. Finder's transient inline-rename field is the important case:
     // rendering it without an element_index leaves an agent able to see the
@@ -590,6 +615,15 @@ unsafe fn walk_element(
         None
     };
     let is_actionable = is_addressable(!actions.is_empty(), value_settable);
+    let identity = read_identity_attrs(is_actionable, value.is_none(), |attr| attrs.string(attr));
+    let value = value.or_else(|| identity.placeholder.clone());
+
+    let visible_title = title.as_deref().unwrap_or("").trim().to_owned();
+    let visible_description = description.as_deref().unwrap_or("").trim().to_owned();
+    let visible_value = value.as_deref().unwrap_or("").trim().to_owned();
+
+    let has_content =
+        !visible_title.is_empty() || !visible_description.is_empty() || !visible_value.is_empty();
 
     if !is_actionable && !has_content && role != "AXWindow" && role != "AXSheet" {
         let children = attrs.children();
@@ -657,6 +691,8 @@ unsafe fn walk_element(
             } else {
                 Some(visible_description.clone())
             },
+            placeholder: identity.placeholder,
+            subrole: identity.subrole,
             identifier: identifier.clone(),
             help: help.clone(),
             actions: actions.clone(),
@@ -691,6 +727,8 @@ unsafe fn walk_element(
             } else {
                 Some(visible_description.clone())
             },
+            placeholder: identity.placeholder,
+            subrole: identity.subrole,
             identifier: identifier.clone(),
             help: help.clone(),
             actions: vec![],
@@ -993,6 +1031,8 @@ mod tests {
             title: Some("Reset".into()),
             value: None,
             description: None,
+            placeholder: None,
+            subrole: None,
             identifier: None,
             help: None,
             actions: vec!["AXPress".into()],
@@ -1058,6 +1098,43 @@ mod tests {
         });
         assert_eq!(reads.get(), 1, "actionable nodes must read state once");
         assert_eq!(actionable.enabled, Some(true));
+    }
+
+    fn identity_reads(is_actionable: bool, value_is_empty: bool) -> (Vec<NodeAttr>, IdentityAttrs) {
+        let mut reads = Vec::new();
+        let identity = read_identity_attrs(is_actionable, value_is_empty, |attr| {
+            reads.push(attr);
+            Some(format!("raw {}", attr.name()))
+        });
+        (reads, identity)
+    }
+
+    #[test]
+    fn display_only_nodes_skip_identity_reads_unless_placeholder_is_the_value() {
+        let (reads, identity) = identity_reads(false, false);
+        assert!(reads.is_empty(), "display row with a value read {reads:?}");
+        assert_eq!(identity, IdentityAttrs::default());
+
+        let (reads, identity) = identity_reads(false, true);
+        assert_eq!(reads, [NodeAttr::PlaceholderValue]);
+        assert_eq!(
+            identity.placeholder.as_deref(),
+            Some("raw AXPlaceholderValue")
+        );
+        assert_eq!(identity.subrole, None);
+    }
+
+    #[test]
+    fn actionable_nodes_read_placeholder_and_subrole_once() {
+        for value_is_empty in [false, true] {
+            let (reads, identity) = identity_reads(true, value_is_empty);
+            assert_eq!(reads, [NodeAttr::PlaceholderValue, NodeAttr::Subrole]);
+            assert_eq!(
+                identity.placeholder.as_deref(),
+                Some("raw AXPlaceholderValue")
+            );
+            assert_eq!(identity.subrole.as_deref(), Some("raw AXSubrole"));
+        }
     }
 }
 

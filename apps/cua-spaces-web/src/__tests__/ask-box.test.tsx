@@ -100,21 +100,28 @@ describe.skipIf(!wasmBuilt)("the prompt box", () => {
     expect(q('[data-agent-group="claude-code"] [aria-selected="true"]')!.textContent).toBe("work Max");
   });
 
-  it("opens an app's sign-ins from its chevron: the default, make default, rename and remove", async () => {
-    const calls: { op: string; args: Record<string, unknown> }[] = [];
-    await mountApp("/home", { failsCreates: false, listsGhost: false, ...ACCOUNTS, intercept: (op, args) => (calls.push({ op, args: args as Record<string, unknown> }), undefined) });
+  it("says in one line what signing in is for, and leaves managing sign-ins to Settings", async () => {
+    await mountApp("/home", { failsCreates: false, listsGhost: false, ...ACCOUNTS });
     await screen.findByLabelText("What should it do?");
     await waitFor(() => expect(q("[data-ask-agent]")!.textContent).toContain("Codex"));
     await openAgents();
-    await act(async () => {
-      fireEvent.click(q('[data-agent-manage="claude-code"]')!);
-    });
+    expect(q("[data-agent-menu-why]")!.textContent).toBe("Pick the agent for this job. Sign in once, and it runs on any of your computers.");
+    // No sign-in management in the job box: no chevrons, no rename or remove.
+    expect(q("[data-agent-manage]")).toBeNull();
+    expect(q("[data-manage-rename]")).toBeNull();
+    expect(q("[data-agent-configure]")!.textContent).toBe("Manage agents and sign-ins");
+  });
+
+  it("an app's sign-ins live on its Settings page: why, which one is in use, use another, rename and remove", async () => {
+    const calls: { op: string; args: Record<string, unknown> }[] = [];
+    await mountApp("/settings/connections/claude-code", { failsCreates: false, listsGhost: false, ...ACCOUNTS, intercept: (op, args) => (calls.push({ op, args: args as Record<string, unknown> }), undefined) });
     const page = await waitFor(() => {
-      const el = q('[data-agent-manage-page="claude-code"]');
+      const el = q('[data-agent-sign-ins="claude-code"]');
       expect(el).not.toBeNull();
       return el!;
     });
-    expect(page.textContent).toContain("Claude Code sign-ins");
+    expect(document.body.textContent).toContain("Sign in once so your agents can run on your other computers without asking again.");
+    expect(page.textContent).toContain("ada@example.com");
     expect(q("[data-manage-default]")!.closest("[data-manage-account]")!.textContent).toContain("ada@example.com");
     await act(async () => {
       fireEvent.click(q('[data-manage-account="kwork"] [data-manage-use]')!);
@@ -152,12 +159,15 @@ describe.skipIf(!wasmBuilt)("the prompt box", () => {
     await act(async () => {
       fireEvent.click(q("[data-agent-model-row]")!);
     });
-    expect(q('[data-model-row="claude-haiku-4-5"]')!.textContent).toContain("Fast");
+    // Sonnet 5.5 is the default (checked); Haiku 5.5 is one tap away, tagged Fast; older ids are not listed.
+    expect(q('[data-model-row="claude-sonnet-5-5"]')!.getAttribute("aria-selected")).toBe("true");
+    expect(q('[data-model-row="claude-haiku-5-5"]')!.textContent).toContain("Fast");
+    expect(q('[data-model-row="claude-haiku-4-5"]')).toBeNull();
     await act(async () => {
-      fireEvent.click(q('[data-model-row="claude-sonnet-5"]')!);
+      fireEvent.click(q('[data-model-row="claude-haiku-5-5"]')!);
     });
     await openAgents();
-    expect(q("[data-agent-model-row]")!.textContent).toContain("Claude Sonnet 5");
+    expect(q("[data-agent-model-row]")!.textContent).toContain("Claude Haiku 5.5");
   });
 
   it("Enter sends the job with the picked app, account and model; Shift+Enter is a new line", async () => {
@@ -183,14 +193,14 @@ describe.skipIf(!wasmBuilt)("the prompt box", () => {
     await act(async () => {
       fireEvent.keyDown(box, { key: "Enter" });
     });
-    await waitFor(() => expect(askTasks()[0]).toMatchObject({ prompt: "fix the build", agent: "claude-code", model: "claude-haiku-4-5" }));
+    await waitFor(() => expect(askTasks()[0]).toMatchObject({ prompt: "fix the build", agent: "claude-code", model: "claude-sonnet-5-5" }));
     await waitFor(() => expect(calls.some((c) => c.op === "thread.post" && c.args.text === "@claude fix the build")).toBe(true), { timeout: 15000 });
   });
 
   it("with nothing signed in the chip says to sign in, every app has a Sign in row and Start waits", async () => {
     await mountApp("/home", { failsCreates: false, listsGhost: false, demo: { keys: "none" } });
     await screen.findByLabelText("What should it do?");
-    await waitFor(() => expect(q("[data-ask-agent]")!.textContent).toBe("Sign in to an agent"));
+    await waitFor(() => expect(q("[data-ask-agent]")!.textContent).toBe("Choose an agent"));
     expect((screen.getByRole("button", { name: "Start" }) as HTMLButtonElement).disabled).toBe(true);
     await openAgents();
     expect(document.querySelectorAll("[data-agent-sign-in]")).toHaveLength(4);

@@ -158,7 +158,7 @@ function PaletteBody({ onClose }: { onClose: () => void }) {
             id: "nav:driver",
             group: "Go to",
             label: "Cua Driver",
-            keywords: "pointer cursor computer use",
+            keywords: "driver permissions accessibility screen recording computer use pointer cursor",
             icon: icon(MousePointer2Icon),
             run: () => void navigate({ to: "/spaces/computer/$computerId/driver", params: { computerId: THIS_COMPUTER } }),
           },

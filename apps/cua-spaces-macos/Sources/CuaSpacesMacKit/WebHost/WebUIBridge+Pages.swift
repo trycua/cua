@@ -412,14 +412,12 @@ extension WebUIBridge {
             guard let cua = AppEnvironment.bundledCuaPath else {
                 throw Failure.unsupported("This build has no bundled cua to join with")
             }
-            let was = model.host.providesSpaces
             do {
                 try await JoinWithCode.run(cua: cua, args: cliArgs)
             } catch let failed as JoinWithCode.FailedRun {
                 throw Failure(code: "failed", message: failed.message)
             }
             await model.host.refresh()
-            model.host.followProviding(from: was)
             return hostStatus()
         case "host.action":
             guard model.host.host != nil else { throw Failure.unsupported("This Mac can't be set up for access in this build") }

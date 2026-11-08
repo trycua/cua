@@ -1332,6 +1332,13 @@ pub(crate) fn typing_budget(chars: usize, niri: bool) -> std::time::Duration {
     }
 }
 
+/// The budget of a `type_text` call that types `text`, whichever input route it
+/// takes. libei text with line breaks takes time between its parts.
+pub(crate) fn text_typing_budget(text: &str) -> std::time::Duration {
+    typing_budget(text.chars().count(), crate::wayland::niri::is_session())
+        + crate::wayland::text_pacing(text)
+}
+
 #[cfg(test)]
 #[test]
 fn niri_typing_outlasts_the_keyboard_deadline() {
@@ -1387,6 +1394,17 @@ pub(crate) fn input_error_result(e: anyhow::Error) -> ToolResult {
         return refusal;
     }
     match crate::input::foreground::error_code(&e) {
+        Some(code) if text.ends_with(crate::wayland::NOTHING_TYPED) => {
+            ToolResult::error(text.clone()).with_structured(json!({
+                "code": code,
+                "detail": text,
+                "effect": "none",
+                // Set here so it isn't the generic hint for this code, which
+                // blames a window that could not be brought forward.
+                "hint": "This text can't be typed right now, so nothing was sent. The detail says why.",
+                "suggestion": "Use set_value on the element, or clipboard_write and then hotkey ctrl+v.",
+            }))
+        }
         Some(code) => ToolResult::error(text.clone()).with_structured(json!({
             "code": code,
             "detail": text,
@@ -1401,6 +1419,28 @@ pub(crate) fn input_error_result(e: anyhow::Error) -> ToolResult {
         })),
         None => linux_input_error(e),
     }
+}
+
+#[cfg(test)]
+#[test]
+fn a_refused_text_says_why_instead_of_blaming_a_window() {
+    let mut refused =
+        input_error_result(crate::wayland::type_text_focused("abc\u{8}").unwrap_err());
+    cua_driver_core::recovery_hint::annotate(
+        "type_text",
+        &cua_driver_core::recovery_hint::Seed::from_args(&json!({})),
+        &mut refused,
+    );
+    assert_eq!(
+        refused.structured_content.unwrap(),
+        json!({
+            "code": "foreground_unavailable",
+            "detail": "foreground_unavailable: control character U+0008 cannot be typed; nothing was typed",
+            "effect": "none",
+            "hint": "This text can't be typed right now, so nothing was sent. The detail says why.",
+            "suggestion": "Use set_value on the element, or clipboard_write and then hotkey ctrl+v.",
+        })
+    );
 }
 
 #[cfg(test)]
@@ -1935,17 +1975,18 @@ pub(crate) fn background_virtual_text(
     pid: u32,
     xid: u64,
     text: &str,
+    pacing: crate::input::TypePacing,
 ) -> anyhow::Result<crate::input::KeyboardDeliveryReport> {
     if let Some(popup) = crate::input::popup_of_pid(pid) {
-        match crate::input::send_popup_keyboard_text(popup.window, text) {
+        match crate::input::send_popup_keyboard_text_paced(popup.window, text, pacing) {
             Err(error) if error.is::<crate::input::PopupOwnerGone>() => {}
             delivered => return delivered,
         }
         return crate::input::send_keys_under_popup_grab(pid, popup, || {
-            crate::input::send_type_text_xtest(text)
+            crate::input::send_type_text_xtest_paced(text, pacing)
         });
     }
-    crate::input::send_virtual_keyboard_text(cursor_id, xid, text)
+    crate::input::send_virtual_keyboard_text_paced(cursor_id, xid, text, pacing)
 }
 
 pub(crate) fn is_popup_keyboard_grab(error: &anyhow::Error) -> bool {

@@ -58,10 +58,12 @@ fn validate_target_route(target: &Value, route: DeliveryRoute) -> Result<()> {
 /// Validate the whole string before dispatching any keys. Physical key delivery
 /// uses the compositor's keyboard layout; these codes describe US ASCII keys.
 pub(crate) fn text_actions(text: &str) -> Result<Vec<Action>> {
-    ensure!(
-        text.len() <= 4096 && text.is_ascii(),
-        "Hyprland text requires at most 4096 ASCII bytes"
-    );
+    let text = super::text_keys::typable_text(text)?;
+    if text.len() > 4096 || !text.is_ascii() {
+        return Err(super::text_keys::refused(
+            "Hyprland text takes at most 4096 ASCII bytes",
+        ));
+    }
     text.bytes()
         .map(|byte| {
             let (keycode, shift) = match byte {
@@ -105,7 +107,12 @@ pub(crate) fn text_actions(text: &str) -> Result<Vec<Action>> {
                 b'*' => (9, true),
                 b'(' => (10, true),
                 b')' => (11, true),
-                _ => bail!("unsupported Hyprland text control character"),
+                other => {
+                    return Err(super::text_keys::refused(format!(
+                        "Hyprland text has no key for {:?}",
+                        char::from(other)
+                    )))
+                }
             };
             Ok(Action::TextKey { keycode, shift })
         })
@@ -2103,10 +2110,24 @@ mod tests {
 
     #[test]
     fn hyprland_text_is_bounded_and_fully_prevalidated() {
-        for text in ["valid prefix\u{00e9}", "valid prefix\0", "\r", "\u{007f}"] {
-            assert!(text_actions(text).is_err());
+        let too_much = "foreground_unavailable: Hyprland text takes at most 4096 ASCII bytes; \
+             nothing was typed";
+        for (text, refusal) in [
+            ("valid prefix\u{00e9}".to_owned(), too_much),
+            ("a".repeat(4097), too_much),
+            (
+                "valid prefix\0".to_owned(),
+                "foreground_unavailable: control character U+0000 cannot be typed; nothing was typed",
+            ),
+            (
+                "\u{007f}".to_owned(),
+                "foreground_unavailable: control character U+007F cannot be typed; nothing was typed",
+            ),
+        ] {
+            let error = text_actions(&text).err().map(|error| error.to_string());
+            assert_eq!(error.as_deref(), Some(refusal));
         }
-        assert!(text_actions(&"a".repeat(4097)).is_err());
+        assert_eq!(text_actions("a\r\nb").unwrap().len(), 3);
         assert_eq!(text_actions(&"a".repeat(4096)).unwrap().len(), 4096);
         let actions = text_actions("Aa!? \t\n").unwrap();
         let packets: Vec<_> = actions

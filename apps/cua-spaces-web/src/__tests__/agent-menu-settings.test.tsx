@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-// Which coding apps Home's agent menu shows: the "Configure agents" button at the foot of the menu
+// Which coding apps Home's agent menu shows: the "Manage agents and sign-ins" button at the foot of the menu
 // leads to Settings, Connections, where each app has a switch. The rule (defaults, the last app
 // that cannot be hidden, a connect that shows an app again) is the app core's `agent_menu`.
 
@@ -51,12 +51,12 @@ const groups = () => qa("[data-agent-group]").map((g) => g.dataset.agentGroup);
 const sw = (app: string) => found(`[data-agent-menu-switch="${app}"]`);
 
 describe.skipIf(!wasmBuilt)("the agent menu's apps", () => {
-  it("ends with a Configure agents button that opens Settings, Connections", async () => {
+  it("ends with a Manage agents and sign-ins button that opens Settings, Connections", async () => {
     const { router } = await mountApp("/home", HOST);
     await screen.findByLabelText("What should it do?");
     await openMenu();
     const button = await found("[data-agent-configure]");
-    expect(button.textContent).toBe("Configure agents");
+    expect(button.textContent).toBe("Manage agents and sign-ins");
     // It is the last thing in the menu.
     expect(q("[data-agent-menu] [role=listbox]")!.lastElementChild!.contains(button)).toBe(true);
     await click(button);

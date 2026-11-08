@@ -46,7 +46,18 @@ describe.skipIf(!wasmBuilt)("the model menu in the web app", () => {
       expect(g.models.map((m) => m.id)).toEqual(reg.models.map((m) => m.id));
       expect(g.harness).toBeNull();
     }
-    expect(view.default).toEqual({ provider: "anthropic", model: "claude-haiku-4-5" });
+    expect(view.default).toEqual({ provider: "anthropic", model: "claude-sonnet-5-5" });
+  });
+
+  it("lists every top provider's default model, never as a legacy id, and keeps older Claude ids accepted", () => {
+    for (const p of PROVIDER_REGISTRY.filter((x) => x.tier === "top" && x.defaultModel)) {
+      const d = p.models.find((m) => m.id === p.defaultModel);
+      expect(d, p.id).toBeDefined();
+      expect(d!.legacy, p.id).toBe(false);
+    }
+    const anthropic = PROVIDER_REGISTRY.find((p) => p.id === "anthropic")!;
+    expect(anthropic.defaultModel).toBe("claude-sonnet-5-5");
+    expect(anthropic.models.find((m) => m.id === "claude-haiku-4-5")?.legacy).toBe(true);
   });
 
   it("marks a sign-in as its own app's and an expired one as needing a reconnect, listed last", async () => {

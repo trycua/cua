@@ -17,10 +17,11 @@ const account = (line: string, extra: Partial<AgentAccount> = {}): AgentAccount 
   via: "sign-in",
   selected: false,
   models: [
-    { id: "haiku", label: "Claude Haiku 4.5", fast: true, default: false },
-    { id: "sonnet", label: "Claude Sonnet 5", fast: false, default: true },
+    { id: "haiku", label: "Claude Haiku 5.5", fast: true, default: false },
+    { id: "sonnet", label: "Claude Sonnet 5.5", fast: false, default: true },
+    { id: "haiku-old", label: "Claude Haiku 4.5", fast: true, default: false, legacy: true },
   ],
-  defaultModel: "haiku",
+  defaultModel: "sonnet",
   ...extra,
 });
 const group = (app: string, accounts: AgentAccount[], extra: Partial<AgentGroup> = {}): AgentGroup => ({
@@ -46,11 +47,16 @@ beforeEach(() => {
 
 describe("the agent the box starts with", () => {
   it("is the first connected app with its own account and quick model when nothing was picked", () => {
-    const v = { ...view([group("codex", []), claude]), default: { harness: "claude-code", provider: "anthropic", env: "CLAUDE_CODE_OAUTH_TOKEN", slot: null, model: "haiku" } };
+    const v = { ...view([group("codex", []), claude]), default: { harness: "claude-code", provider: "anthropic", env: "CLAUDE_CODE_OAUTH_TOKEN", slot: null, model: "sonnet" } };
     const s = resolveAgent(v, null)!;
     expect(s.harness).toBe("claude-code");
     expect(agentLine(s)).toBe("Claude Code");
-    expect(s.model.id).toBe("haiku");
+    expect(s.model.id).toBe("sonnet");
+  });
+
+  it("keeps a saved older model id the person chose before the default moved", () => {
+    const s = resolveAgent(view([claude]), { harness: "claude-code", env: "CLAUDE_CODE_OAUTH_TOKEN", model: "haiku-old" })!;
+    expect(s.model.id).toBe("haiku-old");
   });
 
   it("is the last pick while that app and account are still there, with its model", () => {
@@ -69,7 +75,7 @@ describe("the agent the box starts with", () => {
   });
 
   it("falls back to the default when the remembered app is no longer connected, and to nothing when none is", () => {
-    const v = { ...view([group("codex", []), claude]), default: { harness: "claude-code", provider: "anthropic", env: "CLAUDE_CODE_OAUTH_TOKEN", slot: null, model: "haiku" } };
+    const v = { ...view([group("codex", []), claude]), default: { harness: "claude-code", provider: "anthropic", env: "CLAUDE_CODE_OAUTH_TOKEN", slot: null, model: "sonnet" } };
     expect(resolveAgent(v, { harness: "openai-codex", env: "CODEX_AUTH_JSON" })!.harness).toBe("claude-code");
     expect(resolveAgent(view([group("codex", [])]), null)).toBeNull();
     expect(resolveAgent(null, null)).toBeNull();
@@ -77,9 +83,10 @@ describe("the agent the box starts with", () => {
 
   it("picking an account starts with its quick model, or the last model while it offers it", () => {
     const work = claude.accounts[1]!;
-    expect(pickAccount(claude, work, null)).toEqual({ harness: "claude-code", env: "CLAUDE_CODE_OAUTH_TOKEN", slot: "work", model: "haiku" });
-    expect(pickAccount(claude, work, { harness: "claude-code", model: "sonnet" }).model).toBe("sonnet");
-    expect(pickAccount(claude, work, { harness: "openai-codex", model: "sonnet" }).model).toBe("haiku");
+    expect(pickAccount(claude, work, null)).toEqual({ harness: "claude-code", env: "CLAUDE_CODE_OAUTH_TOKEN", slot: "work", model: "sonnet" });
+    expect(pickAccount(claude, work, { harness: "claude-code", model: "haiku" }).model).toBe("haiku");
+    expect(pickAccount(claude, work, { harness: "claude-code", model: "haiku-old" }).model).toBe("haiku-old");
+    expect(pickAccount(claude, work, { harness: "openai-codex", model: "haiku" }).model).toBe("sonnet");
   });
 });
 

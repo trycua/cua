@@ -68,6 +68,14 @@ describe("the launched signal crossing the bridge", () => {
     expect(sanitizeSignals([{ type: "launched", onboardingEligible: null }])).toHaveLength(1);
     expect(sanitizeSignals([{ type: "launched", onboardingEligible: "maya@example.com" }])).toEqual([]);
   });
+
+  it("passes the Ready screen's events as fixed words and drops a command or a path", () => {
+    for (const action of ["step_viewed", "step_command_copied", "step_chat_picked_up", "step_completed"]) {
+      const ok = { type: "onboarding-page", page: "ready", action, choice: "claude_code" } as const;
+      expect(sanitizeSignals([ok])).toEqual([ok]);
+      expect(sanitizeSignals([{ ...ok, choice: 'claude "Build this in /Users/alice/app"' }])).toEqual([]);
+    }
+  });
 });
 
 describe.skipIf(!wasmBuilt)("first-run usage events from the web pages", () => {

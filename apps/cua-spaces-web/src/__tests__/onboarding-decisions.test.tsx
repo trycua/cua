@@ -221,7 +221,7 @@ describe("Cua Driver in setup (A, CUA-2706): the permissions step is the Cua Dri
       const h = heading();
       if (h && seen.at(-1) !== h) seen.push(h);
     };
-    await waitFor(() => expect(heading()).toBe("Bring all your computers under one account"));
+    await waitFor(() => expect(heading()).toBe("Combine your existing computers into one supercomputer."));
     note();
     fireEvent.click(q("[data-onboarding-later]")!);
     await waitFor(() => expect(heading()).toBe("Pick where your agents work"));
@@ -231,7 +231,7 @@ describe("Cua Driver in setup (A, CUA-2706): the permissions step is the Cua Dri
     note();
     await waitFor(() => expect(all("[data-app-permission]").length).toBe(2));
     fireEvent.click(q("[data-new-run-permissions-next=Later]")!);
-    await waitFor(() => expect(heading()).toBe("Your agents will use Codex"), { timeout: 15_000 });
+    await waitFor(() => expect(heading()).toBe("Use Codex on all your computers"), { timeout: 15_000 });
     note();
     fireEvent.click(q("[data-onboarding-primary]")!);
     await waitFor(() => expect(heading()).toBe("Codex can now use this Mac"), { timeout: 15_000 });

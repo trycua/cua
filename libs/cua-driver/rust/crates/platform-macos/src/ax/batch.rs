@@ -42,6 +42,7 @@ pub(crate) enum NodeAttr {
     Title,
     Value,
     PlaceholderValue,
+    Subrole,
     Description,
     Identifier,
     Help,
@@ -56,11 +57,12 @@ pub(crate) enum NodeAttr {
 }
 
 impl NodeAttr {
-    const ALL: [NodeAttr; 15] = [
+    const ALL: [NodeAttr; 16] = [
         NodeAttr::Role,
         NodeAttr::Title,
         NodeAttr::Value,
         NodeAttr::PlaceholderValue,
+        NodeAttr::Subrole,
         NodeAttr::Description,
         NodeAttr::Identifier,
         NodeAttr::Help,
@@ -80,6 +82,7 @@ impl NodeAttr {
             NodeAttr::Title => "AXTitle",
             NodeAttr::Value => "AXValue",
             NodeAttr::PlaceholderValue => "AXPlaceholderValue",
+            NodeAttr::Subrole => "AXSubrole",
             NodeAttr::Description => "AXDescription",
             NodeAttr::Identifier => "AXIdentifier",
             NodeAttr::Help => "AXHelp",

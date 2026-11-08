@@ -12,8 +12,11 @@
  *   picked), Add another computer you own, and a separate computer on this Mac.
  * 2b On a Mac: let Cua Spaces see and use apps (Screen Recording and Accessibility, which Cua Driver
  *   uses too), each with Allow, or Later. `lib/app-permissions.ts` has its words.
- * 3 The coding agent found on this Mac, or Install Claude Code / Install Codex instead.
- * 4 Ready: "<agent> can now use <computers>", one line to try in their own terminal. Done ends setup on Home.
+ * 3 Connect the coding agents found on this Mac (all ticked, untick any to leave alone; Choose later skips it), or
+ *   Install Claude Code / Install Codex instead. Kept in setup, not moved to the first job: that job is typed into the
+ *   agent in the person's own terminal, so Cua has to be in the agent's settings before it, and there is no moment in
+ *   the app to ask then. Nothing is a choice here: every agent found is connected, and a job picks its own agent.
+ * 4 Ready: "<agents> can now use <computers>", one line to try in their own terminal. Done ends setup on Home.
  *
  * The rest (invite a teammate, add another computer, let agents use apps on this Mac, Cua from Terminal) is
  * asked for on Home once the first job is done, not during setup (CUA-3150, idea C): `bringRestView`.
@@ -38,8 +41,12 @@ export interface NewRunSaved {
   screen: NewRunScreen;
   /** The computers picked on screen 2: `this` for this computer, else a machine id or the separate computer's Space id. */
   picks: string[];
-  /** The coding agent picked on screen 3 (setup id). */
+  /** The coding agent Ready's line to try uses: the first one connected on screen 3 (setup id). */
   agent: string | null;
+  /** The coding agents screen 3 connected (setup ids), in `CODING_AGENTS` order. */
+  connected?: string[];
+  /** The coding agents found on screen 3 that the person unticked, so they are left alone. */
+  agentsOff?: string[];
   /** This run asked to add this computer and the sign-in finished: its row says "just now". */
   addedInRun: boolean;
   /** The separate computer's create (its pending row id), once asked for. */
@@ -203,7 +210,7 @@ export interface WhereView {
    * A separate computer on this one. Null where this computer can't make one (CUA-3150, idea D: offer only what
    * it can run), unless the person already asked and the create was refused: then the one sentence says why.
    */
-  separate: { title: string; sub: string; disabled: boolean; state: "offer" | "checking" | "explain" | "making" | "ready" | "failed"; action: string | null } | null;
+  separate: { title: string; sub: string; disabled: boolean; state: "offer" | "checking" | "making" | "ready" | "failed"; action: string | null } | null;
   continueEnabled: boolean;
 }
 
@@ -227,7 +234,7 @@ export interface WhereInput {
   separateRefused?: boolean;
   /** Why not, in the host's words (used where the frame's sentence doesn't fit: not a Mac). */
   separateBlocked: string | null;
-  separate: { phase: "none" | "explain" | "making" | "ready" | "failed"; name: string | null; error: string | null };
+  separate: { phase: "none" | "making" | "ready" | "failed"; name: string | null; error: string | null };
   now: number;
 }
 
@@ -276,14 +283,6 @@ export function whereView(input: WhereInput): WhereView {
       return { title, sub, disabled: true, state: "offer" as const, action: null };
     }
     const s = input.separate;
-    if (s.phase === "explain")
-      return {
-        title,
-        sub: "If macOS asks to let Cua Spaces find devices on your local network, choose Allow. Cua uses it to reach the new computer.",
-        disabled: false,
-        state: "explain" as const,
-        action: "Make it",
-      };
     if (s.phase === "making") return { title, sub: `Making ${s.name ?? "it"} now. You can continue; it keeps going.`, disabled: false, state: "making" as const, action: null };
     if (s.phase === "ready") return { title, sub: `${s.name ?? "It"} is ready.`, disabled: false, state: "ready" as const, action: null };
     if (s.phase === "failed") return { title, sub: `Couldn't make it. ${s.error ?? ""}`.trim(), disabled: false, state: "failed" as const, action: "Try again" };
@@ -368,26 +367,33 @@ export const agentInfo = (id: string) => CODING_AGENTS.find((a) => a.id === id) 
 /** The official pages "Install" opens (phase 1: the page, not the installer). */
 export const INSTALL_PAGES = { "claude-code": "https://claude.com/product/claude-code", codex: "https://developers.openai.com/codex" } as const;
 
-const COUNT = ["", "one", "two", "three", "four", "five", "six"];
-
 export interface AgentView {
-  state: "looking" | "one" | "several" | "none";
+  state: "looking" | "found" | "none";
   title: string;
   line: string;
   /** "Found on this Mac". */
   label: string;
+  /** Every agent found, ticked unless the person unticked it. */
   agents: { id: string; name: string; maker: string; picked: boolean }[];
+  /** Under the list: where to change it later. */
+  note: string | null;
   continueEnabled: boolean;
+  /** The quiet way past the step without connecting anything ("Choose later"); null while looking. */
+  later: string | null;
   install: { primary: string; secondary: string; note: string } | null;
   error: string | null;
 }
 
-/** `found`: the coding agents installed on this computer (setup ids); null while still looking. */
-export function agentView(input: { os: string; found: string[] | null; picked: string | null; error: string | null }): AgentView {
+/**
+ * Screen 3. `found`: the coding agents installed on this computer (setup ids), null while still looking; `off`: the
+ * ones the person unticked. Nothing has to be picked: every agent found starts ticked, Continue connects the ticked
+ * ones (or, with none ticked, goes on like Choose later), and each job picks its own agent.
+ */
+export function agentView(input: { os: string; found: string[] | null; off?: readonly string[]; error: string | null }): AgentView {
   const place = placeName(input.os);
   const label = `Found on ${place}`;
   if (input.found === null)
-    return { state: "looking", title: "Looking for your coding agent…", line: "", label, agents: [], continueEnabled: false, install: null, error: null };
+    return { state: "looking", title: "Looking for your coding agents…", line: "", label, agents: [], note: null, continueEnabled: false, later: null, install: null, error: null };
   const found = CODING_AGENTS.filter((a) => input.found!.includes(a.id));
   if (found.length === 0) {
     return {
@@ -396,42 +402,39 @@ export function agentView(input: { os: string; found: string[] | null; picked: s
       line: `Cua doesn't come with its own, and we didn't find one on ${place}. Install Claude Code, then sign in to it once.`,
       label,
       agents: [],
+      note: null,
       continueEnabled: false,
+      later: "Install later",
       install: { primary: "Install Claude Code", secondary: "Install Codex instead", note: "This opens the official Claude Code install page in your browser. Come back here when it's installed." },
       error: null,
     };
   }
-  if (found.length === 1) {
-    const a = found[0]!;
-    return {
-      state: "one",
-      title: `Your agents will use ${a.name}`,
-      line: `We found ${a.name} on ${place}. Your agents will use it to do the work while you keep working on other things.`,
-      label,
-      agents: [{ id: a.id, name: a.name, maker: a.maker, picked: true }],
-      continueEnabled: true,
-      install: null,
-      error: input.error,
-    };
-  }
-  const picked = found.some((a) => a.id === input.picked) ? input.picked : null;
+  const off = input.off ?? [];
+  const one = found.length === 1 ? found[0]! : null;
   return {
-    state: "several",
-    title: "Pick the coding agent to use",
-    line: `We found ${COUNT[found.length] ?? found.length} on ${place}. Pick the one your agents should use. You can change it for any job later.`,
+    state: "found",
+    title: one ? `Use ${one.name} on all your computers` : "Use your coding agents on all your computers",
+    line: one
+      ? `We found ${one.name} on ${place}. Cua connects it to your computers, so it can run jobs on any of them while you keep working here.`
+      : `We found ${listNames(found.map((a) => a.name))} on ${place}. Cua connects each one to your computers, so any of them can run jobs there while you keep working here.`,
     label,
-    agents: found.map((a) => ({ id: a.id, name: a.name, maker: a.maker, picked: a.id === picked })),
-    continueEnabled: picked !== null,
+    agents: found.map((a) => ({ id: a.id, name: a.name, maker: a.maker, picked: !off.includes(a.id) })),
+    note: "You pick the agent for each job. You can change this later in Settings.",
+    continueEnabled: true,
+    later: "Choose later",
     install: null,
     error: input.error,
   };
 }
 
-/** The agent screen 3 settles on: the only one found, or the one picked among several. */
-export function chosenAgent(found: string[] | null, picked: string | null): string | null {
-  const list = CODING_AGENTS.filter((a) => (found ?? []).includes(a.id));
-  if (list.length === 1) return list[0]!.id;
-  return list.some((a) => a.id === picked) ? picked : null;
+/** The agents screen 3 connects: every one found that the person didn't untick, in `CODING_AGENTS` order. */
+export function chosenAgents(found: string[] | null, off: readonly string[] = []): string[] {
+  return CODING_AGENTS.filter((a) => (found ?? []).includes(a.id) && !off.includes(a.id)).map((a) => a.id);
+}
+
+/** Ticks or unticks one agent on screen 3. */
+export function toggleAgentOff(off: readonly string[], id: string): string[] {
+  return off.includes(id) ? off.filter((x) => x !== id) : [...off, id];
 }
 
 /* ---- 4 ---------------------------------------------------------------------------------- */
@@ -448,9 +451,11 @@ export interface ReadyView {
  * `computers`: the picked computers' names, this computer first as `this` (written "this Mac"). `canMakeSeparate`:
  * false where this computer can't make a separate computer, so the line to try never asks for one (CUA-3150, idea D).
  */
-export function readyView(input: { os: string; agent: string; computers: string[]; canMakeSeparate?: boolean | null }): ReadyView {
+export function readyView(input: { os: string; agent: string; agents?: string[]; computers: string[]; canMakeSeparate?: boolean | null }): ReadyView {
   const place = placeName(input.os);
   const a = agentInfo(input.agent);
+  // Every agent connected is named; the line to try uses `agent`.
+  const connected = input.agents?.length ? input.agents : [input.agent];
   const names = input.computers.map((c) => (c === "this" ? place : c));
   const elsewhere = input.computers.find((c) => c !== "this");
   const task = elsewhere
@@ -460,7 +465,7 @@ export function readyView(input: { os: string; agent: string; computers: string[
       : `Make a separate Linux computer on ${place} and run this repo's tests in it`;
   const command = a.command ? `${a.command} "${task}"` : task;
   return {
-    title: `${a.name} can now use ${listNames(names)}`,
+    title: `${listNames(connected.map((id) => agentInfo(id).name))} can now use ${listNames(names)}`,
     line: a.command ? "Try it from your own terminal. Nothing runs until you do." : `Paste this into ${a.name}. Nothing runs until you do.`,
     command,
     copy: "Copy",
@@ -532,7 +537,7 @@ export function dotFor(screen: NewRunScreen): number | null {
 export const DOT_SCREENS = ["welcome", "where", "agent"] as const satisfies readonly NewRunScreen[];
 
 /** Each step's name, read out with its dot ("Step 2 of 3: Pick where your agents work"). */
-export const DOT_NAMES = [WELCOME.title, "Pick where your agents work", "Pick your coding agent"] as const;
+export const DOT_NAMES = [WELCOME.title, "Pick where your agents work", "Connect your coding agents"] as const;
 
 /** How far a run has got, once it's on `screen`: Ready counts as past the last dot. */
 export function reachedAfter(reached: number, screen: NewRunScreen): number {

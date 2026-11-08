@@ -194,6 +194,24 @@ def test_a_verified_release_installs(fixture: Fixture) -> None:
     assert fixture.installed()
 
 
+KWIN_HINT = "==> KWin window capture is off; `cua-driver kwin-capture on` turns it on"
+
+
+@linux_only
+@pytest.mark.parametrize("kwin", [True, False])
+def test_a_release_install_grants_nothing_on_kwin_and_says_how_to(fixture: Fixture, kwin: bool) -> None:
+    if kwin:
+        shim = fixture.shims / "kwin_wayland"
+        shim.write_text("#!/bin/sh\nexit 0\n")
+        shim.chmod(0o755)
+    fixture.with_cosign()
+    fixture.publish("0.31.0")
+    result = fixture.install("0.31.0")
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert result.stdout.splitlines().count(KWIN_HINT) == int(kwin)
+    assert not (fixture.home / ".local/share/applications").exists()
+
+
 @linux_only
 def test_a_checksum_mismatch_is_refused(fixture: Fixture) -> None:
     fixture.publish("0.31.0", sums="bad")

@@ -24,7 +24,7 @@
     {
       "aliases": [],
       "alsoWires": [],
-      "defaultModel": "claude-sonnet-5",
+      "defaultModel": "claude-sonnet-5-5",
       "delivery": {
         "claude-code": [
           "ANTHROPIC_API_KEY",
@@ -72,18 +72,39 @@
       "models": [
         {
           "fast": true,
+          "id": "claude-haiku-5-5",
+          "legacy": false,
+          "name": "Claude Haiku 5.5"
+        },
+        {
+          "fast": false,
+          "id": "claude-sonnet-5-5",
+          "legacy": false,
+          "name": "Claude Sonnet 5.5"
+        },
+        {
+          "fast": false,
+          "id": "claude-opus-5-5",
+          "legacy": false,
+          "name": "Claude Opus 5.5"
+        },
+        {
+          "fast": false,
+          "id": "claude-fable-5-1",
+          "legacy": false,
+          "name": "Claude Fable 5.1"
+        },
+        {
+          "fast": true,
           "id": "claude-haiku-4-5",
+          "legacy": true,
           "name": "Claude Haiku 4.5"
         },
         {
           "fast": false,
           "id": "claude-sonnet-5",
+          "legacy": true,
           "name": "Claude Sonnet 5"
-        },
-        {
-          "fast": false,
-          "id": "claude-opus-5-5",
-          "name": "Claude Opus 5.5"
         }
       ],
       "name": "Anthropic",
@@ -141,6 +162,7 @@
         {
           "fast": false,
           "id": "gpt-5.5",
+          "legacy": false,
           "name": "GPT-5.5"
         }
       ],
@@ -187,6 +209,7 @@
         {
           "fast": false,
           "id": "anthropic/claude-sonnet-5",
+          "legacy": false,
           "name": "Claude Sonnet 5"
         }
       ],
@@ -242,6 +265,7 @@
         {
           "fast": true,
           "id": "gemini-3.8-flash",
+          "legacy": false,
           "name": "Gemini 3.8 Flash"
         }
       ],
@@ -280,6 +304,7 @@
         {
           "fast": false,
           "id": "grok-4.6",
+          "legacy": false,
           "name": "Grok 4.6"
         }
       ],
@@ -314,6 +339,7 @@
         {
           "fast": true,
           "id": "deepseek-flash",
+          "legacy": false,
           "name": "DeepSeek Flash"
         }
       ],
@@ -351,6 +377,7 @@
         {
           "fast": false,
           "id": "kimi-k3",
+          "legacy": false,
           "name": "Kimi K3"
         }
       ],

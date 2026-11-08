@@ -1861,6 +1861,43 @@ impl Sandboxes {
         out
     }
 
+    /// Repairs the running local sandboxes that lost what they need to be
+    /// reached (a macOS VM whose network gateway ended is restarted behind a
+    /// new one) and records where they listen now; the names of those it
+    /// restarted, whose open connections are stale.
+    pub async fn mend_local(&self) -> Vec<String> {
+        let mut out = Vec::new();
+        let Some(rt) = self.inner.local.as_ref() else {
+            return out;
+        };
+        for s in self.inner.state.list_all() {
+            // A stopped record too: the restart that mends a VM is seen as
+            // a stop by the watch ([`Self::note_unasked_stops`]) and its
+            // record says stopped while the VM runs again.
+            if provider_of(&s) != ProviderKind::Local
+                || !matches!(s.status(), "running" | "stopped")
+                || s.runtime_type() == "direct"
+            {
+                continue;
+            }
+            let name = s.name().to_string();
+            match rt.mend(&name, s.runtime_type()).await {
+                Ok(Some(inst)) => {
+                    if let Err(e) = self.record_endpoints(&name, &inst) {
+                        tracing::warn!(sandbox = %name, "recording where it listens now: {e}");
+                    }
+                    if let Err(e) = self.inner.state.set_status(&name, "running") {
+                        tracing::warn!(sandbox = %name, "recording that it runs: {e}");
+                    }
+                    out.push(name);
+                }
+                Ok(None) => {}
+                Err(e) => tracing::warn!(sandbox = %name, "repairing it: {e}"),
+            }
+        }
+        out
+    }
+
     /// [`Self::note_unasked_stops`] for the one local sandbox `name`, looked
     /// at now: `Some` (and recorded as stopped) when it was running and its
     /// engine says it stopped without being asked to. A job's Space is

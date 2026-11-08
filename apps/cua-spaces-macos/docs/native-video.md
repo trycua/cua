@@ -31,6 +31,7 @@ The page keeps one reporter, with one set of observers and one animation frame. 
 { type: "surfaces", update: [{ surfaceId, spaceId, tier: "tile" | "full", interactive,
                                rect, clip, radius, occluded, holes, visible }], remove: [surfaceId] }
 { type: "focus", surfaceId | null }
+{ type: "prewarm", spaceId }
 ```
 
 - **`rect`** is the video area inside the slot's border, in CSS px from the web view's top left.
@@ -85,6 +86,12 @@ CSS px become points through `pageZoom × magnification`. A web view that isn't 
 **Lifecycle.** A page load (`didCommit`), the web content process ending, and the window closing all tear every surface and session down. A viewer slot the page removes keeps its session warm for `slotGrace` (45 s). The Space page moves its viewer between call view's stage and thread view's mini-player by removing one slot and adding another, and a person leaves a Space for the Spaces page and comes back: the new slot binds to the same live session and shows its current frame at once, with no reconnect (it was 1.5 s, so every real visit away reopened the stream). A warm session is bounded: at most `maxWarm` (3) Spaces stay warm, the oldest going first; one whose transport drops (the Space stopped, the machine went away) is released at once rather than reconnected for nobody; a hidden window, a closed window and a page load release every one; and one that was already reconnecting or failed when its slot left is not kept.
 
 Opening a stream no longer lists every Space on every machine first (`SpacesConnection.attachForStream`): that list waited for the relay directory, so a slow or unreachable relay delayed or failed the desktop of a Space on this Mac.
+
+**Opening fast.** Connecting to a desktop must feel instant (budget: a Space already running opens in 1 s or less, a first open in 2 s or less), so the connect is taken off the click:
+
+- *Intent.* The page tells the host `{ type: "prewarm", spaceId }` when the pointer rests on a link to a Space for 120 ms, or presses one (`lib/stream-intent.ts`, unless the person turned off connecting by itself). The host opens that Space's viewer stream at once (`WebUIVideoSurfaces.prewarm`), counts it as a warm stream (so `maxWarm` bounds it) and lets it go after `prewarmGrace` (15 s) when no slot takes it. The slot that follows binds to a stream that is connected or already connecting. A prewarm that failed is no verdict on the slot: it opens again.
+- *Poster.* When a slot connects, the Space's last picture (kept when its stream is let go, at most 8, 30 minutes) draws dimmed in its place and takes no input; the page's "Connecting…" shows through it, and the live picture replaces it.
+- *Timing.* Every open writes a `stream.open` span in the unified log (subsystem `ai.cua.spaces`, category `stream.timing`, debug): `slot`, `resolved`, `begun`, `presence`, `opened`, `decoded`, `painted` as ms from the first stamp, and `stream.slot ... first_frame_ms` per slot (click to first painted frame). The daemon and the streaming client log the rest (`cua::stream::timing`, debug: `connect_space`, `ticket`, `attached`, `connection_established`, `session_opened`, `first_frame`, `first_keyframe`). Times only, never frame content. The page marks `stream.open:<space>` in `performance`. `cargo test -p cua-spaces-ext --test e2e_docker_stream_timing` (see its header) fails when a cold open takes over 2 s or the warm p95 over 1 s.
 
 ### Input and keyboard focus
 

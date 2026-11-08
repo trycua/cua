@@ -1,5 +1,43 @@
 # Changelog
 
+## [0.15.1](https://github.com/trycua/cua/compare/cua-sdk-v0.15.0...cua-sdk-v0.15.1) (2026-11-08)
+
+
+### Bug Fixes
+
+* **cua:** ship the static cua-spacesd in every platform wheel ([#6959](https://github.com/trycua/cua/issues/6959)) ([16ac156](https://github.com/trycua/cua/commit/16ac1561354530107bd86cc721b044587d448f6c))
+
+## [0.15.0](https://github.com/trycua/cua/compare/cua-sdk-v0.14.0...cua-sdk-v0.15.0) (2026-11-08)
+
+
+### Features
+
+* **spaces:** record the Ready screen, Copy, chat pickup and Done in the first-run funnel ([#6924](https://github.com/trycua/cua/issues/6924)) ([2a1b66e](https://github.com/trycua/cua/commit/2a1b66e731d446c05fa443916eaaaa6ba26c22aa))
+
+
+### Bug Fixes
+
+* **cua-vmm:** forward the agent port of a macOS Space behind the secure gateway ([#6793](https://github.com/trycua/cua/issues/6793)) ([55eaa9b](https://github.com/trycua/cua/commit/55eaa9b6c618bbe2f723ec392436ceb9e2b4e541))
+* **spaces:** a slow-starting desktop no longer keeps a sleeping Space awake ([#6868](https://github.com/trycua/cua/issues/6868)) ([066f837](https://github.com/trycua/cua/commit/066f837d6e9a84483d02076dcd8a3ea5f67fe29c))
+* **spaces:** start Claude agents on Sonnet 5.5 and list the Claude 5 family ([#6810](https://github.com/trycua/cua/issues/6810)) ([1511490](https://github.com/trycua/cua/commit/15114908cae2b3d70a85356651142faa1414ebf8))
+
+
+### Performance Improvements
+
+* **spaces:** connect Space desktop streams in under a second ([#6818](https://github.com/trycua/cua/issues/6818)) ([1f060b6](https://github.com/trycua/cua/commit/1f060b62491bce2fb010b64a6569bb1974decdc0))
+
+## [0.14.0](https://github.com/trycua/cua/compare/cua-sdk-v0.13.0...cua-sdk-v0.14.0) (2026-11-07)
+
+
+### Features
+
+* **spaces:** setup says what Spaces is for, asks for the rest after the first job, offers only what this computer can make ([#6787](https://github.com/trycua/cua/issues/6787)) ([7ecb202](https://github.com/trycua/cua/commit/7ecb202e25329e41985b19b66025f9c02480e25d))
+
+
+### Bug Fixes
+
+* **spaces:** Home's apps row opens again after a relaunch and shows each switch live (CUA-3551) ([#6872](https://github.com/trycua/cua/issues/6872)) ([26858cd](https://github.com/trycua/cua/commit/26858cd5050728f64aaa1ef78a9bf3a248fdccc8))
+
 ## [0.13.0](https://github.com/trycua/cua/compare/cua-sdk-v0.12.1...cua-sdk-v0.13.0) (2026-11-07)
 
 

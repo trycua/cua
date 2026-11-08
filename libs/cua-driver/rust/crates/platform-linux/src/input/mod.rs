@@ -32,7 +32,8 @@ pub use focus_guard::{FocusGuardReport, FocusSnapshot, SameAppWindow};
 pub use foreground::{FocusAfter, ForegroundOptions, ForegroundReport};
 pub use mpx_keyboard::{
     real_keyboard_input_available, send_popup_keyboard_key, send_popup_keyboard_text,
-    send_virtual_keyboard_key, send_virtual_keyboard_text, KeyboardDeliveryReport, MPX_UINPUT_PATH,
+    send_popup_keyboard_text_paced, send_virtual_keyboard_key, send_virtual_keyboard_text,
+    send_virtual_keyboard_text_paced, KeyboardDeliveryReport, MPX_UINPUT_PATH,
 };
 
 use anyhow::{anyhow, bail, Context, Result};
@@ -55,6 +56,49 @@ use x11rb::rust_connection::RustConnection;
 const CLICK_DELAY_MS: u64 = 35;
 const DOUBLE_CLICK_DELAY_MS: u64 = 50;
 const KEY_DELAY_MS: u64 = 10;
+
+/// How `type_text` paces key delivery on X11 (see
+/// [`cua_driver_core::type_pacing`] for the shared contract). The default,
+/// `delay_ms` 0, sends keys back to back with a server round trip every
+/// [`cua_driver_core::type_pacing::BATCH_UNITS`] keys. A positive `delay_ms`
+/// holds each key [`KEY_DELAY_MS`] and then waits `delay_ms`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TypePacing {
+    pub delay_ms: u64,
+}
+
+impl TypePacing {
+    pub fn from_args(args: &serde_json::Value) -> Self {
+        Self {
+            delay_ms: cua_driver_core::type_pacing::delay_from_args(args),
+        }
+    }
+
+    pub fn is_batched(self) -> bool {
+        cua_driver_core::type_pacing::is_batched(self.delay_ms)
+    }
+
+    /// How long a key stays down before its release.
+    pub(crate) fn hold(self) -> Duration {
+        if self.is_batched() {
+            Duration::ZERO
+        } else {
+            Duration::from_millis(KEY_DELAY_MS)
+        }
+    }
+
+    /// The pause after a key's release.
+    pub(crate) fn gap(self) -> Duration {
+        Duration::from_millis(self.delay_ms)
+    }
+
+    /// Whether the key just sent (the `sent`-th) ends a batch and needs a
+    /// server round trip before the next one. Never in paced mode, where each
+    /// key already has its own pause.
+    pub(crate) fn batch_boundary(self, sent: usize) -> bool {
+        self.is_batched() && sent.is_multiple_of(cua_driver_core::type_pacing::BATCH_UNITS)
+    }
+}
 const PING_TIMEOUT: Duration = Duration::from_secs(1);
 static PING_SERIAL: AtomicU32 = AtomicU32::new(1);
 
@@ -3584,6 +3628,13 @@ pub fn send_type_text(xid: u64, text: &str) -> Result<()> {
     send_type_text_with_delay(xid, text, 0)
 }
 
+/// Pause for `d` unless it is zero.
+fn pause_unless_zero(d: Duration) {
+    if !d.is_zero() {
+        crate::interaction::pause(d);
+    }
+}
+
 fn type_text_with_preflight<G>(
     text: &str,
     keymap: &GetKeyboardMappingReply,
@@ -3690,6 +3741,10 @@ fn type_text_in_spare_batches<G>(
 
 /// Type a string with an additional `inter_char_ms` delay between each character.
 pub fn send_type_text_with_delay(xid: u64, text: &str, inter_char_ms: u64) -> Result<()> {
+    let pacing = TypePacing {
+        delay_ms: inter_char_ms,
+    };
+    let sent = std::cell::Cell::new(0usize);
     let (conn, _) = connect_x11_for_input()?;
     let window = xid as u32;
     let root = conn.setup().roots[0].root;
@@ -3741,11 +3796,14 @@ pub fn send_type_text_with_delay(xid: u64, text: &str, inter_char_ms: u64) -> Re
             admitted(|| conn.send_event(false, window, EventMask::KEY_PRESS, press))?;
             // Start the hold interval after sending the press, not while it is buffered.
             conn.flush()?;
-            crate::interaction::pause(Duration::from_millis(KEY_DELAY_MS));
+            pause_unless_zero(pacing.hold());
             conn.send_event(false, window, EventMask::KEY_RELEASE, release)?;
             conn.flush()?;
-            if inter_char_ms > 0 {
-                crate::interaction::pause(Duration::from_millis(inter_char_ms));
+            pause_unless_zero(pacing.gap());
+            sent.set(sent.get() + 1);
+            if pacing.batch_boundary(sent.get()) {
+                // Bound what the client has queued before sending more.
+                conn.get_input_focus()?.reply()?;
             }
             Ok(())
         },
@@ -3764,7 +3822,13 @@ pub fn send_type_text_with_delay(xid: u64, text: &str, inter_char_ms: u64) -> Re
 /// argument because XTest always delivers to the focused window; the caller
 /// focuses the target by clicking it first. `\n`/`\t` map to Return/Tab.
 pub fn send_type_text_xtest(text: &str) -> Result<()> {
+    send_type_text_xtest_paced(text, TypePacing::default())
+}
+
+/// [`send_type_text_xtest`] with the `delay_ms` contract in `pacing`.
+pub fn send_type_text_xtest_paced(text: &str, pacing: TypePacing) -> Result<()> {
     use x11rb::protocol::xtest::ConnectionExt as _;
+    let sent = std::cell::Cell::new(0usize);
     let (conn, _) = connect_x11_for_input()?;
     let mapping = conn.get_keyboard_mapping(8, 248)?.reply()?;
     // Shift keycode (modifier index 0) for shifted characters.
@@ -3794,7 +3858,12 @@ pub fn send_type_text_xtest(text: &str) -> Result<()> {
             }
             conn.flush()?;
             delivered.confirmed();
-            crate::interaction::pause(Duration::from_millis(KEY_DELAY_MS));
+            pause_unless_zero(pacing.hold() + pacing.gap());
+            sent.set(sent.get() + 1);
+            if pacing.batch_boundary(sent.get()) {
+                // Bound what the server and client have queued before sending more.
+                conn.get_input_focus()?.reply()?;
+            }
             Ok(())
         },
         || client.borrow_mut().release(),
@@ -5729,5 +5798,46 @@ mod path_tests {
         let (cum, total) = path_cumulative(&path);
         assert!((total - 0.0).abs() < 1e-9);
         assert_eq!(point_on_path(&path, &cum, total, 0.3), (5, 5));
+    }
+}
+
+#[cfg(test)]
+mod type_pacing_tests {
+    use super::*;
+
+    #[test]
+    fn default_pacing_is_batched_with_no_pauses() {
+        let pacing = TypePacing::default();
+        assert!(pacing.is_batched());
+        assert_eq!(pacing.hold(), Duration::ZERO);
+        assert_eq!(pacing.gap(), Duration::ZERO);
+        assert_eq!(
+            TypePacing::from_args(&serde_json::json!({})),
+            TypePacing::default()
+        );
+    }
+
+    #[test]
+    fn a_positive_delay_holds_each_key_and_waits() {
+        let pacing = TypePacing::from_args(&serde_json::json!({"delay_ms": 30}));
+        assert!(!pacing.is_batched());
+        assert_eq!(pacing.hold(), Duration::from_millis(KEY_DELAY_MS));
+        assert_eq!(pacing.gap(), Duration::from_millis(30));
+        assert!((1..100).all(|sent| !pacing.batch_boundary(sent)));
+    }
+
+    #[test]
+    fn batches_sync_with_the_server_every_sixteen_keys() {
+        let pacing = TypePacing::default();
+        let boundaries: Vec<usize> = (1..=48)
+            .filter(|&sent| pacing.batch_boundary(sent))
+            .collect();
+        assert_eq!(boundaries, vec![16, 32, 48]);
+    }
+
+    #[test]
+    fn the_delay_is_clamped() {
+        let pacing = TypePacing::from_args(&serde_json::json!({"delay_ms": 100_000}));
+        assert_eq!(pacing.delay_ms, 200);
     }
 }

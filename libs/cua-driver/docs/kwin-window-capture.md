@@ -123,6 +123,18 @@ layouts, mismatched owners/UUIDs, closed windows and timeouts return
 `surface_identity_unproven`, the same refusal as any window the driver can't
 capture exactly. The driver log at debug level names the cause.
 
+## Desktop capture
+
+While the adapter is on, a desktop screenshot asks `CaptureWorkspace` before
+the Screenshot portal, in logical pixels and with every output. Its image is the
+desktop frame `get_desktop_state` and desktop input use, so window positions and
+clicks line up with it on any layout. Where KWin answers (see
+[Turning it on and off](#turning-it-on-and-off)), there is no consent dialog.
+`ScreenShot2` never asks the portal, so the switch is what keeps a portal
+**Deny**: a saved Deny keeps this off, as it does window capture, unless
+`--override-portal-deny` was given. While the adapter is off, or where KWin
+refuses, the portal runs as before.
+
 ## Focused native regression
 
 In a disposable KWin Wayland session, with `XDG_CURRENT_DESKTOP` set to `KDE` or

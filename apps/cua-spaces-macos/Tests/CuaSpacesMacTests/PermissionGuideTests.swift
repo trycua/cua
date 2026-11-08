@@ -227,3 +227,65 @@ struct PermissionGuideTests {
         #expect(web.acceptsFirstMouse(for: nil))
     }
 }
+
+/// Where the guide panel docks (CUA-3551). Mac test, 7 Nov: on a 1024x768
+/// screen with a 60 pt Dock, the panel sat under System Settings with its
+/// drag row in view on the first grant, and about 60 pt lower, its drag row
+/// behind the Dock, after a relaunch, when Cua Spaces came back full screen:
+/// a full-screen app's `visibleFrame` is its own Space's, with no Dock.
+struct GuidePanelPlacementTests {
+    let screenFrame = CGRect(x: 0, y: 0, width: 1024, height: 768)
+    /// The desktop Space: a 60 pt Dock at the bottom, a 24 pt menu bar.
+    var desktop: PanelScreen { PanelScreen(frame: screenFrame, visibleFrame: CGRect(x: 0, y: 60, width: 1024, height: 684)) }
+    /// What a full-screen Cua Spaces reads: neither the Dock nor the menu bar.
+    var fullScreen: PanelScreen { PanelScreen(frame: screenFrame, visibleFrame: screenFrame) }
+    /// System Settings as in the shots: its bottom edge just above the Dock.
+    let settings = CGRect(x: 126, y: 66, width: 770, height: 668)
+    let panelHeight: CGFloat = 120
+
+    func docked(_ screen: PanelScreen, hostIsFullScreen: Bool) -> CGRect {
+        let usable = PanelPlacement.usableArea(screen: screen, settingsFrame: settings,
+                                               hostIsFullScreen: hostIsFullScreen, menuBarHeight: 24)
+        return PanelPlacement.dockedFrame(settingsFrame: settings, usable: usable, height: { _ in panelHeight })
+    }
+
+    @Test func staysClearOfTheDockOnTheDesktop() {
+        let panel = docked(desktop, hostIsFullScreen: false)
+        #expect(panel.minY >= 60 + PanelPlacement.screenInset)
+        #expect(panel.minX == settings.minX + PanelPlacement.sidebarWidth)
+        #expect(panel.width == settings.width - PanelPlacement.sidebarWidth)
+    }
+
+    /// The bug: the same System Settings window, asked from a full-screen
+    /// Cua Spaces, must give the same, fully visible panel.
+    @Test func staysClearOfTheDockWhenTheAppIsFullScreen() {
+        let first = docked(desktop, hostIsFullScreen: false)
+        // macOS may or may not report the full-screen flag before the
+        // visible frame changes: either one alone is enough.
+        for (screen, flag) in [(fullScreen, true), (fullScreen, false), (desktop, true)] {
+            let panel = docked(screen, hostIsFullScreen: flag)
+            #expect(panel.minY >= 60, "the drag row must not sit behind the Dock")
+            #expect(panel.minY >= settings.minY)
+            #expect(panel.maxY <= screenFrame.maxY - 24)
+            #expect(abs(panel.minY - first.minY) < 8)
+        }
+    }
+
+    /// With room under System Settings, the panel sits right under it.
+    @Test func sitsRightUnderAShortWindow() {
+        let short = CGRect(x: 126, y: 400, width: 770, height: 340)
+        let usable = PanelPlacement.usableArea(screen: desktop, settingsFrame: short, hostIsFullScreen: false, menuBarHeight: 24)
+        let panel = PanelPlacement.dockedFrame(settingsFrame: short, usable: usable, height: { _ in panelHeight })
+        #expect(panel.maxY == short.minY)
+    }
+
+    /// Picks the screen System Settings is mostly on.
+    @Test func picksTheScreenSystemSettingsIsOn() {
+        let right = PanelScreen(frame: CGRect(x: 1024, y: 0, width: 1440, height: 900),
+                                visibleFrame: CGRect(x: 1024, y: 0, width: 1440, height: 875))
+        let onRight = CGRect(x: 900, y: 100, width: 770, height: 600)
+        #expect(PanelPlacement.screen(for: onRight, among: [desktop, right]) == right)
+        #expect(PanelPlacement.screen(for: settings, among: [desktop, right]) == desktop)
+        #expect(PanelPlacement.screen(for: CGRect(x: 5000, y: 0, width: 10, height: 10), among: [desktop, right]) == nil)
+    }
+}

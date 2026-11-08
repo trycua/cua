@@ -162,6 +162,12 @@ Which workflow a change triggers is listed in
 [`.github/workflows/README.md`](.github/workflows/README.md); known flaky
 checks are in [`.github/workflows/FLAKY.md`](.github/workflows/FLAKY.md).
 
+## Try a Pull Request Without Building It
+
+Maintainers can add the `preview:mac` label to a pull request from a branch of this repository. CI then builds
+an installable "Cua Spaces Local" macOS app from the pull request head and comments the download link. See
+[CI](../docs/contributing/CI.md#try-a-pull-request-the-previewmac-label). Pull requests from forks are not built.
+
 ## Preserve Contributor Authorship
 
 Keep the original author when external code or design ships in Cua. Merge the

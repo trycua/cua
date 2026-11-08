@@ -449,14 +449,24 @@ mod tests {
             setup: Restore,
         };
         assert_eq!(foreground_policy(Desktop::X11), x11);
-        for compositor in [Compositor::Hyprland, Compositor::Niri, Compositor::Other] {
+        for compositor in [
+            Compositor::Injected,
+            Compositor::Hyprland,
+            Compositor::Niri,
+            Compositor::Other,
+        ] {
             assert_eq!(foreground_policy(Desktop::XWayland(compositor)), x11);
         }
     }
 
     #[test]
     fn wayland_restores_all_but_menus_and_gestures_off_niri() {
-        for compositor in [Compositor::Hyprland, Compositor::Niri, Compositor::Other] {
+        for compositor in [
+            Compositor::Injected,
+            Compositor::Hyprland,
+            Compositor::Niri,
+            Compositor::Other,
+        ] {
             let policy = foreground_policy(Desktop::Wayland(compositor));
             for restored in [policy.typing, policy.key, policy.click, policy.setup] {
                 assert_eq!(restored, RestoreMode::RestorePrevious, "{compositor:?}");

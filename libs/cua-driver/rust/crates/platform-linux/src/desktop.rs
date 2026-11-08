@@ -20,10 +20,12 @@ pub enum Desktop {
     Wayland(Compositor),
 }
 
-/// The compositor a Wayland session names. With `CUA_INJECT_SOCKET` set,
-/// input goes to the nested cua-compositor and no host adapter applies.
+/// The compositor a Wayland session names.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Compositor {
+    /// `CUA_INJECT_SOCKET` is set: input goes to the nested cua-compositor
+    /// and no host adapter applies.
+    Injected,
     Hyprland,
     /// `NIRI_SOCKET` is set. Until [`Desktop::attested`], it may name
     /// another session's niri.
@@ -39,15 +41,19 @@ impl Desktop {
         }
     }
 
-    /// This desktop once niri's IPC attestation has run: a `NIRI_SOCKET`
-    /// that is not this session's niri names [`Compositor::Other`]. Probes
-    /// niri's socket, so only route choices that differ on niri call it.
+    /// This desktop once niri's IPC attestation has run. An attested niri
+    /// wins over a Hyprland signature it inherited; a `NIRI_SOCKET` that is
+    /// not this session's niri names [`Compositor::Other`]. Probes niri's
+    /// socket when one is set, so only choices that differ on niri call it.
     #[cfg(target_os = "linux")]
     pub fn attested(self) -> Desktop {
         match self {
-            Desktop::Wayland(Compositor::Niri) if !crate::wayland::niri::is_session() => {
-                Desktop::Wayland(Compositor::Other)
+            Desktop::Wayland(compositor)
+                if compositor != Compositor::Injected && crate::wayland::niri::is_session() =>
+            {
+                Desktop::Wayland(Compositor::Niri)
             }
+            Desktop::Wayland(Compositor::Niri) => Desktop::Wayland(Compositor::Other),
             desktop => desktop,
         }
     }
@@ -89,7 +95,7 @@ fn classify(var: impl Fn(&str) -> Option<OsString>) -> Desktop {
     let text = |name| var(name).and_then(|value| value.into_string().ok());
     let set = |name| var(name).is_some_and(|value| !value.is_empty());
     let compositor = if text("CUA_INJECT_SOCKET").is_some_and(|socket| !socket.is_empty()) {
-        Compositor::Other
+        Compositor::Injected
     } else if set("HYPRLAND_INSTANCE_SIGNATURE") {
         Compositor::Hyprland
     } else if set("NIRI_SOCKET") {
@@ -168,7 +174,14 @@ mod tests {
                 ("CUA_INJECT_SOCKET", "/run/cua.sock"),
                 ("HYPRLAND_INSTANCE_SIGNATURE", "abc"),
             ]),
-            Desktop::Wayland(Compositor::Other)
+            Desktop::Wayland(Compositor::Injected)
+        );
+        assert_eq!(
+            with(&[
+                ("HYPRLAND_INSTANCE_SIGNATURE", "abc"),
+                ("NIRI_SOCKET", "/run/niri.sock"),
+            ]),
+            Desktop::Wayland(Compositor::Hyprland)
         );
         assert_eq!(
             classify_env(&[

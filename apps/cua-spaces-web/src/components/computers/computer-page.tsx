@@ -38,7 +38,7 @@ import { Switch } from "@/components/ui/switch";
 import { toast } from "@/components/ui/toast";
 import { useMachinesLive } from "@/hooks/use-machines-live";
 import { useNewSpace } from "@/hooks/use-new-space";
-import { showDesktop } from "@/lib/hidden-desktops";
+import { useHiddenDesktops } from "@/lib/hidden-desktops";
 import { accessFor } from "@/lib/machines-account";
 import { withRelayStatus } from "@/lib/machines-relay-status";
 import { THIS_COMPUTER, computerFor } from "@/lib/machines";
@@ -129,6 +129,10 @@ function ComputerDetail({ machine: m, row, onUseCode }: { machine: MachinesViewM
   const [renaming, setRenaming] = useState(false);
   const [removing, setRemoving] = useState<MachinesViewRemove | null>(null);
   const [busy, setBusy] = useState(false);
+  const desktops = useHiddenDesktops();
+  // Its desktop's tile on Home, which Hide takes off (per account, on this device): the switch below brings it back.
+  const desktopId = m.desktop?.id ?? (m.current ? "this-mac" : null);
+  const onHome = desktopId ? !desktops.hidden.has(desktopId) : true;
   const fail = (what: string) => (e: unknown) => toast(what, { description: errorText(e), type: "error" });
 
   const flip = (t: MachinesViewToggle) => {
@@ -138,7 +142,7 @@ function ComputerDetail({ machine: m, row, onUseCode }: { machine: MachinesViewM
       try {
         for (const a of t.actions) await host.run(a);
         // Turning this Mac's desktop on shows its row in the Spaces list again, if it was hidden.
-        if (m.current && t.id === "desktop" && !t.on) showDesktop("this-mac");
+        if (m.current && t.id === "desktop" && !t.on) desktops.show("this-mac");
       } catch (e) {
         fail(`Couldn't change ${t.label}`)(e);
       } finally {
@@ -233,6 +237,17 @@ function ComputerDetail({ machine: m, row, onUseCode }: { machine: MachinesViewM
             />
           </div>
         ))}
+        {desktopId && (m.desktop || !onHome) ? (
+          <div className="flex items-center justify-between gap-5 px-4 py-3.5" data-machine-on-home={onHome ? "on" : "off"}>
+            <div>
+              <div className="text-[13px] font-medium" id="toggle-on-home">
+                Show on Home
+              </div>
+              <div className="mt-px text-xs text-muted-foreground">{onHome ? "Its desktop is one of your computers on Home." : "Hidden from Home. Turn on to show it again."}</div>
+            </div>
+            <Switch checked={onHome} aria-labelledby="toggle-on-home" onCheckedChange={(on) => (on ? desktops.show(desktopId) : desktops.hide(desktopId))} />
+          </div>
+        ) : null}
         {m.togglesNote ? (
           <div className="flex items-center gap-2 px-4 py-2.5 text-xs text-muted-foreground" data-machine-toggles-note>
             {m.team ? <UsersIcon className="size-3.5" /> : <LockIcon className="size-3.5" />}

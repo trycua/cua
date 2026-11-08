@@ -1268,7 +1268,8 @@ fn fire_session_end_for_owner(session_id: &str, owner_transport: Option<&str>) -
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum EndTransition {
-    /// The idle sweep's candidate was used, or ended, after it was picked.
+    /// The idle sweep's candidate was used, or ended, after it was picked, or
+    /// a call was admitted after the end decided; that call finishes it.
     StillLive,
     /// The episode's first end.
     First,
@@ -1298,6 +1299,15 @@ fn mark_session_ended(
         // section, so a call that started and finished after the sweep picked
         // the session keeps it alive.
         if idle.is_some_and(|idle| !records.get(session_id).is_some_and(|r| idle.expired(r))) {
+            return EndTransition::StillLive;
+        }
+        // A call admitted after the end released this lock owns the session
+        // now; its guard drop finishes the end.
+        if let Some(record) = records.get_mut(session_id).filter(|r| r.in_flight > 0) {
+            let pending = record.pending_end.get_or_insert(reason);
+            if *pending == SessionEndReason::IdleTimeout {
+                *pending = reason;
+            }
             return EndTransition::StillLive;
         }
         records.remove(session_id)

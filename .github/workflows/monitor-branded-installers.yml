@@ -154,15 +154,14 @@ jobs:
             .github/release-state
             libs/cua-driver/scripts
 
+      # libpipewire-0.3-0 is left out on purpose: cua-driver loads it only
+      # when a portal ScreenCast recording starts, so the install and
+      # --version must work without it.
       - name: Install Linux runtime libraries
+        uses: ./.github/actions/apt-install
         if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          # libpipewire-0.3-0 is left out on purpose: cua-driver loads it only
-          # when a portal ScreenCast recording starts, so the install and
-          # --version must work without it.
-          sudo apt-get install -y --no-install-recommends \
-            libx11-6 libxi6 libxtst6 libxext6 libwayland-client0 libxkbcommon0
+        with:
+          packages: libx11-6 libxi6 libxtst6 libxext6 libwayland-client0 libxkbcommon0
 
       - name: Run the canonical macOS/Linux installer with default resolution
         if: runner.os != 'Windows'

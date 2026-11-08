@@ -63,11 +63,13 @@ jobs:
         with:
           workspaces: libs/cua
           shared-key: libs-cua-qemu-tests
+      - name: Install apt packages
+        uses: ./.github/actions/apt-install
+        with:
+          packages: nftables
       - name: nftables and gVisor
         run: |
           set -euo pipefail
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq --no-install-recommends nftables
           scripts/images/install-gvisor.sh
           docker info --format '{{json .Runtimes}}'
       - name: Egress policies of runc and gVisor containers
@@ -118,12 +120,13 @@ jobs:
         with:
           workspaces: libs/cua
           shared-key: libs-cua-qemu-tests
+      - name: Install apt packages
+        uses: ./.github/actions/apt-install
+        with:
+          packages: qemu-utils qemu-system-x86 ovmf passt musl-tools e2fsprogs squashfs-tools
       - name: QEMU, pasta, and user namespaces for pasta
         run: |
           set -euo pipefail
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq --no-install-recommends \
-            qemu-utils qemu-system-x86 ovmf passt musl-tools e2fsprogs squashfs-tools
           # Installing QEMU re-applies the udev rules to /dev/kvm; open it again.
           sudo chmod 666 /dev/kvm
           # Ubuntu 24.04 lets only profiled programs create user namespaces.

@@ -183,15 +183,15 @@ jobs:
           - distro: "debian:12"
             image: "debian:12"
             glibc_version: "2.36"
-            pkg_install: "apt-get update -qq && apt-get install -y --no-install-recommends curl ca-certificates libx11-6 libxi6 libxtst6 libxext6 libwayland-client0 libxkbcommon0"
+            pkg_install: "pkg_apt curl ca-certificates libx11-6 libxi6 libxtst6 libxext6 libwayland-client0 libxkbcommon0"
           - distro: "ubuntu:22.04"
             image: "ubuntu:22.04"
             glibc_version: "2.35"
-            pkg_install: "apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends curl ca-certificates libx11-6 libxi6 libxtst6 libxext6 libwayland-client0 libxkbcommon0"
+            pkg_install: "pkg_apt curl ca-certificates libx11-6 libxi6 libxtst6 libxext6 libwayland-client0 libxkbcommon0"
           - distro: "ubuntu:24.04"
             image: "ubuntu:24.04"
             glibc_version: "2.39"
-            pkg_install: "apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends curl ca-certificates libx11-6 libxi6 libxtst6 libxext6 libwayland-client0 libxkbcommon0"
+            pkg_install: "pkg_apt curl ca-certificates libx11-6 libxi6 libxtst6 libxext6 libwayland-client0 libxkbcommon0"
           # RPM family
           # Rocky Linux 9 ships curl-minimal in the base image which conflicts
           # with the full curl package. Use --allowerasing to let dnf replace
@@ -217,7 +217,18 @@ jobs:
 
       - name: Install runtime deps (curl, certificates, X11, Wayland, xkbcommon)
         if: needs.resolve-version.outputs.version != 'none'
-        run: ${{ matrix.pkg_install }}
+        run: |
+          # The container has no checkout and no git yet, so the retry loop
+          # lives here (the same policy as .github/scripts/apt-retry.sh).
+          pkg_apt() {
+            n=1
+            until DEBIAN_FRONTEND=noninteractive timeout 300 apt-get update -qq \
+              && DEBIAN_FRONTEND=noninteractive timeout 300 apt-get install -y -qq --no-install-recommends -o Acquire::Retries=3 "$@"; do
+              [ "$n" -ge 3 ] && { echo "::error::apt: no success after 3 attempts; the mirror is slow or unreachable. Re-run the job."; return 1; }
+              echo "::warning::apt attempt $n failed or timed out"; sleep $((n * 10)); n=$((n + 1))
+            done
+          }
+          ${{ matrix.pkg_install }}
 
       - name: Restore workflow-cached released binary
         if: needs.resolve-version.outputs.version != 'none'

@@ -66,11 +66,13 @@ jobs:
         with:
           workspaces: libs/cua
           shared-key: libs-cua-qemu-tests
+      - name: Install apt packages
+        uses: ./.github/actions/apt-install
+        with:
+          packages: qemu-utils qemu-system-x86 ovmf genisoimage
       - name: Install QEMU and firmware
         run: |
           set -euo pipefail
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq --no-install-recommends qemu-utils qemu-system-x86 ovmf genisoimage
           sudo chmod 666 /dev/kvm
       - name: Cold VM Spaces are usable the moment create returns
         working-directory: libs/cua

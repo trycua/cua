@@ -105,10 +105,12 @@ jobs:
             libs/cua
             libs/cua-spacesd
           shared-key: libs-cua-qemu-tests
+      - name: Install apt packages
+        uses: ./.github/actions/apt-install
+        with:
+          packages: genisoimage qemu-utils qemu-system-x86 ovmf
       - name: QEMU, KVM and the Linux reference disk
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq --no-install-recommends genisoimage qemu-utils qemu-system-x86 ovmf
           sudo chmod 666 /dev/kvm
           cd libs/images
           linux/build-spacesd-linux.sh amd64

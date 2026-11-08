@@ -71,11 +71,13 @@ jobs:
       - uses: ./.github/actions/rust-cache
         with:
           workspaces: libs/cua/bench/streaming -> target
+      - name: Install apt packages
+        uses: ./.github/actions/apt-install
+        with:
+          packages: protobuf-compiler libprotobuf-dev cmake nasm clang pkg-config
       - name: Install build deps and gVisor
         run: |
           set -euo pipefail
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq --no-install-recommends protobuf-compiler libprotobuf-dev cmake nasm clang pkg-config
           scripts/images/install-gvisor.sh
           docker info --format '{{json .Runtimes}}'
       - name: Pull the Spaces image

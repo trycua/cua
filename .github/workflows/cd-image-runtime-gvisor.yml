@@ -56,9 +56,12 @@ jobs:
         arch: [arm64, amd64]
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Install apt packages
+        uses: ./.github/actions/apt-install
+        with:
+          packages: bzip2 pigz
       - name: Build the disk
         run: |
-          sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends bzip2 pigz
           sudo TMPDIR=/mnt libs/images/runtime-gvisor/build.sh "${{ matrix.arch }}" out
           sudo chown -R "$(id -u):$(id -g)" out
           {

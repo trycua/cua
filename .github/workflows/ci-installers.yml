@@ -70,18 +70,18 @@ jobs:
       - uses: actions/checkout@v4
       - name: install.sh test suite (fake release on a local HTTP server)
         run: |
-          docker run --rm -v "$PWD/scripts/install:/w:ro" "${{ matrix.image }}" sh -c '
+          docker run --rm -v "$PWD/scripts/install:/w:ro" -v "$PWD/.github/scripts/apt-retry.sh:/apt-retry.sh:ro" "${{ matrix.image }}" sh -c '
             set -e
             if command -v apk >/dev/null; then apk add -q python3 curl; adduser -D u
-            else apt-get update -qq && apt-get install -y -qq python3 curl ca-certificates bsdutils >/dev/null; useradd -m u; fi
+            else sh /apt-retry.sh python3 curl ca-certificates bsdutils >/dev/null; useradd -m u; fi
             echo "--- as root (dash/ash, deb path dry run)"; sh /w/tests/run.sh
             echo "--- as a user"; su u -c "sh /w/tests/run.sh"
           '
       - name: install.sh --yes --no-onboarding against a served release dir
         run: |
-          docker run --rm -v "$PWD/scripts/install:/w:ro" "${{ matrix.image }}" sh -c '
+          docker run --rm -v "$PWD/scripts/install:/w:ro" -v "$PWD/.github/scripts/apt-retry.sh:/apt-retry.sh:ro" "${{ matrix.image }}" sh -c '
             set -e
-            if command -v apk >/dev/null; then apk add -q python3 curl; else apt-get update -qq && apt-get install -y -qq python3 curl ca-certificates >/dev/null; fi
+            if command -v apk >/dev/null; then apk add -q python3 curl; else sh /apt-retry.sh python3 curl ca-certificates >/dev/null; fi
             mkdir -p /rel/cua-install-latest /stage
             printf "#!/bin/sh\necho cua 0.0.1\n" > /stage/cua && chmod +x /stage/cua
             arch=x64; case "$(uname -m)" in aarch64|arm64) arch=arm64;; esac

@@ -41,10 +41,12 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           persist-credentials: false
+      - name: Install apt packages
+        uses: ./.github/actions/apt-install
+        with:
+          packages: clang-18 ninja-build python3-venv libxkbcommon-dev xkb-data
       - name: Install portable test toolchain
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends clang-18 ninja-build python3-venv libxkbcommon-dev xkb-data
           python3 -m venv "$RUNNER_TEMP/hyprland-plugin-tools"
           "$RUNNER_TEMP/hyprland-plugin-tools/bin/python" -m pip install cmake==3.31.6
           echo "$RUNNER_TEMP/hyprland-plugin-tools/bin" >> "$GITHUB_PATH"

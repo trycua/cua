@@ -312,6 +312,11 @@ jobs:
             --expires-unix "$EXPIRES_UNIX"
           python .github/scripts/perception_release.py \
             verify-checksums perception-candidate/checksums.txt
+      - name: Install apt packages
+        uses: ./.github/actions/apt-install
+        if: needs.resolve.outputs.publish != 'true' && runner.os == 'Linux'
+        with:
+          packages: libx11-6 libxi6 libxtst6 libxext6 libwayland-client0 libxkbcommon0
       - name: Install the published Cua Driver (macOS and Linux)
         if: needs.resolve.outputs.publish != 'true' && runner.os != 'Windows'
         shell: bash
@@ -323,11 +328,6 @@ jobs:
           CUA_TELEMETRY_ENABLED: "false"
         run: |
           set -euo pipefail
-          if [[ "$RUNNER_OS" == Linux ]]; then
-            sudo apt-get update
-            sudo apt-get install -y --no-install-recommends \
-              libx11-6 libxi6 libxtst6 libxext6 libwayland-client0 libxkbcommon0
-          fi
           bash libs/cua-driver/scripts/install.sh --no-modify-path
           echo "CUA_DRIVER_BINARY=$CUA_DRIVER_RS_INSTALL_DIR/cua-driver" >> "$GITHUB_ENV"
       - name: Install the published Cua Driver (Windows)
@@ -481,6 +481,11 @@ jobs:
           }
           console.log(`verified ${payload.archive} for ${payload.target} (catalog ${payload.catalog_version})`);
           JS
+      - name: Install apt packages
+        uses: ./.github/actions/apt-install
+        if: runner.os == 'Linux'
+        with:
+          packages: libx11-6 libxi6 libxtst6 libxext6 libwayland-client0 libxkbcommon0
       - name: Install the published Cua Driver (macOS and Linux)
         if: runner.os != 'Windows'
         shell: bash
@@ -492,11 +497,6 @@ jobs:
           CUA_TELEMETRY_ENABLED: "false"
         run: |
           set -euo pipefail
-          if [[ "$RUNNER_OS" == Linux ]]; then
-            sudo apt-get update
-            sudo apt-get install -y --no-install-recommends \
-              libx11-6 libxi6 libxtst6 libxext6 libwayland-client0 libxkbcommon0
-          fi
           bash libs/cua-driver/scripts/install.sh --no-modify-path
           echo "CUA_DRIVER_BINARY=$CUA_DRIVER_RS_INSTALL_DIR/cua-driver" >> "$GITHUB_ENV"
       - name: Install the published Cua Driver (Windows)

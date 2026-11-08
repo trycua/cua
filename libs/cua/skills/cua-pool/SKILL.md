@@ -30,8 +30,8 @@ app = cua.App("train")
 def train():
     import torch
     print(torch.cuda.get_device_name(0), flush=True)
-    ...                       # write files under the current directory
-    return {"loss": 0.1}      # saved with the run
+    ...
+    return {"loss": 0.1}      # saved with the run as result.json
 ```
 
 - `gpu`: `"nvidia"` (CUDA, PyTorch), `"apple"` (Metal, MLX; add `kind="machine"` so it runs on the Mac itself),
@@ -47,13 +47,21 @@ cua run train.py::train --detach      # prints the run id and returns
 cua run --accelerator nvidia -- python script.py     # any command; this directory goes with it
 ```
 
+## What comes back
+
+Only what the function RETURNS comes back. Files it writes stay on the computer that ran it and are gone when the
+run ends. To get files (weights, images), write them and return the path: `return "weights.npz"` brings that file
+back, a directory path brings the directory, `bytes` come back as `result.bin`, and a dict as `result.json`.
+Return the weights from the run that trains, so you never train twice. A function with one parameter is passed
+the `cua.Cluster` (rank, world size); give it no parameters when you do not need that.
+
 ## Follow and finish
 
 ```bash
 cua jobs                      # your runs
 cua jobs <run>                # members, state, cost
 cua jobs logs -f <run>        # live output
-cua jobs result <run> -o out  # rank 0's result (files written by the function come back with it)
+cua jobs result <run> -o out  # rank 0's return value, unpacked into out/
 cua jobs cancel <run>
 ```
 

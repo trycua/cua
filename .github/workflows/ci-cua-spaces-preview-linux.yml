@@ -85,39 +85,6 @@ jobs:
             gh api -X POST "repos/$REPO/issues/$PR_NUMBER/comments" -f body="$body" >/dev/null
           fi
 
-  # A stale generated binding crashed a macOS build on 7 Nov. Check it before
-  # spending the build time.
-  bindings:
-    name: The Electron app core binding is up to date
-    if: >-
-      github.event.pull_request.head.repo.full_name == github.repository &&
-      ((github.event.action == 'labeled' && github.event.label.name == 'preview:linux') ||
-       (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'preview:linux')))
-    runs-on: ubuntu-22.04
-    timeout-minutes: 15
-    permissions:
-      contents: read
-    defaults:
-      run:
-        working-directory: apps/cua-spaces-desktop
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.pull_request.head.sha }}
-          persist-credentials: false
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      # pnpm through corepack: the root package.json pins pnpm 9.0.4, the
-      # Electron shell and the web UI pin 11.20.0, and corepack picks the one
-      # each directory's packageManager names.
-      - name: Enable corepack
-        run: corepack enable
-      - name: Check the binding
-        run: |
-          pnpm install --frozen-lockfile
-          pnpm native -- --skip-build --check-bindings
-
   # The web UI (the app core is Rust built for the browser), as the release's
   # `web` job builds it.
   web:
@@ -164,7 +131,6 @@ jobs:
   # Actions cache when main (or an earlier run) built the same inputs.
   native:
     name: Native layer (${{ matrix.label }})
-    needs: [bindings]
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
     permissions:
@@ -242,6 +208,17 @@ jobs:
         run: chmod +x native/linux-${{ matrix.arch }}/cua native/linux-${{ matrix.arch }}/cua-spacesd-linux-*
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+      # A stale generated binding crashed a macOS build on 7 Nov. The check
+      # needs the compiled library, so it runs here on the x64 native layer
+      # (the binding is the same for every target), before the app is packaged.
+      - name: The Electron TypeScript app core binding is up to date
+        if: matrix.arch == 'x64'
+        run: |
+          set -euo pipefail
+          mkdir -p ../../libs/cua/target/release
+          cp native/linux-x64/libcua_spaces_ffi.so ../../libs/cua/target/release/
+          (cd ../../libs/cua && (rustup show active-toolchain || rustup toolchain install))
+          pnpm native -- --skip-build --check-bindings
       # No OS code signing on Linux.
       - name: Build (electron-builder)
         run: pnpm dist:linux

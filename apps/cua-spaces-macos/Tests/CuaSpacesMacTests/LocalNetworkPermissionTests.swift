@@ -175,32 +175,82 @@ struct LocalNetworkPermissionTests {
     }
 }
 
-/// Providing Spaces asks nothing (Apple's guidance: ask when the person does
-/// the thing that needs it). The sign-in's setup provides Spaces, and the
-/// Local Network steps then came before a Linux Space that never needs them.
-/// A macOS Space made here asks before its create (`followCreate`).
+/// A Mac that accepts Spaces from your other computers asks for Local
+/// Network when it starts to (the switch, a setup, a join code), while
+/// someone is here, so a macOS Space another device creates here does not
+/// meet macOS's bare prompt first. Never during the first run or a sign-in:
+/// finishing the first run asks instead.
 @MainActor
 @Suite("Local Network access when providing Spaces")
 struct LocalNetworkWhenProvidingTests {
-    @Test func providingSpacesAsksNothing() async throws {
+    func model(_ host: FixtureHost, probe: LocalNetworkPermissionTests.FakeProbe,
+               shown: LocalNetworkPermissionTests.Shown) -> AppModel {
+        let m = ViewModelTests().makeModel(host: host)
+        m.localNetworkGate = LocalNetworkPermissionTests().gate(probe, shown: shown)
+        return m
+    }
+
+    func request(_ provide: Bool?) -> AppHostSetupRequest {
+        AppHostSetupRequest(mode: "relay", relayUrl: nil, direct: nil, name: "Studio", allow: nil,
+                            profile: "desktop", shareDesktop: nil, provideSpaces: provide)
+    }
+
+    @Test func theSignInsSetupAsksOnlyWhenTheFirstRunEnds() async throws {
+        let host = FixtureHost()
+        let shown = LocalNetworkPermissionTests.Shown()
+        let probe = LocalNetworkPermissionTests.FakeProbe([.blocked, .allowed], prompts: [0, 1, 1])
+        let m = model(host, probe: probe, shown: shown)
+        // The sign-in's setup, and the first run's own (the page's), in the
+        // first run: nothing asked.
+        await m.host.addAfterSignIn()
+        #expect(host.current.provideSpaces)
+        await m.host.run(.stopProvidingSpaces)
+        try await m.host.setUp(request(true), on: host)
+        #expect(host.current.provideSpaces)
+        #expect(m.hostingLocalNetworkCheck == nil)
+        #expect(shown.steps.isEmpty && probe.connects == 0)
+
+        // Done: the explanation, then macOS's prompt, once.
+        let bridge = WebUIBridge(model: m, allowedOrigins: [])
+        _ = try bridge.completeOnboarding(["mode": "host"])
+        await m.hostingLocalNetworkCheck?.value
+        #expect(shown.steps.map(\.kind) == [.explain])
+        #expect(probe.connects == 2, "macOS asked from this app's own process")
+    }
+
+    @Test func turningProvidingOnAsksOnce() async throws {
+        let host = FixtureHost()
+        let shown = LocalNetworkPermissionTests.Shown()
+        let probe = LocalNetworkPermissionTests.FakeProbe([.blocked, .allowed], prompts: [0, 1, 1])
+        let m = model(host, probe: probe, shown: shown)
+        m.onboarding.finish()
+        try await m.host.setUp(request(false), on: host)
+        #expect(!host.current.provideSpaces)
+        #expect(m.hostingLocalNetworkCheck == nil, "not providing Spaces: nothing asked")
+
+        await m.host.run(.provideSpaces)
+        #expect(host.current.provideSpaces)
+        await m.hostingLocalNetworkCheck?.value
+        #expect(shown.steps.map(\.kind) == [.explain])
+        #expect(m.host.actionFailure == nil)
+
+        // Set up again while providing: nothing asked again.
+        try await m.host.setUp(request(nil), on: host)
+        #expect(m.hostingLocalNetworkCheck == nil)
+        #expect(shown.steps.count == 1)
+    }
+
+    /// A sign-in after the first run (Settings) that sets this Mac up asks
+    /// nothing either.
+    @Test func aLaterSignInsSetupAsksNothing() async throws {
         let host = FixtureHost()
         let shown = LocalNetworkPermissionTests.Shown()
         let probe = LocalNetworkPermissionTests.FakeProbe([.blocked])
-        let m = ViewModelTests().makeModel(host: host)
-        m.localNetworkGate = LocalNetworkPermissionTests().gate(probe, shown: shown)
-        func request(_ provide: Bool?) -> AppHostSetupRequest {
-            AppHostSetupRequest(mode: "relay", relayUrl: nil, direct: nil, name: "Studio", allow: nil,
-                                profile: "desktop", shareDesktop: nil, provideSpaces: provide)
-        }
-        // The sign-in's setup (provides Spaces by default).
-        try await m.host.setUp(request(nil), on: host)
+        let m = model(host, probe: probe, shown: shown)
+        m.onboarding.finish()
+        await m.host.addAfterSignIn()
         #expect(host.current.provideSpaces)
-        // Off, then on with the switch.
-        await m.host.run(.provideSpaces)
-        await m.host.run(.provideSpaces)
-        #expect(host.current.provideSpaces)
-        try await Task.sleep(for: .milliseconds(100))
-        #expect(shown.steps.isEmpty)
-        #expect(probe.connects == 0)
+        #expect(m.hostingLocalNetworkCheck == nil)
+        #expect(shown.steps.isEmpty && probe.connects == 0)
     }
 }

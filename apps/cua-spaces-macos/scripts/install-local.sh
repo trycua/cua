@@ -387,6 +387,9 @@ if [ "$SKIP_RUST_BUILD" = 0 ]; then
         . "$HOME/.cargo/env"
     fi
     command -v cargo >/dev/null 2>&1 || die "cargo is required (https://rustup.rs), or build the libraries yourself and pass --skip-rust-build."
+    # macOS defaults to 256 open files; 256 codegen units with sccache exceed it
+    # ("Too many open files").
+    ulimit -n 10240 || true
     log "building the Cua Spaces library and CLI (cargo, $RUST_PROFILE)"
     # The SDK dylib the app links, and the `cua` that goes into the bundle
     # (build-app.sh's defaults).

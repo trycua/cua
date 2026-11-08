@@ -1787,9 +1787,6 @@ pub fn app_call(
         r.and_then(|r| serde_json::to_value(r).map_err(|e| Error::Agent(e.to_string())))
     };
     if super::github_auth::is_app_method(name) {
-        if !super::github_auth::enabled() {
-            return Some(Err(super::github_auth::off_error()));
-        }
         return super::github_auth::app_call(super::github_auth::global(), name, args);
     }
     Some(match name {
@@ -1919,11 +1916,6 @@ pub async fn app_tool_async(
     args: serde_json::Value,
 ) -> Option<crate::mcp::ToolOutcome> {
     if super::github_auth::is_app_method(name) {
-        if !super::github_auth::enabled() {
-            return Some(crate::mcp::ToolOutcome::error(
-                &super::github_auth::off_error(),
-            ));
-        }
         return super::github_auth::app_call_async(name, args)
             .await
             .map(|r| match r {

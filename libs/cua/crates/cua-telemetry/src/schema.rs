@@ -727,9 +727,7 @@ pub const PLANS: &[&str] = &["free", "pro", "teams", "unknown"];
 /// `cua-spaces-app-core` `experiments::Experiment::id`).
 pub const EXPERIMENTS: &[&str] = &[
     "cua_volume",
-    "secure_spaces",
     "child_spaces",
-    "ask_first",
     "ci_runners",
     "tcp_shares",
     "mobile",
@@ -1839,7 +1837,7 @@ pub const EVENTS: &[EventSpec] = &[
             p(
                 "experiments_on",
                 Kind::Set(EXPERIMENTS),
-                "The Spaces app's experiments turned on in Settings, Experiments on this install (cua_volume, secure_spaces, child_spaces, ask_first, ci_runners, tcp_shares, mobile, warm_pools, joined with +), or none.",
+                "The Spaces app's experiments turned on in Settings, Experiments on this install (cua_volume, child_spaces, ci_runners, tcp_shares, mobile, warm_pools, joined with +), or none.",
             ),
             p(
                 "ui_locale",
@@ -2292,7 +2290,7 @@ pub const EVENTS: &[EventSpec] = &[
             p(
                 "experiment",
                 Kind::Enum(EXPERIMENTS),
-                "Which experiment: cua_volume, secure_spaces, child_spaces, ask_first, ci_runners, tcp_shares, mobile or warm_pools.",
+                "Which experiment: cua_volume, child_spaces, ci_runners, tcp_shares, mobile or warm_pools.",
             ),
         ],
         purpose: "Which experiments people try, and which they turn off again.",

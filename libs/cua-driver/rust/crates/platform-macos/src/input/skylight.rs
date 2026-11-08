@@ -1377,7 +1377,7 @@ pub fn with_foreground_assist(
 
     let result = body();
 
-    if prev_ok {
+    if restores_front(prev_ok, front_psn(), target_psn) {
         unsafe { set_front(prev_psn.as_ptr() as *const c_void, 0, 0x400) };
     }
 
@@ -1529,11 +1529,26 @@ pub fn with_foreground_hid_activation(
     let result = action();
     std::thread::sleep(std::time::Duration::from_millis(40));
 
-    if prev_ok {
+    if restores_front(prev_ok, front_psn(), target_psn) {
         unsafe { set_front(prev_psn.as_ptr() as *const c_void, 0, 0x400) };
     }
 
     result
+}
+
+/// The process WindowServer has in front now, if it can be read.
+fn front_psn() -> Option<[u8; 8]> {
+    let get_front = get_front_process_fn()?;
+    let mut psn = [0u8; 8];
+    (unsafe { get_front(psn.as_mut_ptr() as *mut c_void) } == 0).then_some(psn)
+}
+
+/// Whether a foreground turn gives the front back to the process it saved.
+/// Only while the target still has the front: if you switched apps during
+/// the turn, or another app took the front, putting the saved one back would
+/// undo that. Windows leaves the front alone the same way (`TypingTurn::Lost`).
+fn restores_front(saved: bool, front_now: Option<[u8; 8]>, target_psn: [u8; 8]) -> bool {
+    saved && front_now == Some(target_psn)
 }
 
 fn preserves_exact_existing_focus(
@@ -1553,9 +1568,21 @@ mod tests {
     use super::{
         focus_failure_hint_from, foreground_turn, make_key_window_record, note_post_status,
         preserves_exact_existing_focus, reset_windowserver_connection_invalid_for_test,
-        windowserver_connection_invalid, WINDOWSERVER_INVALID_CONNECTION,
+        restores_front, windowserver_connection_invalid, WINDOWSERVER_INVALID_CONNECTION,
     };
     use crate::ax::exact_target::AxWindowId;
+
+    #[test]
+    fn a_turn_gives_the_front_back_only_while_its_target_still_has_it() {
+        let target = [1, 0, 0, 0, 0, 0, 0, 0];
+        let yours = [2, 0, 0, 0, 0, 0, 0, 0];
+        assert!(restores_front(true, Some(target), target));
+        // You switched apps (or another app took the front) during the turn.
+        assert!(!restores_front(true, Some(yours), target));
+        // Nothing to give back, or the front could not be read.
+        assert!(!restores_front(false, Some(target), target));
+        assert!(!restores_front(true, None, target));
+    }
 
     #[test]
     fn a_1002_post_status_is_remembered_and_other_failures_are_not() {

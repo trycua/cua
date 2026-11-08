@@ -1803,8 +1803,11 @@ mod tests {
         w("lib/util.py", "x = 1\n");
         w("weights.bin", "binary");
         w("target.png", "png");
-        w("cfg/params.csv", "a,b
-");
+        w(
+            "cfg/params.csv",
+            "a,b
+",
+        );
         w(".env", "SECRET=1");
         w("__pycache__/train.cpython-312.pyc", "x");
         w("cua-runs/p-1/adapters.safetensors", "x");

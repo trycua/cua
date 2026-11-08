@@ -6001,6 +6001,15 @@
         "parent": {
           "type": "string"
         },
+        "jobName": {
+          "type": "string"
+        },
+        "jobGpu": {
+          "type": "boolean"
+        },
+        "jobRun": {
+          "type": "string"
+        },
         "power": {
           "type": "string"
         },

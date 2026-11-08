@@ -288,6 +288,15 @@ pub struct Space {
     /// top-level Space.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent: Option<String>,
+    /// A job's Space (label `cua.job`): the name to show in its row (label `cua.job.name`, a pet-name shape, never an id).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub job_name: Option<String>,
+    /// A job's Space with a GPU (label `cua.job.gpu`): its row shows the GPU icon in place of the OS icon.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub job_gpu: bool,
+    /// The run a job's Space belongs to (label `cua.job.run`): one row per run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub job_run: Option<String>,
 }
 
 /// Whose a Space is, as the Spaces page groups it.
@@ -608,6 +617,15 @@ pub struct SpaceRow {
     /// The Space it is a child of (its id), as the daemon records the tree; absent for a top-level Space.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent: Option<String>,
+    /// A job's Space (label `cua.job`): the name to show in its row (label `cua.job.name`, a pet-name shape, never an id).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub job_name: Option<String>,
+    /// A job's Space with a GPU (label `cua.job.gpu`): its row shows the GPU icon in place of the OS icon.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub job_gpu: bool,
+    /// The run a job's Space belongs to (label `cua.job.run`): one row per run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub job_run: Option<String>,
 }
 
 /// `arm64` or `amd64` for any spelling of a CPU architecture (`aarch64`,

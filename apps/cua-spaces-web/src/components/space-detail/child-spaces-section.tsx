@@ -9,12 +9,13 @@
  */
 
 import { Link } from "@tanstack/react-router";
-import { MoreHorizontalIcon } from "lucide-react";
+import { MicrochipIcon, MoreHorizontalIcon } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { useSpaces, type Space } from "@/bridge";
 import { useChildren } from "@/components/children/use-children";
 import { OsIcon } from "@/components/os-icon";
+import { JobTag } from "@/components/space-thread/identity";
 import { StateLabel } from "@/components/state-dot";
 import { ConfirmDialog } from "@/components/ui/alert-dialog";
 import { Menu } from "@/components/ui/menu";
@@ -72,7 +73,8 @@ export function ChildSpacesSection({ spaceId, spaceName }: { spaceId: string; sp
   const tree = useChildren();
   const { data, startSpace, stopSpace, deleteSpaces } = useSpaces();
   const all = data ?? [];
-  const kids = useMemo(() => childrenOfSpace(all, spaceId, tree), [all, spaceId, tree]);
+  // One row per job, however many Spaces (attempts) its run has made.
+  const kids = useMemo(() => oneRowPerJob(childrenOfSpace(all, spaceId, tree)), [all, spaceId, tree]);
   const total = useMemo(() => descendantCount(all, spaceId, tree), [all, spaceId, tree]);
   const [confirm, setConfirm] = useState<"all" | string | null>(null);
   const folded = useSpaceLayoutStore((st) => st.folded.children);

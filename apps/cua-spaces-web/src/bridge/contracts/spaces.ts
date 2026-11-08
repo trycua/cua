@@ -105,6 +105,12 @@ export interface Space {
   host?: string;
   /** The Space it is a child of (its id): the Spaces page nests it under that Space. Absent for a top-level Space. */
   parent?: string;
+  /** A job's Space (label `cua.job`): the name its row shows (a pet-name shape, never an id). */
+  jobName?: string;
+  /** A job's Space with a GPU: its row shows the GPU icon in place of the OS icon. */
+  jobGpu?: boolean;
+  /** The run a job's Space belongs to: one row per run. */
+  jobRun?: string;
   hostName?: string;
   /** Whether and how it turns off and on (the SDK's `power`), with a power
    * action in flight; absent when it cannot (a cloud Space). */
@@ -254,6 +260,12 @@ export interface SpaceRow {
   host?: string;
   /** The Space it is a child of (its id). */
   parent?: string;
+  /** A job's Space (label `cua.job`): the name its row shows (a pet-name shape, never an id). */
+  jobName?: string;
+  /** A job's Space with a GPU: its row shows the GPU icon in place of the OS icon. */
+  jobGpu?: boolean;
+  /** The run a job's Space belongs to: one row per run. */
+  jobRun?: string;
   hostName?: string;
   /** How it turns off and on (`suspend`, `stop`); absent when it cannot. */
   power?: string;

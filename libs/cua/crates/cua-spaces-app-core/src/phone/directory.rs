@@ -231,6 +231,9 @@ pub fn space_row(row: &RelayRow, host_name: Option<&str>) -> SpaceRow {
     SpaceRow {
         hidden: false,
         parent: None,
+        job_name: None,
+        job_gpu: false,
+        job_run: None,
         id: format!("relay:{}", row.id),
         name: if row.name.is_empty() {
             row.id.clone()

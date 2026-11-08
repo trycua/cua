@@ -362,6 +362,12 @@ pub struct AppSpace {
     /// The Space it is a child of (its id): the Spaces page nests it under that Space. Absent for a
     /// top-level Space.
     pub parent: Option<String>,
+    /// A job's Space (label `cua.job`): the name to show in its row (a pet-name shape, never an id).
+    pub job_name: Option<String>,
+    /// A job's Space with a GPU: its row shows the GPU icon in place of the OS icon.
+    pub job_gpu: bool,
+    /// The run a job's Space belongs to: one row per run.
+    pub job_run: Option<String>,
 }
 
 /// One row of the SDK's `list_spaces`.
@@ -431,6 +437,12 @@ pub struct AppSpaceRow {
     pub sharing: Option<AppSpaceSharingFacts>,
     /// The Space it is a child of (its id), as the daemon records the tree; absent for a top-level Space.
     pub parent: Option<String>,
+    /// A job's Space (label `cua.job`): the name to show in its row (a pet-name shape, never an id).
+    pub job_name: Option<String>,
+    /// A job's Space with a GPU: its row shows the GPU icon in place of the OS icon.
+    pub job_gpu: bool,
+    /// The run a job's Space belongs to: one row per run.
+    pub job_run: Option<String>,
 }
 
 /// Where new Spaces can be created.

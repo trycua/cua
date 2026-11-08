@@ -895,6 +895,9 @@ mod sharing_tests {
         let row = crate::model::SpaceRow {
             hidden: false,
             parent: None,
+            job_name: None,
+            job_gpu: false,
+            job_run: None,
             id: id.into(),
             name: name.into(),
             display_name: None,

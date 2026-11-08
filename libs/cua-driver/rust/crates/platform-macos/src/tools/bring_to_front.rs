@@ -15,7 +15,7 @@ use async_trait::async_trait;
 use core_graphics::display::CGDisplay;
 use cua_driver_core::{
     protocol::ToolResult,
-    tool::{Tool, ToolDef},
+    tool::{DesktopLease, Tool, ToolDef},
 };
 use objc2_app_kit::{NSApplicationActivationOptions, NSRunningApplication};
 use serde_json::{json, Value};
@@ -370,6 +370,23 @@ impl Tool for BringToFrontTool {
             None => None,
         };
 
+        // Activation, the own-process main-queue raise and the verification
+        // poll all block; keep them off the async worker. The worker keeps the
+        // desktop lease, so a cancelled call cannot hand the lane on early.
+        let lease = DesktopLease::current();
+        tokio::task::spawn_blocking(move || {
+            let _lease = lease;
+            Self::activate_blocking(pid, window_id)
+        })
+        .await
+        .unwrap_or_else(|error| {
+            ToolResult::error(format!("bring_to_front: activation worker failed: {error}"))
+        })
+    }
+}
+
+impl BringToFrontTool {
+    fn activate_blocking(pid: i32, window_id: Option<u32>) -> ToolResult {
         let Some(app) =
             (unsafe { NSRunningApplication::runningApplicationWithProcessIdentifier(pid) })
         else {

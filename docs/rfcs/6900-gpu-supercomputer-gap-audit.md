@@ -123,11 +123,11 @@ Re-tested against the current builds (PC and Mac):
 | N3 | F: full corrupted the runtime distro; no guard in the daemon | FIXED (#6945): every local create checks the free-space floor (`CUA_DISK_MIN_FREE`, default 5 GiB; pulls and VM creates already did) and refuses with the way out; unit tests with a fake probe |
 | N4 | `cua run` followed in the foreground is killed by the agent shell after ~2 min and cancels the run | FIXED (#6945): when stdout is not a terminal (and not `--json`) the follow stops after 100 s (`CUA_RUN_FOLLOW_SECS`, 0 = never), says the run keeps going and how to follow or cancel it, exits 0 like `--detach`; a terminal follows to the end |
 | N5 | The agent retrains to "polish" (3 runs, 15 min) | mitigated by the brief and a 3-minute limit; the quality check is still the agent's own |
-| N6 | Remote children made with `create_space --on host:...` carry the labels but the cross-host orphan sweep and the child list for them are not verified across two hosts | OPEN: test with the PC and the Mac using a non-GPU Space |
-| N7 | A host leaving mid-job: row logic and tests exist; not yet exercised live (needs a fault test with the Mac host stopped) | OPEN |
-| N8 | 10 concurrent agents: 10 jobs ran with VRAM admission earlier; not re-run on this build | OPEN (re-run on the Mac, CPU/MLX only) |
-| N9 | The relay/tunnel is an SSH tunnel to the Mac; a flap makes `cua computers` time out and agents' submits fail | OPEN: the client should retry and say plainly |
-| N10 | Windows native member (`kind=machine`) has no pinned uv, `member_env` joins PATH with `:` | OPEN (OS invariance) |
-| N11 | Stream/log/command routing to a remote child through the mesh | OPEN: a window of a job running on another computer is not streamed (the NCA window opened in the agent's own Space by design) |
+| N6 | Children on another host: orphan sweep and child list | VERIFIED live (PC and Mac, non-GPU `sleep` jobs submitted from a home Space with `--on host:`): one row per run under the parent, each with its host; deleting the parent canceled both runs within ~10 s and the rows left the list |
+| N7 | A host leaving mid-job | MEASURED live: the Mac host process killed mid-job; the row stayed Running about 3 minutes (the pool's detection time), then went queued while the pool placed it again, then failed with the reason (an Apple GPU job has no other computer). Never stuck at Running; the 3-minute window is the pool's, not the row's |
+| N8 | 10 concurrent agents | RE-RUN with CPU jobs: 10 concurrent `cua run --on auto` jobs across the PC and the Mac all succeeded (Mac 20 s each, PC ~68 s each: the PC's member start is the slow part). A job's row now counts the gang size, not every attempt |
+| N9 | The relay/tunnel is an SSH tunnel; a flap makes submits fail | FIXED (#6945): a submit retries for about a minute and says once, plainly, that the computers did not answer and nothing was started; a follow says it once and keeps trying |
+| N10 | Windows native member PATH | FIXED (#6945): `member_env` joins `PATH` with `;` for a Windows guest (drive-letter tools directory), `:` elsewhere; tested |
+| N11 | Stream/log/command routing to a remote child | BY DESIGN for now: results come back to the home Space and the window opens there (the demo's window is in the person's Stream); the job's own Space is not streamed. Logs follow through `cua jobs logs -f` across hosts |
 
-Ranked next: N6, N7, N9, N11, N8, N10 (N3 and N4 done).
+Ranked next: all of N3-N11 are fixed, verified or documented as by design; what is left is N5 (the agent's own quality check) and a faster host-loss detection than the pool's ~3 minutes.

@@ -152,12 +152,15 @@ describe.skipIf(!wasmBuilt)("the prompt box", () => {
     await act(async () => {
       fireEvent.click(q("[data-agent-model-row]")!);
     });
-    expect(q('[data-model-row="claude-haiku-4-5"]')!.textContent).toContain("Fast");
+    // Sonnet 5.5 is the default (checked); Haiku 5.5 is one tap away, tagged Fast; older ids are not listed.
+    expect(q('[data-model-row="claude-sonnet-5-5"]')!.getAttribute("aria-selected")).toBe("true");
+    expect(q('[data-model-row="claude-haiku-5-5"]')!.textContent).toContain("Fast");
+    expect(q('[data-model-row="claude-haiku-4-5"]')).toBeNull();
     await act(async () => {
-      fireEvent.click(q('[data-model-row="claude-sonnet-5"]')!);
+      fireEvent.click(q('[data-model-row="claude-haiku-5-5"]')!);
     });
     await openAgents();
-    expect(q("[data-agent-model-row]")!.textContent).toContain("Claude Sonnet 5");
+    expect(q("[data-agent-model-row]")!.textContent).toContain("Claude Haiku 5.5");
   });
 
   it("Enter sends the job with the picked app, account and model; Shift+Enter is a new line", async () => {
@@ -183,7 +186,7 @@ describe.skipIf(!wasmBuilt)("the prompt box", () => {
     await act(async () => {
       fireEvent.keyDown(box, { key: "Enter" });
     });
-    await waitFor(() => expect(askTasks()[0]).toMatchObject({ prompt: "fix the build", agent: "claude-code", model: "claude-haiku-4-5" }));
+    await waitFor(() => expect(askTasks()[0]).toMatchObject({ prompt: "fix the build", agent: "claude-code", model: "claude-sonnet-5-5" }));
     await waitFor(() => expect(calls.some((c) => c.op === "thread.post" && c.args.text === "@claude fix the build")).toBe(true), { timeout: 15000 });
   });
 

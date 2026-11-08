@@ -120,6 +120,9 @@ describe("the agent's prompt", () => {
     expect(p).toContain("posted to the thread, in order, as its own message, and none is replaced");
     expect(p).toContain("cua spaces ls");
     expect(p).toContain(approvalAction("machines.use"));
+    // A window the agent opened in a child is shown live in the home's Stream list, not sent as a screenshot.
+    expect(p).toContain("stream_space_window");
+    expect(p).toContain("never delete a Space the person asked to see");
     expect(p).toContain("Unless the person says where");
     expect(p.endsWith("test https://github.com/acme/app")).toBe(true);
   });

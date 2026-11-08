@@ -59,6 +59,18 @@ fn deny<T>() -> R<T> {
     Err(refused("create, list and manage its own children"))
 }
 
+/// `(power, power_state)` as an agent in a Space sees them. `power` is how the Space turns off (`stop` or `suspend`);
+/// the guest tools and the `cua spaces ls` an image shipped before 0.14 print it as the Space's state, so a running
+/// child read "stop" and agents said "the Space shows as stopped" about a Space they were using. On this channel
+/// `power` therefore carries the state itself (`running`, `stopped`, `suspended`); `power_state` is unchanged.
+pub(crate) fn state_for_agents((power, state): (String, String)) -> (String, String) {
+    if state.is_empty() {
+        (power, state)
+    } else {
+        (state.clone(), state)
+    }
+}
+
 /// The scoped services of one Space's channel.
 #[derive(Clone)]
 pub struct Scoped {
@@ -120,7 +132,7 @@ impl Scoped {
     /// Power, stop reason and the rest of a record's live fields.
     fn fill(&self, records: &mut [pb::Space]) {
         for r in records.iter_mut() {
-            (r.power, r.power_state) = self.spaces().power_of(&r.id);
+            (r.power, r.power_state) = state_for_agents(self.spaces().power_of(&r.id));
             r.stop_reason = self.spaces().stop_reason_of(&r.id);
         }
         self.spaces().fill_records(records);
@@ -823,7 +835,7 @@ impl SpaceService for Scoped {
         let mut resp = resp;
         if let Some(s) = resp.get_mut().space.as_mut() {
             // The result says how the Space is now (running or not), read now, not left to the registry's last word.
-            (s.power, s.power_state) = self.spaces().power_of(&s.id);
+            (s.power, s.power_state) = state_for_agents(self.spaces().power_of(&s.id));
         }
         if let Some(s) = &resp.get_ref().space {
             tracked.ready(&s.id);
@@ -883,7 +895,7 @@ impl SpaceService for Scoped {
                 && let Some(s) = r.space.as_mut()
             {
                 // The result says how the Space is now, read now.
-                (s.power, s.power_state) = me.spaces().power_of(&s.id);
+                (s.power, s.power_state) = state_for_agents(me.spaces().power_of(&s.id));
             }
             if let Ok(pb::CreateSpaceStreamResponse {
                 event: Some(pb::create_space_stream_response::Event::Result(r)),
@@ -1520,6 +1532,24 @@ mod agent_words_tests {
         assert_eq!(
             for_the_agent(Status::resource_exhausted("the budget is spent")).message(),
             "the budget is spent"
+        );
+    }
+}
+
+#[cfg(test)]
+mod state_for_agents_tests {
+    use super::state_for_agents;
+
+    #[test]
+    fn a_running_child_reads_running_not_the_way_it_turns_off() {
+        let (power, state) = state_for_agents(("stop".into(), "running".into()));
+        assert_eq!((power.as_str(), state.as_str()), ("running", "running"));
+        let (power, _) = state_for_agents(("suspend".into(), "suspended".into()));
+        assert_eq!(power, "suspended");
+        // Unknown state (not a local Space): left as it was.
+        assert_eq!(
+            state_for_agents(("stop".into(), String::new())),
+            ("stop".into(), String::new())
         );
     }
 }

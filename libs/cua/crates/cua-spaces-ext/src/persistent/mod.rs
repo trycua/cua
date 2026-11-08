@@ -2415,8 +2415,19 @@ impl Persistent {
             .map(|e| e.space.as_str())
             .filter(|s| !s.is_empty())
             .collect();
+        // A create still under way has no Space id yet (`space` is empty): its child is already in the list of children, and
+        // the create's own row will say when it is ready. Without this the child was reported twice, once as "Ready"
+        // from here and once as "Ready in 2s" from the create.
+        let asked_names: std::collections::HashSet<&str> = asked.iter().map(|e| e.name.as_str()).collect();
         for id in kids {
             if covered.contains(id.as_str()) {
+                continue;
+            }
+            if infos
+                .iter()
+                .find(|i| i.id == id)
+                .is_some_and(|i| made_by_a_tracked_create(&asked_names, &i.name, &i.display_name))
+            {
                 continue;
             }
             let key = format!("child:{id}");
@@ -2851,6 +2862,36 @@ enum Activity {
     Line(String),
 }
 
+/// Whether a child Space is the one a tracked create (a row with its own steps and time) is making or made: its name is
+/// the create's. Such a child is not announced a second time as "made the computer".
+fn made_by_a_tracked_create(asked: &std::collections::HashSet<&str>, name: &str, display_name: &str) -> bool {
+    asked.contains(name) || (!display_name.is_empty() && asked.contains(display_name))
+}
+
+/// An MCP tool's name (`mcp__cua__stream_space_window`) in plain words for the chip, or `None` for any other title.
+fn plain_tool(title: &str) -> Option<&'static str> {
+    // The harness looking up which tools it has: not something the person needs to read as a tool name.
+    if title == "ToolSearch" {
+        return Some("getting ready");
+    }
+    let name = title.rsplit("__").next().unwrap_or(title);
+    if !title.starts_with("mcp__") {
+        return None;
+    }
+    Some(match name {
+        "list_space_windows" => "looking at the windows",
+        "stream_space_window" => "showing a window",
+        "launch_space_app" => "opening an app",
+        "create_space" => "making a Space",
+        "delete_space" => "removing a Space",
+        "start_space" | "stop_space" => "changing a Space's power",
+        "list_spaces" => "looking at its Spaces",
+        "space_bash" => "running a command",
+        "thread_post" | "thread_reply" => "replying",
+        _ => return None,
+    })
+}
+
 /// The stage `events` put the turn in, in a few plain words: `installing`,
 /// `starting`, `thinking`, `replying` or `using <tool>` (never the task's
 /// text, never a secret). `Cleared` when the turn ended or failed after it.
@@ -2870,6 +2911,8 @@ fn activity_line(events: &[ag::AgentEvent]) -> Activity {
                     "working".to_string()
                 } else if !cua_volume::scan::scan(one.as_bytes()).is_empty() {
                     "using a tool".to_string()
+                } else if let Some(plain) = plain_tool(&one) {
+                    plain.to_string()
                 } else {
                     format!("using {}", members::clip_line(&one, 48))
                 })
@@ -3257,5 +3300,33 @@ mod power_tests {
         assert!(space_is_off("suspended"));
         assert!(!space_is_off("running"));
         assert!(!space_is_off(""));
+    }
+}
+
+#[cfg(test)]
+mod plain_tool_tests {
+    use super::plain_tool;
+
+    #[test]
+    fn the_chip_names_what_the_agent_does_not_the_tool() {
+        assert_eq!(plain_tool("mcp__cua__stream_space_window"), Some("showing a window"));
+        assert_eq!(plain_tool("mcp__cua__launch_space_app"), Some("opening an app"));
+        assert_eq!(plain_tool("ToolSearch"), Some("getting ready"));
+        assert_eq!(plain_tool("Terminal"), None);
+        assert_eq!(plain_tool("mcp__other__thing"), None);
+    }
+}
+
+#[cfg(test)]
+mod tracked_create_tests {
+    use super::made_by_a_tracked_create;
+    use std::collections::HashSet;
+
+    #[test]
+    fn a_child_a_create_is_making_is_not_announced_twice() {
+        let asked: HashSet<&str> = ["kid-a", "kid-b"].into_iter().collect();
+        assert!(made_by_a_tracked_create(&asked, "kid-a", ""));
+        assert!(made_by_a_tracked_create(&asked, "x", "kid-b"));
+        assert!(!made_by_a_tracked_create(&asked, "other", ""));
     }
 }

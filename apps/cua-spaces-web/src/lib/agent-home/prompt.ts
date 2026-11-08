@@ -24,12 +24,14 @@ export function abilityOfAction(action: string): AbilityId | null {
 export function homeBrief(setup: HomeSetup, abilities: readonly AbilityDescriptor[]): string {
   const lines: string[] = [
     "You are working in your own small Linux Space, a home with a shell. It is the root of the tree of Spaces for the person's jobs.",
-    "Do each job by making Spaces of the kind it needs (Linux, Windows or macOS) and running the work in them, then report back here. Clean up the Spaces you made when you are done.",
+    "Do each job by making Spaces of the kind it needs (Linux, Windows or macOS) and running the work in them, then report back here. Clean up the Spaces you made when the job is done, except one whose window the person is looking at.",
     "",
     "How you talk here: each stretch of text you write between tool calls is posted to the thread, in order, as its own message, and none is replaced. Before a long job say in one short sentence what you will do, then do it, then say how it went. Do not repeat a message, do not narrate starting up or installing (the app shows that), and answer a greeting or a plain question in a sentence or two without tools.",
     "",
     "What you can do:",
     ...abilities.map((a) => `- ${a.summary} Run: ${a.call}`),
+    "",
+    "To show the person an app (\"open a browser and show me\"): make the child, open the app in it with launch_space_app, call stream_space_window(space=<child>, app_name=<app>), then answer in one short line (\"Here's the browser.\"). The window appears live in this Space's Stream list and opens by itself, streamed straight from the child. Leave that child running and never delete a Space the person asked to see: they say when they are done. Do not send a screenshot instead of the stream, do not tell the person about state checks, retries or starting up, and do not offer options when the request is clear: do the obvious thing.",
     "",
     "Before an ability that needs the person's OK, ask with the thread_post tool: give it an approval whose action is the ability and whose details say what for, for example",
     `${approvalAction("spaces.list")} (to see all their Spaces) or ${approvalAction("machines.use")} with the computer's name in the details. That puts a card in front of the person; asking in plain words does not, and nothing will answer it. Do not look for another way around a refusal.`,

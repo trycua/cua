@@ -2,9 +2,9 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 import { create } from "zustand";
-import { persist } from "zustand/middleware";
+import { createJSONStorage, persist } from "zustand/middleware";
 
-import { DEFAULT_PREFS, SPACE_LAYOUT_STORAGE_KEY, sanitizePrefs, type Dock, type SectionId, type SpaceLayoutPrefs } from "@/lib/space-layout";
+import { DEFAULT_PREFS, migrateLegacySplit, SPACE_LAYOUT_STORAGE_KEY, sanitizePrefs, type Dock, type SectionId, type SpaceLayoutPrefs } from "@/lib/space-layout";
 
 interface SpaceLayoutState extends SpaceLayoutPrefs {
   setDock: (dock: Dock) => void;
@@ -31,6 +31,15 @@ export const useSpaceLayoutStore = create<SpaceLayoutState>()(
     }),
     {
       name: SPACE_LAYOUT_STORAGE_KEY,
+      // Reading the saved layout first carries over a split saved before the layout existed.
+      storage: createJSONStorage(() => ({
+        getItem: (name) => {
+          migrateLegacySplit(localStorage);
+          return localStorage.getItem(name);
+        },
+        setItem: (name, value) => localStorage.setItem(name, value),
+        removeItem: (name) => localStorage.removeItem(name),
+      })),
       partialize: (s) => ({ dock: s.dock, vSplit: s.vSplit, hSplit: s.hSplit, folded: s.folded }),
       merge: (saved, current) => ({ ...current, ...sanitizePrefs(saved) }),
     },

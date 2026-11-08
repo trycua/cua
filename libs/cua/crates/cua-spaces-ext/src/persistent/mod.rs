@@ -2309,10 +2309,16 @@ impl Persistent {
             if text.is_empty() {
                 continue;
             }
-            // Already in the thread word for word (the agent posted it itself with `thread_reply`).
-            if recent.iter().any(|e| {
-                e.author.id == me.id && e.kind == EntryKind::Message && e.text.trim() == text
-            }) {
+            // Already in the thread word for word: the agent posted it itself with `thread_reply` in this
+            // turn. That is its latest message after the task it is answering; an identical message
+            // from an earlier task (or with other words said since) is a different message.
+            let floor = reply_to.unwrap_or(0);
+            if recent
+                .iter()
+                .rev()
+                .find(|e| e.seq > floor && e.author.id == me.id && e.kind == EntryKind::Message)
+                .is_some_and(|e| e.text.trim() == text)
+            {
                 continue;
             }
             let text = if check_text(&text).is_ok() {
@@ -2338,7 +2344,13 @@ impl Persistent {
             return Ok(());
         };
         let kids = self.spaces.children(&rec.space).unwrap_or_default();
-        let asked = cua_spaces::child_creates::of(self.spaces.home_dir(), &rec.space);
+        // A create is told by the one member it is attributed to, on the task that member was on when it
+        // saw the create (not whichever task is current when a later pass runs).
+        cua_spaces::child_creates::claim(self.spaces.home_dir(), &rec.space, &rec.name, task);
+        let asked: Vec<_> = cua_spaces::child_creates::of(self.spaces.home_dir(), &rec.space)
+            .into_iter()
+            .filter(|e| e.agent == rec.name)
+            .collect();
         if kids.is_empty() && asked.is_empty() {
             return Ok(());
         }
@@ -2357,7 +2369,12 @@ impl Persistent {
                 cua_spaces::child_creates::State::Failed => "failed",
             };
             let key = match e.state {
-                cua_spaces::child_creates::State::Creating => format!("{base}:p:{}", e.phase),
+                // A step posts again as it moves on (every 5 percent), so the row's bar keeps moving.
+                cua_spaces::child_creates::State::Creating => format!(
+                    "{base}:p:{}:{}",
+                    e.phase,
+                    e.percent.map_or(String::new(), |p| (p / 5 * 5).to_string())
+                ),
                 _ => format!("{base}:{state}"),
             };
             if recent
@@ -2396,7 +2413,7 @@ impl Persistent {
                     "started_ms": e.started_ms, "ended_ms": e.ended_ms,
                 }),
             );
-            d.task_seq = Some(task);
+            d.task_seq = Some(if e.task > 0 { e.task } else { task });
             d.client_id = Some(key);
             drafts.push(d);
         }

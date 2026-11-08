@@ -115,4 +115,25 @@ export function sanitizePrefs(raw: unknown): SpaceLayoutPrefs {
   };
 }
 
+/** Where the one saved split lived before the layout kept dock, sizes and folds together: the desktop's share of the column. */
+export const LEGACY_SPLIT_KEY = "cua-spaces:call-split";
+
+/**
+ * Carries a split saved under [`LEGACY_SPLIT_KEY`] into the layout's own saved copy, so an upgrade keeps what the person
+ * dragged. Only when no layout has been saved yet (a saved layout is newer and wins), and only a usable fraction. The old
+ * key is left for the first-run reset to clear.
+ */
+export function migrateLegacySplit(storage: Pick<Storage, "getItem" | "setItem">): void {
+  try {
+    if (storage.getItem(STORAGE_KEY) !== null) return;
+    const raw = storage.getItem(LEGACY_SPLIT_KEY);
+    if (raw === null) return;
+    const v = Number(raw);
+    if (!isFraction(v)) return;
+    storage.setItem(STORAGE_KEY, JSON.stringify({ state: { ...DEFAULT_PREFS, vSplit: v }, version: 0 }));
+  } catch {
+    // Blocked storage: nothing to carry over.
+  }
+}
+
 export { STORAGE_KEY as SPACE_LAYOUT_STORAGE_KEY };

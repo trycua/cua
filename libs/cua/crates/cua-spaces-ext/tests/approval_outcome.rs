@@ -287,16 +287,12 @@ async fn a_space_the_host_makes_shows_its_steps_then_ready_or_the_plain_failure_
     let parent = fx.space.clone();
     use cua_spaces::child_creates as cc;
     // One create is cloning, another is making a Linux Space.
-    cc::update(
-        &home,
-        &parent,
-        "macos-child",
-        "macos-child",
-        "macOS",
-        100,
-        |e| e.phase = cc::phase_words("creating", "macOS"),
-    );
-    cc::update(&home, &parent, "build", "build", "Linux", 101, |e| {
+    let mac = cc::start(&home, &parent, "macos-child", "macos-child", "macOS", 100);
+    cc::update_id(&home, &mac, |e| {
+        e.phase = cc::phase_words("creating", "macOS")
+    });
+    let build = cc::start(&home, &parent, "build", "build", "Linux", 101);
+    cc::update_id(&home, &build, |e| {
         e.phase = cc::phase_words("booting", "Linux")
     });
     Box::pin(p.tick()).await;
@@ -314,22 +310,13 @@ async fn a_space_the_host_makes_shows_its_steps_then_ready_or_the_plain_failure_
             .any(|e| e["event"]["phase"] == "Cloning the disk for the macOS Space")
     );
     // The first fails, the second is ready.
-    cc::update(
-        &home,
-        &parent,
-        "macos-child",
-        "macos-child",
-        "macOS",
-        110,
-        |e| {
-            e.state = cc::State::Failed;
-            e.error = cc::person_reason(
-                "invalid request: probe port 3211 is not published by this sandbox",
-            );
-            e.ended_ms = Some(110);
-        },
-    );
-    cc::update(&home, &parent, "build", "build", "Linux", 111, |e| {
+    cc::update_id(&home, &mac, |e| {
+        e.state = cc::State::Failed;
+        e.error =
+            cc::person_reason("invalid request: probe port 3211 is not published by this sandbox");
+        e.ended_ms = Some(110);
+    });
+    cc::update_id(&home, &build, |e| {
         e.state = cc::State::Ready;
         e.space = "local:build".into();
         e.phase = "Ready".into();
@@ -359,6 +346,35 @@ async fn a_space_the_host_makes_shows_its_steps_then_ready_or_the_plain_failure_
         .map(|e| e["event"]["key"].as_str().unwrap().to_string())
         .collect();
     assert_eq!(mac_keys.len(), 1);
+}
+
+/// A step's percentage keeps moving in the thread, and a create is told once, by the member it was
+/// attributed to, on the task that member was on.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_steps_progress_keeps_moving_and_a_create_belongs_to_one_member_and_task() {
+    let mut fx = setup().await;
+    let p = member(&mut fx, 1).await;
+    let task = post(&fx, json!({"text": "@ada make a computer"}))
+        .await
+        .unwrap();
+    Box::pin(p.tick()).await;
+    let home = fx.home.path().to_path_buf();
+    use cua_spaces::child_creates as cc;
+    let id = cc::start(&home, &fx.space, "big", "big", "Linux", 100);
+    for pct in [10u8, 40, 70] {
+        cc::update_id(&home, &id, |e| {
+            e.phase = "Downloading the image".into();
+            e.percent = Some(pct);
+        });
+        Box::pin(p.tick()).await;
+    }
+    let all = entries(&fx).await;
+    let n = child_notes(&all);
+    let pcts: Vec<_> = n.iter().map(|e| e["event"]["percent"].clone()).collect();
+    assert_eq!(pcts, [json!(10), json!(40), json!(70)], "{n:?}");
+    let mine = cc::of(&home, &fx.space);
+    assert_eq!(mine[0].agent, "ada");
+    assert_eq!(mine[0].task, task, "attributed to the task it was asked on");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

@@ -48,4 +48,25 @@ describe("space layout store", () => {
     const s = useSpaceLayoutStore.getState();
     expect([s.dock, s.vSplit, s.folded]).toEqual(["top", DEFAULT_PREFS.vSplit, DEFAULT_PREFS.folded]);
   });
+
+  it("keeps a split saved before the layout existed, once, and never over a saved layout", async () => {
+    // An upgrade: the old key is there and no layout was ever saved.
+    localStorage.removeItem(SPACE_LAYOUT_STORAGE_KEY);
+    localStorage.setItem("cua-spaces:call-split", "0.7");
+    await useSpaceLayoutStore.persist.rehydrate();
+    expect(useSpaceLayoutStore.getState().vSplit).toBe(0.7);
+    expect(stored().vSplit).toBe(0.7);
+    // A layout saved since wins over the old key.
+    useSpaceLayoutStore.getState().setSplit("top", 0.4);
+    localStorage.setItem("cua-spaces:call-split", "0.9");
+    await useSpaceLayoutStore.persist.rehydrate();
+    expect(useSpaceLayoutStore.getState().vSplit).toBe(0.4);
+  });
+
+  it("ignores an old split that is not a usable share", async () => {
+    localStorage.removeItem(SPACE_LAYOUT_STORAGE_KEY);
+    localStorage.setItem("cua-spaces:call-split", "banana");
+    await useSpaceLayoutStore.persist.rehydrate();
+    expect(useSpaceLayoutStore.getState().vSplit).toBe(DEFAULT_PREFS.vSplit);
+  });
 });

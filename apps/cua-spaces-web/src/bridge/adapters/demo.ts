@@ -107,6 +107,8 @@ export interface DemoOptions {
   noSpaces?: boolean;
   /** `?demo=desktops`: the Mac mini and the Linux box also share their desktops (Space rows of their own, `relay:mac-mini`, `relay:linux-box`). */
   desktops?: boolean;
+  /** `?demo=driver-update`: a newer Cua Driver is ready for This Mac. */
+  driverUpdate?: boolean;
   /** This many more Spaces on the list, for scale (`?demo=scale-1000`;
    * scripts/scale-bench.mjs). */
   extraSpaces?: number;
@@ -288,6 +290,7 @@ export function demoOptionsFromSearch(search: string): DemoOptions {
     ...(flags.has("accounts") ? { accounts: true } : {}),
     noSpaces: flags.has("empty"),
     desktops: flags.has("desktops"),
+    driverUpdate: flags.has("driver-update"),
     ...(() => {
       const scale = [...flags].find((f) => /^scale-\d+$/.test(f));
       return scale ? { extraSpaces: Math.min(5000, Number(scale.slice(6))) } : {};
@@ -440,7 +443,7 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     ...demoNewSpaceState(Boolean(options.macHost), options.clouds ?? null),
     ...demoKeyvaultSetupState(!options.noVault),
     ...demoKeyvaultManageState(),
-    ...demoDriverState(now(), options.onboarded === false),
+    ...demoDriverState(now(), options.onboarded === false, Boolean(options.driverUpdate)),
   };
 
   if (state.platform.os !== "macos") state.host = { ...state.host, name: demoMachine(state.platform).name };

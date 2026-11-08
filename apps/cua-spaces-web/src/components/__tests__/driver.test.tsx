@@ -55,7 +55,7 @@ describe("pointer settings from the driver's get_config", () => {
 });
 
 describe("Cua Driver in the app", () => {
-  it("is no sidebar item: it is one of This Mac's settings, under Computers (CUA-3551)", async () => {
+  it("is no nav item of its own: it is one of This Mac's settings, a line under Computers (CUA-3551)", async () => {
     mount(createDemoAdapter({ latencyMs: 0, stepMs: 0 }), () => <NavLabels />);
     await waitFor(() => expect(document.querySelector("[data-nav]")?.textContent).toMatch(/^Home,Computers,Agents/));
     expect(document.querySelector("[data-nav]")?.textContent).not.toMatch(/Cua Driver|Machines/);

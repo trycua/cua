@@ -27,7 +27,13 @@ const shared: UserConfig = {
   fixedExtension: true,
   // @sentry/electron stays a runtime dependency, packaged beside electron-updater.
   deps: { neverBundle: ["electron", "electron-updater", /^@sentry\//, "./main.cjs"] },
-  define: { __CUA_CRASH_CONFIG__: JSON.stringify(crashConfig()) },
+  // CUA_DEFAULT_ENV: the deployment this build defaults to, the same variable the
+  // Rust build is compiled with (cua-home's CuaEnv::compiled_default). Empty for
+  // a release (production); a preview build sets `staging`.
+  define: {
+    __CUA_CRASH_CONFIG__: JSON.stringify(crashConfig()),
+    __CUA_DEFAULT_ENV__: JSON.stringify((process.env.CUA_DEFAULT_ENV ?? "").trim()),
+  },
 };
 
 export default defineConfig([

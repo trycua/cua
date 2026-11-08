@@ -154,6 +154,8 @@ jobs:
         with:
           label: ${{ matrix.label }}
           target: ${{ matrix.target }}
+          # The preview talks to staging, with its data in ~/.cua/envs/staging.
+          default-env: staging
       - uses: actions/upload-artifact@v4
         with:
           name: preview-native-${{ matrix.label }}
@@ -182,6 +184,9 @@ jobs:
       ARCH: ${{ matrix.arch }}
       CUA_SPACES_ARCHS: ${{ matrix.arch }}
       CUA_SPACES_BUILD_NUMBER: ${{ github.run_number }}
+      # Read by the Electron build (tsdown) so the app sets CUA_ENV=staging
+      # itself; the native layer was compiled with the same default.
+      CUA_DEFAULT_ENV: staging
     steps:
       - uses: actions/checkout@v4
         with:
@@ -294,7 +299,7 @@ jobs:
           - AppImage: run \`chmod +x Cua-Spaces-*.AppImage\`, then \`./Cua-Spaces-*.AppImage\`.
           - deb (Debian and Ubuntu): run \`sudo apt install ./cua-spaces_*.deb\`.
 
-          These are the regular Cua Spaces packages built from this commit, not a separate variant: the deb replaces an installed Cua Spaces, and both use the released app's sign-in and data. They use the production deployment unless you start them with \`CUA_ENV=staging\` (for example \`CUA_ENV=staging ./Cua-Spaces-*.AppImage\`).
+          Preview · Staging: the app uses the staging deployment, so sign in with a staging account, and it keeps its data in \`~/.cua/envs/staging\`, apart from the released app's \`~/.cua\`. It is not a separate app, though: the deb installs over a regular Cua Spaces (the same package), and the AppImage is the same app as the released one.
 
           A new push to this branch rebuilds it while the \`preview:linux\` label stays on. [Build log]($RUN_URL)"
           fi

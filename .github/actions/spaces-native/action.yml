@@ -19,6 +19,14 @@ inputs:
   extra-paths:
     description: "More files to keep in the cache with the native directory (newline separated, repo-relative)."
     default: ""
+  default-env:
+    description: >-
+      Compile the build with CUA_DEFAULT_ENV set to this (`staging`: the build
+      defaults to the staging deployment and its ~/.cua/envs/staging home, as a
+      beta channel build is meant to). Empty (the default, and what every
+      release uses) leaves the variable unset. A non-empty value is part of
+      the cache key, so such a build never shares an entry with a release's.
+    default: ""
 
 outputs:
   cache-hit:
@@ -34,6 +42,7 @@ runs:
       env:
         LABEL: ${{ inputs.label }}
         TARGET: ${{ inputs.target }}
+        DEFAULT_ENV: ${{ inputs.default-env }}
       run: |
         set -euo pipefail
         # Tree hashes of every input of `pnpm native`: the Rust workspace (it
@@ -41,7 +50,9 @@ runs:
         # identical key, whatever the commit.
         inputs_hash="$(git rev-parse HEAD:libs/cua HEAD:libs/cua-spacesd/VERSION HEAD:apps/cua-spaces-desktop/scripts/build-native.mjs | git hash-object --stdin)"
         repo="${CUA_RELEASE_REPOSITORY//\//-}"
-        echo "key=spaces-native-v1-${LABEL}-${TARGET}-rust1.97.1-${repo}-${inputs_hash}" >> "$GITHUB_OUTPUT"
+        suffix=""
+        [ -z "$DEFAULT_ENV" ] || suffix="-env-${DEFAULT_ENV}"
+        echo "key=spaces-native-v1-${LABEL}-${TARGET}-rust1.97.1-${repo}-${inputs_hash}${suffix}" >> "$GITHUB_OUTPUT"
     - name: Restore the native layer
       id: cache
       uses: actions/cache@v4
@@ -97,8 +108,12 @@ runs:
         CARGO_BUILD_JOBS: 4
         LABEL: ${{ inputs.label }}
         TARGET: ${{ inputs.target }}
+        DEFAULT_ENV: ${{ inputs.default-env }}
       run: |
         set -euo pipefail
+        # Set only when asked: an empty value is a different cargo fingerprint
+        # from an unset one, and would rebuild every release's cache.
+        [ -z "$DEFAULT_ENV" ] || export CUA_DEFAULT_ENV="$DEFAULT_ENV"
         pnpm install --frozen-lockfile
         pnpm native -- --target "$TARGET"
         test -d "native/$LABEL" || { echo "::error::pnpm native wrote no native/$LABEL"; exit 1; }

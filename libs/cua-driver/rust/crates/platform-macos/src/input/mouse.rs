@@ -1618,6 +1618,85 @@ fn post_mouse_event_with_mode(
     dispatch_mouse_event(post_route(mode, skylight_available()), pid, event);
 }
 
+/// Hover a background window with stamped `mouseMoved` events, without
+/// touching the real pointer: a short approach path ending on `to`, then the
+/// last move repeated for `dwell_ms` so AppKit tracking and tooltip timers
+/// see the pointer rest there. Every event is posted once to `pid` (SkyLight
+/// `SLEventPostToPid`, public per-pid API only when the SPI is absent) with
+/// the exact window in the routing fields (f51/f91/f92), the target pid (f40)
+/// and one gesture id (f58). Nothing goes to the global HID tap.
+///
+/// The caller makes the window AppKit-key without raising it first
+/// ([`prepare_background_pixel_click`]). Whether the app turns these into hover
+/// callbacks is the app's business: the result is not verified here.
+pub fn hover_at_xy_background<F>(
+    pid: i32,
+    to: (f64, f64),
+    wid: u32,
+    dwell_ms: u64,
+    mut observe: F,
+) -> anyhow::Result<()>
+where
+    F: FnMut(f64, f64),
+{
+    use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+    let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
+        .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
+    let gesture_id = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .subsec_nanos() as i64;
+    let route = post_route(MousePostMode::SkyLightPreferred, skylight_available());
+    let window_id = wid as i64;
+    let post = |point: (f64, f64)| -> anyhow::Result<()> {
+        let event = CGEvent::new_mouse_event(
+            source.clone(),
+            CGEventType::MouseMoved,
+            CGPoint::new(point.0, point.1),
+            CGMouseButton::Left,
+        )
+        .map_err(|_| anyhow::anyhow!("background hover mouseMoved event creation failed"))?;
+        let ptr = event.as_ptr() as *mut std::ffi::c_void;
+        let set =
+            |field: u32, value: i64| crate::input::skylight::set_integer_field(ptr, field, value);
+        set(0, 2);
+        set(1, 0);
+        set(3, 0);
+        set(7, 0);
+        set(40, pid as i64);
+        set(51, window_id);
+        set(91, window_id);
+        set(92, window_id);
+        set(58, gesture_id);
+        crate::input::skylight::set_window_location(ptr, point.0, point.1);
+        set_explicit_flags(&event, CGEventFlags::empty());
+        dispatch_mouse_event(route, pid, &event);
+        Ok(())
+    };
+    // Approach from a few points up-left so the move crosses into the target
+    // the way a hand would, instead of appearing on it.
+    let steps = 6;
+    for i in 0..steps {
+        let t = i as f64 / steps as f64;
+        let back = 24.0 * (1.0 - t);
+        let point = (to.0 - back, to.1 - back);
+        post(point)?;
+        observe(point.0, point.1);
+        std::thread::sleep(Duration::from_millis(12));
+    }
+    let started = Instant::now();
+    loop {
+        post(to)?;
+        observe(to.0, to.1);
+        if started.elapsed() >= Duration::from_millis(dwell_ms) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(80));
+    }
+    Ok(())
+}
+
 /// Post a stamped `mouseMoved` to `pid` at `point` before a down/up pair.
 ///
 /// AppKit hit-tests a button/`NSView` against the cursor-tracking state the
@@ -2232,6 +2311,20 @@ mod tests {
                 Posted::new("LeftMouseUp", PostRoute::SkyLight, 0),
             ]
         );
+    }
+
+    /// A background hover is only `mouseMoved` events posted once each to the
+    /// pid: an approach path, then the resting point repeated for the dwell.
+    /// No button event, nothing to the HID tap.
+    #[test]
+    fn background_hover_posts_only_mouse_moved_to_the_pid() {
+        let capture = Capture::start(true);
+        hover_at_xy_background(1, (200.0, 150.0), 7, 0, |_, _| {}).unwrap();
+        let posted = capture.posted();
+        assert!(posted.len() >= 7, "approach path plus the resting move");
+        assert!(posted
+            .iter()
+            .all(|p| p.event == "MouseMoved" && p.route == PostRoute::SkyLight));
     }
 
     #[test]

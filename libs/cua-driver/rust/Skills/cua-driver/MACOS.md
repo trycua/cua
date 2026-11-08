@@ -678,6 +678,14 @@ and how:
 - `electron_input`: an Electron page gets `mouseEnter`/`mouseMove` through
   the app's main process, so page hover effects update. Native tooltips do
   not show.
+- `synthetic_mouse_moved`: neither route applies, so the driver posts
+  stamped `mouseMoved` events to the window's pid (the route background
+  clicks use), makes the window AppKit-key without raising it, rests on the
+  point for about a second and puts focus back. Nothing confirms that the
+  app acted on it: read `get_window_state` for a control that appeared, and
+  `list_windows` for a new window of the app (a tooltip). Views that take
+  hover from the window server's tracking, not from posted events, still see
+  nothing.
 
 For a web page in Chrome, Edge or Brave use `browser_pointer` hover: a
 window-target `move_cursor` there says the page saw no hover and names

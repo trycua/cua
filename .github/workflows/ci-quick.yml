@@ -111,6 +111,13 @@ jobs:
           # Both names of a renamed file (--no-renames), like the pull request files API.
           git -C head fetch --no-tags --depth=1 --filter=blob:none origin "$BASE_SHA"
           git -C head diff --name-only --no-renames "$BASE_SHA" HEAD > "$RUNNER_TEMP/files.txt"
+          # Until the selector with --workflow is on the base commit (the pull request that adds it),
+          # there is nothing trusted to ask: run everything, which is what any .github/** change does anyway.
+          if ! grep -q -- '--workflow' base/.github/scripts/ci_gate_scope.py; then
+            echo "The base commit's selector has no --workflow mode yet; running everything."
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           python3 base/.github/scripts/ci_gate_scope.py --workflow "$workflow" < "$RUNNER_TEMP/files.txt"
 
   quick:

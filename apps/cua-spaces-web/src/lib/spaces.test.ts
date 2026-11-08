@@ -223,4 +223,23 @@ describe("orderSpaces: running first, then the most recently used", () => {
     const all = [space("this-mac", "suspended", 999, { provider: "local" }), space("relay:studio", "running", 999, { provider: "relay" }), space("a", "running", 1), space("b", "suspended", 2)];
     expect(orderSpaces(all).map((s) => s.id)).toEqual(["a", "relay:studio", "b", "this-mac"]);
   });
+
+  it("keeps desktops in one order however the host stamped them on this poll", () => {
+    // The host stamps a desktop with the time it read the list, so This Mac's and another machine's
+    // move past each other from one poll to the next.
+    const poll = (mac: number, studio: number, mini: number) => [
+      space("relay:mini", "running", mini, { provider: "relay" }),
+      space("this-mac", "local", mac, { provider: "local" }),
+      space("relay:studio", "running", studio, { provider: "relay" }),
+    ];
+    const first = orderSpaces(poll(1_000, 2_000, 3_000)).map((s) => s.id);
+    expect(first).toEqual(["this-mac", "relay:mini", "relay:studio"]);
+    expect(orderSpaces(poll(3_000, 1_000, 2_000).reverse()).map((s) => s.id)).toEqual(first);
+  });
+
+  it("orders Spaces used at the same time by id, not by the host's row order", () => {
+    const rows = [space("b", "running", 5), space("a", "running", 5), space("c", "running", 5)];
+    expect(orderSpaces(rows).map((s) => s.id)).toEqual(["a", "b", "c"]);
+    expect(orderSpaces(rows.toReversed()).map((s) => s.id)).toEqual(["a", "b", "c"]);
+  });
 });

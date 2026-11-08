@@ -543,7 +543,11 @@ impl Scoped {
     fn shows_on_desktop(name: &str) -> bool {
         matches!(
             name,
-            "stream_space_window" | "show_space_pip" | "hide_space_pip" | "open_space_viewer"
+            "stream_space_window"
+                | "show_space_pip"
+                | "hide_space_pip"
+                | "open_space_viewer"
+                | "list_space_windows"
         )
     }
 

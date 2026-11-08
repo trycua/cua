@@ -33,12 +33,7 @@ fn wayland_focused_paced(text: &str, pacing: crate::input::TypePacing) -> anyhow
     if pacing.is_batched() {
         return crate::wayland::type_text_focused(text);
     }
-    let mut buf = [0u8; 4];
-    for ch in text.chars() {
-        crate::wayland::type_text_focused(ch.encode_utf8(&mut buf))?;
-        std::thread::sleep(std::time::Duration::from_millis(pacing.delay_ms));
-    }
-    Ok(())
+    crate::wayland::type_text_focused_paced(text, std::time::Duration::from_millis(pacing.delay_ms))
 }
 
 /// Extra call time a paced `type_text` needs on top of [`text_typing_budget`].

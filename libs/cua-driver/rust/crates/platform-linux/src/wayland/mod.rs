@@ -2843,6 +2843,25 @@ pub fn type_text_focused(text: &str) -> anyhow::Result<()> {
     type_into(None, text)
 }
 
+/// [`type_text_focused`] one character at a time, `gap` after each. The whole
+/// text is checked and its line endings made line feeds first, so a character
+/// that can't be typed refuses it with nothing sent, and `\r\n` is one Return.
+pub fn type_text_focused_paced(text: &str, gap: std::time::Duration) -> anyhow::Result<()> {
+    let text = text_keys::typable_text(text)?;
+    let total = text.chars().count();
+    let mut buf = [0u8; 4];
+    for (done, ch) in text.chars().enumerate() {
+        match type_into(None, ch.encode_utf8(&mut buf)) {
+            Err(error) if done > 0 => {
+                anyhow::bail!("type_text stopped after {done} of {total} characters: {error:#}")
+            }
+            result => result?,
+        }
+        std::thread::sleep(gap);
+    }
+    Ok(())
+}
+
 /// [`type_text`] into `window`, activated first, or [`type_text_focused`].
 fn type_into(window: Option<u64>, text: &str) -> anyhow::Result<()> {
     if text.is_empty() {
@@ -4574,6 +4593,19 @@ mod output_transform_tests {
 
 #[cfg(test)]
 mod tests {
+    /// Paced text is refused whole, as unpaced text is, so a retry can't type
+    /// its start twice.
+    #[test]
+    fn paced_text_with_a_late_control_character_types_nothing() {
+        let error = super::type_text_focused_paced("abc\u{8}", std::time::Duration::ZERO)
+            .unwrap_err()
+            .to_string();
+        assert_eq!(
+            error,
+            "foreground_unavailable: control character U+0008 cannot be typed; nothing was typed"
+        );
+    }
+
     /// A point past the pointer space is clamped onto another pixel; the
     /// niri gate must see that rather than admit the clamped point.
     #[test]

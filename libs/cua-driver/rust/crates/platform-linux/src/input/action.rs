@@ -245,6 +245,49 @@ mod tests {
     }
 
     #[test]
+    fn once_an_action_reads_abandoned_it_admits_nothing() {
+        // The window this guards is a race, so take it many times.
+        for _ in 0..50 {
+            let action = Action::new(Duration::from_secs(60));
+            let abandoner = action
+                .admit(|| {
+                    let abandoner = {
+                        let action = action.clone();
+                        std::thread::spawn(move || action.abandon())
+                    };
+                    while !action.is_abandoned() {
+                        std::thread::yield_now();
+                    }
+                    abandoner
+                })
+                .unwrap();
+            action
+                .admit(|| panic!("sent after the action read abandoned"))
+                .unwrap_err();
+            abandoner.join().unwrap();
+        }
+    }
+
+    #[test]
+    fn abandoned_reads_true_only_once_fenced_sockets_are_shut() {
+        use std::io::Write;
+        for _ in 0..50 {
+            let (mut socket, _peer) = std::os::unix::net::UnixStream::pair().unwrap();
+            let action = Action::new(Duration::from_secs(60));
+            action.fence(&socket).unwrap();
+            let abandoner = {
+                let action = action.clone();
+                std::thread::spawn(move || action.abandon())
+            };
+            while !action.is_abandoned() {
+                std::thread::yield_now();
+            }
+            assert!(socket.write_all(b"late").is_err());
+            abandoner.join().unwrap();
+        }
+    }
+
+    #[test]
     fn abandon_shuts_a_fenced_socket_without_waiting_for_a_wedged_send() {
         use std::io::Write;
         let (mut socket, peer) = std::os::unix::net::UnixStream::pair().unwrap();

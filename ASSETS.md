@@ -144,3 +144,18 @@ trycua/cua#6546 (CUA-3510) screenshots: the five spaces-1b-*.jpg images above (a
 <img width="1440" height="900" alt="cua-3816-after-computers-list-hidden" src="https://github.com/user-attachments/assets/8f354564-e94a-4888-a83c-0212bf371f72" />
 <img width="1440" height="900" alt="cua-3816-after-computer-page-hidden" src="https://github.com/user-attachments/assets/c97674fb-98a5-4c5a-91b6-55a0e69608da" />
 <img width="1440" height="900" alt="cua-3816-before-computer-page-hidden" src="https://github.com/user-attachments/assets/bf5c1f08-f9fc-46ae-b3d3-542d42e2db32" />
+
+### trycua/cua PR: Spaces copy audit (CUA-3843), before/after screenshots
+
+<img width="2904" height="940" alt="spaces-copy-audit-cmp-home-desktop" src="https://github.com/user-attachments/assets/56c636e4-9149-40e6-8d1a-a8f8c770f49f" />
+<img width="960" height="1052" alt="spaces-copy-audit-cmp-settings-advanced-mobile" src="https://github.com/user-attachments/assets/213757fa-38ab-4945-b1de-758509fab367" />
+<img width="2904" height="940" alt="spaces-copy-audit-cmp-settings-advanced-desktop" src="https://github.com/user-attachments/assets/697d3674-2674-4968-b0b8-bd99b24c4872" />
+<img width="960" height="1052" alt="spaces-copy-audit-cmp-settings-general-mobile" src="https://github.com/user-attachments/assets/3248f8bd-a5c3-4773-8f66-4d349b4c6350" />
+<img width="2904" height="940" alt="spaces-copy-audit-cmp-settings-general-desktop" src="https://github.com/user-attachments/assets/126ce712-47b1-4e23-98e3-2ae4e3f55cd1" />
+<img width="960" height="1052" alt="spaces-copy-audit-cmp-computer-mobile" src="https://github.com/user-attachments/assets/ca9b440d-6051-484b-a6e7-5468dd131d8f" />
+<img width="2904" height="940" alt="spaces-copy-audit-cmp-computer-desktop" src="https://github.com/user-attachments/assets/bf3657b6-9657-4f8e-bc34-40b703d0ad8e" />
+<img width="960" height="1052" alt="spaces-copy-audit-cmp-driver-mobile" src="https://github.com/user-attachments/assets/a0629f8a-de15-40c7-90ae-0e73f53c7a77" />
+<img width="2904" height="940" alt="spaces-copy-audit-cmp-driver-desktop" src="https://github.com/user-attachments/assets/6c183fac-c909-48bd-b9a4-82a96e02319b" />
+<img width="960" height="1052" alt="spaces-copy-audit-cmp-where-mobile" src="https://github.com/user-attachments/assets/4d074958-c8f2-445c-ae4b-42871a66371d" />
+<img width="2904" height="940" alt="spaces-copy-audit-cmp-where-desktop" src="https://github.com/user-attachments/assets/4a5d9e8b-34c7-4176-94a6-424ed958d0ab" />
+<img width="960" height="1052" alt="spaces-copy-audit-cmp-home-mobile" src="https://github.com/user-attachments/assets/854a0fba-7719-4db1-80bc-60552eb3ee01" />

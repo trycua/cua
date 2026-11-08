@@ -50,10 +50,10 @@ pub(super) struct Watch {
 
 /// Prints `procs=<n> files=<n> up=<secs>`: processes that are not the
 /// Space's own. The Space's own are its start-up (anything started within
-/// the first seconds, under load that includes a slow desktop) and the
-/// desktop's helpers (by name, unless started through cua-spacesd, which is
-/// how every run, exec and job starts). The probe's own processes live under
-/// 2 s and are skipped, and files changed in the home folder since boot
+/// the first seconds) and the desktop's helpers (by name, unless started
+/// through cua-spacesd, which is how every run, exec and job starts): under
+/// load a desktop starts well after the first 30 s. The probe's own
+/// processes live under 2 s and are skipped, and files changed in the home folder since boot
 /// (hidden folders hold tool state and are skipped).
 const PROBE: &str = r#"
 up=$(ps -o etimes= -p 1 2>/dev/null | tr -d ' ')

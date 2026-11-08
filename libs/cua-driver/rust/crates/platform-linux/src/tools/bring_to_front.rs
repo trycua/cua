@@ -76,7 +76,7 @@ impl Tool for BringToFrontTool {
                 .await;
             }
             let result = tokio::task::spawn_blocking(move || {
-                crate::wayland::activate_window_for_input_target(window_id, Some(pid))
+                crate::wayland::activate_window(window_id, Some(pid))
             })
             .await;
             return match result {

@@ -9,12 +9,11 @@ import { Loader2Icon, TriangleAlertIcon } from "lucide-react";
 import type { SignInFooter, Space } from "@/bridge";
 import { spokenName } from "@/bridge/space-names";
 
-import { signInFooter, useBridge, useFeatureRecorded, useMachines, useNotifications, useSession, useSpaces } from "@/bridge";
+import { signInFooter, useBridge, useFeatureRecorded, useNotifications, useSession, useSpaces } from "@/bridge";
 import { CuaKey } from "@/components/cua-key";
 import { Button } from "@/components/ui/button";
 import { toast } from "@/components/ui/toast";
 import { bindingFor } from "@/lib/keybindings";
-import { useListedSpaces } from "@/components/spaces/listed";
 import { useHiddenSpaceIds } from "@/lib/prepare/store";
 import { spaceState } from "@/lib/spaces";
 import { cn } from "@/lib/utils";
@@ -31,22 +30,16 @@ import { useSpacesTreeData } from "@/components/spaces/use-spaces-tree";
 export function Sidebar() {
   const width = useUiStore((s) => s.sidebarWidth);
   const { data: spaces, listStatus } = useSpaces();
-  const { data: machines } = useMachines();
   const { core } = useBridge();
   const notifications = useNotifications();
-  // No count before the list was read (not "0" while the daemon starts); while computers still answer, the
-  // Spaces known so far.
-  const { counted } = useListedSpaces(spaces);
   // The home warming for Home's box is no "Making" item either: Home's own line says how it goes.
   const warming = useHiddenSpaceIds(core);
-  const spacesCount = spaces && listStatus.loaded ? counted.length : undefined;
-  // Machines waiting to be added show beside the item, so they are seen from every page.
+  // Computers waiting to be added show beside the item, so they are seen from every page.
   const { pending } = useMachinesAccount();
-  // Spaces as a tree (Labs): one Spaces item counting your computers and the Spaces on them, as the Spaces page lists
-  // them. The tree itself is only on the Spaces page, so the sidebar stays short.
+  // One Computers item counting your computers and the Spaces on them, as its page lists them (no count before the
+  // list was read, not "0" while the daemon starts). The list itself is only on that page, so the sidebar stays short.
   const { tree } = useSpacesTreeData();
-  const treeCount = tree && listStatus.loaded ? tree.computers + tree.spaces : undefined;
-  const counts: Partial<Record<string, number>> = { "/spaces": tree ? treeCount : spacesCount, "/machines": machines?.length };
+  const counts: Partial<Record<string, number>> = { "/spaces": tree && listStatus.loaded ? tree.computers + tree.spaces : undefined };
   const navItems = useNavItems();
   const unread = notifications.data?.unread ?? 0;
 
@@ -80,7 +73,7 @@ export function Sidebar() {
                       <span className="text-2xs font-medium tabular-nums text-foreground">{unread}</span>
                     </span>
                   ) : null}
-                  {item.to === "/machines" && pending.length > 0 ? (
+                  {item.to === "/spaces" && pending.length > 0 ? (
                     <span data-pending-badge className="rounded-full bg-warning/20 px-1.5 text-2xs font-medium tabular-nums text-foreground" aria-label={`${pending.length} waiting to be added`}>
                       {pending.length}
                     </span>
@@ -100,7 +93,7 @@ export function Sidebar() {
       <div className="flex-1" />
       <SidebarCreating spaces={(spaces ?? []).filter((s) => !warming.has(s.id))} />
       <SidebarTip />
-      {/* Free only: "Run more Spaces at once with Pro", right above the account line. */}
+      {/* Free only: "Use more computers at once with Pro", right above the account line. */}
       <ProBanner />
       {/* A ready update is a compact button at the end of the account line. */}
       <AccountFooter trailing={<SidebarUpdateButton />} />

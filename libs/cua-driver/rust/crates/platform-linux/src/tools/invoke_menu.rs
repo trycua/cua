@@ -135,7 +135,7 @@ impl Tool for InvokeMenuTool {
 
         let activation = if crate::wayland::is_wayland() {
             let result = tokio::task::spawn_blocking(move || {
-                crate::wayland::activate_window_for_input_target(window_id, Some(pid))
+                crate::wayland::activate_window(window_id, Some(pid))
             })
             .await;
             match result {

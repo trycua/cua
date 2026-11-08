@@ -1326,6 +1326,20 @@ impl Tool for ClickTool {
             if let Some(refusal) = unavailable_chromium_background(pid, delivery) {
                 return refusal;
             }
+            // A KWin handle is not an X11 id, and KWin has no input route bound
+            // to one window, so it gets no pointer fallback.
+            if let Some(xid) = xid_hint {
+                let kwin =
+                    tokio::task::spawn_blocking(move || crate::wayland::refuse_kwin_input(xid));
+                if let Ok(Err(error)) = kwin.await {
+                    if !delivery.is_foreground() {
+                        return crate::input::delivery::background_unavailable_error(
+                            crate::input::delivery::BackgroundUnavailable::FocusedInputOnly,
+                        );
+                    }
+                    return input_error_result(error);
+                }
+            }
 
             // The AX route was unavailable. Fall back to a real MPX pointer
             // click at the element (no focus steal), then to a target-addressed

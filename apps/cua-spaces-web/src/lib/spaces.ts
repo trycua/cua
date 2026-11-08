@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-import type { CoreClient, CreatingElsewhere, Machine, Space, SpaceOs } from "@/bridge";
+import type { CoreClient, Machine, Space } from "@/bridge";
 import { OS_NAME } from "@/components/os-icon";
 import { thisComputerLabel } from "@/lib/host-labels";
 import { messageText } from "@/lib/messages";
@@ -92,26 +92,6 @@ export type SpaceFilter = "all" | "running" | "stopped" | "creating";
 /** Running first, then the Space being created, then the rest (each by most recent use). */
 const ORDER: Record<SpaceState, number> = { running: 0, creating: 1, failed: 2, stopped: 3, deleting: 4 };
 
-/**
- * Whether the filter box's `query` keeps `space`: the core's rule
- * (`sidebar.matches`, the SwiftUI sidebar search's): any of its name,
- * detail, id or machine holds the trimmed query, ignoring case. Without the
- * core, the same rule here.
- */
-export function matchesQuery(
-  core: { tryCall<T>(op: string, args?: Record<string, unknown>): T | undefined } | undefined,
-  space: Pick<Space, "id" | "name" | "detail">,
-  machine: string,
-  query: string,
-): boolean {
-  if (query.trim() === "") return true;
-  const fields = [space.name, space.detail ?? "", space.id, machine];
-  const kept = core?.tryCall<boolean>("sidebar.matches", { query, fields });
-  if (typeof kept === "boolean") return kept;
-  const needle = query.trim().toLowerCase();
-  return fields.some((f) => f.toLowerCase().includes(needle));
-}
-
 /** Filter by state, then: creating first, running next, then stopped; most recent first within each. */
 export function visibleSpaces(spaces: readonly Space[], filter: SpaceFilter, keep: (space: Space) => boolean = () => true): Space[] {
   return spaces
@@ -129,26 +109,6 @@ export function osLabel(space: Pick<Space, "os" | "osPrettyName">): string {
 export function spacePlace(space: Pick<Space, "os" | "osPrettyName">, machine: string): string {
   const os = osLabel(space);
   return os ? `${os} on ${machine}` : machine;
-}
-
-/** A Space another computer is creating: its OS as an icon takes (`unknown` when it did not say). */
-export function elsewhereOs(c: Pick<CreatingElsewhere, "os">): SpaceOs {
-  return c.os === "macos" || c.os === "linux" || c.os === "windows" ? c.os : "unknown";
-}
-
-/** "Creating macOS on Mac mini…" (CUA-2349): what another computer is making, from its own report. */
-export function creatingElsewherePlace(c: Pick<CreatingElsewhere, "os" | "machineName">): string {
-  const os = elsewhereOs(c);
-  const what = os === "unknown" ? "a Space" : OS_NAME[os];
-  return `Creating ${what} on ${c.machineName.trim() || "another machine"}…`;
-}
-
-/** How far it got: "40%". */
-export const creatingElsewherePercent = (c: Pick<CreatingElsewhere, "percent">): string => `${Math.min(100, Math.max(0, Math.round(c.percent)))}%`;
-
-/** "Creating macOS on Mac mini… 40%". */
-export function creatingElsewhereLine(c: Pick<CreatingElsewhere, "os" | "machineName" | "percent">): string {
-  return `${creatingElsewherePlace(c)} ${creatingElsewherePercent(c)}`;
 }
 
 /** The machine a Space runs on, by the machines' `spaceIds`. */
@@ -268,7 +228,7 @@ export function canDelete(space: Pick<Space, "id" | "status" | "cloudDelete">): 
 
 const PROVIDER: Record<Exclude<NonNullable<Space["provider"]>, "local">, string> = {
   relay: "Your computer, through the Cua relay",
-  direct: "A machine added by address",
+  direct: "A computer added by address",
 };
 
 /** Where it runs, in words. */

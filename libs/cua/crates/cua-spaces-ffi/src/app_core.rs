@@ -189,10 +189,27 @@ pub fn app_usage_refresh_ms() -> u64 {
     core::spaces::sidebar::USAGE_REFRESH_MS
 }
 
+/// The system this process runs on, from the platform the library was
+/// built for. The shells run in the same process as the library, so this is
+/// the real host, never a macOS default.
+fn host_space_os() -> core::model::SpaceOs {
+    space_os_of_platform(std::env::consts::OS)
+}
+
+/// Maps Rust's `std::env::consts::OS` to a Space's system.
+fn space_os_of_platform(platform: &str) -> core::model::SpaceOs {
+    match platform {
+        "macos" => core::model::SpaceOs::Macos,
+        "windows" => core::model::SpaceOs::Windows,
+        "linux" => core::model::SpaceOs::Linux,
+        _ => core::model::SpaceOs::Unknown,
+    }
+}
+
 /// The "This machine" roster entry.
 #[uniffi::export]
 pub fn app_this_machine_space(status: Option<AppHostSummaryInput>, now_ms: i64) -> AppSpace {
-    core::host::this_machine_space(status.as_ref(), now_ms, core::model::SpaceOs::Macos)
+    core::host::this_machine_space(status.as_ref(), now_ms, host_space_os())
 }
 
 /// Adds the "This machine" entry to a roster, first.
@@ -202,12 +219,7 @@ pub fn app_with_this_machine(
     status: Option<AppHostSummaryInput>,
     now_ms: i64,
 ) -> Vec<AppSpace> {
-    core::host::with_this_machine(
-        &spaces,
-        status.as_ref(),
-        now_ms,
-        core::model::SpaceOs::Macos,
-    )
+    core::host::with_this_machine(&spaces, status.as_ref(), now_ms, host_space_os())
 }
 
 /// The words of a Space's sections (Stream, Agents, Teleport).
@@ -3703,5 +3715,27 @@ mod resources_tests {
             format!("{} in use", rt::words::computer_memory(c))
         );
         assert_eq!(v.computers[0].rows[2].value, rt::words::computer_disk(c));
+    }
+}
+
+#[cfg(test)]
+mod host_os_tests {
+    use super::*;
+    use crate::app_core::core::model::SpaceOs;
+
+    #[test]
+    fn platform_words_map_to_their_system() {
+        assert_eq!(space_os_of_platform("macos"), SpaceOs::Macos);
+        assert_eq!(space_os_of_platform("windows"), SpaceOs::Windows);
+        assert_eq!(space_os_of_platform("linux"), SpaceOs::Linux);
+        assert_eq!(space_os_of_platform("freebsd"), SpaceOs::Unknown);
+    }
+
+    #[test]
+    fn this_machine_space_carries_the_real_host_system() {
+        let want = space_os_of_platform(std::env::consts::OS);
+        assert_eq!(app_this_machine_space(None, 0).os, want);
+        let roster = app_with_this_machine(Vec::new(), None, 0);
+        assert_eq!(roster[0].os, want);
     }
 }

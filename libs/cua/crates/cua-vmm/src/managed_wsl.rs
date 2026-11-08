@@ -93,6 +93,39 @@ pub fn rootfs_pin() -> Pin {
 /// packages. The guard keeps `CUA_DISK_MIN_FREE` (5 GiB) free on top.
 pub const SETUP_DISK_BYTES: u64 = 2 << 30;
 
+/// A warning for the drive holding the runtime's disk (a sparse VHDX that
+/// grows with the images and Spaces in it): `None` while it has more than the
+/// warning threshold free (`CUA_DISK_WARN_FREE`, default 10 GiB), else how much
+/// is left and what to do. Nothing is refused here; a create that would leave
+/// less than `CUA_DISK_MIN_FREE` is refused by the setup and image-pull guards.
+pub fn low_space_note(volume: &std::path::Path) -> Option<String> {
+    let cfg = crate::disk::CacheConfig::load();
+    let avail = crate::disk::space(volume).ok()?.available;
+    low_space_message(avail, cfg.min_free, cfg.warn_free, volume)
+}
+
+fn low_space_message(
+    avail: u64,
+    min_free: u64,
+    warn_free: u64,
+    volume: &std::path::Path,
+) -> Option<String> {
+    use crate::disk::format_size;
+    if avail >= warn_free.max(min_free) {
+        return None;
+    }
+    let level = if avail < min_free {
+        "below what cua keeps free: new Linux Spaces and image pulls are refused"
+    } else {
+        "getting low"
+    };
+    Some(format!(
+        "low disk space: {} free on {} ({level}); remove Spaces you do not use or run `cua cache prune`",
+        format_size(avail),
+        volume.display()
+    ))
+}
+
 /// What the first Linux Space downloads: the rootfs and about 120 MB of packages.
 pub fn first_use_download() -> u64 {
     rootfs_pin().size + (120 << 20)
@@ -1016,6 +1049,23 @@ mod tests {
         drop(client);
         let ended = tokio::time::timeout(std::time::Duration::from_secs(5), task).await;
         assert!(ended.is_ok(), "the bridge stayed up after its client left");
+    }
+
+    #[test]
+    fn a_filling_drive_is_reported_before_it_is_refused() {
+        let v = std::path::Path::new("D:/cua");
+        let gib = 1u64 << 30;
+        assert_eq!(low_space_message(50 * gib, 5 * gib, 10 * gib, v), None);
+        let warn = low_space_message(8 * gib, 5 * gib, 10 * gib, v).unwrap();
+        assert!(
+            warn.contains("8.0 GiB free") && warn.contains("getting low"),
+            "{warn}"
+        );
+        let refuse = low_space_message(2 * gib, 5 * gib, 10 * gib, v).unwrap();
+        assert!(
+            refuse.contains("refused") && refuse.contains("cua cache prune"),
+            "{refuse}"
+        );
     }
 
     #[test]

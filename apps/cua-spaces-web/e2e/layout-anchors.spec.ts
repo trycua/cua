@@ -60,10 +60,6 @@ for (const [width, height] of SIZES) {
   test.describe(`${width}x${height}`, () => {
     test("first run: the logo, headline, step dots and primary button stay put on every step", async ({ page }) => {
       await page.setViewportSize({ width, height });
-      await page.addInitScript(() => {
-        localStorage.setItem("cua.flag.spaces_new_onboarding", "1");
-        localStorage.setItem("cua.flag.spaces_ask_first_home", "1");
-      });
       // signin-wait: the browser never confirms, so the sign-in step stays to be measured.
       await page.goto("/onboarding?bridge=demo&demo=fresh,signin-wait&parity");
       const root = page.locator("[data-new-first-run]");
@@ -100,9 +96,8 @@ for (const [width, height] of SIZES) {
       if (await primary.isDisabled()) await page.locator("[data-new-run-agent][role=checkbox]").first().click();
       await measure("agent");
       await primary.click();
+      // Ready is setup's last screen: Done goes to Home, where the rest is asked for after the first job (CUA-3150).
       await measure("ready");
-      await primary.click();
-      await measure("next");
 
       expectSteady(
         rows,

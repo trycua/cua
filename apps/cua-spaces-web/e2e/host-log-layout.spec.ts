@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 /**
- * This machine's logs (under Details on the Machines page) at a real window width (1100 px, as on a Mac): a long row gives way in the middle, so what happened ("Screen and
+ * This computer's logs (under Details on its page) at a real window width (1100 px, as on a Mac): a long row gives way in the middle, so what happened ("Screen and
  * input refused (desktop not shared) ×12") stays whole, on the page and in
  * Show All; the Spaces activity keeps its action and Space whole instead.
  */
@@ -47,7 +47,7 @@ for (const [name, css] of [
   ["a wider font", WIDE_FONT],
 ] as const) {
   test(`This computer's long log rows keep what happened in view at 1100 px, in ${name}`, async ({ page }) => {
-    await page.goto("/machines?bridge=demo&parity");
+    await page.goto("/spaces/computer/this-mac?bridge=demo&parity");
     await page.waitForFunction(() => window.__cuaParity !== undefined);
     if (css) await page.addStyleTag({ content: css });
     await page.locator('[data-machine-detail="this-mac"]').waitFor();

@@ -81,7 +81,7 @@ fn def() -> &'static ToolDef {
                     "type": "integer",
                     "minimum": 0,
                     "maximum": 200,
-                    "description": "Ms between characters in the CGEvent fallback. Default 30."
+                    "description": "Ms between characters in the CGEvent fallback. Default 0: characters go in batched key events, fast. Set a positive value for one paced key per character (debounced search boxes)."
                 },
                 "scope": { "type": "string", "enum": ["window", "desktop"], "default": "window", "description": "\"desktop\" with no pid/window_id types into the frontmost app." },
                 "delivery_mode": {
@@ -144,7 +144,7 @@ impl Tool for TypeTextTool {
             let text =
                 cua_driver_core::text_sanitize::strip_trailing_agent_protocol_tags(&input.text)
                     .into_owned();
-            let delay_ms = args.u64_or("delay_ms", 30).min(200);
+            let delay_ms = args.u64_or("delay_ms", DEFAULT_DELAY_MS).min(200);
             if let Some(refusal) = synthesis_preflight(
                 TextDeliveryRoute::UnicodeSynthesis,
                 text.chars().count(),
@@ -191,7 +191,7 @@ impl Tool for TypeTextTool {
             Ok(window_id) => window_id,
             Err(error) => return error,
         };
-        let delay_ms = args.u64_or("delay_ms", 30);
+        let delay_ms = args.u64_or("delay_ms", DEFAULT_DELAY_MS);
         let delivery_mode = super::DeliveryMode::parse(args.opt_str("delivery_mode").as_deref());
         if let Some(error) = screen_sharing_delivery_error(
             crate::input::keyboard::is_screen_sharing_pid(pid),
@@ -812,8 +812,20 @@ fn chromium_native_field_submit_refusal(
     })
 }
 
+/// Default `delay_ms`. Zero selects batched key events (see
+/// `keyboard::type_text_batched`); a positive value keeps per-character pacing.
+const DEFAULT_DELAY_MS: u64 = 0;
+
+/// Pace used to retype the undelivered tail when a batched send did not land.
+const RETYPE_TAIL_DELAY_MS: u64 = 30;
+
+/// A readable field that has not changed at all after this long is not going
+/// to (an app ignoring synthesized keys, or web content echoing a stale
+/// AXValue). Stop polling instead of burning the whole drain timeout.
+const UNCHANGED_GIVE_UP: std::time::Duration = std::time::Duration::from_millis(500);
+
 const DELIVERY_DRAIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
-const DELIVERY_DRAIN_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(10);
+const DELIVERY_DRAIN_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(5);
 
 /// Pause before the single `AXFocused` re-apply in the foreground rung. Covers
 /// an app that installs its own first responder just after activation is
@@ -1270,6 +1282,7 @@ fn cgevent_type_verified(
         std::thread::sleep(std::time::Duration::from_millis(settle_ms));
     }
     crate::input::keyboard::type_text_with_delay(pid, text, delay_ms)?;
+    let batched = delay_ms == 0;
 
     // CGEvent posting is asynchronous with respect to the renderer. In
     // particular, Chromium can acknowledge the posting process while a long
@@ -1277,13 +1290,37 @@ fn cgevent_type_verified(
     // visible instead of treating any growth as success. If the deadline
     // expires after observable growth, surface the exact partial count.
     let deadline = std::time::Instant::now() + DELIVERY_DRAIN_TIMEOUT;
-    Ok(await_typed_delivery(
+    let outcome = await_typed_delivery(
         before,
         text,
         deadline,
         || read_axvalue_bound(pid, element_ptr_and_idx, window_id),
         || target_in_web_area(pid, element_ptr_and_idx, window_id),
-    ))
+    );
+    // A batched send that a native field only partly took (an app that reads
+    // just the first character of a multi-character event) is finished one
+    // paced key at a time from where it stopped. Web content never takes this
+    // branch: its read-back cannot prove how much landed, so a retype could
+    // duplicate text.
+    if batched {
+        if let (false, Some(done)) = outcome {
+            let total = text.chars().count();
+            let web = target_in_web_area(pid, element_ptr_and_idx, window_id);
+            if done < total && !web {
+                let tail: String = text.chars().skip(done).collect();
+                crate::input::keyboard::type_text_with_delay(pid, &tail, RETYPE_TAIL_DELAY_MS)?;
+                let deadline = std::time::Instant::now() + DELIVERY_DRAIN_TIMEOUT;
+                return Ok(await_typed_delivery(
+                    before,
+                    text,
+                    deadline,
+                    || read_axvalue_bound(pid, element_ptr_and_idx, window_id),
+                    || false,
+                ));
+            }
+        }
+    }
+    Ok(outcome)
 }
 
 fn await_typed_delivery(
@@ -1294,6 +1331,8 @@ fn await_typed_delivery(
     is_web: impl FnOnce() -> bool,
 ) -> (bool, Option<usize>) {
     let mut best_partial = None;
+    let started = std::time::Instant::now();
+    let mut deadline = deadline;
     loop {
         let after = read_value();
         match typed_progress(before, after.as_deref(), text) {
@@ -1307,6 +1346,9 @@ fn await_typed_delivery(
                 // A readable unchanged value is an observed zero-character
                 // delivery, not an unverifiable success.
                 best_partial.get_or_insert(0);
+                if best_partial == Some(0) && started.elapsed() >= UNCHANGED_GIVE_UP {
+                    deadline = std::time::Instant::now();
+                }
             }
         }
         if std::time::Instant::now() >= deadline {
@@ -2138,6 +2180,25 @@ mod tests {
             || false,
         );
         assert_eq!(delivery, (false, Some(5)));
+    }
+
+    #[test]
+    fn zero_progress_stops_polling_after_the_give_up_window() {
+        let started = std::time::Instant::now();
+        let outcome = await_typed_delivery(
+            Some("abc"),
+            "xyz",
+            started + DELIVERY_DRAIN_TIMEOUT,
+            || Some("abc".to_string()),
+            || false,
+        );
+        assert_eq!(outcome, (false, Some(0)));
+        assert!(started.elapsed() < DELIVERY_DRAIN_TIMEOUT / 2);
+    }
+
+    #[test]
+    fn default_delay_selects_batched_typing() {
+        assert_eq!(DEFAULT_DELAY_MS, 0);
     }
 
     #[test]

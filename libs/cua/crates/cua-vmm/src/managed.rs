@@ -982,6 +982,9 @@ async fn ensure_windows() -> Result<String> {
     }
     let _ = std::fs::remove_file(stopped_names_file());
     *WINDOWS_VERIFIED.lock().unwrap_or_else(|e| e.into_inner()) = Some(std::time::Instant::now());
+    if let Some(note) = wsl::low_space_note(&root()) {
+        tracing::warn!("{note}");
+    }
     Ok(endpoint())
 }
 

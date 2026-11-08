@@ -1,5 +1,40 @@
 # Changelog
 
+## [0.43.1](https://github.com/trycua/cua/compare/cua-driver-rs-v0.43.0...cua-driver-rs-v0.43.1) (2026-11-07)
+
+
+### Bug Fixes
+
+* **cua-driver:** an AX press on a web textarea now takes DOM focus (CUA-3763) ([#6909](https://github.com/trycua/cua/issues/6909)) ([eefa210](https://github.com/trycua/cua/commit/eefa2104df2b0757b80b57599997a74d4fa7d50b))
+
+## [0.43.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.42.4...cua-driver-rs-v0.43.0) (2026-11-07)
+
+
+### Features
+
+* **cua-driver:** expose macOS search field identity attributes ([#6893](https://github.com/trycua/cua/issues/6893)) ([e298a4f](https://github.com/trycua/cua/commit/e298a4f0bc0f339665946401b24004d124591dbe))
+
+## [0.42.4](https://github.com/trycua/cua/compare/cua-driver-rs-v0.42.3...cua-driver-rs-v0.42.4) (2026-11-07)
+
+
+### Bug Fixes
+
+* **cua-driver:** give KWin windows exact bounds, stacking, capture and bring_to_front ([#6820](https://github.com/trycua/cua/issues/6820)) ([5ee57ab](https://github.com/trycua/cua/commit/5ee57ab5bba333f33e48df787b77d997cc1e8019))
+* **cua-driver:** refuse an ambiguous AT-SPI editable pick on Linux ([#6887](https://github.com/trycua/cua/issues/6887)) ([16616ba](https://github.com/trycua/cua/commit/16616bacc0477cd8884d49272623b3da9f6c22ee))
+
+
+### Performance Improvements
+
+* **cua-driver:** capture PiP frames off the request path ([#6885](https://github.com/trycua/cua/issues/6885)) ([7feb9ee](https://github.com/trycua/cua/commit/7feb9ee4e4ce9702b872f64fe77ef9825e191b7a))
+* **cua-driver:** capture the macOS desktop with captureImage(in:) when there is no overlay to leave out ([#6881](https://github.com/trycua/cua/issues/6881)) ([d58e7aa](https://github.com/trycua/cua/commit/d58e7aaed0f6c6a4c363124bdfba9fa3aba2e4aa))
+* **cua-driver:** identify apps without spawning ps or listing every process ([#6879](https://github.com/trycua/cua/issues/6879)) ([1759af2](https://github.com/trycua/cua/commit/1759af24ec84685269529425ac42e5de964adf85))
+* **cua-driver:** look up one window by id instead of enumerating all ([#6882](https://github.com/trycua/cua/issues/6882)) ([02df6a0](https://github.com/trycua/cua/commit/02df6a000ff6edc7f04c3ba424489769d181aab3))
+* **cua-driver:** memoize the installed-app scan behind a root-mtime key ([#6883](https://github.com/trycua/cua/issues/6883)) ([7a221f6](https://github.com/trycua/cua/commit/7a221f618ab2d9428559ed23d17a7b8770aa4216))
+* **cua-driver:** poll AXWebArea stabilization instead of sleeping 500ms on Chromium AX wake ([#6880](https://github.com/trycua/cua/issues/6880)) ([5a95301](https://github.com/trycua/cua/commit/5a9530166836300cca8b4813de95ca61d0a85adf))
+* **cua-driver:** read each AX node in one batched round trip ([#6878](https://github.com/trycua/cua/issues/6878)) ([6054a72](https://github.com/trycua/cua/commit/6054a728d83accff23cf7034d1ac567e715d5b71))
+* **cua-driver:** run health checks concurrently ([#6886](https://github.com/trycua/cua/issues/6886)) ([78a962b](https://github.com/trycua/cua/commit/78a962bf6087522471129845b603c9d8b289b8c3))
+* **cua-driver:** wait for web focus instead of a fixed 800 ms, and add mouse pacing knobs ([#6889](https://github.com/trycua/cua/issues/6889)) ([03139f5](https://github.com/trycua/cua/commit/03139f54a10e61e1c3d7ed4f2885584faca8b24a))
+
 ## [0.42.3](https://github.com/trycua/cua/compare/cua-driver-rs-v0.42.2...cua-driver-rs-v0.42.3) (2026-11-07)
 
 

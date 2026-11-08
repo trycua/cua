@@ -465,7 +465,7 @@ fn golden_support_table() {
         (BackendKind::QemuDocker, "R", "R", "R"),
         (BackendKind::Container, "E", "E", "E"),
         (BackendKind::Managed, "E", "E", "E"),
-        (BackendKind::Firecracker, "E", "R", "R"),
+        (BackendKind::Firecracker, "E", "R", "N"),
         (BackendKind::Containerization, "R", "R", "R"),
         (BackendKind::Vz, "R", "E", "R"),
     ];

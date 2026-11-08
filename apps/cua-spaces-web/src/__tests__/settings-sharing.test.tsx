@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-// Settings, General, Sharing: "Let other machines create Spaces here" for this
+// Settings, General, Sharing: "Let other computers create Spaces here" for this
 // Mac, on by default. Turning it off and on again runs the host's own actions;
 // there is no error and no command-line hint whichever way it is set.
 
@@ -33,7 +33,7 @@ describe.skipIf(!wasmBuilt)("Settings, Sharing", () => {
       expect(el).not.toBeNull();
       return el!;
     });
-    expect(document.body.textContent).toContain("Let other machines create Spaces here");
+    expect(document.body.textContent).toContain("Let other computers create Spaces here");
     expect(document.body.textContent).not.toMatch(/cua host config|nothing to share/);
     const on = (sw as HTMLInputElement).checked || sw.getAttribute("aria-checked") === "true" || sw.hasAttribute("data-checked");
     await act(async () => void fireEvent.click(sw));
@@ -65,7 +65,7 @@ describe.skipIf(!wasmBuilt)("Settings, Sharing", () => {
     expect(document.querySelector('[data-limit-use="max-spaces"]')?.textContent).toMatch(/of 4 Spaces/);
     expect(document.querySelector('[data-limit-use="max-memory"]')?.textContent).toMatch(/GB/);
     expect(text).not.toContain("\u00b7");
-    expect(text).not.toMatch(/devices|computers/i);
+    expect(text).not.toMatch(/devices|machines/i);
     // No limit is an empty field.
     expect((document.querySelector('[data-setting-row="limit-max-memory"]') as HTMLInputElement).value).toBe("");
     // A number saves when the field is left.

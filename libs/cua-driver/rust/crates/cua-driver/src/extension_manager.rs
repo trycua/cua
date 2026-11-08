@@ -34,7 +34,7 @@ use cua_driver_core::perception_client::containment::{
     run_contained_hook, ContainmentLimits, HookOutcome,
 };
 use cua_driver_core::perception_client::{
-    PerceptionClient, PerceptionClientResolver, PerceptionWorkerConfig,
+    PerceptionClient, PerceptionClientResolver, PerceptionWorkerConfig, ResolutionDeferred,
 };
 use cua_driver_core::protocol::ToolResult;
 use cua_driver_core::tool::{Tool, ToolDef, ToolRegistry};
@@ -1069,17 +1069,23 @@ fn extension_root() -> Result<PathBuf> {
 }
 
 /// Resolve the optional perception worker through the same active-pointer and
-/// installed-payload verification used by extension lifecycle commands.
-fn perception_client_in(store: &ExtensionStore) -> PerceptionClient {
+/// installed-payload verification used by extension lifecycle commands. A lock
+/// held by another command defers resolution, since that command may finish
+/// without changing anything the fingerprint observes.
+fn perception_client_in(store: &ExtensionStore) -> Result<PerceptionClient, ResolutionDeferred> {
     match perception_worker_config_in(store) {
-        Ok(Some(config)) => PerceptionClient::new(config).unwrap_or_else(|error| {
+        Ok(Some(config)) => Ok(PerceptionClient::new(config).unwrap_or_else(|error| {
             tracing::warn!("installed cua-perception configuration is unusable: {error:?}");
             PerceptionClient::unavailable()
-        }),
-        Ok(None) => PerceptionClient::unavailable(),
+        })),
+        Ok(None) => Ok(PerceptionClient::unavailable()),
+        Err(error) if is_lock_contention(&error) => {
+            tracing::warn!("installed cua-perception extension is busy: {error:#}");
+            Err(ResolutionDeferred)
+        }
         Err(error) => {
             tracing::warn!("installed cua-perception extension is unavailable: {error:#}");
-            PerceptionClient::unavailable()
+            Ok(PerceptionClient::unavailable())
         }
     }
 }
@@ -1113,12 +1119,12 @@ impl PerceptionClientResolver for InstalledPerceptionResolver {
         }
     }
 
-    fn resolve(&self) -> PerceptionClient {
+    fn resolve(&self) -> Result<PerceptionClient, ResolutionDeferred> {
         match self.store() {
             Ok(store) => perception_client_in(&store),
             Err(error) => {
                 tracing::warn!("installed cua-perception extension is unavailable: {error:#}");
-                PerceptionClient::unavailable()
+                Ok(PerceptionClient::unavailable())
             }
         }
     }
@@ -4344,6 +4350,20 @@ fn open_lock_file_at(dir: &Dir, name: &str) -> Result<fs::File> {
     }
 }
 
+fn is_contended(cause: &std::io::Error) -> bool {
+    cause.kind() == std::io::ErrorKind::WouldBlock
+        || cause.raw_os_error() == fs2::lock_contended_error().raw_os_error()
+}
+
+/// True when `error` came from another command holding an extension lock.
+fn is_lock_contention(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| {
+        cause
+            .downcast_ref::<std::io::Error>()
+            .is_some_and(is_contended)
+    })
+}
+
 fn acquire_extension_lock_with(
     retry_window: Duration,
     mut elapsed: impl FnMut() -> Duration,
@@ -4353,10 +4373,7 @@ fn acquire_extension_lock_with(
     loop {
         match try_lock() {
             Ok(()) => return Ok(()),
-            Err(cause)
-                if cause.kind() == std::io::ErrorKind::WouldBlock
-                    || cause.raw_os_error() == fs2::lock_contended_error().raw_os_error() =>
-            {
+            Err(cause) if is_contended(&cause) => {
                 if elapsed() >= retry_window {
                     return Err(cause);
                 }
@@ -4382,12 +4399,9 @@ fn acquire_windows_acl_lease_with(
     loop {
         match try_lock() {
             Ok(()) => return Ok(()),
-            Err(cause)
-                if cause.kind() == std::io::ErrorKind::WouldBlock
-                    || cause.raw_os_error() == fs2::lock_contended_error().raw_os_error() =>
-            {
+            Err(cause) if is_contended(&cause) => {
                 if elapsed() >= retry_window {
-                    bail!("timed out waiting for the Windows ACL lease");
+                    return Err(cause).context("timed out waiting for the Windows ACL lease");
                 }
                 sleep(WINDOWS_ACL_LEASE_RETRY_INTERVAL);
             }
@@ -5746,6 +5760,40 @@ mod tests {
         assert_eq!(
             parse_code(&handle).await,
             VisualParseErrorCode::NotInstalled
+        );
+    }
+
+    #[tokio::test]
+    async fn live_perception_client_retries_after_lock_contention() {
+        use cua_driver_core::perception_client::PerceptionClientHandle;
+
+        let temp = TempDir::new().unwrap();
+        let root = temp.path().join("extensions");
+        let store = ExtensionStore::new(root.clone());
+        let runtime_name = if cfg!(target_os = "windows") {
+            "onnxruntime.dll"
+        } else if cfg!(target_os = "macos") {
+            "libonnxruntime.dylib"
+        } else {
+            "libonnxruntime.so"
+        };
+        let archive = perception_fixture_archive(temp.path(), "1.0.0", runtime_name);
+        store
+            .install_archive(registry_entry(PERCEPTION_ID).unwrap(), &archive)
+            .unwrap();
+        let handle =
+            PerceptionClientHandle::live(std::sync::Arc::new(InstalledPerceptionResolver {
+                root: Some(root),
+            }));
+
+        // Another command holds the lock and exits without changing anything
+        // the fingerprint observes.
+        let lock = store.lock(PERCEPTION_ID).unwrap();
+        assert!(!handle.current().await.is_available());
+        drop(lock);
+        assert!(
+            handle.current().await.is_available(),
+            "a busy lock must not leave the running Driver unavailable"
         );
     }
 

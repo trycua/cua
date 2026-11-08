@@ -949,14 +949,12 @@ impl EisState {
             Event::Keyboard(
                 _kb,
                 reis::ei::keyboard::Event::Keymap {
-                    keymap_type,
+                    keymap_type: reis::ei::keyboard::KeymapType::Xkb,
                     size,
                     keymap,
                 },
             ) => {
-                if keymap_type == reis::ei::keyboard::KeymapType::Xkb {
-                    self.load_xkb_keymap(keymap, size);
-                }
+                self.load_xkb_keymap(keymap, size);
             }
             Event::Keyboard(
                 _kb,

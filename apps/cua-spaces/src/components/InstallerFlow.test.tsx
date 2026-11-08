@@ -152,7 +152,7 @@ describe("InstallerFlow", () => {
     expect(screen.getByText("Welcome to Cua Spaces")).toBeInTheDocument();
     // The telemetry notice is on Welcome: it is recorded as shown before
     // anything is recorded.
-    expect(screen.getByTestId("telemetry-notice")).toHaveTextContent("Change this here or in Settings, Privacy.");
+    expect(screen.getByTestId("telemetry-notice")).toHaveTextContent("Features you use and errors, linked to your account. Never your files, typing or screen.");
     expect(screen.getByRole("link", { name: "What is collected" })).toHaveAttribute(
       "href",
       "https://cua.ai/docs/cua-sdk/concepts/telemetry",

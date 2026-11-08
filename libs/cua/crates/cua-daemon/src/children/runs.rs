@@ -17,6 +17,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 /// One recorded run.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -128,6 +129,71 @@ pub fn pool_op(method: &str) -> PoolOp {
     }
 }
 
+/// Providers a run may name in `on` that spend the owner's cloud account.
+const PROVIDERS: [&str; 6] = ["modal", "aws", "gcp", "hetzner", "cloud", "elastic"];
+
+/// What a Space's `submit` may ask for, and what the daemon sets on it: the
+/// run becomes the Space's child wherever it is placed. Refused: a native
+/// machine job (it runs outside every network rule) unless the Space has
+/// none to escape, host services (`services`, they make Spaces on the host's
+/// own terms) and a cloud provider (the owner's money, outside the tree's
+/// budget). Set, over anything the request said (the Space's own say-so is
+/// never believed): the parent, root, depth and network the job's Space is
+/// bound to ([`cua_cluster::model::ENV_PARENT_SPACE`]).
+pub fn confine_submit(
+    params: &mut Value,
+    space: &str,
+    root: &str,
+    depth: u32,
+    network: &cua_spaces::network::NetworkSettings,
+) -> Result<(), String> {
+    use cua_cluster::model::{
+        ENV_PARENT_NETWORK, ENV_PARENT_SPACE, ENV_ROOT_SPACE, ENV_TREE_DEPTH, KIND_MACHINE,
+    };
+    let open = *network == cua_spaces::network::NetworkSettings::internet();
+    let tag = serde_json::to_string(network).unwrap_or_default();
+    let check = |v: &Value| -> Result<(), String> {
+        if v["kind"].as_str() == Some(KIND_MACHINE) && !open {
+            return Err("start a native machine job from a Space with network rules: it would run                         outside them (ask the owner, or use a container job)"
+                .into());
+        }
+        if v["services"].as_array().is_some_and(|s| !s.is_empty()) {
+            return Err("ask for host services: they are the owner's".into());
+        }
+        let on = v["on"]
+            .as_str()
+            .unwrap_or_default()
+            .trim()
+            .to_ascii_lowercase();
+        if PROVIDERS.contains(&on.as_str()) {
+            return Err(format!(
+                "place a run on {on}: it spends the owner's cloud account outside the tree's budget"
+            ));
+        }
+        Ok(())
+    };
+    check(params)?;
+    for j in params["jobs"].as_array().into_iter().flatten() {
+        check(&j["spec"])?;
+    }
+    let stamp = |v: &mut Value| {
+        if !v["env"].is_object() {
+            v["env"] = serde_json::json!({});
+        }
+        v["env"][ENV_PARENT_SPACE] = Value::String(space.to_string());
+        v["env"][ENV_ROOT_SPACE] = Value::String(root.to_string());
+        v["env"][ENV_TREE_DEPTH] = Value::String((depth + 1).to_string());
+        v["env"][ENV_PARENT_NETWORK] = Value::String(tag.clone());
+    };
+    stamp(params);
+    for j in params["jobs"].as_array_mut().into_iter().flatten() {
+        if let Some(spec) = j.get_mut("spec") {
+            stamp(spec);
+        }
+    }
+    Ok(())
+}
+
 /// Runs whose submitting Space is gone or turned off: the ones to cancel.
 /// `alive` says whether a Space id is registered and on.
 pub fn orphaned(l: &Ledger, alive: impl Fn(&str) -> bool) -> Vec<String> {
@@ -167,6 +233,61 @@ mod tests {
         ] {
             assert_eq!(pool_op(m), PoolOp::Refused, "{m:?}");
         }
+    }
+
+    fn net(preset: cua_spaces::network::NetworkPreset) -> cua_spaces::network::NetworkSettings {
+        cua_spaces::network::NetworkSettings::preset(preset)
+    }
+
+    #[test]
+    fn a_submit_becomes_a_child_run_that_says_so_over_any_claim() {
+        use serde_json::json;
+        let inside = net(cua_spaces::network::NetworkPreset::None);
+        let mut p = json!({
+            "command": ["python", "x.py"],
+            // The Space lies about its place and its network.
+            "env": {"CUA_PARENT_SPACE": "local:victim", "CUA_PARENT_NETWORK": "{}", "A": "1"},
+            "jobs": [{"spec": {"env": {"CUA_TREE_DEPTH": "0"}, "argv": ["x"]}}],
+        });
+        confine_submit(&mut p, "local:me", "local:root", 1, &inside).unwrap();
+        for env in [&p["env"], &p["jobs"][0]["spec"]["env"]] {
+            assert_eq!(env["CUA_PARENT_SPACE"], "local:me");
+            assert_eq!(env["CUA_ROOT_SPACE"], "local:root");
+            assert_eq!(env["CUA_TREE_DEPTH"], "2");
+            let n: cua_spaces::network::NetworkSettings =
+                serde_json::from_str(env["CUA_PARENT_NETWORK"].as_str().unwrap()).unwrap();
+            assert_eq!(n, inside);
+        }
+        assert_eq!(p["env"]["A"], "1", "its own variables stay");
+    }
+
+    #[test]
+    fn a_space_with_network_rules_cannot_start_what_would_run_outside_them() {
+        use serde_json::json;
+        let closed = net(cua_spaces::network::NetworkPreset::None);
+        let open = cua_spaces::network::NetworkSettings::internet();
+        let machine = json!({"kind": "machine", "command": ["x"]});
+        let explicit = json!({"jobs": [{"spec": {"kind": "machine", "argv": ["x"]}}]});
+        for p in [&machine, &explicit] {
+            assert!(confine_submit(&mut p.clone(), "local:a", "local:r", 0, &closed).is_err());
+            assert!(confine_submit(&mut p.clone(), "local:a", "local:r", 0, &open).is_ok());
+        }
+        // Host services and the owner's cloud are refused whatever the network.
+        for p in [
+            json!({"services": ["compat:e2b"], "command": ["x"]}),
+            json!({"jobs": [{"spec": {"services": ["compat:e2b"]}}]}),
+            json!({"on": "modal", "command": ["x"]}),
+            json!({"on": "AWS", "command": ["x"]}),
+            json!({"jobs": [{"spec": {"on": "hetzner"}}]}),
+        ] {
+            assert!(
+                confine_submit(&mut p.clone(), "local:a", "local:r", 0, &open).is_err(),
+                "{p}"
+            );
+        }
+        // A host of the owner's by name, and a container job, are fine.
+        let ok = json!({"on": "host:mac1", "kind": "container", "command": ["x"]});
+        assert!(confine_submit(&mut ok.clone(), "local:a", "local:r", 0, &closed).is_ok());
     }
 
     #[test]

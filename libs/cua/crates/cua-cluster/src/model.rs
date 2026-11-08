@@ -305,6 +305,21 @@ pub fn space_name(job_id: &str, attempt: u32) -> String {
     format!("{JOB_SPACE_PREFIX}{}-{attempt}", &hex::encode(digest)[..16])
 }
 
+/// The Space a run was submitted from, set in a job's environment by the
+/// submitting computer's daemon. The host that creates the job's Space
+/// records it as a child of that Space (a real tree record on the same
+/// computer, the `cua.parent` / `cua.root` / `cua.depth` labels on another),
+/// so it is listed under its parent and goes with it.
+pub const ENV_PARENT_SPACE: &str = "CUA_PARENT_SPACE";
+/// The top-level Space of the submitter's tree ([`ENV_PARENT_SPACE`]).
+pub const ENV_ROOT_SPACE: &str = "CUA_ROOT_SPACE";
+/// The depth the job's Space has in that tree (its parent's plus one).
+pub const ENV_TREE_DEPTH: &str = "CUA_TREE_DEPTH";
+
+/// The submitter's network settings (JSON), for a host that does not hold
+/// the parent's record: the job's Space is no more open than this.
+pub const ENV_PARENT_NETWORK: &str = "CUA_PARENT_NETWORK";
+
 /// The name prefix of every job Space ([`space_name`]).
 pub const JOB_SPACE_PREFIX: &str = "cj-";
 

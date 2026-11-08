@@ -22,6 +22,7 @@ import { useFirstSpaceOffers } from "@/bridge/new-space-hooks";
 import { onboardingInitial, onboardingTelemetry, onboardingView, readSavedOnboarding, writeSavedOnboarding } from "@/bridge/onboarding";
 import { extraName, spokenName } from "@/bridge/space-names";
 import { AddComputerSheet } from "@/components/add-computer-sheet";
+import { starsWord } from "./stars-word";
 import { AppPermissionList, type PermissionsView } from "@/components/app-permissions";
 import { AppMarkImage } from "@/components/agents/harness-mark";
 import { agoLabel, PICK_UP_LIMIT, recentThreads, useRecentThreads } from "@/components/ask-first/pick-up";
@@ -84,6 +85,35 @@ function Title({ children }: { children: ReactNode }) {
     <h1 tabIndex={-1} data-onboarding-heading="" className="font-display text-[clamp(34px,min(4.9vw,6.6vh),76px)] leading-[0.98] font-semibold tracking-[-0.045em] text-balance text-white outline-none">
       {children}
     </h1>
+  );
+}
+
+// The headline as on cua.ai: its last word in the keys' gradient (Cua Blue, the lifted navy, terracotta),
+// arriving once as points of light that settle into it (stars-word.ts). Reduced motion: simply there.
+const SUPER_INK_STYLE = {
+  backgroundImage: "linear-gradient(90deg, #5ec0e8 0%, #6a8bb0 50%, #b5694b 100%)",
+  WebkitBackgroundClip: "text",
+  backgroundClip: "text",
+  color: "transparent",
+  WebkitTextFillColor: "transparent",
+} as const;
+
+function SuperTitle({ text }: { text: string }) {
+  const word = useRef<HTMLSpanElement>(null);
+  const cut = text.lastIndexOf(" ");
+  useEffect(() => {
+    const el = word.current;
+    const host = el?.closest<HTMLElement>("[data-new-first-run]");
+    if (!el || !host || matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    return starsWord(el, host);
+  }, []);
+  return (
+    <>
+      {text.slice(0, cut + 1)}
+      <span ref={word} className="inline-block">
+        <span style={SUPER_INK_STYLE}>{text.slice(cut + 1)}</span>
+      </span>
+    </>
   );
 }
 
@@ -256,7 +286,7 @@ export function StepDots({ dots, onGo }: { dots: StepDot[]; onGo: (i: number, vi
 export function WelcomeScreen({ onAdd, usage, onUsage, onUsageLink }: { onAdd: () => void; usage?: WelcomeUsage | null; onUsage?: (on: boolean) => void; onUsageLink?: () => void }) {
   return (
     <div data-new-run="welcome">
-      <Title>{WELCOME.title}</Title>
+      <Title><SuperTitle text={WELCOME.title} /></Title>
       <Line>{WELCOME.line}</Line>
       {usage ? (
         // Before anything is sent: the hosts hold every usage event until the run leaves this screen.

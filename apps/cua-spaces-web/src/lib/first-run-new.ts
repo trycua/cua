@@ -6,7 +6,7 @@
  * screen says and which choices it offers, from what the app knows. Pure, so every state is tested
  * without a host. The page (`components/first-run-new`) draws it.
  *
- * 1 Combine your existing computers into one supercomputer. Add this computer (sign in) or Skip for now.
+ * 1 Combine all your computers into one supercomputer. Add this computer (sign in) or Skip for now.
  * 1b Finish signing in in your browser: Try again, Use a code instead; "Sign-in didn't finish".
  * 2 Pick where your agents work: this Mac, the account's other computers (offline ones can't be
  *   picked), Add another computer you own, and a separate computer on this Mac.
@@ -93,7 +93,7 @@ export function welcomeUsage(view: { notice?: string | null; noticeLinkLabel?: s
 }
 
 export const WELCOME = {
-  title: "Combine your existing computers into one supercomputer.",
+  title: "Combine all your computers into one supercomputer.",
   // The headline picked on 7 Nov 2026 (CUA-3753), then the one-liner and what to do here (CUA-3150).
   line: "Your computers, shared by your team and its agents. Sign in on each one to use them all from here.",
   primary: "Add this computer",

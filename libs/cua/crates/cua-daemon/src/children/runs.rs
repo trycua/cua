@@ -272,7 +272,11 @@ pub fn job_row(run: &str, owned: &Owned, pool: Option<&Value>) -> Option<JobRowO
     } else {
         owned.name.clone()
     };
-    let members = pool.and_then(|p| p["total"].as_u64()).unwrap_or(1).max(1) as u32;
+    // The gang's size: `total` counts every attempt's jobs, so a retried single job would read as a gang.
+    let members = pool
+        .and_then(|p| p["gang"]["size"].as_u64())
+        .unwrap_or(1)
+        .max(1) as u32;
     let hosts: Vec<&str> = pool
         .and_then(|p| p["gang"]["hosts"].as_array())
         .map(|h| h.iter().filter_map(Value::as_str).collect())
@@ -455,7 +459,8 @@ mod tests {
             ("mac-m2max", "running")
         );
         // A gang of several members is ONE row with a count.
-        let gang = json!({"state": "running", "total": 3, "gang": {"hosts": ["a", "b", "c"]}});
+        let gang =
+            json!({"state": "running", "total": 3, "gang": {"size": 3, "hosts": ["a", "b", "c"]}});
         let r = job_row("p-3", &owned(true), Some(&gang)).unwrap();
         assert_eq!((r.members, r.host.as_str()), (3, "3 computers"));
         // Not yet known to the pool, or waiting: queued, with no host.
@@ -464,6 +469,19 @@ mod tests {
         assert_eq!(
             job_row("p-4", &owned(false), Some(&wait)).unwrap().state,
             "queued"
+        );
+    }
+
+    #[test]
+    fn a_retried_single_job_is_still_one_member() {
+        use serde_json::json;
+        // Four attempts of one job: the pool's `total` is 4, the gang is 1.
+        let retried = json!({"state": "running", "total": 4, "gang": {"size": 1, "attempt": 4, "hosts": ["mac-m2max"]}});
+        assert_eq!(
+            job_row("p-9", &owned(true), Some(&retried))
+                .unwrap()
+                .members,
+            1
         );
     }
 

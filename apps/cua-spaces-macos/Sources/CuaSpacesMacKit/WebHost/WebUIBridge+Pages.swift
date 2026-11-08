@@ -307,15 +307,15 @@ extension WebUIBridge {
 
         // Notifications
         case "notifications.list":
-            guard model.persistent.canCallTools else { throw Failure.unsupported("Notifications need the cua daemon") }
+            guard model.persistent.canCallTools else { throw Failure.unsupported(serviceDownMessage) }
             await model.persistent.pollNotifications()
             return model.persistent.feedRows()
         case "notifications.markAllRead":
-            guard model.persistent.canCallTools else { throw Failure.unsupported("Notifications need the cua daemon") }
+            guard model.persistent.canCallTools else { throw Failure.unsupported(serviceDownMessage) }
             await model.persistent.markAllRead()
             return NSNull()
         case "notifications.markRead":
-            guard model.persistent.canCallTools else { throw Failure.unsupported("Notifications need the cua daemon") }
+            guard model.persistent.canCallTools else { throw Failure.unsupported(serviceDownMessage) }
             guard let ids = args["ids"] as? [String] else { throw Failure.badArgs("ids: array of strings") }
             await model.persistent.markRead(ids: ids)
             return NSNull()
@@ -484,7 +484,7 @@ extension WebUIBridge {
 
     /// One of the daemon's Spaces tools the native pages run.
     func tool(_ name: String, _ args: [String: Any] = [:]) async throws -> Any {
-        guard model.persistent.canCallTools else { throw Failure.unsupported("This needs the cua daemon") }
+        guard model.persistent.canCallTools else { throw Failure.unsupported(serviceDownMessage) }
         return try await model.persistent.daemonTool(name, args)
     }
 
@@ -511,7 +511,7 @@ extension WebUIBridge {
             throw f
         } catch {
             let words = LiveSpacesBackend.words(error)
-            if Self.missingThreadTool(words) { throw Failure.unsupported("This cua daemon can't list your agents' chats; update Cua") }
+            if Self.missingThreadTool(words) { throw Failure.unsupported("Update Cua Spaces to see agent chats.") }
             throw Failure(code: "failed", message: words)
         }
     }
@@ -530,7 +530,7 @@ extension WebUIBridge {
             throw f
         } catch {
             let words = LiveSpacesBackend.words(error)
-            if Self.missingThreadTool(words) { throw Failure.unsupported("This cua daemon has no Space thread; update Cua") }
+            if Self.missingThreadTool(words) { throw Failure.unsupported("Update Cua Spaces to see this Space's thread.") }
             throw Failure(code: "failed", message: words)
         }
     }
@@ -625,12 +625,12 @@ extension WebUIBridge {
     }
 
     func cloudTool(_ name: String, _ args: [String: Any]) async throws -> Any {
-        guard let clouds = model.backend as? CloudToolRunning else { throw Failure.unsupported("Clouds need the cua daemon") }
+        guard let clouds = model.backend as? CloudToolRunning else { throw Failure.unsupported(serviceDownMessage) }
         return try await clouds.cloudTool(name, args)
     }
 
     func volumeOverview() async throws -> Any {
-        guard model.persistent.canCallTools else { throw Failure.unsupported("Cua Volume needs the cua daemon") }
+        guard model.persistent.canCallTools else { throw Failure.unsupported(serviceDownMessage) }
         func list(_ v: Any?, _ key: String) -> Any { (v as? [String: Any])?[key] as? [Any] ?? [] }
         async let requests = try? tool("volume_requests")
         async let grants = try? tool("volume_grants")

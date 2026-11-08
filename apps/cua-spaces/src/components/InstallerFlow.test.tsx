@@ -122,7 +122,7 @@ describe("InstallerFlow", () => {
 
   it("Welcome has one clear action: a plain line, and Get started has focus so Enter works (CUA-1959)", () => {
     render(<InstallerFlow installer={createFakeInstallerBridge()} host={createFakeHostBridge()} onDone={vi.fn()} />);
-    expect(screen.getByText("Computers for you and your AI agents. Setup takes about a minute.")).toBeInTheDocument();
+    expect(screen.getByText("Computers for you and your AI agents.")).toBeInTheDocument();
     const start = screen.getByRole("button", { name: "Get started" });
     expect(start).toHaveFocus();
     // The only button on the page; the usage switch never blocks it.

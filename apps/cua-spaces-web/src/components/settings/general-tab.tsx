@@ -84,13 +84,11 @@ export function GeneralTab() {
         {mac && notch ? (
           <CoreSettingsRow
             row={showCuaIn(notch)}
-            description="Pick where to find Cua Spaces. Mac only."
             onChoose={(_, option) => void updateSetting("menuBar", option === "hide").catch(fail("Couldn't change where Cua shows"))}
           />
         ) : mac && values ? (
           <SettingsRow
             label="Show Cua in"
-            description="Pick where to find Cua Spaces. Mac only."
             control={
               <Segmented
                 aria-label="Show Cua in"
@@ -140,7 +138,6 @@ export function GeneralTab() {
 
 /** What the switch says before this Mac is set up (the core's words once it is). */
 const SPACES_SWITCH = "Let other computers create Spaces here";
-const SPACES_HELP = "Your other computers can create Spaces here.";
 
 /**
  * Sharing, for this Mac: "Let other machines create Spaces here", on by default. Before this Mac is set
@@ -175,7 +172,7 @@ function SharingGroup() {
     <SettingsGroup title="Sharing">
       <SettingsRow
         label={toggle?.label ?? SPACES_SWITCH}
-        description={toggle?.help ?? SPACES_HELP}
+        description={toggle?.help || undefined}
         htmlFor="share-spaces"
         control={<Switch id="share-spaces" data-setting-row="share-spaces" checked={on} disabled={host.busy || (panel.configured && !toggle?.enabled)} onCheckedChange={flip} />}
       />
@@ -313,7 +310,7 @@ function ShortcutRow({ shortcut, onChange }: { shortcut: GlobalShortcut | null |
     <div data-global-shortcut={shortcut.registered ? "registered" : "taken"}>
       <SettingsRow
         label="Open Cua Spaces from any app"
-        description={recording ? "Press the keys you want. Esc cancels." : shortcut.registered ? "Press this to bring Cua Spaces to the front." : globalShortcutLine(shortcut)}
+        description={recording ? "Press the keys you want. Esc cancels." : (globalShortcutLine(shortcut) ?? undefined)}
         control={
           <div className="flex items-center gap-2">
             <span className="text-[13px] text-muted-foreground" data-shortcut-label="">

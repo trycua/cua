@@ -60,13 +60,8 @@ export function homeAppsRowShown(input: { os: string; available: boolean; allGra
 /** The line under Home's apps row title: how many switches are still off, or that both are on. */
 export function homeAppsRowLine(permissions: readonly Pick<DriverPermission, "granted">[]): string {
   const off = permissions.filter((p) => !p.granted).length;
-  if (off === 0) return "Both switches are on. Agents can see the screen and use the mouse and keyboard.";
+  if (off === 0) return allowHint("", true);
   return off === 1 ? "One switch in System Settings is still off." : "Two switches in System Settings are still off.";
-}
-
-/** Under the Cua Driver page's rows: one set of permissions, no second app. */
-export function driverUsesAppPermissions(appName: string): string {
-  return `Cua Driver uses the permissions you give ${appName}. It never asks for its own.`;
 }
 
 /** The first run's permissions step. */
@@ -82,8 +77,8 @@ export interface PermissionsStepView {
 export function permissionsStepView(input: { appName: string; allGranted: boolean }): PermissionsStepView {
   return {
     title: `Let ${input.appName} see and use apps`,
-    line: `This lets your agents work in the apps on this Mac, in the background. Cua Driver uses these same permissions, so there's no second app to allow.`,
-    note: input.allGranted ? "Both are on. Agents can use apps on this Mac." : `${allowHint(input.appName)} You can also do this later on the Cua Driver page.`,
+    line: "Agents can then use the apps on this Mac. Your own pointer never moves.",
+    note: input.allGranted ? allowHint(input.appName, true) : `${allowHint(input.appName)} You can also do this later on the Cua Driver page.`,
     primary: input.allGranted ? { label: "Continue", white: true } : { label: "Later", white: false },
   };
 }
@@ -117,7 +112,7 @@ export function driverReadiness(input: { permissions: { available: boolean; allG
 export function readinessLede(readiness: Exclude<DriverReadiness, "ready">, appName: string, problem: string | null): string {
   switch (readiness) {
     case "permissions":
-      return `One more step: turn on two switches for ${appName}, so Cua Driver can see and use apps. Allow opens System Settings.`;
+      return `Turn on two switches for ${appName} in System Settings.`;
     case "starting":
       return "Cua Driver is starting. This takes a few seconds.";
     case "driver":

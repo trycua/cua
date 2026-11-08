@@ -58,7 +58,6 @@ export function AdvancedTab() {
           {overflow ? (
             <CoreSettingsRow
               row={{ ...overflow, label: `Use my own cloud when ${thisComputerText()} is busy` }}
-              description={`New Spaces go to your linked cloud when ${thisComputerText()} is full.`}
               onChoose={choose}
             />
           ) : null}
@@ -179,7 +178,7 @@ function Labs() {
   };
   if (!rows.length) return null;
   return (
-    <SettingsGroup title="Labs">
+    <SettingsGroup title="Labs" footer="These are experiments. They may change or go away.">
       {rows.map((r) => (
         <CoreSettingsRow
           key={r.id}
@@ -209,7 +208,6 @@ function OwnConnection() {
         <SettingRow
           data-self-hosting=""
           label="Use your own connection server"
-          help="For teams that run their own."
           control={
             <Button size="sm" variant="outline" disabled={host.busy} onClick={() => host.openForm(SELF_HOSTED)}>
               Set up…

@@ -284,6 +284,7 @@ export {
 // Clears the overrides of retired flags once, on load.
 import "./flags";
 export type { CreateReport, ReportPart, ReportSend } from "./diagnostic-report";
+export { createReport, reportMailto } from "./diagnostic-report";
 export {
   TEAMMATES_KEY,
   UPSELL_DISMISSED_KEY,

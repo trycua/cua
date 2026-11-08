@@ -134,7 +134,7 @@ describe("Cua Driver in the app", () => {
     await waitFor(() => expect(document.querySelector("[data-app-permission=screen]")?.textContent).toContain("Off"));
     // The app the grant goes to, by name, and that the driver needs no second one.
     expect(document.querySelector("[data-app-permission=screen]")?.textContent).toContain("Screen Recording, given to Cua Spaces");
-    expect(document.body.textContent).toContain("Cua Driver uses the permissions you give Cua Spaces. It never asks for its own.");
+    expect(document.body.textContent).not.toContain("It never asks for its own.");
     fireEvent.click(screen.getByRole("button", { name: "Allow" }));
     await waitFor(() => expect(calls).toContain("host.openSettings"));
     // The demo plays the grant in System Settings: the row turns On without another click.

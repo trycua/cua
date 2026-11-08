@@ -148,8 +148,8 @@ describe("where a task runs", () => {
   });
 
   it("says plainly what working on this Mac means", () => {
-    expect(thisMacConfirmText("Codex").description).toContain("Codex will work directly on this Mac, with your files and apps. It can't be undone by throwing the computer away.");
-    expect(thisMacConfirmText("Codex").description).toContain("doesn't ask before each step");
+    expect(thisMacConfirmText("Codex").description).toContain("Codex will use your own files and apps, without asking before each step.");
+    expect(thisMacConfirmText("Codex").description).toContain("You can't throw this computer away afterwards.");
   });
 });
 

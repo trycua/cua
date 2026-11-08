@@ -6,7 +6,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { agentsView, useAgentChats, useBridge, useMachines, useSpaces, type AgentAccount, type AgentGroup, type AgentRunSummary } from "@/bridge";
 import { useChildren } from "@/components/children/use-children";
-import { CuaKey } from "@/components/cua-key";
 import { useAgentAttempts } from "@/hooks/use-agent-attempts";
 import { useAgentMenu } from "@/hooks/use-agent-menu";
 import { toast } from "@/components/ui/toast";
@@ -137,7 +136,6 @@ export function AskFirstHome() {
   return (
     <div className="h-full scroll-y-stable" data-ask-first-home="">
       <div className={cn("mx-auto flex w-full flex-col gap-8 px-8 pb-16", first ? "max-w-[880px] pt-24" : "max-w-[1040px] pt-10")}>
-        {first ? <h1 className="font-heading text-[40px] font-semibold tracking-tight">What do you want to do?</h1> : null}
         <AskBox
           text={text}
           onText={setText}
@@ -186,16 +184,10 @@ export function AskFirstHome() {
                 >
                   <OsIcon os={s.os} className="size-4 text-muted-foreground" />
                   <span className="text-[14px] leading-snug font-medium">{s.title}</span>
-                  <span className="text-[13px] leading-snug text-muted-foreground">{s.detail}</span>
+                  {s.detail ? <span className="text-[13px] leading-snug text-muted-foreground">{s.detail}</span> : null}
                 </button>
               ))}
             </div>
-            <p className="flex items-center gap-3 text-[13px] text-muted-foreground">
-              <CuaKey size={24} />
-              {agentHome
-                ? "The agent works in Spaces of its own, so your computer stays untouched. Watch it live, step in any time, and throw them away when you're done."
-                : "A fresh computer does the work, so yours stays untouched. Watch it live, step in any time, and throw it away when you're done."}
-            </p>
           </>
         ) : null}
         {/* The Agents page's own list, then the Spaces page's tiles. */}

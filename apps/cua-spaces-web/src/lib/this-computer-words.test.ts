@@ -6,7 +6,6 @@
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { whereFooter } from "@/components/ask-first/ask-box";
 import type { Machine, Space } from "@/bridge";
 
 import { startErrorView, thisMacConfirmText } from "./ask-first";
@@ -37,9 +36,8 @@ describe.each(WORDS)("on %s", (platform, label, text) => {
     expect(t.roots[0]!.name).toBe(label);
   });
 
-  it("names it in the picker footer, the confirmation and the start errors", () => {
+  it("names it in the confirmation and the start errors", () => {
     runOn(platform);
-    expect(whereFooter()).toContain(`${label} works on your own files and apps.`);
     expect(thisMacConfirmText("Codex").title).toBe(`Work on ${text}?`);
     expect(startErrorView("this-mac: this Mac isn't shared", "Codex").title).toBe(`${label} isn't set up for tasks yet`);
     expect(startErrorView("disk full", "Codex").title).toBe(`${label} doesn't have room for a new computer`);

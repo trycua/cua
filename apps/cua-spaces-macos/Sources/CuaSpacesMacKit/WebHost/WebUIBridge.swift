@@ -602,6 +602,9 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         }
         model.onboarding.finish(mode: word == "host" ? .host : .client, launchAtLogin: args["launchAtLogin"] as? Bool)
         model.telemetrySink?.acknowledgeNotice()
+        // The first run's sign-in set this Mac up to provide Spaces: ask for
+        // Local Network now that it is over.
+        if model.host.providesSpaces { model.askLocalNetworkForHosting() }
         return onboarding()
     }
 

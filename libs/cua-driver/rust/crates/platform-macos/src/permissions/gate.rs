@@ -518,7 +518,7 @@ fn present_finished_if_available() {
     if panel::panel_enabled() {
         panel::show_finished(panel_hooks(false));
     } else {
-        println!("[cua-driver] All set. Cua Driver can now use this Mac.");
+        println!("{}", all_set_line(&panel::host_app_name()));
         let _ = std::io::stdout().flush();
     }
 }
@@ -603,13 +603,14 @@ fn wait_for_grants_with(
     opts: &GateOpts,
     mut probe: impl FnMut() -> Vec<MissingPermission>,
 ) -> Result<()> {
+    let host = super::panel::host_app_name();
     let start = Instant::now();
     let mut last_status_print = start;
     let mut last_missing: Vec<MissingPermission> = probe();
 
     loop {
         if last_missing.is_empty() {
-            println!("[cua-driver] All set. Cua Driver can now use this Mac.");
+            println!("{}", all_set_line(&host));
             let _ = std::io::stdout().flush();
             return Ok(());
         }
@@ -643,20 +644,50 @@ fn wait_for_grants_with(
         }
 
         if last_status_print.elapsed() >= opts.status_interval {
-            println!(
-                "[cua-driver] Still waiting for: {} \
-                 (System Settings → Privacy & Security, turn on Cua Driver)",
-                fmt_missing(&last_missing)
-            );
+            println!("{}", still_waiting_line(&last_missing, &host));
             let _ = std::io::stdout().flush();
             last_status_print = Instant::now();
         }
     }
 }
 
+fn all_set_line(app: &str) -> String {
+    format!(
+        "[cua-driver] {}",
+        super::guide::for_app(super::guide::DONE_TITLE, app)
+    )
+}
+
+fn still_waiting_line(missing: &[MissingPermission], app: &str) -> String {
+    super::guide::for_app(
+        &format!(
+            "[cua-driver] Still waiting for: {} \
+             (System Settings → Privacy & Security, turn on Cua Driver)",
+            fmt_missing(missing)
+        ),
+        app,
+    )
+}
+
 fn print_banner(missing: &[MissingPermission], open_settings: bool) {
-    print!("{}", banner_text(missing, open_settings));
+    let text = super::guide::for_app(
+        &banner_text(missing, open_settings),
+        &super::panel::host_app_name(),
+    );
+    print!(
+        "{}",
+        in_host_folder(text, super::panel::host_app_folder().as_deref())
+    );
     let _ = std::io::stdout().flush();
+}
+
+fn in_host_folder(text: String, folder: Option<&std::path::Path>) -> String {
+    match folder {
+        Some(folder) if folder != std::path::Path::new("/Applications") => {
+            text.replace(" in Applications.", &format!(" in {}.", folder.display()))
+        }
+        _ => text,
+    }
 }
 
 fn banner_text(missing: &[MissingPermission], open_settings: bool) -> String {
@@ -865,6 +896,39 @@ mod tests {
         ] {
             assert_eq!(progress_for_presentation(presentation), None);
         }
+    }
+
+    #[test]
+    fn terminal_lines_name_the_host_app() {
+        let missing = [MissingPermission::ScreenRecording];
+        for text in [
+            all_set_line("Host App"),
+            still_waiting_line(&missing, "Host App"),
+            super::super::guide::for_app(&banner_text(&missing, true), "Host App"),
+        ] {
+            assert!(text.contains("Host App"), "{text}");
+            assert!(!text.contains("Cua Driver"), "{text}");
+        }
+        assert_eq!(
+            all_set_line("Cua Driver"),
+            "[cua-driver] All set. Cua Driver can now use this Mac."
+        );
+    }
+
+    #[test]
+    fn the_banner_points_to_the_folder_that_holds_the_host_app() {
+        let text = banner_text(&[MissingPermission::Accessibility], true);
+        let elsewhere = in_host_folder(
+            text.clone(),
+            Some(std::path::Path::new("/Users/u/Applications/Vendor")),
+        );
+        assert!(elsewhere.contains("choose Cua Driver in /Users/u/Applications/Vendor."));
+        assert!(!elsewhere.contains("in Applications."));
+        assert_eq!(
+            in_host_folder(text.clone(), Some(std::path::Path::new("/Applications"))),
+            text
+        );
+        assert_eq!(in_host_folder(text.clone(), None), text);
     }
 
     #[test]

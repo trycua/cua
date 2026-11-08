@@ -316,7 +316,7 @@ Web content (browser tabs, Slack, VS Code): AXValue is not proof the DOM saw the
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
-| <span id="type_text--macos--delay_ms"></span>`delay_ms` | `integer` |  | Ms between characters in the CGEvent fallback. Default 30. Range: 0 to 200. |
+| <span id="type_text--macos--delay_ms"></span>`delay_ms` | `integer` |  | Ms between characters in the CGEvent fallback. Default 0: characters go in batched key events, fast. Set a positive value for one paced key per character (debounced search boxes). Range: 0 to 200. |
 | <span id="type_text--macos--delivery_mode"></span>`delivery_mode` | `"background" \| "foreground"` |  | Default "background": AX insert, then CGEvent keys, no focus steal. "foreground": front the window, type, restore; last resort for surfaces (WhatsApp/Catalyst) where background keys do not land. |
 | <span id="type_text--macos--element_token"></span>`element_token` | `string` |  | Element handle `<snapshot_id>:<row>` from get_window_state: row `[11]` of a read whose snapshot_id is s0000002a is "s0000002a:11" (also in `structuredContent.elements[].element_token`). Returns an explicit stale error naming the current snapshots once a newer read supersedes it. |
 | <span id="type_text--macos--pid"></span>`pid` | `integer` |  | Target process ID. |

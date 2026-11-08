@@ -99,6 +99,35 @@ impl Ledger {
     }
 }
 
+/// What a pool method asks of the tree that sends it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PoolOp {
+    /// The computers and the queue: read only, anyone's.
+    Read,
+    /// A new run: recorded under the sender.
+    Submit,
+    /// The runs of the sender's tree, listed.
+    List,
+    /// One run, named: only the sender's tree's.
+    OwnRun,
+    /// One job, named by id: found first, then only the sender's tree's.
+    OwnJob,
+    /// Anything else the pool offers (its keys, durable Spaces, audit): refused.
+    Refused,
+}
+
+/// How the scoped channel treats pool method `method`.
+pub fn pool_op(method: &str) -> PoolOp {
+    match method {
+        "status" | "pool" => PoolOp::Read,
+        "submit" => PoolOp::Submit,
+        "runs" => PoolOp::List,
+        "run" | "run_result" | "job_output" | "jobs" | "cancel_run" => PoolOp::OwnRun,
+        "job" | "cancel_job" => PoolOp::OwnJob,
+        _ => PoolOp::Refused,
+    }
+}
+
 /// Runs whose submitting Space is gone or turned off: the ones to cancel.
 /// `alive` says whether a Space id is registered and on.
 pub fn orphaned(l: &Ledger, alive: impl Fn(&str) -> bool) -> Vec<String> {
@@ -112,6 +141,33 @@ pub fn orphaned(l: &Ledger, alive: impl Fn(&str) -> bool) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_space_may_use_the_pool_for_its_own_runs_and_nothing_else_of_it() {
+        for m in ["status", "pool"] {
+            assert_eq!(pool_op(m), PoolOp::Read);
+        }
+        assert_eq!(pool_op("submit"), PoolOp::Submit);
+        assert_eq!(pool_op("runs"), PoolOp::List);
+        for m in ["run", "run_result", "job_output", "jobs", "cancel_run"] {
+            assert_eq!(pool_op(m), PoolOp::OwnRun, "{m}");
+        }
+        for m in ["job", "cancel_job"] {
+            assert_eq!(pool_op(m), PoolOp::OwnJob, "{m}");
+        }
+        // The pool's keys, its audit log, durable Spaces and its other methods stay the owner's.
+        for m in [
+            "audit",
+            "durable_create",
+            "keys",
+            "pool_keys",
+            "drain",
+            "",
+            "SUBMIT",
+        ] {
+            assert_eq!(pool_op(m), PoolOp::Refused, "{m:?}");
+        }
+    }
 
     #[test]
     fn a_tree_sees_only_its_own_runs() {

@@ -210,10 +210,11 @@ impl Scoped {
         let run_of = |p: &Value| p["run"].as_str().unwrap_or_default().to_string();
         let own = |run: &str| super::runs::Ledger::load(&home).visible(run, root);
         let method = r.method.clone();
-        match method.as_str() {
+        use super::runs::PoolOp;
+        match super::runs::pool_op(method.as_str()) {
             // The computers and the queue: read only.
-            "status" | "pool" => {}
-            "submit" => {
+            PoolOp::Read => {}
+            PoolOp::Submit => {
                 let mut run = run_of(&params);
                 if run.trim().is_empty() {
                     run = format!("p-{:08x}", rand::random::<u32>());
@@ -230,14 +231,14 @@ impl Scoped {
                 }
                 self.audit("pool-submit", &run, "a run submitted from a Space");
             }
-            "runs" => {}
-            "run" | "run_result" | "job_output" | "jobs" | "cancel_run" => {
+            PoolOp::List => {}
+            PoolOp::OwnRun => {
                 let run = run_of(&params);
                 if !own(&run) {
                     return Err(not_found(&run));
                 }
             }
-            "job" | "cancel_job" => {
+            PoolOp::OwnJob => {
                 // A job id names a run only by asking for the job first.
                 let probe = self
                     .owner()
@@ -257,7 +258,7 @@ impl Scoped {
                     return Err(not_found(&params["id"].to_string()));
                 }
             }
-            _ => return deny(),
+            PoolOp::Refused => return deny(),
         }
         r.params_json = params.to_string();
         let out = self.owner().pool_request(Request::new(r)).await?;

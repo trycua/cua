@@ -1104,6 +1104,40 @@ mod tests {
         assert!(!pressed, "a worker whose call was dropped pressed the item");
     }
 
+    /// The next action on the same pid waits for a dropped call's worker to
+    /// finish its press, instead of running beside it.
+    #[tokio::test]
+    async fn a_dropped_call_keeps_the_pid_until_its_worker_returns() {
+        let pid = -92_001;
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+        // The call holds the pid's lease while it awaits the worker, as
+        // run_in_background does.
+        let call = tokio::spawn(async move {
+            let _mutation = super::super::acquire_background_mutation(pid).await;
+            run_admitted(move |_| {
+                let _ = started_tx.send(());
+                let _ = release_rx.recv();
+            })
+            .await
+        });
+        started_rx.await.unwrap();
+        call.abort();
+        assert!(call.await.unwrap_err().is_cancelled());
+        let mut next = tokio::spawn(super::super::acquire_background_mutation(pid));
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), &mut next)
+                .await
+                .is_err(),
+            "the next action started while the dropped call's worker still ran"
+        );
+        release_tx.send(()).unwrap();
+        tokio::time::timeout(Duration::from_secs(5), next)
+            .await
+            .expect("the next action starts once the worker returns")
+            .unwrap();
+    }
+
     #[tokio::test]
     async fn a_live_background_call_presses_once() {
         let pressed = run_admitted(|admission| admission.admit(|| 7))

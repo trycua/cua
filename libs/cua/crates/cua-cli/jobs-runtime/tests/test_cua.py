@@ -104,6 +104,30 @@ class Parse(unittest.TestCase):
         with self.assertRaises(ValueError):
             app.function(network="vpn")
 
+    def test_gpu_is_the_modal_spelling_of_the_accelerator(self):
+        def acc(**kw):
+            return cua.App("x").function(**kw)(lambda: None).spec["accelerator"]
+        self.assertEqual(acc(), "")
+        self.assertEqual(acc(gpu="any"), "gpu")
+        self.assertEqual(acc(gpu="nvidia"), "nvidia")
+        self.assertEqual(acc(gpu="L4"), "nvidia:L4")
+        self.assertEqual(acc(gpu="A100:2"), "nvidia:A100")
+        self.assertEqual(acc(gpu="RTX PRO 6000", gpu_memory="40GB"), "nvidia:RTX PRO 6000:40GB")
+        self.assertEqual(acc(gpu_memory=24), "gpu:24GB")
+        self.assertEqual(acc(gpu="apple"), "apple")
+        self.assertEqual(acc(accelerator="cuda"), "nvidia")
+        self.assertEqual(acc(accelerator="nvidia:L4", gpu_memory="16 gb"), "nvidia:L4:16GB")
+        with self.assertRaises(ValueError):
+            acc(gpu="L4", accelerator="nvidia")
+        with self.assertRaises(ValueError):
+            acc(gpu_memory="lots")
+        with self.assertRaises(ValueError):
+            acc(accelerator="tpu:16GB")
+
+    def test_on_local_is_this_computer(self):
+        f = cua.App("x").function(on="local")(lambda: None)
+        self.assertEqual(f.spec["on"], "local")
+
     def test_network_direct_sets_the_peer_route(self):
         f = cua.App("x").function(network="direct")(lambda: None)
         self.assertEqual(f.spec["network"], "direct")

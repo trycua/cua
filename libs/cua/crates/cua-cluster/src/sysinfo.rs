@@ -302,6 +302,60 @@ pub fn accelerators() -> Vec<String> {
     CACHE.get_or_init(detect_accelerators).clone()
 }
 
+/// [`accelerators`] with the video memory free on each NVIDIA GPU now
+/// (`nvidia:L4:24 GB:20 GB free`): what `nvidia-smi` says, less `reserved_mb`
+/// that accepted jobs asked for and have not allocated yet. `nvidia-smi` is
+/// asked at most every 5 seconds.
+pub fn accelerators_free(reserved_mb: u64) -> Vec<String> {
+    static LAST: std::sync::Mutex<Option<(std::time::Instant, Vec<u64>)>> =
+        std::sync::Mutex::new(None);
+    let words = accelerators();
+    let nvidia_free = {
+        let mut g = LAST.lock().unwrap_or_else(|e| e.into_inner());
+        match g.as_ref() {
+            Some((at, v)) if at.elapsed() < std::time::Duration::from_secs(5) => v.clone(),
+            _ => {
+                let v = command_output(
+                    "nvidia-smi",
+                    &["--query-gpu=memory.free", "--format=csv,noheader,nounits"],
+                )
+                .map(|t| {
+                    t.lines()
+                        .filter_map(|l| l.trim().parse::<u64>().ok())
+                        .collect::<Vec<u64>>()
+                })
+                .unwrap_or_default();
+                *g = Some((std::time::Instant::now(), v.clone()));
+                v
+            }
+        }
+    };
+    with_free(&words, &nvidia_free, reserved_mb)
+}
+
+/// The words of `accelerators` with `:N GB free` on each NVIDIA one, from
+/// `free_mb` (per GPU, in order), the reservation taken from the first GPU
+/// that still has it.
+pub fn with_free(words: &[String], free_mb: &[u64], reserved_mb: u64) -> Vec<String> {
+    let mut left = reserved_mb;
+    let mut i = 0;
+    words
+        .iter()
+        .map(|w| {
+            if !w.starts_with("nvidia:") {
+                return w.clone();
+            }
+            let Some(&f) = free_mb.get(i) else {
+                return w.clone();
+            };
+            i += 1;
+            let take = left.min(f);
+            left -= take;
+            format!("{w}:{} GB free", (f - take) / 1024)
+        })
+        .collect()
+}
+
 fn command_output(cmd: &str, args: &[&str]) -> Option<String> {
     let out = std::process::Command::new(cmd)
         .args(args)
@@ -332,6 +386,24 @@ fn detect_accelerators() -> Vec<String> {
         out.extend(parse_nvidia_smi(&text));
     }
     out
+}
+
+#[cfg(test)]
+mod gpu_free_tests {
+    use super::*;
+
+    #[test]
+    fn free_memory_is_reported_per_gpu_less_what_accepted_jobs_hold() {
+        let words = vec!["nvidia:L4:24 GB".to_string(), "nvidia:L4:24 GB".to_string()];
+        let w = with_free(&words, &[20 * 1024, 24 * 1024], 0);
+        assert_eq!(w[0], "nvidia:L4:24 GB:20 GB free");
+        // A 16 GB reservation comes off the first GPU, then spills over.
+        let w = with_free(&words, &[20 * 1024, 24 * 1024], 28 * 1024);
+        assert_eq!(w[0], "nvidia:L4:24 GB:0 GB free");
+        assert_eq!(w[1], "nvidia:L4:24 GB:16 GB free");
+        // Without a reading the word stays as it is.
+        assert_eq!(with_free(&words, &[], 8 * 1024), words);
+    }
 }
 
 /// `nvidia-smi --query-gpu=name,memory.total --format=csv,noheader,nounits`

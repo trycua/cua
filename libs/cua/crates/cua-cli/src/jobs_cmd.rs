@@ -615,13 +615,8 @@ pub async fn run(a: RunArgs, json: bool, out: &mut dyn Write) -> Result<i32, Cua
             .unwrap_or(spec["on"].as_str().unwrap_or("auto")),
     )?;
     let accelerator = match a.accelerator.as_deref() {
-        Some("none") => String::new(),
-        Some(x @ ("gpu" | "apple" | "nvidia")) => x.to_string(),
-        Some(x) => {
-            return Err(CuaError::InvalidArgument(format!(
-                "--accelerator {x}: use gpu, apple, nvidia or none"
-            )));
-        }
+        Some(x) => cua_cluster::model::normalize_accelerator(x)
+            .map_err(|e| CuaError::InvalidArgument(format!("--accelerator {x}: {e}")))?,
         None => spec["accelerator"].as_str().unwrap_or("").to_string(),
     };
     let retries = a

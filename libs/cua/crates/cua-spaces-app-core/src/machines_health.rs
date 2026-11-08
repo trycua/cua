@@ -434,7 +434,10 @@ mod tests {
         let warn = issue("machine.disk", "warn", "y".into(), None);
         let note = issue("version", "info", "z".into(), None);
         assert_eq!(status_with_issues("Online".into(), &[]), "Online");
-        assert_eq!(status_with_issues("Online".into(), std::slice::from_ref(&note)), "Online");
+        assert_eq!(
+            status_with_issues("Online".into(), std::slice::from_ref(&note)),
+            "Online"
+        );
         assert_eq!(
             status_with_issues("Online".into(), &[fail.clone(), note.clone()]),
             "Online, 1 thing to fix"

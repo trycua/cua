@@ -65,7 +65,7 @@ describe("the permissions step on a Mac that runs macOS Spaces", () => {
     const n = net();
     draw(both(false), n);
     expect(screen.getByRole("heading").textContent).toBe("Let Cua Spaces Local use this Mac");
-    expect(text()).toContain("and run macOS Spaces here");
+    expect(text()).toContain("and macOS Spaces can run here");
     const rows = [...document.querySelectorAll<HTMLElement>("[data-app-permission]")].map((r) => r.dataset.appPermission);
     expect(rows).toEqual(["screen", "accessibility", "local-network"]);
     const row = document.querySelector<HTMLElement>("[data-app-permission=local-network]")!;

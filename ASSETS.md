@@ -170,3 +170,13 @@ trycua/cua#6546 (CUA-3510) screenshots: the five spaces-1b-*.jpg images above (a
 <img width="1520" height="1800" alt="infra-before-narrow" src="https://github.com/user-attachments/assets/d915665c-c978-4060-8cad-ce15662c625d" />
 <img width="2880" height="1800" alt="infra-after-desktop" src="https://github.com/user-attachments/assets/25a4d739-37eb-4abf-833f-df3bd122a808" />
 <img width="2880" height="1800" alt="infra-before-desktop" src="https://github.com/user-attachments/assets/2085e456-9953-426b-ab2b-e1163f9c96b8" />
+
+<!-- PR 7046: Spaces dogfood fixes from 8 Nov (files in pr-7046/) -->
+<img alt="pr7046-after-1-welcome-desktop" src="https://raw.githubusercontent.com/trycua/cua/assets/pr-7046/pr7046-after-1-welcome-desktop.jpg" />
+<img alt="pr7046-after-1-welcome-narrow" src="https://raw.githubusercontent.com/trycua/cua/assets/pr-7046/pr7046-after-1-welcome-narrow.jpg" />
+<img alt="pr7046-after-2-signin-desktop" src="https://raw.githubusercontent.com/trycua/cua/assets/pr-7046/pr7046-after-2-signin-desktop.jpg" />
+<img alt="pr7046-after-2-signin-narrow" src="https://raw.githubusercontent.com/trycua/cua/assets/pr-7046/pr7046-after-2-signin-narrow.jpg" />
+<img alt="pr7046-before-1-welcome-desktop" src="https://raw.githubusercontent.com/trycua/cua/assets/pr-7046/pr7046-before-1-welcome-desktop.jpg" />
+<img alt="pr7046-before-1-welcome-narrow" src="https://raw.githubusercontent.com/trycua/cua/assets/pr-7046/pr7046-before-1-welcome-narrow.jpg" />
+<img alt="pr7046-before-2-signin-desktop" src="https://raw.githubusercontent.com/trycua/cua/assets/pr-7046/pr7046-before-2-signin-desktop.jpg" />
+<img alt="pr7046-before-2-signin-narrow" src="https://raw.githubusercontent.com/trycua/cua/assets/pr-7046/pr7046-before-2-signin-narrow.jpg" />

@@ -231,6 +231,7 @@ impl Scoped {
                 }
                 if let Err(why) = super::runs::confine_submit(
                     &mut params,
+                    &run,
                     &self.space,
                     root,
                     depth,

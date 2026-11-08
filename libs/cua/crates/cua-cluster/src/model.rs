@@ -320,6 +320,64 @@ pub const ENV_TREE_DEPTH: &str = "CUA_TREE_DEPTH";
 /// the parent's record: the job's Space is no more open than this.
 pub const ENV_PARENT_NETWORK: &str = "CUA_PARENT_NETWORK";
 
+/// A short name for the job, shown in place of any id: what the agent called its app, cut to a
+/// pet-name shape by [`sanitize_job_name`], else one made from the run ([`pet_name`]).
+pub const ENV_JOB_NAME: &str = "CUA_JOB_NAME";
+
+/// Label on a job's Space: it is a job (one row for it, with a JOB badge).
+pub const LABEL_JOB: &str = "cua.job";
+/// Label on a job's Space: the name to show.
+pub const LABEL_JOB_NAME: &str = "cua.job.name";
+/// Label on a job's Space: it has a GPU (the row shows a GPU icon).
+pub const LABEL_JOB_GPU: &str = "cua.job.gpu";
+
+/// A job name in the shape of a pet name: lower case letters and digits in words joined by single
+/// hyphens, at most 24 characters. `None` when nothing is left, or when it is an id (`p-train-1a2b3c4d`,
+/// `cj-...`): ids are never shown.
+pub fn sanitize_job_name(raw: &str) -> Option<String> {
+    let mut out = String::new();
+    for c in raw.trim().chars().flat_map(char::to_lowercase) {
+        if c.is_ascii_alphanumeric() {
+            out.push(c);
+        } else if !out.is_empty() && !out.ends_with('-') {
+            out.push('-');
+        }
+    }
+    let out: String = out.trim_matches('-').chars().take(24).collect();
+    let out = out.trim_matches('-').to_string();
+    let first = out.split('-').next().unwrap_or("");
+    let last = out.rsplit('-').next().unwrap_or("");
+    let hex = |x: &str, n: usize| x.len() >= n && x.bytes().all(|b| b.is_ascii_hexdigit());
+    let idlike = (matches!(first, "p" | "l" | "cj" | "j") && hex(last, 6)) || hex(last, 8);
+    (!out.is_empty() && !idlike).then_some(out)
+}
+
+/// A pet name (`lucky-llama`) that is the same for the same `seed`.
+pub fn pet_name(seed: &str) -> String {
+    use sha2::Digest;
+    const ADJ: [&str; 16] = [
+        "lucky", "brave", "calm", "swift", "bright", "gentle", "bold", "quiet", "merry", "keen",
+        "sunny", "witty", "nimble", "steady", "cosmic", "amber",
+    ];
+    const ANIMAL: [&str; 16] = [
+        "llama", "otter", "falcon", "panda", "koala", "heron", "lynx", "gecko", "badger", "orca",
+        "ibis", "newt", "fox", "wren", "bison", "mole",
+    ];
+    let d = sha2::Sha256::digest(seed.as_bytes());
+    format!(
+        "{}-{}",
+        ADJ[(d[0] & 15) as usize],
+        ANIMAL[(d[1] & 15) as usize]
+    )
+}
+
+/// The name a job shows: the agent's own (sanitized) or a pet name made from `seed`.
+pub fn job_display_name(agent_given: Option<&str>, seed: &str) -> String {
+    agent_given
+        .and_then(sanitize_job_name)
+        .unwrap_or_else(|| pet_name(seed))
+}
+
 /// The name prefix of every job Space ([`space_name`]).
 pub const JOB_SPACE_PREFIX: &str = "cj-";
 
@@ -480,5 +538,33 @@ mod tests {
     fn tails_keep_the_end() {
         assert_eq!(tail(b"abcdef".to_vec(), 3), (b"def".to_vec(), true));
         assert_eq!(tail(b"ab".to_vec(), 3), (b"ab".to_vec(), false));
+    }
+
+    #[test]
+    fn a_job_shows_a_pet_style_name_and_never_an_id() {
+        assert_eq!(sanitize_job_name("NCA Logo!!").as_deref(), Some("nca-logo"));
+        assert_eq!(
+            sanitize_job_name("  logo_grower ").as_deref(),
+            Some("logo-grower")
+        );
+        assert_eq!(
+            sanitize_job_name("a-very-long-name-that-goes-on-and-on").as_deref(),
+            Some("a-very-long-name-that-g")
+        );
+        for id in [
+            "p-train-1a2b3c4d",
+            "cj-0123456789abcdef-1",
+            "p-1a2b3c4d",
+            "",
+            "---",
+            "!!!",
+        ] {
+            assert_eq!(sanitize_job_name(id), None, "{id}");
+        }
+        // Without a name of its own, a stable pet name of the run.
+        let n = job_display_name(None, "p-1a2b3c4d");
+        assert_eq!(n, job_display_name(Some("p-train-1a2b3c4d"), "p-1a2b3c4d"));
+        assert!(n.contains('-') && !n.starts_with("p-"), "{n}");
+        assert_eq!(job_display_name(Some("logo-grower"), "x"), "logo-grower");
     }
 }

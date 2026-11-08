@@ -578,6 +578,20 @@ impl SpacesExecutor {
             ENV_PARENT_NETWORK, ENV_PARENT_SPACE, ENV_ROOT_SPACE, ENV_TREE_DEPTH,
         };
         let get = |k: &str| job.env.get(k).map(|v| v.trim()).filter(|v| !v.is_empty());
+        // The job's row: one Space, a JOB badge, its name (never an id) and a GPU mark.
+        {
+            use cua_cluster::model::{
+                ENV_JOB_NAME, LABEL_JOB, LABEL_JOB_GPU, LABEL_JOB_NAME, job_display_name,
+            };
+            opts.labels.insert(LABEL_JOB.into(), "1".into());
+            opts.labels.insert(
+                LABEL_JOB_NAME.into(),
+                job_display_name(get(ENV_JOB_NAME), &job.run_id),
+            );
+            if !job.accelerator.is_empty() {
+                opts.labels.insert(LABEL_JOB_GPU.into(), "1".into());
+            }
+        }
         let Some(parent) = get(ENV_PARENT_SPACE) else {
             return;
         };

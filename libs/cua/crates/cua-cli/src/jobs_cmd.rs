@@ -447,6 +447,10 @@ impl Submit {
         for (k, v) in &self.secrets {
             env.insert(k.clone(), json!(v));
         }
+        // What the job is called where it is listed: the app's name (`cua.App("nca-logo")`).
+        if let Some(app) = self.spec["app"].as_str().filter(|a| !a.is_empty()) {
+            env.entry("CUA_JOB_NAME".to_string()).or_insert(json!(app));
+        }
         env.insert("PYTHONPATH".into(), json!("_cua_runtime"));
         env.insert("PYTHONUNBUFFERED".into(), json!("1"));
         env.insert("CUA_JOB_PYTHON".into(), json!(python));

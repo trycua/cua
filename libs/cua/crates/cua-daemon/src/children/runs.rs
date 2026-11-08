@@ -142,6 +142,7 @@ const PROVIDERS: [&str; 6] = ["modal", "aws", "gcp", "hetzner", "cloud", "elasti
 /// bound to ([`cua_cluster::model::ENV_PARENT_SPACE`]).
 pub fn confine_submit(
     params: &mut Value,
+    run: &str,
     space: &str,
     root: &str,
     depth: u32,
@@ -176,6 +177,11 @@ pub fn confine_submit(
     for j in params["jobs"].as_array().into_iter().flatten() {
         check(&j["spec"])?;
     }
+    // The row's name: the agent's own, cut to a pet-name shape, else one made from the run.
+    let name = cua_cluster::model::job_display_name(
+        params["env"][cua_cluster::model::ENV_JOB_NAME].as_str(),
+        run,
+    );
     let stamp = |v: &mut Value| {
         if !v["env"].is_object() {
             v["env"] = serde_json::json!({});
@@ -184,9 +190,15 @@ pub fn confine_submit(
         v["env"][ENV_ROOT_SPACE] = Value::String(root.to_string());
         v["env"][ENV_TREE_DEPTH] = Value::String((depth + 1).to_string());
         v["env"][ENV_PARENT_NETWORK] = Value::String(tag.clone());
+        v["env"][cua_cluster::model::ENV_JOB_NAME] = Value::String(name.clone());
     };
     stamp(params);
-    for j in params["jobs"].as_array_mut().into_iter().flatten() {
+    for j in params
+        .get_mut("jobs")
+        .and_then(Value::as_array_mut)
+        .into_iter()
+        .flatten()
+    {
         if let Some(spec) = j.get_mut("spec") {
             stamp(spec);
         }
@@ -249,7 +261,7 @@ mod tests {
             "env": {"CUA_PARENT_SPACE": "local:victim", "CUA_PARENT_NETWORK": "{}", "A": "1"},
             "jobs": [{"spec": {"env": {"CUA_TREE_DEPTH": "0"}, "argv": ["x"]}}],
         });
-        confine_submit(&mut p, "local:me", "local:root", 1, &inside).unwrap();
+        confine_submit(&mut p, "p-1", "local:me", "local:root", 1, &inside).unwrap();
         for env in [&p["env"], &p["jobs"][0]["spec"]["env"]] {
             assert_eq!(env["CUA_PARENT_SPACE"], "local:me");
             assert_eq!(env["CUA_ROOT_SPACE"], "local:root");
@@ -259,6 +271,15 @@ mod tests {
             assert_eq!(n, inside);
         }
         assert_eq!(p["env"]["A"], "1", "its own variables stay");
+        // A request with no explicit jobs gets no `jobs` key (a null one is refused by the coordinator).
+        let mut plain = json!({"command": ["x"]});
+        confine_submit(&mut plain, "p-1", "local:me", "local:root", 1, &inside).unwrap();
+        assert!(plain.get("jobs").is_none(), "{plain}");
+        // No name asked for: a pet name of the run, never the run's id.
+        assert!(!p["env"]["CUA_JOB_NAME"].as_str().unwrap().starts_with("p-"));
+        let mut q = json!({"command": ["x"], "env": {"CUA_JOB_NAME": "NCA Logo"}});
+        confine_submit(&mut q, "p-9", "local:me", "local:root", 1, &inside).unwrap();
+        assert_eq!(q["env"]["CUA_JOB_NAME"], "nca-logo");
     }
 
     #[test]
@@ -269,8 +290,10 @@ mod tests {
         let machine = json!({"kind": "machine", "command": ["x"]});
         let explicit = json!({"jobs": [{"spec": {"kind": "machine", "argv": ["x"]}}]});
         for p in [&machine, &explicit] {
-            assert!(confine_submit(&mut p.clone(), "local:a", "local:r", 0, &closed).is_err());
-            assert!(confine_submit(&mut p.clone(), "local:a", "local:r", 0, &open).is_ok());
+            assert!(
+                confine_submit(&mut p.clone(), "p-1", "local:a", "local:r", 0, &closed).is_err()
+            );
+            assert!(confine_submit(&mut p.clone(), "p-1", "local:a", "local:r", 0, &open).is_ok());
         }
         // Host services and the owner's cloud are refused whatever the network.
         for p in [
@@ -281,13 +304,13 @@ mod tests {
             json!({"jobs": [{"spec": {"on": "hetzner"}}]}),
         ] {
             assert!(
-                confine_submit(&mut p.clone(), "local:a", "local:r", 0, &open).is_err(),
+                confine_submit(&mut p.clone(), "p-1", "local:a", "local:r", 0, &open).is_err(),
                 "{p}"
             );
         }
         // A host of the owner's by name, and a container job, are fine.
         let ok = json!({"on": "host:mac1", "kind": "container", "command": ["x"]});
-        assert!(confine_submit(&mut ok.clone(), "local:a", "local:r", 0, &closed).is_ok());
+        assert!(confine_submit(&mut ok.clone(), "p-1", "local:a", "local:r", 0, &closed).is_ok());
     }
 
     #[test]

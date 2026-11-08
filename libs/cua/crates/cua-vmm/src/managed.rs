@@ -1632,13 +1632,22 @@ mod engine_impl {
                     )));
                 };
                 let root = home.join(name);
-                std::fs::create_dir_all(&root)?;
                 let at = format!("{}{name}", crate::types::ENGINE_MOUNT_ROOT);
-                let script = format!(
-                    "mountpoint -q '{at}' || {{ mkdir -p '{at}' && \
-                     mount -t drvfs '{}' '{at}' -o metadata,uid=0,gid=0,umask=000; }}",
-                    root.display().to_string().replace('\'', "'\\''")
-                );
+                // The caches (uv's wheels and the environments built from them, the
+                // Hugging Face cache) are only used inside the Spaces: they live on the
+                // distribution's own disk, many times faster than a Windows folder for
+                // the thousands of small files of a PyTorch environment. The other
+                // directories the host reads and writes too.
+                let script = if name == "job-cache" {
+                    format!("mkdir -p '{at}' && chmod 777 '{at}'")
+                } else {
+                    std::fs::create_dir_all(&root)?;
+                    format!(
+                        "mountpoint -q '{at}' || {{ mkdir -p '{at}' && \
+                         mount -t drvfs '{}' '{at}' -o metadata,uid=0,gid=0,umask=000; }}",
+                        root.display().to_string().replace('\'', "'\\''")
+                    )
+                };
                 let r = wsl::run_in(&wsl::WslExe, &wsl::distro(), &["sh", "-c", &script], 60)
                     .await
                     .map_err(|e| VmmError::other(format!("mounting {}: {e}", root.display())))?;

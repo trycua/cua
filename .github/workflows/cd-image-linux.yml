@@ -378,6 +378,13 @@ jobs:
           echo "$RUNNER_TEMP/bin" >>"$GITHUB_PATH"
           sudo apt-get update -qq
           sudo apt-get install -y -qq --no-install-recommends qemu-utils qemu-system-x86 ovmf genisoimage netcat-openbsd
+          # The secure network runs every VM in a pasta namespace. Ubuntu 24.04
+          # lets only profiled programs create user namespaces.
+          sudo apt-get install -y -qq --no-install-recommends passt
+          printf 'abi <abi/4.0>,\ninclude <tunables/global>\nprofile cua-pasta /usr/bin/pasta flags=(unconfined) {\n  userns,\n}\n' \
+            | sudo tee /etc/apparmor.d/cua-pasta >/dev/null
+          sudo apparmor_parser -r /etc/apparmor.d/cua-pasta
+          pasta --config-net -q -- true
           sudo chmod 666 /dev/kvm
       - name: Free runner disk (golden snapshots and the checkpoint need room)
         run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL

@@ -1508,13 +1508,15 @@ impl QemuRuntime {
         let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
         let mut q = loop {
             if !host::pid_alive(pid) {
+                let log_text = std::fs::read_to_string(&log_path).unwrap_or_default();
+                let mut stderr = crate::exec::tail(&log_text, 4000);
+                if st.netns && pasta_userns_denied(&log_text) {
+                    stderr = format!("{PASTA_USERNS_HINT}\n{stderr}");
+                }
                 return Err(VmmError::Command {
                     cmd: format!("{} (see {})", bin.display(), dir.join("cmdline").display()),
                     code: None,
-                    stderr: crate::exec::tail(
-                        &std::fs::read_to_string(&log_path).unwrap_or_default(),
-                        4000,
-                    ),
+                    stderr,
                 });
             }
             match QmpClient::connect(&qmp_addr(st)?).await {
@@ -2495,6 +2497,19 @@ pub struct Density {
 }
 
 const LAUNCH_PORT_ATTEMPTS: u32 = 4;
+
+/// What a host that stops pasta from making its namespace gets: the secure
+/// network needs it, and the guest is never started on the open network instead.
+const PASTA_USERNS_HINT: &str = "This host does not let pasta create the user namespace the secure \
+     network runs in (on Ubuntu 24.04 an AppArmor profile must allow `userns` for /usr/bin/pasta, \
+     or set kernel.apparmor_restrict_unprivileged_userns=0).";
+
+/// Whether pasta's output says it could not create its user namespace.
+fn pasta_userns_denied(log: &str) -> bool {
+    log.contains("Couldn't configure user mappings")
+        || log.contains("Couldn't write to /proc/self/uid_map")
+        || log.contains("Couldn't create user namespace")
+}
 
 /// Whether QEMU's stderr says a host port it was handed is already bound.
 fn is_port_conflict(stderr: &str) -> bool {
@@ -3819,6 +3834,14 @@ mod tests {
         assert!(a.starts_with(std::env::temp_dir()));
         // QEMU and the gateway need a socket path under 104 bytes.
         assert!(a.join("q.sock").as_os_str().len() < 104, "{}", a.display());
+    }
+
+    #[test]
+    fn pasta_userns_denial_is_recognised() {
+        assert!(pasta_userns_denied(
+            "Couldn't write to /proc/self/uid_map: Operation not permitted\nCouldn't configure user mappings\nclone: Operation not permitted"
+        ));
+        assert!(!pasta_userns_denied("No routable interface for IPv6"));
     }
 
     #[test]

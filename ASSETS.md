@@ -159,3 +159,4 @@ trycua/cua#6546 (CUA-3510) screenshots: the five spaces-1b-*.jpg images above (a
 <img width="960" height="1052" alt="spaces-copy-audit-cmp-where-mobile" src="https://github.com/user-attachments/assets/4d074958-c8f2-445c-ae4b-42871a66371d" />
 <img width="2904" height="940" alt="spaces-copy-audit-cmp-where-desktop" src="https://github.com/user-attachments/assets/4a5d9e8b-34c7-4176-94a6-424ed958d0ab" />
 <img width="960" height="1052" alt="spaces-copy-audit-cmp-home-mobile" src="https://github.com/user-attachments/assets/854a0fba-7719-4db1-80bc-60552eb3ee01" />
+

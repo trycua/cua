@@ -1,0 +1,312 @@
+name: "Preview: Cua Spaces for Linux (label preview:linux)"
+
+# A maintainer adds the `preview:linux` label to a pull request; this builds an
+# installable Cua Spaces for Linux (AppImage and deb, x64 and arm64) from the PR head and posts one
+# sticky comment with the download. While the label stays on, each new push
+# rebuilds it. The macOS twin is ci-cua-spaces-preview-mac.yml.
+#
+# The build is the release build's (cd-cua-spaces-build.yml) without the
+# signing: the same native layer action (.github/actions/spaces-native, same
+# cache key, so a tree main already built is restored, not compiled), the same
+# web UI build and the same electron-builder packaging. The packages are the regular Cua Spaces AppImage and deb (the repository has no
+# side-by-side Linux variant), unsigned like every Linux build.
+# There are no signing secrets and no environment here, and none are needed.
+#
+# Trust: it runs only for pull requests from a branch of this repository
+# (head.repo.full_name == github.repository), so it never builds fork code.
+# Only someone who can label or push to a branch here can start it.
+# The build jobs have a read-only token; only the two small comment jobs hold
+# pull-requests: write, and they check out nothing and run no PR code.
+# Fork previews are not built (see ci-cua-spaces-preview-mac.yml).
+
+on:
+  pull_request:
+    types: [labeled, synchronize]
+
+permissions:
+  contents: read
+
+# One build per pull request. A push, or the label being added, cancels the
+# build in flight. Any other label (or a push without the label) is a skipped
+# run: it gets its own group so it can neither cancel nor replace a build.
+concurrency:
+  group: >-
+    preview-linux-${{ github.event.pull_request.number }}-${{
+      ((github.event.action == 'labeled' && github.event.label.name == 'preview:linux') ||
+       (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'preview:linux')))
+      && 'build' || github.run_id }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  CARGO_NET_RETRY: "10"
+  CARGO_HTTP_TIMEOUT: "120"
+  CARGO_HTTP_MULTIPLEXING: "false"
+  COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
+  # The release build's settings; the native cache key includes the repository.
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+  CUA_RELEASE_REPOSITORY: ${{ github.repository }}
+
+jobs:
+  started:
+    name: Comment that the build started
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      ((github.event.action == 'labeled' && github.event.label.name == 'preview:linux') ||
+       (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'preview:linux')))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: none
+      pull-requests: write
+    steps:
+      - name: Post or update the preview comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          body="<!-- preview-linux -->
+          **Cua Spaces Linux preview: building**
+
+          Building commit \`${SHA:0:12}\`. It takes about 10 minutes when the compiled native layer is cached and up to 60 minutes when it is not. This comment gets the download links when it finishes. [Build log]($RUN_URL)"
+          id=$(gh api --paginate "repos/$REPO/issues/$PR_NUMBER/comments?per_page=100" \
+            --jq '[.[] | select(.user.login == "github-actions[bot]" and (.body | startswith("<!-- preview-linux -->")))][0].id // empty' | head -n 1)
+          if [ -n "$id" ]; then
+            gh api -X PATCH "repos/$REPO/issues/comments/$id" -f body="$body" >/dev/null
+          else
+            gh api -X POST "repos/$REPO/issues/$PR_NUMBER/comments" -f body="$body" >/dev/null
+          fi
+
+  # The web UI (the app core is Rust built for the browser), as the release's
+  # `web` job builds it.
+  web:
+    name: Web UI
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      ((github.event.action == 'labeled' && github.event.label.name == 'preview:linux') ||
+       (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'preview:linux')))
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@1.97.1
+        with:
+          targets: wasm32-unknown-unknown
+      - name: Install protoc
+        uses: ./.github/actions/setup-protoc
+      - name: Install wasm-bindgen (the web UI's app core)
+        uses: ./.github/actions/wasm-bindgen
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Enable corepack
+        run: corepack enable
+      - name: Build the web UI
+        working-directory: apps/cua-spaces-web
+        run: |
+          pnpm install --ignore-workspace --frozen-lockfile
+          pnpm build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: preview-web-dist
+          path: apps/cua-spaces-web/dist/
+          if-no-files-found: error
+          retention-days: 1
+
+  # The native layer (the Cua Spaces library, the Node runtime and the bundled
+  # cua), one job per target on a runner of its architecture, restored from the
+  # Actions cache when main (or an earlier run) built the same inputs.
+  native:
+    name: Native layer (${{ matrix.label }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { label: linux-x64, runner: ubuntu-22.04, target: x86_64-unknown-linux-gnu }
+          - { label: linux-arm64, runner: ubuntu-22.04-arm, target: aarch64-unknown-linux-gnu }
+    defaults:
+      run:
+        working-directory: apps/cua-spaces-desktop
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: ./.github/actions/spaces-native
+        with:
+          label: ${{ matrix.label }}
+          target: ${{ matrix.target }}
+          # The preview talks to staging, with its data in ~/.cua/envs/staging.
+          default-env: staging
+      - uses: actions/upload-artifact@v4
+        with:
+          name: preview-native-${{ matrix.label }}
+          path: apps/cua-spaces-desktop/native/${{ matrix.label }}/
+          if-no-files-found: error
+          retention-days: 1
+
+  # Packaging runs on x64 for both architectures (fpm and the AppImage tools
+  # run on x64 for both), as the release does. The release config as is: the
+  # AppImage and the deb, without any update-feed publishing.
+  package:
+    name: Package AppImage and deb (${{ matrix.arch }})
+    needs: [web, native]
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x64, arm64]
+    defaults:
+      run:
+        working-directory: apps/cua-spaces-desktop
+    env:
+      ARCH: ${{ matrix.arch }}
+      CUA_SPACES_ARCHS: ${{ matrix.arch }}
+      CUA_SPACES_BUILD_NUMBER: ${{ github.run_number }}
+      # Read by the Electron build (tsdown) so the app sets CUA_ENV=staging
+      # itself; the native layer was compiled with the same default.
+      CUA_DEFAULT_ENV: staging
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Enable corepack
+        run: corepack enable
+      - name: Download the web UI
+        uses: actions/download-artifact@v4
+        with:
+          name: preview-web-dist
+          path: apps/cua-spaces-web/dist
+      - name: Download the native layer
+        uses: actions/download-artifact@v4
+        with:
+          name: preview-native-linux-${{ matrix.arch }}
+          path: apps/cua-spaces-desktop/native/linux-${{ matrix.arch }}
+      # Artifacts drop the executable bit; the daemon starts from this cua,
+      # and a Space without cua-spacesd runs the static one beside it.
+      - name: The bundled cua is executable
+        run: chmod +x native/linux-${{ matrix.arch }}/cua native/linux-${{ matrix.arch }}/cua-spacesd-linux-*
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      # A stale generated binding crashed a macOS build on 7 Nov. The check
+      # needs the compiled library, so it runs here on the x64 native layer
+      # (the binding is the same for every target), before the app is packaged.
+      - name: The Electron TypeScript app core binding is up to date
+        if: matrix.arch == 'x64'
+        run: |
+          set -euo pipefail
+          mkdir -p ../../libs/cua/target/release
+          cp native/linux-x64/libcua_spaces_ffi.so ../../libs/cua/target/release/
+          (cd ../../libs/cua && (rustup show active-toolchain || rustup toolchain install))
+          pnpm native -- --skip-build --check-bindings
+      # No OS code signing on Linux.
+      - name: Build (electron-builder)
+        run: pnpm dist:linux
+      - name: Check the packages
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          cp dist/*.AppImage dist/*.deb out/
+          find out -type f -ls
+          [ "$(find out -name '*.AppImage' | wc -l)" = 1 ] && [ "$(find out -name '*.deb' | wc -l)" = 1 ]
+          sha256sum out/*
+      - name: Check the deb ships the static cua-spacesd next to cua
+        working-directory: .
+        run: .github/scripts/check_static_spacesd_packaged.sh apps/cua-spaces-desktop/out
+      - name: Upload the packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: cua-spaces-preview-linux-${{ matrix.arch }}-pr${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}
+          path: apps/cua-spaces-desktop/out/*
+          if-no-files-found: error
+          retention-days: 14
+
+  result:
+    name: Comment the download links
+    needs: [web, native, package]
+    # Not on a cancelled run (a newer push replaced it) or a skipped one (the
+    # label was not this one, or the pull request is from a fork).
+    if: ${{ !cancelled() && needs.web.result != 'skipped' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: none
+      pull-requests: write
+    steps:
+      - name: Post or update the preview comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+          RUN_ID: ${{ github.run_id }}
+          RESULT: ${{ needs.package.result }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          # One download link per package this run uploaded.
+          links=$(gh api --paginate "repos/$REPO/actions/runs/$RUN_ID/artifacts?per_page=100" \
+            --jq '.artifacts[] | select(.name | startswith("cua-spaces-preview-linux-")) | "- [\(.name)](https://github.com/'"$REPO"'/actions/runs/'"$RUN_ID"'/artifacts/\(.id))"' | sort)
+          if [ -z "$links" ]; then
+            body="<!-- preview-linux -->
+          **Cua Spaces Linux preview: build failed**
+
+          The build for commit \`${SHA:0:12}\` failed. [Build log]($RUN_URL). Pushing a fix rebuilds it while the \`preview:linux\` label stays on."
+          else
+            if [ "$RESULT" = success ]; then
+              head="**Cua Spaces Linux preview: ready**"
+              partial=""
+            else
+              head="**Cua Spaces Linux preview: partly built**"
+              partial="Not every architecture built; see the [build log]($RUN_URL) for the one that failed.
+
+          "
+            fi
+            body="<!-- preview-linux -->
+          $head
+
+          ${partial}Downloads for commit \`${SHA:0:12}\` (they need a GitHub sign-in with access to this repository, and are kept 14 days):
+
+          $links
+
+          To install it (the \"x64\" build is for most PCs, \"arm64\" for ARM machines). Unzip the download first; it holds an AppImage and a deb.
+          - AppImage: run \`chmod +x Cua-Spaces-*.AppImage\`, then \`./Cua-Spaces-*.AppImage\`.
+          - deb (Debian and Ubuntu): run \`sudo apt install ./cua-spaces_*.deb\`.
+
+          Preview · Staging: the app uses the staging deployment, so sign in with a staging account, and it keeps its data in \`~/.cua/envs/staging\`, apart from the released app's \`~/.cua\`. It is not a separate app, though: the deb installs over a regular Cua Spaces (the same package), and the AppImage is the same app as the released one.
+
+          A new push to this branch rebuilds it while the \`preview:linux\` label stays on. [Build log]($RUN_URL)"
+          fi
+          id=$(gh api --paginate "repos/$REPO/issues/$PR_NUMBER/comments?per_page=100" \
+            --jq '[.[] | select(.user.login == "github-actions[bot]" and (.body | startswith("<!-- preview-linux -->")))][0].id // empty' | head -n 1)
+          if [ -n "$id" ]; then
+            gh api -X PATCH "repos/$REPO/issues/comments/$id" -f body="$body" >/dev/null
+          else
+            gh api -X POST "repos/$REPO/issues/$PR_NUMBER/comments" -f body="$body" >/dev/null
+          fi

@@ -265,7 +265,7 @@ The nightly **Flaky job scan** files a `flaky` issue for each job that failed an
   almost always the sign-off queue on the Mac runner or a quarantined-flake rerun, not a poll interval; the
   weekly report shows which.
 
-## Try a pull request: the `preview:mac` label
+## Try a pull request: the `preview:mac`, `preview:windows` and `preview:linux` labels
 
 A maintainer or agent adds the `preview:mac` label to a pull request to get an installable Cua Spaces macOS app built from its head commit, without building locally. `ci-cua-spaces-preview-mac.yml` builds "Cua Spaces Local" the way `apps/cua-spaces-macos/scripts/install-local.sh --release` does, after the Swift and Electron binding checks, and posts one comment on the pull request with the download and the commit it was built from. While the label stays on, each new push rebuilds the app and updates that comment. Remove the label to stop.
 
@@ -274,6 +274,12 @@ A maintainer or agent adds the `preview:mac` label to a pull request to get an i
 - **Open it.** Unzip the download, then the zip inside it. The app is signed ad hoc, so macOS blocks it the first time: right-click it and choose Open (or run `xattr -dr com.apple.quarantine "Cua Spaces Local.app"`). It installs next to the released Cua Spaces and keeps its own sign-in and data. It is "Local · Staging": it uses the staging deployment, like every Local build.
 - **Who can start it.** Only pull requests from a branch of this repository build. A fork pull request never does, and the workflow holds no signing or notarization secrets. Adding a label needs triage access.
 - **The gate.** `ci-gate` does not wait for this workflow, and a failed preview does not block a merge.
+
+`preview:windows` (`ci-cua-spaces-preview-windows.yml`) and `preview:linux` (`ci-cua-spaces-preview-linux.yml`) work the same way, with their own sticky comment each. They build the way the release build (`cd-cua-spaces-build.yml`) does, minus the signing, and check the Electron binding (on the x64 native layer) before packaging. Each uploads one artifact per architecture (x64 and arm64), kept 14 days, and the comment links them. They are two workflows beside the macOS one, not one shared file: the builds share no steps beyond the comment.
+
+- **Windows.** A portable folder, zipped: the "Cua Spaces Local" build `apps/cua-spaces-desktop/scripts/install-local.ps1` makes (another app id, executable and URL scheme, no update feed), so it runs beside a released Cua Spaces. Unzip it (the download holds a zip), run `Cua Spaces Local.exe`, and choose More info, then Run anyway at the SmartScreen prompt, because it is unsigned. It is "Local · Staging": it uses the staging deployment, like every Local build. Delete the folder to remove it.
+- **Linux.** The release's AppImage and deb, unsigned like every Linux build. There is no side-by-side Linux variant, so the deb replaces an installed Cua Spaces. It is "Preview · Staging": the native layer and the Electron build are compiled with `CUA_DEFAULT_ENV=staging` (the `default-env` input of `.github/actions/spaces-native`, which is part of its cache key), so it uses the staging deployment and keeps its data in `~/.cua/envs/staging`, apart from the released app's `~/.cua`. It still installs over a regular Cua Spaces package. Run `chmod +x` on the AppImage, or `sudo apt install ./cua-spaces_*.deb`.
+- **Time.** The native layer is cached by the tree hash of its inputs (the same key the release uses), so a pull request that leaves `libs/cua` alone restores it from a build main already did: about 10 minutes. A change under `libs/cua` compiles it cold: up to 60 minutes on Linux and 100 on Windows (the release's timings for those jobs), with the architectures in parallel.
 
 ## Urgent-fix lane
 

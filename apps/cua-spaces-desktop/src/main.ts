@@ -61,6 +61,14 @@ if (channel.isLocal) {
   process.env.CUA_CHANNEL = "local";
   process.env.CUA_HOME ||= localCuaHome(process.env.USERPROFILE || homedir(), process.env);
 }
+// A build compiled with CUA_DEFAULT_ENV=staging (the PR preview builds) defaults to the staging
+// deployment and its ~/.cua/envs/staging home. The native library and the bundled cua are
+// compiled with that default; this tells the TypeScript side (daemon home, crash-reporting
+// consent) and every child process the same, unless CUA_ENV is already set.
+declare const __CUA_DEFAULT_ENV__: string | undefined;
+if (!process.env.CUA_ENV && !channel.isLocal && typeof __CUA_DEFAULT_ENV__ === "string" && __CUA_DEFAULT_ENV__ === "staging") {
+  process.env.CUA_ENV = "staging";
+}
 app.setName(channel.appName);
 // Windows groups taskbar buttons and toasts by this id; the NSIS shortcuts carry the same one.
 if (process.platform === "win32") app.setAppUserModelId(APP_USER_MODEL_ID);

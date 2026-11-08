@@ -51,7 +51,8 @@ When asked what to work on, follow
 To get an installable Cua Spaces macOS app from a pull request's head commit, add the `preview:mac` label to
 a pull request from a branch of this repository. CI builds "Cua Spaces Local" (ad hoc signed, installs next
 to the released app) and comments the download link; each new push rebuilds it while the label stays on.
-Fork pull requests never build. Details: [`CI.md`](docs/contributing/CI.md#try-a-pull-request-the-previewmac-label).
+`preview:windows` (a portable "Cua Spaces Local" folder, unsigned) and `preview:linux` (the AppImage and deb) do the
+same for those systems. Fork pull requests never build. Details: [`CI.md`](docs/contributing/CI.md#try-a-pull-request-the-previewmac-previewwindows-and-previewlinux-labels).
 
 ## Repository layout
 

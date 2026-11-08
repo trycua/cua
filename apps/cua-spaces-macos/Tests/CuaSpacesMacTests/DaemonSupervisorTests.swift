@@ -239,9 +239,19 @@ import Testing
         #expect(DaemonSupervisor.runningPid(cuaHome: home) == now)
         #expect(kill(now, 0) == 0)
 
-        // A live process of this app answers for it (its service helper):
-        // kept.
+        // The launch that started it exited: macOS names the daemon itself.
         supervisor.responsiblePid = { $0 == now ? now : 4242 }
+        #expect(supervisor.orphaned()?.pid == now)
+
+        // Another live process of this app answers for it (its service
+        // helper): kept.
+        let helper = Process()
+        helper.executableURL = URL(fileURLWithPath: bundle.daemon)
+        helper.arguments = ["30"]
+        try helper.run()
+        defer { helper.terminate() }
+        let helperPid = helper.processIdentifier
+        supervisor.responsiblePid = { $0 == now ? helperPid : 4242 }
         #expect(supervisor.orphaned() == nil)
 
         // Unknown responsibility: kept (never a restart on a guess).

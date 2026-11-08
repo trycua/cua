@@ -93,14 +93,15 @@ public final class DaemonSupervisor: @unchecked Sendable {
 
     /// This app's running daemon when macOS holds responsible for it a
     /// process that is gone or is not this app's: one an earlier launch of
-    /// this app started, or one started from a terminal. `nil` when it is
-    /// this launch's, or a live process of this app answers for it (its
+    /// this app started (once that launch exits, macOS names the daemon
+    /// itself), or one started from a terminal. `nil` when it is this
+    /// launch's, or another live process of this app answers for it (its
     /// service helper, whose `cua-spacesd` may start it), or it is another
     /// app's, or either answer is unknown.
     func orphaned() -> (pid: Int32, responsible: Int32)? {
         guard let pid = Self.runningPid(cuaHome: cuaHome), kill(pid, 0) == 0, isOwn(pid: UInt32(pid)),
               let mine = responsiblePid(getpid()), let theirs = responsiblePid(pid), theirs != mine,
-              !isOwn(pid: UInt32(theirs)) else { return nil }
+              theirs == pid || !isOwn(pid: UInt32(theirs)) else { return nil }
         return (pid, theirs)
     }
 

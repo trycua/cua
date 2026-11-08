@@ -160,7 +160,7 @@ impl Tool for DoubleClickTool {
                                 return crate::interaction::with_target_foreground(
                                     pid,
                                     xid,
-                                    crate::interaction::pointer_gesture_restore(),
+                                    crate::interaction::session_policy().gesture,
                                     || crate::wayland::click(xid, aimed, 2, 1),
                                 )
                                 .map(|()| PointerRoute::Wayland);
@@ -169,7 +169,7 @@ impl Tool for DoubleClickTool {
                                 return crate::interaction::with_x11_foreground(
                                     xid,
                                     crate::input::ForegroundOptions::pointer(),
-                                    crate::interaction::RestoreMode::LeaveFocused,
+                                    crate::interaction::session_policy().gesture,
                                     || {
                                         let (sx, sy) =
                                             window_local_to_screen(xid, lxi as f64, lyi as f64)?;
@@ -288,7 +288,7 @@ impl Tool for DoubleClickTool {
                     return crate::interaction::with_target_foreground(
                         pid,
                         xid,
-                        crate::interaction::pointer_gesture_restore(),
+                        crate::interaction::session_policy().gesture,
                         || crate::wayland::click(xid, aimed, 2, 1),
                     )
                     .map(|()| PointerRoute::Wayland);
@@ -297,7 +297,7 @@ impl Tool for DoubleClickTool {
                     return crate::interaction::with_x11_foreground(
                         xid,
                         crate::input::ForegroundOptions::pointer(),
-                        crate::interaction::RestoreMode::LeaveFocused,
+                        crate::interaction::session_policy().gesture,
                         || {
                             // Real XTest double-click at the screen point — synthetic
                             // XSendEvent button events are dropped by GTK/Qt and the MPX

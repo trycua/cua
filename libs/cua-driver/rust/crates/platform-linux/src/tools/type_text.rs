@@ -642,7 +642,7 @@ impl Tool for TypeTextTool {
                         crate::interaction::with_target_foreground(
                             pid,
                             xid,
-                            crate::interaction::RestoreMode::RestorePrevious,
+                            crate::interaction::session_policy().typing,
                             || {
                                 if !crate::atspi::focus_token(pid, &element)? {
                                     anyhow::bail!(
@@ -726,7 +726,7 @@ impl Tool for TypeTextTool {
                     crate::interaction::with_target_foreground(
                         pid,
                         xid,
-                        crate::interaction::RestoreMode::RestorePrevious,
+                        crate::interaction::session_policy().typing,
                         || {
                             if let Some(element) = &element {
                                 if !crate::atspi::focus_token(pid, element)? {
@@ -790,7 +790,7 @@ impl Tool for TypeTextTool {
                     crate::interaction::with_x11_foreground(
                         xid,
                         crate::input::ForegroundOptions::pointer(),
-                        crate::interaction::RestoreMode::RestorePrevious,
+                        crate::interaction::session_policy().typing,
                         || crate::input::send_type_text_xtest_paced(&text_t, pacing),
                     )
                     .map(|(value, _report)| value)?;
@@ -833,7 +833,7 @@ impl Tool for TypeTextTool {
                     crate::interaction::with_x11_foreground(
                         xid,
                         crate::input::ForegroundOptions::keyboard(),
-                        crate::interaction::RestoreMode::RestorePrevious,
+                        crate::interaction::session_policy().typing,
                         || {
                             if let Some(element) = &element {
                                 if !crate::atspi::focus_token(pid, element)? {
@@ -957,7 +957,7 @@ impl Tool for TypeTextTool {
                     crate::interaction::with_x11_foreground(
                         xid,
                         crate::input::ForegroundOptions::pointer(),
-                        crate::interaction::RestoreMode::RestorePrevious,
+                        crate::interaction::session_policy().typing,
                         || crate::input::send_type_text_xtest_paced(&text_f, pacing),
                     )
                     .map(|(value, _report)| value)
@@ -1065,7 +1065,7 @@ impl Tool for TypeTextTool {
                 crate::interaction::with_x11_foreground(
                     xid,
                     crate::input::ForegroundOptions::pointer(),
-                    crate::interaction::RestoreMode::RestorePrevious,
+                    crate::interaction::session_policy().typing,
                     || crate::input::send_type_text_xtest_paced(&text, pacing),
                 )
                 .map(|(value, _report)| value)?;

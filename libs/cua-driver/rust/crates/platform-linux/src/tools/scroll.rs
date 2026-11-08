@@ -662,7 +662,7 @@ impl Tool for ScrollTool {
                     crate::interaction::with_target_foreground(
                         pid,
                         xid,
-                        crate::interaction::pointer_gesture_restore(),
+                        crate::interaction::session_policy().gesture,
                         || {
                             crate::wayland::scroll_at(
                                 xid,
@@ -744,7 +744,7 @@ impl Tool for ScrollTool {
                     return crate::interaction::with_target_foreground(
                         pid,
                         xid,
-                        crate::interaction::pointer_gesture_restore(),
+                        crate::interaction::session_policy().gesture,
                         || crate::wayland::scroll(xid, &direction_for_wayland, amount_u32),
                     );
                 }
@@ -805,7 +805,7 @@ impl Tool for ScrollTool {
                     crate::interaction::with_x11_foreground(
                         xid,
                         crate::input::ForegroundOptions::pointer(),
-                        crate::interaction::RestoreMode::LeaveFocused,
+                        crate::interaction::session_policy().gesture,
                         || {
                             crate::input::send_click_xtest_desktop(
                                 point.0 as i32,

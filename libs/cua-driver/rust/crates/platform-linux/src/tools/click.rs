@@ -551,7 +551,7 @@ impl ClickTool {
                         crate::interaction::with_x11_foreground(
                             xid,
                             crate::input::ForegroundOptions::pointer(),
-                            crate::interaction::RestoreMode::LeaveFocused,
+                            crate::interaction::session_policy().click,
                             || {
                                 crate::input::send_click_xtest_desktop_with_modifiers(
                                     sx.round() as i32,
@@ -646,7 +646,7 @@ impl ClickTool {
                         crate::interaction::with_x11_foreground(
                             xid,
                             crate::input::ForegroundOptions::pointer(),
-                            crate::interaction::RestoreMode::LeaveFocused,
+                            crate::interaction::session_policy().click,
                             || crate::atspi::perform_action_observed(&observed_for_ax),
                         )
                     },
@@ -1371,7 +1371,7 @@ impl Tool for ClickTool {
                         crate::interaction::with_x11_foreground(
                             xid2,
                             crate::input::ForegroundOptions::pointer(),
-                            crate::interaction::RestoreMode::LeaveFocused,
+                            crate::interaction::session_policy().click,
                             || {
                                 crate::input::send_click_xtest_desktop_with_modifiers(
                                     sx.round() as i32,
@@ -1644,7 +1644,7 @@ impl Tool for ClickTool {
                 // Native Wayland: focus+raise the target toplevel
                 // (foreign-toplevel `activate`), then drive `count` virtual-pointer
                 // button events. Wayland injection routes to the compositor focus.
-                crate::interaction::with_target_foreground(pid, xid, crate::interaction::RestoreMode::RestorePrevious, || {
+                crate::interaction::with_target_foreground(pid, xid, crate::interaction::session_policy().click, || {
                     crate::wayland::click_focused(aimed, count as u32, button)
                 })?;
                 return Ok(("wayland_activate", None, None, None));
@@ -1741,7 +1741,7 @@ impl Tool for ClickTool {
                 crate::interaction::with_x11_foreground(
                     xid,
                     crate::input::ForegroundOptions::pointer(),
-                    crate::interaction::RestoreMode::LeaveFocused,
+                    crate::interaction::session_policy().click,
                     || inject(true),
                 )
                 .map(|((path, route, guard), report)| (path, Some(report), route, guard))

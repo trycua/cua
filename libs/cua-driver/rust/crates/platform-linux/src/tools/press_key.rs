@@ -372,7 +372,7 @@ impl Tool for PressKeyTool {
                 crate::interaction::with_target_foreground(
                     pid,
                     xid,
-                    crate::interaction::RestoreMode::RestorePrevious,
+                    crate::interaction::session_policy().key,
                     || {
                         if let Some(element) = &element {
                             if !crate::atspi::focus_token(pid, element)? {
@@ -429,7 +429,7 @@ impl Tool for PressKeyTool {
                 return crate::interaction::with_x11_foreground(
                     xid,
                     crate::input::ForegroundOptions::keyboard(),
-                    crate::interaction::RestoreMode::LeaveFocused,
+                    crate::interaction::session_policy().key,
                     || {
                         if let Some(element) = &token {
                             let element_index = element.index;

@@ -182,7 +182,7 @@ impl Tool for SetValueTool {
                     crate::interaction::with_x11_foreground(
                         win,
                         crate::input::ForegroundOptions::pointer(),
-                        crate::interaction::RestoreMode::LeaveFocused,
+                        crate::interaction::session_policy().menu,
                         || {
                             crate::input::send_click_xtest_desktop(
                                 sx.round() as i32,
@@ -296,7 +296,7 @@ fn pick_from_popup(
             crate::interaction::with_x11_foreground(
                 win,
                 crate::input::ForegroundOptions::keyboard(),
-                crate::interaction::RestoreMode::LeaveFocused,
+                crate::interaction::session_policy().menu,
                 || crate::input::send_key_xtest("Escape", &[]),
             )
             .map(|_| ())
@@ -330,7 +330,7 @@ fn pick_from_popup(
         crate::interaction::with_x11_foreground(
             win,
             crate::input::ForegroundOptions::pointer(),
-            crate::interaction::RestoreMode::LeaveFocused,
+            crate::interaction::session_policy().menu,
             || crate::input::send_click_xtest_desktop(sx.round() as i32, sy.round() as i32, 1, 1),
         )?;
         open_and_pick()?;

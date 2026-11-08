@@ -13,6 +13,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::Result;
 
+use crate::desktop::{Compositor, Desktop};
 use crate::input::{ForegroundOptions, ForegroundReport};
 
 pub mod facts;
@@ -29,22 +30,71 @@ pub fn admit_lock(scope: policy::Scope, focused: facts::Fact<bool>) -> Result<()
 }
 
 /// Whether a foreground transaction gives focus back once its body ran.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RestoreMode {
     RestorePrevious,
     /// The body activates the target itself and leaves it focused.
     LeaveFocused,
 }
 
-/// How a window-addressed pointer gesture (double click, scroll, drag)
-/// treats focus: niri restores the prior focus, as its clicks do; other
-/// compositors leave the target focused.
-pub fn pointer_gesture_restore() -> RestoreMode {
-    if crate::wayland::niri::is_session() {
-        RestoreMode::RestorePrevious
-    } else {
-        RestoreMode::LeaveFocused
+/// What each kind of foreground action does with the focus it took.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ForegroundPolicy {
+    /// `type_text`.
+    pub typing: RestoreMode,
+    /// `press_key`.
+    pub key: RestoreMode,
+    /// `click`.
+    pub click: RestoreMode,
+    /// `double_click`, `scroll` and `drag`.
+    pub gesture: RestoreMode,
+    /// `right_click`, `hotkey` and `set_value`, whose input can open a menu
+    /// or popup that giving focus back would close.
+    pub menu: RestoreMode,
+    /// The browser setup and consent flows, which act for the driver rather
+    /// than the agent.
+    pub setup: RestoreMode,
+}
+
+/// The one table of foreground restore rules. XWayland takes the X11 input
+/// routes, so it reads the X11 row. Pass a niri claim through
+/// [`Desktop::attested`] first.
+pub fn foreground_policy(desktop: Desktop) -> ForegroundPolicy {
+    use RestoreMode::{LeaveFocused as Leave, RestorePrevious as Restore};
+    match desktop {
+        // Typing gives the active window back (CUA-3663); pointer and key
+        // actions leave the target active.
+        Desktop::X11 | Desktop::XWayland(_) => ForegroundPolicy {
+            typing: Restore,
+            key: Leave,
+            click: Leave,
+            gesture: Leave,
+            menu: Leave,
+            setup: Restore,
+        },
+        // niri restores the prior focus after gestures, as after clicks.
+        Desktop::Wayland(Compositor::Niri) => ForegroundPolicy {
+            typing: Restore,
+            key: Restore,
+            click: Restore,
+            gesture: Restore,
+            menu: Leave,
+            setup: Restore,
+        },
+        Desktop::Wayland(_) => ForegroundPolicy {
+            typing: Restore,
+            key: Restore,
+            click: Restore,
+            gesture: Leave,
+            menu: Leave,
+            setup: Restore,
+        },
     }
+}
+
+/// This session's [`foreground_policy`].
+pub fn session_policy() -> ForegroundPolicy {
+    foreground_policy(crate::desktop::desktop().attested())
 }
 
 /// Run `body` with the exact `pid`/`window_id` pair focused. On Wayland a
@@ -67,7 +117,7 @@ pub fn with_target_foreground<T>(
         )?;
         return body();
     }
-    if crate::desktop::desktop() == crate::desktop::Desktop::X11 {
+    if crate::desktop::desktop() == Desktop::X11 {
         return with_x11_foreground(window_id, ForegroundOptions::pointer(), mode, body)
             .map(|(value, _report)| value);
     }
@@ -385,6 +435,40 @@ mod tests {
         let action = Action::new(Duration::from_millis(20));
         let _bound = bind(action.clone());
         assert!(operation_deadline(Duration::from_secs(5)) <= action.deadline());
+    }
+
+    #[test]
+    fn x11_typing_alone_gives_the_prior_focus_back() {
+        use RestoreMode::{LeaveFocused as Leave, RestorePrevious as Restore};
+        let x11 = ForegroundPolicy {
+            typing: Restore,
+            key: Leave,
+            click: Leave,
+            gesture: Leave,
+            menu: Leave,
+            setup: Restore,
+        };
+        assert_eq!(foreground_policy(Desktop::X11), x11);
+        for compositor in [Compositor::Hyprland, Compositor::Niri, Compositor::Other] {
+            assert_eq!(foreground_policy(Desktop::XWayland(compositor)), x11);
+        }
+    }
+
+    #[test]
+    fn wayland_restores_all_but_menus_and_gestures_off_niri() {
+        for compositor in [Compositor::Hyprland, Compositor::Niri, Compositor::Other] {
+            let policy = foreground_policy(Desktop::Wayland(compositor));
+            for restored in [policy.typing, policy.key, policy.click, policy.setup] {
+                assert_eq!(restored, RestoreMode::RestorePrevious, "{compositor:?}");
+            }
+            assert_eq!(policy.menu, RestoreMode::LeaveFocused, "{compositor:?}");
+            let gesture = if compositor == Compositor::Niri {
+                RestoreMode::RestorePrevious
+            } else {
+                RestoreMode::LeaveFocused
+            };
+            assert_eq!(policy.gesture, gesture, "{compositor:?}");
+        }
     }
 
     #[test]

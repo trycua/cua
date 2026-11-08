@@ -348,7 +348,7 @@ export function demoTelemetry(enabled: boolean): TelemetryView {
     source: "config ~/.cua/config.toml",
     sourceKind: "config",
     noticeShown: true,
-    noticeText: "Cua collects usage data, like which features you use and when something goes wrong. When you're signed in, it's linked to your account through a random ID. Never your files, what you type or your screen.",
+    noticeText: "Features you use and errors, linked to your account. Never your files, typing or screen.",
     docsUrl: "https://cua.ai/docs/cua-sdk/concepts/telemetry",
   };
 }

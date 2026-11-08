@@ -35,7 +35,8 @@ pub(crate) async fn call(caller: &Caller, tool: &str, a: Value) -> Result<ToolOu
                     .unwrap_or(4)
                     .clamp(1, cua_agent_threads::RECENT_MAX as u32) as usize,
             };
-            let threads = blocking(move || Ok(cua_agent_threads::recent(&roots, &opts))).await?;
+            let threads =
+                blocking(move || Ok(cua_agent_threads::recent_cached(&roots, &opts))).await?;
             Ok(ToolOutcome::json(&json!({ "threads": threads })))
         }
         "agent_thread_read" => {

@@ -107,6 +107,8 @@ export interface DemoOptions {
   noSpaces?: boolean;
   /** `?demo=desktops`: the Mac mini and the Linux box also share their desktops (Space rows of their own, `relay:mac-mini`, `relay:linux-box`). */
   desktops?: boolean;
+  /** `?demo=driver-update`: a newer Cua Driver is ready for This Mac. */
+  driverUpdate?: boolean;
   /** This many more Spaces on the list, for scale (`?demo=scale-1000`;
    * scripts/scale-bench.mjs). */
   extraSpaces?: number;
@@ -155,6 +157,10 @@ export interface DemoOptions {
    * set; `local` is a Local build's (`?demo=cli-local`), `missing` one
    * not installed (`?demo=cli-missing`). */
   cli?: "local" | "missing";
+  /** The channel and environment the demo host reports (`settings.get`'s
+   * `target`): the released app on production unless set; `?demo=local-staging`,
+   * `?demo=local-prod` and `?demo=stable-staging` show the title bar's tag. */
+  target?: { channel: "stable" | "local"; env: "prod" | "staging" };
   /** A daemon without the Space thread (`?demo=nothread`): the Space page keeps its old layout. */
   noThread?: boolean;
   /** No Claude Code, Codex or Hermes chats on this computer (`?demo=nochats`): the Ready screen hides "Pick up where you left off". */
@@ -288,6 +294,7 @@ export function demoOptionsFromSearch(search: string): DemoOptions {
     ...(flags.has("accounts") ? { accounts: true } : {}),
     noSpaces: flags.has("empty"),
     desktops: flags.has("desktops"),
+    driverUpdate: flags.has("driver-update"),
     ...(() => {
       const scale = [...flags].find((f) => /^scale-\d+$/.test(f));
       return scale ? { extraSpaces: Math.min(5000, Number(scale.slice(6))) } : {};
@@ -338,6 +345,13 @@ export function demoOptionsFromSearch(search: string): DemoOptions {
     nudge: (["second-agent", "risky"] as const).find((n) => flags.has(`nudge-${n}`)),
     disk: flags.has("disk-full") ? "full" : flags.has("low-disk") ? "low" : undefined,
     cli: flags.has("cli-local") ? "local" : flags.has("cli-missing") ? "missing" : undefined,
+    ...(flags.has("local-staging")
+      ? { target: { channel: "local" as const, env: "staging" as const } }
+      : flags.has("local-prod")
+        ? { target: { channel: "local" as const, env: "prod" as const } }
+        : flags.has("stable-staging")
+          ? { target: { channel: "stable" as const, env: "staging" as const } }
+          : {}),
     ...(flags.has("network") ? { network: flags } : {}),
     ...(flags.has("agent-home") ? { agentHome: true } : {}),
     shares: (["consent", "routes", "settings", "cap"] as const).find((p) => flags.has(`shares-${p}`)),
@@ -440,7 +454,7 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     ...demoNewSpaceState(Boolean(options.macHost), options.clouds ?? null),
     ...demoKeyvaultSetupState(!options.noVault),
     ...demoKeyvaultManageState(),
-    ...demoDriverState(now(), options.onboarded === false),
+    ...demoDriverState(now(), options.onboarded === false, Boolean(options.driverUpdate)),
   };
 
   if (state.platform.os !== "macos") state.host = { ...state.host, name: demoMachine(state.platform).name };
@@ -508,6 +522,8 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     globalShortcut: state.platform.os === "macos" ? { label: state.settings.hotkey, registered: true } : null,
     // What a host's CLI install plan names (`CuaChannel::cli_name`): Local's is `cua-local`.
     cli: { name: cliName, installed: cliInstalled },
+    // The released app on production unless `?demo=local-staging` (or another) says otherwise.
+    target: { channel: "stable", env: "prod", authHost: "", ...options.target },
   });
   const overview = () => {
     if (!state.keyvaultSetUp) return demoNoVaultOverview(now());

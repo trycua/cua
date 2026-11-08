@@ -101,7 +101,7 @@ export function ConnectAgentDialog({ open, onOpenChange }: { open: boolean; onOp
           <DialogTitle className="text-[15px] font-semibold">Connect an agent</DialogTitle>
           <DialogDescription className="mt-1.5 text-[13px] leading-relaxed text-muted-foreground">
             Coding agents reach Cua through the cua MCP server (<code className="font-mono text-xs">cua mcp</code>) and the cua skills.
-            Once an agent has them, it can create Spaces, work inside them and start persistent agents. Its runs then show up on this page.
+            Connected agents can make and use Spaces. Their runs show up here.
           </DialogDescription>
 
           <section className="mt-5">

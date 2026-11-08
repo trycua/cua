@@ -11133,6 +11133,21 @@ pub struct AppRelayUsageView {
     pub plan_card: AppPlanCard,
 }
 
+/// Which build and deployment the app runs as, resolved by the host
+/// (`cua_home::channel::CuaChannel`, `cua_home::env::CuaEnv`).
+pub type AppTarget = core::environment_tag::Target;
+#[uniffi::remote(Record)]
+pub struct AppTarget {
+    /// `stable` or `local` (`CuaChannel`); anything else is Stable.
+    pub channel: String,
+    /// `prod` or `staging` (`CuaEnv::name`).
+    pub env: String,
+    /// The sign-in server's host (`auth.staging.cua.ai`), from the resolved
+    /// OIDC issuer, so an override (`CUA_OIDC_ISSUER`) shows as it is.
+    /// Empty: the environment's default.
+    pub auth_host: String,
+}
+
 /// Whose Space it is.
 pub type AppSpaceMenuKind = core::space_menu::SpaceMenuKind;
 #[uniffi::remote(Enum)]

@@ -690,6 +690,10 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
             // The account app (CUA_ENV, CUA_ACCOUNT_APP_URL): the page's core
             // has no environment, so Upgrade's billing fallback names this one.
             "accountUrl": appAccountAppUrl(),
+            // The channel and environment this app runs as (CUA_CHANNEL,
+            // CUA_ENV, as cua-home resolves them): the page's title bar tag
+            // ("Local · Staging", the core's `environment.tag`).
+            "target": BridgeValue.encode(appTarget()),
             // The CLI this app installs and whether it is here (WebUIBridge+Cli.swift).
             "cli": cliSetting(),
             // Settings, Advanced's runtimes as read (`runtimes::RuntimesInput`):
@@ -874,7 +878,7 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
         let persistent = model.persistent
         switch method {
         case "agents.list":
-            guard persistent.canCallTools else { throw Failure.unsupported("Agents need the cua daemon") }
+            guard persistent.canCallTools else { throw Failure.unsupported(serviceDownMessage) }
             return try await persistent.listAgents()
         case "agents.runs":
             let runs = AgentRunsModel(backend: model.backend, spaceId: try string(args, "spaceId"))
@@ -885,14 +889,14 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
             case .loading: return [Any]()
             }
         case "agents.events":
-            guard persistent.canCallTools else { throw Failure.unsupported("A run's conversation needs the cua daemon") }
+            guard persistent.canCallTools else { throw Failure.unsupported(serviceDownMessage) }
             let cursor = (args["cursor"] as? NSNumber)?.uint64Value ?? 0
             let max = (args["max"] as? NSNumber)?.uint32Value
             return try await persistent.runEvents(space: try string(args, "spaceId"), runId: try string(args, "runId"),
                                                   cursor: cursor, max: max)
         case "agents.start":
             let spaceId = try string(args, "spaceId"), agent = try string(args, "agent"), prompt = try string(args, "prompt")
-            guard persistent.canCallTools else { throw Failure.unsupported("Starting a run needs the cua daemon") }
+            guard persistent.canCallTools else { throw Failure.unsupported(serviceDownMessage) }
             let text = { (key: String) in (args[key] as? String).flatMap { $0.isEmpty ? nil : $0 } }
             return try await persistent.startRun(space: spaceId, agent: agent, prompt: prompt, repo: text("repo"),
                                                  branch: text("branch"), model: text("model"),
@@ -901,7 +905,7 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
                                                  resumeContext: text("resumeContext"))
         case "agents.message":
             let spaceId = try string(args, "spaceId"), runId = try string(args, "runId"), text = try string(args, "text")
-            guard persistent.canCallTools else { throw Failure.unsupported("Replying to a run needs the cua daemon") }
+            guard persistent.canCallTools else { throw Failure.unsupported(serviceDownMessage) }
             return try await persistent.sendMessage(space: spaceId, runId: runId, text: text,
                                                     force: (args["force"] as? Bool) ?? false)
         case "agents.pause", "agents.resume":
@@ -984,7 +988,7 @@ final class WebUIBridge: NSObject, WKScriptMessageHandlerWithReply {
     /// draws with the app core itself.
     func agentDetail(_ method: String, _ args: [String: Any]) async throws -> Any {
         let persistent = model.persistent
-        guard persistent.canCallTools else { throw Failure.unsupported("Agents need the cua daemon") }
+        guard persistent.canCallTools else { throw Failure.unsupported(serviceDownMessage) }
         switch method {
         case "agents.detail":
             var detail = try await persistent.detail(try string(args, "name"))

@@ -371,7 +371,7 @@ export function useThisMacConfirmed(): boolean {
 export function thisMacConfirmText(agent: string): { title: string; description: string } {
   return {
     title: `Work on ${thisComputerText()}?`,
-    description: `${agent} will work directly on ${thisComputerText()}, with your files and apps. It can't be undone by throwing the computer away. ${agent} doesn't ask before each step here, the same as on a new computer.`,
+    description: `${agent} will use your own files and apps, without asking before each step. You can't throw this computer away afterwards.`,
   };
 }
 
@@ -385,6 +385,8 @@ export interface StartErrorView {
   action: StartErrorAction;
   /** Whether Try again can help (not for a target that can't work). */
   retry: boolean;
+  /** No known cause: the card also offers Send a report. */
+  report?: boolean;
 }
 
 /**
@@ -411,12 +413,12 @@ export function startErrorView(raw: string, agent: string): StartErrorView {
   if (/not found|no such|unknown space|add_space/.test(e))
     return { title: "Couldn't find that computer", body: "It may have been deleted or renamed. Pick another one.", action: "change-computer", retry: false };
   if (/api key|key|sign in|signed in|auth|login|credential|unauthori[sz]ed|401/.test(e))
-    return { title: `${agent} needs your key`, body: `Add it in Settings → Connected apps, then try again.`, action: "add-key", retry: true };
+    return { title: `${agent} needs your key`, body: `Add it in Settings → Connections, then try again.`, action: "add-key", retry: true };
   if (/not running|space_off|stopped|suspended|offline|unreachable|timed out|timeout|connection|refused/.test(e))
     return { title: "Couldn't reach that computer", body: "Check it's on, then try again. Or pick another one.", action: "retry", retry: true };
   if (/disk|space left|no room|memory|quota|limit/.test(e))
     return { title: `${thisComputerLabel()} doesn't have room for a new computer`, body: "Free some disk space or turn off a computer you're not using, then try again.", action: "retry", retry: true };
-  return { title: `${agent} couldn't start`, body: "Something went wrong. Try again, or pick another computer.", action: "retry", retry: true };
+  return { title: `${agent} couldn't start`, body: "Something went wrong. Try again, pick another computer, or send us a report.", action: "retry", retry: true, report: true };
 }
 
 /** Where a task stands, in the words Home and the thread use. */
@@ -468,22 +470,20 @@ export function orderTasks<T extends { state: TaskState; task: AskTask }>(rows: 
 }
 
 /** The jobs offered on an empty Home: real dev work where a fresh computer matters. */
-export const SUGGESTIONS: { title: string; detail: string; os: SpaceOs; prompt: string }[] = [
+export const SUGGESTIONS: { title: string; detail?: string; os: SpaceOs; prompt: string }[] = [
   {
     title: "Run my project's tests on a clean Linux Space",
-    detail: "Find out if it works somewhere that has never seen your code.",
     os: "linux",
     prompt: "Get my project, make a clean Linux Space for it, install what it needs and run its tests. Tell me what passed and what failed: ",
   },
   {
     title: "Try a pull request before merging",
-    detail: "Paste the link. It builds the branch and tells you what breaks.",
+    detail: "Paste the PR link after it.",
     os: "linux",
     prompt: "Check out this pull request, build it and run its tests, then tell me if it's safe to merge: ",
   },
   {
     title: "Check my site works on Safari",
-    detail: "It clicks through your pages on a macOS Space and shows you what looks wrong.",
     os: "macos",
     prompt: "Make a macOS Space, open my site in Safari, click through the main pages and tell me what looks or works wrong: ",
   },

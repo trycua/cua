@@ -48,7 +48,7 @@ describe.skipIf(!wasmBuilt)("account usage and self-hosting in Settings (real ro
       return el as HTMLElement;
     });
     expect(row.textContent).toContain("Use your own connection server");
-    expect(row.textContent).toContain("For teams that run their own.");
+    expect(row.textContent).not.toContain("For teams that run their own.");
     expect(document.body.textContent).not.toMatch(/relay/i);
     fireEvent.click(row.querySelector("button")!);
     const form = await waitFor(() => {

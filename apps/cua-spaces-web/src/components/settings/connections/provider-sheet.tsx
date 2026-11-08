@@ -124,11 +124,14 @@ function ImportSheet() {
                 {v.title}
               </DialogTitle>
               <DialogDescription className="mt-1 text-[13px] text-muted-foreground">{v.lede}</DialogDescription>
-              <ul data-import-points="" className="mt-3 space-y-2 text-[13px]">
-                {v.points.map((p) => (
-                  <li key={p}>{p}</li>
-                ))}
-              </ul>
+              <details className="mt-3 text-[13px]">
+                <summary className="cursor-pointer text-muted-foreground select-none">How this works</summary>
+                <ul data-import-points="" className="mt-2 space-y-2">
+                  {v.points.map((p) => (
+                    <li key={p}>{p}</li>
+                  ))}
+                </ul>
+              </details>
               {reading ? (
                 <p className="mt-4 flex items-center gap-2 text-xs text-muted-foreground" data-import-reading="">
                   <Loader2Icon className="size-3.5 animate-spin" /> {v.readingLabel}

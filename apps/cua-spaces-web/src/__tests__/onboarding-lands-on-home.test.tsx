@@ -47,8 +47,7 @@ async function throughOnboarding(hold?: Promise<void>, calls: { op: string }[] =
   await waitFor(() => expect(document.querySelector("[data-new-run=permissions], [data-new-run=agent]")).not.toBeNull(), { timeout: 15_000 });
   if (document.querySelector("[data-new-run=permissions]")) click("[data-onboarding-primary]");
   await waitFor(() => expect(document.querySelector("[data-new-run=agent]:not([data-state=looking])")).not.toBeNull(), { timeout: 15_000 });
-  const several = document.querySelector("[data-new-run=agent][data-state=several]");
-  if (several) click("[data-new-run-agent=claude-code]");
+  // Every agent found is ticked: Continue connects them, with nothing to pick first.
   click("[data-onboarding-primary]");
   await waitFor(() => expect(document.querySelector("[data-new-run=ready]")).not.toBeNull(), { timeout: 15_000 });
   // Nothing is made while the first run shows.

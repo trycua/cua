@@ -13,7 +13,7 @@ import type { AgentSelection } from "@/lib/ask-first-model";
 import type { AskRepo } from "@/lib/ask-first-repo";
 import { cn } from "@/lib/utils";
 
-import { AgentPicker, type AccountActions } from "./agent-picker";
+import { AgentPicker } from "./agent-picker";
 import { RepoChip } from "./repo-chip";
 import { thisComputerLabel, thisComputerText } from "@/lib/host-labels";
 import { thisMacChipText, type ThisMacReadiness } from "@/lib/this-mac-target";
@@ -26,7 +26,7 @@ const OS_WORD: Record<SpaceOs, string> = { linux: "Linux", macos: "Mac", windows
 
 /** Where it runs is a Space: "New Space", then quieter "Linux on This Mac". */
 export function whereSpaceLabel(where: TaskWhere): { title: string; detail: string | null } {
-  if (where.kind === "agent") return { title: where.reuse ? "Agent decides, existing Home" : "Agent decides", detail: null };
+  if (where.kind === "agent") return { title: where.reuse ? "Agent decides, same Home" : "Agent decides", detail: null };
   if (where.kind === "machine") return { title: where.machine.name, detail: null };
   if (where.kind === "new") return { title: "New Space", detail: `${OS_WORD[where.os]} on ${where.on?.name ?? thisComputerLabel()}` };
   return { title: where.kind === "this-mac" ? thisComputerLabel() : where.space.name, detail: null };
@@ -40,11 +40,11 @@ export function AppMark({ agent, size = 32 }: { agent: string; size?: number }) 
   );
 }
 
-/** The trade-off, under the list. */
-export const whereFooter = (): string => `A new computer keeps yours untouched. ${thisComputerLabel()} works on your own files and apps.`;
+/** With agent homes the box's placeholder says the agent can also be told where in the text, with @. */
+export const PLACEHOLDER_HOME = "Describe a task. Type @ to pick a computer.";
 
-/** With agent homes: what the footer adds (the agent can also be told in the text with @). */
-export const WHERE_FOOTER_HOME = "You can also name a Space or computer in the text with @.";
+/** A new Space's row: just its system ("Linux", "macOS"); the section label says it's new, on this computer. */
+const NEW_KIND_WORD: Record<SpaceOs, string> = { linux: "Linux", macos: "macOS", windows: "Windows", unknown: "" };
 
 /** A computer the person can name for the agent to use (agent homes). */
 export interface NameableMachine {
@@ -85,7 +85,7 @@ function Picker({
   );
 }
 
-function PickerRow({ icon, title, note, selected, onSelect }: { icon: ReactNode; title: string; note: string; selected: boolean; onSelect: () => void }) {
+function PickerRow({ icon, title, note, selected, onSelect }: { icon: ReactNode; title: string; note?: string; selected: boolean; onSelect: () => void }) {
   return (
     <MenuPrimitive.Item
       onClick={onSelect}
@@ -94,7 +94,7 @@ function PickerRow({ icon, title, note, selected, onSelect }: { icon: ReactNode;
       {icon}
       <div className="min-w-0 flex-1">
         <div className="text-[14px] font-medium">{title}</div>
-        <div className="text-[12px] text-muted-foreground">{note}</div>
+        {note ? <div className="text-[12px] text-muted-foreground">{note}</div> : null}
       </div>
       {selected ? <CheckIcon className="size-4" /> : null}
     </MenuPrimitive.Item>
@@ -121,7 +121,6 @@ export function AskBox({
   onModel,
   onSignIn,
   onConfigure,
-  accounts,
   repo,
   onRepo,
   where,
@@ -150,10 +149,8 @@ export function AskBox({
   onModel: (model: string) => void;
   /** Starts the sign-in of an app that has no account. */
   onSignIn: (group: AgentGroup) => void;
-  /** Opens Settings, Connections, where the menu's apps are chosen. */
+  /** Opens Settings, Connections, where the agents and their sign-ins are managed. */
   onConfigure?: () => void;
-  /** What the menu does with an app's accounts (default, rename, remove, add). */
-  accounts: AccountActions;
   repo: AskRepo | null;
   onRepo?: (r: AskRepo | null) => void;
   where: TaskWhere;
@@ -207,11 +204,11 @@ export function AskBox({
         }}
         rows={compact ? 1 : 3}
         aria-label="What should it do?"
-        placeholder="What should it do?"
+        placeholder={agentHome ? PLACEHOLDER_HOME : "What should it do?"}
         className={cn("block w-full resize-none bg-transparent px-5 pt-4 text-[16px] leading-relaxed outline-none placeholder:text-muted-foreground", compact ? "min-h-14" : "min-h-24")}
       />
       <div className="flex items-center gap-1 px-2 pt-1 pb-2">
-        <AgentPicker view={view} selected={selected} onPick={onPickAccount} onModel={onModel} onSignIn={onSignIn} onConfigure={onConfigure} accounts={accounts} />
+        <AgentPicker view={view} selected={selected} onPick={onPickAccount} onModel={onModel} onSignIn={onSignIn} onConfigure={onConfigure} />
         <RepoChip repo={repo} onRepo={onRepo} />
         {placed && agentHome ? (
           <span data-ask-where="" className="max-w-64 truncate px-1.5 text-[13px] text-muted-foreground">
@@ -345,12 +342,13 @@ export function WherePicker({
           <OsIcon os={k.os} className="size-4" />
         </span>
       }
-      title={`A new ${OS_WORD[k.os]} computer on ${thisComputerText()}`}
+      title={NEW_KIND_WORD[k.os]}
       note={k.blocked ?? k.note}
       selected={where?.kind === "new" && where.os === k.os}
       onSelect={() => onWhere({ kind: "new", os: k.os })}
     />
   ));
+  const newSpaceLabel = `New Space on ${thisComputerText()}`;
   const thisRow = (
     <PickerRow
       icon={
@@ -379,7 +377,7 @@ export function WherePicker({
     />
   ));
   return (
-    <Picker title="Where it runs" trigger={trigger} footer={agentHome ? `${whereFooter()} ${WHERE_FOOTER_HOME}` : whereFooter()} open={open} onOpenChange={onOpenChange}>
+    <Picker title="Where it runs" trigger={trigger} open={open} onOpenChange={onOpenChange}>
       {agentHome ? (
         <PickerRow
           icon={
@@ -387,8 +385,7 @@ export function WherePicker({
               <SparklesIcon className="size-4" />
             </span>
           }
-          title="Let the agent decide"
-          note="It picks what the job needs, within your budget"
+          title="Agent decides"
           selected={where?.kind === "agent" && !where.reuse}
           onSelect={() => onWhere({ kind: "agent" })}
         />
@@ -400,18 +397,17 @@ export function WherePicker({
               <SparklesIcon className="size-4" />
             </span>
           }
-          title="Let the agent decide, in your existing Home"
-          note="Continues in the Home you already have instead of starting a new one"
+          title="Agent decides, same Home"
           selected={where?.kind === "agent" && Boolean(where.reuse)}
           onSelect={() => onWhere({ kind: "agent", reuse: true })}
         />
       ) : null}
       {agentHome ? (
         <>
+          <SectionLabel>{newSpaceLabel}</SectionLabel>
           {newRows}
-          <SectionLabel>Or use a computer you already have</SectionLabel>
+          <SectionLabel>Your computers</SectionLabel>
           {thisRow}
-          {machines?.some((m) => !m.current) ? <SectionLabel>Your computers</SectionLabel> : null}
           {machines
             ?.filter((m) => !m.current)
             .slice(0, 5)
@@ -452,7 +448,7 @@ export function WherePicker({
           ))}
           {spaces.length > 0 ? <SectionLabel>Your Spaces</SectionLabel> : null}
           {spaceRows}
-          <SectionLabel>Or make a new computer</SectionLabel>
+          <SectionLabel>{newSpaceLabel}</SectionLabel>
           {newRows}
         </>
       )}

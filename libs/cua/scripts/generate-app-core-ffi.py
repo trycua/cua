@@ -76,6 +76,7 @@ TYPES = [
     ("palette.rs", "palette", ["Keybinding", "PaletteEntry"]),
     ("teams.rs", "teams", ["TeamPersonInput", "TeamInput", "TeamsState", "TeamsInput"]),
     ("relay_usage.rs", "relay_usage", ["RelayUsageTeam", "RelayUsage", "RelayAllowanceNotice", "PlanLink", "PlanCard", "RelayUsageView"]),
+    ("environment_tag.rs", "environment_tag", ["Target"]),
     ("space_menu.rs", "space_menu", ["SpaceMenuKind", "SpaceMenuRole", "SpaceMenuPower", "SpaceMenuInput", "SpaceMenuItemId", "SpaceMenuItem"]),
     ("bulk_confirm.rs", "bulk_confirm", ["BulkPerson", "BulkItem", "BulkRow", "BulkGroup", "BulkConfirmView", "BulkResult", "BulkTone", "BulkDone"]),
     ("tips.rs", "tips", ["TipsState", "TipPlace", "TipFacts", "TipActionKind", "TipAction", "TipLink", "Tip", "TipsEvent"]),

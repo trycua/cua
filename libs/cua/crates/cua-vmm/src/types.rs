@@ -362,10 +362,25 @@ pub struct Mount {
 
 /// Checks `mounts` for any backend: absolute paths, existing host
 /// directories, no guest path twice.
+/// Where the built-in Linux runtime on Windows mounts cua's job directories
+/// inside its distribution (`drvfs`): a mount's host side that starts here is a
+/// path in the engine's own filesystem, not a Windows path.
+pub const ENGINE_MOUNT_ROOT: &str = "/mnt/cua-host/";
+
+/// Whether `host` is a path in the engine's own filesystem
+/// ([`ENGINE_MOUNT_ROOT`]), which only a Windows host has no way to check.
+pub fn is_engine_path(host: &std::path::Path) -> bool {
+    cfg!(windows)
+        && host
+            .to_string_lossy()
+            .replace('\\', "/")
+            .starts_with(ENGINE_MOUNT_ROOT)
+}
+
 pub fn check_mounts(backend: BackendKind, mounts: &[Mount]) -> crate::Result<()> {
     let mut seen = std::collections::BTreeSet::new();
     for m in mounts {
-        if !m.host.is_absolute() || !m.host.is_dir() {
+        if !is_engine_path(&m.host) && (!m.host.is_absolute() || !m.host.is_dir()) {
             return Err(crate::VmmError::invalid(format!(
                 "{}: a mount's host side must be an existing directory given by its absolute path ({})",
                 backend.as_str(),
@@ -913,6 +928,24 @@ mod duration_secs {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// On Windows a mount under the engine's own `/mnt/cua-host/` (the job
+    /// directories mounted into its distribution) is not a Windows folder.
+    #[cfg(windows)]
+    #[test]
+    fn engine_paths_are_mounts_without_a_windows_folder() {
+        let m = |host: &str| Mount {
+            host: std::path::PathBuf::from(host),
+            guest: "/cua/job".into(),
+            read_only: false,
+        };
+        assert!(check_mounts(BackendKind::Container, &[m("/mnt/cua-host/jobs/a/job")]).is_ok());
+        assert!(check_mounts(BackendKind::Container, &[m("/mnt/elsewhere")]).is_err());
+        assert!(is_engine_path(std::path::Path::new(
+            "/mnt/cua-host/job-cache"
+        )));
+        assert!(!is_engine_path(std::path::Path::new(r"C:\x")));
+    }
 
     #[test]
     fn egress_is_on_by_default_and_only_qemu_can_cut_it() {

@@ -299,7 +299,7 @@ describe("Add a machine: without a code", () => {
     const { adapter } = host({}, { "devices.createPairingCode": () => Promise.reject(new HostError("relay: 404 Not Found", "failed")) });
     await mount(adapter);
     await waitFor(() => expect(phase()).toBe("error"));
-    expect(document.querySelector("[data-add-code-error]")?.textContent).toMatch(/Your Cua relay can't make codes yet/);
+    expect(document.querySelector("[data-add-code-error]")?.textContent).toMatch(/Codes don't work with your account yet/);
     expect(method("signin").disabled).toBe(false);
     expect(method("link").disabled).toBe(true);
   });

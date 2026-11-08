@@ -5496,6 +5496,29 @@ export function appStreamSection(input: AppStreamSectionInput): AppStreamSection
     }
 
 /**
+ * Which build and deployment this app runs as: its channel (`stable` or
+ * `local`, `CuaChannel`), its environment (`prod` or `staging`, `CuaEnv`)
+ * and the host of the sign-in server it uses, resolved as every other part
+ * of the app resolves them. The web UI's title bar tag ("Local · Staging",
+ * the app core's `environment.tag`) is drawn from it, so every shell agrees.
+ */
+export function appTarget(): AppTarget {
+    return ((__rb: Uint8Array) => {
+        try {
+            return FfiConverterTypeAppTarget.lift(__rb);
+        } finally {
+            nativeModule().rustbuffer_free(__rb);
+        }
+    })(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().uniffi_cua_spaces_ffi_fn_func_app_target(
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+/**
  * The account's Teams (the organizations of `GET /v1/me` on the Spaces
  * API for this environment, `api.cua.ai` or `api.staging.cua.ai`), each
  * with its members and pending invites, read with `account_token`.
@@ -45306,6 +45329,64 @@ const FfiConverterTypeAppStreamSectionInput = (() => {
     return new FFIConverter();
 })();
 
+export type AppTarget = {
+    /**
+     * `stable` or `local` (`CuaChannel`); anything else is Stable.
+     */
+    channel: string,
+    /**
+     * `prod` or `staging` (`CuaEnv::name`).
+     */
+    env: string,
+    /**
+     * The sign-in server's host (`auth.staging.cua.ai`), from the resolved
+     * OIDC issuer, so an override (`CUA_OIDC_ISSUER`) shows as it is.
+     * Empty: the environment's default.
+     */
+    authHost: string
+}
+
+/**
+ * Generated factory for {@link AppTarget} record objects.
+ */
+export const AppTarget = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<AppTarget, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<AppTarget>,
+    });
+})();
+
+const FfiConverterTypeAppTarget = (() => {
+    type TypeName = AppTarget;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                channel: FfiConverterString.read(from),
+                env: FfiConverterString.read(from),
+                authHost: FfiConverterString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.channel, into);
+            FfiConverterString.write(value.env, into);
+            FfiConverterString.write(value.authHost, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.channel) +
+             FfiConverterString.allocationSize(value.env) +
+             FfiConverterString.allocationSize(value.authHost);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
 export type AppTeleportConsent = {
     /**
      * Confirmed.
@@ -71978,6 +72059,9 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_stream_section() !== 40082) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_stream_section");
     }
+    if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_target() !== 5718) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_target");
+    }
     if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_teams() !== 64616) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_teams");
     }
@@ -72810,6 +72894,7 @@ export default Object.freeze({
     FfiConverterTypeAppSwitcherTheme,
     FfiConverterTypeAppSystemNote,
     FfiConverterTypeAppTabView,
+    FfiConverterTypeAppTarget,
     FfiConverterTypeAppTeamInput,
     FfiConverterTypeAppTeamPersonInput,
     FfiConverterTypeAppTeamsInput,

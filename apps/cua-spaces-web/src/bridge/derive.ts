@@ -634,10 +634,10 @@ function fallbackPanel(s: HostStatus | null): HostPanelView {
   const base: HostPanelView = { title: "This computer", summary: "Checking…", configured: false, facts: [], clients: [], permissions: [], openSettingsLabel: "Open Settings", actions: [] };
   if (!s) return base;
   if (!s.configured) {
-    return { ...base, summary: "Your other computers can’t reach this computer yet.", intro: FALLBACK_INTRO, setupChoices: FALLBACK_CHOICES };
+    return { ...base, summary: "Your other computers can’t reach this computer yet.", setupChoices: FALLBACK_CHOICES };
   }
   const via = s.mode === "direct" ? "Direct" : "Relay";
-  const summary = !s.service.running ? "Host service stopped" : !s.sharing ? "Not sharing" : `Sharing · ${via}`;
+  const summary = !s.service.running ? "Sharing stopped" : !s.sharing ? "Not sharing" : `Sharing · ${via}`;
   const access = s.mode === "direct" ? `Direct at ${s.directUrl || "this machine’s address"}` : s.relayUrl ? `Relay ${s.relayUrl}` : "Relay";
   return {
     ...base,
@@ -654,8 +654,6 @@ function fallbackPanel(s: HostStatus | null): HostPanelView {
   };
 }
 
-const FALLBACK_INTRO =
-  "This is the computer you’re using now. Set it up so you, your teammates and your AI agents can use it from other computers. Cua connects them for you, with no network setup.";
 const FALLBACK_CHOICES: HostSetupChoice[] = [
   { id: "desktop", label: "Let other computers create Spaces and control this desktop", buttonLabel: "Set Up…" },
   { id: "spare", label: "Let other computers create Spaces here", buttonLabel: "Set Up…" },
@@ -664,7 +662,7 @@ const FALLBACK_CHOICES: HostSetupChoice[] = [
 /** What "Add a machine" explains: the core's words for host setup, as the
  * other machine will show them. Read-only; nothing here sets anything up. */
 export interface HostSetupGuide {
-  /** What setting a machine up does (`host::HOST_INTRO`). */
+  /** What setting a machine up does (`host::HOST_INTRO`; empty without the core). */
   intro: string;
   /** The ways to set it up (`host::setup_choices`). */
   choices: HostSetupChoice[];
@@ -677,7 +675,7 @@ export function hostSetupGuide(core: CoreClient): HostSetupGuide {
   const initial = core.tryCall<unknown>("host.formInitial");
   // As setup shows it: Cua's relay. Self-hosting is under Settings → Advanced.
   const form = initial === undefined ? null : (core.tryCall<HostFormView>("host.formView", { state: initial, identity: null }) ?? null);
-  return { intro: panel.intro ?? FALLBACK_INTRO, choices: panel.setupChoices?.length ? panel.setupChoices : FALLBACK_CHOICES, form };
+  return { intro: panel.intro ?? "", choices: panel.setupChoices?.length ? panel.setupChoices : FALLBACK_CHOICES, form };
 }
 
 /* ---- Settings ----------------------------------------------------------- */

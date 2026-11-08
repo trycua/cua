@@ -113,9 +113,12 @@ function DriverRow({ computerId }: { computerId: string }) {
   );
 }
 
-/** Green when usable, grey when not; amber or red when the computer has issues (`health`). */
+/**
+ * Green when usable, grey when not; amber when the computer has something to fix (`health`, warn or fail), which its
+ * status line then says ("Online, 1 thing to fix"). Never red beside "Online": it still answers, it just needs a fix.
+ */
 function StatusDot({ online, health, className }: { online: boolean; health?: string; className?: string }) {
-  const tint = health === "fail" ? "bg-destructive" : health === "warn" ? "bg-warning" : online ? "bg-success" : "bg-muted-foreground/45";
+  const tint = health === "fail" || health === "warn" ? "bg-warning" : online ? "bg-success" : "bg-muted-foreground/45";
   return <span aria-hidden data-machine-health={health || undefined} className={cn("size-2 shrink-0 rounded-full", tint, className)} />;
 }
 

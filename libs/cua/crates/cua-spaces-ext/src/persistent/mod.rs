@@ -2853,6 +2853,10 @@ enum Activity {
 
 /// An MCP tool's name (`mcp__cua__stream_space_window`) in plain words for the chip, or `None` for any other title.
 fn plain_tool(title: &str) -> Option<&'static str> {
+    // The harness looking up which tools it has: not something the person needs to read as a tool name.
+    if title == "ToolSearch" {
+        return Some("getting ready");
+    }
     let name = title.rsplit("__").next().unwrap_or(title);
     if !title.starts_with("mcp__") {
         return None;
@@ -3290,6 +3294,7 @@ mod plain_tool_tests {
     fn the_chip_names_what_the_agent_does_not_the_tool() {
         assert_eq!(plain_tool("mcp__cua__stream_space_window"), Some("showing a window"));
         assert_eq!(plain_tool("mcp__cua__launch_space_app"), Some("opening an app"));
+        assert_eq!(plain_tool("ToolSearch"), Some("getting ready"));
         assert_eq!(plain_tool("Terminal"), None);
         assert_eq!(plain_tool("mcp__other__thing"), None);
     }

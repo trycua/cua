@@ -139,22 +139,28 @@ impl Changes {
         }
     }
 
-    /// Identity of windows seen by this result and the previous action's
-    /// detached tail, matching the Linux action result's `new_windows` shape.
-    pub fn opened_windows_json(&self) -> Option<serde_json::Value> {
-        let windows: Vec<_> = self
-            .earlier_new_windows
-            .iter()
-            .chain(&self.new_windows)
-            .map(|window| {
-                serde_json::json!({
-                    "window_id": window.window_id,
-                    "pid": window.pid,
-                    "title": window.title,
-                })
-            })
-            .collect();
-        (!windows.is_empty()).then_some(serde_json::Value::Array(windows))
+    /// Add opened-window identity to an action's structured result:
+    /// `new_windows` for windows this action opened (the Linux result's
+    /// shape) and `earlier_new_windows` for those the previous action's
+    /// detached tail saw. Empty lists are omitted.
+    pub fn add_window_identity(&self, structured: &mut serde_json::Value) {
+        for (key, windows) in [
+            ("new_windows", &self.new_windows),
+            ("earlier_new_windows", &self.earlier_new_windows),
+        ] {
+            if !windows.is_empty() {
+                structured[key] = windows
+                    .iter()
+                    .map(|w| {
+                        serde_json::json!({
+                            "window_id": w.window_id,
+                            "pid": w.pid,
+                            "title": w.title,
+                        })
+                    })
+                    .collect();
+            }
+        }
     }
 
     /// True when we found evidence that the action triggered a cross-app
@@ -705,7 +711,7 @@ mod tests {
     }
 
     #[test]
-    fn opened_windows_json_includes_detached_and_immediate_identity() {
+    fn window_identity_keeps_earlier_and_current_windows_apart() {
         let changes = Changes {
             earlier_new_windows: vec![WindowEvent {
                 window_id: 101,
@@ -721,16 +727,39 @@ mod tests {
             }],
             ..Changes::no_change()
         };
+        let mut structured = serde_json::json!({ "effect": "unverifiable" });
+        changes.add_window_identity(&mut structured);
         assert_eq!(
-            changes.opened_windows_json(),
-            Some(serde_json::json!([
-                {"window_id": 101, "pid": 1001, "title": "Detached tail"},
-                {"window_id": 202, "pid": 1002, "title": "Immediate window"}
-            ]))
+            structured,
+            serde_json::json!({
+                "effect": "unverifiable",
+                "new_windows": [
+                    {"window_id": 202, "pid": 1002, "title": "Immediate window"}
+                ],
+                "earlier_new_windows": [
+                    {"window_id": 101, "pid": 1001, "title": "Detached tail"}
+                ]
+            })
         );
-        assert_eq!(Changes::no_change().opened_windows_json(), None);
-        assert_eq!(Changes::not_polled().opened_windows_json(), None);
-        assert_eq!(Changes::deferred().opened_windows_json(), None);
+
+        let earlier_only = Changes {
+            new_windows: Vec::new(),
+            ..changes
+        };
+        let mut structured = serde_json::json!({});
+        earlier_only.add_window_identity(&mut structured);
+        assert!(structured.get("new_windows").is_none());
+        assert_eq!(structured["earlier_new_windows"][0]["window_id"], 101);
+
+        for empty in [
+            Changes::no_change(),
+            Changes::not_polled(),
+            Changes::deferred(),
+        ] {
+            let mut structured = serde_json::json!({});
+            empty.add_window_identity(&mut structured);
+            assert_eq!(structured, serde_json::json!({}));
+        }
     }
 
     #[test]

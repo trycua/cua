@@ -971,9 +971,7 @@ impl ClickTool {
                     //     so the press likely did nothing → cross to vision/pixel.
                     //   * unverifiable — dispatched fine, driver just can't confirm;
                     //     the caller verifies via screenshot.
-                    let suspected_noop = suspected_noop
-                        && changes.earlier_new_windows.is_empty()
-                        && changes.new_windows.is_empty();
+                    let effect = ax_click_effect(selection_verified, suspected_noop, &changes);
                     let mut structured = serde_json::json!({
                         "path": if selection_via_pixel {
                             if fronted { "cgevent_fg" } else { "cgevent" }
@@ -983,23 +981,15 @@ impl ClickTool {
                             "ax"
                         },
                         "verified": selection_verified,
-                        "effect": if selection_verified {
-                            "confirmed"
-                        } else if suspected_noop {
-                            "suspected_noop"
-                        } else {
-                            "unverifiable"
-                        },
+                        "effect": effect,
                     });
-                    if let Some(windows) = changes.opened_windows_json() {
-                        structured["new_windows"] = windows;
-                    }
+                    changes.add_window_identity(&mut structured);
                     if selection_verified {
                         structured["evidence"] = serde_json::json!([
                             { "kind": "accessibility_readback" }
                         ]);
                     }
-                    if suspected_noop {
+                    if effect == "suspected_noop" {
                         structured["escalation"] = serde_json::json!({
                             "recommended": "px",
                             "reason": "element does not advertise this action — the \
@@ -1569,9 +1559,7 @@ impl ClickTool {
                         "effect": "unverifiable",
                         "focus_without_raise": focus_without_raise
                     });
-                    if let Some(windows) = changes.opened_windows_json() {
-                        structured["new_windows"] = windows;
-                    }
+                    changes.add_window_identity(&mut structured);
                     ToolResult::text(format!(
                         "✅ Posted {button_label} {target} ({}).{}",
                         super::pixel_route::delivery_note(route),
@@ -2048,6 +2036,24 @@ mod selection_fallback_tests {
 /// background focus rung that pixel `type_text`, `press_key` and `scroll`
 /// use to put the keyboard focus on a point (`focus_by_pixel`). It sets
 /// AXFocused on the element under the point instead of pressing it.
+/// The AX click's `effect`. A window this action opened is evidence the
+/// press did something, so it lifts `suspected_noop` to `unverifiable`. A
+/// window the previous action's detached tail saw says nothing about this
+/// press and leaves the classification alone.
+fn ax_click_effect(
+    selection_verified: bool,
+    suspected_noop: bool,
+    changes: &crate::window_change_detector::Changes,
+) -> &'static str {
+    if selection_verified {
+        "confirmed"
+    } else if suspected_noop && changes.new_windows.is_empty() {
+        "suspected_noop"
+    } else {
+        "unverifiable"
+    }
+}
+
 fn validate_click_action(action: &str, element_target: bool) -> anyhow::Result<()> {
     if !element_target && action == "focus" {
         return Ok(());
@@ -2068,6 +2074,45 @@ mod tests {
         assert!(validate_click_action("show_alternate_ui", true).is_ok());
         assert!(validate_click_action("focus", true).is_err());
         assert!(validate_click_action("hover", false).is_err());
+    }
+
+    fn window(window_id: u32) -> crate::window_change_detector::WindowEvent {
+        crate::window_change_detector::WindowEvent {
+            window_id,
+            pid: 1,
+            app_name: "App".into(),
+            title: String::new(),
+        }
+    }
+
+    /// A late window from the previous action must not turn this press's
+    /// suspected no-op into `unverifiable` and drop the pixel escalation.
+    #[test]
+    fn ax_click_effect_ignores_the_previous_actions_late_window() {
+        use crate::window_change_detector::Changes;
+        let earlier_only = Changes {
+            earlier_new_windows: vec![window(7)],
+            ..Changes::no_change()
+        };
+        assert_eq!(
+            ax_click_effect(false, true, &earlier_only),
+            "suspected_noop"
+        );
+
+        let opened_now = Changes {
+            new_windows: vec![window(8)],
+            ..Changes::no_change()
+        };
+        assert_eq!(ax_click_effect(false, true, &opened_now), "unverifiable");
+        assert_eq!(
+            ax_click_effect(false, true, &Changes::no_change()),
+            "suspected_noop"
+        );
+        assert_eq!(
+            ax_click_effect(false, false, &Changes::no_change()),
+            "unverifiable"
+        );
+        assert_eq!(ax_click_effect(true, true, &opened_now), "confirmed");
     }
 
     /// #3835: Finder's toolbar view switcher applies an AXPress and returns

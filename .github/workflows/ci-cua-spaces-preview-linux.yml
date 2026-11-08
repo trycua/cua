@@ -294,7 +294,7 @@ jobs:
           - AppImage: run \`chmod +x Cua-Spaces-*.AppImage\`, then \`./Cua-Spaces-*.AppImage\`.
           - deb (Debian and Ubuntu): run \`sudo apt install ./cua-spaces_*.deb\`.
 
-          These are the regular Cua Spaces packages built from this commit, not a separate variant: the deb replaces an installed Cua Spaces, and both use the released app's sign-in and data.
+          These are the regular Cua Spaces packages built from this commit, not a separate variant: the deb replaces an installed Cua Spaces, and both use the released app's sign-in and data. They use the production deployment unless you start them with \`CUA_ENV=staging\` (for example \`CUA_ENV=staging ./Cua-Spaces-*.AppImage\`).
 
           A new push to this branch rebuilds it while the \`preview:linux\` label stays on. [Build log]($RUN_URL)"
           fi

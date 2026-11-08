@@ -234,10 +234,6 @@ jobs:
             if (-not (Test-Path (Join-Path $dir $f))) { throw "missing $f in $dir" }
           }
           if (Test-Path (Join-Path $dir 'resources/app-update.yml')) { throw 'the preview has an update feed (resources/app-update.yml)' }
-          # The Local channel talks to staging by default; this launcher points
-          # it at production, as the macOS preview does (CuaEnv=prod).
-          $launcher = "@echo off`r`nset CUA_ENV=prod`r`nstart `"`" `"%~dp0Cua Spaces Local.exe`"`r`n"
-          Set-Content -Path (Join-Path $dir 'Start Cua Spaces Local.cmd') -Value $launcher -Encoding ASCII -NoNewline
           $name = "Cua-Spaces-Local-win-$($env:ARCH)-pr$($env:PR_NUMBER)-$($env:HEAD_SHA.Substring(0, 7))"
           New-Item -ItemType Directory -Force out | Out-Null
           Rename-Item $dir $name
@@ -302,8 +298,8 @@ jobs:
 
           To open it (the \"x64\" build is for most PCs, \"arm64\" for Windows on Arm):
           1. Unzip the download, then unzip the zip inside it.
-          2. Open the folder and double-click \`Start Cua Spaces Local.cmd\`. It is not signed, so SmartScreen shows \"Windows protected your PC\": choose More info, then Run anyway.
-          3. It runs as \"Cua Spaces Local\", next to the released Cua Spaces, with its own sign-in and data, and points at production. It is a portable folder, not an installer: delete the folder to remove it. It does not update itself.
+          2. Open the folder and double-click \`Cua Spaces Local.exe\`. It is not signed, so SmartScreen shows \"Windows protected your PC\": choose More info, then Run anyway.
+          3. It runs as \"Cua Spaces Local\", next to the released Cua Spaces, with its own sign-in and data. The app shows \"Local · Staging\": it uses the staging deployment, so sign in with a staging account. It is a portable folder, not an installer: delete the folder to remove it. It does not update itself.
 
           A new push to this branch rebuilds it while the \`preview:windows\` label stays on. [Build log]($RUN_URL)"
           fi

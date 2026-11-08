@@ -5995,6 +5995,9 @@
         "host": {
           "type": "string"
         },
+        "hidden": {
+          "type": "boolean"
+        },
         "hostName": {
           "type": "string"
         },

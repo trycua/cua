@@ -102,6 +102,7 @@ pub mod resources;
 pub mod route;
 pub mod routines;
 pub mod services;
+pub mod sleep;
 pub mod snapshots;
 mod space;
 pub mod space_jobs;

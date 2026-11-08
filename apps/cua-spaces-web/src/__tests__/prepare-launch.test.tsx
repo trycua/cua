@@ -8,7 +8,7 @@
 import { act, cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { setFlagOverride } from "@/bridge";
+import { writeFirstRun } from "@/bridge";
 import { wasmBuilt } from "@/bridge/__tests__/testCore";
 import { resetConnectState } from "@/hooks/use-connectors";
 import { resetAskTasks } from "@/lib/ask-first";
@@ -18,11 +18,11 @@ import { mountApp, pickNewLinux, stubBrowserApis } from "./app-harness";
 stubBrowserApis();
 beforeEach(() => {
   localStorage.clear();
+  // Set up with this app's first run: the home warms only after one.
+  writeFirstRun({ newRun: { screen: "next" } });
   resetAskTasks();
   resetConnectState();
   resetPrepare();
-  setFlagOverride("spaces_ask_first_home", true);
-  setFlagOverride("spaces_new_onboarding", true);
 });
 afterEach(() => {
   cleanup();

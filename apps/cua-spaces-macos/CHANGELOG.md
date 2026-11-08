@@ -1,5 +1,39 @@
 # Changelog
 
+## [0.22.4](https://github.com/trycua/cua/compare/cua-spaces-v0.22.3...cua-spaces-v0.22.4) (2026-11-07)
+
+
+### Bug Fixes
+
+* **spaces-macos:** bundle cua 0.14.0 in Cua Spaces ([#6906](https://github.com/trycua/cua/issues/6906)) ([1ef20b2](https://github.com/trycua/cua/commit/1ef20b2f9c00a3f3db7cfb2d4d18130c860d0dd0))
+
+## [0.22.3](https://github.com/trycua/cua/compare/cua-spaces-v0.22.2...cua-spaces-v0.22.3) (2026-11-07)
+
+
+### Bug Fixes
+
+* **spaces:** Home's apps row opens again after a relaunch and shows each switch live (CUA-3551) ([#6872](https://github.com/trycua/cua/issues/6872)) ([26858cd](https://github.com/trycua/cua/commit/26858cd5050728f64aaa1ef78a9bf3a248fdccc8))
+
+## [0.22.2](https://github.com/trycua/cua/compare/cua-spaces-v0.22.1...cua-spaces-v0.22.2) (2026-11-07)
+
+
+### Bug Fixes
+
+* **spaces:** the permission guide always docks under System Settings and says what the pane needs; the rows show each switch live (CUA-3551) ([#6870](https://github.com/trycua/cua/issues/6870)) ([a947cac](https://github.com/trycua/cua/commit/a947cac8e345966db46a11e12f42593560e8e86d))
+
+## [0.22.1](https://github.com/trycua/cua/compare/cua-spaces-v0.22.0...cua-spaces-v0.22.1) (2026-11-07)
+
+
+### Bug Fixes
+
+* **cua-spaces-macos:** make Restart to update install the downloaded update ([#6759](https://github.com/trycua/cua/issues/6759)) ([e1c7840](https://github.com/trycua/cua/commit/e1c784079a92c0cf9b9c32ebe80f27c41863e1c5))
+* **spaces-macos:** bundle cua 0.12.0 in Cua Spaces ([#6781](https://github.com/trycua/cua/issues/6781)) ([2c4374a](https://github.com/trycua/cua/commit/2c4374a0af7d6e462acd1501ecc7c29777822a76))
+* **spaces-macos:** bundle cua 0.12.1 in Cua Spaces ([#6801](https://github.com/trycua/cua/issues/6801)) ([d9665a6](https://github.com/trycua/cua/commit/d9665a631f8537b4dbb58230827512208bf7e58d))
+* **spaces-macos:** bundle cua 0.13.0 in Cua Spaces ([#6856](https://github.com/trycua/cua/issues/6856)) ([0c778e2](https://github.com/trycua/cua/commit/0c778e2d6b790acbda635c1b43b338314a48ef26))
+* **spaces-macos:** serve the loopback control server so open_space_viewer works ([#6342](https://github.com/trycua/cua/issues/6342)) ([fea2a64](https://github.com/trycua/cua/commit/fea2a64df02ad42cf1ed909d9cb4c4bd6d311f66))
+* **spaces:** every agent message is appended to the thread, child Spaces work from inside a Space, and child agents show in the chat ([#6733](https://github.com/trycua/cua/issues/6733)) ([515371a](https://github.com/trycua/cua/commit/515371a48a616aea3bba5f0ea13e0863c8a26041))
+* **spaces:** say computers in use at once for the plan limit (CUA-3690) ([#6790](https://github.com/trycua/cua/issues/6790)) ([891ccb7](https://github.com/trycua/cua/commit/891ccb7153dde86f6219da719c583d2de0b88b14))
+
 ## [0.22.0](https://github.com/trycua/cua/compare/cua-spaces-v0.21.1...cua-spaces-v0.22.0) (2026-11-07)
 
 

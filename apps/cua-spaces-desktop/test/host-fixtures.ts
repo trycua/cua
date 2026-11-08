@@ -58,7 +58,7 @@ export class FixtureHost {
       relayUrl: relay ? (o.relayUrl ?? "https://relay.cua.ai") : undefined,
       directUrl: relay ? undefined : `http://${o.direct ?? ""}`,
       machineId: "0123abcd4567",
-      name: o.name ?? "This machine",
+      name: o.name ?? "This computer",
       sharing: true,
       serviceInstalled: true,
       serviceRunning: true,

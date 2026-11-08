@@ -116,7 +116,7 @@ async function checkAbout(page: Page, checkpoints: ParityCheckpoint[]): Promise<
   return states.length;
 }
 
-/* ---- Machines: this machine's trust, the machines waiting, the enroll sheet ---------- */
+/* ---- Your computers: this computer's trust, the ones waiting, the enroll sheet ------ */
 
 async function checkDevices(page: Page, checkpoints: ParityCheckpoint[]): Promise<number> {
   let checked = 0;
@@ -135,9 +135,11 @@ async function checkDevices(page: Page, checkpoints: ParityCheckpoint[]): Promis
       await expect(page.locator("[data-machine-trust-action]"), step).toHaveCount(v.thisDevice.actionLabel ? 1 : 0);
       if (v.banner) await expect(page.locator("[data-machine-trust-text]"), step).toHaveText(v.banner.text);
       else await expect(page.locator("[data-machine-trust-text]"), step).toHaveCount(0);
-      // The machines waiting to be added are the top group.
+      // The computers waiting to be added are the top group of your computers.
       const waiting = [...v.unconfirmedMachines.map((m) => m.id), ...v.approvals.map((a) => a.deviceId)];
+      await page.evaluate((p) => window.__cuaParity!.navigate(p), "/spaces");
       await expect.poll(() => attrs(page.locator("[data-pending-machine]"), "data-pending-machine"), { message: step }).toEqual(waiting);
+      await page.evaluate((p) => window.__cuaParity!.navigate(p), "/spaces/computer/this-mac");
       checked++;
     } else if (cp.kind === "enroll" && last) {
       const { state, view: v } = cp;

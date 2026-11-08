@@ -16,7 +16,7 @@ beforeEach(() => {
   window.localStorage.setItem("cua.settings.experiments", JSON.stringify({ cuaVolume: true }));
 });
 
-/** The notch's roster: "This machine" (not shared) and the Spaces. */
+/** The notch's roster: "This computer" (not shared) and the Spaces. */
 const ROSTER = withThisMachine(FIXTURE_SPACES, null, FIXTURE_NOW, "macos");
 
 function sync(over: Record<string, unknown> = {}) {
@@ -66,7 +66,7 @@ describe("the menu bar item's menu", () => {
     await waitFor(() => expect(calls).toEqual(["volume_sync_status", "volume_storage"]));
     const items = menus.at(-1)!;
     expect(items).toEqual(trayMenu({ spaces: ROSTER, keyvault: null, sync: null, backend: "s3", nowMs: FIXTURE_NOW }));
-    // "This machine" (not shared) is in the roster but not in the count,
+    // "This computer" (not shared) is in the roster but not in the count,
     // and neither is a stopped Space: only the ones on or starting.
     expect(ROSTER.some((s) => s.id === "this-mac")).toBe(true);
     expect(ROSTER.some((s) => s.status === "suspended")).toBe(true);

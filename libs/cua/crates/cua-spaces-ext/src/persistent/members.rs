@@ -12,8 +12,10 @@
 //!   the oldest queued task of a member that is not mid-turn and not paused
 //!   is delivered as its next turn ([`Persistent::send_from`] restores the
 //!   home and wakes an asleep agent), recorded `claimed` then `working`; when
-//!   that turn ends, the turn's answer is posted as the member's reply
-//!   unless it replied itself, and the task is `done` (`failed` on an error).
+//!   that turn runs, each message the agent writes is appended to the
+//!   thread as its own entry (see `Persistent::post_said`), and when it ends
+//!   the task is `done` (`failed` on an error, with the failure said in
+//!   plain words; a turn that said nothing ends with `Finished.`).
 //! - Schedules (routines) post a task authored `system:schedule:<id>` and
 //!   go through the same delivery, keeping the skip-if-busy rule.
 
@@ -869,7 +871,7 @@ impl Persistent {
             .map(|e| e.text.clone())
             .unwrap_or_else(|| task.text.clone());
         let framed = format!(
-            "[thread #{} from {}] {text}\n\n(Your answer is posted as your reply in the Space's thread when this turn ends; the `cua` tools thread_reply, thread_post and thread_read reach the thread yourself.)",
+            "[thread #{} from {}] {text}\n\n(Everything you write between tool calls is posted to this thread as you write it, one message for each stretch, in order; nothing you wrote is replaced or removed. So talk to the person like a colleague: before a long job say in one short sentence what you will do, then do it, then say how it went. Never repeat something you already posted. Do not call thread_reply for plain text; use it only to attach files or to mark the task failed. Starting up, installing and \"working for Ns\" are shown by the app itself, so do not narrate them. To make another computer from here, run `cua spaces create IMAGE --name NAME` (it becomes this Space's child; `cua sb exec NAME -- COMMAND` runs things in it and `cua spaces delete --force NAME` removes it); if that is refused, say what the refusal says.)",
             task.seq, task.author.name
         );
         // The member's standing instructions go in front of the first message
@@ -1226,7 +1228,7 @@ impl Persistent {
             && !t.state.is_closed()
         {
             let mut drafts = vec![];
-            if !t.replied {
+            if !t.replied || error.is_some() {
                 let failure = error.as_deref().map(|e| failure_for(rec, e));
                 let text = match (&failure, &answer) {
                     // Plain words; the complete error rides along as `failure`.
@@ -1334,6 +1336,29 @@ impl Persistent {
                 {
                     row["text"] = json!(p.text.trim_end());
                 }
+                // The subagents it has running now (title, steps, the latest step).
+                let running: Vec<Value> = self
+                    .partials
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .get(&format!("{key}!subs"))
+                    .map(|p| {
+                        p.subs
+                            .iter()
+                            .filter(|s| s.state == "running")
+                            .map(|s| {
+                                json!({
+                                    "id": s.id, "title": s.title, "state": s.state,
+                                    "steps": s.steps, "step": s.last_step,
+                                    "since_ms": s.started_ms,
+                                })
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                if !running.is_empty() {
+                    row["children"] = json!(running);
+                }
                 rows.push(row);
             }
         }
@@ -1346,6 +1371,8 @@ impl Persistent {
                     r["agent"].as_str().unwrap_or_default(),
                     r["stage"].as_str().unwrap_or_default(),
                     r["text"].as_str().map_or(0, str::len)
+                        + 7919 * r["children"].as_array().map_or(0, |c| c.len())
+                        + r["children"][0]["steps"].as_u64().unwrap_or(0) as usize
                 )
             })
             .collect::<Vec<_>>()
@@ -2519,11 +2546,46 @@ impl Thread {
         let t = self.task(seq)?;
         let name = self.agent_of(None, &t)?;
         self.may_steer(&t)?;
+        // The same words already said under this task by the same author (a retry, or a tool
+        // call a restarted bridge ran again): that entry is the answer, nothing is added twice.
+        if attachments.is_empty() {
+            let last = self.store.last_seq()?;
+            let me = self.author().id;
+            if let Some(same) = self
+                .store
+                .read(last.saturating_sub(300), 301)?
+                .into_iter()
+                .rev()
+                .find(|e| {
+                    e.kind == EntryKind::Message
+                        && e.reply_to == Some(seq)
+                        && e.author.id == me
+                        && e.text.trim() == text.trim()
+                })
+            {
+                return Ok((same.clone(), same));
+            }
+        }
+        // An agent may say more under a task it already closed (a background job finished, a
+        // second thought): its words are appended like any other and the task keeps its state.
+        // Nothing the agent posts is refused for coming late.
         if t.state.is_closed() {
-            return Err(Error::invalid(format!(
-                "task #{seq} is {}",
-                t.state.as_str()
-            )));
+            if self.caller.agent_member().is_none() {
+                return Err(Error::invalid(format!(
+                    "task #{seq} is {}",
+                    t.state.as_str()
+                )));
+            }
+            let id = new_entry_id();
+            let files = self.attachments(&id, attachments).await?;
+            let mut reply = Draft::new(self.author(), EntryKind::Message, text);
+            reply.id = Some(id);
+            reply.reply_to = Some(seq);
+            reply.mentions = parse_mentions(text);
+            reply.attachments = files;
+            let mut w = self.store.append_many(vec![reply])?;
+            let reply = w.pop().expect("one");
+            return Ok((reply.clone(), reply));
         }
         // An agent session answers only what no other session holds.
         let mine = match self.session {

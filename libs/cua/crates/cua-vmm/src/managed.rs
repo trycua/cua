@@ -954,8 +954,8 @@ async fn ensure_windows() -> Result<String> {
             wsl::unregister(&w, &name).await;
         }
         let file = root().join("downloads").join(format!(
-            "alpine-minirootfs-{}-{}.tar.gz",
-            wsl::ALPINE_VERSION,
+            "ubuntu-base-{}-{}.tar.gz",
+            wsl::BASE_VERSION,
             &pin.sha256[..8]
         ));
         std::fs::create_dir_all(file.parent().expect("has a parent"))?;
@@ -982,6 +982,9 @@ async fn ensure_windows() -> Result<String> {
     }
     let _ = std::fs::remove_file(stopped_names_file());
     *WINDOWS_VERIFIED.lock().unwrap_or_else(|e| e.into_inner()) = Some(std::time::Instant::now());
+    if let Some(note) = wsl::low_space_note(&root()) {
+        tracing::warn!("{note}");
+    }
     Ok(endpoint())
 }
 

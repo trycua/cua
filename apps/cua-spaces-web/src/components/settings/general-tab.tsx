@@ -65,8 +65,6 @@ export function GeneralTab() {
 
   return (
     <div data-settings-tab="general">
-      {/* Labs "Spaces as a tree": the default Space and the order to try (nothing while it's off). */}
-      <DefaultSpaceGroup />
       <SettingsGroup
         title="Everyday"
         footer={
@@ -134,13 +132,15 @@ export function GeneralTab() {
       <CliSettingsSection />
       <SharingGroup />
       <RepoCacheGroup />
+      {/* Last: it shows once your computers have loaded, so nothing above it moves when it does. */}
+      <DefaultSpaceGroup />
     </div>
   );
 }
 
 /** What the switch says before this Mac is set up (the core's words once it is). */
-const SPACES_SWITCH = "Let other machines create Spaces here";
-const SPACES_HELP = "Your other machines can create Spaces here.";
+const SPACES_SWITCH = "Let other computers create Spaces here";
+const SPACES_HELP = "Your other computers can create Spaces here.";
 
 /**
  * Sharing, for this Mac: "Let other machines create Spaces here", on by default. Before this Mac is set

@@ -5,7 +5,6 @@ import { HashIcon, UserRoundIcon, UsersIcon } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { useDevices, useSession, type AccessLine, type MachinesAccountView, type PendingMachine, type ThisMachineTrust } from "@/bridge";
-import { OsIcon } from "@/components/os-icon";
 import { ConfirmDialog } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogPopup, DialogTitle } from "@/components/ui/dialog";
@@ -15,10 +14,10 @@ import type { SpaceOs } from "@/bridge";
 
 const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
-/** The account's part of the Machines page: what waits, this machine's trust, who reached each machine. */
+/** The account's part of your computers: what waits, this computer's trust, who reached each one. */
 export function useMachinesAccount(): {
   account: MachinesAccountView | null;
-  /** Machines waiting to be added (the ones put off are left out). */
+  /** Computers waiting to be added (the ones put off are left out). */
   pending: PendingMachine[];
   now: number;
   devices: ReturnType<typeof useDevices>;
@@ -37,7 +36,7 @@ export function pendingOs(p: Pick<PendingMachine, "os">): SpaceOs | null {
   return os === "macos" ? "macos" : os === "windows" ? "windows" : os === "linux" ? "linux" : null;
 }
 
-/** [Add machine] [Not me] for one waiting machine: the one place that does either. */
+/** [Add] [Not me] for one waiting computer: the one place that does either. */
 export function usePendingActions() {
   const { devices } = useMachinesAccount();
   const [notMe, setNotMe] = useState<PendingMachine | null>(null);
@@ -53,7 +52,7 @@ export function usePendingActions() {
     busy,
     add: (p: PendingMachine) =>
       run(p, () => (p.kind === "machine" ? devices.confirmMachine(p.machine!) : devices.addMachine(p.device!)), `Added ${p.name}`, `Couldn't add ${p.name}`),
-    /** Not me: a machine that signed in is denied at once; one that registered is removed after a question. */
+    /** Not me: a computer that signed in is denied at once; one that registered is removed after a question. */
     notMe: (p: PendingMachine) => (p.kind === "machine" ? setNotMe(p) : run(p, () => devices.denyDevice(p.device!), `${p.name} was not added`, `Couldn't refuse ${p.name}`)),
     notMeDialog: (remove: (machine: string) => Promise<unknown>) => (
       <ConfirmDialog
@@ -69,90 +68,12 @@ export function usePendingActions() {
   };
 }
 
-/** One waiting machine in the list's top group: name, system, its line, and the two choices. */
-export function PendingRow({
-  machine: p,
-  selected,
-  busy,
-  onSelect,
-  onAdd,
-  onNotMe,
-}: {
-  machine: PendingMachine;
-  selected: boolean;
-  busy: boolean;
-  onSelect: () => void;
-  onAdd: () => void;
-  onNotMe: () => void;
-}) {
-  const os = pendingOs(p);
-  return (
-    <div
-      data-pending-machine={p.id}
-      data-pending-kind={p.kind}
-      aria-selected={selected}
-      className={`rounded-lg px-2 py-[7px] ${selected ? "bg-brand/15" : "hover:bg-accent/60"}`}
-    >
-      <button type="button" onClick={onSelect} className="flex w-full cursor-default items-center gap-2.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/60 rounded-lg">
-        <span aria-hidden className="size-2 shrink-0 rounded-full bg-warning" />
-        <span className="min-w-0 flex-1">
-          <span className="block truncate text-[13px] font-medium">{p.name}</span>
-          <span className="block truncate text-xs text-muted-foreground" data-pending-line="">
-            {p.line}
-          </span>
-        </span>
-        {os ? <OsIcon os={os} className="size-3.5 shrink-0 text-muted-foreground/70" /> : null}
-      </button>
-      <div className="mt-1.5 flex gap-1.5 pl-[18px]">
-        <Button size="sm" className="h-6 px-2 text-xs" disabled={busy} onClick={onAdd} data-pending-add="">
-          {p.addLabel}
-        </Button>
-        <Button size="sm" variant="ghost" className="h-6 px-2 text-xs" disabled={busy} onClick={onNotMe} data-pending-not-me="">
-          {p.notMeLabel}
-        </Button>
-      </div>
-    </div>
-  );
-}
-
-/** "Add this machine?": the waiting machine's page, with its name, system and when it asked, and two buttons. */
-export function PendingDetail({ machine: p, now, busy, onAdd, onNotMe }: { machine: PendingMachine; now: number; busy: boolean; onAdd: () => void; onNotMe: () => void }) {
-  return (
-    <section aria-label={`${p.name} is waiting`} className="min-w-0 max-w-[620px]" data-pending-detail={p.id}>
-      <h2 className="text-[22px] font-semibold tracking-[-0.015em]">Add this machine?</h2>
-      <p className="mt-1.5 text-[13px] text-muted-foreground">{p.text}</p>
-      <dl className="mt-5 border-y">
-        <Fact label="Name" value={p.name} />
-        {p.os ? <Fact label="System" value={p.os} /> : null}
-        {p.since ? <Fact label="Last seen" value={relativeText(p.since, now)} /> : null}
-      </dl>
-      <div className="mt-5 flex gap-2">
-        <Button disabled={busy} onClick={onAdd} data-pending-add="">
-          {p.addLabel}
-        </Button>
-        <Button variant="outline" disabled={busy} onClick={onNotMe} data-pending-not-me="">
-          {p.notMeLabel}
-        </Button>
-      </div>
-    </section>
-  );
-}
-
-function Fact({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="grid grid-cols-[140px_1fr] border-t py-2.5 text-[13px] first:border-t-0">
-      <dt className="text-muted-foreground">{label}</dt>
-      <dd className="select-text">{value}</dd>
-    </div>
-  );
-}
-
 /** This machine's own trust, in plain words, with the one action that fixes it. */
 export function TrustSection({ trust, onTrust }: { trust: ThisMachineTrust; onTrust: () => void }) {
   const status = trust.at === null ? trust.status : `${trust.status} ${dateText(trust.at)}`;
   return (
     <>
-      <h3 className="mt-5 mb-2 text-xs font-semibold text-muted-foreground">Access to your machines</h3>
+      <h3 className="mt-5 mb-2 text-xs font-semibold text-muted-foreground">Access to your computers</h3>
       <div className="border-y" data-machine-trust={trust.kind}>
         <div className="flex min-h-11 items-center justify-between gap-4 py-2.5">
           <span className={`text-[13px] ${trust.kind === "enrolled" ? "text-muted-foreground" : "text-warning"}`} data-machine-trust-status="">
@@ -205,7 +126,7 @@ export function RecentAccess({ lines, title, empty, now, error }: { lines: Acces
               {lines.map((a, i) => (
                 <div key={`${a.ts}-${i}`} data-recent-row="" className={`flex min-h-10 items-center justify-between gap-4 py-2 ${i > 0 ? "border-t" : ""}`}>
                   <span className="flex min-w-0 items-center gap-2 text-[13px]">
-                    {a.notable ? <UsersIcon className="size-3.5 shrink-0 text-warning" aria-label="Another account or an untrusted machine" /> : null}
+                    {a.notable ? <UsersIcon className="size-3.5 shrink-0 text-warning" aria-label="Another account or an untrusted computer" /> : null}
                     <span className="select-text" data-recent-text="">
                       {a.text}
                     </span>
@@ -226,7 +147,7 @@ export function RecentAccess({ lines, title, empty, now, error }: { lines: Acces
   );
 }
 
-/** "Trust this machine": sign in again, or add it from a machine you already trust with a one-time code. */
+/** "Trust this computer": sign in again, or add it from a computer you already trust with a one-time code. */
 export function EnrollSheet() {
   const { data, chooseEnroll, backEnroll, closeEnroll } = useDevices();
   const v = data?.enroll?.view;

@@ -17,6 +17,7 @@ import { askText } from "@/lib/agent-home/requests";
 import { cn, isMacPlatform } from "@/lib/utils";
 
 import { AgentTile, MemberAvatar } from "./avatar";
+import { ChildSpaceRow, SubagentRow } from "./child-rows";
 import { FailureNote } from "./failure-note";
 import { AgentName, AiTag, holderNames, MemberEventNote } from "./identity";
 import { MentionChip, ProfileTrigger } from "./profile-card";
@@ -169,7 +170,7 @@ export function ThreadView({
 export function aboveSeq(items: readonly ThreadItem[], i: number): number | null {
   for (let j = i - 1; j >= 0; j--) {
     const it = items[j]!;
-    if (it.type === "system" || it.type === "unread") continue;
+    if (it.type === "system" || it.type === "unread" || it.type === "subagent" || it.type === "child_space") continue;
     return it.entry.seq;
   }
   return null;
@@ -216,6 +217,10 @@ export const ThreadItemView = memo(function Item({
           {item.text}
         </p>
       );
+    case "subagent":
+      return <SubagentRow item={item} />;
+    case "child_space":
+      return <ChildSpaceRow item={item} />;
     case "message":
       // One row, in order. A reply quotes the message it answers only when that is not the one right above it.
       return <Message entry={item.entry} {...m} quote={item.quote && item.quote.seq !== above ? item.quote : null} task={item.taskText !== null ? { text: item.taskText, onRetry } : undefined} />;

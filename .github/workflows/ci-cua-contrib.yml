@@ -176,12 +176,10 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install Linux build dependencies (cua-media-codec)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            build-essential cmake pkg-config libx11-dev libxkbcommon-dev \
-            libwayland-dev libxcb1-dev libx11-xcb-dev libxkbcommon-x11-dev \
-            libxrandr-dev libxi-dev libudev-dev
+        uses: ./.github/actions/apt-install
+        with:
+          packages: >-
+            build-essential cmake pkg-config libx11-dev libxkbcommon-dev libwayland-dev libxcb1-dev libx11-xcb-dev libxkbcommon-x11-dev libxrandr-dev libxi-dev libudev-dev
       - name: Build the contrib binding and the fixtures
         working-directory: libs/cua
         run: |

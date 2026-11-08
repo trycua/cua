@@ -187,7 +187,7 @@ export function useStartTask(): {
       const home = Boolean(children) && (where.kind === "agent" || where.kind === "machine");
       const mentions = named(prompt, where);
       const reuse = home ? homeForRequest(where, agent, spaces, children?.homesOf(agent)) : null;
-      // The new setup (Labs) made a Linux Space for this agent while the person was in the first run: the job is
+      // The first run made a Linux Space for this agent while the person was in the first run: the job is
       // kept by the preparing driver, which sends it exactly once when the agent is ready, even across a quit.
       const preparing = getDriver();
       const prep = preparing?.state;

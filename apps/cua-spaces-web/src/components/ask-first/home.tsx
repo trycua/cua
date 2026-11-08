@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 import { useNavigate } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { agentsView, useAgentChats, useAgentKeys, useBridge, useMachines, useSpaces, type AgentAccount, type AgentGroup, type AgentRunSummary } from "@/bridge";
 import { useChildren } from "@/components/children/use-children";
@@ -20,6 +20,7 @@ import { useListedSpaces } from "@/components/spaces/listed";
 import { cn } from "@/lib/utils";
 
 import { AskBox, type TaskWhere } from "./ask-box";
+import { BringTheRest } from "./bring-the-rest";
 import { agentName } from "./task-agents";
 import { AgentStatus } from "./agent-status";
 import type { AccountActions } from "./agent-picker";
@@ -31,8 +32,6 @@ import { useStartTask } from "./use-start-task";
 import { useThisMacTarget } from "./use-this-mac-target";
 import { useWhereOptions } from "./where-options";
 import { homeDefaultWhere } from "@/lib/this-mac-target";
-import { FallbackLine, useTreeWhere } from "./tree-where";
-import { currentTreeWhere } from "@/lib/default-where";
 import { PrepareLine } from "@/components/prepare/prepare-line";
 import { usePrepareAction } from "@/components/prepare/use-prepare-action";
 import { usePrepare } from "@/lib/prepare/store";
@@ -90,16 +89,12 @@ export function AskFirstHome() {
   // This computer once it's in the account, else a new Linux computer, unless you pick; a pick that's no longer
   // offered falls back to it.
   const [pickedWhere, setWhere] = useState<TaskWhere | null>(null);
-  // The first Space being prepared since launch (Labs, the new setup): silent unless it fails.
+  // The first Space being prepared after the first run: silent unless it fails.
   const prep = usePrepare();
   const onPrepareAction = usePrepareAction();
   const [whereOpen, setWhereOpen] = useState(false);
   const pick = useWherePick(agentName(chosenAgent));
-  // Spaces as a tree (Labs): your default Space unless you pick, or the next online computer; never a new one.
-  // With agent homes the agent decides where, so the tree's default doesn't apply.
-  const treeWhere = useTreeWhere();
-  const tw = agentHome ? null : treeWhere;
-  const where = tw ? currentTreeWhere(pickedWhere, tw.def.where, kinds, tw.tree) : currentWhere(pickedWhere ?? (agentHome ? { kind: "agent" } : homeDefaultWhere(thisMac.readiness, kinds)), kinds, [...pickable, ...computers]);
+  const where = currentWhere(pickedWhere ?? (agentHome ? { kind: "agent" } : homeDefaultWhere(thisMac.readiness, kinds)), kinds, [...pickable, ...computers]);
   const submit = (prompt = text, w = where) => {
     if (!prompt.trim() || !selected) return;
     // The default can be This Mac itself: it asks once, as picking it does.
@@ -130,16 +125,22 @@ export function AskFirstHome() {
     // Another sign-in or key beside the others: Claude Code's takes a token, the others the key of their provider.
     onAdd: (g, name, value) => keys.save(g.accounts[0]?.provider ?? (g.app === "claude-code" ? "anthropic" : g.app === "codex" ? "openai" : "anthropic"), value, null, {}, { add: true, ...(name ? { label: name } : {}) }),
   };
-  const fallback = tw && pickedWhere === null ? tw.def.fallback : null;
 
   // Home lists agents and Spaces, not tasks: with neither (a first run,
   // or tasks whose Spaces are gone), Home is the welcome again.
   const attempts = useAgentAttempts();
-  const { chats } = useAgentChats(attempts);
+  const { chats, loading: chatsLoading } = useAgentChats(attempts);
   // The home being prepared since launch, and the agent waiting in it, are not "yours" yet: until a job
   // is asked for, the welcome and its suggestions stay.
   const prepared = (id: string) => Boolean(prep.state?.wanted && (id === prep.state.homeSpaceId || id === prep.state.pendingId));
   const first = prep.state?.wanted ? tasks.length === 0 && listed.counted.every((c) => prepared(c.id)) : !chats?.length && listed.counted.length === 0;
+  // Nothing is drawn until the Spaces have loaded and, when there are some, their agents have answered (at most
+  // 0.8 s): otherwise the welcome turns into the lists, or the agents push the Spaces down, as the page loads.
+  // Once drawn, it stays drawn: a later read of the agents never blanks the page again.
+  const waited = useElapsed(800);
+  const shown = useRef(false);
+  shown.current ||= spaces !== undefined && (waited || listed.counted.length === 0 || (chats !== null && chatsLoading === 0));
+  if (!shown.current) return <div className="h-full" data-ask-first-home="" aria-busy="true" />;
 
   return (
     <div className="h-full scroll-y-stable" data-ask-first-home="">
@@ -171,12 +172,12 @@ export function AskFirstHome() {
           onSubmit={() => submit()}
           compact={!first}
           autoFocus
-          tree={tw}
         />
         <AgentStatus state={agentHome ? readiness : "none"} onReconnect={() => selected && void signInTo(selected.group.app, selected.group.label)} />
-        {fallback ? <FallbackLine fallback={fallback} /> : null}
         {/* Preparing is silent: only a failed prepare says so, with Try again. */}
         <PrepareLine view={prep.view} onRetry={onPrepareAction} />
+        {/* After the first job: the rest of setup, once (CUA-3150, idea C). On a Mac with a permission missing, the apps row at every launch (CUA-3551). */}
+        <BringTheRest />
         {first ? (
           <>
             <div className="grid gap-4 sm:grid-cols-3">
@@ -213,4 +214,14 @@ export function AskFirstHome() {
       {pick.dialog}
     </div>
   );
+}
+
+/** True once `ms` have passed since the first render. */
+function useElapsed(ms: number): boolean {
+  const [done, setDone] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setDone(true), ms);
+    return () => clearTimeout(t);
+  }, [ms]);
+  return done;
 }

@@ -37,7 +37,7 @@ export function ConnectorAppPage({ agent }: { agent: string }) {
     return (
       <div>
         {back}
-        <p className="text-[13px] text-muted-foreground">This app isn't on this machine.</p>
+        <p className="text-[13px] text-muted-foreground">This app isn't on this computer.</p>
       </div>
     );
   }

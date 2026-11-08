@@ -142,6 +142,8 @@ function nativeLayout(platform, arch) {
   const libraryFile = { darwin: "libcua_spaces_ffi.dylib", win32: "cua_spaces_ffi.dll", linux: "libcua_spaces_ffi.so" }[platform];
   const files = [libraryFile, "cua_node_runtime.node", platform === "win32" ? "cua.exe" : "cua"];
   if (platform === "linux") files.push(`cua-spacesd-linux-${spacesdArch[arch] ?? arch}`);
+  // Windows microVMs (QEMU on the Windows Hypervisor Platform) boot this static Linux init.
+  if (platform === "win32" && spacesdArch[arch] === "x86_64") files.push("cua-microvm-init");
   return { libraryFile, files };
 }
 

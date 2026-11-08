@@ -4,7 +4,7 @@
 // The sidebar's account area (CUA-2204) on the real routes, the wasm core
 // and the demo host: one line (the initial and the email) that opens
 // Settings, Plan (with its word) and Sign out; no "Signed in as", no plan
-// line, no sign-out icon. On Free only, "Run more Spaces at once with Pro"
+// line, no sign-out icon. On Free only, "Use more computers at once with Pro"
 // and Upgrade above it, with no way to close it; a paid plan never sees it.
 
 import { cleanup, fireEvent, waitFor, within } from "@testing-library/react";
@@ -92,7 +92,7 @@ describe.skipIf(!wasmBuilt)("the account area", () => {
     const { h, opened } = host("idle");
     await mountApp("/spaces", h);
     const b = await waitFor(() => banner() ?? Promise.reject(new Error("no banner")));
-    expect(b.textContent).toContain("Run more Spaces at once with Pro");
+    expect(b.textContent).toContain("Use more computers at once with Pro");
     const copy = b.querySelector<HTMLElement>("[data-pro-copy]")!;
     expect(copy.className).toContain("whitespace-normal");
     expect(copy.className).not.toContain("truncate");

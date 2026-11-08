@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.22.5](https://github.com/trycua/cua/compare/cua-spaces-v0.22.4...cua-spaces-v0.22.5) (2026-11-08)
+
+
+### Bug Fixes
+
+* **cua-vmm:** forward the agent port of a macOS Space behind the secure gateway ([#6793](https://github.com/trycua/cua/issues/6793)) ([55eaa9b](https://github.com/trycua/cua/commit/55eaa9b6c618bbe2f723ec392436ceb9e2b4e541))
+* **spaces:** start Claude agents on Sonnet 5.5 and list the Claude 5 family ([#6810](https://github.com/trycua/cua/issues/6810)) ([1511490](https://github.com/trycua/cua/commit/15114908cae2b3d70a85356651142faa1414ebf8))
+
+
+### Performance Improvements
+
+* **spaces:** connect Space desktop streams in under a second ([#6818](https://github.com/trycua/cua/issues/6818)) ([1f060b6](https://github.com/trycua/cua/commit/1f060b62491bce2fb010b64a6569bb1974decdc0))
+
 ## [0.22.4](https://github.com/trycua/cua/compare/cua-spaces-v0.22.3...cua-spaces-v0.22.4) (2026-11-07)
 
 

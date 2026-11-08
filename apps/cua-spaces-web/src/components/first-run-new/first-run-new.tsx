@@ -123,7 +123,7 @@ function Line({ children }: { children: ReactNode }) {
 
 function Check({ on }: { on: boolean }) {
   return on ? (
-    <span className="flex size-[22px] shrink-0 items-center justify-center rounded-full bg-white text-[#0a152d]" data-check="on">
+    <span className="flex size-[22px] shrink-0 items-center justify-center rounded-full bg-[#5ec0e8] text-[#050607]" data-check="on">
       <CheckIcon className="size-[13px]" strokeWidth={3} />
     </span>
   ) : (
@@ -141,7 +141,7 @@ function Row({ icon, name, sub, picked, disabled, onClick, extra, check = true, 
     <>
       {icon}
       <span className="min-w-0 flex-1 text-left">
-        <span className="block text-[15px] leading-5 font-medium text-white">{name}</span>
+        <span className={cn("block text-[15px] leading-5 font-medium transition-colors", check && !picked && onClick ? "text-white/60" : "text-white")}>{name}</span>
         <span className={cn("flex items-center gap-1.5 text-[13.5px] leading-[19px] font-medium", GREY)}>{sub}</span>
       </span>
       {extra}
@@ -149,7 +149,8 @@ function Row({ icon, name, sub, picked, disabled, onClick, extra, check = true, 
     </>
   );
   // design-ok: the first run is drawn from the spaces.cua.ai hero (storyboard CUA-3193), not the app's pages
-  const cls = cn("flex w-full items-center gap-3 rounded-[14px] px-3 py-[7px]", picked && "bg-white/10 shadow-[inset_0_0_0_1px_rgb(255_255_255/0.5)]", disabled && "pointer-events-none cursor-not-allowed opacity-40");
+  // Picked is said by the check alone (Cua Blue) and the name at full white; no box around the row.
+  const cls = cn("flex w-full items-center gap-3 rounded-[12px] px-3 py-[9px]", disabled && "pointer-events-none cursor-not-allowed opacity-40");
   if (!onClick || disabled)
     return (
       <div className={cls} aria-disabled={disabled || undefined} {...rest}>

@@ -345,10 +345,10 @@ pub fn sanitize_job_name(raw: &str) -> Option<String> {
     }
     let out: String = out.trim_matches('-').chars().take(24).collect();
     let out = out.trim_matches('-').to_string();
-    let first = out.split('-').next().unwrap_or("");
-    let last = out.rsplit('-').next().unwrap_or("");
     let hex = |x: &str, n: usize| x.len() >= n && x.bytes().all(|b| b.is_ascii_hexdigit());
-    let idlike = (matches!(first, "p" | "l" | "cj" | "j") && hex(last, 6)) || hex(last, 8);
+    let first = out.split('-').next().unwrap_or("");
+    let idlike = out.split('-').any(|x| hex(x, 8))
+        || (matches!(first, "p" | "l" | "cj" | "j") && out.split('-').any(|x| hex(x, 6)));
     (!out.is_empty() && !idlike).then_some(out)
 }
 
@@ -549,7 +549,7 @@ mod tests {
         );
         assert_eq!(
             sanitize_job_name("a-very-long-name-that-goes-on-and-on").as_deref(),
-            Some("a-very-long-name-that-g")
+            Some("a-very-long-name-that-go")
         );
         for id in [
             "p-train-1a2b3c4d",

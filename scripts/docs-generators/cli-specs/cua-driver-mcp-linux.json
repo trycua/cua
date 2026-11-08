@@ -547,6 +547,15 @@
       "description": "Target process ID. Required unless scope is \"desktop\" or element_token is supplied (the token carries the pid).",
       "type": "integer"
      },
+     "post_action_wait": {
+      "description": "How long the result waits for the post-action window-change report. \"default\": on macOS the result returns as soon as the input is delivered; on Linux X11 foreground delivery it waits up to 150 ms. \"report\" waits for a new window, menu, dialog or foreground change (up to 300 ms on macOS, 800 ms on Linux X11). \"none\" returns at delivery and says window changes were not observed. On macOS the watch keeps running in the background and a change it sees later is reported on the next action's result. Only paths that already observe window changes are affected; for example a right_click that does not watch is unchanged.",
+      "enum": [
+       "default",
+       "report",
+       "none"
+      ],
+      "type": "string"
+     },
      "scope": {
       "default": "window",
       "description": "Coordinate frame (default \"window\"). Pass \"desktop\" with x,y and no pid/window_id for a screen-absolute click in get_desktop_state coordinates.",
@@ -652,6 +661,15 @@
       "description": "Target process ID. Optional with element_token (the token carries the pid).",
       "type": "integer"
      },
+     "post_action_wait": {
+      "description": "How long the result waits for the post-action window-change report. \"default\": on macOS the result returns as soon as the input is delivered; on Linux X11 foreground delivery it waits up to 150 ms. \"report\" waits for a new window, menu, dialog or foreground change (up to 300 ms on macOS, 800 ms on Linux X11). \"none\" returns at delivery and says window changes were not observed. On macOS the watch keeps running in the background and a change it sees later is reported on the next action's result. Only paths that already observe window changes are affected; for example a right_click that does not watch is unchanged.",
+      "enum": [
+       "default",
+       "report",
+       "none"
+      ],
+      "type": "string"
+     },
      "session": {
       "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
       "type": "string"
@@ -722,6 +740,15 @@
      "pid": {
       "description": "Target process ID. Optional with element_token (the token carries the pid).",
       "type": "integer"
+     },
+     "post_action_wait": {
+      "description": "How long the result waits for the post-action window-change report. \"default\": on macOS the result returns as soon as the input is delivered; on Linux X11 foreground delivery it waits up to 150 ms. \"report\" waits for a new window, menu, dialog or foreground change (up to 300 ms on macOS, 800 ms on Linux X11). \"none\" returns at delivery and says window changes were not observed. On macOS the watch keeps running in the background and a change it sees later is reported on the next action's result. Only paths that already observe window changes are affected; for example a right_click that does not watch is unchanged.",
+      "enum": [
+       "default",
+       "report",
+       "none"
+      ],
+      "type": "string"
      },
      "session": {
       "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
@@ -811,6 +838,15 @@
      "pid": {
       "description": "Target process ID. Required unless scope is \"desktop\".",
       "type": "integer"
+     },
+     "post_action_wait": {
+      "description": "How long the result waits for the post-action window-change report. \"default\": on macOS the result returns as soon as the input is delivered; on Linux X11 foreground delivery it waits up to 150 ms. \"report\" waits for a new window, menu, dialog or foreground change (up to 300 ms on macOS, 800 ms on Linux X11). \"none\" returns at delivery and says window changes were not observed. On macOS the watch keeps running in the background and a change it sees later is reported on the next action's result. Only paths that already observe window changes are affected; for example a right_click that does not watch is unchanged.",
+      "enum": [
+       "default",
+       "report",
+       "none"
+      ],
+      "type": "string"
      },
      "scope": {
       "default": "window",
@@ -1204,6 +1240,15 @@
       "description": "Target process ID. Omit with scope \"desktop\" to type into the focused application.",
       "type": "integer"
      },
+     "post_action_wait": {
+      "description": "How long the result waits for the post-action window-change report. \"default\": on macOS the result returns as soon as the input is delivered; on Linux X11 foreground delivery it waits up to 150 ms. \"report\" waits for a new window, menu, dialog or foreground change (up to 300 ms on macOS, 800 ms on Linux X11). \"none\" returns at delivery and says window changes were not observed. On macOS the watch keeps running in the background and a change it sees later is reported on the next action's result. Only paths that already observe window changes are affected; for example a right_click that does not watch is unchanged.",
+      "enum": [
+       "default",
+       "report",
+       "none"
+      ],
+      "type": "string"
+     },
      "scope": {
       "default": "window",
       "description": "Use \"desktop\" with no pid to type into the focused application. Default \"window\".",
@@ -1318,6 +1363,15 @@
       "description": "Target process ID. Omit with scope \"desktop\" to send the key to the focused application.",
       "type": "integer"
      },
+     "post_action_wait": {
+      "description": "How long the result waits for the post-action window-change report. \"default\": on macOS the result returns as soon as the input is delivered; on Linux X11 foreground delivery it waits up to 150 ms. \"report\" waits for a new window, menu, dialog or foreground change (up to 300 ms on macOS, 800 ms on Linux X11). \"none\" returns at delivery and says window changes were not observed. On macOS the watch keeps running in the background and a change it sees later is reported on the next action's result. Only paths that already observe window changes are affected; for example a right_click that does not watch is unchanged.",
+      "enum": [
+       "default",
+       "report",
+       "none"
+      ],
+      "type": "string"
+     },
      "scope": {
       "default": "window",
       "description": "Use \"desktop\" with no pid to send the key to the focused application. Default \"window\".",
@@ -1417,6 +1471,15 @@
       "description": "Target process ID. Omit with scope \"desktop\" to send the chord to the focused application.",
       "type": "integer"
      },
+     "post_action_wait": {
+      "description": "How long the result waits for the post-action window-change report. \"default\": on macOS the result returns as soon as the input is delivered; on Linux X11 foreground delivery it waits up to 150 ms. \"report\" waits for a new window, menu, dialog or foreground change (up to 300 ms on macOS, 800 ms on Linux X11). \"none\" returns at delivery and says window changes were not observed. On macOS the watch keeps running in the background and a change it sees later is reported on the next action's result. Only paths that already observe window changes are affected; for example a right_click that does not watch is unchanged.",
+      "enum": [
+       "default",
+       "report",
+       "none"
+      ],
+      "type": "string"
+     },
      "scope": {
       "default": "window",
       "description": "Use \"desktop\" with no pid to send the chord to the focused application. Default \"window\".",
@@ -1508,6 +1571,15 @@
       "description": "Target process ID. Optional with element_token (the token carries the pid).",
       "type": "integer"
      },
+     "post_action_wait": {
+      "description": "How long the result waits for the post-action window-change report. \"default\": on macOS the result returns as soon as the input is delivered; on Linux X11 foreground delivery it waits up to 150 ms. \"report\" waits for a new window, menu, dialog or foreground change (up to 300 ms on macOS, 800 ms on Linux X11). \"none\" returns at delivery and says window changes were not observed. On macOS the watch keeps running in the background and a change it sees later is reported on the next action's result. Only paths that already observe window changes are affected; for example a right_click that does not watch is unchanged.",
+      "enum": [
+       "default",
+       "report",
+       "none"
+      ],
+      "type": "string"
+     },
      "session": {
       "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.",
       "type": "string"
@@ -1589,6 +1661,15 @@
      "pid": {
       "description": "Target process ID. Required unless scope is \"desktop\" or element_token is supplied (the token carries the pid).",
       "type": "integer"
+     },
+     "post_action_wait": {
+      "description": "How long the result waits for the post-action window-change report. \"default\": on macOS the result returns as soon as the input is delivered; on Linux X11 foreground delivery it waits up to 150 ms. \"report\" waits for a new window, menu, dialog or foreground change (up to 300 ms on macOS, 800 ms on Linux X11). \"none\" returns at delivery and says window changes were not observed. On macOS the watch keeps running in the background and a change it sees later is reported on the next action's result. Only paths that already observe window changes are affected; for example a right_click that does not watch is unchanged.",
+      "enum": [
+       "default",
+       "report",
+       "none"
+      ],
+      "type": "string"
      },
      "scope": {
       "default": "window",

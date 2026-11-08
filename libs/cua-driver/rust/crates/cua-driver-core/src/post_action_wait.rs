@@ -99,11 +99,11 @@ pub fn schema() -> Value {
                         delivered; on Linux X11 foreground delivery it waits up to 150 ms. \
                         \"report\" waits for a new window, menu, dialog or foreground change \
                         (up to 300 ms on macOS, 800 ms on Linux X11). \"none\" returns at \
-                        delivery and says window changes were not observed. In every case the \
-                        watch keeps running in the background and a change it sees later is \
-                        reported on the next action's result. Only paths that already observe \
-                        window changes are affected; for example a right_click that does not \
-                        watch is unchanged."
+                        delivery and says window changes were not observed. On macOS the watch \
+                        keeps running in the background and a change it sees later is reported \
+                        on the next action's result. Only paths that already observe window \
+                        changes are affected; for example a right_click that does not watch is \
+                        unchanged."
     })
 }
 

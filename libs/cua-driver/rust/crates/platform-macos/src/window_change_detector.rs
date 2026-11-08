@@ -253,12 +253,13 @@ const DEFAULT_TIMEOUT: Duration = Duration::from_millis(1000);
 /// Default inter-poll interval.
 const DEFAULT_POLL_INTERVAL: Duration = Duration::from_millis(25);
 
-/// How long the action result itself waits for a window change. Menus,
-/// popovers and sheets map well inside this. When nothing has changed by
-/// then the result returns, and the rest of the observation deadline runs
-/// detached (see [`Snapshot::continue_detached`]): the focus-steal lease
-/// stays armed and a late window is reported on the next action's result. Before this, every
-/// action that opened nothing paid the whole deadline.
+/// How long a result waits for a window change when the caller passed
+/// `post_action_wait: "report"`, or when the action needs the change as
+/// evidence (see [`Snapshot::detect_async_for_evidence`]). Menus, popovers and
+/// sheets map well inside this. A default call does not wait at all: it
+/// returns at delivery and the whole deadline runs detached (see
+/// [`Snapshot::continue_detached`]), with the focus-steal lease armed, so a
+/// window that opens is reported on the next action's result.
 const REPORT_WINDOW: Duration = Duration::from_millis(300);
 
 /// A late change older than this is not reported on a later result.
@@ -486,24 +487,37 @@ impl Snapshot {
     /// loop on a `spawn_blocking` thread so it doesn't stall the
     /// tokio runtime. Most action-tool call sites should prefer this
     /// over the blocking `detect()`.
+    ///
+    /// The caller's `post_action_wait` sets how long the result waits: not
+    /// at all by default or with `"none"` (which also says so in the
+    /// result), the report window with `"report"`.
     pub async fn detect_async(self) -> Changes {
-        // A step of a batch returns after a shorter report window, because
-        // the next step follows at once. The pacing is read here: a blocking
-        // thread does not inherit the task's batch marker.
-        // `post_action_wait: "none"` skips the wait altogether.
-        let report_window = match cua_driver_core::post_action_wait::current() {
-            cua_driver_core::post_action_wait::PostActionWait::None => Duration::ZERO,
-            cua_driver_core::post_action_wait::PostActionWait::Default => {
-                cua_driver_core::step_pacing::report_window(REPORT_WINDOW)
-            }
-        };
+        self.detect_async_waiting(false).await
+    }
+
+    /// [`detect_async`](Self::detect_async) for an action whose result reads
+    /// `new_windows` as evidence (an AX press that may be a no-op): it waits
+    /// the report window unless the caller passed `post_action_wait: "none"`.
+    pub async fn detect_async_for_evidence(self) -> Changes {
+        self.detect_async_waiting(true).await
+    }
+
+    async fn detect_async_waiting(self, evidence: bool) -> Changes {
+        use cua_driver_core::post_action_wait::PostActionWait;
+        // Read here: a blocking thread does not inherit the task-locals.
+        let wait = cua_driver_core::post_action_wait::current();
+        let report_window = report_window_for(wait, evidence);
         // Move the Snapshot (and its embedded lease) onto the blocking
         // thread; the lease's Drop runs there when detect_with returns.
-        tokio::task::spawn_blocking(move || {
+        let mut changes = tokio::task::spawn_blocking(move || {
             self.detect_bounded_reporting(host_observation_bounds(), report_window, observe_host)
         })
         .await
-        .unwrap_or_else(|_| Changes::not_polled())
+        .unwrap_or_else(|_| Changes::not_polled());
+        // Only an explicit "none" says that nothing was observed; a default
+        // call reports later changes on the next result without a note.
+        changes.deferred &= wait == PostActionWait::None;
+        changes
     }
 
     /// One observation against the snapshot: the change it shows, if any.
@@ -631,6 +645,24 @@ impl Snapshot {
     }
 }
 
+/// How long a result waits for a window change, given the caller's
+/// `post_action_wait` and whether the action reads the change as evidence. A
+/// step of a batch waits at most the batch report window, because the next
+/// step follows at once.
+fn report_window_for(
+    wait: cua_driver_core::post_action_wait::PostActionWait,
+    evidence: bool,
+) -> Duration {
+    use cua_driver_core::post_action_wait::PostActionWait;
+    match wait {
+        PostActionWait::None => Duration::ZERO,
+        PostActionWait::Default if !evidence => Duration::ZERO,
+        PostActionWait::Default | PostActionWait::Report => {
+            cua_driver_core::step_pacing::report_window(REPORT_WINDOW)
+        }
+    }
+}
+
 /// The host's visible layer-0 windows.
 fn host_windows() -> Vec<WindowInfo> {
     windows::visible_windows_without_spaces()
@@ -652,7 +684,8 @@ pub(crate) fn observe_quiet_window_list(bounds: WindowObservationBounds, report_
     focus_arbiter::end_detached();
 }
 
-/// The report window of a direct call. Support for the step-latency benchmark.
+/// The report window of a direct `"report"` call. Support for the
+/// step-latency benchmark.
 #[cfg(test)]
 pub(crate) const DIRECT_REPORT_WINDOW: Duration = REPORT_WINDOW;
 
@@ -1056,6 +1089,37 @@ mod tests {
             },
         );
         assert_eq!(changes.new_windows.len(), 1);
+    }
+
+    /// A default call returns at delivery; "report" and an evidence wait get
+    /// the report window, shortened inside a batch; "none" never waits.
+    #[tokio::test]
+    async fn only_report_and_evidence_wait_for_the_report_window() {
+        use cua_driver_core::post_action_wait::PostActionWait;
+        use cua_driver_core::step_pacing::{scope, StepPacing, BATCH_REPORT_WINDOW};
+        assert_eq!(
+            report_window_for(PostActionWait::Default, false),
+            Duration::ZERO
+        );
+        assert_eq!(
+            report_window_for(PostActionWait::None, true),
+            Duration::ZERO
+        );
+        assert_eq!(
+            report_window_for(PostActionWait::Report, false),
+            REPORT_WINDOW
+        );
+        assert_eq!(
+            report_window_for(PostActionWait::Default, true),
+            REPORT_WINDOW
+        );
+        scope(StepPacing::Batched, async {
+            assert_eq!(
+                report_window_for(PostActionWait::Report, false),
+                BATCH_REPORT_WINDOW
+            );
+        })
+        .await;
     }
 
     /// `post_action_wait: "none"` (a zero report window) returns at once

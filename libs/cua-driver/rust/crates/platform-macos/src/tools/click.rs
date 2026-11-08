@@ -940,8 +940,16 @@ impl ClickTool {
             .await;
 
             // Drop the wildcard lease + detect window/foreground side-effects.
+            // A press on an element that does not advertise the action is a
+            // suspected no-op unless it opened a window, so that result waits
+            // for the report window; every other result returns at delivery.
             let acted_at = std::time::Instant::now();
-            let changes = super::finish_window_observation(snapshot).await;
+            let may_be_noop = matches!(&result, Ok(Ok(((_, _, true, false, _), _))));
+            let changes = if may_be_noop {
+                snapshot.detect_async_for_evidence().await
+            } else {
+                super::finish_window_observation(snapshot).await
+            };
 
             match result {
                 Ok(Ok((

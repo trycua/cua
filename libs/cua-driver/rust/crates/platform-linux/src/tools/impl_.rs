@@ -2933,17 +2933,16 @@ async fn close_window_background(pid: u32, xid: u64, display: &str) -> ToolResul
         }
         Err(error) => return ToolResult::error(format!("Task error: {error}")),
     }
-    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(2000);
-    let mut closed = false;
-    while std::time::Instant::now() < deadline {
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        let viewable =
-            tokio::task::spawn_blocking(move || crate::x11::window_is_viewable(xid)).await;
-        if matches!(viewable, Ok(false)) {
-            closed = true;
-            break;
-        }
-    }
+    // Woken by the window's UnmapNotify / DestroyNotify on the root.
+    let closed = tokio::task::spawn_blocking(move || {
+        crate::input::foreground::wait_for_root_change(
+            std::time::Duration::from_millis(2000),
+            std::time::Duration::from_millis(100),
+            || !crate::x11::window_is_viewable(xid),
+        )
+    })
+    .await
+    .unwrap_or(false);
     let after: Vec<crate::x11::WindowInfo> =
         tokio::task::spawn_blocking(move || crate::x11::list_windows(Some(pid)))
             .await

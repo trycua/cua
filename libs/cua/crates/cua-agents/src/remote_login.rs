@@ -1,6 +1,3 @@
-// SPDX-License-Identifier: FSL-1.1-MIT
-// Copyright (c) 2026 Cua AI, Inc.
-
 //! An agent's own sign-in, made on the computer it runs on.
 //!
 //! Cua does not move a Claude Code or ChatGPT sign-in between computers by

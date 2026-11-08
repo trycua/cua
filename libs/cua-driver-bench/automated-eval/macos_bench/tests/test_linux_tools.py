@@ -680,6 +680,7 @@ class EvidenceTest(unittest.TestCase):
     def test_run_stopped_during_its_first_attempt(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             run = write_run(Path(tmp))
+            (run / "run.lock").touch()  # every runner start takes the lock first
             (run / "results.jsonl").unlink()
             (run / "trials/T1/a1/trial.json").unlink()
             self.assertEqual(self.check(run), [])
@@ -687,6 +688,13 @@ class EvidenceTest(unittest.TestCase):
             self.assertEqual(self.check(run), [])
             (run / "DONE").write_text("{}")
             self.assertTrue(any("no rows" in p for p in self.check(run)))
+
+    def test_directory_the_runner_never_started_is_not_a_run(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            empty = Path(tmp) / "empty"
+            (empty / "trials").mkdir(parents=True)
+            self.assertTrue(any("not a run directory" in p for p in self.check(empty)))
+            self.assertEqual(evidence.main([str(empty)]), 1)
 
     def test_recorder_requires_started_and_video(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

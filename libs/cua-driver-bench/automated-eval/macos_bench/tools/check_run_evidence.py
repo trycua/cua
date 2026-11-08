@@ -144,7 +144,12 @@ def _video_problem(attempt: Path) -> str | None:
     return None
 
 
+RUN_MARKERS = ("run.lock", "results.jsonl", "manifest.json")  # a runner start writes run.lock first
+
+
 def check_run(run: Path) -> list[str]:
+    if not any((run / name).exists() for name in RUN_MARKERS):
+        return [f"not a run directory: none of {', '.join(RUN_MARKERS)}"]
     problems: list[str] = []
     results = run / "results.jsonl"
     rows: list[dict] = []

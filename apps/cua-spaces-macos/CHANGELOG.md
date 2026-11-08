@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.23.1](https://github.com/trycua/cua/compare/cua-spaces-v0.23.0...cua-spaces-v0.23.1) (2026-11-08)
+
+
+### Bug Fixes
+
+* **spaces-macos:** ask for Local Network when this Mac starts accepting Spaces from your other computers ([#7005](https://github.com/trycua/cua/issues/7005)) ([69b459b](https://github.com/trycua/cua/commit/69b459b33ca001a5e7026dee4f57da1ec02ee53f))
+
+## [0.23.0](https://github.com/trycua/cua/compare/cua-spaces-v0.22.5...cua-spaces-v0.23.0) (2026-11-08)
+
+
+### Features
+
+* **spaces:** show "Local · Staging" or "Local · Prod" in the title bar (CUA-3814) ([#6962](https://github.com/trycua/cua/issues/6962)) ([17b37ef](https://github.com/trycua/cua/commit/17b37ef5775b4b06f0d1483bf0a9db6074a8d2ff))
+
+
+### Bug Fixes
+
+* **spaces-macos:** ask for Local Network access before a macOS Space, not when this Mac starts providing Spaces ([#6970](https://github.com/trycua/cua/issues/6970)) ([d71463d](https://github.com/trycua/cua/commit/d71463dda18b8ffc6c655b6319785c1a33425d39))
+* **spaces-macos:** bundle cua 0.15.1 in Cua Spaces ([#6979](https://github.com/trycua/cua/issues/6979)) ([c34374a](https://github.com/trycua/cua/commit/c34374a9302c59d424841fbdf1c858f9c4aef7dc))
+* **spaces-macos:** uninstall-local.sh also removes the Local Cua Driver login item ([#6978](https://github.com/trycua/cua/issues/6978)) ([54813bf](https://github.com/trycua/cua/commit/54813bf1f85ac76636a94b813631efa4f8988454))
+* **spaces:** Ready lists only the picked agent's chats, and shows at once (CUA-3774) ([#6916](https://github.com/trycua/cua/issues/6916)) ([4392fe0](https://github.com/trycua/cua/commit/4392fe0502790f4fdd1d9b9e5bc42c1418281146))
+
 ## [0.22.5](https://github.com/trycua/cua/compare/cua-spaces-v0.22.4...cua-spaces-v0.22.5) (2026-11-08)
 
 

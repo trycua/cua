@@ -274,12 +274,13 @@ describe.skipIf(!wasmBuilt)("with the wasm core", () => {
     const core = await testCore();
     const guide = hostSetupGuide(core);
     expect(guide.choices.map((c) => c.id)).toEqual(["desktop", "spare"]);
-    expect(guide.intro).toMatch(/no network setup/);
+    expect(guide.intro).toMatch(/Its screen stays private unless you share it/);
     expect(guide.form?.fields.map((f) => [f.id, f.advanced])).toEqual([
       ["name", false],
       ["profile", false],
       ["allow", false],
     ]);
-    expect(hostSetupGuide(noCore)).toMatchObject({ form: null, choices: guide.choices, intro: guide.intro });
+    // Without the core: the same choices and no intro of its own (one copy, the core's).
+    expect(hostSetupGuide(noCore)).toMatchObject({ form: null, choices: guide.choices, intro: "" });
   });
 });

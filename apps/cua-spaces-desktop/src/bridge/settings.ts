@@ -92,12 +92,12 @@ export function experimentsPage(model: AppModel) {
   return model.native.appExperimentsPage(model.settings.experiments);
 }
 
-/** The experiments the daemon enforces (Secure Spaces, Child Spaces, Ask first, CI runners, Public TCP shares, Phone app, Warm start) as the cua home keeps them: what `cua experiments enable` set shows the next time Settings is read. */
+/** The experiments the daemon enforces (Child Spaces, CI runners, Public TCP shares, Phone app, Warm start) as the cua home keeps them: what `cua experiments enable` set shows the next time Settings is read. */
 export function refreshDaemonExperiments(model: AppModel): void {
   const kept = model.native.appSettingsLoad(model.settingsPath).experiments;
   const now = model.settings.experiments;
-  if (kept.secureSpaces === now.secureSpaces && kept.childSpaces === now.childSpaces && kept.askFirst === now.askFirst && kept.ciRunners === now.ciRunners && kept.tcpShares === now.tcpShares && kept.mobile === now.mobile && kept.warmPools === now.warmPools) return;
-  model.settings = { ...model.settings, experiments: { ...now, secureSpaces: kept.secureSpaces, childSpaces: kept.childSpaces, askFirst: kept.askFirst, ciRunners: kept.ciRunners, tcpShares: kept.tcpShares, mobile: kept.mobile, warmPools: kept.warmPools } };
+  if (kept.childSpaces === now.childSpaces && kept.ciRunners === now.ciRunners && kept.tcpShares === now.tcpShares && kept.mobile === now.mobile && kept.warmPools === now.warmPools) return;
+  model.settings = { ...model.settings, experiments: { ...now, childSpaces: kept.childSpaces, ciRunners: kept.ciRunners, tcpShares: kept.tcpShares, mobile: kept.mobile, warmPools: kept.warmPools } };
 }
 
 /** `settings.get`'s answer: General, Experiments, the update channel (null:
@@ -112,6 +112,9 @@ export function settingsState(model: AppModel, parts: HostParts) {
     // The account app (CUA_ENV, CUA_ACCOUNT_APP_URL): the page's core has no
     // environment, so Upgrade's billing fallback names this one.
     accountUrl: model.native.appAccountAppUrl(),
+    // The channel and environment this app runs as (CUA_CHANNEL, CUA_ENV, as cua-home resolves
+    // them): the page's title bar tag ("Local · Staging", the core's `environment.tag`).
+    target: model.native.appTarget(),
     // The CLI this app installs and whether it is here (`cli.ts`).
     cli: cliSetting(model),
     // Settings, Advanced's runtimes as read (`runtimes::RuntimesInput`): the page's core lays out every kind's row.

@@ -66,6 +66,8 @@ jobs:
         with:
           workspaces: libs/cua
           shared-key: libs-cua-qemu-tests
+      - name: Set up pasta (secure network)
+        uses: ./.github/actions/setup-pasta
       - name: Install QEMU and firmware
         run: |
           set -euo pipefail

@@ -144,6 +144,21 @@ export interface SettingsSnapshot {
    * plan) and whether it is on this computer. Absent or null: the host
    * can't say, and the hints stay hidden. */
   cli?: CliInfo | null;
+  /** The channel and environment this app runs as, as the host resolved them
+   * (`app_target`, from cua-home): the title bar's "Local · Staging" tag
+   * (the core's `environment.tag`). Absent or null: the host can't say, and
+   * no tag shows. */
+  target?: AppTarget | null;
+}
+
+/** `SettingsSnapshot.target` (`environment_tag::Target` in the app core). */
+export interface AppTarget {
+  /** `stable` or `local`. */
+  channel: string;
+  /** `prod` or `staging`. */
+  env: string;
+  /** The sign-in server's host (`auth.staging.cua.ai`); empty: the environment's. */
+  authHost: string;
 }
 
 /** `SettingsSnapshot.cli`. */

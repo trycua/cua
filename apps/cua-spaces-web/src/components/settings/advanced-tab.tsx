@@ -22,7 +22,7 @@ import { thisComputerText } from "@/lib/host-labels";
 const SELF_HOSTED = "self-hosted";
 
 /** Experiments that stay as Labs. "Your cloud" and "Sharing" have no switch any more: the plan decides on the server. */
-const LABS = new Set(["experiment:cua_volume", "experiment:secure_spaces", "experiment:child_spaces", "experiment:ask_first", "experiment:ci_runners", "experiment:tcp_shares", "experiment:mobile", "experiment:warm_pools"]);
+const LABS = new Set(["experiment:cua_volume", "experiment:child_spaces", "experiment:ci_runners", "experiment:tcp_shares", "experiment:mobile", "experiment:warm_pools"]);
 
 /**
  * Settings, Advanced: the update channel (Stable or Nightly), Labs, which software runs Spaces on
@@ -58,7 +58,6 @@ export function AdvancedTab() {
           {overflow ? (
             <CoreSettingsRow
               row={{ ...overflow, label: `Use my own cloud when ${thisComputerText()} is busy` }}
-              description={`New Spaces go to your linked cloud when ${thisComputerText()} is full.`}
               onChoose={choose}
             />
           ) : null}
@@ -169,9 +168,7 @@ function Labs() {
   const rows = (data?.page?.sections.flatMap((s) => s.rows) ?? []).filter((r) => LABS.has(r.id));
   const note: Record<string, string> = {
     "experiment:cua_volume": "Memory and files your agents share across every Space.",
-    "experiment:secure_spaces": "A Space reaches the internet and nothing else on your network unless you open it.",
     "experiment:child_spaces": "A Space can make Spaces of its own, inside a budget you set.",
-    "experiment:ask_first": "An agent asks you on a card before anything leaves its Space, such as a push to GitHub.",
     "experiment:ci_runners": "Run GitHub Actions jobs in a fresh Space each, on this computer. Adds CI Runners to the sidebar.",
     "experiment:tcp_shares": "Share a game server or another TCP service in a Space at a public address.",
     "experiment:mobile": "Your computers answer the Cua Spaces phone app: start a task, follow the thread and review changes.",
@@ -179,7 +176,7 @@ function Labs() {
   };
   if (!rows.length) return null;
   return (
-    <SettingsGroup title="Labs">
+    <SettingsGroup title="Labs" footer="These are experiments. They may change or go away.">
       {rows.map((r) => (
         <CoreSettingsRow
           key={r.id}
@@ -209,7 +206,6 @@ function OwnConnection() {
         <SettingRow
           data-self-hosting=""
           label="Use your own connection server"
-          help="For teams that run their own."
           control={
             <Button size="sm" variant="outline" disabled={host.busy} onClick={() => host.openForm(SELF_HOSTED)}>
               Set up…

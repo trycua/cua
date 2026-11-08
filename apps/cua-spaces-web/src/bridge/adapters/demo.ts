@@ -71,8 +71,6 @@ import { createDemoNetwork, demoAgentHomeRows, demoNetworkSpaceRows } from "./de
 import { demoMachine, MAC_DEMO_PLATFORM, type DemoPlatform } from "./demo/platform";
 
 export interface DemoOptions {
-  /** The Ask first experiment is on (`?demo=ask-first`; the GitHub demos turn it on too): Settings, Connections lists GitHub and Labs has its switch. */
-  askFirst?: boolean;
   /** Connections, GitHub: `gh` with two accounts and an Enterprise host (default), `?demo=github-none`, `github-saved` (a saved token) or `github-warning` (scopes broader than needed). */
   github?: DemoGithubStart;
   /** CI Runners: nothing connected (`?demo=ci-fresh`), GitHub connected and no job yet (`?demo=ci-connected`), or a week of jobs (default). */
@@ -157,6 +155,10 @@ export interface DemoOptions {
    * set; `local` is a Local build's (`?demo=cli-local`), `missing` one
    * not installed (`?demo=cli-missing`). */
   cli?: "local" | "missing";
+  /** The channel and environment the demo host reports (`settings.get`'s
+   * `target`): the released app on production unless set; `?demo=local-staging`,
+   * `?demo=local-prod` and `?demo=stable-staging` show the title bar's tag. */
+  target?: { channel: "stable" | "local"; env: "prod" | "staging" };
   /** A daemon without the Space thread (`?demo=nothread`): the Space page keeps its old layout. */
   noThread?: boolean;
   /** No Claude Code, Codex or Hermes chats on this computer (`?demo=nochats`): the Ready screen hides "Pick up where you left off". */
@@ -276,7 +278,6 @@ export function demoOptionsFromSearch(search: string): DemoOptions {
     ...(flags.has("slow") ? { latencyMs: 4000 } : {}),
     signedIn: !flags.has("fresh"),
     onboarded: !flags.has("fresh"),
-    ...(flags.has("ask-first") ? { askFirst: true } : {}),
     ...(flags.has("github-none") ? { github: "none" as const } : flags.has("github-saved") ? { github: "saved" as const } : flags.has("github-warning") ? { github: "warning" as const } : {}),
     ...(flags.has("ci-fresh") ? { ci: "fresh" as const } : flags.has("ci-connected") ? { ci: "connected" as const } : {}),
     keyvaultLocked: flags.has("locked"),
@@ -341,6 +342,13 @@ export function demoOptionsFromSearch(search: string): DemoOptions {
     nudge: (["second-agent", "risky"] as const).find((n) => flags.has(`nudge-${n}`)),
     disk: flags.has("disk-full") ? "full" : flags.has("low-disk") ? "low" : undefined,
     cli: flags.has("cli-local") ? "local" : flags.has("cli-missing") ? "missing" : undefined,
+    ...(flags.has("local-staging")
+      ? { target: { channel: "local" as const, env: "staging" as const } }
+      : flags.has("local-prod")
+        ? { target: { channel: "local" as const, env: "prod" as const } }
+        : flags.has("stable-staging")
+          ? { target: { channel: "stable" as const, env: "staging" as const } }
+          : {}),
     ...(flags.has("network") ? { network: flags } : {}),
     ...(flags.has("agent-home") ? { agentHome: true } : {}),
     shares: (["consent", "routes", "settings", "cap"] as const).find((p) => flags.has(`shares-${p}`)),
@@ -426,9 +434,9 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     hostSettings: options.macHost ? DEMO_MAC_HOST_SETTINGS : undefined,
     runtimes: demoRuntimesState(),
     volume: (() => {
-      const v = demoVolumeState(now(), options.onboarded !== false, options.platform, Boolean(options.askFirst || options.github), options.ci !== undefined);
+      const v = demoVolumeState(now(), options.onboarded !== false, options.platform, options.ci !== undefined);
       return options.shares || options.network || options.agentHome
-        ? { ...v, experiments: { ...v.experiments, ...(options.shares ? { tcpShares: true } : {}), ...(options.network ? { secureSpaces: true } : {}), ...(options.agentHome ? { childSpaces: true, askFirst: true } : {}) } }
+        ? { ...v, experiments: { ...v.experiments, ...(options.shares ? { tcpShares: true } : {}), ...(options.agentHome ? { childSpaces: true } : {}) } }
         : v;
     })(),
     ...demoTelemetryState(),
@@ -511,6 +519,8 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     globalShortcut: state.platform.os === "macos" ? { label: state.settings.hotkey, registered: true } : null,
     // What a host's CLI install plan names (`CuaChannel::cli_name`): Local's is `cua-local`.
     cli: { name: cliName, installed: cliInstalled },
+    // The released app on production unless `?demo=local-staging` (or another) says otherwise.
+    target: { channel: "stable", env: "prod", authHost: "", ...options.target },
   });
   const overview = () => {
     if (!state.keyvaultSetUp) return demoNoVaultOverview(now());

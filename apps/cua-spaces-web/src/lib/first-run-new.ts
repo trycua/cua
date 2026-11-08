@@ -95,7 +95,7 @@ export function welcomeUsage(view: { notice?: string | null; noticeLinkLabel?: s
 export const WELCOME = {
   title: "Combine your existing computers into one supercomputer.",
   // The headline picked on 7 Nov 2026 (CUA-3753), then the one-liner and what to do here (CUA-3150).
-  line: "Your computers, shared by your team and its agents. Sign in on each Mac, PC or Linux computer you own, then use any of them from here.",
+  line: "Your computers, shared by your team and its agents. Sign in on each one to use them all from here.",
   primary: "Add this computer",
   skip: "Skip for now",
 } as const;
@@ -131,7 +131,7 @@ export function signInView(phase: SignInPhase, url: string | null): SignInView {
       ...base,
       state: "code",
       title: "Finish signing in in your browser",
-      line: "Open the sign-in page on any device and enter this code. This window moves on by itself when you're done.",
+      line: "Enter this code on the sign-in page, on any device.",
       waiting: "Waiting for the code",
       code: { code: phase.userCode, url },
       tryAgainPrimary: false,
@@ -142,7 +142,7 @@ export function signInView(phase: SignInPhase, url: string | null): SignInView {
     ...base,
     state: "waiting",
     title: "Finish signing in in your browser",
-    line: "Cua opened in your browser. Create your account there, or sign in if you already have one. This window moves on by itself when you're done.",
+    line: "Create your account or sign in there. This window moves on when you're done.",
     waiting: "Waiting for your browser",
     code: null,
     tryAgainPrimary: false,
@@ -278,7 +278,7 @@ export function whereView(input: WhereInput): WhereView {
     if (input.canMakeSeparate === false) {
       const sub =
         input.os === "macos"
-          ? "This Mac can't make one. Older Intel Macs can't, for example. Your agents can still work on this Mac or on another computer you add."
+          ? "This Mac can't make one (older Intel Macs can't)."
           : `${input.separateBlocked ? `${input.separateBlocked} ` : `${Place} can't make one. `}Your agents can still work on ${place} or on another computer you add.`;
       return { title, sub, disabled: true, state: "offer" as const, action: null };
     }
@@ -293,7 +293,7 @@ export function whereView(input: WhereInput): WhereView {
   if (!input.signedIn) {
     return {
       title: "Pick where your agents work",
-      line: `Your agents can work on ${place} without an account. Add ${place} to an account when you want them on your other computers too.`,
+      line: `No account needed for ${place}. Sign in to use your other computers too.`,
       thisRow: { name: Place, status: "not added yet", tick: false, model: input.model, modelFirst: true, picked: thisPicked, action: { id: "add", label: "Add" } },
       others: null,
       offlineFold: null,
@@ -318,7 +318,7 @@ export function whereView(input: WhereInput): WhereView {
           : "In your account";
   return {
     title: "Pick where your agents work",
-    line: `You're signed in, and ${place} is now in your account. Your agents can start here, or on your other computers while you keep working on this one.`,
+    line: "Pick the computers your agents can use.",
     thisRow: {
       name: Place,
       status,
@@ -384,6 +384,9 @@ export interface AgentView {
   error: string | null;
 }
 
+/** Why setup asks for a coding agent at all, said in every state of screen 3. */
+export const NO_AI_OF_ITS_OWN = "Cua has no AI of its own.";
+
 /**
  * Screen 3. `found`: the coding agents installed on this computer (setup ids), null while still looking; `off`: the
  * ones the person unticked. Nothing has to be picked: every agent found starts ticked, Continue connects the ticked
@@ -399,13 +402,13 @@ export function agentView(input: { os: string; found: string[] | null; off?: rea
     return {
       state: "none",
       title: "Install a coding agent",
-      line: `Cua doesn't come with its own, and we didn't find one on ${place}. Install Claude Code, then sign in to it once.`,
+      line: `${NO_AI_OF_ITS_OWN} We didn't find a coding agent on ${place}. Install Claude Code, then sign in to it once.`,
       label,
       agents: [],
       note: null,
       continueEnabled: false,
       later: "Install later",
-      install: { primary: "Install Claude Code", secondary: "Install Codex instead", note: "This opens the official Claude Code install page in your browser. Come back here when it's installed." },
+      install: { primary: "Install Claude Code", secondary: "Install Codex instead", note: "Opens claude.com. Come back when it's installed." },
       error: null,
     };
   }
@@ -415,8 +418,8 @@ export function agentView(input: { os: string; found: string[] | null; off?: rea
     state: "found",
     title: one ? `Use ${one.name} on all your computers` : "Use your coding agents on all your computers",
     line: one
-      ? `We found ${one.name} on ${place}. Cua connects it to your computers, so it can run jobs on any of them while you keep working here.`
-      : `We found ${listNames(found.map((a) => a.name))} on ${place}. Cua connects each one to your computers, so any of them can run jobs there while you keep working here.`,
+      ? `${NO_AI_OF_ITS_OWN} ${one.name} does the work, on your own plan.`
+      : `${NO_AI_OF_ITS_OWN} ${listNames(found.map((a) => a.name))} do the work, each on your own plan.`,
     label,
     agents: found.map((a) => ({ id: a.id, name: a.name, maker: a.maker, picked: !off.includes(a.id) })),
     note: "You pick the agent for each job. You can change this later in Settings.",
@@ -493,14 +496,12 @@ export function bringRestView(input: { os: string; apps?: boolean; cli?: boolean
   const apps = input.apps ?? input.os === "macos";
   return {
     title: "Now bring the rest in",
-    line: apps
-      ? `Your first job is done. When you're ready, add your team and your other computers, and let agents use apps on ${place}.`
-      : "Your first job is done. When you're ready, add your team and your other computers.",
+    line: "Your first job is done.",
     rows: [
       { id: "invite", title: "Invite a teammate", sub: "They can use these computers and agents too." },
       { id: "add-computer", title: "Add another computer", sub: "Install Cua Spaces on it and sign in." },
       ...(apps ? [{ id: "apps" as const, title: `Let agents use apps on ${place}`, sub: "They can see the screen and use the mouse and keyboard, after you allow it." }] : []),
-      ...(input.cli ? [{ id: "cli" as const, title: "Use Cua from Terminal", sub: "If you type commands, add the cua command to this computer." }] : []),
+      ...(input.cli ? [{ id: "cli" as const, title: "Use Cua from Terminal", sub: "Adds the cua command." }] : []),
     ],
     dismiss: "Not now",
   };

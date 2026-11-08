@@ -97,7 +97,7 @@ export function Sidebar() {
       <div className="flex-1" />
       <SidebarCreating spaces={(spaces ?? []).filter((s) => !warming.has(s.id))} />
       <SidebarTip />
-      {/* Free only: "Use more computers at once with Pro", right above the account line. */}
+      {/* Free only, near a limit: "2 of 2 computers in use. Pro allows 5.", right above the account line. */}
       <ProBanner />
       {/* A ready update is a compact button at the end of the account line. */}
       <AccountFooter trailing={<SidebarUpdateButton />} />
@@ -262,7 +262,7 @@ export function AccountFooter({ trailing }: { trailing?: ReactNode }) {
           </div>
           {stuck ? (
             <div className="mt-1.5 pl-5.5 text-2xs text-muted-foreground" data-signin-stuck="">
-              <p>Still waiting? If the page won&apos;t finish, get a code and sign in from any browser or phone.</p>
+              <p>Page stuck?</p>
               <button type="button" className="mt-0.5 underline underline-offset-2 hover:text-foreground" onClick={startWithCode} data-signin-code="">
                 Get a code instead
               </button>

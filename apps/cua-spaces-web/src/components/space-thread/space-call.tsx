@@ -258,7 +258,7 @@ export function SpaceCall({
     // The first time a message is addressed for you, say so quietly.
     const told = address.told || r.auto;
     setAddress(spaceId, { ...r.next, told });
-    if (r.auto && !address.told) toast(`${r.addressee.handles.map(nameOf).join(" and ")} will be mentioned automatically`, { description: "Click the X on the name in the box to stop." });
+    if (r.auto && !address.told) toast(`Sending to ${r.addressee.handles.map(nameOf).join(" and ")}`);
   };
   const harnessOf = (handle: string) => roster.agents.find((a) => a.name === handle)?.harness ?? summon.candidates.find((c) => c.handle === handle)?.harness ?? "";
   // Attachments are Cua Volume paths: show the file where the Volume is mounted.

@@ -63,9 +63,8 @@ pub fn note_for(backend: &str, settings: &NetworkSettings) -> Option<String> {
     }
 }
 
-/// While Secure Spaces is off (an experiment), a Space gets the network it
-/// always had: only the old allow and deny lists. Anything
-/// else is refused with how to turn the experiment on.
+/// While the operator override `CUA_SECURE_DEFAULT=0` has the secure default off, a Space gets
+/// the network it always had: only the old allow and deny lists. Anything else is refused.
 pub fn require_secure_spaces(settings: Option<&NetworkSettings>) -> Result<()> {
     if Mode::from_env() == Mode::Secure {
         return Ok(());
@@ -83,7 +82,7 @@ pub fn require_secure_spaces(settings: Option<&NetworkSettings>) -> Result<()> {
     });
     if beyond_lists {
         return Err(Error::invalid(
-            cua_vmm::experiments::Gate::SecureSpaces.off_message(),
+            cua_vmm::network::secure_default_off_message(),
         ));
     }
     Ok(())
@@ -665,10 +664,10 @@ impl Spaces {
         tree: bool,
     ) -> Result<cua_vmm::network::Applied> {
         settings.validate().map_err(|e| Error::invalid(e.0))?;
-        // Changing a Space's network is part of the experiment.
+        // Changing a Space's network needs the secure default.
         if Mode::from_env() == Mode::Legacy {
             return Err(Error::invalid(
-                cua_vmm::experiments::Gate::SecureSpaces.off_message(),
+                cua_vmm::network::secure_default_off_message(),
             ));
         }
         let id = self.resolve(space)?;
@@ -752,12 +751,12 @@ impl Spaces {
         settings: &NetworkSettings,
     ) -> Result<NetworkSettings> {
         let current = crate::network::settings_of(self.inner.registry.meta(key).as_ref());
-        // Choosing an exit is part of Secure Spaces; an exit that is a Space
-        // of the tree needs Child Spaces as well.
+        // Choosing an exit needs the secure default; an exit that is a Space of the tree needs
+        // Child Spaces as well.
         if settings.via.is_some() && settings.via != current.via {
             if Mode::from_env() == Mode::Legacy {
                 return Err(Error::invalid(
-                    cua_vmm::experiments::Gate::SecureSpaces.off_message(),
+                    cua_vmm::network::secure_default_off_message(),
                 ));
             }
             if matches!(settings.via, Some(cua_vmm::network::EgressVia::Space(_)))

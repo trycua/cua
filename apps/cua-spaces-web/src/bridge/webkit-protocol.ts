@@ -414,6 +414,8 @@ export interface WkSettings {
   /** The CLI the app installs (its install plan's file name) and whether it
    * is on this computer; absent or null: not known. */
   cli?: { name: string; installed: boolean } | null;
+  /** The channel and environment the app runs as (`app_target`); absent or null: not known. */
+  target?: { channel: string; env: string; authHost: string } | null;
   /** `AppSettings.tips`; absent: an older host that keeps none. Saved with `settings.update`. */
   tips?: { off: boolean; done: string[] };
   /** `AppSettings.notchPinned`: the Spaces and desktops pinned to the notch, in pin order; absent: an older host. Saved with `settings.update`. */

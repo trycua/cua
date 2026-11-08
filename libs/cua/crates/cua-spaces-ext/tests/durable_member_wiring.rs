@@ -120,6 +120,11 @@ async fn alive(fx: &Fx, run: &str) -> cua_spacesd_client::ProcessHandle {
 /// The 0.7.0 record of `ada` (the shape `upgrade/0.7.0/home/persistent/
 /// agents.json` holds), working in the fixture's Space, with a field a
 /// newer daemon wrote.
+/// The Space as the Volume names it: `<id>--<uid>`, since Secure Spaces is the default.
+fn volume_id(fx: &Fx) -> String {
+    fx.spaces.volume_space_id(&fx.space).unwrap()
+}
+
 fn agents_070(space: &str) -> Value {
     json!([{
         "name": "ada",
@@ -225,12 +230,12 @@ async fn a_070_agent_becomes_a_durable_member_and_its_080_run_is_shipped_and_red
     assert_eq!((rec.redrive.epoch, rec.redrive.attempts), (2, 1));
     assert_eq!(rec.setup, "ok", "no .cua/setup: settled at once");
     let b = backend(&fx);
-    let restored = cua_spaces_ext::session_journal::restore(b.as_ref(), &fx.space, RUN)
+    let restored = cua_spaces_ext::session_journal::restore(b.as_ref(), &volume_id(&fx), RUN)
         .await
         .unwrap();
     assert_eq!(restored.files["tools.jsonl"], TOOLS_080.as_bytes());
     assert_eq!(restored.files["events.jsonl"], EVENTS_080.as_bytes());
-    let prefix = cua_volume::journal::session_prefix(&fx.space, RUN).unwrap();
+    let prefix = cua_volume::journal::session_prefix(&volume_id(&fx), RUN).unwrap();
     let (fence, _) = cua_volume::journal::read_fence(b.as_ref(), &prefix)
         .await
         .unwrap()
@@ -460,7 +465,7 @@ async fn a_lost_durable_run_is_started_again_from_the_volume_behind_a_raised_fen
     let proc = alive(&fx, RUN).await;
     Box::pin(p.tick()).await;
     let b = backend(&fx);
-    let prefix = cua_volume::journal::session_prefix(&fx.space, RUN).unwrap();
+    let prefix = cua_volume::journal::session_prefix(&volume_id(&fx), RUN).unwrap();
     assert!(
         !cua_volume::journal::chunks(b.as_ref(), &prefix)
             .await

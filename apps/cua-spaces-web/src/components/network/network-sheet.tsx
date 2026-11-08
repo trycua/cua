@@ -182,9 +182,13 @@ function NetworkSheetBody({
             />
           ) : null}
           {topology ? <Reachable topology={topology} /> : null}
-          <p data-network-always="" className="mt-4 flex items-start gap-2 px-1 text-xs text-muted-foreground">
+          <p
+            data-network-always=""
+            title="Cloud metadata, Cua's own services and other Spaces' trees are always blocked."
+            className="mt-4 flex items-start gap-2 px-1 text-xs text-muted-foreground"
+          >
             <LockIcon className="mt-px size-3.5 shrink-0" />
-            Cloud metadata, Cua's own services and other Spaces' trees are always blocked.
+            Some addresses are always blocked.
           </p>
           {blocked.length ? <RecentlyBlocked rows={blocked} /> : null}
           {error ? (

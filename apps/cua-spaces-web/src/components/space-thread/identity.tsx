@@ -170,7 +170,7 @@ export function ProvenanceCard({
             {joinedWhen(i.joined.atMs)}
           </Fact>
         ) : null}
-        <Fact label="Harness" title={!harness ? `${i.displayName} didn't say which harness it runs` : i.origin === "external" ? `As ${i.displayName} reported it` : "Cua started it"}>
+        <Fact label="Runs in" title={!harness ? `${i.displayName} didn't say which app it runs in` : i.origin === "external" ? `As ${i.displayName} reported it` : "Cua started it"}>
           {harness ? <span className="truncate">{harness}</span> : <span className="text-muted-foreground">Not reported</span>}
         </Fact>
       </div>
@@ -184,7 +184,7 @@ export function ProvenanceCard({
         </div>
       ) : null}
       <p className="mt-2.5 text-[11.5px] leading-snug text-muted-foreground">
-        {harness && i.origin === "external" ? "Name, icon and harness are set by the agent." : "The name and icon are set by the agent."} Owner and machine are checked by Cua.
+        The agent sets its own name and icon. Owner and computer are checked by Cua.
       </p>
       {onRemove || onActivity ? (
         <div className="mt-3 flex items-center">

@@ -13,6 +13,9 @@ use core_graphics::{
     event_source::{CGEventSource, CGEventSourceStateID},
 };
 use foreign_types::ForeignType;
+use std::sync::{Arc, Mutex};
+
+use super::input_source;
 
 const SCREEN_SHARING_BUNDLE_ID: &str = "com.apple.ScreenSharing";
 const SHIFT_KEY_CODE: u16 = 56;
@@ -996,10 +999,16 @@ fn target_key_code(
     modifiers: &[&str],
 ) -> anyhow::Result<u16> {
     let screen_sharing = pid.into().is_some_and(is_screen_sharing_pid);
-    chord_key_code(key, modifiers, target_layout(screen_sharing).as_ref())
+    chord_key_code(key, modifiers, target_layout(screen_sharing).as_deref())
 }
 
-fn target_layout(screen_sharing: bool) -> Option<KeyLayout> {
+/// The virtual key `key` with `modifiers` presses on the current keyboard
+/// layout, as `press_key` and `hotkey` resolve it for a local app.
+pub fn layout_key_code(key: &str, modifiers: &[&str]) -> anyhow::Result<u16> {
+    target_key_code(None, key, modifiers)
+}
+
+fn target_layout(screen_sharing: bool) -> Option<Arc<KeyLayout>> {
     (!screen_sharing).then(current_layout).flatten()
 }
 
@@ -1008,9 +1017,36 @@ fn target_layout(screen_sharing: bool) -> Option<KeyLayout> {
 /// character is.
 const TYPING_KEY_CODES: std::ops::RangeInclusive<u16> = 0..=50;
 
-/// The current keyboard layout, read with `UCKeyTranslate`, or `None` when it
-/// has no Unicode layout data.
-fn current_layout() -> Option<KeyLayout> {
+/// The current keyboard layout, or `None` when it has no Unicode layout data
+/// or could not be read with the thread affinity Text Input Sources requires
+/// (see [`super::input_source`]); chords then keep their US key positions.
+///
+/// In a process with a main run loop the layout is read once on the main
+/// queue and cached until the selected or enabled input sources change.
+fn current_layout() -> Option<Arc<KeyLayout>> {
+    static CACHE: Mutex<Option<(u64, Option<Arc<KeyLayout>>)>> = Mutex::new(None);
+
+    let generation = input_source::generation();
+    if input_source::can_cache() {
+        if let Some((cached, layout)) = CACHE.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
+            if *cached == generation {
+                return layout.clone();
+            }
+        }
+    }
+    input_source::run(move || {
+        let layout = read_current_layout().map(Arc::new);
+        if input_source::can_cache() {
+            *CACHE.lock().unwrap_or_else(|e| e.into_inner()) = Some((generation, layout.clone()));
+        }
+        layout
+    })
+    .flatten()
+}
+
+/// Read the current layout with `UCKeyTranslate`. Text Input Sources calls:
+/// only through [`input_source::run`].
+fn read_current_layout() -> Option<KeyLayout> {
     use core_foundation::base::{CFRelease, CFTypeRef};
     use core_foundation::data::{CFDataGetBytePtr, CFDataRef};
     use core_foundation::string::CFStringRef;
@@ -1508,7 +1544,7 @@ mod tests {
     fn screen_sharing_chords_keep_us_positions() {
         assert!(target_layout(true).is_none());
         assert_eq!(
-            chord_key_code("a", &["cmd"], target_layout(true).as_ref()).unwrap(),
+            chord_key_code("a", &["cmd"], target_layout(true).as_deref()).unwrap(),
             0
         );
     }
@@ -1523,7 +1559,7 @@ mod tests {
             if layout.plain.iter().all(|&(_, typed)| typed != letter) {
                 continue;
             }
-            let code = chord_key_code(&letter.to_string(), &[], Some(&layout)).unwrap();
+            let code = chord_key_code(&letter.to_string(), &[], Some(&*layout)).unwrap();
             assert!(layout.plain.contains(&(code, letter)), "{letter}");
         }
     }

@@ -14,6 +14,7 @@
 pub mod ax_actions;
 pub mod electron_drag;
 pub mod hover;
+pub mod input_source;
 pub mod interactive;
 pub mod keyboard;
 pub mod mouse;

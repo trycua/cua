@@ -164,3 +164,9 @@ trycua/cua#6546 (CUA-3510) screenshots: the five spaces-1b-*.jpg images above (a
 <img width="3936" height="908" alt="cua3854-onboarding-desktop" src="https://github.com/user-attachments/assets/dee10edc-ac92-4c8a-aedd-9d009e631bf4" />
 <img width="2632" height="908" alt="cua3854-computer-desktop" src="https://github.com/user-attachments/assets/6950300b-4ac8-46ca-a44f-79ef6b0daaa7" />
 <img width="2184" height="1168" alt="cua3854-onboarding-narrow" src="https://github.com/user-attachments/assets/cad4899c-cce7-4c29-97e8-785d265edaaa" />
+<img width="1520" height="1800" alt="infra-pseudo-narrow" src="https://github.com/user-attachments/assets/4bed7465-5247-46e5-bb35-54e0d42049d2" />
+<img width="2880" height="1800" alt="infra-pseudo-desktop" src="https://github.com/user-attachments/assets/f7f64146-cb83-4f06-8e40-98386add1c00" />
+<img width="1520" height="1800" alt="infra-after-narrow" src="https://github.com/user-attachments/assets/c4c2e71d-3c0f-42c6-b991-c21eae79277f" />
+<img width="1520" height="1800" alt="infra-before-narrow" src="https://github.com/user-attachments/assets/d915665c-c978-4060-8cad-ce15662c625d" />
+<img width="2880" height="1800" alt="infra-after-desktop" src="https://github.com/user-attachments/assets/25a4d739-37eb-4abf-833f-df3bd122a808" />
+<img width="2880" height="1800" alt="infra-before-desktop" src="https://github.com/user-attachments/assets/2085e456-9953-426b-ab2b-e1163f9c96b8" />

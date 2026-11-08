@@ -428,6 +428,7 @@ impl AgentTools {
             }
             "space_job" => self.space_job(a).await,
             "stream_space_window" | "list_space_windows" => self.child_windows(tool, a).await,
+            "launch_space_app" => self.launch_in_child(a).await,
             other => Err(Error::NotFound(format!("tool {other}"))),
         }
     }
@@ -457,6 +458,28 @@ impl AgentTools {
             }
         }
         Ok(McpServer::new(spaces.clone()).call(tool, a).await)
+    }
+
+    /// `launch_space_app`: opens an app on the desktop of one of this agent's child Spaces (its computer tool
+    /// `computer_launch`), so the agent does not have to find the right shell incantation for a graphical app.
+    async fn launch_in_child(&self, a: Value) -> Result<ToolOutcome> {
+        let spaces = &self.persistent.spaces;
+        let target = str_arg(&a, "space")?.to_string();
+        let app = str_arg(&a, "app")?.to_string();
+        let info = spaces.find(&target).await.map_err(|_| {
+            Error::invalid(format!(
+                "no Space {target:?} among yours: pass the name of a child Space you made"
+            ))
+        })?;
+        let id = info.id.to_string();
+        if !spaces.descendants(&self.space)?.contains(&id) {
+            return Err(Error::invalid(format!(
+                "{target:?} is not a child Space of yours: you can only open apps in Spaces you made"
+            )));
+        }
+        Ok(McpServer::new(spaces.clone())
+            .call("computer_launch", json!({"app": app, "sandbox": id, "args": a.get("args").cloned().unwrap_or(json!([]))}))
+            .await)
     }
 
     /// `space_job` in this agent's own Space (whatever `space` says). With
@@ -783,6 +806,7 @@ const NAMES: &[&str] = &[
     "space_job",
     "stream_space_window",
     "list_space_windows",
+    "launch_space_app",
     "repo_push",
 ];
 
@@ -916,6 +940,17 @@ impl ToolExtension for AgentTools {
                 false,
             ),
             space_job_tool(),
+            tool(
+                "launch_space_app",
+                "Open an app on the desktop of one of your child Spaces, by its name (for example Firefox). Use this to open a browser or any graphical app there; it is not a shell command. Then call stream_space_window to show it.",
+                schema(
+                    json!({"space": {"type": "string", "description": "The child Space's name."},
+                              "app": {"type": "string", "description": "The app, for example Firefox."},
+                              "args": {"type": "array", "items": {"type": "string"}, "description": "Arguments, for example a URL."}}),
+                    &["space", "app"],
+                ),
+                false,
+            ),
             tool(
                 "list_space_windows",
                 "List the windows open in one of your child Spaces (app, title, handle). Use it to see whether an app's window has opened.",

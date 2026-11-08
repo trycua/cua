@@ -120,8 +120,8 @@ Re-tested against the current builds (PC and Mac):
 | G7 | UI: job row | working for a job's Space on this computer; this pass adds the ledger-driven row for any host (tests; real-app check on the Mac run pending a native rebuild) |
 | N1 | The thread said "Let me look at it" (process narration) in the MLX run. Cause: the model's habit before a tool call; the brief alone does not hold. | fixed structurally: later stretches that narrate a plan are held back (`is_process_narration`), plus the brief |
 | N2 | An outsized event line in an agent's log made the reader stall and the final message never reach the chat | fixed (#7004) |
-| N3 | F: full corrupted the runtime distro; no guard in the daemon | OPEN, high: refuse to start Spaces under a free-space floor and say so; ranked first below |
-| N4 | `cua run` followed in the foreground is killed by the agent shell after ~2 min and cancels the run | OPEN: the brief now says `--detach`; the CLI should detach itself when stdout is not a terminal |
+| N3 | F: full corrupted the runtime distro; no guard in the daemon | FIXED (#6945): every local create checks the free-space floor (`CUA_DISK_MIN_FREE`, default 5 GiB; pulls and VM creates already did) and refuses with the way out; unit tests with a fake probe |
+| N4 | `cua run` followed in the foreground is killed by the agent shell after ~2 min and cancels the run | FIXED (#6945): when stdout is not a terminal (and not `--json`) the follow stops after 100 s (`CUA_RUN_FOLLOW_SECS`, 0 = never), says the run keeps going and how to follow or cancel it, exits 0 like `--detach`; a terminal follows to the end |
 | N5 | The agent retrains to "polish" (3 runs, 15 min) | mitigated by the brief and a 3-minute limit; the quality check is still the agent's own |
 | N6 | Remote children made with `create_space --on host:...` carry the labels but the cross-host orphan sweep and the child list for them are not verified across two hosts | OPEN: test with the PC and the Mac using a non-GPU Space |
 | N7 | A host leaving mid-job: row logic and tests exist; not yet exercised live (needs a fault test with the Mac host stopped) | OPEN |
@@ -130,4 +130,4 @@ Re-tested against the current builds (PC and Mac):
 | N10 | Windows native member (`kind=machine`) has no pinned uv, `member_env` joins PATH with `:` | OPEN (OS invariance) |
 | N11 | Stream/log/command routing to a remote child through the mesh | OPEN: a window of a job running on another computer is not streamed (the NCA window opened in the agent's own Space by design) |
 
-Ranked next: N3, N4, N6, N7, N9, N11, N8, N10.
+Ranked next: N6, N7, N9, N11, N8, N10 (N3 and N4 done).

@@ -2852,14 +2852,22 @@ pub fn type_text_focused_paced(text: &str, gap: std::time::Duration) -> anyhow::
     let mut buf = [0u8; 4];
     for (done, ch) in text.chars().enumerate() {
         match type_into(None, ch.encode_utf8(&mut buf)) {
-            Err(error) if done > 0 => {
-                anyhow::bail!("type_text stopped after {done} of {total} characters: {error:#}")
-            }
+            Err(error) if done > 0 => return Err(stopped_after(done, total, &error)),
             result => result?,
         }
         std::thread::sleep(gap);
     }
     Ok(())
+}
+
+/// A stop after `done` characters went out. A refusal of the next one loses its
+/// claim that nothing was typed, which held only for that character.
+fn stopped_after(done: usize, total: usize, error: &anyhow::Error) -> anyhow::Error {
+    let detail = format!("{error:#}");
+    let detail = detail
+        .strip_suffix(text_keys::NOTHING_TYPED)
+        .map_or(detail.as_str(), |rest| rest.trim_end_matches("; "));
+    anyhow::anyhow!("type_text stopped after {done} of {total} characters: {detail}")
 }
 
 /// [`type_text`] into `window`, activated first, or [`type_text_focused`].
@@ -4603,6 +4611,15 @@ mod tests {
         assert_eq!(
             error,
             "foreground_unavailable: control character U+0008 cannot be typed; nothing was typed"
+        );
+    }
+
+    #[test]
+    fn a_refusal_after_some_text_went_out_does_not_say_nothing_was_typed() {
+        let refusal = super::text_keys::refused("no keyboard for a line break");
+        assert_eq!(
+            super::stopped_after(1, 2, &refusal).to_string(),
+            "type_text stopped after 1 of 2 characters: foreground_unavailable: no keyboard for a line break"
         );
     }
 

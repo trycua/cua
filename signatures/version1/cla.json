@@ -927,6 +927,14 @@
       "created_at": "2026-11-08T01:50:57Z",
       "repoId": 925270205,
       "pullRequestNo": 6926
+    },
+    {
+      "name": "lucharo",
+      "id": 47890755,
+      "comment_id": 6721850483,
+      "created_at": "2026-11-08T13:04:57Z",
+      "repoId": 925270205,
+      "pullRequestNo": 6967
     }
   ]
 }

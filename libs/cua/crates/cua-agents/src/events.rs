@@ -622,7 +622,10 @@ mod tests {
     }
 
     fn line(seq: u64, pad: usize) -> String {
-        format!(r#"{{"seq":{seq},"ts":1,"turn":1,"type":"update","pad":"{}"}}"#, "x".repeat(pad))
+        format!(
+            r#"{{"seq":{seq},"ts":1,"turn":1,"type":"update","pad":"{}"}}"#,
+            "x".repeat(pad)
+        )
     }
 
     #[tokio::test]

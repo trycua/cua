@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.23.1](https://github.com/trycua/cua/compare/cua-spaces-v0.23.0...cua-spaces-v0.23.1) (2026-11-08)
+
+
+### Bug Fixes
+
+* **spaces-macos:** ask for Local Network when this Mac starts accepting Spaces from your other computers ([#7005](https://github.com/trycua/cua/issues/7005)) ([69b459b](https://github.com/trycua/cua/commit/69b459b33ca001a5e7026dee4f57da1ec02ee53f))
+
 ## [0.23.0](https://github.com/trycua/cua/compare/cua-spaces-v0.22.5...cua-spaces-v0.23.0) (2026-11-08)
 
 

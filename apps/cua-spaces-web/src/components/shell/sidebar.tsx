@@ -2,15 +2,16 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 import { Link } from "@tanstack/react-router";
-import { useEffect, useRef, useState, type PointerEvent, type ReactNode } from "react";
+import { Fragment, useEffect, useRef, useState, type PointerEvent, type ReactNode } from "react";
 
 import { Loader2Icon, TriangleAlertIcon } from "lucide-react";
 
 import type { SignInFooter, Space } from "@/bridge";
 import { spokenName } from "@/bridge/space-names";
 
-import { signInFooter, useBridge, useFeatureRecorded, useNotifications, useSession, useSpaces } from "@/bridge";
+import { signInFooter, useBridge, useDriver, useFeatureRecorded, useNotifications, useSession, useSpaces } from "@/bridge";
 import { CuaKey } from "@/components/cua-key";
+import { DriverAttentionLabel } from "@/components/driver/attention";
 import { Button } from "@/components/ui/button";
 import { toast } from "@/components/ui/toast";
 import { bindingFor } from "@/lib/keybindings";
@@ -26,6 +27,7 @@ import { SidebarTip } from "@/components/tips";
 import { useMachinesAccount } from "@/components/machines/account-parts";
 import { AccountLine, ProBanner } from "./account-area";
 import { useSpacesTreeData } from "@/components/spaces/use-spaces-tree";
+import { THIS_COMPUTER } from "@/lib/machines";
 
 export function Sidebar() {
   const width = useUiStore((s) => s.sidebarWidth);
@@ -57,34 +59,36 @@ export function Sidebar() {
           if (item.to === "/notifications" && notifications.unsupported) return null;
           const shortcut = item.command ? bindingFor(item.command) : undefined;
           return (
-            <Link
-              key={item.to}
-              to={item.to}
-              className="group flex h-7 items-center gap-2.5 rounded-lg px-2 text-[13px] outline-none hover:bg-foreground/5 focus-visible:ring-2 focus-visible:ring-ring/60 data-[status=active]:bg-foreground/[0.07] data-[status=active]:font-medium data-[status=active]:text-foreground dark:data-[status=active]:bg-white/[0.08]"
-            >
-              {({ isActive }) => (
-                <>
-                  <item.icon className={cn("size-4 text-muted-foreground", isActive && "text-brand-strong")} strokeWidth={1.75} />
-                  <span className="flex-1 truncate">{item.label}</span>
-                  {item.to === "/notifications" && unread > 0 ? (
-                    // The Cua key says they're Cua's; the count, in plain text, says how many are unread.
-                    <span data-unread-badge className="flex items-center gap-1" aria-label={`${unread} unread`}>
-                      <CuaKey size={16} />
-                      <span className="text-2xs font-medium tabular-nums text-foreground">{unread}</span>
-                    </span>
-                  ) : null}
-                  {item.to === "/spaces" && pending.length > 0 ? (
-                    <span data-pending-badge className="rounded-full bg-warning/20 px-1.5 text-2xs font-medium tabular-nums text-foreground" aria-label={`${pending.length} waiting to be added`}>
-                      {pending.length}
-                    </span>
-                  ) : null}
-                  {counts[item.to] !== undefined ? (
-                    <span className="text-2xs tabular-nums text-muted-foreground group-hover:hidden">{counts[item.to]}</span>
-                  ) : null}
-                  {shortcut ? <Shortcut spec={shortcut} className="hidden opacity-70 group-hover:inline-flex" /> : null}
-                </>
-              )}
-            </Link>
+            <Fragment key={item.to}>
+              <Link
+                to={item.to}
+                className="group flex h-7 items-center gap-2.5 rounded-lg px-2 text-[13px] outline-none hover:bg-foreground/5 focus-visible:ring-2 focus-visible:ring-ring/60 data-[status=active]:bg-foreground/[0.07] data-[status=active]:font-medium data-[status=active]:text-foreground dark:data-[status=active]:bg-white/[0.08]"
+              >
+                {({ isActive }) => (
+                  <>
+                    <item.icon className={cn("size-4 text-muted-foreground", isActive && "text-brand-strong")} strokeWidth={1.75} />
+                    <span className="flex-1 truncate">{item.label}</span>
+                    {item.to === "/notifications" && unread > 0 ? (
+                      // The Cua key says they're Cua's; the count, in plain text, says how many are unread.
+                      <span data-unread-badge className="flex items-center gap-1" aria-label={`${unread} unread`}>
+                        <CuaKey size={16} />
+                        <span className="text-2xs font-medium tabular-nums text-foreground">{unread}</span>
+                      </span>
+                    ) : null}
+                    {item.to === "/spaces" && pending.length > 0 ? (
+                      <span data-pending-badge className="rounded-full bg-warning/20 px-1.5 text-2xs font-medium tabular-nums text-foreground" aria-label={`${pending.length} waiting to be added`}>
+                        {pending.length}
+                      </span>
+                    ) : null}
+                    {counts[item.to] !== undefined ? (
+                      <span className="text-2xs tabular-nums text-muted-foreground group-hover:hidden">{counts[item.to]}</span>
+                    ) : null}
+                    {shortcut ? <Shortcut spec={shortcut} className="hidden opacity-70 group-hover:inline-flex" /> : null}
+                  </>
+                )}
+              </Link>
+              {item.to === "/spaces" ? <SidebarDriverLine /> : null}
+            </Fragment>
           );
         })}
       </nav>
@@ -99,6 +103,27 @@ export function Sidebar() {
       <AccountFooter trailing={<SidebarUpdateButton />} />
       <ResizeHandle />
     </aside>
+  );
+}
+
+/**
+ * Cua Driver, under Computers, where this Cua Spaces carries it: it opens
+ * This Mac's Cua Driver page, and says so beside it when the driver needs
+ * a person.
+ */
+export function SidebarDriverLine() {
+  const driver = useDriver();
+  if (!driver.available) return null;
+  return (
+    <Link
+      to="/spaces/computer/$computerId/driver"
+      params={{ computerId: THIS_COMPUTER }}
+      data-sidebar-driver=""
+      className="flex h-7 items-center gap-2 rounded-lg pr-2 pl-[34px] text-[13px] outline-none hover:bg-foreground/5 focus-visible:ring-2 focus-visible:ring-ring/60 data-[status=active]:font-medium data-[status=active]:text-foreground"
+    >
+      <span className="shrink-0">Cua Driver</span>
+      <DriverAttentionLabel status={driver.status} className="ml-auto" />
+    </Link>
   );
 }
 

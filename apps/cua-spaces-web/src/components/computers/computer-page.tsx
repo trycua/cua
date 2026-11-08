@@ -22,6 +22,7 @@ import {
 } from "@/bridge";
 import { AddComputerSheet } from "@/components/add-computer-sheet";
 import { BackLink } from "@/components/back-link";
+import { DriverAttentionLabel } from "@/components/driver/attention";
 import { driverLine } from "@/components/driver/copy";
 import { EnrollSheet, RecentAccess, TrustSection, useMachinesAccount } from "@/components/machines/account-parts";
 import { EmptyState, Page } from "@/components/page";
@@ -93,7 +94,7 @@ export function ComputerPage({ id }: { id: string }) {
   );
 }
 
-/** This Mac's Cua Driver, as one of its settings: only where this Cua Spaces carries the driver (CUA-2706). */
+/** This Mac's Cua Driver, as one of its settings: only where this Cua Spaces carries the driver (CUA-2706), with the sidebar line's word when it needs a person. */
 function DriverRow({ computerId }: { computerId: string }) {
   const driver = useDriver();
   if (!driver.available) return null;
@@ -105,6 +106,7 @@ function DriverRow({ computerId }: { computerId: string }) {
           <span className="block text-[13px] font-medium">Cua Driver</span>
           <span className="block text-xs text-muted-foreground">{driverLine()}</span>
         </span>
+        <DriverAttentionLabel status={driver.status} className="shrink-0" />
         <ChevronRightIcon className="size-3.5 shrink-0 text-muted-foreground/60" />
       </Link>
     </GroupedSection>

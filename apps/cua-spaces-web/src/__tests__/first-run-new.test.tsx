@@ -59,7 +59,7 @@ describe("screen 2, signed in", () => {
   it("says this Mac was added just now, lists the account's other computers and Add another computer you own", () => {
     drawWhere(base);
     expect(screen.getByRole("heading").textContent).toBe("Pick where your agents work");
-    expect(text()).toContain("You're signed in, and this Mac is now in your account. Your agents can start here, or on your other computers while you keep working on this one.");
+    expect(text()).toContain("Pick the computers your agents can use.");
     expect(document.querySelector("[data-new-run-this-status]")!.textContent).toBe("Added to your account just now");
     expect(document.querySelector("[data-new-run-computer=this]")!.textContent).toContain("MacBook Pro");
     expect(text()).toContain("Other computers in your account");
@@ -173,7 +173,7 @@ describe("screen 2, signed out (after Skip for now)", () => {
     const onAddThis = vi.fn();
     const onSignIn = vi.fn();
     drawWhere({ ...base, signedIn: false, thisState: "signed-out" }, { onAddThis, onSignIn });
-    expect(text()).toContain("Your agents can work on this Mac without an account. Add this Mac to an account when you want them on your other computers too.");
+    expect(text()).toContain("No account needed for this Mac. Sign in to use your other computers too.");
     expect(document.querySelector("[data-new-run-this-status]")!.textContent).toBe("not added yet");
     expect(document.querySelector("[data-new-run-sign-in-line]")!.textContent).toBe("Sign in to see your other computers.");
     expect(text()).not.toContain("Other computers in your account");
@@ -204,7 +204,7 @@ describe("screen 2, this Mac can't make a separate computer", () => {
     drawWhere({ ...base, canMakeSeparate: false, separateRefused: true, separateBlocked: "Needs Apple silicon." });
     const sep = document.querySelector<HTMLElement>("[data-new-run-separate]")!;
     expect(sep.dataset.disabled).toBe("");
-    expect(sep.textContent).toContain("This Mac can't make one. Older Intel Macs can't, for example. Your agents can still work on this Mac or on another computer you add.");
+    expect(sep.textContent).toContain("This Mac can't make one (older Intel Macs can't).");
     expect(document.querySelector("[data-new-run-separate-open]")).toBeNull();
     expect(screen.getByRole("button", { name: "Continue" }).hasAttribute("disabled")).toBe(false);
     expect(document.querySelector("[data-new-run-computer=mini]")!.getAttribute("aria-disabled")).toBeNull();
@@ -262,7 +262,7 @@ describe("1b, sign-in", () => {
     const v = signInView({ kind: "waiting" }, null);
     render(<SignInScreen view={v} onTryAgain={noop} onUseCode={noop} onOpen={noop} />);
     expect(screen.getByRole("heading").textContent).toBe("Finish signing in in your browser");
-    expect(text()).toContain("Cua opened in your browser. Create your account there, or sign in if you already have one. This window moves on by itself when you're done.");
+    expect(text()).toContain("Create your account or sign in there. This window moves on when you're done.");
     expect(screen.getByRole("status").textContent).toBe("Waiting for your browser");
     expect(screen.getByRole("button", { name: "Try again" })).not.toBeNull();
     expect(screen.getByRole("button", { name: "Use a code instead" })).not.toBeNull();
@@ -308,7 +308,7 @@ describe("screen 3, the coding agents", () => {
   it("one found: says why (it can run jobs on your other computers), ticked, and Continue works", () => {
     draw(["claude-code", "cursor"]);
     expect(screen.getByRole("heading").textContent).toBe("Use Claude Code on all your computers");
-    expect(text()).toContain("We found Claude Code on this Mac. Cua connects it to your computers, so it can run jobs on any of them while you keep working here.");
+    expect(text()).toContain("Cua has no AI of its own. Claude Code does the work, on your own plan.");
     expect(text()).toContain("Found on this Mac");
     expect(document.querySelector("[data-new-run-agent=claude-code]")!.textContent).toContain("By Anthropic");
     expect(document.querySelector("[data-new-run-agent=claude-code] [data-check=on]")).not.toBeNull();
@@ -319,7 +319,7 @@ describe("screen 3, the coding agents", () => {
   it("several found: all ticked, nothing to pick before Continue, and a quiet Choose later", () => {
     const { onPick, onContinue, onLater } = draw(["codex", "claude-code", "hermes"]);
     expect(screen.getByRole("heading").textContent).toBe("Use your coding agents on all your computers");
-    expect(text()).toContain("We found Claude Code, Codex and Hermes on this Mac. Cua connects each one to your computers, so any of them can run jobs there while you keep working here.");
+    expect(text()).toContain("Cua has no AI of its own. Claude Code, Codex and Hermes do the work, each on your own plan.");
     expect(text()).toContain("You pick the agent for each job.");
     expect(text()).not.toContain("Pick the coding agent");
     expect(document.querySelectorAll("[data-check=on]").length).toBe(3);
@@ -345,7 +345,7 @@ describe("screen 3, the coding agents", () => {
   it("none found: Install Claude Code, or Install Codex instead (the official pages), or Install later", () => {
     const { onInstall, onLater } = draw([]);
     expect(screen.getByRole("heading").textContent).toBe("Install a coding agent");
-    expect(text()).toContain("Cua doesn't come with its own, and we didn't find one on this Mac. Install Claude Code, then sign in to it once.");
+    expect(text()).toContain("Cua has no AI of its own. We didn't find a coding agent on this Mac. Install Claude Code, then sign in to it once.");
     expect(screen.queryByRole("button", { name: "Continue" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Install Claude Code" }));
     fireEvent.click(screen.getByRole("button", { name: "Install Codex instead" }));
@@ -429,8 +429,8 @@ describe("2b, Cua Spaces' permissions (a Mac only)", () => {
   it("asks for both for Cua Spaces itself, says Cua Driver uses the same ones, and offers Later", () => {
     const { allow, onContinue } = draw(data(false, false));
     expect(screen.getByRole("heading").textContent).toBe("Let Cua Spaces see and use apps");
-    expect(text()).toContain("This lets your agents work in the apps on this Mac, in the background.");
-    expect(text()).toContain("Cua Driver uses these same permissions, so there's no second app to allow.");
+    expect(text()).toContain("Agents can then use the apps on this Mac. Your own pointer never moves.");
+    expect(text()).not.toContain("Cua Driver uses these same permissions");
     const rows = [...document.querySelectorAll<HTMLElement>("[data-app-permission]")];
     expect(rows.map((r) => r.dataset.appPermission)).toEqual(["screen", "accessibility"]);
     expect(rows[0]!.textContent).toContain("See the screen");
@@ -891,7 +891,7 @@ describe.skipIf(!wasmBuilt)("the new first run on its route", () => {
     click("[data-new-run-separate-open]");
     await waitFor(() => expect(calls.some((c) => c.op === "spaces.create")).toBe(true));
     expect(document.body.textContent).not.toMatch(/local network/i);
-    await waitFor(() => expect(document.querySelector("[data-new-run-separate]")!.textContent).toContain("This Mac can't make one."), { timeout: 15_000 });
+    await waitFor(() => expect(document.querySelector("[data-new-run-separate]")!.textContent).toContain("This Mac can't make one (older Intel Macs can't)."), { timeout: 15_000 });
     expect((document.querySelector("[data-new-run-separate]") as HTMLElement).dataset.disabled).toBe("");
     expect(document.body.textContent).not.toMatch(/local runtime:|exit status/i);
     expect(screen.getByRole("button", { name: "Continue" }).hasAttribute("disabled")).toBe(false);

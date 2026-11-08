@@ -140,7 +140,7 @@ describe.skipIf(!wasmBuilt)("Your agents and the Agents page: one list", () => {
   it("a task whose Space is gone leaves nothing to list: Home is the welcome, not a bare box", async () => {
     addAskTask({ prompt: "an old job", agent: "claude-code", os: "linux", spaceId: "gone-space" });
     await mountApp("/home", { failsCreates: false, listsGhost: false, answer: (op, out) => (op === "spaces.list" ? [] : out) });
-    expect(await screen.findByRole("heading", { name: "What do you want to do?" })).toBeTruthy();
+    expect(await waitFor(() => q("[data-home-card]") ?? Promise.reject(new Error("no welcome cards")))).toBeTruthy();
     expect(q("[data-home-agents]")).toBeNull();
     expect(q("[data-home-spaces]")).toBeNull();
   });

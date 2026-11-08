@@ -223,9 +223,11 @@ function ComputerDetail({ machine: m, row, onUseCode }: { machine: MachinesViewM
               <div className="text-[13px] font-medium" id={`toggle-${t.id}`}>
                 {t.label}
               </div>
-              <div className="mt-px text-xs text-muted-foreground" data-machine-toggle-help={t.id}>
-                {helpOf(t)}
-              </div>
+              {helpOf(t) ? (
+                <div className="mt-px text-xs text-muted-foreground" data-machine-toggle-help={t.id}>
+                  {helpOf(t)}
+                </div>
+              ) : null}
             </div>
             <Switch
               checked={t.on}

@@ -756,7 +756,16 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
             &a.get::<String>("row")?,
             &a.get::<Option<String>>("option")?.unwrap_or_default(),
         )),
-        "upsell.proBanner" => out(upsell::pro_banner(&a.all()?)),
+        // With `usage` (the relay's answer): only near a limit, saying how close.
+        "upsell.proBanner" => match a.get::<Option<crate::relay_usage::RelayUsage>>("usage")? {
+            Some(usage) => out(upsell::pro_banner_near(
+                &upsell::ProBannerInput {
+                    plan: a.get::<Option<String>>("plan")?.unwrap_or_default(),
+                },
+                &usage,
+            )),
+            None => out(upsell::pro_banner(&a.all()?)),
+        },
         "account.menu" => out(account::menu(&a.all()?)),
         "upgrade.link" => out(telemetry::upgrade_link(
             &a.get::<String>("url")?,

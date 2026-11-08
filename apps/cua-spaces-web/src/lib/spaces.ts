@@ -227,7 +227,7 @@ export function canDelete(space: Pick<Space, "id" | "status" | "cloudDelete">): 
 }
 
 const PROVIDER: Record<Exclude<NonNullable<Space["provider"]>, "local">, string> = {
-  relay: "Your computer, through the Cua relay",
+  relay: "Your computer, through Cua",
   direct: "A computer added by address",
 };
 

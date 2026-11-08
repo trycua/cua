@@ -14,7 +14,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { wasmBuilt } from "@/bridge/__tests__/testCore";
 import { addAskTask, askTask, askTasks, resetAskTasks, setThisMacConfirmed, thisMacConfirmed } from "@/lib/ask-first";
 
-import { mountApp, stubBrowserApis } from "./app-harness";
+import { mountApp, newLinuxRow, stubBrowserApis } from "./app-harness";
 
 const CORE_NOT_FOUND = 'Space "this-mac" (use its id, such as local:<name> or cloud:<name>, or add it with add_space) not found';
 /** The demo host shares this Mac on the relay as machine `this-mac`. */
@@ -54,7 +54,7 @@ describe.skipIf(!wasmBuilt)("This Mac as a task's computer (real routes, wasm co
     await startJob("Tidy my Downloads folder");
     await screen.findByText("Work on this Mac?");
     expect(askTasks()).toHaveLength(0);
-    expect(screen.getByText(/Codex will work directly on this Mac, with your files and apps\. It can't be undone by throwing the computer away\./)).toBeTruthy();
+    expect(screen.getByText(/Codex will use your own files and apps, without asking before each step\./)).toBeTruthy();
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Use this Mac" }));
     });
@@ -84,7 +84,7 @@ describe.skipIf(!wasmBuilt)("This Mac as a task's computer (real routes, wasm co
     await act(async () => {
       fireEvent.click(await screen.findByRole("button", { name: "Pick another" }));
     });
-    await screen.findByRole("menuitem", { name: /A new Linux computer on this Mac/ });
+    await newLinuxRow();
     expect(thisMacConfirmed()).toBe(false);
     expect(askTasks()).toHaveLength(0);
   });
@@ -127,7 +127,7 @@ describe.skipIf(!wasmBuilt)("a task that couldn't start (real routes, wasm core)
     await screen.findByText("Couldn't find that computer");
     expect(screen.queryByRole("button", { name: /Try again/ })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: /Change computer/ }));
-    const linux = await screen.findByRole("menuitem", { name: /A new Linux computer on this Mac/ });
+    const linux = await newLinuxRow();
     await act(async () => {
       fireEvent.click(linux);
     });

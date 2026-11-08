@@ -28,7 +28,7 @@ export interface AddressState {
   last: string | null;
   /** The default was dismissed with the chip's X: plain messages until you address someone again. */
   off: boolean;
-  /** The "will be mentioned automatically" note was shown once already. */
+  /** The "Sending to {names}" note was shown once already. */
   told: boolean;
 }
 

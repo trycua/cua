@@ -217,7 +217,7 @@ describe("a browser sign-in that never comes back", () => {
     });
     vi.useRealTimers();
     const stuck = (await waitFor(() => document.querySelector("[data-signin-stuck]") ?? Promise.reject(new Error("not yet")))) as Element;
-    expect(stuck.textContent).toContain("Still waiting?");
+    expect(stuck.textContent).toContain("Page stuck?");
     fireEvent.click(screen.getByText("Get a code instead"));
     await waitFor(() => expect(starts).toEqual([{}, { code: true }]));
     await waitFor(() => expect(document.querySelector("[data-signin=waiting]")?.textContent).toContain("Code WXYZ-1234"));

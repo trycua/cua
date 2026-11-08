@@ -1595,7 +1595,7 @@ pub fn friendly_add_error(raw: &str) -> String {
     .any(|k| l.contains(k))
     {
         return format!(
-            "The Space rejected the token. Check the spacesd token (CUA_ENV_TOKEN). ({raw})"
+            "This Space didn\u{2019}t accept the access token. Add it again. (CUA_ENV_TOKEN: {raw})"
         );
     }
     if [
@@ -6668,7 +6668,10 @@ mod tests {
         assert!(!looks_like_address("host name"));
         assert!(!looks_like_address(""));
         assert!(!looks_like_address("host:abc"));
-        assert!(friendly_add_error("status: Unauthenticated").starts_with("The Space rejected"));
+        assert!(
+            friendly_add_error("status: Unauthenticated")
+                .starts_with("This Space didn\u{2019}t accept")
+        );
     }
 
     fn act(s: &WizardState, a: WizardAction) -> WizardState {

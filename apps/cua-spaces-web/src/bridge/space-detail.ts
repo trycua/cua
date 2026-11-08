@@ -145,7 +145,7 @@ function fallbackSection(input: StreamSectionInput): StreamSection {
   });
   return {
     rows: [{ id: "desktop", kind: "desktop", label: desktop, help: desktopHelp, resolution: res, icon: { kind: "os", id: `os-${input.os}` }, actions: pip("desktop") }, ...windows],
-    statusText: input.windows === null ? "Looking for this Space’s windows…" : windows.length ? null : input.failed ? "No windows: the Space’s window host is not up." : "No open windows in this Space yet.",
+    statusText: input.windows === null ? "Looking for this Space’s windows…" : windows.length ? null : input.failed ? "Can’t see this Space’s windows yet." : "No open windows in this Space yet.",
   };
 }
 

@@ -146,7 +146,7 @@ describe.skipIf(!wasmBuilt)("your computers as a tree", () => {
     const name = await found('[data-tree-name="relay:linux-box/ubuntu-build"]');
     doubleClick(name);
     const input = (await found("[data-tree-rename-input]")) as HTMLInputElement;
-    expect(document.body.textContent).toContain("Renaming changes the name only.");
+    expect(document.body.textContent).not.toContain("Renaming changes the name only.");
     fireEvent.change(input, { target: { value: "nightly-builds" } });
     fireEvent.keyDown(input, { key: "Escape" });
     expect(q("[data-tree-rename-input]")).toBeNull();

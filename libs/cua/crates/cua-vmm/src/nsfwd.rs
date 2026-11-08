@@ -39,8 +39,12 @@
 //! (a pidfd) and exits when it does. Stopping a VM also ends it at once
 //! ([`stop`]), so a restart can bind the same ports.
 
-use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::path::Path;
+#[cfg(unix)]
+use std::path::PathBuf;
+use std::sync::atomic::AtomicBool;
+#[cfg(unix)]
+use std::sync::atomic::Ordering;
 
 use crate::error::{Result, VmmError};
 
@@ -59,6 +63,7 @@ pub const JOIN_FAILED: &str = "the port forwarder could not join the VM's networ
 
 /// Set once the helper failed to join a namespace: this process uses
 /// pasta's forwards from then on.
+#[cfg_attr(not(unix), allow(dead_code))]
 static BROKEN: AtomicBool = AtomicBool::new(false);
 
 /// Runs the helper and exits when this process was started as one (its
@@ -272,6 +277,26 @@ pub fn stop(dir: &Path) {
     }
     crate::host::signal(pid, "KILL");
 }
+
+/// No helper off Unix: callers compile everywhere and forward with pasta
+/// (or the platform's own forwards) as before.
+#[cfg(not(unix))]
+pub struct Pending;
+
+#[cfg(not(unix))]
+pub async fn spawn(_dir: &Path, _forwards: &[(u16, u16)]) -> Option<Pending> {
+    None
+}
+
+#[cfg(not(unix))]
+impl Pending {
+    pub async fn join(self, _pid: u32) -> Result<()> {
+        Ok(())
+    }
+}
+
+#[cfg(not(unix))]
+pub fn stop(_dir: &Path) {}
 
 /// Whether process `pid` is a port forwarder (by its command line, so a
 /// reused pid is never signalled).

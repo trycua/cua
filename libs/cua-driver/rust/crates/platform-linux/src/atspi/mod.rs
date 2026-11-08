@@ -1145,6 +1145,7 @@ mod token_dispatch_tests {
 mod bridge_disabled_reason_tests {
     use super::{bridge_disabled_reason, empty_walk_reason, no_windows_message};
     use std::process::{Child, Command, Stdio};
+    use std::time::{Duration, Instant};
 
     const REASON: &str = "atspi_bridge_disabled: the target runs with NO_AT_BRIDGE=1, which \
         keeps GTK3 and other ATK apps off the accessibility bus. Start it with launch_app, or \
@@ -1161,6 +1162,13 @@ mod bridge_disabled_reason_tests {
                 .stderr(Stdio::null())
                 .spawn()
                 .expect("spawn sleep");
+            let environ = format!("/proc/{}/environ", child.id());
+            let deadline = Instant::now() + Duration::from_secs(2);
+            while std::fs::read(&environ).is_ok_and(|bytes| bytes.is_empty())
+                && Instant::now() < deadline
+            {
+                std::thread::sleep(Duration::from_millis(5));
+            }
             Self(child)
         }
     }

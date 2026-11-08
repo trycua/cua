@@ -240,8 +240,8 @@ struct LocalNetworkWhenProvidingTests {
         #expect(shown.steps.count == 1)
     }
 
-    /// A local macOS create while the hosting ask is open waits for its
-    /// answer: one explanation, not two.
+    /// A local macOS create and the hosting ask at once, in either order:
+    /// one explanation, not two.
     @Test func aCreateDuringTheHostingAskExplainsOnce() async throws {
         let host = FixtureHost()
         let probe = LocalNetworkPermissionTests.FakeProbe([.blocked, .allowed], prompts: [0, 1, 1])
@@ -263,6 +263,17 @@ struct LocalNetworkWhenProvidingTests {
         let args = AppCreateSpaceArgs(image: "ghcr.io/trycua/macos:26", on: "local", kind: .vm, runtime: .auto,
                                       name: nil, cpus: nil, memoryMb: nil, diskGb: nil, spacesd: true, gpu: nil)
         _ = try? await m.runCreate(args, os: .macos, pendingId: "pending:mac")
+        #expect(explained == 1)
+
+        // The create first, then the switch while its explanation shows.
+        gate.asked = false
+        explained = 0
+        try await m.host.setUp(request(false), on: host)
+        async let created: String? = try? m.runCreate(args, os: .macos, pendingId: "pending:mac2")
+        try? await Task.sleep(for: .milliseconds(20))
+        await m.host.run(.provideSpaces)
+        _ = await created
+        await m.hostingLocalNetworkCheck?.value
         #expect(explained == 1)
     }
 

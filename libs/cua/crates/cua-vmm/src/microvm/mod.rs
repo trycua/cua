@@ -1290,11 +1290,17 @@ impl MicroVmRuntime {
         // DNATs them to the guest; a newer pasta would otherwise deliver
         // them to the namespace's public address ([`crate::pasta`]).
         args.extend(crate::pasta::host_lo_args(&pasta));
-        if st.host_ports.is_empty() {
+        // The host's ports cross into the namespace through cua's own
+        // forwarder, not pasta's splice (passt before 2025 adds ~40 ms per
+        // round trip; [`crate::nsfwd`]). Without one, pasta's forwards.
+        let pairs: Vec<(u16, u16)> = st.host_ports.iter().map(|(g, h)| (*h, *g)).collect();
+        let fwd = crate::nsfwd::spawn(&dir, &pairs).await;
+        if st.host_ports.is_empty() || fwd.is_some() {
             args.extend(["-t".into(), "none".into()]);
-        }
-        for (g, h) in &st.host_ports {
-            args.extend(["-t".into(), format!("127.0.0.1/{h}:{g}")]);
+        } else {
+            for (g, h) in &st.host_ports {
+                args.extend(["-t".into(), format!("127.0.0.1/{h}:{g}")]);
+            }
         }
         args.extend(["--".into(), "/bin/sh".into(), "net.sh".into()]);
         let log = std::fs::OpenOptions::new()
@@ -1353,6 +1359,25 @@ impl MicroVmRuntime {
             return Err(VmmError::other(
                 "cannot find the firecracker process under pasta",
             ));
+        }
+        if let (Some(fwd), Some(ns)) = (fwd, st.fc_pid)
+            && let Err(e) = fwd.join(ns).await
+        {
+            // The forwarder is off now: launch again with pasta's forwards.
+            tracing::warn!(sandbox = %st.name, error = %e, "port forwarder failed; launching again with pasta's forwards");
+            if let Some(p) = st.pasta_pid.take() {
+                host::signal(p, "KILL");
+            }
+            if let Some(p) = st.fc_pid.take() {
+                host::signal(p, "KILL");
+                for _ in 0..250 {
+                    if !host::pid_alive(p) {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                }
+            }
+            return Box::pin(self.launch(st, config)).await;
         }
         st.paused = false;
         self.save(st)?;
@@ -1624,6 +1649,8 @@ impl MicroVmRuntime {
         if let Some(id) = st.sock_id.take() {
             let _ = std::fs::remove_dir_all(self.run_dir(&id));
         }
+        #[cfg(unix)]
+        crate::nsfwd::stop(&self.dir(&st.name));
         st.fc_pid = None;
         st.pasta_pid = None;
         st.paused = false;

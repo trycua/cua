@@ -3192,6 +3192,9 @@ fn fallback_notice(n: &cua_spaces::mesh::FallbackNotice) {
 }
 
 pub fn main() {
+    // First, before any thread starts: the helper that forwards a VM's
+    // ports into its network namespace joins it (cua_vmm::nsfwd).
+    cua_vmm::nsfwd::run_if_asked();
     #[cfg(windows)]
     keep_stdio_out_of_children();
     let channel = cua_home::channel::CuaChannel::current();

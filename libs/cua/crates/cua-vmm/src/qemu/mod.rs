@@ -1086,6 +1086,12 @@ impl QemuRuntime {
                         boot.keep_ports = false;
                     }
                 }
+                // The forwarder could not join the namespace: it is off
+                // now, so this launch uses pasta's forwards.
+                Err(e) if attempt < LAUNCH_PORT_ATTEMPTS && crate::nsfwd::is_join_failure(&e) => {
+                    tracing::warn!(sandbox = %st.name, error = %e, "port forwarder failed; launching again with pasta's forwards");
+                    attempt += 1;
+                }
                 Err(e) if st.accel == "kvm" && self.cfg.accel.is_none() && kvm_stalled(&e) => {
                     tracing::warn!(
                         sandbox = %st.name,
@@ -1368,6 +1374,7 @@ impl QemuRuntime {
             // the guest's first instruction).
             let mut relay: Option<PathBuf> = None;
             let mut tree_argv: Vec<String> = Vec::new();
+            let mut fwd: Option<crate::nsfwd::Pending> = None;
             let (program, args): (PathBuf, Vec<String>) = match &netns_rules {
                 Some(rules) => {
                     let pasta = host::which("pasta").ok_or_else(|| {
@@ -1409,8 +1416,15 @@ impl QemuRuntime {
                     } else {
                         Vec::new()
                     };
+                    // The host's ports cross into the namespace through
+                    // cua's own forwarder, not pasta's splice (passt before
+                    // 2025 adds ~40 ms per round trip; [`crate::nsfwd`]).
+                    // Without one, pasta's forwards as before.
+                    let pairs: Vec<(u16, u16)> = ports.iter().map(|p| (*p, *p)).collect();
+                    fwd = crate::nsfwd::spawn(&dir, &pairs).await;
+                    let pasta_ports: &[u16] = if fwd.is_some() { &[] } else { &ports };
                     let mut a = netns_pasta_args(
-                        &ports,
+                        pasta_ports,
                         &localhost,
                         crate::pasta::supports_host_lo(&pasta),
                     );
@@ -1484,6 +1498,35 @@ impl QemuRuntime {
             if netns_rules.is_some() {
                 st.pasta_pid = Some(pid);
                 st.netns = true;
+            }
+            if let Some(fwd) = fwd {
+                // pasta's command (the namespace's first process) appears
+                // as pasta's child at once; QEMU becomes that process.
+                let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+                let child = loop {
+                    if let Some(c) = netns_child(pid) {
+                        break Some(c);
+                    }
+                    if !host::pid_alive(pid) || tokio::time::Instant::now() >= deadline {
+                        break None;
+                    }
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                };
+                match child {
+                    Some(c) => {
+                        if let Err(e) = fwd.join(c).await {
+                            // End this launch before the next one uses the
+                            // same disk ([`Self::launch_admitted`] retries).
+                            for p in [c, pid] {
+                                host::signal(p, "KILL");
+                                Self::wait_exit(p, Duration::from_secs(5)).await;
+                            }
+                            return Err(e);
+                        }
+                    }
+                    // pasta is gone: the wait below reports why.
+                    None => drop(fwd),
+                }
             }
         }
         #[cfg(not(unix))]
@@ -1860,7 +1903,8 @@ impl QemuRuntime {
         let Some(pid) = st.pid.filter(|p| host::pid_alive(*p)) else {
             st.pid = None;
             self.drop_aliases(Some(&self.dir(&st.name)));
-            Self::end_netns(st);
+            let run_dir = self.run_dir(st);
+            Self::end_netns(st, &run_dir);
             return self.stop_tpm(st).await;
         };
         if !graceful.is_zero() {
@@ -1876,7 +1920,8 @@ impl QemuRuntime {
             if Self::wait_exit(pid, wait).await {
                 st.pid = None;
                 self.drop_aliases(Some(&self.dir(&st.name)));
-                Self::end_netns(st);
+                let run_dir = self.run_dir(st);
+                Self::end_netns(st, &run_dir);
                 return self.stop_tpm(st).await;
             }
         }
@@ -1895,7 +1940,8 @@ impl QemuRuntime {
         }
         st.pid = None;
         self.drop_aliases(Some(&self.dir(&st.name)));
-        Self::end_netns(st);
+        let run_dir = self.run_dir(st);
+        Self::end_netns(st, &run_dir);
         self.stop_tpm(st).await
     }
 
@@ -1980,7 +2026,11 @@ impl QemuRuntime {
     }
 
     /// pasta exits with QEMU; one left behind (a VM killed with it) goes.
-    fn end_netns(st: &mut QemuState) {
+    fn end_netns(st: &mut QemuState, dir: &Path) {
+        #[cfg(unix)]
+        crate::nsfwd::stop(dir);
+        #[cfg(not(unix))]
+        let _ = dir;
         if let Some(p) = st.pasta_pid.take()
             && host::pid_alive(p)
         {
@@ -2298,6 +2348,11 @@ fn netns_pasta_args(ports: &[u16], localhost: &[u16], host_lo_to_ns_lo: bool) ->
     .collect();
     if host_lo_to_ns_lo {
         a.push(crate::pasta::HOST_LO_TO_NS_LO.into());
+    }
+    // No ports: `none`, never pasta's default (`auto`, which would forward
+    // every port anything in the namespace listens on).
+    if ports.is_empty() {
+        a.extend(["-t".into(), "none".into()]);
     }
     for p in ports {
         a.extend(["-t".into(), format!("127.0.0.1/{p}:{p}")]);
@@ -4613,6 +4668,14 @@ mod tests {
             "{new:?}"
         );
         assert_eq!(new.len(), a.len() + 1);
+        // cua's forwarder carries the ports: pasta forwards none, never
+        // its default `auto` (every port the namespace listens on).
+        let none = netns_pasta_args(&[], &[], false);
+        assert!(
+            none.windows(2).any(|w| w[0] == "-t" && w[1] == "none"),
+            "{none:?}"
+        );
+        assert!(!none.iter().any(|x| x.starts_with("127.0.0.1/")));
     }
 
     #[test]

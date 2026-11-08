@@ -30585,7 +30585,8 @@ export type AppMachinesViewMachine = {
      */
     team: boolean,
     /**
-     * The page's status line ("Online", "Offline").
+     * The page's status line ("Online", "Offline"; "Online, 1 thing to
+     * fix" when it has issues, so the words agree with the dot).
      */
     status: string,
     /**

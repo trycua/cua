@@ -25,6 +25,9 @@ const RETRY: Duration = Duration::from_secs(5);
 /// cua-spacesd).
 const NO_FEATURE_RETRY: Duration = Duration::from_secs(60);
 
+/// How long a Space counts as just started.
+const YOUNG: Duration = Duration::from_secs(180);
+
 /// How often orphaned children are judged.
 const REAP_EVERY: Duration = Duration::from_secs(60);
 
@@ -250,6 +253,7 @@ fn tree_limit(shared: &Shared, root: &str) -> u32 {
 /// Keeps one Space's channel until the task is aborted.
 async fn run(shared: Arc<Shared>, id: String) {
     let mut warned = false;
+    let born = std::time::Instant::now();
     loop {
         let spaces = shared.runtime.spaces();
         let space = match spaces.space(&id).await {
@@ -271,7 +275,15 @@ async fn run(shared: Arc<Shared>, id: String) {
                 );
                 warned = true;
             }
-            tokio::time::sleep(NO_FEATURE_RETRY).await;
+            // A guest that has just started answers before its services are
+            // up: look again at once for its first minutes (the agent's first
+            // command must find the channel), then rarely (an older cua-spacesd).
+            tokio::time::sleep(if born.elapsed() < YOUNG {
+                RETRY
+            } else {
+                NO_FEATURE_RETRY
+            })
+            .await;
             continue;
         }
         let Some(authority) = shared.spawn_authority() else {

@@ -2415,8 +2415,19 @@ impl Persistent {
             .map(|e| e.space.as_str())
             .filter(|s| !s.is_empty())
             .collect();
+        // A create still under way has no Space id yet (`space` is empty): its child is already in the list of children, and
+        // the create's own row will say when it is ready. Without this the child was reported twice, once as "Ready"
+        // from here and once as "Ready in 2s" from the create.
+        let asked_names: std::collections::HashSet<&str> = asked.iter().map(|e| e.name.as_str()).collect();
         for id in kids {
             if covered.contains(id.as_str()) {
+                continue;
+            }
+            if infos
+                .iter()
+                .find(|i| i.id == id)
+                .is_some_and(|i| made_by_a_tracked_create(&asked_names, &i.name, &i.display_name))
+            {
                 continue;
             }
             let key = format!("child:{id}");
@@ -2849,6 +2860,12 @@ enum Activity {
     /// The turn ended: nothing.
     Cleared,
     Line(String),
+}
+
+/// Whether a child Space is the one a tracked create (a row with its own steps and time) is making or made: its name is
+/// the create's. Such a child is not announced a second time as "made the computer".
+fn made_by_a_tracked_create(asked: &std::collections::HashSet<&str>, name: &str, display_name: &str) -> bool {
+    asked.contains(name) || (!display_name.is_empty() && asked.contains(display_name))
 }
 
 /// An MCP tool's name (`mcp__cua__stream_space_window`) in plain words for the chip, or `None` for any other title.
@@ -3297,5 +3314,19 @@ mod plain_tool_tests {
         assert_eq!(plain_tool("ToolSearch"), Some("getting ready"));
         assert_eq!(plain_tool("Terminal"), None);
         assert_eq!(plain_tool("mcp__other__thing"), None);
+    }
+}
+
+#[cfg(test)]
+mod tracked_create_tests {
+    use super::made_by_a_tracked_create;
+    use std::collections::HashSet;
+
+    #[test]
+    fn a_child_a_create_is_making_is_not_announced_twice() {
+        let asked: HashSet<&str> = ["kid-a", "kid-b"].into_iter().collect();
+        assert!(made_by_a_tracked_create(&asked, "kid-a", ""));
+        assert!(made_by_a_tracked_create(&asked, "x", "kid-b"));
+        assert!(!made_by_a_tracked_create(&asked, "other", ""));
     }
 }

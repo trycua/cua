@@ -581,7 +581,8 @@ impl SpacesExecutor {
         // The job's row: one Space, a JOB badge, its name (never an id) and a GPU mark.
         {
             use cua_cluster::model::{
-                ENV_JOB_NAME, LABEL_JOB, LABEL_JOB_GPU, LABEL_JOB_NAME, job_display_name,
+                ENV_JOB_NAME, LABEL_JOB, LABEL_JOB_GPU, LABEL_JOB_NAME, LABEL_JOB_RUN,
+                job_display_name,
             };
             opts.labels.insert(LABEL_JOB.into(), "1".into());
             opts.labels.insert(
@@ -590,6 +591,9 @@ impl SpacesExecutor {
             );
             if !job.accelerator.is_empty() {
                 opts.labels.insert(LABEL_JOB_GPU.into(), "1".into());
+            }
+            if !job.run_id.is_empty() {
+                opts.labels.insert(LABEL_JOB_RUN.into(), job.run_id.clone());
             }
         }
         let Some(parent) = get(ENV_PARENT_SPACE) else {

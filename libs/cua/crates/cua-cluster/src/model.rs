@@ -330,6 +330,8 @@ pub const LABEL_JOB: &str = "cua.job";
 pub const LABEL_JOB_NAME: &str = "cua.job.name";
 /// Label on a job's Space: it has a GPU (the row shows a GPU icon).
 pub const LABEL_JOB_GPU: &str = "cua.job.gpu";
+/// Label on a job's Space: the run it belongs to (one row per run).
+pub const LABEL_JOB_RUN: &str = "cua.job.run";
 
 /// A job name in the shape of a pet name: lower case letters and digits in words joined by single
 /// hyphens, at most 24 characters. `None` when nothing is left, or when it is an id (`p-train-1a2b3c4d`,

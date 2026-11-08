@@ -82,7 +82,7 @@ const LINK = "font-semibold text-white underline decoration-white/50 underline-o
 
 function Title({ children }: { children: ReactNode }) {
   return (
-    <h1 tabIndex={-1} data-onboarding-heading="" className="font-display text-[clamp(34px,min(4.9vw,6.6vh),76px)] leading-[0.98] font-semibold tracking-[-0.045em] text-balance text-white outline-none">
+    <h1 tabIndex={-1} data-onboarding-heading="" className="font-display text-[clamp(34px,min(4.9vw,6.6vh),76px)] leading-[1.04] font-semibold tracking-[-0.03em] text-balance text-white outline-none">
       {children}
     </h1>
   );

@@ -110,7 +110,7 @@ struct DevicesTests {
         live.setCode("k7qxm2rp")
         await live.approve()
         #expect(live.approval != nil, "still open: nothing was approved")
-        #expect(live.approvalView?.error?.contains("pending") == true)
+        #expect(live.approvalView?.error == "Couldn\u{2019}t add Work laptop. Ask that computer for a new code.")
         relay.state = "enrolled"
         await live.approve()
         #expect(live.approval == nil)

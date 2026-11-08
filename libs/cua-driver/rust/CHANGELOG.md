@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.43.2](https://github.com/trycua/cua/compare/cua-driver-rs-v0.43.1...cua-driver-rs-v0.43.2) (2026-11-08)
+
+
+### Bug Fixes
+
+* **cua-driver:** name the no-window case in turn evidence (fixes Linux release gate) ([#6839](https://github.com/trycua/cua/issues/6839)) ([f365b53](https://github.com/trycua/cua/commit/f365b53b0a14c3995b0a00d2ae63f204ead7d531))
+* **cua-driver:** retry perception resolve after extension lock contention ([#6844](https://github.com/trycua/cua/issues/6844)) ([3c29dc5](https://github.com/trycua/cua/commit/3c29dc5870b880d208ea3bdc2457e253416717fa))
+* **cua-driver:** sweep orphaned extension staging and clean it on every refusal ([#6845](https://github.com/trycua/cua/issues/6845)) ([85d75c1](https://github.com/trycua/cua/commit/85d75c16899c5da49a4f54de39e26eb5058dc709))
+
+
+### Performance Improvements
+
+* **cua-driver:** batch macOS type_text key events and stop polling a field that never changes ([#6884](https://github.com/trycua/cua/issues/6884)) ([7d4d5a0](https://github.com/trycua/cua/commit/7d4d5a0407ebbcda20696f6c82035dab391e2d14))
+* **cua-driver:** batch type_text key events on Windows and Linux ([#6892](https://github.com/trycua/cua/issues/6892)) ([64aec78](https://github.com/trycua/cua/commit/64aec785908dbe83f46ea8a8e775c47f4765b5db))
+
 ## [0.43.1](https://github.com/trycua/cua/compare/cua-driver-rs-v0.43.0...cua-driver-rs-v0.43.1) (2026-11-07)
 
 

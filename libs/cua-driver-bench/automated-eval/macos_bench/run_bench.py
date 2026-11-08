@@ -175,6 +175,7 @@ class Ctx:
             self.args.phase1_runs,
             self.args.phase2_runs,
             self.args.schedule_seed,
+            getattr(self.args, "run_offset", 0),
         )
         kept = [b for b in blocks if b["task"] in self.task_ids]
         index = 0
@@ -1300,6 +1301,7 @@ def run_attempt(ctx: Ctx, entry: dict[str, Any], attempt: int) -> dict[str, Any]
                 "tool_calls", {"total": 0, "by_class": {}, "by_name": {}, "failed": 0}
             ),
             "steps": (summary.get("tool_calls") or {}).get("total", 0),
+            "batching": summary.get("batching"),
             "action_latency_ms": summary.get("action_latency_ms", {}),
             "tokens": {
                 "input": tokens.get("input", 0),
@@ -2317,7 +2319,14 @@ def preflight(ctx: Ctx, with_models: bool = True) -> list[tuple[str, str, str]]:
     driver_arms = [pia.SOURCE_ARM.get(a, a) for a in ctx.arm_names]
     if any(ca.CUA_BUILDS[a].label == "main" for a in driver_arms if a in ca.CUA_BUILDS):
         main = pins.get("cua_main", {})
-        spec = ca.CUA_BUILDS["cc-cua-driver-main"]
+        # the first main-label build that is actually part of this run (a script-only run has no main app)
+        spec = ca.CUA_BUILDS[
+            next(
+                a
+                for a in dict.fromkeys(driver_arms)
+                if a in ca.CUA_BUILDS and ca.CUA_BUILDS[a].label == "main"
+            )
+        ]
         got_bin = ca.sha256_file(spec.bin) if spec.bin.is_file() else None
         for other in [
             a
@@ -2334,8 +2343,8 @@ def preflight(ctx: Ctx, with_models: bool = True) -> list[tuple[str, str, str]]:
             )
         got_skills = ca.sha256_tree(spec.skills) if spec.skills.is_dir() else None
         add(
-            "pin cua_main.binary_sha256",
-            "pass" if got_bin and got_bin == main.get("binary_sha256") else "fail",
+            f"pin cua_main.{spec.binary_pin}",
+            "pass" if got_bin and got_bin == main.get(spec.binary_pin) else "fail",
             str(got_bin),
         )
         add(
@@ -2611,6 +2620,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--cutoff-utc", default=None, help="ISO time; no trial starts after it (STOPPED_TIME)"
     )
     p.add_argument("--schedule-seed", type=int, default=20261005)
+    p.add_argument(
+        "--run-offset",
+        type=int,
+        default=0,
+        help="first run index (task seeds come from task:run_index); use it so repeated invocations of the same "
+        "setup draw new instances, for example one invocation per round of an overnight comparison",
+    )
     p.add_argument("--model", default="claude-sonnet-5-5")
     p.add_argument(
         "--effort", default=None, choices=[None, "low", "medium", "high", "xhigh", "max"]

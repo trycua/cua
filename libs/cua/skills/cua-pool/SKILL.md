@@ -52,8 +52,11 @@ cua run --accelerator nvidia -- python script.py     # any command; this directo
 Only what the function RETURNS comes back. Files it writes stay on the computer that ran it and are gone when the
 run ends. To get files (weights, images), write them and return the path: `return "weights.npz"` brings that file
 back, a directory path brings the directory, `bytes` come back as `result.bin`, and a dict as `result.json`.
-Return the weights from the run that trains, so you never train twice. A function with one parameter is passed
-the `cua.Cluster` (rank, world size); give it no parameters when you do not need that.
+Return the weights from the run that trains, so you never train twice; `cua run` says "result: <path>" or
+"no result" when it ends. A function run passes no arguments: take none (or give them defaults). Name the first
+parameter `cluster` (or annotate it `cua.Cluster`) to receive the cluster (rank, world size). The function's folder
+goes with it: `*.py`, `*.json`, `*.csv`, `*.yaml`, `*.png`, `*.npz` and similar small files (at most 1 MiB in all);
+download anything bigger inside the function.
 
 ## Follow and finish
 

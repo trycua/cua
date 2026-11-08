@@ -7,7 +7,7 @@
 //! - The function's spec comes from the decorator: the local `python3`
 //!   imports FILE with the embedded pure-Python `cua` shim first on its path
 //!   (`python3 -m _cua_entry --spec FILE FN`); nothing is installed.
-//! - FILE's directory (`*.py`, `*.json`, `*.jsonl`, `*.txt`, minus
+//! - FILE's directory (source, config, small data and image files: `*.py`, `*.json`, `*.csv`, `*.png`, `*.npz`, ... minus
 //!   `.cuaignore`) and the shim (as `_cua_runtime/`) go with the run as a
 //!   gzip tar of at most 1 MiB.
 //! - Every member runs in a Space: the decorator's `kind`, or the one its
@@ -172,6 +172,10 @@ pub enum JobsCmd {
     },
 }
 
+/// What a run that returned nothing says: files the function wrote stay on
+/// the computer that ran it, only its return value comes back.
+pub const NO_RESULT: &str = "no result: the function returned nothing. Files it wrote stay on the computer that ran it; return a file or directory path to bring it back (here: ./cua-runs/<run>/)";
+
 /// `FILE::FN`.
 pub fn split_target(t: &str) -> Result<(PathBuf, String), CuaError> {
     let (file, func) = t.rsplit_once("::").ok_or_else(|| {
@@ -261,7 +265,25 @@ fn glob(p: &str, s: &str) -> bool {
 /// Whether `name` goes in a bundle.
 fn bundled(name: &str) -> bool {
     let ext = name.rsplit_once('.').map(|(_, e)| e).unwrap_or("");
-    matches!(ext, "py" | "json" | "jsonl" | "txt") || name.starts_with("requirements")
+    matches!(
+        ext,
+        "py" | "json"
+            | "jsonl"
+            | "txt"
+            | "csv"
+            | "tsv"
+            | "yaml"
+            | "yml"
+            | "toml"
+            | "png"
+            | "jpg"
+            | "jpeg"
+            | "gif"
+            | "webp"
+            | "svg"
+            | "npy"
+            | "npz"
+    ) || name.starts_with("requirements")
 }
 
 /// The files of `dir` that go with a run (relative paths, sorted).
@@ -1166,6 +1188,9 @@ async fn finish(
             let size = std::fs::metadata(p).map(|m| m.len()).unwrap_or(0);
             line(out, format!("result: {} ({} KB)", p.display(), size / 1024));
         }
+        if state == "succeeded" && saved.is_empty() {
+            line(out, NO_RESULT.to_string());
+        }
         line(
             out,
             format!(
@@ -1582,7 +1607,7 @@ pub async fn jobs(a: JobsArgs, json: bool, out: &mut dyn Write) -> Result<i32, C
                         .to_string(),
                 );
             } else if saved.is_empty() {
-                line(out, format!("{run} returned no result"));
+                line(out, format!("{run}: {NO_RESULT}"));
             } else {
                 for p in saved {
                     line(out, format!("{}", p.display()));
@@ -1777,6 +1802,9 @@ mod tests {
         w("requirements.txt", "mlx\n");
         w("lib/util.py", "x = 1\n");
         w("weights.bin", "binary");
+        w("target.png", "png");
+        w("cfg/params.csv", "a,b
+");
         w(".env", "SECRET=1");
         w("__pycache__/train.cpython-312.pyc", "x");
         w("cua-runs/p-1/adapters.safetensors", "x");
@@ -1785,7 +1813,14 @@ mod tests {
         let files = bundle_files(d.path()).unwrap();
         assert_eq!(
             files,
-            vec!["data.jsonl", "lib/util.py", "requirements.txt", "train.py"]
+            vec![
+                "cfg/params.csv",
+                "data.jsonl",
+                "lib/util.py",
+                "requirements.txt",
+                "target.png",
+                "train.py"
+            ]
         );
         let b = bundle(d.path(), &files).unwrap();
         let mut names: Vec<String> = tar::Archive::new(flate2::read::GzDecoder::new(&b[..]))
@@ -1802,9 +1837,11 @@ mod tests {
                 "_cua_runtime/cua/_store.py",
                 "_cua_runtime/cua/checkpoint.py",
                 "_cua_runtime/cua/progress.py",
+                "cfg/params.csv",
                 "data.jsonl",
                 "lib/util.py",
                 "requirements.txt",
+                "target.png",
                 "train.py"
             ]
         );

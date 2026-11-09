@@ -41,8 +41,6 @@ export const DOUBLE_CLICK_MS = 300;
 
 const COLS = "grid grid-cols-[minmax(0,3fr)_minmax(0,2fr)_96px_96px_32px] items-center gap-3";
 
-export const RENAME_NOTE = "Renaming changes the name only. Your team sees the new name, and agent tasks and links keep working.";
-
 /** "Safari check, 1 agent task stops". */
 export function stopsLine(node: Pick<TreeNode, "name" | "running">): string {
   if (node.running === 0) return node.name;
@@ -438,7 +436,6 @@ export function SpacesTreePage({ search = {}, onSearchDone }: { search?: Compute
           {listed.reachingLine}
         </p>
       ) : null}
-      {editing ? <p className="mt-4 text-[13px] text-muted-foreground">{RENAME_NOTE}</p> : null}
       {single ? (
         // f7: only This Mac. Agents are better off on a computer you're not using.
         <GroupedSection className="mt-8" data-tree-single="">
@@ -446,7 +443,7 @@ export function SpacesTreePage({ search = {}, onSearchDone }: { search?: Compute
             <HardDriveIcon className="size-6 shrink-0 text-muted-foreground" strokeWidth={1.5} />
             <div className="min-w-0 flex-1">
               <div className="text-[15px] font-medium">Add a computer you're not using</div>
-              <div className="text-[13px] text-muted-foreground">A Mac mini or PC you own. Agents work there and {thisComputerLabel()} stays yours.</div>
+              <div className="text-[13px] text-muted-foreground">A Mac mini or PC you own.</div>
             </div>
             <Button variant="outline" onClick={() => setAdding(true)}>
               Add a computer

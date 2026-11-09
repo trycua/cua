@@ -13,6 +13,7 @@ import { BridgeProvider, type DataAdapter, type HostStatus } from "@/bridge";
 import { createDemoAdapter } from "@/bridge/adapters/demo";
 import { testCore, wasmBuilt } from "@/bridge/__tests__/testCore";
 import { ContinueOn } from "@/components/ask-first/imported-task";
+import { recentThreads } from "@/components/ask-first/pick-up";
 import { PickUpWhereYouLeftOff, ReadyScreen } from "@/components/first-run-new/first-run-new";
 import { readyView } from "@/lib/first-run-new";
 import { addImportedTask, askTask, resetAskTasks, type AskTask } from "@/lib/ask-first";
@@ -62,18 +63,76 @@ describe("Pick up where you left off", () => {
   });
 });
 
+/** The demo host, with `agents.recentThreads` answered by `list`. */
+function listing(list: (args: unknown) => Promise<unknown>): DataAdapter {
+  const base = createDemoAdapter({ latencyMs: 1 });
+  return new Proxy(base, {
+    get: (t, k) => (k === "call" ? (op: string, args: unknown) => (op === "agents.recentThreads" ? list(args) : (t.call as (o: string, a: unknown) => Promise<unknown>)(op, args)) : Reflect.get(t, k)),
+  }) as DataAdapter;
+}
+
 describe("the new setup's Ready screen", () => {
-  it("offers the recent chats under the command, and Continue in Cua hands the task on", async () => {
-    const picked: AskTask[] = [];
-    const view = readyView({ os: "macos", agent: "claude-code", computers: ["this"] });
+  const rows = () => [...document.querySelectorAll<HTMLElement>("[data-new-run=ready] [data-pick-up-row]")].map((r) => r.dataset.pickUpRow);
+  const ready = async (agent: string, adapter: DataAdapter = createDemoAdapter({ latencyMs: 1 }), onContinueChat: (t: AskTask) => void = () => {}) =>
     render(
-      <BridgeProvider adapter={createDemoAdapter({ latencyMs: 1 })} core={await testCore()}>
-        <ReadyScreen view={view} agent="claude-code" place="this Mac" onDone={() => {}} onContinueChat={(t) => picked.push(t)} />
+      <BridgeProvider adapter={adapter} core={await testCore()}>
+        <ReadyScreen view={readyView({ os: "macos", agent, computers: ["this"] })} agent={agent} place="this Mac" onDone={() => {}} onContinueChat={onContinueChat} />
       </BridgeProvider>,
     );
-    await waitFor(() => expect(document.querySelectorAll("[data-new-run=ready] [data-pick-up-row]").length).toBe(3));
+
+  it("offers the picked agent's recent chats under the command, and Continue in Cua hands the task on", async () => {
+    const picked: AskTask[] = [];
+    await ready("claude-code", undefined, (t) => picked.push(t));
+    await waitFor(() => expect(rows()).toEqual(["claude-code"]));
     fireEvent.click(document.querySelectorAll<HTMLElement>("[data-pick-up-continue]")[0]!);
     expect(picked[0]!.imported).toMatchObject({ sessionId: KETTLE.id });
+  });
+
+  it("lists only Codex's chats when Codex was picked", async () => {
+    await ready("codex");
+    await waitFor(() => expect(rows()).toEqual(["openai-codex"]));
+  });
+
+  it("lists both agents' chats, newest first, when both are asked for", async () => {
+    render(
+      <BridgeProvider adapter={createDemoAdapter({ latencyMs: 1 })} core={await testCore()}>
+        <PickUpWhereYouLeftOff agents={["claude-code", "codex"]} onContinue={() => {}} />
+      </BridgeProvider>,
+    );
+    await waitFor(() => expect(document.querySelectorAll("[data-pick-up-row]").length).toBe(2));
+    expect([...document.querySelectorAll<HTMLElement>("[data-pick-up-row]")].map((r) => r.dataset.pickUpRow)).toEqual(["claude-code", "openai-codex"]);
+  });
+
+  it("asks the host for the picked agent only, holds the place quietly while it reads, and hides when it has none", async () => {
+    const asked: unknown[] = [];
+    let answer: (v: unknown) => void = () => {};
+    const adapter = listing((args) => (asked.push(args), new Promise((r) => (answer = r))));
+    await ready("claude-code", adapter);
+    await waitFor(() => expect(asked).toEqual([{ limit: 4, agents: ["claude-code"] }]));
+    expect(q("[data-pick-up][data-pick-up-loading]")).toBeTruthy();
+    expect(document.querySelectorAll("[data-pick-up-placeholder]").length).toBe(2);
+    expect(document.querySelector("[role=progressbar], .animate-spin")).toBeNull();
+    answer([]);
+    await waitFor(() => expect(q("[data-pick-up]")).toBeNull());
+  });
+
+  it("shows nothing for an agent whose chats Cua doesn't read, and asks nothing", async () => {
+    const asked: unknown[] = [];
+    const adapter = listing((args) => (asked.push(args), Promise.resolve([])));
+    await ready("gemini-cli", adapter);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(q("[data-pick-up]")).toBeNull();
+    expect(asked).toEqual([]);
+  });
+
+  it("uses the list read while the agent was being connected: no second ask, no placeholder", async () => {
+    const asked: unknown[] = [];
+    const adapter = listing((args) => (asked.push(args), Promise.resolve([{ agent: "claude-code", id: KETTLE.id, title: KETTLE.title, cwd: KETTLE.cwd, lastActiveMs: KETTLE.lastActiveMs, resume: [] }])));
+    await recentThreads(adapter, ["claude-code"]);
+    await ready("claude-code", adapter);
+    expect(rows()).toEqual(["claude-code"]);
+    expect(q("[data-pick-up-placeholder]")).toBeNull();
+    expect(asked).toHaveLength(1);
   });
 });
 

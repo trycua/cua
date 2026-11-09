@@ -21,6 +21,7 @@ pub mod budget;
 pub mod capability;
 pub mod home;
 pub mod reaper;
+pub mod runs;
 #[cfg(test)]
 mod tests;
 pub mod tree;

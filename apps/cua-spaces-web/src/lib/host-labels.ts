@@ -50,11 +50,11 @@ export function keyvaultUnlockWay(platform?: string): string {
   return { macos: "Touch ID", windows: "Windows Hello", linux: "the system keyring" }[osOf(platform)];
 }
 
-/** The line under Settings' "Global shortcut" row: what the keys do, or,
- * when the system refused them, why they do nothing and how to fix it (the
- * host tries again each time Settings opens). */
-export function globalShortcutLine(shortcut: { label: string; registered: boolean }): string {
+/** The line under Settings' "Global shortcut" row: none while the keys work
+ * (the row's label says what they do); when the system refused them, why they
+ * do nothing and how to fix it (the host tries again each time Settings opens). */
+export function globalShortcutLine(shortcut: { label: string; registered: boolean }): string | null {
   return shortcut.registered
-    ? "Brings Cua Spaces to the front from any app."
+    ? null
     : `Another app is using ${shortcut.label}, so it does nothing here. Free it in that app, then open Settings again.`;
 }

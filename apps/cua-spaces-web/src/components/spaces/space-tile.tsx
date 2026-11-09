@@ -204,7 +204,7 @@ export function HomeTag({ spaceId }: { spaceId: string }) {
   );
 }
 
-/** Hide, on a desktop's hover where a Space has its power button: the row leaves the list until "Show hidden". */
+/** Hide, on a desktop's hover where a Space has its power button: the tile leaves Home until "N hidden · Show" or the computer's "Show on Home". */
 function TileHide({ name, onHide }: { name: string; onHide: () => void }) {
   return (
     <button

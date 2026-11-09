@@ -1503,7 +1503,10 @@ fn type_text_in_key_window(
         // The caller's early AXEnabled read skips a foreground call into a
         // background app; read it here, after activation, before any key.
         let ensure_enabled = || match element_ptr_and_idx {
-            Some((ptr, _)) => crate::input::ax_actions::ensure_ax_action_enabled(ptr, "type_text"),
+            Some((ptr, _)) => crate::input::ax_actions::ensure_ax_action_enabled_after_activation(
+                ptr,
+                "type_text",
+            ),
             None => Ok(()),
         };
         let do_type = |element: Option<(usize, Option<usize>)>| {

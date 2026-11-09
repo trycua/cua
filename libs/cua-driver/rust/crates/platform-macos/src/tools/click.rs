@@ -741,10 +741,17 @@ impl ClickTool {
                     // Re-read after any activation: the early read skips a
                     // foreground call into a background app.
                     let ensure_enabled = || {
-                        crate::input::ax_actions::ensure_ax_action_enabled(
-                            middle_guard.as_ptr(),
-                            "middle_click",
-                        )
+                        if foreground {
+                            crate::input::ax_actions::ensure_ax_action_enabled_after_activation(
+                                middle_guard.as_ptr(),
+                                "middle_click",
+                            )
+                        } else {
+                            crate::input::ax_actions::ensure_ax_action_enabled(
+                                middle_guard.as_ptr(),
+                                "middle_click",
+                            )
+                        }
                     };
                     if foreground && !m.is_empty() {
                         crate::input::skylight::with_foreground_hid_activation(
@@ -1743,7 +1750,15 @@ fn perform_ax_click(
     // enable menu items that were disabled in the cached snapshot, while a
     // background transition can disable them after that snapshot. macOS may
     // otherwise return success for a disabled action that did nothing.
-    crate::input::ax_actions::ensure_ax_action_enabled(element_ptr, ax_action)?;
+    if foreground {
+        // Activation has just run; the app may not have enabled it yet.
+        crate::input::ax_actions::ensure_ax_action_enabled_after_activation(
+            element_ptr,
+            ax_action,
+        )?;
+    } else {
+        crate::input::ax_actions::ensure_ax_action_enabled(element_ptr, ax_action)?;
+    }
 
     // Capture advertised actions BEFORE dispatching so we can detect silent no-ops
     // (AX returns success even when the element doesn't advertise the action).

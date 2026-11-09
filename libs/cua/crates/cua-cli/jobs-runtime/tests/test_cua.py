@@ -60,6 +60,14 @@ def waits(cluster):
 def plain():
     return {"ok": True}
 
+@app.function()
+def with_defaults(steps=5, lr=0.1):
+    return {"steps": steps, "lr": lr}
+
+@app.function()
+def needs_arg(steps):
+    return steps
+
 import torch_not_installed_but_unused_ok if False else None
 '''
 
@@ -280,7 +288,7 @@ class Entry(unittest.TestCase):
     def test_unknown_function(self):
         r = self.run_entry("--spec", str(self.job), "nope")
         self.assertNotEqual(r.returncode, 0)
-        self.assertIn("available: launches, outdir, plain, raw, train, waits", r.stderr)
+        self.assertIn("available: launches, needs_arg, outdir, plain, raw, train, waits, with_defaults", r.stderr)
 
     def test_sigterm_stops_the_launched_command(self):
         import signal
@@ -366,6 +374,19 @@ class Entry(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(json.loads(untar(res)["result.json"]), {"ok": True})
         self.assertFalse((Path(self.tmp.name) / "d" / "result.json").exists())  # not in data_dir
+
+    def test_parameters_with_defaults_get_no_cluster(self):
+        res = Path(self.tmp.name) / "result"
+        r = self.run_entry(str(self.job), "with_defaults", CUA_JOB_DATA=str(Path(self.tmp.name) / "d"),
+                           CUA_RESULT_PATH=str(res))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(json.loads(untar(res)["result.json"]), {"steps": 5, "lr": 0.1})
+
+    def test_a_required_parameter_that_is_not_the_cluster_says_so(self):
+        r = self.run_entry(str(self.job), "needs_arg", CUA_JOB_DATA=str(Path(self.tmp.name) / "d"))
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("needs_arg() needs steps: a function run passes no arguments", r.stderr)
+        self.assertIn("name the first one `cluster`", r.stderr)
 
     def test_launch_picks_cuda_builds_on_nvidia_hosts_only(self):
         import _cua_entry as e

@@ -144,6 +144,21 @@ export interface SettingsSnapshot {
    * plan) and whether it is on this computer. Absent or null: the host
    * can't say, and the hints stay hidden. */
   cli?: CliInfo | null;
+  /** The channel and environment this app runs as, as the host resolved them
+   * (`app_target`, from cua-home): the title bar's "Local · Staging" tag
+   * (the core's `environment.tag`). Absent or null: the host can't say, and
+   * no tag shows. */
+  target?: AppTarget | null;
+}
+
+/** `SettingsSnapshot.target` (`environment_tag::Target` in the app core). */
+export interface AppTarget {
+  /** `stable` or `local`. */
+  channel: string;
+  /** `prod` or `staging`. */
+  env: string;
+  /** The sign-in server's host (`auth.staging.cua.ai`); empty: the environment's. */
+  authHost: string;
 }
 
 /** `SettingsSnapshot.cli`. */
@@ -332,8 +347,10 @@ export interface HostOperations
 
   "machines.list": { args: Record<string, never>; result: MachineRow[] };
   /** `localNetwork`: the permissions page is asking, so a Mac that runs macOS Spaces also lists its
-   * Local Network access ("local-network", granted or not) and checks it from the daemon. */
-  "host.status": { args: { localNetwork?: boolean }; result: HostStatus };
+   * Local Network access ("local-network", granted or not) and checks it from the daemon (the check makes macOS ask
+   * the first time). `localNetworkCheck: false` lists the row without checking: the first run checks only once the
+   * person pressed Allow, right after the step explains why. */
+  "host.status": { args: { localNetwork?: boolean; localNetworkCheck?: boolean }; result: HostStatus };
 
   "settings.get": { args: Record<string, never>; result: SettingsSnapshot };
   "settings.set": { args: { key: SettingKey; value: SettingsValues[SettingKey] }; result: SettingsSnapshot };

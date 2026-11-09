@@ -62,6 +62,9 @@ for (const [width, height] of SIZES) {
       await page.setViewportSize({ width, height });
       // signin-wait: the browser never confirms, so the sign-in step stays to be measured.
       await page.goto("/onboarding?bridge=demo&demo=fresh,signin-wait&parity");
+      // A button under the pointer grows (hover:scale) and would read as a move. Moving the pointer away is not enough on
+      // Linux: the corner is over the always-on scrollbar, which swallows the move and leaves the old hover in place.
+      await page.addStyleTag({ content: "button, a { transform: none !important; transition: none !important; }" });
       const root = page.locator("[data-new-first-run]");
       const primary = page.locator("[data-onboarding-primary]");
 
@@ -93,7 +96,6 @@ for (const [width, height] of SIZES) {
         await primary.click();
       }
       await page.locator("[data-new-run='agent']:not([data-state='looking'])").waitFor({ timeout: 30_000 });
-      if (await primary.isDisabled()) await page.locator("[data-new-run-agent][role=checkbox]").first().click();
       await measure("agent");
       await primary.click();
       // Ready is setup's last screen: Done goes to Home, where the rest is asked for after the first job (CUA-3150).

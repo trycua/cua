@@ -144,7 +144,7 @@ pub fn settings_view(input: &ConnectorsInput, prefs: &AgentMenuPrefs) -> AgentMe
     AgentMenuSettings {
         title: "Agent menu".into(),
         switch_label: SWITCH.into(),
-        help: "Choose which coding apps Home's agent menu lists. A hidden app keeps its sign-ins and stays on the Agents page and available by name. Connecting it again shows it.".into(),
+        help: "Hidden apps keep their sign-ins.".into(),
         rows: all
             .iter()
             .map(|g| {

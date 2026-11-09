@@ -45,10 +45,10 @@ const OTHERS: DriverMachine[] = [
   { machineId: "linux-box", name: "Linux box", os: "linux", thisMachine: false, state: "ready", version: "0.38.1", update: null },
 ];
 
-export const demoDriverState = (now: number, firstRun: boolean): DemoDriverState => ({
+export const demoDriverState = (now: number, firstRun: boolean, update = false): DemoDriverState => ({
   driver: {
     version: "0.38.0",
-    update: null,
+    update: update ? { version: "0.38.1", note: "Faster clicks in Chrome" } : null,
     paused: false,
     lastTest: firstRun ? null : { passed: true, atMs: now - 2 * 60_000, failure: null, tookMs: 4_000 },
     config: structuredClone(CONFIG),

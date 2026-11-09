@@ -1,5 +1,54 @@
 # Changelog
 
+## [0.45.1](https://github.com/trycua/cua/compare/cua-driver-rs-v0.45.0...cua-driver-rs-v0.45.1) (2026-11-08)
+
+
+### Bug Fixes
+
+* **cua-driver:** classify the Linux desktop once and read foreground restore from one table ([#6982](https://github.com/trycua/cua/issues/6982)) ([2506d9d](https://github.com/trycua/cua/commit/2506d9dd25e784389f15fcda6739c2b87c04fb19))
+
+## [0.45.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.44.2...cua-driver-rs-v0.45.0) (2026-11-08)
+
+
+### Features
+
+* **cua-driver:** nudge to batch after the second action, with a ready run_steps call ([#6921](https://github.com/trycua/cua/issues/6921)) ([7f81b8b](https://github.com/trycua/cua/commit/7f81b8b270e0742432689764a08efaba051e4fbe))
+
+## [0.44.2](https://github.com/trycua/cua/compare/cua-driver-rs-v0.44.1...cua-driver-rs-v0.44.2) (2026-11-08)
+
+
+### Bug Fixes
+
+* **cua-driver:** stop Windows stub registry panicking off Windows ([#7011](https://github.com/trycua/cua/issues/7011)) ([e142191](https://github.com/trycua/cua/commit/e142191254c9871ca8f29ba24eb4294829223c4c))
+
+## [0.44.1](https://github.com/trycua/cua/compare/cua-driver-rs-v0.44.0...cua-driver-rs-v0.44.1) (2026-11-08)
+
+
+### Bug Fixes
+
+* **cua-driver:** keep Linux action abandonment in one ActionPhase ([#6968](https://github.com/trycua/cua/issues/6968)) ([da8e73b](https://github.com/trycua/cua/commit/da8e73b9cea4f5e4c34bbc37b40005c78161632b))
+* **cua-driver:** skip a background invoke_menu press after its call is cancelled ([#6953](https://github.com/trycua/cua/issues/6953)) ([6a0b069](https://github.com/trycua/cua/commit/6a0b069a7301eebee0a86876287c949ab0d260c9))
+* **platform-macos:** run bring_to_front activation off the async worker ([#6980](https://github.com/trycua/cua/issues/6980)) ([1252201](https://github.com/trycua/cua/commit/12522016d0a94f5c84f4081cfdfdc233900efa64))
+
+## [0.44.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.43.2...cua-driver-rs-v0.44.0) (2026-11-08)
+
+
+### Features
+
+* **cua-driver:** capture the KWin desktop through ScreenShot2 behind kwin-capture ([#6890](https://github.com/trycua/cua/issues/6890)) ([5399b7b](https://github.com/trycua/cua/commit/5399b7b83de61e91fcf9183393f72ca93d238f05))
+* **cua-driver:** write the KWin desktop entry for the install that owns the CLI ([#6836](https://github.com/trycua/cua/issues/6836)) ([c91446f](https://github.com/trycua/cua/commit/c91446ff5c8bc9478a1e7e65e8fbb5bbadd6a244))
+
+
+### Bug Fixes
+
+* **cua-driver:** call Text Input Sources only with the thread affinity macOS requires (CUA-3763) ([#6939](https://github.com/trycua/cua/issues/6939)) ([76bad3c](https://github.com/trycua/cua/commit/76bad3ce512f1ff8123d1b0cbca6ad630cf9993d))
+* **cua-driver:** clear portal-input clippy lints in platform-linux ([#6940](https://github.com/trycua/cua/issues/6940)) ([4d148ba](https://github.com/trycua/cua/commit/4d148ba45fa30629e7e41139252649fe208efe30))
+* **cua-driver:** cover foreground activation enabling a macOS AppKit control ([#6947](https://github.com/trycua/cua/issues/6947)) ([a90b916](https://github.com/trycua/cua/commit/a90b916a5f136eafdc6cf314326768b1587567c1))
+* **cua-driver:** name the dialog that blocks keys and how to reach a spreadsheet cell (CUA-3763) ([#6937](https://github.com/trycua/cua/issues/6937)) ([33116fc](https://github.com/trycua/cua/commit/33116fccee2520d410385f372057cf2bf9988a69))
+* **cua-driver:** renumber Linux list_windows z_index after its filters ([#6938](https://github.com/trycua/cua/issues/6938)) ([5eafcfd](https://github.com/trycua/cua/commit/5eafcfd14179d66a365decbbd2291275ed32065e))
+* **cua-driver:** report macOS opened-window identity per action ([#6928](https://github.com/trycua/cua/issues/6928)) ([62530d9](https://github.com/trycua/cua/commit/62530d915b2e7c191f88a8555643621b25d93b25))
+* **cua-driver:** type exact text on the active keyboard layout or refuse it ([#6827](https://github.com/trycua/cua/issues/6827)) ([8edcf3a](https://github.com/trycua/cua/commit/8edcf3a50c84da1c20697e79b575e3a3eeb59c67))
+
 ## [0.43.2](https://github.com/trycua/cua/compare/cua-driver-rs-v0.43.1...cua-driver-rs-v0.43.2) (2026-11-08)
 
 

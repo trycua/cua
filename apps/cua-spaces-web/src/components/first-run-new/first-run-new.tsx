@@ -16,25 +16,29 @@ import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type
 import { folderLabel, isNeedsProof, newPendingId, useMachines, useSession, useSettings, useSpaces, type SignInPhase } from "@/bridge";
 import { BridgeContext } from "@/bridge/BridgeProvider";
 import { useAppPermissions } from "@/bridge/app-permissions";
+import { useLocalNetwork, type LocalNetworkState } from "@/bridge/local-network";
 import { readFirstRun, useFirstRunSaved, writeFirstRun } from "@/bridge/first-run";
 import { hostOs } from "@/bridge/host-os";
 import { useFirstSpaceOffers } from "@/bridge/new-space-hooks";
 import { onboardingInitial, onboardingTelemetry, onboardingView, readSavedOnboarding, writeSavedOnboarding } from "@/bridge/onboarding";
 import { extraName, spokenName } from "@/bridge/space-names";
 import { AddComputerSheet } from "@/components/add-computer-sheet";
-import { AppPermissionList, type PermissionsView } from "@/components/app-permissions";
+import { AppPermissionList, LocalNetworkRow, type PermissionsView } from "@/components/app-permissions";
 import { AppMarkImage } from "@/components/agents/harness-mark";
-import { agoLabel, useRecentThreads } from "@/components/ask-first/pick-up";
+import { agoLabel, PICK_UP_LIMIT, recentThreads, useRecentThreads } from "@/components/ask-first/pick-up";
 import { CuaLogo } from "@/components/cua-logo";
 import { Switch } from "@/components/ui/switch";
 import { permissionsStepView, type PermissionsStepView } from "@/lib/app-permissions";
 import { addImportedTask, type AskTask } from "@/lib/ask-first";
 import {
   afterWhere,
+  agentInfo,
   agentView,
-  chosenAgent,
+  chosenAgents,
+  toggleAgentOff,
   dotStep,
   INSTALL_PAGES,
+  listNames,
   NEW_RUN_EMPTY,
   placeName,
   reachedAfter,
@@ -470,7 +474,12 @@ export function WhereScreen({
   );
 }
 
-export function AgentScreen({ view, onPick, onContinue, onInstall, busy }: { view: AgentView; onPick: (id: string) => void; onContinue: () => void; onInstall: (agent: "claude-code" | "codex") => void; busy: boolean }) {
+export function AgentScreen({ view, onPick, onContinue, onLater, onInstall, busy }: { view: AgentView; onPick: (id: string) => void; onContinue: () => void; onLater: () => void; onInstall: (agent: "claude-code" | "codex") => void; busy: boolean }) {
+  const later = view.later ? (
+    <button type="button" className={cn(LINK, "text-[15px]")} disabled={busy} onClick={onLater} data-new-run-agent-later="">
+      {view.later}
+    </button>
+  ) : null;
   return (
     <div data-new-run="agent" data-state={view.state}>
       <Title>{view.title}</Title>
@@ -488,12 +497,13 @@ export function AgentScreen({ view, onPick, onContinue, onInstall, busy }: { vie
               name={a.name}
               sub={a.maker}
               picked={a.picked}
-              onClick={view.state === "several" ? () => onPick(a.id) : undefined}
+              onClick={() => onPick(a.id)}
               data-new-run-agent={a.id}
             />
           ))}
         </div>
       ) : null}
+      {view.note ? <p className={cn("mt-3 max-w-[480px] text-[13.5px] font-medium", GREY)} data-new-run-agent-note="">{view.note}</p> : null}
       {view.error ? (
         <p role="alert" className="mt-3 max-w-[480px] text-[13.5px] font-medium text-white" data-new-run-agent-error="">
           {view.error}
@@ -509,14 +519,16 @@ export function AgentScreen({ view, onPick, onContinue, onInstall, busy }: { vie
             <button type="button" className={cn(LINK, "text-[15px]")} onClick={() => onInstall("codex")} data-new-run-install="codex">
               {view.install.secondary}
             </button>
+            {later}
           </Actions>
         </>
       ) : (
         // Shown (greyed) while the agents are still being looked for, so it doesn't pop in once they're found.
-        <Actions>
+        <Actions className="flex flex-wrap items-center gap-6">
           <button type="button" className={WHITE_BUTTON} disabled={!view.continueEnabled || busy} onClick={onContinue} data-onboarding-primary="">
             {busy ? "Setting up…" : "Continue"}
           </button>
+          {later}
         </Actions>
       )}
     </div>
@@ -526,19 +538,32 @@ export function AgentScreen({ view, onPick, onContinue, onInstall, busy }: { vie
 /**
  * "Pick up where you left off" (CUA-3319): 2 to 4 of the person's recent chats with their agents on
  * this computer, each with **Continue in Cua**, which opens it in a new Home task with what was said
- * so far. Nothing runs until they send. Hidden when there are none. Only each chat's title, folder
- * and time are read here; its messages are read when it is picked.
+ * so far. Nothing runs until they send. Only the chats of `agents` (the agent picked in setup) are
+ * listed; all three agents' when none are named. While they are read, two quiet grey rows hold the
+ * place; hidden when there are none. Only each chat's title, folder and time are read here; its
+ * messages are read when it is picked.
  */
-export function PickUpWhereYouLeftOff({ onContinue, place = thisComputerText(), className }: { onContinue: (task: AskTask) => void; place?: string; className?: string }) {
-  const threads = useRecentThreads();
-  if (!threads?.length) return null;
+export function PickUpWhereYouLeftOff({ onContinue, agents, place = thisComputerText(), className }: { onContinue: (task: AskTask) => void; agents?: readonly string[]; place?: string; className?: string }) {
+  const threads = useRecentThreads(PICK_UP_LIMIT, agents);
+  if (threads && !threads.length) return null;
   return (
-    <section aria-labelledby="pick-up-heading" className={cn("w-full", className)} data-pick-up="">
+    <section aria-labelledby="pick-up-heading" aria-busy={threads ? undefined : true} className={cn("w-full", className)} data-pick-up="" data-pick-up-loading={threads ? undefined : ""}>
       <h2 id="pick-up-heading" className="text-[15px] font-semibold text-white">
         Pick up where you left off
       </h2>
       <ul className={cn(CARD, "mt-2.5 max-w-[600px]")}>
-        {threads.map((t) => {
+        {threads === null
+          ? [0, 1].map((i) => (
+              <li key={i} aria-hidden className="flex items-center gap-3 px-3 py-2.5" data-pick-up-placeholder="">
+                <span className="size-7 shrink-0 rounded-full bg-white/[0.06]" />
+                <span className="min-w-0 flex-1 space-y-1.5 py-0.5">
+                  <span className="block h-3.5 w-[55%] rounded-full bg-white/[0.08]" />
+                  <span className="block h-3 w-[35%] rounded-full bg-white/[0.05]" />
+                </span>
+              </li>
+            ))
+          : null}
+        {(threads ?? []).map((t) => {
           const folder = folderLabel(t.cwd);
           const when = agoLabel(t.lastActiveMs);
           return (
@@ -562,7 +587,7 @@ export function PickUpWhereYouLeftOff({ onContinue, place = thisComputerText(), 
   );
 }
 
-export function ReadyScreen({ view, agent, onDone, onContinueChat, onCopied, place }: { view: ReadyView; agent: string; onDone: () => void; onContinueChat?: (task: AskTask) => void; onCopied?: () => void; place?: string }) {
+export function ReadyScreen({ view, agent, agents, onDone, onContinueChat, onCopied, place }: { view: ReadyView; agent: string; agents?: readonly string[]; onDone: () => void; onContinueChat?: (task: AskTask) => void; onCopied?: () => void; place?: string }) {
   const [copied, setCopied] = useState(false);
   const copy = () => {
     onCopied?.();
@@ -586,8 +611,8 @@ export function ReadyScreen({ view, agent, onDone, onContinueChat, onCopied, pla
           {copied ? "Copied" : view.copy}
         </button>
       </div>
-      {/* The person's own recent chats on this computer (CUA-3319), hidden when there are none. */}
-      {onContinueChat ? <PickUpWhereYouLeftOff className="mt-[min(28px,3vh)]" place={place} onContinue={onContinueChat} /> : null}
+      {/* The person's own recent chats with the agent they picked (CUA-3319), hidden when there are none. */}
+      {onContinueChat ? <PickUpWhereYouLeftOff className="mt-[min(28px,3vh)]" agents={agents?.length ? agents : [agent]} place={place} onContinue={onContinueChat} /> : null}
       <Actions>
         <button type="button" className={WHITE_BUTTON} onClick={onDone} data-onboarding-primary="">
           {view.done}
@@ -597,13 +622,17 @@ export function ReadyScreen({ view, agent, onDone, onContinueChat, onCopied, pla
   );
 }
 
-/** 2b, on a Mac: Cua Spaces' two permissions (the same rows as the Cua Driver page), each with Allow, and Later. Never blocks the run. */
-export function PermissionsScreen({ view, perms, onContinue }: { view: PermissionsStepView; perms: PermissionsView; onContinue: () => void }) {
+/**
+ * 2b, on a Mac: Cua Spaces' two permissions (the same rows as the Cua Driver page), each with Allow, and Later. A Mac
+ * that runs macOS Spaces also gets Local Network (`net`), asked here so the first macOS Space just starts. Never blocks
+ * the run.
+ */
+export function PermissionsScreen({ view, perms, net, appName, onContinue }: { view: PermissionsStepView; perms: PermissionsView; net?: LocalNetworkState | null; appName?: string; onContinue: () => void }) {
   return (
     <div data-new-run="permissions">
       <Title>{view.title}</Title>
       <Line>{view.line}</Line>
-      <AppPermissionList perms={perms} variant="hero" className="mt-[min(28px,3vh)]" footer={view.note} />
+      <AppPermissionList perms={perms} variant="hero" className="mt-[min(28px,3vh)]" footer={view.note} extra={net?.available ? <LocalNetworkRow net={net} appName={appName ?? "Cua Spaces"} /> : null} />
       <Actions>
         <button type="button" className={view.primary.white ? WHITE_BUTTON : GLASS_BUTTON} onClick={onContinue} data-onboarding-primary="" data-new-run-permissions-next={view.primary.label}>
           {view.primary.label}
@@ -668,13 +697,11 @@ export function NewFirstRun() {
   const phase: SignInPhase = session.data?.signIn ?? { kind: "idle" };
   const [now, setNow] = useState(() => Date.now());
   const [found, setFound] = useState<string[] | null>(null);
-  const [agentPick, setAgentPick] = useState<string | null>(s.agent);
   const [connecting, setConnecting] = useState(false);
   const [connectError, setConnectError] = useState<string | null>(null);
   const [thisState, setThisState] = useState<"adding" | "added" | "failed">("adding");
   const [addError, setAddError] = useState<string | null>(null);
   const [addNeedsProof, setAddNeedsProof] = useState(false);
-  const [explain, setExplain] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   // "Use a code from another computer": the sheet opens on "Enter a code".
   const [addEnter, setAddEnter] = useState(false);
@@ -810,6 +837,9 @@ export function NewFirstRun() {
   // 2b: Cua Spaces' permissions, read while the step shows. A host with none to give (not a Mac, an older app) has
   // no step: it goes on to the coding agent.
   const perms = useAppPermissions(s.screen === "permissions");
+  // A Mac that runs macOS Spaces (set up on screen 2) also needs Local Network: asked on the same step, so the issue
+  // never shows up later on its page, and its first macOS Space just starts.
+  const net = useLocalNetwork(s.screen === "permissions");
   useEffect(() => {
     if (s.screen === "permissions" && !perms.loading && !perms.available) go("agent");
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -818,7 +848,6 @@ export function NewFirstRun() {
   // The separate computer: this page's create, followed in the Spaces list.
   const linux = offers.offers.find((o) => o.id === "linux") ?? null;
   const made = useMemo(() => {
-    if (explain) return { phase: "explain" as const, name: null, error: null, id: null };
     if (!s.separatePendingId) return { phase: "none" as const, name: null, error: null, id: null };
     const id = store?.createdId(s.separatePendingId) ?? s.separatePendingId;
     const row = spaces.data?.find((x) => x.id === id);
@@ -827,7 +856,7 @@ export function NewFirstRun() {
     const name = spokenName(row.name);
     if (st === "failed") return { phase: "failed" as const, name, error: row.progress?.error ?? null, id: row.id };
     return { phase: st === "creating" ? ("making" as const) : ("ready" as const), name, error: null, id: row.id };
-  }, [explain, s.separatePendingId, spaces.data, store]);
+  }, [s.separatePendingId, spaces.data, store]);
   // A Mac that can't run virtual computers is only known when the daemon refuses the create (#6323): then
   // the option turns grey with the plain sentence, instead of a failure.
   const cantRun = made.phase === "failed" && CANT_RUN.test(made.error ?? "");
@@ -836,9 +865,7 @@ export function NewFirstRun() {
 
   const makeSeparate = () => {
     if (!linux || linux.blocked) return;
-    // On a Mac, our one line first; the ask itself is the daemon's, before the create (#6009).
-    if (os === "macos" && !explain && separate.phase !== "failed") return setExplain(true);
-    setExplain(false);
+    // A Linux computer needs no Local Network access (only a macOS Space here does), so nothing is asked first.
     const pendingId = newPendingId();
     save({ separatePendingId: pendingId, picks: [...new Set([...s.picks, `pending:${pendingId}`])] });
     spaces.createSpace({ ...linux.args, name: extraName("linux", spaces.data ?? []), os: linux.os, notifyWhenReady: true }, pendingId).catch(() => {
@@ -879,30 +906,62 @@ export function NewFirstRun() {
     return out.length ? out : ["this"];
   };
 
-  const agent = chosenAgent(found, agentPick);
-  const agentScreen = agentView({ os, found, picked: agentPick, error: connectError });
+  const agentsOff = s.agentsOff ?? [];
+  const agentScreen = agentView({ os, found, off: agentsOff, error: connectError });
   const continueAgent = async () => {
-    if (!agent || !adapter || connecting) return;
+    const agents = chosenAgents(found, agentsOff);
+    if (!adapter || connecting) return;
+    // Nothing ticked: the same as Choose later.
+    if (!agents.length) return void agentsLater();
     setConnecting(true);
     setConnectError(null);
+    // Ready's "Pick up where you left off": the picked agents' chats are read while Cua connects, so the list is
+    // there when the screen shows (CUA-3319).
+    void recentThreads(adapter, agents, PICK_UP_LIMIT);
+    const started = performance.now();
     try {
-      // The same connect as Settings and the old first run: Cua's tools in the agent's settings, and its sign-in kept.
-      const viaConnect = await adapter.call("agents.connect", { agents: [agent], signIn: true }).then(
-        () => true,
-        () => false,
-      );
-      const rows = viaConnect ? await adapter.call("agents.setup", {}) : await adapter.call("agents.configure", { agents: [agent] });
-      const row = rows.find((r) => r.agent === agent);
-      if (!row?.configured) {
-        setConnectError(`Cua couldn't add itself to ${row?.name ?? "the agent"}'s settings.${row?.detail ? ` ${row.detail}` : ""}`);
+      // Only Cua's tools in each agent's settings wait here: they are all the Ready screen needs, and take well under a
+      // second. Copying an agent's sign-in can run Claude Code to refresh a sign-in that ran out (seconds, up to 30),
+      // so it runs after, below.
+      const results = await adapter.call("agents.connect", { agents, signIn: false }).catch(() => null);
+      // A host without Connect, or an answer missing an agent: the agents' rows say.
+      const missing = results ? agents.filter((id) => !results.some((r) => r.agent === id)) : agents;
+      const rows = missing.length ? (results ? await adapter.call("agents.setup", {}) : await adapter.call("agents.configure", { agents })) : [];
+      const failed = agents
+        .map((id) => {
+          const r = results?.find((x) => x.agent === id);
+          if (r) return { agent: id, name: agentInfo(id).name, configured: Boolean(r.tools_ok), detail: r.tools_line ?? null };
+          return rows.find((x) => x.agent === id) ?? { agent: id, name: agentInfo(id).name, configured: false, detail: null };
+        })
+        .filter((r) => !r.configured);
+      if (failed.length) {
+        const one = failed.length === 1 ? failed[0]! : null;
+        setConnectError(
+          one
+            ? `Cua couldn't add itself to ${one.name ?? "the agent"}'s settings.${one.detail ? ` ${one.detail}` : ""}`
+            : `Cua couldn't add itself to the settings of ${listNames(failed.map((r) => r.name ?? r.agent))}.`,
+        );
         return;
       }
-      save({ agent, screen: "ready" });
+      console.info(`first run: ${agents.join(", ")} connected in ${Math.round(performance.now() - started)} ms`);
+      // Ready's line to try uses the first one that has a command to type.
+      const primary = agents.find((id) => agentInfo(id).command) ?? agents[0]!;
+      save({ agent: primary, connected: agents, screen: "ready" });
+      // The same connect as Settings, now with the sign-ins kept for runs in your Spaces. Nothing on Ready waits on it.
+      void adapter.call("agents.connect", { agents, signIn: true }).then(
+        () => console.info(`first run: sign-ins kept in ${Math.round(performance.now() - started)} ms`),
+        (e: unknown) => console.warn("first run: keeping the sign-ins failed", e),
+      );
     } catch (e) {
       setConnectError(e instanceof Error ? e.message : String(e));
     } finally {
       setConnecting(false);
     }
+  };
+  // Choose later: setup is done without connecting an agent; Settings, Connections does it any time.
+  const agentsLater = () => {
+    funnel("step_skipped", "later");
+    void finish();
   };
 
   const open = (url: string) => void session.openExternal(url).catch(() => {});
@@ -1005,18 +1064,28 @@ export function NewFirstRun() {
       );
       break;
     case "permissions":
-      body = <PermissionsScreen view={permissionsStepView({ appName: perms.data?.appName ?? "Cua Spaces", allGranted: perms.allGranted })} perms={perms} onContinue={() => go("agent")} />;
+      body = (
+        <PermissionsScreen
+          view={permissionsStepView({
+            appName: perms.data?.appName ?? "Cua Spaces",
+            allGranted: perms.allGranted,
+            localNetwork: !net.available ? "none" : net.granted ? "on" : net.denied ? "denied" : "off",
+          })}
+          perms={perms}
+          net={net}
+          appName={perms.data?.appName ?? "Cua Spaces"}
+          onContinue={() => go("agent")}
+        />
+      );
       break;
     case "agent":
       body = (
         <AgentScreen
           view={agentScreen}
           busy={connecting}
-          onPick={(id) => {
-            setAgentPick(id);
-            save({ agent: id });
-          }}
+          onPick={(id) => save({ agentsOff: toggleAgentOff(agentsOff, id) })}
           onContinue={() => void continueAgent()}
+          onLater={agentsLater}
           onInstall={(a) => open(INSTALL_PAGES[a])}
         />
       );
@@ -1024,8 +1093,9 @@ export function NewFirstRun() {
     case "ready":
       body = s.agent ? (
         <ReadyScreen
-          view={readyView({ os, agent: s.agent, computers: pickedNames(), canMakeSeparate })}
+          view={readyView({ os, agent: s.agent, agents: s.connected, computers: pickedNames(), canMakeSeparate })}
           agent={s.agent}
+          agents={s.connected}
           place={placeName(os)}
           onDone={() => {
             funnel("step_completed", agentWord(s.agent));
@@ -1058,9 +1128,10 @@ export function NewFirstRun() {
       </header>
       {/* Every screen starts at the same height under the header (never centred: screens differ in height, and a
           centred one moved the title and the button between steps). The screen fills the area, so its action row
-          (`Actions`) sits at the bottom of it; content longer than the window scrolls above that row. */}
-      <main ref={mainRef} className="relative z-20 flex min-h-0 flex-1 flex-col overflow-y-auto px-16" data-new-run-main="">
-        <div className="flex w-full max-w-[600px] shrink-0 grow flex-col pt-[clamp(16px,8vh,96px)] *:flex *:grow *:flex-col">{body}</div>
+          (`Actions`) sits at the bottom of it; content longer than the window scrolls above that row. On windows taller
+          than 1000px the area stops at 860px, so the button stays near the text instead of the far bottom edge. */}
+      <main ref={mainRef} className="relative z-20 flex min-h-0 flex-1 flex-col scroll-y-stable px-16" data-new-run-main="">
+        <div className="flex w-full max-w-[600px] shrink-0 grow flex-col pt-[clamp(16px,8vh,96px)] *:flex *:grow *:flex-col [@media(min-height:1000px)]:max-h-[860px]">{body}</div>
       </main>
       {/* The dots' row keeps its height on the screens without dots, so the area above it keeps its height too. */}
       <div className="relative z-20 flex h-[38px] shrink-0 flex-col justify-end" data-new-run-dots-row="">

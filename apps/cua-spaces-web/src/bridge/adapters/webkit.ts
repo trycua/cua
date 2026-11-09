@@ -356,6 +356,7 @@ export function toSettingsSnapshot(s: WkSettings, page: Pick<SettingsValues, "th
     globalShortcut: s.globalShortcut ? { label: s.globalShortcut.label, registered: s.globalShortcut.registered } : null,
     accountUrl: s.accountUrl ?? null,
     cli: s.cli && s.cli.name ? { name: s.cli.name, installed: Boolean(s.cli.installed) } : null,
+    target: s.target ? { channel: s.target.channel, env: s.target.env, authHost: s.target.authHost ?? "" } : null,
   };
 }
 
@@ -655,8 +656,9 @@ export function createWebkitAdapter(
       machinesView = machines?.view ? fromHostView(machines.view) : null;
       return toMachineRows(spaces, machines, os);
     },
-    "host.status": async () => {
-      const h = await request<WkHostState | null>("host.status");
+    // The args (localNetwork, localNetworkCheck) go to the app: without them it never lists the Local Network row.
+    "host.status": async (args) => {
+      const h = await request<WkHostState | null>("host.status", { ...args });
       if (!h) throw new HostError("This Mac has not reported its sharing status yet", "not_found");
       return toHostStatus(h);
     },

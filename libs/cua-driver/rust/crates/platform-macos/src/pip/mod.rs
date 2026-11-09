@@ -209,6 +209,8 @@ pub fn run_appkit_main_loop() {
 
     let _mtm = objc2_foundation::MainThreadMarker::new()
         .expect("run_appkit_main_loop must be called from the main thread");
+    // AppKit uses Text Input Sources on this thread from here on.
+    crate::input::input_source::main_thread_runs_event_loop();
     unsafe {
         let app: *mut AnyObject = msg_send![class!(NSApplication), sharedApplication];
         // Accessory policy: no Dock icon, no menu bar. Keeps the

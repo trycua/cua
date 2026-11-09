@@ -19,7 +19,10 @@
 //                    whose accessibility press raises, so AppKit answers AXPress
 //                    with an AX error; one toggles before raising (#3835)
 //   disabled_control — opt-in (CUA_APPKIT_DISABLED_CONTROL=1): a disabled
-//                    checkbox (disabled_checked=) for enablement reads (#3949)
+//                    checkbox (disabled_checked=) for enablement reads (#3949),
+//                    and a button and field enabled only while the app is
+//                    active (active_only=, activations=) for the
+//                    post-activation re-read
 //   context_menu   — NSButton + NSMenu (Cut/Copy/Paste → menu_action=)
 //   popup_select   — NSPopUpButton (Design/Research/Finance → popup_value=)
 //   scroll_target  — NSScrollView with a tall body and offset label
@@ -65,6 +68,10 @@ let kErroringTogglesStateAID = "lbl-erroring-toggles"
 let kDisabledControlEnv = "CUA_APPKIT_DISABLED_CONTROL"
 let kDisabledCheckboxAID = "chk-disabled"
 let kDisabledStateAID = "lbl-disabled-state"
+let kActiveOnlyButtonAID = "btn-active-only"
+let kActiveOnlyFieldAID = "txt-active-only"
+let kActiveOnlyStateAID = "lbl-active-only"
+let kActivationsAID = "lbl-activations"
 let kSelectionStateAID = "lbl-selection-state"
 let kContextButtonAID = "btn-context"
 let kMenuActionAID = "lbl-menu-action"
@@ -147,6 +154,12 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate, NSTableViewD
     let erroringTogglesLabel = NSTextField(labelWithString: "")
     let disabledCheckbox = NSButton(checkboxWithTitle: "Unavailable option", target: nil, action: nil)
     let disabledStateLabel = NSTextField(labelWithString: "")
+    // Lazy: an ordinary launch never creates the opt-in active-only controls.
+    lazy var activeOnlyButton = ActiveOnlyButton(title: "Active only", target: nil, action: nil)
+    lazy var activeOnlyField = NSTextField(string: "")
+    lazy var activeOnlyLabel = NSTextField(labelWithString: "active_only=none")
+    lazy var activationsLabel = NSTextField(labelWithString: "activations=0")
+    var activations = 0
     let selectionItems = ["alpha", "beta", "gamma"]
     let selectionTable = NSTableView()
     let selectionStateLabel = NSTextField(labelWithString: "selection=none")
@@ -550,10 +563,55 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate, NSTableViewD
         row.addArrangedSubview(disabledStateLabel)
         content.addArrangedSubview(row)
         onDisabledCheckbox()
+
+        // Enabled only while the app is active, like a toolbar item in a
+        // window that is not key: activation is what makes them usable.
+        activeOnlyButton.setAccessibilityIdentifier(kActiveOnlyButtonAID)
+        activeOnlyButton.target = self
+        activeOnlyButton.action = #selector(onActiveOnlyPress)
+        activeOnlyButton.onEvent = { [weak self] in self?.recordActiveOnly($0) }
+        activeOnlyField.setAccessibilityIdentifier(kActiveOnlyFieldAID)
+        activeOnlyField.delegate = self
+        activeOnlyLabel.setAccessibilityIdentifier(kActiveOnlyStateAID)
+        activeOnlyLabel.font = NSFont.monospacedSystemFont(ofSize: 14, weight: .regular)
+        let activeRow = NSStackView()
+        activeRow.orientation = .horizontal
+        activeRow.spacing = 12
+        activeRow.addArrangedSubview(activeOnlyButton)
+        activeRow.addArrangedSubview(activeOnlyField)
+        activeRow.addArrangedSubview(activeOnlyLabel)
+        activationsLabel.setAccessibilityIdentifier(kActivationsAID)
+        activationsLabel.font = NSFont.monospacedSystemFont(ofSize: 14, weight: .regular)
+        activeRow.addArrangedSubview(activationsLabel)
+        NSLayoutConstraint.activate([activeOnlyField.widthAnchor.constraint(equalToConstant: 160)])
+        content.addArrangedSubview(activeRow)
+        for name in [NSApplication.didBecomeActiveNotification,
+                     NSApplication.didResignActiveNotification] {
+            NotificationCenter.default.addObserver(
+                self, selector: #selector(syncActiveOnly(_:)), name: name, object: nil)
+        }
+        syncActiveOnly(nil)
     }
 
     @objc private func onDisabledCheckbox() {
         disabledStateLabel.stringValue = "disabled_checked=\(disabledCheckbox.state == .on)"
+    }
+
+    /// Also counts activations, so a refused call can show it activated the
+    /// app before refusing rather than refusing up front.
+    @objc private func syncActiveOnly(_ note: Notification?) {
+        activeOnlyButton.isEnabled = NSApp.isActive
+        activeOnlyField.isEnabled = NSApp.isActive
+        if note?.name == NSApplication.didBecomeActiveNotification {
+            activations += 1
+            activationsLabel.stringValue = "activations=\(activations)"
+        }
+    }
+
+    @objc private func onActiveOnlyPress() { recordActiveOnly("click") }
+
+    private func recordActiveOnly(_ event: String) {
+        activeOnlyLabel.stringValue = "active_only=\(event)"
     }
 
     /// Benign distractor controls for density mode (#4312): a grid of buttons,
@@ -769,6 +827,8 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate, NSTableViewD
         guard let field = obj.object as? NSTextField else { return }
         if field === textInput {
             textInputMirror.stringValue = field.stringValue
+        } else if field.accessibilityIdentifier() == kActiveOnlyFieldAID {
+            recordActiveOnly("text:\(field.stringValue)")
         }
     }
 
@@ -852,6 +912,20 @@ final class ClickTargetButton: NSButton {
         harness?.clickTargetSawRight()
     }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+}
+
+/// The active-only button: AXPress and a single click fire its action, and a
+/// pixel double-click reports itself before AppKit's tracking loop.
+final class ActiveOnlyButton: NSButton {
+    var onEvent: ((String) -> Void)?
+
+    override func mouseDown(with event: NSEvent) {
+        if event.clickCount == 2 && isEnabled {
+            onEvent?("double_click")
+            return
+        }
+        super.mouseDown(with: event)
+    }
 }
 
 // Opt-in windows for the persistent exact-window activation certification.

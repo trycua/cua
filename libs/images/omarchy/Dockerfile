@@ -66,8 +66,8 @@ RUN echo 'Server = https://mirror.omarchy.org/$repo/os/$arch' >/etc/pacman.d/mir
  && pacman-key --init \
  && pacman-key --populate archlinux \
  && pacman -Sy --noconfirm archlinux-keyring \
- && curl -fsSL --retry 5 -o "/tmp/$OMARCHY_KEYRING" "https://pkgs.omarchy.org/edge/x86_64/$OMARCHY_KEYRING" \
- && curl -fsSL --retry 5 -o "/tmp/$OMARCHY_KEYRING.sig" "https://pkgs.omarchy.org/edge/x86_64/$OMARCHY_KEYRING.sig" \
+ && curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 -o "/tmp/$OMARCHY_KEYRING" "https://pkgs.omarchy.org/edge/x86_64/$OMARCHY_KEYRING" \
+ && curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 -o "/tmp/$OMARCHY_KEYRING.sig" "https://pkgs.omarchy.org/edge/x86_64/$OMARCHY_KEYRING.sig" \
  && echo "$OMARCHY_KEYRING_SHA256  /tmp/$OMARCHY_KEYRING" | sha256sum -c - \
  && install -d /usr/share/pacman/keyrings \
  && for f in omarchy.gpg omarchy-trusted omarchy-revoked; do \

@@ -2040,9 +2040,8 @@ pub fn import_sheet_on(os: SpaceOs) -> ImportSheetView {
     };
     ImportSheetView {
         title: "Use your Claude Code sign-in".into(),
-        lede: format!(
-            "Run Claude Code in your Spaces with the Claude plan you already use on {this}."
-        ),
+        // The one line most people need; `points` (what is read, kept and sent) go under "How this works".
+        lede: format!("Cua uses the Claude Code sign-in on {this}. You stay signed in."),
         points: vec![
             format!("Cua reads your Claude Code sign-in from {from}."),
             format!(

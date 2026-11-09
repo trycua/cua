@@ -50,12 +50,12 @@ function usePlanLink(): { plan: string; open(): void } {
   };
 }
 
-/** The Pro line and Upgrade: Free only (the core's `upsell.proBanner`). */
+/** The Pro line and Upgrade: Free only, near a limit (the core's `upsell.proBanner` with the month's usage). */
 export function ProBanner() {
   const { core } = useBridge();
   const usage = useRelayUsage();
   const link = usePlanLink();
-  const banner = useMemo(() => (core.status !== "ready" || !usage ? null : proBanner(core, { plan: usage.plan })), [core, usage]);
+  const banner = useMemo(() => (core.status !== "ready" || !usage ? null : proBanner(core, { plan: usage.plan, usage })), [core, usage]);
   if (!banner?.visible) return null;
   return (
     <div data-pro-banner="" className="mx-2.5 mb-1.5 flex min-h-9 items-center gap-1 rounded-lg bg-brand-surface py-1 pr-1 pl-3">

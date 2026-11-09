@@ -36,6 +36,7 @@ use crate::error::{Result, VmmError};
 use crate::exec::{ExecOutput, ExecRequest, GuestExec};
 use crate::host;
 use crate::runtime::Runtime;
+use crate::stack::boxed;
 use crate::types::*;
 
 pub use engine::{EngineEndpoint, EngineKind};
@@ -873,7 +874,7 @@ impl ContainerRuntime {
         }
         // Its own MAC, so egress rules can be keyed by it before it starts
         // ([`egress`]); no raw sockets under a policy that blocks anything.
-        if let Some((net, mac)) = self.mac_config(name).await? {
+        if let Some((net, mac)) = boxed(|| self.mac_config(name)).await? {
             body.networking_config = Some(net);
             body.labels
                 .get_or_insert_with(Default::default)
@@ -886,7 +887,7 @@ impl ContainerRuntime {
         }
         // Its own resolv.conf: a user-defined network's embedded resolver
         // (127.0.0.11) is out of reach under gVisor ([`egress`]).
-        if let Some((bind, servers)) = self.prepare_resolv(name).await?
+        if let Some((bind, servers)) = boxed(|| self.prepare_resolv(name)).await?
             && let Some(hc) = body.host_config.as_mut()
         {
             hc.binds.get_or_insert_with(Vec::new).push(bind);
@@ -1320,7 +1321,7 @@ impl Runtime for ContainerRuntime {
                     }
                     let have = Self::published(&i);
                     if merged != env || spec.ports.iter().any(|p| !have.contains(p)) {
-                        self.recreate(&spec.name, &i, merged, &spec.ports).await?;
+                        boxed(|| self.recreate(&spec.name, &i, merged, &spec.ports)).await?;
                         i = self
                             .inspect(&spec.name)
                             .await?
@@ -1365,8 +1366,7 @@ impl Runtime for ContainerRuntime {
                             .as_ref()
                             .and_then(|c| c.labels.clone())
                             .unwrap_or_default();
-                        self.create(&spec.name, &img, spec, labels, None, None)
-                            .await?;
+                        boxed(|| self.create(&spec.name, &img, spec, labels, None, None)).await?;
                     }
                     self.start_policed(&spec.name).await?;
                 }
@@ -1412,11 +1412,12 @@ impl Runtime for ContainerRuntime {
                 let (spec, secret) = pool_member_spec(spec)?;
                 let spec = spec.as_ref();
                 // Warm: restore this configuration's golden checkpoint.
-                let plan = self.golden_plan(original, reference).await;
+                let plan = boxed(|| self.golden_plan(original, reference)).await;
                 if let Some(rec) = plan.as_ref().and_then(|p| p.record.as_ref()) {
-                    match self
-                        .start_warm(spec, reference, platform.clone(), rec, secret.as_deref())
-                        .await
+                    match boxed(|| {
+                        self.start_warm(spec, reference, platform.clone(), rec, secret.as_deref())
+                    })
+                    .await
                     {
                         Ok(inst) => return Ok(inst),
                         Err(e) => {
@@ -1447,14 +1448,16 @@ impl Runtime for ContainerRuntime {
                 let mut attempt = 0;
                 loop {
                     attempt += 1;
-                    self.create(
-                        &spec.name,
-                        reference,
-                        spec,
-                        HashMap::new(),
-                        platform.clone(),
-                        None,
-                    )
+                    boxed(|| {
+                        self.create(
+                            &spec.name,
+                            reference,
+                            spec,
+                            HashMap::new(),
+                            platform.clone(),
+                            None,
+                        )
+                    })
                     .await?;
                     if let Some(secret) = &secret
                         && let Err(e) = self.write_token_file(&spec.name, secret).await
@@ -1465,7 +1468,7 @@ impl Runtime for ContainerRuntime {
                     crate::progress::report(crate::progress::Progress::phase(
                         crate::progress::Phase::Booting,
                     ));
-                    match self.start_policed(&spec.name).await {
+                    match boxed(|| self.start_policed(&spec.name)).await {
                         Ok(()) => break,
                         Err(e) => {
                             self.unpolice(&spec.name).await;
@@ -1497,7 +1500,8 @@ impl Runtime for ContainerRuntime {
                 .host_port(snapshot::SPACESD_PORT)
                 .map(|p| format!("http://{}:{p}", inst.endpoints.host));
             if let Err(e) =
-                snapshot::give_identity(&self.docker, &spec.name, spacesd, auth, token).await
+                boxed(|| snapshot::give_identity(&self.docker, &spec.name, spacesd, auth, token))
+                    .await
             {
                 // A clone must never run on with its source's identity.
                 let _ = self
@@ -1519,8 +1523,8 @@ impl Runtime for ContainerRuntime {
         }
         // Sidecars join the sandbox's network namespace and start before
         // readiness is checked (a probe may target a sidecar's port).
-        if let Err(e) = self.ensure_sidecars(spec).await {
-            let _ = self.delete(&spec.name).await;
+        if let Err(e) = boxed(|| self.ensure_sidecars(spec)).await {
+            let _ = boxed(|| self.delete(&spec.name)).await;
             return Err(e);
         }
         if !spec.probes.is_empty() {
@@ -1528,15 +1532,17 @@ impl Runtime for ContainerRuntime {
                 crate::progress::Phase::WaitingForServices,
             ));
         }
-        self.wait_probes(
-            &spec.name,
-            &inst.endpoints,
-            &spec.probes,
-            spec.ready_timeout,
-        )
+        boxed(|| {
+            self.wait_probes(
+                &spec.name,
+                &inst.endpoints,
+                &spec.probes,
+                spec.ready_timeout,
+            )
+        })
         .await?;
         if let Some((plan, reference)) = record_golden {
-            self.spawn_golden(spec, &reference, plan).await;
+            boxed(|| self.spawn_golden(spec, &reference, plan)).await;
         }
         Ok(inst)
     }
@@ -3048,9 +3054,10 @@ fn apply_wsl_gpu(body: &mut ContainerCreateBody) {
                 path_in_container: Some("/dev/dxg".into()),
                 cgroup_permissions: Some("rwm".into()),
             });
-        hc.binds
-            .get_or_insert_with(Vec::new)
-            .push("/usr/lib/wsl:/usr/lib/wsl:ro".into());
+        let binds = hc.binds.get_or_insert_with(Vec::new);
+        binds.push("/usr/lib/wsl:/usr/lib/wsl:ro".into());
+        // A job's member runs with its own PATH: `nvidia-smi` is on it.
+        binds.push("/usr/lib/wsl/lib/nvidia-smi:/usr/local/bin/nvidia-smi:ro".into());
     }
 }
 
@@ -3635,10 +3642,13 @@ mod tests {
             hc.devices.unwrap()[0].path_on_host.as_deref(),
             Some("/dev/dxg")
         );
+        let binds = hc.binds.unwrap();
+        assert!(binds.contains(&"/usr/lib/wsl:/usr/lib/wsl:ro".to_string()));
         assert!(
-            hc.binds
-                .unwrap()
-                .contains(&"/usr/lib/wsl:/usr/lib/wsl:ro".to_string())
+            binds
+                .iter()
+                .any(|b| b.ends_with(":/usr/local/bin/nvidia-smi:ro")),
+            "a member's own PATH still finds nvidia-smi"
         );
         assert!(
             body.env

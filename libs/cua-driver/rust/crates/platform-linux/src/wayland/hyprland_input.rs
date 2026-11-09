@@ -241,7 +241,7 @@ pub(crate) fn unknown_dispatch(error: anyhow::Error, acknowledged_phases: u32) -
 }
 
 pub fn enabled() -> bool {
-    super::wayland_input_enabled()
+    super::is_wayland()
         && super::hyprland::is_session()
         && (protocol() == InputProtocol::Experiment
             || (0..MAX_LANES).any(|lane| {

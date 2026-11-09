@@ -2457,11 +2457,6 @@ pub fn run_mcp_config(client: Option<&str>, no_skills: bool) {
             // .factory/mcp.json (folder/project), top-level "mcpServers" with
             // "type":"stdio". The CLI takes command+args as one quoted string.
             println!("droid mcp add cua-driver \"{binary} mcp\"");
-            eprintln!(
-                "Droid asks for --auto high before any MCP tool without readOnlyHint. \
-                 `cua-driver connect --client droid` also rates the action tools medium \
-                 in ~/.factory/settings.json, so --auto medium runs them."
-            );
         }
         Some("zcode") => {
             // ZCode by Z.ai (GLM coding harness) — a GUI app. MCP servers are

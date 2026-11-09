@@ -684,19 +684,22 @@ fn deliver(
                 sleep(pause);
             }
             if confirm_at.binary_search(&sent).is_ok() {
-                let deadline = std::time::Instant::now() + DELIVERY_CONFIRM_TIMEOUT;
+                let mut deadline = std::time::Instant::now() + DELIVERY_CONFIRM_TIMEOUT;
                 while read <= sent {
                     let Some((_, _, deviceid)) =
                         next_raw_key(display, xi_opcode, &[slave_keyboard_id], deadline)
                     else {
                         bail!(
-                            "virtual keyboard: the X server read {} of the first {} characters \
-                             within {DELIVERY_CONFIRM_TIMEOUT:?}; the rest was not sent",
+                            "virtual keyboard: the X server read {} of the first {} characters, \
+                             then nothing for {DELIVERY_CONFIRM_TIMEOUT:?}; the rest was not sent",
                             characters(&steps[..read]),
                             characters(&steps[..=sent])
                         );
                     };
-                    read += usize::from(deviceid == slave_keyboard_id);
+                    if deviceid == slave_keyboard_id {
+                        read += 1;
+                        deadline = std::time::Instant::now() + DELIVERY_CONFIRM_TIMEOUT;
+                    }
                 }
                 unread = false;
             }

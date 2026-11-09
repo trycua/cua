@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.18.0](https://github.com/trycua/cua/compare/cua-sdk-v0.17.1...cua-sdk-v0.18.0) (2026-11-09)
+
+
+### Features
+
+* **agents:** official sign-in on each computer, stop copying sign-ins by default (CUA-3907) ([#7045](https://github.com/trycua/cua/issues/7045)) ([5a14a01](https://github.com/trycua/cua/commit/5a14a01e43fc350dead0f5098d08958b68cff3ce))
+* **spaces-macos:** install-local.sh --development for fast dev-loop builds ([#7019](https://github.com/trycua/cua/issues/7019)) ([7f9f5c2](https://github.com/trycua/cua/commit/7f9f5c20440510a999851010c00034d2afd433d1))
+
+
+### Bug Fixes
+
+* **auth:** redact tokens in Debug output ([#7071](https://github.com/trycua/cua/issues/7071)) ([#7097](https://github.com/trycua/cua/issues/7097)) ([646d5eb](https://github.com/trycua/cua/commit/646d5eb76db3ffaef409aef77986ac7d368be1a6))
+* **crash:** scrub tokens before sending to Sentry ([#7098](https://github.com/trycua/cua/issues/7098)) ([0d1eb93](https://github.com/trycua/cua/commit/0d1eb93c301e6ab1a9b1492ddb1db93f11f5fe7d))
+* **spaces:** dogfood fixes from 8 Nov (setup, sign-in, Cua Driver, Local Network, Home) ([#7046](https://github.com/trycua/cua/issues/7046)) ([14f9e88](https://github.com/trycua/cua/commit/14f9e8845134af1c13a71e2f57e5b18565df0320))
+
 ## [0.17.1](https://github.com/trycua/cua/compare/cua-sdk-v0.17.0...cua-sdk-v0.17.1) (2026-11-09)
 
 

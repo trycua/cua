@@ -117,7 +117,7 @@ def test_copy_verify_feeds_last_and_idempotent():
 def test_feed_held_back_when_referenced_file_missing():
     src, store = FakeSource({}), FakeStore()
     src.add("app-latest", {"appcast.xml": b"https://github.com/o/r/releases/download/gone-v9/z.dmg"})
-    assert run(src, store, ["app-latest"], "--no-follow") == 1
+    assert run(src, store, ["app-latest"]) == 1
     assert "app-latest/appcast.xml" not in store.objs
 
 

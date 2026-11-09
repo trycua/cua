@@ -22,6 +22,7 @@ import { useConnectors } from "@/hooks/use-connectors";
 import { cn } from "@/lib/utils";
 
 import { AgentTile, PersonDot } from "./avatar";
+import { FailureDetails } from "./failure-note";
 import { holdersName, identityKey, joinedHow, reportedHarness } from "./identity";
 import { RightsEditor } from "./members-panel";
 import { canEditRights, RIGHT_ROWS, rightsAreDefault } from "./rights";
@@ -297,6 +298,7 @@ export function AgentCard({ identity: i, agent, roster, onRemove, onDone }: { id
         <span className={cn("size-1.5 shrink-0 rounded-full", v.status === "working" ? "bg-success" : v.status === "not-connected" ? "bg-warning" : "bg-muted-foreground/40")} />
         <span className={cn("truncate", v.status === "idle" && "text-muted-foreground")}>{v.statusText}</span>
       </p>
+      {agent?.failure ? <FailureDetails message={agent.failure.message} /> : null}
       <div className="pt-1">
         <button
           type="button"

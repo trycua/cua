@@ -311,6 +311,10 @@ export interface WkSpace {
   arch?: string | null;
   host?: string | null;
   hostName?: string | null;
+  /** The Space it is a child of (its id), from the daemon's tree. */
+  /** The host marks it hidden (label `cua.hidden`): the home warming for Home's box. No list, count or tree shows it. */
+  hidden?: boolean;
+  parent?: string | null;
   power?: { control: "suspend" | "stop" | (string & {}); off: boolean; turningOn?: boolean | null; error?: string | null; stopReason?: string | null } | null;
   cloud?: string | null;
   cloudPlace?: string | null;

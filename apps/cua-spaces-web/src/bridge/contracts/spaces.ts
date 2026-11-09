@@ -113,6 +113,8 @@ export interface Space {
   /** For a Space one of your machines provides: that machine's relay id
    * (the sidebar nests it under the machine) and name. */
   host?: string;
+  /** The Space it is a child of (its id): the Spaces page nests it under that Space. Absent for a top-level Space. */
+  parent?: string;
   hostName?: string;
   /** Whether and how it turns off and on (the SDK's `power`), with a power
    * action in flight; absent when it cannot (a cloud Space). */
@@ -258,6 +260,10 @@ export interface SpaceRow {
   error?: string;
   /** For a Space one of your machines provides: that machine's relay id and name. */
   host?: string;
+  /** The home warming in the background for Home's box (`cua.hidden`): no list or count shows it. */
+  hidden?: boolean;
+  /** The Space it is a child of (its id). */
+  parent?: string;
   hostName?: string;
   /** How it turns off and on (`suspend`, `stop`); absent when it cannot. */
   power?: string;

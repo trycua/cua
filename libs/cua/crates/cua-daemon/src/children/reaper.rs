@@ -8,7 +8,7 @@
 //! - that parent is not in this host's registry, or it is a different Space
 //!   now (deleted and made again under the same name: its creation time
 //!   changed), and
-//! - that has been so for the whole grace period (15 minutes), across
+//! - that has been so for the whole grace period (a minute), across
 //!   passes, measured by this host's clock.
 //!
 //! Anything else is never ended here: a parent on another computer that does
@@ -23,7 +23,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 /// How long a parent must be provably gone before its children are ended.
-pub const GRACE_SECS: u64 = 15 * 60;
+pub const GRACE_SECS: u64 = 60;
 
 /// One registered Space as the reaper sees it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -179,6 +179,24 @@ mod tests {
             parent: parent.map(str::to_owned),
             created_at: at,
         }
+    }
+
+    #[test]
+    fn a_top_level_space_is_never_judged_and_an_orphan_goes_within_a_minute() {
+        let mut m = Memory::default();
+        // A top-level Space whose id looks like anything, and a child whose parent is not registered.
+        let seen = [
+            s("local:mine", None, 5),
+            s("local:kid", Some("local:gone"), 6),
+        ];
+        let first = judge(&seen, &mut m, 100);
+        assert!(!first.contains_key("local:mine"), "{first:?}");
+        assert!(matches!(first["local:kid"], Verdict::Waiting { .. }));
+        const _: () = assert!(GRACE_SECS <= 60);
+        assert!(matches!(
+            judge(&seen, &mut m, 100 + GRACE_SECS)["local:kid"],
+            Verdict::End { .. }
+        ));
     }
 
     #[test]

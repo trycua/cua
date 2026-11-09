@@ -62,10 +62,13 @@ export function foldThread(entries: readonly ThreadEntry[], opts: { readSeq?: nu
   const tasks = new Map<number, Extract<ThreadItem, { type: "task" }>>();
   const approvals = new Map<number, Extract<ThreadItem, { type: "approval" | "join_request" }>>();
   const subs = new Map<string, Extract<ThreadItem, { type: "subagent" }>>();
+  const kids = new Map<string, Extract<ThreadItem, { type: "child_space" }>>();
   const answered = new Set<string>();
   for (const e of sorted) {
     // The copy of a message that tasks one more agent: the original is the row.
     if (e.fanoutOf != null) continue;
+    // An event only the agents are told (an approval's outcome: the card already shows it) is not drawn for people.
+    if (e.audience === "agent") continue;
     if (e.kind === "task_update") {
       const u = e.update;
       const task = u ? tasks.get(u.task) : undefined;
@@ -97,7 +100,18 @@ export function foldThread(entries: readonly ThreadEntry[], opts: { readSeq?: nu
       continue;
     }
     if (e.kind === "system" && e.child?.kind === "child_space") {
-      items.push({ type: "child_space", key: `c${e.seq}`, entry: e, space: e.child });
+      // A Space still being made hangs under its agent's live row (a subagent's way), not in the thread; the row
+      // comes with its outcome, ready or failed, and keeps its place there.
+      if (e.child.state === "creating") continue;
+      // The notes of one create are one row, in the order it started.
+      const known = e.child.key ? kids.get(e.child.key) : undefined;
+      if (known) {
+        known.space = e.child;
+      } else {
+        const item = { type: "child_space" as const, key: `c${e.seq}`, entry: e, space: e.child };
+        if (e.child.key) kids.set(e.child.key, item);
+        items.push(item);
+      }
       continue;
     }
     if (e.kind === "system") {

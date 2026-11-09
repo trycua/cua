@@ -51,6 +51,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use crate::thread::events;
 use crate::thread::{Author, Draft, EntryKind, check_text};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -491,9 +492,13 @@ pub(crate) struct Live {
     setups: std::collections::HashSet<String>,
     /// Journal shippers of durable runs, by `<run>#<epoch>`.
     shippers: HashMap<String, crate::session_journal::Shipper>,
-    /// Runs started for a task whose "woke up and joined" note waits until
-    /// the agent is up: run id to the task's seq.
-    joining: HashMap<String, u64>,
+    /// Runs started for a task, until the agent is up: run id to the task's
+    /// seq and whether the start is a restart nobody asked for (only that
+    /// one says so in the thread; a start the person asked for shows as the
+    /// starting row).
+    joining: HashMap<String, (u64, bool)>,
+    /// Tasks put back after an agent stopped, whose next start is a restart.
+    restarted: std::collections::HashSet<u64>,
     /// Agent-to-agent wakes per Space ([`wake`]).
     wake: wake::LiveWake,
     /// Local Spaces some agent names that the registry does not have, and
@@ -529,6 +534,9 @@ pub struct Persistent {
     /// Errors of the per-agent passes that ran on their own tasks (detached),
     /// handed to the next pass's report.
     detached_errors: Arc<std::sync::Mutex<Vec<String>>>,
+    /// The power state last seen of each child Space, by `<parent space>\n<child id>`
+    /// (`track_child_power`).
+    child_power: Arc<std::sync::Mutex<HashMap<String, String>>>,
 }
 
 /// What each working session has said so far this turn, by `<space>/<name>#<session>`; shared by every
@@ -601,6 +609,7 @@ impl Persistent {
             admins,
             detach_dispatch: false,
             detached_errors: Arc::default(),
+            child_power: Arc::default(),
         }
     }
 
@@ -1987,6 +1996,13 @@ impl Persistent {
         self.tick_watched(&mut report).await;
         self.tick_watched_jobs(&mut report).await;
         self.tick_mirror(&mut report).await;
+        for rec in records.iter().filter(|r| !r.paused) {
+            if let Err(e) = self.track_child_power(rec) {
+                report
+                    .errors
+                    .push(format!("{} child spaces: {e}", rec.name));
+            }
+        }
         report
     }
 
@@ -2305,10 +2321,16 @@ impl Persistent {
             if text.is_empty() {
                 continue;
             }
-            // Already in the thread word for word (the agent posted it itself with `thread_reply`).
-            if recent.iter().any(|e| {
-                e.author.id == me.id && e.kind == EntryKind::Message && e.text.trim() == text
-            }) {
+            // Already in the thread word for word: the agent posted it itself with `thread_reply` in this
+            // turn. That is its latest message after the task it is answering; an identical message
+            // from an earlier task (or with other words said since) is a different message.
+            let floor = reply_to.unwrap_or(0);
+            if recent
+                .iter()
+                .rev()
+                .find(|e| e.seq > floor && e.author.id == me.id && e.kind == EntryKind::Message)
+                .is_some_and(|e| e.text.trim() == text)
+            {
                 continue;
             }
             let text = if check_text(&text).is_ok() {
@@ -2333,10 +2355,15 @@ impl Persistent {
         let Some(task) = rec.task.as_ref().map(|t| t.seq) else {
             return Ok(());
         };
-        let Ok(kids) = self.spaces.children(&rec.space) else {
-            return Ok(());
-        };
-        if kids.is_empty() {
+        let kids = self.spaces.children(&rec.space).unwrap_or_default();
+        // A create is told by the one member it is attributed to, on the task that member was on when it
+        // saw the create (not whichever task is current when a later pass runs).
+        cua_spaces::child_creates::claim(self.spaces.home_dir(), &rec.space, &rec.name, task);
+        let asked: Vec<_> = cua_spaces::child_creates::of(self.spaces.home_dir(), &rec.space)
+            .into_iter()
+            .filter(|e| e.agent == rec.name)
+            .collect();
+        if kids.is_empty() && asked.is_empty() {
             return Ok(());
         }
         let store = self.thread_store(&rec.space);
@@ -2344,7 +2371,86 @@ impl Persistent {
         let recent = store.read(last.saturating_sub(RECENT * 2), RECENT as usize * 2 + 1)?;
         let infos = self.spaces.list()?;
         let mut drafts = vec![];
+        // The creates the host ran for this agent: one note per step and per outcome (keyed, so a
+        // pass never repeats one), which the clients fold into one row each.
+        for e in &asked {
+            let base = format!("childc:{}:{}", e.key, e.started_ms);
+            let state = match e.state {
+                cua_spaces::child_creates::State::Creating => "creating",
+                cua_spaces::child_creates::State::Ready => "ready",
+                cua_spaces::child_creates::State::Failed => "failed",
+            };
+            let key = match e.state {
+                // A step posts again as it moves on (every 5 percent), so the row's bar keeps moving.
+                cua_spaces::child_creates::State::Creating => format!(
+                    "{base}:p:{}:{}",
+                    e.phase,
+                    e.percent.map_or(String::new(), |p| (p / 5 * 5).to_string())
+                ),
+                _ => format!("{base}:{state}"),
+            };
+            if recent
+                .iter()
+                .any(|r| r.client_id.as_deref() == Some(key.as_str()))
+            {
+                continue;
+            }
+            let os = &e.os;
+            let text = match e.state {
+                cua_spaces::child_creates::State::Creating => {
+                    format!("Creating the {} Space {}", os, e.name).replace("  ", " ")
+                }
+                cua_spaces::child_creates::State::Ready => format!("{} is ready", e.name),
+                cua_spaces::child_creates::State::Failed => format!(
+                    "Couldn't create the {} Space {}: {}. {} was told.",
+                    os,
+                    e.name,
+                    e.error.trim_end_matches('.').to_lowercase(),
+                    rec.name
+                )
+                .replace("  ", " "),
+            };
+            let space = if e.space.is_empty() {
+                format!("local:{}", e.key)
+            } else {
+                e.space.clone()
+            };
+            drafts.push(events::draft(&events::AgentEvent {
+                kind: match e.state {
+                    cua_spaces::child_creates::State::Creating => events::Kind::ChildSpaceCreating,
+                    cua_spaces::child_creates::State::Ready => events::Kind::ChildSpaceReady,
+                    cua_spaces::child_creates::State::Failed => events::Kind::ChildSpaceFailed,
+                },
+                agent: rec.name.clone(),
+                text,
+                guidance: None,
+                payload: json!({
+                    "space": space, "key": format!("{}:{}", e.key, e.started_ms),
+                    "name": e.name, "os": os, "agent": rec.handle(), "state": state,
+                    "phase": e.phase, "percent": e.percent, "error": e.error,
+                    "started_ms": e.started_ms, "ended_ms": e.ended_ms,
+                }),
+                task_seq: Some(if e.task > 0 { e.task } else { task }),
+                client_id: Some(key),
+                from: "child_space",
+            }));
+        }
+        // A create that failed is reported on this thread (below) and then left no placeholder: there is no
+        // Try again for it, so a row in the Spaces list would only be a zombie.
+        let failed_now: Vec<(String, u64)> = asked
+            .iter()
+            .filter(|e| e.state == cua_spaces::child_creates::State::Failed)
+            .map(|e| (e.key.clone(), e.started_ms))
+            .collect();
+        let covered: std::collections::HashSet<&str> = asked
+            .iter()
+            .map(|e| e.space.as_str())
+            .filter(|s| !s.is_empty())
+            .collect();
         for id in kids {
+            if covered.contains(id.as_str()) {
+                continue;
+            }
             let key = format!("child:{id}");
             if recent
                 .iter()
@@ -2366,14 +2472,160 @@ impl Persistent {
                 "linux" => "Linux",
                 _ => "",
             };
-            let mut d = Draft::event(
-                "child_space",
-                format!("{} made the computer {name}", rec.name),
-                json!({"kind": "child_space", "space": id, "name": name, "os": os, "agent": rec.handle()}),
-            );
-            d.task_seq = Some(task);
-            d.client_id = Some(key);
-            drafts.push(d);
+            drafts.push(events::draft(&events::AgentEvent {
+                kind: events::Kind::ChildSpaceReady,
+                agent: rec.name.clone(),
+                text: format!("{} made the computer {name}", rec.name),
+                guidance: None,
+                payload: json!({"space": id, "name": name, "os": os, "agent": rec.handle()}),
+                task_seq: Some(task),
+                client_id: Some(key),
+                from: "child_space",
+            }));
+        }
+        store.append_many(drafts)?;
+        for (key, started) in failed_now {
+            cua_spaces::child_creates::hide(self.spaces.home_dir(), &key, started);
+        }
+        Ok(())
+    }
+
+    /// Tells the thread when a child Space of the member's Space stops, sleeps, wakes, dies, is deleted
+    /// or is about to end, once per change. The first sight of a child records its state without a note.
+    /// Nothing here depends on the kind of Space or its runtime: it reads the power state the registry keeps.
+    fn track_child_power(&self, rec: &AgentRecord) -> Result<()> {
+        let kids = self.spaces.children(&rec.space).unwrap_or_default();
+        let prefix = format!("{}\n", rec.space);
+        let known: Vec<String> = {
+            let map = self.child_power.lock().unwrap_or_else(|p| p.into_inner());
+            map.keys()
+                .filter_map(|k| k.strip_prefix(prefix.as_str()).map(str::to_string))
+                .collect()
+        };
+        if kids.is_empty() && known.is_empty() {
+            return Ok(());
+        }
+        let infos = self.spaces.list()?;
+        let store = self.thread_store(&rec.space);
+        let last = store.last_seq()?;
+        let recent = store.read(last.saturating_sub(RECENT * 2), RECENT as usize * 2 + 1)?;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let mut drafts = vec![];
+        let mut seen: Vec<String> = vec![];
+        for id in kids.iter().chain(known.iter()) {
+            if seen.contains(id) {
+                continue;
+            }
+            seen.push(id.clone());
+            let map_key = format!("{prefix}{id}");
+            let info = infos.iter().find(|i| &i.id == id);
+            let prior = self
+                .child_power
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .get(&map_key)
+                .cloned()
+                .or_else(|| {
+                    recent.iter().rev().find_map(|e| {
+                        let ev = e.event.as_ref()?;
+                        (ev["kind"] == "child_power" && ev["space"] == id.as_str())
+                            .then(|| ev["state"].as_str().map(str::to_string))
+                            .flatten()
+                    })
+                });
+            let Some(info) = info else {
+                // Gone from the registry: deleted (by anyone, or reaped with its parent or lifetime).
+                if prior.is_some_and(|p| p != "deleted") {
+                    let name = id.rsplit(':').next().unwrap_or(id).to_string();
+                    drafts.push(events::draft(&events::AgentEvent {
+                        kind: events::Kind::ChildSpaceDeleted,
+                        agent: rec.name.clone(),
+                        text: format!("The computer {name} was deleted"),
+                        guidance: None,
+                        payload: json!({"space": id, "name": name, "agent": rec.handle(), "state": "deleted"}),
+                        task_seq: None,
+                        client_id: Some(format!("cpow:{id}:deleted:{now}")),
+                        from: "child_space",
+                    }));
+                }
+                self.child_power
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .remove(&map_key);
+                continue;
+            };
+            let name = if info.display_name.is_empty() {
+                info.name.clone()
+            } else {
+                info.display_name.clone()
+            };
+            let state = if info.power_state.is_empty() {
+                "running".to_string()
+            } else {
+                info.power_state.clone()
+            };
+            self.child_power
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .insert(map_key, state.clone());
+            if let Some(kind) = events::power_change(prior.as_deref(), &state, &info.stop_reason) {
+                let text = match kind {
+                    events::Kind::ChildSpaceWoke => format!("{name} is running again"),
+                    events::Kind::ChildSpaceDied => format!(
+                        "@{} the computer {name} stopped on its own: {}. Start it again if you still need it.",
+                        rec.name, info.stop_reason
+                    ),
+                    _ if state == "suspended" => format!("{name} went to sleep"),
+                    _ => format!("{name} was stopped"),
+                };
+                drafts.push(events::draft(&events::AgentEvent {
+                    kind,
+                    agent: rec.name.clone(),
+                    text,
+                    guidance: None,
+                    payload: json!({
+                        "space": id, "name": name, "agent": rec.handle(), "state": state,
+                        "reason": info.stop_reason,
+                    }),
+                    task_seq: None,
+                    client_id: Some(format!("cpow:{id}:{state}:{now}")),
+                    from: "child_space",
+                }));
+            }
+            // The grace warning: a lifetime that runs out within two minutes, said once per end time.
+            if state == "running" && info.expires_at_unix > now && info.expires_at_unix - now <= 120
+            {
+                let key = format!("cend:{id}:{}", info.expires_at_unix);
+                if !recent
+                    .iter()
+                    .any(|e| e.client_id.as_deref() == Some(key.as_str()))
+                {
+                    let what = if info.on_expire == "suspend" {
+                        "go to sleep"
+                    } else {
+                        "be deleted"
+                    };
+                    drafts.push(events::draft(&events::AgentEvent {
+                        kind: events::Kind::ChildSpaceEnding,
+                        agent: rec.name.clone(),
+                        text: format!(
+                            "{name} will {what} in about {} seconds. Save its work if you need it.",
+                            info.expires_at_unix - now
+                        ),
+                        guidance: None,
+                        payload: json!({
+                            "space": id, "name": name, "agent": rec.handle(), "state": "ending",
+                            "ends_at": info.expires_at_unix, "on_expire": info.on_expire,
+                        }),
+                        task_seq: None,
+                        client_id: Some(key),
+                        from: "child_space",
+                    }));
+                }
+            }
         }
         store.append_many(drafts)?;
         Ok(())
@@ -2483,11 +2735,16 @@ impl Persistent {
                     _ => format!("{}'s subagent failed: {title}", rec.name),
                 };
                 let result = s.result.as_deref().filter(|r| check_text(r).is_ok());
-                let mut d = Draft::event(
-                    "subagent",
+                let d = events::draft(&events::AgentEvent {
+                    kind: if state == "running" {
+                        events::Kind::SubagentStarted
+                    } else {
+                        events::Kind::SubagentEnded
+                    },
+                    agent: rec.name.clone(),
                     text,
-                    json!({
-                        "kind": "subagent",
+                    guidance: None,
+                    payload: json!({
                         "id": s.id,
                         "agent": rec.handle(),
                         "title": title,
@@ -2497,9 +2754,10 @@ impl Persistent {
                         "started_ms": s.started_ms,
                         "ended_ms": s.ended_ms,
                     }),
-                );
-                d.task_seq = reply_to;
-                d.client_id = Some(id);
+                    task_seq: reply_to,
+                    client_id: Some(id),
+                    from: "subagent",
+                });
                 drafts.push(d);
             }
         }
@@ -2659,18 +2917,22 @@ impl Persistent {
                 self.thread_store(&rec.space).wake();
             }
         }
-        // "woke up and joined" says so once the agent is up (an agent that
-        // never gets there fails instead, and says that).
+        // A run restarted without the person asking says so once the agent
+        // is up (an agent that never gets there fails instead, and says
+        // that). A start the person asked for says nothing: its starting
+        // row already showed it.
         if agent_ready(&page.events)
-            && let Some(seq) = self.live.lock().await.joining.remove(&run)
+            && let Some((seq, restart)) = self.live.lock().await.joining.remove(&run)
         {
-            let _ = self
-                .thread_store(&rec.space)
-                .append(crate::thread::Draft::note(
-                    "dispatch",
-                    Some(seq),
-                    format!("{} woke up and joined", members::session_name(&rec)),
-                ));
+            let store = self.thread_store(&rec.space);
+            let words = store
+                .fold()
+                .ok()
+                .and_then(|f| f.tasks.get(&seq).map(|t| t.text.clone()))
+                .unwrap_or_default();
+            if let Some(text) = members::start_note(restart, &rec.name, &words) {
+                let _ = store.append(crate::thread::Draft::note("dispatch", Some(seq), text));
+            }
         }
         if failed.is_some() || ended.is_some() {
             self.live.lock().await.joining.remove(&run);

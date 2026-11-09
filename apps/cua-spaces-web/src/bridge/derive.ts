@@ -83,6 +83,7 @@ function fallbackRowToSpace(row: SpaceRow, now: number): Space {
     arch: row.arch,
     host: row.host,
     hostName: row.hostName,
+    parent: row.parent,
     power: row.power
       ? {
           control: row.power === "stop" ? "stop" : "suspend",

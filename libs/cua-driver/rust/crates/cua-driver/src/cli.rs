@@ -2534,7 +2534,7 @@ mod daemon_compatibility_tests {
 
     #[test]
     fn incompatible_daemon_is_refused_before_a_cli_action_can_dispatch() {
-        let directory = tempfile::tempdir().unwrap();
+        let directory = cua_driver_testkit::socket_tempdir().unwrap();
         let socket = directory.path().join("driver.sock");
         let listener = UnixListener::bind(&socket).unwrap();
         let server = std::thread::spawn(move || {

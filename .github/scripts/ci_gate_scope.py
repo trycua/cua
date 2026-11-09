@@ -18,14 +18,22 @@ The area map lives in `.github/ci-areas.json` and is documented in
 6. A workflow listed under some area is required only when one of its areas
    changed. A workflow listed under no area is always required, so a new or
    unmapped workflow can never be skipped by accident.
+7. A workflow under `narrow` is required only when one of the packages it
+   builds (`packages`, package directories) is affected, or a changed file
+   matches its `paths`. "Affected" is rule 4: the package changed or depends on
+   a changed package, transitively. Narrowing only ever removes a workflow that
+   rule 6 required; a shared file still requires it.
 
 The gate runs this script, the map and the graph from the base branch, so a
 pull request cannot narrow its own gate by editing them. It also reads the
 pull request's manifests and adds their edges, so a dependency the pull request
 adds counts too.
 
-The gate itself never decides what a workflow's own `paths:` filter runs; it
-only decides which of the runs that exist it waits for.
+The same decision also gates execution (CUA-3856): every workflow with the
+shared `quick` stage (ci-quick.yml) runs `--workflow <file>` from the base
+commit and skips its heavy jobs when the workflow is not required. A workflow's
+own `paths:` filter is only a cheap pre-filter; it must stay a superset of what
+the map requires (test_ci_gate_scope.py checks that).
 """
 from __future__ import annotations
 
@@ -140,6 +148,20 @@ def affected_packages(files: list[str], cfg: dict, graph: ci_graph.Graph) -> tup
     return seeds, loose, False
 
 
+def narrowed_out(needed: set[str], loose: set[str], affected: set[str], cfg: dict) -> set[str]:
+    """The required workflows that rule 7 drops: none of their packages or paths changed."""
+    out = set()
+    for workflow, rule in cfg.get('narrow', {}).items():
+        if workflow not in needed:
+            continue
+        if affected & set(rule.get('packages', [])):
+            continue
+        if any(matches(f, rule.get('paths', [])) for f in loose):
+            continue
+        out.add(workflow)
+    return out
+
+
 def scope(files: list[str], cfg: dict, graph: ci_graph.Graph | None = None) -> tuple[list[str], set[str] | None]:
     """Return (changed areas, workflows to ignore). Ignore is empty when nothing is."""
     if not files:
@@ -148,15 +170,41 @@ def scope(files: list[str], cfg: dict, graph: ci_graph.Graph | None = None) -> t
     seeds, loose, everything = affected_packages(files, cfg, graph)
     if everything:
         return ['all'], set()
+    affected = graph.dependents(seeds)
     areas: set[str] = set()
-    for path in sorted(loose) + [d + '/' for d in sorted(graph.dependents(seeds))]:
+    for path in sorted(loose) + [d + '/' for d in sorted(affected)]:
         a = area_of(path, cfg)
         if a is None:
             return ['all'], set()
         areas.add(a)
     mapped = {w for a in cfg['areas'].values() for w in a['workflows']}
     needed = {w for name in areas for w in cfg['areas'][name]['workflows']}
-    return sorted(areas), mapped - needed
+    # A narrowed workflow that no area lists (one with no `paths:` filter) starts out required.
+    narrow = set(cfg.get('narrow', {}))
+    needed |= narrow - mapped
+    needed -= narrowed_out(needed, loose, affected, cfg)
+    return sorted(areas), (mapped | narrow) - needed
+
+
+def decide_workflow(workflow: str, files: list[str], cfg: dict, graph: ci_graph.Graph) -> int:
+    """The execution side of the same decision: one workflow, skip or run."""
+    workflow = Path(workflow).name
+    areas, ignored = scope(files, cfg, graph)
+    skip = workflow in ignored
+    line = (f'{workflow}: ' + ('skip, ' if skip else 'run, ') + f'{len(files)} changed files, '
+            f'areas: {", ".join(areas)}')
+    print(line)
+    out = os.environ.get('GITHUB_OUTPUT')
+    if out:
+        with open(out, 'a') as fh:
+            fh.write(f'skip={"true" if skip else "false"}\nareas={",".join(areas)}\n')
+    summary = os.environ.get('GITHUB_STEP_SUMMARY')
+    if summary:
+        with open(summary, 'a') as fh:
+            fh.write('### CI scope\n\n' + line + ('\n\nThe changed files do not reach this workflow '
+                     '(.github/ci-areas.json), so its jobs are skipped and ci-gate does not wait for it.\n'
+                     if skip else '\n'))
+    return 0
 
 
 def ignore_regex(ignored: set[str]) -> str:
@@ -197,10 +245,13 @@ def main() -> int:
     ap.add_argument('--map', type=Path, default=MAP_PATH)
     ap.add_argument('--labels', default='')
     ap.add_argument('--body-file', type=Path)
+    ap.add_argument('--workflow', help='decide for one workflow file: writes skip=true|false')
     args = ap.parse_args()
     cfg = load_map(args.map)
     files = [l.strip() for l in sys.stdin if l.strip()]
     graph = load_graph()
+    if args.workflow:
+        return decide_workflow(args.workflow, files, cfg, graph)
     seeds, _, _ = affected_packages(files, cfg, graph)
     affected = graph.dependents(seeds)
     areas, ignored = scope(files, cfg, graph)

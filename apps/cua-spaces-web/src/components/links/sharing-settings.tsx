@@ -72,7 +72,14 @@ export function SharingSettings() {
       <SettingsRow
         label="Where shares go"
         description={LANDING_HELP[settings.landing]}
-        control={<Select aria-label="Where shares go" value={settings.landing} options={LANDING} onValueChange={(landing) => change({ landing, relayFallback: landing !== "only_my_cloud" })} />}
+        control={
+          <Select
+            aria-label="Where shares go"
+            value={settings.landing}
+            options={LANDING}
+            onValueChange={(landing) => change({ landing, relayFallback: landing !== "only_my_cloud" })}
+          />
+        }
       />
       <SettingsRow
         label="Daily data cap"
@@ -114,7 +121,14 @@ export function SharingSettings() {
       <SettingsRow
         label="Ask before an agent shares"
         description="An agent in a Space asks you before its share goes public."
-        control={<Switch aria-label="Ask before an agent shares" checked={settings.approveAgentShares} onCheckedChange={(approveAgentShares) => change({ approveAgentShares })} data-sharing-ask="" />}
+        control={
+          <Switch
+            aria-label="Ask before an agent shares"
+            checked={settings.approveAgentShares}
+            onCheckedChange={(approveAgentShares) => change({ approveAgentShares })}
+            data-sharing-ask=""
+          />
+        }
       />
       {settings.edgeHost ? (
         <SettingsRow

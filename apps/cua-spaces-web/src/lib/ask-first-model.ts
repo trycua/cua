@@ -58,10 +58,21 @@ function select(group: AgentGroup | undefined, p: PickedAgent | null, wanted?: s
  */
 export function resolveAgent(view: AgentsView | null | undefined, picked: PickedAgent | null): AgentSelection | null {
   if (!view) return null;
-  const last = picked ? select(view.groups.find((g) => g.harness === picked.harness), picked) : null;
+  const last = picked
+    ? select(
+        view.groups.find((g) => g.harness === picked.harness),
+        picked,
+      )
+    : null;
   if (last) return last;
   const d = view.default;
-  return d ? select(view.groups.find((g) => g.harness === d.harness), { harness: d.harness, env: d.env, ...(d.slot ? { slot: d.slot } : {}) }, d.model) : null;
+  return d
+    ? select(
+        view.groups.find((g) => g.harness === d.harness),
+        { harness: d.harness, env: d.env, ...(d.slot ? { slot: d.slot } : {}) },
+        d.model,
+      )
+    : null;
 }
 
 /** What picking `account` of `group` starts with: that account and its quick model (the last model while it is offered). */
@@ -74,7 +85,12 @@ export function pickAccount(group: AgentGroup, account: AgentAccount, picked: Pi
 export const agentLine = (s: AgentSelection) => s.group.label;
 
 /** The pick to remember for a selection. */
-export const pickOf = (s: AgentSelection): PickedAgent => ({ harness: s.harness, model: s.model.id, env: s.account.env, ...(s.account.slot ? { slot: s.account.slot } : {}) });
+export const pickOf = (s: AgentSelection): PickedAgent => ({
+  harness: s.harness,
+  model: s.model.id,
+  env: s.account.env,
+  ...(s.account.slot ? { slot: s.account.slot } : {}),
+});
 
 /* ---- the last pick, per computer ---- */
 

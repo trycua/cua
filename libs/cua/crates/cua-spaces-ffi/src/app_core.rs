@@ -2109,6 +2109,21 @@ pub fn app_account_app_url() -> String {
     cua_home::env::account_app_url()
 }
 
+/// Which build and deployment this app runs as: its channel (`stable` or
+/// `local`, `CuaChannel`), its environment (`prod` or `staging`, `CuaEnv`)
+/// and the host of the sign-in server it uses, resolved as every other part
+/// of the app resolves them. The web UI's title bar tag ("Local · Staging",
+/// the app core's `environment.tag`) is drawn from it, so every shell agrees.
+#[uniffi::export]
+pub fn app_target() -> AppTarget {
+    let (channel, env) = cua_home::channel::CuaChannel::current_with_env();
+    AppTarget {
+        channel: channel.name().to_string(),
+        env: env.name().to_string(),
+        auth_host: core::environment_tag::auth_host(&cua_home::env::oidc_issuer()),
+    }
+}
+
 /// Settings' "Relay usage" row and the notice past the allowance; none
 /// when the relay meters nothing.
 #[uniffi::export]
@@ -2176,7 +2191,7 @@ pub fn app_resources_warning(warning: cua_sdk::DiskWarning) -> Option<AppWarning
 }
 
 /// Reads the settings file (defaults when missing or damaged). The
-/// experiments the daemon enforces (Secure Spaces, Child Spaces, Ask first, CI runners, Public TCP shares, Phone app) are what
+/// experiments the daemon enforces (Child Spaces, CI runners, Public TCP shares, Phone app) are what
 /// the cua home keeps, so `cua experiments enable` shows in the app.
 #[uniffi::export]
 pub fn app_settings_load(path: String) -> AppSettings {
@@ -2193,14 +2208,8 @@ fn sync_experiments_from_home(
     home: &std::path::Path,
 ) -> AppExperiments {
     use cua_spaces::experiments::{Gate, switch};
-    if let Some(on) = switch(home, Gate::SecureSpaces) {
-        experiments.secure_spaces = on;
-    }
     if let Some(on) = switch(home, Gate::ChildSpaces) {
         experiments.child_spaces = on;
-    }
-    if let Some(on) = switch(home, Gate::AskFirst) {
-        experiments.ask_first = on;
     }
     if let Some(on) = switch(home, Gate::CiRunners) {
         experiments.ci_runners = on;
@@ -2224,9 +2233,7 @@ fn sync_experiments_to_home(
     home: &std::path::Path,
 ) -> std::io::Result<()> {
     use cua_spaces::experiments::{Gate, set_switch};
-    set_switch(home, Gate::SecureSpaces, experiments.secure_spaces)?;
     set_switch(home, Gate::ChildSpaces, experiments.child_spaces)?;
-    set_switch(home, Gate::AskFirst, experiments.ask_first)?;
     set_switch(home, Gate::CiRunners, experiments.ci_runners)?;
     set_switch(home, Gate::TcpShares, experiments.tcp_shares)?;
     set_switch(home, Gate::Mobile, experiments.mobile)?;
@@ -2248,6 +2255,22 @@ mod experiment_sync_tests {
     use super::*;
 
     #[test]
+    fn a_switch_off_once_for_an_always_on_feature_is_ignored_and_removed_on_save() {
+        let home = tempfile::tempdir().unwrap();
+        let dir = home.path().join("experiments");
+        std::fs::create_dir_all(&dir).unwrap();
+        for n in ["secure-spaces", "ask-first"] {
+            std::fs::write(dir.join(n), "off\n").unwrap();
+        }
+        // Reading ignores them.
+        let seen = sync_experiments_from_home(AppExperiments::default(), home.path());
+        assert_eq!(seen, AppExperiments::default());
+        // Writing removes them.
+        sync_experiments_to_home(&seen, home.path()).unwrap();
+        assert!(!dir.join("secure-spaces").exists() && !dir.join("ask-first").exists());
+    }
+
+    #[test]
     fn the_daemon_switches_follow_the_cua_home_both_ways() {
         let home = tempfile::tempdir().unwrap();
         // Nothing kept: the app's own file decides.
@@ -2260,12 +2283,12 @@ mod experiment_sync_tests {
         // What `cua experiments enable` set wins.
         cua_spaces::experiments::set_switch(
             home.path(),
-            cua_spaces::experiments::Gate::SecureSpaces,
+            cua_spaces::experiments::Gate::Mobile,
             true,
         )
         .unwrap();
         let seen = sync_experiments_from_home(mine, home.path());
-        assert!(seen.secure_spaces && seen.child_spaces && seen.ci_runners);
+        assert!(seen.mobile && seen.child_spaces && seen.ci_runners);
         // The app's switches land in the home for the daemon.
         sync_experiments_to_home(&seen, home.path()).unwrap();
         assert_eq!(
@@ -2282,9 +2305,7 @@ mod experiment_sync_tests {
             .map(|e| e.file_name().to_string_lossy().into_owned())
             .collect();
         assert!(
-            kept.iter().all(|n| n == "secure-spaces"
-                || n == "child-spaces"
-                || n == "ask-first"
+            kept.iter().all(|n| n == "child-spaces"
                 || n == "ci-runners"
                 || n == "tcp-shares"
                 || n == "mobile"

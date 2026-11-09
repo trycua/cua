@@ -117,7 +117,14 @@ async fn an_agent_needs_a_grant_for_another_agents_folder() {
     put(&h, "agents/researcher/notes.md", "mine", &as_rs)
         .await
         .ok();
-    put(&h, "spaces/local-lab/out.txt", "out", &as_rs)
+    // A Space's folder carries its uid (`spaces/local-lab--<uid>/`, Secure Spaces is the default),
+    // so the agent finds the folder it may write by listing `spaces/`.
+    let mut ls = vec!["--embedded", "--json", "drive", "ls", "spaces/"];
+    ls.extend_from_slice(&as_rs);
+    let ls = h.run(&ls).await.ok().json();
+    let folder = ls["entries"][0]["path"].as_str().unwrap().to_string();
+    assert!(folder.starts_with("spaces/local-lab--"), "{ls}");
+    put(&h, &format!("{folder}out.txt"), "out", &as_rs)
         .await
         .ok();
     // Secrets never land in an agent home.

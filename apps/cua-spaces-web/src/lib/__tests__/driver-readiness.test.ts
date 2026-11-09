@@ -40,7 +40,12 @@ describe("Repair outcomes", () => {
     expect(repairOutcome(base).kind).toBe("ok");
   });
   it("opens the guide for the first missing permission", () => {
-    const out = repairOutcome({ ...base, state: "needs-permission", permissions: perms(false, true), lastTest: { passed: false, failure: "Screen Recording is off for Cua Spaces" } });
+    const out = repairOutcome({
+      ...base,
+      state: "needs-permission",
+      permissions: perms(false, true),
+      lastTest: { passed: false, failure: "Screen Recording is off for Cua Spaces" },
+    });
     expect(out.kind).toBe("permission");
     expect(out.settingsUrl).toBe("x-apple.systempreferences:screen");
     expect(out.description).toContain("turn on Cua Spaces");

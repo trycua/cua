@@ -8,6 +8,10 @@ import Foundation
 import Observation
 import UserNotifications
 
+/// What every feature that needs this app's background service (`cua daemon`)
+/// says when it isn't running: one plain line, never "daemon".
+public let serviceDownMessage = "Cua\u{2019}s background service isn\u{2019}t running. Reopen Cua Spaces."
+
 /// Runs one Spaces tool (the daemon's `CallSpaceTool`) and answers its JSON.
 public protocol AgentsToolRunning: AnyObject, Sendable {
     func agentsTool(_ tool: String, _ args: [String: Any]) async throws -> Any
@@ -106,7 +110,7 @@ public final class PersistentModel {
     // MARK: - Agents
 
     private func call(_ tool: String, _ args: [String: Any] = [:]) async throws -> [String: Any] {
-        guard let tools else { throw AgentsToolError(message: "Agents need the cua daemon") }
+        guard let tools else { throw AgentsToolError(message: serviceDownMessage) }
         return (try await tools.agentsTool(tool, args) as? [String: Any]) ?? [:]
     }
 
@@ -138,7 +142,7 @@ public final class PersistentModel {
     /// One of the daemon's tools, its answer as is (the web UI's Volume,
     /// Storage and Notifications read the same tools this model runs).
     func daemonTool(_ tool: String, _ args: [String: Any] = [:]) async throws -> Any {
-        guard let tools else { throw AgentsToolError(message: "This needs the cua daemon") }
+        guard let tools else { throw AgentsToolError(message: serviceDownMessage) }
         return try await tools.agentsTool(tool, args)
     }
 

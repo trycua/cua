@@ -214,6 +214,12 @@ public enum AppEnvironment {
                         guard let model else { return false }
                         return await reconnect(model, supervisor: supervisor)
                     }
+                    model.restartDaemon = { [weak model] in
+                        let error = await Task.detached(priority: .userInitiated) { supervisor.restart() }.value
+                        if let error { NSLog("Cua Spaces: starting the cua daemon again failed: %@", error) }
+                        await model?.reconnectNow(reason: "the cua daemon was started again")
+                        return error == nil
+                    }
                 } else {
                     // Last resort: Spaces run in the app; say what is missing.
                     model.show(error: "Cua Spaces could not start its daemon (\(services.daemonError ?? "it does not answer")). "

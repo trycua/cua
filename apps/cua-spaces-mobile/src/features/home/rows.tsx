@@ -41,7 +41,9 @@ export function SwipeRow({ space, caps, actions, children }: { space: SpaceSumma
       style={{ width: 76, backgroundColor: bg, alignItems: "center", justifyContent: "center", gap: 3 }}
     >
       <Icon name={icon} size={20} color="#fff" />
-      <Text variant="caption" weight="600" style={{ color: "#fff" }}>{label}</Text>
+      <Text variant="caption" weight="600" style={{ color: "#fff" }}>
+        {label}
+      </Text>
     </Pressable>
   );
   return (
@@ -68,7 +70,19 @@ const preview = (s: SpaceSummary) => (s.lastMessage ? `${s.lastMessage.author}: 
  * An iMessage style row for an agent (avatar, name, last message, time, unread badge, one status), or for a Space
  * with no agent yet (a machine tile in place of the avatar), so every Space can be opened from the list.
  */
-export function ConversationRow({ row, space, now, onPress, onLongPress }: { row: AgentListRow | null; space: SpaceSummary; now: number; onPress(): void; onLongPress?(): void }) {
+export function ConversationRow({
+  row,
+  space,
+  now,
+  onPress,
+  onLongPress,
+}: {
+  row: AgentListRow | null;
+  space: SpaceSummary;
+  now: number;
+  onPress(): void;
+  onLongPress?(): void;
+}) {
   const { c } = useTheme();
   const last = row?.lastMs || space.lastMessage?.tsMs || 0;
   const unread = row ? row.unread : space.unread;
@@ -83,7 +97,13 @@ export function ConversationRow({ row, space, now, onPress, onLongPress }: { row
       accessibilityRole="button"
       accessibilityLabel={`${title}${row ? `, in ${space.name}` : ""}, on ${space.machineName}, ${word}${unread ? `, ${unread} unread` : ""}. ${preview(space)}`}
       accessibilityHint="Opens the chat. Swipe left for more actions."
-      style={({ pressed }) => ({ flexDirection: "row", gap: 12, paddingHorizontal: 16, paddingVertical: 10, backgroundColor: pressed ? c.accent : c.background })}
+      style={({ pressed }) => ({
+        flexDirection: "row",
+        gap: 12,
+        paddingHorizontal: 16,
+        paddingVertical: 10,
+        backgroundColor: pressed ? c.accent : c.background,
+      })}
     >
       <View style={{ opacity: space.machineOnline ? 1 : 0.55 }}>
         {row ? (
@@ -96,17 +116,25 @@ export function ConversationRow({ row, space, now, onPress, onLongPress }: { row
       </View>
       <View style={{ flex: 1, gap: 2 }}>
         <View style={{ flexDirection: "row", alignItems: "baseline", gap: 8 }}>
-          <Text variant="headline" numberOfLines={1} style={{ flexShrink: 1, opacity: space.machineOnline ? 1 : 0.6 }}>{title}</Text>
+          <Text variant="headline" numberOfLines={1} style={{ flexShrink: 1, opacity: space.machineOnline ? 1 : 0.6 }}>
+            {title}
+          </Text>
           <View style={{ flex: 1 }} />
-          <Text variant="footnote" color="muted">{last ? rowTime(last, now) : ""}</Text>
+          <Text variant="footnote" color="muted">
+            {last ? rowTime(last, now) : ""}
+          </Text>
         </View>
         <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-          <Text variant="subhead" color="muted" numberOfLines={2} style={{ flex: 1 }}>{preview(space)}</Text>
+          <Text variant="subhead" color="muted" numberOfLines={2} style={{ flex: 1 }}>
+            {preview(space)}
+          </Text>
           <UnreadBadge n={unread} />
         </View>
         <View style={{ flexDirection: "row", alignItems: "center", gap: 10, marginTop: 2 }}>
           <StatusBadge tone={tone} word={word} />
-          <Text variant="footnote" color="muted" numberOfLines={1} style={{ flexShrink: 1 }}>{space.name === space.machineName || !row ? space.machineName : `${space.name} on ${space.machineName}`}</Text>
+          <Text variant="footnote" color="muted" numberOfLines={1} style={{ flexShrink: 1 }}>
+            {space.name === space.machineName || !row ? space.machineName : `${space.name} on ${space.machineName}`}
+          </Text>
         </View>
       </View>
     </Pressable>

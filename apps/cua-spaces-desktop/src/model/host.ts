@@ -248,7 +248,17 @@ export class HostModel {
     this.busy = true;
     this.error = null;
     try {
-      this.apply(await host.configure({ shareDesktop: undefined, provideSpaces: undefined, maxMacosVms: undefined, maxSpaces: limits.maxSpaces, maxMemoryGb: limits.maxMemoryGb, maxDiskGb: limits.maxDiskGb, maxRunMinutes: limits.maxRunMinutes }));
+      this.apply(
+        await host.configure({
+          shareDesktop: undefined,
+          provideSpaces: undefined,
+          maxMacosVms: undefined,
+          maxSpaces: limits.maxSpaces,
+          maxMemoryGb: limits.maxMemoryGb,
+          maxDiskGb: limits.maxDiskGb,
+          maxRunMinutes: limits.maxRunMinutes,
+        }),
+      );
       this.actionFailure = null;
     } catch (error) {
       this.actionFailure = presentHostFailure(words(error), this.platform);
@@ -275,7 +285,17 @@ export class HostModel {
     // The two settings: the core says what each switch changes.
     const change = this.native.appHostSettingChange(id);
     if (change) {
-      this.apply(await host.configure({ shareDesktop: change.shareDesktop, provideSpaces: change.provideSpaces, maxSpaces: undefined, maxMacosVms: undefined, maxMemoryGb: undefined, maxDiskGb: undefined, maxRunMinutes: undefined }));
+      this.apply(
+        await host.configure({
+          shareDesktop: change.shareDesktop,
+          provideSpaces: change.provideSpaces,
+          maxSpaces: undefined,
+          maxMacosVms: undefined,
+          maxMemoryGb: undefined,
+          maxDiskGb: undefined,
+          maxRunMinutes: undefined,
+        }),
+      );
       return;
     }
     switch (id) {

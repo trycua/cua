@@ -516,10 +516,10 @@ export const PAGES: PageSpec[] = [
   },
   {
     slug: 'spaces/network',
-    title: 'Network settings (experiment)',
+    title: 'Network settings',
     description: 'What a Space can reach: its network preset, the allow and deny lists, and deleting a Space together with its children.',
     intro:
-      'These calls belong to the Secure Spaces experiment (`cua experiments enable secure-spaces`) and are refused while it is off. `Spaces.network` says what a Space can reach and where that is enforced, `set_network` changes it (a child Space stays within its parent\'s unless widened), and `delete_tree` deletes a Space with or without its children. See [A Space\'s network](/cua-sdk/guides/egress).',
+      '`Spaces.network` says what a Space can reach and where that is enforced, `set_network` changes it (a child Space stays within its parent\'s unless widened), and `delete_tree` deletes a Space with or without its children. See [A Space\'s network](/cua-sdk/guides/egress).',
     items: ['NetworkSettings', 'SpaceNetworkInfo', 'SetNetworkResult'],
     members: [{ object: 'Spaces', title: 'Network', methods: ['network', 'ack_network_notice', 'set_network', 'delete_tree'] }],
   },

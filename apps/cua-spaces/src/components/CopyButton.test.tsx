@@ -35,7 +35,13 @@ describe("CopyButton (the Identifier row)", () => {
   it("copies the full id, shows Copied, then goes back", async () => {
     vi.useFakeTimers();
     const copy = identifierCopy();
-    expect(copy).toMatchObject({ text: ID, symbol: "doc.on.doc", help: "Copy", doneSymbol: "checkmark", doneHelp: "Copied" });
+    expect(copy).toMatchObject({
+      text: ID,
+      symbol: "doc.on.doc",
+      help: "Copy",
+      doneSymbol: "checkmark",
+      doneHelp: "Copied",
+    });
     const write = vi.fn(async () => {});
     render(<CopyButton copy={copy} write={write} />);
     const button = screen.getByRole("button", { name: "Copy" });

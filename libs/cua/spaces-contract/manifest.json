@@ -9,7 +9,7 @@
     "mcp_stdio",
     "mcp_streamable_http"
   ],
-  "tool_count": 121,
+  "tool_count": 122,
   "categories": [
     {
       "id": "lifecycle",
@@ -2623,6 +2623,72 @@
       "errors": [],
       "input_schema": {
         "properties": {},
+        "type": "object"
+      }
+    },
+    {
+      "name": "agent_sign_in",
+      "category": "agents",
+      "description": "Sign a coding agent in on the Space's computer, the agent's own way.",
+      "instructions": "Only for a person, never for an agent: no MCP server lists or runs it. Signs Claude Code or Codex in on the Space's own computer with the agent's official sign-in (`claude auth login`, `codex login --device-auth`), so the sign-in stays in that computer's agent config and Cua never holds it. `start` shows a link (and Codex's code) for the person to open in their own browser; the person finishes it in their own browser.",
+      "platforms": [
+        "macos",
+        "windows",
+        "linux"
+      ],
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free",
+      "capabilities": [
+        "agent.signin"
+      ],
+      "requires": [],
+      "host_requires": [],
+      "annotations": {
+        "read_only": true,
+        "destructive": false,
+        "idempotent": true,
+        "open_world": true
+      },
+      "sdk_symbol": "spaces.callTool(\"agent_sign_in\")",
+      "rust_symbol": "Agents::sign_in",
+      "notes": [],
+      "result": "JSON: `{\"space\", \"agent\", \"state\"}`; `state` is `not_signed_in`, `signing_in` (with `url`, `code` (Codex: type it on that page) and `paste_code` (Claude Code: the person pastes the page's code back with action `code`)), `signed_in`, `failed` (with `reason`) or `expired`.",
+      "errors": [
+        "agent"
+      ],
+      "input_schema": {
+        "properties": {
+          "action": {
+            "description": "`status` (default), `start`, `code` (hand over the pasted `code`) or `cancel`.",
+            "type": "string"
+          },
+          "after_refusal": {
+            "default": false,
+            "description": "The agent's last run there was refused its sign-in: a sign-in that is\nthere has run out (`expired`).",
+            "type": "boolean"
+          },
+          "agent": {
+            "description": "Harness id: `claude-code` or `openai-codex`.",
+            "type": "string"
+          },
+          "code": {
+            "description": "For `code`: the code the sign-in page showed (Claude Code).",
+            "type": "string"
+          },
+          "space": {
+            "description": "Space id or name.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "space",
+          "agent"
+        ],
         "type": "object"
       }
     },

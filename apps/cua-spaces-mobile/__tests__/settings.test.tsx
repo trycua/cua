@@ -11,12 +11,19 @@ import { ThemeProvider } from "../src/theme/theme";
 import { installFixtureCore, uninstallCore } from "./helpers/core";
 
 const mockSample = { capabilities: { sample: true }, sample: { offline: false, setOffline: jest.fn() } };
-jest.mock("../src/state/app", () => ({ useApp: () => ({ account: null, signOut: jest.fn(), backend: mockSample, deviceId: () => "dev_0123456789abcdef01234567" }) }));
+jest.mock("../src/state/app", () => ({
+  useApp: () => ({ account: null, signOut: jest.fn(), backend: mockSample, deviceId: () => "dev_0123456789abcdef01234567" }),
+}));
 
 beforeAll(installFixtureCore);
 afterAll(uninstallCore);
 
-const settings = () => render(<ThemeProvider force="light"><SettingsScreen onClose={() => {}} /></ThemeProvider>);
+const settings = () =>
+  render(
+    <ThemeProvider force="light">
+      <SettingsScreen onClose={() => {}} />
+    </ThemeProvider>,
+  );
 
 describe("Settings: notifications and the sample switch", () => {
   beforeEach(() => {

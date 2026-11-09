@@ -250,6 +250,8 @@ pub struct ConnectorAppInput {
     pub mcp: Option<bool>,
     /// The app's settings file, for its page.
     pub mcp_config: Option<String>,
+    /// The app's own sign-in is on this computer (`agents.setup`' `signedIn`): a run here uses it as is.
+    pub signed_in: bool,
 }
 
 /// Something running for a row: `app:<id>` or `provider:<id>`.
@@ -1927,6 +1929,14 @@ pub(crate) fn menu_groups(input: &ConnectorsInput) -> Vec<AgentGroup> {
                 }
             })
             .collect();
+        // Nothing saved in Cua, but the app is signed in on This Mac: a run here uses that sign-in, as the app
+        // itself would, so the menu offers it and asks for nothing. Another computer needs its own sign-in.
+        let mut accounts = accounts;
+        if accounts.is_empty()
+            && let Some(acc) = this_mac_account(input, h.app, true)
+        {
+            accounts.push(acc);
+        }
         let expired = accounts.is_empty()
             && app_sign_in(h.app).is_some_and(|a| {
                 a.providers
@@ -1961,6 +1971,50 @@ pub(crate) fn menu_groups(input: &ConnectorsInput) -> Vec<AgentGroup> {
             .map(build),
     );
     groups
+}
+
+/// The account of an app that signs in on its own (Claude Code, Codex) and is signed in on This Mac, with
+/// nothing saved in Cua: `Signed in on This Mac`, via `this-mac`. A run on This Mac uses the app's own
+/// sign-in; nothing is copied.
+fn this_mac_account(input: &ConnectorsInput, app: &str, selected: bool) -> Option<AgentAccount> {
+    if !input.app(app).is_some_and(|a| a.installed && a.signed_in) {
+        return None;
+    }
+    let a = app_sign_in(app)?;
+    let (p, env) = a.providers.iter().find_map(|p| {
+        provider_envs(p)
+            .into_iter()
+            .find(|e| p.scope_of(e).is_some() && a.reads.contains(e))
+            .map(|e| (*p, e))
+    })?;
+    let models: Vec<ModelChoice> = p
+        .model_list()
+        .iter()
+        .map(|m| ModelChoice {
+            id: m.id.into(),
+            label: m.name.into(),
+            fast: m.fast,
+            default: m.id == p.default_model,
+            legacy: m.legacy,
+        })
+        .collect();
+    Some(AgentAccount {
+        provider: p.id.into(),
+        provider_label: p.name.into(),
+        icon: p.icon.into(),
+        env: env.into(),
+        slot: Some("this-mac".into()),
+        line: "Signed in on This Mac".into(),
+        via: "this-mac".into(),
+        selected,
+        default_model: models
+            .iter()
+            .find(|m| m.default)
+            .or_else(|| models.iter().find(|m| !m.legacy))
+            .or_else(|| models.first())
+            .map(|m| m.id.clone()),
+        models,
+    })
 }
 
 /// [`agents_view`] with the person's choice of which apps the menu shows ([`crate::agent_menu`]): a
@@ -2040,9 +2094,8 @@ pub fn import_sheet_on(os: SpaceOs) -> ImportSheetView {
     };
     ImportSheetView {
         title: "Use your Claude Code sign-in".into(),
-        lede: format!(
-            "Run Claude Code in your Spaces with the Claude plan you already use on {this}."
-        ),
+        // The one line most people need; `points` (what is read, kept and sent) go under "How this works".
+        lede: format!("Cua uses the Claude Code sign-in on {this}. You stay signed in."),
         points: vec![
             format!("Cua reads your Claude Code sign-in from {from}."),
             format!(
@@ -2517,6 +2570,7 @@ mod tests {
             skills: configured,
             mcp: Some(configured),
             mcp_config: Some(format!("~/.{agent}/settings.json")),
+            signed_in: false,
         }
     }
 
@@ -4026,6 +4080,51 @@ mod tests {
             (cc.state.as_str(), cc.sign_in_label.as_str()),
             ("needs-reconnect", "Sign in again")
         );
+    }
+
+    #[test]
+    fn an_app_signed_in_on_this_mac_runs_here_without_a_sign_in() {
+        let mut i = with_keys(vec![], vec![]);
+        for (agent, name) in [
+            ("codex", "OpenAI Codex"),
+            ("claude-code", "Claude Code"),
+            ("hermes", "Hermes"),
+        ] {
+            i.apps.retain(|a| a.agent != agent);
+            let mut a = app(agent, name, true);
+            a.signed_in = true;
+            i.apps.push(a);
+        }
+        let v = agents_view(&i);
+        for (app, env) in [
+            ("codex", "CODEX_AUTH_JSON"),
+            ("claude-code", "CLAUDE_CODE_OAUTH_TOKEN"),
+        ] {
+            let g = group(&v, app);
+            assert_eq!(g.state, "connected", "{app}");
+            let [a] = g.accounts.as_slice() else {
+                panic!("{app}: {:?}", g.accounts)
+            };
+            assert_eq!(
+                (a.line.as_str(), a.via.as_str(), a.env.as_str()),
+                ("Signed in on This Mac", "this-mac", env)
+            );
+            assert!(a.selected && a.default_model.is_some(), "{app}");
+        }
+        // Hermes runs on provider keys: its own sign-in is not an account of the menu.
+        assert!(group(&v, "hermes").accounts.is_empty());
+        assert!(v.default.is_some() && v.empty.is_none());
+        // A sign-in saved in Cua is listed instead of This Mac's.
+        let v = agents_view(&{
+            let mut j = i.clone();
+            j.keys.keys = vec![named(
+                "CODEX_AUTH_JSON",
+                "Signed in with ChatGPT as ada@example.com",
+            )];
+            j
+        });
+        assert_eq!(group(&v, "codex").accounts.len(), 1);
+        assert_eq!(group(&v, "codex").accounts[0].via, "sign-in");
     }
 
     #[test]

@@ -738,13 +738,33 @@ impl ClickTool {
                 let middle_guard = element_guard.clone();
                 let result = tokio::task::spawn_blocking(move || {
                     let m: Vec<&str> = mods_owned.iter().map(String::as_str).collect();
+                    // AppKit hit-tests the window-local stamp, so an unrouted
+                    // post never reaches the control (CUA-3797). Same as the
+                    // pixel path.
+                    let routed_middle_click = || {
+                        let (wx, wy) = crate::windows::window_bounds_by_id(wid)
+                            .map(|b| (cx - b.x, cy - b.y))
+                            .ok_or_else(|| {
+                                anyhow::anyhow!("cannot resolve bounds for window_id {wid}")
+                            })?;
+                        crate::input::mouse::middle_click_at_xy_with_window_local(
+                            pid, cx, cy, wx, wy, wid, &m,
+                        )
+                    };
                     // Re-read after any activation: the early read skips a
                     // foreground call into a background app.
                     let ensure_enabled = || {
-                        crate::input::ax_actions::ensure_ax_action_enabled(
-                            middle_guard.as_ptr(),
-                            "middle_click",
-                        )
+                        if foreground {
+                            crate::input::ax_actions::ensure_ax_action_enabled_after_activation(
+                                middle_guard.as_ptr(),
+                                "middle_click",
+                            )
+                        } else {
+                            crate::input::ax_actions::ensure_ax_action_enabled(
+                                middle_guard.as_ptr(),
+                                "middle_click",
+                            )
+                        }
                     };
                     if foreground && !m.is_empty() {
                         crate::input::skylight::with_foreground_hid_activation(
@@ -763,13 +783,13 @@ impl ClickTool {
                             wid,
                             || {
                                 ensure_enabled()?;
-                                crate::input::mouse::middle_click_at_xy(pid, cx, cy, &m)
+                                routed_middle_click()
                             },
                         )
                         .map(|_| ())
                     } else {
                         ensure_enabled()?;
-                        crate::input::mouse::middle_click_at_xy(pid, cx, cy, &m)
+                        routed_middle_click()
                     }
                 })
                 .await;
@@ -1743,7 +1763,15 @@ fn perform_ax_click(
     // enable menu items that were disabled in the cached snapshot, while a
     // background transition can disable them after that snapshot. macOS may
     // otherwise return success for a disabled action that did nothing.
-    crate::input::ax_actions::ensure_ax_action_enabled(element_ptr, ax_action)?;
+    if foreground {
+        // Activation has just run; the app may not have enabled it yet.
+        crate::input::ax_actions::ensure_ax_action_enabled_after_activation(
+            element_ptr,
+            ax_action,
+        )?;
+    } else {
+        crate::input::ax_actions::ensure_ax_action_enabled(element_ptr, ax_action)?;
+    }
 
     // Capture advertised actions BEFORE dispatching so we can detect silent no-ops
     // (AX returns success even when the element doesn't advertise the action).

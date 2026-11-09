@@ -2,19 +2,61 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 import { Link } from "@tanstack/react-router";
-import { ArrowLeftIcon, ArrowUpIcon, CheckIcon, ChevronDownIcon, EyeIcon, HandIcon, Loader2Icon, Maximize2Icon, Minimize2Icon, RotateCwIcon, Trash2Icon, TriangleAlertIcon, UserPlusIcon } from "lucide-react";
+import {
+  ArrowLeftIcon,
+  ArrowUpIcon,
+  CheckIcon,
+  ChevronDownIcon,
+  EyeIcon,
+  HandIcon,
+  Loader2Icon,
+  Maximize2Icon,
+  Minimize2Icon,
+  RotateCwIcon,
+  Trash2Icon,
+  TriangleAlertIcon,
+  UserPlusIcon,
+} from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
-import { setupCard, useAgents, useAgentTimeline, useBridge, useSession, useShareSheet, useSpaceDetail, useSpaces, type AgentTimeline, type Space } from "@/bridge";
+import {
+  createReport,
+  reportMailto,
+  setupCard,
+  useAgents,
+  useAgentTimeline,
+  useBridge,
+  useSession,
+  useShareSheet,
+  useSpaceDetail,
+  useSpaces,
+  type AgentTimeline,
+  type Space,
+} from "@/bridge";
 import { Timeline } from "@/components/agents/timeline";
 import { CuaKey } from "@/components/cua-key";
+import { DiagnosticReportDialog } from "@/components/diagnostic-report-dialog";
 import { OsIcon } from "@/components/os-icon";
 import { StreamSurface } from "@/components/space-detail/stream-surface";
 import { ConfirmDialog } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { toastError } from "@/components/ui/toast";
 import { useConnectors } from "@/hooks/use-connectors";
-import { keepTranscript, postToSpaceThread, retryTarget, startErrorView, taskState, TASK_STATE_TEXT, taskTitle, updateAskTask, useAskTasks, type AskTask, type TaskState, type TaskWhere } from "@/lib/ask-first";
+import {
+  keepTranscript,
+  postToSpaceThread,
+  retryTarget,
+  startErrorView,
+  taskState,
+  TASK_STATE_TEXT,
+  taskTitle,
+  updateAskTask,
+  useAskTasks,
+  type AskTask,
+  type TaskState,
+  type TaskWhere,
+} from "@/lib/ask-first";
+import { t as tr, useT } from "@/i18n";
 import { createProgress, spaceState } from "@/lib/spaces";
 import { cn } from "@/lib/utils";
 
@@ -40,13 +82,14 @@ export const HAND_BACK_TEXT = "I used the computer myself and have handed it bac
  * it needs you, and you can take over the screen and hand it back.
  */
 export function AskFirstTask({ taskId }: { taskId: string }) {
-  const task = useAskTasks().find((t) => t.id === taskId);
+  const t = useT();
+  const task = useAskTasks().find((x) => x.id === taskId);
   if (!task) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
-        <p className="text-[14px] text-muted-foreground">This task isn't on this device.</p>
+        <p className="text-[14px] text-muted-foreground">{t("home.task.not_here")}</p>
         <Button variant="outline" render={<Link to="/home" />}>
-          Back to Home
+          {t("home.task.back_home")}
         </Button>
       </div>
     );
@@ -57,6 +100,7 @@ export function AskFirstTask({ taskId }: { taskId: string }) {
 }
 
 function TaskView({ task }: { task: AskTask }) {
+  const t = useT();
   const { data } = useBridge();
   const { data: spaces, deleteSpace } = useSpaces();
   const { data: agents, sendMessage } = useAgents();
@@ -84,10 +128,13 @@ function TaskView({ task }: { task: AskTask }) {
   const awaiting = sentMs !== null && (timeline.lastEventMs ?? 0) < sentMs && Date.now() - sentMs < REPLY_GRACE_MS;
   useEffect(() => {
     if (!awaiting) return;
-    const t = setTimeout(() => tick((n) => n + 1), REPLY_GRACE_MS);
-    return () => clearTimeout(t);
+    const timer = setTimeout(() => tick((n) => n + 1), REPLY_GRACE_MS);
+    return () => clearTimeout(timer);
   }, [awaiting]);
-  const read = taskState(task, ref ? { status: timeline.status ?? run?.status ?? null, needsYou: Boolean(run?.needsYou), lastEventMs: timeline.lastEventMs } : null);
+  const read = taskState(
+    task,
+    ref ? { status: timeline.status ?? run?.status ?? null, needsYou: Boolean(run?.needsYou), lastEventMs: timeline.lastEventMs } : null,
+  );
   const state: TaskState = awaiting && (read === "done" || read === "needs-you" || read === "kept") ? "working" : read;
   const [mode, setMode] = useState<"watch" | "control">("watch");
   const [big, setBig] = useState(false);
@@ -106,7 +153,7 @@ function TaskView({ task }: { task: AskTask }) {
     setReply("");
     setSentMs(Date.now());
     void postToSpaceThread(data, task.spaceId, text);
-    await sendMessage(ref, text.trim()).catch(toastError(`Couldn't send that to ${name}`));
+    await sendMessage(ref, text.trim()).catch(toastError(t("home.task.send_failed", { name })));
   };
   const takeOver = () => {
     setMode("control");
@@ -121,7 +168,7 @@ function TaskView({ task }: { task: AskTask }) {
   const throwAway = async () => {
     if (!task.spaceId) return;
     updateAskTask(task.id, { transcript: keepTranscript(timeline.items), lastStatus: timeline.status, ending: "thrown", endedMs: Date.now() });
-    await deleteSpace(task.spaceId).catch(toastError("Couldn't throw the computer away"));
+    await deleteSpace(task.spaceId).catch(toastError(t("home.task.throw_failed")));
   };
 
   const footer = (
@@ -144,7 +191,7 @@ function TaskView({ task }: { task: AskTask }) {
     <div className="flex h-full flex-col" data-ask-first-task={task.id} data-task-state={state}>
       <header className="flex h-16 shrink-0 items-center gap-3 border-b px-8">
         <Button variant="ghost" className="-ml-2 h-9" render={<Link to="/home" />}>
-          <ArrowLeftIcon /> Home
+          <ArrowLeftIcon /> {t("home.task.home")}
         </Button>
         <AppMark agent={task.agent} size={32} />
         <div className="min-w-0 flex-1">
@@ -154,17 +201,21 @@ function TaskView({ task }: { task: AskTask }) {
           </p>
         </div>
         {space ? (
-          <Button variant="outline" className="h-10" onClick={() => void sharing.open(space, session?.signedIn ?? false).catch(toastError("Couldn't share"))}>
-            <UserPlusIcon /> Share
+          <Button
+            variant="outline"
+            className="h-10"
+            onClick={() => void sharing.open(space, session?.signedIn ?? false).catch(toastError(t("home.task.share_failed")))}
+          >
+            <UserPlusIcon /> {t("home.task.share")}
           </Button>
         ) : null}
       </header>
       {mode === "control" ? (
         <div className="flex min-h-12 shrink-0 items-center gap-3 border-b bg-brand-surface px-8 text-[13px]" role="status">
           <HandIcon className="size-4" />
-          <span className="flex-1">You have the controls. {name} waits until you hand it back.</span>
+          <span className="flex-1">{t("home.task.controls", { name })}</span>
           <Button className="h-9" onClick={handBack}>
-            Hand back to {name}
+            {t("home.task.hand_back", { name })}
           </Button>
         </div>
       ) : null}
@@ -198,16 +249,25 @@ function TaskView({ task }: { task: AskTask }) {
                       void send(reply);
                     }
                   }}
-                  aria-label={`Reply to ${name}`}
-                  placeholder={state === "needs-you" ? "Or answer in words" : state === "done" || state === "kept" ? "Ask a follow-up" : `Reply to ${name}`}
+                  aria-label={t("home.task.reply_to", { name })}
+                  placeholder={
+                    state === "needs-you"
+                      ? t("home.task.answer_in_words")
+                      : state === "done" || state === "kept"
+                        ? t("home.task.follow_up")
+                        : t("home.task.reply_to", { name })
+                  }
                   className="min-h-11 flex-1 resize-none self-center bg-transparent py-2.5 text-[14px] outline-none placeholder:text-muted-foreground disabled:opacity-60"
                 />
                 <button
                   type="button"
-                  aria-label="Send"
+                  aria-label={t("home.task.send")}
                   disabled={!ref || !reply.trim()}
                   onClick={() => void send(reply)}
-                  className={cn("flex size-11 shrink-0 items-center justify-center rounded-full", ref && reply.trim() ? "bg-primary text-primary-foreground" : "bg-foreground/10 text-muted-foreground")}
+                  className={cn(
+                    "flex size-11 shrink-0 items-center justify-center rounded-full",
+                    ref && reply.trim() ? "bg-primary text-primary-foreground" : "bg-foreground/10 text-muted-foreground",
+                  )}
                 >
                   <ArrowUpIcon className="size-5" />
                 </button>
@@ -231,9 +291,9 @@ function TaskView({ task }: { task: AskTask }) {
       <ConfirmDialog
         open={throwing}
         onOpenChange={setThrowing}
-        title="Throw the computer away?"
-        description="This deletes the computer and everything on it. This conversation stays here."
-        confirmLabel="Throw it away"
+        title={t("home.task.throw_title")}
+        description={t("home.task.throw_description")}
+        confirmLabel={t("home.task.throw_it_away")}
         destructive
         onConfirm={() => void throwAway()}
       />
@@ -251,31 +311,42 @@ function CuaLine({ children }: { children: ReactNode }) {
 }
 
 function Starting({ pending, space, name, onHost }: { pending: Space | undefined; space: Space | undefined; name: string; onHost: boolean }) {
+  const t = useT();
   const making = pending?.progress;
   const steps = onHost
-    ? [{ text: `Opening ${name} on ${thisComputerText()}`, done: false, now: true }]
+    ? [{ text: t("home.task.opening_on", { name, computer: thisComputerText() }), done: false, now: true }]
     : [
-        { text: "Making the computer", done: Boolean(space), now: !space },
-        { text: `Opening ${name} inside it`, done: false, now: Boolean(space) },
+        { text: t("home.task.making"), done: Boolean(space), now: !space },
+        { text: t("home.task.opening_inside", { name }), done: false, now: Boolean(space) },
       ];
   return (
     <div className="rounded-xl border bg-card px-5 py-4 shadow-xs" data-ask-starting="">
       <div className="flex items-center gap-3">
         <CuaKey size={28} />
         <div className="flex-1">
-          <div className="text-[15px] font-semibold">{onHost ? `Starting on ${thisComputerText()}` : "Getting a fresh computer ready"}</div>
+          <div className="text-[15px] font-semibold">
+            {onHost ? t("home.task.starting_on", { computer: thisComputerText() }) : t("home.task.getting_ready")}
+          </div>
           <div className="text-[13px] text-muted-foreground">
             {onHost
-              ? "It works with your own files and apps."
+              ? t("home.task.own_files")
               : (making?.transfer ??
-                (making ? `${making.label} ${Math.round(createProgress({ progress: making }) * 100)}%` : "Usually under a minute. The first one takes a few minutes."))}
+                (making
+                  ? t("home.task.progress", { label: making.label, percent: Math.round(createProgress({ progress: making }) * 100) })
+                  : t("home.task.usually_under_a_minute")))}
           </div>
         </div>
       </div>
       <ol className="mt-4 space-y-3">
         {steps.map((s) => (
           <li key={s.text} className="flex items-center gap-3 text-[14px]">
-            {s.done ? <CheckIcon className="size-4 text-success" /> : s.now ? <Loader2Icon className="size-4 animate-spin text-brand-strong" /> : <span className="size-4" />}
+            {s.done ? (
+              <CheckIcon className="size-4 text-success" />
+            ) : s.now ? (
+              <Loader2Icon className="size-4 animate-spin text-brand-strong" />
+            ) : (
+              <span className="size-4" />
+            )}
             <span className={cn(!s.done && !s.now && "text-muted-foreground")}>{s.text}</span>
           </li>
         ))}
@@ -289,7 +360,20 @@ function Starting({ pending, space, name, onHost }: { pending: Space | undefined
  * Change computer right in the card, and the core's own words under
  * Details.
  */
-export function StartFailed({ error, name, agent, host, onRetry }: { error: string; name: string; agent?: string; host: boolean; onRetry: (where?: TaskWhere) => void }) {
+export function StartFailed({
+  error,
+  name,
+  agent,
+  host,
+  onRetry,
+}: {
+  error: string;
+  name: string;
+  agent?: string;
+  host: boolean;
+  onRetry: (where?: TaskWhere) => void;
+}) {
+  const t = useT();
   const view = startErrorView(error, name);
   const { core } = useBridge();
   const connectors = useConnectors();
@@ -306,6 +390,13 @@ export function StartFailed({ error, name, agent, host, onRetry }: { error: stri
   const { kinds, spaces } = useWhereOptions();
   const [open, setOpen] = useState(false);
   const pick = useWherePick(name);
+  // No known cause: Send a report, reviewed in the same sheet a failed Space uses; nothing goes until Send there.
+  const { openExternal } = useSession();
+  const report = useMemo(
+    () => (view.report ? createReport(core, { error, phase: "start", os: host ? hostOs() : "", provider: "local", gpu: false, names: [] }) : null),
+    [core, error, host, view.report],
+  );
+  const [reporting, setReporting] = useState(false);
   return (
     <CuaLine>
       <div data-ask-start-failed={view.action}>
@@ -316,18 +407,27 @@ export function StartFailed({ error, name, agent, host, onRetry }: { error: stri
         <div className="mt-3 flex flex-wrap items-center gap-2">
           {view.action === "set-up-host" ? (
             <Button className="h-10 px-4" render={<Link to="/spaces/computer/$computerId" params={{ computerId: THIS_COMPUTER }} />}>
-              Open {thisComputerLabel()}
+              {t("home.task.open_computer", { computer: thisComputerLabel() })}
             </Button>
           ) : null}
           {view.action === "add-key" ? (
             <Button className="h-10 px-4" disabled={connecting} onClick={() => void connect()} data-ask-connect="">
               {connecting ? <Loader2Icon className="animate-spin" /> : null}
-              {connecting ? (card?.connectingLabel ?? "Connecting…") : (card?.connectLabel ?? `Connect ${name}`)}
+              {connecting ? (card?.connectingLabel ?? t("home.task.connecting")) : (card?.connectLabel ?? t("home.task.connect", { name }))}
             </Button>
           ) : null}
           {view.retry ? (
-            <Button variant={view.action === "retry" ? "default" : "outline"} className="h-10 px-4" onClick={() => (host ? pick.choose({ kind: "this-mac" }, onRetry) : onRetry())}>
-              <RotateCwIcon /> Try again
+            <Button
+              variant={view.action === "retry" ? "default" : "outline"}
+              className="h-10 px-4"
+              onClick={() => (host ? pick.choose({ kind: "this-mac" }, onRetry) : onRetry())}
+            >
+              <RotateCwIcon /> {t("home.task.try_again")}
+            </Button>
+          ) : null}
+          {report ? (
+            <Button variant="outline" className="h-10 px-4" data-send-report="" onClick={() => setReporting(true)}>
+              {t("home.task.send_report")}
             </Button>
           ) : null}
           <WherePicker
@@ -339,17 +439,29 @@ export function StartFailed({ error, name, agent, host, onRetry }: { error: stri
             spaces={spaces}
             trigger={
               <Button variant={view.action === "change-computer" ? "default" : "outline"} className="h-10 px-4" data-ask-change-computer="">
-                Change computer <ChevronDownIcon />
+                {t("home.task.change_computer")} <ChevronDownIcon />
               </Button>
             }
           />
         </div>
         <details className="mt-3 text-[12px]">
-          <summary className="cursor-pointer select-none">Details</summary>
+          <summary className="cursor-pointer select-none">{t("home.task.details")}</summary>
           <p className="mt-1 font-mono break-words whitespace-pre-wrap">{error}</p>
         </details>
       </div>
       {pick.dialog}
+      {report ? (
+        <DiagnosticReportDialog
+          open={reporting}
+          onOpenChange={setReporting}
+          report={report}
+          onSend={async (subject, parts) => {
+            const link = reportMailto(core, { subject, parts }, []);
+            if (!link) throw new Error(tr("home.task.report_failed"));
+            await openExternal(link);
+          }}
+        />
+      ) : null}
     </CuaLine>
   );
 }
@@ -377,23 +489,24 @@ function ThreadFooter({
   onThrow: () => void;
   onRetry: (where?: TaskWhere) => void;
 }) {
+  const t = useT();
   return (
     <div className="flex flex-col gap-5" data-ask-footer="">
       {task.error ? <StartFailed error={task.error} name={name} agent={task.agent} host={retryTarget(task).kind === "host"} onRetry={onRetry} /> : null}
       {state === "working" ? (
         <p className="flex items-center gap-2 text-xs text-muted-foreground" role="status">
           <StateDot state="working" />
-          {timeline.phase === "responding" ? "Writing" : timeline.phase === "tool" ? "Using the computer" : "Working"}
+          {timeline.phase === "responding" ? t("home.task.writing") : timeline.phase === "tool" ? t("home.task.using_computer") : t("home.task.working")}
         </p>
       ) : null}
       {state === "stuck" ? (
         <CuaLine>
-          <div className="mb-1 text-[15px] font-semibold text-foreground">No progress for 10 minutes</div>
-          {name} hasn't done anything new for a while. You can nudge it with a reply, or take over the screen.
+          <div className="mb-1 text-[15px] font-semibold text-foreground">{t("home.task.stuck_title")}</div>
+          {t("home.task.stuck_body", { name })}
           {onTakeOver ? (
             <div className="mt-3">
               <Button variant="outline" className="h-10" onClick={onTakeOver}>
-                <HandIcon /> Take over
+                <HandIcon /> {t("home.task.take_over")}
               </Button>
             </div>
           ) : null}
@@ -409,11 +522,11 @@ function ThreadFooter({
               <div className="mt-4 flex flex-wrap gap-2">
                 {onTakeOver ? (
                   <Button className="h-11 px-4" onClick={onTakeOver}>
-                    <HandIcon /> Do it on the screen
+                    <HandIcon /> {t("home.task.do_on_screen")}
                   </Button>
                 ) : null}
                 <Button variant="outline" className="h-11 px-4" onClick={onAnswer}>
-                  Answer in words
+                  {t("home.task.answer_in_words_button")}
                 </Button>
               </div>
             </div>
@@ -425,28 +538,25 @@ function ThreadFooter({
           <div className="flex items-start gap-3 px-5 py-4">
             <CheckIcon className="mt-0.5 size-5 text-success" />
             <div>
-              <div className="text-[15px] font-semibold">{name} finished</div>
-              <div className="mt-1 text-[13px] text-muted-foreground">
-                {task.onHost ? "Ask a follow-up below." : "Ask a follow-up below, or decide what happens to the computer."}
-              </div>
+              <div className="text-[15px] font-semibold">{t("home.task.finished", { name })}</div>
+              {task.onHost ? <div className="mt-1 text-[13px] text-muted-foreground">{t("home.task.follow_up_below")}</div> : null}
             </div>
           </div>
           {task.onHost ? null : (
-          <div className="flex flex-wrap items-center gap-3 border-t px-5 py-3">
-            <span className="flex-1 text-[13px] text-muted-foreground">The computer is still on. What should happen to it?</span>
-            <Button variant="outline" className="h-11 px-4" onClick={onKeep}>
-              Keep it
-            </Button>
-            <Button variant="outline" className="h-11 px-4" onClick={onThrow}>
-              <Trash2Icon /> Throw it away
-            </Button>
-          </div>
+            <div className="flex flex-wrap items-center gap-3 border-t px-5 py-3">
+              <span className="flex-1 text-[13px] text-muted-foreground">{t("home.task.still_on")}</span>
+              <Button variant="outline" className="h-11 px-4" onClick={onKeep}>
+                {t("home.task.keep_it")}
+              </Button>
+              <Button variant="outline" className="h-11 px-4" onClick={onThrow}>
+                <Trash2Icon /> {t("home.task.throw_it_away")}
+              </Button>
+            </div>
           )}
         </div>
       ) : null}
-      {state === "done" && !task.onHost ? <p className="text-[12px] text-muted-foreground">Throwing it away deletes the computer. This conversation stays.</p> : null}
-      {state === "kept" ? <p className="text-[12px] text-muted-foreground">You kept the computer. It's with your Spaces.</p> : null}
-      {state === "thrown" ? <p className="text-[12px] text-muted-foreground">You threw the computer away. This is the conversation as it was.</p> : null}
+      {state === "kept" ? <p className="text-[12px] text-muted-foreground">{t("home.task.kept")}</p> : null}
+      {state === "thrown" ? <p className="text-[12px] text-muted-foreground">{t("home.task.thrown_period")}</p> : null}
     </div>
   );
 }
@@ -468,6 +578,7 @@ function Screen({
   onMode: (m: "watch" | "control") => void;
   onBig: () => void;
 }) {
+  const t = useT();
   const detail = useSpaceDetail(space, null).detail;
   // A task that never started shows no screen: there is nothing of its to watch.
   const on = space && state !== "didnt-start" ? spaceState(space) === "running" : false;
@@ -476,21 +587,28 @@ function Screen({
       ? TASK_STATE_TEXT["didnt-start"]
       : !space
         ? task.ending === "thrown"
-          ? "Thrown away"
+          ? t("home.task.thrown")
           : task.onHost
             ? state === "working" || state === "stuck"
-              ? `Working on ${thisComputerText()}`
+              ? t("home.task.working_on", { computer: thisComputerText() })
               : TASK_STATE_TEXT[state]
-            : "Not ready yet"
+            : t("home.task.not_ready")
         : state === "needs-you"
-          ? "Waiting for you"
+          ? t("home.task.waiting_for_you")
           : state === "working" || state === "stuck"
-            ? "Live"
+            ? t("home.task.live")
             : state === "failed"
               ? TASK_STATE_TEXT.failed
-              : "Finished";
+              : t("home.task.finished_short");
   return (
-    <div className={cn("overflow-hidden rounded-xl border bg-card shadow-xs", state === "needs-you" && mode === "watch" && "ring-2 ring-warning/70", mode === "control" && "ring-2 ring-brand")} data-ask-screen={mode}>
+    <div
+      className={cn(
+        "overflow-hidden rounded-xl border bg-card shadow-xs",
+        state === "needs-you" && mode === "watch" && "ring-2 ring-warning/70",
+        mode === "control" && "ring-2 ring-brand",
+      )}
+      data-ask-screen={mode}
+    >
       {space && on ? (
         <StreamSurface
           spaceId={space.id}
@@ -501,23 +619,27 @@ function Screen({
           className="aspect-[16/10] w-full rounded-none border-0"
         />
       ) : (
-        <div className="flex aspect-[16/10] items-center justify-center bg-thumb text-[13px] text-muted-foreground">
-          <OsIcon os={task.os} className="mr-2 size-5" />
-          {caption}
+        <div className="flex aspect-[16/10] flex-col items-center justify-center gap-1 bg-thumb text-[13px] text-muted-foreground">
+          <span className="flex items-center">
+            <OsIcon os={task.os} className="mr-2 size-5" />
+            {caption}
+          </span>
+          {/* On this Mac the agent doesn't stop to ask: the one-time confirm said so, this keeps it in view. */}
+          {!space && task.onHost && (state === "working" || state === "stuck") ? <span data-ask-no-asking="">{t("home.task.wont_ask")}</span> : null}
         </div>
       )}
       <div className="flex min-h-12 items-center gap-2 px-3">
         <span className="min-w-0 flex-1 truncate text-[13px] text-muted-foreground">{caption}</span>
         {space && on ? (
           <>
-            <div className="flex rounded-lg border p-0.5 text-[13px]" role="group" aria-label="Screen">
+            <div className="flex rounded-lg border p-0.5 text-[13px]" role="group" aria-label={t("home.task.screen")}>
               <button
                 type="button"
                 aria-pressed={mode === "watch"}
                 onClick={() => onMode("watch")}
                 className={cn("flex h-8 items-center gap-1.5 rounded-md px-2.5", mode === "watch" && "bg-foreground/[0.08] font-medium")}
               >
-                <EyeIcon className="size-3.5" /> Watch
+                <EyeIcon className="size-3.5" /> {t("home.task.watch")}
               </button>
               <button
                 type="button"
@@ -525,10 +647,10 @@ function Screen({
                 onClick={() => onMode("control")}
                 className={cn("flex h-8 items-center gap-1.5 rounded-md px-2.5", mode === "control" && "bg-brand-surface font-medium")}
               >
-                <HandIcon className="size-3.5" /> Take over
+                <HandIcon className="size-3.5" /> {t("home.task.take_over")}
               </button>
             </div>
-            <Button variant="ghost" size="icon" aria-label={big ? "Make smaller" : "Make bigger"} onClick={onBig}>
+            <Button variant="ghost" size="icon" aria-label={big ? t("home.task.make_smaller") : t("home.task.make_bigger")} onClick={onBig}>
               {big ? <Minimize2Icon /> : <Maximize2Icon />}
             </Button>
           </>
@@ -539,29 +661,30 @@ function Screen({
 }
 
 function ComputerCard({ task, space }: { task: AskTask; space: Space | undefined }) {
+  const t = useT();
   const os = task.os === "macos" ? "Mac" : task.os === "windows" ? "Windows" : "Linux";
   const line = task.onHost
-    ? `Your own ${{ macos: "Mac", windows: "PC", linux: "computer" }[hostOs()]}, with your files and apps`
+    ? thisComputerLabel()
     : !space
       ? task.ending === "thrown"
-        ? "Thrown away"
+        ? t("home.task.thrown")
         : task.error
-          ? "Not made"
-          : "Getting ready"
+          ? t("home.task.not_made")
+          : t("home.task.getting_ready_short")
       : spaceState(space) === "running"
-        ? "On"
-        : "Off";
+        ? t("home.task.on")
+        : t("home.task.off");
   return (
     <div className="rounded-xl border bg-card text-[13px] shadow-xs">
       <div className="flex min-h-12 items-center gap-3 px-4 py-2">
         <OsIcon os={task.os} className="size-4 text-muted-foreground" />
         <div className="min-w-0 flex-1">
-          <div className="font-medium">{task.onHost ? thisComputerLabel() : space ? space.name : `${os} computer for this task`}</div>
+          <div className="font-medium">{task.onHost ? thisComputerLabel() : space ? space.name : t("home.task.computer_for_task", { os })}</div>
           <div className="text-muted-foreground">{line}</div>
         </div>
         {space ? (
           <Button variant="ghost" size="sm" render={<Link to="/spaces/$spaceId" params={{ spaceId: space.id }} />}>
-            Open
+            {t("home.task.open")}
           </Button>
         ) : null}
       </div>

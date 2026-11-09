@@ -19,7 +19,19 @@ name = "cua-spaces-cli"
 path = "src/main.rs"
 
 [features]
-default = []
+default = ["aws"]
+# AWS (`--on aws`, `cua cloud add aws`, the S3 Cua Volume and checkpoint
+# fallback): the AWS SDK crates. Release builds keep it; local development
+# builds (`install-local.sh`) build with `--no-default-features`. Without it
+# every AWS feature fails with "this build doesn't include AWS support".
+aws = [
+    "cua-cli/aws",
+    "cua-sdk/aws",
+    "cua-daemon/aws",
+    "cua-spaces/s3",
+    "cua-spaces-ext/s3",
+    "cua-spaces-ffi/aws",
+]
 # Modal as overflow capacity of your machines (needs the cua-modal-helper binary).
 contrib-modal = ["dep:cua-contrib", "cua-contrib/modal"]
 
@@ -28,8 +40,8 @@ cua-cli = { path = "../cua-cli", features = ["byoc"] }
 # Hetzner and Modal tokens sealed with the pool keys (cloud_tokens).
 cua-byoc = { workspace = true, features = ["federation"] }
 zeroize = "1"
-cua-spaces-ext = { workspace = true, features = ["s3", "mount"] }
-cua-spaces-ffi = { path = "../cua-spaces-ffi" }
+cua-spaces-ext = { workspace = true, features = ["mount"] }
+cua-spaces-ffi = { path = "../cua-spaces-ffi", default-features = false }
 cua-spacesd-html5 = { path = "../cua-spacesd-html5", features = ["standalone"] }
 cua-sdk = { workspace = true, features = ["local", "spaces", "media", "byoc"] }
 cua-keyvault.workspace = true

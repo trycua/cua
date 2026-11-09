@@ -33,12 +33,29 @@ type Pt = { x: number; y: number };
 /** What the surface shows: the daemon's HTML5 viewer in a web view when a ticket exists; the sample scene for sample data; else why not. */
 function Surface({ ticket, scene, loading, error }: { ticket: StreamTicket | null; scene: Scene; loading: boolean; error: string | null }) {
   const backend = useBackend();
-  if (loading) return <View style={{ flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: "#0b0c0f" }}><ActivityIndicator color="#fff" /></View>;
-  if (backend.capabilities.sample) return <View style={{ flex: 1 }}><Thumbnail scene={scene} radius={0} style={{ aspectRatio: undefined, flex: 1, borderWidth: 0 }} /><View style={{ position: "absolute", left: 8, bottom: 8, backgroundColor: "#000a", borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2 }}><Text variant="caption" style={{ color: "#fff" }}>Sample screen</Text></View></View>;
+  if (loading)
+    return (
+      <View style={{ flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: "#0b0c0f" }}>
+        <ActivityIndicator color="#fff" />
+      </View>
+    );
+  if (backend.capabilities.sample)
+    return (
+      <View style={{ flex: 1 }}>
+        <Thumbnail scene={scene} radius={0} style={{ aspectRatio: undefined, flex: 1, borderWidth: 0 }} />
+        <View style={{ position: "absolute", left: 8, bottom: 8, backgroundColor: "#000a", borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2 }}>
+          <Text variant="caption" style={{ color: "#fff" }}>
+            Sample screen
+          </Text>
+        </View>
+      </View>
+    );
   if (!ticket) {
     return (
       <View style={{ flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: "#0b0c0f", padding: 16 }}>
-        <Text variant="subhead" style={{ color: "#fff", textAlign: "center" }}>{error ?? backend.capabilities.why.stream ?? "The live screen is not available yet."}</Text>
+        <Text variant="subhead" style={{ color: "#fff", textAlign: "center" }}>
+          {error ?? backend.capabilities.why.stream ?? "The live screen is not available yet."}
+        </Text>
       </View>
     );
   }
@@ -165,42 +182,91 @@ export function StreamView({ spaceId, scene, mode, embedded, controlled, onClose
   const enabled = full && controlled;
   // A tap clicks at once. There is no double-tap gesture to wait for: two quick taps are two clicks, and the desktop
   // reads them as a double click.
-  const tap = Gesture.Tap().runOnJS(true).enabled(enabled).onEnd((e, ok) => { if (ok) { Haptics.selectionAsync().catch(() => {}); send({ type: "click", ...at({ x: e.x, y: e.y }) }); } });
-  const press = Gesture.LongPress().runOnJS(true).minDuration(450).enabled(enabled).onStart((e) => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {}); send({ type: "click", ...at({ x: e.x, y: e.y }), button: "right" }); });
-  const scroll = Gesture.Pan().runOnJS(true).minPointers(2).maxPointers(2).enabled(enabled).onChange((e) => { send({ type: "scroll", ...at({ x: e.x, y: e.y }), dx: Math.round(-e.changeX), dy: Math.round(-e.changeY) }); });
-  const move = Gesture.Pan().runOnJS(true).maxPointers(1).enabled(full && (trackpad || scale.value > 1)).onChange((e) => {
-    if (trackpad) setCursor((p) => ({ x: Math.min(1, Math.max(0, p.x + (e.changeX * 1.6) / size.w)), y: Math.min(1, Math.max(0, p.y + (e.changeY * 1.6) / size.h)) }));
-    else {
-      tx.value += e.changeX;
-      ty.value += e.changeY;
-      base.current.tx = tx.value;
-      base.current.ty = ty.value;
-    }
-  });
-  const pinch = Gesture.Pinch().runOnJS(true).enabled(full).onUpdate((e) => {
-    scale.value = Math.min(4, Math.max(1, base.current.scale * e.scale));
-  }).onEnd(() => {
-    base.current.scale = scale.value;
-    if (scale.value <= 1.01) {
-      scale.value = 1; tx.value = 0; ty.value = 0; base.current = { scale: 1, tx: 0, ty: 0 };
-    }
-  });
+  const tap = Gesture.Tap()
+    .runOnJS(true)
+    .enabled(enabled)
+    .onEnd((e, ok) => {
+      if (ok) {
+        Haptics.selectionAsync().catch(() => {});
+        send({ type: "click", ...at({ x: e.x, y: e.y }) });
+      }
+    });
+  const press = Gesture.LongPress()
+    .runOnJS(true)
+    .minDuration(450)
+    .enabled(enabled)
+    .onStart((e) => {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+      send({ type: "click", ...at({ x: e.x, y: e.y }), button: "right" });
+    });
+  const scroll = Gesture.Pan()
+    .runOnJS(true)
+    .minPointers(2)
+    .maxPointers(2)
+    .enabled(enabled)
+    .onChange((e) => {
+      send({ type: "scroll", ...at({ x: e.x, y: e.y }), dx: Math.round(-e.changeX), dy: Math.round(-e.changeY) });
+    });
+  const move = Gesture.Pan()
+    .runOnJS(true)
+    .maxPointers(1)
+    .enabled(full && (trackpad || scale.value > 1))
+    .onChange((e) => {
+      if (trackpad)
+        setCursor((p) => ({ x: Math.min(1, Math.max(0, p.x + (e.changeX * 1.6) / size.w)), y: Math.min(1, Math.max(0, p.y + (e.changeY * 1.6) / size.h)) }));
+      else {
+        tx.value += e.changeX;
+        ty.value += e.changeY;
+        base.current.tx = tx.value;
+        base.current.ty = ty.value;
+      }
+    });
+  const pinch = Gesture.Pinch()
+    .runOnJS(true)
+    .enabled(full)
+    .onUpdate((e) => {
+      scale.value = Math.min(4, Math.max(1, base.current.scale * e.scale));
+    })
+    .onEnd(() => {
+      base.current.scale = scale.value;
+      if (scale.value <= 1.01) {
+        scale.value = 1;
+        tx.value = 0;
+        ty.value = 0;
+        base.current = { scale: 1, tx: 0, ty: 0 };
+      }
+    });
   const gestures = Gesture.Simultaneous(pinch, scroll, move, Gesture.Exclusive(press, tap));
   const zoomStyle = useAnimatedStyle(() => ({ transform: [{ translateX: tx.value }, { translateY: ty.value }, { scale: scale.value }] }));
   const hiddenInput = useRef<React.ComponentRef<typeof TextInput>>(null);
 
   const bar = (children: React.ReactNode) => <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>{children}</View>;
   const round = (name: Parameters<typeof Icon>[0]["name"], label: string, onPress: () => void, on = false) => (
-    <Pressable onPress={onPress} accessibilityRole="button" accessibilityLabel={label} accessibilityState={{ selected: on }} hitSlop={6} style={{ width: 38, height: 38, borderRadius: 19, alignItems: "center", justifyContent: "center", backgroundColor: on ? "#ffffff" : "#ffffff30" }}>
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      accessibilityState={{ selected: on }}
+      hitSlop={6}
+      style={{ width: 38, height: 38, borderRadius: 19, alignItems: "center", justifyContent: "center", backgroundColor: on ? "#ffffff" : "#ffffff30" }}
+    >
       <Icon name={name} size={17} color={on ? "#111" : "#fff"} />
     </Pressable>
   );
 
   if (!full) {
     return (
-      <View style={{ marginHorizontal: 12, borderRadius: 12, overflow: "hidden", aspectRatio: 16 / 9, backgroundColor: "#0b0c0f" }} onLayout={(e: LayoutChangeEvent) => setSize({ w: e.nativeEvent.layout.width, h: e.nativeEvent.layout.height })}>
+      <View
+        style={{ marginHorizontal: 12, borderRadius: 12, overflow: "hidden", aspectRatio: 16 / 9, backgroundColor: "#0b0c0f" }}
+        onLayout={(e: LayoutChangeEvent) => setSize({ w: e.nativeEvent.layout.width, h: e.nativeEvent.layout.height })}
+      >
         <Surface ticket={ticket} scene={scene} loading={loading} error={error} />
-        <Pressable onPress={onExpand} accessibilityRole="button" accessibilityLabel="Open the live desktop full screen" style={{ position: "absolute", inset: 0 }} />
+        <Pressable
+          onPress={onExpand}
+          accessibilityRole="button"
+          accessibilityLabel="Open the live desktop full screen"
+          style={{ position: "absolute", inset: 0 }}
+        />
         <View style={{ position: "absolute", top: 8, right: 8, flexDirection: "row", gap: 8 }}>
           {round("expand", "Full screen", () => onExpand?.())}
           {round("collapse", "Fold back into the header", onClose)}
@@ -212,16 +278,51 @@ export function StreamView({ spaceId, scene, mode, embedded, controlled, onClose
     <View style={{ flex: 1, backgroundColor: "#000" }}>
       <View style={{ flex: 1, justifyContent: "center" }}>
         <GestureDetector gesture={gestures}>
-          <View collapsable={false} style={{ width: "100%", aspectRatio: (ticket?.width ?? 16) / (ticket?.height ?? 9), maxHeight: "100%", alignSelf: "center", overflow: "hidden" }} onLayout={(e) => setSize({ w: e.nativeEvent.layout.width, h: e.nativeEvent.layout.height })} accessibilityLabel={controlled ? "Desktop. Tap to click, hold to right-click, two fingers to scroll, pinch to zoom." : "Desktop, watching"}>
+          <View
+            collapsable={false}
+            style={{ width: "100%", aspectRatio: (ticket?.width ?? 16) / (ticket?.height ?? 9), maxHeight: "100%", alignSelf: "center", overflow: "hidden" }}
+            onLayout={(e) => setSize({ w: e.nativeEvent.layout.width, h: e.nativeEvent.layout.height })}
+            accessibilityLabel={controlled ? "Desktop. Tap to click, hold to right-click, two fingers to scroll, pinch to zoom." : "Desktop, watching"}
+          >
             <Animated.View style={[{ flex: 1 }, reduceMotion ? { transform: [] } : null, zoomStyle]}>
               <Surface ticket={ticket} scene={scene} loading={loading} error={error} />
-              {trackpad ? <View pointerEvents="none" style={{ position: "absolute", left: `${cursor.x * 100}%`, top: `${cursor.y * 100}%`, width: 14, height: 14, marginLeft: -7, marginTop: -7, borderRadius: 7, borderWidth: 2, borderColor: "#fff", backgroundColor: "#00000055" }} /> : null}
+              {trackpad ? (
+                <View
+                  pointerEvents="none"
+                  style={{
+                    position: "absolute",
+                    left: `${cursor.x * 100}%`,
+                    top: `${cursor.y * 100}%`,
+                    width: 14,
+                    height: 14,
+                    marginLeft: -7,
+                    marginTop: -7,
+                    borderRadius: 7,
+                    borderWidth: 2,
+                    borderColor: "#fff",
+                    backgroundColor: "#00000055",
+                  }}
+                />
+              ) : null}
             </Animated.View>
           </View>
         </GestureDetector>
         {!controlled ? (
-          <View pointerEvents="none" style={{ position: "absolute", bottom: 12, alignSelf: "center", backgroundColor: "#000a", paddingHorizontal: 12, paddingVertical: 6, borderRadius: 14 }}>
-            <Text variant="footnote" style={{ color: "#fff" }}>Watching. Take control to touch the desktop.</Text>
+          <View
+            pointerEvents="none"
+            style={{
+              position: "absolute",
+              bottom: 12,
+              alignSelf: "center",
+              backgroundColor: "#000a",
+              paddingHorizontal: 12,
+              paddingVertical: 6,
+              borderRadius: 14,
+            }}
+          >
+            <Text variant="footnote" style={{ color: "#fff" }}>
+              Watching. Take control to touch the desktop.
+            </Text>
           </View>
         ) : null}
       </View>
@@ -237,13 +338,26 @@ export function StreamView({ spaceId, scene, mode, embedded, controlled, onClose
               }}
               accessibilityRole="button"
               accessibilityLabel={controlled ? "Give control back to the agent" : "Take control. This pauses an agent that is working."}
-              style={{ height: 38, borderRadius: 19, paddingHorizontal: 16, alignItems: "center", justifyContent: "center", backgroundColor: controlled ? c.warning : "#ffffff" }}
+              style={{
+                height: 38,
+                borderRadius: 19,
+                paddingHorizontal: 16,
+                alignItems: "center",
+                justifyContent: "center",
+                backgroundColor: controlled ? c.warning : "#ffffff",
+              }}
             >
-              <Text weight="600" style={{ color: "#111" }}>{controlled ? "Give back" : "Take control"}</Text>
+              <Text weight="600" style={{ color: "#111" }}>
+                {controlled ? "Give back" : "Take control"}
+              </Text>
             </Pressable>
           </>,
         )}
-        {controlled ? <Text variant="caption" style={{ color: "#fff", marginTop: 6 }}>{controlNote ?? "Touch the desktop to control it. A working agent is paused."}</Text> : null}
+        {controlled ? (
+          <Text variant="caption" style={{ color: "#fff", marginTop: 6 }}>
+            {controlNote ?? "Touch the desktop to control it. A working agent is paused."}
+          </Text>
+        ) : null}
       </View>
       {controlled ? (
         <View style={{ position: "absolute", bottom: 0, left: 0, right: 0, paddingBottom: 28, paddingHorizontal: 12, gap: 8 }}>
@@ -253,8 +367,32 @@ export function StreamView({ spaceId, scene, mode, embedded, controlled, onClose
                 const isMod = key === "ctrl" || key === "alt" || key === "cmd";
                 const on = mods.includes(key);
                 return (
-                  <Pressable key={key} accessibilityRole="button" accessibilityLabel={label} accessibilityState={{ selected: on }} onPress={() => { Haptics.selectionAsync().catch(() => {}); if (isMod) setMods((m) => (on ? m.filter((x) => x !== key) : [...m, key])); else { send({ type: "key", key, modifiers: mods }); setMods([]); } }} style={{ minWidth: 46, height: 34, paddingHorizontal: 10, borderRadius: 8, alignItems: "center", justifyContent: "center", backgroundColor: on ? "#fff" : "#ffffff30" }}>
-                    <Text variant="footnote" weight="600" style={{ color: on ? "#111" : "#fff" }}>{label}</Text>
+                  <Pressable
+                    key={key}
+                    accessibilityRole="button"
+                    accessibilityLabel={label}
+                    accessibilityState={{ selected: on }}
+                    onPress={() => {
+                      Haptics.selectionAsync().catch(() => {});
+                      if (isMod) setMods((m) => (on ? m.filter((x) => x !== key) : [...m, key]));
+                      else {
+                        send({ type: "key", key, modifiers: mods });
+                        setMods([]);
+                      }
+                    }}
+                    style={{
+                      minWidth: 46,
+                      height: 34,
+                      paddingHorizontal: 10,
+                      borderRadius: 8,
+                      alignItems: "center",
+                      justifyContent: "center",
+                      backgroundColor: on ? "#fff" : "#ffffff30",
+                    }}
+                  >
+                    <Text variant="footnote" weight="600" style={{ color: on ? "#111" : "#fff" }}>
+                      {label}
+                    </Text>
                   </Pressable>
                 );
               })}
@@ -263,16 +401,40 @@ export function StreamView({ spaceId, scene, mode, embedded, controlled, onClose
           {bar(
             <>
               <View style={{ flex: 1 }} />
-              {round("keyboard", "Keyboard", () => { setTyping(true); setTimeout(() => hiddenInput.current?.focus(), 30); }, typing)}
+              {round(
+                "keyboard",
+                "Keyboard",
+                () => {
+                  setTyping(true);
+                  setTimeout(() => hiddenInput.current?.focus(), 30);
+                },
+                typing,
+              )}
               {round("chevronUpDown", "Keys row", () => setKeys((k) => !k), keys)}
               {round("trackpad", trackpad ? "Touch mode" : "Trackpad mode", () => setTrackpad((t) => !t), trackpad)}
-              {round("reload", "Reset zoom", () => { scale.value = 1; tx.value = 0; ty.value = 0; base.current = { scale: 1, tx: 0, ty: 0 }; })}
+              {round("reload", "Reset zoom", () => {
+                scale.value = 1;
+                tx.value = 0;
+                ty.value = 0;
+                base.current = { scale: 1, tx: 0, ty: 0 };
+              })}
               <View style={{ flex: 1 }} />
             </>,
           )}
         </View>
       ) : null}
-      <TextInput ref={hiddenInput} value="" onChangeText={(t) => t && send({ type: "type", text: t })} onSubmitEditing={() => send({ type: "key", key: "return" })} onBlur={() => setTyping(false)} autoCapitalize="none" autoCorrect={false} blurOnSubmit={false} style={{ position: "absolute", width: 1, height: 1, opacity: 0 }} accessibilityLabel="Type on the desktop" />
+      <TextInput
+        ref={hiddenInput}
+        value=""
+        onChangeText={(t) => t && send({ type: "type", text: t })}
+        onSubmitEditing={() => send({ type: "key", key: "return" })}
+        onBlur={() => setTyping(false)}
+        autoCapitalize="none"
+        autoCorrect={false}
+        blurOnSubmit={false}
+        style={{ position: "absolute", width: 1, height: 1, opacity: 0 }}
+        accessibilityLabel="Type on the desktop"
+      />
     </View>
   );
 }

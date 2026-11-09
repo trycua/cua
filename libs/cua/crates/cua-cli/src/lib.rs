@@ -23,7 +23,7 @@
 
 #![recursion_limit = "512"]
 
-#[cfg(feature = "byoc")]
+#[cfg(feature = "aws")]
 mod add_aws;
 mod agent_cmd;
 mod agent_keys_cmd;
@@ -262,16 +262,15 @@ enum Command {
     /// layers already built are reused.
     Build(build_cmd::BuildArgs),
     /// What a Space can reach on the network, and changing it: `show`,
-    /// `set`, `log`. An experiment: see `cua experiments`.
+    /// `set`, `log`.
     #[command(subcommand)]
     Network(network_cmd::NetworkCmd),
     /// Send a Space's internet traffic out through this computer for a
     /// while: `start`, `stop`, `status`. (`cua network set --via
-    /// this-computer` keeps it.) Part of the Secure Spaces experiment.
+    /// this-computer` keeps it.)
     #[command(subcommand)]
     Hotspot(network_cmd::HotspotCmd),
     /// How traffic reaches your other computers: `status` (and `--prefer`).
-    /// Part of the Secure Spaces experiment.
     #[command(subcommand)]
     Mesh(network_cmd::MeshCmd),
     /// Features that are still being built, one switch each: `list`,
@@ -2491,8 +2490,8 @@ async fn remove_computer(
     .await
 }
 
-/// `cua cloud add aws` (builds with AWS: the `byoc` feature).
-#[cfg(feature = "byoc")]
+/// `cua cloud add aws` (builds with AWS: the `aws` feature).
+#[cfg(feature = "aws")]
 async fn add_aws(a: onboard::AwsArgs, json: bool, out: &mut dyn Write) -> Result<i32, CuaError> {
     add_aws::run(a, json, out).await
 }
@@ -2519,10 +2518,10 @@ async fn cloud_trust(_cloud: &str, _out: &mut dyn Write) -> Result<i32, CuaError
     ))
 }
 
-#[cfg(not(feature = "byoc"))]
+#[cfg(not(feature = "aws"))]
 async fn add_aws(_a: onboard::AwsArgs, _json: bool, _out: &mut dyn Write) -> Result<i32, CuaError> {
     Err(CuaError::Unsupported(
-        "this cua was built without AWS (the byoc feature); install the Cua Spaces cua".into(),
+        "this build doesn't include AWS support; install the Cua Spaces cua".into(),
     ))
 }
 
@@ -2958,27 +2957,19 @@ fn uses_teams(cmd: &Command) -> bool {
 fn uses_experiment(cmd: &Command) -> Option<cua_vmm::experiments::Gate> {
     use cua_vmm::experiments::Gate;
     match cmd {
-        Command::Network(_) | Command::Hotspot(_) | Command::Mesh(_) => Some(Gate::SecureSpaces),
-        Command::Connections(connections_cmd::ConnectionsCmd::Github { .. }) => {
-            Some(Gate::AskFirst)
-        }
         Command::Ci(_) => Some(Gate::CiRunners),
         Command::Spaces(host::SpacesCmd::Create {
-            network,
             parent,
             widen,
             children,
             ..
         }) => {
-            if network.is_some() {
-                Some(Gate::SecureSpaces)
-            } else if parent.is_some() || *widen || *children {
+            if parent.is_some() || *widen || *children {
                 Some(Gate::ChildSpaces)
             } else {
                 None
             }
         }
-        Command::Spaces(host::SpacesCmd::Set { .. }) => Some(Gate::SecureSpaces),
         Command::Share(args) if args.uses_tcp_shares() => Some(Gate::TcpShares),
         Command::Spaces(
             host::SpacesCmd::Ls { tree: true, .. }
@@ -3008,21 +2999,6 @@ fn cli_command(teams: bool) -> clap::Command {
 fn cli_command_for(teams: bool, on: impl Fn(cua_vmm::experiments::Gate) -> bool) -> clap::Command {
     use cua_vmm::experiments::Gate;
     let mut cmd = without_teams_if(Cli::command(), teams);
-    if !on(Gate::SecureSpaces) {
-        cmd = cmd
-            .mut_subcommand("network", |c| c.hide(true))
-            .mut_subcommand("hotspot", |c| c.hide(true))
-            .mut_subcommand("mesh", |c| c.hide(true))
-            .mut_subcommand("spaces", |s| {
-                s.mut_subcommand("create", |c| c.mut_arg("network", |a| a.hide(true)))
-                    .mut_subcommand("set", |c| c.hide(true))
-            });
-    }
-    if !on(Gate::AskFirst) {
-        cmd = cmd.mut_subcommand("connections", |c| {
-            c.mut_subcommand("github", |g| g.hide(true))
-        });
-    }
     if !on(Gate::CiRunners) {
         cmd = cmd.mut_subcommand("ci", |c| c.hide(true));
     }
@@ -3216,6 +3192,9 @@ fn fallback_notice(n: &cua_spaces::mesh::FallbackNotice) {
 }
 
 pub fn main() {
+    // First, before any thread starts: the helper that forwards a VM's
+    // ports into its network namespace joins it (cua_vmm::nsfwd).
+    cua_vmm::nsfwd::run_if_asked();
     #[cfg(windows)]
     keep_stdio_out_of_children();
     let channel = cua_home::channel::CuaChannel::current();
@@ -3723,35 +3702,43 @@ mod tests {
         (r, String::from_utf8(out).unwrap())
     }
 
-    /// `cua connections github` belongs to the ask-first experiment: left out
-    /// of help and refused with how to turn it on while that is off, there
-    /// once it is on.
+    /// The commands of the features that are always on (network, hotspot, mesh,
+    /// `connections github`, `spaces set`) are listed in help and are not behind an experiment.
     #[test]
-    fn connections_github_belongs_to_the_ask_first_experiment() {
-        use cua_vmm::experiments::Gate;
-        let visible = |on: bool| {
-            let cmd = cli_command_for(true, |g| g != Gate::AskFirst || on);
-            let connections = cmd
-                .find_subcommand("connections")
-                .expect("connections")
-                .clone();
+    fn the_always_on_commands_are_listed_and_need_no_experiment() {
+        let mut cmd = cli_command_for(true, |_| false);
+        cmd.build();
+        for name in ["network", "hotspot", "mesh"] {
+            let c = cmd
+                .get_subcommands()
+                .find(|c| c.get_name() == name)
+                .unwrap_or_else(|| panic!("{name}"));
+            assert!(!c.is_hide_set(), "{name} is hidden");
+        }
+        let connections = cmd.find_subcommand("connections").expect("connections");
+        assert!(
             connections
                 .get_subcommands()
                 .find(|c| c.get_name() == "github")
-                .map(|c| !c.is_hide_set())
-        };
-        assert_eq!(visible(false), Some(false), "hidden while it is off");
-        assert_eq!(visible(true), Some(true), "listed once it is on");
-        // It still parses while off, and is refused with how to turn the experiment on.
-        let cli = Cli::try_parse_from(["cua", "connections", "github"]).unwrap();
-        assert_eq!(uses_experiment(&cli.command), Some(Gate::AskFirst));
-        let other = Cli::try_parse_from(["cua", "connections", "list"]).unwrap();
-        assert_eq!(uses_experiment(&other.command), None);
-        assert!(
-            Gate::AskFirst
-                .off_message()
-                .contains("cua experiments enable ask-first")
+                .is_some_and(|c| !c.is_hide_set())
         );
+        let spaces = cmd.find_subcommand("spaces").expect("spaces");
+        let set = spaces
+            .get_subcommands()
+            .find(|c| c.get_name() == "set")
+            .expect("spaces set");
+        assert!(!set.is_hide_set(), "spaces set is hidden");
+        for args in [
+            ["cua", "connections", "github"].as_slice(),
+            &["cua", "network", "show", "x"],
+        ] {
+            if let Ok(cli) = Cli::try_parse_from(args) {
+                assert_eq!(uses_experiment(&cli.command), None, "{args:?}");
+            }
+        }
+        // And the switch is gone for them.
+        assert!(cua_vmm::experiments::Gate::parse("ask-first").is_none());
+        assert!(cua_vmm::experiments::Gate::parse("secure-spaces").is_none());
     }
 
     /// `cua ci` belongs to the ci-runners experiment: left out of help and

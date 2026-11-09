@@ -153,6 +153,8 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: dtolnay/rust-toolchain@1.97.1
       - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc # v6
+      - name: Set up pasta (secure network)
+        uses: ./.github/actions/setup-pasta
       - name: Host tools (QEMU, gVisor, crane, oras, skopeo)
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends protobuf-compiler libprotobuf-dev
@@ -287,6 +289,8 @@ jobs:
         with:
           name: bench-${{ inputs.bench }}-lock
           path: libs/images/bench/${{ inputs.bench }}
+      - name: Set up pasta (secure network)
+        uses: ./.github/actions/setup-pasta
       - name: Host tools (QEMU, gVisor, crane)
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends protobuf-compiler libprotobuf-dev

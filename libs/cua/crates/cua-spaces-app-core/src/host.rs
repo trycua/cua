@@ -341,13 +341,13 @@ pub fn validate_setup(mut request: HostSetupRequest) -> Result<HostSetupRequest,
 /// The switch that lets other machines create Spaces on this one (a
 /// Settings row on this Mac, read-only on a machine's page).
 pub const SPACES_SWITCH: &str = "Let other computers create Spaces here";
-/// One line under [`SPACES_SWITCH`].
-pub const SPACES_HELP: &str = "Your other computers can create Spaces here.";
+/// No line under [`SPACES_SWITCH`]: the label says it all (shells skip an empty help).
+pub const SPACES_HELP: &str = "";
 /// The switch that shows this machine's own desktop as a Space on the
 /// others.
 pub const DESKTOP_SWITCH: &str = "Let other computers control this desktop";
-/// One line under [`DESKTOP_SWITCH`].
-pub const DESKTOP_HELP: &str = "Your other computers can see and control this screen.";
+/// No line under [`DESKTOP_SWITCH`]: the label says it all (shells skip an empty help).
+pub const DESKTOP_HELP: &str = "";
 
 /// The production relay. Host setup joins [`default_relay_url`] unless the
 /// form names another.
@@ -1146,9 +1146,7 @@ pub struct HostSetupChoice {
 }
 
 /// The intro over the setup choices.
-pub const HOST_INTRO: &str = "This is the computer you\u{2019}re using now. Set \
-it up so you, your teammates and your AI agents can use it from other computers. \
-Cua connects them for you, with no network setup.";
+pub const HOST_INTRO: &str = PROVIDES_SPACES_NOTE;
 
 /// The "Use it to" option that lets other machines create Spaces here and control this desktop.
 pub const DESKTOP_CHOICE: &str = "Let other computers create Spaces and control this desktop";
@@ -1162,7 +1160,8 @@ pub const SPARE_SUBMIT: &str = "Start running Spaces";
 /// What the desktop setup also turns on, in the form's words (it says
 /// "this computer" on every system, like the rest of the form, so every
 /// shell draws the same text).
-pub const PROVIDES_SPACES_NOTE: &str = "You and the people you share with can create Spaces on this computer, and see and control its screen if you turn that on, from other computers. Cua connects them for you, with no network setup.";
+pub const PROVIDES_SPACES_NOTE: &str =
+    "Use this computer from your other computers. Its screen stays private unless you share it.";
 
 /// The setup choices (the form's "Use for" options).
 pub fn setup_choices() -> Vec<HostSetupChoice> {
@@ -1545,7 +1544,7 @@ pub fn limit_rows(s: &HostState) -> Vec<HostLimitRow> {
         row(
             "max-memory",
             "Most memory in total",
-            "What the Spaces other computers create here may use together.",
+            "Shared limit for Spaces from other computers",
             s.max_memory_gb,
             "GB",
             Some(s.used_memory_gb),
@@ -1554,7 +1553,7 @@ pub fn limit_rows(s: &HostState) -> Vec<HostLimitRow> {
         row(
             "max-disk",
             "Most disk in total",
-            "What the Spaces other computers create here may use together.",
+            "",
             s.max_disk_gb,
             "GB",
             Some(s.used_disk_gb),
@@ -1994,22 +1993,14 @@ pub fn form_view(s: &HostFormState, identity: Option<&str>) -> HostFormView {
     let lede = if s.direct {
         "Other computers on your network connect to this address with an access token.".to_string()
     } else {
-        let what = if s.spare {
-            "This computer runs Spaces, separate computers inside it, that you and your team open from your other computers. Its own screen stays private.".to_string()
-        } else {
-            PROVIDES_SPACES_NOTE.to_string()
-        };
+        // One sentence for both profiles: a spare computer's screen simply stays private.
+        let what = PROVIDES_SPACES_NOTE.to_string();
         match identity.filter(|i| !i.is_empty()) {
             _ if s.advanced => {
                 // Self-hosting: Cua's relay is not involved, so only the
                 // spare-computer sentence, or what the desktop setup also
                 // turns on, carries over.
-                let also = if s.spare {
-                    what
-                } else {
-                    PROVIDES_SPACES_NOTE.to_string()
-                };
-                format!("For self-hosting teams: joins your own relay at the address below. {also}")
+                format!("For self-hosting teams: joins your own relay at the address below. {what}")
             }
             Some(id) => format!("{what} Signed in as {id}."),
             None => what.to_string(),
@@ -2559,11 +2550,7 @@ mod tests {
         let s = form_initial();
         let v = form_view(&s, Some("ada@example.com"));
         assert!(v.fields.iter().all(|f| !f.advanced), "{:?}", v.fields);
-        assert!(
-            v.lede.starts_with("You and the people you share with"),
-            "{}",
-            v.lede
-        );
+        assert!(v.lede.starts_with(PROVIDES_SPACES_NOTE), "{}", v.lede);
         // Settings → Advanced: the team's own relay, typed in.
         let s = form_reduce(
             &s,
@@ -2944,11 +2931,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             [DESKTOP_CHOICE, SPARE_CHOICE]
         );
-        assert!(
-            v.lede.contains("Its own screen stays private"),
-            "{}",
-            v.lede
-        );
+        assert!(v.lede.contains("Its screen stays private"), "{}", v.lede);
         assert!(
             v.lede.ends_with("Signed in as ada@example.com."),
             "{}",
@@ -3007,14 +2990,14 @@ mod tests {
         assert!(form_view(&adv, None).lede.ends_with(PROVIDES_SPACES_NOTE));
         let direct = form_reduce(&adv, &HostFormAction::SetDirect { on: true });
         assert!(!form_view(&direct, None).lede.contains("provides Spaces"));
-        // The spare form says what it does instead.
+        // The spare form says the same one sentence (its screen stays private).
         let spare = form_reduce(
             &form_initial(),
             &HostFormAction::SetProfile {
                 profile: "spare".into(),
             },
         );
-        assert!(!form_view(&spare, None).lede.contains(PROVIDES_SPACES_NOTE));
+        assert!(form_view(&spare, None).lede.contains(PROVIDES_SPACES_NOTE));
     }
 
     #[test]

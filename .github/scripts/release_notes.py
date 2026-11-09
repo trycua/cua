@@ -99,9 +99,8 @@ def resolve_tag(config: Mapping[str, Any], tag: str) -> dict[str, Any] | None:
         "version": version,
         "tag": tag,
         "tag_prefix": prefix,
-        # The pinned release-please 17.3.0 has no `additional-paths` support
-        # (the key is ignored), so the changelog covers the package path only.
-        "paths": [path],
+        # release_please_additional_paths.cjs counts these for the changelog too.
+        "paths": [path, *package.get("additional-paths", [])],
         "exclude_paths": [*package.get("exclude-paths", []), *nested],
         "changelog": f"{path}/{package.get('changelog-path', 'CHANGELOG.md')}",
         "self_rendered": component in SELF_RENDERED,

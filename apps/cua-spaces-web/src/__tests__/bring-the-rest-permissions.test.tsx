@@ -28,12 +28,30 @@ describe("Home's 'Now bring the rest in'", () => {
   it("marks the apps row On once both are on, and its panel shows each switch live", () => {
     const view = bringRestView({ os: "macos" });
     const data = answer("on", "off");
-    const { rerender } = render(<BringTheRestCard view={view} open="apps" onRow={() => {}} onDismiss={() => {}} apps={<AppsPanel perms={{ data, allow: vi.fn(async () => {}), waiting: true }} />} done={{ apps: false }} />);
+    const { rerender } = render(
+      <BringTheRestCard
+        view={view}
+        open="apps"
+        onRow={() => {}}
+        onDismiss={() => {}}
+        apps={<AppsPanel perms={{ data, allow: vi.fn(async () => {}), waiting: true }} />}
+        done={{ apps: false }}
+      />,
+    );
     expect(document.querySelector("[data-bring-rest-done=apps]")).toBeNull();
     expect(document.querySelector("[data-app-permission=screen] [data-permission-status]")!.getAttribute("data-permission-status")).toBe("on");
     expect(document.querySelector("[data-app-permission=accessibility] [data-permission-status]")!.getAttribute("data-permission-status")).toBe("checking");
     const both = answer("on", "on");
-    rerender(<BringTheRestCard view={view} open="apps" onRow={() => {}} onDismiss={() => {}} apps={<AppsPanel perms={{ data: both, allow: vi.fn(async () => {}) }} />} done={{ apps: true }} />);
+    rerender(
+      <BringTheRestCard
+        view={view}
+        open="apps"
+        onRow={() => {}}
+        onDismiss={() => {}}
+        apps={<AppsPanel perms={{ data: both, allow: vi.fn(async () => {}) }} />}
+        done={{ apps: true }}
+      />,
+    );
     expect(document.querySelector("[data-bring-rest-done=apps]")!.textContent).toContain("On");
     expect(document.querySelector("[data-bring-rest-apps]")!.textContent).toContain("Both are on.");
   });
@@ -54,7 +72,7 @@ describe("Home's apps row on its own (CUA-3551)", () => {
   it("says how many switches are still off", () => {
     expect(homeAppsRowLine([{ granted: false }, { granted: false }])).toBe("Two switches in System Settings are still off.");
     expect(homeAppsRowLine([{ granted: true }, { granted: false }])).toBe("One switch in System Settings is still off.");
-    expect(homeAppsRowLine([{ granted: true }, { granted: true }])).toContain("Both switches are on.");
+    expect(homeAppsRowLine([{ granted: true }, { granted: true }])).toContain("Both are on.");
   });
 
   it("draws each switch live, with Allow only where it is off, and On once both are", () => {

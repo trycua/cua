@@ -389,7 +389,7 @@
       "agentMenu": "nothing chosen, nothing signed in",
       "choices": [],
       "default": "- | - | - | -",
-      "help": "Choose which coding apps Home's agent menu lists. A hidden app keeps its sign-ins and stays on the Agents page and available by name. Connecting it again shows it.",
+      "help": "Hidden apps keep their sign-ins.",
       "lastNote": null,
       "menu": [
         "codex | not-connected",
@@ -420,7 +420,7 @@
       "agentMenu": "nothing chosen, accounts that also run Goose and Pi",
       "choices": [],
       "default": "openai-codex | CODEX_AUTH_JSON | - | gpt-5.5",
-      "help": "Choose which coding apps Home's agent menu lists. A hidden app keeps its sign-ins and stays on the Agents page and available by name. Connecting it again shows it.",
+      "help": "Hidden apps keep their sign-ins.",
       "lastNote": null,
       "menu": [
         "codex | connected",
@@ -463,7 +463,7 @@
       "agentMenu": "Hermes hidden, Goose hidden",
       "choices": [],
       "default": "openai-codex | CODEX_AUTH_JSON | - | gpt-5.5",
-      "help": "Choose which coding apps Home's agent menu lists. A hidden app keeps its sign-ins and stays on the Agents page and available by name. Connecting it again shows it.",
+      "help": "Hidden apps keep their sign-ins.",
       "lastNote": null,
       "menu": [
         "codex | connected",
@@ -504,7 +504,7 @@
       "agentMenu": "Antigravity shown before it is signed in",
       "choices": [],
       "default": "- | - | - | -",
-      "help": "Choose which coding apps Home's agent menu lists. A hidden app keeps its sign-ins and stays on the Agents page and available by name. Connecting it again shows it.",
+      "help": "Hidden apps keep their sign-ins.",
       "lastNote": null,
       "menu": [
         "codex | not-connected",
@@ -545,7 +545,7 @@
         "nope off :: shown [] / hidden [\"codex\",\"hermes\",\"claude-code\"] :: -"
       ],
       "default": "- | - | - | -",
-      "help": "Choose which coding apps Home's agent menu lists. A hidden app keeps its sign-ins and stays on the Agents page and available by name. Connecting it again shows it.",
+      "help": "Hidden apps keep their sign-ins.",
       "lastNote": null,
       "menu": [
         "codex | not-connected",
@@ -576,7 +576,7 @@
       "agentMenu": "a file that hides all four reads as the defaults",
       "choices": [],
       "default": "- | - | - | -",
-      "help": "Choose which coding apps Home's agent menu lists. A hidden app keeps its sign-ins and stays on the Agents page and available by name. Connecting it again shows it.",
+      "help": "Hidden apps keep their sign-ins.",
       "lastNote": null,
       "menu": [
         "codex | not-connected",
@@ -612,7 +612,7 @@
       "agentMenu": "Claude Code hidden while signed out, then an account is added",
       "choices": [],
       "default": "- | - | - | -",
-      "help": "Choose which coding apps Home's agent menu lists. A hidden app keeps its sign-ins and stays on the Agents page and available by name. Connecting it again shows it.",
+      "help": "Hidden apps keep their sign-ins.",
       "lastNote": null,
       "menu": [
         "codex | not-connected",
@@ -644,7 +644,7 @@
       "agentMenu": "Claude Code hidden with its account already seen: stays hidden",
       "choices": [],
       "default": "- | - | - | -",
-      "help": "Choose which coding apps Home's agent menu lists. A hidden app keeps its sign-ins and stays on the Agents page and available by name. Connecting it again shows it.",
+      "help": "Hidden apps keep their sign-ins.",
       "lastNote": null,
       "menu": [
         "codex | not-connected",

@@ -736,20 +736,6 @@ impl AgentTools {
     }
 }
 
-/// The tools an agent is offered: `repo_push` only while Ask first is on.
-fn offered(mut tools: Vec<Value>, ask_first: bool) -> Vec<Value> {
-    if !ask_first {
-        tools.retain(|t| t["name"] != "repo_push");
-    }
-    tools
-}
-
-/// The answer to a call of a tool of Ask first while it is off.
-fn refused_while_off(tool: &str, ask_first: bool) -> Option<ToolOutcome> {
-    (tool == "repo_push" && !ask_first)
-        .then(|| ToolOutcome::error(&cua_spaces::agents::github_auth::off_error()))
-}
-
 const NAMES: &[&str] = &[
     "notify_user",
     "volume_ls",
@@ -924,9 +910,7 @@ impl ToolExtension for AgentTools {
                 false,
             ),
         ];
-        // Asking before something leaves the Space is the Ask first experiment:
-        // while it is off the agent is not offered the tool.
-        offered(tools, cua_spaces::agents::github_auth::enabled())
+        tools
     }
 
     async fn call(&self, tool: &str, arguments: Value) -> Option<ToolOutcome> {
@@ -935,48 +919,9 @@ impl ToolExtension for AgentTools {
         if !NAMES.contains(&tool) {
             return None;
         }
-        // Not offered while Ask first is off, and refused if called anyway.
-        if let Some(refused) = refused_while_off(tool, cua_spaces::agents::github_auth::enabled()) {
-            return Some(refused);
-        }
         Some(match AgentTools::call(self, tool, arguments).await {
             Ok(o) => o,
             Err(e) => ToolOutcome::error(&e),
         })
-    }
-}
-
-#[cfg(test)]
-mod ask_first_gate_tests {
-    use super::*;
-
-    fn listed() -> Vec<Value> {
-        ["repo_push", "notify_user"]
-            .iter()
-            .map(|n| tool(n, "", schema(json!({}), &[]), false))
-            .collect()
-    }
-
-    #[test]
-    fn repo_push_is_offered_only_while_ask_first_is_on() {
-        let names = |v: Vec<Value>| -> Vec<String> {
-            v.iter()
-                .map(|t| t["name"].as_str().unwrap().to_string())
-                .collect()
-        };
-        assert_eq!(names(offered(listed(), true)), ["repo_push", "notify_user"]);
-        assert_eq!(names(offered(listed(), false)), ["notify_user"]);
-    }
-
-    #[test]
-    fn a_call_of_repo_push_while_it_is_off_says_how_to_turn_it_on() {
-        let r = refused_while_off("repo_push", false).expect("refused");
-        assert!(r.is_error);
-        let text = cua_spaces::extension::outcome_json(r)
-            .unwrap_err()
-            .to_string();
-        assert!(text.contains("cua experiments enable ask-first"), "{text}");
-        assert!(refused_while_off("repo_push", true).is_none());
-        assert!(refused_while_off("notify_user", false).is_none());
     }
 }

@@ -35,7 +35,12 @@ const click = (el: Element) =>
   act(async () => {
     fireEvent.click(el);
   });
-const host = (calls: Call[], github?: "gh" | "none" | "saved" | "warning") => ({ failsCreates: false, listsGhost: false, demo: { askFirst: true, ...(github ? { github } : {}) }, intercept: (op: string, args: unknown) => (calls.push({ op, args }), undefined) });
+const host = (calls: Call[], github?: "gh" | "none" | "saved" | "warning") => ({
+  failsCreates: false,
+  listsGhost: false,
+  demo: { ...(github ? { github } : {}) },
+  intercept: (op: string, args: unknown) => (calls.push({ op, args }), undefined),
+});
 const line = (h: string) => q(`[data-github-host="${h}"] [data-github-line]`)?.textContent;
 const openRow = async (h: string) => {
   await click(await found(`[data-github-host="${h}"]`));
@@ -105,15 +110,5 @@ describe.skipIf(!wasmBuilt)("Connections, GitHub (real routes, wasm core)", () =
     const sheet = await openRow("github.com");
     expect(sheet.querySelector('[data-github-source="saved"]')!.textContent).toContain("In use");
     expect(sheet.querySelector('[data-github-source="gh"]')!.textContent).not.toContain("In use");
-  });
-});
-
-describe.skipIf(!wasmBuilt)("Connections, GitHub while Ask first is off (the default)", () => {
-  it("shows no GitHub rows, and the Ask first switch stays out of Labs", async () => {
-    await mountApp("/settings/connections", { failsCreates: false, listsGhost: false, demo: {} });
-    await waitFor(() => expect(q("[data-connectors]") ?? q("main")).not.toBeNull());
-    await new Promise((r) => setTimeout(r, 300));
-    expect(q("[data-connectors-github]")).toBeNull();
-    expect(document.body.textContent).not.toContain("Signed in as ada with gh");
   });
 });

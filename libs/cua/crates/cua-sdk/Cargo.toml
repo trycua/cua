@@ -15,7 +15,7 @@ name = "cua_sdk"
 crate-type = ["rlib", "cdylib", "staticlib"]
 
 [features]
-default = ["local", "spaces", "host", "media", "byoc"]
+default = ["local", "spaces", "host", "media", "byoc", "aws"]
 # `Cua.local()`: local runtimes and images. Placeholder surface that returns
 # `Unsupported` until cua-vmm / cua-image are merged.
 local = []
@@ -30,6 +30,9 @@ media = []
 # Your own cloud account as a location (`on="aws"`, `"gcp"`, `"hetzner"`, `"modal"`) for
 # sandboxes and Spaces: the cua-byoc providers and `cua cloud`.
 byoc = ["cua-daemon/byoc"]
+# AWS (EC2 and S3) in the byoc providers and the checkpoint fallback; see
+# cua-daemon's `aws`.
+aws = ["byoc", "cua-daemon/aws"]
 # Contrib sandbox providers (`on="e2b"`, ...), off by default.
 contrib = ["cua-daemon/contrib"]
 contrib-e2b = ["cua-daemon/contrib-e2b"]
@@ -41,7 +44,7 @@ web = ["dep:tonic-web-wasm-client"]
 
 [dependencies]
 # Contract types (both targets). The server half never builds for wasm32.
-cua-proto = { path = "../cua-proto", version = "0.15.1", default-features = false, features = ["client", "serde"] } # x-release-please-version
+cua-proto = { path = "../cua-proto", version = "0.18.0", default-features = false, features = ["client", "serde"] } # x-release-please-version
 uniffi.workspace = true
 thiserror.workspace = true
 serde.workspace = true

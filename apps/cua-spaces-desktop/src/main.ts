@@ -405,6 +405,7 @@ if (!app.requestSingleInstanceLock()) {
       // The parity flows' traces are a Mac's: under the e2e switch the page can play another platform.
       platform: (E2E_DEMO ? demoPlatform() : null) ?? process.platform,
       videoStats: countsVideo(VIDEO_BENCH),
+      languages: () => app.getPreferredSystemLanguages(),
     });
 
     nativeTheme.on("updated", () => {

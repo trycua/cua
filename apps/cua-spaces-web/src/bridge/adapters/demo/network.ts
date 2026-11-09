@@ -12,7 +12,16 @@
  * the paths to two other computers.
  */
 
-import type { BlockedConnection, ClipboardOffer, NetworkPreset, NetworkPreview, SpaceNetwork, SpaceSecurity, SpaceTopology, VolumeRequest } from "../../contracts/network";
+import type {
+  BlockedConnection,
+  ClipboardOffer,
+  NetworkPreset,
+  NetworkPreview,
+  SpaceNetwork,
+  SpaceSecurity,
+  SpaceTopology,
+  VolumeRequest,
+} from "../../contracts/network";
 import type { SpaceRow } from "../../contracts/spaces";
 
 const STREAMS = ["desktop_stream", "window_stream", "audio.desktop", "relay_attach"];
@@ -72,7 +81,11 @@ function demoTopology(self: string, via: string | undefined, down: boolean, loca
     exit: exitLabel ? { label: exitLabel, state: down ? "unreachable" : "active", note: down ? "It's stopped." : undefined } : undefined,
     hostReach: localhost ? ["localhost:3000", "localhost:5432"] : [],
     hostOnly: localhost ? [{ port: 8080, why: "in use" }] : [],
-    members: MEMBERS.map((m) => ({ id: `local:${m}`, name: `${m}.research-swarm`, relation: m === self ? "self" : m === "research-swarm" ? "parent" : "member" })),
+    members: MEMBERS.map((m) => ({
+      id: `local:${m}`,
+      name: `${m}.research-swarm`,
+      relation: m === self ? "self" : m === "research-swarm" ? "parent" : "member",
+    })),
     remote: remote
       ? [
           { name: "db.research-swarm", machine: "Studio computer" },
@@ -112,7 +125,9 @@ export function createDemoNetwork({ now, flags }: { now: () => number; flags: Se
     [
       "local:swarm-worker-1",
       {
-        network: via ? { preset: "localhost", allow: [], deny: [], enforced: true, localhostPorts: [3000, 5432], inheritedFrom: "research-swarm", via } : internet({ inheritedFrom: "research-swarm" }),
+        network: via
+          ? { preset: "localhost", allow: [], deny: [], enforced: true, localhostPorts: [3000, 5432], inheritedFrom: "research-swarm", via }
+          : internet({ inheritedFrom: "research-swarm" }),
         volume: "own-folder",
         clipboard: "viewing",
         parent,
@@ -120,7 +135,17 @@ export function createDemoNetwork({ now, flags }: { now: () => number; flags: Se
         topology: topo("swarm-worker-1", via, Boolean(via)),
       },
     ],
-    ["local:swarm-worker-2", { network: internet({ inheritedFrom: "research-swarm", via: down ? undefined : via }), volume: "own-folder", clipboard: "viewing", parent, children: [], topology: topo("swarm-worker-2", down ? undefined : via) }],
+    [
+      "local:swarm-worker-2",
+      {
+        network: internet({ inheritedFrom: "research-swarm", via: down ? undefined : via }),
+        volume: "own-folder",
+        clipboard: "viewing",
+        parent,
+        children: [],
+        topology: topo("swarm-worker-2", down ? undefined : via),
+      },
+    ],
   ]);
   const minutes = (n: number) => now() - n * 60_000;
   const blocked = new Map<string, BlockedConnection[]>([
@@ -144,14 +169,18 @@ export function createDemoNetwork({ now, flags }: { now: () => number; flags: Se
       const s = security.get(spaceId);
       if (!s) return;
       const self = spaceNameOf(spaceId);
-      security.set(spaceId, { ...s, network: { ...network, inheritedFrom: undefined }, topology: demoTopology(self, network.via, false, (network.preset === "localhost" || network.preset === "localhost+lan"), remote) });
+      security.set(spaceId, {
+        ...s,
+        network: { ...network, inheritedFrom: undefined },
+        topology: demoTopology(self, network.via, false, network.preset === "localhost" || network.preset === "localhost+lan", remote),
+      });
       // Children follow a parent's change (its exit too).
       for (const [id, child] of security) {
         if (child.parent?.id === spaceId) {
           security.set(id, {
             ...child,
             network: { ...network, inheritedFrom: s.parent ? undefined : self },
-            topology: demoTopology(spaceNameOf(id), network.via, false, (network.preset === "localhost" || network.preset === "localhost+lan"), remote),
+            topology: demoTopology(spaceNameOf(id), network.via, false, network.preset === "localhost" || network.preset === "localhost+lan", remote),
           });
         }
       }

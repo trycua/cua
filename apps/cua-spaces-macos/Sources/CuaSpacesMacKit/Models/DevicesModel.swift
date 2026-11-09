@@ -76,8 +76,7 @@ public final class LiveDevices: DevicesRunning, @unchecked Sendable {
     static func requireEnrolled(_ device: RelayDevice) throws {
         guard device.state == "enrolled" else {
             throw CuaError.Runtime(
-                message: "The relay did not enroll \(device.name) (\(device.id)): it is \(device.state). "
-                    + "Ask that machine for a new code and try again.")
+                message: "Couldn\u{2019}t add \(device.name). Ask that computer for a new code.")
         }
     }
     public func rename(id: String, name: String) async throws { _ = try await inner.rename(id: id, name: name) }

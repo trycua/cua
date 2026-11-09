@@ -9,8 +9,29 @@ import { buildSpacesTree, findNode, foldOffline, treeRows, treeSummary } from ".
 
 const NOW = Date.parse("2026-11-04T12:00:00Z");
 
-const machine = (over: Partial<Machine>): Machine => ({ id: "m", name: "M", os: "macos", via: "relay", connection: "relay", online: true, current: false, spaceIds: [], limits: [], ...over });
-const space = (over: Partial<Space>): Space => ({ id: "s", name: "s", os: "linux", status: "running", detail: "", lastUsedAt: 0, scene: "blank", provider: "relay", ...over });
+const machine = (over: Partial<Machine>): Machine => ({
+  id: "m",
+  name: "M",
+  os: "macos",
+  via: "relay",
+  connection: "relay",
+  online: true,
+  current: false,
+  spaceIds: [],
+  limits: [],
+  ...over,
+});
+const space = (over: Partial<Space>): Space => ({
+  id: "s",
+  name: "s",
+  os: "linux",
+  status: "running",
+  detail: "",
+  lastUsedAt: 0,
+  scene: "blank",
+  provider: "relay",
+  ...over,
+});
 
 const THIS_MAC = machine({ id: "this-mac", name: "Francesco's MacBook", current: true, via: "local", relayId: "mac-here" });
 const STUDIO = machine({ id: "studio", name: "Studio Mac mini", lastSeen: Math.floor((NOW - 20 * 60_000) / 1000) });
@@ -63,7 +84,11 @@ describe("buildSpacesTree", () => {
     expect(tree({ machines: [THIS_MAC, { ...STUDIO, online: false }, DILLON] }).defaultKey).toBe("relay:dillon");
     const allOff = tree({ machines: [THIS_MAC, { ...STUDIO, online: false }, { ...DILLON, online: false }] });
     expect(allOff.defaultKey).toBe("relay:mac-here");
-    expect(treeRows(allOff).filter((n) => n.isDefault).map((n) => n.name)).toEqual(["This Mac"]);
+    expect(
+      treeRows(allOff)
+        .filter((n) => n.isDefault)
+        .map((n) => n.name),
+    ).toEqual(["This Mac"]);
   });
 
   it("marks the first online computer that isn't this Mac Default while none is set, and the setting once it is", () => {
@@ -71,7 +96,11 @@ describe("buildSpacesTree", () => {
     expect(tree().roots[1]!.status).toBe("Online, Default");
     const set = tree({ defaultSpace: "relay:dillon" });
     expect(set.defaultKey).toBe("relay:dillon");
-    expect(treeRows(set).filter((n) => n.isDefault).map((n) => n.name)).toEqual(["Dillon's PC"]);
+    expect(
+      treeRows(set)
+        .filter((n) => n.isDefault)
+        .map((n) => n.name),
+    ).toEqual(["Dillon's PC"]);
     // A default that's no longer listed: the first other computer again.
     expect(tree({ defaultSpace: "relay:gone" }).defaultKey).toBe("relay:studio");
   });
@@ -103,7 +132,24 @@ describe("buildSpacesTree", () => {
   });
 
   it("lists a Space whose computer isn't one of yours as a top row of its own", () => {
-    const shared = space({ id: "relay:space-sam-qa", name: "Sam's QA", hostName: "Sam's Mac", access: { kind: "withMe", role: "editor", ownerName: "Sam", place: "Sam's Mac", people: [], canPower: false, canTeleport: false, canShare: false, canRename: false, canDelete: false, canLeave: true } });
+    const shared = space({
+      id: "relay:space-sam-qa",
+      name: "Sam's QA",
+      hostName: "Sam's Mac",
+      access: {
+        kind: "withMe",
+        role: "editor",
+        ownerName: "Sam",
+        place: "Sam's Mac",
+        people: [],
+        canPower: false,
+        canTeleport: false,
+        canShare: false,
+        canRename: false,
+        canDelete: false,
+        canLeave: true,
+      },
+    });
     const t = tree({ spaces: [...SPACES, shared] });
     expect(t.roots.map((r) => r.name)).toEqual(["This Mac", "Studio Mac mini", "Dillon's PC", "Sam's QA"]);
     const orphan = t.roots[3]!;
@@ -155,11 +201,17 @@ describe("the default Space", () => {
       { space: "relay:studio", name: "Studio Mac mini", online: false },
       { space: "relay:mac-here", name: "This Mac", online: true, here: true },
     ];
-    expect(resolveDefaultSpace({ defaultSpace: "relay:removed", fallback: [], fallbackOn: true }, candidates)).toMatchObject({ space: "relay:mac-here", defaultSpace: null, defaultOnline: null });
+    expect(resolveDefaultSpace({ defaultSpace: "relay:removed", fallback: [], fallbackOn: true }, candidates)).toMatchObject({
+      space: "relay:mac-here",
+      defaultSpace: null,
+      defaultOnline: null,
+    });
     // One that is still there is kept.
-    expect(resolveDefaultSpace({ defaultSpace: "relay:studio", fallback: [], fallbackOn: true }, candidates)).toMatchObject({ defaultSpace: "relay:studio", defaultOnline: false });
+    expect(resolveDefaultSpace({ defaultSpace: "relay:studio", fallback: [], fallbackOn: true }, candidates)).toMatchObject({
+      defaultSpace: "relay:studio",
+      defaultOnline: false,
+    });
   });
-
 });
 
 describe("findNode", () => {

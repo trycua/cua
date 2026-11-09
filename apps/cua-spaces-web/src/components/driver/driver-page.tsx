@@ -5,7 +5,18 @@ import { Link } from "@tanstack/react-router";
 import { CheckIcon, ChevronRightIcon, MousePointer2Icon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
-import { pointerChange, pointerSettings, POINTER_STYLES, useBridge, useDriver, useDriverMachines, type DriverApp, type DriverHook, type DriverStatus, type PointerSettings } from "@/bridge";
+import {
+  pointerChange,
+  pointerSettings,
+  POINTER_STYLES,
+  useBridge,
+  useDriver,
+  useDriverMachines,
+  type DriverApp,
+  type DriverHook,
+  type DriverStatus,
+  type PointerSettings,
+} from "@/bridge";
 import { useAppPermissions } from "@/bridge/app-permissions";
 import { AppMarkImage } from "@/components/agents/harness-mark";
 import { AppPermissionList } from "@/components/app-permissions";
@@ -19,7 +30,7 @@ import { Segmented } from "@/components/ui/segmented";
 import { Select } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { toast, toastError } from "@/components/ui/toast";
-import { driverUsesAppPermissions, repairOutcome } from "@/lib/app-permissions";
+import { repairOutcome } from "@/lib/app-permissions";
 import { thisComputerLabel, thisComputerText } from "@/lib/host-labels";
 import { THIS_COMPUTER } from "@/lib/machines";
 import { cn } from "@/lib/utils";
@@ -110,7 +121,8 @@ function Hero({ driver, status, settings }: { driver: DriverHook; status: Driver
       if (outcome.kind === "ok") toast(outcome.title, { description: outcome.description });
       else toast(outcome.title, { description: outcome.description, type: "error" });
       // A switch that's off: open its guide now, so Repair leaves one thing to do.
-      if (outcome.kind === "permission" && outcome.settingsUrl) await bridge.data?.call("host.openSettings", { url: outcome.settingsUrl }).catch(toastError("Couldn't open System Settings"));
+      if (outcome.kind === "permission" && outcome.settingsUrl)
+        await bridge.data?.call("host.openSettings", { url: outcome.settingsUrl }).catch(toastError("Couldn't open System Settings"));
     });
   const ok = status.state === "ready";
   const tested = testText(status);
@@ -122,7 +134,9 @@ function Hero({ driver, status, settings }: { driver: DriverHook; status: Driver
         <CuaKey size={56} className="mt-1 size-14 self-start" />
         <div className="min-w-0">
           <h1 className="font-display text-[28px] leading-tight font-semibold tracking-[-0.02em]">Cua Driver</h1>
-          <p className="mt-1 text-[14px] text-muted-foreground">{status.thisMachine ? driverLine() : `Lets agents see and use the apps on ${status.machineName}.`}</p>
+          <p className="mt-1 text-[14px] text-muted-foreground">
+            {status.thisMachine ? driverLine() : `Lets agents see and use the apps on ${status.machineName}.`}
+          </p>
           <p className="mt-4 flex items-start gap-2 text-[13px]" data-driver-state={status.state}>
             {ok ? (
               <span className="mt-px flex size-4 shrink-0 items-center justify-center rounded-full bg-[#1f9d55] text-white" aria-hidden>
@@ -131,7 +145,11 @@ function Hero({ driver, status, settings }: { driver: DriverHook; status: Driver
             ) : null}
             <span>
               <span className="font-medium">{stateText(status)}</span>
-              {busy === "test" ? <span className="text-muted-foreground"> Testing now.</span> : tested ? <span className="text-muted-foreground"> {tested}</span> : null}
+              {busy === "test" ? (
+                <span className="text-muted-foreground"> Testing now.</span>
+              ) : tested ? (
+                <span className="text-muted-foreground"> {tested}</span>
+              ) : null}
             </span>
           </p>
           {problem ? (
@@ -146,7 +164,16 @@ function Hero({ driver, status, settings }: { driver: DriverHook; status: Driver
           ) : null}
           {status.thisMachine ? (
             <div className="mt-5 flex flex-wrap items-center gap-2">
-              <Button disabled={busy !== null} onClick={() => void setup()} data-driver-setup={connected ? "repair" : "setup"}>
+              <Button
+                disabled={busy !== null}
+                onClick={() => void setup()}
+                data-driver-setup={connected ? "repair" : "setup"}
+                title={
+                  connected
+                    ? "Connects your coding agents again, restarts Cua Driver and tests it."
+                    : "Connects Claude Code and Codex to Cua Driver and tests it."
+                }
+              >
                 {busy === "setup" ? (connected ? "Repairing…" : "Setting up…") : connected ? "Repair" : "Set up"}
               </Button>
               <Button variant="outline" disabled={busy !== null || status.state === "paused"} onClick={() => void test()} data-driver-test="">
@@ -154,12 +181,9 @@ function Hero({ driver, status, settings }: { driver: DriverHook; status: Driver
               </Button>
             </div>
           ) : null}
-          {status.thisMachine ? (
-            <p className="mt-2 text-xs text-muted-foreground">{connected ? "Repair connects your coding agents again, restarts Cua Driver and tests it." : "Set up connects Claude Code and Codex to Cua Driver and tests it."}</p>
-          ) : null}
         </div>
       </div>
-      {status.thisMachine ? <PointerPreview settings={settings} caption={`Live: the agent pointer as it looks on ${thisComputerText()}`} /> : null}
+      {status.thisMachine ? <PointerPreview settings={settings} /> : null}
     </section>
   );
 }
@@ -172,8 +196,18 @@ function AllowSection({ driver, status }: { driver: DriverHook; status: DriverSt
     <GroupedSection title="Agents" className="mt-8 mb-8" data-driver-allow="">
       <SettingRow
         label={`Let agents use apps on ${thisComputerText()}`}
-        help={on ? "Coding agents you connect can see your screen and use your apps. Your own pointer never moves." : "Off. Agents can't see your screen or use your apps until you turn this on."}
-        control={<Switch checked={on} onCheckedChange={(next) => void driver.pause(!next).catch(toastError(next ? "Couldn't turn agents on" : "Couldn't turn agents off"))} aria-label={`Let agents use apps on ${thisComputerText()}`} />}
+        help={
+          on
+            ? "Coding agents you connect can see your screen and use your apps. Your own pointer never moves."
+            : "Off. Agents can't see your screen or use your apps until you turn this on."
+        }
+        control={
+          <Switch
+            checked={on}
+            onCheckedChange={(next) => void driver.pause(!next).catch(toastError(next ? "Couldn't turn agents on" : "Couldn't turn agents off"))}
+            aria-label={`Let agents use apps on ${thisComputerText()}`}
+          />
+        }
       />
     </GroupedSection>
   );
@@ -186,35 +220,55 @@ function PointerSection({ driver, settings }: { driver: DriverHook; settings: Po
     void driver.setConfig(pointerChange(key, value)).catch(toastError("Couldn't change the pointer"));
   const off = settings.show === false;
   return (
-    <GroupedSection title="Agent pointer" className="mb-8 min-w-0" data-driver-pointer="" footer={`Applies to every agent on ${thisComputerText()}.`}>
+    <GroupedSection title="Agent pointer" className="mb-8 min-w-0" data-driver-pointer="">
       {settings.show !== null ? (
         <SettingRow
           label="Show the agent's pointer"
-          help="A second pointer shows where an agent is working. Yours never moves."
+          help="Shows where an agent is working."
           control={<Switch checked={settings.show} onCheckedChange={(on) => change("show", on)} aria-label="Show the agent's pointer" />}
         />
       ) : null}
       {settings.style !== null ? (
         <SettingRow
           label="Style"
-          help="How it travels between clicks."
           dim={off}
-          control={<Select aria-label="Pointer style" value={settings.style} options={POINTER_STYLES.some((s) => s.value === settings.style) ? POINTER_STYLES : [...POINTER_STYLES, { value: settings.style, label: settings.style }]} onValueChange={(v) => change("style", v)} disabled={off} />}
+          control={
+            <Select
+              aria-label="Pointer style"
+              value={settings.style}
+              options={
+                POINTER_STYLES.some((s) => s.value === settings.style) ? POINTER_STYLES : [...POINTER_STYLES, { value: settings.style, label: settings.style }]
+              }
+              onValueChange={(v) => change("style", v)}
+              disabled={off}
+            />
+          }
         />
       ) : null}
       {settings.float !== null ? (
-        <SettingRow label="Float while it thinks" help="A slow bob while the agent pauses." dim={off} control={<Switch checked={settings.float} disabled={off} onCheckedChange={(on) => change("float", on)} aria-label="Float while it thinks" />} />
+        <SettingRow
+          label="Float while it thinks"
+          dim={off}
+          control={<Switch checked={settings.float} disabled={off} onCheckedChange={(on) => change("float", on)} aria-label="Float while it thinks" />}
+        />
       ) : null}
       {settings.marks !== null ? (
-        <SettingRow label="Show what it's doing" help="A small sign next to it: moving, clicking, typing." dim={off} control={<Switch checked={settings.marks} disabled={off} onCheckedChange={(on) => change("marks", on)} aria-label="Show what it's doing" />} />
+        <SettingRow
+          label="Show what it's doing"
+          dim={off}
+          control={<Switch checked={settings.marks} disabled={off} onCheckedChange={(on) => change("marks", on)} aria-label="Show what it's doing" />}
+        />
       ) : null}
       {settings.rotate !== null ? (
-        <SettingRow label="Tilt while moving" help="The arrow leans the way it's going." dim={off} control={<Switch checked={settings.rotate} disabled={off} onCheckedChange={(on) => change("rotate", on)} aria-label="Tilt while moving" />} />
+        <SettingRow
+          label="Tilt while moving"
+          dim={off}
+          control={<Switch checked={settings.rotate} disabled={off} onCheckedChange={(on) => change("rotate", on)} aria-label="Tilt while moving" />}
+        />
       ) : null}
       {settings.nameTag !== null ? (
         <SettingRow
           label="Name tag"
-          help="Which app is moving it."
           dim={off}
           control={
             <Segmented
@@ -277,7 +331,7 @@ function PermissionsSection({ driver }: { driver: DriverHook }) {
     if (allGranted) void refresh.current().catch(() => {});
   }, [allGranted]);
   if (!perms.data) return null;
-  return <AppPermissionList perms={perms} variant="settings" footer={driverUsesAppPermissions(perms.data.appName)} />;
+  return <AppPermissionList perms={perms} variant="settings" />;
 }
 
 /* ---- The account's other computers -------------------------------------------- */

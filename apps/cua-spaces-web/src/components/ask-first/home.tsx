@@ -6,7 +6,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { agentsView, useAgentChats, useBridge, useMachines, useSpaces, type AgentAccount, type AgentGroup, type AgentRunSummary } from "@/bridge";
 import { useChildren } from "@/components/children/use-children";
-import { CuaKey } from "@/components/cua-key";
 import { useAgentAttempts } from "@/hooks/use-agent-attempts";
 import { useAgentMenu } from "@/hooks/use-agent-menu";
 import { toast } from "@/components/ui/toast";
@@ -17,6 +16,7 @@ import { pickAccount, pickOf, rememberAgent, resolveAgent, usePickedAgent } from
 import { reusableHome } from "@/lib/agent-home/home-space";
 import { useRepos } from "@/lib/ask-first-repo";
 import { useListedSpaces } from "@/components/spaces/listed";
+import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 
 import { AskBox, type TaskWhere } from "./ask-box";
@@ -42,7 +42,15 @@ export function taskRun(runs: readonly AgentRunSummary[] | undefined, task: AskT
 
 export function StateDot({ state }: { state: TaskState }) {
   const tone =
-    state === "working" ? "bg-success" : state === "needs-you" || state === "stuck" ? "bg-warning" : state === "failed" || state === "didnt-start" ? "bg-destructive" : state === "done" ? "bg-success" : "bg-muted-foreground/40";
+    state === "working"
+      ? "bg-success"
+      : state === "needs-you" || state === "stuck"
+        ? "bg-warning"
+        : state === "failed" || state === "didnt-start"
+          ? "bg-destructive"
+          : state === "done"
+            ? "bg-success"
+            : "bg-muted-foreground/40";
   return (
     <span className={cn("relative inline-flex size-2 shrink-0 rounded-full", tone)}>
       {state === "working" ? <span className="absolute inset-0 animate-ping rounded-full bg-success/60" /> : null}
@@ -56,6 +64,7 @@ export function StateDot({ state }: { state: TaskState }) {
  * conversations (the one that needs you first), and your Spaces underneath.
  */
 export function AskFirstHome() {
+  const t = useT();
   const tasks = useAskTasks();
   const { data: spaces } = useSpaces();
   const listed = useListedSpaces(spaces);
@@ -98,7 +107,11 @@ export function AskFirstHome() {
     // The default can be This Mac itself: it asks once, as picking it does.
     if (w.kind === "this-mac" && thisMac.readiness === "needs-setup") return;
     if (w.kind === "this-mac" && !thisMacConfirmed()) {
-      pick.choose(w, (ok) => submit(prompt, ok), () => setWhereOpen(true));
+      pick.choose(
+        w,
+        (ok) => submit(prompt, ok),
+        () => setWhereOpen(true),
+      );
       return;
     }
     // The run uses the app's own choice of account: make it the one shown.
@@ -109,14 +122,17 @@ export function AskFirstHome() {
   // A sign-in that did not work says so, in plain words, where the person clicked.
   const signInTo = async (app: string, label: string) => {
     if ((await connectors.connectApp(app)) === "failed") {
-      toast(`Couldn't sign in to ${label}`, { description: connectFailureLine(app) || "Try again, or sign in from Settings, then Connections.", type: "error", group: `sign-in:${app}` });
+      toast(t("home.ask_box.sign_in_failed", { label }), {
+        description: connectFailureLine(app) || t("home.ask_box.sign_in_failed_hint"),
+        type: "error",
+        group: `sign-in:${app}`,
+      });
     }
   };
   const useAccount = (group: AgentGroup, account: AgentAccount) => {
     rememberAgent(pickAccount(group, account, picked));
     if (!account.selected) void connectors.useCredential(group.app, { env: account.env, slot: account.slot });
   };
-
 
   // Home lists agents and Spaces, not tasks: with neither (a first run,
   // or tasks whose Spaces are gone), Home is the welcome again.
@@ -137,7 +153,6 @@ export function AskFirstHome() {
   return (
     <div className="h-full scroll-y-stable" data-ask-first-home="">
       <div className={cn("mx-auto flex w-full flex-col gap-8 px-8 pb-16", first ? "max-w-[880px] pt-24" : "max-w-[1040px] pt-10")}>
-        {first ? <h1 className="font-heading text-[40px] font-semibold tracking-tight">What do you want to do?</h1> : null}
         <AskBox
           text={text}
           onText={setText}
@@ -186,16 +201,10 @@ export function AskFirstHome() {
                 >
                   <OsIcon os={s.os} className="size-4 text-muted-foreground" />
                   <span className="text-[14px] leading-snug font-medium">{s.title}</span>
-                  <span className="text-[13px] leading-snug text-muted-foreground">{s.detail}</span>
+                  {s.detail ? <span className="text-[13px] leading-snug text-muted-foreground">{s.detail}</span> : null}
                 </button>
               ))}
             </div>
-            <p className="flex items-center gap-3 text-[13px] text-muted-foreground">
-              <CuaKey size={24} />
-              {agentHome
-                ? "The agent works in Spaces of its own, so your computer stays untouched. Watch it live, step in any time, and throw them away when you're done."
-                : "A fresh computer does the work, so yours stays untouched. Watch it live, step in any time, and throw it away when you're done."}
-            </p>
           </>
         ) : null}
         {/* The Agents page's own list, then the Spaces page's tiles. */}
@@ -211,8 +220,8 @@ export function AskFirstHome() {
 function useElapsed(ms: number): boolean {
   const [done, setDone] = useState(false);
   useEffect(() => {
-    const t = setTimeout(() => setDone(true), ms);
-    return () => clearTimeout(t);
+    const timer = setTimeout(() => setDone(true), ms);
+    return () => clearTimeout(timer);
   }, [ms]);
   return done;
 }

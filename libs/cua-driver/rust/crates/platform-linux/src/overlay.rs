@@ -437,7 +437,7 @@ fn try_send_command_for(key: CursorKey, cmd: OverlayCommand) -> bool {
     #[cfg(target_os = "linux")]
     let native_wayland = crate::wayland::is_wayland();
     let x11_overlay_allowed =
-        should_start_x11_overlay(std::env::var_os("WAYLAND_DISPLAY").is_some());
+        should_start_x11_overlay(crate::desktop::desktop() != crate::desktop::Desktop::X11);
     let x11_queued = x11_overlay_allowed && try_send_x11_message(CMD_TX.get(), msg.clone());
     if x11_overlay_allowed && !x11_queued {
         tracing::warn!(
@@ -945,7 +945,7 @@ pub fn run_on_thread() {
     // overlay is preferable to mapping an opaque black X11 root window over
     // the Wayland desktop. With the opt-in enabled, commands are forwarded to
     // the native layer-shell backend below.
-    if !should_start_x11_overlay(std::env::var_os("WAYLAND_DISPLAY").is_some()) {
+    if !should_start_x11_overlay(crate::desktop::desktop() != crate::desktop::Desktop::X11) {
         return;
     }
 

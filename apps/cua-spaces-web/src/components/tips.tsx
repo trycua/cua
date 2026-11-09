@@ -222,7 +222,13 @@ export function PageTip({ place, space, onShare, className }: { place: "spaces" 
           />
           {action.value && action.label ? <CopyButton text={action.value} label={action.label} doneLabel={action.doneLabel ?? action.label} /> : null}
           {tip.openIn ? (
-            <Button size="sm" variant="ghost" data-tip-open-in="" className="text-muted-foreground hover:text-foreground" onClick={() => void openExternal(tip.openIn!.url).catch(() => {})}>
+            <Button
+              size="sm"
+              variant="ghost"
+              data-tip-open-in=""
+              className="text-muted-foreground hover:text-foreground"
+              onClick={() => void openExternal(tip.openIn!.url).catch(() => {})}
+            >
               {tip.openIn.label}
             </Button>
           ) : null}
@@ -260,7 +266,9 @@ export function SidebarTip() {
           <code data-tip-code="" className="min-w-0 flex-1 truncate rounded-lg bg-background px-2 py-1 font-mono text-[11px] leading-5 select-all">
             {tip.code}
           </code>
-          {tip.action.value ? <CopyButton iconOnly text={tip.action.value} label={tip.action.label || "Copy"} doneLabel={tip.action.doneLabel ?? "Copied"} /> : null}
+          {tip.action.value ? (
+            <CopyButton iconOnly text={tip.action.value} label={tip.action.label || "Copy"} doneLabel={tip.action.doneLabel ?? "Copied"} />
+          ) : null}
         </div>
       ) : null}
     </div>

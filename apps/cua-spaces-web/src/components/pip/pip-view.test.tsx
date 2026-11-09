@@ -64,7 +64,14 @@ describe("the picture-in-picture view's address", () => {
       windowId: "w-1",
       epoch: 3,
     });
-    expect(pipParams("?space=local%3Aa&title=Desktop")).toEqual({ spaceId: "local:a", spaceName: "", title: "Desktop", os: undefined, windowId: undefined, epoch: undefined });
+    expect(pipParams("?space=local%3Aa&title=Desktop")).toEqual({
+      spaceId: "local:a",
+      spaceName: "",
+      title: "Desktop",
+      os: undefined,
+      windowId: undefined,
+      epoch: undefined,
+    });
   });
 
   it("shows the Swift panel's status chip until the stream is live", () => {

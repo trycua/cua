@@ -46,9 +46,36 @@ const SPRITES: Record<string, { w: number; h: number; quad?: number[][] }> = {
   "ivory-3": { w: 392, h: 393 },
   "ivory-5": { w: 352, h: 350 },
   "ivory-6": { w: 365, h: 398 },
-  "product-1": { w: 486, h: 470, quad: [[105, 78], [325, 22], [415, 215], [165, 268]] },
-  "product-2": { w: 494, h: 481, quad: [[100, 92], [300, 15], [408, 222], [185, 298]] },
-  "product-3": { w: 491, h: 477, quad: [[95, 82], [318, 12], [410, 210], [172, 282]] },
+  "product-1": {
+    w: 486,
+    h: 470,
+    quad: [
+      [105, 78],
+      [325, 22],
+      [415, 215],
+      [165, 268],
+    ],
+  },
+  "product-2": {
+    w: 494,
+    h: 481,
+    quad: [
+      [100, 92],
+      [300, 15],
+      [408, 222],
+      [185, 298],
+    ],
+  },
+  "product-3": {
+    w: 491,
+    h: 477,
+    quad: [
+      [95, 82],
+      [318, 12],
+      [410, 210],
+      [172, 282],
+    ],
+  },
   "product-4": { w: 484, h: 469 },
   "near-1": { w: 473, h: 397 },
   "near-2": { w: 467, h: 471 },
@@ -68,10 +95,19 @@ const FRAME = { w: 1486, h: 956 };
 /** CSS matrix3d that maps a 100 x 100 box onto four points (the site's `homography`). */
 export function homography(q: number[][]): string {
   const [[x0, y0], [x1, y1], [x2, y2], [x3, y3]] = q as unknown as [[number, number], [number, number], [number, number], [number, number]];
-  const dx1 = x1 - x2, dx2 = x3 - x2, dy1 = y1 - y2, dy2 = y3 - y2, sx = x0 - x1 + x2 - x3, sy = y0 - y1 + y2 - y3;
+  const dx1 = x1 - x2,
+    dx2 = x3 - x2,
+    dy1 = y1 - y2,
+    dy2 = y3 - y2,
+    sx = x0 - x1 + x2 - x3,
+    sy = y0 - y1 + y2 - y3;
   const den = dx1 * dy2 - dx2 * dy1;
-  const g = (sx * dy2 - dx2 * sy) / den, h = (dx1 * sy - sx * dy1) / den;
-  const a = x1 - x0 + g * x1, b = x3 - x0 + h * x3, d = y1 - y0 + g * y1, e = y3 - y0 + h * y3;
+  const g = (sx * dy2 - dx2 * sy) / den,
+    h = (dx1 * sy - sx * dy1) / den;
+  const a = x1 - x0 + g * x1,
+    b = x3 - x0 + h * x3,
+    d = y1 - y0 + g * y1,
+    e = y3 - y0 + h * y3;
   return `matrix3d(${a / 100},${d / 100},0,${g / 100},${b / 100},${e / 100},0,${h / 100},0,0,1,0,${x0},${y0},0,1)`;
 }
 
@@ -82,7 +118,8 @@ export function homography(q: number[][]): string {
  */
 export function placeKeys(w: number, h: number, copyRight: number): (Place & { left: number; top: number; width: number; height: number })[] {
   const s = Math.max(w / FRAME.w, h / FRAME.h);
-  const ox = (w - FRAME.w * s) / 2, oy = (h - FRAME.h * s) / 2;
+  const ox = (w - FRAME.w * s) / 2,
+    oy = (h - FRAME.h * s) / 2;
   const edge = (copyRight / w) * 100 + 3;
   const k = edge <= 50 ? 1 : (100 - Math.min(edge, 70)) / 50;
   return KEYS.map((p) => {
@@ -129,12 +166,27 @@ export function FloatKeys({ copyRight }: { copyRight: number }) {
   return (
     <div ref={box} aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden bg-[#050607]" data-float-keys="">
       <div className="absolute -inset-3">
-        <img src="/onboarding/float/space-1920.webp" alt="" draggable={false} className="absolute inset-0 size-full object-cover brightness-[1.7] contrast-[1.08] select-none" />
+        <img
+          src="/onboarding/float/space-1920.webp"
+          alt=""
+          draggable={false}
+          className="absolute inset-0 size-full object-cover brightness-[1.7] contrast-[1.08] select-none"
+        />
         {STARS.map((s, i) => (
           <span
             key={i}
             className="first-run-star"
-            style={{ left: `${s.x.toFixed(2)}%`, top: `${s.y.toFixed(2)}%`, width: s.d, height: s.d, "--o": s.o.toFixed(2), "--t": `${s.t.toFixed(1)}s`, "--d": `${s.delay.toFixed(1)}s` } as CSSProperties}
+            style={
+              {
+                left: `${s.x.toFixed(2)}%`,
+                top: `${s.y.toFixed(2)}%`,
+                width: s.d,
+                height: s.d,
+                "--o": s.o.toFixed(2),
+                "--t": `${s.t.toFixed(1)}s`,
+                "--d": `${s.delay.toFixed(1)}s`,
+              } as CSSProperties
+            }
           />
         ))}
       </div>
@@ -143,19 +195,56 @@ export function FloatKeys({ copyRight }: { copyRight: number }) {
         const sc = k.width / sp.w;
         const l = loop(i);
         return (
-          <div key={k.src} className="absolute" style={{ left: k.left, top: k.top, width: k.width, height: k.height, zIndex: Math.round(k.depth * 10) }} data-key={k.src} data-mark={k.mark}>
+          <div
+            key={k.src}
+            className="absolute"
+            style={{ left: k.left, top: k.top, width: k.width, height: k.height, zIndex: Math.round(k.depth * 10) }}
+            data-key={k.src}
+            data-mark={k.mark}
+          >
+            {/* The site's entrance timing for this key (FloatEarly.astro). */}
             <div
-              className="first-run-key absolute inset-0"
-              style={{ "--r": `${k.rot}deg`, "--dx": `${l.dx}px`, "--dy": `${l.dy}px`, "--dr": `${l.dr}deg`, "--dur": `${l.dur}s`, "--delay": `${l.delay}s` } as CSSProperties}
+              className="first-run-key-in absolute inset-0"
+              style={
+                {
+                  "--ed": `${(0.85 + k.depth * 0.35).toFixed(2)}s`,
+                  "--edl": `${(0.04 + (1 - k.depth) * 0.2 + (i % 4) * 0.04).toFixed(2)}s`,
+                  "--fy": `${(24 + k.depth * 70).toFixed(0)}px`,
+                  "--fs": (0.86 - k.depth * 0.12).toFixed(2),
+                } as CSSProperties
+              }
             >
-              <img src={`/onboarding/float/${k.src}.webp`} alt="" draggable={false} className="absolute inset-0 size-full select-none" style={k.soft ? { opacity: 0.72 } : undefined} />
-              {k.mark && sp.quad ? (
-                <div className="absolute top-0 left-0 size-[100px]" style={{ transformOrigin: "0 0", transform: homography(sp.quad.map(([x, y]) => [x! * sc, y! * sc])) }}>
-                  <svg viewBox={OS_MARKS[k.mark].viewBox} fill="currentColor" className="absolute inset-[24%] size-[52%]" style={MARK_STYLE[k.mark]}>
-                    <path d={OS_MARKS[k.mark].d} />
-                  </svg>
-                </div>
-              ) : null}
+              <div
+                className="first-run-key absolute inset-0"
+                style={
+                  {
+                    "--r": `${k.rot}deg`,
+                    "--dx": `${l.dx}px`,
+                    "--dy": `${l.dy}px`,
+                    "--dr": `${l.dr}deg`,
+                    "--dur": `${l.dur}s`,
+                    "--delay": `${l.delay}s`,
+                  } as CSSProperties
+                }
+              >
+                <img
+                  src={`/onboarding/float/${k.src}.webp`}
+                  alt=""
+                  draggable={false}
+                  className="absolute inset-0 size-full select-none"
+                  style={k.soft ? { opacity: 0.72 } : undefined}
+                />
+                {k.mark && sp.quad ? (
+                  <div
+                    className="absolute top-0 left-0 size-[100px]"
+                    style={{ transformOrigin: "0 0", transform: homography(sp.quad.map(([x, y]) => [x! * sc, y! * sc])) }}
+                  >
+                    <svg viewBox={OS_MARKS[k.mark].viewBox} fill="currentColor" className="absolute inset-[24%] size-[52%]" style={MARK_STYLE[k.mark]}>
+                      <path d={OS_MARKS[k.mark].d} />
+                    </svg>
+                  </div>
+                ) : null}
+              </div>
             </div>
           </div>
         );

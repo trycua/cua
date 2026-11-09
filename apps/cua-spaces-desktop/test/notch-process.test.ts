@@ -28,7 +28,10 @@ class FakeChild extends EventEmitter {
 
   /** What the helper read, one message per line. */
   get received(): unknown[] {
-    return this.written.split("\n").filter(Boolean).map((l) => JSON.parse(l));
+    return this.written
+      .split("\n")
+      .filter(Boolean)
+      .map((l) => JSON.parse(l));
   }
 
   say(message: unknown): void {

@@ -25,12 +25,8 @@ export type { DriveCheckInput, DriveS3Input, DriveStorageInput, DriveStorageUpda
 /** `experiments::Experiments`: Settings, Experiments' switches (all off by default). */
 export interface Experiments {
   cuaVolume?: boolean;
-  /** Secure Spaces: a Space reaches the internet and nothing else on the network unless opened. Off unless turned on; the daemon enforces it. */
-  secureSpaces?: boolean;
   /** Child Spaces: a Space may make Spaces of its own. Off unless turned on; the daemon enforces it. */
   childSpaces?: boolean;
-  /** Ask first: an agent asks on a card before something leaves its Space (a push to GitHub). Off unless turned on; the daemon enforces it. */
-  askFirst?: boolean;
   /** CI runners: GitHub Actions jobs run in a fresh Space each (`cua ci`, the CI Runners page). Off unless turned on; the `cua` command enforces it. */
   ciRunners?: boolean;
   /** Public TCP shares: share a game server or another TCP service at a public address. Off unless turned on; the daemon enforces it. */
@@ -40,7 +36,14 @@ export interface Experiments {
   warmPools?: boolean;
 }
 
-export const NO_EXPERIMENTS: Required<Experiments> = { cuaVolume: false, secureSpaces: false, childSpaces: false, askFirst: false, ciRunners: false, tcpShares: false, mobile: false, warmPools: false };
+export const NO_EXPERIMENTS: Required<Experiments> = {
+  cuaVolume: false,
+  childSpaces: false,
+  ciRunners: false,
+  tcpShares: false,
+  mobile: false,
+  warmPools: false,
+};
 
 /* ---- The daemon's answers (volume_*) ---------------------------------------- */
 

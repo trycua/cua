@@ -90,7 +90,12 @@ const WINDOWS: Record<string, SpaceWindows> = {
   },
 };
 
-export function demoSpaceDetailHandlers({ state, findRow }: DemoContext): DemoHandlers<"spaces.usage" | "spaces.windows" | "stream.pip" | "spaces.thumbnail" | "spaces.chooseFiles" | "spaces.droppedFiles" | "spaces.sendFiles"> {
+export function demoSpaceDetailHandlers({
+  state,
+  findRow,
+}: DemoContext): DemoHandlers<
+  "spaces.usage" | "spaces.windows" | "stream.pip" | "spaces.thumbnail" | "spaces.chooseFiles" | "spaces.droppedFiles" | "spaces.sendFiles"
+> {
   return {
     "spaces.usage": ({ spaceId }) => {
       const row = findRow(spaceId);

@@ -7,7 +7,8 @@
 //! activity. [`history`] reads one chat's messages (what the person and the
 //! agent said, no tool calls or outputs) once the person picked it.
 //!
-//! Nothing here writes, caches or sends anything. Each agent's store stays
+//! Nothing here writes or sends anything, and the only thing kept is
+//! [`recent_cached`]'s listing, in memory for a few seconds. Each agent's store stays
 //! the source of truth, and every format is read defensively: a record,
 //! column or line this crate does not know is skipped, a file it cannot read
 //! is left out. Large files are read from their head and tail only when
@@ -225,18 +226,27 @@ pub type Result<T> = std::result::Result<T, Error>;
 /// store is missing or unreadable adds nothing.
 pub fn recent(roots: &Roots, opts: &ListOptions) -> Vec<ThreadSummary> {
     let limit = opts.limit.clamp(1, RECENT_MAX);
-    let mut all = vec![];
-    for agent in &opts.agents {
-        let Some(root) = roots.root(*agent) else {
-            continue;
-        };
-        let found = match agent {
-            Agent::ClaudeCode => claude::recent(root, limit),
-            Agent::Codex => codex::recent(root, limit),
-            Agent::Hermes => hermes::recent(root, limit),
-        };
-        all.extend(found);
-    }
+    let mut agents = opts.agents.clone();
+    agents.sort_by_key(|a| a.id());
+    agents.dedup();
+    let one = |agent: Agent| match (agent, roots.root(agent)) {
+        (_, None) => vec![],
+        (Agent::ClaudeCode, Some(root)) => claude::recent(root, limit),
+        (Agent::Codex, Some(root)) => codex::recent(root, limit),
+        (Agent::Hermes, Some(root)) => hermes::recent(root, limit),
+    };
+    // Each agent's store is read on its own thread: one slow store doesn't add to the others.
+    let mut all: Vec<ThreadSummary> = if agents.len() == 1 {
+        one(agents[0])
+    } else {
+        std::thread::scope(|s| {
+            let handles: Vec<_> = agents.iter().map(|a| s.spawn(move || one(*a))).collect();
+            handles
+                .into_iter()
+                .flat_map(|h| h.join().unwrap_or_default())
+                .collect()
+        })
+    };
     all.sort_by(|a, b| {
         b.last_active_ms
             .cmp(&a.last_active_ms)
@@ -244,6 +254,39 @@ pub fn recent(roots: &Roots, opts: &ListOptions) -> Vec<ThreadSummary> {
     });
     all.truncate(limit);
     all
+}
+
+/// How long [`recent_cached`] keeps a listing.
+pub const RECENT_CACHE_FOR: std::time::Duration = std::time::Duration::from_secs(30);
+
+type RecentKey = (Roots, Vec<Agent>, usize);
+type RecentCache = std::sync::Mutex<Vec<(RecentKey, std::time::Instant, Vec<ThreadSummary>)>>;
+
+fn recent_cache() -> &'static RecentCache {
+    static C: std::sync::OnceLock<RecentCache> = std::sync::OnceLock::new();
+    C.get_or_init(Default::default)
+}
+
+/// [`recent`], kept for [`RECENT_CACHE_FOR`] per roots, agents and limit, so
+/// a screen that asks again (the setup's last screen, then Home) answers at
+/// once. Only titles, folders and times are kept, in this process's memory.
+pub fn recent_cached(roots: &Roots, opts: &ListOptions) -> Vec<ThreadSummary> {
+    let mut agents = opts.agents.clone();
+    agents.sort_by_key(|a| a.id());
+    agents.dedup();
+    let key: RecentKey = (roots.clone(), agents, opts.limit.clamp(1, RECENT_MAX));
+    if let Ok(c) = recent_cache().lock()
+        && let Some((_, at, v)) = c.iter().find(|(k, _, _)| *k == key)
+        && at.elapsed() < RECENT_CACHE_FOR
+    {
+        return v.clone();
+    }
+    let found = recent(roots, opts);
+    if let Ok(mut c) = recent_cache().lock() {
+        c.retain(|(k, at, _)| *k != key && at.elapsed() < RECENT_CACHE_FOR);
+        c.push((key, std::time::Instant::now(), found.clone()));
+    }
+    found
 }
 
 /// One chat's messages, the newest `max_messages` of them (default

@@ -4546,7 +4546,7 @@ export function appSettingsInputFromJson(json: string): AppSettingsInput /*throw
 
 /**
  * Reads the settings file (defaults when missing or damaged). The
- * experiments the daemon enforces (Secure Spaces, Child Spaces, Ask first, CI runners, Public TCP shares, Phone app) are what
+ * experiments the daemon enforces (Child Spaces, CI runners, Public TCP shares, Phone app) are what
  * the cua home keeps, so `cua experiments enable` shows in the app.
  */
 export function appSettingsLoad(path: string): AppSettings {
@@ -5489,6 +5489,29 @@ export function appStreamSection(input: AppStreamSectionInput): AppStreamSection
             /*caller:*/ (callStatus) => {
                 return nativeModule().uniffi_cua_spaces_ffi_fn_func_app_stream_section(
         FfiConverterTypeAppStreamSectionInput.lower(input, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+/**
+ * Which build and deployment this app runs as: its channel (`stable` or
+ * `local`, `CuaChannel`), its environment (`prod` or `staging`, `CuaEnv`)
+ * and the host of the sign-in server it uses, resolved as every other part
+ * of the app resolves them. The web UI's title bar tag ("Local · Staging",
+ * the app core's `environment.tag`) is drawn from it, so every shell agrees.
+ */
+export function appTarget(): AppTarget {
+    return ((__rb: Uint8Array) => {
+        try {
+            return FfiConverterTypeAppTarget.lift(__rb);
+        } finally {
+            nativeModule().rustbuffer_free(__rb);
+        }
+    })(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().uniffi_cua_spaces_ffi_fn_func_app_target(
                 callStatus);
             },
             /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
@@ -14578,22 +14601,10 @@ export type AppExperiments = {
      */
     cuaVolume: boolean,
     /**
-     * Secure Spaces: a Space reaches the internet and nothing else on the
-     * network unless it is opened. Off unless turned on; the daemon enforces
-     * it (the switch is kept in the cua home).
-     */
-    secureSpaces: boolean,
-    /**
      * Child Spaces: a Space may make Spaces of its own. Off unless turned
      * on; the daemon enforces it (the switch is kept in the cua home).
      */
     childSpaces: boolean,
-    /**
-     * Ask first: an agent asks on a card before something leaves its Space
-     * (a push to GitHub). Off unless turned on; the daemon enforces it (the
-     * switch is kept in the cua home).
-     */
-    askFirst: boolean,
     /**
      * CI runners: GitHub Actions jobs run in a fresh Space each (`cua ci`
      * and the CI Runners page). Off unless turned on; the daemon and the
@@ -14642,9 +14653,7 @@ const FfiConverterTypeAppExperiments = (() => {
         read(from: RustBuffer): TypeName {
             return {
                 cuaVolume: FfiConverterBool.read(from),
-                secureSpaces: FfiConverterBool.read(from),
                 childSpaces: FfiConverterBool.read(from),
-                askFirst: FfiConverterBool.read(from),
                 ciRunners: FfiConverterBool.read(from),
                 tcpShares: FfiConverterBool.read(from),
                 mobile: FfiConverterBool.read(from),
@@ -14653,9 +14662,7 @@ const FfiConverterTypeAppExperiments = (() => {
         }
         write(value: TypeName, into: RustBuffer): void {
             FfiConverterBool.write(value.cuaVolume, into);
-            FfiConverterBool.write(value.secureSpaces, into);
             FfiConverterBool.write(value.childSpaces, into);
-            FfiConverterBool.write(value.askFirst, into);
             FfiConverterBool.write(value.ciRunners, into);
             FfiConverterBool.write(value.tcpShares, into);
             FfiConverterBool.write(value.mobile, into);
@@ -14663,9 +14670,7 @@ const FfiConverterTypeAppExperiments = (() => {
         }
         allocationSize(value: TypeName): number {
             return FfiConverterBool.allocationSize(value.cuaVolume) +
-             FfiConverterBool.allocationSize(value.secureSpaces) +
              FfiConverterBool.allocationSize(value.childSpaces) +
-             FfiConverterBool.allocationSize(value.askFirst) +
              FfiConverterBool.allocationSize(value.ciRunners) +
              FfiConverterBool.allocationSize(value.tcpShares) +
              FfiConverterBool.allocationSize(value.mobile) +
@@ -30580,7 +30585,8 @@ export type AppMachinesViewMachine = {
      */
     team: boolean,
     /**
-     * The page's status line ("Online", "Offline").
+     * The page's status line ("Online", "Offline"; "Online, 1 thing to
+     * fix" when it has issues, so the words agree with the dot).
      */
     status: string,
     /**
@@ -45300,6 +45306,64 @@ const FfiConverterTypeAppStreamSectionInput = (() => {
              FfiConverterOptionalString.allocationSize(value.osName) +
              FfiConverterSequenceString.allocationSize(value.open) +
              FfiConverterString.allocationSize(value.query);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export type AppTarget = {
+    /**
+     * `stable` or `local` (`CuaChannel`); anything else is Stable.
+     */
+    channel: string,
+    /**
+     * `prod` or `staging` (`CuaEnv::name`).
+     */
+    env: string,
+    /**
+     * The sign-in server's host (`auth.staging.cua.ai`), from the resolved
+     * OIDC issuer, so an override (`CUA_OIDC_ISSUER`) shows as it is.
+     * Empty: the environment's default.
+     */
+    authHost: string
+}
+
+/**
+ * Generated factory for {@link AppTarget} record objects.
+ */
+export const AppTarget = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<AppTarget, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<AppTarget>,
+    });
+})();
+
+const FfiConverterTypeAppTarget = (() => {
+    type TypeName = AppTarget;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                channel: FfiConverterString.read(from),
+                env: FfiConverterString.read(from),
+                authHost: FfiConverterString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.channel, into);
+            FfiConverterString.write(value.env, into);
+            FfiConverterString.write(value.authHost, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.channel) +
+             FfiConverterString.allocationSize(value.env) +
+             FfiConverterString.allocationSize(value.authHost);
 
         }
     };
@@ -71843,7 +71907,7 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_settings_input_from_json() !== 15437) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_settings_input_from_json");
     }
-    if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_settings_load() !== 56775) {
+    if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_settings_load() !== 17320) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_settings_load");
     }
     if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_settings_page() !== 454) {
@@ -71977,6 +72041,9 @@ function uniffiEnsureInitialized() {
     }
     if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_stream_section() !== 40082) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_stream_section");
+    }
+    if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_target() !== 5718) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_target");
     }
     if (nativeModule().uniffi_cua_spaces_ffi_checksum_func_app_teams() !== 64616) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_spaces_ffi_checksum_func_app_teams");
@@ -72810,6 +72877,7 @@ export default Object.freeze({
     FfiConverterTypeAppSwitcherTheme,
     FfiConverterTypeAppSystemNote,
     FfiConverterTypeAppTabView,
+    FfiConverterTypeAppTarget,
     FfiConverterTypeAppTeamInput,
     FfiConverterTypeAppTeamPersonInput,
     FfiConverterTypeAppTeamsInput,

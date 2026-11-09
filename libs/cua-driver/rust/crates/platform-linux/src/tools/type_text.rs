@@ -649,21 +649,20 @@ impl Tool for TypeTextTool {
                                     "AT-SPI Component.GrabFocus returned false for element {idx}"
                                 );
                                 }
-                                wayland_focused_paced(&text_w, pacing)
+                                crate::wayland::keyboard_route::tracked(|| {
+                                    wayland_focused_paced(&text_w, pacing)
+                                })
                             },
                         )
                     },
                 )
                 .await;
                 return match result {
-                    Ok(Ok(())) => ToolResult::text(format!(
-                        "Typed {text_len} character(s) (via Wayland virtual-keyboard)."
+                    Ok(Ok(((), route))) => ToolResult::text(format!(
+                        "Typed {text_len} character(s){}.",
+                        crate::wayland::keyboard_route::via(route)
                     ))
-                    .with_structured(type_text_structured(
-                        "key_events",
-                        text_len,
-                        false,
-                    )),
+                    .with_structured(type_text_structured("key_events", text_len, false)),
                     Ok(Err(error)) => stale_observed_element("type_text", idx, &error)
                         .unwrap_or_else(|| ToolResult::error(error.to_string())),
                     Err(error) => ToolResult::error(format!("Task error: {error}")),
@@ -736,15 +735,18 @@ impl Tool for TypeTextTool {
                                     );
                                 }
                             }
-                            wayland_focused_paced(&text_w, pacing)
+                            crate::wayland::keyboard_route::tracked(|| {
+                                wayland_focused_paced(&text_w, pacing)
+                            })
                         },
                     )
                 },
             )
             .await;
             return match result {
-                Ok(Ok(())) => ToolResult::text(format!(
-                    "Typed {text_len} character(s) (via Wayland virtual-keyboard)."
+                Ok(Ok(((), route))) => ToolResult::text(format!(
+                    "Typed {text_len} character(s){}.",
+                    crate::wayland::keyboard_route::via(route)
                 ))
                 .with_structured(type_text_structured(
                     "key_events",

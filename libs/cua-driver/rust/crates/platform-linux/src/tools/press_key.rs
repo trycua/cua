@@ -360,7 +360,7 @@ impl Tool for PressKeyTool {
             }
         };
 
-        // Native Wayland: send the key to the focused surface via virtual-keyboard.
+        // Native Wayland: send the key to the focused surface.
         // `wayland::press_key` carries no modifier list, so a modified request has
         // to become a chord here — otherwise the modifiers are dropped and the
         // bare key is typed as a character (Ctrl+S inserts a literal "s").
@@ -382,17 +382,18 @@ impl Tool for PressKeyTool {
                                 );
                             }
                         }
-                        match chord {
+                        crate::wayland::keyboard_route::tracked(|| match chord {
                             Some(keys) => crate::wayland::hotkey_focused(&keys),
                             None => crate::wayland::press_key_focused(&key_w),
-                        }
+                        })
                     },
                 )
             })
             .await;
             return match result {
-                Ok(Ok(())) => ToolResult::text(format!(
-                    "Pressed key '{key}' (via Wayland virtual-keyboard)."
+                Ok(Ok(((), route))) => ToolResult::text(format!(
+                    "Pressed key '{key}'{}.",
+                    crate::wayland::keyboard_route::via(route)
                 )),
                 Ok(Err(e)) => resolved_element_index
                     .and_then(|idx| stale_observed_element("press_key", idx, &e))

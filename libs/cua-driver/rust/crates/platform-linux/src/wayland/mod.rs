@@ -19,6 +19,7 @@ pub mod hyprland;
 pub mod hyprland_capture;
 mod hyprland_compatibility;
 pub mod hyprland_input;
+pub mod keyboard_route;
 pub mod kwin_access;
 pub mod kwin_capture;
 pub(crate) mod kwin_gate;
@@ -56,6 +57,8 @@ pub const PORTAL_INPUT_ENABLED: bool = cfg!(feature = "portal-input");
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Mutex, OnceLock};
+
+use keyboard_route::{note as note_route, KeyboardRoute};
 
 use wayland_client::{
     event_created_child,
@@ -2924,7 +2927,8 @@ fn type_into(window: Option<u64>, text: &str) -> anyhow::Result<()> {
         let text = &*text_keys::typable_text(text)?;
         window.map_or(Ok(()), activate_window_for_input)?;
         if niri::is_session() {
-            return niri::keyboard::type_text(window.or_else(niri_expected_window), text);
+            return niri::keyboard::type_text(window.or_else(niri_expected_window), text)
+                .inspect(|()| note_route(KeyboardRoute::Niri));
         }
         // Lead with a no-op Shift_L tap: on a freshly-focused window under a headless
         // seat (notably sway), the compositor needs the first virtual-keyboard event
@@ -2933,7 +2937,10 @@ fn type_into(window: Option<u64>, text: &str) -> anyhow::Result<()> {
         // it's harmless where routing is already live (labwc).
         let result = wtype_output(&["-k", "Shift_L", "--", text]);
         match result {
-            Ok(out) if out.status.success() => Ok(()),
+            Ok(out) if out.status.success() => {
+                note_route(KeyboardRoute::VirtualKeyboard);
+                Ok(())
+            }
             // `wtype` relies on `zwp_virtual_keyboard_v1`, which KWin/Plasma and
             // Mutter/GNOME don't implement (and the binary may be missing wtype
             // entirely). On a portal-input build, route typing through libei's
@@ -2959,7 +2966,8 @@ pub fn type_text_then_key_focused(text: &str, key: &str) -> anyhow::Result<()> {
     let keysym = key_to_keysym(key);
     if niri::is_session() {
         niri::keyboard::type_text(niri_expected_window(), text)?;
-        return niri::keyboard::press(niri_expected_window(), &[], &keysym);
+        return niri::keyboard::press(niri_expected_window(), &[], &keysym)
+            .inspect(|()| note_route(KeyboardRoute::Niri));
     }
     let result = wtype_output(&[
         "-k",
@@ -2973,7 +2981,10 @@ pub fn type_text_then_key_focused(text: &str, key: &str) -> anyhow::Result<()> {
         keysym.as_str(),
     ]);
     match result {
-        Ok(out) if out.status.success() => Ok(()),
+        Ok(out) if out.status.success() => {
+            note_route(KeyboardRoute::VirtualKeyboard);
+            Ok(())
+        }
         other => with_wtype_libei_fallback(
             || {
                 libei_wait_keyboard_ready()?;
@@ -2994,7 +3005,8 @@ pub fn press_key(window_id: u64, key: &str) -> anyhow::Result<()> {
 pub fn press_key_focused(key: &str) -> anyhow::Result<()> {
     if is_inject_mode() {
         let (pid, window_id) = inject_focused_target()?;
-        return inject_press_key(pid, window_id, key);
+        return inject_press_key(pid, window_id, key)
+            .inspect(|()| note_route(KeyboardRoute::Compositor));
     }
     press_into(None, key)
 }
@@ -3005,14 +3017,18 @@ fn press_into(window: Option<u64>, key: &str) -> anyhow::Result<()> {
         window.map_or(Ok(()), activate_window_for_input)?;
         let keysym = key_to_keysym(key);
         if niri::is_session() {
-            return niri::keyboard::press(window.or_else(niri_expected_window), &[], &keysym);
+            return niri::keyboard::press(window.or_else(niri_expected_window), &[], &keysym)
+                .inspect(|()| note_route(KeyboardRoute::Niri));
         }
         // Keep the sacrificial modifier and requested key in one virtual-keyboard
         // lifetime. Starting a second wtype process creates a fresh protocol object,
         // causing headless seats to drop the requested key as their first event.
         let result = wtype_output(&["-k", "Shift_L", "-k", keysym.as_str()]);
         match result {
-            Ok(out) if out.status.success() => Ok(()),
+            Ok(out) if out.status.success() => {
+                note_route(KeyboardRoute::VirtualKeyboard);
+                Ok(())
+            }
             other => with_wtype_libei_fallback(
                 || {
                     libei_wait_keyboard_ready()?;
@@ -3038,7 +3054,8 @@ pub fn hotkey(window_id: u64, keys: &[String]) -> anyhow::Result<()> {
 pub fn hotkey_focused(keys: &[String]) -> anyhow::Result<()> {
     if is_inject_mode() {
         let (pid, window_id) = inject_focused_target()?;
-        return inject_hotkey(pid, window_id, keys);
+        return inject_hotkey(pid, window_id, keys)
+            .inspect(|()| note_route(KeyboardRoute::Compositor));
     }
     chord_into(None, keys)
 }
@@ -3050,17 +3067,22 @@ fn chord_into(window: Option<u64>, keys: &[String]) -> anyhow::Result<()> {
         let (mods, final_key) = partition_modifiers(keys)?;
         if niri::is_session() {
             let expected = window.or_else(niri_expected_window);
-            return niri::keyboard::press(expected, &mods, &chord_keysym(&final_key));
+            return niri::keyboard::press(expected, &mods, &chord_keysym(&final_key))
+                .inspect(|()| note_route(KeyboardRoute::Niri));
         }
         // KWin's input gate sees only libei input.
         if !kwin_gate::armed() && virtual_keyboard::hotkey(&mods, &final_key).is_ok() {
+            note_route(KeyboardRoute::VirtualKeyboard);
             return Ok(());
         }
         let keysym = key_to_keysym(&final_key);
         let args = wtype_hotkey_args(&mods, &keysym);
         let result = wtype_output(&args);
         match result {
-            Ok(out) if out.status.success() => Ok(()),
+            Ok(out) if out.status.success() => {
+                note_route(KeyboardRoute::VirtualKeyboard);
+                Ok(())
+            }
             other => {
                 let stderr = other.map(|o| String::from_utf8_lossy(&o.stderr).into_owned());
                 #[cfg(feature = "portal-input")]
@@ -3425,14 +3447,14 @@ fn libei_type_text(text: &str) -> anyhow::Result<()> {
     if text.is_empty() {
         return Ok(());
     }
-    libei::type_text(text)
+    libei::type_text(text).inspect(|()| note_route(KeyboardRoute::Libei))
 }
 
 #[cfg(feature = "portal-input")]
 fn libei_press_key(key: &str) -> anyhow::Result<()> {
     let keycode = key_to_evdev(key)
         .ok_or_else(|| anyhow::anyhow!("no evdev keycode mapping for key '{key}' (libei path)"))?;
-    libei::press_key(keycode)
+    libei::press_key(keycode).inspect(|()| note_route(KeyboardRoute::Libei))
 }
 
 #[cfg(feature = "portal-input")]
@@ -3456,7 +3478,7 @@ fn libei_hotkey(mods: &[String], key: &str) -> anyhow::Result<()> {
     transitions.push(Press(keycode));
     transitions.push(Release(keycode));
     transitions.extend(modifier_codes.iter().rev().copied().map(Release));
-    libei::key_sequence(&transitions)
+    libei::key_sequence(&transitions).inspect(|()| note_route(KeyboardRoute::Libei))
 }
 
 /// Map cua key names to Linux evdev keycodes for the libei `press_key` path

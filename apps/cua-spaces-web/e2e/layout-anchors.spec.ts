@@ -88,8 +88,7 @@ for (const [width, height] of SIZES) {
       await primary.click();
       await measure("signin", "[data-new-run-try-again]");
       await page.locator("[data-onboarding-later]").click();
-      await measure("where");
-      await primary.click();
+      // Skipping sign-in goes straight on: there is no step to pick where agents work (Francesco, 8 Nov 2026).
       // On a Mac host, Cua Spaces' permissions come next (CUA-3550): its button sits in the same pinned row.
       await expect(root).toHaveAttribute("data-step", /^(permissions|agent)$/, { timeout: 30_000 });
       if ((await root.getAttribute("data-step")) === "permissions") {

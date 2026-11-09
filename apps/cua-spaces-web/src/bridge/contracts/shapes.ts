@@ -95,6 +95,7 @@ import type { AppPermissions, DriverActivity, DriverApp, DriverLiveTest, DriverM
 import type { DefaultSpace, DefaultSpaceStep, SpacesSettings } from "../ops/spaces-settings";
 import type { RiskyRequest } from "../ops/nudges";
 import type { PastMessage, PastThread, RecentThread } from "../ops/agent-threads";
+import type { ComputerSignInState } from "../ops/agent-sign-in";
 import type { ComputerResources, DiskOnHost, DiskWarning, GuestUsage, ResourcesSnapshot, SharedBase, SpaceResources } from "../ops/resources";
 import type { HostChecklistState } from "../ops/checklist";
 import type { TipsState } from "./spaces-page";
@@ -730,6 +731,7 @@ const AgentKeysShape = ref(
     available: bool,
     unavailable: nullable(str),
     insecure: optNull(str),
+    copySignIn: opt(bool),
   }),
 );
 
@@ -1698,6 +1700,7 @@ export const OP_SHAPES: Record<OpName, Schema> = {
   "agentKeys.rename": AgentKeysShape,
   "agentKeys.shell": object({ names: list(str) }),
   "agentKeys.fromShell": AgentKeysShape,
+  "agentKeys.copySignIn": AgentKeysShape,
   "github.status": GithubShape,
   "github.rescan": GithubShape,
   "github.use": GithubShape,
@@ -1724,6 +1727,13 @@ export const OP_SHAPES: Record<OpName, Schema> = {
   "spaces.openStream": obj<StreamTicket>()({ wsUrl: str, expiresAt: nullable(str) }),
   "nudges.pending": list(obj<RiskyRequest>()({ id: str, agent: str, action: str, atMs: num, expiresMs: num })),
   "agents.recentThreads": list(RecentThreadShape),
+  "agents.computerSignIn": obj<ComputerSignInState>()({
+    state: oneOf("not_signed_in", "signing_in", "signed_in", "failed", "expired"),
+    url: nullable(str),
+    code: nullable(str),
+    pasteCode: bool,
+    reason: nullable(str),
+  }),
   "agents.threadHistory": obj<PastThread>()({
     thread: RecentThreadShape,
     messages: list(obj<PastMessage>()({ key: str, role: oneOf("person", "agent"), text: str, tsMs: nullable(num), cut: bool })),
@@ -2087,6 +2097,8 @@ const AgentKeysWire = object({
   providers: list(object({ id: str, env: str, label: opt(str) })),
   available: bool,
   unavailable: optNull(str),
+  insecure: optNull(str),
+  copy_sign_in: opt(bool),
 });
 
 /** The daemon's `github.*` answer, which `githubFromWire` reads. */
@@ -2259,6 +2271,7 @@ export const WEBKIT_SHAPES: Partial<Record<WebkitMethod, Schema>> = {
   "agentKeys.rename": AgentKeysWire,
   "agentKeys.shell": object({ names: list(str) }),
   "agentKeys.fromShell": AgentKeysWire,
+  "agentKeys.copySignIn": AgentKeysWire,
   "github.status": GithubWire,
   "github.rescan": GithubWire,
   "github.use": GithubWire,
@@ -2406,6 +2419,7 @@ export const WEBKIT_UNSHAPED: Partial<Record<WebkitMethod, string>> = {
   "thread.settings": THREAD_TOOL_JSON,
   "agents.recentThreads": AGENT_THREADS_TOOL_JSON,
   "agents.threadHistory": AGENT_THREADS_TOOL_JSON,
+  "agents.computerSignIn": "the daemon tool's JSON as-is (agent_sign_in); ops/agent-sign-in.ts maps it for every host",
   "driver.config": "the driver's get_config JSON as-is; bridge/driver.ts reads only the keys it knows",
   "driver.setConfig": "the driver's get_config JSON as-is, after the change",
 };

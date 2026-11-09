@@ -59,7 +59,7 @@ use tonic::{Status, body::Body};
 type Stream<T> = Pin<Box<dyn futures_util::Stream<Item = Result<T, Status>> + Send>>;
 
 /// How the mock authenticates callers.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Default)]
 pub struct MockAuth {
     /// Required env token (direct mode: `authorization`).
     pub token: Option<String>,
@@ -71,13 +71,32 @@ pub struct MockAuth {
     pub prefix: Option<String>,
 }
 
+impl std::fmt::Debug for MockAuth {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MockAuth")
+            .field("token", &self.token.as_ref().map(|_| "<redacted>"))
+            .field("gateway", &self.gateway)
+            .field("prefix", &self.prefix)
+            .finish()
+    }
+}
+
 /// Gateway emulation settings.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct MockGateway {
     /// Path prefix, e.g. `/m/<machine-id>`.
     pub prefix: String,
     /// Expected gateway bearer.
     pub bearer: String,
+}
+
+impl std::fmt::Debug for MockGateway {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MockGateway")
+            .field("prefix", &self.prefix)
+            .field("bearer", &"<redacted>")
+            .finish()
+    }
 }
 
 /// Observations the tests assert on.

@@ -1072,10 +1072,17 @@ export class BridgeStore {
    * choice on its page (Share this desktop), never a side effect of a
    * sign-in. A computer already set up keeps its settings. Resolves to
    * whether this computer is set up; never throws. Once at a time.
+   *
+   * Signed out (no account session, or a browser sign-in still under way)
+   * nothing is set up or registered, and the host isn't asked to sign in
+   * on its own: the sign-in comes first, then this. Resolves to false.
    */
   addThisComputer(identity: string | null): Promise<boolean> {
     if (this.addingThisComputer) return this.addingThisComputer;
     const run = (async () => {
+      const snap = (await this.adapter.call("session.get", {}).catch(() => null)) as SessionSnapshot | null;
+      if (!snap || snap.account.authMode !== "user" || !snap.account.identity) return false;
+      if (this.signInPhase.kind === "starting" || this.signInPhase.kind === "waiting") return false;
       const status = (await this.adapter.call("host.status", {}).catch(() => null)) as { configured?: boolean } | null;
       if (!status) return false;
       if (status.configured) return true;

@@ -67,6 +67,7 @@ import { teleportProgressFromWk, webkitPageOps } from "../ops/webkit-pages";
 import { webkitAgentDetailOps } from "../ops/agent-detail";
 import { webkitThreadOps } from "../ops/thread";
 import { webkitAgentThreadsOps } from "../ops/agent-threads";
+import { webkitAgentSignInOps } from "../ops/agent-sign-in";
 import { webkitAgentKeysOps } from "../ops/agent-keys";
 import { webkitGithubOps } from "../ops/github";
 import { webkitKeyvaultManageOps } from "../ops/keyvault-manage";
@@ -795,6 +796,7 @@ export function createWebkitAdapter(win: HostWindow = globalThis.window as HostW
     ...webkitAgentDetailOps(request),
     ...webkitThreadOps(request),
     ...webkitAgentThreadsOps(request),
+    ...webkitAgentSignInOps(request),
     ...webkitAgentKeysOps(request),
     ...webkitGithubOps(request),
     ...webkitKeyvaultManageOps(request, toKeyvaultOverview as (wk: never) => KeyvaultOverview),

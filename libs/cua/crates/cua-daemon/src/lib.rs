@@ -710,7 +710,7 @@ impl Drop for StartingMarker {
 }
 
 /// Contents of the discovery file.
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Discovery {
     /// Daemon pid.
     pub pid: u32,
@@ -722,6 +722,18 @@ pub struct Discovery {
     pub token: Option<String>,
     /// Daemon version.
     pub version: String,
+}
+
+impl std::fmt::Debug for Discovery {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Discovery")
+            .field("pid", &self.pid)
+            .field("socket_path", &self.socket_path)
+            .field("loopback_url", &self.loopback_url)
+            .field("token", &self.token.as_ref().map(|_| "<redacted>"))
+            .field("version", &self.version)
+            .finish()
+    }
 }
 
 impl Discovery {

@@ -28,7 +28,7 @@ use std::collections::BTreeMap;
 pub type SpaceArg = String;
 
 /// `add_space`: register a Space by URL after a capabilities handshake.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct AddSpace {
     /// The Space's cua-spacesd: `http(s)://host:port` (port defaults to
     /// 3211), `host:port`, or a Space id (`cloud:<name>`, `local:<name>`).
@@ -47,6 +47,17 @@ pub struct AddSpace {
     /// Default `mcp`.
     #[serde(default)]
     pub service: Option<String>,
+}
+
+impl std::fmt::Debug for AddSpace {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AddSpace")
+            .field("url", &self.url)
+            .field("token", &self.token.as_ref().map(|_| "<redacted>"))
+            .field("name", &self.name)
+            .field("service", &self.service)
+            .finish()
+    }
 }
 
 /// What a Space runs besides its image (`create_space`).
@@ -793,6 +804,25 @@ pub struct AgentStop {
     /// exactly one of `run_id` and `name`.
     #[serde(default)]
     pub name: Option<String>,
+}
+
+/// `agent_sign_in`: an agent's own sign-in on the Space's computer.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct AgentSignIn {
+    /// Space id or name.
+    pub space: SpaceArg,
+    /// Harness id: `claude-code` or `openai-codex`.
+    pub agent: String,
+    /// `status` (default), `start`, `code` (hand over the pasted `code`) or `cancel`.
+    #[serde(default)]
+    pub action: Option<String>,
+    /// For `code`: the code the sign-in page showed (Claude Code).
+    #[serde(default)]
+    pub code: Option<String>,
+    /// The agent's last run there was refused its sign-in: a sign-in that is
+    /// there has run out (`expired`).
+    #[serde(default)]
+    pub after_refusal: bool,
 }
 
 /// `agent_capabilities`: takes no arguments.
@@ -1699,7 +1729,7 @@ pub struct DriveAudit {
 }
 
 /// `volume_storage_set`: test or change where the drive keeps its bytes.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct DriveStorageSet {
     /// `fs` (this computer) or `s3` (an S3-compatible bucket: AWS S3, R2,
     /// MinIO). `cloud` is refused.
@@ -1717,6 +1747,21 @@ pub struct DriveStorageSet {
     /// Only test the connection; change nothing. Default false.
     #[serde(default)]
     pub dry_run: Option<bool>,
+}
+
+impl std::fmt::Debug for DriveStorageSet {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DriveStorageSet")
+            .field("backend", &self.backend)
+            .field("s3", &self.s3)
+            .field("access_key_id", &self.access_key_id)
+            .field(
+                "secret_access_key",
+                &self.secret_access_key.as_ref().map(|_| "<redacted>"),
+            )
+            .field("dry_run", &self.dry_run)
+            .finish()
+    }
 }
 
 /// Where an S3-compatible bucket is.

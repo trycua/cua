@@ -648,9 +648,9 @@ echo "== the host service (cua-spacesd) =="
 reset_fixture
 install
 check "the library and CLI are built and staged" \
-    'grep >/dev/null "^cargo build --locked --release -p cua-spaces-ffi -p cua-spaces-cli \[in cua\]$" "$CARGO_LOG" && grep >/dev/null "^stage-library" "$CARGO_LOG"'
+    'grep >/dev/null "^cargo build --locked --profile release -p cua-spaces-ffi -p cua-spaces-cli \[in cua\]$" "$CARGO_LOG" && grep >/dev/null "^stage-library" "$CARGO_LOG"'
 check "cua-spacesd is built from this checkout's libs/cua-spacesd" \
-    'grep >/dev/null "^cargo build --locked --release -p cua-spacesd --bin cua-spacesd \[in cua-spacesd\]$" "$CARGO_LOG"'
+    'grep >/dev/null "^cargo build --locked --profile release -p cua-spacesd --bin cua-spacesd \[in cua-spacesd\]$" "$CARGO_LOG"'
 check "(the checkout's and the pinned daemon of this fixture differ in code)" '[ "$(text_hash "$DAEMON_CHECKOUT")" != "$(text_hash "$DAEMON_PINNED")" ]'
 check "the bundled cua-spacesd is this checkout's build" '[ "$(text_hash "$LOCAL_APP/Contents/Helpers/cua-spacesd")" = "$(text_hash "$DAEMON_CHECKOUT")" ]'
 check "and not the pinned release" '[ "$(text_hash "$LOCAL_APP/Contents/Helpers/cua-spacesd")" != "$(text_hash "$DAEMON_PINNED")" ]'

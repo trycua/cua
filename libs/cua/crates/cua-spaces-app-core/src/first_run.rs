@@ -3,7 +3,7 @@
 
 //! The first run every app shows: a few short screens, agent first.
 //!
-//! 1. **Welcome.** "Combine your existing computers into one supercomputer." One button.
+//! 1. **Welcome.** "Combine all your computers into one supercomputer." One button.
 //! 2. **Pick your agent.** The agents found on this computer, in the order
 //!    [`PREFERENCE`] gives (Hermes, Claude Code, Codex, Cursor, then the
 //!    rest), one Connect each. Nothing is connected until its button is
@@ -398,7 +398,7 @@ fn button(id: &str, label: &str) -> FirstRunButton {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WelcomeView {
-    /// "Combine your existing computers into one supercomputer."
+    /// "Combine all your computers into one supercomputer."
     pub title: String,
     pub lede: String,
     /// "Get started" (`start`).
@@ -1088,7 +1088,7 @@ fn default_or(name: &str, id: &str) -> String {
 
 fn welcome_view(_input: &FirstRunInput) -> WelcomeView {
     WelcomeView {
-        title: "Combine your existing computers into one supercomputer.".into(),
+        title: "Combine all your computers into one supercomputer.".into(),
         // The shipped welcome (first-run-new) carries the product line; this one says nothing twice.
         lede: String::new(),
         primary: button("start", "Get started"),
@@ -2294,7 +2294,7 @@ mod tests {
         let w = view(&input(FirstRunStep::Welcome, vec![])).welcome.unwrap();
         assert_eq!(
             w.title,
-            "Combine your existing computers into one supercomputer."
+            "Combine all your computers into one supercomputer."
         );
         assert_eq!(w.primary.id, "start");
     }

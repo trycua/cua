@@ -119,6 +119,39 @@ describe.skipIf(!wasmBuilt)("This Mac's desktop row", () => {
 });
 
 describe.skipIf(!wasmBuilt)("Home's Your Spaces", () => {
+  it("keeps its tiles in place across refreshes while the host restamps the desktops", async () => {
+    // The host stamps a desktop with the time it read the list: from one poll to the next This Mac's
+    // and another machine's pass each other, and the tiles swapped places on every refresh.
+    let poll = 0;
+    const studio = { id: "relay:studio", name: "Studio", provider: "relay", spacesdVersion: "", features: [], reachable: true, os: "macos" };
+    const at = (ms: number) => new Date(Date.UTC(2026, 10, 8) + ms).toISOString();
+    const { hooks } = await mountApp("/home", {
+      failsCreates: false,
+      listsGhost: false,
+      answer: (op, out) => {
+        if (op === "host.status") return { ...(out as object), shareDesktop: true };
+        if (op !== "spaces.list") return out;
+        poll += 1;
+        const mac = { ...thisMac(true), addedAt: at(poll % 2 ? 2_000 : 1_000) };
+        const other = { ...studio, addedAt: at(poll % 2 ? 1_000 : 2_000) };
+        return poll % 2 ? [mac, other] : [other, mac];
+      },
+    });
+    const tiles = () => [...document.querySelectorAll<HTMLElement>("[data-home-spaces] [data-space-id]")];
+    const first = await waitFor(() => {
+      expect(tiles().map((t) => t.getAttribute("data-space-id"))).toEqual(["this-mac", "relay:studio"]);
+      return tiles();
+    });
+    for (let i = 0; i < 2; i++) {
+      const before = poll;
+      await act(() => hooks.spaces.refresh());
+      expect(poll).toBeGreaterThan(before);
+      // Same order, and the same DOM nodes: nothing remounted.
+      expect(tiles()).toEqual(first);
+      tiles().forEach((t, j) => expect(t).toBe(first[j]));
+    }
+  });
+
   it("lists running Spaces first, even when the list holds them last", async () => {
     await mountApp("/home", {
       failsCreates: false,

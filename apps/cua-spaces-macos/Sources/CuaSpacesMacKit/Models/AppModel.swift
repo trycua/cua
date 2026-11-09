@@ -480,6 +480,19 @@ public final class AppModel {
             }
             for (id, h) in results where wanted.contains(id) { machineHealth[id] = h }
         }
+        // This Mac's daemon blocked while this app is allowed: started again,
+        // then checked again, so the issue the person just fixed goes.
+        if let this = targets.first(where: { $0.target.isEmpty }),
+           let h = machineHealth[this.id], Self.localNetworkFails(h),
+           await restartDaemonIfLocalNetworkStale() {
+            let r = await withTimeout(seconds: Self.healthTimeout) { [backend = self.backend] in
+                try await backend.machineHealth(machine: nil)
+            }
+            if case .success(var fresh) = r {
+                fresh.id = this.id
+                machineHealth[this.id] = fresh
+            }
+        }
     }
 
     /// This Mac as the Machines page names it: its name, the app's
@@ -1330,8 +1343,10 @@ public final class AppModel {
             daemonLocalNetworkBusy = false
             daemonLocalNetworkAt = Date()
         }
-        let backend = self.backend
-        let answer = await withTimeout(seconds: 20) { try await backend.machineHealth(machine: nil) }
+        var answer = await withTimeout(seconds: 20) { [backend] in try await backend.machineHealth(machine: nil) }
+        if case .success(let health) = answer, Self.localNetworkFails(health), await restartDaemonIfLocalNetworkStale() {
+            answer = await withTimeout(seconds: 20) { [backend] in try await backend.machineHealth(machine: nil) }
+        }
         guard case .success(let health) = answer,
               let check = health.checks.first(where: { $0.id == "machine.local_network" }) else { return }
         switch check.status {
@@ -1339,6 +1354,33 @@ public final class AppModel {
         case "fail": daemonLocalNetworkAllowed = false
         default: break
         }
+    }
+
+    /// Starts this app's daemon again (the supervisor's restart, then a new
+    /// connection); true when it runs afterwards. Set with the live services.
+    public var restartDaemon: (@MainActor () async -> Bool)?
+    @ObservationIgnored private var localNetworkRestartedAt: Date?
+    /// At most one restart for Local Network in this long.
+    static let localNetworkRestartEvery: TimeInterval = 600
+
+    static func localNetworkFails(_ health: AppMachinesViewHealth) -> Bool {
+        health.checks.contains { $0.id == "machine.local_network" && $0.status == "fail" }
+    }
+
+    /// The daemon says Local Network is off, but this app's own connect gets
+    /// out: macOS allows the app, and the daemon still runs with what macOS
+    /// decided for it before (access turned on while it ran, or a daemon an
+    /// earlier launch of the app started). It is started again, at most once
+    /// every `localNetworkRestartEvery`, so the issue clears once access is
+    /// on. True when it was started again.
+    func restartDaemonIfLocalNetworkStale() async -> Bool {
+        guard let restartDaemon, let gate = localNetworkGate else { return false }
+        let now = listClock()
+        if let at = localNetworkRestartedAt, now.timeIntervalSince(at) < Self.localNetworkRestartEvery { return false }
+        guard await gate.probe.access() == .allowed else { return false }
+        localNetworkRestartedAt = now
+        NSLog("Cua Spaces: Local Network is allowed for this app but the cua daemon is blocked; starting the daemon again")
+        return await restartDaemon()
     }
 
     /// How long the daemon may take to take a create (its first progress

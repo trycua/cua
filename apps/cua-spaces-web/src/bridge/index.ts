@@ -298,6 +298,7 @@ export {
   type ThreadPage,
   type ThreadRole,
 } from "./ops/thread";
+export { computerSignInAgentOf, type ComputerSignInAgent, type ComputerSignInState } from "./ops/agent-sign-in";
 export {
   agentOf as threadAgentOf,
   folderLabel,

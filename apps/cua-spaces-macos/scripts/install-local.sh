@@ -8,12 +8,22 @@
 # pattern as Cua Driver's libs/cua-driver/scripts/install-local.sh, which
 # installs cua-driver-local.)
 #
-#   scripts/install-local.sh [--release] [--no-launch] [--prefix DIR]
+#   scripts/install-local.sh [--release | --development] [--no-launch] [--prefix DIR]
 #                            [--with-lume-local] [--skip-rust-build]
 #                            [--skip-web-build] [--setup-signing]
 #                            [--require-stable-signing]
 #
-#   --release            build the release configuration (default: debug)
+#   --release            build the release configuration: Rust and Swift fully
+#                        optimised (slow, rebuilds everything). Use it to check
+#                        what ships. The app reads no dev hooks.
+#   --development        the fast dev loop: Rust with the `dev-fast` Cargo profile
+#                        (target/dev-fast: opt-level 1, incremental, no LTO) and
+#                        the Swift debug configuration, so the dev hooks work
+#                        (CUA_SPACES_*, and live reload of the web UI with
+#                        CUA_WEBUI_DEV=1 against `pnpm dev`). Still signed with
+#                        the stable local certificate. Not for anything you
+#                        hand to someone else.
+#                        Neither flag (the default): Rust release, Swift debug.
 #   --no-launch          do not open the app when it is installed
 #   --prefix DIR         install under DIR instead of $HOME: the app in
 #                        DIR/Applications, `cua-local` in DIR/.local/bin
@@ -102,6 +112,8 @@ die() { err "$*"; exit 1; }
 # --- Arguments ----------------------------------------------------------------
 
 CONFIG=debug
+RUST_PROFILE=release
+DEVELOPMENT=0
 LAUNCH=1
 PREFIX=""
 WITH_LUME_LOCAL=0
@@ -114,7 +126,8 @@ usage() { sed -n '/^# Builds Cua Spaces/,/^# Uninstall:/p' "$0" | sed 's/^# \{0,
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
-        --release) CONFIG=release ;;
+        --release) CONFIG=release; RUST_PROFILE=release; DEVELOPMENT=0 ;;
+        --development) CONFIG=debug; RUST_PROFILE=dev-fast; DEVELOPMENT=1 ;;
         --no-launch) LAUNCH=0 ;;
         --prefix)
             [ "$#" -ge 2 ] || die "--prefix needs a directory"
@@ -220,7 +233,7 @@ if [ -n "${CARGO_TARGET_DIR:-}" ]; then
 else
     SPACESD_TARGET_DIR="$SPACESD_DIR/target"
 fi
-SPACESD_BIN="$SPACESD_TARGET_DIR/release/cua-spacesd"
+SPACESD_BIN="$SPACESD_TARGET_DIR/$RUST_PROFILE/cua-spacesd"
 
 [ -x "$BUILD_SCRIPT" ] || die "missing $BUILD_SCRIPT"
 [ -f "$SIGNING_LIB" ] || die "missing $SIGNING_LIB (the stable local signing shared with Cua Driver)"
@@ -241,7 +254,7 @@ if [ -d "$CLI_LINK" ] && [ ! -L "$CLI_LINK" ]; then
     die "refusing to replace $CLI_LINK: it is a directory"
 fi
 if [ "$SKIP_RUST_BUILD" = 1 ] && [ ! -x "$SPACESD_BIN" ]; then
-    die "--skip-rust-build: there is no cua-spacesd build at $SPACESD_BIN. Build it ((cd libs/cua-spacesd && cargo build --locked --release -p cua-spacesd --bin cua-spacesd)) or leave out --skip-rust-build."
+    die "--skip-rust-build: there is no cua-spacesd build at $SPACESD_BIN. Build it ((cd libs/cua-spacesd && cargo build --locked --profile $RUST_PROFILE -p cua-spacesd --bin cua-spacesd)) or leave out --skip-rust-build."
 fi
 if [ "$WITH_LUME_LOCAL" = 1 ]; then
     [ -f "$LUME_INSTALL" ] || die "--with-lume-local: missing $LUME_INSTALL"
@@ -295,7 +308,7 @@ check_prerequisites() {
     # The web UI's app core is Rust built for the browser (WebAssembly), with
     # the toolchain and the wasm-bindgen the release build pins.
     toolchain="$(sed -n 's/^channel *= *"\(.*\)"/\1/p' "$WASM_TOOLCHAIN_FILE" 2>/dev/null | head -n 1)"
-    wasm_bindgen_version="$(sed -n 's/^const WASM_BINDGEN = "\(.*\)"/\1/p' "$WASM_SCRIPT" 2>/dev/null | head -n 1)"
+    wasm_bindgen_version="$(sed -n 's/^const WASM_BINDGEN = "\([^"]*\)".*/\1/p' "$WASM_SCRIPT" 2>/dev/null | head -n 1)"
     if [ -n "$toolchain" ]; then
         { have rustup && rustup target list --installed --toolchain "$toolchain" 2>/dev/null | grep -qx wasm32-unknown-unknown; } \
             || missing "the wasm32 Rust target for Rust $toolchain (the web UI; after Rust is installed): rustup toolchain install $toolchain --profile minimal --target wasm32-unknown-unknown"
@@ -330,7 +343,7 @@ fi
 
 printf '%sCua Spaces Local installer%s\n' "$BOLD$BLUE" "$NORMAL"
 echo "  source:  $REPO_ROOT"
-echo "  config:  $CONFIG"
+echo "  config:  $CONFIG (Rust: $RUST_PROFILE)"
 echo "  app:     $APP_DEST"
 echo "  cli:     $CLI_LINK"
 echo ""
@@ -374,13 +387,19 @@ if [ "$SKIP_RUST_BUILD" = 0 ]; then
         . "$HOME/.cargo/env"
     fi
     command -v cargo >/dev/null 2>&1 || die "cargo is required (https://rustup.rs), or build the libraries yourself and pass --skip-rust-build."
-    log "building the Cua Spaces library and CLI (cargo, release)"
+    # macOS defaults to 256 open files; 256 codegen units with sccache exceed it
+    # ("Too many open files").
+    ulimit -n 10240 || true
+    log "building the Cua Spaces library and CLI (cargo, $RUST_PROFILE)"
     # The SDK dylib the app links, and the `cua` that goes into the bundle
     # (build-app.sh's defaults).
-    (cd "$REPO_ROOT/libs/cua" && cargo build --locked --release -p cua-spaces-ffi -p cua-spaces-cli)
-    "$REPO_ROOT/libs/spaces-app-swift/scripts/stage-library.sh"
-    log "building cua-spacesd from this checkout (cargo, release)"
-    (cd "$SPACESD_DIR" && CARGO_TARGET_DIR="$SPACESD_TARGET_DIR" cargo build --locked --release -p cua-spacesd --bin cua-spacesd)
+    # --no-default-features leaves out AWS (EC2 and S3: the AWS SDK crates, a big share of a
+    # cold build). In this build every AWS feature says "this build doesn't include AWS
+    # support". Release builds keep the default `aws` feature.
+    (cd "$REPO_ROOT/libs/cua" && cargo build --locked --profile "$RUST_PROFILE" --no-default-features -p cua-spaces-ffi -p cua-spaces-cli)
+    CUA_CARGO_PROFILE_DIR="$RUST_PROFILE" "$REPO_ROOT/libs/spaces-app-swift/scripts/stage-library.sh"
+    log "building cua-spacesd from this checkout (cargo, $RUST_PROFILE)"
+    (cd "$SPACESD_DIR" && CARGO_TARGET_DIR="$SPACESD_TARGET_DIR" cargo build --locked --profile "$RUST_PROFILE" -p cua-spacesd --bin cua-spacesd)
 fi
 # The network gateway (cua-netgw, Go): VM Spaces behind the secure default network, and every
 # child Space of a VM tree, need it next to `cua`. Without it a child Space an agent makes
@@ -418,7 +437,7 @@ SPACESD_CODE_HASH="$(code_hash "$SPACESD_BIN")" || die "cannot read the machine 
 log "building the app (build-app.sh --channel local $CONFIG)"
 mkdir -p "$BUILD_OUT"
 # build-app.sh prints the bundle path as its last line.
-if ! BUILT_APP="$(CUA_SPACESD_BIN="$SPACESD_BIN" CUA_WEBUI_DIST="$WEBUI_DIST" "$BUILD_SCRIPT" --channel local "$CONFIG" "$BUILD_OUT" | tee /dev/stderr | tail -n 1)"; then
+if ! BUILT_APP="$(CUA_CARGO_PROFILE_DIR="$RUST_PROFILE" CUA_SPACESD_BIN="$SPACESD_BIN" CUA_WEBUI_DIST="$WEBUI_DIST" "$BUILD_SCRIPT" --channel local "$CONFIG" "$BUILD_OUT" | tee /dev/stderr | tail -n 1)"; then
     die "build-app.sh failed"
 fi
 [ -d "$BUILT_APP" ] || BUILT_APP="$BUILD_OUT/$LOCAL_APP_DIR_NAME"
@@ -1035,13 +1054,15 @@ quit_local_app "$APP_DEST"
 mkdir -p "$APP_PARENT"
 APP_BACKUP="$APP_DEST.install-backup.$$"
 rm -rf "$APP_BACKUP"
-if [ -d "$APP_DEST" ]; then
-    mv "$APP_DEST" "$APP_BACKUP"
-fi
+# Copy next to the destination first and rename it into place: a rename is atomic, so launchd, which
+# restarts the app's KeepAlive background items as soon as they exit, never starts a half-copied bundle
+# (dyld "Library missing: Sparkle" crash reports on every rebuild).
+APP_INCOMING="$APP_DEST.installing.$$"
+rm -rf "$APP_INCOMING"
 install_valid=false
 INSTALLED_REQUIREMENT=""
 INSTALLED_CLASS=""
-if ditto "$STAGE_APP" "$APP_DEST" && verify_local_bundle "$APP_DEST"; then
+if ditto "$STAGE_APP" "$APP_INCOMING"     && { [ ! -d "$APP_DEST" ] || mv "$APP_DEST" "$APP_BACKUP"; }     && mv "$APP_INCOMING" "$APP_DEST" && verify_local_bundle "$APP_DEST"; then
     INSTALLED_REQUIREMENT="$(designated_requirement "$APP_DEST")"
     INSTALLED_CLASS="$(classify_designated_requirement "$INSTALLED_REQUIREMENT")"
     if [ "$INSTALLED_REQUIREMENT" = "$STAGED_REQUIREMENT" ] \
@@ -1059,15 +1080,18 @@ if [ "$install_valid" = true ]; then
     fi
     rm -rf "$APP_BACKUP"
 else
-    rm -rf "$APP_DEST"
+    rm -rf "$APP_INCOMING"
+    # Only remove what is at the destination when the old app was moved aside; if the copy itself
+    # failed, the old app is still in place and stays.
     if [ -d "$APP_BACKUP" ]; then
+        rm -rf "$APP_DEST"
         mv "$APP_BACKUP" "$APP_DEST"
         if [ "$REPLACING_LEGACY_LOCAL" = 1 ]; then
             restore_retired_local_app "$APP_DEST" "$LEGACY_HELPER_WAS_ENABLED"
         fi
         die "the installed copy did not verify; restored the previous $LOCAL_APP_DIR_NAME."
     fi
-    die "the installed copy did not verify and was removed."
+    die "the new copy could not be put in place; the installed app was not changed."
 fi
 ok "installed $APP_DEST"
 if [ "$REPLACING_LEGACY_LOCAL" = 1 ]; then

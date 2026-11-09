@@ -21,12 +21,15 @@ use x11rb::protocol::Event;
 /// Thirteen characters no stock layout has, so each one borrows a spare keycode.
 const TEXT: &str = "中文输入法测试汉字键盘映射";
 
-#[test]
-#[ignore = "requires a real Xorg (CUA_TEST_XORG_PID) with libinput hotplug and /dev/uinput"]
-fn a_stalled_server_never_reads_borrowed_keys_after_their_keycodes_are_restored() {
+/// Both tests stop the same thread of the same server.
+static SERVER: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// The thread of the X server that reads evdev. While it is stopped the
+/// server still answers requests, as it does when it is short of CPU.
+fn input_thread() -> libc::pid_t {
     let server = std::env::var("CUA_TEST_XORG_PID")
         .expect("CUA_TEST_XORG_PID names the X server whose input thread is stalled");
-    let input_thread: libc::pid_t = std::fs::read_dir(format!("/proc/{server}/task"))
+    std::fs::read_dir(format!("/proc/{server}/task"))
         .unwrap()
         .map(|task| task.unwrap().path())
         .find(|task| {
@@ -39,7 +42,10 @@ fn a_stalled_server_never_reads_borrowed_keys_after_their_keycodes_are_restored(
         .to_str()
         .unwrap()
         .parse()
-        .unwrap();
+        .unwrap()
+}
+
+fn key_window(events: EventMask) -> (x11rb::rust_connection::RustConnection, Window) {
     let (conn, screen) = x11rb::connect(None).unwrap();
     let root = conn.setup().roots[screen].root;
     let window = conn.generate_id().unwrap();
@@ -56,11 +62,108 @@ fn a_stalled_server_never_reads_borrowed_keys_after_their_keycodes_are_restored(
         0,
         &CreateWindowAux::new()
             .override_redirect(1)
-            .event_mask(EventMask::KEY_PRESS),
+            .event_mask(events),
     )
     .unwrap();
     conn.map_window(window).unwrap();
     conn.get_input_focus().unwrap().reply().unwrap();
+    (conn, window)
+}
+
+#[test]
+#[ignore = "requires a real Xorg (CUA_TEST_XORG_PID) with libinput hotplug and /dev/uinput"]
+fn a_key_the_server_reads_down_but_not_up_is_not_repeated() {
+    let _server = SERVER
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let input_thread = input_thread();
+    let (conn, window) = key_window(EventMask::KEY_PRESS | EventMask::KEY_RELEASE);
+    let cursor = "virtual-keyboard-xorg-repeat";
+    send_virtual_keyboard_text_paced(cursor, u64::from(window), "a", TypePacing::default())
+        .unwrap();
+    while conn.poll_for_event().unwrap().is_some() {}
+
+    // Stop the input thread as soon as the fifth key is down. Its release
+    // follows 10 ms later, so the server holds that key for the whole stall.
+    let watch = std::thread::spawn(move || unsafe {
+        let null = std::ptr::null_mut::<libc::c_void>();
+        assert_eq!(
+            libc::ptrace(libc::PTRACE_SEIZE, input_thread, null, null),
+            0
+        );
+        let mut keys = Vec::new();
+        while keys.iter().filter(|(down, _, _)| *down).count() < 5 {
+            match conn.wait_for_event().unwrap() {
+                Event::KeyPress(key) => keys.push((true, key.detail, key.time)),
+                Event::KeyRelease(key) => keys.push((false, key.detail, key.time)),
+                _ => {}
+            }
+        }
+        assert_eq!(
+            libc::ptrace(libc::PTRACE_INTERRUPT, input_thread, null, null),
+            0
+        );
+        let mut status = 0;
+        libc::waitpid(input_thread, &mut status, libc::__WALL);
+        let stalled = Instant::now();
+        let mut running = false;
+        while stalled.elapsed() < Duration::from_millis(3500) {
+            if !running && stalled.elapsed() >= Duration::from_millis(2500) {
+                libc::ptrace(libc::PTRACE_DETACH, input_thread, null, null);
+                running = true;
+            }
+            match conn.poll_for_event().unwrap() {
+                Some(Event::KeyPress(key)) => keys.push((true, key.detail, key.time)),
+                Some(Event::KeyRelease(key)) => keys.push((false, key.detail, key.time)),
+                Some(_) => {}
+                None => std::thread::sleep(Duration::from_millis(5)),
+            }
+        }
+        keys
+    });
+    let typed = send_virtual_keyboard_text_paced(
+        cursor,
+        u64::from(window),
+        "abcdefghijklmnopqrstuvwxyz",
+        TypePacing { delay_ms: 30 },
+    );
+    let keys = watch.join().unwrap();
+    forget_master_pointer(cursor);
+    typed.expect_err("the stalled server cannot confirm the text");
+
+    let down: Vec<u8> = keys
+        .iter()
+        .filter(|(down, _, _)| *down)
+        .map(|key| key.1)
+        .collect();
+    let held = down[4];
+    let times = |want: bool| {
+        keys.iter()
+            .filter(move |(down, keycode, _)| *down == want && *keycode == held)
+            .map(|key| key.2)
+    };
+    let held_for = times(false)
+        .next_back()
+        .expect("the held key is released when its keyboard is unplugged")
+        .wrapping_sub(times(true).next().unwrap());
+    assert!(
+        held_for >= 1000,
+        "the stall missed the key: it was down for {held_for} ms"
+    );
+    // Every character of the text is on its own key, so a second press of
+    // any key is one the driver never sent.
+    let repeats = down.len() - down.iter().collect::<std::collections::HashSet<_>>().len();
+    assert_eq!(repeats, 0, "the server repeated a held key: {down:?}");
+}
+
+#[test]
+#[ignore = "requires a real Xorg (CUA_TEST_XORG_PID) with libinput hotplug and /dev/uinput"]
+fn a_stalled_server_never_reads_borrowed_keys_after_their_keycodes_are_restored() {
+    let _server = SERVER
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let input_thread = input_thread();
+    let (conn, window) = key_window(EventMask::KEY_PRESS);
     let cursor = "virtual-keyboard-xorg-stall";
     // Create the master pair and its keyboard before the timed call.
     send_virtual_keyboard_text_paced(cursor, u64::from(window), "a", TypePacing::default())

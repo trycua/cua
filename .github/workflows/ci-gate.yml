@@ -190,7 +190,7 @@ jobs:
           }
           runs() {
             local pr queue
-            pr=$(list_runs "$sha" '.event == "pull_request" or .event == "pull_request_target"') || return 1
+            pr=$(list_runs "$sha" '.event == "pull_request"') || return 1
             if [[ -z "$queue_sha" ]]; then
               [[ -z "$pr" ]] || printf '%s\n' "$pr"
               return 0

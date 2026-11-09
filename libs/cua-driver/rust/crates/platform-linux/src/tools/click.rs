@@ -1432,11 +1432,17 @@ impl Tool for ClickTool {
             };
         }
 
-        if !isolated_background {
-            if let Some(refusal) = unavailable_chromium_background(pid, delivery) {
-                return refusal;
-            }
-        }
+        // Chromium drops background pointer events, but on X11 the AT-SPI
+        // action of the control under a plain left click still lands: that
+        // route tries it first and refuses only on a miss.
+        let plain_left = button == 1 && count == 1 && modifiers.is_empty();
+        let chromium_atspi_only = match (!isolated_background)
+            .then(|| unavailable_chromium_background(pid, delivery))
+            .flatten()
+        {
+            Some(refusal) if crate::wayland::is_wayland() || !plain_left => return refusal,
+            refusal => refusal.is_some(),
+        };
 
         // Coordinate-based path.
         if let Some(refusal) = require_point_args("click", &args) {
@@ -1663,8 +1669,10 @@ impl Tool for ClickTool {
                     // real pointer available, an entry / spin button / cell
                     // under the point is left to the MPX click below (its
                     // `doAction` would not focus it for a following type_text).
+                    // Chromium: an editable's action does not focus it for a
+                    // following type, so leave it to the refusal.
                     let real_click_for_focus_roles =
-                        crate::input::real_pointer_input_available();
+                        chromium_atspi_only || crate::input::real_pointer_input_available();
                     let (hit, guard) = crate::input::focus_guard::guarded(Some(pid), || {
                         Ok(crate::atspi::perform_action_at_point_in(
                             pid,
@@ -1679,6 +1687,9 @@ impl Tool for ClickTool {
                     if let Some(hit) = hit {
                         return Ok(("x11_atspi", Some(PointerRoute::Atspi(hit)), guard));
                     }
+                }
+                if chromium_atspi_only {
+                    return Ok(("background_unavailable_chromium", None, None));
                 }
                 if !fg
                     && !crate::input::real_pointer_input_available()
@@ -1759,6 +1770,11 @@ impl Tool for ClickTool {
             Ok(Ok(("background_unavailable", _, _, _))) => {
                 crate::input::delivery::background_unavailable_error(
                     crate::input::delivery::BackgroundUnavailable::FocusedInputOnly,
+                )
+            }
+            Ok(Ok(("background_unavailable_chromium", _, _, _))) => {
+                crate::input::delivery::background_unavailable_error(
+                    crate::input::delivery::BackgroundUnavailable::ChromiumInput,
                 )
             }
             Ok(Ok(("background_unavailable_pointer", _, _, _))) => {

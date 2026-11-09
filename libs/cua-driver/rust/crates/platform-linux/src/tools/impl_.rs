@@ -2226,10 +2226,10 @@ pub(crate) enum CoordinateContext {
     Screenshot(f64),
 }
 
-/// Chromium's X11 renderer drops synthetic input sent to an occluded,
-/// unfocused toplevel. Returning success here would be a silent loss, so all
-/// input tools expose the same typed refusal and leave foreground activation
-/// as the explicit escalation.
+/// Chromium's X11 renderer drops synthetic input sent to an unfocused
+/// toplevel. Returning success here would be a silent loss, so all input
+/// tools expose the same typed refusal and leave foreground activation as the
+/// explicit escalation. A plain left click still reaches it through AT-SPI.
 pub(crate) fn unavailable_chromium_background(
     pid: u32,
     delivery: crate::input::delivery::DeliveryMode,

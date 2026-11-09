@@ -1,0 +1,9 @@
+==> booting ~/.cache/cua-images/ubuntu-server/amd64/disk.img (amd64, accel=tcg, firmware=bios)
+    serial log: <scratchpad>/vm-server-amd64-bios-serial.log
+  ok   serial login prompt after 40s: cua-vm login: <14>Sep 23 00:55:29 cloud-init: #############################################################
+  ok   guest :22 reachable after 41s
+x86_64
+running
+firmware=bios
+  ok   ssh as cua
+==> boot smoke rc=0 in 41s

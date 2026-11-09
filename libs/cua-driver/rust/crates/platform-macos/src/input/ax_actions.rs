@@ -1,13 +1,261 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! AX action dispatch — the preferred click/interaction path for indexed elements.
 
 use crate::ax::bindings::*;
+use core_foundation::base::{CFEqual, CFRelease, CFRetain, CFTypeRef};
+
+const MAX_SELECTION_ANCESTORS: usize = 8;
+
+fn is_selectable_container_role(role: &str) -> bool {
+    matches!(role, "AXRow" | "AXCell" | "AXListItem" | "AXImage")
+}
+
+/// Select the nearest list-like element at or above `element_ptr` and confirm
+/// the write through `AXSelected` read-back.
+///
+/// Finder and other AppKit collection views commonly expose an item's label as
+/// an actionable child (`AXTextField`) while the selectable object is its
+/// parent `AXRow`. Neither object necessarily advertises `AXPress`, and Finder
+/// can return `kAXErrorCannotComplete` for a press on the row. A pointer click
+/// selects that row, so the AX equivalent is to set the row's `AXSelected`
+/// attribute rather than treating the failed press as terminal.
+///
+/// Finder icon views expose each selectable file directly as an `AXImage` with
+/// an `AXSelected` attribute, so that role is included alongside the standard
+/// row-like containers. The fallback remains bounded and requires a successful
+/// `AXSelected=true` read-back, so an arbitrary failed image/button press cannot
+/// become a claimed success.
+pub fn select_nearest_container(element_ptr: usize) -> Option<String> {
+    let mut current = element_ptr as AXUIElementRef;
+    let mut owns_current = false;
+
+    for _ in 0..MAX_SELECTION_ANCESTORS {
+        let role = unsafe { copy_string_attr(current, "AXRole") }.unwrap_or_default();
+        if is_selectable_container_role(&role)
+            && unsafe { copy_bool_attr(current, "AXSelected") }.is_some()
+        {
+            let err = unsafe { set_bool_attr_true(current, "AXSelected") };
+            if err == kAXErrorSuccess
+                && unsafe { copy_bool_attr(current, "AXSelected") } == Some(true)
+            {
+                if owns_current {
+                    unsafe { CFRelease(current as CFTypeRef) };
+                }
+                return Some(role);
+            }
+        }
+
+        let parent = unsafe { copy_element_attr(current, "AXParent") };
+        if owns_current {
+            unsafe { CFRelease(current as CFTypeRef) };
+        }
+        current = parent?;
+        owns_current = true;
+    }
+
+    if owns_current {
+        unsafe { CFRelease(current as CFTypeRef) };
+    }
+    None
+}
+
+/// Read the selection state of the nearest collection-like element without
+/// mutating it. This is used to verify a coordinate fallback when AppKit
+/// exposes `AXSelected` but refuses to set it directly (notably Finder icon
+/// views).
+pub fn nearest_container_selection_state(element_ptr: usize) -> Option<(String, bool)> {
+    let mut current = element_ptr as AXUIElementRef;
+    let mut owns_current = false;
+
+    for _ in 0..MAX_SELECTION_ANCESTORS {
+        let role = unsafe { copy_string_attr(current, "AXRole") }.unwrap_or_default();
+        if is_selectable_container_role(&role) {
+            if let Some(selected) = unsafe { copy_bool_attr(current, "AXSelected") } {
+                if owns_current {
+                    unsafe { CFRelease(current as CFTypeRef) };
+                }
+                return Some((role, selected));
+            }
+        }
+
+        let parent = unsafe { copy_element_attr(current, "AXParent") };
+        if owns_current {
+            unsafe { CFRelease(current as CFTypeRef) };
+        }
+        current = parent?;
+        owns_current = true;
+    }
+
+    if owns_current {
+        unsafe { CFRelease(current as CFTypeRef) };
+    }
+    None
+}
+
+/// A retained selection context for proving the settled result of a modified
+/// pointer click.
+///
+/// Reading only the target's `AXSelected` bit is insufficient for multi-select:
+/// AppKit can expose a transient target transition while it is still resolving
+/// the synthetic gesture, and a modifier-less outcome can replace the prior
+/// selection with the target. Keep the target and every selected sibling alive
+/// across delivery so callers can require both the intended target transition
+/// and preservation of the pre-existing selection.
+pub struct SelectionReadback {
+    role: String,
+    target: AXUIElementRef,
+    peer_model_observed: bool,
+    previously_selected_peers: Vec<AXUIElementRef>,
+}
+
+impl SelectionReadback {
+    pub fn role(&self) -> &str {
+        &self.role
+    }
+
+    pub fn observe(&self) -> Option<(bool, bool)> {
+        let target_selected = unsafe { copy_bool_attr(self.target, "AXSelected") }?;
+        let peers_preserved = self.peer_model_observed
+            && self
+                .previously_selected_peers
+                .iter()
+                .all(|&peer| unsafe { copy_bool_attr(peer, "AXSelected") } == Some(true));
+        Some((target_selected, peers_preserved))
+    }
+}
+
+impl Drop for SelectionReadback {
+    fn drop(&mut self) {
+        unsafe {
+            CFRelease(self.target as CFTypeRef);
+            for peer in self.previously_selected_peers.drain(..) {
+                CFRelease(peer as CFTypeRef);
+            }
+        }
+    }
+}
+
+/// Capture the nearest selectable container and its currently-selected peers.
+/// Returns `None` when the platform does not expose a readable selection model;
+/// callers must then leave the action unverifiable instead of inventing proof.
+pub fn capture_nearest_container_selection(element_ptr: usize) -> Option<SelectionReadback> {
+    let mut current = element_ptr as AXUIElementRef;
+    let mut owns_current = false;
+
+    for _ in 0..MAX_SELECTION_ANCESTORS {
+        let role = unsafe { copy_string_attr(current, "AXRole") }.unwrap_or_default();
+        if is_selectable_container_role(&role)
+            && unsafe { copy_bool_attr(current, "AXSelected") }.is_some()
+        {
+            if !owns_current {
+                unsafe { CFRetain(current as CFTypeRef) };
+            }
+            let target = current;
+            let parent = unsafe { copy_element_attr(target, "AXParent") };
+            let mut peers = Vec::new();
+            let mut peer_model_observed = false;
+            if let Some(parent) = parent {
+                for child in unsafe { copy_children(parent) } {
+                    let is_target =
+                        unsafe { CFEqual(child as CFTypeRef, target as CFTypeRef) != 0 };
+                    peer_model_observed |= is_target;
+                    if !is_target && unsafe { copy_bool_attr(child, "AXSelected") } == Some(true) {
+                        peers.push(child);
+                    } else {
+                        unsafe { CFRelease(child as CFTypeRef) };
+                    }
+                }
+                unsafe { CFRelease(parent as CFTypeRef) };
+            }
+            return Some(SelectionReadback {
+                role,
+                target,
+                peer_model_observed,
+                previously_selected_peers: peers,
+            });
+        }
+
+        let parent = unsafe { copy_element_attr(current, "AXParent") };
+        if owns_current {
+            unsafe { CFRelease(current as CFTypeRef) };
+        }
+        current = parent?;
+        owns_current = true;
+    }
+
+    if owns_current {
+        unsafe { CFRelease(current as CFTypeRef) };
+    }
+    None
+}
+
+/// The live `AXEnabled` read said the target is disabled, so nothing was sent.
+/// Tools turn this into a structured `element_disabled` refusal.
+#[derive(Debug, thiserror::Error)]
+#[error(
+    "refusing {action}: the target reports AXEnabled=false, so the app would ignore it. \
+     Nothing was sent. Snapshot again and act once the element reports enabled"
+)]
+pub struct ElementDisabled {
+    pub action: String,
+}
+
+impl ElementDisabled {
+    pub const CODE: &'static str = "element_disabled";
+}
+
+fn ensure_ax_enabled(enabled: Option<bool>, action: &str) -> anyhow::Result<()> {
+    if enabled == Some(false) {
+        return Err(ElementDisabled {
+            action: action.to_owned(),
+        }
+        .into());
+    }
+    Ok(())
+}
+
+/// Refuse AX actions that macOS reports as disabled.
+///
+/// This must be checked immediately before dispatch rather than trusting the
+/// cached snapshot value: foreground delivery can make a menu item live after
+/// it was resolved, while backgrounding can disable it in the other direction.
+pub fn ensure_ax_action_enabled(element_ptr: usize, action: &str) -> anyhow::Result<()> {
+    let enabled = unsafe { copy_bool_attr(element_ptr as AXUIElementRef, "AXEnabled") };
+    ensure_ax_enabled(enabled, action)
+}
+
+/// How long a read made right after a foreground activation waits for a
+/// control that reports disabled to become enabled.
+const ACTIVATION_ENABLE_SETTLE: std::time::Duration = std::time::Duration::from_millis(750);
+const ACTIVATION_ENABLE_POLL: std::time::Duration = std::time::Duration::from_millis(25);
+
+/// Like [`ensure_ax_action_enabled`], for a read made right after a foreground
+/// activation. The window reports focus before the app has handled its
+/// activation, so a control that is enabled only while the app is active can
+/// still read `AXEnabled=false` for a moment. Re-read until it reports enabled
+/// or the settle window ends, then refuse. A control that stays disabled costs
+/// one settle window before the refusal.
+pub fn ensure_ax_action_enabled_after_activation(
+    element_ptr: usize,
+    action: &str,
+) -> anyhow::Result<()> {
+    let deadline = std::time::Instant::now() + ACTIVATION_ENABLE_SETTLE;
+    loop {
+        let enabled = unsafe { copy_bool_attr(element_ptr as AXUIElementRef, "AXEnabled") };
+        if enabled != Some(false) || std::time::Instant::now() >= deadline {
+            return ensure_ax_enabled(enabled, action);
+        }
+        std::thread::sleep(ACTIVATION_ENABLE_POLL);
+    }
+}
 
 /// Perform an AX action on a cached element.
 pub fn perform_ax_action(element_ptr: usize, action: &str) -> anyhow::Result<()> {
-    let ax_action = map_action(action);
-    let err = unsafe {
-        perform_action(element_ptr as AXUIElementRef, ax_action)
-    };
+    let ax_action = map_action(action)?;
+    ensure_ax_action_enabled(element_ptr, ax_action)?;
+    let err = unsafe { perform_action(element_ptr as AXUIElementRef, ax_action) };
 
     if err == kAXErrorSuccess {
         Ok(())
@@ -16,23 +264,36 @@ pub fn perform_ax_action(element_ptr: usize, action: &str) -> anyhow::Result<()>
     }
 }
 
-fn map_action(action: &str) -> &'static str {
-    match action.to_lowercase().as_str() {
+/// The AX action named by a tool's `action` argument. Accepts the short
+/// names (`press`, `show_menu`, ...) and the tree's spelling (`showalternateui`,
+/// `AXShowAlternateUI`). An unknown name is an error: falling back to AXPress
+/// would press a control the caller meant only to reveal.
+pub fn map_action(action: &str) -> anyhow::Result<&'static str> {
+    let key: String = action
+        .chars()
+        .filter(|c| *c != '_' && *c != '-')
+        .collect::<String>()
+        .to_lowercase();
+    let key = key.strip_prefix("ax").unwrap_or(&key);
+    Ok(match key {
         "press" | "click" => "AXPress",
-        "show_menu" | "right_click" | "rightclick" => "AXShowMenu",
+        "showmenu" | "rightclick" => "AXShowMenu",
         "pick" => "AXPick",
         "confirm" => "AXConfirm",
         "cancel" => "AXCancel",
         "open" => "AXOpen",
-        _ => "AXPress",
-    }
+        "showalternateui" => "AXShowAlternateUI",
+        "showdefaultui" => "AXShowDefaultUI",
+        _ => anyhow::bail!(
+            "unknown action \"{action}\": use press, show_menu, pick, confirm, cancel, open, \
+             show_alternate_ui or show_default_ui"
+        ),
+    })
 }
 
 /// Set AXFocused=true on an element (for pre-focusing before key press).
 pub fn focus_element(element_ptr: usize) -> anyhow::Result<()> {
-    let err = unsafe {
-        set_bool_attr_true(element_ptr as AXUIElementRef, "AXFocused")
-    };
+    let err = unsafe { set_bool_attr_true(element_ptr as AXUIElementRef, "AXFocused") };
     if err == kAXErrorSuccess {
         Ok(())
     } else {
@@ -42,14 +303,88 @@ pub fn focus_element(element_ptr: usize) -> anyhow::Result<()> {
     }
 }
 
-/// Set the AXValue of an element (for dropdowns, text fields, etc.).
-pub fn set_ax_value(element_ptr: usize, value: &str) -> anyhow::Result<()> {
-    let err = unsafe {
-        set_string_attr(element_ptr as AXUIElementRef, "AXValue", value)
-    };
-    if err == kAXErrorSuccess {
-        Ok(())
-    } else {
-        anyhow::bail!("AXUIElementSetAttributeValue(AXValue) failed with error {err}")
+/// Report whether `element_ptr` is the application's currently focused element.
+///
+/// This is a read-only confirmation for the foreground typing rung: an
+/// `AXFocused` write can be accepted by the element and then immediately
+/// clobbered when AppKit installs the window's remembered first responder, so
+/// "the write returned success" is not evidence that focus stuck. Identity is
+/// compared with `CFEqual` because the app hands back a fresh `AXUIElementRef`
+/// for the same underlying element.
+///
+/// A `false` return is deliberately conservative: an app whose
+/// `AXFocusedUIElement` is unreadable reports not-focused, which at worst costs
+/// one extra re-apply.
+pub fn is_element_focused(pid: i32, element_ptr: usize) -> bool {
+    unsafe {
+        let Some(focused) = crate::ax::bindings::focused_element_of_pid(pid) else {
+            return false;
+        };
+        let same = CFEqual(focused as CFTypeRef, element_ptr as CFTypeRef) != 0;
+        CFRelease(focused as CFTypeRef);
+        same
+    }
+}
+
+/// Report whether `element_ptr` holds keyboard focus, by either readback.
+///
+/// The application's `AXFocusedUIElement` is the stronger signal, but for
+/// web content (the Tauri fixture) in a background window it does not name
+/// the DOM control even after the control took focus, so a targeted
+/// background `press_key` was refused although the key would have landed.
+/// Accept the control's own `AXFocused = true` too. A write that AppKit
+/// clobbered reads back `false` either way.
+pub fn element_has_keyboard_focus(pid: i32, element_ptr: usize) -> bool {
+    is_element_focused(pid, element_ptr)
+        || unsafe { copy_bool_attr(element_ptr as AXUIElementRef, "AXFocused") } == Some(true)
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn action_names_accept_the_tree_spelling_and_refuse_unknown_ones() {
+        use super::map_action;
+        assert_eq!(map_action("press").unwrap(), "AXPress");
+        assert_eq!(
+            map_action("show_alternate_ui").unwrap(),
+            "AXShowAlternateUI"
+        );
+        assert_eq!(map_action("showalternateui").unwrap(), "AXShowAlternateUI");
+        assert_eq!(map_action("AXShowDefaultUI").unwrap(), "AXShowDefaultUI");
+        assert_eq!(map_action("right_click").unwrap(), "AXShowMenu");
+        // An unknown name must not fall back to pressing the control.
+        assert!(map_action("hover").is_err());
+    }
+
+    use super::*;
+
+    #[test]
+    fn disabled_elements_are_refused_before_dispatch() {
+        let error = ensure_ax_enabled(Some(false), "AXPick").unwrap_err();
+        let disabled = error
+            .downcast_ref::<ElementDisabled>()
+            .expect("a disabled target is a typed refusal");
+        assert_eq!(disabled.action, "AXPick");
+        let message = error.to_string();
+        assert!(message.contains("AXEnabled=false"));
+        // A foreground retry does not enable a disabled control.
+        assert!(!message.contains("foreground"));
+        assert!(!message.contains("bring_to_front"));
+    }
+
+    #[test]
+    fn enabled_or_unreported_state_is_allowed() {
+        assert!(ensure_ax_enabled(Some(true), "AXPress").is_ok());
+        assert!(ensure_ax_enabled(None, "AXPress").is_ok());
+    }
+
+    #[test]
+    fn selection_fallback_is_limited_to_collection_item_roles() {
+        for role in ["AXRow", "AXCell", "AXListItem", "AXImage"] {
+            assert!(is_selectable_container_role(role), "{role}");
+        }
+        for role in ["AXButton", "AXTextField", "AXWindow", "AXOutline"] {
+            assert!(!is_selectable_container_role(role), "{role}");
+        }
     }
 }

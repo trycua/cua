@@ -1,0 +1,95 @@
+# Changelog
+
+## [0.7.0](https://github.com/trycua/cua/compare/lume-v0.6.1...lume-v0.7.0) (2026-11-06)
+
+
+### Features
+
+* compat gateways for E2B and Daytona, Hetzner as your own cloud, the elastic pool, cua share and the public relay ([#5778](https://github.com/trycua/cua/issues/5778)) ([d4f3f80](https://github.com/trycua/cua/commit/d4f3f8063d7b30a3b3bda2b4c05c565a9dfcb460))
+* **lume:** add `lume cp` for host↔guest file transfer ([#4896](https://github.com/trycua/cua/issues/4896)) ([be898dc](https://github.com/trycua/cua/commit/be898dc7fc0034222aa7c75887dcd419e464befb))
+* **lume:** install source builds as lume-local, beside the released lume ([#5804](https://github.com/trycua/cua/issues/5804)) ([86aae66](https://github.com/trycua/cua/commit/86aae66ff31135ef6ba1036315b55b5f8892fc15))
+* **spaces:** ask first, CI runners, TCP shares, secure networks and the phone app, behind experiments ([#6355](https://github.com/trycua/cua/issues/6355)) ([8cfff8e](https://github.com/trycua/cua/commit/8cfff8ef0e4a904c1534eac44cea3d65e741e6fd))
+
+
+### Bug Fixes
+
+* **lume:** preserve background service during updates ([#4337](https://github.com/trycua/cua/issues/4337)) ([faa52c9](https://github.com/trycua/cua/commit/faa52c949a6b225332c9be428a2c8f5115f90fab))
+* **lume:** preserve legacy multipart disk bytes during assembly ([#4714](https://github.com/trycua/cua/issues/4714)) ([ffaa073](https://github.com/trycua/cua/commit/ffaa073ad9a291ee112d1761d8e01d20917d5fd3))
+* **lume:** print VM details as labeled fields in terminals ([#5358](https://github.com/trycua/cua/issues/5358)) ([d9998fb](https://github.com/trycua/cua/commit/d9998fb4af5d94f784209b0129b9f98c80088d5d))
+* **lume:** pull parameterized OCI tar disk parts ([9c97c20](https://github.com/trycua/cua/commit/9c97c20ad8908bb9fbd26683f618253b7ca37c1c))
+* **lume:** refuse a macOS guest start at the host's macOS guest limit ([#3958](https://github.com/trycua/cua/issues/3958)) ([69ca401](https://github.com/trycua/cua/commit/69ca401e2d6dcd713ba6ec5c52b9a2580a339625))
+* **lume:** report a VM stopped once its guest stops on its own ([#4853](https://github.com/trycua/cua/issues/4853)) ([3d9879e](https://github.com/trycua/cua/commit/3d9879ee54e728d4a2fa2f787f0a7353d412a7a8)), closes [#4704](https://github.com/trycua/cua/issues/4704)
+* **lume:** shell-escape remote command arguments in lume ssh ([#3879](https://github.com/trycua/cua/issues/3879)) ([#3911](https://github.com/trycua/cua/issues/3911)) ([b1c38d2](https://github.com/trycua/cua/commit/b1c38d2af14295c372f585c560612a9ab28cae91))
+* **lume:** stop a VM in lume serve without ending the server ([#4662](https://github.com/trycua/cua/issues/4662)) ([25f63ee](https://github.com/trycua/cua/commit/25f63eea951c1ac31f7b71357ba4c9f849199cec))
+* **lume:** verify VM owner before stopping ([524b7c4](https://github.com/trycua/cua/commit/524b7c43276fef51f9f01d9d74e6dfc2f6d9d519))
+* **spaces:** reach macOS VMs over vsock, not Local Network or VPN routes (CUA-3139) ([#6380](https://github.com/trycua/cua/issues/6380)) ([37af9df](https://github.com/trycua/cua/commit/37af9dffdd0a79d9bcbcee0667832272b556435a))
+
+## [0.6.1](https://github.com/trycua/cua/compare/lume-v0.6.0...lume-v0.6.1) (2026-10-04)
+
+
+### Bug Fixes
+
+* **lume:** share SSH event loop infrastructure ([#3272](https://github.com/trycua/cua/issues/3272)) ([ea4abe6](https://github.com/trycua/cua/commit/ea4abe672afc166fa42dcbd991e36749c44edf54))
+* **spaces-macos:** make a spare Mac a Spaces host you can use from another Mac ([#4512](https://github.com/trycua/cua/issues/4512)) ([410578a](https://github.com/trycua/cua/commit/410578a4a18e91fbee5d0a169342e3fb669a5bb9))
+
+## [0.6.0](https://github.com/trycua/cua/compare/lume-v0.5.3...lume-v0.6.0) (2026-10-01)
+
+
+### Features
+
+* **lume:** add macOS GPU passthrough ([#3070](https://github.com/trycua/cua/issues/3070)) ([3c1acf2](https://github.com/trycua/cua/commit/3c1acf27748c3e0f8ff71cd0c9ab072b1e160997))
+* add immutable Driver and Lume nightly releases ([#3097](https://github.com/trycua/cua/issues/3097)) ([8cef90b](https://github.com/trycua/cua/commit/8cef90b7ce6f85793a0ca3a3ddc050eac01b6b83))
+* add persistent Driver and Lume release channels ([#3102](https://github.com/trycua/cua/issues/3102)) ([0813659](https://github.com/trycua/cua/commit/0813659ac237cd46da21c2a51f9a95f27a3e7845))
+* **lume:** support running without a VNC listener ([#3209](https://github.com/trycua/cua/issues/3209)) ([ab957bd](https://github.com/trycua/cua/commit/ab957bdb7566f7e137b00654cc01167d9e42af38))
+* merge updated sdk from cua-staging ([#4397](https://github.com/trycua/cua/issues/4397)) ([9166817](https://github.com/trycua/cua/commit/9166817485ae53f3966935c13878a8196d79a399))
+* **lume:** add force/timeout to stop and fix stuck stop for detached VMs ([#4235](https://github.com/trycua/cua/issues/4235)) ([14f66c8](https://github.com/trycua/cua/commit/14f66c849217b59c89d72b16e04148e0ab93aea2))
+
+## [0.5.3](https://github.com/trycua/cua/compare/lume-v0.5.2...lume-v0.5.3) (2026-08-11)
+
+
+### Bug Fixes
+
+* **lume:** handle reused OCI disk layer digests ([#3066](https://github.com/trycua/cua/issues/3066)) ([69a5e38](https://github.com/trycua/cua/commit/69a5e38caea9f29538a1bc57cc6b79617d9a8af1))
+
+## [0.5.2](https://github.com/trycua/cua/compare/lume-v0.5.1...lume-v0.5.2) (2026-08-11)
+
+
+### Bug Fixes
+
+* **lume:** bound stalled ARP lookups ([#2710](https://github.com/trycua/cua/issues/2710)) ([a410c7a](https://github.com/trycua/cua/commit/a410c7ab7e83a254604082628e705fa1580b5ca8))
+* **lume:** tolerate missing terminal capabilities ([#2186](https://github.com/trycua/cua/issues/2186)) ([d7b29a9](https://github.com/trycua/cua/commit/d7b29a9b9520ce5164a92e89935bd365e663acca))
+
+## [0.5.1](https://github.com/trycua/cua/compare/lume-v0.5.0...lume-v0.5.1) (2026-07-31)
+
+
+### Bug Fixes
+
+* **lume:** run macos installer on vm queue ([#2708](https://github.com/trycua/cua/issues/2708)) ([c4e150c](https://github.com/trycua/cua/commit/c4e150cd90151ad2330aad10e9e23c7cec507167))
+
+## [0.5.0](https://github.com/trycua/cua/compare/lume-v0.4.0...lume-v0.5.0) (2026-07-28)
+
+
+### Features
+
+* **lume:** add live display attach and guest power commands ([#2642](https://github.com/trycua/cua/issues/2642)) ([57fae6a](https://github.com/trycua/cua/commit/57fae6aed0718a3948cbf575b5b04ad9b30d85cb))
+* **lume:** add native file drag and drop ([faa0e1e](https://github.com/trycua/cua/commit/faa0e1e1d4e5bbcef1906189998df704e8cc2052))
+* **lume:** add native macOS VM display ([#2641](https://github.com/trycua/cua/issues/2641)) ([7a5bc82](https://github.com/trycua/cua/commit/7a5bc829cd8b9a87ce67953bcf5adf4e3a5165a9))
+* **lume:** open native display by default ([644c012](https://github.com/trycua/cua/commit/644c012835b69deb686e2a98fc93e65345eaa372))
+* **lume:** support detached VM runs ([#2647](https://github.com/trycua/cua/issues/2647)) ([9b7797a](https://github.com/trycua/cua/commit/9b7797a8a72fa722f401d5e5a91a7fb7cb19ac6d))
+
+
+### Bug Fixes
+
+* **lume:** distinguish running VMs from resize recovery ([9a02db4](https://github.com/trycua/cua/commit/9a02db498e1729492b6823c1ff14f249e4a141d1))
+* **lume:** make native clipboard actions reliable ([7ba697f](https://github.com/trycua/cua/commit/7ba697f1d35556cc754de9bdaed5c83050ca9af5))
+* **lume:** prevent SSH promise lifecycle crash ([#2640](https://github.com/trycua/cua/issues/2640)) ([21e3524](https://github.com/trycua/cua/commit/21e352498b782dd0218cd5cb72a2d150cbfea174))
+* **lume:** refresh live folder shares ([#2649](https://github.com/trycua/cua/issues/2649)) ([1be5ca1](https://github.com/trycua/cua/commit/1be5ca1e60442b5662118099077f8a671f9da595))
+
+## [0.4.0](https://github.com/trycua/cua/compare/lume-v0.3.16...lume-v0.4.0) (2026-07-23)
+
+
+### Features
+
+* **lume:** add additional virtio-blk data disks ([a375b3f](https://github.com/trycua/cua/commit/a375b3ff1712a07233f14985de07072810caf498))
+* **lume:** add schema-v3 product telemetry ([22ccc04](https://github.com/trycua/cua/commit/22ccc04ed09a4ac0b5fe24f0660ef2169e9acec5))
+* **release:** automate Driver and Lume attribution ([#2267](https://github.com/trycua/cua/issues/2267)) ([5019927](https://github.com/trycua/cua/commit/50199272cff60b11df0374dd26db365338be5744))

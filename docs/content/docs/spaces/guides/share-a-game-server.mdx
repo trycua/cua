@@ -1,0 +1,161 @@
+---
+title: Share a game server
+description: 'Share a TCP service in a Space, such as a Minecraft server, at a public address anyone can connect to.'
+---
+
+A game server speaks plain TCP, not HTTP, so a share link cannot carry it.
+A public TCP share gives it a public address instead: a host and port people
+connect to, and for known games on Cua's relay a name they can type, such as
+`mc-1a2b3c4d.m.cua.sh` for Minecraft.
+
+<Callout type="info">
+  Public TCP shares are an experiment. Turn on **Public TCP shares** in
+  Settings, Labs. Until then every TCP share is refused.
+</Callout>
+
+## Share a Minecraft server
+
+Run the server in a Space (for example `mc`), then share its port:
+
+```bash skip="no-runner"
+cua share space:mc:25565 --tcp --public --service minecraft
+```
+
+The command prints the address to type in Minecraft's "Server Address", and
+one line saying how it is reached ("Through your AWS account" or "Through
+Cua"). Players need nothing from Cua. `cua share ls` lists the share, and
+`cua share stop <id>` ends it at once.
+
+From an agent inside the Space, the same works with the Space's own port:
+`cua share 25565 --tcp --public --service minecraft`, or the
+`share_tcp_port` tool of the Space's MCP server. The agent needs Child Spaces
+turned on for that Space, because it asks through the same narrow channel.
+An agent's share waits for you first (see [Approval](#approval)).
+
+## How people reach it
+
+Each share takes one of three routes, picked when it is made:
+
+| Route | When | What people connect to |
+|---|---|---|
+| Your cloud host | The Space runs in your linked cloud | The Space's own host: its address and one port opened for this share |
+| Your share server | The Space runs on your computer and a cloud is linked | One small server in your cloud, reused for every share; your computer connects out to it |
+| Cua | No cloud is linked | Cua's relay, with the limits below |
+
+With a cloud linked, the traffic of your shares stays between your players,
+your cloud and your computer. The address is your cloud's own (an IP address
+and port, or the server's cloud host name); it does not depend on Cua's DNS.
+
+To pick a route yourself, add `--route host`, `--route edge` or
+`--route relay`.
+
+### Your cloud host
+
+A Space in your linked cloud runs on its own host. A share opens exactly
+one TCP port of that computer's Cua firewall, to the addresses you allow, and
+the Space serves only that port. The firewall rule carries Cua's tags and the
+share's end time; it closes when the share ends, and a sweep closes any rule
+a crash left behind. Spaces made before this feature need to be made again to
+serve shares this way.
+
+### Your share server
+
+The first share through a cloud asks once:
+
+> This creates a small server in your AWS account (about $7 a month plus
+> $0.09 per GB players download). Remove it any time.
+
+Say yes in the app, answer `y` to the command, or pass `--yes`. Cua then
+makes one small server in your account with its own address and its own
+certificate (no Cua keys or certificates are copied to it), reuses it for
+every later share, and removes it after three days without shares, or when
+you remove it:
+
+```bash skip="no-runner"
+cua share settings --remove-edge
+```
+
+The server runs nothing but the share relay: no SSH, security updates
+installed automatically, every port closed except the share ports and the
+one your computer connects out on. Your computer dials it; nothing in your
+network is opened.
+
+### Cua
+
+Without a linked cloud, Cua's relay carries the share. You can turn this off
+so shares only ever go through your own cloud:
+
+```bash skip="no-runner"
+cua share settings --land only-my-cloud
+```
+
+## Who can connect
+
+By default anyone with the address can connect. To limit a share to some
+addresses, pass them (repeat `--allow`, addresses or CIDR ranges):
+
+```bash skip="no-runner"
+cua share space:mc:25565 --tcp --public --service minecraft \
+  --allow 203.0.113.7 --allow 198.51.100.0/24
+```
+
+On your cloud host the firewall rule itself only opens to those
+addresses. `cua share settings --allow ...` sets the list new shares start
+with.
+
+For Minecraft Java, `--check-host` also drops connections that did not dial
+this share's address, such as port scanners.
+
+## Approval
+
+A public share an agent asks for waits for you. It shows in the app's Shared
+links with **Approve** and **Turn down**, and in `cua share ls` as `waiting`:
+
+```bash skip="no-runner"
+cua share approve share-1a2b3c4d5e6f
+# and let that Space share without asking from now on
+cua share approve share-1a2b3c4d5e6f --always
+```
+
+An agent never agrees to a share server's cost for you: a share that needs
+one waits for you either way. Turn approval off with
+`cua share settings --approve-agents off`.
+
+## Daily data cap
+
+Public shares stop for the day once they moved the daily cap (2 GB unless
+you change it), so a busy server cannot run up your cloud's data bill:
+
+```bash skip="no-runner"
+cua share settings --daily-cap 5GB
+cua share settings --daily-cap off
+```
+
+`cua share settings` shows the cap, what was used today, where shares go and
+the share server, if there is one.
+
+## What a TCP share can reach
+
+- Only the one port of the one Space it names. It never reaches this
+  computer, your network or another Space. An agent can share ports of its
+  own Space and the Spaces it made, nothing else.
+- Admin and remote-access ports are refused: SSH, RDP, VNC, the Minecraft
+  console (RCON, 25575), Docker and Kubernetes APIs, and common databases.
+
+## Limits
+
+| Limit | Value |
+|---|---|
+| How long a share lasts | 24 hours, or less with `--ttl` |
+| Shares at once | 2 per tree of Spaces; on Cua's relay also 2 per account |
+| New connections from one address | 2 per second, bursts of 10 |
+| Players at once | 64 connections per share |
+| Speed (Cua's relay) | 4 MiB/s per share, both directions together |
+
+A share ends when it expires, when you stop it, when the day's data cap is
+reached, or when its Space (or the Space whose agent made it) is deleted. If
+the computer serving it goes offline, the address stops working within ten
+minutes.
+
+Every share, approval and stop is in your audit log, with who made it and
+its route.

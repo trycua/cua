@@ -1,2 +1,2 @@
-# Python dependencies for documentation generation
-griffe>=0.40.0
+# Python dependencies for documentation generation (pinned: output must be deterministic)
+griffe==2.3.0

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! WKWebView detection: checks whether a process embeds WebKit.
 
 /// Returns true if the process at `pid` is a WKWebView-based app (but not Electron).
@@ -5,9 +8,7 @@ pub fn is_wk_web_view_app(pid: i32) -> bool {
     let apps = crate::apps::list_running_apps();
     let app = apps.iter().find(|a| a.pid == pid);
 
-    let bundle_path: Option<String> = app.and_then(|a| {
-        find_bundle_path_for_app_name(&a.name)
-    });
+    let bundle_path: Option<String> = app.and_then(|a| find_bundle_path_for_app_name(&a.name));
 
     if let Some(ref bp) = bundle_path {
         // If it has Electron Framework it's Electron, not WKWebView.

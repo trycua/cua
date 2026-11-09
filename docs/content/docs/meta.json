@@ -1,5 +1,13 @@
 {
-  "title": "Home",
-  "description": "Documentation Home",
-  "pages": ["cua-driver", "cua", "cuabench", "cuabot", "lume"]
+  "title": "Documentation",
+  "root": true,
+  "pages": [
+    "index",
+    "spaces",
+    "cua-driver",
+    "lume",
+    "cua-sdk",
+    "cua-cli",
+    "cua-bench"
+  ]
 }

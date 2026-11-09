@@ -5,7 +5,7 @@ import Virtualization
 private func parseNetworkModeString(_ value: String) throws -> NetworkMode {
     guard let mode = NetworkMode.parse(value) else {
         throw ValidationError(
-            "Invalid network mode '\(value)'. Expected 'nat', 'bridged', or 'bridged:<interface>'."
+            "Invalid network mode '\(value)'. Expected 'nat', 'bridged', 'bridged:<interface>' or 'gateway:<socket path>'."
         )
     }
     return mode
@@ -20,6 +20,13 @@ struct RunVMRequest: Codable {
     let nvramPath: String?
     let network: String?
     let clipboard: Bool?
+    /// "enabled" (default) or "disabled". Absent keeps the historic behavior of
+    /// always starting a VNC server.
+    let vnc: String?
+    /// Guest ports to publish on host loopback ports over vsock (the VM
+    /// gets a virtio socket device; the guest needs Cua's vsock agent).
+    /// `get` reports the host ports under `forwards` once the agent answers.
+    var forwards: [UInt16]? = nil
 
     struct SharedDirectoryRequest: Codable {
         let hostPath: String
@@ -53,6 +60,31 @@ struct RunVMRequest: Codable {
         }
         return try parseNetworkModeString(network)
     }
+
+    func parseVNCPolicy() throws -> VNCPolicy {
+        guard let vnc else {
+            return .enabled
+        }
+        guard let policy = VNCPolicy(rawValue: vnc) else {
+            throw ValidationError(
+                "Invalid vnc policy '\(vnc)'. Expected 'enabled' or 'disabled'.")
+        }
+        return policy
+    }
+
+    func validatedVNCPolicy(noDisplayDefault: Bool) throws -> VNCPolicy {
+        let policy = try parseVNCPolicy()
+        let noDisplay = self.noDisplay ?? noDisplayDefault
+        if let option = VNCPolicy.conflictingOption(
+            policy: policy,
+            displayMode: noDisplay ? .none : .vnc,
+            vncPort: 0,
+            vncPassword: nil
+        ) {
+            throw VMError.vncDisabledConflict(option)
+        }
+        return policy
+    }
 }
 
 struct PullRequest: Codable {
@@ -76,6 +108,10 @@ struct PullRequest: Codable {
     }
 }
 
+struct PullCancelRequest: Codable {
+    let name: String
+}
+
 struct CreateVMRequest: Codable {
     let name: String
     let os: String
@@ -85,7 +121,7 @@ struct CreateVMRequest: Codable {
     let display: String
     let ipsw: String?
     let storage: String?
-    /// Preset name or path to YAML config file for unattended macOS Setup Assistant automation
+    /// Preset name or YAML path for offline unattended macOS setup
     let unattended: String?
     /// Network mode: "nat" (default), "bridged", or "bridged:<interface>"
     let network: String?
@@ -101,7 +137,9 @@ struct CreateVMRequest: Codable {
         guard let network else {
             return .nat
         }
-        return try parseNetworkModeString(network)
+        let mode = try parseNetworkModeString(network)
+        try mode.checkStorable()
+        return mode
     }
 }
 
@@ -111,6 +149,9 @@ struct SetVMRequest: Codable {
     let diskSize: String?
     let display: String?
     let storage: String?
+    let noBackup: Bool?
+    let keepBackup: Bool?
+    let dryRun: Bool?
 
     func parse() throws -> (memory: UInt64?, diskSize: UInt64?, display: VMDisplayResolution?) {
         return (
@@ -132,6 +173,13 @@ struct CloneRequest: Codable {
     let newName: String
     let sourceLocation: String?
     let destLocation: String?
+    /// Clone the source's saved machine state too (`POST /lume/vms/:name/suspend`).
+    let withSavedState: Bool?
+}
+
+struct RenameVMRequest: Codable {
+    let newName: String
+    let storage: String?
 }
 
 struct SetupVMRequest: Codable {

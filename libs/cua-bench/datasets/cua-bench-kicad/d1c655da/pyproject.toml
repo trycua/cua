@@ -1,0 +1,15 @@
+[project]
+name = "cua-bench-kicad-d1c655da-env"
+version = "0.1.0"
+license = "MIT"
+authors = [
+    { name = "Snorkel AI" },
+    { name = "Cua" }
+]
+requires-python = ">=3.11"
+
+[tool.cua-bench]
+description = "Modify the overall gain of the circuit by changing R10 to 2.80kOhm."
+difficulty = "medium"
+category = "eda"
+tags = ["kicad", "schematic", "eda"]

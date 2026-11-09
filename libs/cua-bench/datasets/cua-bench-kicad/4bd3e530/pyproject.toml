@@ -1,0 +1,15 @@
+[project]
+name = "cua-bench-kicad-4bd3e530-env"
+version = "0.1.0"
+license = "MIT"
+authors = [
+    { name = "Snorkel AI" },
+    { name = "Cua" }
+]
+requires-python = ">=3.11"
+
+[tool.cua-bench]
+description = "Give me a KiCad schematic for a simple +5V LED flasher using a 2N3904 transistor where a 2-lead self-flashing LED drives a second brighter LED. Use a 1k resistor and 100uF capacitor in the collector timing network, and use 10k and 4.7k resistors to bias the base and load the output."
+difficulty = "easy"
+category = "eda"
+tags = ["kicad", "schematic", "eda"]

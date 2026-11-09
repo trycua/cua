@@ -1,11 +1,16 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use async_trait::async_trait;
-use cua_driver_core::{protocol::ToolResult, tool::{Tool, ToolDef}};
+use cua_driver_core::{
+    protocol::ToolResult,
+    tool::{Tool, ToolDef},
+};
 use serde_json::Value;
 use std::sync::Arc;
 
 use crate::ax::bindings::{
-    copy_action_names, element_screen_center, perform_action, kAXErrorSuccess,
-    AXUIElementRef,
+    copy_action_names, element_screen_center, kAXErrorSuccess, perform_action, AXUIElementRef,
 };
 
 use super::ToolState;
@@ -14,8 +19,20 @@ pub struct DoubleClickTool {
     state: Arc<ToolState>,
 }
 
+fn background_action_for_element(
+    has_ax_open: bool,
+) -> cua_driver_core::background_input::BackgroundAction {
+    if has_ax_open {
+        cua_driver_core::background_input::BackgroundAction::AxSemantic
+    } else {
+        cua_driver_core::background_input::BackgroundAction::WindowPointer
+    }
+}
+
 impl DoubleClickTool {
-    pub fn new(state: Arc<ToolState>) -> Self { Self { state } }
+    pub fn new(state: Arc<ToolState>) -> Self {
+        Self { state }
+    }
 }
 
 static DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
@@ -24,22 +41,23 @@ fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
         name: "double_click".into(),
         description:
-            "Double-click at (x, y) or on an AX element identified by element_index + window_id.\n\n\
-             AX path (element_index provided): performs `AXOpen` when the element advertises it \
+            "Double-click at (x, y) or on an AX element identified by element_token.\n\n\
+             AX path (element_token provided): performs `AXOpen` when the element advertises it \
              (Finder items, openable list rows/cells); otherwise resolves the element's on-screen \
              center and falls back to a pixel double-click there.\n\n\
              Pixel path (x, y provided): two down/up pairs ~80 ms apart at the given coordinates."
             .into(),
         input_schema: serde_json::json!({
             "type": "object",
-            "required": ["pid"],
+            "required": [],
             "properties": {
-                "session": { "type": "string", "description": "Optional session id: declares/uses the agent cursor and per-session state for this run. The same id works over MCP, the CLI, or the raw socket, and follows the run across apps/windows. Omit to run cursor-less." },
-                "pid":           { "type": "integer" },
+                "session": { "type": "string", "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session." },
+                "pid":           { "type": "integer", "description": "Target process ID. Optional with element_token (the token carries the pid)." },
                 "x":             { "type": "number",  "description": "Screen X coordinate (pixel path)." },
                 "y":             { "type": "number",  "description": "Screen Y coordinate (pixel path)." },
-                "window_id":     { "type": "integer", "description": "CGWindowID. Required when element_index is used." },
-                "element_index": { "type": "integer", "description": "Element index from last get_window_state. Uses AX path." }
+                "window_id":     { "type": "integer", "description": "CGWindowID. Omit when element_token is supplied (the token carries it)." },
+                "element_token": cua_driver_core::tool_schema::element_token_schema(),
+                "delivery_mode": cua_driver_core::tool_schema::delivery_mode_schema()
             },
             "additionalProperties": false
         }),
@@ -52,131 +70,200 @@ fn def() -> &'static ToolDef {
 
 #[async_trait]
 impl Tool for DoubleClickTool {
-    fn def(&self) -> &ToolDef { def() }
+    fn def(&self) -> &ToolDef {
+        def()
+    }
 
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
-        let pid = match args.require_i32("pid") { Ok(v) => v, Err(e) => return e };
+        let pid = match super::target_pid(&self.state, &args) {
+            Ok(v) => v,
+            Err(e) => return e,
+        };
+        // delivery_mode: foreground briefly fronts the window before the pixel
+        // double-click (the explicit last resort for surfaces that drop
+        // background CGEvents), via the same skylight assist click uses.
+        let delivery_mode = super::DeliveryMode::parse(args.opt_str("delivery_mode").as_deref());
         let cursor_key = super::cursor_tools::resolve_cursor_key(&args);
-        let element_index = args.opt_u64("element_index").map(|v| v as usize);
-        let window_id     = args.opt_u64("window_id").map(|v| v as u32);
+        let window_id_arg = args.opt_u64("window_id");
+        let resolved = match self.state.snapshots.resolve(pid, &args) {
+            Ok(r) => r,
+            Err(e) => return e,
+        };
+        let (element_index, window_id, element_guard) = resolved.into_parts(window_id_arg);
+        let window_id = match super::native_window_id(window_id) {
+            Ok(window_id) => window_id,
+            Err(error) => return error,
+        };
 
         // ── AX element path ──────────────────────────────────────────────────
-        if let (Some(idx), Some(wid)) = (element_index, window_id) {
-            // Retain out of the cache so a concurrent get_window_state can't
-            // free the element mid-action (use-after-free → daemon crash).
-            let element_guard = match self.state.element_cache.get_element_retained(pid, wid, idx) {
-                Some(e) => e,
-                None    => return ToolResult::error(format!(
-                    "Element index {idx} not found. Call get_window_state first."
-                )),
-            };
+        if let (Some(idx), Some(wid), Some(element_guard)) =
+            (element_index, window_id, element_guard)
+        {
             let element_ptr = element_guard.as_ptr();
+
+            // Choose one background actuator before dispatch. An element that
+            // advertises AXOpen uses the exact semantic route; all other
+            // elements require the stricter routed-pointer proof. Do not let a
+            // failed AXOpen silently cross into an ungated pointer fallback.
+            let probe_guard = element_guard.clone();
+            let has_ax_open = tokio::task::spawn_blocking(move || unsafe {
+                copy_action_names(probe_guard.as_ptr() as AXUIElementRef)
+                    .iter()
+                    .any(|action| action == "AXOpen")
+            })
+            .await
+            .unwrap_or(false);
+            let _mutation_lease = if !delivery_mode.is_foreground() {
+                let action = background_action_for_element(has_ax_open);
+                match super::gate_background_window_action(pid, wid, Some(element_ptr), action)
+                    .await
+                {
+                    Ok(lease) => Some(lease),
+                    Err(refusal_result) => return refusal_result,
+                }
+            } else {
+                None
+            };
+            if let Some(refusal) = super::refuse_if_disabled(
+                pid,
+                wid,
+                &element_guard,
+                "double_click",
+                delivery_mode.is_foreground(),
+            )
+            .await
+            {
+                return refusal;
+            }
 
             // Thread the resolved session cursor key into the blocking AX path
             // so its ClickPulse lands on THIS session's cursor, not "default".
             let ck = cursor_key.clone();
-            let result = tokio::task::spawn_blocking(move || {
-                ax_double_click(pid, element_ptr, idx, &ck)
-            }).await;
+            let foreground = delivery_mode.is_foreground();
+            // AXOpen or the routed double-click can make the app activate
+            // itself (opening a document or a register). In the background,
+            // revert that and keep the user's key window, as `click` does.
+            let prior_front = crate::apps::frontmost_pid();
+            let snapshot = if foreground {
+                crate::window_change_detector::WindowChangeDetector::snapshot_without_suppression(
+                    prior_front,
+                )
+            } else {
+                crate::window_change_detector::WindowChangeDetector::snapshot(prior_front)
+            };
+            let result = crate::focus_guard::with_focus_suppressed(
+                (!foreground).then_some(pid),
+                prior_front,
+                "double_click.ax",
+                || async move {
+                    tokio::task::spawn_blocking(move || {
+                        let act = || {
+                            ax_double_click(
+                                pid,
+                                wid,
+                                element_guard.as_ptr(),
+                                idx,
+                                &ck,
+                                has_ax_open,
+                                foreground,
+                            )
+                        };
+                        if !foreground {
+                            return act();
+                        }
+                        // Front, act, restore, as click's foreground AX path
+                        // does; activation can enable the control.
+                        let mut outcome = None;
+                        crate::input::skylight::with_foreground_assist(
+                            pid as libc::pid_t,
+                            wid,
+                            || {
+                                outcome = Some(act()?);
+                                Ok(())
+                            },
+                        )?;
+                        outcome.ok_or_else(|| {
+                            anyhow::anyhow!("foreground double_click did not execute")
+                        })
+                    })
+                    .await
+                },
+            )
+            .await;
+            let changes = super::finish_window_observation(snapshot).await;
 
             return match result {
-                Ok(Ok(msg))  => ToolResult::text(msg),
-                Ok(Err(e))   => ToolResult::error(format!("double_click failed: {e}")),
-                Err(e)       => ToolResult::error(format!("Task error: {e}")),
+                Ok(Ok(msg)) => ToolResult::text(format!("{msg}{}", changes.result_suffix())),
+                Ok(Err(e)) => super::element_disabled_error(pid, wid, &e, foreground)
+                    .unwrap_or_else(|| ToolResult::error(format!("double_click failed: {e}"))),
+                Err(e) => ToolResult::error(format!("Task error: {e}")),
             };
         }
 
         // ── Pixel path ───────────────────────────────────────────────────────
-        let mut cx = match args.get("x").and_then(|v| v.as_f64()) {
-            Some(v) => v,
-            None => return ToolResult::error(
-                "Either element_index + window_id or x + y must be provided."
-            ),
-        };
-        let mut cy = match args.get("y").and_then(|v| v.as_f64()) {
-            Some(v) => v,
-            None => return ToolResult::error("Missing required parameter: y"),
-        };
-
-        // Scale back from downscaled-image space to native pixels when needed.
-        if let Some(ratio) = self.state.resize_registry.ratio(pid) {
-            cx *= ratio;
-            cy *= ratio;
+        // A pixel double-click is a click with count 2. Route it through
+        // `click` so it gets the same coordinate mapping, exact-window gate,
+        // window-change observation, key-focus guard and focus-steal restore.
+        // Some apps activate themselves when a double-click opens something
+        // (GnuCash opening an account register); before this, the pixel
+        // double-click had none of those and the activation stayed (Bench v2
+        // CDB-G03, CUA-1341).
+        if args.get("x").and_then(|v| v.as_f64()).is_none() {
+            return ToolResult::error("Either element_token or x + y must be provided.");
         }
-
-        // Window-local → screen coordinate translation + win-local logical coords
-        // for CGEventSetWindowLocation (matches click.rs enhancement).
-        let (screen_x, screen_y, win_local_x, win_local_y) = if let Some(wid) = window_id {
-            let result = tokio::task::spawn_blocking(move || {
-                let bounds = crate::windows::window_bounds_by_id(wid);
-                let scale: f64 = if let Some(ref b) = bounds {
-                    if let Ok(png) = crate::capture::screenshot_window_bytes(wid) {
-                        if png.len() >= 24 {
-                            let pw = u32::from_be_bytes([png[16], png[17], png[18], png[19]]) as f64;
-                            let lw = b.width;
-                            if lw > 0.0 && pw > lw { pw / lw } else { 1.0 }
-                        } else { 1.0 }
-                    } else { 1.0 }
-                } else { 1.0 };
-                (bounds, scale)
-            }).await.unwrap_or((None, 1.0));
-            if let (Some(b), scale) = result {
-                let wx = cx / scale;
-                let wy = cy / scale;
-                (b.x + wx, b.y + wy, wx, wy)
-            } else {
-                (cx, cy, cx, cy)
-            }
-        } else {
-            (cx, cy, cx, cy)
-        };
-
-        // Pin overlay above the target window before animating.
-        if let Some(wid) = window_id {
-            crate::cursor::overlay::send_command(
-                cursor_key.clone(),
-                cursor_overlay::OverlayCommand::PinAbove(wid as u64),
-            );
+        if args.get("y").and_then(|v| v.as_f64()).is_none() {
+            return ToolResult::error("Missing required parameter: y");
         }
-        // Animate cursor to the click point; wait for arrival before firing.
-        crate::cursor::overlay::animate_cursor_to(cursor_key.clone(), screen_x, screen_y).await;
-        crate::cursor::overlay::send_command(
-            cursor_key.clone(),
-            cursor_overlay::OverlayCommand::ClickPulse { x: screen_x, y: screen_y },
-        );
-
-        let result = tokio::task::spawn_blocking(move || {
-            if let Some(wid) = window_id {
-                crate::input::mouse::click_at_xy_with_window_local(
-                    pid, screen_x, screen_y, win_local_x, win_local_y, wid, 2, &[],
-                )
-            } else {
-                crate::input::mouse::click_at_xy(pid, screen_x, screen_y, 2, &[])
-            }
-        }).await;
-
-        match result {
-            Ok(Ok(())) => ToolResult::text(format!("✅ Double-clicked at ({screen_x:.1}, {screen_y:.1}).")),
-            Ok(Err(e)) => ToolResult::error(format!("Double-click failed: {e}")),
-            Err(e)     => ToolResult::error(format!("Task error: {e}")),
+        let mut click_args = args;
+        if let Some(map) = click_args.as_object_mut() {
+            map.insert("count".into(), serde_json::json!(2));
         }
+        super::click::ClickTool::new(self.state.clone())
+            .invoke(click_args)
+            .await
     }
 }
 
 // ── Blocking AX path ─────────────────────────────────────────────────────────
 
-fn ax_double_click(pid: i32, element_ptr: usize, idx: usize, cursor_key: &str) -> anyhow::Result<String> {
+fn ax_double_click(
+    pid: i32,
+    wid: u32,
+    element_ptr: usize,
+    idx: usize,
+    cursor_key: &str,
+    has_ax_open: bool,
+    foreground: bool,
+) -> anyhow::Result<String> {
     let element = element_ptr as AXUIElementRef;
+    // The caller's early read skips a foreground call into a background app,
+    // so this read, right before input, is the one that always runs.
+    if foreground {
+        // Activation has just run; the app may not have enabled it yet.
+        crate::input::ax_actions::ensure_ax_action_enabled_after_activation(
+            element_ptr,
+            "double_click",
+        )?;
+    } else {
+        crate::input::ax_actions::ensure_ax_action_enabled(element_ptr, "double_click")?;
+    }
 
     // Try AXOpen first (Finder items, openable list rows, document cells).
-    let actions = unsafe { copy_action_names(element) };
-    if actions.iter().any(|a| a == "AXOpen") {
+    if has_ax_open {
         let err = unsafe { perform_action(element, "AXOpen") };
         if err == kAXErrorSuccess {
             return Ok(format!("AXOpen performed on element [{idx}]."));
         }
-        tracing::debug!("AXOpen returned {err} for element [{idx}], falling back to pixel double-click");
+        if !foreground {
+            anyhow::bail!(
+                "AXOpen returned {err} for element [{idx}]; background delivery will not \
+                 improvise a pointer fallback after choosing the semantic route"
+            );
+        }
+        tracing::debug!(
+            "AXOpen returned {err} for element [{idx}], falling back to pixel double-click"
+        );
     }
 
     // Resolve screen center and fall back to pixel double-click.
@@ -188,6 +275,52 @@ fn ax_double_click(pid: i32, element_ptr: usize, idx: usize, cursor_key: &str) -
         cursor_key.to_owned(),
         cursor_overlay::OverlayCommand::ClickPulse { x: cx, y: cy },
     );
-    crate::input::mouse::click_at_xy(pid, cx, cy, 2, &[])?;
-    Ok(format!("✅ Double-clicked element [{idx}] at ({cx:.1}, {cy:.1})."))
+    // Use the window-local primitive (not bare click_at_xy): a plain
+    // click_at_xy does NOT reliably reach a backgrounded / non-key window — it
+    // no-ops on AppKit controls that hit-test the window-local stamp. Mirror the
+    // delivering path the `click` pixel branch uses so the double-click actually
+    // lands without foregrounding the app.
+    // Window-routed target: we MUST have the window's bounds to translate the
+    // screen center into a window-local stamp. If bounds are missing, refuse
+    // rather than stamping screen coords as window-local — that no-ops or hits
+    // the wrong location while still routing to `wid`.
+    let (wx, wy) = crate::windows::window_bounds_by_id(wid)
+        .map(|b| (cx - b.x, cy - b.y))
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "Cannot resolve window bounds for window_id {wid}; refusing to stamp \
+             screen coordinates as window-local for element [{idx}]."
+            )
+        })?;
+    crate::input::mouse::click_at_xy_with_window_local(
+        pid,
+        cx,
+        cy,
+        wx,
+        wy,
+        wid,
+        2,
+        &[],
+        crate::input::mouse::WindowClickDelivery::from_foreground(foreground),
+    )?;
+    Ok(format!(
+        "✅ Double-clicked element [{idx}] at ({cx:.1}, {cy:.1})."
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn background_element_route_does_not_guess_across_actuator_classes() {
+        assert_eq!(
+            background_action_for_element(true),
+            cua_driver_core::background_input::BackgroundAction::AxSemantic
+        );
+        assert_eq!(
+            background_action_for_element(false),
+            cua_driver_core::background_input::BackgroundAction::WindowPointer
+        );
+    }
 }

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Defensive sanitization for `text` payloads passed to `type_text`.
 //!
 //! When an LLM agent calls a tool with a long multi-line `text` parameter
@@ -93,7 +96,10 @@ pub fn strip_trailing_agent_protocol_tags(text: &str) -> Cow<'_, str> {
         if inner.is_empty() || inner.chars().any(char::is_whitespace) {
             break;
         }
-        if !PROTOCOL_TAG_NAMES.iter().any(|name| inner.eq_ignore_ascii_case(name)) {
+        if !PROTOCOL_TAG_NAMES
+            .iter()
+            .any(|name| inner.eq_ignore_ascii_case(name))
+        {
             break;
         }
         // Balance check: is there an opening `<NAME` (case-insensitive,
@@ -158,8 +164,6 @@ fn has_matching_opener(prelude: &str, name: &str) -> bool {
     }
     false
 }
-
-
 
 #[cfg(test)]
 mod tests {

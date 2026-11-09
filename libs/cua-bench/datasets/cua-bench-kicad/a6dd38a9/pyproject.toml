@@ -1,0 +1,15 @@
+[project]
+name = "cua-bench-kicad-a6dd38a9-env"
+version = "0.1.0"
+license = "MIT"
+authors = [
+    { name = "Snorkel AI" },
+    { name = "Cua" }
+]
+requires-python = ">=3.11"
+
+[tool.cua-bench]
+description = "Design a passive RC band-pass filter for audio signals with corner frequencies near 1 kHz and 10 kHz. Implement it as a cascaded high-pass stage followed by a low-pass stage using 10 kΩ resistors, a 15 nF capacitor for the high-pass section, and a 1.5 nF capacitor for the low-pass section. Include 2-pin input and output connectors sharing a common ground. Create the KiCad schematic and export the KiCad netlist for the design."
+difficulty = "easy"
+category = "eda"
+tags = ["kicad", "schematic", "eda"]

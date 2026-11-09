@@ -70,17 +70,16 @@ func testVNCServiceClient() async throws {
     }
 }
 
-@Test("VNCService handles virtual machine attachment")
+@MainActor
+@Test("VNCService accepts an unavailable typed virtual machine")
 func testVNCServiceVMAttachment() async throws {
     let tempDir = try createTempDirectory()
     defer { try? FileManager.default.removeItem(at: tempDir) }
     let vmDir = VMDirectory(Path(tempDir.path))
-    let service = await MockVNCService(vmDirectory: vmDir)
-    let mockVM = "mock_vm"
-    
-    try await service.start(port: 5900, virtualMachine: mockVM)
-    let attachedVM = await service.attachedVM
-    #expect(attachedVM == mockVM)
+    let service = MockVNCService(vmDirectory: vmDir)
+
+    try await service.start(port: 5900, virtualMachine: nil)
+    #expect(await !service.hasAttachedVM)
 }
 
 private func createTempDirectory() throws -> URL {

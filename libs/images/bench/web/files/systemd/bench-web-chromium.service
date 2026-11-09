@@ -1,0 +1,16 @@
+[Unit]
+Description=bench-web Chromium (CDP on 127.0.0.1:9223)
+After=cua-desktop.service
+Wants=cua-desktop.service
+
+[Service]
+Type=simple
+User=cua
+Environment=HOME=/home/cua XDG_RUNTIME_DIR=/run/cua-desktop
+ExecStart=/opt/bench-web/start-chromium.sh
+Restart=always
+RestartSec=2
+KillMode=control-group
+
+[Install]
+WantedBy=multi-user.target

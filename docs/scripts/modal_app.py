@@ -10,6 +10,8 @@ Usage:
 """
 
 import asyncio
+import html
+from html.parser import HTMLParser
 import json
 import re
 import sqlite3
@@ -40,13 +42,24 @@ image = (
     modal.Image.debian_slim(python_version="3.12")
     .apt_install("git")
     .pip_install(
-        "crawl4ai>=0.4.0",
         "playwright>=1.40.0",
-        "lancedb>=0.4.0",
-        "sentence-transformers>=2.2.0",
-        "pyarrow>=14.0.1",
+        # Pinned exactly, and kept in step with docs-mcp-server/uv.lock.
+        #
+        # This job writes docs.lance; docs-mcp-server reads it. Both also build
+        # embeddings through lancedb.embeddings.get_registry(). These specs used
+        # to be ">=" on both sides, which looks symmetric but is not: this image
+        # re-resolves on every run while the server's versions froze at whenever
+        # its Docker image was last built. The two drifted apart, the writer
+        # started emitting newer-format Lance manifests, and the server could no
+        # longer open the table -- reporting it as a missing database.
+        #
+        # If you change these, relock docs-mcp-server and rebuild its image in
+        # the same change, so reader and writer move together.
+        "lancedb==0.37.1",
+        "sentence-transformers==5.7.0",
+        "pyarrow==25.0.1",
         "fastapi>=0.100.0",
-        "fastmcp>=2.14.0",
+        "fastmcp>=2.14.0,<3",
         "pydantic>=2.0.0",
         "pandas>=2.0.0",
         "markdown-it-py>=3.0.0",
@@ -54,6 +67,7 @@ image = (
         "boto3>=1.34.0",
     )
     .run_commands("playwright install --with-deps chromium")
+    .add_local_file(Path(__file__).parent / "docs-mcp-server" / "docs_index.py", "/root/docs_index.py")
 )
 
 # Volume mount paths
@@ -70,6 +84,139 @@ CODE_DB_PATH = f"{CODE_VOLUME_PATH}/code_db"
 # =============================================================================
 # Helper Functions
 # =============================================================================
+
+
+async def load_docs_page(page, url: str) -> str:
+    """Wait for the docs body, not unrelated background network activity."""
+    response = await page.goto(url, wait_until="domcontentloaded", timeout=30_000)
+    if response is None or not response.ok:
+        status = response.status if response is not None else "no response"
+        raise RuntimeError(f"HTTP {status}")
+    await page.wait_for_selector("article, main", state="attached", timeout=30_000)
+    return await page.content()
+
+
+class HTMLToMarkdown(HTMLParser):
+    """Small dependency-free HTML-to-Markdown converter for crawled docs pages.
+
+    Extraction is scoped to the page's main content container (``<article>``,
+    falling back to ``<main>``) and site chrome (``nav``/``aside``/``footer``) is
+    dropped, so the crawled corpus is the documentation body rather than the
+    navigation tree that repeats identically on every page.
+    """
+
+    block_tags = {
+        "blockquote",
+        "br",
+        "div",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "h5",
+        "h6",
+        "header",
+        "li",
+        "main",
+        "ol",
+        "p",
+        "pre",
+        "section",
+        "table",
+        "tr",
+        "ul",
+    }
+    # Content of these tags is dropped entirely: non-text assets and the site
+    # chrome (sidebar/nav tree, "on this page" aside, footer) that is identical
+    # on every page and would otherwise dominate the embedded corpus.
+    skip_tags = {"script", "style", "svg", "nav", "aside", "footer"}
+
+    def __init__(self, scope_tag: str | None = None) -> None:
+        super().__init__(convert_charrefs=True)
+        self.parts: list[str] = []
+        self.skip_depth = 0
+        self.in_pre = False
+        # When set, only emit text while inside this container; None = emit all.
+        self.scope_tag = scope_tag
+        self.scope_depth = 0
+
+    @property
+    def _capturing(self) -> bool:
+        return self.scope_tag is None or self.scope_depth > 0
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag in self.skip_tags:
+            self.skip_depth += 1
+            return
+        if tag == self.scope_tag:
+            self.scope_depth += 1
+        if self.skip_depth or not self._capturing:
+            return
+        if tag in self.block_tags:
+            self.parts.append("\n")
+        if tag == "li":
+            self.parts.append("- ")
+        elif tag == "pre":
+            self.in_pre = True
+            self.parts.append("\n```\n")
+        elif tag == "code" and not self.in_pre:
+            self.parts.append("`")
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in self.skip_tags and self.skip_depth:
+            self.skip_depth -= 1
+            return
+        if self.skip_depth:
+            return
+        if self._capturing:
+            if tag == "pre":
+                self.in_pre = False
+                self.parts.append("\n```\n")
+            elif tag == "code" and not self.in_pre:
+                self.parts.append("`")
+            if tag in self.block_tags:
+                self.parts.append("\n")
+        if tag == self.scope_tag and self.scope_depth:
+            self.scope_depth -= 1
+
+    def handle_data(self, data: str) -> None:
+        if self.skip_depth or not self._capturing:
+            return
+        text = data if self.in_pre else re.sub(r"\s+", " ", data)
+        if text.strip():
+            self.parts.append(text)
+
+    def markdown(self) -> str:
+        text = html.unescape("".join(self.parts))
+        text = re.sub(r"[ \t]+\n", "\n", text)
+        text = re.sub(r"\n{3,}", "\n\n", text)
+        return text.strip()
+
+
+def html_to_markdown(page_html: str) -> str:
+    # Prefer the main content container so the navigation/sidebar chrome that
+    # repeats on every page does not pollute the crawled corpus; fall back to
+    # the whole document when neither container is present.
+    scope_tag = None
+    for tag in ("article", "main"):
+        if re.search(rf"<{tag}[\s>]", page_html, re.IGNORECASE):
+            scope_tag = tag
+            break
+    parser = HTMLToMarkdown(scope_tag)
+    parser.feed(page_html)
+    return parser.markdown()
+
+
+def extract_metadata(page_html: str, title: str) -> dict[str, str]:
+    description = ""
+    match = re.search(
+        r'<meta[^>]+name=["\']description["\'][^>]+content=["\']([^"\']*)["\']',
+        page_html,
+        re.IGNORECASE,
+    )
+    if match:
+        description = html.unescape(match.group(1))
+    return {"title": title, "description": description}
 
 
 def clean_markdown(markdown: str) -> str:
@@ -128,21 +275,15 @@ def clean_markdown(markdown: str) -> str:
 async def crawl_docs():
     """Crawl CUA documentation and save to volume"""
     import re
-    import shutil
     from urllib.parse import urljoin, urlparse
 
-    from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig
+    from playwright.async_api import async_playwright
 
     print("Starting documentation crawl...")
 
     BASE_URL = "https://cua.ai"
     DOCS_URL = f"{BASE_URL}/docs"
     OUTPUT_DIR = Path(CRAWLED_DATA_PATH)
-
-    # Clear existing crawled data to ensure fresh results
-    if OUTPUT_DIR.exists():
-        shutil.rmtree(OUTPUT_DIR)
-        print("Cleared existing crawled data")
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -164,7 +305,7 @@ async def crawl_docs():
         parsed = urlparse(url)
         if parsed.netloc and parsed.netloc not in ["cua.ai", "www.cua.ai"]:
             return False
-        if not parsed.path.startswith("/docs"):
+        if parsed.path != "/docs" and not parsed.path.startswith("/docs/"):
             return False
         # Skip non-page resources
         excluded_extensions = [
@@ -222,58 +363,42 @@ async def crawl_docs():
         with open(filepath, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
 
-    # Seed URLs
-    seed_urls = [
-        DOCS_URL,
-        f"{DOCS_URL}/cua",
-        f"{DOCS_URL}/cua/guide",
-        f"{DOCS_URL}/cua/guide/get-started",
-        f"{DOCS_URL}/cua/reference",
-        f"{DOCS_URL}/cua/reference/computer-sdk",
-        f"{DOCS_URL}/cuabench",
-        f"{DOCS_URL}/cuabench/guide",
-        f"{DOCS_URL}/cuabench/reference",
-    ]
+    # Discover the public corpus from the canonical docs root.
+    seed_urls = [DOCS_URL]
 
     for url in seed_urls:
         normalized = normalize_url(url)
         if is_valid_url(normalized):
             to_visit.add(normalized)
 
-    browser_config = BrowserConfig(
-        headless=True,
-        verbose=False,
-    )
+    async with async_playwright() as playwright:
+        browser = await playwright.chromium.launch(headless=True)
+        try:
+            while to_visit:
+                # Get batch of URLs to crawl
+                batch = []
+                MAX_CONCURRENT = 5
+                while to_visit and len(batch) < MAX_CONCURRENT:
+                    url = to_visit.pop()
+                    if url not in visited_urls:
+                        batch.append(url)
+                        visited_urls.add(url)
 
-    async with AsyncWebCrawler(config=browser_config) as crawler:
-        while to_visit:
-            # Get batch of URLs to crawl
-            batch = []
-            MAX_CONCURRENT = 5
-            while to_visit and len(batch) < MAX_CONCURRENT:
-                url = to_visit.pop()
-                if url not in visited_urls:
-                    batch.append(url)
-                    visited_urls.add(url)
+                if not batch:
+                    break
 
-            if not batch:
-                break
+                # Crawl each URL in batch
+                for url in batch:
+                    page = None
+                    try:
+                        print(f"Crawling: {url}")
 
-            # Crawl each URL in batch
-            for url in batch:
-                try:
-                    print(f"Crawling: {url}")
+                        page = await browser.new_page()
+                        page_html = await load_docs_page(page, url)
+                        metadata = extract_metadata(page_html, await page.title())
 
-                    config = CrawlerRunConfig(
-                        word_count_threshold=10,
-                        exclude_external_links=True,
-                    )
-
-                    result = await crawler.arun(url=url, config=config)
-
-                    if result.success:
                         # Extract new links from the page
-                        new_links = extract_links(result.html, url)
+                        new_links = extract_links(page_html, url)
                         for link in new_links:
                             if link not in visited_urls and link not in to_visit:
                                 to_visit.add(link)
@@ -282,11 +407,9 @@ async def crawl_docs():
 
                         page_data = {
                             "url": url,
-                            "title": result.metadata.get("title", "") if result.metadata else "",
-                            "description": (
-                                result.metadata.get("description", "") if result.metadata else ""
-                            ),
-                            "markdown": result.markdown,
+                            "title": metadata["title"],
+                            "description": metadata["description"],
+                            "markdown": html_to_markdown(page_html),
                             "path_info": path_info,
                             "links_found": list(new_links),
                         }
@@ -296,15 +419,23 @@ async def crawl_docs():
                         all_data.append(page_data)
 
                         await asyncio.sleep(0.5)
-                    else:
-                        print(f"Failed to crawl {url}: {result.error_message}")
+
+                    except Exception as e:
+                        print(f"Error crawling {url}: {e}")
                         failed_urls.add(url)
+                    finally:
+                        if page is not None:
+                            await page.close()
 
-                except Exception as e:
-                    print(f"Error crawling {url}: {e}")
-                    failed_urls.add(url)
+                print(f"Progress: {len(visited_urls)} crawled, {len(to_visit)} remaining")
+        finally:
+            await browser.close()
 
-            print(f"Progress: {len(visited_urls)} crawled, {len(to_visit)} remaining")
+    from docs_index import capture_corpus, write_json
+
+    corpus = capture_corpus(all_data, visited_urls, failed_urls)
+    # A single snapshot is the only input to both index writers.
+    write_json(OUTPUT_DIR / "_corpus.json", corpus)
 
     # Save summary
     summary = {
@@ -327,6 +458,48 @@ async def crawl_docs():
     return summary
 
 
+def _publish_dir(s3, bucket: str, local_dir, prefix: str) -> int:
+    """Publish local_dir to s3://bucket/prefix, removing anything stale.
+
+    Uploads every file, then deletes keys under the prefix that the current
+    build did not write. Plain upload-only publishing is what broke docs
+    vector search: the indexer rebuilds docs.lance from scratch, but old
+    files were never removed from S3, so manifests from a previous Lance
+    format lingered next to the new ones. Lance then refused to open the
+    table ("Found multiple manifest naming schemes in the same directory:
+    V1 and V2") and the server reported it as a missing database.
+
+    This legacy code-index publisher is not atomic: a consumer can observe
+    partially uploaded files. Docs use immutable generations and a commit marker.
+    """
+    uploaded_keys = set()
+    count = 0
+    for fpath in sorted(local_dir.rglob("*")):
+        if fpath.is_file():
+            key = f"{prefix}{fpath.relative_to(local_dir).as_posix()}"
+            s3.upload_file(str(fpath), bucket, key)
+            uploaded_keys.add(key)
+            count += 1
+
+    stale = []
+    for page in s3.get_paginator("list_objects_v2").paginate(
+        Bucket=bucket, Prefix=prefix
+    ):
+        for obj in page.get("Contents", []):
+            if obj["Key"] not in uploaded_keys:
+                stale.append({"Key": obj["Key"]})
+
+    for batch_start in range(0, len(stale), 1000):
+        s3.delete_objects(
+            Bucket=bucket,
+            Delete={"Objects": stale[batch_start : batch_start + 1000]},
+        )
+    if stale:
+        print(f"  Removed {len(stale)} stale object(s) under {prefix}")
+
+    return count
+
+
 @app.function(
     image=image,
     volumes={VOLUME_PATH: docs_volume, CODE_VOLUME_PATH: code_volume},
@@ -334,7 +507,9 @@ async def crawl_docs():
     cpu=1.0,
     memory=2048,
 )
-def sync_to_s3(bucket: str = S3_BUCKET_NAME):
+def sync_to_s3(
+    bucket: str = S3_BUCKET_NAME, publish_docs: bool = True, publish_code: bool = True
+):
     """Sync generated databases from Modal volumes to S3.
 
     Uses Modal OIDC federation to assume an AWS IAM role for write access.
@@ -343,6 +518,8 @@ def sync_to_s3(bucket: str = S3_BUCKET_NAME):
 
     Args:
         bucket: S3 bucket name to upload to
+        publish_docs: Publish the verified docs generation and its pointer.
+        publish_code: Publish the legacy code index independently of docs.
     """
     import os
 
@@ -370,31 +547,27 @@ def sync_to_s3(bucket: str = S3_BUCKET_NAME):
     )
 
     uploaded = 0
+    docs_volume.reload()
 
-    # --- docs databases ---
+    # Publish only a complete pair. The consumer must activate current.json last.
+    from docs_index import publish_generation
+
     docs_db_dir = Path(DB_PATH)
-    if docs_db_dir.exists():
-        # SQLite
-        sqlite_path = docs_db_dir / "docs.sqlite"
-        if sqlite_path.exists():
-            key = "docs_db/docs.sqlite"
-            print(f"  Uploading {sqlite_path} -> {key}")
-            s3.upload_file(str(sqlite_path), bucket, key)
-            uploaded += 1
-
-        # LanceDB directory
-        lance_dir = docs_db_dir / "docs.lance"
-        if lance_dir.exists():
-            for fpath in lance_dir.rglob("*"):
-                if fpath.is_file():
-                    key = f"docs_db/docs.lance/{fpath.relative_to(lance_dir)}"
-                    s3.upload_file(str(fpath), bucket, key)
-                    uploaded += 1
-            print(f"  Uploaded docs LanceDB directory")
+    pointer_path = docs_db_dir / "current.json"
+    if publish_docs:
+        if not pointer_path.exists():
+            raise RuntimeError("No verified docs generation is available to publish")
+        pointer = json.loads(pointer_path.read_text())
+        generation = docs_db_dir / "generations" / pointer["build_id"]
+        manifest = json.loads((generation / "manifest.json").read_text())
+        from docs_index import pointer_for
+        if pointer != pointer_for(manifest):
+            raise ValueError("Docs publication pointer mismatch")
+        uploaded += publish_generation(s3, bucket, generation, manifest)
 
     # --- code databases ---
     code_db_dir = Path(CODE_DB_PATH)
-    if code_db_dir.exists():
+    if publish_code and code_db_dir.exists():
         # Aggregated SQLite
         code_sqlite = code_db_dir / "code_index.sqlite"
         if code_sqlite.exists():
@@ -406,12 +579,10 @@ def sync_to_s3(bucket: str = S3_BUCKET_NAME):
         # Aggregated LanceDB directory
         code_lance = code_db_dir / "code_index.lancedb"
         if code_lance.exists():
-            for fpath in code_lance.rglob("*"):
-                if fpath.is_file():
-                    key = f"code_db/code_index.lancedb/{fpath.relative_to(code_lance)}"
-                    s3.upload_file(str(fpath), bucket, key)
-                    uploaded += 1
-            print(f"  Uploaded code LanceDB directory")
+            uploaded += _publish_dir(
+                s3, bucket, code_lance, "code_db/code_index.lancedb/"
+            )
+            print("  Uploaded code LanceDB directory")
 
     print(f"S3 sync complete: {uploaded} files uploaded to s3://{bucket}/")
     return {"bucket": bucket, "files_uploaded": uploaded}
@@ -430,12 +601,11 @@ async def scheduled_crawl():
 
     # Regenerate databases after crawl
     print("Generating databases...")
-    await generate_vector_db.remote.aio()
-    await generate_sqlite_db.remote.aio()
+    await generate_docs_indexes.remote.aio()
 
     # Sync docs databases to S3
     print("Syncing docs databases to S3...")
-    sync_result = sync_to_s3.remote()
+    sync_result = sync_to_s3.remote(publish_code=False)
     print(f"S3 sync result: {sync_result}")
 
     print(f"Scheduled crawl complete: {summary}")
@@ -452,14 +622,14 @@ async def scheduled_crawl():
 #    - SQLite FTS5 Database (docs.sqlite):
 #      * `pages` table: stores URL, title, category, and plain-text content
 #      * `pages_fts` virtual table: FTS5 full-text search index
-#      * Triggers keep FTS index synchronized with pages table
-#      * Built by: generate_sqlite_db()
+#      * FTS is rebuilt once for the immutable generation
+#      * Built by: generate_docs_indexes()
 #
 #    - LanceDB Vector Database (docs.lance/):
 #      * DocsChunk schema: text, vector (384-dim), url, title, category, chunk_index
 #      * Uses sentence-transformers/all-MiniLM-L6-v2 for embeddings
-#      * Chunks documents by paragraph for semantic search
-#      * Built by: generate_vector_db()
+#      * Chunks searchable text into overlapping windows without dropping short pages
+#      * Built by: generate_docs_indexes()
 #
 # 2. CODE INDEX DATABASES (from git tags):
 #    Per-component databases (built in parallel):
@@ -482,8 +652,7 @@ async def scheduled_crawl():
 # Database Build Process:
 # 1. scheduled_crawl() runs daily at 6 AM UTC:
 #    - Calls crawl_docs() to crawl cua.ai/docs
-#    - Calls generate_vector_db() to build LanceDB from crawled markdown
-#    - Calls generate_sqlite_db() to build SQLite FTS from crawled content
+#    - Calls generate_docs_indexes() to build and validate the pair from one snapshot
 #
 # 2. scheduled_code_index() runs daily at 5 AM UTC (before docs):
 #    - Calls generate_code_index_parallel() which:
@@ -501,250 +670,42 @@ async def scheduled_crawl():
 @app.function(
     image=image,
     volumes={VOLUME_PATH: docs_volume},
-    timeout=1800,  # 30 minutes
+    timeout=1800,
     cpu=2.0,
     memory=8192,
 )
-async def generate_vector_db():
-    """Generate LanceDB vector database from crawled data"""
+async def generate_docs_indexes():
+    """Build and validate both docs indexes before committing a generation."""
     import shutil
     import tempfile
+    from docs_index import build_generation, load_corpus, pointer_for, verify_files, write_json
 
-    import lancedb
-    from lancedb.embeddings import get_registry
-    from lancedb.pydantic import LanceModel, Vector
-
-    print("Generating LanceDB vector database...")
-
-    CRAWLED_DIR = Path(CRAWLED_DATA_PATH)
-    DB_DIR = Path(DB_PATH)
-    DB_DIR.mkdir(parents=True, exist_ok=True)
-
-    # Use /tmp for LanceDB operations (Modal volumes don't support atomic rename)
-    TMP_LANCE_DIR = Path(tempfile.mkdtemp(prefix="lancedb_"))
-    print(f"Using temp directory: {TMP_LANCE_DIR}")
-
-    # Initialize embedding model
-    model = get_registry().get("sentence-transformers").create(name="all-MiniLM-L6-v2")
-
-    # Define schema with embedding configuration
-    class DocsChunk(LanceModel):
-        text: str = model.SourceField()
-        vector: Vector(model.ndims()) = model.VectorField()
-        url: str
-        title: str
-        category: str
-        chunk_index: int
-
-    # Load all crawled pages
-    json_files = list(CRAWLED_DIR.glob("*.json"))
-    json_files = [f for f in json_files if not f.name.startswith("_")]
-
-    if not json_files:
-        print("No crawled data found!")
-        return
-
-    all_chunks = []
-
-    for json_file in json_files:
-        with open(json_file, "r", encoding="utf-8") as f:
-            page_data = json.load(f)
-
-        url = page_data.get("url", "")
-        title = page_data.get("title", "")
-        markdown = page_data.get("markdown", "")
-        category = page_data.get("path_info", {}).get("category", "unknown")
-
-        if not markdown:
-            continue
-
-        # Convert markdown to plain text
-        text = clean_markdown(markdown)
-
-        # Simple chunking by paragraphs
-        paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
-
-        for i, para in enumerate(paragraphs):
-            if len(para) < 50:  # Skip very short paragraphs
-                continue
-
-            chunk = {
-                "text": para,
-                "url": url,
-                "title": title,
-                "category": category,
-                "chunk_index": i,
-            }
-            all_chunks.append(chunk)
-
-    if not all_chunks:
-        print("No chunks generated!")
-        return
-
-    # Create LanceDB in temp directory (supports atomic operations)
-    db = lancedb.connect(TMP_LANCE_DIR)
-
-    # Create table with schema - embeddings are generated automatically
-    table = db.create_table(
-        "docs",
-        schema=DocsChunk,
-        mode="overwrite",
-    )
-
-    # Add data in batches for better performance
-    batch_size = 100
-    for i in range(0, len(all_chunks), batch_size):
-        batch = all_chunks[i : i + batch_size]
-        table.add(batch)
-        print(
-            f"Added batch {i // batch_size + 1}/{(len(all_chunks) + batch_size - 1) // batch_size}"
-        )
-
-    # Close the connection before copying
-    del table
-    del db
-
-    # Copy completed database to Modal volume
-    lance_db_dest = DB_DIR / "docs.lance"
-    if lance_db_dest.exists():
-        shutil.rmtree(lance_db_dest)
-        print("Cleared existing vector database on volume")
-
-    # Copy from temp to volume
-    shutil.copytree(TMP_LANCE_DIR / "docs.lance", lance_db_dest)
-    print(f"Copied LanceDB to volume: {lance_db_dest}")
-
-    # Clean up temp directory
-    shutil.rmtree(TMP_LANCE_DIR)
-
-    # Commit changes to volume
+    docs_volume.reload()
+    corpus = load_corpus(Path(CRAWLED_DATA_PATH) / "_corpus.json")
+    staging = Path(tempfile.mkdtemp(prefix="docs-generation-"))
+    path, manifest = build_generation(corpus, staging)
+    root = Path(DB_PATH)
+    destination = root / "generations" / manifest["build_id"]
+    shutil.copytree(path, destination)
+    verify_files(destination, manifest)
+    # Modal commits make the complete generation visible before its pointer.
     docs_volume.commit()
+    write_json(root / "current.json", pointer_for(manifest))
+    docs_volume.commit()
+    return {"build_id": manifest["build_id"], "pages": len(manifest["included_urls"]),
+            "chunks": manifest["chunk_count"], "exclusions": manifest["exclusions"]}
 
-    print(f"Vector database created with {len(all_chunks)} chunks")
-    return {"chunks": len(all_chunks)}
+
+@app.function(image=image, volumes={VOLUME_PATH: docs_volume}, timeout=1800)
+async def generate_vector_db():
+    """Compatibility entry point: rebuild the paired docs indexes."""
+    return await generate_docs_indexes.remote.aio()
 
 
-@app.function(
-    image=image,
-    volumes={VOLUME_PATH: docs_volume},
-    timeout=1800,
-    cpu=2.0,
-    memory=4096,
-)
+@app.function(image=image, volumes={VOLUME_PATH: docs_volume}, timeout=1800)
 async def generate_sqlite_db():
-    """Generate SQLite FTS5 database from crawled data"""
-
-    print("Generating SQLite FTS5 database...")
-
-    CRAWLED_DIR = Path(CRAWLED_DATA_PATH)
-    DB_DIR = Path(DB_PATH)
-    DB_DIR.mkdir(parents=True, exist_ok=True)
-
-    SQLITE_PATH = DB_DIR / "docs.sqlite"
-
-    # Delete existing database to ensure fresh data
-    if SQLITE_PATH.exists():
-        SQLITE_PATH.unlink()
-        print("Cleared existing SQLite database")
-
-    # Create database
-    conn = sqlite3.connect(SQLITE_PATH)
-    cursor = conn.cursor()
-
-    # Create tables
-    cursor.execute(
-        """
-        CREATE TABLE pages (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            url TEXT UNIQUE NOT NULL,
-            title TEXT,
-            category TEXT,
-            content TEXT
-        )
-    """
-    )
-
-    cursor.execute(
-        """
-        CREATE VIRTUAL TABLE pages_fts USING fts5(
-            content,
-            url UNINDEXED,
-            title UNINDEXED,
-            category UNINDEXED,
-            content='pages',
-            content_rowid='id'
-        )
-    """
-    )
-
-    # Create FTS triggers BEFORE inserting data
-    # This is critical: since pages_fts uses external content (content='pages'),
-    # the FTS index is only populated via these triggers. If triggers are created
-    # after data insertion, the FTS table will be empty.
-    cursor.execute(
-        """
-        CREATE TRIGGER pages_ai AFTER INSERT ON pages BEGIN
-            INSERT INTO pages_fts(rowid, content, url, title, category)
-            VALUES (new.id, new.content, new.url, new.title, new.category);
-        END;
-    """
-    )
-
-    cursor.execute(
-        """
-        CREATE TRIGGER pages_ad AFTER DELETE ON pages BEGIN
-            DELETE FROM pages_fts WHERE rowid = old.id;
-        END;
-    """
-    )
-
-    cursor.execute(
-        """
-        CREATE TRIGGER pages_au AFTER UPDATE ON pages BEGIN
-            DELETE FROM pages_fts WHERE rowid = old.id;
-            INSERT INTO pages_fts(rowid, content, url, title, category)
-            VALUES (new.id, new.content, new.url, new.title, new.category);
-        END;
-    """
-    )
-
-    conn.commit()
-
-    # Load and insert data (triggers will populate FTS automatically)
-    json_files = list(CRAWLED_DIR.glob("*.json"))
-    json_files = [f for f in json_files if not f.name.startswith("_")]
-
-    inserted = 0
-
-    for json_file in json_files:
-        with open(json_file, "r", encoding="utf-8") as f:
-            page_data = json.load(f)
-
-        url = page_data.get("url", "")
-        title = page_data.get("title", "")
-        markdown = page_data.get("markdown", "")
-        category = page_data.get("path_info", {}).get("category", "unknown")
-
-        if not markdown:
-            continue
-
-        # Convert markdown to plain text
-        text = clean_markdown(markdown)
-
-        cursor.execute(
-            "INSERT OR REPLACE INTO pages (url, title, category, content) VALUES (?, ?, ?, ?)",
-            (url, title, category, text),
-        )
-        inserted += 1
-
-    conn.commit()
-    conn.close()
-
-    # Commit changes to volume
-    docs_volume.commit()
-
-    print(f"SQLite database created with {inserted} pages")
-    return {"pages": inserted}
+    """Compatibility entry point: rebuild the paired docs indexes."""
+    return await generate_docs_indexes.remote.aio()
 
 
 # =============================================================================
@@ -834,8 +795,7 @@ def index_component(component: str, tags: list[str], repo_path: str) -> dict:
     conn = sqlite3.connect(SQLITE_PATH)
     cursor = conn.cursor()
 
-    cursor.execute(
-        """
+    cursor.execute("""
         CREATE TABLE code_files (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             component TEXT NOT NULL,
@@ -845,13 +805,11 @@ def index_component(component: str, tags: list[str], repo_path: str) -> dict:
             language TEXT NOT NULL,
             UNIQUE(component, version, file_path)
         )
-    """
-    )
+    """)
     cursor.execute("CREATE INDEX idx_component ON code_files(component)")
     cursor.execute("CREATE INDEX idx_version ON code_files(component, version)")
 
-    cursor.execute(
-        """
+    cursor.execute("""
         CREATE VIRTUAL TABLE code_files_fts USING fts5(
             content,
             component UNINDEXED,
@@ -860,17 +818,14 @@ def index_component(component: str, tags: list[str], repo_path: str) -> dict:
             content='code_files',
             content_rowid='id'
         )
-    """
-    )
+    """)
 
-    cursor.execute(
-        """
+    cursor.execute("""
         CREATE TRIGGER code_files_ai AFTER INSERT ON code_files BEGIN
             INSERT INTO code_files_fts(rowid, content, component, version, file_path)
             VALUES (new.id, new.content, new.component, new.version, new.file_path);
         END;
-    """
-    )
+    """)
     conn.commit()
 
     # Initialize LanceDB
@@ -1180,8 +1135,7 @@ def aggregate_code_databases() -> dict:
     cursor = conn.cursor()
 
     # Create main table
-    cursor.execute(
-        """
+    cursor.execute("""
         CREATE TABLE code_files (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             component TEXT NOT NULL,
@@ -1191,14 +1145,12 @@ def aggregate_code_databases() -> dict:
             language TEXT NOT NULL,
             UNIQUE(component, version, file_path)
         )
-    """
-    )
+    """)
     cursor.execute("CREATE INDEX idx_component ON code_files(component)")
     cursor.execute("CREATE INDEX idx_version ON code_files(component, version)")
 
     # Create FTS5 virtual table
-    cursor.execute(
-        """
+    cursor.execute("""
         CREATE VIRTUAL TABLE code_files_fts USING fts5(
             content,
             component UNINDEXED,
@@ -1207,18 +1159,15 @@ def aggregate_code_databases() -> dict:
             content='code_files',
             content_rowid='id'
         )
-    """
-    )
+    """)
 
     # Create FTS triggers BEFORE inserting data
-    cursor.execute(
-        """
+    cursor.execute("""
         CREATE TRIGGER code_files_ai AFTER INSERT ON code_files BEGIN
             INSERT INTO code_files_fts(rowid, content, component, version, file_path)
             VALUES (new.id, new.content, new.component, new.version, new.file_path);
         END;
-    """
-    )
+    """)
     conn.commit()
 
     # Copy data from each component database
@@ -1231,12 +1180,10 @@ def aggregate_code_databases() -> dict:
         cursor.execute(f"ATTACH DATABASE 'file:{db_path}?mode=ro' AS comp")
 
         # Copy data (triggers will populate FTS automatically)
-        cursor.execute(
-            """
+        cursor.execute("""
             INSERT INTO code_files (component, version, file_path, content, language)
             SELECT component, version, file_path, content, language FROM comp.code_files
-        """
-        )
+        """)
         rows_copied = cursor.rowcount
         total_rows += rows_copied
         print(f"    Copied {rows_copied} rows from {component_name}")
@@ -1376,8 +1323,7 @@ async def generate_code_index():
     conn = sqlite3.connect(SQLITE_PATH)
     cursor = conn.cursor()
 
-    cursor.execute(
-        """
+    cursor.execute("""
         CREATE TABLE code_files (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             component TEXT NOT NULL,
@@ -1387,13 +1333,11 @@ async def generate_code_index():
             language TEXT NOT NULL,
             UNIQUE(component, version, file_path)
         )
-    """
-    )
+    """)
     cursor.execute("CREATE INDEX idx_component ON code_files(component)")
     cursor.execute("CREATE INDEX idx_version ON code_files(component, version)")
 
-    cursor.execute(
-        """
+    cursor.execute("""
         CREATE VIRTUAL TABLE code_files_fts USING fts5(
             content,
             component UNINDEXED,
@@ -1402,18 +1346,15 @@ async def generate_code_index():
             content='code_files',
             content_rowid='id'
         )
-    """
-    )
+    """)
 
     # FTS triggers
-    cursor.execute(
-        """
+    cursor.execute("""
         CREATE TRIGGER code_files_ai AFTER INSERT ON code_files BEGIN
             INSERT INTO code_files_fts(rowid, content, component, version, file_path)
             VALUES (new.id, new.content, new.component, new.version, new.file_path);
         END;
-    """
-    )
+    """)
     conn.commit()
 
     # Initialize LanceDB in temp directory
@@ -1567,7 +1508,7 @@ async def scheduled_code_index():
 
         # Sync code databases to S3
         print("Syncing code databases to S3...")
-        sync_result = sync_to_s3.remote()
+        sync_result = sync_to_s3.remote(publish_docs=False)
         print(f"S3 sync result: {sync_result}")
         result["s3_sync"] = sync_result
 
@@ -1610,7 +1551,7 @@ async def scheduled_code_index():
     volumes={VOLUME_PATH: docs_volume, CODE_VOLUME_PATH: code_volume},
     cpu=1.0,
     memory=2048,
-    keep_warm=1,  # Keep one container warm to avoid cold start latency
+    min_containers=1,  # Keep one container warm to avoid cold start latency
 )
 @modal.concurrent(max_inputs=10)
 @modal.asgi_app(custom_domains=["docs-mcp.cua.ai"])
@@ -1649,8 +1590,9 @@ The documentation database contains crawled pages from cua.ai/docs covering:
 
 === CODE DATABASE ===
 
-The code database contains versioned source code indexed across all git tags.
-Components include: agent, computer, mcp-server, som, etc.
+The code database contains Python, TypeScript, and JavaScript files from indexed git tags.
+Enumerate code_files for serving component, version, and language coverage.
+Component names identify tag families, not complete standalone product coverage.
 
 === WORKFLOW EXAMPLES ===
 
@@ -1676,28 +1618,17 @@ IMPORTANT: Always cite sources - URLs for docs, component@version:path for code.
     # Eagerly initialize database connections at startup to reduce first-request latency
     print("Initializing database connections...")
 
-    # Docs LanceDB
-    _docs_lance_db = None
-    _docs_lance_table = None
-    db_path = Path(DB_PATH)
-    if db_path.exists():
-        try:
-            _docs_lance_db = lancedb.connect(db_path)
-            _docs_lance_table = _docs_lance_db.open_table("docs")
-            print(f"  Docs LanceDB loaded from {db_path}")
-        except Exception as e:
-            print(f"  Warning: Could not load docs LanceDB: {e}")
+    import tempfile
+    from docs_index import GenerationReader, copy_generation
 
-    # Docs SQLite
-    _docs_sqlite_conn = None
-    sqlite_path = Path(DB_PATH) / "docs.sqlite"
-    if sqlite_path.exists():
-        try:
-            _docs_sqlite_conn = sqlite3.connect(f"file:{sqlite_path}?mode=ro", uri=True)
-            _docs_sqlite_conn.row_factory = sqlite3.Row
-            print(f"  Docs SQLite loaded from {sqlite_path}")
-        except Exception as e:
-            print(f"  Warning: Could not load docs SQLite: {e}")
+    # Keep open handles off the Modal volume so reload can see new commits.
+    local_docs = Path(tempfile.mkdtemp(prefix="docs-reader-"))
+
+    def refresh_docs():
+        docs_volume.reload()
+        copy_generation(Path(DB_PATH), local_docs)
+
+    docs_reader = GenerationReader(local_docs, refresh=refresh_docs)
 
     # Code LanceDB
     _code_lance_db = None
@@ -1725,16 +1656,10 @@ IMPORTANT: Always cite sources - URLs for docs, component@version:path for code.
     print("Database initialization complete.")
 
     def get_lance_table():
-        """Get LanceDB connection for docs (eagerly loaded)"""
-        if _docs_lance_table is None:
-            raise RuntimeError("Database not found. Run crawl and generation functions first.")
-        return _docs_lance_table
+        return docs_reader.get()[1]
 
     def get_sqlite_conn():
-        """Get read-only SQLite connection for docs (eagerly loaded)"""
-        if _docs_sqlite_conn is None:
-            raise RuntimeError("SQLite database not found.")
-        return _docs_sqlite_conn
+        return docs_reader.get()[0]
 
     def get_code_lance_table():
         """Get LanceDB connection for the aggregated code database (eagerly loaded)."""
@@ -1766,7 +1691,8 @@ IMPORTANT: Always cite sources - URLs for docs, component@version:path for code.
         - id INTEGER PRIMARY KEY AUTOINCREMENT
         - url TEXT NOT NULL UNIQUE         -- Full URL of the documentation page
         - title TEXT NOT NULL              -- Page title
-        - category TEXT NOT NULL           -- Category (e.g., 'cua', 'cuabench', 'llms.txt')
+        - category TEXT NOT NULL           -- URL category (e.g., 'reference', 'tutorials')
+        - build_id TEXT NOT NULL           -- Verified paired-generation identifier
         - content TEXT NOT NULL            -- Plain text content (markdown stripped)
 
         Virtual Table: pages_fts (FTS5 full-text search)
@@ -1812,13 +1738,14 @@ IMPORTANT: Always cite sources - URLs for docs, component@version:path for code.
         - vector VECTOR       -- Embedding vector (all-MiniLM-L6-v2, 384 dimensions)
         - url TEXT            -- Source URL
         - title TEXT          -- Document title
-        - category TEXT       -- Category (e.g., 'cua', 'cuabench')
+        - category TEXT       -- URL category (e.g., 'reference', 'tutorials')
+        - build_id TEXT       -- Verified paired-generation identifier
         - chunk_index INT     -- Index of chunk within document
 
         Args:
             query: Natural language query to embed and search for
             limit: Maximum number of results (default: 10, max: 100)
-            where: Optional SQL-like filter (e.g., "category = 'cua'")
+            where: Optional SQL-like filter (e.g., "category = 'reference'")
             select: Optional list of columns to return (default: all except vector)
 
         Returns:
@@ -2006,13 +1933,9 @@ def main(
         summary = crawl_docs.remote()
         print(f"Crawl summary: {summary}")
 
-        print("Generating vector database...")
-        vector_result = generate_vector_db.remote()
-        print(f"Vector DB: {vector_result}")
-
-        print("Generating SQLite database...")
-        sqlite_result = generate_sqlite_db.remote()
-        print(f"SQLite DB: {sqlite_result}")
+        print("Generating paired docs indexes...")
+        result = generate_docs_indexes.remote()
+        print(f"Docs indexes: {result}")
 
     if not skip_code:
         if parallel:

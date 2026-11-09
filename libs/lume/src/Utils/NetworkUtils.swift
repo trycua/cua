@@ -49,32 +49,46 @@ enum NetworkUtils {
         return runWithTimeout(process, timeout: 3)
     }
 
-    /// Checks if a TCP port is open on an IP address
+    /// Checks if a TCP port is open on an IP address: a non-blocking
+    /// connect, waited on for at most `timeout`. No process is spawned, so a
+    /// guest that does not answer yet costs `timeout`, not seconds of `nc`
+    /// (callers run on the main actor, which `lume serve` shares with every
+    /// request and with VM start and restore).
     /// - Parameters:
-    ///   - ipAddress: The IP address to check
+    ///   - ipAddress: The IPv4 address to check
     ///   - port: The port number to check
     ///   - timeout: Timeout in seconds (default: 2)
-    /// - Returns: true if the port is open, false otherwise
+    /// - Returns: true if the port accepted the connection, false otherwise
     static func isPortOpen(ipAddress: String, port: UInt16, timeout: TimeInterval = 2) -> Bool {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/nc")
-        // Use -w (timeout) instead of -G (connection timeout) as -G doesn't work
-        // reliably with VM networking on macOS
-        process.arguments = ["-z", "-w", "\(Int(timeout))", ipAddress, "\(port)"]
-
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = pipe
-
-        // Process timeout = nc timeout + 2s buffer for process overhead
-        return runWithTimeout(process, timeout: timeout + 2)
+        var addr = sockaddr_in()
+        addr.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        addr.sin_family = sa_family_t(AF_INET)
+        addr.sin_port = port.bigEndian
+        guard inet_pton(AF_INET, ipAddress, &addr.sin_addr) == 1 else { return false }
+        let fd = socket(AF_INET, SOCK_STREAM, 0)
+        guard fd >= 0 else { return false }
+        defer { close(fd) }
+        _ = fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK)
+        let rc = withUnsafePointer(to: &addr) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                connect(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
+        }
+        if rc == 0 { return true }
+        guard errno == EINPROGRESS else { return false }
+        var pfd = pollfd(fd: fd, events: Int16(POLLOUT), revents: 0)
+        guard poll(&pfd, 1, Int32(max(timeout, 0) * 1000)) == 1 else { return false }
+        var err: Int32 = 0
+        var len = socklen_t(MemoryLayout<Int32>.size)
+        guard getsockopt(fd, SOL_SOCKET, SO_ERROR, &err, &len) == 0 else { return false }
+        return err == 0
     }
 
     /// Checks if SSH (port 22) is available on an IP address
     /// - Parameter ipAddress: The IP address to check
     /// - Returns: true if SSH port is open, false otherwise
     static func isSSHAvailable(ipAddress: String) -> Bool {
-        return isPortOpen(ipAddress: ipAddress, port: 22, timeout: 2)
+        return isPortOpen(ipAddress: ipAddress, port: 22, timeout: 0.3)
     }
 
     /// Checks if a local port has a process listening on it

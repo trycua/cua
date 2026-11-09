@@ -1,0 +1,140 @@
+---
+title: Cua Spaces on your phone
+description: 'Follow your agents from an iPhone or iPad: start a task on one of your computers, read the thread, answer approvals, review changes and watch the desktop.'
+---
+
+The Cua Spaces phone app shows your Spaces grouped by the computer they run on.
+Each Space opens as a conversation with its agents. You can start a task, send
+a message, answer an approval, look at what changed, and open the live desktop
+of a Space. Nothing runs on the phone itself: the work stays on your computers.
+
+The phone app is a separate product from the desktop apps. What your computers
+do for it is an [experiment](/spaces/guides/experiments) called `mobile`, and it
+is off until you turn it on.
+
+## Turn it on
+
+On each computer that should answer your phone:
+
+```bash test="cli-shape" id="phone-on"
+cua experiments enable mobile
+```
+
+You can also use Settings, Advanced, Labs once the experiment is on. While it
+is off, the computer does not answer a phone's requests and does not report
+events for alerts. The experiment is the same switch the other experiments use:
+`CUA_EXPERIMENTS=mobile` turns it on for one process.
+
+## Sign in
+
+Open the app and sign in with your Cua account. The phone adds itself to
+your account, the same way another computer does, and your computers
+appear in the list. A computer that is off or asleep shows as offline, and the
+last thread you read stays on the phone, sealed, so you can read it without a
+connection. Messages and answers you write offline wait in an outbox and are
+sent once, in order, when the computer is back.
+
+The app asks for Face ID, Touch ID or the phone's passcode when it opens, when it
+comes back after a minute away, and before it opens the desktop of a computer
+if you last unlocked more than five minutes ago, so a stolen, unlocked phone is
+not instant access. It is on by default; Settings, Privacy turns it off. A phone
+with no passcode cannot be asked anything, and Settings says so.
+
+## Which Spaces it shows
+
+Every Space running on a computer that is signed in and sharing is on your
+account, so the phone lists it without a step from you, whichever way it was
+made: in the Mac app, with `cua spaces create`, from an SDK, by an agent or by
+a job. A new Space shows up a few seconds after it runs, and while you are
+creating many at once they are listed once you pause. A Space leaves the list when it stops or is deleted, and when you sign
+out of the computer. Only your account reaches them, and a Space you have not
+shared with anyone stays yours alone.
+
+To keep one Space off your account, make it with `--no-relay`
+(`cua spaces create --no-relay`); a child Space follows its parent. To keep all
+of them off, turn the setting off. `cua spaces ls` says which Spaces stay off.
+
+```bash test="cli-shape" id="relay-spaces-off"
+cua config set relay.spaces off
+```
+
+A Space you added by its address (`cua spaces add`) was not made by Cua and is
+never listed this way.
+
+## What you can do
+
+- Start a task: write the job, pick an agent and the computer it runs on, and
+  optionally a repository. The computer makes the Space.
+- Follow a thread: messages, short rows for the agent's tool calls, and the
+  status of each agent.
+- Answer approvals: Allow, Allow for this Space when the computer says it can be
+  remembered, or Decline. When several wait, the card says how many.
+- Queue or steer a running agent: a message while it works either waits its turn
+  or interrupts it.
+- Review changes: the changed files, a unified or word diff, and a preview of
+  images and text.
+- Dictate a message with the phone's own speech recognizer. No Cua server
+  transcribes it.
+- Watch the desktop of a Space in the viewer.
+
+A phone cannot run up your computer or a bill. At most three tasks start at once, twenty an
+hour, and three new agent homes a day per account. A task from a phone does not start where a
+linked cloud could be billed unless you allow it on the computer with `CUA_PHONE_MAY_SPEND=on`.
+"Allow for this Space" lasts a day; after that the same request asks again. Approvals for
+pushes, sign-ins, joins and abilities are never remembered.
+
+## Watching and controlling a desktop
+
+A computer that shares its desktop shares it as a Space, and the phone opens it
+like any Space, with the same roles the desktop app uses. Your own phone may
+look and touch. A teammate you shared it with may do what their share allows: a
+viewer only looks. There is no extra question on the phone or the computer:
+sharing the desktop is the permission. The live desktop in the viewer is view
+only until you take control in the app.
+
+What a phone never reaches is the computer underneath: it cannot run a command,
+read or write a file, open a tunnel, shut the computer down or create Spaces on
+it, whatever it is allowed in a Space. When you stop sharing the desktop, a
+phone that is watching it stops within a second.
+
+A computer needs the latest Cua Spaces to be used from a phone. The relay does not send a phone's calls to
+one that predates phones, and the phone says "update it". What widens a Space's reach (an ability for a home
+Space, an agent asking to join) is answered on the computer, not from a phone. "Allow for this Space" from a
+phone lasts a day and names the phone that gave it.
+
+To make a computer answer no phone at all:
+
+```bash skip="host-install"
+cua-spacesd phone off
+cua-spacesd phone on
+```
+
+To remove one phone, remove it from the Computers list: that ends its sessions,
+its viewer tickets and its alerts. To remove every phone of your account at once, use
+Remove all phones in the app's Settings (it asks for Face ID or the passcode, and a recent sign-in).
+Resharing or removing a computer from a phone also needs a sign-in made in the last ten minutes, and a
+phone never adds a computer. What phones did is a line each in the log
+(`cua-spacesd phone audit`), and the computer's access log names the phone and
+whether it looked or touched.
+
+## Alerts on a closed app
+
+An alert is sent when an agent needs you or finishes. It says only that, with the
+agent's name: never message text, tool output or file content. Alerts need the
+relay that connects your account to be set up for them.
+
+If you run your own relay, turn alerts on with `CUA_RELAY_PUSH=on` and give it
+the Apple push key through `CUA_PUSH_APNS_KEY_FILE`, `CUA_PUSH_APNS_KEY_ID` and
+`CUA_PUSH_APNS_TEAM_ID`. Keep the key out of the image and out of source
+control. A relay without `CUA_RELAY_PUSH=on` behaves exactly as it did before:
+the push routes answer 404, and the viewer is handled as it always was. The
+same setting also lets the phone's web view open the viewer, with the relay
+serving the viewer page itself inside a sandbox. See the relay README for the
+full list and a deploy checklist.
+
+## Build it yourself
+
+The app is in `apps/cua-spaces-mobile` (React Native with Expo and a Rust core).
+Its `README.md` explains how to build it for the Simulator, and `docs/SETUP.md`
+lists what a release needs: an OAuth client for the phone, an Apple developer
+account, and the push key.

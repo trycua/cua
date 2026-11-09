@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Shared tool-argument extraction helpers.
 //!
 //! Every tool in every platform crate does the same dance to pull
@@ -26,9 +29,342 @@
 //! See `libs/cua-driver/rust/docs/dedup-audit.md` for the audit trail
 //! that motivated this extraction.
 
-use serde_json::Value;
+use serde::de::DeserializeOwned;
+use serde_json::{json, Value};
 
 use crate::protocol::ToolResult;
+
+/// Deserialize one transport-free Rust input type from MCP arguments.
+///
+/// Published SDK tools use this before invoking platform behavior, so the
+/// generated schema and the live parser share the same Rust definition.
+pub fn parse_typed_input<T: DeserializeOwned>(
+    tool_name: &str,
+    mut args: Value,
+) -> Result<T, ToolResult> {
+    // Public callers cannot supply reserved arguments: ingress strips them
+    // before trusted session/approval context is injected. Keep that internal
+    // transport metadata out of the transport-free contract types as well.
+    sanitize_reserved_args(&mut args);
+    serde_json::from_value(args).map_err(|error| {
+        ToolResult::error(format!("{tool_name}: invalid arguments: {error}")).with_structured(
+            json!({
+                "code": "invalid_arguments",
+                "tool": tool_name,
+                "detail": error.to_string(),
+            }),
+        )
+    })
+}
+
+/// Deserialize the portable portion of a richer live tool input.
+///
+/// Platform handlers may accept window-targeting or diagnostic fields that are
+/// intentionally absent from the generated cross-platform SDK method. This
+/// projects only fields owned by the portable Rust type, then deserializes that
+/// type so both surfaces share field names, types, enums, and defaults without
+/// rejecting legitimate platform-rich arguments.
+pub fn parse_typed_projection<T: cua_driver_contract::ToolInput>(
+    tool_name: &str,
+    args: &Value,
+) -> Result<T, ToolResult> {
+    let Some(source) = args.as_object() else {
+        return parse_typed_input(tool_name, args.clone());
+    };
+    let properties = cua_driver_contract::tool_input_fields(T::TOOL_NAME)
+        .expect("typed tool input is indexed in the published contract");
+    let projected = source
+        .iter()
+        .filter(|(name, _)| properties.contains(*name))
+        .map(|(name, value)| (name.clone(), value.clone()))
+        .collect();
+    parse_typed_input(tool_name, Value::Object(projected))
+}
+
+/// Keep the released desktop-coordinate wire parser independent of the SDK's
+/// explicit addressing API. Native handlers still accept legacy scope/defaults.
+pub fn parse_legacy_click_input(
+    args: &Value,
+) -> Result<cua_driver_contract::LegacyClickInput, ToolResult> {
+    const FIELDS: &[&str] = &["x", "y", "target", "scope", "session", "button", "count"];
+    let Some(source) = args.as_object() else {
+        return parse_typed_input("click", args.clone());
+    };
+    let projected = source
+        .iter()
+        .filter(|(name, _)| FIELDS.contains(&name.as_str()))
+        .map(|(name, value)| (name.clone(), value.clone()))
+        .collect();
+    parse_typed_input("click", Value::Object(projected))
+}
+
+/// Remove transport-reserved arguments supplied by a public caller. Trusted
+/// ingress code calls this before injecting session or approval context, so a
+/// tool request cannot forge underscore-prefixed transport evidence.
+pub fn sanitize_reserved_args(args: &mut Value) {
+    if let Some(object) = args.as_object_mut() {
+        object.retain(|key, _| !key.starts_with('_'));
+    }
+}
+
+/// Resolve and apply the session identity for one tool call at a trusted
+/// transport boundary, returning the effective `_session_id`.
+///
+/// Public naming and the transport's lifecycle identity resolve
+/// independently. A non-empty `session` label is mirrored into the reserved
+/// `_session_id`; otherwise the transport's own session (a per-connection
+/// lease or MCP HTTP session) becomes the implicit lifecycle key.
+/// `_transport_session_id` always carries the transport session. Any
+/// caller-supplied value for either reserved key is replaced, never trusted.
+/// With neither a label nor a transport session the call stays anonymous.
+pub fn apply_session_identity(args: &mut Value, transport_session: Option<&str>) -> Option<String> {
+    let object = args.as_object_mut()?;
+    let effective = object
+        .get("session")
+        .and_then(Value::as_str)
+        .filter(|session| !session.is_empty())
+        .or(transport_session)
+        .map(str::to_owned);
+    object.remove("_session_id");
+    object.remove("_transport_session_id");
+    if let Some(id) = &effective {
+        object.insert("_session_id".to_owned(), Value::String(id.clone()));
+    }
+    if let Some(id) = transport_session {
+        object.insert(
+            "_transport_session_id".to_owned(),
+            Value::String(id.to_owned()),
+        );
+    }
+    effective
+}
+
+#[cfg(test)]
+mod session_identity_tests {
+    use super::apply_session_identity;
+    use serde_json::json;
+
+    #[test]
+    fn public_label_and_transport_session_resolve_independently() {
+        // (args, transport session) -> (effective _session_id, _transport_session_id)
+        for (mut args, transport, session_id, transport_id) in [
+            (
+                json!({ "x": 1, "session": "research-1" }),
+                None,
+                Some("research-1"),
+                None,
+            ),
+            (
+                json!({ "session": "capability-session" }),
+                Some("proxy-session"),
+                Some("capability-session"),
+                Some("proxy-session"),
+            ),
+            // The transport session drives the implicit lifecycle without
+            // manufacturing a caller-visible public `session` label.
+            (
+                json!({ "x": 1 }),
+                Some("mcp-123"),
+                Some("mcp-123"),
+                Some("mcp-123"),
+            ),
+            (
+                json!({ "session": "" }),
+                Some("mcp-1"),
+                Some("mcp-1"),
+                Some("mcp-1"),
+            ),
+            (json!({ "x": 1 }), None, None, None),
+            // Caller-supplied reserved keys are replaced or removed.
+            (
+                json!({ "_session_id": "caller-set", "_transport_session_id": "forged" }),
+                Some("mcp-999"),
+                Some("mcp-999"),
+                Some("mcp-999"),
+            ),
+            (
+                json!({ "_session_id": "caller-set", "_transport_session_id": "forged" }),
+                None,
+                None,
+                None,
+            ),
+        ] {
+            let before = args.clone();
+            let effective = apply_session_identity(&mut args, transport);
+            assert_eq!(effective.as_deref(), session_id, "{before}");
+            assert_eq!(args["_session_id"].as_str(), session_id, "{before}");
+            assert_eq!(
+                args["_transport_session_id"].as_str(),
+                transport_id,
+                "{before}"
+            );
+            assert_eq!(args.get("session"), before.get("session"), "{before}");
+        }
+
+        let mut not_an_object = json!(["session"]);
+        assert_eq!(
+            apply_session_identity(&mut not_an_object, Some("mcp")),
+            None
+        );
+    }
+}
+
+/// The session key an isolation-scoped state store should key on for this
+/// call: the public `session` label, else the proxy-minted `_session_id`,
+/// else the legacy `cursor_id`, else a shared `"default"` bucket for
+/// anonymous calls. Mirrors the cursor/mouse-hold isolation convention so new
+/// per-call state (e.g. desktop screenshot scale) doesn't invent its own.
+pub fn resolve_session_key(args: &Value) -> String {
+    session_key(args).unwrap_or_else(|| "default".to_owned())
+}
+
+/// The first non-empty of `session`, the proxy-minted `_session_id`, and the
+/// legacy `cursor_id`, or `None` for an anonymous call. Callers pick their own
+/// anonymous fallback: [`resolve_session_key`] uses a shared `"default"`
+/// bucket, and the Windows cursor key stays cursor-less.
+pub fn session_key(args: &Value) -> Option<String> {
+    ["session", "_session_id", "cursor_id"]
+        .into_iter()
+        .filter_map(|key| args.get(key).and_then(Value::as_str))
+        .find(|value| !value.is_empty())
+        .map(str::to_owned)
+}
+
+#[cfg(test)]
+mod session_key_tests {
+    use super::{resolve_session_key, session_key};
+    use serde_json::json;
+
+    #[test]
+    fn session_then_implicit_session_then_legacy_cursor_id() {
+        for (args, expected) in [
+            (json!({}), None),
+            (json!({ "pid": 1 }), None),
+            (json!({ "session": "research-run" }), Some("research-run")),
+            (json!({ "_session_id": "mcp-1-2" }), Some("mcp-1-2")),
+            (json!({ "cursor_id": "user-handle" }), Some("user-handle")),
+            (
+                json!({ "session": "s1", "_session_id": "implicit", "cursor_id": "c1" }),
+                Some("s1"),
+            ),
+            (
+                json!({ "_session_id": "implicit", "cursor_id": "c1" }),
+                Some("implicit"),
+            ),
+            // Empty and non-string values fall through to the next source.
+            (json!({ "session": "", "cursor_id": "c1" }), Some("c1")),
+            (json!({ "session": 7, "_session_id": "mcp" }), Some("mcp")),
+            (json!({ "session": "", "cursor_id": "" }), None),
+        ] {
+            assert_eq!(session_key(&args).as_deref(), expected, "{args}");
+            assert_eq!(
+                resolve_session_key(&args),
+                expected.unwrap_or("default"),
+                "{args}"
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod reserved_args_tests {
+    use super::{parse_legacy_click_input, parse_typed_input, sanitize_reserved_args};
+    use cua_driver_contract::{ClickButton, GetScreenSizeInput, SetWindowFrameInput};
+    use serde_json::json;
+
+    #[test]
+    fn removes_all_top_level_reserved_arguments_only() {
+        let mut args = json!({
+            "pid": 42,
+            "_session_id": "forged",
+            "_observation_only": true,
+            "_cua_browser_prepare_mcp_host_approved": true,
+            "profile": {"mode": "isolated_new", "_future_public_field": "retained"}
+        });
+        sanitize_reserved_args(&mut args);
+        assert_eq!(
+            args,
+            json!({
+                "pid": 42,
+                "profile": {"mode": "isolated_new", "_future_public_field": "retained"}
+            })
+        );
+    }
+
+    #[test]
+    fn typed_input_ignores_trusted_transport_metadata_but_rejects_public_unknown_fields() {
+        let input = parse_typed_input::<GetScreenSizeInput>(
+            "get_screen_size",
+            json!({"session": "public", "_session_id": "trusted"}),
+        )
+        .expect("trusted transport metadata is not part of the public contract");
+        assert_eq!(input.session.as_deref(), Some("public"));
+
+        let error = parse_typed_input::<GetScreenSizeInput>(
+            "get_screen_size",
+            json!({"pid": 42, "_session_id": "trusted"}),
+        )
+        .expect_err("ordinary unknown fields remain invalid");
+        assert_eq!(error.is_error, Some(true));
+        assert!(matches!(
+            &error.content[0],
+            crate::protocol::Content::Text { text, .. }
+                if text.contains("unknown field `pid`")
+        ));
+    }
+
+    #[test]
+    fn set_window_frame_typed_input_accepts_namespaced_session_metadata() {
+        let input = parse_typed_input::<SetWindowFrameInput>(
+            "set_window_frame",
+            json!({
+                "pid": 42,
+                "window_id": 84,
+                "x": 10,
+                "y": 20,
+                "width": 800,
+                "height": 600,
+                "session": "window-layout",
+                "_public_session_label": "window-layout",
+                "_session_id": "__cua_runtime_test:window-layout",
+                "_transport_session_id": "transport-1"
+            }),
+        )
+        .expect("trusted session metadata is not part of the public contract");
+
+        assert_eq!(input.pid, 42);
+        assert_eq!(input.window_id, 84);
+        assert_eq!(input.session.as_deref(), Some("window-layout"));
+    }
+
+    #[test]
+    fn legacy_click_projection_preserves_wire_defaults_and_validates_coordinates() {
+        let input = parse_legacy_click_input(&json!({
+            "x": 10,
+            "y": 20.5,
+            "scope": "desktop",
+            "button": "right",
+            "pid": 42,
+            "delivery_mode": "foreground"
+        }))
+        .expect("rich fields are projected away");
+        assert_eq!(input.x, 10.0);
+        assert_eq!(input.button, Some(ClickButton::Right));
+
+        assert!(input.target.is_none());
+        let error =
+            parse_legacy_click_input(&json!({"x": "10", "y": 20, "scope": "desktop", "pid": 42}))
+                .expect_err("portable field types are still enforced");
+        assert_eq!(error.is_error, Some(true));
+        assert_eq!(
+            error
+                .structured_content
+                .as_ref()
+                .and_then(|value| value.get("code")),
+            Some(&json!("invalid_arguments"))
+        );
+    }
+}
 
 /// Format the canonical "missing required field" error.
 #[inline]
@@ -40,17 +376,13 @@ fn missing(kind: &str, name: &str) -> ToolResult {
 /// present but a different JSON type than the caller asked for.
 #[inline]
 fn wrong_type(kind: &str, name: &str) -> ToolResult {
-    ToolResult::error(format!(
-        "Field {name} has wrong type — expected {kind}"
-    ))
+    ToolResult::error(format!("Field {name} has wrong type — expected {kind}"))
 }
 
 /// Format the canonical out-of-range error for narrowing casts.
 #[inline]
 fn out_of_range(kind: &str, name: &str, raw: i128) -> ToolResult {
-    ToolResult::error(format!(
-        "Field {name} is out of range for {kind}: {raw}"
-    ))
+    ToolResult::error(format!("Field {name} is out of range for {kind}: {raw}"))
 }
 
 /// Extension trait on `&serde_json::Value` (the MCP `arguments` blob)
@@ -177,9 +509,7 @@ impl ArgsExt for Value {
     }
 
     fn opt_str(&self, name: &str) -> Option<String> {
-        self.get(name)
-            .and_then(|v| v.as_str())
-            .map(str::to_owned)
+        self.get(name).and_then(|v| v.as_str()).map(str::to_owned)
     }
 
     fn opt_bool(&self, name: &str) -> Option<bool> {
@@ -332,5 +662,51 @@ mod tests {
         assert!(!args.bool_or("from_zoom", false));
         let args = json!({ "from_zoom": true });
         assert!(args.bool_or("from_zoom", false));
+    }
+}
+
+/// Description of the `app` filter that `list_windows` accepts on every
+/// platform.
+pub const LIST_WINDOWS_APP_FILTER_DESCRIPTION: &str = "Only windows of apps whose name contains this text (case-insensitive), or whose bundle id equals it. Prefer this or `pid` over an unfiltered call, which returns every window on the host.";
+
+/// Whether a window owned by `app_name` (and, where known, `bundle_id`)
+/// passes `list_windows`' `app` filter: a case-insensitive substring of the
+/// app name, or the exact bundle id. An empty filter matches everything.
+pub fn app_filter_matches(filter: &str, app_name: &str, bundle_id: Option<&str>) -> bool {
+    let filter = filter.trim();
+    if filter.is_empty() {
+        return true;
+    }
+    if bundle_id.is_some_and(|id| id.eq_ignore_ascii_case(filter)) {
+        return true;
+    }
+    app_name.to_lowercase().contains(&filter.to_lowercase())
+}
+
+#[cfg(test)]
+mod app_filter_tests {
+    use super::app_filter_matches;
+
+    #[test]
+    fn matches_name_substrings_and_exact_bundle_ids() {
+        assert!(app_filter_matches("libreoffice", "LibreOffice", None));
+        assert!(app_filter_matches("Office", "LibreOffice", None));
+        assert!(app_filter_matches(
+            "com.google.Chrome",
+            "Google Chrome",
+            Some("com.google.Chrome")
+        ));
+        assert!(app_filter_matches(
+            "COM.GOOGLE.CHROME",
+            "Google Chrome",
+            Some("com.google.Chrome")
+        ));
+        assert!(app_filter_matches("  ", "Anything", None));
+        assert!(!app_filter_matches(
+            "Safari",
+            "Google Chrome",
+            Some("com.google.Chrome")
+        ));
+        assert!(!app_filter_matches("com.google", "Finder", None));
     }
 }

@@ -1,6 +1,0 @@
-{
-  "title": "Examples",
-  "description": "Real-world examples of building with Cua",
-  "icon": "Blocks",
-  "pages": ["sandboxes", "automation", "ai-models", "platform-specific", "claude-code"]
-}

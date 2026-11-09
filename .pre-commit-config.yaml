@@ -11,11 +11,11 @@ repos:
 
   - repo: local
     hooks:
-      - id: tsc
+      - id: typescript-typecheck
         name: TypeScript type check
-        entry: node ./scripts/typescript-typecheck.js
-        language: node
-        files: \.(ts|tsx)$
+        entry: pnpm -C libs/typescript typecheck
+        language: system
+        files: ^libs/typescript/.*\.(ts|tsx)$
         pass_filenames: false
 
   - repo: https://github.com/PyCQA/isort

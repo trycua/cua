@@ -1,0 +1,4609 @@
+{
+  "candidates": [
+    {
+      "candidateSha256": "3b51fc384042555975fed2bc7c81149e1db90d81392739a6e4ee9fe9eb3ea4fb",
+      "changes": [
+        {
+          "evidence": [
+            "pr:1511"
+          ],
+          "summary": "Added a cross-platform Rust port of cua-driver with feature-complete Windows and Linux automation backends, using PostMessage plus UI Automation on Windows and X11 plus AT-SPI on Linux, that can drive background windows without stealing focus from the user's foreground app",
+          "type": "feat"
+        }
+      ],
+      "key": "cua-driver-rs:0.1.3",
+      "provenance": {
+        "evidenceSha256": "e16c3acd0338378003bbf23139c1bdde4077fee196fec40c4bc9aa57e8402802",
+        "generatedAt": "2026-07-17T20:58:25.112578Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "d237e63cf7e5d517e0428c2e4bf52678c40c475596c503caee8b72ba43297fe9",
+        "promptVersion": 1
+      },
+      "summary": "This release introduces cua-driver-rs, a cross-platform Rust port of cua-driver that adds feature-complete Windows and Linux support alongside a beta macOS build.",
+      "summaryEvidence": [
+        "pr:1511"
+      ]
+    },
+    {
+      "candidateSha256": "10e14154601d11f14cd5b42c202fc73b2d3efd613babb76853b81b7e10fb44bb",
+      "changes": [
+        {
+          "evidence": [
+            "pr:1518"
+          ],
+          "summary": "Fixed the install script 404ing on macOS by downloading the universal binary tarball instead of a nonexistent per-architecture darwin build",
+          "type": "fix"
+        },
+        {
+          "evidence": [
+            "pr:1518"
+          ],
+          "summary": "Fixed configuration changes made with config set not being applied during MCP sessions; the driver now loads saved configuration at startup and persists configuration changes made during a session to disk",
+          "type": "fix"
+        }
+      ],
+      "key": "cua-driver-rs:0.1.4",
+      "provenance": {
+        "evidenceSha256": "bd7aabc293a6df2cf14eea1d78dea3c8eb25cc07777bd362d21171652e759996",
+        "generatedAt": "2026-07-17T20:58:25.113362Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "f1ed2cb4cf8670560c35138e2af6dce13e197046767f581409bc2b56963ccd8f",
+        "promptVersion": 1
+      },
+      "summary": "This patch fixes a macOS installer 404 and makes CLI configuration changes actually take effect in MCP sessions.",
+      "summaryEvidence": [
+        "pr:1518"
+      ]
+    },
+    {
+      "candidateSha256": "aa3eda2980677f68382eca900da98c2ffa7539c8b70a1b2d952559d2fdbad108",
+      "changes": [
+        {
+          "evidence": [
+            "pr:1529"
+          ],
+          "summary": "Added a macOS first-launch permissions flow that prompts for and waits on Accessibility and Screen Recording permissions before the driver starts, with an opt-out for CI and headless environments",
+          "type": "feat"
+        },
+        {
+          "evidence": [
+            "pr:1532"
+          ],
+          "summary": "Added anonymous usage telemetry with an environment variable opt-out",
+          "type": "feat"
+        },
+        {
+          "evidence": [
+            "pr:1536"
+          ],
+          "summary": "Added a startup banner that announces when a newer release is available",
+          "type": "feat"
+        },
+        {
+          "evidence": [
+            "pr:1524"
+          ],
+          "summary": "Added focus-steal prevention on macOS so that launching an application no longer steals focus from the user's active application",
+          "type": "feat"
+        },
+        {
+          "evidence": [
+            "pr:1530"
+          ],
+          "summary": "Fixed permission prompts being attributed to the wrong app when the driver was started from an IDE terminal on macOS, by auto-relaunching under its own app bundle",
+          "type": "fix"
+        },
+        {
+          "evidence": [
+            "pr:1531"
+          ],
+          "summary": "Added per-action focus suppression and window-change detection on macOS so click, type, hotkey, drag, scroll, and set-value actions no longer steal focus and report any window changes the action caused",
+          "type": "feat"
+        }
+      ],
+      "key": "cua-driver-rs:0.2.0",
+      "provenance": {
+        "evidenceSha256": "c9f72a5f40b4bfc7497e81e6abe7c74565dc0aa89a2d1c5c24cc9c5460783dfd",
+        "generatedAt": "2026-07-17T20:58:25.113868Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "6b2479c9b4d890242fed0f07d47685035ee3a264334f93bc1478dbcdc0e346d1",
+        "promptVersion": 1
+      },
+      "summary": "This release focuses on macOS readiness for cua-driver-rs, adding a first-launch permissions flow, focus-steal prevention for app launches and interactive actions, anonymous usage telemetry, and startup update notifications.",
+      "summaryEvidence": [
+        "pr:1524",
+        "pr:1529",
+        "pr:1530",
+        "pr:1531",
+        "pr:1532",
+        "pr:1536"
+      ]
+    },
+    {
+      "candidateSha256": "73b1c8169bd12dac706ee8998a5173518331adf5b80bb223f73318cf21de4446",
+      "changes": [
+        {
+          "evidence": [
+            "pr:1540"
+          ],
+          "summary": "Added a Windows PowerShell installer and native Windows ARM64 builds",
+          "type": "feat"
+        },
+        {
+          "evidence": [
+            "pr:1540"
+          ],
+          "summary": "Switched Linux and Windows installs to a versioned directory layout with an atomic symlink or junction swap, so a previous version can be restored quickly if needed",
+          "type": "feat"
+        },
+        {
+          "evidence": [
+            "pr:1541"
+          ],
+          "summary": "Added automatic cleanup of old installed versions, keeping the most recent versions by default and configurable by the user, plus a lockfile that prevents concurrent installs from corrupting the install directory",
+          "type": "feat"
+        }
+      ],
+      "key": "cua-driver-rs:0.2.1",
+      "provenance": {
+        "evidenceSha256": "89999afc5b79468b39845aad8ca1b67878143c47a5b1720e20c04b47bad57418",
+        "generatedAt": "2026-07-17T20:58:25.114077Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "b266f9d3f8c3dd1e020f4f58f36896aa14959cb7fb006b0c805052ab4657a071",
+        "promptVersion": 1
+      },
+      "summary": "This release adds a Windows installer with native ARM64 support and makes installs on Linux and Windows safer through versioned, rollback-capable install directories, automatic cleanup of old versions, and protection against concurrent installs.",
+      "summaryEvidence": [
+        "pr:1540",
+        "pr:1541"
+      ]
+    },
+    {
+      "candidateSha256": "6d1f000fb1684b9c35a7c2391fbf2777f24da5a9b3982b2618cea09c3701bd4a",
+      "changes": [
+        {
+          "evidence": [
+            "pr:1542"
+          ],
+          "summary": "Fixed window listing on Windows returning empty results for modern apps such as WebView2-hosted Notepad and packaged apps, by enumerating windows through UI Automation in addition to the classic enumeration method",
+          "type": "fix"
+        },
+        {
+          "evidence": [
+            "pr:1544"
+          ],
+          "summary": "Added support for launching packaged Windows Store apps such as the modern Notepad, Calculator, and Paint, fixing launches that previously returned a short-lived stub process with no window",
+          "type": "feat"
+        },
+        {
+          "evidence": [
+            "pr:1543"
+          ],
+          "summary": "Added real diagnostics for Windows and Linux, including detection of non-interactive Windows sessions (such as over SSH) that cause window-driving tools to silently return empty results",
+          "type": "feat"
+        },
+        {
+          "evidence": [
+            "pr:1545"
+          ],
+          "summary": "Unified the list of running and installed applications across macOS, Windows, and Linux, including the launch path and metadata needed to start an application that isn't currently running",
+          "type": "feat"
+        }
+      ],
+      "key": "cua-driver-rs:0.2.2",
+      "provenance": {
+        "evidenceSha256": "4859f757b08e050941690f17952f35d379f1a9aad93cb0d6040e25ede030ebfc",
+        "generatedAt": "2026-07-17T20:58:25.114434Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "2a0e1f626359ce20d7f893fd8dde44cbc59f53c09a7d33d466b1ee63ba2b26eb",
+        "promptVersion": 1
+      },
+      "summary": "This release improves Windows reliability by fixing window enumeration for modern apps, adding support for launching packaged Windows apps, and adding diagnostics for common Windows session issues, while also unifying application listing across all platforms.",
+      "summaryEvidence": [
+        "pr:1542",
+        "pr:1543",
+        "pr:1544",
+        "pr:1545"
+      ]
+    },
+    {
+      "candidateSha256": "bb22ed2625bacdc3f27925d43e9db1240a7055d9867b59d8a178dc3146f20f83",
+      "changes": [
+        {
+          "evidence": [
+            "pr:1550"
+          ],
+          "summary": "Add a cua-driver autostart CLI verb (enable, disable, status, kick) that registers the Windows daemon as a Scheduled Task, replacing duplicated PowerShell logic in the install scripts",
+          "type": "feat"
+        },
+        {
+          "evidence": [
+            "pr:1549"
+          ],
+          "summary": "Clicking by element index or by screen coordinates on Windows now uses UI Automation invocation, fixing clicks that silently failed on UWP apps such as Calculator, Notepad, Edge, and Settings",
+          "type": "fix"
+        },
+        {
+          "evidence": [
+            "pr:1548"
+          ],
+          "summary": "Fixed crashes and hangs when running on Windows in non-interactive Session 0, added a Session 0 startup warning, restored proper foreground-window behavior after launching UWP apps in the background, and filtered out opaque system packages from the app list",
+          "type": "fix"
+        },
+        {
+          "evidence": [
+            "pr:1547"
+          ],
+          "summary": "Installed Windows apps are now sorted with recently used apps first, with improved UWP display name resolution from app manifests",
+          "type": "fix"
+        }
+      ],
+      "key": "cua-driver-rs:0.2.3",
+      "provenance": {
+        "evidenceSha256": "636f3a71045ab5b96f88ba588a58b9cb1cab2889e846aaf04dace1b7e7d22783",
+        "generatedAt": "2026-07-17T21:00:47.862697Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "3db210a42b7b8a87b72ba0e7c2f73c31900c4be29e770939eec6a1c6b82bdf1e",
+        "promptVersion": 1
+      },
+      "summary": "This release adds a Windows autostart CLI verb and fixes several Windows-specific reliability issues, including UI Automation-based clicking on UWP apps and stability under non-interactive Session 0.",
+      "summaryEvidence": [
+        "pr:1550",
+        "pr:1549",
+        "pr:1548"
+      ]
+    },
+    {
+      "candidateSha256": "050fd7fb743d2cee91764c9a2567d548d99e9a8b2d5906980c05228fb524ec88",
+      "changes": [
+        {
+          "evidence": [
+            "pr:1559"
+          ],
+          "summary": "The macOS app now installs as CuaDriver.app with the bundle identifier com.trycua.cuadriver, replacing the Swift driver's app at the same install path instead of installing alongside it",
+          "type": "feat"
+        },
+        {
+          "evidence": [
+            "pr:1556",
+            "pr:1557"
+          ],
+          "summary": "Installer URLs are now consolidated to a single canonical install.sh and install.ps1 per platform, with old install URLs continuing to work via a redirect shim",
+          "type": "feat"
+        },
+        {
+          "evidence": [
+            "pr:1553"
+          ],
+          "summary": "Added Windows and Linux skill documentation, deployed automatically at install time",
+          "type": "feat"
+        },
+        {
+          "evidence": [
+            "pr:1551"
+          ],
+          "summary": "Fixed vision-mode clicks at screen coordinates that could hit the wrong window or fail on UWP apps when the target was occluded or hosted in a separate process",
+          "type": "fix"
+        }
+      ],
+      "key": "cua-driver-rs:0.2.4",
+      "provenance": {
+        "evidenceSha256": "e391e00e810beb2e304f34a7d12485cdaeae337bd75617b6ed455a22aa7194e9",
+        "generatedAt": "2026-07-17T21:00:47.863766Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "a05f384cff13194c7d0181ba8287c9b7ee501522d7ea82c09383d703409264aa",
+        "promptVersion": 1
+      },
+      "summary": "This release converges macOS install identity with the Swift driver, consolidates installer scripts to a single canonical entry point per platform, ships Windows and Linux skill documentation, and further improves vision-mode clicking on Windows.",
+      "summaryEvidence": [
+        "pr:1559",
+        "pr:1556",
+        "pr:1557",
+        "pr:1553"
+      ]
+    },
+    {
+      "candidateSha256": "c206a7e059d48e2795caece8f85eee86390074150889f60af2015a53c97d18d9",
+      "changes": [
+        {
+          "evidence": [
+            "pr:1565",
+            "pr:1566"
+          ],
+          "summary": "Added a native macOS permissions onboarding panel, showing live status of required grants and guiding users to System Settings; enabled via an opt-in environment variable while the terminal-based prompt remains the default",
+          "type": "feat"
+        },
+        {
+          "evidence": [
+            "pr:1562"
+          ],
+          "summary": "Fixed a bug on macOS where the Screen Recording permission check could report the grant as active even when it had been revoked, which could skip the permissions setup prompt and cause screenshot or recording failures",
+          "type": "fix"
+        }
+      ],
+      "key": "cua-driver-rs:0.2.5",
+      "provenance": {
+        "evidenceSha256": "e124c0e2931cf5dc3866780caa39516b1237cef920e99cf4a6f8479520cfd232",
+        "generatedAt": "2026-07-17T21:00:47.864040Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "8f0aee58a003b2ec5a2d460f6007893f02a68426a24cee37ee7f080bb6f80f12",
+        "promptVersion": 1
+      },
+      "summary": "This release adds an opt-in native permissions onboarding panel on macOS and fixes a bug where the Screen Recording permission could be incorrectly reported as granted.",
+      "summaryEvidence": [
+        "pr:1565",
+        "pr:1566",
+        "pr:1562"
+      ]
+    },
+    {
+      "candidateSha256": "962af919068b31c80831f84cdae2de11d260202810d21c8eda54ec14ccc3d922",
+      "changes": [
+        {
+          "evidence": [
+            "pr:1567"
+          ],
+          "summary": "Fixed a hang on macOS where the daemon could remain stuck waiting for permissions even after the user granted Accessibility and Screen Recording access, by restarting itself to pick up the refreshed permission state",
+          "type": "fix"
+        }
+      ],
+      "key": "cua-driver-rs:0.2.6",
+      "provenance": {
+        "evidenceSha256": "19bf78434d4b993b5bbc29c9e2d72078c1a9a14354db52d3833f5d6aa3fb3f63",
+        "generatedAt": "2026-07-17T21:00:47.864176Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "7dfe16324ea063378a95e064ed1404016a5a76b1d5bb32dfd4cae5a7167d0712",
+        "promptVersion": 1
+      },
+      "summary": "This release fixes a macOS hang where the daemon would keep waiting indefinitely after the user granted Accessibility and Screen Recording permissions.",
+      "summaryEvidence": [
+        "pr:1567"
+      ]
+    },
+    {
+      "candidateSha256": "7018dd3b099318cbcfe56c0777f4084f3b204aae6e6128c1f43939c20ac40c42",
+      "changes": [
+        {
+          "evidence": [
+            "pr:1580"
+          ],
+          "summary": "On Windows and Linux, the MCP server now proxies through an already-running daemon when one is available, fixing empty results for window and app tools when the MCP server was launched from a non-interactive session such as over SSH",
+          "type": "fix"
+        }
+      ],
+      "key": "cua-driver-rs:0.2.7",
+      "provenance": {
+        "evidenceSha256": "2400acccd60fffa3d4ad7368be030a7a42d48e80c94db6eeecf4ad95c905a552",
+        "generatedAt": "2026-07-17T21:00:47.864295Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "a5f13eb184ca498f2112b87a1803df51fc8759967e2a5d69b855fe0cd3900980",
+        "promptVersion": 1
+      },
+      "summary": "This release fixes an issue on Windows and Linux where the MCP server did not use a running daemon, causing tools to return empty results when launched from a non-interactive session.",
+      "summaryEvidence": [
+        "pr:1580"
+      ]
+    },
+    {
+      "candidateSha256": "350175c5374a90eba10c8fc02ebf50eb665101a8b8e2709425e1bc3bbb350977",
+      "changes": [
+        {
+          "evidence": [
+            "pr:1596"
+          ],
+          "summary": "Added a kill_app tool that force-terminates a process by pid, using taskkill on Windows and SIGKILL on macOS and Linux, providing a way to terminate UWP and WinUI3 apps that ignore cooperative window close requests",
+          "type": "feat"
+        },
+        {
+          "evidence": [
+            "pr:1599"
+          ],
+          "summary": "Most previously all-black XAML, WinUI3, and UWP window captures now return real on-screen pixels by copying the window's on-screen bounds from the desktop instead of using PrintWindow; background-collapsed UWP windows remain unavailable",
+          "type": "fix"
+        },
+        {
+          "evidence": [
+            "pr:1597"
+          ],
+          "summary": "Typing text into modern XAML, WinUI3, and UWP application windows now routes through UI Automation's ValuePattern so keystrokes are correctly delivered instead of being silently dropped; added a debug_window_info diagnostic tool for inspecting window and automation properties",
+          "type": "feat"
+        },
+        {
+          "evidence": [
+            "pr:1604"
+          ],
+          "summary": "Added a prototype Windows-only worker process that runs at UIAccess integrity to enable UWP automation, with tool calls automatically routed through it when present, falling back to previous behavior when the worker cannot elevate",
+          "type": "feat"
+        }
+      ],
+      "key": "cua-driver-rs:0.2.8",
+      "provenance": {
+        "evidenceSha256": "01af0195d3fa4cf552bf1811aa9b8ad017a82e7726a71bba7b6d8ffa7da8dd8b",
+        "generatedAt": "2026-07-17T21:01:32.763779Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "e8f19f4cd62584e01abce7b62c8d22c12d9629a80310465c4e80fbe06505455a",
+        "promptVersion": 1
+      },
+      "summary": "This release advances Windows automation for modern UWP and XAML applications, adding a force-terminate tool for stuck processes, partially fixing all-black screenshots for XAML-based windows, and prototyping UI Automation-based text input and an elevated worker process.",
+      "summaryEvidence": [
+        "pr:1596",
+        "pr:1599",
+        "pr:1597",
+        "pr:1604"
+      ]
+    },
+    {
+      "candidateSha256": "2c27e537870151227d073d52db78bebfc74c8f5bd9a84206b4238a71d5e487f9",
+      "changes": [
+        {
+          "evidence": [
+            "pr:1622"
+          ],
+          "summary": "Clicking at specific coordinates no longer incorrectly redirects to a UI Automation invoke at an element's center for container-like elements such as canvases or paint surfaces; clicks on non-button and non-menu elements now use the requested coordinates directly",
+          "type": "fix"
+        },
+        {
+          "evidence": [
+            "pr:1624"
+          ],
+          "summary": "Launching Chromium-based browsers now automatically injects flags that disable occlusion-based renderer throttling, preventing launched browser tabs from having their content invisible to automation and screenshots",
+          "type": "feat"
+        },
+        {
+          "evidence": [
+            "pr:1611"
+          ],
+          "summary": "Hotkeys sent to modern XAML and UWP application windows now route through UI Automation accelerator discovery and pattern activation, so shortcuts like Ctrl+B actually toggle the target control instead of silently doing nothing, and unsupported combinations now return an actionable error",
+          "type": "fix"
+        },
+        {
+          "evidence": [
+            "pr:1618"
+          ],
+          "summary": "Hotkeys with modifier keys sent to legacy Win32 applications now use a synthesized input method that properly sets system-wide modifier state, fixing shortcuts that previously were ignored or typed as literal characters; app launching also now correctly resolves the process window when the launched executable is a stub that re-executes into a different process",
+          "type": "fix"
+        },
+        {
+          "evidence": [
+            "pr:1613"
+          ],
+          "summary": "Keyboard and mouse input sent to a target window is now detected and reported when it would be silently blocked by a mismatch in process integrity levels, and text typed into applications with an embedded editor child window is now correctly delivered to the focused child instead of being silently dropped",
+          "type": "fix"
+        },
+        {
+          "evidence": [
+            "pr:1625"
+          ],
+          "summary": "Clicking at specific coordinates on Chromium-based browser windows now uses a synthesized input method when needed, fixing clicks on custom-drawn surfaces like canvases that were previously silently ignored by the browser",
+          "type": "feat"
+        },
+        {
+          "evidence": [
+            "pr:1606"
+          ],
+          "summary": "Fixed automation tree discovery for CoreWindow-class Windows apps, which previously returned an empty automation tree; the driver now falls back to searching from the automation root for these apps",
+          "type": "fix"
+        },
+        {
+          "evidence": [
+            "pr:1612"
+          ],
+          "summary": "Improved the error message returned when a hotkey has no matching UI Automation accelerator, clarifying what was searched and noting common causes such as menu-nested actions",
+          "type": "fix"
+        }
+      ],
+      "key": "cua-driver-rs:0.2.9",
+      "provenance": {
+        "evidenceSha256": "4df74082a5aca9f5a69c582dd4c0219ba1654a2a061c5df9900035143a460165",
+        "generatedAt": "2026-07-17T21:01:32.764350Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "d8e8b8900b25d4e57846daf03dd3f199f5830f05c7cfec1e93e5d085f75abd4f",
+        "promptVersion": 1
+      },
+      "summary": "This release fixes several Windows input-delivery bugs affecting modern UWP and XAML apps and Chromium-based browsers, including click precision, hotkey and keyboard modifier handling, and UI Automation tree discovery, and adds automatic anti-throttling flags for launched Chromium browsers.",
+      "summaryEvidence": [
+        "pr:1622",
+        "pr:1624",
+        "pr:1611",
+        "pr:1618",
+        "pr:1613",
+        "pr:1625",
+        "pr:1606"
+      ]
+    },
+    {
+      "candidateSha256": "158478988f44029dd6047090d05f68c7a5e02b8ab751436d55d71422a2f3459a",
+      "changes": [
+        {
+          "evidence": [
+            "pr:1630"
+          ],
+          "summary": "The Windows autostart scheduled task now registers the driver daemon to run at the highest available privilege level instead of a limited one, enabling successful automation of UWP applications such as Calculator and Settings that previously returned little to no automation data",
+          "type": "feat"
+        }
+      ],
+      "key": "cua-driver-rs:0.2.10",
+      "provenance": {
+        "evidenceSha256": "7a26c8a3628ef024a8f0a91abee6bd271866793a2372a28ef8099531b3550ae3",
+        "generatedAt": "2026-07-17T21:01:32.764523Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "6e384d47a48c687208ac2caad05ce0178364d063c3b0ddd03c5e89048ad8f845",
+        "promptVersion": 1
+      },
+      "summary": "This release changes the Windows autostart configuration to run the driver daemon with full administrator privileges, improving automation support for UWP applications that require elevated access.",
+      "summaryEvidence": [
+        "pr:1630"
+      ]
+    },
+    {
+      "candidateSha256": "e54df3ce25d2e284c21124905ea5b75be4c61a8aef369ad3be4fb9aac96c2cae",
+      "changes": [
+        {
+          "evidence": [
+            "pr:1632"
+          ],
+          "summary": "Running the autostart enable command from a non-elevated shell now automatically prompts for administrator elevation to register the scheduled task, instead of failing with an access-denied error",
+          "type": "fix"
+        }
+      ],
+      "key": "cua-driver-rs:0.2.11",
+      "provenance": {
+        "evidenceSha256": "74727ae479667860318df837350169cc59c4166ac9ea7f31a45a5cf30370989c",
+        "generatedAt": "2026-07-17T21:01:32.764632Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "8934d117c98261b2d8d51949ca358eaba768aeb3489335994c4a1e13dbd2e3e7",
+        "promptVersion": 1
+      },
+      "summary": "This release fixes the Windows autostart enable command so it properly requests administrator elevation when needed instead of failing with an access-denied error.",
+      "summaryEvidence": [
+        "pr:1632"
+      ]
+    },
+    {
+      "candidateSha256": "2d87cb36691118684bae7df4c051aa84928bbe385d9da9a5c18230995d9fb400",
+      "changes": [
+        {
+          "evidence": [
+            "pr:1634"
+          ],
+          "summary": "The driver no longer attempts to spawn the elevated UIAccess worker process when the main daemon is already running with administrator privileges, eliminating a spurious Windows error dialog that appeared on startup",
+          "type": "fix"
+        }
+      ],
+      "key": "cua-driver-rs:0.2.12",
+      "provenance": {
+        "evidenceSha256": "492ce2bcb953c4d584a3a99ea8f9d037ef05547db935ab98e5c076cd2a788fc8",
+        "generatedAt": "2026-07-17T21:01:32.764734Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "9b02fef2d13c1b6c71b23859505683cd74e443f864ac4dbaab4fabaf283e9178",
+        "promptVersion": 1
+      },
+      "summary": "This release stops an unnecessary Windows error dialog from appearing when the driver daemon runs with administrator privileges.",
+      "summaryEvidence": [
+        "pr:1634"
+      ]
+    },
+    {
+      "candidateSha256": "b81cac540ce3527f5bad64b2657d7634599cd532bb81694b8c700e85d66864b2",
+      "changes": [
+        {
+          "evidence": [
+            "pr:1642"
+          ],
+          "summary": "The CLI call command now reports JSON parse errors directly, including a hint for PowerShell 5.1 users whose shell strips quotes from multi-field JSON arguments, instead of silently falling back to stdin",
+          "type": "fix"
+        },
+        {
+          "evidence": [
+            "pr:1642"
+          ],
+          "summary": "Windows launch_app error messages now list all supported application identifiers (bundle_id, name, aumid, path, launch_path, urls) instead of only mentioning bundle_id or name",
+          "type": "fix"
+        },
+        {
+          "evidence": [
+            "pr:1641"
+          ],
+          "summary": "check_permissions on Windows now reports the process token's actual integrity level instead of relying on a legacy elevation flag that could misreport permission status for administrator and autostart-launched processes",
+          "type": "fix"
+        },
+        {
+          "evidence": [
+            "pr:1643"
+          ],
+          "summary": "Added diagnostic logging for Windows app enumeration failures so gaps in list_apps output (such as missing UWP apps) are now visible instead of silent",
+          "type": "fix"
+        }
+      ],
+      "key": "cua-driver-rs:0.2.13",
+      "provenance": {
+        "evidenceSha256": "46e2a9377df0edf59aa64bc4eafe16c43136ff2e749c0d733c5e6a04d3970fcb",
+        "generatedAt": "2026-07-17T21:02:40.831448Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "d25fbb995de09243f500cdaa6b8d5c440e4faf940e27d7440b2cec32090307b5",
+        "promptVersion": 1
+      },
+      "summary": "This release improves the accuracy of Windows permission reporting and adds clearer error handling and diagnostics for CLI and app-launch operations.",
+      "summaryEvidence": [
+        "pr:1641",
+        "pr:1642",
+        "pr:1643"
+      ]
+    },
+    {
+      "candidateSha256": "d0c68f84dd5678a592be8df320368d0547ab9fa59358486159842d46f2e2a933",
+      "changes": [
+        {
+          "evidence": [
+            "pr:1647"
+          ],
+          "summary": "check_permissions on Windows now reverts thread impersonation and uses an explicit process handle before querying integrity level, fixing cases where it still misreported permission status",
+          "type": "fix"
+        }
+      ],
+      "key": "cua-driver-rs:0.2.14",
+      "provenance": {
+        "evidenceSha256": "3426c7933511a21b5fa818b964c308eecc319f82571a4fd3a42d1db865c028dd",
+        "generatedAt": "2026-07-17T21:02:40.831673Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "625a1225853b239af421a966fcc851c66b13bb1398aaee3a6656c2a18089d9c0",
+        "promptVersion": 1
+      },
+      "summary": "This release fixes a case where check_permissions on Windows could still misreport integrity level due to thread impersonation.",
+      "summaryEvidence": [
+        "pr:1647"
+      ]
+    },
+    {
+      "candidateSha256": "4754ebda11741f2190212235ba1b982ad450c7fed905a4976f167db609550eb2",
+      "changes": [
+        {
+          "evidence": [
+            "pr:1650"
+          ],
+          "summary": "The telemetry and configuration data directory was renamed from ~/.cua-driver-rs to ~/.cua-driver, with existing installations automatically migrated on first launch",
+          "type": "fix"
+        }
+      ],
+      "key": "cua-driver-rs:0.2.16",
+      "provenance": {
+        "evidenceSha256": "7d03c4347e806d34a45110a513d67704dff279b003f35256c829f23b37844bd2",
+        "generatedAt": "2026-07-17T21:02:40.831788Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "8077c1d82e34ed419a7326ff378f92abd3d7f0d27ec91072117515d96a6a9324",
+        "promptVersion": 1
+      },
+      "summary": "This release renames the local telemetry and configuration directory and migrates existing data automatically.",
+      "summaryEvidence": [
+        "pr:1650"
+      ]
+    },
+    {
+      "candidateSha256": "58103f895a22ebe5b958059efd66897e2e02deb0657a1b7ca6fdcfa80dfead83",
+      "changes": [
+        {
+          "evidence": [
+            "pr:1653"
+          ],
+          "summary": "check_permissions on Windows now retrieves integrity level through a PowerShell-based check instead of an in-process query, fixing cases where permission status was still misreported",
+          "type": "fix"
+        }
+      ],
+      "key": "cua-driver-rs:0.2.18",
+      "provenance": {
+        "evidenceSha256": "2d047a07c4aaf33c28d39485043ae84ffd8e3c3c7025e286b2283ffe25b9f3fd",
+        "generatedAt": "2026-07-17T21:02:40.831892Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "d6764cd8bea43eb241e917035dc0c1282f0af5091d36cca5761beb2caebd3408",
+        "promptVersion": 1
+      },
+      "summary": "This release fixes persistent misreporting of Windows permission status by changing how integrity level is queried.",
+      "summaryEvidence": [
+        "pr:1653"
+      ]
+    },
+    {
+      "candidateSha256": "301059833de5451446bf0949a63b8d2916b5fe65eac812ca1a2a33c17db6897b",
+      "changes": [
+        {
+          "evidence": [
+            "pr:1734"
+          ],
+          "summary": "Added a check-update CLI command and a check_for_update MCP tool that report whether a newer release is available, without installing it",
+          "type": "feat"
+        }
+      ],
+      "key": "cua-driver-rs:0.3.2",
+      "provenance": {
+        "evidenceSha256": "1102cf84fceec1c842725b2ca8f74e89e017380fda22ca84032e5aee7a33d22e",
+        "generatedAt": "2026-07-17T21:02:40.832035Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "e0def9f8d41fd6a1304cc9a56e87fd9c61061c2cc2ec08fb68e2c3271449a7c9",
+        "promptVersion": 1
+      },
+      "summary": "This release adds a way to check for newer cua-driver releases without installing them.",
+      "summaryEvidence": [
+        "pr:1734"
+      ]
+    },
+    {
+      "candidateSha256": "9f60900026e628918e2d46845e5167e7b24d4afe92f8fa12e239c036f92de574",
+      "changes": [
+        {
+          "evidence": [
+            "pr:1738"
+          ],
+          "summary": "Documentation was reorganized to present the Rust implementation as the primary cua-driver product, with updated install, intro, and platform guides for macOS, Linux, and Windows",
+          "type": "feat"
+        },
+        {
+          "evidence": [
+            "pr:1762"
+          ],
+          "summary": "The install script's default backend on macOS was reverted to the Swift implementation due to permission-system issues in the Rust implementation; the Rust implementation remains available via an explicit backend flag, and non-macOS installs still default to the Rust implementation",
+          "type": "fix"
+        },
+        {
+          "evidence": [
+            "pr:1758"
+          ],
+          "summary": "The local development installer now produces a proper application bundle on macOS instead of a bare binary, so Accessibility and Screen Recording permission grants persist across rebuilds instead of resetting",
+          "type": "fix"
+        },
+        {
+          "evidence": [
+            "pr:1760"
+          ],
+          "summary": "check_permissions run from a terminal on macOS no longer triggers a permission prompt misattributed to the terminal; it now reports status only and instructs the user to launch the background service for a correctly attributed prompt",
+          "type": "fix"
+        },
+        {
+          "evidence": [
+            "pr:1765"
+          ],
+          "summary": "Added a permissions status/grant CLI command on macOS, along with a live screen-recording capability check and clearer labeling of which process a reported permission actually belongs to",
+          "type": "feat"
+        },
+        {
+          "evidence": [
+            "pr:1754"
+          ],
+          "summary": "get_window_state now caps traversal at 2000 elements and times out after 30 seconds, preventing indefinite hangs when inspecting complex applications such as Arc, Safari with many tabs, or Electron apps",
+          "type": "fix"
+        },
+        {
+          "evidence": [
+            "pr:1719"
+          ],
+          "summary": "launch_app on macOS now returns a structured error when an application or local file target cannot be found, instead of allowing macOS to show a persistent system dialog",
+          "type": "fix"
+        },
+        {
+          "evidence": [
+            "pr:1769"
+          ],
+          "summary": "The cursor position reported after a click is now correctly synced with the actual on-screen cursor, fixing cases where the reported position was null after clicking",
+          "type": "fix"
+        },
+        {
+          "evidence": [
+            "pr:1750"
+          ],
+          "summary": "The uninstall.ps1 one-liner no longer fails to parse when piped through Invoke-Expression; force mode is now controlled with an environment variable instead of a script parameter",
+          "type": "fix"
+        },
+        {
+          "evidence": [
+            "pr:1759"
+          ],
+          "summary": "Added an opt-in flag to the uninstall script to revoke Accessibility, Screen Recording, and Automation permission grants on macOS during uninstall",
+          "type": "feat"
+        }
+      ],
+      "key": "cua-driver-rs:0.3.3",
+      "provenance": {
+        "evidenceSha256": "f29d2f7fffa81168e6e500367b3ffa83fe326ffd3e246e28300f51d1abad53f9",
+        "generatedAt": "2026-07-17T21:02:40.832573Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "7ad437b208ebba52cc10ab2283d1a4b8d303193d477479d9a4c456bba8543f84",
+        "promptVersion": 1
+      },
+      "summary": "This release makes the Rust implementation the primary cua-driver product with updated documentation, while addressing several macOS permission-handling and reliability issues, including install bundling, permission prompt attribution, and reliability fixes for window inspection and app launching.",
+      "summaryEvidence": [
+        "pr:1738",
+        "pr:1765",
+        "pr:1754",
+        "pr:1762"
+      ]
+    },
+    {
+      "candidateSha256": "f3963322b559ae31b8cab55ea38206e2368805e6c3eafb2ecbf21ebbf37b7fde",
+      "changes": [
+        {
+          "evidence": [
+            "pr:1768"
+          ],
+          "summary": "The install script now defaults to installing the Rust implementation on all platforms; the Swift implementation remains available on macOS via an explicit backend flag",
+          "type": "fix"
+        }
+      ],
+      "key": "cua-driver-rs:0.3.4",
+      "provenance": {
+        "evidenceSha256": "a3f23f183c585132638dcfd7cf989910e9cec077f87a0acc191b4835c304e402",
+        "generatedAt": "2026-07-17T21:02:40.832703Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "a946dba7181b3f113b977e308bef8907856b3ecae0440e4c1480bc289c86fc45",
+        "promptVersion": 1
+      },
+      "summary": "This release changes the default install script to install the Rust implementation on all platforms.",
+      "summaryEvidence": [
+        "pr:1768"
+      ]
+    },
+    {
+      "candidateSha256": "4534c55150a1ee5c107888c05044c493ed7c720fe4df6a8fbb1f63e76c3cc66e",
+      "changes": [
+        {
+          "evidence": [
+            "pr:1773"
+          ],
+          "summary": "On macOS, the background service now binds its communication socket before waiting on the permissions prompt, fixing cases where the service was unreachable for minutes on first launch until Accessibility and Screen Recording permissions were granted",
+          "type": "fix"
+        },
+        {
+          "evidence": [
+            "pr:1770"
+          ],
+          "summary": "The default install script now correctly installs the latest release instead of remaining stuck on an older version due to a release automation failure",
+          "type": "fix"
+        }
+      ],
+      "key": "cua-driver-rs:0.3.5",
+      "provenance": {
+        "evidenceSha256": "90e5e91fddbce24c122f6e39da9b4fdfcd1c39d033c7550a4a376ddc7d97b973",
+        "generatedAt": "2026-07-17T21:02:40.832898Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "67f9175bc0604294c6c5946e1b5bdd28c69711b885ac01d42f222f370c9e52a1",
+        "promptVersion": 1
+      },
+      "summary": "This release fixes a macOS startup issue where the background service could be unreachable for minutes when permissions had not yet been granted, and corrects the install script to fetch the latest release.",
+      "summaryEvidence": [
+        "pr:1773",
+        "pr:1770"
+      ]
+    },
+    {
+      "candidateSha256": "e83ea0676c099d79a5a12bd1607e524e6afc2d468e4d8b1a9c2b82f9f908b292",
+      "changes": [
+        {
+          "evidence": [
+            "pr:1774"
+          ],
+          "summary": "Fixed cua-driver permissions status incorrectly reporting Accessibility and Screen Recording as granted when run standalone from a terminal; it now reports an unknown status with guidance when the daemon is not running instead of falsely claiming permissions were granted",
+          "type": "fix"
+        }
+      ],
+      "key": "cua-driver-rs:0.3.6",
+      "provenance": {
+        "evidenceSha256": "4200a9b0cda55304973cc02568043add91b8aac6b4f995e8bd7e59d385af4773",
+        "generatedAt": "2026-07-17T21:03:44.046983Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "b3b7e70b9f558ffd757291c67417f71873af35a2a48a81f1c4bd2375867e0298",
+        "promptVersion": 1
+      },
+      "summary": "This patch fixes a false positive in permissions status reporting on macOS.",
+      "summaryEvidence": [
+        "pr:1774"
+      ]
+    },
+    {
+      "candidateSha256": "b8aaf9007ac1a7bc0668e6e913024ae900934444f54eecd9a62ee06f7fb6e49b",
+      "changes": [
+        {
+          "evidence": [
+            "pr:1776"
+          ],
+          "summary": "Added per-session identity to the daemon so that starting or stopping a recording, or changing configuration, in one session no longer clobbers another concurrent session's state",
+          "type": "feat"
+        },
+        {
+          "evidence": [
+            "pr:1776"
+          ],
+          "summary": "Video recording now starts off by default for a recording session",
+          "type": "feat"
+        }
+      ],
+      "key": "cua-driver-rs:0.4.0",
+      "provenance": {
+        "evidenceSha256": "dc12511b8b16e1ca10bafc2f11509c909e25e25a39e48a9f3891284a2c82b95c",
+        "generatedAt": "2026-07-17T21:03:44.047155Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "350c65a77ce39e665e8a23061fe9fc46bc7130c252b4e4b45bdcea67328e0edf",
+        "promptVersion": 1
+      },
+      "summary": "This release isolates recording and configuration state per daemon session so concurrent MCP sessions no longer interfere with each other.",
+      "summaryEvidence": [
+        "pr:1776"
+      ]
+    },
+    {
+      "candidateSha256": "04cd5fca6cb4e62f599a0047d7800d5dd20f8a55456aad42b3d42d09c2272aa7",
+      "changes": [
+        {
+          "evidence": [
+            "pr:1779"
+          ],
+          "summary": "Added per-session agent cursors on macOS so concurrent sessions each render their own distinctly colored cursor instead of sharing and overwriting one overlay",
+          "type": "feat"
+        },
+        {
+          "evidence": [
+            "pr:1781"
+          ],
+          "summary": "Fixed cua-driver mcp crashing with SIGABRT when launched in a context without Window Server access, such as over SSH or as a headless daemon; it now degrades to running headless instead of aborting",
+          "type": "fix"
+        },
+        {
+          "evidence": [
+            "pr:1780"
+          ],
+          "summary": "Fixed the macOS CuaDriver.app bundle showing a blank generic icon in Finder and Launchpad by shipping a proper application icon",
+          "type": "fix"
+        }
+      ],
+      "key": "cua-driver-rs:0.4.1",
+      "provenance": {
+        "evidenceSha256": "17053532cb0cbf356c653324f4d14bc36545db7016bdf5460e7af36cb3a9dd09",
+        "generatedAt": "2026-07-17T21:03:44.047357Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "3efa84e8583e082994e7ecb20fd9b78d0ab16f9da852a195dabcac4f0ab9c992",
+        "promptVersion": 1
+      },
+      "summary": "This release adds distinct per-session agent cursors on macOS and fixes a headless-environment crash and a missing application icon.",
+      "summaryEvidence": [
+        "pr:1779",
+        "pr:1781",
+        "pr:1780"
+      ]
+    },
+    {
+      "candidateSha256": "738127af2d9080244de188b20414eb39c84c1fc70f9f05047df065265b4983f9",
+      "changes": [
+        {
+          "evidence": [
+            "pr:1756"
+          ],
+          "summary": "Enabled accessibility trees for Chromium- and Electron-based applications so get_window_state returns the full window content instead of only the title bar on first access",
+          "type": "feat"
+        },
+        {
+          "evidence": [
+            "pr:1782"
+          ],
+          "summary": "Fixed hotkey, press_key, and scroll crashing the daemon on macOS 14 (Sonoma) due to an unrecognized selector; the driver now checks API availability and falls back gracefully on older macOS versions",
+          "type": "fix"
+        }
+      ],
+      "key": "cua-driver-rs:0.4.2",
+      "provenance": {
+        "evidenceSha256": "b131b8b8e9bd83e962c2728e4e39c6b08a08341fcb9db163021bb9f8b24d9b76",
+        "generatedAt": "2026-07-17T21:03:44.047492Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "95b71086c9af3bc83d07237bf70a7641c283feb63242d1ba47de422bdd883e66",
+        "promptVersion": 1
+      },
+      "summary": "This release improves accessibility support for Chromium and Electron apps and fixes a crash on macOS 14.",
+      "summaryEvidence": [
+        "pr:1756",
+        "pr:1782"
+      ]
+    },
+    {
+      "candidateSha256": "6582a87ed1d7c73ce0aaa3c27913b2f79a67f1f8356cf5c79f634aa73ecef810",
+      "changes": [
+        {
+          "evidence": [
+            "pr:1787"
+          ],
+          "summary": "Fixed the agent cursor not appearing during MCP sessions by wiring per-session cursor identity through the real cua-driver mcp path and seeding the cursor on-screen so the first action glides into view instead of only snapping in place",
+          "type": "fix"
+        },
+        {
+          "evidence": [
+            "pr:1791"
+          ],
+          "summary": "Fixed the macOS permissions grant flow repeatedly re-prompting for Accessibility and Screen Recording access roughly every 25 seconds instead of prompting once",
+          "type": "fix"
+        },
+        {
+          "evidence": [
+            "pr:1790"
+          ],
+          "summary": "Fixed the agent cursor overlay not rendering when cua-driver ran through the daemon-proxy setup by running the overlay loop inside the serve daemon",
+          "type": "fix"
+        }
+      ],
+      "key": "cua-driver-rs:0.4.3",
+      "provenance": {
+        "evidenceSha256": "c3cc93d1c537a9d0018d39db17fcf20daf221f4fd96fcf17f9a949b991e609ba",
+        "generatedAt": "2026-07-17T21:03:44.047689Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "ed3a5c5ea6fa781aedc456ce5e003bc87a001477582a1938b3758c02fb4da125",
+        "promptVersion": 1
+      },
+      "summary": "This release fixes the agent cursor not appearing during real MCP sessions, stops a repeated permissions prompt, and ensures the cursor overlay renders when using the daemon.",
+      "summaryEvidence": [
+        "pr:1787",
+        "pr:1791",
+        "pr:1790"
+      ]
+    },
+    {
+      "candidateSha256": "127f08b3caa87df3604fefb446db00785b1342cbd59acb9d3a605e44cb2e293a",
+      "changes": [
+        {
+          "evidence": [
+            "pr:1798"
+          ],
+          "summary": "Added explicit, caller-declared session identity and a Streamable-HTTP MCP transport, allowing multiple agents to run in true parallel with independent sessions, cursors, and automatic idle-timeout cleanup",
+          "type": "feat"
+        },
+        {
+          "evidence": [
+            "pr:1801"
+          ],
+          "summary": "Added per-session agent cursors on Windows so concurrent sessions each render their own distinctly colored cursor instead of sharing one overlay",
+          "type": "feat"
+        },
+        {
+          "evidence": [
+            "pr:1796"
+          ],
+          "summary": "Fixed a daemon crash on macOS caused by a use-after-free when concurrent sessions accessed the same window during accessibility actions like clicking, typing, and scrolling",
+          "type": "fix"
+        },
+        {
+          "evidence": [
+            "pr:1795"
+          ],
+          "summary": "Fixed local macOS installs becoming stuck reporting permissions as not granted after a rebuild, even though System Settings showed them enabled, by resetting a permission grant that was pinned to a previous signing identity",
+          "type": "fix"
+        }
+      ],
+      "key": "cua-driver-rs:0.5.0",
+      "provenance": {
+        "evidenceSha256": "158938d6eb2fe2f569aefac5bd890b31fa3fdfa9add6e0ee624c64095a65bf74",
+        "generatedAt": "2026-07-17T21:03:44.047962Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "37a77ed20f39b92b0fac566baeca010f1f87c9e0102ac9edc5cd1f1474a20938",
+        "promptVersion": 1
+      },
+      "summary": "This release adds caller-declared session identity with an HTTP transport for running multiple agents in parallel, brings per-session agent cursors to Windows, and fixes a daemon crash under concurrent sessions.",
+      "summaryEvidence": [
+        "pr:1798",
+        "pr:1801",
+        "pr:1796"
+      ]
+    },
+    {
+      "candidateSha256": "66f07123a95b3e0a276084d09fcbe3e553e9676e63b67738476942998595cdcc",
+      "changes": [
+        {
+          "evidence": [
+            "pr:1803"
+          ],
+          "summary": "Fixed the release installer using a different installation directory than the local installer and runtime, and added cleanup of a prior local install so the two no longer conflict",
+          "type": "fix"
+        }
+      ],
+      "key": "cua-driver-rs:0.5.1",
+      "provenance": {
+        "evidenceSha256": "d04303bdbd12aecf6d4b7f6b9d56553e86bd284a75df0608bd014030132f1fef",
+        "generatedAt": "2026-07-17T21:03:44.048075Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "f56b1b7de9a97792074d2854296cf6122836070452f948c4e5cc4d0033290aad",
+        "promptVersion": 1
+      },
+      "summary": "This release fixes the release installer to use a consistent installation directory and clean up conflicting local installs.",
+      "summaryEvidence": [
+        "pr:1803"
+      ]
+    },
+    {
+      "candidateSha256": "24565466bd30f83d3bdc0dcf108506d0ad4d9d4f159ad4b77a351f8eab49cb24",
+      "changes": [
+        {
+          "evidence": [
+            "pr:1809"
+          ],
+          "summary": "Background input on Windows can now click and type into Chromium, WPF, WinForms, Electron, and GTK applications without raising the window or moving the visible cursor, with automatic fallback to touch injection when needed",
+          "type": "feat"
+        },
+        {
+          "evidence": [
+            "pr:1814"
+          ],
+          "summary": "Added GTK4 support for truly focus-free background text entry using synthetic focus events, extending the technique already used for Qt5",
+          "type": "feat"
+        },
+        {
+          "evidence": [
+            "pr:1821"
+          ],
+          "summary": "Added a DPI-awareness manifest to the Windows driver, fixing an issue where click and screenshot coordinates were offset when the display was scaled to 125%, 150%, or 200%",
+          "type": "fix"
+        }
+      ],
+      "key": "cua-driver-rs:0.5.2",
+      "provenance": {
+        "evidenceSha256": "25516e3a2b13c23e908bb788185d9daf6e55c992c5ec325e6640f6b7ccc0f5d7",
+        "generatedAt": "2026-07-17T21:04:42.629229Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "cfee02541b2bda96601227a808f52f8b6e11ea0c0ba499c3bfed82bda901a699",
+        "promptVersion": 1
+      },
+      "summary": "This release adds Windows background computer-use input that avoids window activation, brings a focus-free background text-entry technique to GTK4 apps on Linux, and fixes a Windows coordinate offset bug at 125%, 150%, and 200% display scaling.",
+      "summaryEvidence": [
+        "pr:1809",
+        "pr:1814",
+        "pr:1821"
+      ]
+    },
+    {
+      "candidateSha256": "cd61ae2614bb5a63f5888be2abdd9cf1ab4ac498b38b832f7927d8c953d310fd",
+      "changes": [
+        {
+          "evidence": [
+            "pr:1871"
+          ],
+          "summary": "Added background drag and held-button (pressed) cursor support on Linux, along with a refactored overlay backend that supports multiple simultaneous cursors",
+          "type": "feat"
+        },
+        {
+          "evidence": [
+            "pr:1789"
+          ],
+          "summary": "The Linux driver can now animate the cursor to on-screen coordinates and type text directly into background terminal windows",
+          "type": "feat"
+        }
+      ],
+      "key": "cua-driver-rs:0.5.3",
+      "provenance": {
+        "evidenceSha256": "aff0289a119b85b2b5ed9622e8394bda9ae4e2a6f5d5e97009cbfaa37563f439",
+        "generatedAt": "2026-07-17T21:04:42.629408Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "91bb25b3ab4f61322e49059776c6a1156622113f42c1ef2ece510d46d3d5d865",
+        "promptVersion": 1
+      },
+      "summary": "This release adds Linux background drag and held-button cursor support and enables the driver to show the cursor and type text into background terminal windows.",
+      "summaryEvidence": [
+        "pr:1871",
+        "pr:1789"
+      ]
+    },
+    {
+      "candidateSha256": "cdaf164b8d7525eedd1f68ce4f0d12cc67761f19ada23b00831aaac6c2017fd9",
+      "changes": [
+        {
+          "evidence": [
+            "pr:1906"
+          ],
+          "summary": "Restored the screen-capture entitlement on the signed macOS release binary and app bundle, fixing screenshots and window-state captures that were returning blank 0x0 images on macOS 15 and later even when Screen Recording permission was granted",
+          "type": "fix"
+        }
+      ],
+      "key": "cua-driver-rs:0.5.4",
+      "provenance": {
+        "evidenceSha256": "66927d555fbdc5405238cb35387c28a1792c849ea13fa09fc3cb08bdf22f3adf",
+        "generatedAt": "2026-07-17T21:04:42.629505Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "3572fec04b069dc7967a72eaa76f363829ee8bcfeed6ed8d91cf3685471b4725",
+        "promptVersion": 1
+      },
+      "summary": "This release fixes a macOS bug where screenshots and window captures returned blank, zero-sized images on macOS 15 and later.",
+      "summaryEvidence": [
+        "pr:1906"
+      ]
+    },
+    {
+      "candidateSha256": "8613d9e728408b5bb60f9502fab17b681339eae5c5972faaed200af7a451b0a2",
+      "changes": [
+        {
+          "evidence": [
+            "pr:1884"
+          ],
+          "summary": "The zoom tool now scales the requested crop region by the window's resize ratio before cropping, fixing zoom captures that showed the wrong region of the screen when window downscaling was active",
+          "type": "fix"
+        },
+        {
+          "evidence": [
+            "pr:1883"
+          ],
+          "summary": "Corrected the Windows DPI-awareness manifest so it is actually applied by the system loader, and removed the resulting double-scaling in screen and window capture, fixing screenshot and click misalignment on high-DPI and multi-monitor Windows setups",
+          "type": "fix"
+        }
+      ],
+      "key": "cua-driver-rs:0.5.5",
+      "provenance": {
+        "evidenceSha256": "75efeb028e0072d7f62a65bb9aea5a19d5fcfa38f7d8a306c4f8e87cb622428e",
+        "generatedAt": "2026-07-17T21:04:42.629605Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "96159a371da6a670690b524f534371a648006362cd4100d564d6e4e1b5d00d1f",
+        "promptVersion": 1
+      },
+      "summary": "This release fixes two Windows coordinate-accuracy issues: incorrect zoom crops when window downscaling is active, and screenshot and click misalignment on high-DPI and multi-monitor displays.",
+      "summaryEvidence": [
+        "pr:1884",
+        "pr:1883"
+      ]
+    },
+    {
+      "candidateSha256": "1b23a2c9f62b9ef5e0a1a34fbe97b35c965fda0b30b6fdc27f9d1b6b632de840",
+      "changes": [
+        {
+          "evidence": [
+            "pr:1910"
+          ],
+          "summary": "Added native Wayland support for background input on wlroots-based compositors",
+          "type": "feat"
+        },
+        {
+          "evidence": [
+            "pr:1930"
+          ],
+          "summary": "The Linux driver now enables accessibility support for Chromium and Electron-based applications, such as VS Code, Slack, Discord, and Obsidian, at startup, so these apps are no longer invisible to the driver's accessibility tree",
+          "type": "feat"
+        },
+        {
+          "evidence": [
+            "pr:1931"
+          ],
+          "summary": "Fixed incorrect element screen coordinates reported for GTK4 applications on Linux, which had prevented element-targeted clicks and the cursor overlay from aiming correctly",
+          "type": "fix"
+        },
+        {
+          "evidence": [
+            "pr:1865"
+          ],
+          "summary": "The macOS agent-cursor overlay no longer renders frames continuously while idle, eliminating unnecessary CPU usage when the cursor is not active",
+          "type": "fix"
+        }
+      ],
+      "key": "cua-driver-rs:0.5.6",
+      "provenance": {
+        "evidenceSha256": "98f21e5827ff4e889fea75eb8a7e59e939a5ef2d4152555f93af94f8a66c1ffe",
+        "generatedAt": "2026-07-17T21:04:42.629740Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "7b439d269aeecfb2c95bd8da284e1c097b01795a84f2b8208c52e21f3bf5e4bb",
+        "promptVersion": 1
+      },
+      "summary": "This release adds native Wayland support and automatic accessibility enablement for Chromium and Electron apps on Linux, fixes incorrect element coordinates in GTK4 apps, and stops the macOS cursor overlay from consuming CPU while idle.",
+      "summaryEvidence": [
+        "pr:1910",
+        "pr:1930",
+        "pr:1931",
+        "pr:1865"
+      ]
+    },
+    {
+      "candidateSha256": "1cf5b4b886a3135b8e5f667fb02177a8f363e4a6d94efd656e0ef437eb03e448",
+      "changes": [
+        {
+          "evidence": [
+            "pr:1928"
+          ],
+          "summary": "Fixed Linux configuration settings such as max_image_dimension and capture_mode silently failing to persist when set using the key/value format",
+          "type": "fix"
+        },
+        {
+          "evidence": [
+            "pr:1935"
+          ],
+          "summary": "The experimental native Wayland backend is now disabled by default and must be explicitly enabled, rather than automatically engaging on any Wayland session",
+          "type": "fix"
+        },
+        {
+          "evidence": [
+            "pr:1933"
+          ],
+          "summary": "Fixed the Windows cursor overlay consuming significant CPU while idle, and fixed the driver process lingering as an orphan with the overlay still running after an MCP client disconnected",
+          "type": "fix"
+        }
+      ],
+      "key": "cua-driver-rs:0.5.7",
+      "provenance": {
+        "evidenceSha256": "465b1954fea40f6839c268f7581d940ddbe8a1e5070ca593c8fca257ec0316a5",
+        "generatedAt": "2026-07-17T21:04:42.629874Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "06960d345504f6b68399195a27e7c3e026b1700e0191e40cc7e0516018aaf80c",
+        "promptVersion": 1
+      },
+      "summary": "This release fixes a Linux configuration bug where settings failed to persist, disables the experimental native Wayland backend by default until it is more complete, and fixes idle CPU usage and an orphaned process issue in the Windows cursor overlay.",
+      "summaryEvidence": [
+        "pr:1928",
+        "pr:1935",
+        "pr:1933"
+      ]
+    },
+    {
+      "candidateSha256": "c6fc1199d3087962754ab131b9052c17447800c8f117cca9d5439fabab15bd01",
+      "changes": [
+        {
+          "evidence": [
+            "pr:1961"
+          ],
+          "summary": "The agent cursor overlay now renders at native retina resolution and supports selecting between arrow and teardrop cursor shapes",
+          "type": "feat"
+        },
+        {
+          "evidence": [
+            "pr:1961"
+          ],
+          "summary": "Typing text now falls back to direct key-event synthesis when the target window is a terminal emulator, fixing silent text-input failures in terminals such as Ghostty, iTerm2, Terminal.app, and Windows Terminal",
+          "type": "fix"
+        },
+        {
+          "evidence": [
+            "pr:1961"
+          ],
+          "summary": "Expanded the MCP tool surface with per-tool capability lists, a machine-readable CLI manifest, explicit image response types, a click button enum, and opaque element tokens, letting third-party agent integrations decouple from internal driver details",
+          "type": "feat"
+        },
+        {
+          "evidence": [
+            "pr:1908"
+          ],
+          "summary": "Added a health_report MCP tool that returns a single diagnostic report covering driver version, platform support, permissions, and capability status",
+          "type": "feat"
+        },
+        {
+          "evidence": [
+            "pr:1963"
+          ],
+          "summary": "The skills installer now autodetects the Hermes agent and symlinks the cua-driver skill pack into its skills directory",
+          "type": "feat"
+        }
+      ],
+      "key": "cua-driver-rs:0.6.0",
+      "provenance": {
+        "evidenceSha256": "3a8e0ab96a8a7471f094ae631c92a027fbed4eb499c9bb379376871d2a231135",
+        "generatedAt": "2026-07-17T21:04:42.630045Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "aefb20634e155b1e2803289fd72565126b7a19fe218d0682593f273cc1bc5c4e",
+        "promptVersion": 1
+      },
+      "summary": "This release overhauls the cursor overlay with retina-aware rendering and selectable cursor shapes, fixes text input in terminal emulators, expands the MCP tool surface for third-party agent integrations, adds a unified health_report diagnostics tool, and adds Hermes agent skill autodetection.",
+      "summaryEvidence": [
+        "pr:1961",
+        "pr:1908",
+        "pr:1963"
+      ]
+    },
+    {
+      "candidateSha256": "42a51b3821e17e0167a3e9ca97d5b26c4b62031655d752ec8ddabffbce163664",
+      "changes": [
+        {
+          "evidence": [
+            "pr:1967"
+          ],
+          "summary": "Feature-gate the desktop-portal and libei input backends so Linux release builds no longer require a newer PipeWire/libei toolchain, preserving compatibility with Debian 11, Ubuntu 22.04, and RHEL/Rocky 9",
+          "type": "fix"
+        }
+      ],
+      "key": "cua-driver-rs:0.6.2",
+      "provenance": {
+        "evidenceSha256": "92d422fc1437837255fd33d151680c0113064b2489196fe26e42c72e111805e2",
+        "generatedAt": "2026-07-17T21:05:41.739021Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "f29a19925f6f954f0b903bcf62f5e1575e0c08d745482670f8b079d1fd572735",
+        "promptVersion": 1
+      },
+      "summary": "This patch makes the Linux release pipeline compatible with the Debian bullseye build container by feature-gating optional desktop-portal and libei input backends, allowing Linux release artifacts to build without raising the minimum required glibc version.",
+      "summaryEvidence": [
+        "pr:1967"
+      ]
+    },
+    {
+      "candidateSha256": "4097e18ada5d4c0502b7ece6dc991dfcf55208db0ad0eff74c5abaab05ceb73e",
+      "changes": [
+        {
+          "evidence": [
+            "pr:1974"
+          ],
+          "summary": "Return a clear error instead of a blank black screenshot when capturing a minimized window on Windows",
+          "type": "fix"
+        },
+        {
+          "evidence": [
+            "pr:1972"
+          ],
+          "summary": "Uninstall scripts now also remove skill links for the Antigravity and Hermes agents, preventing orphaned symlinks after uninstall",
+          "type": "fix"
+        }
+      ],
+      "key": "cua-driver-rs:0.6.3",
+      "provenance": {
+        "evidenceSha256": "6251b3c0d5c875bd3e3e2a4052a9182e4e1606ab9277ba7db69ab9f9b73ab8c0",
+        "generatedAt": "2026-07-17T21:05:41.739196Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "3706a8a0c54e75433c82255ab56eba0ea87c96c9e49eb21f1e1c03043b113723",
+        "promptVersion": 1
+      },
+      "summary": "This patch fixes a black-screenshot bug when capturing minimized windows on Windows and completes uninstall cleanup for additional AI agent skill directories.",
+      "summaryEvidence": [
+        "pr:1974",
+        "pr:1972"
+      ]
+    },
+    {
+      "candidateSha256": "afb767baa23d90280474e23438d9d09178dd2b273864e18d098ac95a2d4a5fca",
+      "changes": [
+        {
+          "evidence": [
+            "pr:1977"
+          ],
+          "summary": "Windows window-state responses now include a clear error message when a screenshot cannot be captured, instead of silently omitting it",
+          "type": "fix"
+        }
+      ],
+      "key": "cua-driver-rs:0.6.4",
+      "provenance": {
+        "evidenceSha256": "3ca2bd5cc814c1f4f718a1abbe08e21bb8a23f5cd74164b8a02a1e88f621392a",
+        "generatedAt": "2026-07-17T21:05:41.739279Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "3c6753bc17a3effe1fe4fde336551539f8530dfc2194ad9bc4517052c004b1f3",
+        "promptVersion": 1
+      },
+      "summary": "This patch surfaces screenshot capture failures instead of silently dropping them when reporting Windows window state.",
+      "summaryEvidence": [
+        "pr:1977"
+      ]
+    },
+    {
+      "candidateSha256": "6bf35b9b38f370ce014db9d710f46a784434efc6ec5f85f217ae8130184c7a67",
+      "changes": [
+        {
+          "evidence": [
+            "pr:1980"
+          ],
+          "summary": "Corrected a fence-post error in multi-monitor coordinate normalization on Windows that could send synthesized clicks to the wrong monitor near screen boundaries",
+          "type": "fix"
+        },
+        {
+          "evidence": [
+            "pr:1983"
+          ],
+          "summary": "Windows mouse input coordinate packing now clamps and logs out-of-range values instead of silently corrupting them",
+          "type": "fix"
+        }
+      ],
+      "key": "cua-driver-rs:0.6.5",
+      "provenance": {
+        "evidenceSha256": "0f5bd66079d0dc23ef415dd5b3e8dfc58220cad9b5bfa8e82a47c6f8bc9f4f43",
+        "generatedAt": "2026-07-17T21:05:41.739399Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "b7c762b735a9acf253cc04198348c66ad7ee5cb703be33bf44cf9e33d01e63d1",
+        "promptVersion": 1
+      },
+      "summary": "This patch fixes incorrect click placement on multi-monitor Windows setups with negative-offset secondary monitors and hardens mouse coordinate packing against out-of-range values.",
+      "summaryEvidence": [
+        "pr:1980",
+        "pr:1983"
+      ]
+    },
+    {
+      "candidateSha256": "344a211df2d1f1e8d77a518f52bc7a14d2afeb585eecad4754999e44e56d64cb",
+      "changes": [
+        {
+          "evidence": [
+            "pr:1995"
+          ],
+          "summary": "Double-click and right-click on Chromium and Electron apps on Windows, such as Obsidian, VS Code, and Slack, now actually deliver clicks instead of silently doing nothing",
+          "type": "fix"
+        },
+        {
+          "evidence": [
+            "pr:1992"
+          ],
+          "summary": "On GNOME and KDE Wayland desktops without libei/portal input support, input actions now return a clear error instead of silently failing",
+          "type": "fix"
+        },
+        {
+          "evidence": [
+            "pr:1994"
+          ],
+          "summary": "On Linux desktops running pure Wayland with no working input backend, input actions now fail with an actionable error instead of reporting false success",
+          "type": "fix"
+        },
+        {
+          "evidence": [
+            "pr:1996"
+          ],
+          "summary": "Windows UI Automation tree queries now retry transient cache-build failures instead of returning an empty element tree",
+          "type": "fix"
+        },
+        {
+          "evidence": [
+            "pr:1997"
+          ],
+          "summary": "The daemon proxy no longer treats a socket read timeout as a fatal error, fixing failures on large or slow responses such as full-screen captures and slow accessibility scans",
+          "type": "fix"
+        },
+        {
+          "evidence": [
+            "pr:1998"
+          ],
+          "summary": "Linux window-state queries now retry when a Qt6 application's accessibility tree is still empty right after a cold launch, instead of returning only the root window",
+          "type": "fix"
+        },
+        {
+          "evidence": [
+            "pr:1999"
+          ],
+          "summary": "Driving a Wayland and Xwayland desktop over SSH now auto-discovers the X authentication cookie, fixing X11 tool failures such as list_windows returning empty results",
+          "type": "fix"
+        },
+        {
+          "evidence": [
+            "pr:1990"
+          ],
+          "summary": "The Windows installer no longer fails when the system temp directory resolves to a missing 8.3 short path",
+          "type": "fix"
+        }
+      ],
+      "key": "cua-driver-rs:0.6.6",
+      "provenance": {
+        "evidenceSha256": "15ccbba8eb0a8f510ca4014349b4c209ff83ced930242dbdd5a93f69b3cc62cb",
+        "generatedAt": "2026-07-17T21:05:41.739663Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "787b83c088909473e18a9b04d8c45fb4c52f941d00c7b3b459c280633d44dc66",
+        "promptVersion": 1
+      },
+      "summary": "This release fixes several Linux and Windows input reliability issues, including dead-input detection on GNOME/KDE Wayland, SSH-driven Wayland+Xwayland authentication, double and right-click delivery to Chromium apps, transient UI Automation cache failures, a Windows installer temp-path failure, and a stalled daemon proxy on slow requests.",
+      "summaryEvidence": [
+        "pr:1992",
+        "pr:1994",
+        "pr:1995",
+        "pr:1996",
+        "pr:1997",
+        "pr:1998",
+        "pr:1999",
+        "pr:1990"
+      ]
+    },
+    {
+      "candidateSha256": "a1572da29910cbd68ff30dae987a300741c89832f0d66a3ac1212ac30082144c",
+      "changes": [
+        {
+          "evidence": [
+            "pr:2006"
+          ],
+          "summary": "Linux screen-size and screenshot calls now fail with an actionable error instead of returning 0x0 dimensions or a blank capture when no usable display, such as WSL without WSLg, is available",
+          "type": "fix"
+        }
+      ],
+      "key": "cua-driver-rs:0.6.7",
+      "provenance": {
+        "evidenceSha256": "a61dc70b0c47e225194e2b65467924f8960d9eaf6d8d36c1a0466f32af7cf935",
+        "generatedAt": "2026-07-17T21:05:41.739753Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "22f65bbbba5a131a53a9d5871e4105bc2074b00d2d1b46c5bd47bb025aa83ae7",
+        "promptVersion": 1
+      },
+      "summary": "This patch returns a clear error instead of a zero-size or null screen dimension when no usable display is detected on Linux, such as under WSL without a display attached.",
+      "summaryEvidence": [
+        "pr:2006"
+      ]
+    },
+    {
+      "candidateSha256": "1cf59dc26a2dce599aac72a2ed3e63dcc75bb5c5e38678c979b1e57195439c8e",
+      "changes": [
+        {
+          "evidence": [
+            "pr:2000"
+          ],
+          "summary": "Applied a dependency security update rollup to remove known vulnerabilities in project dependencies",
+          "type": "fix"
+        }
+      ],
+      "key": "cua-driver-rs:0.6.8",
+      "provenance": {
+        "evidenceSha256": "8fff061ae47535937918689690cdd4d87b868acb97f60cb0c3c7228c480c2ace",
+        "generatedAt": "2026-07-17T21:05:41.739838Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "799e6caacca2ac076be454ca08d076a126a2b82af8af6795bda5211c9c221fca",
+        "promptVersion": 1
+      },
+      "summary": "This release applies a dependency security rollup addressing vulnerable dependencies used by the project, including the Rust driver.",
+      "summaryEvidence": [
+        "pr:2000"
+      ]
+    },
+    {
+      "candidateSha256": "6a5345065f3df5b328b49109c7c16f89efe01bde4effbca081382fedb3d2ef80",
+      "changes": [
+        {
+          "evidence": [
+            "pr:2077"
+          ],
+          "summary": "Actions now report whether they were verified, which input path was used, the observed effect, and an escalation suggestion when an action's effect cannot be confirmed (for example when a web or Electron app's accessibility tree falsely echoes success)",
+          "type": "feat"
+        },
+        {
+          "evidence": [
+            "pr:2077"
+          ],
+          "summary": "Added browser page control (reading text, querying the DOM, clicking elements, running JavaScript, and two text-entry methods) so actions can be verified and applied directly against web content",
+          "type": "feat"
+        },
+        {
+          "evidence": [
+            "pr:2077"
+          ],
+          "summary": "Perception now always returns both the accessibility tree and a screenshot in one call; the separate capture-mode selection for perception is deprecated in favor of choosing addressing (element vs. pixel coordinates) at the time of each action",
+          "type": "feat"
+        },
+        {
+          "evidence": [
+            "pr:2019"
+          ],
+          "summary": "Added a desktop-scope mode that captures the full screen and supports window-less, screen-absolute clicking and scrolling, first shipped for Windows",
+          "type": "feat"
+        },
+        {
+          "evidence": [
+            "pr:2056"
+          ],
+          "summary": "Extended window-less, screen-absolute clicking to macOS and Linux, unifying desktop-scope support across all three platforms",
+          "type": "feat"
+        },
+        {
+          "evidence": [
+            "pr:2077"
+          ],
+          "summary": "Added support for background accessibility clicks and cursor-accurate pixel clicks on Linux Wayland sessions without direct pointer injection",
+          "type": "feat"
+        },
+        {
+          "evidence": [
+            "pr:2077"
+          ],
+          "summary": "Added Qwen Code, Factory Droid, and ZCode as supported clients for MCP configuration setup",
+          "type": "feat"
+        },
+        {
+          "evidence": [
+            "pr:2034"
+          ],
+          "summary": "Configuration changes made with set_config now persist to disk on Windows and Linux, so settings survive across separate command invocations instead of reverting to defaults",
+          "type": "fix"
+        },
+        {
+          "evidence": [
+            "pr:2059"
+          ],
+          "summary": "set_config on macOS now also accepts the key/value input shape already supported on Windows and Linux, fixing cases where configuration updates silently had no effect on macOS",
+          "type": "fix"
+        },
+        {
+          "evidence": [
+            "pr:2047"
+          ],
+          "summary": "Fixed desktop state capture failing with a display-not-set error on pure Wayland Linux sessions",
+          "type": "fix"
+        },
+        {
+          "evidence": [
+            "pr:2048"
+          ],
+          "summary": "Fixed key presses failing on Linux systems with a sparse or headless keyboard layout that lacked a mapping for the requested key",
+          "type": "fix"
+        },
+        {
+          "evidence": [
+            "pr:2061"
+          ],
+          "summary": "The visible agent cursor now moves to the click location for window-less desktop-scope clicks on Linux, instead of remaining stationary while the click lands elsewhere",
+          "type": "fix"
+        },
+        {
+          "evidence": [
+            "pr:2018"
+          ],
+          "summary": "Window listings on Linux now include bounds, application name, and on-screen status fields matching the format already returned on macOS and Windows",
+          "type": "fix"
+        }
+      ],
+      "key": "cua-driver-rs:0.7.0",
+      "provenance": {
+        "evidenceSha256": "f3fe236d800f2d0c8efc9550614f5d216627729811cd3a652f845012f5c73b21",
+        "generatedAt": "2026-07-17T21:06:01.854969Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "037007d0cd827ddb74fd57c37a543a123a29fe9e8431cf001be3b3b3b0fab628",
+        "promptVersion": 1
+      },
+      "summary": "cua-driver-rs 0.7.0 introduces action-time modality selection with honest verification of whether an action actually took effect, adds browser DOM control, extends screen-absolute desktop-scope actions to macOS and Linux, and retires the Swift implementation in favor of Rust.",
+      "summaryEvidence": [
+        "pr:2077"
+      ]
+    },
+    {
+      "candidateSha256": "0bd4ca1010247b6415d1272c53b235b122c9ce642f1a87180ca36295845d925f",
+      "changes": [
+        {
+          "evidence": [
+            "pr:2102"
+          ],
+          "summary": "Embedded mode lets a host application run cua-driver as a child process that inherits the host's Accessibility and Screen Recording grants, avoiding a second permission prompt for the driver",
+          "type": "feat"
+        },
+        {
+          "evidence": [
+            "pr:2082"
+          ],
+          "summary": "Added macOS support for clicking page elements, along with a fix so browser JavaScript targets the correct Chrome window",
+          "type": "feat"
+        },
+        {
+          "evidence": [
+            "pr:2091"
+          ],
+          "summary": "Linux app launches now return the process ID and other launch identity as structured data instead of only in the text response",
+          "type": "fix"
+        },
+        {
+          "evidence": [
+            "pr:2036"
+          ],
+          "summary": "Daemon socket writes now retry through temporary backpressure instead of failing with a resource-unavailable error when several tools run at once",
+          "type": "fix"
+        },
+        {
+          "evidence": [
+            "pr:2108"
+          ],
+          "summary": "Uninstalling cua-driver now resets macOS Accessibility and Screen Recording permission grants by default, with a new option to preserve them if needed",
+          "type": "fix"
+        }
+      ],
+      "key": "cua-driver-rs:0.7.1",
+      "provenance": {
+        "evidenceSha256": "ed2a270ffeeed9df6ccc37a20202b9c252546a4d2cdb1b248fa89068a412422b",
+        "generatedAt": "2026-07-17T21:06:56.088285Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "31899bbb83957a6aae8d2c218392938783f43a1e698dd2c92e2693077e2dce1a",
+        "promptVersion": 1
+      },
+      "summary": "This release adds an embedded mode that lets a host macOS application share its own Accessibility and Screen Recording permissions with cua-driver, adds macOS page click support with improved Chromium window targeting, returns structured launch identity from Linux app launches, retries daemon socket writes instead of failing on temporary backpressure, and resets macOS permission grants by default on uninstall.",
+      "summaryEvidence": [
+        "pr:2102",
+        "pr:2082",
+        "pr:2091",
+        "pr:2036",
+        "pr:2108"
+      ]
+    },
+    {
+      "candidateSha256": "381ae7579e09009f61e602f1f5dff2ae4f1b67d1f2d08687587dec14c92337cc",
+      "changes": [
+        {
+          "evidence": [
+            "pr:2211"
+          ],
+          "summary": "Added default-on, consent-aware telemetry for Cua Driver and Lume, including commands to disable, reset, and purge collected identity data",
+          "type": "feat"
+        },
+        {
+          "evidence": [
+            "pr:2166"
+          ],
+          "summary": "Page JavaScript execution now requires an explicit target and fails instead of silently running against the wrong window when one debugging port serves multiple pages",
+          "type": "fix"
+        },
+        {
+          "evidence": [
+            "pr:2152"
+          ],
+          "summary": "The install and uninstall scripts now fetch from cua.ai instead of the previous location",
+          "type": "fix"
+        },
+        {
+          "evidence": [
+            "pr:2180"
+          ],
+          "summary": "Windows background actions no longer report success when input was not actually delivered, and window capture now falls back through GDI and Windows Graphics Capture with an honest unavailable result for minimized windows",
+          "type": "fix"
+        },
+        {
+          "evidence": [
+            "pr:2182"
+          ],
+          "summary": "Corrected Linux Wayland window identity tracking, accessibility frame geometry, and WebKitGTK window bounds and scroll delivery so background actions target the right window position",
+          "type": "fix"
+        },
+        {
+          "evidence": [
+            "pr:2193"
+          ],
+          "summary": "Windows UI Automation actions now scroll clipped controls into view before acting and background text entry appends to existing text instead of replacing it; macOS keyboard delivery now clears stale modifier keys before typing",
+          "type": "fix"
+        }
+      ],
+      "key": "cua-driver-rs:0.8.0",
+      "provenance": {
+        "evidenceSha256": "390d97503f9c4f41e9edd3f521b9e34d43ecde91ce4df3a78ba51314eb038044",
+        "generatedAt": "2026-07-17T21:06:56.089274Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "6f35f34365deae3e53d72501a4f7ab98525ecb22ed6bbb41cd260d1ecadf20d6",
+        "promptVersion": 1
+      },
+      "summary": "This release adds consent-aware telemetry to Cua Driver and Lume, fixes JavaScript execution so it targets the correct page in multi-window applications, moves installer and uninstaller downloads to cua.ai, and hardens delivery reliability on Windows, macOS, and Linux.",
+      "summaryEvidence": [
+        "pr:2211",
+        "pr:2166",
+        "pr:2152",
+        "pr:2180",
+        "pr:2182",
+        "pr:2193"
+      ]
+    },
+    {
+      "candidateSha256": "7e457dd2ad91a8ae656aa892c69b6aa5ecada9dbf31ed51f25debd8cc8b3de72",
+      "changes": [
+        {
+          "evidence": [
+            "pr:2214"
+          ],
+          "summary": "Windows installer recovery now routes through the stable cua.ai installer endpoint instead of GitHub's releases/latest, and installer attribution hints are suppressed when telemetry is disabled",
+          "type": "fix"
+        },
+        {
+          "evidence": [
+            "pr:2217"
+          ],
+          "summary": "Telemetry now retains only country-level location data derived from IP enrichment, discarding the raw client IP address",
+          "type": "fix"
+        }
+      ],
+      "key": "cua-driver-rs:0.8.1",
+      "provenance": {
+        "evidenceSha256": "af06635de4084d1b0fa8b235c8f2e3691672e18ad30bf6d8483d3005efcfb478",
+        "generatedAt": "2026-07-17T21:07:41.776261Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "c18c13562a820e529f5d1ff9bbf7885f24d543800690012a231d33656d1435e7",
+        "promptVersion": 1
+      },
+      "summary": "This release hardens installer recovery paths and telemetry handling, keeping Windows recovery on the stable installer endpoint and ensuring location data collected by telemetry is limited to country level.",
+      "summaryEvidence": [
+        "pr:2214",
+        "pr:2217"
+      ]
+    },
+    {
+      "candidateSha256": "2bd2a8944565830e0fc65c6420914bc6b9da8288589f193c9a52f596af942ef6",
+      "changes": [
+        {
+          "evidence": [
+            "pr:2227"
+          ],
+          "summary": "Added session-level telemetry that aggregates duration, tool, action, error, and transport usage in a bounded, privacy-preserving way across CLI, daemon, and MCP execution paths",
+          "type": "feat"
+        },
+        {
+          "evidence": [
+            "pr:2228"
+          ],
+          "summary": "Added bounded telemetry for CLI operations, MCP client kinds, and cursor state, while isolating GUI test harnesses from live telemetry by default",
+          "type": "feat"
+        },
+        {
+          "evidence": [
+            "pr:2224"
+          ],
+          "summary": "Corrected daemon lifecycle telemetry across macOS permission and responsibility re-execs, and added events for the macOS permission gate",
+          "type": "fix"
+        },
+        {
+          "evidence": [
+            "pr:2225"
+          ],
+          "summary": "Unified tool-completion telemetry so only a single owner emits each event, preventing duplicate telemetry records between the MCP proxy and daemon",
+          "type": "fix"
+        }
+      ],
+      "key": "cua-driver-rs:0.8.2",
+      "provenance": {
+        "evidenceSha256": "a86cc9553d6c94f03947a2c788b9f0c5b19af1d0497755bbb29098d48e160969",
+        "generatedAt": "2026-07-17T21:07:41.776511Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "150c538d07ece6f59a0fde322c79a57b26b29a55557a67e64aed6e44a34193c0",
+        "promptVersion": 1
+      },
+      "summary": "This release adds comprehensive, privacy-bounded telemetry covering agent sessions, CLI and MCP tool usage, and the macOS permission gate, while ensuring tool-completion events are emitted only once.",
+      "summaryEvidence": [
+        "pr:2227",
+        "pr:2228",
+        "pr:2224",
+        "pr:2225"
+      ]
+    },
+    {
+      "candidateSha256": "e8f1bba50d79f3d6f09e3e117ae2e264fd362ab902d8072e5c4bc3c0a2f7ceb4",
+      "changes": [
+        {
+          "evidence": [
+            "pr:2235"
+          ],
+          "summary": "Added support for defining tool access permission policies using YAML or Rego, allowing administrators to restrict which tools the driver can execute",
+          "type": "feat"
+        }
+      ],
+      "key": "cua-driver-rs:0.8.3",
+      "provenance": {
+        "evidenceSha256": "7c8b5c31acd9d6b3afe40ec50ed8cea6d9eb2ad36bf3fb0aa26c0aa6efd19e69",
+        "generatedAt": "2026-07-17T21:07:41.776626Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "85c5754f2ff508e8f0153ac531f39d014008799baf84359150e82fc2afe2bc63",
+        "promptVersion": 1
+      },
+      "summary": "This release adds configurable permission policies, written in YAML or Rego, that let administrators restrict which tools the driver can execute.",
+      "summaryEvidence": [
+        "pr:2235"
+      ]
+    },
+    {
+      "candidateSha256": "5bf8f4ffe9c785c6c48536c14cfe5181556f4fee62e76e7def5df8cc12be3d88",
+      "changes": [
+        {
+          "evidence": [
+            "commit:b92c9cd5fd4f463c88be3132868cb6523762e1be"
+          ],
+          "summary": "Initial public release of Lume, including commands to create, run, list, stop, delete, and manage virtual machines and container images",
+          "type": "feat"
+        }
+      ],
+      "key": "lume:0.1.0",
+      "provenance": {
+        "evidenceSha256": "844283a7f2a6f22e9f078ebf4f523f6f199a13d30108f57bbc766426218dc3b8",
+        "generatedAt": "2026-07-17T21:07:41.776692Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "bb8b60547d249161714215be9545914d1fcab54640169f900adc85fb67a29c12",
+        "promptVersion": 1
+      },
+      "summary": "Initial public release of Lume, a command-line tool for creating, running, and managing lightweight macOS and Linux virtual machines.",
+      "summaryEvidence": [
+        "commit:b92c9cd5fd4f463c88be3132868cb6523762e1be"
+      ]
+    },
+    {
+      "candidateSha256": "d116b96cd365f8658bd34fc0ea9a2ca6980fb6f03c8c7a7202cee5422301b9a9",
+      "changes": [
+        {
+          "evidence": [
+            "commit:5443076a9f78c252b6a23fe787d2599e61c83d92"
+          ],
+          "summary": "Correctly handle cached images with an unknown state instead of causing errors",
+          "type": "fix"
+        }
+      ],
+      "key": "lume:0.1.1",
+      "provenance": {
+        "evidenceSha256": "4928a3d0ac7ca9b0595cd8ed530bd9e885ed96eec8607d9a5a3ddcc981e51a6d",
+        "generatedAt": "2026-07-17T21:07:41.776771Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "872d2f82457a11babc9c1a5993809dae4d9ffe3b9043f5d4261028a2215715dc",
+        "promptVersion": 1
+      },
+      "summary": "This release fixes handling of cached images that are in an unknown state.",
+      "summaryEvidence": [
+        "commit:5443076a9f78c252b6a23fe787d2599e61c83d92"
+      ]
+    },
+    {
+      "candidateSha256": "b693f7ebbd27963f4f1fe7733b7d97002b89f9dee196a680d42b2e2449a19d39",
+      "changes": [
+        {
+          "evidence": [
+            "pr:6"
+          ],
+          "summary": "Normalized virtual machine names to prevent issues caused by inconsistent naming when pulling or running VMs",
+          "type": "fix"
+        }
+      ],
+      "key": "lume:0.1.5",
+      "provenance": {
+        "evidenceSha256": "e2e1750d50c7c66709998484d6c2201a62f5feb6153e9f1f74279f972158166d",
+        "generatedAt": "2026-07-17T21:07:41.776846Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "094bd315b27a253a2438198d9d086cd2ec75fa60eb6daa44ac949b7076af87e2",
+        "promptVersion": 1
+      },
+      "summary": "This release fixes an issue with virtual machine name handling.",
+      "summaryEvidence": [
+        "pr:6"
+      ]
+    },
+    {
+      "candidateSha256": "e44c074a6f04afd9d0ae8ad615dc9c15a03af9414c09f396149b3aae7a6d3fbd",
+      "changes": [
+        {
+          "evidence": [
+            "pr:11"
+          ],
+          "summary": "Added a progress indicator while processing image layers during pull operations",
+          "type": "feat"
+        }
+      ],
+      "key": "lume:0.1.6",
+      "provenance": {
+        "evidenceSha256": "ab50cd30f48dfbc5abf84b762af960040f1cd2f80de398890da559915c61e8e6",
+        "generatedAt": "2026-07-17T21:07:41.776893Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "5834d53233c86034fdff43130270402f7deba9f0f0b8b508a36c08fd8dbab2a9",
+        "promptVersion": 1
+      },
+      "summary": "This release adds a progress indicator when pulling image layers.",
+      "summaryEvidence": [
+        "pr:11"
+      ]
+    },
+    {
+      "candidateSha256": "501ec508c2e207a4f44cd98d4d059df6e107f934d8fbc875634c7bbdd536f608",
+      "changes": [
+        {
+          "evidence": [
+            "commit:4c89d488a275c2ee4ef7900befe910d5afeb1082"
+          ],
+          "summary": "Corrected the message displayed when no virtual machines exist",
+          "type": "fix"
+        }
+      ],
+      "key": "lume:0.1.7",
+      "provenance": {
+        "evidenceSha256": "ebf822d03663786ad8d2a237d7cc977fbb38ceaf11497106ca8bae00f57a950f",
+        "generatedAt": "2026-07-17T21:07:41.776935Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "08e6f0c11ca06981f91bfafc978853a7eae5d592d09853af6497d3dd68320b24",
+        "promptVersion": 1
+      },
+      "summary": "This release fixes the message displayed when no virtual machines exist.",
+      "summaryEvidence": [
+        "commit:4c89d488a275c2ee4ef7900befe910d5afeb1082"
+      ]
+    },
+    {
+      "candidateSha256": "1225d6e18dd2bca205b8bde8df3eeda55af78d633e43cedbd3ae892fe9ef81fe",
+      "changes": [
+        {
+          "evidence": [
+            "pr:25"
+          ],
+          "summary": "Added a command to set the VM display resolution",
+          "type": "feat"
+        }
+      ],
+      "key": "lume:0.1.8",
+      "provenance": {
+        "evidenceSha256": "706a58331eba80936183148a56d890ffb3933fd3b63cbaf88e586134f367e01f",
+        "generatedAt": "2026-07-17T21:08:22.269841Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "349e6eec84cc1fb51b7350c7b8300b88fefa31b54c83d8124f20f38dc3803d9d",
+        "promptVersion": 1
+      },
+      "summary": "This release adds the ability to set the VM display resolution.",
+      "summaryEvidence": [
+        "pr:25"
+      ]
+    },
+    {
+      "candidateSha256": "7c4ccfd4ba98ed22bf76be5140818fbbb50ffdf5db5e877e21d5efa711508013",
+      "changes": [
+        {
+          "evidence": [
+            "pr:17"
+          ],
+          "summary": "Added a --json flag to the get and list commands for machine readable output",
+          "type": "feat"
+        },
+        {
+          "evidence": [
+            "pr:31"
+          ],
+          "summary": "Added local network support for VNC connections",
+          "type": "feat"
+        }
+      ],
+      "key": "lume:0.1.9",
+      "provenance": {
+        "evidenceSha256": "bcfdd05139387406aab4cd31ecba7a48a9042f9732980879f8c638707187ac72",
+        "generatedAt": "2026-07-17T21:08:22.270027Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "ad7956a99e3137788d62e1953306bd0ffa5b795effe302fc26a844bcc9e5b015",
+        "promptVersion": 1
+      },
+      "summary": "This release adds JSON output support for the get and list commands and local network support for VNC.",
+      "summaryEvidence": [
+        "pr:17",
+        "pr:31"
+      ]
+    },
+    {
+      "candidateSha256": "25574d87a2398f684a267ae4f8c4d23fadd49d86d903088808acf0c8d852bd85",
+      "changes": [
+        {
+          "evidence": [
+            "pr:37"
+          ],
+          "summary": "Added an option to start a VM in recovery mode",
+          "type": "feat"
+        },
+        {
+          "evidence": [
+            "pr:43"
+          ],
+          "summary": "Fixed the serve command failing when its port was already bound by another process",
+          "type": "fix"
+        }
+      ],
+      "key": "lume:0.1.10",
+      "provenance": {
+        "evidenceSha256": "b7d622142b2314ebd6eedff9cfd686ebdf978a5cc1d5041c3f0fbf112920fa0a",
+        "generatedAt": "2026-07-17T21:08:22.270153Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "3ecb4d7cafc0fe194c8aab22328e1e6cb6e8c502a4f674d077d0ea22903f432f",
+        "promptVersion": 1
+      },
+      "summary": "This release adds a recovery mode option and fixes an issue where serve failed if its port was already bound.",
+      "summaryEvidence": [
+        "pr:37",
+        "pr:43"
+      ]
+    },
+    {
+      "candidateSha256": "3da96bc41945c3adaea056f26fe0f447c4c6458d1606eeef926a75eaffa46b32",
+      "changes": [
+        {
+          "evidence": [
+            "pr:47"
+          ],
+          "summary": "Introduced Computer and an Agent preview as part of a restructured monorepo",
+          "type": "feat"
+        },
+        {
+          "evidence": [
+            "pr:51"
+          ],
+          "summary": "Fixed a faulted directory issue that occurred after pulling images",
+          "type": "fix"
+        }
+      ],
+      "key": "lume:0.1.11",
+      "provenance": {
+        "evidenceSha256": "1c1a0f7761b2fcfa035d6e6925561cc41f6d75a2ddef924725a4dee40734fd89",
+        "generatedAt": "2026-07-17T21:08:22.270345Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "437b9fb4f757145b3c074fbdf6f1cf9261351d4abce6c05cc75cbe0356dc6643",
+        "promptVersion": 1
+      },
+      "summary": "This release restructures the project into a monorepo and introduces Computer and an Agent preview, along with a fix for a faulted directory after pulling images.",
+      "summaryEvidence": [
+        "pr:47",
+        "pr:51"
+      ]
+    },
+    {
+      "candidateSha256": "a63117fe251e1831016addd2c61daf25a5271687cfcdaa9e5b6aba0eabf9fb18",
+      "changes": [
+        {
+          "evidence": [
+            "pr:53"
+          ],
+          "summary": "Added support for installing Lume using ubi and mise",
+          "type": "feat"
+        }
+      ],
+      "key": "lume:0.1.12",
+      "provenance": {
+        "evidenceSha256": "ab22fdb76c4276296f2d60cc906f37d4a5c3fc046c72c83b3f8d1cc43b419cd8",
+        "generatedAt": "2026-07-17T21:08:22.270642Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "c89a387f161fa24caf38e7ea3ee54ec65f083dd86f42664848b73b2e841ee47d",
+        "promptVersion": 1
+      },
+      "summary": "This release adds support for installing Lume with ubi and mise.",
+      "summaryEvidence": [
+        "pr:53"
+      ]
+    },
+    {
+      "candidateSha256": "9da07904cc4f2a036d2c740cb928b8297d1bd3c00ac84957ca2c4ab789c41b0b",
+      "changes": [
+        {
+          "evidence": [
+            "pr:54"
+          ],
+          "summary": "Corrected the documented clone endpoint URL in the API reference, which previously caused clone requests to fail",
+          "type": "fix"
+        }
+      ],
+      "key": "lume:0.1.14",
+      "provenance": {
+        "evidenceSha256": "931e6a1200851cc901636657e613da67a21d95239d56065641b3a614f3012cee",
+        "generatedAt": "2026-07-17T21:08:22.270803Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "8791c7f7d88a5cdb85084a92168601d54fdd0f699c673c7c3e862e68a9b8ce86",
+        "promptVersion": 1
+      },
+      "summary": "This release fixes an incorrect clone endpoint URL documented in the API reference.",
+      "summaryEvidence": [
+        "pr:54"
+      ]
+    },
+    {
+      "candidateSha256": "175679f9bb9cac06a526c030f23a1230fcf5e7b29ebb54130592e8cef8ba9533",
+      "changes": [
+        {
+          "evidence": [
+            "pr:54"
+          ],
+          "summary": "Corrected the documented clone endpoint URL in the API reference, which previously caused clone requests to fail",
+          "type": "fix"
+        }
+      ],
+      "key": "lume:0.1.16",
+      "provenance": {
+        "evidenceSha256": "fe9fd1eb409658ec7918b7f920286a629be0ac3e5b28c852cab90e65fea026d6",
+        "generatedAt": "2026-07-17T21:08:22.270912Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "df11c0aec3956050c2d46ec2104ed59b4f84d13287868fb8842d1b08eb6818f1",
+        "promptVersion": 1
+      },
+      "summary": "This release fixes an incorrect clone endpoint URL documented in the API reference.",
+      "summaryEvidence": [
+        "pr:54"
+      ]
+    },
+    {
+      "candidateSha256": "daa093d2b454e1f8ec11f3a3fd9c6e11a21197a7bb97e4543c4b881b561ceaff",
+      "changes": [
+        {
+          "evidence": [
+            "commit:46fd3a0c7ca5628bc02bef486de913fca7ebfa7e",
+            "pr:62"
+          ],
+          "summary": "Restored the build and install scripts used to package and install Lume",
+          "type": "fix"
+        }
+      ],
+      "key": "lume:0.1.18",
+      "provenance": {
+        "evidenceSha256": "f2e6352614bc32c1c9f92f3009951ada3bdd995cdb4370ea9c44ab395e3ec030",
+        "generatedAt": "2026-07-18T11:28:46.259371Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "44cf1fc4d8a64c7207ee3dc8c8132d0aaaa21620dbed87b8bd024989f98d6543",
+        "promptVersion": 1
+      },
+      "summary": "This release restores build scripts required to install and package Lume.",
+      "summaryEvidence": [
+        "commit:46fd3a0c7ca5628bc02bef486de913fca7ebfa7e"
+      ]
+    },
+    {
+      "candidateSha256": "bfa59b00c9579e0d8c7619bc5b9702f50c930b25049253a677147125ae6b1003",
+      "changes": [
+        {
+          "evidence": [
+            "pr:67"
+          ],
+          "summary": "Added a --no-cache option to the pull command to force re-downloading of images",
+          "type": "feat"
+        }
+      ],
+      "key": "lume:0.1.19",
+      "provenance": {
+        "evidenceSha256": "290fff48e8219a7d1ca56d76a8631e1842a8ff8f0ae2b337941e1aefa21082df",
+        "generatedAt": "2026-07-17T21:08:22.271015Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "9f099f49a6b862e9dd0ef8da049f13b612316b7a4b57a5c06d9498872de43a4e",
+        "promptVersion": 1
+      },
+      "summary": "This release adds a --no-cache option to the pull command.",
+      "summaryEvidence": [
+        "pr:67"
+      ]
+    },
+    {
+      "candidateSha256": "7d403d762c506d761397bdd6bd6dcaf9ebcfa030a6b833fa08baaa8337202dca",
+      "changes": [
+        {
+          "evidence": [
+            "pr:72"
+          ],
+          "summary": "Reduced storage and memory requirements during disk image reassembly, allowing images of 60GB or larger to be reassembled on systems with limited RAM and storage",
+          "type": "perf"
+        }
+      ],
+      "key": "lume:0.1.20",
+      "provenance": {
+        "evidenceSha256": "67a04c77458f09bb39a4b26f55efd1c355618b104081d93e1938b68b71626866",
+        "generatedAt": "2026-07-17T21:08:22.271074Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "7542223dcb1f0ebd618a4fb7c2f5ad40de07b161ab36a22db6f1535cd030621e",
+        "promptVersion": 1
+      },
+      "summary": "This release optimizes disk image reassembly to reduce memory usage and storage requirements.",
+      "summaryEvidence": [
+        "pr:72"
+      ]
+    },
+    {
+      "candidateSha256": "39d2e3d2970967c95ca851dd240135c90583efe4c99db70f6a97bea36e80d5c7",
+      "changes": [
+        {
+          "evidence": [
+            "pr:99"
+          ],
+          "summary": "Fixed the VM image reassemble process being killed by the system on Macs with less than 16GB of RAM due to memory constraints",
+          "type": "fix"
+        }
+      ],
+      "key": "lume:0.1.31",
+      "provenance": {
+        "evidenceSha256": "fb18a92d063ab5329b8f7fe7d5104ee01793fc98baf9bebca4bc57f67180dc4a",
+        "generatedAt": "2026-07-17T21:09:02.343544Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "62b6032c503a56d9300ae7929c649b58792b185e798f0f38341950bd2c359804",
+        "promptVersion": 1
+      },
+      "summary": "This patch fixes a crash during VM image reassembly on Macs with limited memory.",
+      "summaryEvidence": [
+        "pr:99"
+      ]
+    },
+    {
+      "candidateSha256": "50ffaaee05eeca18a0248b63f290c0b5ceab89d1ae17765016740f94b6c982e3",
+      "changes": [
+        {
+          "evidence": [
+            "pr:102"
+          ],
+          "summary": "Reduced disk space usage during VM image assembly by about 50% using a sparse file technique",
+          "type": "perf"
+        },
+        {
+          "evidence": [
+            "pr:102"
+          ],
+          "summary": "Improved VM image download speed through adaptive concurrency and network optimizations",
+          "type": "perf"
+        },
+        {
+          "evidence": [
+            "pr:102"
+          ],
+          "summary": "Added real-time download speed statistics with an ETA and a download summary",
+          "type": "feat"
+        }
+      ],
+      "key": "lume:0.1.32",
+      "provenance": {
+        "evidenceSha256": "19d5d10882732776d7a95039f3151c5ce3e70d4317130b7a81f5534d26725f39",
+        "generatedAt": "2026-07-17T21:09:02.343688Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "4a9509bbcadd8487e57391d4718bcc75d4f677f471d024081d8db9ecda874ef8",
+        "promptVersion": 1
+      },
+      "summary": "This release reduces disk usage and improves download speed when assembling VM images, with better progress reporting.",
+      "summaryEvidence": [
+        "pr:102"
+      ]
+    },
+    {
+      "candidateSha256": "9851fe3b6c43a81403f861c1dcaa0ba63220073e364fc619ff117a402685fac0",
+      "changes": [
+        {
+          "evidence": [
+            "pr:91"
+          ],
+          "summary": "Added support for creating and managing VMs in multiple storage locations, configurable via new lume config location commands and a --location parameter on create, pull, and run",
+          "type": "feat"
+        },
+        {
+          "evidence": [
+            "pr:91"
+          ],
+          "summary": "Added configurable cache directory management via lume config cache get and lume config cache set commands, replacing the --no-cache parameter",
+          "type": "feat"
+        },
+        {
+          "evidence": [
+            "pr:91"
+          ],
+          "summary": "Moved configuration storage to follow the XDG Base Directory specification, with automatic migration from legacy settings",
+          "type": "feat"
+        }
+      ],
+      "key": "lume:0.1.34",
+      "provenance": {
+        "evidenceSha256": "3c243b9dea6aa0276e6e09ff71e143c9f06ac94eca19e0d96b3585d63b1775e8",
+        "generatedAt": "2026-07-17T21:09:02.343809Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "60931c3598a769b327d1d174f29e9b4b808fcedc843795869f9f3df7cbfc9b52",
+        "promptVersion": 1
+      },
+      "summary": "This release adds support for managing VMs across multiple storage locations with configurable cache settings.",
+      "summaryEvidence": [
+        "pr:91"
+      ]
+    },
+    {
+      "candidateSha256": "f0492decd1fd975162322a0eec3ade61bdec741b452af24b8982211b67505938",
+      "changes": [
+        {
+          "evidence": [
+            "pr:122"
+          ],
+          "summary": "Added a push command to share VMs via the registry, including support for additional tags",
+          "type": "feat"
+        },
+        {
+          "evidence": [
+            "pr:122"
+          ],
+          "summary": "Added sparse file support for VM disk images, significantly reducing actual disk usage",
+          "type": "perf"
+        },
+        {
+          "evidence": [
+            "pr:122"
+          ],
+          "summary": "Fixed VM boot issues by properly preserving partition tables during image operations",
+          "type": "fix"
+        }
+      ],
+      "key": "lume:0.2.0",
+      "provenance": {
+        "evidenceSha256": "8fb6d235b1c614aa704684554d14a3b1921e24940d7be9389dbdfd3f93349b72",
+        "generatedAt": "2026-07-17T21:09:02.343937Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "bfab7b2225d3478eb20fb647960d00bfb4420e5f2be0ffa8f538c38d17d339f8",
+        "promptVersion": 1
+      },
+      "summary": "This release adds a push command for sharing VMs via the registry and introduces sparse file support to reduce disk usage while improving VM bootability.",
+      "summaryEvidence": [
+        "pr:122"
+      ]
+    },
+    {
+      "candidateSha256": "0e7884098db39a552480a907e304b35392ed856368071679dadfc57f7c3c347a",
+      "changes": [
+        {
+          "evidence": [
+            "commit:5653c86670cd3c1de2c9f57044ce3b41997a32fc"
+          ],
+          "summary": "Fixed handling of sparse disk images for VMs",
+          "type": "fix"
+        }
+      ],
+      "key": "lume:0.2.1",
+      "provenance": {
+        "evidenceSha256": "c73c5abfcff50aef63a777c2d4f6530bbac9a8237fed12a1313d79592e9f77da",
+        "generatedAt": "2026-07-17T21:09:02.344006Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "4625b252e40a377163b6314cae9125c4dd52606b26b535f5b5b7f7abcb9306c5",
+        "promptVersion": 1
+      },
+      "summary": "This patch improves handling of sparse VM disk images.",
+      "summaryEvidence": [
+        "commit:5653c86670cd3c1de2c9f57044ce3b41997a32fc"
+      ]
+    },
+    {
+      "candidateSha256": "bd6e9eacf6a391a62ace6a6b33f5968fc0575605c3f4b261bddb21186048bc11",
+      "changes": [
+        {
+          "evidence": [
+            "commit:f5121a6f4df500d68dad73a9b150e0a4843ce11f"
+          ],
+          "summary": "Fixed normalization of VM image names",
+          "type": "fix"
+        }
+      ],
+      "key": "lume:0.2.3",
+      "provenance": {
+        "evidenceSha256": "6b3a9e7bbdc2f1195857fb1a107f05082cccc3cad7a5c3d32d109b11ec1483b3",
+        "generatedAt": "2026-07-17T21:09:02.344051Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "43e08d0fd9610876d9aa0cc0e8f648865991eca6d51263949f22767ad0ffd9d3",
+        "promptVersion": 1
+      },
+      "summary": "This patch fixes VM image name normalization.",
+      "summaryEvidence": [
+        "commit:f5121a6f4df500d68dad73a9b150e0a4843ce11f"
+      ]
+    },
+    {
+      "candidateSha256": "234db5c08848833113501cd7a850f9f79875d96b32ea98426020fe887b7da40e",
+      "changes": [
+        {
+          "evidence": [
+            "pr:130"
+          ],
+          "summary": "Fixed cloned VMs incorrectly appearing as running when the original VM was started, by generating a new machine identifier for cloned images",
+          "type": "fix"
+        },
+        {
+          "evidence": [
+            "commit:182e8c69ad75042b5ab8d48bdf665f8f9d71f94d"
+          ],
+          "summary": "Fixed an issue where cloning a VM while it was running caused problems",
+          "type": "fix"
+        }
+      ],
+      "key": "lume:0.2.4",
+      "provenance": {
+        "evidenceSha256": "9f1775f11d355248d0816ea1171396949ddfdb2ccb6b9214fbac3ec96fc646fd",
+        "generatedAt": "2026-07-17T21:09:02.344119Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "56dd94bfd436b9bbe4a60e269f9e6f390afa8504ca9e3bd5cc452f5e2f8fd6f3",
+        "promptVersion": 1
+      },
+      "summary": "This release fixes VM cloning so that cloned and original VMs run independently instead of interfering with each other.",
+      "summaryEvidence": [
+        "pr:130",
+        "commit:182e8c69ad75042b5ab8d48bdf665f8f9d71f94d"
+      ]
+    },
+    {
+      "candidateSha256": "b9ff8996698e46a0b9f3d0fdbbc5d0b71b1d3883e90b10a00b93fe104015b2de",
+      "changes": [
+        {
+          "evidence": [
+            "commit:003879c46eadc3a28b5447cd1c421fb8093b5a31"
+          ],
+          "summary": "Fixed registry push authorization to include all required scopes",
+          "type": "fix"
+        },
+        {
+          "evidence": [
+            "commit:35e24a9d637c588bb7a3d6452ae1b37c750c198f"
+          ],
+          "summary": "Fixed incorrect push and pull scopes that could cause registry authentication failures",
+          "type": "fix"
+        },
+        {
+          "evidence": [
+            "commit:b7c96f63794dfb89097bcf29e1979322ff3878e3"
+          ],
+          "summary": "Restored previous pull authentication behavior after a regression",
+          "type": "fix"
+        }
+      ],
+      "key": "lume:0.2.5",
+      "provenance": {
+        "evidenceSha256": "74ea028c99ea237a6e29536439b9e1a2df08767ea3c0b34c3d14376f3c9ca9e2",
+        "generatedAt": "2026-07-17T21:09:02.344195Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "0e00dcf930dedd2341dd46d5842a69e5f5998067d07e67c290f0a5be69b3aef2",
+        "promptVersion": 1
+      },
+      "summary": "This patch fixes authentication and permission scopes used when pushing and pulling VM images from the registry.",
+      "summaryEvidence": [
+        "commit:003879c46eadc3a28b5447cd1c421fb8093b5a31",
+        "commit:35e24a9d637c588bb7a3d6452ae1b37c750c198f",
+        "commit:b7c96f63794dfb89097bcf29e1979322ff3878e3"
+      ]
+    },
+    {
+      "candidateSha256": "32871a46d4e20efa1d4477c710a5d2d207a11ce3a1c0a9c56a42127095114005",
+      "changes": [
+        {
+          "evidence": [
+            "pr:144"
+          ],
+          "summary": "Introduced Lumier, a Docker-based interface for running lume macOS VMs in containers with browser-based VNC access and configurable CPU, RAM, and display resolution",
+          "type": "feat"
+        },
+        {
+          "evidence": [
+            "pr:137"
+          ],
+          "summary": "Changed the default installation directory to a user-owned location, removing the need for sudo, with an optional install directory parameter for custom locations",
+          "type": "fix"
+        }
+      ],
+      "key": "lume:0.2.6",
+      "provenance": {
+        "evidenceSha256": "4a653dc36fd546ac58e6f883cda5256bb7001b7497b003e5db336bdf8996212f",
+        "generatedAt": "2026-07-17T21:09:02.344274Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "d54ec3fc05390a7a69daead2195d581293dd406d1471b339901b7e86f8dd4be7",
+        "promptVersion": 1
+      },
+      "summary": "This release introduces Lumier, a Docker-based interface for running macOS VMs in containers, and makes the install script sudo-free by default.",
+      "summaryEvidence": [
+        "pr:137",
+        "pr:144"
+      ]
+    },
+    {
+      "candidateSha256": "d16421422131d11c51a236e10545ebecb0e41a9b668aed9bb87344889bf7b452",
+      "changes": [
+        {
+          "evidence": [
+            "commit:9b78a40cb556ee67e159bb47a40b1af4d31fdf26"
+          ],
+          "summary": "Handle the case where a VM's storage location is not found when running lume run",
+          "type": "fix"
+        }
+      ],
+      "key": "lume:0.2.7",
+      "provenance": {
+        "evidenceSha256": "dce4ea9bd801af6f233350fdbdfb6c7332d25fb98bf97ba4f2b94300fc9a75d7",
+        "generatedAt": "2026-07-17T21:09:36.068120Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "46a3fbfc68a998d1211a24b3c6e7c810353f20b4ae2c8f5202afd57dc36b52cf",
+        "promptVersion": 1
+      },
+      "summary": "This patch fixes an issue where running a VM could fail if its storage location was not found.",
+      "summaryEvidence": [
+        "commit:9b78a40cb556ee67e159bb47a40b1af4d31fdf26"
+      ]
+    },
+    {
+      "candidateSha256": "d3f600beb50d41c0ae975f43b598f96ae971dc10557eced7259ba6dd05845cf6",
+      "changes": [
+        {
+          "evidence": [
+            "commit:a5ec926922f55c03303261e90aa4805ce4fc146d"
+          ],
+          "summary": "Add a --no-background-service option to the install script",
+          "type": "feat"
+        },
+        {
+          "evidence": [
+            "commit:e9a9c03b637916eb307af0e7e3c8a7113f723449"
+          ],
+          "summary": "Fix a bug in the stop handler",
+          "type": "fix"
+        }
+      ],
+      "key": "lume:0.2.8",
+      "provenance": {
+        "evidenceSha256": "9e2185e1871b913684ae5d93f1304368d193192c636f28fa700b72b5bc94dbbf",
+        "generatedAt": "2026-07-17T21:09:36.068323Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "5bd1906e2e7a6c2259fc516cc140f5f6059ac98dd23f0316a1673c70a4086603",
+        "promptVersion": 1
+      },
+      "summary": "This release adds an option to start Lume without its background service and fixes a stop-handling bug.",
+      "summaryEvidence": [
+        "commit:a5ec926922f55c03303261e90aa4805ce4fc146d",
+        "commit:e9a9c03b637916eb307af0e7e3c8a7113f723449"
+      ]
+    },
+    {
+      "candidateSha256": "11c5bcd5e75c5725970ef7da1afdab59e58b52c33246fae1836f9366d99edb1b",
+      "changes": [
+        {
+          "evidence": [
+            "commit:591a4561e5712648cfede5409d91792475550a8b"
+          ],
+          "summary": "Add Lumier, a Docker-first interface",
+          "type": "feat"
+        }
+      ],
+      "key": "lume:0.2.9",
+      "provenance": {
+        "evidenceSha256": "5f0fea7343e09ccd98691b55e1ea0d1bf942b53c3ab87dd419b63e082fd5c0c2",
+        "generatedAt": "2026-07-17T21:09:36.068403Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "aec728c3db6fed2266d7574edfb0fd71ebe9227fff84452076f82f18aacf96cb",
+        "promptVersion": 1
+      },
+      "summary": "This release introduces Lumier, a Docker-first interface for Lume.",
+      "summaryEvidence": [
+        "commit:591a4561e5712648cfede5409d91792475550a8b"
+      ]
+    },
+    {
+      "candidateSha256": "9c9368050c65f377b76afd8e23939e44e10a4121dad4bb96c9261e9dfb529d2b",
+      "changes": [
+        {
+          "evidence": [
+            "commit:f0016d3e24e6a7c451c04762e31ae499101f8ba4"
+          ],
+          "summary": "Fix handling of PATCH requests for setting values",
+          "type": "fix"
+        }
+      ],
+      "key": "lume:0.2.10",
+      "provenance": {
+        "evidenceSha256": "ebfab848133f36d521559d4d6fa43a73b12deab64ebd7f610ae7d967aa070c2b",
+        "generatedAt": "2026-07-17T21:09:36.068458Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "df2a7479c36c8ff0234221d31087114a0018429d64f5fdb94387e44f3c336b22",
+        "promptVersion": 1
+      },
+      "summary": "This patch fixes an issue with PATCH requests used to update VM settings.",
+      "summaryEvidence": [
+        "commit:f0016d3e24e6a7c451c04762e31ae499101f8ba4"
+      ]
+    },
+    {
+      "candidateSha256": "b479a08d4b7b87ba4733a43ac35f04065897a1fb0549f2c0b8d6425af4bcf9be",
+      "changes": [
+        {
+          "evidence": [
+            "commit:0ab712d5ef97354323cc011aa94189d7387ab7f7"
+          ],
+          "summary": "Fix lume delete",
+          "type": "fix"
+        }
+      ],
+      "key": "lume:0.2.11",
+      "provenance": {
+        "evidenceSha256": "8d4b42de4949b7d8c8673d61eadd595495e79ddbeb0fa91417fce18907288d6b",
+        "generatedAt": "2026-07-17T21:09:36.068530Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "d07cbac95a9f8418a1f020f444a72f61b1a8f654bb4b713fb0d78e7080728d96",
+        "promptVersion": 1
+      },
+      "summary": "This patch fixes an issue with deleting VMs.",
+      "summaryEvidence": [
+        "commit:0ab712d5ef97354323cc011aa94189d7387ab7f7"
+      ]
+    },
+    {
+      "candidateSha256": "dbf19d219e0cede56f6a2b97cdaab448bf8fbb8edff2e1d43710bc183542f169",
+      "changes": [
+        {
+          "evidence": [
+            "commit:a1890ad9cc2214ebe559506367e6266b2bafad04"
+          ],
+          "summary": "Include the correct port in the Lume install script",
+          "type": "fix"
+        },
+        {
+          "evidence": [
+            "pr:161"
+          ],
+          "summary": "Prevent installing Lume when run with sudo",
+          "type": "fix"
+        },
+        {
+          "evidence": [
+            "commit:c88ef772cc3f319de0f93643e20424dc69e30d34"
+          ],
+          "summary": "Add support for ephemeral storage",
+          "type": "feat"
+        }
+      ],
+      "key": "lume:0.2.12",
+      "provenance": {
+        "evidenceSha256": "724b4f8fce6d31cb0de247eebe0c58208ab37374d8b18cf4c6e916bd5f074b83",
+        "generatedAt": "2026-07-17T21:09:36.068631Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "1af0cc6154cb691188366fd596aa2b54e927e6c9b252e5ed44f995c60efc0fd4",
+        "promptVersion": 1
+      },
+      "summary": "This release improves the install script to include the correct port and prevent installing with sudo, and adds support for ephemeral storage.",
+      "summaryEvidence": [
+        "commit:a1890ad9cc2214ebe559506367e6266b2bafad04",
+        "pr:161",
+        "commit:c88ef772cc3f319de0f93643e20424dc69e30d34"
+      ]
+    },
+    {
+      "candidateSha256": "6eadcc026cf33243be15ffde657ba7d03731b72e7c6ee32bd0b0bf33723da7b1",
+      "changes": [
+        {
+          "evidence": [
+            "pr:170"
+          ],
+          "summary": "Add clipboard and audio device support",
+          "type": "feat"
+        }
+      ],
+      "key": "lume:0.2.13",
+      "provenance": {
+        "evidenceSha256": "4787ffd87825aab881a93550fd99d9e0a25d39edfcd7249741d73c4b8990005e",
+        "generatedAt": "2026-07-17T21:09:36.068691Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "7a6779fe57e3a300cd8cdcd5b41500cf41d1bd0117226f4f0a2eb540d826c18b",
+        "promptVersion": 1
+      },
+      "summary": "This release adds clipboard and audio device support to VMs.",
+      "summaryEvidence": [
+        "pr:170"
+      ]
+    },
+    {
+      "candidateSha256": "b94b7e248ca6718d443c87a5f7470f9393d3489372351e7af4283bf4f5af70c0",
+      "changes": [
+        {
+          "evidence": [
+            "pr:162"
+          ],
+          "summary": "Add an initial VM provider to support multiple provider types including Lume, Lumier, and Cloud",
+          "type": "feat"
+        },
+        {
+          "evidence": [
+            "pr:162"
+          ],
+          "summary": "Change the Lume daemon service port from 3000 to 7777 to avoid conflicts with common frontend development ports",
+          "type": "fix"
+        },
+        {
+          "evidence": [
+            "pr:162"
+          ],
+          "summary": "Cache the VM disk image as a fully reassembled file instead of in parts, enabling faster cache hits",
+          "type": "perf"
+        }
+      ],
+      "key": "lume:0.2.14",
+      "provenance": {
+        "evidenceSha256": "a3ccaac167ce702a56b0a9c7c670e371a166f0e371ac79f13519e8a4bdf0cb67",
+        "generatedAt": "2026-07-17T21:09:36.068766Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "316a2f2fbcc5e2a144b724bed0f7171ea53b5117ff55f69ebf8c4c6df94b2737",
+        "promptVersion": 1
+      },
+      "summary": "This release adds an initial VM provider abstraction to the Computer interface, changes the Lume daemon's default port, and speeds up disk image caching.",
+      "summaryEvidence": [
+        "pr:162"
+      ]
+    },
+    {
+      "candidateSha256": "e68341c27f68dab84c7e23ff7a7b7649f6cacfe53ea7e45a5440b5332bd03f7c",
+      "changes": [
+        {
+          "evidence": [
+            "pr:177"
+          ],
+          "summary": "Fix cloning a VM from a direct path, such as a Lumier location, into a standard Lume storage location",
+          "type": "fix"
+        }
+      ],
+      "key": "lume:0.2.15",
+      "provenance": {
+        "evidenceSha256": "7e890b8b265a816c39565f7ec7476e0685f8e63ddddaf1d7ba4edd01080321e7",
+        "generatedAt": "2026-07-17T21:09:36.068830Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "bd131049c1baa26a7333382ca1f30cb3552b245569b16a11077865f4a8a9b46a",
+        "promptVersion": 1
+      },
+      "summary": "This patch fixes a bug when cloning a VM from a direct storage path.",
+      "summaryEvidence": [
+        "pr:177"
+      ]
+    },
+    {
+      "candidateSha256": "8fd3985e1e27ee6850d548239a597e412d792b595444a1a8a4c842f49bf24b41",
+      "changes": [
+        {
+          "evidence": [
+            "pr:420"
+          ],
+          "summary": "Update the server endpoint for pushing VMs from /vms/push to /lume/vms/push",
+          "type": "fix"
+        },
+        {
+          "evidence": [
+            "pr:655"
+          ],
+          "summary": "Fix the install script so it downloads from the correct Lume release instead of resolving to an unrelated component's release",
+          "type": "fix"
+        }
+      ],
+      "key": "lume:0.2.23",
+      "provenance": {
+        "evidenceSha256": "00cb84cd620eb6b415b057a98bf7c93a4d82602e3699682894e93935a55a112d",
+        "generatedAt": "2026-07-17T21:09:36.069071Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "cc389c2e5d725aa7401ed9c96cf72f687282c6fa98e20daebe8930b638b3b886",
+        "promptVersion": 1
+      },
+      "summary": "This release fixes a server endpoint used for pushing VMs and corrects the install script so it downloads the correct Lume release instead of an unrelated component release.",
+      "summaryEvidence": [
+        "pr:420",
+        "pr:655"
+      ]
+    },
+    {
+      "candidateSha256": "d34ffe4e1ef694711b02d02e8eafbac4e6c2e240674aff920036e1349cfdffaa",
+      "changes": [
+        {
+          "evidence": [
+            "pr:772"
+          ],
+          "summary": "Run the signed lume binary directly in the LaunchAgent instead of a wrapper script, fixing an unidentified developer warning and correcting the Login Item display name",
+          "type": "fix"
+        },
+        {
+          "evidence": [
+            "pr:771"
+          ],
+          "summary": "Consolidate the daemon and updater into a single Login Item to reduce duplicate background activity notifications",
+          "type": "fix"
+        }
+      ],
+      "key": "lume:0.2.27",
+      "provenance": {
+        "evidenceSha256": "ea70d26689f3e633b2978c4438e76764062bf6b3a8bb02fb4765317f70c39a7e",
+        "generatedAt": "2026-07-17T21:09:51.565251Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "18485b8a3a6b9c431c57bfc59db90b124cd49b4bf2c7102ea7de650719f1d8cb",
+        "promptVersion": 1
+      },
+      "summary": "This release fixes macOS Login Items behavior for the Lume daemon, removing an unidentified developer warning and reducing duplicate notifications.",
+      "summaryEvidence": [
+        "pr:772",
+        "pr:771"
+      ]
+    },
+    {
+      "candidateSha256": "d1dc158d3c0d3e5defe005c376b486b4d55341140aff21600403741d584cea2e",
+      "changes": [
+        {
+          "evidence": [
+            "pr:820"
+          ],
+          "summary": "Add opt-out telemetry for CLI commands and HTTP API endpoints, configurable via a new lume config telemetry command or an environment variable",
+          "type": "feat"
+        },
+        {
+          "evidence": [
+            "pr:820"
+          ],
+          "summary": "Display an ASCII art banner when running lume or lume --help",
+          "type": "feat"
+        },
+        {
+          "evidence": [
+            "pr:820"
+          ],
+          "summary": "Add an uninstall script with purge and force options",
+          "type": "feat"
+        }
+      ],
+      "key": "lume:0.2.28",
+      "provenance": {
+        "evidenceSha256": "6e30d2cd1ad7717e17f0292bdba98444d774e6749e995aa81cac03645290d419",
+        "generatedAt": "2026-07-17T21:09:51.565425Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "eb9a98958dc85e0f1a8790b17fcd6b2ef6925547baeee585deaeb37d96f91106",
+        "promptVersion": 1
+      },
+      "summary": "This release adds opt-out telemetry, CLI usability improvements, and a rewritten documentation site.",
+      "summaryEvidence": [
+        "pr:820"
+      ]
+    },
+    {
+      "candidateSha256": "d1a2214af96d67a3874ec3e22f1987cd47ef2cf180f0b52936a05856f496d90e",
+      "changes": [
+        {
+          "evidence": [
+            "pr:821"
+          ],
+          "summary": "Include the required resource bundle in installation, fixing a fatal error when using the unattended setup flag",
+          "type": "fix"
+        }
+      ],
+      "key": "lume:0.2.29",
+      "provenance": {
+        "evidenceSha256": "7a8778d5fc2a088f97cfee7b298910326590d94e77ce89d3de72714de8faea35",
+        "generatedAt": "2026-07-17T21:09:51.565504Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "8d0df33cdfdc8990ee4963004d28abdf18455834780016c7e8a53c614302ccf4",
+        "promptVersion": 1
+      },
+      "summary": "This release fixes a fatal error when creating VMs with the unattended flag.",
+      "summaryEvidence": [
+        "pr:821"
+      ]
+    },
+    {
+      "candidateSha256": "f36c49da8873b9dcd5c51f61d7d9e00cb0922cc4268581f1ace417aaa6df1a37",
+      "changes": [
+        {
+          "evidence": [
+            "pr:824"
+          ],
+          "summary": "Improve reliability of the unattended Setup Assistant automation by using a more direct field interaction and longer delays",
+          "type": "fix"
+        }
+      ],
+      "key": "lume:0.2.30",
+      "provenance": {
+        "evidenceSha256": "59d40973a5f0cdab507eb046735ff090a59ae879c11ded26324e2c0a13657bfd",
+        "generatedAt": "2026-07-17T21:09:51.565570Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "156911917ddaa4f1595a907b0b847893741e7ba893ce1b9eec497f50361a57cf",
+        "promptVersion": 1
+      },
+      "summary": "This release improves the reliability of unattended macOS VM setup.",
+      "summaryEvidence": [
+        "pr:824"
+      ]
+    },
+    {
+      "candidateSha256": "cd654144a262a813e80d2c265ff3b4b638e9de38e0e6e1ea34ed603ee2af5a75",
+      "changes": [
+        {
+          "evidence": [
+            "pr:825"
+          ],
+          "summary": "Fix an unattended setup failure where System Settings search could not be reached due to lost keyboard focus",
+          "type": "fix"
+        }
+      ],
+      "key": "lume:0.2.31",
+      "provenance": {
+        "evidenceSha256": "59ae444184676b490c6f7d69ab749cd3d3257236e48dea644e55faec28b2d704",
+        "generatedAt": "2026-07-17T21:09:51.565635Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "487b53194bb375ad091f32f3053d1dab1f0bb07079792f7ae68ee8accb701af7",
+        "promptVersion": 1
+      },
+      "summary": "This release fixes an unattended setup failure in System Settings navigation.",
+      "summaryEvidence": [
+        "pr:825"
+      ]
+    },
+    {
+      "candidateSha256": "541c0885e54bc034a330bb52fdb3ea5128ee70737c2844501c99dc226280fe72",
+      "changes": [
+        {
+          "evidence": [
+            "pr:834"
+          ],
+          "summary": "Fix lume ls incorrectly showing VMs as stopped when run in a different process than lume run",
+          "type": "fix"
+        }
+      ],
+      "key": "lume:0.2.32",
+      "provenance": {
+        "evidenceSha256": "27cb1db9e237cacaedc5b8669e1532ed5a4d5ffb1c56bfe318dff5fc4c4b37cd",
+        "generatedAt": "2026-07-17T21:09:51.565699Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "e3580e4885f6d6601b3a87a8f136d642ba2fb5ea3c53688d4475daaa64b604e0",
+        "promptVersion": 1
+      },
+      "summary": "This release fixes VM status detection across processes and improves installation documentation.",
+      "summaryEvidence": [
+        "pr:834"
+      ]
+    },
+    {
+      "candidateSha256": "349a8d2578b3bd2a5580ec24f01bf79497d74fb653078c31fb1e894990549012",
+      "changes": [
+        {
+          "evidence": [
+            "pr:835"
+          ],
+          "summary": "Fix lume ls incorrectly reporting SSH as unavailable due to unreliable connection timeout detection",
+          "type": "fix"
+        }
+      ],
+      "key": "lume:0.2.33",
+      "provenance": {
+        "evidenceSha256": "8dee1a8c8f1511091693a478fa5109e5a8f746fb8e4afabdf0b069989f7cd7bb",
+        "generatedAt": "2026-07-17T21:09:51.565758Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "31d126b2a7d737be9bfe13a5478022f72f1b96824c9e9bdb3b34737c7466a5d2",
+        "promptVersion": 1
+      },
+      "summary": "This release fixes incorrect SSH availability detection in lume ls.",
+      "summaryEvidence": [
+        "pr:835"
+      ]
+    },
+    {
+      "candidateSha256": "7fb1daf361a32851aa19cd55ccba3edd691bd7f7497fb3b88ef0075d353a543f",
+      "changes": [
+        {
+          "evidence": [
+            "pr:836"
+          ],
+          "summary": "Add a native MCP server via lume serve --mcp with tools, resources, and prompts for AI agent VM management",
+          "type": "feat"
+        },
+        {
+          "evidence": [
+            "pr:836"
+          ],
+          "summary": "VM creation now returns immediately while provisioning runs in the background, with a new provisioning status visible in CLI, HTTP API, and MCP",
+          "type": "feat"
+        }
+      ],
+      "key": "lume:0.2.34",
+      "provenance": {
+        "evidenceSha256": "a8429fb9dc0151e9078dd5a1b09d26fd5bdd21df06b3c2da4e22ac5c444f9659",
+        "generatedAt": "2026-07-17T21:09:51.565978Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "c58fe99b41c91babf71fd028c4f908bda78c17e047b4b4254d28b98a39fd09ea",
+        "promptVersion": 1
+      },
+      "summary": "This release adds a Model Context Protocol server for AI agent integration and makes VM creation asynchronous with provisioning status tracking.",
+      "summaryEvidence": [
+        "pr:836"
+      ]
+    },
+    {
+      "candidateSha256": "6e994b1fae2f408f5ff739e5bad57e537034a01b5c4e1eb0c0aa2aab114b76eb",
+      "changes": [
+        {
+          "evidence": [
+            "pr:838"
+          ],
+          "summary": "Add MCP resources providing a usage guide and default credentials, plus guided prompts for creating, running, and resetting sandboxes",
+          "type": "feat"
+        }
+      ],
+      "key": "lume:0.2.36",
+      "provenance": {
+        "evidenceSha256": "dbe605ba869be7acb2324c54135bcde812bdf8a619c23cf7a74c9fb8877ba0b7",
+        "generatedAt": "2026-07-17T21:09:51.566105Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "91c864d5696d4bbad4eb1b2816ab526f64409b0b6c728c37e336377d3c85bd1a",
+        "promptVersion": 1
+      },
+      "summary": "This release adds MCP resources and prompts to help AI agents follow Lume workflows and best practices.",
+      "summaryEvidence": [
+        "pr:838"
+      ]
+    },
+    {
+      "candidateSha256": "130012e24c859f3375ec49670a5d4710f41e2417c12d27459d6f82e4afbea341",
+      "changes": [
+        {
+          "evidence": [
+            "pr:839"
+          ],
+          "summary": "Show newly created VMs with a provisioning status in lume ls immediately after lume create starts, instead of only after creation finishes",
+          "type": "fix"
+        },
+        {
+          "evidence": [
+            "pr:839"
+          ],
+          "summary": "Prevent running, stopping, or cloning a VM while it is still being provisioned, returning a clear error instead",
+          "type": "fix"
+        }
+      ],
+      "key": "lume:0.2.37",
+      "provenance": {
+        "evidenceSha256": "02cddd4bad5bd7abe8d64c33293263b26a768aa8e23fb3305962013fe38abf49",
+        "generatedAt": "2026-07-17T21:10:24.434211Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "58b4f75cae39e30935e1ebd7b1405907a42703595b22bfcd4a6c9421b317f980",
+        "promptVersion": 1
+      },
+      "summary": "This patch ensures lume ls and other CLI commands reflect a VM's provisioning state accurately and prevents unsafe operations on VMs that are still being created.",
+      "summaryEvidence": [
+        "pr:839"
+      ]
+    },
+    {
+      "candidateSha256": "ee2b7db0b6d096f95a0a0b7a8221bd5da754a8b7351642554efd2cbf639dff9e",
+      "changes": [
+        {
+          "evidence": [
+            "pr:846"
+          ],
+          "summary": "Detect and clean up stale session files left by crashed or killed lume processes so lume ls no longer hangs and correctly reports the VM as stopped",
+          "type": "fix"
+        }
+      ],
+      "key": "lume:0.2.39",
+      "provenance": {
+        "evidenceSha256": "40404032df0d4be0b55de7795f3ec858f55e966084a44db0e59fb2c37a75cdbe",
+        "generatedAt": "2026-07-17T21:10:24.434407Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "e4e4fef751cf189fd50efd425e3936d4e7878dda276aad3e2c643594f7e0c999",
+        "promptVersion": 1
+      },
+      "summary": "This patch fixes lume ls hanging when a previous lume process crashed and left behind stale session data.",
+      "summaryEvidence": [
+        "pr:846"
+      ]
+    },
+    {
+      "candidateSha256": "e94d583e66e5db49f1d112c487b02786659a68098bb82fabc756297604f6afbd",
+      "changes": [
+        {
+          "evidence": [
+            "pr:847"
+          ],
+          "summary": "Show VMs as running during unattended setup instead of provisioning, and automatically clean up leftover provisioning markers on completed VMs while warning about VMs stuck provisioning for more than 8 hours",
+          "type": "fix"
+        },
+        {
+          "evidence": [
+            "pr:847"
+          ],
+          "summary": "Rename the default storage location to \"home\" for new installations to better reflect the ~/.lume directory",
+          "type": "feat"
+        }
+      ],
+      "key": "lume:0.2.40",
+      "provenance": {
+        "evidenceSha256": "b2080fc545ac29cc58c8ec0093e94df7d0268c116ddb05b1776f021a28edbaf1",
+        "generatedAt": "2026-07-17T21:10:24.434517Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "739940d25a3488f4521b7e14ce3e4ee89691411aec466563b0ac6ed50ad8935d",
+        "promptVersion": 1
+      },
+      "summary": "This patch refines how VM provisioning status is tracked and renames the default storage location.",
+      "summaryEvidence": [
+        "pr:847"
+      ]
+    },
+    {
+      "candidateSha256": "ea3a472b9f9fb6e43b1c6ef3b3dc94dfbc867effccb2b2e188c3c9c09c47ba6a",
+      "changes": [
+        {
+          "evidence": [
+            "pr:853"
+          ],
+          "summary": "Fix lume get to show accurate provisioning status for VMs that are still being created, matching the behavior of lume ls",
+          "type": "fix"
+        }
+      ],
+      "key": "lume:0.2.41",
+      "provenance": {
+        "evidenceSha256": "a2afa28071d9f6b9e9dcdcabe542a71d5024afafd0c5ab086ac8515fe9d8d65e",
+        "generatedAt": "2026-07-17T21:10:24.434608Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "115383a4a2fb9c343b685f80631bc08a687bbb11cebbdf114670dfbf9057b8be",
+        "promptVersion": 1
+      },
+      "summary": "This patch fixes lume get to accurately report provisioning status and simplifies MCP server setup for Claude Desktop.",
+      "summaryEvidence": [
+        "pr:853"
+      ]
+    },
+    {
+      "candidateSha256": "edb42d971591ee18ae455313db87700a3602083198a1e6859b1fee886cdf2b0a",
+      "changes": [
+        {
+          "evidence": [
+            "pr:854"
+          ],
+          "summary": "Fix the MCP server's run VM command to return immediately after starting the VM instead of blocking forever, preventing MCP client timeouts",
+          "type": "fix"
+        }
+      ],
+      "key": "lume:0.2.42",
+      "provenance": {
+        "evidenceSha256": "db1fea3e0075d89545ec23077742956a39e9bc90e3b2b54fca52b12be92c0912",
+        "generatedAt": "2026-07-17T21:10:24.434674Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "bd5899dcdb013d9e70ed2f9e012d7b555af2076957cf6a65142e2fd85d19e729",
+        "promptVersion": 1
+      },
+      "summary": "This patch fixes the MCP server's run VM command, which previously blocked indefinitely and caused MCP clients to time out.",
+      "summaryEvidence": [
+        "pr:854"
+      ]
+    },
+    {
+      "candidateSha256": "4c38132688732af68d83282e19a529a171c669128d1c0fb2e3e858a5aad2bfd0",
+      "changes": [
+        {
+          "evidence": [
+            "pr:855"
+          ],
+          "summary": "Fix the MCP server's get VM command to correctly show provisioning status instead of incorrectly reporting stopped for VMs still being created",
+          "type": "fix"
+        }
+      ],
+      "key": "lume:0.2.44",
+      "provenance": {
+        "evidenceSha256": "9482fe75dbdcea3d003ef490d35e1cf1be512515d69de2ed7ec111aae742449d",
+        "generatedAt": "2026-07-17T21:10:24.434735Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "78a39e23582def23edb5f489e93e1e16434b1c35f725d635ee6adf42e8818555",
+        "promptVersion": 1
+      },
+      "summary": "This patch fixes the MCP server's get VM command, which incorrectly reported provisioning VMs as stopped.",
+      "summaryEvidence": [
+        "pr:855"
+      ]
+    },
+    {
+      "candidateSha256": "333bcd7d72f5427eea5c80dc885e2a465702f0d168ac3fe8b368de52c0025974",
+      "changes": [
+        {
+          "evidence": [
+            "pr:856"
+          ],
+          "summary": "Fix the MCP server's run VM command to return immediately in the background instead of blocking forever",
+          "type": "fix"
+        },
+        {
+          "evidence": [
+            "pr:856"
+          ],
+          "summary": "Fix the MCP server's get VM command to correctly report provisioning status",
+          "type": "fix"
+        },
+        {
+          "evidence": [
+            "pr:856"
+          ],
+          "summary": "Fix the HTTP API's get VM endpoint to correctly report provisioning status",
+          "type": "fix"
+        },
+        {
+          "evidence": [
+            "pr:856"
+          ],
+          "summary": "Fix a race condition where a newly created VM could briefly show as stopped immediately after creation instead of provisioning",
+          "type": "fix"
+        }
+      ],
+      "key": "lume:0.2.45",
+      "provenance": {
+        "evidenceSha256": "dc043aedaef39998841cfa5ade53135c624347e9931daf64e491356a2f7441fe",
+        "generatedAt": "2026-07-17T21:10:24.434812Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "c366cb65a5f9fa78f10d99c71d698d2c04bb95ff2ed8fa6bea8847bb6fa79c36",
+        "promptVersion": 1
+      },
+      "summary": "This patch fixes several issues where the MCP and HTTP API servers reported incorrect VM status or blocked on VM creation and startup.",
+      "summaryEvidence": [
+        "pr:856"
+      ]
+    },
+    {
+      "candidateSha256": "7fb7eec3f82fc550d768822c99a6bbd0b6b91b5a9d9d887fa62a6f7b65fee987",
+      "changes": [
+        {
+          "evidence": [
+            "pr:874"
+          ],
+          "summary": "Add an install-local.sh script that builds lume from local source, codesigns it, installs it, and sets up the background service without downloading from GitHub releases",
+          "type": "feat"
+        }
+      ],
+      "key": "lume:0.2.49",
+      "provenance": {
+        "evidenceSha256": "6d98a8bf8d53a61874cb8dcdab296e739d2b6f18e52bfc9e45ee5b0085f8e5ca",
+        "generatedAt": "2026-07-17T21:10:24.434887Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "93322e30f07212820bb34097a15a0fff224199ce442d9bbdaf9423694efdc349",
+        "promptVersion": 1
+      },
+      "summary": "This patch adds a script for building and installing lume from local source code for local development and debugging.",
+      "summaryEvidence": [
+        "pr:874"
+      ]
+    },
+    {
+      "candidateSha256": "0bef7a8e6a6f27e30db2dec9821711a92b3381a3ff711846fef42fab0f859708",
+      "changes": [
+        {
+          "evidence": [
+            "pr:948"
+          ],
+          "summary": "Update the CI build toolchain to resolve a build failure caused by stricter concurrency checks in the prior Swift compiler version",
+          "type": "fix"
+        }
+      ],
+      "key": "lume:0.2.54",
+      "provenance": {
+        "evidenceSha256": "e577b4f4ebee5d029e47ca0b64f099acbaadb6abc21a568503f7856738d16a52",
+        "generatedAt": "2026-07-17T21:10:24.434953Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "573075505a1a13c81bcf17f4bf61bd862b0db57b974d9ff7346881d1c705492e",
+        "promptVersion": 1
+      },
+      "summary": "This patch fixes a build failure in the previous release by updating the CI toolchain used to compile lume.",
+      "summaryEvidence": [
+        "pr:948"
+      ]
+    },
+    {
+      "candidateSha256": "20e274071a8f55b4acfd55b26299b9b2c24dba03c4e938ccb978d9972c6054a1",
+      "changes": [
+        {
+          "evidence": [
+            "pr:951"
+          ],
+          "summary": "Automatically sync clipboard content in both directions between the host Mac and a running VM over SSH, allowing copy and paste to work seamlessly between them",
+          "type": "feat"
+        }
+      ],
+      "key": "lume:0.2.55",
+      "provenance": {
+        "evidenceSha256": "a295d55cb3d921fb273568e68e0543e22eaf502515edcf3734509ed2f2fc7430",
+        "generatedAt": "2026-07-17T21:10:24.435025Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "bc01df8a474efd9c6cb199f59555499ad19e3640d06982ac1d3888edf1166bb5",
+        "promptVersion": 1
+      },
+      "summary": "This patch adds automatic bidirectional clipboard syncing between the macOS host and running Lume VMs.",
+      "summaryEvidence": [
+        "pr:951"
+      ]
+    },
+    {
+      "candidateSha256": "c73759882d6bf34f66debad226e03aa49e5ee43ef2fa05945130a6cf5b038896",
+      "changes": [
+        {
+          "evidence": [
+            "pr:952"
+          ],
+          "summary": "Disk size values without an explicit unit now default to gigabytes instead of megabytes, and a minimum size check rejects disks that are too small to use (30GB for macOS, 10GB for Linux)",
+          "type": "fix"
+        }
+      ],
+      "key": "lume:0.2.56",
+      "provenance": {
+        "evidenceSha256": "39addb64ca55bbf56b1b7fb993c7766fe12954511120833d01d7c7ca2682e8cd",
+        "generatedAt": "2026-07-17T21:10:42.491739Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "bb28da6d721c53407f1f6e4c657422e75bbd6806f5162caf950234d3598612a4",
+        "promptVersion": 1
+      },
+      "summary": "This patch fixes VM disk sizing so that sizes given without a unit are treated as gigabytes instead of megabytes, preventing accidentally undersized disks.",
+      "summaryEvidence": [
+        "pr:952"
+      ]
+    },
+    {
+      "candidateSha256": "882f4c5de88fae23925fbb074afc61490a509ef54f7d972948547df0fb4f6aa8",
+      "changes": [
+        {
+          "evidence": [
+            "pr:953"
+          ],
+          "summary": "Clipboard sync now uses a heredoc instead of a command line argument for content larger than 64KB, avoiding shell argument length limits, and the transfer timeout for large content was increased from 5 to 10 seconds",
+          "type": "fix"
+        }
+      ],
+      "key": "lume:0.2.57",
+      "provenance": {
+        "evidenceSha256": "02611260f7c8c6ea9c3d757c08c431e0f43031c7e10f0c40bec6664adf163572",
+        "generatedAt": "2026-07-17T21:10:42.491835Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "7877b23dde757c29475187d447d9d20e6df52c2348c4e700ce2997b1ea71cfa7",
+        "promptVersion": 1
+      },
+      "summary": "This patch fixes clipboard synchronization for large amounts of copied content.",
+      "summaryEvidence": [
+        "pr:953"
+      ]
+    },
+    {
+      "candidateSha256": "a45d8a07fbdd033e362232ccffcb0a06fd3de001f94d11990fd8f27ed430c921",
+      "changes": [
+        {
+          "evidence": [
+            "pr:955"
+          ],
+          "summary": "Fixed a race condition where clipboard content copied on the host could be overwritten by stale VM clipboard content immediately after syncing",
+          "type": "fix"
+        }
+      ],
+      "key": "lume:0.2.58",
+      "provenance": {
+        "evidenceSha256": "b544f456b3535c931d56745b15be8dee27c8d02c14c220394cba3754087d16e4",
+        "generatedAt": "2026-07-17T21:10:42.491881Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "ab9e573afd0c86212b52a34ec89e421e117382e9421b013dfb310aabf63097ae",
+        "promptVersion": 1
+      },
+      "summary": "This patch fixes a clipboard synchronization race condition between the host and the VM.",
+      "summaryEvidence": [
+        "pr:955"
+      ]
+    },
+    {
+      "candidateSha256": "f72ba2d52f0f767da8fc9998f67160a94441381b8a97bbd02f95ea525e9de2dc",
+      "changes": [
+        {
+          "evidence": [
+            "pr:958"
+          ],
+          "summary": "Synced the bundled unattended setup presets with prior System Settings navigation fixes that had been applied to an unused copy of the preset files, and removed the duplicate unused files",
+          "type": "fix"
+        }
+      ],
+      "key": "lume:0.2.59",
+      "provenance": {
+        "evidenceSha256": "3c40f0b945711d05de4ce7ee0947e93fab28d1cd58d354944a065165f005cad2",
+        "generatedAt": "2026-07-17T21:10:42.491923Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "f1f18fbe541ed9f7dfcbc5e54216cc0ea4dc698ff49d3f45fdab1821b23ca596",
+        "promptVersion": 1
+      },
+      "summary": "This patch fixes unattended macOS setup presets that had not been receiving previous fixes due to being bundled from the wrong location.",
+      "summaryEvidence": [
+        "pr:958"
+      ]
+    },
+    {
+      "candidateSha256": "bb63669b0b998bb202794c32dd8be1da7f80715231ef3318eade004387bd2806",
+      "changes": [
+        {
+          "evidence": [
+            "pr:959"
+          ],
+          "summary": "Unattended setup now clicks Enable Ask Siri directly, skipping the Select a Siri Voice and Improve Siri and Dictation screens, making setup faster and more reliable",
+          "type": "fix"
+        }
+      ],
+      "key": "lume:0.2.60",
+      "provenance": {
+        "evidenceSha256": "acffca1fbd9c1f2128872b2d247c535ffbf109e75fee2ef7b428a49aff68f08f",
+        "generatedAt": "2026-07-17T21:10:42.491957Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "c9cabae07580a58ae96d62710d08df0b6796c79eee492d9dafec961a85c6863a",
+        "promptVersion": 1
+      },
+      "summary": "This patch simplifies Siri setup during unattended macOS installation.",
+      "summaryEvidence": [
+        "pr:959"
+      ]
+    },
+    {
+      "candidateSha256": "497f1147a5de1395abcf7fb21c288da371c47a47774ca82c0d13a0abdb939661",
+      "changes": [
+        {
+          "evidence": [
+            "pr:961"
+          ],
+          "summary": "Unattended setup now clicks directly on the English option instead of pressing enter, preventing English (UK) from being selected instead of English on European hosts",
+          "type": "fix"
+        }
+      ],
+      "key": "lume:0.2.61",
+      "provenance": {
+        "evidenceSha256": "aca8f269e7deaa5d0f4a464bdd1fbcfec374c0f731abf3bd0da500e7ee3fe1e2",
+        "generatedAt": "2026-07-17T21:10:42.491991Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "b5850334a15f630e1699d56fa199945271393ab19c9330571fcb9d25da642fd7",
+        "promptVersion": 1
+      },
+      "summary": "This patch fixes language selection during unattended macOS setup on European hosts.",
+      "summaryEvidence": [
+        "pr:961"
+      ]
+    },
+    {
+      "candidateSha256": "0ffbb1d476ce31f8a78a28d7f4c3fc78c48b7e51db813b114afedf7efc279f2c",
+      "changes": [
+        {
+          "evidence": [
+            "pr:963"
+          ],
+          "summary": "Unattended setup now presses enter after clicking English to confirm the selection and proceed, after the previous fix left the selection unconfirmed",
+          "type": "fix"
+        }
+      ],
+      "key": "lume:0.2.62",
+      "provenance": {
+        "evidenceSha256": "987a8070ca16e0019b01f8434b921589276867f083f7550d19e3a276f85141eb",
+        "generatedAt": "2026-07-17T21:10:42.492022Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "18202ef902f3762b16ad6dcfb5d0ec9961dbf20d8c98d7b96de7d794db551d2e",
+        "promptVersion": 1
+      },
+      "summary": "This patch fixes an unattended setup issue where language selection did not proceed to the next screen.",
+      "summaryEvidence": [
+        "pr:963"
+      ]
+    },
+    {
+      "candidateSha256": "044e1088c0c5999176d337e15c27beae7c5101cb27852ecbaa9311c47d342586",
+      "changes": [
+        {
+          "evidence": [
+            "pr:965"
+          ],
+          "summary": "Added one-second delays between keyboard input steps during unattended account creation, fixing an issue where rapid input caused the password field to receive incomplete characters",
+          "type": "fix"
+        }
+      ],
+      "key": "lume:0.2.63",
+      "provenance": {
+        "evidenceSha256": "6f2897e6f16b558ca5f4e6db04c60bddbe4f532f4501093f6e8b3bebe6df984c",
+        "generatedAt": "2026-07-17T21:10:42.492068Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "0afa73f248f5e3219777ce43ca4eb69d60a85ea4e013a07a8f435f644ee49408",
+        "promptVersion": 1
+      },
+      "summary": "This patch fixes unreliable password entry during unattended account creation.",
+      "summaryEvidence": [
+        "pr:965"
+      ]
+    },
+    {
+      "candidateSha256": "46b7afa2fb10f188f21fb1606b208019b6b637332ea2563be00dc36462d46c9d",
+      "changes": [
+        {
+          "evidence": [
+            "pr:966"
+          ],
+          "summary": "Unattended setup now searches for Remote Logi instead of Remote Login in System Settings to avoid ambiguous search result matches",
+          "type": "fix"
+        }
+      ],
+      "key": "lume:0.2.65",
+      "provenance": {
+        "evidenceSha256": "29c3f35ab1c87546a8be26f095268afe16855272e133d62a8803954520b2b999",
+        "generatedAt": "2026-07-17T21:10:42.492104Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "c887f0246021162bb4210c1156bcb4c1b82bf6aa8701b7ddf9975c7275b03cd7",
+        "promptVersion": 1
+      },
+      "summary": "This patch fixes an unattended setup issue where Remote Login settings could not be reliably located.",
+      "summaryEvidence": [
+        "pr:966"
+      ]
+    },
+    {
+      "candidateSha256": "69f936db53455a24f95f44a74be2e50304531b0955a799c96272345f2ab572ff",
+      "changes": [
+        {
+          "evidence": [
+            "pr:967"
+          ],
+          "summary": "Unattended setup now searches for login instead of Remote Logi and waits up to 10 seconds after clicking for the settings pane to fully load",
+          "type": "fix"
+        }
+      ],
+      "key": "lume:0.2.66",
+      "provenance": {
+        "evidenceSha256": "55b7d88d584d4ed131929d66d8a7924107932cfafd67f339ef54af4e8798ba7f",
+        "generatedAt": "2026-07-17T21:10:42.492133Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "81e89af0ccb278713e74c32967ff43e9b7f3fc721eca08755ae93a13124154d4",
+        "promptVersion": 1
+      },
+      "summary": "This patch further improves the reliability of locating Remote Login settings during unattended setup.",
+      "summaryEvidence": [
+        "pr:967"
+      ]
+    },
+    {
+      "candidateSha256": "2dc9a8830bdffddf55356951bd4fbc2cabca30d2521c939b26615846bdc95c5b",
+      "changes": [
+        {
+          "evidence": [
+            "pr:964"
+          ],
+          "summary": "Stop automatically converting image names to a suffixed variant during pull; images are now pulled exactly as specified. This is a breaking change for existing images that relied on the old naming convention",
+          "type": "fix"
+        }
+      ],
+      "key": "lume:0.2.67",
+      "provenance": {
+        "evidenceSha256": "86e659cfe84ad77a2cedc983ed1d78972d87706d3de41e503c72332889ec205d",
+        "generatedAt": "2026-07-17T21:11:05.288141Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "c2649d27277d0220afaed0213a28c7f5021c48a836962714109ad118a35887f4",
+        "promptVersion": 1
+      },
+      "summary": "This release removes automatic name conversion during image pulls, so images are pulled exactly as specified without an added suffix.",
+      "summaryEvidence": [
+        "pr:964"
+      ]
+    },
+    {
+      "candidateSha256": "e2f40506e83d1403375e6a1960e5731f30495c1924eb574728673fb1ce2642a0",
+      "changes": [
+        {
+          "evidence": [
+            "pr:968"
+          ],
+          "summary": "Disable the screensaver, screen lock, display sleep, system sleep, and auto-logout in unattended VM setup presets to prevent re-login prompts that broke automated workflows",
+          "type": "feat"
+        }
+      ],
+      "key": "lume:0.2.68",
+      "provenance": {
+        "evidenceSha256": "eab4e1bdfde9807d23e34c5aeb01d94beb99e5f5b066b7d76d8bc5102acfb6c6",
+        "generatedAt": "2026-07-17T21:11:05.288294Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "8ff5ab184d476a1327ac38b0e2a2b7d16683a88ef5f678cacaca3a0e34021a86",
+        "promptVersion": 1
+      },
+      "summary": "This release prevents VM screensaver activation and re-login prompts during unattended setup.",
+      "summaryEvidence": [
+        "pr:968"
+      ]
+    },
+    {
+      "candidateSha256": "91de1e66947e66a4689ff814e14202bfc33058b841a6e3a97e25574161bc128c",
+      "changes": [
+        {
+          "evidence": [
+            "pr:971"
+          ],
+          "summary": "Add a post_ssh_commands option to unattended configuration that runs commands over SSH after the health check passes, replacing less reliable VNC keyboard typing for setup steps like disabling the screensaver and sleep",
+          "type": "feat"
+        }
+      ],
+      "key": "lume:0.2.69",
+      "provenance": {
+        "evidenceSha256": "bfd7c091f5c64b121449272a904e5dc5ed0c257e9084b00151952fa51fe95dbd",
+        "generatedAt": "2026-07-17T21:11:05.288362Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "8a38c8a81ce3526df179b5c168469946fdf49e64f87abac8a1e49cd4a578711d",
+        "promptVersion": 1
+      },
+      "summary": "This release adds a more reliable way to run post-setup commands in unattended VM configuration.",
+      "summaryEvidence": [
+        "pr:971"
+      ]
+    },
+    {
+      "candidateSha256": "15195cd8d690df80ed25a29e6b735fe85ee95abb6c2847d70224ed8153133591",
+      "changes": [
+        {
+          "evidence": [
+            "pr:980"
+          ],
+          "summary": "Enable Remote Login through the System Settings UI toggle instead of typing Terminal commands, avoiding issues caused by fast keyboard input",
+          "type": "fix"
+        },
+        {
+          "evidence": [
+            "pr:981"
+          ],
+          "summary": "Slow down automated keyboard typing during unattended setup to prevent missed characters and typos",
+          "type": "fix"
+        }
+      ],
+      "key": "lume:0.2.70",
+      "provenance": {
+        "evidenceSha256": "1238c83ea649ccf507bfe04b6588fc8f291d2d1d93c30a063c5ca1101be7d79c",
+        "generatedAt": "2026-07-17T21:11:05.288461Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "b3c60133583c6564dea80bfd6f7ca656b05ac5adb452552334196da89467b347",
+        "promptVersion": 1
+      },
+      "summary": "This release improves the reliability of unattended VM setup by changing how remote login is enabled and slowing down automated keyboard input.",
+      "summaryEvidence": [
+        "pr:980",
+        "pr:981"
+      ]
+    },
+    {
+      "candidateSha256": "bbd27f9156700c70a110f7811bfd6a7e4b4b2b958ea043f9ba3951c976d09873",
+      "changes": [
+        {
+          "evidence": [
+            "pr:982"
+          ],
+          "summary": "Add an optional delay parameter to the type command in unattended configuration files, allowing per-command control over typing speed",
+          "type": "feat"
+        }
+      ],
+      "key": "lume:0.2.71",
+      "provenance": {
+        "evidenceSha256": "a7a1847900ce256b1a12beb40005b1a4addddd762def7df16fa434f5871cfb3a",
+        "generatedAt": "2026-07-17T21:11:05.288522Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "fbf8521e9e139c9e35a44ee3348b2fa100f3e609d1716238089fd7be6ece2734",
+        "promptVersion": 1
+      },
+      "summary": "This release lets unattended setup configurations control typing speed per command.",
+      "summaryEvidence": [
+        "pr:982"
+      ]
+    },
+    {
+      "candidateSha256": "0568c88c345651dcc41dc2c6d2e1e0d75e9a4840ae734a3737db98ad476ae355",
+      "changes": [
+        {
+          "evidence": [
+            "pr:983"
+          ],
+          "summary": "Open Terminal during unattended setup by typing a partial name and clicking the Spotlight search result instead of typing the full name and pressing enter",
+          "type": "fix"
+        }
+      ],
+      "key": "lume:0.2.72",
+      "provenance": {
+        "evidenceSha256": "90fa8881553d66b78c99beb2022bca53919be737f57fc8094875ceafbd29c026",
+        "generatedAt": "2026-07-17T21:11:05.288573Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "a84f9a35e4c627c7c3ea2fabc05ddb25185a22e9839039d025f99a622417b8e9",
+        "promptVersion": 1
+      },
+      "summary": "This release improves how unattended setup opens the Terminal application via Spotlight.",
+      "summaryEvidence": [
+        "pr:983"
+      ]
+    },
+    {
+      "candidateSha256": "3eb251a86524ce103b3d068b19b9e36df8e07893b4f39e2a23b4b486a7e06076",
+      "changes": [
+        {
+          "evidence": [
+            "pr:984"
+          ],
+          "summary": "Revert to opening Terminal during unattended setup by typing a partial name and pressing enter, instead of clicking the Spotlight search result",
+          "type": "revert"
+        }
+      ],
+      "key": "lume:0.2.73",
+      "provenance": {
+        "evidenceSha256": "49693d29cfb71b1111ee27c1f340e87c9176938eec19b28fc2462520d070fbb8",
+        "generatedAt": "2026-07-17T21:11:05.288627Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "c281d72de3afe403ad8c0da3501377003ffed1eab9d54a7b519f15a948177f10",
+        "promptVersion": 1
+      },
+      "summary": "This release reverts the previous change to how Terminal is opened during unattended setup.",
+      "summaryEvidence": [
+        "pr:984"
+      ]
+    },
+    {
+      "candidateSha256": "22eabd5bc8b68076fe4cbec2be92b0dcbe5dfb94e3d35d5d2ce9ad8d47cb5f49",
+      "changes": [
+        {
+          "evidence": [
+            "pr:985"
+          ],
+          "summary": "Fix repeated key presses in Terminal during unattended setup by removing the key hold delay; the configured delay now only affects the pause between characters",
+          "type": "fix"
+        }
+      ],
+      "key": "lume:0.2.74",
+      "provenance": {
+        "evidenceSha256": "4b8177f567dbbc450e091a183024d1f74d9b02346429f3f065ae37dfd98872f9",
+        "generatedAt": "2026-07-17T21:11:05.288674Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "bfe0d986a42adcc84bd697c4553a6fc656367f289578d42a4ef14c83e94446ad",
+        "promptVersion": 1
+      },
+      "summary": "This release fixes repeated characters appearing when typing commands during unattended setup.",
+      "summaryEvidence": [
+        "pr:985"
+      ]
+    },
+    {
+      "candidateSha256": "8a183b79dc7358fbf6658997d6bfc4eebcafb1c972ec698d88b6695015aee005",
+      "changes": [
+        {
+          "evidence": [
+            "pr:989"
+          ],
+          "summary": "Simplify and increase delays in the Remote Login toggle sequence during unattended setup, improving reliability on both supported macOS versions",
+          "type": "fix"
+        }
+      ],
+      "key": "lume:0.2.75",
+      "provenance": {
+        "evidenceSha256": "e2a997e6f0e6c029360a45dadcd9d0343b8ec78b68935ad80ccdf70710bfce90",
+        "generatedAt": "2026-07-17T21:11:05.288729Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "6800c15f419630f6d4a6371df397567ddb0141f5156d85f73adccecb1b6ed7ec",
+        "promptVersion": 1
+      },
+      "summary": "This release improves the reliability of enabling Remote Login during unattended VM setup.",
+      "summaryEvidence": [
+        "pr:989"
+      ]
+    },
+    {
+      "candidateSha256": "cd849f63e2fb3814e2b8e762bfd580f77717b504a611580351c9270a5e2fd805",
+      "changes": [
+        {
+          "evidence": [
+            "pr:990"
+          ],
+          "summary": "Replace the external sshpass dependency with a built-in SSH client for health checks and post-setup commands, fixing failures when sshpass was not installed on the host",
+          "type": "fix"
+        }
+      ],
+      "key": "lume:0.2.76",
+      "provenance": {
+        "evidenceSha256": "6af9461e810042769cad14feb072bdcb654fc1825bb118524d76c9313c61005e",
+        "generatedAt": "2026-07-17T21:11:05.288780Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "ba91af7fe3742ddadd48607b76ed6b3c9c8eca5304b11f751682835d2a4a7938",
+        "promptVersion": 1
+      },
+      "summary": "This release fixes unattended setup health checks failing when sshpass is not installed.",
+      "summaryEvidence": [
+        "pr:990"
+      ]
+    },
+    {
+      "candidateSha256": "68eedc408817846c53209ab5229dd9cf464695a49e0e0ce8f7a361a78f544b9f",
+      "changes": [
+        {
+          "evidence": [
+            "pr:994"
+          ],
+          "summary": "Added a script that provisions OpenClaw and its dependencies on a Lume macOS VM, with an unattended mode for fully automated installs",
+          "type": "feat"
+        },
+        {
+          "evidence": [
+            "pr:991"
+          ],
+          "summary": "Improved unattended macOS setup reliability by extending the Remote Login wait time, confirming the dialog more reliably, and ensuring auto-login persists after a VM restart",
+          "type": "fix"
+        },
+        {
+          "evidence": [
+            "pr:992"
+          ],
+          "summary": "Fixed sudo command handling during unattended setup and prevented the VM from showing a lock screen after being idle",
+          "type": "fix"
+        }
+      ],
+      "key": "lume:0.2.77",
+      "provenance": {
+        "evidenceSha256": "0a12c80f608b074c5cacc750e1c0b25bfe51cb25177e1b1e4a66b17ca975d7e3",
+        "generatedAt": "2026-07-17T21:11:39.589707Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "939349d04640c496e5c1a3e2a6684ff6e169dc24f544d4b2dbb597b503d1a39e",
+        "promptVersion": 1
+      },
+      "summary": "This release adds a VM provisioning script and improves the reliability of unattended macOS setup, including auto-login and sudo command handling.",
+      "summaryEvidence": [
+        "pr:994",
+        "pr:991",
+        "pr:992"
+      ]
+    },
+    {
+      "candidateSha256": "b72672d886b9fa0f20addd8894ecf89b73f9fb8ceba60590198b8b724881ce93",
+      "changes": [
+        {
+          "evidence": [
+            "pr:1063"
+          ],
+          "summary": "Fixed VM run and creation commands so they respect a VM's persisted network mode instead of reverting to NAT, and the API now rejects invalid network values instead of silently falling back to NAT",
+          "type": "fix"
+        },
+        {
+          "evidence": [
+            "pr:1063"
+          ],
+          "summary": "Fixed local ad-hoc installer signing to avoid a networking entitlement that could cause macOS to kill the binary at launch",
+          "type": "fix"
+        }
+      ],
+      "key": "lume:0.2.78",
+      "provenance": {
+        "evidenceSha256": "fd9602532172e3280b7b89dbb611b69112d03e6a9a593ad4395652ecbb6054aa",
+        "generatedAt": "2026-07-17T21:11:39.589810Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "af3bae422aa6ea1f7683049671579ebe173748c4b732613ec0ea81397ede6311",
+        "promptVersion": 1
+      },
+      "summary": "This release fixes networking configuration regressions and installer signing issues introduced by bridged networking support.",
+      "summaryEvidence": [
+        "pr:1063"
+      ]
+    },
+    {
+      "candidateSha256": "857c3f206cf0eae54c735f1f6d5176208b4bb4760120efa9072c2d5dd990964f",
+      "changes": [
+        {
+          "evidence": [
+            "pr:1075"
+          ],
+          "summary": "Removed a restricted networking entitlement from release builds that was causing macOS to immediately kill the binary on launch for all commands, including basic ones like listing VMs",
+          "type": "fix"
+        }
+      ],
+      "key": "lume:0.2.79",
+      "provenance": {
+        "evidenceSha256": "e36e16a29ff10ddb23234f2bf8f2c54823816e93e3b56bb29f094f01678b4f10",
+        "generatedAt": "2026-07-17T21:11:39.589863Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "7fdb80dbdb27e4976052fd182406e2bd7b6938a7320a191f4b8cf1a5dea10ec2",
+        "promptVersion": 1
+      },
+      "summary": "This release fixes a critical bug that caused the previous release to be unusable on macOS.",
+      "summaryEvidence": [
+        "pr:1075"
+      ]
+    },
+    {
+      "candidateSha256": "38bfcbc3e15c46e98fce12afb6ab9581dcac135384addb62671133bda345e5ba",
+      "changes": [
+        {
+          "evidence": [
+            "pr:1077"
+          ],
+          "summary": "Fixed clipboard sync so repeated SSH connection failures no longer flood the console with identical error messages, added a backoff on the poll interval, reused the SSH connection across polls, and logged when sync recovers",
+          "type": "fix"
+        }
+      ],
+      "key": "lume:0.2.80",
+      "provenance": {
+        "evidenceSha256": "ebea551dd8c9e67e0869894c6100e255796a44cd3a59110a74fb6756ab6117ee",
+        "generatedAt": "2026-07-17T21:11:39.589915Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "13fd80ee705a665f5180a17ee6d8151982c13f6b954be64f2e33953de9659ab9",
+        "promptVersion": 1
+      },
+      "summary": "This release fixes noisy clipboard sync error logging when SSH connectivity to a VM is disrupted.",
+      "summaryEvidence": [
+        "pr:1077"
+      ]
+    },
+    {
+      "candidateSha256": "518ec9767d04e3dee6129b4ff9115884616d17ae8b34a2176e88ccefeb964d49",
+      "changes": [
+        {
+          "evidence": [
+            "pr:1122"
+          ],
+          "summary": "Re-landed the release packaging as a signed macOS .app bundle with a provisioning profile to support bridged networking after an earlier revert",
+          "type": "feat"
+        },
+        {
+          "evidence": [
+            "pr:1084"
+          ],
+          "summary": "Reverted an earlier .app bundle packaging attempt while waiting for the required Apple entitlement",
+          "type": "revert"
+        }
+      ],
+      "key": "lume:0.2.82",
+      "provenance": {
+        "evidenceSha256": "40c900722971764f848a5b37e7aa31bf5909d6b41ad879f78577e055f40bde21",
+        "generatedAt": "2026-07-17T21:11:39.589975Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "e2f7898d3f3f03537564117569ac4b7fcbb64df99ce20d011e97c053eeaabb1c",
+        "promptVersion": 1
+      },
+      "summary": "This release ships Lume as a signed macOS .app bundle with a provisioning profile to support bridged networking, re-landing the packaging change after an earlier revert.",
+      "summaryEvidence": [
+        "pr:1122",
+        "pr:1084"
+      ]
+    },
+    {
+      "candidateSha256": "d564846dbc9259ba044484f05579545f9986a42dd7cccdf6a0baba801d4e8b10",
+      "changes": [
+        {
+          "evidence": [
+            "pr:1125"
+          ],
+          "summary": "Prevented the VM listing command from hanging indefinitely when subprocesses got stuck during concurrent VM state transitions",
+          "type": "fix"
+        },
+        {
+          "evidence": [
+            "pr:1125"
+          ],
+          "summary": "Added a fallback to system SSH so remote sessions still work in sandboxed or restricted environments that block direct connections",
+          "type": "fix"
+        },
+        {
+          "evidence": [
+            "pr:1125"
+          ],
+          "summary": "Fixed VM listing and info commands to show the correct IP address for VMs using bridged networking instead of a stale NAT address",
+          "type": "fix"
+        }
+      ],
+      "key": "lume:0.2.84",
+      "provenance": {
+        "evidenceSha256": "c695d0b44db61a9b553fd9af711c3323a1c0aac195f21cda6eea6ca8adc2b04d",
+        "generatedAt": "2026-07-17T21:11:39.590034Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "7eba7571229f961bd3ce7a5a17e0b4ae950571391d7586ba9b6c362685f96eae",
+        "promptVersion": 1
+      },
+      "summary": "This release fixes VM listing hangs, adds an SSH fallback for restricted environments, and corrects IP address resolution for bridged networking.",
+      "summaryEvidence": [
+        "pr:1125"
+      ]
+    },
+    {
+      "candidateSha256": "cee1480d32f0c35d394f47285158e2eae384c5b1db611472d2cea0b03db7c534",
+      "changes": [
+        {
+          "evidence": [
+            "pr:1132"
+          ],
+          "summary": "Fixed Screen Sharing windows sometimes appearing black on VM startup by waiting for visible framebuffer content before opening the viewer",
+          "type": "fix"
+        },
+        {
+          "evidence": [
+            "pr:1130"
+          ],
+          "summary": "Fixed a bug where pausing or resuming a VM would instead restart it",
+          "type": "fix"
+        },
+        {
+          "evidence": [
+            "pr:1100"
+          ],
+          "summary": "Fixed filesystem corruption in Linux VMs by using cached disk mode for virtual disk attachments; macOS VMs are unaffected",
+          "type": "fix"
+        }
+      ],
+      "key": "lume:0.2.85",
+      "provenance": {
+        "evidenceSha256": "b6823b3a3442218e24fe4f81048cebe041f1e62ee5f23278f716fee4e9c78ebe",
+        "generatedAt": "2026-07-17T21:11:39.590110Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "2121ea2bbddf6dc9634f2a37e01ce87239d97db2e2222701c0ab45821ace5daf",
+        "promptVersion": 1
+      },
+      "summary": "This release fixes VM startup screen sharing, pause/resume behavior, and filesystem corruption in Linux VMs.",
+      "summaryEvidence": [
+        "pr:1132",
+        "pr:1130",
+        "pr:1100"
+      ]
+    },
+    {
+      "candidateSha256": "027c7077d02837689550f20e6b34a6bf2b59e3413e36b101fbc063e73a5f31de",
+      "changes": [
+        {
+          "evidence": [
+            "pr:1167"
+          ],
+          "summary": "Fixed cleanup after a failed VM creation so it behaves consistently across synchronous and asynchronous creation paths, and partially created VMs remain discoverable if cleanup itself fails",
+          "type": "fix"
+        }
+      ],
+      "key": "lume:0.2.86",
+      "provenance": {
+        "evidenceSha256": "3f189cf8ac16067109e919f26a0cb46e2279c28d15e1b6297a603542a2834b0a",
+        "generatedAt": "2026-07-17T21:11:39.590151Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "8f9d6b6e3f61adca0cd53e64631def268378ffe9db5280086571910d49577c1c",
+        "promptVersion": 1
+      },
+      "summary": "This release fixes inconsistent cleanup behavior when VM creation fails.",
+      "summaryEvidence": [
+        "pr:1167"
+      ]
+    },
+    {
+      "candidateSha256": "41dd8763178d5336bade1a8f4d609de8919bf68e8b7e49afa43f7d60c342d034",
+      "changes": [
+        {
+          "evidence": [
+            "pr:1196"
+          ],
+          "summary": "Added a VNC-based automation backend for the computer server that connects to any VNC server for screenshots, mouse, keyboard, and scroll operations, selectable via a backend flag or environment variables",
+          "type": "feat"
+        },
+        {
+          "evidence": [
+            "pr:1144"
+          ],
+          "summary": "Overhauled the VM image push and pull format to produce standard OCI-compliant, multi-layer compressed manifests by default, while still accepting older image formats for backward compatibility",
+          "type": "feat"
+        },
+        {
+          "evidence": [
+            "pr:1144"
+          ],
+          "summary": "Fixed a crash in the reassemble flag and a division-by-zero crash in the download progress bar, and changed the auto-update check from daily to weekly to reduce interruptions",
+          "type": "fix"
+        }
+      ],
+      "key": "lume:0.3.0",
+      "provenance": {
+        "evidenceSha256": "7e15c7383e41372bec69c9b06f3ffda8cda2518ee679677a229b3ff5daf0c552",
+        "generatedAt": "2026-07-17T21:11:39.590216Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "a6be2908b547351218d7d559f323b466762967261af6ff4901bf72d411123a64",
+        "promptVersion": 1
+      },
+      "summary": "This release adds a cross-platform VNC automation backend for the computer server and overhauls the VM image push/pull format to a standard OCI-compliant structure.",
+      "summaryEvidence": [
+        "pr:1196",
+        "pr:1144"
+      ]
+    },
+    {
+      "candidateSha256": "18361dcdae604624fe72280f12c388107636f00c826e0dd7d913d0a79af9dc05",
+      "changes": [
+        {
+          "evidence": [
+            "pr:1205"
+          ],
+          "summary": "Rewrote the VNC backend to avoid deadlocks and fixed drag operations and screen access issues in VNC-based automation",
+          "type": "fix"
+        },
+        {
+          "evidence": [
+            "pr:1205"
+          ],
+          "summary": "VMs now share dynamic VNC port and password configuration with the guest at boot instead of relying on hardcoded values",
+          "type": "feat"
+        }
+      ],
+      "key": "lume:0.3.1",
+      "provenance": {
+        "evidenceSha256": "9efb586293c29ffd9beb0f01623bcad8e5e755c29a0a40a970cee3f1f0a73d0b",
+        "generatedAt": "2026-07-17T21:11:39.590272Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "cddf44d78fbf0aa74a286cdaab7d0da5c86609cdedf7ca27b1e40bd024eb4b0f",
+        "promptVersion": 1
+      },
+      "summary": "This release rewrites the VNC automation backend for reliability and adds dynamic VNC configuration discovery for VMs.",
+      "summaryEvidence": [
+        "pr:1205"
+      ]
+    },
+    {
+      "candidateSha256": "c33b1f272a49310844f731172011d77210d75df4f8dc4567b1ffe94ee083e255",
+      "changes": [
+        {
+          "evidence": [
+            "pr:1207"
+          ],
+          "summary": "Each VM now gets a randomly generated VNC port and passphrase instead of a shared hardcoded password",
+          "type": "feat"
+        },
+        {
+          "evidence": [
+            "pr:1207"
+          ],
+          "summary": "VNC connection configuration is now delivered to the guest VM over SSH after boot, avoiding failures caused by macOS restrictions on reading shared files from background processes",
+          "type": "fix"
+        },
+        {
+          "evidence": [
+            "pr:1207"
+          ],
+          "summary": "Fixed VNC coordinate corruption, incorrect scroll direction, and a connection leak in the VNC backend",
+          "type": "fix"
+        }
+      ],
+      "key": "lume:0.3.2",
+      "provenance": {
+        "evidenceSha256": "63c92eabe6344677e19db3f65a2c348372df880ff07a83cfd8e02d7d54af840d",
+        "generatedAt": "2026-07-17T21:12:11.456218Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "7b80580588530adcb3631298489d391de6495a24bcb6c2fa7bee792d38513476",
+        "promptVersion": 1
+      },
+      "summary": "This release replaces the shared, hardcoded VNC password with per-VM auto-generated credentials delivered securely after boot, and fixes several VNC input bugs.",
+      "summaryEvidence": [
+        "pr:1207"
+      ]
+    },
+    {
+      "candidateSha256": "86d07de590a31f068207ae353c40dc1878e6476f1f53ec24abd06a37cce3c6ff",
+      "changes": [
+        {
+          "evidence": [
+            "pr:1209"
+          ],
+          "summary": "Fixed image pulls failing with a file collision error when retrying a download that was previously interrupted partway through",
+          "type": "fix"
+        }
+      ],
+      "key": "lume:0.3.3",
+      "provenance": {
+        "evidenceSha256": "eb9f369d3b01889783d7f164776d0362d7cd0d06127db901856cd6b1370c57fb",
+        "generatedAt": "2026-07-17T21:12:11.456309Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "b31cc216edfd7eb4cba7dc65b7f5cd7833db5ae53f3771283eb931b969259395",
+        "promptVersion": 1
+      },
+      "summary": "This patch fixes an image pull failure that occurred when resuming an interrupted download.",
+      "summaryEvidence": [
+        "pr:1209"
+      ]
+    },
+    {
+      "candidateSha256": "e27da90ced3b1497c0cc8ca32da416786ca0832c443be837e0a347bb8ce2605e",
+      "changes": [
+        {
+          "evidence": [
+            "pr:1213"
+          ],
+          "summary": "Standardized the OCI image format, renaming the auxiliary image layer to a dedicated NVRAM layer; images previously published under the old format are no longer recognized and must be re-published",
+          "type": "feat"
+        }
+      ],
+      "key": "lume:0.3.4",
+      "provenance": {
+        "evidenceSha256": "0abddd6a8a542b596b7fd54e1f3f941bd3600f03b39710704bb412f6ed03f1a6",
+        "generatedAt": "2026-07-17T21:12:11.456362Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "965bb371865f82ced888ef8430fdf8435fba513fa3ecf691176cf2957a60701f",
+        "promptVersion": 1
+      },
+      "summary": "This release standardizes the OCI image format used by Lume, which breaks compatibility with images published under the old format.",
+      "summaryEvidence": [
+        "pr:1213"
+      ]
+    },
+    {
+      "candidateSha256": "dfa55171d28b7aab34321ab745d5c69c71d3ea07952914b079cb9398aa2a4ec2",
+      "changes": [
+        {
+          "evidence": [
+            "pr:1232"
+          ],
+          "summary": "Fixed a build error caused by a mismatched progress-reporting parameter in the image pull code path, which had been breaking the release build",
+          "type": "fix"
+        }
+      ],
+      "key": "lume:0.3.7",
+      "provenance": {
+        "evidenceSha256": "6d9755f42dc15eb33c8326119c2baa6b5f81ec350a72e3984fe444824abec380",
+        "generatedAt": "2026-07-17T21:12:11.456402Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "ee379aaa12ba8493c39697b65a0d46ed9dd13b19fd471021622dfb07a6ec6b41",
+        "promptVersion": 1
+      },
+      "summary": "This patch fixes a build failure that was breaking the release process for Lume.",
+      "summaryEvidence": [
+        "pr:1232"
+      ]
+    },
+    {
+      "candidateSha256": "37d238da84122ec73a655d6bfa58c21e5ce1ad53da6b0564bd31a104d7c2dc58",
+      "changes": [
+        {
+          "evidence": [
+            "pr:1233"
+          ],
+          "summary": "Image layers are now cached locally after download, so pulling the same image again skips the network download and reuses cached files",
+          "type": "perf"
+        }
+      ],
+      "key": "lume:0.3.8",
+      "provenance": {
+        "evidenceSha256": "a06e55b39461fc0d62f8c3f348075b7a2e4c6ba93e6a74830ba25272570d10ec",
+        "generatedAt": "2026-07-17T21:12:11.456458Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "2c9946724a15f9c3c941ad3ecf09935780241a8cd8d968848d4c1ecaeda5a3a0",
+        "promptVersion": 1
+      },
+      "summary": "This patch speeds up repeated image pulls by caching downloaded layers locally.",
+      "summaryEvidence": [
+        "pr:1233"
+      ]
+    },
+    {
+      "candidateSha256": "0db52dc800c1ed59e4ee0f34cf311bf6c0aa2de451ded7b1cae8e460c6878501",
+      "changes": [
+        {
+          "evidence": [
+            "pr:1236"
+          ],
+          "summary": "Fixed requests such as image pull and VM clone intermittently failing with an invalid request body error when headers and body arrived in separate network packets",
+          "type": "fix"
+        }
+      ],
+      "key": "lume:0.3.9",
+      "provenance": {
+        "evidenceSha256": "0b96cd00f1ac0d2f13d713a9527455ef724b0d6ac24a7def01fa8adbeb9373a5",
+        "generatedAt": "2026-07-17T21:12:11.456510Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "32355d1ad311b257bff3986a3e6f028f408b135dd66840d0b1067a629d83afa4",
+        "promptVersion": 1
+      },
+      "summary": "This patch fixes intermittent request failures in Lume's HTTP server that occurred on fresh connections.",
+      "summaryEvidence": [
+        "pr:1236"
+      ]
+    },
+    {
+      "candidateSha256": "fdad8cbffd9443bc0dfd0e4c1efe1b3f1a5da7a4aee18c733bd98e0dd796fdc5",
+      "changes": [
+        {
+          "evidence": [
+            "pr:1855"
+          ],
+          "summary": "Fixed pulls of macOS Sequoia images stalling and repeatedly retrying due to corrupted downloads being silently cached; downloaded layers are now verified against their checksum and corrupted data is discarded instead of being reused",
+          "type": "fix"
+        }
+      ],
+      "key": "lume:0.3.10",
+      "provenance": {
+        "evidenceSha256": "2aac2fbd7db7f7ffe793b23de1e2033b0a3fa643f77838e2411043dd7a5bedcf",
+        "generatedAt": "2026-07-17T21:12:11.456594Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "6120dccef0e59f01ba0f32e294f38eb5d6f0b1b8cd6e137a93197ec5a84fbd5a",
+        "promptVersion": 1
+      },
+      "summary": "This patch fixes image pulls for macOS Sequoia images that would stall and loop endlessly with checksum failures.",
+      "summaryEvidence": [
+        "pr:1855"
+      ]
+    },
+    {
+      "candidateSha256": "fb7b8ef42f92d201decf69a41ab3669cf466bc2e75cfbb971c83a3b59789476a",
+      "changes": [
+        {
+          "evidence": [
+            "pr:2098"
+          ],
+          "summary": "Added explicit check-update and update commands, and stopped installing a scheduled background auto-updater",
+          "type": "feat"
+        }
+      ],
+      "key": "lume:0.3.11",
+      "provenance": {
+        "evidenceSha256": "1f2efc5a0ba8ce521c0fd08e8d0a41d67bc4420cf7e92b350e693d8e8ebb292c",
+        "generatedAt": "2026-07-17T21:12:11.456649Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "051ef7943df42217f27a5700dd409be8b9305c5d1a623ac3599e082067e7656d",
+        "promptVersion": 1
+      },
+      "summary": "This release adds an explicit update flow for Lume and removes the automatic background updater.",
+      "summaryEvidence": [
+        "pr:2098"
+      ]
+    },
+    {
+      "candidateSha256": "a2b0d7620d30bca393d2c6cde4d0e867404b5746c651896c6293d3759c3b82e7",
+      "changes": [
+        {
+          "evidence": [
+            "pr:2156"
+          ],
+          "summary": "Unattended macOS setup now patches the disk offline instead of relying on a GUI or agent-driven process, and creates a dedicated user with SSH access and autologin enabled",
+          "type": "feat"
+        }
+      ],
+      "key": "lume:0.3.12",
+      "provenance": {
+        "evidenceSha256": "dea95999521b999a7a3611c348ffbb7e142e93e4c281355d775ec749ce25a328",
+        "generatedAt": "2026-07-17T21:12:11.456694Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "87fa23093b437e7b9d6848dd30a963569a8126f030352876960d8afd42936eec",
+        "promptVersion": 1
+      },
+      "summary": "This release replaces the GUI-driven unattended macOS setup with an offline disk-patching approach for more reliable VM provisioning.",
+      "summaryEvidence": [
+        "pr:2156"
+      ]
+    },
+    {
+      "candidateSha256": "675c0c6019273e9ccdec9a2bfed41a2bb2b4d29bd3c0254eeec0694c3a1d028b",
+      "changes": [
+        {
+          "evidence": [
+            "pr:2165"
+          ],
+          "summary": "Added a command to enable or disable System Integrity Protection on stopped macOS VMs by automating the process through macOS Recovery",
+          "type": "feat"
+        },
+        {
+          "evidence": [
+            "pr:2152"
+          ],
+          "summary": "Installer and update downloads now come from cua.ai instead of the previous GitHub-hosted URLs",
+          "type": "fix"
+        }
+      ],
+      "key": "lume:0.3.13",
+      "provenance": {
+        "evidenceSha256": "bd1a618781e3580d0ce4b45895930acab8fd781c448bc1146b2c2746ff25b986",
+        "generatedAt": "2026-07-17T21:12:11.456751Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "8b0747c34e2a77469abe2aab01a4e9bba9f3cccbfd8d8b2b2877666875a72f6a",
+        "promptVersion": 1
+      },
+      "summary": "This release adds automated control of System Integrity Protection on macOS VMs and moves installer downloads to a new domain.",
+      "summaryEvidence": [
+        "pr:2165",
+        "pr:2152"
+      ]
+    },
+    {
+      "candidateSha256": "835113ecb7dac2fa0bd286ccfc19f64dabe187b83a83985423396da68c48f0ad",
+      "changes": [
+        {
+          "evidence": [
+            "pr:2167"
+          ],
+          "summary": "Refresh APFS Preboot metadata after unattended guest finalization so the offline-created administrator account is authorized in paired Recovery, fixing failures when running lume sip off",
+          "type": "fix"
+        },
+        {
+          "evidence": [
+            "pr:2167"
+          ],
+          "summary": "Make the installer's color setup tolerate missing terminal capabilities instead of exiting early in non-TTY shells",
+          "type": "fix"
+        }
+      ],
+      "key": "lume:0.3.14",
+      "provenance": {
+        "evidenceSha256": "d41261163f85295c9392ee2c6c12923492537ad97dc3c80e89107276fd1f2b34",
+        "generatedAt": "2026-07-17T21:12:21.041837Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "d02a25fad7defd62ce886506ed39d7db90c70004daef216b526fe62f64e4c31a",
+        "promptVersion": 1
+      },
+      "summary": "This release makes freshly created unattended macOS VMs Recovery-ready by fixing an authorization issue that blocked disabling System Integrity Protection, and improves installer reliability in non-interactive shells.",
+      "summaryEvidence": [
+        "pr:2167"
+      ]
+    },
+    {
+      "candidateSha256": "fdd4b79f9698f48d8da9a86165508cc40d2cf01778a21896e73b969a3c4217ec",
+      "changes": [
+        {
+          "evidence": [
+            "pr:2174"
+          ],
+          "summary": "Add support for expanding macOS VM disks with recovery-preserving offline resizing, exposed through the CLI, HTTP API, and MCP server, including transactional rollback and validation safeguards",
+          "type": "feat"
+        }
+      ],
+      "key": "lume:0.3.15",
+      "provenance": {
+        "evidenceSha256": "60792cead4d1a4d86c3cdf2ecd8214d43f54da0fac997ea483ab6160a7db4f34",
+        "generatedAt": "2026-07-17T21:12:21.041943Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "32eea9062de5682e460b7a92a913ed09433ec182feb5a0c7d6975e4dcaf04a54",
+        "promptVersion": 1
+      },
+      "summary": "This release adds the ability to safely expand macOS VM disks, relocating the paired Recovery partition and growing the APFS container while preserving VM identity and boot state.",
+      "summaryEvidence": [
+        "pr:2174"
+      ]
+    },
+    {
+      "candidateSha256": "18f3d3e0ae1b6026061654c345c790de412f2a1638ffc6110188405d2ed26da9",
+      "changes": [
+        {
+          "evidence": [
+            "pr:2191"
+          ],
+          "summary": "Default new macOS VM disks to 100GB in the CLI and MCP create tool, while preserving the existing 50GB Linux default and explicit disk-size overrides",
+          "type": "feat"
+        },
+        {
+          "evidence": [
+            "pr:2203"
+          ],
+          "summary": "Handle the new macOS 26 authorized-user prompt during SIP automation, so disabling or enabling System Integrity Protection completes correctly on macOS 26 guests while remaining compatible with older guests",
+          "type": "fix"
+        },
+        {
+          "evidence": [
+            "pr:2211"
+          ],
+          "summary": "Add default-on, consent-aware telemetry with persistent disable, reset, and purge controls, sending content-free usage events while excluding prompts, screenshots, file paths, and other sensitive data",
+          "type": "feat"
+        }
+      ],
+      "key": "lume:0.3.16",
+      "provenance": {
+        "evidenceSha256": "8b8538db74f2aacd5f345657f693aa570ee67e4a643c9aac5d8aa237d3e62ad5",
+        "generatedAt": "2026-07-17T21:12:21.042050Z",
+        "modelId": "claude-sonnet-5",
+        "promptSha256": "ddefb740b0ef4006af453059ce0a1ef6a19fa76ead0a328ab36939b1d5c60a97",
+        "promptVersion": 1
+      },
+      "summary": "This release increases the default macOS VM disk size to 100GB, fixes SIP automation for macOS 26 guests, and adds consent-aware telemetry with persistent disable controls.",
+      "summaryEvidence": [
+        "pr:2191",
+        "pr:2203",
+        "pr:2211"
+      ]
+    }
+  ],
+  "generatedAt": "2026-07-18T11:28:46.267705Z",
+  "kind": "release-backfill-candidates",
+  "promptVersion": 1,
+  "schemaVersion": 1
+}

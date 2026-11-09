@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 // MARK: - VMDirectory
@@ -17,22 +18,41 @@ struct VMDirectory: Sendable {
         static let config = "config.json"
         static let sessions = "sessions.json"
         static let provisioning = ".provisioning"
+        static let resizeMarker = "resize.lock.json"
+        static let diskBackup = "disk.img.pre-resize"
+        static let configBackup = "config.json.pre-resize"
+        static let savedState = "state.vzvmsave"
+        static let savedStateVsock = "state.vsock"
+        static let vsockSession = "vsock.json"
     }
-    
+
     // MARK: - Properties
-    
+
     let dir: Path
     let nvramPath: Path
     let diskPath: Path
+    var runOwnerURL: URL { configPath.url.deletingLastPathComponent().appendingPathComponent(".run-owner.json") }
     let configPath: Path
     let sessionsPath: Path
     let provisioningPath: Path
-    
+    let resizeMarkerPath: Path
+    let diskBackupPath: Path
+    let configBackupPath: Path
+    let resizeGuardPath: Path
+    /// The VM's saved machine state (`lume suspend`), restored by the next run.
+    let statePath: Path
+    /// Present when the saved state was saved with a virtio socket device
+    /// (a run with host port forwards): a state restores only into the
+    /// devices it was saved with.
+    let stateVsockPath: Path
+    /// The running VM's host port forwards over vsock ([`VsockSession`]).
+    let vsockSessionPath: Path
+
     /// The name of the VM directory
     var name: String { dir.name }
-    
+
     // MARK: - Initialization
-    
+
     /// Creates a new VMDirectory instance
     /// - Parameters:
     ///   - dir: The base directory path for the VM
@@ -43,6 +63,15 @@ struct VMDirectory: Sendable {
         self.configPath = dir.file(FileNames.config)
         self.sessionsPath = dir.file(FileNames.sessions)
         self.provisioningPath = dir.file(FileNames.provisioning)
+        self.resizeMarkerPath = dir.file(FileNames.resizeMarker)
+        self.diskBackupPath = dir.file(FileNames.diskBackup)
+        self.configBackupPath = dir.file(FileNames.configBackup)
+        self.statePath = dir.file(FileNames.savedState)
+        self.stateVsockPath = dir.file(FileNames.savedStateVsock)
+        self.vsockSessionPath = dir.file(FileNames.vsockSession)
+        self.resizeGuardPath = Path(
+            dir.url.deletingLastPathComponent()
+                .appendingPathComponent(".\(dir.name).resize.guard", isDirectory: false))
     }
 }
 
@@ -76,27 +105,171 @@ extension VMDirectory {
     func exists() -> Bool {
         dir.exists()
     }
+
+    /// Whether the VM has a saved machine state its next run restores.
+    func hasSavedState() -> Bool {
+        statePath.exists()
+    }
+
+    /// Drops the saved machine state: once the VM booted or resumed, its
+    /// disk no longer matches the memory the state holds.
+    func discardSavedState() {
+        try? FileManager.default.removeItem(atPath: statePath.path)
+        try? FileManager.default.removeItem(atPath: stateVsockPath.path)
+    }
+
+    /// Whether the saved state was saved with a virtio socket device.
+    func savedStateHasVsock() -> Bool {
+        hasSavedState() && stateVsockPath.exists()
+    }
+
+    /// Records whether the state just saved has a virtio socket device.
+    func markSavedStateVsock(_ present: Bool) {
+        if present {
+            FileManager.default.createFile(atPath: stateVsockPath.path, contents: Data())
+        } else {
+            try? FileManager.default.removeItem(atPath: stateVsockPath.path)
+        }
+    }
+
+    /// The running VM's vsock forwards, when it was started with some.
+    func loadVsockSession() -> VsockSession? {
+        guard let data = try? Data(contentsOf: vsockSessionPath.url) else { return nil }
+        return try? JSONDecoder().decode(VsockSession.self, from: data)
+    }
+
+    func saveVsockSession(_ session: VsockSession) {
+        guard let data = try? JSONEncoder().encode(session) else { return }
+        try? data.write(to: vsockSessionPath.url, options: .atomic)
+    }
+
+    func clearVsockSession() {
+        try? FileManager.default.removeItem(atPath: vsockSessionPath.path)
+    }
 }
 
 // MARK: - Disk Management
 
 extension VMDirectory {
-    /// Resizes the VM's disk to the specified size
+    /// Resizes the VM's disk to the specified size (grow-only).
     /// - Parameter size: The new size in bytes
-    /// - Throws: VMDirectoryError if the disk operation fails
+    /// - Throws: VMDirectoryError if the disk operation fails or would shrink
+    ///   the image (which silently truncates and corrupts the APFS tail).
     func setDisk(_ size: UInt64) throws {
-        do {
-            if !diskPath.exists() {
-                guard FileManager.default.createFile(atPath: diskPath.path, contents: nil) else {
-                    throw VMDirectoryError.fileCreationFailed(diskPath.path)
-                }
+        if !diskPath.exists() {
+            guard FileManager.default.createFile(atPath: diskPath.path, contents: nil) else {
+                throw VMDirectoryError.fileCreationFailed(diskPath.path)
             }
-            
-            let handle = try FileHandle(forWritingTo: diskPath.url)
-            defer { try? handle.close() }
-            
+        }
+
+        let currentSize =
+            ((try? FileManager.default.attributesOfItem(atPath: diskPath.path))?[.size]
+            as? NSNumber)?.uint64Value ?? 0
+        guard size >= currentSize else {
+            throw VMDirectoryError.diskOperationFailed(
+                "refusing to shrink disk from \(currentSize) to \(size) bytes")
+        }
+
+        let handle: FileHandle
+        do {
+            handle = try FileHandle(forWritingTo: diskPath.url)
+        } catch {
+            throw VMDirectoryError.diskOperationFailed(
+                "could not open \(diskPath.path): \(error.localizedDescription)")
+        }
+        defer { try? handle.close() }
+
+        do {
             try handle.truncate(atOffset: size)
         } catch {
+            throw VMDirectoryError.diskOperationFailed(
+                "truncate to \(size) bytes failed: \(error.localizedDescription)")
+        }
+    }
+}
+
+// MARK: - Resize Transaction Marker
+
+extension VMDirectory {
+    func tryAcquireResizeGuard(exclusive: Bool) throws -> FileHandle? {
+        if !resizeGuardPath.exists() {
+            guard FileManager.default.createFile(atPath: resizeGuardPath.path, contents: Data()) else {
+                throw VMDirectoryError.fileCreationFailed(resizeGuardPath.path)
+            }
+        }
+        let handle = try FileHandle(forUpdating: resizeGuardPath.url)
+        let operation = exclusive ? (LOCK_EX | LOCK_NB) : (LOCK_SH | LOCK_NB)
+        guard flock(handle.fileDescriptor, operation) == 0 else {
+            try? handle.close()
+            return nil
+        }
+        return handle
+    }
+
+    /// Removes the resize guard file. Call it only after the VM directory
+    /// is gone, while holding the guard exclusively.
+    func removeResizeGuard() {
+        try? FileManager.default.removeItem(atPath: resizeGuardPath.path)
+    }
+
+    /// Loads the resize transaction marker if a resize is in progress.
+    func loadResizeMarker() throws -> ResizeMarker? {
+        guard resizeMarkerPath.exists() else {
+            return nil
+        }
+        do {
+            let data = try Data(contentsOf: resizeMarkerPath.url)
+            let marker = try JSONDecoder().decode(ResizeMarker.self, from: data)
+            guard marker.version == ResizeMarker.currentVersion else {
+                throw DiskResizeError.invalidResizeMarker("unsupported version \(marker.version)")
+            }
+            return marker
+        } catch let error as DiskResizeError {
+            throw error
+        } catch {
+            throw DiskResizeError.invalidResizeMarker(error.localizedDescription)
+        }
+    }
+
+    /// True if a disk resize transaction is currently armed.
+    func hasResizeMarker() -> Bool {
+        resizeMarkerPath.exists()
+    }
+
+    /// Persists (and fsyncs) the resize transaction marker.
+    func saveResizeMarker(_ marker: ResizeMarker) throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .prettyPrinted
+        let data = try encoder.encode(marker)
+        let temporary = resizeMarkerPath.path + ".tmp"
+        guard FileManager.default.createFile(atPath: temporary, contents: data) else {
+            throw VMDirectoryError.fileCreationFailed(temporary)
+        }
+        let handle = try FileHandle(forWritingTo: URL(fileURLWithPath: temporary))
+        try handle.synchronize()
+        try handle.close()
+        guard Darwin.rename(temporary, resizeMarkerPath.path) == 0 else {
+            throw VMDirectoryError.diskOperationFailed(
+                "could not commit resize marker: \(String(cString: strerror(errno)))")
+        }
+        try syncDirectory()
+    }
+
+    /// Removes the resize transaction marker after the transaction resolves.
+    func clearResizeMarker() throws {
+        guard resizeMarkerPath.exists() else { return }
+        try FileManager.default.removeItem(atPath: resizeMarkerPath.path)
+        try syncDirectory()
+    }
+
+    private func syncDirectory() throws {
+        let directoryFD = Darwin.open(dir.path, O_RDONLY)
+        guard directoryFD >= 0 else {
+            throw VMDirectoryError.diskOperationFailed("could not open VM directory for sync")
+        }
+        defer { Darwin.close(directoryFD) }
+        guard Darwin.fsync(directoryFD) == 0 else {
+            throw VMDirectoryError.diskOperationFailed("could not sync VM directory")
         }
     }
 }
@@ -140,13 +313,55 @@ extension VMDirectory {
 
 // MARK: - VNC Session Management
 
+/// Marker written while a VM session is running.
+///
+/// Legacy markers carry only `url` and `sharedDirectories`; both still decode
+/// unchanged, and a VNC-backed session still encodes exactly those two fields.
+/// A VNC-disabled session has no URL, so it omits `url` and instead records the
+/// owning `lume run` process, which `get`/`list` verify against the config-file
+/// run lock. Older Lume binaries fail to decode that marker and therefore
+/// report the VM as stopped instead of acting on stale information.
 struct VNCSession: Codable {
-    let url: String
+    let url: String?
     let sharedDirectories: [SharedDirectory]?
-    
-    init(url: String, sharedDirectories: [SharedDirectory]? = nil) {
+    /// Absent on legacy markers, which always described a VNC-backed session.
+    let vncEnabled: Bool?
+    /// PID of the owning `lume run` process. Written only for VNC-disabled
+    /// sessions, which have no listening port to probe for liveness.
+    let pid: Int32?
+    /// Unix timestamp of when the session started.
+    let startedAt: Double?
+
+    /// A marker without `vncEnabled` predates the policy and described VNC.
+    var isVNCEnabled: Bool { vncEnabled ?? true }
+
+    init(
+        url: String?,
+        sharedDirectories: [SharedDirectory]? = nil,
+        vncEnabled: Bool? = nil,
+        pid: Int32? = nil,
+        startedAt: Double? = nil
+    ) {
         self.url = url
         self.sharedDirectories = sharedDirectories
+        self.vncEnabled = vncEnabled
+        self.pid = pid
+        self.startedAt = startedAt
+    }
+
+    /// Marker for a run started with `--vnc disabled`.
+    static func vncDisabled(
+        pid: Int32,
+        startedAt: Double,
+        sharedDirectories: [SharedDirectory]? = nil
+    ) -> VNCSession {
+        VNCSession(
+            url: nil,
+            sharedDirectories: sharedDirectories,
+            vncEnabled: false,
+            pid: pid,
+            startedAt: startedAt
+        )
     }
 }
 
@@ -317,6 +532,7 @@ extension VMDirectory {
         guard let config = try? loadConfig() else {
             return nil
         }
+        let vsockSession = status == "running" ? loadVsockSession() : nil
 
         return VMDetails(
             name: name,
@@ -333,7 +549,12 @@ extension VMDirectory {
             locationName: locationName,
             sharedDirectories: nil,
             networkMode: config.networkMode.description,
-            downloadProgress: downloadProgress
+            downloadProgress: downloadProgress,
+            machineIdentifier: config.machineIdentifier?.base64EncodedString(),
+            macAddress: config.macAddress,
+            savedState: hasSavedState(),
+            vsock: vsockSession.map { _ in true },
+            forwards: vsockSession.flatMap { $0.agent ? $0.forwards : nil }
         )
     }
 }

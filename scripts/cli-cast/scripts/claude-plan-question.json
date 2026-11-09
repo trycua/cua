@@ -1,0 +1,14 @@
+{
+  "name": "claude-plan-question",
+  "description": "Plan mode: the agent stops and asks for approval before acting. Exercises the question element, its numbered options and the selected option, and the plan mode footer.",
+  "cmd": ["claude", "--permission-mode", "plan"],
+  "steps": [
+    {"wait": 6},
+    {"send": "Add a divide function to calc.py. Propose the plan first."},
+    {"wait": 1.5},
+    {"key": "enter"},
+    {"expect": "proceed", "timeout": 90},
+    {"wait": 10},
+    {"wait": 6}
+  ]
+}

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Background input synthesis for macOS.
 //!
 //! Two strategies:
@@ -8,11 +11,21 @@
 //!    public `CGEventPostToPid` to reach Catalyst/Chromium apps and trigger
 //!    the activity-monitor tickle required for live-input detection.
 
-pub mod mouse;
-pub mod keyboard;
 pub mod ax_actions;
+pub mod electron_drag;
+pub mod hover;
+pub mod input_source;
+pub mod interactive;
+pub mod keyboard;
+pub mod mouse;
+pub mod pointer_toolkit;
 pub mod skylight;
 
 pub use ax_actions::perform_ax_action;
+pub use interactive::{
+    GesturePhase, InteractiveDeliveryMode, InteractiveInputBatch, InteractiveInputConfig,
+    InteractiveInputError, InteractiveInputEvent, InteractiveInputReceipt, InteractiveInputSession,
+    KeyState, Modifier, PointerButton, PointerPhase,
+};
+pub use keyboard::{hotkey, press_key, type_text};
 pub use mouse::click_at_xy;
-pub use keyboard::{press_key, type_text, hotkey};

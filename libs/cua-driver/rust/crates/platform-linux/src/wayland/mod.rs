@@ -1,0 +1,5561 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
+//! Native-Wayland backend.
+//!
+//! Used when the experimental backend is enabled under a Wayland compositor.
+//! Enumerates toplevels via `zwlr_foreign_toplevel_manager_v1` or the generic
+//! staging `ext_foreign_toplevel_list_v1`, captures per-output screenshots via
+//! `zwlr_screencopy_manager_v1` + `wl_shm` (native — `grim` remains a
+//! fallback), and synthesises pointer / scroll / drag input via
+//! `zwlr_virtual_pointer_v1`. Until identified per-toplevel capture is broadly
+//! available, window-scoped screenshots use output crops only for visible,
+//! compositor-attested surfaces and return a typed identity error otherwise.
+
+mod compositor_peer;
+pub mod ext_screencopy;
+pub mod ext_toplevel;
+pub mod hyprland;
+pub mod hyprland_capture;
+mod hyprland_compatibility;
+pub mod hyprland_input;
+pub mod kwin_access;
+pub mod kwin_capture;
+pub mod kwin_helper;
+#[cfg(feature = "portal-input")]
+mod kwin_keystate;
+pub(crate) mod kwin_layout;
+pub mod niri;
+pub use niri::keyboard::call_budget as niri_keyboard_budget;
+pub(crate) use niri::AimedPoint;
+pub mod overlay;
+pub mod persistent_vptr;
+pub(crate) mod portal;
+pub mod portal_screenshot;
+mod primary_seat;
+#[cfg(any(feature = "portal-input", test))]
+mod region_route;
+pub mod shell_helper;
+pub mod sway_ipc;
+mod text_keys;
+pub(crate) use text_keys::NOTHING_TYPED;
+mod virtual_keyboard;
+// RemoteDesktop/libei input is portable and ships in release binaries.
+#[cfg(feature = "portal-input")]
+pub mod libei;
+// PipeWire ScreenCast capture backs the portal video route for compositors
+// without wlr-screencopy (KDE/KWin).
+#[cfg(feature = "portal-capture")]
+pub(crate) mod libpipewire;
+#[cfg(feature = "portal-capture")]
+pub(crate) mod portal_screencast;
+
+/// Whether the GNOME/KDE RemoteDesktop + libei input backend is compiled in.
+pub const PORTAL_INPUT_ENABLED: bool = cfg!(feature = "portal-input");
+
+use std::collections::{HashMap, HashSet};
+use std::sync::{Mutex, OnceLock};
+
+use wayland_client::{
+    event_created_child,
+    protocol::{
+        wl_buffer::WlBuffer,
+        wl_callback::WlCallback,
+        wl_output::{self, WlOutput},
+        wl_pointer::{Axis, AxisSource, ButtonState},
+        wl_registry,
+        wl_seat::WlSeat,
+        wl_shm::{self, WlShm},
+        wl_shm_pool::WlShmPool,
+    },
+    Connection, Dispatch, Proxy, QueueHandle, WEnum,
+};
+use wayland_protocols_wlr::foreign_toplevel::v1::client::{
+    zwlr_foreign_toplevel_handle_v1::{self as ftl_handle, ZwlrForeignToplevelHandleV1},
+    zwlr_foreign_toplevel_manager_v1::{
+        self as ftl_manager, ZwlrForeignToplevelManagerV1, EVT_TOPLEVEL_OPCODE,
+    },
+};
+use wayland_protocols_wlr::screencopy::v1::client::{
+    zwlr_screencopy_frame_v1::{self as scrcopy_frame, ZwlrScreencopyFrameV1},
+    zwlr_screencopy_manager_v1::ZwlrScreencopyManagerV1,
+};
+use wayland_protocols_wlr::virtual_pointer::v1::client::{
+    zwlr_virtual_pointer_manager_v1::ZwlrVirtualPointerManagerV1,
+    zwlr_virtual_pointer_v1::ZwlrVirtualPointerV1,
+};
+
+/// Linux evdev BTN_LEFT — the button code the virtual-pointer protocol expects.
+const BTN_LEFT: u32 = 0x110;
+
+use crate::x11::WindowInfo;
+
+thread_local! {
+    /// Exact foreground target currently held by an outer compositor guard.
+    /// Focus-bound helpers use this only to re-enter the guard after a blocking
+    /// portal/libei readiness wait, so the actual input is preceded by a fresh
+    /// compositor verification rather than relying on a stale pre-wait check.
+    static CURRENT_FOREGROUND_TARGET: std::cell::Cell<Option<(u32, u64)>> =
+        const { std::cell::Cell::new(None) };
+}
+
+pub(crate) struct ForegroundTargetGuard(Option<(u32, u64)>);
+
+impl Drop for ForegroundTargetGuard {
+    fn drop(&mut self) {
+        CURRENT_FOREGROUND_TARGET.with(|target| target.set(self.0));
+    }
+}
+
+pub(crate) fn bind_foreground_target(pid: u32, window_id: u64) -> ForegroundTargetGuard {
+    let previous = CURRENT_FOREGROUND_TARGET.with(|target| target.replace(Some((pid, window_id))));
+    ForegroundTargetGuard(previous)
+}
+
+fn current_foreground_target() -> Option<(u32, u64)> {
+    CURRENT_FOREGROUND_TARGET.with(std::cell::Cell::get)
+}
+
+pub use crate::desktop::ENABLE_WAYLAND_ENV;
+
+/// True when this is an opted-in Wayland desktop session
+/// ([`crate::desktop::Desktop::Wayland`]).
+///
+/// The Wayland backend covers toplevel enumeration, per-output capture
+/// (native screencopy + a `grim` fallback), and virtual-pointer /
+/// virtual-keyboard input via the wlroots protocols. Per-window image
+/// capture still depends on the staging `ext-image-copy-capture-v1`
+/// protocol, so the backend stays OFF by default and a pure-Wayland
+/// session is reported as unsupported unless the user explicitly sets
+/// `CUA_DRIVER_RS_ENABLE_WAYLAND=1`.
+///
+/// GNOME and KDE export `DISPLAY` for XWayland even when the target and the
+/// desktop are native Wayland, so `DISPLAY` never disables Wayland. Input
+/// chooses wlroots or libei/portal from live compositor capabilities inside
+/// the `wayland::*` input functions.
+pub fn is_wayland() -> bool {
+    matches!(
+        crate::desktop::desktop(),
+        crate::desktop::Desktop::Wayland(_)
+    )
+}
+
+/// Whether [`ENABLE_WAYLAND_ENV`] opts into the native Wayland backend,
+/// whatever the session.
+pub fn wayland_enabled() -> bool {
+    crate::desktop::opted_in(std::env::var(ENABLE_WAYLAND_ENV).ok().as_deref())
+}
+
+/// Reason string when X11 input injection cannot possibly work, so callers
+/// **fail loudly** instead of falling through to an X11 path that no-ops yet
+/// reports success. Triggers only on a *pure* Wayland session — `WAYLAND_DISPLAY`
+/// set, no X11 `DISPLAY` — with the native-Wayland backend NOT opted in (so
+/// [`is_wayland`] is false and the X11 path would be chosen). XWayland sessions
+/// (where `DISPLAY` is set) and X11 sessions return `None` and proceed normally.
+/// See #1921.
+pub fn wayland_input_unavailable_reason() -> Option<String> {
+    if matches!(
+        crate::desktop::desktop(),
+        crate::desktop::Desktop::XWayland(_)
+    ) && std::env::var_os("DISPLAY").is_none()
+    {
+        Some(format!(
+            "input cannot be delivered: pure Wayland session (no X11 DISPLAY) and \
+             the native-Wayland input backend is not enabled. Set {}=1 to enable \
+             the Wayland backend (wlroots compositors: sway, labwc, hyprland), or \
+             run the target under XWayland so an X11 DISPLAY is available.",
+            ENABLE_WAYLAND_ENV
+        ))
+    } else {
+        None
+    }
+}
+
+fn wl_sockets(dir: &str) -> std::collections::HashSet<String> {
+    std::fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| e.file_name().into_string().ok())
+        .filter(|n| {
+            n.strip_prefix("wayland-")
+                .is_some_and(|s| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()))
+        })
+        .collect()
+}
+
+/// "Bring your own compositor": if `CUA_WAYLAND_NEST` is set, spawn a private
+/// **headless wlroots compositor** (labwc by default) and point this process —
+/// and therefore every app it launches (`launch_app`), every capture (`grim`),
+/// and all enumeration/injection — at it via `WAYLAND_DISPLAY`. This lets
+/// cua-driver automate apps in its **own** Wayland session on ANY host,
+/// including KDE (kwin) and GNOME (mutter) which expose no client protocols for
+/// this, without ever touching the host compositor or its focus. Idempotent.
+pub fn ensure_nested_session() {
+    use std::sync::OnceLock;
+    static DONE: OnceLock<()> = OnceLock::new();
+    if std::env::var_os("CUA_WAYLAND_NEST").is_none() {
+        return;
+    }
+    DONE.get_or_init(|| {
+        let xdg = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/run/user/0".into());
+        let comp = std::env::var("CUA_WAYLAND_NEST_COMPOSITOR").unwrap_or_else(|_| "labwc".into());
+        let before = wl_sockets(&xdg);
+        let spawned = std::process::Command::new(&comp)
+            .env("WLR_BACKENDS", "headless")
+            .env("WLR_RENDERER", "pixman")
+            .env("WLR_RENDERER_ALLOW_SOFTWARE", "1")
+            .env("WLR_LIBINPUT_NO_DEVICES", "1")
+            .env("WLR_HEADLESS_OUTPUTS", "1")
+            .env_remove("WAYLAND_DISPLAY") // headless: do not nest into the host compositor
+            .env_remove("DISPLAY")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn();
+        match spawned {
+            Ok(child) => {
+                std::mem::forget(child); // keep the compositor alive for our lifetime
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+                loop {
+                    if let Some(sock) = wl_sockets(&xdg).difference(&before).min().cloned() {
+                        std::env::set_var("WAYLAND_DISPLAY", &sock);
+                        std::env::remove_var("DISPLAY");
+                        crate::desktop::reclassify();
+                        // Publish the nested socket so external tools (e.g. a
+                        // `grim` recorder) can target the same session we drive.
+                        let _ = std::fs::write(format!("{xdg}/.cua-nested-display"), &sock);
+                        tracing::info!("cua nested compositor '{comp}' up: WAYLAND_DISPLAY={sock}");
+                        break;
+                    }
+                    if std::time::Instant::now() >= deadline {
+                        tracing::error!(
+                            "cua nested compositor '{comp}': no Wayland socket appeared"
+                        );
+                        break;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(200));
+                }
+            }
+            Err(e) => tracing::error!("cua nested compositor '{comp}' spawn failed: {e}"),
+        }
+    });
+}
+
+#[derive(Default)]
+struct Toplevel {
+    title: String,
+    app_id: String,
+    closed: bool,
+    activated: bool,
+}
+
+#[derive(Clone, Debug)]
+struct ToplevelIdentity {
+    title: String,
+    app_id: String,
+}
+
+fn identity_registry() -> &'static Mutex<HashMap<u64, ToplevelIdentity>> {
+    static REGISTRY: OnceLock<Mutex<HashMap<u64, ToplevelIdentity>>> = OnceLock::new();
+    REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn observed_origin_registry() -> &'static Mutex<HashMap<u32, (i32, i32)>> {
+    static REGISTRY: OnceLock<Mutex<HashMap<u32, (i32, i32)>>> = OnceLock::new();
+    REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn listed_window_registry() -> &'static Mutex<HashMap<(u32, u64), u64>> {
+    static REGISTRY: OnceLock<Mutex<HashMap<(u32, u64), u64>>> = OnceLock::new();
+    REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn remember_listed_windows(windows: &[WindowInfo]) {
+    if let Ok(mut registry) = listed_window_registry().lock() {
+        for window in windows {
+            if let Some((pid, instance_id)) = window.pid.and_then(|pid| {
+                crate::proc_fs::process_instance_id(pid).map(|instance_id| (pid, instance_id))
+            }) {
+                registry.insert((pid, window.xid), instance_id);
+            }
+        }
+    }
+}
+
+pub fn window_was_listed_for_pid(pid: u32, window_id: u64) -> bool {
+    let current_instance = crate::proc_fs::process_instance_id(pid);
+    listed_window_registry()
+        .lock()
+        .ok()
+        .and_then(|registry| registry.get(&(pid, window_id)).copied())
+        == current_instance
+        && current_instance.is_some()
+}
+
+fn listed_windows(windows: Vec<WindowInfo>) -> Vec<WindowInfo> {
+    remember_listed_windows(&windows);
+    windows
+}
+
+pub fn remember_observed_window_origins(windows: &[WindowInfo]) {
+    if let Ok(mut registry) = observed_origin_registry().lock() {
+        for window in windows {
+            if let Some(pid) = window.pid {
+                // Generic foreign-toplevel and AT-SPI fallbacks use (0,0) when
+                // they do not know compositor geometry. Do not let that
+                // placeholder erase a previously observed real origin or
+                // prevent the caller from falling through to Sway/GNOME data.
+                if (window.x, window.y) != (0, 0) {
+                    registry.insert(pid, (window.x, window.y));
+                }
+            }
+        }
+    }
+}
+
+pub fn observed_window_origin(pid: u32) -> Option<(i32, i32)> {
+    observed_origin_registry()
+        .lock()
+        .ok()
+        .and_then(|registry| registry.get(&pid).copied())
+}
+
+fn remember_identity(id: u64, toplevel: &Toplevel) {
+    if let Ok(mut registry) = identity_registry().lock() {
+        registry.insert(
+            id,
+            ToplevelIdentity {
+                title: toplevel.title.clone(),
+                app_id: toplevel.app_id.clone(),
+            },
+        );
+    }
+}
+
+fn identity_for(id: u64) -> Option<ToplevelIdentity> {
+    identity_registry()
+        .lock()
+        .ok()
+        .and_then(|registry| registry.get(&id).cloned())
+        .or_else(|| {
+            sway_ipc::window_for_id(id).map(|window| ToplevelIdentity {
+                title: window.title,
+                app_id: window.app_id,
+            })
+        })
+        .or_else(|| {
+            crate::atspi::list_windows(None)
+                .into_iter()
+                .find(|window| window.xid == id || u64::from(window.xid as u32) == id)
+                .map(|window| ToplevelIdentity {
+                    title: window.title,
+                    app_id: window.app_name,
+                })
+        })
+}
+
+fn matching_handle(state: &State, id: u64) -> Option<ZwlrForeignToplevelHandleV1> {
+    if let Some(identity) = identity_for(id) {
+        let by_title = state.toplevels.iter().find_map(|(protocol_id, toplevel)| {
+            (!identity.title.is_empty() && toplevel.title == identity.title)
+                .then(|| state.handles.get(protocol_id).cloned())
+                .flatten()
+        });
+        return by_title.or_else(|| {
+            state.toplevels.iter().find_map(|(protocol_id, toplevel)| {
+                (!identity.app_id.is_empty() && toplevel.app_id == identity.app_id)
+                    .then(|| state.handles.get(protocol_id).cloned())
+                    .flatten()
+            })
+        });
+    }
+
+    let protocol_id = u32::try_from(id).ok()?;
+    state.handles.get(&protocol_id).cloned()
+}
+
+/// Per-capture in-flight state populated by the screencopy frame Dispatch.
+#[derive(Default)]
+struct CaptureState {
+    /// wl_shm format code (Argb8888 / Xrgb8888 / …).
+    format: Option<u32>,
+    width: u32,
+    height: u32,
+    stride: u32,
+    y_invert: bool,
+    ready: bool,
+    failed: bool,
+}
+
+#[derive(Default)]
+struct State {
+    manager: Option<ZwlrForeignToplevelManagerV1>,
+    toplevels: HashMap<u32, Toplevel>,
+    // Live handles + a seat, kept so `click` can `activate` a target toplevel by
+    // its window_id (foreign-toplevel protocol id) — the focus-based input model.
+    handles: HashMap<u32, ZwlrForeignToplevelHandleV1>,
+    seats: primary_seat::Seats<WlSeat>,
+    // Virtual-pointer manager + output dimensions, so `click` can land a real
+    // button press at the output centre (over the just-activated window).
+    vptr_manager: Option<ZwlrVirtualPointerManagerV1>,
+    output: Option<WlOutput>,
+    /// wl_output v4 name of `output`, the output screencopy copies.
+    output_name: Option<String>,
+    // Logical (post-transform) output size: virtual-pointer absolute motion
+    // maps onto the output's logical box, so rotated outputs swap axes.
+    output_w: u32,
+    output_h: u32,
+    output_mode: (u32, u32),
+    output_transform: u32,
+    // Native screencopy capture state.
+    scrcopy_manager: Option<ZwlrScreencopyManagerV1>,
+    shm: Option<WlShm>,
+    capture: CaptureState,
+}
+
+wayland_client::delegate_dispatch!(State: [WlCallback: Answered] => Answered);
+
+// ── Bounded Wayland waits (niri) ─────────────────────────────────────────────
+
+/// How long one round trip with niri may take.
+const NIRI_ROUNDTRIP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(1);
+/// A niri pointer action's deadline when its worker serves no tool call
+/// with one (see [`crate::input::action`]).
+const NIRI_POINTER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(12);
+
+/// niri did not answer a bounded round trip in time; its connection may
+/// still work.
+#[derive(Debug)]
+struct RoundTripTimedOut;
+
+impl std::fmt::Display for RoundTripTimedOut {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("niri did not answer a Wayland round trip in time")
+    }
+}
+
+impl std::error::Error for RoundTripTimedOut {}
+
+/// Set when the `wl_display.sync` of a [`bounded_roundtrip`] is answered.
+#[derive(Clone, Default)]
+struct Answered(std::sync::Arc<std::sync::atomic::AtomicBool>);
+
+impl<D: Dispatch<WlCallback, Answered>> Dispatch<WlCallback, Answered, D> for Answered {
+    fn event(
+        _: &mut D,
+        _: &WlCallback,
+        _: wayland_client::protocol::wl_callback::Event,
+        answered: &Answered,
+        _: &Connection,
+        _: &QueueHandle<D>,
+    ) {
+        answered.0.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+/// Send `wl_display.sync` and dispatch until niri answers or `deadline`
+/// (at most [`NIRI_ROUNDTRIP_TIMEOUT`] away) passes. `EventQueue::roundtrip`
+/// blocks until the compositor answers, so a stalled niri would hang the
+/// call and leave a pressed button held.
+fn bounded_roundtrip<D>(
+    connection: &Connection,
+    queue: &mut wayland_client::EventQueue<D>,
+    state: &mut D,
+    deadline: std::time::Instant,
+) -> anyhow::Result<()>
+where
+    D: Dispatch<WlCallback, Answered> + 'static,
+{
+    use anyhow::Context as _;
+    use std::os::fd::AsRawFd as _;
+    let deadline = deadline.min(std::time::Instant::now() + NIRI_ROUNDTRIP_TIMEOUT);
+    let answered = Answered::default();
+    connection.display().sync(&queue.handle(), answered.clone());
+    loop {
+        queue
+            .dispatch_pending(state)
+            .context("niri Wayland dispatch failed")?;
+        if answered.0.load(std::sync::atomic::Ordering::SeqCst) {
+            return Ok(());
+        }
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        if remaining.is_zero() {
+            return Err(RoundTripTimedOut.into());
+        }
+        queue.flush().context("niri Wayland flush failed")?;
+        let Some(guard) = queue.prepare_read() else {
+            continue;
+        };
+        let mut pfd = libc::pollfd {
+            fd: guard.connection_fd().as_raw_fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        let timeout = remaining.as_millis().clamp(1, i32::MAX as u128) as i32;
+        // SAFETY: one valid pollfd that outlives the call.
+        let ready = unsafe { libc::poll(&mut pfd, 1, timeout) };
+        if ready < 0 {
+            let error = std::io::Error::last_os_error();
+            if error.kind() == std::io::ErrorKind::Interrupted {
+                continue;
+            }
+            return Err(error).context("poll on niri's Wayland socket failed");
+        }
+        if ready == 0 {
+            continue;
+        }
+        match guard.read() {
+            Ok(_) => {}
+            Err(wayland_client::backend::WaylandError::Io(error))
+                if error.kind() == std::io::ErrorKind::WouldBlock => {}
+            Err(error) => return Err(error).context("niri Wayland read failed"),
+        }
+    }
+}
+
+/// A round trip bounded by `deadline` on niri; elsewhere the blocking one
+/// other compositors have always used.
+fn sync_by(
+    connection: &Connection,
+    queue: &mut wayland_client::EventQueue<State>,
+    state: &mut State,
+    deadline: Option<std::time::Instant>,
+) -> anyhow::Result<()> {
+    match deadline {
+        Some(deadline) => bounded_roundtrip(connection, queue, state, deadline),
+        None => queue.roundtrip(state).map(drop).map_err(Into::into),
+    }
+}
+
+/// The Wayland connection for capture or pointer input: on niri, a socket
+/// connected within a deadline and proven to reach the recognised niri.
+fn wayland_connection(niri: bool) -> anyhow::Result<Connection> {
+    if niri {
+        return Ok(Connection::from_socket(niri::attested_wayland_socket()?)?);
+    }
+    Ok(Connection::connect_to_env()?)
+}
+
+impl Dispatch<wl_registry::WlRegistry, ()> for State {
+    fn event(
+        state: &mut Self,
+        registry: &wl_registry::WlRegistry,
+        event: wl_registry::Event,
+        _: &(),
+        _: &Connection,
+        qh: &QueueHandle<Self>,
+    ) {
+        if let wl_registry::Event::Global {
+            name,
+            interface,
+            version,
+        } = event
+        {
+            if interface == ZwlrForeignToplevelManagerV1::interface().name {
+                let v = version.min(3);
+                state.manager =
+                    Some(registry.bind::<ZwlrForeignToplevelManagerV1, _, _>(name, v, qh, ()));
+            } else if interface == WlSeat::interface().name {
+                let v = version.min(7);
+                state
+                    .seats
+                    .add(registry.bind::<WlSeat, _, _>(name, v, qh, ()));
+            } else if interface == ZwlrVirtualPointerManagerV1::interface().name {
+                state.vptr_manager = Some(registry.bind::<ZwlrVirtualPointerManagerV1, _, _>(
+                    name,
+                    version.min(2),
+                    qh,
+                    (),
+                ));
+            } else if interface == WlOutput::interface().name {
+                let out = registry.bind::<WlOutput, _, _>(name, version.min(4), qh, ());
+                if state.output.is_none() {
+                    state.output = Some(out);
+                }
+            } else if interface == ZwlrScreencopyManagerV1::interface().name {
+                state.scrcopy_manager = Some(registry.bind::<ZwlrScreencopyManagerV1, _, _>(
+                    name,
+                    version.min(3),
+                    qh,
+                    (),
+                ));
+            } else if interface == WlShm::interface().name {
+                state.shm = Some(registry.bind::<WlShm, _, _>(name, version.min(1), qh, ()));
+            }
+        }
+    }
+}
+
+impl Dispatch<WlSeat, ()> for State {
+    fn event(
+        state: &mut Self,
+        seat: &WlSeat,
+        event: wayland_client::protocol::wl_seat::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        if let wayland_client::protocol::wl_seat::Event::Name { name } = event {
+            state.seats.name(seat, name);
+        }
+    }
+}
+
+impl Dispatch<WlOutput, ()> for State {
+    fn event(
+        state: &mut Self,
+        output: &WlOutput,
+        event: wl_output::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        if let wl_output::Event::Name { name } = &event {
+            if state.output.as_ref() == Some(output) {
+                state.output_name = Some(name.clone());
+            }
+            return;
+        }
+        // Remember the output resolution so `click` can aim at its centre.
+        // Modes are reported in the panel's native orientation; the geometry
+        // transform turns them into the logical frame input coordinates use.
+        match event {
+            wl_output::Event::Mode { width, height, .. } => {
+                state.output_mode = (width.max(0) as u32, height.max(0) as u32);
+            }
+            wl_output::Event::Geometry {
+                transform: WEnum::Value(transform),
+                ..
+            } => {
+                state.output_transform = transform as u32;
+            }
+            _ => return,
+        }
+        (state.output_w, state.output_h) =
+            logical_output_size(state.output_mode, state.output_transform);
+    }
+}
+
+impl Dispatch<ZwlrVirtualPointerManagerV1, ()> for State {
+    fn event(
+        _: &mut Self,
+        _: &ZwlrVirtualPointerManagerV1,
+        _: <ZwlrVirtualPointerManagerV1 as Proxy>::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
+}
+
+impl Dispatch<ZwlrVirtualPointerV1, ()> for State {
+    fn event(
+        _: &mut Self,
+        _: &ZwlrVirtualPointerV1,
+        _: <ZwlrVirtualPointerV1 as Proxy>::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
+}
+
+impl Dispatch<WlShm, ()> for State {
+    fn event(
+        _: &mut Self,
+        _: &WlShm,
+        _: wl_shm::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        // wl_shm advertises supported formats via `format` events; we don't
+        // need to track them — screencopy tells us exactly which format to use
+        // for the frame buffer.
+    }
+}
+
+impl Dispatch<WlShmPool, ()> for State {
+    fn event(
+        _: &mut Self,
+        _: &WlShmPool,
+        _: wayland_client::protocol::wl_shm_pool::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
+}
+
+impl Dispatch<WlBuffer, ()> for State {
+    fn event(
+        _: &mut Self,
+        _: &WlBuffer,
+        _: wayland_client::protocol::wl_buffer::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
+}
+
+impl Dispatch<ZwlrScreencopyManagerV1, ()> for State {
+    fn event(
+        _: &mut Self,
+        _: &ZwlrScreencopyManagerV1,
+        _: <ZwlrScreencopyManagerV1 as Proxy>::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
+}
+
+impl Dispatch<ZwlrScreencopyFrameV1, ()> for State {
+    fn event(
+        state: &mut Self,
+        _: &ZwlrScreencopyFrameV1,
+        event: scrcopy_frame::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        match event {
+            scrcopy_frame::Event::Buffer {
+                format,
+                width,
+                height,
+                stride,
+            } => {
+                if let WEnum::Value(fmt) = format {
+                    state.capture.format = Some(fmt as u32);
+                }
+                state.capture.width = width;
+                state.capture.height = height;
+                state.capture.stride = stride;
+            }
+            scrcopy_frame::Event::Flags {
+                flags: WEnum::Value(f),
+            } => {
+                state.capture.y_invert = f.contains(scrcopy_frame::Flags::YInvert);
+            }
+            scrcopy_frame::Event::Ready { .. } => {
+                state.capture.ready = true;
+            }
+            scrcopy_frame::Event::Failed => {
+                state.capture.failed = true;
+            }
+            _ => {}
+        }
+    }
+}
+
+impl Dispatch<ZwlrForeignToplevelManagerV1, ()> for State {
+    fn event(
+        _state: &mut Self,
+        _: &ZwlrForeignToplevelManagerV1,
+        _event: ftl_manager::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        // The `toplevel` event creates a handle object (see event_created_child!);
+        // the handle's own events carry the title/app_id we collect below.
+    }
+
+    event_created_child!(State, ZwlrForeignToplevelManagerV1, [
+        EVT_TOPLEVEL_OPCODE => (ZwlrForeignToplevelHandleV1, ()),
+    ]);
+}
+
+impl Dispatch<ZwlrForeignToplevelHandleV1, ()> for State {
+    fn event(
+        state: &mut Self,
+        handle: &ZwlrForeignToplevelHandleV1,
+        event: ftl_handle::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        let id = handle.id().protocol_id();
+        state.handles.entry(id).or_insert_with(|| handle.clone());
+        let tl = state.toplevels.entry(id).or_default();
+        match event {
+            ftl_handle::Event::Title { title } => tl.title = title,
+            ftl_handle::Event::AppId { app_id } => tl.app_id = app_id,
+            ftl_handle::Event::State { state } => {
+                tl.activated = foreign_toplevel_state_is_activated(&state)
+            }
+            ftl_handle::Event::Closed => tl.closed = true,
+            _ => {}
+        }
+    }
+}
+
+fn foreign_toplevel_state_is_activated(state: &[u8]) -> bool {
+    state
+        .chunks_exact(std::mem::size_of::<u32>())
+        .any(|bytes| u32::from_ne_bytes(bytes.try_into().expect("four-byte state")) == 2)
+}
+
+/// Enumerate native Wayland toplevels via wlr-foreign-toplevel-management.
+/// `xid` begins as the foreign-toplevel handle's connection-scoped protocol id.
+/// The dispatcher replaces it with a stable compositor or AT-SPI identity when
+/// available. pid is unknown (not exposed by the protocol); geometry is 0
+/// (the protocol does not surface position/size). app_id is folded into the
+/// title (`"<title> [<app_id>]"`) so callers matching on either still match.
+pub fn list_windows() -> anyhow::Result<Vec<WindowInfo>> {
+    let conn = Connection::connect_to_env()?;
+    let mut queue = conn.new_event_queue::<State>();
+    let qh = queue.handle();
+    conn.display().get_registry(&qh, ());
+
+    let mut state = State::default();
+    queue.roundtrip(&mut state)?; // registry globals -> bind manager
+    if state.manager.is_none() {
+        anyhow::bail!("compositor does not expose zwlr_foreign_toplevel_manager_v1");
+    }
+    // Manager emits a `toplevel` per window; each handle then emits title/app_id
+    // and a `done`. A few roundtrips drain the initial enumeration.
+    for _ in 0..4 {
+        queue.roundtrip(&mut state)?;
+    }
+
+    let sway_windows = sway_ipc::list_windows().unwrap_or_default();
+    let mut used_sway_ids = HashSet::new();
+    let mut out = Vec::new();
+    for (id, tl) in &state.toplevels {
+        if tl.closed {
+            continue;
+        }
+        let title = if tl.app_id.is_empty() {
+            tl.title.clone()
+        } else {
+            format!("{} [{}]", tl.title, tl.app_id)
+        };
+        let sway = sway_windows
+            .iter()
+            .find(|window| {
+                !used_sway_ids.contains(&window.id)
+                    && !tl.title.is_empty()
+                    && window.title == tl.title
+            })
+            .or_else(|| {
+                sway_windows.iter().find(|window| {
+                    !used_sway_ids.contains(&window.id)
+                        && !tl.app_id.is_empty()
+                        && window.app_id == tl.app_id
+                })
+            });
+        let stable_id = sway.map(|window| window.id).unwrap_or(*id as u64);
+        if let Some(window) = sway {
+            used_sway_ids.insert(window.id);
+        }
+        remember_identity(stable_id, tl);
+        out.push(WindowInfo {
+            xid: stable_id,
+            pid: sway.map(|window| window.pid),
+            app_name: tl.app_id.clone(),
+            title,
+            is_on_screen: sway.map(|window| window.visible).unwrap_or(true),
+            z_index: None,
+            x: sway.map(|window| window.x).unwrap_or(0),
+            y: sway.map(|window| window.y).unwrap_or(0),
+            width: sway.map(|window| window.width).unwrap_or(0),
+            height: sway.map(|window| window.height).unwrap_or(0),
+        });
+    }
+    Ok(out)
+}
+
+// ── Capture (native screencopy + grim fallback) ──────────────────────────────
+
+/// Capture the Wayland output as PNG bytes via `zwlr_screencopy_manager_v1`.
+///
+/// Binds the screencopy manager plus `wl_shm`, asks the compositor to copy the
+/// next frame of the first advertised output into a shm buffer, channel-swaps
+/// from the compositor's pixel format to RGBA, and encodes a PNG via the
+/// existing `image` crate. Falls back to shelling out to `grim` when the
+/// screencopy manager or `wl_shm` is unavailable so users on lighter wlroots
+/// builds stay supported.
+pub fn screenshot_bytes() -> anyhow::Result<Vec<u8>> {
+    match capture_via_screencopy() {
+        Ok(bytes) => return Ok(bytes),
+        Err(e) => tracing::warn!("native screencopy failed, falling back to grim: {e}"),
+    }
+    capture_via_grim()
+}
+
+/// Shell out to `grim -t png -` — the wlroots reference screenshot tool. Kept
+/// as the last-resort fallback for compositors that hide screencopy.
+fn capture_via_grim() -> anyhow::Result<Vec<u8>> {
+    let out = std::process::Command::new("grim")
+        .args(["-t", "png", "-"])
+        .output()?;
+    if !out.status.success() {
+        anyhow::bail!("grim failed: {}", String::from_utf8_lossy(&out.stderr));
+    }
+    if out.stdout.is_empty() {
+        anyhow::bail!("grim produced no output");
+    }
+    Ok(out.stdout)
+}
+
+/// Native screencopy path: bind manager + shm, allocate an anon mmap buffer,
+/// request a copy, wait for Ready, swap channels, encode PNG. Returns an error
+/// if any global is missing or the compositor flags the capture as failed.
+fn capture_via_screencopy() -> anyhow::Result<Vec<u8>> {
+    screencopy_first_output().map(|(png, _)| png)
+}
+
+/// [`capture_via_screencopy`], plus the wl_output v4 name of the copied
+/// output when the compositor reports one.
+fn screencopy_first_output() -> anyhow::Result<(Vec<u8>, Option<String>)> {
+    // The whole copy, connection included, waits at most this long.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    // On niri every round trip is bounded by it as well, so a stalled niri
+    // ends the capture at the deadline instead of hanging it.
+    let niri = niri::is_session();
+    let bounded = niri.then_some(deadline);
+    let conn = wayland_connection(niri)?;
+    let mut queue = conn.new_event_queue::<State>();
+    let qh = queue.handle();
+    conn.display().get_registry(&qh, ());
+
+    let mut state = State::default();
+    sync_by(&conn, &mut queue, &mut state, bounded)?;
+    sync_by(&conn, &mut queue, &mut state, bounded)?; // outputs report their Mode
+
+    let manager = state
+        .scrcopy_manager
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("compositor does not expose zwlr_screencopy_manager_v1"))?;
+    let shm = state
+        .shm
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("compositor does not expose wl_shm"))?;
+    let output = state
+        .output
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("compositor exposed no wl_output to capture"))?;
+
+    let frame = manager.capture_output(0, &output, &qh, ());
+    // Drain Buffer / Flags events; spin until Ready or Failed (or timeout).
+    let mut buffer: Option<WlBuffer> = None;
+    let mut pool: Option<WlShmPool> = None;
+    let mut mmap_ptr: *mut libc::c_void = std::ptr::null_mut();
+    let mut mmap_len: usize = 0;
+    let mut fd: i32 = -1;
+
+    loop {
+        if let Err(error) = sync_by(&conn, &mut queue, &mut state, bounded) {
+            cleanup_mmap(mmap_ptr, mmap_len, fd);
+            return Err(error);
+        }
+        if state.capture.failed {
+            anyhow::bail!("compositor signalled screencopy failure");
+        }
+        if state.capture.ready {
+            break;
+        }
+        // Once we know the buffer params, allocate + send copy exactly once.
+        if let Some(fmt_raw) = state
+            .capture
+            .format
+            .filter(|_| buffer.is_none() && state.capture.stride > 0 && state.capture.height > 0)
+        {
+            let size = (state.capture.stride as usize)
+                .checked_mul(state.capture.height as usize)
+                .ok_or_else(|| anyhow::anyhow!("screencopy buffer size overflow"))?;
+            let (anon_fd, p) = anon_shm(size)?;
+            fd = anon_fd;
+            mmap_ptr = p;
+            mmap_len = size;
+            use std::os::fd::AsFd as _;
+            let pool_fd = unsafe { borrowed_fd(fd) };
+            let p = shm.create_pool(pool_fd.as_fd(), size as i32, &qh, ());
+            let fmt: wl_shm::Format = match wl_shm::Format::try_from(fmt_raw) {
+                Ok(f) => f,
+                Err(_) => {
+                    cleanup_mmap(mmap_ptr, mmap_len, fd);
+                    anyhow::bail!("compositor advertised unsupported wl_shm format {fmt_raw:#x}");
+                }
+            };
+            let b = p.create_buffer(
+                0,
+                state.capture.width as i32,
+                state.capture.height as i32,
+                state.capture.stride as i32,
+                fmt,
+                &qh,
+                (),
+            );
+            frame.copy(&b);
+            buffer = Some(b);
+            pool = Some(p);
+        }
+        if std::time::Instant::now() >= deadline {
+            cleanup_mmap(mmap_ptr, mmap_len, fd);
+            anyhow::bail!("screencopy timed out waiting for frame");
+        }
+    }
+
+    let result = (|| -> anyhow::Result<Vec<u8>> {
+        let w = state.capture.width;
+        let h = state.capture.height;
+        let stride = state.capture.stride as usize;
+        let format = state.capture.format.unwrap_or(0);
+        if mmap_ptr.is_null() || mmap_len == 0 {
+            anyhow::bail!("screencopy ready without a backing buffer");
+        }
+        let raw = unsafe { std::slice::from_raw_parts(mmap_ptr as *const u8, mmap_len) };
+        let mut rgba = Vec::with_capacity((w as usize) * (h as usize) * 4);
+        for row in 0..(h as usize) {
+            let src_row = if state.capture.y_invert {
+                (h as usize) - 1 - row
+            } else {
+                row
+            };
+            let base = src_row * stride;
+            for col in 0..(w as usize) {
+                let px = &raw[base + col * 4..base + col * 4 + 4];
+                let (r, g, b, a) = match wl_shm::Format::try_from(format).ok() {
+                    // Argb8888 / Xrgb8888 over wl_shm are little-endian BGRA / BGRX.
+                    Some(wl_shm::Format::Argb8888) => (px[2], px[1], px[0], px[3]),
+                    Some(wl_shm::Format::Xrgb8888) => (px[2], px[1], px[0], 255),
+                    Some(wl_shm::Format::Abgr8888) => (px[0], px[1], px[2], px[3]),
+                    Some(wl_shm::Format::Xbgr8888) => (px[0], px[1], px[2], 255),
+                    _ => (px[2], px[1], px[0], px[3]),
+                };
+                rgba.extend_from_slice(&[r, g, b, a]);
+            }
+        }
+        cua_driver_core::image_utils::encode_rgba_to_png(&rgba, w, h)
+    })();
+
+    // Always tear down regardless of result.
+    if let Some(b) = buffer {
+        b.destroy();
+    }
+    if let Some(p) = pool {
+        p.destroy();
+    }
+    frame.destroy();
+    let _ = sync_by(
+        &conn,
+        &mut queue,
+        &mut state,
+        niri.then(|| std::time::Instant::now() + crate::interaction::CLEANUP_CAP),
+    );
+    cleanup_mmap(mmap_ptr, mmap_len, fd);
+
+    result.map(|png| (png, state.output_name.take()))
+}
+
+/// Allocate an anonymous shared-memory file of `size` bytes and mmap it RW.
+/// Returns the raw fd and the mmap pointer; the caller is responsible for
+/// passing both to [`cleanup_mmap`] when done.
+pub(crate) fn anon_shm(size: usize) -> anyhow::Result<(i32, *mut libc::c_void)> {
+    // memfd_create is Linux-only and is the cleanest path; fall back to
+    // shm_open if memfd isn't available for any reason.
+    let name = b"cua-scrcopy\0";
+    let fd = unsafe { libc::memfd_create(name.as_ptr() as *const libc::c_char, libc::MFD_CLOEXEC) };
+    if fd < 0 {
+        return Err(anyhow::anyhow!(
+            "memfd_create failed: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    let rc = unsafe { libc::ftruncate(fd, size as libc::off_t) };
+    if rc != 0 {
+        let err = std::io::Error::last_os_error();
+        unsafe { libc::close(fd) };
+        return Err(anyhow::anyhow!("ftruncate failed: {err}"));
+    }
+    let p = unsafe {
+        libc::mmap(
+            std::ptr::null_mut(),
+            size,
+            libc::PROT_READ | libc::PROT_WRITE,
+            libc::MAP_SHARED,
+            fd,
+            0,
+        )
+    };
+    if p == libc::MAP_FAILED {
+        let err = std::io::Error::last_os_error();
+        unsafe { libc::close(fd) };
+        return Err(anyhow::anyhow!("mmap failed: {err}"));
+    }
+    Ok((fd, p))
+}
+
+/// Unmap and close the screencopy backing buffer; safe to call with the
+/// sentinel values left from a never-allocated buffer.
+pub(crate) fn cleanup_mmap(ptr: *mut libc::c_void, len: usize, fd: i32) {
+    if !ptr.is_null() && len > 0 {
+        unsafe { libc::munmap(ptr, len) };
+    }
+    if fd >= 0 {
+        unsafe { libc::close(fd) };
+    }
+}
+
+/// Borrow a raw fd as an `OwnedFd` for wl_shm.create_pool. The pool keeps
+/// its own reference; we close our copy via [`cleanup_mmap`].
+///
+/// SAFETY: caller must guarantee `fd` is a valid open file descriptor.
+/// `libc::dup` may fail (returning -1, errno set), in which case we panic
+/// instead of constructing an `OwnedFd` from -1 (which would have UB on
+/// drop). Callers that need fallible behaviour should use the dup syscall
+/// directly and check the result before wrapping.
+pub(crate) unsafe fn borrowed_fd(fd: i32) -> std::os::fd::OwnedFd {
+    use std::os::fd::FromRawFd;
+    let dup = libc::dup(fd);
+    if dup < 0 {
+        let err = std::io::Error::last_os_error();
+        panic!("dup({fd}) failed: {err}");
+    }
+    std::os::fd::OwnedFd::from_raw_fd(dup)
+}
+
+/// A Wayland output crop cannot prove which surface supplied its pixels. This
+/// is especially unsafe for off-workspace XWayland windows: their X11 geometry
+/// can crop the active workspace at the requested coordinates.
+#[derive(Debug)]
+pub struct SurfaceIdentityUnproven {
+    window_id: u64,
+    reason: std::borrow::Cow<'static, str>,
+}
+
+impl std::fmt::Display for SurfaceIdentityUnproven {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "surface_identity_unproven: Wayland capture cannot prove pixels belong to window {}: {}",
+            self.window_id, self.reason
+        )
+    }
+}
+
+impl std::error::Error for SurfaceIdentityUnproven {}
+
+pub fn is_surface_identity_unproven(error: &anyhow::Error) -> bool {
+    error.downcast_ref::<SurfaceIdentityUnproven>().is_some()
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct WaylandWindowCrop {
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+}
+
+fn surface_identity_unproven(
+    window_id: u64,
+    reason: impl Into<std::borrow::Cow<'static, str>>,
+) -> anyhow::Error {
+    SurfaceIdentityUnproven {
+        window_id,
+        reason: reason.into(),
+    }
+    .into()
+}
+
+fn attested_wayland_crop(
+    xid: u64,
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+    visible: bool,
+) -> anyhow::Result<WaylandWindowCrop> {
+    if !visible {
+        return Err(surface_identity_unproven(
+            xid,
+            "the compositor reports the surface is not visible on the active workspace",
+        ));
+    }
+    if width == 0 || height == 0 {
+        return Err(surface_identity_unproven(
+            xid,
+            "the compositor reports empty surface geometry",
+        ));
+    }
+    Ok(WaylandWindowCrop {
+        x,
+        y,
+        width,
+        height,
+    })
+}
+
+/// Resolve a crop only from compositor-owned metadata that also proves the
+/// surface is present on the currently rendered workspace. X11 geometry and
+/// AT-SPI bounds are intentionally insufficient: an off-workspace XWayland
+/// window retains both while the output contains another application's pixels.
+fn wayland_window_crop(xid: u64) -> anyhow::Result<WaylandWindowCrop> {
+    if let Some(window) = sway_ipc::window_for_id(xid) {
+        return attested_wayland_crop(
+            xid,
+            window.x,
+            window.y,
+            window.width,
+            window.height,
+            window.visible,
+        );
+    }
+    // GNOME helpers before API 9 have no per-window capture, so the stage is
+    // cropped to the window's frame. GetRects proves geometry, not occlusion:
+    // a covering window shows in the crop. API 9+ helpers never reach this
+    // (see `screenshot_dispatch_for_pid`).
+    if let Some(window) = shell_helper::list_windows(None)
+        .and_then(|windows| windows.into_iter().find(|window| window.xid == xid))
+    {
+        return attested_wayland_crop(
+            xid,
+            window.x,
+            window.y,
+            window.width,
+            window.height,
+            window.is_on_screen,
+        );
+    }
+    Err(surface_identity_unproven(
+        xid,
+        "no compositor-attested window geometry is available",
+    ))
+}
+
+fn screenshot_window_bytes_with_dispatch(
+    wayland: bool,
+    xid: u64,
+    wayland_crop: impl FnOnce(u64) -> anyhow::Result<WaylandWindowCrop>,
+    display_capture: impl FnOnce() -> anyhow::Result<Vec<u8>>,
+    x11_capture: impl FnOnce(u64) -> anyhow::Result<Vec<u8>>,
+) -> anyhow::Result<Vec<u8>> {
+    if wayland {
+        let crop = wayland_crop(xid)?;
+        let output = display_capture()?;
+        return crop_png_to_rect(
+            &output,
+            crop.x,
+            crop.y,
+            crop.width,
+            crop.height,
+            &format!("Wayland window {xid}"),
+        );
+    }
+    x11_capture(xid)
+}
+
+/// Window capture dispatcher. X11 uses its per-window capture path. Wayland
+/// crops output pixels only when compositor metadata proves that the requested
+/// surface is currently rendered; otherwise it fails closed. Output-level
+/// capture remains available through [`screenshot_display_dispatch`].
+pub fn screenshot_dispatch(xid: u64) -> anyhow::Result<Vec<u8>> {
+    screenshot_dispatch_for_pid(xid, None)
+}
+
+pub fn screenshot_dispatch_with_pid(xid: u64, pid: u32) -> anyhow::Result<Vec<u8>> {
+    screenshot_dispatch_for_pid(xid, Some(pid))
+}
+
+fn screenshot_dispatch_for_pid(xid: u64, pid: Option<u32>) -> anyhow::Result<Vec<u8>> {
+    if is_wayland() && kwin_capture::knows_window(xid) {
+        return kwin_capture::capture(xid, pid).map_err(|error| {
+            tracing::debug!("KWin window capture refused: {error:#}");
+            surface_identity_unproven(xid, "KWin could not capture this exact window")
+        });
+    }
+    if is_wayland() && hyprland::is_session() {
+        return hyprland::capture(xid, pid).map_err(|error| {
+            tracing::debug!("Hyprland target capture refused: {error:#}");
+            surface_identity_unproven(
+                xid,
+                "Hyprland target identity or toplevel export could not be verified",
+            )
+        });
+    }
+    if niri::is_session() {
+        return niri_window_capture(xid, pid);
+    }
+    if is_wayland() {
+        // A GNOME helper with API 9+ snapshots the window's own actor, so a
+        // covering window never shows. It is then the only GNOME route: a
+        // refused capture (minimized window, locked screen) must not fall
+        // back to a stage crop that could show another app.
+        match shell_helper::screenshot_window(xid, pid) {
+            shell_helper::WindowCapture::Png(png) => return Ok(png),
+            shell_helper::WindowCapture::Unavailable => {
+                return Err(surface_identity_unproven(
+                    xid,
+                    "the GNOME helper could not capture this window (minimized, closed, \
+                     or the screen is locked)",
+                ))
+            }
+            shell_helper::WindowCapture::Unsupported => {}
+        }
+    }
+    screenshot_window_bytes_with_dispatch(
+        is_wayland(),
+        xid,
+        wayland_window_crop,
+        screenshot_display_dispatch,
+        crate::capture::screenshot_window_bytes,
+    )
+}
+
+/// A niri display capture: only the attested wlroots screencopy, oriented by
+/// the copied output's own transform. grim, ext-image-copy and the portal
+/// are not tied to the attested compositor or orient differently, so niri
+/// never falls back to them.
+fn niri_display_capture() -> anyhow::Result<niri::DisplayCapture> {
+    // Read the transforms on both sides of the copy: a change in between
+    // would orient the buffer with a transform it was not taken in.
+    let before = niri::output_transforms()?;
+    let (png, output) = screencopy_first_output()?;
+    let output = output.ok_or_else(|| {
+        anyhow::anyhow!("niri capture needs the wl_output name (wl_output v4) of the copied output")
+    })?;
+    let transform = niri::output_transforms()?
+        .get(&output)
+        .copied()
+        .ok_or_else(|| anyhow::anyhow!("niri reports no enabled output {output:?}"))?;
+    if before.get(&output) != Some(&transform) {
+        anyhow::bail!("the transform of niri output {output:?} changed during capture");
+    }
+    let png = orient_png_for_niri_transform(png, transform)?;
+    let size = image::ImageReader::new(std::io::Cursor::new(&png))
+        .with_guessed_format()?
+        .into_dimensions()?;
+    Ok(niri::DisplayCapture {
+        png,
+        output,
+        transform,
+        size,
+    })
+}
+
+/// niri has no per-toplevel capture protocol: crop a settled display capture
+/// to a placed, unoverlapped floating window and scale it to the window's
+/// logical size, the window-local coordinate frame input uses. A tiled
+/// window refuses: niri does not report where it is.
+fn niri_window_capture(xid: u64, pid: Option<u32>) -> anyhow::Result<Vec<u8>> {
+    let (png, plan) = niri::capture_window(xid, pid, niri_display_capture)
+        .map_err(|reason| surface_identity_unproven(xid, format!("niri: {reason}")))?;
+    let pixels = plan.pixels;
+    let crop = crop_png_to_rect(
+        &png,
+        pixels.x,
+        pixels.y,
+        pixels.width,
+        pixels.height,
+        &format!("niri window {xid}"),
+    )?;
+    let image = image::load_from_memory_with_format(&crop, image::ImageFormat::Png)?;
+    if (image.width(), image.height()) == (plan.width, plan.height) {
+        return Ok(crop);
+    }
+    let image = image.resize_exact(
+        plan.width,
+        plan.height,
+        image::imageops::FilterType::Triangle,
+    );
+    let mut out = std::io::Cursor::new(Vec::new());
+    image.write_to(&mut out, image::ImageFormat::Png)?;
+    Ok(out.into_inner())
+}
+
+fn crop_png_to_rect(
+    output_png: &[u8],
+    rect_x: i32,
+    rect_y: i32,
+    rect_width: u32,
+    rect_height: u32,
+    label: &str,
+) -> anyhow::Result<Vec<u8>> {
+    let image = image::load_from_memory(output_png)?;
+    let image_width = image.width();
+    let image_height = image.height();
+    let x = rect_x.max(0) as u32;
+    let y = rect_y.max(0) as u32;
+    if x >= image_width || y >= image_height {
+        anyhow::bail!(
+            "{label} origin ({x},{y}) is outside captured output {image_width}x{image_height}"
+        );
+    }
+    let width = rect_width.min(image_width - x);
+    let height = rect_height.min(image_height - y);
+    if width == 0 || height == 0 {
+        anyhow::bail!("{label} has empty capture geometry");
+    }
+    let cropped = image.crop_imm(x, y, width, height);
+    let mut cursor = std::io::Cursor::new(Vec::new());
+    cropped.write_to(&mut cursor, image::ImageFormat::Png)?;
+    Ok(cursor.into_inner())
+}
+
+/// Display-level capture dispatcher. Cascade:
+/// 1. Opt-in GNOME compositor helper. If available, capture failure is
+///    terminal rather than cascading into GNOME's portal implementation.
+/// 2. KWin's ScreenShot2, only while `cua-driver kwin-capture` is on. A Deny
+///    saved in the portal keeps it off unless the operator overrode it.
+/// 3. Native Wayland on wlroots: zwlr_screencopy_manager_v1 (fast, zero
+///    consent).
+/// 4. ext-image-copy-capture-v1 on supported compositors.
+/// 5. xdg-desktop-portal Screenshot via ashpd. Asks once and saves the answer. A
+///    refusal from the portal is terminal; the request has a 30-second deadline,
+///    after which the cascade continues.
+/// 6. X11: existing root-window path.
+pub fn screenshot_display_dispatch() -> anyhow::Result<Vec<u8>> {
+    if niri::is_session() {
+        return niri_display_capture().map(|capture| capture.png);
+    }
+    if is_wayland() && hyprland::is_session() {
+        // The desktop action frame spans every powered output. The cascade
+        // below copies only the first output, so a multi-monitor layout is
+        // composed per output; a single output keeps the cascade.
+        if let Some(capture) = hyprland::composite_desktop_capture() {
+            return capture;
+        }
+    }
+    if is_wayland() {
+        // Tier 1: the opt-in GNOME compositor helper. It avoids probing
+        // wlroots-only protocols and captures the Shell stage without consent.
+        // If the helper is present but capture fails, do not fall through to
+        // GNOME's portal implementation: on GNOME 50 a malformed 0x0 cursor
+        // sprite can crash Shell in GNOME's unsafe stage-content capture path.
+        if let Some(result) = checked_shell_helper_capture(
+            shell_helper::available(),
+            shell_helper::screenshot_display,
+        ) {
+            return result;
+        }
+        // Tier 2: every output from KWin, with no portal request to wait on.
+        if let Some(bytes) = kwin_workspace_capture(
+            kwin_capture::may_be_session(),
+            kwin_access::allowed,
+            kwin_capture::capture_workspace,
+        ) {
+            return Ok(bytes);
+        }
+        // Tier 3: native wlroots screencopy (fast, zero consent).
+        match screenshot_bytes() {
+            Ok(bytes) => return orient_display_png(bytes),
+            Err(e) => {
+                tracing::debug!(
+                    "wlroots screencopy unavailable ({e}); trying ext-image-copy-capture-v1"
+                );
+            }
+        }
+        // Tier 4: ext-image-copy-capture-v1 (sway 1.10+, labwc 0.8+,
+        // hyprland, KDE 6.2+, GNOME 47+).
+        match ext_screencopy::screenshot_via_ext_copy() {
+            Ok(bytes) => return orient_display_png(bytes),
+            Err(e) => {
+                tracing::debug!(
+                    "ext-image-copy-capture-v1 unavailable ({e}); trying xdg-desktop-portal"
+                );
+            }
+        }
+        // Tier 5: xdg-desktop-portal (GNOME, KDE, COSMIC fallback), then X11.
+        return portal_or_x11(
+            portal_screenshot::screenshot_via_portal,
+            crate::capture::screenshot_display_bytes_x11,
+        );
+    }
+    // Final fallback: X11 root window. Call the X11-only path explicitly
+    // so we don't re-enter screenshot_display_bytes (which routes back here
+    // on Wayland — would loop forever).
+    crate::capture::screenshot_display_bytes_x11()
+}
+
+/// Logical size of an output whose native mode is `mode` under wl_output
+/// `transform`: quarter turns (odd transforms) swap the axes.
+pub(crate) fn logical_output_size(mode: (u32, u32), transform: u32) -> (u32, u32) {
+    if transform % 2 == 1 {
+        (mode.1, mode.0)
+    } else {
+        mode
+    }
+}
+
+/// Rotate a native-orientation output capture into the logical frame for a
+/// wl_output transform. `image::rotate90` is clockwise, which is what a
+/// transform-1 (portrait) Hyprland output needs. Flipped transforms refuse.
+fn rotate_png_for_output_transform(png: Vec<u8>, transform: u32) -> anyhow::Result<Vec<u8>> {
+    let rotate: fn(&image::DynamicImage) -> image::DynamicImage = match transform {
+        0 => return Ok(png),
+        1 => image::DynamicImage::rotate90,
+        2 => image::DynamicImage::rotate180,
+        3 => image::DynamicImage::rotate270,
+        other => anyhow::bail!("flipped output transform {other} is not supported"),
+    };
+    let img = image::load_from_memory_with_format(&png, image::ImageFormat::Png)?;
+    let mut out = Vec::new();
+    rotate(&img).write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)?;
+    Ok(out)
+}
+
+/// Full-display screencopy returns the output buffer in the panel's native
+/// orientation. On Hyprland, turn it into the logical desktop frame
+/// so the screenshot matches what the user sees and what desktop-scope input
+/// uses.
+fn orient_display_png(png: Vec<u8>) -> anyhow::Result<Vec<u8>> {
+    if !hyprland::is_session() {
+        return Ok(png);
+    }
+    rotate_png_for_output_transform(png, hyprland::single_output_transform()?)
+}
+
+/// niri output transforms: rotations as on Hyprland, plus the two pure
+/// flips. A nested niri forces `Flipped180` (a vertical flip) on its winit
+/// output, so its screencopy buffer is upside down. Flips combined with a
+/// quarter turn are refused rather than guessed.
+fn orient_png_for_niri_transform(png: Vec<u8>, transform: u32) -> anyhow::Result<Vec<u8>> {
+    let flip: fn(&image::DynamicImage) -> image::DynamicImage = match transform {
+        0..=3 => return rotate_png_for_output_transform(png, transform),
+        4 => image::DynamicImage::fliph,
+        6 => image::DynamicImage::flipv,
+        other => anyhow::bail!("niri output transform {other} is not supported for capture"),
+    };
+    let img = image::load_from_memory_with_format(&png, image::ImageFormat::Png)?;
+    let mut out = Vec::new();
+    flip(&img).write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)?;
+    Ok(out)
+}
+
+fn checked_shell_helper_capture(
+    available: bool,
+    capture: impl FnOnce() -> Option<Vec<u8>>,
+) -> Option<anyhow::Result<Vec<u8>>> {
+    available
+        .then(|| capture().ok_or_else(|| anyhow::anyhow!("GNOME compositor helper capture failed")))
+}
+
+/// The KWin tier. It never runs past the operator's switch, which also keeps a
+/// saved portal Deny: ScreenShot2 doesn't ask the portal, so skipping the switch
+/// would capture a desktop the user refused. A failure falls through to the
+/// tiers below.
+fn kwin_workspace_capture(
+    may_be_kwin: bool,
+    allowed: impl FnOnce() -> bool,
+    capture: impl FnOnce() -> anyhow::Result<Vec<u8>>,
+) -> Option<Vec<u8>> {
+    if !may_be_kwin || !allowed() {
+        return None;
+    }
+    capture()
+        .inspect_err(|e| tracing::debug!("KWin workspace capture unavailable: {e:#}"))
+        .ok()
+}
+
+/// The cascade tail: the portal tier, then the X11 root window. A portal
+/// refusal (`Err`) ends the cascade; only an unavailable portal (`Ok(None)`)
+/// falls through to X11.
+fn portal_or_x11(
+    portal: impl FnOnce() -> anyhow::Result<Option<Vec<u8>>>,
+    x11: impl FnOnce() -> anyhow::Result<Vec<u8>>,
+) -> anyhow::Result<Vec<u8>> {
+    if let Some(bytes) = portal()? {
+        return Ok(bytes);
+    }
+    x11()
+}
+
+/// Per-window capture dispatcher. Kept as the explicit window-capture entry
+/// point for callers outside `get_window_state`; it shares the same fail-closed
+/// Wayland contract as [`screenshot_dispatch`].
+pub fn screenshot_window_dispatch(xid: u64) -> anyhow::Result<Vec<u8>> {
+    screenshot_dispatch(xid)
+}
+
+// ── Input session helper ─────────────────────────────────────────────────────
+
+/// Sentinel substring carried by the `open_vptr_session` error when the
+/// compositor exposes no `zwlr_virtual_pointer_manager_v1` (KWin/Plasma,
+/// Mutter/GNOME). The input dispatch matches on this to decide whether the
+/// libei/portal fallback ([`libei`]) can recover the call. Kept as a string
+/// marker (rather than a typed error) so the existing `anyhow::Result`
+/// signatures of every input fn are unchanged. See #1982.
+pub const NO_VPTR_MARKER: &str = "no-zwlr-virtual-pointer";
+
+/// True when `err` is the "compositor has no wlroots virtual-pointer" failure
+/// from [`open_vptr_session`] — i.e. the point where a non-wlroots compositor
+/// needs the libei fallback rather than a hard error.
+fn is_no_vptr(err: &anyhow::Error) -> bool {
+    err.to_string().contains(NO_VPTR_MARKER)
+}
+
+/// Run the wlroots virtual-pointer closure `f`; if it fails specifically
+/// because the compositor exposes no `zwlr_virtual_pointer_manager_v1` and this
+/// binary carries the `portal-input` feature, run the libei `fallback` instead.
+/// Any other wlroots error (and the no-vptr error in a build without the
+/// feature) propagates unchanged. This is the single seam through which #1982's
+/// KDE/GNOME input recovery flows.
+fn with_libei_fallback<T>(
+    f: impl FnOnce() -> anyhow::Result<T>,
+    fallback: impl FnOnce() -> anyhow::Result<T>,
+) -> anyhow::Result<T> {
+    libei_recovery(niri::is_session(), f, fallback)
+}
+
+/// [`with_libei_fallback`] for a session known to be (or not be) niri.
+/// libei finds its own EIS socket or portal, which nothing ties to the
+/// attested niri, so under niri the failure is refused instead.
+fn libei_recovery<T>(
+    on_niri: bool,
+    f: impl FnOnce() -> anyhow::Result<T>,
+    #[allow(unused_variables)] fallback: impl FnOnce() -> anyhow::Result<T>,
+) -> anyhow::Result<T> {
+    match f() {
+        Ok(v) => Ok(v),
+        Err(e) if on_niri && is_no_vptr(&e) => Err(niri_refuses_libei(e.to_string())),
+        Err(e) if is_no_vptr(&e) => {
+            #[cfg(feature = "portal-input")]
+            {
+                tracing::info!(
+                    "wlroots virtual-pointer unavailable ({e}); falling back to libei/portal"
+                );
+                fallback()
+            }
+            #[cfg(not(feature = "portal-input"))]
+            {
+                Err(e)
+            }
+        }
+        Err(e) => Err(e),
+    }
+}
+
+/// Live virtual-pointer session: connection + queue + the bound objects every
+/// pointer op (click, scroll, drag) needs. Returned by [`open_vptr_session`].
+pub struct VptrSession {
+    pub conn: Connection,
+    queue: wayland_client::EventQueue<State>,
+    state: State,
+    pub seat: WlSeat,
+    pub vptr: ZwlrVirtualPointerV1,
+    /// `motion_absolute` extent, in the same frame as caller coordinates.
+    /// See [`virtual_pointer_space`].
+    pub output_w: u32,
+    pub output_h: u32,
+    /// Layout position of pointer-space (0, 0). Callers pass layout
+    /// coordinates; [`VptrSession::abs`] converts them for `motion_absolute`.
+    pub origin_x: i32,
+    pub origin_y: i32,
+    /// On niri, the deadline every round trip is bounded by.
+    deadline: Option<std::time::Instant>,
+    /// Buttons pressed and not released yet: dropping the session releases
+    /// them, whatever stopped the action.
+    held: Vec<u32>,
+    /// Destroyed by [`VptrSession::finish`], or handed on by
+    /// [`VptrSession::keep`].
+    done: bool,
+}
+
+impl VptrSession {
+    /// Wait until the compositor has handled every request sent so far.
+    fn sync(&mut self) -> anyhow::Result<()> {
+        sync_by(&self.conn, &mut self.queue, &mut self.state, self.deadline)
+    }
+
+    /// Send pointer events, unless the tool call this action serves is over
+    /// (see [`crate::input::action`]), then wait for the compositor.
+    fn send(&mut self, events: impl FnOnce(&ZwlrVirtualPointerV1)) -> anyhow::Result<()> {
+        let (conn, vptr) = (&self.conn, &self.vptr);
+        crate::input::action::admit(|| {
+            events(vptr);
+            vptr.frame();
+            conn.flush()
+        })??;
+        self.sync()
+    }
+
+    fn motion(&mut self, px: u32, py: u32) -> anyhow::Result<()> {
+        let (w, h) = (self.output_w, self.output_h);
+        self.send(|vptr| vptr.motion_absolute(event_time_ms(), px, py, w, h))
+    }
+
+    fn press(&mut self, button: u32) -> anyhow::Result<()> {
+        let (conn, vptr) = (&self.conn, &self.vptr);
+        crate::input::action::admit(|| {
+            vptr.button(event_time_ms(), button, ButtonState::Pressed);
+            vptr.frame();
+            conn.flush()
+        })??;
+        self.held.push(button);
+        self.sync()
+    }
+
+    /// Release `button`. Cleanup: it goes out even once the call is over.
+    fn release(&mut self, button: u32) -> anyhow::Result<()> {
+        self.held.retain(|held| *held != button);
+        self.vptr
+            .button(event_time_ms(), button, ButtonState::Released);
+        self.vptr.frame();
+        self.sync()
+    }
+
+    /// Destroy the virtual pointer once the action is complete.
+    fn finish(mut self) -> anyhow::Result<()> {
+        self.done = true;
+        self.vptr.destroy();
+        self.sync()
+    }
+
+    /// Hand the connection and the virtual pointer, with its pressed
+    /// buttons, to an owner that keeps them across calls.
+    fn keep(mut self) -> (Connection, ZwlrVirtualPointerV1) {
+        self.done = true;
+        self.held.clear();
+        (self.conn.clone(), self.vptr.clone())
+    }
+
+    /// Layout point -> clamped `motion_absolute` coordinates.
+    pub fn abs(&self, x: i32, y: i32) -> (u32, u32) {
+        pointer_abs(
+            self.origin_x,
+            self.origin_y,
+            self.output_w,
+            self.output_h,
+            x,
+            y,
+        )
+    }
+}
+
+pub(crate) fn pointer_abs(
+    origin_x: i32,
+    origin_y: i32,
+    w: u32,
+    h: u32,
+    x: i32,
+    y: i32,
+) -> (u32, u32) {
+    (
+        x.saturating_sub(origin_x)
+            .clamp(0, (w as i32).saturating_sub(1)) as u32,
+        y.saturating_sub(origin_y)
+            .clamp(0, (h as i32).saturating_sub(1)) as u32,
+    )
+}
+
+/// Whether `motion_absolute` reaches layout point `(x, y)` itself rather
+/// than a point [`pointer_abs`] clamped it to.
+fn pointer_reaches(origin_x: i32, origin_y: i32, w: u32, h: u32, x: i32, y: i32) -> bool {
+    let (px, py) = pointer_abs(origin_x, origin_y, w, h, x, y);
+    (origin_x + px as i32, origin_y + py as i32) == (x, y)
+}
+
+/// How one desktop-scope action is addressed: desktop-frame points (from
+/// `get_desktop_state`) convert to layout coordinates, and the virtual pointer
+/// is sized, from a single compositor snapshot. Compositors without an adapter
+/// keep the frame at the layout origin and the pointer on the output's own mode.
+#[derive(Clone, Debug, Default)]
+pub struct DesktopInputSpace {
+    snapshot: Option<hyprland::DesktopSnapshot>,
+    kwin_distorted: Option<kwin_layout::DistortedCapture>,
+}
+
+impl DesktopInputSpace {
+    pub fn current() -> anyhow::Result<Self> {
+        if is_wayland() && hyprland::is_session() {
+            return Ok(Self {
+                snapshot: Some(hyprland::desktop_snapshot()?),
+                kwin_distorted: None,
+            });
+        }
+        if niri::is_session() {
+            return Ok(Self {
+                snapshot: Some(niri::desktop_snapshot()?),
+                kwin_distorted: None,
+            });
+        }
+        // KWin input goes through libei, which takes layout coordinates, so it
+        // has no virtual-pointer layout to qualify.
+        let Some(layout) = kwin_desktop_layout()? else {
+            return Ok(Self::default());
+        };
+        Ok(Self {
+            snapshot: Some(hyprland::DesktopSnapshot {
+                frame: layout.frame,
+                pointer: None,
+            }),
+            kwin_distorted: layout.distorted,
+        })
+    }
+
+    /// Layout coordinates of a desktop-frame point.
+    pub fn to_layout(&self, x: i32, y: i32) -> (i32, i32) {
+        self.snapshot
+            .as_ref()
+            .map_or((x, y), |snapshot| snapshot.frame.to_layout(x, y))
+    }
+
+    /// Layout coordinates of a desktop-frame point that input may target.
+    /// On a multi-monitor frame a point in a gap or on an output in standby
+    /// is refused rather than left for the compositor to move to another
+    /// output edge. A single output keeps the existing edge clamping.
+    pub fn input_layout(&self, x: i32, y: i32) -> anyhow::Result<(i32, i32)> {
+        let Some(snapshot) = self.snapshot.as_ref() else {
+            return Ok((x, y));
+        };
+        let (layout_x, layout_y) = snapshot.frame.to_layout(x, y);
+        anyhow::ensure!(
+            snapshot.frame.outputs.len() <= 1
+                || snapshot.frame.output_contains_layout(layout_x, layout_y),
+            "desktop point ({x}, {y}) is not on a powered monitor in the current layout; call get_desktop_state again"
+        );
+        if let Some(distorted) = &self.kwin_distorted {
+            distorted.admit(&snapshot.frame, (x, y), (layout_x, layout_y))?;
+        }
+        Ok((layout_x, layout_y))
+    }
+}
+
+impl VptrSession {
+    /// Puts the pointer at output pixel `(px, py)` so the compositor picks
+    /// the surface under it. A `motion_absolute` to where the pointer already
+    /// is carries no motion, and Hyprland re-picks pointer focus only on
+    /// motion: a window mapped under a stationary pointer (a terminal opened
+    /// from the keyboard) never got the wheel or the button that followed.
+    /// Approaching from the next pixel always moves the pointer.
+    fn point_at(&mut self, px: u32, py: u32) -> anyhow::Result<()> {
+        self.motion(approach_pixel(px, self.output_w), py)?;
+        self.motion(px, py)
+    }
+}
+
+impl Drop for VptrSession {
+    /// An action that stopped early still releases what it pressed, on a
+    /// short deadline of its own on niri.
+    fn drop(&mut self) {
+        if self.done {
+            return;
+        }
+        for button in std::mem::take(&mut self.held) {
+            self.vptr
+                .button(event_time_ms(), button, ButtonState::Released);
+            self.vptr.frame();
+        }
+        self.vptr.destroy();
+        let _ = match self.deadline {
+            Some(_) => bounded_roundtrip(
+                &self.conn,
+                &mut self.queue,
+                &mut self.state,
+                std::time::Instant::now() + crate::interaction::CLEANUP_CAP,
+            ),
+            None => self.conn.flush().map_err(Into::into),
+        };
+    }
+}
+
+/// A pixel next to `px` on an output `extent` pixels wide.
+fn approach_pixel(px: u32, extent: u32) -> u32 {
+    if px > 0 {
+        px - 1
+    } else {
+        (px + 1).min(extent.saturating_sub(1))
+    }
+}
+
+/// Logical desktop frame published by a compositor adapter whose geometry is
+/// in logical pixels, or `None` when callers keep the protocol-native frame
+/// (for example the full-output screencopy buffer on Sway). Desktop capture
+/// and the virtual pointer both read this, so a desktop screenshot pixel and a
+/// pointer coordinate always share one frame.
+pub(crate) fn compositor_logical_frame() -> Option<anyhow::Result<(u32, u32)>> {
+    if niri::is_session() {
+        return Some(
+            niri::desktop_snapshot().map(|snapshot| (snapshot.frame.width, snapshot.frame.height)),
+        );
+    }
+    if hyprland::is_session() {
+        return Some(hyprland::screen_size().map(|(width, height, _scale)| (width, height)));
+    }
+    kwin_desktop_layout()
+        .transpose()
+        .map(|layout| layout.map(|layout| (layout.frame.width, layout.frame.height)))
+}
+
+/// KWin's desktop layout: its pointer input is logical while its screenshots
+/// are physical, so a screenshot pixel and a pointer coordinate only agree in
+/// this frame. `None` on any other compositor; a KWin that cannot report a
+/// usable layout is an error rather than a silent return to the mismatched
+/// physical frame.
+pub(crate) fn kwin_desktop_layout() -> anyhow::Result<Option<kwin_layout::DesktopLayout>> {
+    if !is_wayland() || hyprland::is_session() || niri::is_session() {
+        return Ok(None);
+    }
+    kwin_layout::desktop_layout()
+}
+
+/// Pointer space for `zwlr_virtual_pointer_v1::motion_absolute`, as
+/// `(origin_x, origin_y, extent_w, extent_h)`. The compositor maps
+/// `x / x_extent` onto its logical layout, so the extent must be in the
+/// caller's coordinate frame. Hyprland maps absolute motion across the
+/// bounding box of every enabled output's logical rectangle, not just the
+/// first `wl_output`; a scaled output's `wl_output` mode is physical and
+/// would land every motion at `1 / scale` of its target. A single output
+/// the Hyprland adapter cannot qualify (a rotated one) keeps its own mode
+/// until that adapter publishes a layout for it; with several outputs that
+/// fallback would misplace every motion, so it is an error instead.
+fn virtual_pointer_space(output_mode: (u32, u32)) -> anyhow::Result<(i32, i32, u32, u32)> {
+    let layout = if hyprland::is_session() {
+        hyprland::pointer_space()?
+    } else if niri::is_session() {
+        Some(niri::pointer_space()?)
+    } else {
+        None
+    };
+    Ok(select_virtual_pointer_space(output_mode, layout))
+}
+
+fn select_virtual_pointer_space(
+    output_mode: (u32, u32),
+    compositor_layout: Option<(i32, i32, u32, u32)>,
+) -> (i32, i32, u32, u32) {
+    let (x, y, width, height) = compositor_layout.unwrap_or((0, 0, output_mode.0, output_mode.1));
+    (x, y, width.max(1), height.max(1))
+}
+
+/// Bind manager + seat + virtual-pointer + first output, optionally activate a
+/// foreign-toplevel by `window_id` so the synthesised events land on it, and
+/// return the live session that scroll / drag / click reuse. Wayland forbids a
+/// client from knowing another window's on-screen geometry, so we drive every
+/// pointer event in *output* coordinates and rely on the activated toplevel
+/// covering the centre.
+pub fn open_vptr_session(activate_window_id: Option<u64>) -> anyhow::Result<VptrSession> {
+    open_vptr_session_in(activate_window_id, None)
+}
+
+/// [`open_vptr_session`] sized from `snapshot` when a desktop action was
+/// addressed in one.
+fn open_vptr_session_in(
+    activate_window_id: Option<u64>,
+    snapshot: Option<&hyprland::DesktopSnapshot>,
+) -> anyhow::Result<VptrSession> {
+    // A niri window is activated by the pointer gate, once the action is
+    // admitted; its id never reaches the foreign-toplevel match below.
+    let niri = niri::is_session();
+    let deadline = niri.then(|| {
+        crate::input::action::current().map_or_else(
+            || std::time::Instant::now() + NIRI_POINTER_TIMEOUT,
+            |action| action.deadline(),
+        )
+    });
+    let conn = wayland_connection(niri)?;
+    let mut queue = conn.new_event_queue::<State>();
+    let qh = queue.handle();
+    conn.display().get_registry(&qh, ());
+
+    let mut state = State::default();
+    for _ in 0..5 {
+        sync_by(&conn, &mut queue, &mut state, deadline)?;
+    }
+
+    // Evaluate the virtual-pointer / NO_VPTR_MARKER path FIRST: on compositors
+    // that expose neither zwlr_virtual_pointer nor zwlr_foreign_toplevel
+    // (KWin/Plasma, Mutter/GNOME) we must surface the marker so
+    // `with_libei_fallback` re-routes through libei/portal. Requiring
+    // foreign-toplevel up front would mask the marker and leave the libei
+    // fallback dead. See #1982.
+    let mgr = state.vptr_manager.clone().ok_or_else(|| {
+        if PORTAL_INPUT_ENABLED {
+            // The caller (via `with_libei_fallback`) recognises NO_VPTR_MARKER
+            // and re-routes the op through the libei/portal backend, which DOES
+            // reach KWin/Plasma and Mutter/GNOME. Keep the marker in the text.
+            anyhow::anyhow!(
+                "compositor does not expose zwlr_virtual_pointer_manager_v1 \
+                 ({NO_VPTR_MARKER})"
+            )
+        } else {
+            // KWin/Plasma and Mutter/GNOME don't implement zwlr_virtual_pointer,
+            // and this build has no libei/portal fallback — so input has no
+            // backend at all rather than silently no-op'ing. The marker still
+            // lets the dispatch layer classify the failure uniformly. See #1982.
+            anyhow::anyhow!(
+                "no input backend for this compositor ({NO_VPTR_MARKER}): it \
+                 exposes no zwlr_virtual_pointer_manager_v1 and this build was \
+                 compiled without libei/portal support (#1982). Use the \
+                 portal-enabled Linux build for input on KDE Plasma / GNOME, or \
+                 a wlroots compositor (sway, labwc, hyprland)."
+            )
+        }
+    })?;
+
+    // foreign-toplevel is only needed to activate a specific window before
+    // synthesising input; require it only when a caller actually asks for that.
+    if activate_window_id.is_some() && !niri && state.manager.is_none() {
+        anyhow::bail!("compositor does not expose zwlr_foreign_toplevel_manager_v1");
+    }
+
+    let seat = state.seats.selected().ok_or_else(|| {
+        anyhow::anyhow!("compositor exposed no wl_seat for virtual-pointer input")
+    })?;
+
+    if let Some(id) = activate_window_id.filter(|_| !niri) {
+        let handle = matching_handle(&state, id)
+            .ok_or_else(|| anyhow::anyhow!("no native Wayland toplevel for window_id {id}"))?;
+        handle.activate(&seat);
+        sync_by(&conn, &mut queue, &mut state, deadline)?;
+    }
+
+    let vptr = mgr.create_virtual_pointer(Some(&seat), &qh, ());
+    let (origin_x, origin_y, output_w, output_h) = match snapshot {
+        Some(snapshot) => {
+            select_virtual_pointer_space((state.output_w, state.output_h), snapshot.pointer)
+        }
+        None => virtual_pointer_space((state.output_w, state.output_h))?,
+    };
+    Ok(VptrSession {
+        conn,
+        queue,
+        state,
+        seat,
+        vptr,
+        output_w,
+        output_h,
+        origin_x,
+        origin_y,
+        deadline,
+        held: Vec::new(),
+        done: false,
+    })
+}
+
+/// KWin's portal/libei input goes to whatever holds focus when it lands, so
+/// activating a KWin handle first wouldn't bind the input to that window. The
+/// refusal is the one every compositor without such an adapter gives.
+pub(crate) fn refuse_kwin_input(window_id: u64) -> anyhow::Result<()> {
+    if kwin_capture::knows_window(window_id) {
+        return Err(no_input_activation(window_id));
+    }
+    Ok(())
+}
+
+fn no_input_activation(window_id: u64) -> anyhow::Error {
+    anyhow::anyhow!(
+        "foreground_unavailable: this Wayland compositor does not expose a verified, \
+         target-addressable activation adapter for window {window_id}; refusing global \
+         input because it could affect the wrong application"
+    )
+}
+
+/// Bring one exact window forward for its own sake: `bring_to_front`, and a menu
+/// path fired through AT-SPI. No global input follows, so KWin's activation is
+/// safe here where [`activate_window_for_input_target`] refuses it.
+pub fn activate_window(window_id: u64, target_pid: Option<u32>) -> anyhow::Result<()> {
+    if kwin_capture::knows_window(window_id) {
+        return kwin_capture::activate(window_id, target_pid);
+    }
+    activate_window_for_input_target(window_id, target_pid)
+}
+
+/// Focus and raise a specific native Wayland toplevel before focus-bound
+/// keyboard or portal/libei input. wlroots exposes an activation request on its
+/// foreign-toplevel protocol; GNOME uses the bundled compositor helper. Other
+/// compositors must refuse until they provide an equally target-addressable
+/// adapter, because global injection without this gate can affect the wrong app.
+pub fn activate_window_for_input(window_id: u64) -> anyhow::Result<()> {
+    let pid = crate::atspi::list_windows(None)
+        .into_iter()
+        .find(|window| window.xid == window_id)
+        .and_then(|window| window.pid);
+    activate_window_for_input_target(window_id, pid)
+}
+
+/// Activate a Wayland target with an explicit process identity when available.
+/// The bundled compositor does not depend on connection-local Wayland object
+/// ids: its control protocol resolves the one mapped toplevel owned by `pid`.
+pub fn activate_window_for_input_target(
+    window_id: u64,
+    target_pid: Option<u32>,
+) -> anyhow::Result<()> {
+    refuse_kwin_input(window_id)?;
+    if is_wayland() && hyprland::is_session() {
+        // A full compositor address must never enter the generic protocol-id
+        // or title-matching route. This observation-only adapter can attest an
+        // already-active target, but cannot switch focus to a different one.
+        if hyprland::target_is_active(window_id, target_pid)? {
+            return Ok(());
+        }
+        anyhow::bail!("foreground_unavailable: exact-address Hyprland activation is not implemented; refusing title-based activation");
+    }
+    if niri::is_session() {
+        // A niri id never enters the foreign-toplevel title route: focus the
+        // exact window and read the focus back.
+        return niri::activate(window_id, target_pid);
+    }
+    if is_inject_mode() {
+        let pid = target_pid.ok_or_else(|| {
+            anyhow::anyhow!(
+                "foreground_unavailable: cua-compositor activation requires a verified target pid"
+            )
+        })?;
+        inject_send(&[format!("f {pid}")])?;
+        remember_inject_focused_target(pid, window_id);
+        crate::interaction::pause(std::time::Duration::from_millis(60));
+        return Ok(());
+    }
+
+    let conn = Connection::connect_to_env()?;
+    let mut queue = conn.new_event_queue::<State>();
+    let qh = queue.handle();
+    conn.display().get_registry(&qh, ());
+    let mut state = State::default();
+    queue.roundtrip(&mut state)?;
+    for _ in 0..4 {
+        queue.roundtrip(&mut state)?;
+    }
+
+    if let (Some(_), Some(seat), Some(handle)) = (
+        state.manager.as_ref(),
+        state.seats.selected(),
+        matching_handle(&state, window_id),
+    ) {
+        let protocol_id = handle.id().protocol_id();
+        handle.activate(&seat);
+        let deadline =
+            crate::interaction::operation_deadline(std::time::Duration::from_millis(500));
+        let activated = crate::interaction::confirm(deadline, |_| {
+            queue.roundtrip(&mut state)?;
+            anyhow::Ok(
+                state
+                    .toplevels
+                    .get(&protocol_id)
+                    .is_some_and(|toplevel| toplevel.activated),
+            )
+        })?;
+        if activated {
+            return Ok(());
+        }
+    }
+
+    if shell_helper::activate_window(window_id) {
+        crate::interaction::pause(std::time::Duration::from_millis(60));
+        return Ok(());
+    }
+
+    Err(no_input_activation(window_id))
+}
+
+/// Query one `wl_output`'s pixel dimensions via a short Wayland roundtrip,
+/// independent of the virtual-pointer protocol. Only used by the libei click to
+/// resolve its `(0, 0)` centre default; it is not the desktop layout, so it
+/// must not bound coordinates. Falls back to `(1, 1)` when no output reports a mode.
+#[cfg(feature = "portal-input")]
+fn output_dimensions() -> anyhow::Result<(u32, u32)> {
+    let conn = Connection::connect_to_env()?;
+    let mut queue = conn.new_event_queue::<State>();
+    let qh = queue.handle();
+    conn.display().get_registry(&qh, ());
+    let mut state = State::default();
+    queue.roundtrip(&mut state)?;
+    for _ in 0..4 {
+        queue.roundtrip(&mut state)?;
+    }
+    Ok((state.output_w.max(1), state.output_h.max(1)))
+}
+
+/// Map a cua/X11 pointer button (1=left / 2=middle / 3=right) to its evdev
+/// code, which is what `zwlr_virtual_pointer_v1::button` expects.
+pub fn evdev_pointer_button(button: u8) -> u32 {
+    match button {
+        2 => 0x112, // BTN_MIDDLE
+        3 => 0x111, // BTN_RIGHT
+        _ => 0x110, // BTN_LEFT
+    }
+}
+
+fn event_time_ms() -> u32 {
+    static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    START
+        .get_or_init(std::time::Instant::now)
+        .elapsed()
+        .as_millis()
+        .clamp(1, u32::MAX as u128) as u32
+}
+
+/// Click a native Wayland toplevel identified by its `window_id` (the
+/// foreign-toplevel protocol id from `list_windows`) at output-relative
+/// `(x, y)`, with `button` (1/2/3 = left/middle/right) emitted `count` times.
+/// Coordinates default to the output centre when both x and y are zero so
+/// the legacy focus-based behaviour is preserved when callers can't supply
+/// real coords. A short delay between iterations gives the compositor time
+/// to discriminate single vs. double clicks.
+pub fn click(window_id: u64, at: AimedPoint, count: u32, button: u8) -> anyhow::Result<()> {
+    // Before the fallback below can ask for portal consent on a doomed call.
+    refuse_kwin_input(window_id)?;
+    with_libei_fallback(
+        || click_vptr(Some(window_id), at, count, button, None),
+        || {
+            libei_wait_pointer_ready()?;
+            activate_window_for_input(window_id)?;
+            libei_click(at.point.0, at.point.1, count, button)
+        },
+    )
+}
+
+/// Click through a foreground target already guarded by
+/// [`crate::interaction::with_target_foreground`]. wlroots keeps its native
+/// virtual-pointer path.
+/// If that path is unavailable and libei needs a potentially blocking portal
+/// readiness wait, re-enter the exact foreground guard *after* readiness so
+/// KWin/GNOME/Sway ownership and focus are freshly verified immediately before
+/// the actual libei dispatch.
+#[cfg(feature = "portal-input")]
+pub fn click_focused(at: AimedPoint, count: u32, button: u8) -> anyhow::Result<()> {
+    let (x, y) = at.point;
+    with_libei_fallback(
+        || click_vptr(None, at, count, button, None),
+        || {
+            libei_wait_pointer_ready()?;
+            if let Some((pid, window_id)) = current_foreground_target() {
+                return crate::interaction::with_target_foreground(
+                    pid,
+                    window_id,
+                    crate::interaction::RestoreMode::RestorePrevious,
+                    || libei_click(x, y, count, button),
+                );
+            }
+            libei_click(x, y, count, button)
+        },
+    )
+}
+
+#[cfg(not(feature = "portal-input"))]
+pub fn click_focused(at: AimedPoint, count: u32, button: u8) -> anyhow::Result<()> {
+    click_vptr(None, at, count, button, None)
+}
+
+/// Click a desktop-absolute point without selecting or activating a toplevel.
+/// This is the Wayland peer of an XTest root-window click and is used only by
+/// the explicit desktop capture scope.
+pub fn click_desktop(
+    space: &DesktopInputSpace,
+    x: i32,
+    y: i32,
+    count: u32,
+    button: u8,
+) -> anyhow::Result<()> {
+    if is_inject_mode() {
+        let btn = evdev_button(button as u32);
+        return inject_send(&[format!("d {x} {y} {} {btn}", count.max(1))]);
+    }
+    let (x, y) = space.input_layout(x, y)?;
+    with_libei_fallback(
+        || click_vptr(None, (x, y).into(), count, button, Some(space)),
+        || libei_click_point(x, y, count, button),
+    )
+}
+
+/// The niri pointer space now, read on an attested connection, or `None`
+/// off niri.
+fn niri_pointer_space_now() -> anyhow::Result<Option<(i32, i32, u32, u32)>> {
+    if !niri::is_session() {
+        return Ok(None);
+    }
+    niri::pointer_space()
+        .map(Some)
+        .map_err(niri::input_unavailable)
+}
+
+/// Refuse when the compositor's pointer space no longer matches the extent
+/// the session scales `motion_absolute` by: every motion would land elsewhere.
+fn pointer_space_holds(
+    session: (i32, i32, u32, u32),
+    current: (i32, i32, u32, u32),
+) -> anyhow::Result<()> {
+    let current = select_virtual_pointer_space((1, 1), Some(current));
+    anyhow::ensure!(
+        session == current,
+        "foreground_unavailable: the niri pointer space changed from {session:?} to {current:?}; take a new screenshot"
+    );
+    Ok(())
+}
+
+/// Deliver the `count` events of one gesture, the presses of a click train
+/// or the ticks of a scroll, rechecking right before each one. `between`
+/// separates two events (a pause, and any motion that re-aims the pointer)
+/// and runs before the recheck, so nothing waits between the check and the
+/// event. A first press can close its target or open another window over
+/// the point, so the next press would reach whatever is there now: it stops
+/// instead. A refusal after an event landed says how many did, without the
+/// `foreground_unavailable` prefix that would report no effect.
+fn gated_events<S>(
+    sess: &mut S,
+    count: u32,
+    (gesture, events): (&str, &str),
+    mut between: impl FnMut(&mut S) -> anyhow::Result<()>,
+    mut recheck: impl FnMut(&S) -> anyhow::Result<()>,
+    mut deliver: impl FnMut(&mut S, u32) -> anyhow::Result<()>,
+) -> anyhow::Result<()> {
+    let count = count.max(1);
+    for i in 0..count {
+        if i > 0 {
+            between(sess)?;
+        }
+        if let Err(refusal) = recheck(sess) {
+            if i == 0 {
+                return Err(refusal);
+            }
+            anyhow::bail!("{gesture} stopped after {i} of {count} {events}: {refusal}");
+        }
+        deliver(sess, i)?;
+    }
+    Ok(())
+}
+
+/// Move a pressed button through `path`, rechecking right before each motion.
+/// The layout or the pointer space can change while the button is held (an
+/// output rescaled by the press), and the rest of the path would then land
+/// elsewhere: a refusal releases the button where the pointer is and says how
+/// far the drag got. The press went out, so it never reads as no effect.
+fn held_motions<S>(
+    sess: &mut S,
+    path: impl ExactSizeIterator<Item = (u32, u32)>,
+    mut recheck: impl FnMut(&S) -> anyhow::Result<()>,
+    mut motion: impl FnMut(&mut S, (u32, u32)) -> anyhow::Result<()>,
+    release: impl FnOnce(&mut S) -> anyhow::Result<()>,
+) -> anyhow::Result<()> {
+    let total = path.len();
+    for (i, point) in path.enumerate() {
+        if let Err(refusal) = recheck(sess) {
+            match release(sess) {
+                Ok(()) => anyhow::bail!(
+                    "drag stopped after {i} of {total} motions, and the button was released: {refusal}"
+                ),
+                Err(error) => anyhow::bail!(
+                    "drag stopped after {i} of {total} motions, and releasing the button failed ({error:#}): {refusal}"
+                ),
+            }
+        }
+        motion(sess, point)?;
+    }
+    Ok(())
+}
+
+/// The legacy wlroots route sends a click at `(0, 0)` to the output centre.
+/// On Hyprland and niri callers address the global layout, where `(0, 0)` is
+/// a real point (a window or bar at the top-left corner).
+fn centres_origin_click(x: i32, y: i32, layout_addressed: bool) -> bool {
+    x == 0 && y == 0 && !layout_addressed
+}
+
+/// On niri, admit the action's pointer input through [`niri::prepare_target`]:
+/// input addressed to a window, by id or by an outer foreground target,
+/// proves each layout point lands on that window and then activates it.
+/// Desktop-scope input names no window: its points are pixels of the single
+/// output. Recheck the gate with [`niri_gate_holds`] before each event.
+fn niri_pointer_gate(
+    window_id: Option<u64>,
+    desktop: Option<&DesktopInputSpace>,
+    sess: &VptrSession,
+    points: &[AimedPoint],
+) -> anyhow::Result<Option<niri::PointerGate>> {
+    if !niri::is_session() {
+        return Ok(None);
+    }
+    let window_id = window_id.or_else(|| {
+        desktop
+            .is_none()
+            .then(current_foreground_target)
+            .flatten()
+            .map(|(_, id)| id)
+    });
+    let target = match (window_id, desktop) {
+        (Some(id), _) => niri::Target::Window(id),
+        (None, Some(_)) => niri::Target::Desktop,
+        (None, None) => niri::Target::Unaddressed,
+    };
+    let space = (sess.origin_x, sess.origin_y, sess.output_w, sess.output_h);
+    niri::prepare_target(target, space, points)
+}
+
+fn niri_gate_holds(gate: &mut Option<niri::PointerGate>) -> anyhow::Result<()> {
+    gate.as_mut().map_or(Ok(()), niri::PointerGate::holds)
+}
+
+/// wlroots virtual-pointer implementation of [`click`]. Falls back to libei via
+/// [`with_libei_fallback`] when the compositor exposes no virtual-pointer.
+fn click_vptr(
+    window_id: Option<u64>,
+    at: AimedPoint,
+    count: u32,
+    button: u8,
+    desktop: Option<&DesktopInputSpace>,
+) -> anyhow::Result<()> {
+    let mut sess = open_vptr_session_in(window_id, desktop.and_then(|d| d.snapshot.as_ref()))?;
+    crate::interaction::pause(std::time::Duration::from_millis(40));
+    let (w, h) = (sess.output_w, sess.output_h);
+    let (x, y) = at.point;
+    let centre = centres_origin_click(x, y, hyprland::is_session() || niri::is_session());
+    let (px, py) = if centre {
+        (w / 2, h / 2)
+    } else {
+        sess.abs(x, y)
+    };
+    let aimed = if centre {
+        (sess.origin_x + px as i32, sess.origin_y + py as i32).into()
+    } else {
+        at
+    };
+    let mut gate = niri_pointer_gate(window_id, desktop, &sess, &[aimed])?;
+    let btn = evdev_pointer_button(button);
+    sess.point_at(px, py)?;
+    crate::interaction::pause(std::time::Duration::from_millis(15));
+    gated_events(
+        &mut sess,
+        count,
+        ("click", "presses"),
+        |sess| {
+            crate::interaction::pause(std::time::Duration::from_millis(80));
+            sess.motion(px, py)?;
+            crate::interaction::pause(std::time::Duration::from_millis(15));
+            Ok(())
+        },
+        |_| niri_gate_holds(&mut gate),
+        |sess, _| {
+            sess.press(btn)?;
+            crate::interaction::pause(std::time::Duration::from_millis(20));
+            sess.release(btn)
+        },
+    )?;
+    // Keep the synthetic-cursor registry in sync with the warp we just
+    // performed so a subsequent `get_cursor_position` reflects reality.
+    record_synth_cursor(sess.origin_x + px as i32, sess.origin_y + py as i32);
+    sess.finish()
+}
+
+/// Synthesize a vertical or horizontal scroll on the activated toplevel. Each
+/// tick emits an `axis_source(wheel)` + `axis_discrete(1)` pair through the
+/// virtual-pointer protocol, mirroring how a real wheel notch decomposes. The
+/// magnitude follows wl_pointer convention: ±10 (in wl_fixed = ×256) per tick.
+pub fn scroll(window_id: u64, direction: &str, amount: u32) -> anyhow::Result<()> {
+    scroll_at(window_id, None, direction, amount)
+}
+
+/// Translate window-local screenshot coordinates into compositor output
+/// coordinates when the active compositor exposes the target geometry.
+/// On niri a window without a reported place (a tiled one) refuses: passing
+/// `(x, y)` through would aim window-local coordinates at the layout origin.
+/// On niri the point carries the rectangle used, so the pointer gate refuses
+/// if the window moved before the input is sent.
+pub fn window_local_to_output(window_id: u64, x: i32, y: i32) -> anyhow::Result<AimedPoint> {
+    if niri::is_session() {
+        return niri::aim(window_id, x, y);
+    }
+    Ok(window_geometry(window_id)
+        .map(|(window_x, window_y, _, _)| (window_x.saturating_add(x), window_y.saturating_add(y)))
+        .unwrap_or((x, y))
+        .into())
+}
+
+/// Resolve geometry through stable title/app identity when a foreign-toplevel
+/// object ID came from an earlier Wayland connection. Protocol object IDs are
+/// connection-local, so direct equality is only a fast path.
+pub fn window_geometry(window_id: u64) -> Option<(i32, i32, u32, u32)> {
+    if is_wayland() && hyprland::is_session() {
+        // Do not fall back to title, app-id, X11, or another compositor when
+        // an explicit native Hyprland address is missing.
+        return hyprland::window_for_address(window_id).map(|w| (w.x, w.y, w.width, w.height));
+    }
+    if niri::is_session() {
+        // Only a placed floating niri window has geometry. A tiled one has
+        // none, and no title or app-id match may supply it.
+        let placed = niri::window_for_id(window_id).ok()?.placement.ok()?;
+        return Some((
+            placed.rect.x,
+            placed.rect.y,
+            placed.rect.width,
+            placed.rect.height,
+        ));
+    }
+    if let Some(window) = sway_ipc::window_for_id(window_id) {
+        return Some((window.x, window.y, window.width, window.height));
+    }
+
+    let identity = identity_for(window_id);
+    if let Some(identity) = identity.as_ref() {
+        if let Some(windows) = sway_ipc::list_windows() {
+            let title_matches = windows
+                .iter()
+                .filter(|window| !identity.title.is_empty() && window.title == identity.title)
+                .collect::<Vec<_>>();
+            if title_matches.len() == 1 {
+                let window = title_matches[0];
+                return Some((window.x, window.y, window.width, window.height));
+            }
+            let app_matches = windows
+                .iter()
+                .filter(|window| !identity.app_id.is_empty() && window.app_id == identity.app_id)
+                .collect::<Vec<_>>();
+            if app_matches.len() == 1 {
+                let window = app_matches[0];
+                return Some((window.x, window.y, window.width, window.height));
+            }
+        }
+    }
+
+    let windows = list_windows_dispatch(None);
+    if let Some(window) = windows
+        .iter()
+        .find(|window| window.xid == window_id && window.width > 0 && window.height > 0)
+    {
+        return Some((window.x, window.y, window.width, window.height));
+    }
+    let identity = identity?;
+    let title_matches = windows
+        .iter()
+        .filter(|window| {
+            window.width > 0
+                && window.height > 0
+                && !identity.title.is_empty()
+                && undecorated_native_title(window) == identity.title
+        })
+        .collect::<Vec<_>>();
+    if title_matches.len() == 1 {
+        let window = title_matches[0];
+        return Some((window.x, window.y, window.width, window.height));
+    }
+    let app_matches = windows
+        .iter()
+        .filter(|window| {
+            window.width > 0
+                && window.height > 0
+                && !identity.app_id.is_empty()
+                && window.app_name == identity.app_id
+        })
+        .collect::<Vec<_>>();
+    (app_matches.len() == 1).then(|| {
+        let window = app_matches[0];
+        (window.x, window.y, window.width, window.height)
+    })
+}
+
+/// Scroll after positioning the synthetic pointer over an output-relative
+/// target. Wayland routes wheel events to the surface beneath the pointer, so
+/// pixel-addressed scrolls must not inherit an unrelated cursor position.
+pub fn scroll_at(
+    window_id: u64,
+    point: Option<AimedPoint>,
+    direction: &str,
+    amount: u32,
+) -> anyhow::Result<()> {
+    refuse_kwin_input(window_id)?;
+    let direction = direction.to_string();
+    with_libei_fallback(
+        || scroll_vptr(Some(window_id), point, &direction, amount, None),
+        || {
+            libei_wait_scroll_ready()?;
+            activate_window_for_input(window_id)?;
+            if let Some(AimedPoint { point: (x, y), .. }) = point {
+                libei_move_absolute(x, y)?;
+            }
+            libei_scroll(&direction, amount)
+        },
+    )
+}
+
+/// Scroll at a desktop-absolute point without activating a named toplevel.
+pub fn scroll_desktop(
+    space: &DesktopInputSpace,
+    x: i32,
+    y: i32,
+    direction: &str,
+    amount: u32,
+) -> anyhow::Result<()> {
+    if is_inject_mode() {
+        return inject_scroll_desktop(x, y, direction, amount);
+    }
+    let (x, y) = space.input_layout(x, y)?;
+    let direction = direction.to_string();
+    with_libei_fallback(
+        || scroll_vptr(None, Some((x, y).into()), &direction, amount, Some(space)),
+        || {
+            libei_wait_scroll_ready()?;
+            libei_move_absolute(x, y)?;
+            libei_scroll(&direction, amount)
+        },
+    )
+}
+
+/// wlroots virtual-pointer implementation of [`scroll`].
+fn scroll_vptr(
+    window_id: Option<u64>,
+    point: Option<AimedPoint>,
+    direction: &str,
+    amount: u32,
+    desktop: Option<&DesktopInputSpace>,
+) -> anyhow::Result<()> {
+    // A niri window scroll without a point aims at the window's centre, so
+    // the wheel provably reaches the window rather than whatever is under the
+    // pointer.
+    let point = match (point, window_id) {
+        (None, Some(id)) if niri::is_session() => {
+            let (_, _, width, height) = window_geometry(id).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "foreground_unavailable: niri reports no on-screen place for window {id}; pass a point inside a floating window"
+                )
+            })?;
+            Some(niri::aim(id, (width / 2) as i32, (height / 2) as i32)?)
+        }
+        (point, _) => point,
+    };
+    let mut sess = open_vptr_session_in(window_id, desktop.and_then(|d| d.snapshot.as_ref()))?;
+    let mut gate = None;
+    if let Some(aimed) = point {
+        let (px, py) = sess.abs(aimed.point.0, aimed.point.1);
+        gate = niri_pointer_gate(window_id, desktop, &sess, &[aimed])?;
+        sess.point_at(px, py)?;
+        record_synth_cursor(sess.origin_x + px as i32, sess.origin_y + py as i32);
+        crate::interaction::pause(std::time::Duration::from_millis(15));
+    }
+    let (axis, sign): (Axis, i32) = match direction.to_ascii_lowercase().as_str() {
+        "up" => (Axis::VerticalScroll, -1),
+        "down" => (Axis::VerticalScroll, 1),
+        "left" => (Axis::HorizontalScroll, -1),
+        "right" => (Axis::HorizontalScroll, 1),
+        other => anyhow::bail!("unknown scroll direction: {other}"),
+    };
+    // axis_discrete: `value` is logical units (the wayland-rs wrapper
+    // converts to wl_fixed internally); `discrete` is the tick count.
+    let value: f64 = (sign as f64) * 10.0;
+    gated_events(
+        &mut sess,
+        amount,
+        ("scroll", "ticks"),
+        |_| {
+            crate::interaction::pause(std::time::Duration::from_millis(25));
+            Ok(())
+        },
+        |_| niri_gate_holds(&mut gate),
+        |sess, _| {
+            sess.send(|vptr| {
+                vptr.axis_source(AxisSource::Wheel);
+                vptr.axis_discrete(event_time_ms(), axis, value, sign);
+            })
+        },
+    )?;
+    sess.finish()
+}
+
+/// Last cursor position the agent warped to via `move_cursor_absolute`.
+/// Wayland exposes no protocol for clients to read the real global cursor
+/// position; a Wayland-conformant `get_cursor_position` can therefore only
+/// report what THIS process synthesized. Updated every `motion_absolute`
+/// emitted from `move_cursor_absolute` / `click` / `drag`.
+static SYNTH_CURSOR_POS: std::sync::OnceLock<std::sync::Mutex<Option<(i32, i32)>>> =
+    std::sync::OnceLock::new();
+
+fn record_synth_cursor(x: i32, y: i32) {
+    let cell = SYNTH_CURSOR_POS.get_or_init(|| std::sync::Mutex::new(None));
+    if let Ok(mut g) = cell.lock() {
+        *g = Some((x, y));
+    }
+}
+
+/// Returns the last `(x, y)` this process warped the cursor to via the
+/// Wayland virtual-pointer protocol, or `None` if no warp has happened in
+/// this process. The reading is "synthetic": Wayland forbids clients from
+/// querying the real cursor position, so this value diverges from reality
+/// the moment the user moves their physical mouse. Callers should surface
+/// `source: "synthetic"` in the structured payload.
+pub fn last_synth_cursor_pos() -> Option<(i32, i32)> {
+    SYNTH_CURSOR_POS
+        .get_or_init(|| std::sync::Mutex::new(None))
+        .lock()
+        .ok()
+        .and_then(|g| *g)
+}
+
+/// Warp the cursor to absolute output coordinates `(x, y)` using
+/// `zwlr_virtual_pointer_v1::motion_absolute`. Clamps to the output bounds
+/// reported by `open_vptr_session`. Emits a motion + frame and roundtrips so
+/// the compositor commits the warp before returning. Records the position in
+/// the synthetic-cursor registry so `last_synth_cursor_pos` can report it.
+pub fn move_cursor_absolute(window_id: Option<u64>, x: i32, y: i32) -> anyhow::Result<()> {
+    with_libei_fallback(
+        || move_cursor_absolute_vptr(window_id, x, y, None),
+        || libei_move_absolute(x, y),
+    )
+}
+
+/// Warp the cursor to a desktop-frame point (the `get_desktop_state` frame).
+pub fn move_cursor_desktop(space: &DesktopInputSpace, x: i32, y: i32) -> anyhow::Result<()> {
+    let (x, y) = space.input_layout(x, y)?;
+    with_libei_fallback(
+        || move_cursor_absolute_vptr(None, x, y, Some(space)),
+        || libei_move_absolute(x, y),
+    )
+}
+
+/// wlroots virtual-pointer implementation of [`move_cursor_absolute`].
+fn move_cursor_absolute_vptr(
+    window_id: Option<u64>,
+    x: i32,
+    y: i32,
+    desktop: Option<&DesktopInputSpace>,
+) -> anyhow::Result<()> {
+    let mut sess = open_vptr_session_in(window_id, desktop.and_then(|d| d.snapshot.as_ref()))?;
+    let (px, py) = sess.abs(x, y);
+    niri_pointer_gate(window_id, desktop, &sess, &[(x, y).into()])?;
+    sess.motion(px, py)?;
+    record_synth_cursor(sess.origin_x + px as i32, sess.origin_y + py as i32);
+    sess.finish()
+}
+
+/// Press-drag-release on a native Wayland toplevel. Emits one button press at
+/// `(from_x, from_y)`, then `steps` interpolated motion events along the
+/// straight segment to `(to_x, to_y)`, then a release. Coordinates are
+/// output-relative; window-local coords need the nested cua-compositor
+/// injection socket (`CUA_INJECT_SOCKET`).
+pub fn drag(
+    window_id: u64,
+    from: AimedPoint,
+    to: AimedPoint,
+    steps: u32,
+    duration_ms: u64,
+    button: u8,
+) -> anyhow::Result<()> {
+    refuse_kwin_input(window_id)?;
+    let ((from_x, from_y), (to_x, to_y)) = (from.point, to.point);
+    with_libei_fallback(
+        || drag_vptr(Some(window_id), from, to, steps, button, None),
+        || {
+            libei_wait_pointer_ready()?;
+            activate_window_for_input(window_id)?;
+            libei_drag(from_x, from_y, to_x, to_y, steps, duration_ms, button)
+        },
+    )
+}
+
+/// Drag through desktop-absolute points without activating a named toplevel.
+#[allow(clippy::too_many_arguments)]
+pub fn drag_desktop(
+    space: &DesktopInputSpace,
+    from_x: i32,
+    from_y: i32,
+    to_x: i32,
+    to_y: i32,
+    steps: u32,
+    duration_ms: u64,
+    button: u8,
+) -> anyhow::Result<()> {
+    let (from_x, from_y) = space.input_layout(from_x, from_y)?;
+    let (to_x, to_y) = space.input_layout(to_x, to_y)?;
+    with_libei_fallback(
+        || {
+            drag_vptr(
+                None,
+                (from_x, from_y).into(),
+                (to_x, to_y).into(),
+                steps,
+                button,
+                Some(space),
+            )
+        },
+        || {
+            libei_wait_pointer_ready()?;
+            libei_drag(from_x, from_y, to_x, to_y, steps, duration_ms, button)
+        },
+    )
+}
+
+/// The most intermediate motions a drag sends: the `steps` maximum the drag
+/// tools advertise.
+const MAX_DRAG_STEPS: u32 = 200;
+
+/// A drag's motions after its press: `steps` points from `from` toward `to`,
+/// each aimed through `aim`, then `end`. `steps` is clamped to
+/// `1..=MAX_DRAG_STEPS`, and each point is computed only when it is sent.
+fn drag_path(
+    from: (i32, i32),
+    to: (i32, i32),
+    steps: u32,
+    end: (u32, u32),
+    mut aim: impl FnMut(i32, i32) -> (u32, u32),
+) -> impl ExactSizeIterator<Item = (u32, u32)> {
+    let n = steps.clamp(1, MAX_DRAG_STEPS) as usize;
+    (1..n + 2).map(move |s| {
+        if s > n {
+            return end;
+        }
+        let t = s as f64 / n as f64;
+        // In i64, the distance between any two i32 points cannot overflow.
+        let x = (f64::from(from.0) + (i64::from(to.0) - i64::from(from.0)) as f64 * t).round();
+        let y = (f64::from(from.1) + (i64::from(to.1) - i64::from(from.1)) as f64 * t).round();
+        aim(x as i32, y as i32)
+    })
+}
+
+/// wlroots virtual-pointer implementation of [`drag`].
+fn drag_vptr(
+    window_id: Option<u64>,
+    from: AimedPoint,
+    to: AimedPoint,
+    steps: u32,
+    button: u8,
+    desktop: Option<&DesktopInputSpace>,
+) -> anyhow::Result<()> {
+    let mut sess = open_vptr_session_in(window_id, desktop.and_then(|d| d.snapshot.as_ref()))?;
+    crate::interaction::pause(std::time::Duration::from_millis(40));
+    let (w, h) = (sess.output_w, sess.output_h);
+    let btn = evdev_pointer_button(button);
+    let (origin_x, origin_y) = (sess.origin_x, sess.origin_y);
+    let clamp_xy = |x: i32, y: i32| pointer_abs(origin_x, origin_y, w, h, x, y);
+    let ((from_x, from_y), (to_x, to_y)) = (from.point, to.point);
+    let (fx, fy) = clamp_xy(from_x, from_y);
+    let (tx, ty) = clamp_xy(to_x, to_y);
+    let mut gate = niri_pointer_gate(window_id, desktop, &sess, &[from, to])?;
+    sess.motion(fx, fy)?;
+    crate::interaction::pause(std::time::Duration::from_millis(15));
+    niri_gate_holds(&mut gate)?;
+    sess.press(btn)?;
+    let path = drag_path((from_x, from_y), (to_x, to_y), steps, (tx, ty), clamp_xy);
+    held_motions(
+        &mut sess,
+        path,
+        |_| niri_gate_holds(&mut gate),
+        |sess, (x, y)| {
+            sess.motion(x, y)?;
+            crate::interaction::pause(std::time::Duration::from_millis(8));
+            Ok(())
+        },
+        |sess| sess.release(btn),
+    )?;
+    // Sync the synthetic-cursor registry with the drag endpoint so a
+    // subsequent `get_cursor_position` reports where we left the pointer.
+    record_synth_cursor(origin_x + tx as i32, origin_y + ty as i32);
+    sess.release(btn)?;
+    sess.finish()
+}
+
+/// Type Unicode text into the focused Wayland surface via `wtype` (the
+/// virtual-keyboard tool — `zwp_virtual_keyboard_v1` under the hood; it builds
+/// the xkb keymap and resolves shift levels for us). This mirrors the X11
+/// backend's XSendEvent typing and the capture slice's shell-out to `grim`.
+/// foreign-toplevel exposes no pid and Wayland delivers keys to the *focused*
+/// surface, so this is window_id-free; pair it with `click`/`activate` to put
+/// the intended window in focus first. Under niri, text goes out on niri's
+/// own keymap instead (see [`niri::keyboard`]).
+pub fn type_text(window_id: u64, text: &str) -> anyhow::Result<()> {
+    type_into(Some(window_id), text)
+}
+
+/// Type into a surface whose exact Sway container is already held focused by
+/// the caller. This avoids re-resolving a title that can change mid-sequence
+/// (for example after opening a Chromium tab). Under niri, text goes out on
+/// niri's own keymap and stops if focus leaves the window that had it.
+pub fn type_text_focused(text: &str) -> anyhow::Result<()> {
+    type_into(None, text)
+}
+
+/// [`type_text_focused`] one character at a time, `gap` after each. The whole
+/// text is checked and its line endings made line feeds first, so a character
+/// that can't be typed refuses it with nothing sent, and `\r\n` is one Return.
+pub fn type_text_focused_paced(text: &str, gap: std::time::Duration) -> anyhow::Result<()> {
+    let text = text_keys::typable_text(text)?;
+    let total = text.chars().count();
+    let mut buf = [0u8; 4];
+    for (done, ch) in text.chars().enumerate() {
+        match type_into(None, ch.encode_utf8(&mut buf)) {
+            Err(error) if done > 0 => return Err(stopped_after(done, total, &error)),
+            result => result?,
+        }
+        std::thread::sleep(gap);
+    }
+    Ok(())
+}
+
+/// A stop after `done` characters went out. A refusal of the next one loses its
+/// claim that nothing was typed, which held only for that character.
+fn stopped_after(done: usize, total: usize, error: &anyhow::Error) -> anyhow::Error {
+    let detail = format!("{error:#}");
+    let detail = detail
+        .strip_suffix(text_keys::NOTHING_TYPED)
+        .map_or(detail.as_str(), |rest| rest.trim_end_matches("; "));
+    anyhow::anyhow!("type_text stopped after {done} of {total} characters: {detail}")
+}
+
+/// [`type_text`] into `window`, activated first, or [`type_text_focused`].
+fn type_into(window: Option<u64>, text: &str) -> anyhow::Result<()> {
+    if text.is_empty() {
+        return Ok(());
+    }
+    let text = &*text_keys::typable_text(text)?;
+    window.map_or(Ok(()), activate_window_for_input)?;
+    if niri::is_session() {
+        return niri::keyboard::type_text(window.or_else(niri_expected_window), text);
+    }
+    // Lead with a no-op Shift_L tap: on a freshly-focused window under a headless
+    // seat (notably sway), the compositor needs the first virtual-keyboard event
+    // to wire up keyboard routing, and that first key is dropped. Sacrificing a
+    // modifier tap (no character) absorbs the drop so the real text lands intact;
+    // it's harmless where routing is already live (labwc).
+    let result = wtype_output(&["-k", "Shift_L", "--", text]);
+    match result {
+        Ok(out) if out.status.success() => Ok(()),
+        // `wtype` relies on `zwp_virtual_keyboard_v1`, which KWin/Plasma and
+        // Mutter/GNOME don't implement (and the binary may be missing wtype
+        // entirely). On a portal-input build, route typing through libei's
+        // `ei_text` interface instead. See #1982.
+        other => with_wtype_libei_fallback(
+            || {
+                libei_wait_keyboard_ready()?;
+                window.map_or(Ok(()), activate_window_for_input)?;
+                libei_type_text(text)
+            },
+            other.map(|o| String::from_utf8_lossy(&o.stderr).into_owned()),
+        ),
+    }
+}
+
+/// Type text and press one key while an outer exact-container focus guard is
+/// active. Keeping both operations in one virtual-keyboard lifetime avoids a
+/// headless wlroots seat dropping the first event from a second `wtype`
+/// process after the text has landed.
+pub fn type_text_then_key_focused(text: &str, key: &str) -> anyhow::Result<()> {
+    let text = &*text_keys::typable_text(text)?;
+    let keysym = key_to_keysym(key);
+    if niri::is_session() {
+        niri::keyboard::type_text(niri_expected_window(), text)?;
+        return niri::keyboard::press(niri_expected_window(), &[], &keysym);
+    }
+    let result = wtype_output(&[
+        "-k",
+        "Shift_L",
+        "-s",
+        "30",
+        text,
+        "-s",
+        "50",
+        "-k",
+        keysym.as_str(),
+    ]);
+    match result {
+        Ok(out) if out.status.success() => Ok(()),
+        other => with_wtype_libei_fallback(
+            || {
+                libei_wait_keyboard_ready()?;
+                libei_type_text(text)?;
+                libei_press_key(key)
+            },
+            other.map(|out| String::from_utf8_lossy(&out.stderr).into_owned()),
+        ),
+    }
+}
+
+/// Press a single named key into the focused Wayland surface via `wtype -k`.
+pub fn press_key(window_id: u64, key: &str) -> anyhow::Result<()> {
+    press_into(Some(window_id), key)
+}
+
+/// Press one key while an outer exact-container focus guard is active.
+pub fn press_key_focused(key: &str) -> anyhow::Result<()> {
+    if is_inject_mode() {
+        let (pid, window_id) = inject_focused_target()?;
+        return inject_press_key(pid, window_id, key);
+    }
+    press_into(None, key)
+}
+
+/// [`press_key`] into `window`, activated first, or [`press_key_focused`].
+fn press_into(window: Option<u64>, key: &str) -> anyhow::Result<()> {
+    window.map_or(Ok(()), activate_window_for_input)?;
+    let keysym = key_to_keysym(key);
+    if niri::is_session() {
+        return niri::keyboard::press(window.or_else(niri_expected_window), &[], &keysym);
+    }
+    // Keep the sacrificial modifier and requested key in one virtual-keyboard
+    // lifetime. Starting a second wtype process creates a fresh protocol object,
+    // causing headless seats to drop the requested key as their first event.
+    let result = wtype_output(&["-k", "Shift_L", "-k", keysym.as_str()]);
+    match result {
+        Ok(out) if out.status.success() => Ok(()),
+        other => with_wtype_libei_fallback(
+            || {
+                libei_wait_keyboard_ready()?;
+                window.map_or(Ok(()), activate_window_for_input)?;
+                libei_press_key(key)
+            },
+            other.map(|o| String::from_utf8_lossy(&o.stderr).into_owned()),
+        ),
+    }
+}
+
+/// Press a key combination (modifiers + final key) via `wtype`. Each modifier
+/// is pressed before the key, then released after, exactly like
+/// `wtype -M ctrl -M shift -k key -m shift -m ctrl`. Unknown values pass
+/// straight to wtype's `-k` so single-character keys and X keysym names work
+/// as-is. This is the Wayland equivalent of the X11 `send_key` modifier mask.
+pub fn hotkey(window_id: u64, keys: &[String]) -> anyhow::Result<()> {
+    chord_into(Some(window_id), keys)
+}
+
+/// Send a chord while an outer exact-container focus guard is active.
+pub fn hotkey_focused(keys: &[String]) -> anyhow::Result<()> {
+    if is_inject_mode() {
+        let (pid, window_id) = inject_focused_target()?;
+        return inject_hotkey(pid, window_id, keys);
+    }
+    chord_into(None, keys)
+}
+
+/// [`hotkey`] into `window`, activated first, or [`hotkey_focused`].
+fn chord_into(window: Option<u64>, keys: &[String]) -> anyhow::Result<()> {
+    window.map_or(Ok(()), activate_window_for_input)?;
+    let (mods, final_key) = partition_modifiers(keys)?;
+    if niri::is_session() {
+        let expected = window.or_else(niri_expected_window);
+        return niri::keyboard::press(expected, &mods, &chord_keysym(&final_key));
+    }
+    if let Ok(()) = virtual_keyboard::hotkey(&mods, &final_key) {
+        return Ok(());
+    }
+    let keysym = key_to_keysym(&final_key);
+    let args = wtype_hotkey_args(&mods, &keysym);
+    let result = wtype_output(&args);
+    match result {
+        Ok(out) if out.status.success() => Ok(()),
+        other => {
+            let stderr = other.map(|o| String::from_utf8_lossy(&o.stderr).into_owned());
+            #[cfg(feature = "portal-input")]
+            {
+                with_wtype_libei_fallback(
+                    || {
+                        libei::wait_keyboard_ready()?;
+                        window.map_or(Ok(()), activate_window_for_input)?;
+                        libei_hotkey(&mods, &final_key)
+                    },
+                    stderr,
+                )
+            }
+            #[cfg(not(feature = "portal-input"))]
+            {
+                anyhow::bail!(
+                    "wtype {} failed: {}",
+                    args.join(" "),
+                    stderr.unwrap_or_else(|_| "wtype unavailable".into())
+                );
+            }
+        }
+    }
+}
+
+/// Run `wtype` with `args`.
+fn wtype_output<S: AsRef<std::ffi::OsStr>>(args: &[S]) -> std::io::Result<std::process::Output> {
+    std::process::Command::new("wtype").args(args).output()
+}
+
+fn wtype_hotkey_args(mods: &[String], keysym: &str) -> Vec<String> {
+    // Keep the same harmless first-event primer used by `press_key`. A fresh
+    // virtual-keyboard object on headless seats can drop its first event. Give
+    // wlroots one event cycle after the primer and modifier transitions;
+    // otherwise Chromium can miss a coalesced shortcut even though wtype exits
+    // successfully.
+    let mut args: Vec<String> = vec!["-k".into(), "Shift_L".into(), "-s".into(), "30".into()];
+    for m in mods {
+        args.push("-M".into());
+        args.push(m.clone());
+    }
+    args.push("-s".into());
+    args.push("20".into());
+    args.push("-k".into());
+    args.push(keysym.to_owned());
+    args.push("-s".into());
+    args.push("20".into());
+    // Release modifiers in reverse press order.
+    for m in mods.iter().rev() {
+        args.push("-m".into());
+        args.push(m.clone());
+    }
+    args
+}
+
+/// Split a `keys` array into wtype-compatible modifier names and a single
+/// final key. Recognised modifier inputs: ctrl/control, alt, shift,
+/// super/meta/cmd/command/win/windows. The final key must be the one
+/// non-modifier in the list.
+fn partition_modifiers(keys: &[String]) -> anyhow::Result<(Vec<String>, String)> {
+    let mut mods: Vec<String> = Vec::new();
+    let mut non_mods: Vec<String> = Vec::new();
+    for k in keys {
+        match k.to_ascii_lowercase().as_str() {
+            "ctrl" | "control" => mods.push("ctrl".into()),
+            "alt" => mods.push("alt".into()),
+            "shift" => mods.push("shift".into()),
+            "super" | "meta" | "cmd" | "command" | "win" | "windows" => mods.push("logo".into()),
+            _ => non_mods.push(k.clone()),
+        }
+    }
+    let final_key = non_mods
+        .last()
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("hotkey requires at least one non-modifier key"))?;
+    Ok((mods, final_key))
+}
+
+/// The niri window focused keyboard input must reach: the target an outer
+/// [`crate::interaction::with_target_foreground`] focused, or `None` for
+/// desktop-scoped input into whatever has focus.
+fn niri_expected_window() -> Option<u64> {
+    current_foreground_target().map(|(_, window_id)| window_id)
+}
+
+/// The keysym of a chord's final key. A letter names its key whatever its
+/// case, as the virtual-keyboard chord route reads it: `ctrl+A` is `ctrl+a`,
+/// and Shift is held only when asked for.
+fn chord_keysym(key: &str) -> String {
+    match key.as_bytes() {
+        [letter] if letter.is_ascii_alphabetic() => key.to_ascii_lowercase(),
+        _ => key_to_keysym(key),
+    }
+}
+
+/// Map cua key names to X keysym names that `wtype -k` understands. Unknown
+/// values pass through (single characters and valid keysym names work as-is).
+fn key_to_keysym(key: &str) -> String {
+    match key.to_lowercase().as_str() {
+        "ctrl" | "control" => "Control_L",
+        "alt" => "Alt_L",
+        "shift" => "Shift_L",
+        "super" | "meta" | "cmd" | "command" | "win" | "windows" => "Super_L",
+        "enter" | "return" => "Return",
+        "tab" => "Tab",
+        "esc" | "escape" => "Escape",
+        "space" => "space",
+        "backspace" => "BackSpace",
+        "delete" | "del" => "Delete",
+        "up" => "Up",
+        "down" => "Down",
+        "left" => "Left",
+        "right" => "Right",
+        "home" => "Home",
+        "end" => "End",
+        "pageup" | "page_up" => "Prior",
+        "pagedown" | "page_down" => "Next",
+        _ => return key.to_string(),
+    }
+    .to_string()
+}
+
+// ── libei / portal fallback adapters ───────────────────────────────────────
+//
+// These bridge the wlroots-shaped public input API (output-relative integer
+// coordinates, cua button codes, X-keysym key names) onto the libei worker
+// (`libei` module), which speaks logical device-region floats and evdev
+// codes. They are the recovery path for compositors with no
+// `zwlr_virtual_pointer_v1` (KWin/Plasma, Mutter/GNOME) — see #1982.
+//
+// In a build WITHOUT the `portal-input` feature the `libei` module does not
+// exist, so each adapter compiles to an error stub. The dispatch seams above
+// only ever CALL these inside `#[cfg(feature = "portal-input")]` branches, so
+// the stubs are dead in that build; they exist purely so the closures passed
+// to `with_libei_fallback` / `with_wtype_libei_fallback` type-check.
+
+/// libei recovery wrapper for the `wtype`-based typing/key functions: when the
+/// virtual-keyboard shell-out failed (`wtype_err`), try the libei `run` on a
+/// portal-input build, otherwise surface the original wtype failure.
+fn with_wtype_libei_fallback(
+    #[allow(unused_variables)] run: impl FnOnce() -> anyhow::Result<()>,
+    wtype_err: Result<String, std::io::Error>,
+) -> anyhow::Result<()> {
+    #[cfg(feature = "portal-input")]
+    {
+        match wtype_err {
+            Ok(stderr) => {
+                tracing::info!("wtype failed ({stderr}); falling back to libei/portal typing")
+            }
+            Err(e) => {
+                tracing::info!("wtype unavailable ({e}); falling back to libei/portal typing")
+            }
+        }
+        run()
+    }
+    #[cfg(not(feature = "portal-input"))]
+    {
+        let _ = run;
+        match wtype_err {
+            Ok(stderr) => anyhow::bail!("wtype failed: {stderr}"),
+            Err(e) => anyhow::bail!("wtype unavailable: {e}"),
+        }
+    }
+}
+
+/// Under niri, input goes only to the attested compositor: a failed
+/// attested route is refused, keeping its detail, rather than recovered.
+fn niri_refuses_libei(detail: String) -> anyhow::Error {
+    anyhow::anyhow!(
+        "foreground_unavailable: {}; under niri the libei/portal fallback is refused because it is not attested",
+        detail.trim_end()
+    )
+}
+
+// Stubs for the no-feature build: the dispatch seams never call these (the
+// libei branch in `with_libei_fallback` / `with_wtype_libei_fallback` is
+// `#[cfg]`-d out), but the closures still need them to exist to type-check.
+#[cfg(not(feature = "portal-input"))]
+fn libei_wait_pointer_ready() -> anyhow::Result<()> {
+    unreachable!("libei fallback compiled out (no portal-input feature)")
+}
+#[cfg(not(feature = "portal-input"))]
+fn libei_wait_scroll_ready() -> anyhow::Result<()> {
+    unreachable!("libei fallback compiled out (no portal-input feature)")
+}
+#[cfg(not(feature = "portal-input"))]
+fn libei_wait_keyboard_ready() -> anyhow::Result<()> {
+    unreachable!("libei fallback compiled out (no portal-input feature)")
+}
+#[cfg(not(feature = "portal-input"))]
+fn libei_click(_x: i32, _y: i32, _count: u32, _button: u8) -> anyhow::Result<()> {
+    unreachable!("libei fallback compiled out (no portal-input feature)")
+}
+#[cfg(not(feature = "portal-input"))]
+fn libei_click_point(_x: i32, _y: i32, _count: u32, _button: u8) -> anyhow::Result<()> {
+    unreachable!("libei fallback compiled out (no portal-input feature)")
+}
+#[cfg(not(feature = "portal-input"))]
+fn libei_scroll(_direction: &str, _amount: u32) -> anyhow::Result<()> {
+    unreachable!("libei fallback compiled out (no portal-input feature)")
+}
+#[cfg(not(feature = "portal-input"))]
+fn libei_move_absolute(_x: i32, _y: i32) -> anyhow::Result<()> {
+    unreachable!("libei fallback compiled out (no portal-input feature)")
+}
+#[cfg(not(feature = "portal-input"))]
+#[allow(clippy::too_many_arguments)]
+fn libei_drag(
+    _from_x: i32,
+    _from_y: i32,
+    _to_x: i32,
+    _to_y: i32,
+    _steps: u32,
+    _duration_ms: u64,
+    _button: u8,
+) -> anyhow::Result<()> {
+    unreachable!("libei fallback compiled out (no portal-input feature)")
+}
+#[cfg(not(feature = "portal-input"))]
+fn libei_type_text(_text: &str) -> anyhow::Result<()> {
+    unreachable!("libei fallback compiled out (no portal-input feature)")
+}
+#[cfg(not(feature = "portal-input"))]
+fn libei_press_key(_key: &str) -> anyhow::Result<()> {
+    unreachable!("libei fallback compiled out (no portal-input feature)")
+}
+#[cfg(feature = "portal-input")]
+fn cua_button_to_libei(button: u8) -> libei::Button {
+    match button {
+        2 => libei::Button::Middle,
+        3 => libei::Button::Right,
+        _ => libei::Button::Left,
+    }
+}
+
+#[cfg(feature = "portal-input")]
+fn libei_wait_pointer_ready() -> anyhow::Result<()> {
+    libei::wait_pointer_ready()
+}
+
+#[cfg(feature = "portal-input")]
+fn libei_wait_scroll_ready() -> anyhow::Result<()> {
+    libei::wait_scroll_ready()
+}
+
+#[cfg(feature = "portal-input")]
+fn libei_wait_keyboard_ready() -> anyhow::Result<()> {
+    libei::wait_keyboard_ready()
+}
+
+#[cfg(feature = "portal-input")]
+fn libei_click(x: i32, y: i32, count: u32, button: u8) -> anyhow::Result<()> {
+    libei_click_with(x, y, count, button, output_dimensions)
+}
+
+#[cfg(feature = "portal-input")]
+fn libei_click_with(
+    x: i32,
+    y: i32,
+    count: u32,
+    button: u8,
+    dimensions: impl FnOnce() -> anyhow::Result<(u32, u32)>,
+) -> anyhow::Result<()> {
+    let (px, py) = if (x, y) == (0, 0) {
+        let (w, h) = dimensions()?;
+        ((w / 2) as i32, (h / 2) as i32)
+    } else {
+        (x, y)
+    };
+    libei_click_point(px, py, count, button)
+}
+
+/// Click exactly at layout point `(x, y)`. Desktop-scope clicks use this: there
+/// `(0, 0)` is a real pixel of the screenshot, not "the output centre".
+#[cfg(feature = "portal-input")]
+fn libei_click_point(x: i32, y: i32, count: u32, button: u8) -> anyhow::Result<()> {
+    let btn = cua_button_to_libei(button);
+    libei::move_absolute(x as f64, y as f64)?;
+    for i in 0..count.max(1) {
+        if i > 0 {
+            crate::interaction::pause(std::time::Duration::from_millis(80));
+        }
+        libei::click(x as f64, y as f64, btn)?;
+    }
+    record_synth_cursor(x, y);
+    Ok(())
+}
+
+#[cfg(feature = "portal-input")]
+fn libei_scroll(direction: &str, amount: u32) -> anyhow::Result<()> {
+    // libei scroll is logical-unit deltas; mirror the wlroots ±10/tick step.
+    let (dx, dy): (f64, f64) = match direction.to_ascii_lowercase().as_str() {
+        "up" => (0.0, -10.0),
+        "down" => (0.0, 10.0),
+        "left" => (-10.0, 0.0),
+        "right" => (10.0, 0.0),
+        other => anyhow::bail!("unknown scroll direction: {other}"),
+    };
+    for i in 0..amount.max(1) {
+        if i > 0 {
+            crate::interaction::pause(std::time::Duration::from_millis(25));
+        }
+        libei::scroll(dx, dy)?;
+    }
+    Ok(())
+}
+
+#[cfg(feature = "portal-input")]
+fn libei_move_absolute(x: i32, y: i32) -> anyhow::Result<()> {
+    libei::move_absolute(x as f64, y as f64)?;
+    record_synth_cursor(x, y);
+    Ok(())
+}
+
+#[cfg(feature = "portal-input")]
+fn libei_drag(
+    from_x: i32,
+    from_y: i32,
+    to_x: i32,
+    to_y: i32,
+    steps: u32,
+    duration_ms: u64,
+    button: u8,
+) -> anyhow::Result<()> {
+    // ei_button exposes separate Press/Released states, so the libei worker can
+    // hold the button across the interpolated motion — a genuine
+    // press→move→release drag.
+    let btn = cua_button_to_libei(button);
+    libei::drag(
+        from_x as f64,
+        from_y as f64,
+        to_x as f64,
+        to_y as f64,
+        steps,
+        duration_ms,
+        btn,
+    )?;
+    record_synth_cursor(to_x, to_y);
+    Ok(())
+}
+
+/// The time the input route may spend between the parts of `text`, at most.
+pub(crate) fn text_pacing(text: &str) -> std::time::Duration {
+    #[cfg(feature = "portal-input")]
+    {
+        libei::text_pacing(text)
+    }
+    #[cfg(not(feature = "portal-input"))]
+    {
+        let _ = text;
+        std::time::Duration::ZERO
+    }
+}
+
+#[cfg(feature = "portal-input")]
+fn libei_type_text(text: &str) -> anyhow::Result<()> {
+    if text.is_empty() {
+        return Ok(());
+    }
+    libei::type_text(text)
+}
+
+#[cfg(feature = "portal-input")]
+fn libei_press_key(key: &str) -> anyhow::Result<()> {
+    let keycode = key_to_evdev(key)
+        .ok_or_else(|| anyhow::anyhow!("no evdev keycode mapping for key '{key}' (libei path)"))?;
+    libei::press_key(keycode)
+}
+
+#[cfg(feature = "portal-input")]
+fn libei_hotkey(mods: &[String], key: &str) -> anyhow::Result<()> {
+    use libei::KeyTransition::{Press, Release};
+
+    let mut modifier_codes = Vec::with_capacity(mods.len());
+    for modifier in mods {
+        modifier_codes.push(match modifier.as_str() {
+            "ctrl" => 29,
+            "shift" => 42,
+            "alt" => 56,
+            "logo" => 125,
+            other => anyhow::bail!("no evdev keycode mapping for modifier '{other}'"),
+        });
+    }
+    let keycode = key_to_evdev(key)
+        .ok_or_else(|| anyhow::anyhow!("no evdev keycode mapping for key '{key}' (libei path)"))?;
+    let mut transitions = Vec::with_capacity(modifier_codes.len() * 2 + 2);
+    transitions.extend(modifier_codes.iter().copied().map(Press));
+    transitions.push(Press(keycode));
+    transitions.push(Release(keycode));
+    transitions.extend(modifier_codes.iter().rev().copied().map(Release));
+    libei::key_sequence(&transitions)
+}
+
+/// Map cua key names to Linux evdev keycodes for the libei `press_key` path
+/// (libei emulates raw evdev, not X keysyms). Mirrors [`key_to_keysym`] but
+/// emits `linux/input-event-codes.h` values. Returns `None` for keys with no
+/// known mapping so the caller can fail loudly.
+fn key_to_evdev(key: &str) -> Option<u32> {
+    let code = match key.to_lowercase().as_str() {
+        "ctrl" | "control" => 29, // KEY_LEFTCTRL
+        "alt" => 56,              // KEY_LEFTALT
+        "shift" => 42,            // KEY_LEFTSHIFT
+        "super" | "meta" | "cmd" | "command" | "win" | "windows" => 125, // KEY_LEFTMETA
+
+        "enter" | "return" => 28,        // KEY_ENTER
+        "tab" => 15,                     // KEY_TAB
+        "esc" | "escape" => 1,           // KEY_ESC
+        "space" => 57,                   // KEY_SPACE
+        "backspace" => 14,               // KEY_BACKSPACE
+        "delete" | "del" => 111,         // KEY_DELETE
+        "up" => 103,                     // KEY_UP
+        "down" => 108,                   // KEY_DOWN
+        "left" => 105,                   // KEY_LEFT
+        "right" => 106,                  // KEY_RIGHT
+        "home" => 102,                   // KEY_HOME
+        "end" => 107,                    // KEY_END
+        "pageup" | "page_up" => 104,     // KEY_PAGEUP
+        "pagedown" | "page_down" => 109, // KEY_PAGEDOWN
+        // Raw evdev shortcuts need physical punctuation keys too (e.g. Ctrl+,).
+        // Shifted symbols require an explicit Shift modifier; mapping them to
+        // an unshifted key here would silently emit a different shortcut.
+        "-" | "minus" | "dash" => 12,            // KEY_MINUS
+        "=" | "equal" | "equals" => 13,          // KEY_EQUAL
+        "[" | "bracketleft" => 26,               // KEY_LEFTBRACE
+        "]" | "bracketright" => 27,              // KEY_RIGHTBRACE
+        ";" | "semicolon" => 39,                 // KEY_SEMICOLON
+        "'" | "apostrophe" | "quoteright" => 40, // KEY_APOSTROPHE
+        "`" | "grave" | "quoteleft" => 41,       // KEY_GRAVE
+        "\\" | "backslash" => 43,                // KEY_BACKSLASH
+        "," | "comma" => 51,                     // KEY_COMMA
+        "." | "period" | "dot" => 52,            // KEY_DOT
+        "/" | "slash" => 53,                     // KEY_SLASH
+        // Letters a-z. evdev codes follow the QWERTY scancode layout, not the
+        // alphabet, so each is listed explicitly (linux/input-event-codes.h).
+        "a" => 30, // KEY_A
+        "b" => 48, // KEY_B
+        "c" => 46, // KEY_C
+        "d" => 32, // KEY_D
+        "e" => 18, // KEY_E
+        "f" => 33, // KEY_F
+        "g" => 34, // KEY_G
+        "h" => 35, // KEY_H
+        "i" => 23, // KEY_I
+        "j" => 36, // KEY_J
+        "k" => 37, // KEY_K
+        "l" => 38, // KEY_L
+        "m" => 50, // KEY_M
+        "n" => 49, // KEY_N
+        "o" => 24, // KEY_O
+        "p" => 25, // KEY_P
+        "q" => 16, // KEY_Q
+        "r" => 19, // KEY_R
+        "s" => 31, // KEY_S
+        "t" => 20, // KEY_T
+        "u" => 22, // KEY_U
+        "v" => 47, // KEY_V
+        "w" => 17, // KEY_W
+        "x" => 45, // KEY_X
+        "y" => 21, // KEY_Y
+        "z" => 44, // KEY_Z
+        // Digits. KEY_1=2 .. KEY_9=10, KEY_0=11 (input-event-codes.h).
+        "1" => 2,  // KEY_1
+        "2" => 3,  // KEY_2
+        "3" => 4,  // KEY_3
+        "4" => 5,  // KEY_4
+        "5" => 6,  // KEY_5
+        "6" => 7,  // KEY_6
+        "7" => 8,  // KEY_7
+        "8" => 9,  // KEY_8
+        "9" => 10, // KEY_9
+        "0" => 11, // KEY_0
+        // Function keys. KEY_F1=59 .. KEY_F10=68, then KEY_F11=87, KEY_F12=88.
+        "f1" => 59,
+        "f2" => 60,
+        "f3" => 61,
+        "f4" => 62,
+        "f5" => 63,
+        "f6" => 64,
+        "f7" => 65,
+        "f8" => 66,
+        "f9" => 67,
+        "f10" => 68,
+        "f11" => 87,
+        "f12" => 88,
+        _ => return None,
+    };
+    Some(code)
+}
+
+// ── Nested cua-compositor injection ────────────────────────────────────────
+//
+// When cua-driver's nested compositor is `cua-compositor` (our patched wlroots,
+// see nix/cua-driver/compositor/), it exposes a line-protocol control socket at
+// $CUA_INJECT_SOCKET for what stock Wayland forbids: focus-FREE per-surface
+// keyboard injection and MULTI-cursor pointer injection, routed by stable PID
+// when available and xdg app_id only as a fallback. These helpers speak that
+// protocol.
+//
+// The protocol is a simple line-based v1 exchange with per-command
+// acknowledgement: the client sends `INJECT_PROTO_HELLO` and the compositor
+// echoes it (or replies `err ...`), then every command line is answered by
+// exactly one `ok` / `err <reason>` line. The client fails on a protocol
+// mismatch, a read timeout, an EOF, or any compositor error line — an
+// acknowledgement is transport evidence only, not proof the target changed.
+
+/// Version banner exchanged at connect time: the client sends this line and the
+/// compositor must echo it back verbatim to confirm both speak v1.
+const INJECT_PROTO_HELLO: &str = "cua-inject v1";
+
+/// The exact named keys the nested compositor's `k` command can emit — the
+/// whitelist in `cua_key_named` (cua_compositor_patch.py). Compared
+/// case-insensitively, matching the compositor's `strcasecmp`.
+const INJECT_NAMED_KEYS: &[&str] = &[
+    "enter",
+    "return",
+    "tab",
+    "escape",
+    "esc",
+    "backspace",
+    "space",
+    "up",
+    "down",
+    "left",
+    "right",
+    "f1",
+    "f2",
+    "f3",
+    "f4",
+    "f5",
+    "f6",
+    "f7",
+    "f8",
+    "f9",
+    "f10",
+    "f11",
+    "f12",
+];
+
+/// The control socket path, when running against the nested cua-compositor.
+pub fn inject_socket_path() -> Option<String> {
+    std::env::var("CUA_INJECT_SOCKET")
+        .ok()
+        .filter(|s| !s.is_empty())
+}
+
+/// True when input should be routed through the nested cua-compositor's control
+/// socket (focus-free / multi-cursor) rather than wtype / virtual-pointer.
+pub fn is_inject_mode() -> bool {
+    inject_socket_path().is_some()
+}
+
+static INJECT_FOCUSED_TARGET: OnceLock<Mutex<Option<(u32, u64)>>> = OnceLock::new();
+
+fn remember_inject_focused_target(pid: u32, window_id: u64) {
+    let target = INJECT_FOCUSED_TARGET.get_or_init(|| Mutex::new(None));
+    if let Ok(mut target) = target.lock() {
+        *target = Some((pid, window_id));
+    }
+}
+
+fn inject_focused_target() -> anyhow::Result<(u32, u64)> {
+    INJECT_FOCUSED_TARGET
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .ok()
+        .and_then(|target| *target)
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "foreground_unavailable: cua-compositor has no verified foreground target; \
+                 call bring_to_front before desktop keyboard input"
+            )
+        })
+}
+
+fn inject_scroll_desktop(x: i32, y: i32, direction: &str, amount: u32) -> anyhow::Result<()> {
+    let windows = crate::atspi::list_windows(None);
+    let target = windows
+        .iter()
+        .filter(|window| {
+            window.is_on_screen
+                && x >= window.x
+                && y >= window.y
+                && x < window.x.saturating_add(window.width as i32)
+                && y < window.y.saturating_add(window.height as i32)
+        })
+        .max_by_key(|window| window.z_index.unwrap_or_default())
+        .or_else(|| {
+            let (pid, _) = inject_focused_target().ok()?;
+            windows.iter().find(|window| window.pid == Some(pid))
+        })
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "foreground_unavailable: no cua-compositor window contains desktop point ({x},{y})"
+            )
+        })?;
+    let pid = target.pid.ok_or_else(|| {
+        anyhow::anyhow!(
+            "foreground_unavailable: desktop point ({x},{y}) resolved to a window without a pid"
+        )
+    })?;
+    inject_scroll(
+        pid,
+        target.xid,
+        f64::from(x.saturating_sub(target.x)),
+        f64::from(y.saturating_sub(target.y)),
+        direction,
+        amount,
+    )
+}
+
+/// Reject any character the nested compositor cannot type before it reaches the
+/// wire. The compositor's chartab (`cua_init_keymap`) only covers printable
+/// ASCII (`0x20..=0x7E`) plus newline and tab; anything else — Unicode, other
+/// control bytes — would be silently dropped, so fail loudly instead.
+fn validate_injectable_text(text: &str) -> anyhow::Result<()> {
+    for ch in text.chars() {
+        let ok = ch == '\n' || ch == '\t' || (ch.is_ascii() && !ch.is_ascii_control());
+        if !ok {
+            anyhow::bail!(
+                "cua-compositor cannot type {ch:?}: only printable ASCII plus newline and tab \
+                 are supported in the v1 injection protocol"
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Reject any key name outside the compositor's named-key whitelist before
+/// sending. Mirrors `cua_key_named`; unsupported names must fail here rather
+/// than being silently ignored by the compositor.
+fn validate_injectable_key(key: &str) -> anyhow::Result<()> {
+    let normalized = key.trim().to_ascii_lowercase();
+    if INJECT_NAMED_KEYS.contains(&normalized.as_str()) {
+        Ok(())
+    } else {
+        anyhow::bail!(
+            "cua-compositor does not support key {key:?}; supported keys: {}",
+            INJECT_NAMED_KEYS.join(", ")
+        );
+    }
+}
+
+fn validate_injectable_hotkey(keys: &[String]) -> anyhow::Result<(String, String)> {
+    let (key, modifiers) = keys
+        .split_last()
+        .ok_or_else(|| anyhow::anyhow!("cua-compositor hotkey requires a non-modifier key"))?;
+    let key = key.trim().to_ascii_lowercase();
+    if !(key.len() == 1 && key.is_ascii()) && !INJECT_NAMED_KEYS.contains(&key.as_str()) {
+        anyhow::bail!("cua-compositor does not support hotkey key {key:?}");
+    }
+    let mut normalized = Vec::with_capacity(modifiers.len());
+    for modifier in modifiers {
+        let modifier = modifier.trim().to_ascii_lowercase();
+        let canonical = match modifier.as_str() {
+            "ctrl" | "control" => "ctrl",
+            "shift" => "shift",
+            "alt" | "option" => "alt",
+            "meta" | "super" | "win" | "cmd" => "meta",
+            _ => anyhow::bail!("cua-compositor does not support modifier {modifier:?}"),
+        };
+        normalized.push(canonical);
+    }
+    if normalized.is_empty() {
+        anyhow::bail!("cua-compositor hotkey requires at least one modifier");
+    }
+    Ok((normalized.join(","), key))
+}
+
+/// Interpret the compositor's handshake reply. Accepts only the verbatim v1
+/// banner; a compositor `err ...` line or anything else is a protocol mismatch.
+fn parse_inject_hello(line: &str) -> anyhow::Result<()> {
+    let trimmed = line.trim();
+    if trimmed == INJECT_PROTO_HELLO {
+        Ok(())
+    } else if let Some(reason) = trimmed.strip_prefix("err") {
+        anyhow::bail!(
+            "cua-compositor rejected the v1 handshake:{}",
+            if reason.trim().is_empty() {
+                String::new()
+            } else {
+                format!(" {}", reason.trim())
+            }
+        )
+    } else {
+        anyhow::bail!(
+            "cua-compositor protocol mismatch: expected {INJECT_PROTO_HELLO:?}, got {trimmed:?}"
+        )
+    }
+}
+
+/// Interpret a single per-command acknowledgement line. `ok` succeeds; `err
+/// <reason>` and any unrecognised line fail.
+fn parse_inject_reply(line: &str) -> anyhow::Result<()> {
+    let trimmed = line.trim();
+    if trimmed == "ok" {
+        Ok(())
+    } else if let Some(reason) = trimmed.strip_prefix("err") {
+        let reason = reason.trim();
+        if reason.is_empty() {
+            anyhow::bail!("cua-compositor rejected the command");
+        }
+        anyhow::bail!("cua-compositor rejected the command: {reason}")
+    } else {
+        anyhow::bail!("unexpected cua-compositor response: {trimmed:?}")
+    }
+}
+
+/// Read one newline-terminated response line, mapping timeout and EOF to clear
+/// errors so the caller never blocks forever on an unresponsive compositor.
+fn read_inject_line(reader: &mut impl std::io::BufRead) -> anyhow::Result<String> {
+    let mut line = String::new();
+    let n = reader.read_line(&mut line).map_err(|e| {
+        if matches!(
+            e.kind(),
+            std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+        ) {
+            anyhow::anyhow!("cua-compositor did not respond within the timeout")
+        } else {
+            anyhow::anyhow!("cua-compositor read failed: {e}")
+        }
+    })?;
+    if n == 0 {
+        anyhow::bail!("cua-compositor closed the connection before responding");
+    }
+    Ok(line)
+}
+
+/// Connect to the nested cua-compositor control socket, perform the v1
+/// handshake, then send each command line and require exactly one
+/// acknowledgement per command. Fails on protocol mismatch, timeout, EOF, or a
+/// compositor error line — the earlier fire-and-forget path hid all of these.
+fn inject_exchange(lines: &[String]) -> anyhow::Result<Vec<String>> {
+    use std::io::{BufReader, Write};
+    use std::os::unix::net::UnixStream;
+    let path = inject_socket_path().ok_or_else(|| anyhow::anyhow!("CUA_INJECT_SOCKET not set"))?;
+    // The nested compositor may still be starting; retry the connect briefly.
+    let connect_by = crate::interaction::operation_deadline(std::time::Duration::from_secs(3));
+    let stream = loop {
+        match UnixStream::connect(&path) {
+            Ok(s) => break s,
+            Err(_) if std::time::Instant::now() < connect_by => {
+                crate::interaction::pause(std::time::Duration::from_millis(50))
+            }
+            Err(_) => anyhow::bail!("could not connect to inject socket {path}"),
+        }
+    };
+    let read_by = crate::interaction::operation_deadline(std::time::Duration::from_secs(5));
+    let mut writer = stream.try_clone()?;
+    let mut reader = BufReader::new(stream);
+    let read_line = |reader: &mut BufReader<UnixStream>| {
+        let remaining = read_by.saturating_duration_since(std::time::Instant::now());
+        anyhow::ensure!(
+            !remaining.is_zero(),
+            "cua-compositor did not respond within the timeout"
+        );
+        reader.get_ref().set_read_timeout(Some(remaining))?;
+        read_inject_line(reader)
+    };
+
+    // v1 handshake: send our banner and require the compositor to echo it.
+    writeln!(writer, "{INJECT_PROTO_HELLO}")?;
+    writer.flush()?;
+    parse_inject_hello(&read_line(&mut reader)?)?;
+
+    let mut replies = Vec::with_capacity(lines.len());
+    // One command per line; block on its response before the next.
+    for l in lines {
+        writeln!(writer, "{l}")?;
+        writer.flush()?;
+        replies.push(read_line(&mut reader)?);
+    }
+    Ok(replies)
+}
+
+fn inject_send(lines: &[String]) -> anyhow::Result<()> {
+    for reply in inject_exchange(lines)? {
+        parse_inject_reply(&reply)?;
+    }
+    Ok(())
+}
+
+fn parse_inject_geometry(line: &str) -> anyhow::Result<((i32, i32), (i32, i32))> {
+    let fields = line.split_whitespace().collect::<Vec<_>>();
+    if fields.len() == 5 && fields[0] == "geometry" {
+        return Ok((
+            (fields[1].parse()?, fields[2].parse()?),
+            (fields[3].parse()?, fields[4].parse()?),
+        ));
+    }
+    if let Some(reason) = line.trim().strip_prefix("err") {
+        anyhow::bail!("cua-compositor geometry query failed: {}", reason.trim());
+    }
+    anyhow::bail!(
+        "unexpected cua-compositor geometry response: {:?}",
+        line.trim()
+    )
+}
+
+/// Return the offset that rebases native Wayland accessibility coordinates into
+/// the nested compositor's root-surface/output coordinate space.
+pub fn inject_accessibility_offset(pid: u32) -> Option<(i32, i32)> {
+    if !is_inject_mode() || pid == 0 {
+        return None;
+    }
+    let replies = inject_exchange(&[format!("g {pid}")]).ok()?;
+    replies
+        .first()
+        .and_then(|line| parse_inject_geometry(line).ok())
+        .map(|geometry| geometry.0)
+}
+
+fn inject_window_origin(pid: u32) -> Option<(i32, i32)> {
+    if !is_inject_mode() || pid == 0 {
+        return None;
+    }
+    let replies = inject_exchange(&[format!("g {pid}")]).ok()?;
+    replies
+        .first()
+        .and_then(|line| parse_inject_geometry(line).ok())
+        .map(|geometry| geometry.1)
+}
+
+/// Resolve a window_id to its xdg app_id via the stable identity registry that
+/// [`list_windows`] populates (falling back to sway IPC / AT-SPI through
+/// [`identity_for`]) — the nested cua-compositor injection protocol addresses
+/// windows by app_id. Returns `None` when no identity is registered or the
+/// resolved app_id is empty, so callers can surface a clear error.
+pub fn app_id_for_window(window_id: u64) -> Option<String> {
+    identity_for(window_id)
+        .map(|identity| identity.app_id)
+        .filter(|s| !s.is_empty())
+}
+
+/// Resolve the WM_CLASS-equivalent (instance, class) pair for a window. On
+/// X11 reads `WM_CLASS`; on Wayland reuses [`app_id_for_window`] and returns
+/// `(app_id, app_id)` — the closest analogue, since foreign-toplevel exposes
+/// a single app_id and not the X11 instance/class split. Used by terminal
+/// emulator detection on `is_terminal_window` so Ghostty / kitty / alacritty
+/// are recognised on Wayland too.
+pub fn wm_class_dispatch(window_id: u64) -> Option<(String, String)> {
+    if is_wayland() {
+        let app = app_id_for_window(window_id)?;
+        return Some((app.clone(), app));
+    }
+    crate::x11::wm_class_for_window(window_id)
+}
+
+fn to_hex(s: &str) -> String {
+    s.bytes().map(|b| format!("{b:02x}")).collect()
+}
+
+/// Map a cua/X11 mouse-button number to its evdev (wl_pointer) button code.
+fn evdev_button(x_button: u32) -> u32 {
+    match x_button {
+        3 => 0x111, // BTN_RIGHT
+        2 => 0x112, // BTN_MIDDLE
+        _ => 0x110, // BTN_LEFT
+    }
+}
+
+/// Sentinel error when a window_id has no registered cua-compositor identity.
+fn no_app_id(window_id: u64) -> anyhow::Error {
+    anyhow::anyhow!(
+        "no known cua-compositor app_id for window {window_id}; call list_windows first so its \
+         Wayland identity is registered"
+    )
+}
+
+/// Resolve the strongest target token understood by the private nested
+/// compositor. AT-SPI window IDs are synthetic on Wayland, but its process ID
+/// is the same credential the compositor observes on the owning wl_client.
+/// Fall back to app_id for clients whose accessibility metadata has no PID.
+pub fn inject_target_for_window(window_id: u64) -> anyhow::Result<String> {
+    inject_target_for_window_with_pid(window_id, None)
+}
+
+fn inject_target_for_window_with_pid(
+    window_id: u64,
+    target_pid: Option<u32>,
+) -> anyhow::Result<String> {
+    if let Some(pid) = target_pid {
+        anyhow::ensure!(pid > 0, "cua-compositor target pid must be positive");
+        // Electron/Chromium may create the xdg_toplevel from a renderer child
+        // rather than the public tool target. The compositor verifies the
+        // wl_client owner is this process or one of its descendants.
+        return Ok(format!("root:{pid}"));
+    }
+    let atspi = crate::atspi::list_windows(None);
+    let direct_pid = atspi
+        .iter()
+        .find(|window| window.xid == window_id)
+        .and_then(|window| window.pid);
+    let correlated_pid = identity_for(window_id)
+        .as_ref()
+        .and_then(|identity| unique_atspi_pid_for_identity(identity, &atspi));
+    if let Some(pid) = direct_pid.or(correlated_pid) {
+        return Ok(format!("pid:{pid}"));
+    }
+    app_id_for_window(window_id).ok_or_else(|| no_app_id(window_id))
+}
+
+/// Correlate a connection-local native toplevel with its AT-SPI process. Exact
+/// titles are the same bridge used by window enumeration; requiring one unique
+/// PID prevents a shared toolkit app_id from silently selecting another app.
+fn unique_atspi_pid_for_identity(
+    identity: &ToplevelIdentity,
+    windows: &[WindowInfo],
+) -> Option<u32> {
+    if identity.title.is_empty() {
+        return None;
+    }
+    let mut pids = windows
+        .iter()
+        .filter(|window| window.title == identity.title)
+        .filter_map(|window| window.pid)
+        .collect::<Vec<_>>();
+    pids.sort_unstable();
+    pids.dedup();
+    (pids.len() == 1).then(|| pids[0])
+}
+
+/// Focus-free type into the window's surface (no focus change). Rejects any
+/// character the compositor cannot emit before touching the socket.
+pub fn inject_type_text(target_pid: u32, window_id: u64, text: &str) -> anyhow::Result<()> {
+    validate_injectable_text(text)?;
+    let app = inject_target_for_window_with_pid(window_id, Some(target_pid))?;
+    inject_send(&[format!("t {app} {}", to_hex(text))])
+}
+
+/// Focus-free named-key press into the window's surface. Rejects any key
+/// outside the compositor's whitelist before touching the socket.
+pub fn inject_press_key(target_pid: u32, window_id: u64, key: &str) -> anyhow::Result<()> {
+    validate_injectable_key(key)?;
+    let app = inject_target_for_window_with_pid(window_id, Some(target_pid))?;
+    inject_send(&[format!("k {app} {}", key.trim())])
+}
+
+/// Focus-free modifier chord into the target surface.
+pub fn inject_hotkey(target_pid: u32, window_id: u64, keys: &[String]) -> anyhow::Result<()> {
+    let (modifiers, key) = validate_injectable_hotkey(keys)?;
+    let app = inject_target_for_window_with_pid(window_id, Some(target_pid))?;
+    inject_send(&[format!("h {app} {modifiers} {key}")])
+}
+
+/// Focus-free wheel/axis input at one target-local point.
+pub fn inject_scroll(
+    target_pid: u32,
+    window_id: u64,
+    x: f64,
+    y: f64,
+    direction: &str,
+    amount: u32,
+) -> anyhow::Result<()> {
+    let app = inject_target_for_window_with_pid(window_id, Some(target_pid))?;
+    let (axis, value) = match direction.to_ascii_lowercase().as_str() {
+        "up" => (0, -15.0),
+        "down" | "page" => (0, 15.0),
+        "left" => (1, -15.0),
+        "right" => (1, 15.0),
+        _ => anyhow::bail!("unsupported cua-compositor scroll direction {direction:?}"),
+    };
+    let mut lines = vec![format!("m {app} 0 {x:.1} {y:.1}")];
+    lines.extend((0..amount.max(1)).map(|_| format!("a {app} 0 {axis} {value:.1}")));
+    inject_send(&lines)
+}
+
+/// Focus-free click into the window's surface via the nested cua-compositor.
+/// Coordinates are window-local, matching the rest of the inject protocol.
+pub fn inject_click(
+    target_pid: u32,
+    window_id: u64,
+    x: f64,
+    y: f64,
+    count: u32,
+    button: u8,
+) -> anyhow::Result<()> {
+    let app = inject_target_for_window_with_pid(window_id, Some(target_pid))?;
+    let btn = evdev_button(button as u32);
+    let n = count.max(1);
+    let mut lines = Vec::with_capacity((n as usize) * 4);
+    for i in 0..n {
+        if i > 0 {
+            // The line protocol is batch-oriented, so use a tiny move-only
+            // separator between clicks to give the compositor a frame boundary
+            // without introducing a protocol-level sleep primitive.
+            lines.push(format!("m {app} 0 {x:.1} {y:.1}"));
+        }
+        lines.push(format!("m {app} 0 {x:.1} {y:.1}"));
+        lines.push(format!("b {app} 0 {btn} 1"));
+        lines.push(format!("b {app} 0 {btn} 0"));
+    }
+    inject_send(&lines)
+}
+
+/// A single pointer drag for `inject_parallel_drags`: window-local waypoints,
+/// driven by cursor `idx` so several run concurrently on one window.
+pub struct InjectDrag {
+    pub app_id: String,
+    pub idx: usize,
+    pub x_button: u32,
+    pub path: Vec<(f64, f64)>,
+    pub steps: usize,
+}
+
+fn resample(path: &[(f64, f64)], steps: usize) -> Vec<(f64, f64)> {
+    if path.len() < 2 || steps == 0 {
+        return path.to_vec();
+    }
+    let seglen: Vec<f64> = path
+        .windows(2)
+        .map(|w| ((w[1].0 - w[0].0).powi(2) + (w[1].1 - w[0].1).powi(2)).sqrt())
+        .collect();
+    let total: f64 = seglen.iter().sum();
+    if total == 0.0 {
+        return vec![path[0]; steps + 1];
+    }
+    let mut out = Vec::with_capacity(steps + 1);
+    for s in 0..=steps {
+        let target = total * (s as f64) / (steps as f64);
+        let mut acc = 0.0;
+        let mut pt = path[path.len() - 1];
+        for (i, &l) in seglen.iter().enumerate() {
+            if acc + l >= target || i == seglen.len() - 1 {
+                let f = if l > 0.0 { (target - acc) / l } else { 0.0 };
+                pt = (
+                    path[i].0 + (path[i + 1].0 - path[i].0) * f,
+                    path[i].1 + (path[i + 1].1 - path[i].1) * f,
+                );
+                break;
+            }
+            acc += l;
+        }
+        out.push(pt);
+    }
+    out
+}
+
+/// Run N pointer drags concurrently on their target windows: each cursor presses
+/// at its start, glides through its (interleaved) waypoints, and releases. This
+/// is true multi-cursor — each `idx` is an independent cursor in the compositor.
+pub fn inject_parallel_drags(drags: &[InjectDrag]) -> anyhow::Result<()> {
+    if drags.is_empty() {
+        return Ok(());
+    }
+    let resampled: Vec<Vec<(f64, f64)>> = drags
+        .iter()
+        .map(|d| resample(&d.path, d.steps.max(1)))
+        .collect();
+    let max_steps = resampled.iter().map(|p| p.len()).max().unwrap_or(0);
+    let mut lines = Vec::new();
+    // Press each cursor at its start point.
+    for (d, pts) in drags.iter().zip(&resampled) {
+        let (x, y) = pts[0];
+        lines.push(format!("m {} {} {x:.1} {y:.1}", d.app_id, d.idx));
+        lines.push(format!(
+            "b {} {} {} 1",
+            d.app_id,
+            d.idx,
+            evdev_button(d.x_button)
+        ));
+    }
+    // Glide all cursors together, one interleaved step at a time.
+    for s in 1..max_steps {
+        for (d, pts) in drags.iter().zip(&resampled) {
+            let (x, y) = pts[s.min(pts.len() - 1)];
+            lines.push(format!("m {} {} {x:.1} {y:.1}", d.app_id, d.idx));
+        }
+    }
+    // Release each cursor.
+    for (d, _) in drags.iter().zip(&resampled) {
+        lines.push(format!(
+            "b {} {} {} 0",
+            d.app_id,
+            d.idx,
+            evdev_button(d.x_button)
+        ));
+    }
+    inject_send(&lines)
+}
+
+/// Focus-free single drag using the same per-surface path as parallel drags.
+pub fn inject_drag(
+    target_pid: u32,
+    window_id: u64,
+    from: (f64, f64),
+    to: (f64, f64),
+    steps: usize,
+    x_button: u32,
+) -> anyhow::Result<()> {
+    let app_id = inject_target_for_window_with_pid(window_id, Some(target_pid))?;
+    inject_parallel_drags(&[InjectDrag {
+        app_id,
+        idx: 0,
+        x_button,
+        path: vec![from, to],
+        steps,
+    }])
+}
+
+fn wayland_atspi_windows(filter_pid: Option<u32>) -> Vec<WindowInfo> {
+    let mut windows = crate::atspi::list_windows(filter_pid);
+    // AT-SPI can retain a toolkit's default placement (commonly 120,120)
+    // after Sway has placed the real toplevel at another origin. Reconcile the
+    // fallback records with compositor-owned metadata before exposing them to
+    // callers; element bounds already use this same authoritative Sway tree.
+    for window in &mut windows {
+        let sway = window
+            .pid
+            .and_then(sway_ipc::window_for_pid)
+            .or_else(|| sway_ipc::window_for_title(&window.title))
+            .or_else(|| sway_ipc::window_for_app_id(&window.app_name));
+        if let Some(sway) = sway {
+            window.xid = sway.id;
+            window.x = sway.x;
+            window.y = sway.y;
+            window.width = sway.width;
+            window.height = sway.height;
+            window.is_on_screen = sway.visible && sway.width > 0 && sway.height > 0;
+        }
+    }
+    if is_inject_mode() {
+        for window in &mut windows {
+            if let Some(pid) = window.pid {
+                if let Some((window_x, window_y)) = inject_window_origin(pid) {
+                    window.x = window_x;
+                    window.y = window_y;
+                }
+            }
+        }
+    }
+    windows
+}
+
+/// A niri window as a listing entry. Only a placed floating window has
+/// geometry; any other window lists as 0x0 at the origin, so no caller can
+/// mistake it for a real rectangle.
+fn niri_window_info(window: niri::Window) -> WindowInfo {
+    let (x, y, width, height) = window.placement.map_or((0, 0, 0, 0), |placed| {
+        (
+            placed.rect.x,
+            placed.rect.y,
+            placed.rect.width,
+            placed.rect.height,
+        )
+    });
+    WindowInfo {
+        xid: window.id,
+        pid: window.pid,
+        app_name: window.app_id,
+        title: window.title,
+        is_on_screen: window.on_screen,
+        // niri reports no stacking order; focus recency is not one.
+        z_index: None,
+        x,
+        y,
+        width,
+        height,
+    }
+}
+
+fn apply_pid_filter(mut windows: Vec<WindowInfo>, filter_pid: Option<u32>) -> Vec<WindowInfo> {
+    if let Some(pid) = filter_pid {
+        windows.retain(|window| window.pid == Some(pid));
+    }
+    windows
+}
+
+/// Window-enumeration dispatcher: native Wayland when available, else X11.
+pub fn list_windows_dispatch(filter_pid: Option<u32>) -> Vec<WindowInfo> {
+    if is_wayland() {
+        if hyprland::is_session() {
+            // Hyprland IPC already attests PID and full native identity. A
+            // foreign-toplevel title join only makes that identity weaker.
+            return match hyprland::list_windows() {
+                Ok(windows) => listed_windows(apply_pid_filter(
+                    windows
+                        .into_iter()
+                        .map(|w| WindowInfo {
+                            xid: w.address,
+                            pid: Some(w.pid),
+                            app_name: w.app_id,
+                            title: w.title,
+                            is_on_screen: w.visible,
+                            z_index: None,
+                            x: w.x,
+                            y: w.y,
+                            width: w.width,
+                            height: w.height,
+                        })
+                        .collect(),
+                    filter_pid,
+                )),
+                Err(error) => {
+                    tracing::warn!("Hyprland window enumeration unavailable: {error:#}");
+                    Vec::new()
+                }
+            };
+        }
+        if niri::is_session() {
+            // niri IPC attests PIDs and its own window ids. Once niri is
+            // recognised, an IPC failure must not fall back to the
+            // foreign-toplevel title join, which loses that id namespace.
+            return match niri::list_windows() {
+                Ok(windows) => listed_windows(apply_pid_filter(
+                    windows.into_iter().map(niri_window_info).collect(),
+                    filter_pid,
+                )),
+                Err(error) => {
+                    tracing::warn!("niri window enumeration unavailable: {error:#}");
+                    Vec::new()
+                }
+            };
+        }
+        // A verified GNOME helper already supplies exact IDs and ownership.
+        // Do not probe unrelated compositor protocols for every preview frame.
+        if let Some(ws) = shell_helper::list_windows(filter_pid) {
+            return listed_windows(ws);
+        }
+        if kwin_capture::may_be_session() && kwin_access::allowed() {
+            match kwin_capture::list_windows() {
+                Ok(ws) => return listed_windows(apply_pid_filter(ws, filter_pid)),
+                Err(error) => tracing::debug!("KWin window enumeration unavailable: {error:#}"),
+            }
+        }
+        if let Some(ws) = kwin_helper::list_window_infos() {
+            return listed_windows(apply_pid_filter(ws, filter_pid));
+        }
+        // Prefer the richer wlroots protocol when no trusted KWin helper is available.
+        // only consulted when wlroots yields no windows (including when its
+        // manager global is absent).
+        let native = match list_windows() {
+            Ok(ws) if !ws.is_empty() => Ok(enrich_native_windows(
+                ws,
+                wayland_atspi_windows(filter_pid),
+                is_inject_mode(),
+            )),
+            Ok(_) => ext_toplevel::list_windows(),
+            Err(wlr_error) => ext_toplevel::list_windows().map_err(|ext_error| {
+                anyhow::anyhow!(
+                    "wlr provider failed ({wlr_error}); ext provider failed ({ext_error})"
+                )
+            }),
+        };
+        match native {
+            Ok(ws) if !ws.is_empty() => {
+                if let Some(pid) = filter_pid {
+                    if let Some(filtered) = native_windows_for_pid(ws, pid) {
+                        return listed_windows(filtered);
+                    }
+                } else {
+                    return listed_windows(ws);
+                }
+                // A compositor window without pid metadata cannot satisfy a
+                // pid-scoped request. Continue to the AT-SPI registry.
+                let ws = wayland_atspi_windows(filter_pid);
+                if !ws.is_empty() {
+                    return listed_windows(ws);
+                }
+            }
+            Ok(_) => {
+                if let Some(ws) = shell_helper::list_windows(filter_pid).filter(|ws| !ws.is_empty())
+                {
+                    return listed_windows(ws);
+                }
+                let ws = wayland_atspi_windows(filter_pid);
+                if !ws.is_empty() {
+                    return listed_windows(ws);
+                }
+            }
+            Err(e) => {
+                if let Some(ws) = shell_helper::list_windows(filter_pid).filter(|ws| !ws.is_empty())
+                {
+                    tracing::debug!(
+                        "native Wayland protocols unavailable ({e}); using compositor helper"
+                    );
+                    return listed_windows(ws);
+                }
+                tracing::warn!("native Wayland list_windows failed: {e}; trying AT-SPI registry");
+                let ws = wayland_atspi_windows(filter_pid);
+                if !ws.is_empty() {
+                    return listed_windows(ws);
+                }
+            }
+        }
+        // Last resort under Wayland: an Xwayland app may still have an X11 XID.
+    }
+    // If native enumeration and its AT-SPI fallback found nothing, X11 may still
+    // expose XWayland clients. Merge one final AT-SPI snapshot so native windows
+    // remain visible on hybrid sessions even when neither foreign-toplevel
+    // protocol is advertised (#1978). Gated on the native-Wayland opt-in.
+    //
+    // Caveats for the merged AT-SPI entries: they carry a synthetic (non-X11)
+    // xid and zero geometry (x/y/w/h = 0), like the existing wlroots AT-SPI
+    // fallback — so `bring_to_front` / `screenshot_window` / pixel translation
+    // against them error cleanly rather than acting (input on GNOME/KDE routes
+    // by pid + screen coords, not xid, so it's unaffected). Dedup is per-pid, so
+    // the rare app owning BOTH an XWayland window and a separate native-Wayland
+    // toplevel would list only the XWayland one.
+    let mut ws = crate::x11::list_windows(filter_pid);
+    if is_wayland() {
+        let seen: std::collections::HashSet<u32> = ws.iter().filter_map(|w| w.pid).collect();
+        // A specific pid already resolved via X11 needs no AT-SPI walk (a full
+        // D-Bus enumeration of every registered app): it can only add duplicates.
+        let already_covered = filter_pid.is_some_and(|p| seen.contains(&p));
+        if !already_covered {
+            merge_atspi_windows(&mut ws, &seen, wayland_atspi_windows(filter_pid));
+        }
+    }
+    listed_windows(ws)
+}
+
+fn merge_atspi_windows(
+    windows: &mut Vec<WindowInfo>,
+    x11_pids: &std::collections::HashSet<u32>,
+    atspi_windows: Vec<WindowInfo>,
+) {
+    for window in atspi_windows {
+        // XWayland apps appear in both lists; keep the X11 entry (real XID +
+        // geometry) and retain every native frame whose pid X11 did not expose.
+        if window.pid.is_none_or(|pid| !x11_pids.contains(&pid)) {
+            windows.push(window);
+        }
+    }
+}
+
+fn enrich_native_windows(
+    mut native: Vec<WindowInfo>,
+    atspi: Vec<WindowInfo>,
+    adopt_atspi_ids: bool,
+) -> Vec<WindowInfo> {
+    let mut claimed = std::collections::HashSet::new();
+    for window in &mut native {
+        if window.pid.is_some() {
+            continue;
+        }
+        let native_title = undecorated_native_title(window);
+        let title_match = atspi.iter().enumerate().find_map(|(index, candidate)| {
+            (!claimed.contains(&index)
+                && !native_title.is_empty()
+                && candidate.title == native_title)
+                .then_some(index)
+        });
+        let app_match = title_match.or_else(|| {
+            let matches = atspi
+                .iter()
+                .enumerate()
+                .filter(|(index, candidate)| {
+                    !claimed.contains(index)
+                        && !window.app_name.is_empty()
+                        && candidate.app_name == window.app_name
+                })
+                .map(|(index, _)| index)
+                .collect::<Vec<_>>();
+            (matches.len() == 1).then(|| matches[0])
+        });
+        let Some(index) = app_match else { continue };
+        claimed.insert(index);
+        let candidate = &atspi[index];
+        window.pid = candidate.pid;
+        if adopt_atspi_ids {
+            let toplevel = Toplevel {
+                title: undecorated_native_title(window).to_owned(),
+                app_id: window.app_name.clone(),
+                closed: false,
+                activated: false,
+            };
+            window.xid = candidate.xid;
+            remember_identity(window.xid, &toplevel);
+        }
+        if window.width == 0 || window.height == 0 {
+            window.x = candidate.x;
+            window.y = candidate.y;
+            window.width = candidate.width;
+            window.height = candidate.height;
+        }
+        if adopt_atspi_ids {
+            if let Some(pid) = candidate.pid {
+                if let Some((window_x, window_y)) = inject_window_origin(pid) {
+                    window.x = window_x;
+                    window.y = window_y;
+                }
+            }
+        }
+        window.is_on_screen = candidate.is_on_screen;
+    }
+    native
+}
+
+fn undecorated_native_title(window: &WindowInfo) -> &str {
+    if window.app_name.is_empty() {
+        return &window.title;
+    }
+    let suffix = format!(" [{}]", window.app_name);
+    window.title.strip_suffix(&suffix).unwrap_or(&window.title)
+}
+
+/// Return native records only when they contain a real match for a pid-scoped
+/// request. Ext records whose AT-SPI merge left pid unknown must not suppress
+/// the later AT-SPI and X11 fallback providers.
+fn native_windows_for_pid(windows: Vec<WindowInfo>, pid: u32) -> Option<Vec<WindowInfo>> {
+    let matching: Vec<_> = windows
+        .into_iter()
+        .filter(|window| window.pid == Some(pid))
+        .collect();
+    (!matching.is_empty()).then_some(matching)
+}
+
+/// Snapshot of which wlroots manager globals the running compositor advertises.
+/// Used by the `health_report` Wayland backend probe to distinguish a working
+/// session from one missing screencopy or virtual-pointer support.
+#[derive(Default, Clone, Debug)]
+pub struct WaylandManagers {
+    pub foreign_toplevel: bool,
+    pub screencopy: bool,
+    pub virtual_pointer: bool,
+    pub wl_shm: bool,
+    /// Staging `ext-image-copy-capture-v1` manager — sway 1.10+, labwc
+    /// 0.8+, KDE 6.2+, GNOME mutter 47+.
+    pub ext_image_copy_capture: bool,
+    /// Companion `ext-output-image-capture-source-v1` source manager —
+    /// required to capture a `wl_output` via the staging protocol.
+    pub ext_output_image_capture_source: bool,
+}
+
+/// Perform a single registry roundtrip and report which of the manager
+/// interfaces the doctor cares about advertise themselves. Returns `Err` only
+/// when we can't even open a Wayland connection — a successful connect with
+/// no managers still resolves to an all-false snapshot.
+pub fn probe_managers() -> anyhow::Result<WaylandManagers> {
+    let conn = Connection::connect_to_env()?;
+    let mut queue = conn.new_event_queue::<State>();
+    let qh = queue.handle();
+    conn.display().get_registry(&qh, ());
+    let mut state = State::default();
+    queue.roundtrip(&mut state)?;
+    // Reuse the existing State for wlroots managers, then do a parallel
+    // probe for staging ext-image-copy-capture interfaces by walking the
+    // raw registry events (no binding required — we only need presence).
+    let ext_probe = probe_ext_interfaces().unwrap_or_default();
+    Ok(WaylandManagers {
+        foreign_toplevel: state.manager.is_some(),
+        screencopy: state.scrcopy_manager.is_some(),
+        virtual_pointer: state.vptr_manager.is_some(),
+        wl_shm: state.shm.is_some(),
+        ext_image_copy_capture: ext_probe.image_copy_capture,
+        ext_output_image_capture_source: ext_probe.output_image_capture_source,
+    })
+}
+
+#[derive(Default, Clone, Copy, Debug)]
+struct ExtInterfaceProbe {
+    image_copy_capture: bool,
+    output_image_capture_source: bool,
+}
+
+/// Probe registry for `ext-image-copy-capture-v1` + companion source manager
+/// presence without binding them. Cheap (one roundtrip) and side-effect
+/// free.
+fn probe_ext_interfaces() -> anyhow::Result<ExtInterfaceProbe> {
+    let conn = Connection::connect_to_env()?;
+    let mut queue = conn.new_event_queue::<ExtProbeState>();
+    let qh = queue.handle();
+    conn.display().get_registry(&qh, ());
+    let mut state = ExtProbeState::default();
+    queue.roundtrip(&mut state)?;
+    Ok(state.probe)
+}
+
+#[derive(Default)]
+struct ExtProbeState {
+    probe: ExtInterfaceProbe,
+}
+
+impl Dispatch<wl_registry::WlRegistry, ()> for ExtProbeState {
+    fn event(
+        state: &mut Self,
+        _: &wl_registry::WlRegistry,
+        event: wl_registry::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        if let wl_registry::Event::Global { interface, .. } = event {
+            match interface.as_str() {
+                "ext_image_copy_capture_manager_v1" => {
+                    state.probe.image_copy_capture = true;
+                }
+                "ext_output_image_capture_source_manager_v1" => {
+                    state.probe.output_image_capture_source = true;
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+// Suppress dead-code warning for the unused BTN_LEFT alias kept for backward
+// compatibility with earlier slice constants.
+#[allow(dead_code)]
+const _BTN_LEFT_ALIAS: u32 = BTN_LEFT;
+
+#[cfg(test)]
+mod output_transform_tests {
+    use super::{
+        logical_output_size, orient_png_for_niri_transform, rotate_png_for_output_transform,
+    };
+
+    #[test]
+    fn logical_output_size_swaps_axes_for_quarter_turns() {
+        assert_eq!(logical_output_size((2560, 1080), 0), (2560, 1080));
+        assert_eq!(logical_output_size((2560, 1080), 1), (1080, 2560));
+        assert_eq!(logical_output_size((2560, 1080), 2), (2560, 1080));
+        assert_eq!(logical_output_size((2560, 1080), 3), (1080, 2560));
+        assert_eq!(logical_output_size((2560, 1080), 5), (1080, 2560));
+    }
+
+    fn two_pixel_png() -> Vec<u8> {
+        // Native frame: red on the left, blue on the right.
+        let mut img = image::RgbaImage::new(2, 1);
+        img.put_pixel(0, 0, image::Rgba([255, 0, 0, 255]));
+        img.put_pixel(1, 0, image::Rgba([0, 0, 255, 255]));
+        let mut png = Vec::new();
+        image::DynamicImage::ImageRgba8(img)
+            .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+            .unwrap();
+        png
+    }
+
+    fn decode(png: &[u8]) -> image::RgbaImage {
+        image::load_from_memory_with_format(png, image::ImageFormat::Png)
+            .unwrap()
+            .to_rgba8()
+    }
+
+    #[test]
+    fn capture_rotation_follows_the_output_transform() {
+        let red = image::Rgba([255, 0, 0, 255]);
+        let blue = image::Rgba([0, 0, 255, 255]);
+        let same = rotate_png_for_output_transform(two_pixel_png(), 0).unwrap();
+        assert_eq!(same, two_pixel_png());
+        let quarter = decode(&rotate_png_for_output_transform(two_pixel_png(), 1).unwrap());
+        assert_eq!(quarter.dimensions(), (1, 2));
+        assert_eq!(
+            (*quarter.get_pixel(0, 0), *quarter.get_pixel(0, 1)),
+            (red, blue)
+        );
+        let half = decode(&rotate_png_for_output_transform(two_pixel_png(), 2).unwrap());
+        assert_eq!((*half.get_pixel(0, 0), *half.get_pixel(1, 0)), (blue, red));
+        let three = decode(&rotate_png_for_output_transform(two_pixel_png(), 3).unwrap());
+        assert_eq!(three.dimensions(), (1, 2));
+        assert_eq!(
+            (*three.get_pixel(0, 0), *three.get_pixel(0, 1)),
+            (blue, red)
+        );
+        assert!(rotate_png_for_output_transform(two_pixel_png(), 5).is_err());
+    }
+
+    #[test]
+    fn niri_capture_undoes_flipped_output_transforms() {
+        // Native frame: red above blue, as a nested niri's Flipped180 winit
+        // output delivers an upright window with red at its top.
+        let mut img = image::RgbaImage::new(2, 2);
+        let (red, blue) = (image::Rgba([255, 0, 0, 255]), image::Rgba([0, 0, 255, 255]));
+        img.put_pixel(0, 0, red);
+        img.put_pixel(1, 1, blue);
+        let mut png = Vec::new();
+        image::DynamicImage::ImageRgba8(img)
+            .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+            .unwrap();
+        let flipped180 = decode(&orient_png_for_niri_transform(png.clone(), 6).unwrap());
+        assert_eq!(
+            (*flipped180.get_pixel(0, 1), *flipped180.get_pixel(1, 0)),
+            (red, blue)
+        );
+        let flipped = decode(&orient_png_for_niri_transform(png.clone(), 4).unwrap());
+        assert_eq!(
+            (*flipped.get_pixel(1, 0), *flipped.get_pixel(0, 1)),
+            (red, blue)
+        );
+        assert_eq!(orient_png_for_niri_transform(png.clone(), 0).unwrap(), png);
+        assert_eq!(
+            orient_png_for_niri_transform(png, 5)
+                .unwrap_err()
+                .to_string(),
+            "niri output transform 5 is not supported for capture"
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// Paced text is refused whole, as unpaced text is, so a retry can't type
+    /// its start twice.
+    #[test]
+    fn paced_text_with_a_late_control_character_types_nothing() {
+        let error = super::type_text_focused_paced("abc\u{8}", std::time::Duration::ZERO)
+            .unwrap_err()
+            .to_string();
+        assert_eq!(
+            error,
+            "foreground_unavailable: control character U+0008 cannot be typed; nothing was typed"
+        );
+    }
+
+    #[test]
+    fn a_refusal_after_some_text_went_out_does_not_say_nothing_was_typed() {
+        let refusal = super::text_keys::refused("no keyboard for a line break");
+        assert_eq!(
+            super::stopped_after(1, 2, &refusal).to_string(),
+            "type_text stopped after 1 of 2 characters: foreground_unavailable: no keyboard for a line break"
+        );
+    }
+
+    /// A point past the pointer space is clamped onto another pixel; the
+    /// niri gate must see that rather than admit the clamped point.
+    #[test]
+    fn layout_addressed_origin_clicks_stay_at_the_origin() {
+        assert!(super::centres_origin_click(0, 0, false));
+        assert!(!super::centres_origin_click(0, 0, true));
+        assert!(!super::centres_origin_click(0, 1, false));
+    }
+
+    #[test]
+    fn clamped_points_are_not_reached() {
+        // The lane's 1280x720 logical output at scale 1.5.
+        assert!(super::pointer_reaches(0, 0, 1280, 720, 100, 719));
+        assert!(!super::pointer_reaches(0, 0, 1280, 720, 100, 750));
+        assert!(!super::pointer_reaches(0, 0, 1280, 720, -1, 10));
+        assert!(super::pointer_reaches(-100, 0, 2773, 1080, -100, 0));
+    }
+
+    #[test]
+    fn niri_never_recovers_input_through_libei() {
+        let pointed: anyhow::Result<()> = super::libei_recovery(
+            true,
+            || anyhow::bail!("{}: none bound", super::NO_VPTR_MARKER),
+            || panic!("libei must not run under niri"),
+        );
+        assert_eq!(
+            pointed.unwrap_err().to_string(),
+            format!(
+                "foreground_unavailable: {}: none bound; under niri the libei/portal fallback is refused because it is not attested",
+                super::NO_VPTR_MARKER
+            )
+        );
+    }
+
+    #[test]
+    fn niri_focused_keyboard_input_expects_the_held_foreground_window() {
+        assert_eq!(super::niri_expected_window(), None);
+        {
+            let _held = super::bind_foreground_target(7, 42);
+            assert_eq!(super::niri_expected_window(), Some(42));
+        }
+        assert_eq!(super::niri_expected_window(), None);
+    }
+
+    #[test]
+    fn a_chord_letter_names_its_key_in_either_case() {
+        assert_eq!(super::chord_keysym("A"), "a");
+        assert_eq!(super::chord_keysym("enter"), "Return");
+        assert_eq!(super::chord_keysym("F5"), "F5");
+    }
+
+    #[test]
+    fn a_niri_that_stops_answering_ends_the_round_trip_at_its_deadline() {
+        // A compositor end that reads nothing and answers nothing.
+        let (client, _server) = std::os::unix::net::UnixStream::pair().unwrap();
+        let connection = super::Connection::from_socket(client).unwrap();
+        let mut queue = connection.new_event_queue::<super::State>();
+        let mut state = super::State::default();
+        let started = std::time::Instant::now();
+        let stalled = super::bounded_roundtrip(
+            &connection,
+            &mut queue,
+            &mut state,
+            started + std::time::Duration::from_millis(200),
+        )
+        .unwrap_err();
+        assert_eq!(
+            stalled.to_string(),
+            "niri did not answer a Wayland round trip in time"
+        );
+        assert!(started.elapsed() < std::time::Duration::from_secs(1));
+    }
+
+    #[test]
+    fn a_gesture_stops_at_the_first_refused_event_and_reports_the_partial_effect() {
+        // The first press of a double click closes the target window, which
+        // uncovers another one under the point: the second press must not
+        // reach it, and the error must not read as "nothing was delivered".
+        let mut target_open = true;
+        let mut delivered = 0;
+        let stopped = super::gated_events(
+            &mut target_open,
+            2,
+            ("click", "presses"),
+            |_| Ok(()),
+            |open| {
+                anyhow::ensure!(*open, "foreground_unavailable: layout changed");
+                Ok(())
+            },
+            |open, _| {
+                delivered += 1;
+                *open = false;
+                Ok(())
+            },
+        )
+        .unwrap_err();
+        assert_eq!(delivered, 1);
+        assert_eq!(
+            stopped.to_string(),
+            "click stopped after 1 of 2 presses: foreground_unavailable: layout changed"
+        );
+        assert_eq!(crate::input::foreground::error_code(&stopped), None);
+
+        // A refusal before the first event still means no effect.
+        let mut delivered = 0;
+        let refused = super::gated_events(
+            &mut (),
+            5,
+            ("scroll", "ticks"),
+            |_| Ok(()),
+            |_| anyhow::bail!("foreground_unavailable: layout changed"),
+            |_, _| {
+                delivered += 1;
+                Ok(())
+            },
+        )
+        .unwrap_err();
+        assert_eq!(delivered, 0);
+        assert_eq!(
+            crate::input::foreground::error_code(&refused),
+            Some(crate::input::foreground::CODE_UNAVAILABLE)
+        );
+    }
+
+    #[test]
+    fn a_target_that_closes_while_the_pointer_re_aims_gets_no_further_press() {
+        // The first press makes the target close itself a moment later,
+        // while the pause and motion before the second press run: the check
+        // must see that, not the state from before the gap.
+        let mut target_open = true;
+        let mut presses = 0;
+        let stopped = super::gated_events(
+            &mut target_open,
+            3,
+            ("click", "presses"),
+            |open| {
+                *open = false;
+                Ok(())
+            },
+            |open| {
+                anyhow::ensure!(*open, "foreground_unavailable: niri window 7 closed");
+                Ok(())
+            },
+            |_, _| {
+                presses += 1;
+                Ok(())
+            },
+        )
+        .unwrap_err();
+        assert_eq!(presses, 1);
+        assert_eq!(
+            stopped.to_string(),
+            "click stopped after 1 of 3 presses: foreground_unavailable: niri window 7 closed"
+        );
+    }
+
+    #[test]
+    fn a_drag_sends_at_most_the_advertised_steps_and_ends_on_its_endpoint() {
+        // `steps` comes from the caller, after the button is already down.
+        let path = super::drag_path((0, 0), (100, 50), u32::MAX, (100, 50), |x, y| {
+            (x as u32, y as u32)
+        });
+        assert_eq!(path.len(), 201);
+        let points: Vec<_> = path.collect();
+        assert_eq!(points[99], (50, 25));
+        assert_eq!(points.last(), Some(&(100, 50)));
+        let path = super::drag_path((0, 0), (10, 0), 0, (10, 0), |x, y| (x as u32, y as u32));
+        assert_eq!(path.collect::<Vec<_>>(), [(10, 0), (10, 0)]);
+    }
+
+    #[test]
+    fn a_drag_between_opposite_coordinate_extremes_aims_every_point() {
+        // The path is interpolated after the press, so its arithmetic must
+        // not overflow for any pair of points the caller can pass.
+        let (min, max) = (i32::MIN, i32::MAX);
+        let mut aimed = Vec::new();
+        let path = super::drag_path((min, max), (max, min), 2, (0, 0), |x, y| {
+            aimed.push((x, y));
+            (0, 0)
+        });
+        assert_eq!(path.count(), 3);
+        assert_eq!(aimed, [(-1, -1), (max, min)]);
+    }
+
+    #[test]
+    fn a_drag_whose_layout_changes_mid_path_releases_and_reports_how_far_it_got() {
+        // The press rescales the output: the remaining motions would land
+        // elsewhere, so the drag releases the button instead of finishing.
+        #[derive(Default)]
+        struct Held {
+            moved: Vec<(u32, u32)>,
+            released: bool,
+        }
+        let mut held = Held::default();
+        let stopped = super::held_motions(
+            &mut held,
+            [(10, 10), (20, 10), (30, 10)].into_iter(),
+            |held| {
+                anyhow::ensure!(
+                    held.moved.len() < 2,
+                    "foreground_unavailable: the niri pointer space changed"
+                );
+                Ok(())
+            },
+            |held, point| {
+                held.moved.push(point);
+                Ok(())
+            },
+            |held| {
+                held.released = true;
+                Ok(())
+            },
+        )
+        .unwrap_err();
+        assert_eq!(held.moved, [(10, 10), (20, 10)]);
+        assert!(held.released);
+        assert_eq!(
+            stopped.to_string(),
+            "drag stopped after 2 of 3 motions, and the button was released: \
+             foreground_unavailable: the niri pointer space changed"
+        );
+        assert_eq!(crate::input::foreground::error_code(&stopped), None);
+    }
+
+    #[test]
+    fn an_output_added_while_settling_refuses_the_pointer_input() {
+        super::pointer_space_holds((0, 0, 854, 480), (0, 0, 854, 480)).unwrap();
+        // The session scaled for one output; a second one doubles the extent,
+        // so (350, 80) would land near (700, 80).
+        assert_eq!(
+            super::pointer_space_holds((0, 0, 854, 480), (0, 0, 1707, 480))
+                .unwrap_err()
+                .to_string(),
+            "foreground_unavailable: the niri pointer space changed from (0, 0, 854, 480) to (0, 0, 1707, 480); take a new screenshot"
+        );
+    }
+
+    /// The pointer always moves before a desktop click or scroll, even when
+    /// it already sits on the target pixel (corners and 1-pixel outputs too).
+    #[test]
+    fn approach_pixel_is_a_different_pixel_on_the_output() {
+        assert_eq!(super::approach_pixel(640, 1280), 639);
+        assert_eq!(super::approach_pixel(0, 1280), 1);
+        assert_eq!(super::approach_pixel(1279, 1280), 1278);
+        assert_eq!(
+            super::approach_pixel(0, 1),
+            0,
+            "a 1-pixel output has nowhere else"
+        );
+    }
+
+    use super::*;
+
+    fn region(offset_x: f32) -> region_route::RegionRect {
+        region_route::RegionRect {
+            offset_x,
+            offset_y: 0.0,
+            width: 3840.0,
+            height: 2160.0,
+        }
+    }
+
+    #[test]
+    fn absolute_point_on_second_monitor_routes_to_its_region() {
+        let (l, r) = ([region(0.0)], [region(3840.0)]);
+        let one = [("abs", &[l[0], r[0]][..])];
+        assert_eq!(
+            region_route::route_absolute(one, 6237.0, 1014.0).unwrap(),
+            Some("abs")
+        );
+        let two = [("left", &l[..]), ("right", &r[..])];
+        assert_eq!(
+            region_route::route_absolute(two, 6237.0, 1014.0).unwrap(),
+            Some("right")
+        );
+    }
+
+    #[test]
+    fn point_outside_announced_regions_is_an_error() {
+        let both = [region(0.0), region(3840.0)];
+        for x in [8000.0, 7680.0] {
+            let err = region_route::route_absolute([("abs", &both[..])], x, 100.0).unwrap_err();
+            assert_eq!(
+                err.to_string(),
+                format!("libei: ({x}, 100) lies outside every announced pointer region")
+            );
+        }
+    }
+
+    #[test]
+    fn unmatched_point_cannot_escape_through_an_empty_candidate() {
+        let l = [region(0.0)];
+        let none: [region_route::RegionRect; 0] = [];
+        let mixed = [("empty", &none[..]), ("left", &l[..])];
+        let err = region_route::route_absolute(mixed, 6237.0, 1014.0).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "libei: (6237, 1014) lies outside every announced pointer region"
+        );
+    }
+
+    #[test]
+    fn a_negative_layout_point_is_refused_even_inside_a_region() {
+        let wrapped = region_route::RegionRect {
+            offset_x: -1920.0,
+            offset_y: 0.0,
+            width: 1920.0,
+            height: 1080.0,
+        };
+        let regions = [wrapped];
+        let err = region_route::route_absolute([("left", &regions[..])], -100.0, 10.0).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "libei: (-100, 10) is left of or above the layout origin, which libei cannot address"
+        );
+    }
+
+    #[cfg(feature = "portal-input")]
+    mod libei_adapters {
+        use super::super::*;
+        use libei::local_eis::{record, Emitted};
+
+        fn motion(x: f32, y: f32) -> Emitted {
+            Emitted::Motion("wide".into(), x, y)
+        }
+
+        #[test]
+        fn click_adapter_does_not_clamp_or_shift_second_monitor_point() {
+            let (result, events) = record(|| libei_click(6237, 1014, 1, 1));
+            result.unwrap();
+            assert_eq!(events[0], motion(6237.0, 1014.0));
+            assert_eq!(events[1], motion(6237.0, 1014.0));
+        }
+
+        #[test]
+        fn click_at_origin_means_output_centre_not_literal_origin() {
+            let (result, events) = record(|| libei_click_with(0, 0, 1, 1, || Ok((3840, 2160))));
+            result.unwrap();
+            assert!(!events.contains(&motion(0.0, 0.0)));
+            assert_eq!(events.first(), Some(&motion(1920.0, 1080.0)));
+            let buttons: Vec<bool> = events
+                .iter()
+                .filter_map(|e| match e {
+                    Emitted::Button(_, down) => Some(*down),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(buttons, vec![true, false]);
+        }
+
+        #[test]
+        fn desktop_click_adapter_keeps_literal_origin() {
+            let (result, events) = record(|| libei_click_point(0, 0, 1, 1));
+            result.unwrap();
+            assert_eq!(events[0], motion(0.0, 0.0));
+            assert_eq!(events[1], motion(0.0, 0.0));
+        }
+
+        #[test]
+        fn move_adapter_keeps_second_monitor_point_and_literal_origin() {
+            let (result, events) = record(|| libei_move_absolute(6237, 1014));
+            result.unwrap();
+            assert_eq!(events, vec![motion(6237.0, 1014.0)]);
+            let (result, events) = record(|| libei_move_absolute(0, 0));
+            result.unwrap();
+            assert_eq!(events, vec![motion(0.0, 0.0)]);
+        }
+
+        #[test]
+        fn drag_adapter_keeps_endpoints_and_literal_origin() {
+            let (result, events) = record(|| libei_drag(0, 0, 6237, 1014, 2, 0, 1));
+            result.unwrap();
+            assert_eq!(events.first(), Some(&motion(0.0, 0.0)));
+            assert_eq!(events[events.len() - 2], motion(6237.0, 1014.0));
+        }
+
+        #[test]
+        fn positioned_scroll_scrolls_after_a_valid_move() {
+            let (result, events) = record(|| {
+                libei_move_absolute(6237, 1014)?;
+                libei_scroll("down", 1)
+            });
+            result.unwrap();
+            assert_eq!(
+                events,
+                vec![motion(6237.0, 1014.0), Emitted::Scroll(0.0, 10.0)]
+            );
+        }
+
+        #[test]
+        fn positioned_scroll_to_an_invalid_point_emits_no_scroll() {
+            let (result, events) = record(|| {
+                libei_move_absolute(8000, 100)?;
+                libei_scroll("down", 1)
+            });
+            assert_eq!(
+                result.unwrap_err().to_string(),
+                "libei: (8000, 100) lies outside every announced pointer region"
+            );
+            assert_eq!(events, vec![]);
+        }
+    }
+
+    #[test]
+    fn no_announced_regions_falls_back() {
+        let none: [region_route::RegionRect; 0] = [];
+        assert_eq!(
+            region_route::route_absolute([("abs", &none[..])], 6237.0, 1.0).unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn punctuation_shortcuts_preserve_modifiers_without_implicit_shift() {
+        for (keys, expected_mods, physical_key) in [
+            (vec!["Ctrl", ","], vec!["ctrl"], evdev::Key::KEY_COMMA),
+            (vec!["Ctrl", "Comma"], vec!["ctrl"], evdev::Key::KEY_COMMA),
+            (vec!["Ctrl", "/"], vec!["ctrl"], evdev::Key::KEY_SLASH),
+            (
+                vec!["Ctrl", "Shift", "/"],
+                vec!["ctrl", "shift"],
+                evdev::Key::KEY_SLASH,
+            ),
+        ] {
+            let keys = keys.into_iter().map(String::from).collect::<Vec<_>>();
+            let (mods, key) = partition_modifiers(&keys).unwrap();
+            assert_eq!(mods, expected_mods);
+            assert_eq!(key_to_evdev(&key), Some(u32::from(physical_key.code())));
+        }
+
+        for shifted in ["?", ":", "+"] {
+            assert_eq!(key_to_evdev(shifted), None);
+        }
+    }
+
+    fn window(xid: u64, pid: Option<u32>, title: &str) -> WindowInfo {
+        WindowInfo {
+            xid,
+            pid,
+            app_name: String::new(),
+            title: title.to_owned(),
+            is_on_screen: true,
+            z_index: None,
+            x: 0,
+            y: 0,
+            width: 0,
+            height: 0,
+        }
+    }
+
+    #[test]
+    fn atspi_merge_keeps_x11_geometry_owner_and_native_only_frames() {
+        let mut windows = vec![window(10, Some(100), "XWayland")];
+        let x11_pids = std::collections::HashSet::from([100]);
+        merge_atspi_windows(
+            &mut windows,
+            &x11_pids,
+            vec![
+                window(100 << 16, Some(100), "XWayland duplicate"),
+                window(200 << 16, Some(200), "Native Wayland"),
+                window(1, None, "Unknown native frame"),
+            ],
+        );
+        assert_eq!(windows.len(), 3);
+        assert_eq!(windows[0].xid, 10);
+        assert_eq!(windows[1].pid, Some(200));
+        assert_eq!(windows[2].pid, None);
+    }
+
+    #[test]
+    fn pid_filter_excludes_other_process_windows() {
+        let filtered = apply_pid_filter(
+            vec![
+                window(10, Some(100), "wanted"),
+                window(20, Some(200), "other"),
+                window(30, None, "unknown"),
+            ],
+            Some(100),
+        );
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].pid, Some(100));
+        assert_eq!(filtered[0].xid, 10);
+    }
+
+    #[test]
+    fn zero_geometry_does_not_replace_a_real_observed_origin() {
+        let pid = u32::MAX - 17;
+        let mut observed = window(1, Some(pid), "Observed");
+        observed.x = 120;
+        observed.y = 80;
+        remember_observed_window_origins(&[observed]);
+        assert_eq!(observed_window_origin(pid), Some((120, 80)));
+
+        remember_observed_window_origins(&[window(2, Some(pid), "Unknown")]);
+        assert_eq!(observed_window_origin(pid), Some((120, 80)));
+    }
+
+    #[test]
+    fn native_enrichment_matches_plain_atspi_title() {
+        let mut native = window(42, None, "CUA Fixture [cua-fixture]");
+        native.app_name = "cua-fixture".into();
+        let mut accessible = window(123 << 16, Some(123), "CUA Fixture");
+        accessible.x = 20;
+        accessible.y = 30;
+        accessible.width = 800;
+        accessible.height = 600;
+
+        let enriched = enrich_native_windows(vec![native], vec![accessible], false);
+
+        assert_eq!(enriched[0].xid, 42);
+        assert_eq!(enriched[0].pid, Some(123));
+        assert_eq!((enriched[0].x, enriched[0].y), (20, 30));
+        assert_eq!((enriched[0].width, enriched[0].height), (800, 600));
+    }
+
+    #[test]
+    fn unmatched_ext_windows_do_not_satisfy_pid_filter() {
+        let windows = vec![window(0xF000_0000, None, "Protocol-only")];
+        assert!(native_windows_for_pid(windows, 4242).is_none());
+    }
+
+    #[test]
+    fn native_title_match_recovers_pid_without_replacing_native_id() {
+        let native = vec![window(77, None, "CuaTestHarness")];
+        let mut accessible = window(123 << 16, Some(123), "CuaTestHarness");
+        accessible.x = 20;
+        accessible.y = 30;
+        accessible.width = 800;
+        accessible.height = 600;
+        let enriched = enrich_native_windows(native, vec![accessible], false);
+        assert_eq!(enriched[0].xid, 77);
+        assert_eq!(enriched[0].pid, Some(123));
+        assert_eq!(
+            (
+                enriched[0].x,
+                enriched[0].y,
+                enriched[0].width,
+                enriched[0].height
+            ),
+            (20, 30, 800, 600)
+        );
+    }
+
+    #[test]
+    fn nested_enrichment_adopts_stable_atspi_id() {
+        let native = vec![window(77, None, "CuaTestHarness")];
+        let accessible = window(123 << 16, Some(123), "CuaTestHarness");
+        let enriched = enrich_native_windows(native, vec![accessible], true);
+        assert_eq!(enriched[0].xid, 123 << 16);
+        assert_eq!(enriched[0].pid, Some(123));
+        assert_eq!(
+            identity_for(enriched[0].xid).unwrap().title,
+            "CuaTestHarness"
+        );
+    }
+
+    #[test]
+    fn inject_target_correlates_native_identity_to_unique_atspi_pid() {
+        let identity = ToplevelIdentity {
+            title: "Unique sentinel".into(),
+            app_id: "electron".into(),
+        };
+        let windows = vec![
+            window(10, Some(100), "Background fixture"),
+            window(20, Some(200), "Unique sentinel"),
+        ];
+        assert_eq!(
+            unique_atspi_pid_for_identity(&identity, &windows),
+            Some(200)
+        );
+    }
+
+    #[test]
+    fn inject_target_prefers_explicit_positive_pid() {
+        assert_eq!(
+            inject_target_for_window_with_pid(99, Some(123)).unwrap(),
+            "root:123"
+        );
+        assert!(inject_target_for_window_with_pid(99, Some(0)).is_err());
+    }
+
+    #[test]
+    fn inject_target_refuses_ambiguous_title_pid_correlation() {
+        let identity = ToplevelIdentity {
+            title: "Shared title".into(),
+            app_id: "electron".into(),
+        };
+        let windows = vec![
+            window(10, Some(100), "Shared title"),
+            window(20, Some(200), "Shared title"),
+        ];
+        assert_eq!(unique_atspi_pid_for_identity(&identity, &windows), None);
+    }
+
+    #[test]
+    fn wayland_window_capture_fails_closed_without_using_x11_pixels() {
+        let display_called = std::cell::Cell::new(false);
+        let x11_called = std::cell::Cell::new(false);
+        let error = screenshot_window_bytes_with_dispatch(
+            true,
+            0x2962,
+            |xid| {
+                Err(surface_identity_unproven(
+                    xid,
+                    "fixture surface is off-workspace",
+                ))
+            },
+            || {
+                display_called.set(true);
+                Ok(vec![9, 9, 9])
+            },
+            |_| {
+                x11_called.set(true);
+                Ok(vec![1, 2, 3])
+            },
+        )
+        .expect_err("Wayland output pixels cannot prove a window surface");
+
+        assert!(is_surface_identity_unproven(&error));
+        assert!(error.to_string().contains("window 10594"));
+        assert!(!display_called.get());
+        assert!(!x11_called.get());
+    }
+
+    #[test]
+    fn x11_window_capture_keeps_the_existing_per_window_path() {
+        let captured_xid = std::cell::Cell::new(None);
+        let bytes = screenshot_window_bytes_with_dispatch(
+            false,
+            42,
+            |_| panic!("X11 must not resolve a Wayland crop"),
+            || panic!("X11 must not capture the Wayland output"),
+            |xid| {
+                captured_xid.set(Some(xid));
+                Ok(vec![1, 2, 3])
+            },
+        )
+        .expect("X11 per-window capture should remain available");
+
+        assert_eq!(captured_xid.get(), Some(42));
+        assert_eq!(bytes, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn listed_wayland_identity_remains_valid_when_current_enumeration_hides_it() {
+        let pid = std::process::id();
+        let window_id = 0x000f_2962_0001;
+        assert!(!window_was_listed_for_pid(pid, window_id));
+
+        remember_listed_windows(&[WindowInfo {
+            xid: window_id,
+            pid: Some(pid),
+            app_name: String::new(),
+            title: String::new(),
+            is_on_screen: false,
+            z_index: None,
+            x: 0,
+            y: 0,
+            width: 0,
+            height: 0,
+        }]);
+
+        assert!(window_was_listed_for_pid(pid, window_id));
+        assert!(!window_was_listed_for_pid(pid + 1, window_id));
+        assert!(!window_was_listed_for_pid(pid, window_id + 1));
+    }
+
+    #[test]
+    fn compositor_attested_visible_wayland_surface_keeps_window_capture() {
+        let source = image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(
+            8,
+            6,
+            image::Rgba([20, 40, 60, 255]),
+        ));
+        let mut encoded = std::io::Cursor::new(Vec::new());
+        source
+            .write_to(&mut encoded, image::ImageFormat::Png)
+            .expect("encode fixture PNG");
+        let cropped = screenshot_window_bytes_with_dispatch(
+            true,
+            42,
+            |_| {
+                Ok(WaylandWindowCrop {
+                    x: 2,
+                    y: 1,
+                    width: 3,
+                    height: 4,
+                })
+            },
+            || Ok(encoded.into_inner()),
+            |_| panic!("Wayland must not use the X11 capture path"),
+        )
+        .expect("visible compositor-attested Wayland surface should capture");
+        let decoded = image::load_from_memory(&cropped).expect("decode cropped PNG");
+        assert_eq!((decoded.width(), decoded.height()), (3, 4));
+    }
+
+    #[test]
+    fn foreign_toplevel_state_requires_activated_value() {
+        let states = [0_u32, 2_u32, 3_u32]
+            .into_iter()
+            .flat_map(u32::to_ne_bytes)
+            .collect::<Vec<_>>();
+        assert!(foreign_toplevel_state_is_activated(&states));
+
+        let inactive = [0_u32, 1_u32, 3_u32]
+            .into_iter()
+            .flat_map(u32::to_ne_bytes)
+            .collect::<Vec<_>>();
+        assert!(!foreign_toplevel_state_is_activated(&inactive));
+    }
+
+    #[test]
+    fn foreign_toplevel_state_ignores_incomplete_wire_values() {
+        assert!(!foreign_toplevel_state_is_activated(&[2, 0, 0]));
+    }
+
+    #[test]
+    fn shell_helper_capture_failure_is_terminal() {
+        let result = checked_shell_helper_capture(true, || None)
+            .expect("available helper must produce a terminal result");
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "GNOME compositor helper capture failed"
+        );
+    }
+
+    #[test]
+    fn kwin_desktop_capture_runs_only_on_kwin_with_the_switch_on() {
+        let unasked = || -> bool { panic!("the switch is not read") };
+        let uncaptured = || -> anyhow::Result<Vec<u8>> { panic!("KWin is not asked") };
+        assert_eq!(kwin_workspace_capture(false, unasked, uncaptured), None);
+        // Off, or on with a saved portal Deny: the portal tier decides.
+        assert_eq!(kwin_workspace_capture(true, || false, uncaptured), None);
+        let shot = || Ok(b"kwin".to_vec());
+        assert_eq!(
+            kwin_workspace_capture(true, || true, shot),
+            Some(b"kwin".to_vec())
+        );
+        // A KWin that refuses leaves the rest of the cascade to run.
+        let refused = || anyhow::bail!("not authorized");
+        assert_eq!(kwin_workspace_capture(true, || true, refused), None);
+    }
+
+    #[test]
+    fn unavailable_shell_helper_does_not_attempt_capture() {
+        let called = std::cell::Cell::new(false);
+        let result = checked_shell_helper_capture(false, || {
+            called.set(true);
+            Some(vec![1, 2, 3])
+        });
+        assert!(result.is_none());
+        assert!(!called.get());
+    }
+
+    /// Run the display cascade's portal-then-X11 tail with a portal request
+    /// that resolves to `outcome`, reporting whether X11 was captured. The
+    /// refusal contract is owned by `tests/portal_screenshot_cascade.rs`,
+    /// which drives the public capture path against a portal on D-Bus.
+    fn portal_tail(
+        outcome: Result<String, portal_screenshot::RequestError>,
+    ) -> (anyhow::Result<Vec<u8>>, bool) {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let x11_called = std::cell::Cell::new(false);
+        let result = portal_or_x11(
+            || {
+                rt.block_on(portal_screenshot::request_outcome(
+                    async { outcome },
+                    portal_screenshot::SCREENSHOT_TIMEOUT,
+                ))
+            },
+            || {
+                x11_called.set(true);
+                Ok(b"x11-root".to_vec())
+            },
+        );
+        (result, x11_called.get())
+    }
+
+    #[test]
+    fn portal_unavailable_falls_through_to_x11() {
+        for unavailable in [
+            ashpd::Error::NoResponse.into(),
+            portal_screenshot::RequestError::Connect(anyhow::anyhow!("session bus unreachable")),
+        ] {
+            let (result, x11_called) = portal_tail(Err(unavailable));
+            assert_eq!(result.unwrap(), b"x11-root");
+            assert!(x11_called);
+        }
+    }
+
+    #[test]
+    fn injectable_text_accepts_printable_ascii_newline_and_tab() {
+        validate_injectable_text("Hello, World! 123 @#$%\t\n").expect("printable ASCII is typable");
+        // The full printable ASCII span the compositor chartab covers.
+        let printable: String = (0x20u8..=0x7e).map(|b| b as char).collect();
+        validate_injectable_text(&printable).expect("every printable ASCII byte is typable");
+    }
+
+    #[test]
+    fn injectable_text_rejects_unicode_and_other_controls() {
+        for bad in [
+            "café",
+            "emoji 😀",
+            "bell\u{07}",
+            "null\u{00}",
+            "delete\u{7f}",
+            "cr\r",
+        ] {
+            assert!(
+                validate_injectable_text(bad).is_err(),
+                "{bad:?} must be rejected before it reaches the compositor"
+            );
+        }
+    }
+
+    #[test]
+    fn injectable_key_accepts_whitelist_case_insensitively() {
+        for good in [
+            "enter", "Enter", "RETURN", "tab", "Escape", "esc", "space", "up", "Left", "f1", "F12",
+        ] {
+            validate_injectable_key(good).unwrap_or_else(|e| panic!("{good:?} should pass: {e}"));
+        }
+    }
+
+    #[test]
+    fn injectable_key_rejects_unsupported_names() {
+        for bad in ["f13", "ctrl", "a", "delete", "home", "pageup", ""] {
+            assert!(
+                validate_injectable_key(bad).is_err(),
+                "{bad:?} is not in the compositor whitelist"
+            );
+        }
+    }
+
+    #[test]
+    fn injectable_hotkey_normalizes_supported_chords() {
+        let keys = vec!["control".to_owned(), "SHIFT".to_owned(), "7".to_owned()];
+        assert_eq!(
+            validate_injectable_hotkey(&keys).expect("supported chord"),
+            ("ctrl,shift".to_owned(), "7".to_owned())
+        );
+        assert!(validate_injectable_hotkey(&["7".to_owned()]).is_err());
+        assert!(validate_injectable_hotkey(&["hyper".to_owned(), "k".to_owned()]).is_err());
+    }
+
+    #[test]
+    fn standalone_modifiers_map_to_native_keyboard_keys() {
+        for (aliases, keysym, evdev) in [
+            (&["ctrl", "control"][..], "Control_L", 29),
+            (&["alt"][..], "Alt_L", 56),
+            (&["shift"][..], "Shift_L", 42),
+            (
+                &["super", "meta", "cmd", "command", "win", "windows"][..],
+                "Super_L",
+                125,
+            ),
+        ] {
+            for alias in aliases {
+                for key in [alias.to_string(), alias.to_uppercase()] {
+                    assert_eq!(key_to_keysym(&key), keysym, "wtype key {key}");
+                    assert_eq!(key_to_evdev(&key), Some(evdev), "libei key {key}");
+                }
+            }
+        }
+        assert_eq!(key_to_keysym("Super_R"), "Super_R");
+    }
+
+    #[test]
+    #[ignore = "requires a focused native Wayland surface and wtype"]
+    fn standalone_modifiers_reach_wayland_keyboard() {
+        for key in ["meta", "ctrl", "alt", "shift"] {
+            press_key_focused(key).unwrap_or_else(|error| panic!("{key}: {error}"));
+            press_key_focused("escape").expect("input remains usable after a modifier tap");
+        }
+    }
+
+    #[test]
+    fn wtype_hotkey_keeps_primer_chord_and_releases_in_order() {
+        let args = wtype_hotkey_args(&["ctrl".into(), "shift".into()], "7");
+        assert_eq!(
+            args,
+            [
+                "-k", "Shift_L", "-s", "30", "-M", "ctrl", "-M", "shift", "-s", "20", "-k", "7",
+                "-s", "20", "-m", "shift", "-m", "ctrl",
+            ]
+        );
+    }
+
+    #[test]
+    fn hello_reply_parses_exact_banner_and_rejects_mismatch() {
+        parse_inject_hello("cua-inject v1\n").expect("verbatim banner is accepted");
+        parse_inject_hello("  cua-inject v1  ").expect("surrounding whitespace is tolerated");
+        assert!(parse_inject_hello("cua-inject v2").is_err());
+        assert!(parse_inject_hello("err unsupported-version").is_err());
+        assert!(parse_inject_hello("garbage").is_err());
+    }
+
+    #[test]
+    fn command_reply_parses_ok_and_surfaces_error_reason() {
+        parse_inject_reply("ok\n").expect("ok is success");
+        parse_inject_reply("ok").expect("ok without newline is success");
+        let err = parse_inject_reply("err ambiguous-app-id\n").unwrap_err();
+        assert!(err.to_string().contains("ambiguous-app-id"));
+        assert!(parse_inject_reply("err").is_err());
+        assert!(parse_inject_reply("maybe").is_err());
+    }
+
+    #[test]
+    fn geometry_reply_is_strict_and_signed() {
+        assert_eq!(
+            parse_inject_geometry("geometry -4 23 10 20\n").unwrap(),
+            ((-4, 23), (10, 20))
+        );
+        assert!(parse_inject_geometry("geometry 1").is_err());
+        assert!(parse_inject_geometry("err target-not-found").is_err());
+        assert!(parse_inject_geometry("ok").is_err());
+    }
+}

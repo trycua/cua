@@ -2,6 +2,8 @@
 
 _Written by Francesco Bonacci — Reviewed by Parth Patel (HUD W25) — Sept 25, 2025_
 
+> Update, October 2026: Cua Cloud (Fleets) ended on 18 October 2026. This post describes it as it was. See [what changed](https://cua.ai/docs/cua-sdk/guides/cua-cloud-ended).
+
 ## Prologue
 
 Hack the North ran Sept 12–14 at the University of Waterloo. Official count this year: **1,778 hackers**, and a [Guinness World Record for the most people building interlocking plastic brick sculptures simultaneously](https://uwaterloo.ca/news/eweal-making-hackathons-fun-again-breaking-guinness-world-record).
@@ -63,7 +65,6 @@ Our slot landed at **2:30 a.m.** (_perks of the cheapest sponsor tier_). Thirty 
 
 - **Leave something tangible.** We provided a Jupyter Notebook teams could run immediately.
 - **Narrow scope, strong starts.** The more focused the challenge, the more **robust starting points** you should provide.
-- **Want the details?** [Here’s the notebook we left participants](https://github.com/trycua/cua/blob/main/notebooks/sota_hackathon.ipynb).
 
 ![hack-booth](./assets/hack-workshop.jpeg)
 

@@ -532,7 +532,6 @@ if __name__ == "__main__":
     asyncio.run(cua_openai_loop())
 ```
 
-You can find the full code in our [notebook](https://github.com/trycua/cua/blob/main/notebooks/blog/build-your-own-operator-on-macos-1.ipynb).
 
 #### Request Handling Differences
 

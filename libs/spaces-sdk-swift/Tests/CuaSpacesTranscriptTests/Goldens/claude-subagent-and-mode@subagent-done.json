@@ -1,0 +1,144 @@
+{
+  "elements" : [
+    {
+      "lines" : [
+        "",
+        "▗ ▗   ▖ ▖  Claude Code v2.1.278",
+        "           Opus 5 (1M context) with low effort · Claude Max",
+        "  ▘▘ ▝▝    /private/tmp/cua-cast-sandbox",
+        "",
+        ""
+      ],
+      "provenance" : "unrecognised",
+      "region" : {
+        "firstRow" : 0,
+        "lastRow" : 5
+      },
+      "type" : "rawText"
+    },
+    {
+      "provenance" : "observed",
+      "region" : {
+        "firstRow" : 6,
+        "lastRow" : 6
+      },
+      "text" : "Use the Explore subagent to find every function defined in calc.py, then tell me the list.",
+      "type" : "userMessage"
+    },
+    {
+      "markdown" : "I'll launch the Explore agent.",
+      "provenance" : "observed",
+      "region" : {
+        "firstRow" : 8,
+        "lastRow" : 8
+      },
+      "text" : "I'll launch the Explore agent.",
+      "type" : "agentMessage"
+    },
+    {
+      "detailLines" : [
+        "Backgrounded agent (↓ to manage · ctrl+o to expand)"
+      ],
+      "kind" : "Explore",
+      "provenance" : "observed",
+      "region" : {
+        "firstRow" : 10,
+        "lastRow" : 11
+      },
+      "status" : "running",
+      "statusProvenance" : "inferred",
+      "task" : "List functions in calc.py",
+      "type" : "subagent"
+    },
+    {
+      "markdown" : "The Explore agent is running — I'll report the function list as soon as it comes back.",
+      "provenance" : "observed",
+      "region" : {
+        "firstRow" : 13,
+        "lastRow" : 13
+      },
+      "text" : "The Explore agent is running — I'll report the function list as soon as it comes back.",
+      "type" : "agentMessage"
+    },
+    {
+      "elapsedSeconds" : null,
+      "hint" : null,
+      "provenance" : "observed",
+      "rawLine" : "✻ Waiting for 1 background agent to finish",
+      "region" : {
+        "firstRow" : 15,
+        "lastRow" : 15
+      },
+      "spinner" : "✻",
+      "tokens" : null,
+      "type" : "agentRunning",
+      "verb" : "Waiting"
+    },
+    {
+      "detailLines" : [
+
+      ],
+      "kind" : "Agent",
+      "provenance" : "observed",
+      "region" : {
+        "firstRow" : 17,
+        "lastRow" : 17
+      },
+      "status" : "succeeded",
+      "statusProvenance" : "observed",
+      "task" : "List functions in calc.py",
+      "type" : "subagent"
+    },
+    {
+      "markdown" : "calc.py (7 lines) defines two functions, both module-level:\n\n1. add(a, b) — calc.py:1 — returns the sum of the two arguments\n2. subtract(a, b) — calc.py:5 — returns a - b\n\nNo classes, methods, or nested functions.",
+      "provenance" : "observed",
+      "region" : {
+        "firstRow" : 19,
+        "lastRow" : 24
+      },
+      "text" : "calc.py (7 lines) defines two functions, both module-level:\n\n1. add(a, b) — calc.py:1 — returns the sum of the two arguments\n2. subtract(a, b) — calc.py:5 — returns a - b\n\nNo classes, methods, or nested functions.",
+      "type" : "agentMessage"
+    },
+    {
+      "kind" : "completed",
+      "provenance" : "observed",
+      "region" : {
+        "firstRow" : 26,
+        "lastRow" : 26
+      },
+      "text" : "✻ Brewed for 9s · done 5:59 PM",
+      "type" : "turnBoundary"
+    },
+    {
+      "content" : "add a multiply function to calc.py",
+      "cursorIsInside" : true,
+      "placeholder" : null,
+      "provenance" : "observed",
+      "region" : {
+        "firstRow" : 30,
+        "lastRow" : 32
+      },
+      "type" : "composer"
+    },
+    {
+      "hint" : null,
+      "mode" : "manual",
+      "provenance" : "observed",
+      "rawText" : "⏸ manual mode on · /tasks to see subagents · ← for agents",
+      "region" : {
+        "firstRow" : 33,
+        "lastRow" : 33
+      },
+      "type" : "modeIndicator"
+    }
+  ],
+  "schema" : "cua.transcript.jsonui/1",
+  "source" : {
+    "alternateScreen" : true,
+    "cli" : "claude",
+    "cliVersion" : "2.1.278 (Claude Code)",
+    "frameTime" : 24.664999999999999,
+    "layoutProfile" : "claude-code/2.x",
+    "unsupportedSequences" : 0
+  }
+}

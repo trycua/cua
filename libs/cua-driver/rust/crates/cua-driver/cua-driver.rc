@@ -1,1 +1,6 @@
-1 RT_MANIFEST "cua-driver.manifest"
+// 24 = RT_MANIFEST. The numeric type is required: `RT_MANIFEST` is not an
+// .rc keyword, so the resource compiler would emit a custom *string-typed*
+// resource named "RT_MANIFEST" that the Windows loader never applies as a
+// manifest (the process then starts DPI-unaware). ID 1 =
+// CREATEPROCESS_MANIFEST_RESOURCE_ID.
+1 24 "cua-driver.manifest"

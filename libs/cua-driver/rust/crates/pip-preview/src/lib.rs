@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! pip-preview — shared types + trait for the experimental
 //! picture-in-picture agent preview window.
 //!
@@ -6,23 +9,37 @@
 //! of the target window plus a one-line label summarising the tool
 //! call. It mirrors the architecture used by `cursor-overlay` (shared
 //! config/types here, platform-specific renderer in each `platform-*`
-//! crate) and the registration pattern used by `cua_driver_core::video`
-//! (a `OnceLock` factory set once at startup by `main.rs`).
+//! crate).
 //!
 //! macOS is the first working implementation (NSWindow + NSImageView).
 //! Windows + Linux ship as compile-clean stubs whose `start()` returns
 //! a clear "not yet implemented" error so the rest of the daemon
 //! continues without a PiP window.
 
-use std::sync::OnceLock;
-
 /// Canonical `~/.cua-driver/config.json` path matching what the per-platform
-/// `set_config` tools write to. Returns `None` when `$HOME` is unset
-/// (sandboxed CI).
+/// `set_config` tools write to. Resolves `$HOME` first (Unix/macOS) and falls
+/// back to `%USERPROFILE%` (Windows, where `HOME` is usually unset). Returns
+/// `None` when neither is set (sandboxed CI).
 pub fn default_config_path() -> Option<std::path::PathBuf> {
-    std::env::var("HOME")
-        .ok()
-        .map(|h| std::path::PathBuf::from(h).join(".cua-driver").join("config.json"))
+    std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(|h| {
+            std::path::PathBuf::from(h)
+                .join(".cua-driver")
+                .join("config.json")
+        })
+}
+
+/// Read a single key from `~/.cua-driver/config.json` as a raw JSON value,
+/// returning `None` when the file is missing/malformed or the key is absent.
+/// Used by the per-platform `load_driver_config` helpers to rehydrate the
+/// in-memory `DriverConfig` at process startup so `set_config` writes survive
+/// across stateless `cua-driver call` invocations.
+pub fn read_config_value(key: &str) -> Option<serde_json::Value> {
+    let path = default_config_path()?;
+    let text = std::fs::read_to_string(&path).ok()?;
+    let json: serde_json::Value = serde_json::from_str(&text).ok()?;
+    json.get(key).cloned()
 }
 
 /// Merge a single `key`/`value` into `~/.cua-driver/config.json`,
@@ -63,8 +80,12 @@ pub fn read_pip_keys_from_file() -> (bool, Option<String>) {
         Ok(v) => v,
         Err(_) => return (false, None),
     };
-    let enabled = json.get("experimental_pip").and_then(|v| v.as_bool()).unwrap_or(false);
-    let geometry = json.get("experimental_pip_geometry")
+    let enabled = json
+        .get("experimental_pip")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let geometry = json
+        .get("experimental_pip_geometry")
         .and_then(|v| v.as_str())
         .map(|s| s.to_owned());
     (enabled, geometry)
@@ -124,17 +145,14 @@ impl PipGeometry {
     }
 }
 
-/// Configuration for the PiP window. Built by `main.rs` from CLI
-/// flags and handed to `PipBackendFactory::start`.
+/// Configuration for the PiP window. Built by `main.rs` from CLI flags.
 #[derive(Debug, Clone)]
 pub struct PipConfig {
-    /// `--experimental-pip` is on argv. The factory is only consulted
-    /// when this is true; the field is kept here so backends that
-    /// share a `start()` path can early-return.
+    /// `--experimental-pip` is on argv.
     pub enabled: bool,
     pub geometry: PipGeometry,
     /// Window title — kept here so the "experimental" label stays in
-    /// one place. Defaults to "cua-driver — agent view (experimental)".
+    /// one place. Defaults to "cua-driver — PiP preview (experimental)".
     pub title: String,
 }
 
@@ -143,7 +161,7 @@ impl Default for PipConfig {
         Self {
             enabled: false,
             geometry: PipGeometry::default(),
-            title: "cua-driver — agent view (experimental)".to_owned(),
+            title: "cua-driver — PiP preview (experimental)".to_owned(),
         }
     }
 }
@@ -199,7 +217,10 @@ impl PipConfig {
                 if let Some(b) = json.get("experimental_pip").and_then(|v| v.as_bool()) {
                     cfg.enabled = b;
                 }
-                if let Some(s) = json.get("experimental_pip_geometry").and_then(|v| v.as_str()) {
+                if let Some(s) = json
+                    .get("experimental_pip_geometry")
+                    .and_then(|v| v.as_str())
+                {
                     if let Some(g) = PipGeometry::parse(s) {
                         cfg.geometry = g;
                     }
@@ -255,30 +276,4 @@ pub trait PipBackend: Send + Sync {
     /// Close the window and release native resources. Called from
     /// `main.rs` on shutdown.
     fn shutdown(self: Box<Self>);
-}
-
-/// Spawns a fresh PiP window. Registered once at startup via
-/// `set_pip_backend_factory`.
-pub trait PipBackendFactory: Send + Sync {
-    fn start(&self, cfg: &PipConfig) -> anyhow::Result<Box<dyn PipBackend>>;
-}
-
-static PIP_FACTORY: OnceLock<Box<dyn PipBackendFactory>> = OnceLock::new();
-
-/// Register the platform's PiP backend factory. Idempotent — subsequent
-/// calls are silently ignored, matching the other startup-callback
-/// setters in `cua_driver_core`.
-pub fn set_pip_backend_factory(factory: Box<dyn PipBackendFactory>) {
-    let _ = PIP_FACTORY.set(factory);
-}
-
-/// Start a PiP window using the registered backend. Returns an error
-/// when no backend has been registered for this platform — `main.rs`
-/// treats that as "PiP unavailable on this OS" and continues without
-/// the window.
-pub fn start_pip(cfg: &PipConfig) -> anyhow::Result<Box<dyn PipBackend>> {
-    let factory = PIP_FACTORY
-        .get()
-        .ok_or_else(|| anyhow::anyhow!("no PiP backend registered for this platform"))?;
-    factory.start(cfg)
 }

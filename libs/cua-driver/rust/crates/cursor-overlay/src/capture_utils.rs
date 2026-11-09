@@ -1,9 +1,12 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Shared image-manipulation utilities for the `zoom` tool.
 //!
 //! All three platform crates depend on cursor-overlay, so this is the natural
 //! home for a pure-Rust crop + JPEG-encode helper.
 
-use image::{DynamicImage, GenericImageView, imageops::FilterType};
+use image::{imageops::FilterType, DynamicImage, GenericImageView};
 
 /// Result of a crop-and-encode operation; carries coordinate metadata so callers
 /// can translate zoom-image pixel coordinates back to full-window pixel coordinates.

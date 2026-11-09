@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Enumerate running processes on Windows.
 //!
 //! Uses CreateToolhelp32Snapshot / Process32FirstW / Process32NextW (simpler
@@ -5,16 +8,11 @@
 
 use windows::Win32::Foundation::CloseHandle;
 use windows::Win32::System::Diagnostics::ToolHelp::{
-    CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
-    TH32CS_SNAPPROCESS,
+    CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,
 };
 
-#[derive(Debug, Clone)]
-pub struct ProcessInfo {
-    pub pid: u32,
-    pub parent_pid: u32,
-    pub name: String,
-}
+pub use crate::process_selection::ProcessInfo;
+use crate::process_selection::{descendants_from_processes, related_processes_from_processes};
 
 /// Return all running processes (pid, parent_pid, executable name).
 pub fn list_processes() -> Vec<ProcessInfo> {
@@ -65,69 +63,11 @@ fn decode_wstr(buf: &[u16]) -> String {
 /// no longer alive, callers handle the empty-windows case the same way).
 pub fn list_descendants(root_pid: u32) -> Vec<u32> {
     let all = list_processes();
-    let mut result = vec![root_pid];
-    let mut frontier = vec![root_pid];
-    while let Some(parent) = frontier.pop() {
-        for p in &all {
-            if p.parent_pid == parent && !result.contains(&p.pid) {
-                result.push(p.pid);
-                frontier.push(p.pid);
-            }
-        }
-    }
-    result
+    descendants_from_processes(root_pid, &all)
 }
 
-/// Like `list_descendants` but ALSO returns processes whose executable name
-/// matches a prefix derived from `exe_basename`. This catches the LibreOffice
-/// pattern (swriter.exe spawns soffice.bin via a parent-pid relationship we
-/// might miss if the spawn happened before our pre-launch snapshot, OR via
-/// CreateProcess flags that detach the child from the launcher's tree) as
-/// well as the GIMP pattern (gimp-3.exe spawns gimp-3.2.exe whose name starts
-/// with the same prefix).
-///
-/// Heuristic: strip extension and trailing version digits/dots/dashes from
-/// the basename to derive a stable prefix. E.g.:
-///   `gimp-3.exe`     → prefix `gimp`
-///   `gimp-3.2.exe`   → prefix `gimp`
-///   `swriter.exe`    → prefix `swriter` (won't match `soffice.bin` — that's
-///                      LibreOffice's parent-pid path; usually still reachable
-///                      via `list_descendants`)
-///   `notepad++.exe`  → prefix `notepad++` (no version stripping needed)
-///
-/// Returns deduplicated pids; ordering favors descendants over name-matches.
-pub fn related_processes(root_pid: u32, exe_basename: &str) -> Vec<u32> {
-    let mut out = list_descendants(root_pid);
-    let prefix = strip_version_suffix(exe_basename);
-    if !prefix.is_empty() {
-        let all = list_processes();
-        for p in &all {
-            let p_prefix = strip_version_suffix(&p.name);
-            if p_prefix.eq_ignore_ascii_case(&prefix) && !out.contains(&p.pid) {
-                out.push(p.pid);
-            }
-        }
-    }
-    out
-}
-
-/// Strip `.exe` (case-insensitive) and any trailing `-<digits>.<digits>...`
-/// or `<digits>.<digits>...` version suffix. Used by `related_processes` to
-/// match `gimp-3.exe` and `gimp-3.2.exe` under the common prefix `gimp`.
-fn strip_version_suffix(basename: &str) -> String {
-    let mut s = basename.to_ascii_lowercase();
-    if let Some(stripped) = s.strip_suffix(".exe") {
-        s = stripped.to_owned();
-    }
-    // Strip trailing version-like tail: `-3`, `-3.2`, `3`, `3.2`, etc.
-    let bytes = s.as_bytes();
-    let mut cut = bytes.len();
-    while cut > 0 {
-        let c = bytes[cut - 1] as char;
-        if c.is_ascii_digit() || c == '.' || c == '-' { cut -= 1; } else { break; }
-    }
-    // Avoid stripping an entire name (e.g. "7z" → "" would lose information).
-    // If everything past cut is purely digits/dots/dashes AND cut > 0, accept.
-    if cut == 0 { return s; }
-    s[..cut].to_string()
+/// Return the launch receipt root and its transitive descendants, root first.
+/// Executable-name similarity does not establish launch ancestry.
+pub fn related_processes(root_pid: u32, _exe_basename: &str) -> Vec<u32> {
+    related_processes_from_processes(root_pid, _exe_basename, &list_processes())
 }

@@ -9,11 +9,11 @@ struct Convert: AsyncParsableCommand {
             under a new name/tag, then removes the temporary local VM.
 
             Example:
-              lume convert macos-sequoia:latest trycua/macos-sequoia:latest-oci
+              lume convert macos-tahoe:latest trycua/macos-tahoe:latest-oci
         """
     )
 
-    @Argument(help: "Source image to convert (legacy format, e.g. macos-sequoia:latest)")
+    @Argument(help: "Source image to convert (legacy format, e.g. macos-tahoe:latest)")
     var sourceImage: String
 
     @Argument(help: "Target image to push in OCI format (format: name:tag)")
@@ -43,7 +43,7 @@ struct Convert: AsyncParsableCommand {
     func run() async throws {
         if verbose { Logger.setVerbose() }
 
-        TelemetryClient.shared.record(event: TelemetryEvent.push)
+        TelemetryClient.shared.record(event: TelemetryEvent.convert)
 
         let targetComponents = targetImage.split(separator: ":")
         guard targetComponents.count == 2, let primaryTag = targetComponents.last else {

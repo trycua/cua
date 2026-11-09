@@ -1,0 +1,4176 @@
+// SPDX-License-Identifier: FSL-1.1-MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
+//! Client-device enrollment of the account mode.
+//!
+//! A device that acts as a client of an account (lists its machines,
+//! connects to them) holds a P-256 key pair (the OS keychain on macOS and
+//! Windows, a 0600 file elsewhere) and is enrolled one of two ways:
+//!
+//! - a fresh interactive sign-in: the account token's `auth_time` is no
+//!   older than the bootstrap window ([`DevicePolicy::bootstrap_max_auth_age_secs`],
+//!   10 minutes by default), plus proof of the device key. By default this
+//!   enrolls *any* device of the account at once -- its first, a re-key of a
+//!   machine it already has, or a brand-new one -- the way signing in adds a
+//!   device to a tailnet. A brand-new device enrolled so is audited as
+//!   `device_enrolled` by [`BY_FRESH_SIGN_IN`] with a detail naming it a
+//!   new device of the account;
+//! - approval from an already enrolled device of the same account, by the
+//!   one-time code the new device shows or by picking it from the pending
+//!   list. A device on a long-lived (refreshed) session -- no fresh
+//!   `auth_time` -- always needs this.
+//!
+//! Why a fresh sign-in alone is enough by default: whoever can complete an
+//! interactive sign-in to the account already *is* the account to the
+//! identity provider; requiring a second device to approve the first does
+//! not stop an account takeover, it only makes the owner's own second Mac
+//! wait for a code (and an identity provider that does not mark a social
+//! login's email verified, or report `amr`, made that the common case).
+//! Account compromise is sign-in compromise, and the defences belong
+//! there (the IdP's MFA and session policy). The relay narrows what a
+//! stolen credential can do: a refreshed or long-lived token cannot enroll
+//! (fresh `auth_time` only), a stolen token without the device key cannot
+//! open a session (key proof per session), every enrollment is audited
+//! with how it happened, any enrolled device can revoke another (ending its
+//! sessions at once), and a relay may switch to the stricter policy.
+//!
+//! The strict policy ([`DevicePolicy::require_approval`],
+//! `--device-require-approval` / `CUA_RELAY_DEVICE_REQUIRE_APPROVAL`, off by
+//! default; `phones` limits it to phone-class devices, see
+//! [`DevicePolicy::approval_phones_only`]) restores approval for brand-new devices: a fresh sign-in then
+//! enrolls only an account's first device (or its only one, after it
+//! expired; while no device enrolled through a real second factor exists),
+//! a re-key of a machine that already has a live device on the account
+//! (same machine id, a new key), and, for a verified email, a token whose
+//! authentication context proves a second factor (`acr`/`amr`; see
+//! [`crate::oidc::Identity::mfa`]). Any other new device waits for an
+//! approval.
+//!
+//! During the migration grace period (ended by default; see
+//! [`DevicePolicy::grace_secs`]) an account with no enrolled device may also
+//! bootstrap without a fresh sign-in (audited).
+//!
+//! A device may report a machine id (a hash of the host's hardware or
+//! install identity, keyed per account here). When a new key of the same
+//! machine enrolls (another build of the app keeps its own key, the key was
+//! lost), it replaces the machine's older records: they are revoked as
+//! superseded, their sessions end, and listings show the machine once. The
+//! machine id is a claim, never a factor for *whom* it replaces; under the
+//! strict policy it is, however, one of the ways a fresh sign-in alone is
+//! allowed to enroll without an approval (a re-key of a machine the account
+//! already trusts).
+//!
+//! Enrollment lasts `device_ttl` (30 days by default) and slides while the
+//! device is in use: each session it opens (a proof of its key) moves the
+//! end to `device_ttl` from then, persisted when that moves it by more than
+//! [`RENEW_STEP_SECS`]. A device unused for `device_ttl` expires and needs
+//! one approval or a fresh sign-in again; a session never revives an
+//! expired device. Per session the device proves its key
+//! (`POST /v1/devices/session`, a signed timestamp) and gets a short-lived
+//! opaque session token it sends as `x-cua-device-session` with its account
+//! token. Hosts are never involved: a hosted-only machine registers with its
+//! machine token and is never enrolled as a client.
+//!
+//! Every enrollment change, device session and machine access is recorded
+//! in the account's audit log (bounded per account, appended to its own
+//! file next to the devices file; see [`AuditLog`]).
+
+use std::collections::{BTreeMap, HashMap};
+use std::io::{BufRead as _, Write as _};
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
+
+use base64::Engine as _;
+use serde::{Deserialize, Serialize};
+
+use crate::assertion::{now_secs, remove_stale_temps, write_private, write_private_with};
+use crate::storage::{store, Storage};
+
+/// Header carrying the device session token.
+pub const DEVICE_SESSION_HEADER: &str = "x-cua-device-session";
+/// Response header set while an unenrolled device is let through during the
+/// migration grace period: `required; enforce-after=<unix seconds>`.
+pub const ENROLLMENT_HEADER: &str = "x-cua-device-enrollment";
+/// Device id prefix.
+pub const DEVICE_ID_PREFIX: &str = "dev_";
+/// Audit events kept per account (S9; raised from an earlier 500 so a
+/// chattier account does not push older, still-relevant events out of
+/// range as quickly; export the full chain with `GET /v1/audit?format=jsonl`
+/// before it does either way).
+pub const AUDIT_LIMIT: usize = 5_000;
+/// How long a one-time enrollment code is valid.
+pub const CODE_TTL_SECS: u64 = 600;
+/// Accepted clock skew of signed timestamps.
+pub const PROOF_SKEW_SECS: u64 = 120;
+/// Minimum time between two recorded accesses of one machine by one
+/// device (or user).
+pub const ACCESS_AUDIT_INTERVAL_SECS: u64 = 600;
+/// Devices one account may register.
+pub const MAX_DEVICES_PER_ACCOUNT: usize = 64;
+
+/// Devices of one account waiting for an approval (a live one-time code)
+/// at once.
+pub const MAX_WAITING_PER_ACCOUNT: usize = 5;
+/// `enrolled_by` of a device enrolled by a fresh interactive sign-in.
+pub const BY_FRESH_SIGN_IN: &str = "bootstrap:fresh-sign-in";
+/// Minimum move of `enrolled_until` that a session's sliding renewal
+/// records (at most half the TTL), so an active device is not rewritten
+/// for every session.
+pub const RENEW_STEP_SECS: u64 = 86_400;
+/// `enrolled_by` of a device enrolled during the migration grace period.
+pub const BY_GRACE: &str = "bootstrap:grace";
+
+/// Domain-separated message a device signs to register itself. (The
+/// account is not part of it: a device key belongs to one account, which
+/// the store enforces.)
+pub fn register_message(device: &str, ts: u64) -> String {
+    format!("cua-device-register/v1\n{device}\n{ts}")
+}
+
+/// Domain-separated message a device signs to open a session.
+pub fn session_message(device: &str, ts: u64) -> String {
+    format!("cua-device-session/v1\n{device}\n{ts}")
+}
+
+/// The device id of an uncompressed P-256 public key.
+pub fn device_id(public_key: &[u8]) -> String {
+    let digest = ring::digest::digest(&ring::digest::SHA256, public_key);
+    format!("{DEVICE_ID_PREFIX}{}", &hex::encode(digest.as_ref())[..24])
+}
+
+fn b64() -> base64::engine::GeneralPurpose {
+    base64::engine::general_purpose::URL_SAFE_NO_PAD
+}
+
+/// Decodes a base64url uncompressed P-256 public key (65 bytes).
+pub fn decode_public_key(key: &str) -> Result<Vec<u8>, String> {
+    let raw = b64()
+        .decode(key.trim())
+        .map_err(|_| "public_key is not base64url".to_owned())?;
+    if raw.len() != 65 || raw[0] != 4 {
+        return Err("public_key must be an uncompressed P-256 point".into());
+    }
+    Ok(raw)
+}
+
+/// Verifies a base64url fixed-size (r‖s) ECDSA P-256 SHA-256 signature.
+pub fn verify(public_key: &[u8], message: &str, signature: &str) -> bool {
+    let Ok(sig) = b64().decode(signature.trim()) else {
+        return false;
+    };
+    ring::signature::UnparsedPublicKey::new(&ring::signature::ECDSA_P256_SHA256_FIXED, public_key)
+        .verify(message.as_bytes(), &sig)
+        .is_ok()
+}
+
+fn sha256_hex(text: &str) -> String {
+    hex::encode(ring::digest::digest(&ring::digest::SHA256, text.as_bytes()).as_ref())
+}
+
+/// The stored form of a device's reported machine id: keyed by the account,
+/// so one machine used with two accounts cannot be linked across them.
+/// `None` for an empty or oversized id.
+fn machine_key(account: &str, machine_id: &str) -> Option<String> {
+    let id = machine_id.trim();
+    if id.is_empty() || id.len() > 128 || id.chars().any(char::is_control) {
+        return None;
+    }
+    Some(sha256_hex(&format!(
+        "cua-device-machine/v1\n{account}\n{id}"
+    )))
+}
+
+/// Where a device stands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DeviceState {
+    /// Registered, waiting for an approval.
+    Pending,
+    /// Enrolled and within its TTL.
+    Enrolled,
+    /// Enrolled once; re-verification is due.
+    Expired,
+    /// Revoked (terminal).
+    Revoked,
+}
+
+/// A client device of an account.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeviceRecord {
+    /// `dev_…`, derived from the public key.
+    pub id: String,
+    /// Owning account.
+    pub account: String,
+    /// User who registered it.
+    pub user: String,
+    /// Display name.
+    pub name: String,
+    /// Uncompressed P-256 public key, base64url.
+    pub public_key: String,
+    /// Registration time.
+    pub created_at: u64,
+    /// Last enrollment (approval or bootstrap).
+    #[serde(default)]
+    pub enrolled_at: Option<u64>,
+    /// End of the current enrollment.
+    #[serde(default)]
+    pub enrolled_until: Option<u64>,
+    /// Approving device id, or [`BY_FRESH_SIGN_IN`] / [`BY_GRACE`].
+    #[serde(default)]
+    pub enrolled_by: Option<String>,
+    /// Revocation time.
+    #[serde(default)]
+    pub revoked_at: Option<u64>,
+    /// The device of the same machine that replaced this one (a re-key);
+    /// set with `revoked_at`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub superseded_by: Option<String>,
+    /// The machine the device runs on ([`machine_key`] of the id it
+    /// reported), when it reported one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub machine: Option<String>,
+    /// Enrolled through a real second factor: a fresh sign-in, or an
+    /// approval from a device that was. Devices bootstrapped during the
+    /// grace period (and those they approve) are not.
+    #[serde(default)]
+    pub strong: bool,
+    /// Last session opened.
+    #[serde(default)]
+    pub last_seen: Option<u64>,
+    /// Operating system the device reported (`macos`, `windows`, `linux`).
+    #[serde(default)]
+    pub platform: String,
+    /// A phone (the Cua Spaces phone app): a smaller kind of device that
+    /// reaches machines through a short list of calls only
+    /// ([`crate::phone`]). Sticky: once a device is a phone it stays one.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub phone: bool,
+    /// What the device says it can host for the pool, fixed once it is
+    /// enrolled like its name and platform. A phone states none today.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capabilities: Option<crate::phone::Capabilities>,
+    /// SHA-256 of the pending one-time code.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code_sha256: Option<String>,
+    /// When the pending code expires.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code_expires: Option<u64>,
+}
+
+impl DeviceRecord {
+    /// Whether this is a phone: marked as one, or enrolled as an iPhone, iPad or
+    /// Android before the mark existed (the mark is also backfilled when the
+    /// store is opened).
+    pub fn is_phone(&self) -> bool {
+        self.phone || crate::phone::platform_is_phone(&self.platform)
+    }
+
+    /// The state at `now`.
+    pub fn state(&self, now: u64) -> DeviceState {
+        if self.revoked_at.is_some() {
+            return DeviceState::Revoked;
+        }
+        match self.enrolled_until {
+            Some(until) if until > now => DeviceState::Enrolled,
+            Some(_) => DeviceState::Expired,
+            None => DeviceState::Pending,
+        }
+    }
+}
+
+/// One audit event.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AuditEvent {
+    /// Unix seconds.
+    pub ts: u64,
+    /// `device_registered`, `device_enrolled`, `device_rekeyed`,
+    /// `device_renamed`, `device_revoked`, `device_session`, `machine_access`,
+    /// `shared_access`, `unenrolled_access`, `share_added`,
+    /// `share_removed`, `machine_registered`, `machine_removed`,
+    /// `sharing_stopped`, `sharing_started`, `share_left` (someone left a
+    /// machine shared with them; owner log), `machine_left` (their own log).
+    pub kind: String,
+    /// Acting device, when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub device: Option<String>,
+    /// Machine concerned.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub machine: Option<String>,
+    /// Other party (user id or email, approving device, allowlist entry).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subject: Option<String>,
+    /// Free-form detail.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+}
+
+impl AuditEvent {
+    /// An event of `kind` now.
+    pub fn new(kind: &str) -> Self {
+        Self {
+            ts: now_secs(),
+            kind: kind.into(),
+            device: None,
+            machine: None,
+            subject: None,
+            detail: None,
+        }
+    }
+
+    /// With the acting device.
+    pub fn device(mut self, device: Option<&str>) -> Self {
+        self.device = device.map(str::to_owned);
+        self
+    }
+
+    /// With the machine.
+    pub fn machine(mut self, machine: &str) -> Self {
+        self.machine = Some(machine.to_owned());
+        self
+    }
+
+    /// With the other party.
+    pub fn subject(mut self, subject: impl Into<String>) -> Self {
+        self.subject = Some(subject.into());
+        self
+    }
+
+    /// With a detail.
+    pub fn detail(mut self, detail: impl Into<String>) -> Self {
+        self.detail = Some(detail.into());
+        self
+    }
+}
+
+/// The "previous hash" of an account's first audit entry ever.
+pub const AUDIT_GENESIS: &str = "0000000000000000000000000000000000000000000000000000000000000000";
+
+/// One audit log entry, hash-chained (S9), like the Keyvault's own
+/// (`cua_keyvault::audit`): `hash` covers `prev`, `seq` and this entry's
+/// event; `mac` is an HMAC-SHA256 of `hash` under a key only the running
+/// relay holds (generated on first use, next to the devices file, 0600;
+/// never derivable from the devices/audit log files alone). Editing,
+/// reordering or deleting an entry breaks the hash chain from that point
+/// on for anyone re-deriving it from the log file; producing a `mac` that
+/// still verifies needs the relay's own audit key, so a copy of the log
+/// file alone (a backup, a disk snapshot) cannot be edited undetectably.
+/// Retention still trims the oldest entries ([`AUDIT_LIMIT`], raised from
+/// an earlier 500): the oldest *retained* entry's own `hash`/`mac` are
+/// still checked by [`DeviceStore::verify_audit_chain`], but nothing before
+/// it is, since it is gone.
+///
+/// `#[serde(default)]` on the chain fields lets this also deserialize a
+/// pre-S9 devices file, whose audit entries are plain [`AuditEvent`]s with
+/// none of them: those come back with `seq == 0`, a sentinel
+/// [`chain_append`] never produces (it starts at 1), which
+/// [`DeviceStore::open`] uses to detect and migrate them (rebuild the chain
+/// from the existing events) instead of refusing to start on an upgrade.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AuditEntry {
+    /// 1-based, per account, never reused (kept across trims). `0` for an
+    /// entry read from a pre-S9 file, before [`DeviceStore::open`] migrates
+    /// it.
+    #[serde(default)]
+    pub seq: u64,
+    /// The event.
+    #[serde(flatten)]
+    pub event: AuditEvent,
+    /// The previous *retained* entry's `hash`, or [`AUDIT_GENESIS`].
+    /// Empty for an unmigrated pre-S9 entry.
+    #[serde(default)]
+    pub prev: String,
+    /// SHA-256 of `prev`, `seq` and the event's canonical JSON, hex.
+    /// Empty for an unmigrated pre-S9 entry.
+    #[serde(default)]
+    pub hash: String,
+    /// HMAC-SHA256 of `hash` under the relay's audit key, hex. Empty for an
+    /// unmigrated pre-S9 entry.
+    #[serde(default)]
+    pub mac: String,
+}
+
+impl std::ops::Deref for AuditEntry {
+    type Target = AuditEvent;
+    fn deref(&self) -> &AuditEvent {
+        &self.event
+    }
+}
+
+fn chain_hash(prev: &str, seq: u64, event: &AuditEvent) -> String {
+    let body = serde_json::to_vec(event).expect("audit event serializes");
+    let mut input = Vec::with_capacity(prev.len() + 8 + body.len());
+    input.extend_from_slice(prev.as_bytes());
+    input.extend_from_slice(&seq.to_be_bytes());
+    input.extend_from_slice(&body);
+    hex::encode(ring::digest::digest(&ring::digest::SHA256, &input).as_ref())
+}
+
+fn chain_mac(key: &[u8; 32], hash: &str) -> String {
+    let key = ring::hmac::Key::new(ring::hmac::HMAC_SHA256, key);
+    hex::encode(ring::hmac::sign(&key, hash.as_bytes()).as_ref())
+}
+
+/// The entry that appends `event` to `log`, hash-chained from its tail.
+fn chain_next(log: &[AuditEntry], event: AuditEvent, audit_key: &[u8; 32]) -> AuditEntry {
+    let prev = log
+        .last()
+        .map(|e| e.hash.clone())
+        .unwrap_or_else(|| AUDIT_GENESIS.to_owned());
+    let seq = log.last().map(|e| e.seq).unwrap_or(0) + 1;
+    let hash = chain_hash(&prev, seq, &event);
+    let mac = chain_mac(audit_key, &hash);
+    AuditEntry {
+        seq,
+        event,
+        prev,
+        hash,
+        mac,
+    }
+}
+
+/// Appends `event` to `log`, hash-chained from its current tail.
+fn chain_append(log: &mut Vec<AuditEntry>, event: AuditEvent, audit_key: &[u8; 32]) {
+    let entry = chain_next(log, event, audit_key);
+    log.push(entry);
+}
+
+/// `text` with `account` and each of `emails` (any case) replaced.
+pub(crate) fn scrub(text: &str, account: &str, emails: &[String], with: &str) -> String {
+    let mut out = text.replace(account, with);
+    for e in emails.iter().filter(|e| !e.is_empty()) {
+        // ASCII lowering keeps byte offsets.
+        while let Some(at) = out.to_ascii_lowercase().find(&e.to_ascii_lowercase()) {
+            out.replace_range(at..at + e.len(), with);
+        }
+    }
+    out
+}
+
+/// Replaces `account` and `emails` in the entries of `log` that name them
+/// with "deleted account", then re-chains the log from the first changed
+/// entry (same `seq`, new `prev`, `hash` and `mac` under `audit_key`), so it
+/// still verifies. Returns how many entries changed; a log that names
+/// neither is left byte for byte as it was.
+fn rewrite_audit(
+    log: &mut [AuditEntry],
+    account: &str,
+    emails: &[String],
+    audit_key: &[u8; 32],
+) -> usize {
+    const GONE: &str = "deleted account";
+    let fix = |f: &mut Option<String>| -> bool {
+        match f {
+            Some(v) => {
+                let n = scrub(v, account, emails, GONE);
+                let changed = n != *v;
+                *v = n;
+                changed
+            }
+            None => false,
+        }
+    };
+    let mut first = None;
+    let mut changed = 0;
+    for (i, e) in log.iter_mut().enumerate() {
+        let ev = &mut e.event;
+        let hit = [
+            fix(&mut ev.device),
+            fix(&mut ev.machine),
+            fix(&mut ev.subject),
+            fix(&mut ev.detail),
+        ]
+        .contains(&true);
+        if hit {
+            changed += 1;
+            first.get_or_insert(i);
+        }
+    }
+    let Some(first) = first else {
+        return 0;
+    };
+    for i in first..log.len() {
+        if i > 0 {
+            log[i].prev = log[i - 1].hash.clone();
+        }
+        log[i].hash = chain_hash(&log[i].prev, log[i].seq, &log[i].event);
+        log[i].mac = chain_mac(audit_key, &log[i].hash);
+    }
+    changed
+}
+
+/// Why chain verification failed: the entry's sequence number and why.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChainBroken {
+    /// The first entry found broken.
+    pub seq: u64,
+    /// `"mac"` (the entry was edited, or produced with a different audit
+    /// key) or `"prev"` (an entry is missing, reordered, or its neighbor
+    /// was edited).
+    pub reason: &'static str,
+}
+
+/// Verifies `log`'s hash chain is internally consistent under `audit_key`:
+/// every entry's `mac` matches its `hash`, and every entry after the first
+/// chains from its predecessor's `hash`. The first retained entry's own
+/// `prev` is not checked against anything earlier (it may be
+/// [`AUDIT_GENESIS`], or the hash of an entry retention already dropped).
+pub fn verify_audit_chain(log: &[AuditEntry], audit_key: &[u8; 32]) -> Result<(), ChainBroken> {
+    let mut prev_hash: Option<&str> = None;
+    for entry in log {
+        if chain_hash(&entry.prev, entry.seq, &entry.event) != entry.hash
+            || chain_mac(audit_key, &entry.hash) != entry.mac
+        {
+            return Err(ChainBroken {
+                seq: entry.seq,
+                reason: "mac",
+            });
+        }
+        if let Some(prev) = prev_hash {
+            if entry.prev != prev {
+                return Err(ChainBroken {
+                    seq: entry.seq,
+                    reason: "prev",
+                });
+            }
+        }
+        prev_hash = Some(&entry.hash);
+    }
+    Ok(())
+}
+
+/// Rebuilds the hash chain (S9) for every account whose persisted log
+/// predates it. A pre-S9 devices file's audit entries are plain
+/// [`AuditEvent`]s with no `seq`/`prev`/`hash`/`mac`; [`AuditEntry`]'s
+/// `#[serde(default)]` on those fields lets them deserialize at all, but
+/// leaves every one with the sentinel `seq == 0` ([`chain_append`] starts
+/// at 1 and never produces it). An account whose log has one is migrated in
+/// place: its events, in their existing order, are re-appended through
+/// [`chain_append`] so the log becomes a genuine chain under `audit_key`.
+/// Mixing migrated and already-chained entries in one log never happens in
+/// practice (a file is either pre-S9 throughout or not), so finding the
+/// sentinel anywhere in an account's log is enough to rebuild that whole
+/// log rather than require it to already be entry-by-entry consistent.
+/// Returns whether anything was migrated (the caller persists the result).
+fn migrate_legacy_audit(
+    audit: &mut BTreeMap<String, Vec<AuditEntry>>,
+    audit_key: &[u8; 32],
+) -> bool {
+    let mut migrated = false;
+    for log in audit.values_mut() {
+        if log.iter().any(|entry| entry.seq == 0) {
+            let events: Vec<AuditEvent> =
+                std::mem::take(log).into_iter().map(|e| e.event).collect();
+            for event in events {
+                chain_append(log, event, audit_key);
+            }
+            migrated = true;
+        }
+    }
+    migrated
+}
+
+/// The devices file: devices only. Audit entries live in [`AuditLog`]'s
+/// own file, so an audit event never rewrites this one.
+#[derive(Debug, Default, Clone, Serialize)]
+struct State {
+    /// Start of the migration grace period (first start with devices).
+    grace_started_at: u64,
+    devices: BTreeMap<String, DeviceRecord>,
+    /// Audit events of the change being applied, appended to the audit log
+    /// once the change is persisted ([`DeviceStore::mutate`]).
+    #[serde(skip)]
+    pending_audit: Vec<(String, AuditEvent)>,
+}
+
+/// The devices file as read: earlier relays also kept every account's
+/// audit log in it, which [`DeviceStore::open`] moves to the audit log file.
+#[derive(Debug, Default, Deserialize)]
+struct StoredState {
+    #[serde(default)]
+    grace_started_at: u64,
+    #[serde(default)]
+    devices: BTreeMap<String, DeviceRecord>,
+    #[serde(default)]
+    audit: BTreeMap<String, Vec<AuditEntry>>,
+}
+
+/// The live device sessions are kept in the devices file's path plus this
+/// suffix, so a relay restart does not cut every client off until its
+/// session expires: an append-only journal, one line per session opened
+/// (`{"open": <token hash>, ...}`) or ended (`{"end": <token hash>}`).
+pub const SESSIONS_FILE_SUFFIX: &str = ".sessions.jsonl";
+
+/// Where earlier relays kept the sessions, as one JSON map rewritten on
+/// every change; read once and replaced by the journal.
+const LEGACY_SESSIONS_FILE_SUFFIX: &str = ".sessions.json";
+
+/// Lines the session journal may hold beyond twice the live sessions
+/// before it is rewritten with only the live ones.
+const SESSIONS_COMPACT_SLACK: usize = 4_096;
+
+/// The audit log file is the devices file's path plus this suffix.
+pub const AUDIT_FILE_SUFFIX: &str = ".audit.jsonl";
+
+/// Lines the audit log file may hold beyond the retained entries (trimmed
+/// ones) before it is rewritten with only the retained ones.
+const AUDIT_COMPACT_SLACK: usize = 50_000;
+
+/// One line of the audit log file.
+#[derive(Serialize)]
+struct AuditLineOut<'a> {
+    account: &'a str,
+    #[serde(flatten)]
+    entry: &'a AuditEntry,
+}
+
+/// One line of the audit log file, read back.
+#[derive(Deserialize)]
+struct AuditLineIn {
+    account: String,
+    #[serde(flatten)]
+    entry: AuditEntry,
+}
+
+/// Every account's audit log: the last [`AUDIT_LIMIT`] entries per account
+/// in memory and, for a persisted store, an append-only file of one JSON
+/// line per entry (`{"account": ..., <entry>}`). Recording an event appends
+/// one line; the file is rewritten (atomically, streamed) only when trimmed
+/// entries make up more than [`AUDIT_COMPACT_SLACK`] of its lines, or at
+/// startup after a torn final line.
+#[derive(Debug, Default)]
+struct AuditLog {
+    path: Option<PathBuf>,
+    /// Append handle, opened on first use.
+    file: Option<std::fs::File>,
+    logs: BTreeMap<String, Vec<AuditEntry>>,
+    /// Entries in `logs`.
+    retained: usize,
+    /// Lines in the file.
+    lines: usize,
+    compact_slack: usize,
+    /// The outcome of the last compaction since it was last taken
+    /// ([`DeviceStore::audit`] reports it).
+    compacted: Option<std::io::Result<()>>,
+}
+
+impl AuditLog {
+    fn path_for(devices_path: &Path) -> PathBuf {
+        PathBuf::from(format!("{}{AUDIT_FILE_SUFFIX}", devices_path.display()))
+    }
+
+    /// Drops every entry recorded before `cutoff` (Unix seconds), oldest
+    /// first, and rewrites the file without them. Like count trimming this
+    /// only removes a prefix, so the retained chain still verifies (its
+    /// first entry's own `hash`/`mac` are checked, nothing before it). An
+    /// account whose whole log expires starts again at `seq` 1 on its next
+    /// event. Returns how many entries were dropped.
+    fn trim_before(&mut self, cutoff: u64) -> usize {
+        let mut dropped = 0;
+        for log in self.logs.values_mut() {
+            let n = log.iter().take_while(|e| e.event.ts < cutoff).count();
+            log.drain(..n);
+            dropped += n;
+        }
+        if dropped > 0 {
+            self.logs.retain(|_, log| !log.is_empty());
+            self.retained -= dropped;
+            self.compacted = Some(self.compact());
+        }
+        dropped
+    }
+
+    fn in_memory() -> Self {
+        Self {
+            compact_slack: AUDIT_COMPACT_SLACK,
+            ..Self::default()
+        }
+    }
+
+    /// Loads the log file at `path` (empty when missing). A line that does
+    /// not parse (a write torn by a crash) is dropped and the file is
+    /// rewritten without it.
+    fn load(path: PathBuf) -> std::io::Result<Self> {
+        let mut log = Self {
+            path: Some(path),
+            ..Self::in_memory()
+        };
+        let path = log.path.clone().expect("path");
+        let file = match std::fs::File::open(&path) {
+            Ok(f) => f,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(log),
+            Err(e) => return Err(e),
+        };
+        let mut reader = std::io::BufReader::new(file);
+        let mut line = Vec::new();
+        let mut dropped = 0usize;
+        loop {
+            line.clear();
+            if reader.read_until(b'\n', &mut line)? == 0 {
+                break;
+            }
+            let complete = line.last() == Some(&b'\n');
+            let body = line.strip_suffix(b"\n").unwrap_or(&line);
+            if body.is_empty() {
+                continue;
+            }
+            log.lines += 1;
+            match serde_json::from_slice::<AuditLineIn>(body) {
+                Ok(parsed) if complete => log.insert(parsed.account, parsed.entry),
+                _ => dropped += 1,
+            }
+        }
+        if dropped > 0 {
+            tracing::warn!(path = %path.display(), dropped, "dropped unreadable audit log lines");
+            log.compact()?;
+        }
+        Ok(log)
+    }
+
+    /// Adds an already chained entry, trimming the account to
+    /// [`AUDIT_LIMIT`].
+    fn insert(&mut self, account: String, entry: AuditEntry) {
+        let log = self.logs.entry(account).or_default();
+        log.push(entry);
+        self.retained += 1;
+        if log.len() > AUDIT_LIMIT {
+            let excess = log.len() - AUDIT_LIMIT;
+            log.drain(..excess);
+            self.retained -= excess;
+        }
+    }
+
+    /// Chains `event` onto `account`'s log and appends it to the file. On
+    /// a write error nothing is recorded (the file is cut back to where it
+    /// was, so no torn line stays in it).
+    fn append(
+        &mut self,
+        account: &str,
+        event: AuditEvent,
+        audit_key: &[u8; 32],
+    ) -> std::io::Result<()> {
+        let entry = chain_next(
+            self.logs.get(account).map(Vec::as_slice).unwrap_or(&[]),
+            event,
+            audit_key,
+        );
+        if self.path.is_some() {
+            let mut line = serde_json::to_vec(&AuditLineOut {
+                account,
+                entry: &entry,
+            })?;
+            line.push(b'\n');
+            self.write_line(&line)?;
+            self.lines += 1;
+        }
+        self.insert(account.to_owned(), entry);
+        if self.lines > self.retained.saturating_add(self.compact_slack) {
+            self.compacted = Some(self.compact());
+        }
+        Ok(())
+    }
+
+    fn write_line(&mut self, line: &[u8]) -> std::io::Result<()> {
+        let path = self.path.as_ref().expect("persisted audit log");
+        if self.file.is_none() {
+            let mut options = std::fs::OpenOptions::new();
+            options.append(true).create(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt as _;
+                options.mode(0o600);
+            }
+            self.file = Some(options.open(path)?);
+        }
+        let file = self.file.as_mut().expect("open");
+        let before = file.metadata()?.len();
+        let written = file.write_all(line).and_then(|()| file.sync_data());
+        if written.is_err() {
+            let _ = file.set_len(before);
+        }
+        written
+    }
+
+    /// Rewrites the file with only the retained entries.
+    fn compact(&mut self) -> std::io::Result<()> {
+        let Some(path) = self.path.clone() else {
+            return Ok(());
+        };
+        self.file = None;
+        let logs = &self.logs;
+        write_private_with(&path, |out| {
+            for (account, entries) in logs {
+                for entry in entries {
+                    serde_json::to_writer(&mut *out, &AuditLineOut { account, entry })?;
+                    out.write_all(b"\n")?;
+                }
+            }
+            Ok(())
+        })?;
+        self.lines = self.retained;
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct Session {
+    account: String,
+    device: String,
+    expires: u64,
+}
+
+/// One line of the session journal.
+#[derive(Serialize, Deserialize)]
+#[serde(untagged)]
+enum SessionLine {
+    Open {
+        open: String,
+        #[serde(flatten)]
+        session: Session,
+    },
+    End {
+        end: String,
+    },
+}
+
+/// The live sessions' journal: opening or ending a session appends one
+/// line (fsynced); the file is rewritten (streamed, atomic) with only the
+/// live sessions once it holds [`SESSIONS_COMPACT_SLACK`] lines more than
+/// twice their number. Losing it only costs clients a new session, and a
+/// session of a device that is no longer enrolled is refused regardless.
+#[derive(Debug)]
+struct SessionLog {
+    path: Option<PathBuf>,
+    file: Option<std::fs::File>,
+    lines: usize,
+    compact_slack: usize,
+}
+
+impl Default for SessionLog {
+    fn default() -> Self {
+        Self {
+            path: None,
+            file: None,
+            lines: 0,
+            compact_slack: SESSIONS_COMPACT_SLACK,
+        }
+    }
+}
+
+impl SessionLog {
+    /// Loads the journal at `path` (and, once, the map an earlier relay
+    /// kept at `legacy`), without the sessions expired by `now`. A line
+    /// that does not parse (a torn write) is skipped and the journal is
+    /// rewritten.
+    fn load(
+        path: PathBuf,
+        legacy: &Path,
+        now: u64,
+    ) -> std::io::Result<(Self, HashMap<String, Session>)> {
+        let mut log = Self {
+            path: Some(path.clone()),
+            ..Self::default()
+        };
+        let mut sessions: HashMap<String, Session> = match std::fs::read(legacy) {
+            // An unreadable file only costs clients a new session.
+            Ok(raw) => serde_json::from_slice(&raw).unwrap_or_default(),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => HashMap::new(),
+            Err(e) => return Err(e),
+        };
+        let had_legacy = legacy.exists();
+        let mut torn = false;
+        match std::fs::File::open(&path) {
+            Ok(file) => {
+                let mut reader = std::io::BufReader::new(file);
+                let mut line = Vec::new();
+                loop {
+                    line.clear();
+                    if reader.read_until(b'\n', &mut line)? == 0 {
+                        break;
+                    }
+                    let complete = line.last() == Some(&b'\n');
+                    let body = line.strip_suffix(b"\n").unwrap_or(&line);
+                    if body.is_empty() {
+                        continue;
+                    }
+                    log.lines += 1;
+                    match serde_json::from_slice::<SessionLine>(body) {
+                        Ok(SessionLine::Open { open, session }) if complete => {
+                            sessions.insert(open, session);
+                        }
+                        Ok(SessionLine::End { end }) if complete => {
+                            sessions.remove(&end);
+                        }
+                        _ => torn = true,
+                    }
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e),
+        }
+        sessions.retain(|_, s| s.expires > now);
+        if torn || had_legacy {
+            log.compact(&sessions)?;
+            if had_legacy {
+                std::fs::remove_file(legacy)?;
+            }
+        }
+        Ok((log, sessions))
+    }
+
+    fn append(&mut self, lines: &[SessionLine]) -> std::io::Result<()> {
+        let Some(path) = &self.path else {
+            return Ok(());
+        };
+        let mut buf = Vec::new();
+        for l in lines {
+            serde_json::to_writer(&mut buf, l)?;
+            buf.push(b'\n');
+        }
+        if self.file.is_none() {
+            let mut options = std::fs::OpenOptions::new();
+            options.append(true).create(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt as _;
+                options.mode(0o600);
+            }
+            self.file = Some(options.open(path)?);
+        }
+        let file = self.file.as_mut().expect("open");
+        let before = file.metadata()?.len();
+        let written = file.write_all(&buf).and_then(|()| file.sync_data());
+        if written.is_err() {
+            // No torn line stays behind.
+            let _ = file.set_len(before);
+        }
+        written?;
+        self.lines += lines.len();
+        Ok(())
+    }
+
+    /// Rewrites the journal with only `live`.
+    fn compact(&mut self, live: &HashMap<String, Session>) -> std::io::Result<()> {
+        let Some(path) = self.path.clone() else {
+            return Ok(());
+        };
+        self.file = None;
+        write_private_with(&path, |out| {
+            for (hash, session) in live {
+                serde_json::to_writer(
+                    &mut *out,
+                    &SessionLine::Open {
+                        open: hash.clone(),
+                        session: session.clone(),
+                    },
+                )?;
+                out.write_all(b"\n")?;
+            }
+            Ok(())
+        })?;
+        self.lines = live.len();
+        Ok(())
+    }
+
+    fn needs_compaction(&self, live: usize) -> bool {
+        self.path.is_some() && self.lines > live.saturating_mul(2) + self.compact_slack
+    }
+}
+
+/// [`DeviceError::Proof`] message: the proof's timestamp is outside the
+/// allowed clock window.
+pub const PROOF_STALE: &str = "the device clock is off or the proof is stale";
+/// [`DeviceError::Proof`] message: the signature does not verify.
+pub const PROOF_BAD_SIGNATURE: &str = "invalid device signature";
+/// [`DeviceError::Proof`] message: the proof was already used.
+pub const PROOF_REPLAYED: &str = "device proof already used";
+
+/// Errors, mapped to HTTP statuses by the API.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DeviceError {
+    /// 400.
+    Invalid(String),
+    /// 401: bad proof.
+    Proof(String),
+    /// 403.
+    Forbidden(String),
+    /// 404.
+    NotFound,
+    /// 404: no pending device shows this code.
+    CodeNotFound,
+    /// 409.
+    Conflict(String),
+    /// 500.
+    Storage(String),
+}
+
+impl std::fmt::Display for DeviceError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Invalid(m)
+            | Self::Proof(m)
+            | Self::Forbidden(m)
+            | Self::Conflict(m)
+            | Self::Storage(m) => f.write_str(m),
+            Self::NotFound => f.write_str("no such device"),
+            Self::CodeNotFound => f.write_str(
+                "no device is waiting with this code (codes expire after 10 minutes); \
+                 approve by id instead (`cua devices approve <device id>`, ids in `cua devices ls`)",
+            ),
+        }
+    }
+}
+
+/// How a registration ended.
+#[derive(Debug, Clone)]
+pub struct Registered {
+    /// The device.
+    pub device: DeviceRecord,
+    /// One-time code to confirm from an enrolled device (pending only).
+    pub code: Option<String>,
+    /// Older devices of the same machine this enrollment replaced.
+    pub superseded: Vec<String>,
+}
+
+/// A device's registration request, its key already proven by the caller's
+/// signature over [`register_message`].
+#[derive(Debug, Clone, Default)]
+pub struct Registration<'a> {
+    /// Owning account.
+    pub account: &'a str,
+    /// User registering it.
+    pub user: &'a str,
+    /// Uncompressed P-256 public key, base64url.
+    pub public_key: &'a str,
+    /// Display name.
+    pub name: &'a str,
+    /// Operating system (`macos`, `windows`, `linux`).
+    pub platform: &'a str,
+    /// The machine id the device reports, if any.
+    pub machine_id: Option<&'a str>,
+    /// Signed timestamp.
+    pub ts: u64,
+    /// Signature over [`register_message`].
+    pub sig: &'a str,
+    /// Asks to enroll without an approval.
+    pub bootstrap: bool,
+    /// The account token's `auth_time`.
+    pub auth_time: Option<u64>,
+    /// The issuer verified the account's email.
+    pub email_verified: bool,
+    /// The account token's authentication context proves a second factor
+    /// ([`crate::oidc::Identity::mfa`]).
+    pub mfa: bool,
+    /// The device is a phone: it reported a phone platform, or its sign-in
+    /// token was issued to the phone app's client ([`crate::phone`]).
+    pub phone: bool,
+    /// What it states it can host (already checked).
+    pub capabilities: Option<crate::phone::Capabilities>,
+}
+
+/// Device store settings.
+#[derive(Debug, Clone, Copy)]
+pub struct DevicePolicy {
+    /// Enrollment lifetime.
+    pub ttl_secs: u64,
+    /// Migration grace period (unenrolled access allowed, flagged).
+    pub grace_secs: u64,
+    /// Maximum `auth_time` age for a bootstrap enrollment.
+    pub bootstrap_max_auth_age_secs: u64,
+    /// Device session lifetime.
+    pub session_ttl_secs: u64,
+    /// Strict policy: a fresh sign-in enrolls only an account's first
+    /// device, a re-key of a machine it already has, or (verified email) a
+    /// sign-in proving MFA; other new devices need an approval. Off by
+    /// default: a fresh sign-in enrolls any device of the account.
+    pub require_approval: bool,
+    /// Narrows [`Self::require_approval`] to phone-class devices (a device
+    /// that reported a phone platform or whose sign-in token was issued to
+    /// a phone client): every other device keeps the default policy. Has no
+    /// effect unless `require_approval` is on.
+    pub approval_phones_only: bool,
+}
+
+impl DevicePolicy {
+    /// Reads `CUA_RELAY_DEVICE_REQUIRE_APPROVAL`: `true`/`on`/`yes`/`1` (every
+    /// new device needs approval), `false`/`off`/`no`/`0` or empty (the
+    /// default policy), or `phones` (approval only for phone-class devices).
+    /// Returns `(require_approval, approval_phones_only)`; any other value is
+    /// an error, never a silent "off".
+    pub fn parse_approval(value: &str) -> Result<(bool, bool), String> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "true" | "on" | "yes" | "1" | "y" | "t" => Ok((true, false)),
+            "false" | "off" | "no" | "0" | "n" | "f" | "" => Ok((false, false)),
+            "phones" => Ok((true, true)),
+            other => Err(format!(
+                "CUA_RELAY_DEVICE_REQUIRE_APPROVAL={other:?}: use true, false or phones"
+            )),
+        }
+    }
+
+    /// Fails closed: the `phones` scope names no one unless phone support is
+    /// on (`phone_clients`: `None` when `CUA_RELAY_PUSH` is off) and at least
+    /// one phone client id is set, and a relay that would then approve
+    /// nothing must not start.
+    pub fn check_approval_scope(
+        phones_only: bool,
+        phone_clients: Option<&[String]>,
+    ) -> Result<(), String> {
+        if phones_only && phone_clients.is_none_or(<[String]>::is_empty) {
+            return Err("CUA_RELAY_DEVICE_REQUIRE_APPROVAL=phones needs CUA_RELAY_PUSH=on and a non-empty CUA_RELAY_PHONE_CLIENTS; without phone clients it would require approval for no device".into());
+        }
+        Ok(())
+    }
+
+    /// Whether the strict policy applies to a device of this class.
+    pub fn strict_for(&self, phone: bool) -> bool {
+        self.require_approval && (phone || !self.approval_phones_only)
+    }
+}
+
+impl Default for DevicePolicy {
+    fn default() -> Self {
+        Self {
+            ttl_secs: 30 * 86_400,
+            // Safe default: ended. The migration grace period (S3) is a
+            // time-boxed exception for the rollout, not a steady state: a
+            // stolen account token alone reaches every machine while it
+            // runs. Set `CUA_RELAY_DEVICE_GRACE_DAYS` explicitly (and only
+            // for the rollout window) to open one.
+            grace_secs: 0,
+            bootstrap_max_auth_age_secs: 600,
+            session_ttl_secs: 3600,
+            require_approval: false,
+            approval_phones_only: false,
+        }
+    }
+}
+
+/// What [`DeviceStore::erase_account`] removed.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct DeviceErase {
+    /// Device records deleted.
+    pub devices: usize,
+    /// Live sessions ended.
+    pub sessions: usize,
+    /// Audit entries dropped with the account's chain.
+    pub audit_entries: usize,
+    /// Entries of other accounts' chains rewritten to stop naming it.
+    pub audit_rewritten: usize,
+}
+
+/// The device store.
+#[derive(Debug)]
+pub struct DeviceStore {
+    path: Option<PathBuf>,
+    policy: DevicePolicy,
+    state: Mutex<State>,
+    /// Live sessions by the SHA-256 of their token (never the token), and
+    /// their journal (`<devices>`[`SESSIONS_FILE_SUFFIX`]).
+    sessions: Mutex<(HashMap<String, Session>, SessionLog)>,
+    /// Signed timestamps already used (replay guard), with their expiry.
+    proofs: Mutex<HashMap<String, u64>>,
+    /// Last recorded access per (account, actor, machine).
+    throttle: Mutex<HashMap<String, u64>>,
+    /// HMAC key for the audit hash chain (S9): random per process for an
+    /// in-memory store, loaded or created (0600, next to the devices file)
+    /// for a persisted one.
+    audit_key: [u8; 32],
+    /// Locked after `state` when both are needed.
+    audit: Mutex<AuditLog>,
+    /// Where write failures are counted and reported.
+    storage: Arc<Storage>,
+}
+
+fn random_audit_key() -> [u8; 32] {
+    use rand::RngCore as _;
+    let mut key = [0u8; 32];
+    rand::rngs::OsRng.fill_bytes(&mut key);
+    key
+}
+
+/// The audit key next to `devices_path` (created 0600 on first use).
+fn load_or_create_audit_key(devices_path: &std::path::Path) -> std::io::Result<[u8; 32]> {
+    let key_path = PathBuf::from(format!("{}.audit-key", devices_path.display()));
+    if let Ok(raw) = std::fs::read(&key_path) {
+        return raw.try_into().map_err(|raw: Vec<u8>| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!(
+                    "audit key {} is {} bytes, not 32",
+                    key_path.display(),
+                    raw.len()
+                ),
+            )
+        });
+    }
+    let key = random_audit_key();
+    write_private(&key_path, &key)?;
+    Ok(key)
+}
+
+fn new_code() -> String {
+    use rand::Rng as _;
+    // No 0/O, 1/I/L: read aloud or typed from another screen.
+    const ALPHABET: &[u8] = b"ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+    let mut rng = rand::rngs::OsRng;
+    let mut code = String::with_capacity(9);
+    for i in 0..8 {
+        if i == 4 {
+            code.push('-');
+        }
+        code.push(ALPHABET[rng.gen_range(0..ALPHABET.len())] as char);
+    }
+    code
+}
+
+fn normalize_code(code: &str) -> String {
+    let compact: String = code
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .map(|c| c.to_ascii_uppercase())
+        .collect();
+    if compact.len() == 8 {
+        format!("{}-{}", &compact[..4], &compact[4..])
+    } else {
+        compact
+    }
+}
+
+fn new_session_token() -> String {
+    use rand::RngCore as _;
+    let mut bytes = [0u8; 32];
+    rand::rngs::OsRng.fill_bytes(&mut bytes);
+    format!("cds_{}", b64().encode(bytes))
+}
+
+fn clean_name(name: &str) -> String {
+    name.chars()
+        .filter(|c| !c.is_control())
+        .take(64)
+        .collect::<String>()
+        .trim()
+        .to_owned()
+}
+
+/// A reported platform: a short lower-case word (`macos`, `windows`,
+/// `linux`), else empty.
+fn clean_platform(platform: &str) -> String {
+    let p = platform.trim().to_ascii_lowercase();
+    if p.len() <= 16 && p.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') {
+        p
+    } else {
+        String::new()
+    }
+}
+
+impl DeviceStore {
+    /// An in-memory store whose grace period starts now.
+    pub fn in_memory(policy: DevicePolicy) -> Self {
+        Self::with_state(
+            None,
+            policy,
+            State {
+                grace_started_at: now_secs(),
+                ..State::default()
+            },
+            random_audit_key(),
+            AuditLog::in_memory(),
+        )
+    }
+
+    fn with_state(
+        path: Option<PathBuf>,
+        policy: DevicePolicy,
+        state: State,
+        audit_key: [u8; 32],
+        audit: AuditLog,
+    ) -> Self {
+        Self {
+            path,
+            policy,
+            state: Mutex::new(state),
+            sessions: Mutex::default(),
+            proofs: Mutex::default(),
+            throttle: Mutex::default(),
+            audit_key,
+            audit: Mutex::new(audit),
+            storage: Arc::default(),
+        }
+    }
+
+    /// Loads (or starts, recording the start of the grace period) the store
+    /// persisted at `path`, with its audit log next to it
+    /// (`<path>`[`AUDIT_FILE_SUFFIX`]). Temp files an interrupted write left
+    /// behind are removed first. An audit log still kept inside the devices
+    /// file (earlier relays) is moved to the audit log file.
+    pub fn open(path: PathBuf, policy: DevicePolicy) -> std::io::Result<Self> {
+        Self::open_with(path, policy, Arc::default())
+    }
+
+    /// [`DeviceStore::open`], reporting writes to `storage`.
+    pub fn open_with(
+        path: PathBuf,
+        policy: DevicePolicy,
+        storage: Arc<Storage>,
+    ) -> std::io::Result<Self> {
+        // Also covers the audit log's temps (`.<name>.audit.jsonl.*.tmp`).
+        remove_stale_temps(&path)?;
+        let stored = match std::fs::read(&path) {
+            Ok(raw) => serde_json::from_slice::<StoredState>(&raw)
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => StoredState::default(),
+            Err(e) => return Err(e),
+        };
+        let StoredState {
+            grace_started_at,
+            mut devices,
+            audit: mut legacy_audit,
+        } = stored;
+        // A device enrolled as an iPhone, iPad or Android before phones were a
+        // class has no mark: it is a phone all the same. Marked here, and
+        // written back below, so no later code has to ask the platform.
+        let mut backfilled = false;
+        for d in devices.values_mut() {
+            if !d.phone && crate::phone::platform_is_phone(&d.platform) {
+                d.phone = true;
+                backfilled = true;
+            }
+        }
+        let state = State {
+            grace_started_at,
+            devices,
+            pending_audit: Vec::new(),
+        };
+        let fresh = state.grace_started_at == 0;
+        let audit_key = load_or_create_audit_key(&path)?;
+        let audit_path = AuditLog::path_for(&path);
+        let moved = !legacy_audit.is_empty();
+        let audit = if moved {
+            // S9 landed after accounts already had audit history: migrate a
+            // pre-chain log (see `migrate_legacy_audit`) instead of failing
+            // to deserialize it and refusing to start.
+            migrate_legacy_audit(&mut legacy_audit, &audit_key);
+            // The devices file is the source until it is rewritten below
+            // without the log, so a crash in between repeats this move
+            // rather than losing or doubling entries.
+            let mut audit = AuditLog {
+                path: Some(audit_path),
+                ..AuditLog::in_memory()
+            };
+            for (account, entries) in legacy_audit {
+                for entry in entries {
+                    audit.insert(account.clone(), entry);
+                }
+            }
+            audit.compact()?;
+            audit
+        } else {
+            AuditLog::load(audit_path)?
+        };
+        let sessions = SessionLog::load(
+            PathBuf::from(format!("{}{SESSIONS_FILE_SUFFIX}", path.display())),
+            &PathBuf::from(format!("{}{LEGACY_SESSIONS_FILE_SUFFIX}", path.display())),
+            now_secs(),
+        )?;
+        let mut store = Self::with_state(Some(path), policy, state, audit_key, audit);
+        *store.sessions.get_mut().expect("sessions") = (sessions.1, sessions.0);
+        store.storage = storage;
+        if fresh || moved || backfilled {
+            let mut state = store.state.lock().expect("devices");
+            if fresh {
+                state.grace_started_at = now_secs();
+            }
+            store
+                .persist(&state)
+                .map_err(|e| std::io::Error::other(e.to_string()))?;
+        }
+        Ok(store)
+    }
+
+    /// The policy.
+    pub fn policy(&self) -> DevicePolicy {
+        self.policy
+    }
+
+    /// When unenrolled access stops being let through.
+    pub fn enforce_after(&self) -> u64 {
+        self.state
+            .lock()
+            .expect("devices")
+            .grace_started_at
+            .saturating_add(self.policy.grace_secs)
+    }
+
+    /// Whether the migration grace period is still running.
+    pub fn in_grace(&self, now: u64) -> bool {
+        now < self.enforce_after()
+    }
+
+    /// Writes the devices file: compact JSON, streamed to a temp file
+    /// that replaces it (never held in memory whole). A failure is the
+    /// caller's error: the change it was for is not made.
+    fn persist(&self, state: &State) -> Result<(), DeviceError> {
+        let Some(path) = &self.path else {
+            return Ok(());
+        };
+        let written = (|| {
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            write_private_with(path, |out| {
+                serde_json::to_writer(&mut *out, state).map_err(std::io::Error::other)
+            })
+        })();
+        self.storage.record(store::DEVICES, &written);
+        written.map_err(|e| DeviceError::Storage(e.to_string()))
+    }
+
+    /// Whether the devices file, the audit log and the session journal are
+    /// writable: no write of theirs failed lately without a successful one
+    /// since (true for an in-memory store). Audit events are written all
+    /// the time, so this tracks the state volume within moments of it
+    /// filling up or going read-only.
+    pub fn writes_ok(&self) -> bool {
+        [store::DEVICES, store::AUDIT, store::SESSIONS]
+            .iter()
+            .all(|s| self.storage.store_ok(s))
+    }
+
+    /// Applies `change` to a copy of the state and persists it before
+    /// making it current, then records the audit events `change` queued.
+    fn mutate<T>(
+        &self,
+        change: impl FnOnce(&mut State) -> Result<T, DeviceError>,
+    ) -> Result<T, DeviceError> {
+        let mut state = self.state.lock().expect("devices");
+        let mut next = state.clone();
+        let out = change(&mut next)?;
+        self.persist(&next)?;
+        let events = std::mem::take(&mut next.pending_audit);
+        *state = next;
+        // Still under the state lock, so the log follows the order of the
+        // changes.
+        for (account, event) in events {
+            self.audit(&account, event);
+        }
+        Ok(out)
+    }
+
+    /// Queues `event` for `account`'s audit log, recorded once the change
+    /// in progress is persisted.
+    fn push_audit(state: &mut State, account: &str, event: AuditEvent) {
+        state.pending_audit.push((account.to_owned(), event));
+    }
+
+    /// Records `event` in `account`'s audit log (best effort: a failed
+    /// write drops the event, counted as `audit_events_dropped` and logged
+    /// as `state persist failed`, store `audit`).
+    pub fn audit(&self, account: &str, event: AuditEvent) {
+        let mut audit = self.audit.lock().expect("audit");
+        let appended = audit.append(account, event, &self.audit_key);
+        if self.path.is_none() {
+            return;
+        }
+        self.storage.record(store::AUDIT, &appended);
+        if appended.is_err() {
+            self.storage.audit_dropped();
+        }
+        if let Some(compacted) = audit.compacted.take() {
+            self.storage.record(store::AUDIT, &compacted);
+        }
+    }
+
+    /// Drops audit entries older than `days` (0: keep them until the count
+    /// limit trims them) from memory and from the audit file. Returns how
+    /// many were dropped. Called at start and then hourly.
+    pub fn trim_audit(&self, days: u64) -> usize {
+        if days == 0 {
+            return 0;
+        }
+        let cutoff = now_secs().saturating_sub(days.saturating_mul(86_400));
+        let mut audit = self.audit.lock().expect("audit");
+        let dropped = audit.trim_before(cutoff);
+        if let Some(compacted) = audit.compacted.take() {
+            if self.path.is_some() {
+                self.storage.record(store::AUDIT, &compacted);
+            }
+        }
+        dropped
+    }
+
+    /// Records `event` unless the same `key` was recorded within
+    /// [`ACCESS_AUDIT_INTERVAL_SECS`].
+    pub fn audit_throttled(&self, key: &str, account: &str, event: AuditEvent) {
+        let now = now_secs();
+        {
+            let mut throttle = self.throttle.lock().expect("throttle");
+            if throttle
+                .get(key)
+                .is_some_and(|last| now.saturating_sub(*last) < ACCESS_AUDIT_INTERVAL_SECS)
+            {
+                return;
+            }
+            if throttle.len() > 10_000 {
+                throttle.retain(|_, last| now.saturating_sub(*last) < ACCESS_AUDIT_INTERVAL_SECS);
+            }
+            throttle.insert(key.to_owned(), now);
+        }
+        self.audit(account, event);
+    }
+
+    /// `account`'s audit log, hash-chained entries, newest last (at most
+    /// `limit`; S9).
+    pub fn audit_log(&self, account: &str, limit: usize) -> Vec<AuditEntry> {
+        let audit = self.audit.lock().expect("audit");
+        let log = audit.logs.get(account).map(Vec::as_slice).unwrap_or(&[]);
+        log[log.len().saturating_sub(limit)..].to_vec()
+    }
+
+    /// Verifies `account`'s full retained audit chain (S9). `Ok(())` for an
+    /// empty log.
+    pub fn verify_audit_chain(&self, account: &str) -> Result<(), ChainBroken> {
+        let audit = self.audit.lock().expect("audit");
+        let log = audit.logs.get(account).map(Vec::as_slice).unwrap_or(&[]);
+        verify_audit_chain(log, &self.audit_key)
+    }
+
+    /// A device by id.
+    pub fn get(&self, id: &str) -> Option<DeviceRecord> {
+        self.state.lock().expect("devices").devices.get(id).cloned()
+    }
+
+    /// `account`'s devices: revoked ones included, those a newer key of the
+    /// same machine replaced left out (the audit log keeps them).
+    pub fn list(&self, account: &str) -> Vec<DeviceRecord> {
+        self.state
+            .lock()
+            .expect("devices")
+            .devices
+            .values()
+            .filter(|d| d.account == account && d.superseded_by.is_none())
+            .cloned()
+            .collect()
+    }
+
+    fn has_enrolled(state: &State, account: &str, now: u64, strong_only: bool) -> bool {
+        state.devices.values().any(|d| {
+            d.account == account
+                && d.state(now) == DeviceState::Enrolled
+                && (d.strong || !strong_only)
+        })
+    }
+
+    fn check_proof(
+        &self,
+        key: &[u8],
+        message: &str,
+        ts: u64,
+        sig: &str,
+    ) -> Result<(), DeviceError> {
+        let now = now_secs();
+        if ts.abs_diff(now) > PROOF_SKEW_SECS {
+            return Err(DeviceError::Proof(PROOF_STALE.into()));
+        }
+        if !verify(key, message, sig) {
+            return Err(DeviceError::Proof(PROOF_BAD_SIGNATURE.into()));
+        }
+        // Keyed by the signature's `r` (the first half): an ECDSA signature
+        // has a second valid form with the same `r`, so the whole signature
+        // would not catch a replay of that form.
+        let raw = b64().decode(sig.trim()).unwrap_or_default();
+        let r = &raw[..raw.len().min(32)];
+        let mut proofs = self.proofs.lock().expect("proofs");
+        proofs.retain(|_, exp| *exp > now);
+        let fingerprint = hex::encode(ring::digest::digest(&ring::digest::SHA256, r).as_ref());
+        if proofs.contains_key(&fingerprint) {
+            return Err(DeviceError::Proof(PROOF_REPLAYED.into()));
+        }
+        proofs.insert(fingerprint, now + 2 * PROOF_SKEW_SECS + 1);
+        Ok(())
+    }
+
+    /// Revokes `account`'s other live devices on `machine` as superseded by
+    /// `by` (a re-key of that machine), recording each; returns their ids.
+    fn supersede(
+        state: &mut State,
+        account: &str,
+        by: &str,
+        machine: Option<&str>,
+        now: u64,
+    ) -> Vec<String> {
+        let Some(machine) = machine else {
+            return Vec::new();
+        };
+        let mut replaced = Vec::new();
+        for d in state.devices.values_mut() {
+            if d.account == account
+                && d.id != by
+                && d.revoked_at.is_none()
+                && d.machine.as_deref() == Some(machine)
+            {
+                d.revoked_at = Some(now);
+                d.superseded_by = Some(by.to_owned());
+                d.code_sha256 = None;
+                d.code_expires = None;
+                replaced.push((d.id.clone(), d.name.clone()));
+            }
+        }
+        for (id, name) in &replaced {
+            Self::push_audit(
+                state,
+                account,
+                AuditEvent::new("device_rekeyed")
+                    .device(Some(by))
+                    .subject(id.clone())
+                    .detail(format!("replaced {name} on the same computer")),
+            );
+        }
+        replaced.into_iter().map(|(id, _)| id).collect()
+    }
+
+    fn end_sessions(&self, devices: &[String]) {
+        if devices.is_empty() {
+            return;
+        }
+        let mut guard = self.sessions.lock().expect("sessions");
+        let (sessions, log) = &mut *guard;
+        let ended: Vec<SessionLine> = sessions
+            .iter()
+            .filter(|(_, s)| devices.contains(&s.device))
+            .map(|(h, _)| SessionLine::End { end: h.clone() })
+            .collect();
+        sessions.retain(|_, s| !devices.contains(&s.device));
+        if !ended.is_empty() {
+            self.journal_sessions(sessions, log, &ended);
+        }
+    }
+
+    /// Appends to the session journal, compacting it when it grew (best
+    /// effort: a lost write only means clients open new sessions after the
+    /// next restart, and an ended device's sessions are refused anyway).
+    fn journal_sessions(
+        &self,
+        sessions: &HashMap<String, Session>,
+        log: &mut SessionLog,
+        lines: &[SessionLine],
+    ) {
+        if log.path.is_none() {
+            return;
+        }
+        let written = log.append(lines);
+        self.storage.record(store::SESSIONS, &written);
+        if log.needs_compaction(sessions.len()) {
+            let compacted = log.compact(sessions);
+            self.storage.record(store::SESSIONS, &compacted);
+        }
+    }
+
+    /// Registers (or re-registers) a device, its key proven by `r.sig` over
+    /// [`register_message`].
+    ///
+    /// - A revoked key never comes back.
+    /// - `bootstrap` asks to enroll without an approval. A fresh sign-in
+    ///   (`auth_time` within the bootstrap window) grants it for any device
+    ///   of the account; under [`DevicePolicy::require_approval`] only for
+    ///   the account's first device (while no device enrolled through a
+    ///   real second factor exists), a re-key of a known machine, or a
+    ///   verified email with MFA. During the migration grace period an
+    ///   account with no enrolled device bootstraps without one.
+    /// - A fresh sign-in newer than an enrolled device's enrollment
+    ///   re-verifies it; otherwise an enrolled device stays as it is.
+    /// - Else the device is (again) pending with a fresh one-time code.
+    ///
+    /// An enrollment replaces the older devices of the same machine.
+    pub fn register(&self, r: &Registration<'_>) -> Result<Registered, DeviceError> {
+        let account = r.account;
+        let raw = decode_public_key(r.public_key).map_err(DeviceError::Invalid)?;
+        let id = device_id(&raw);
+        self.check_proof(&raw, &register_message(&id, r.ts), r.ts, r.sig)?;
+        let now = now_secs();
+        let name = clean_name(r.name);
+        let grace = self.in_grace(now);
+        let policy = self.policy;
+        let machine = r.machine_id.and_then(|m| machine_key(account, m));
+        let out = self.mutate(|state| {
+            if let Some(existing) = state.devices.get(&id) {
+                if existing.account != account {
+                    return Err(DeviceError::Conflict(
+                        "this device key belongs to another account".into(),
+                    ));
+                }
+                if existing.state(now) == DeviceState::Revoked {
+                    return Err(DeviceError::Forbidden(match &existing.superseded_by {
+                        Some(by) => format!(
+                            "this device key was replaced by {by} on the same computer; create a new device key to enroll again"
+                        ),
+                        None => {
+                            "this device was revoked; create a new device key to enroll again".into()
+                        }
+                    }));
+                }
+            } else {
+                // A device that never got enrolled and whose code has run out
+                // holds nothing: a stolen token cannot lock the owner out of
+                // registering their own by piling up junk. Devices waiting for
+                // approval (a live code) are few.
+                let held = |d: &&DeviceRecord| {
+                    d.account == account
+                        && d.revoked_at.is_none()
+                        && (d.enrolled_at.is_some() || d.code_expires.is_some_and(|e| e > now))
+                };
+                if state.devices.values().filter(held).count() >= MAX_DEVICES_PER_ACCOUNT {
+                    return Err(DeviceError::Forbidden(format!(
+                        "an account may register at most {MAX_DEVICES_PER_ACCOUNT} devices; revoke one first"
+                    )));
+                }
+                let waiting = state
+                    .devices
+                    .values()
+                    .filter(|d| {
+                        d.account == account
+                            && d.revoked_at.is_none()
+                            && d.enrolled_at.is_none()
+                            && d.code_expires.is_some_and(|e| e > now)
+                    })
+                    .count();
+                if waiting >= MAX_WAITING_PER_ACCOUNT && !r.bootstrap {
+                    return Err(DeviceError::Forbidden(format!(
+                        "{MAX_WAITING_PER_ACCOUNT} phones and computers are already waiting for approval; approve or revoke one, or wait ten minutes"
+                    )));
+                }
+            }
+            let fresh = !state.devices.contains_key(&id);
+            let mut device = state.devices.get(&id).cloned().unwrap_or(DeviceRecord {
+                id: id.clone(),
+                account: account.to_owned(),
+                user: r.user.to_owned(),
+                name: if name.is_empty() {
+                    "Unnamed device".into()
+                } else {
+                    name.clone()
+                },
+                public_key: r.public_key.trim().to_owned(),
+                created_at: now,
+                enrolled_at: None,
+                enrolled_until: None,
+                enrolled_by: None,
+                revoked_at: None,
+                superseded_by: None,
+                machine: None,
+                strong: false,
+                last_seen: None,
+                platform: String::new(),
+                phone: false,
+                capabilities: None,
+                code_sha256: None,
+                code_expires: None,
+            });
+            // What an enrolled device is (its name and platform, so its class)
+            // is fixed once it is enrolled: registering again with a stale
+            // token cannot relabel it. Renaming is `rename`.
+            let settled = !fresh && device.state(now) == DeviceState::Enrolled;
+            if !settled {
+                if !name.is_empty() {
+                    device.name = name.clone();
+                }
+                let platform = clean_platform(r.platform);
+                if !platform.is_empty() {
+                    device.platform = platform;
+                }
+                if r.capabilities.is_some() {
+                    device.capabilities = r.capabilities.clone();
+                }
+            }
+            if r.phone {
+                // Sticky: a phone never becomes a computer by registering again.
+                device.phone = true;
+            }
+            if machine.is_some() {
+                device.machine = machine.clone();
+            }
+            if fresh {
+                Self::push_audit(
+                    state,
+                    account,
+                    AuditEvent::new("device_registered")
+                        .device(Some(&id))
+                        .detail(device.name.clone()),
+                );
+            }
+            let fresh_sign_in = r.auth_time.filter(|t| {
+                *t <= now + PROOF_SKEW_SECS
+                    && now.saturating_sub(*t) <= policy.bootstrap_max_auth_age_secs
+            });
+            let enrolled = device.state(now) == DeviceState::Enrolled;
+            if enrolled {
+                // A sign-in newer than the enrollment re-verifies it.
+                let reverify = r.bootstrap
+                    && fresh_sign_in.is_some_and(|t| t > device.enrolled_at.unwrap_or(0));
+                if !reverify {
+                    state.devices.insert(id.clone(), device.clone());
+                    return Ok(Registered {
+                        device,
+                        code: None,
+                        superseded: Vec::new(),
+                    });
+                }
+            }
+            // The same machine already has a live device on this account: a
+            // re-key (another build kept its own key, or the old one was
+            // lost), not a new device, so it needs no extra proof (S4).
+            let is_rekey = machine.as_deref().is_some_and(|m| {
+                state
+                    .devices
+                    .values()
+                    .any(|d| d.account == account && d.id != id && d.revoked_at.is_none() && d.machine.as_deref() == Some(m))
+            });
+            // A brand-new device of an account that already has an enrolled
+            // device: never enrolled before, not a re-key of a known machine.
+            let new_device = device.enrolled_at.is_none()
+                && !is_rekey
+                && Self::has_enrolled(state, account, now, false);
+            // By default a fresh sign-in (plus the key proof checked above)
+            // enrolls any device of the account, the way signing in adds a
+            // device to a tailnet: account compromise is sign-in
+            // compromise, and a refreshed / long-lived token never counts
+            // as fresh. Under the strict policy (`require_approval`) it
+            // enrolls only: the first device (while no device enrolled
+            // through a real second factor exists, so an owner can recover
+            // from devices someone enrolled on the grace period's word, and
+            // revoke them); a re-key of an already-enrolled machine; and,
+            // for a brand-new device on an account that already has a
+            // strong enrolled device, a token that also proves a second
+            // factor (`Identity::mfa`) with a verified email (S4). The
+            // other route for a brand-new device is an approval from an
+            // enrolled device ([`Self::approve`]). The grace period
+            // bootstraps only an account's very first device.
+            let by = if !r.bootstrap {
+                None
+            } else if fresh_sign_in.is_some()
+                && (!policy.strict_for(device.is_phone())
+                    || enrolled
+                    || is_rekey
+                    || !Self::has_enrolled(state, account, now, true)
+                    || (r.email_verified && r.mfa))
+            {
+                Some(BY_FRESH_SIGN_IN)
+            } else if grace && !Self::has_enrolled(state, account, now, false) {
+                Some(BY_GRACE)
+            } else {
+                None
+            };
+            if let Some(by) = by {
+                device.enrolled_at = Some(now);
+                device.enrolled_until = Some(now + policy.ttl_secs);
+                device.enrolled_by = Some(by.into());
+                device.strong = by == BY_FRESH_SIGN_IN;
+                device.code_sha256 = None;
+                device.code_expires = None;
+                Self::push_audit(
+                    state,
+                    account,
+                    AuditEvent::new("device_enrolled")
+                        .device(Some(&id))
+                        .subject(by)
+                        .detail(match (by, enrolled, new_device) {
+                            (BY_FRESH_SIGN_IN, true, _) => "re-verified by fresh sign-in",
+                            (BY_FRESH_SIGN_IN, false, true) => {
+                                "enrolled by fresh sign-in (new device of the account)"
+                            }
+                            (BY_FRESH_SIGN_IN, false, false) => "enrolled by fresh sign-in",
+                            _ => "enrolled during the grace period",
+                        }),
+                );
+                state.devices.insert(id.clone(), device.clone());
+                let superseded = Self::supersede(
+                    state,
+                    account,
+                    &id,
+                    device.machine.as_deref(),
+                    now,
+                );
+                return Ok(Registered {
+                    device,
+                    code: None,
+                    superseded,
+                });
+            }
+            let code = new_code();
+            device.code_sha256 = Some(sha256_hex(&code));
+            device.code_expires = Some(now + CODE_TTL_SECS);
+            state.devices.insert(id.clone(), device.clone());
+            Ok(Registered {
+                device,
+                code: Some(code),
+                superseded: Vec::new(),
+            })
+        })?;
+        self.end_sessions(&out.superseded);
+        Ok(out)
+    }
+
+    /// `approver` (an enrolled device of `account`) approves the pending or
+    /// expired device named by `code` or `target`. A code that is a device
+    /// id (`dev_…`) names that device.
+    pub fn approve(
+        &self,
+        account: &str,
+        approver: &str,
+        code: Option<&str>,
+        target: Option<&str>,
+        step_up: bool,
+    ) -> Result<DeviceRecord, DeviceError> {
+        let now = now_secs();
+        let ttl = self.policy.ttl_secs;
+        let (code, target) = match (code.map(str::trim), target) {
+            (Some(c), None) if c.starts_with(DEVICE_ID_PREFIX) => (None, Some(c)),
+            (c, t) => (c, t),
+        };
+        let (approved, superseded) = self.mutate(|state| {
+            let approving = state
+                .devices
+                .get(approver)
+                .filter(|d| d.account == account && d.state(now) == DeviceState::Enrolled)
+                .ok_or_else(|| DeviceError::Forbidden("approve from an enrolled device".into()))?;
+            let approving_id = approving.id.clone();
+            let approving_strong = approving.strong;
+            let id = match (code, target) {
+                (Some(code), _) => {
+                    let hash = sha256_hex(&normalize_code(code));
+                    state
+                        .devices
+                        .values()
+                        .find(|d| {
+                            d.account == account
+                                && d.code_sha256.as_deref() == Some(hash.as_str())
+                                && d.code_expires.is_some_and(|e| e > now)
+                        })
+                        .map(|d| d.id.clone())
+                        .ok_or(DeviceError::CodeNotFound)?
+                }
+                (None, Some(target)) => target.trim().to_owned(),
+                (None, None) => {
+                    return Err(DeviceError::Invalid("give a code or a device id".into()))
+                }
+            };
+            if id == approving_id {
+                return Err(DeviceError::Forbidden(
+                    "a device cannot approve itself".into(),
+                ));
+            }
+            let approver_is_phone = state.devices.get(&approving_id).is_some_and(|d| d.is_phone());
+            let device = state
+                .devices
+                .get_mut(&id)
+                .filter(|d| d.account == account)
+                .ok_or(DeviceError::NotFound)?;
+            // A phone is a smaller kind of device: it cannot enroll a computer
+            // (a stolen phone must not be able to make itself a full device).
+            if approver_is_phone && !device.is_phone() {
+                return Err(DeviceError::Forbidden(
+                    "a phone cannot approve a computer; approve it from a computer".into(),
+                ));
+            }
+            // A stolen, unlocked phone must not be able to enroll more
+            // devices on its own: approving from a phone needs a sign-in made
+            // just now (the token's `auth_time`).
+            if approver_is_phone && !step_up {
+                return Err(DeviceError::Forbidden(
+                    "approving a phone or computer from a phone needs you to sign in again just now".into(),
+                ));
+            }
+            match device.state(now) {
+                DeviceState::Revoked => {
+                    return Err(DeviceError::Forbidden("the device was revoked".into()))
+                }
+                DeviceState::Pending | DeviceState::Expired | DeviceState::Enrolled => {}
+            }
+            device.enrolled_at = Some(now);
+            device.enrolled_until = Some(now + ttl);
+            device.enrolled_by = Some(approving_id.clone());
+            device.strong = approving_strong;
+            device.code_sha256 = None;
+            device.code_expires = None;
+            let approved = device.clone();
+            Self::push_audit(
+                state,
+                account,
+                AuditEvent::new("device_enrolled")
+                    .device(Some(&approved.id))
+                    .subject(approving_id),
+            );
+            let superseded = Self::supersede(
+                state,
+                account,
+                &approved.id,
+                approved.machine.as_deref(),
+                now,
+            );
+            Ok((approved, superseded))
+        })?;
+        self.end_sessions(&superseded);
+        Ok(approved)
+    }
+
+    /// Opens a device session: `sig` over [`session_message`] with the
+    /// device key. Returns the session token and its expiry.
+    ///
+    /// The session renews an enrolled device's enrollment (sliding): its
+    /// end moves to `ttl` from now, recorded when that moves it by more
+    /// than [`RENEW_STEP_SECS`] (at most half the TTL), so a device in use
+    /// does not expire. An expired, pending or revoked device gets no
+    /// session and is not renewed.
+    pub fn open_session(
+        &self,
+        account: &str,
+        device: &str,
+        ts: u64,
+        sig: &str,
+    ) -> Result<(String, u64), DeviceError> {
+        let now = now_secs();
+        let record = self
+            .get(device)
+            .filter(|d| d.account == account)
+            .ok_or(DeviceError::NotFound)?;
+        let raw = decode_public_key(&record.public_key).map_err(DeviceError::Invalid)?;
+        self.check_proof(&raw, &session_message(device, ts), ts, sig)?;
+        let until = match record.state(now) {
+            DeviceState::Enrolled => record.enrolled_until.unwrap_or(now),
+            DeviceState::Pending => {
+                return Err(DeviceError::Forbidden(
+                    if self.policy.strict_for(record.is_phone()) {
+                        "this device is waiting for approval from an enrolled device".into()
+                    } else {
+                        "this device is not enrolled yet: sign in again (`cua auth login`) to enroll it, or approve it from an enrolled device".into()
+                    },
+                ))
+            }
+            DeviceState::Expired => {
+                return Err(DeviceError::Forbidden(
+                    if self.policy.strict_for(record.is_phone()) {
+                        "this device needs re-verification: approve it from an enrolled device"
+                            .into()
+                    } else {
+                        "this device's enrollment expired after a period without use: sign in again (`cua auth login`) to re-verify it, or approve it from an enrolled device".into()
+                    },
+                ))
+            }
+            DeviceState::Revoked => {
+                return Err(DeviceError::Forbidden("this device was revoked".into()))
+            }
+        };
+        let ttl = self.policy.ttl_secs;
+        let step = RENEW_STEP_SECS.min(ttl / 2);
+        // The common case moves nothing that must survive a restart: the
+        // device was renewed within the last step, so only its last-seen
+        // time changes, in memory (written with the next real change).
+        // Rewriting and fsyncing the whole devices file on every session
+        // held the devices lock for the write, and a reconnecting fleet
+        // opens several sessions a second (CUA-2323).
+        let kept = {
+            let mut state = self.state.lock().expect("devices");
+            match state.devices.get_mut(device) {
+                Some(d) if d.state(now) == DeviceState::Enrolled => {
+                    let current = d.enrolled_until.unwrap_or(now);
+                    (now + ttl <= current.saturating_add(step)).then(|| {
+                        d.last_seen = Some(now);
+                        current
+                    })
+                }
+                // Revoked or expired since the read above: `mutate` below
+                // leaves it as it is.
+                _ => None,
+            }
+        };
+        let until = if let Some(current) = kept {
+            // One audit line per device per interval, like other access.
+            self.audit_throttled(
+                &format!("session:{device}"),
+                account,
+                AuditEvent::new("device_session").device(Some(device)),
+            );
+            current
+        } else {
+            self.mutate(|state| {
+                let mut until = until;
+                if let Some(d) = state.devices.get_mut(device) {
+                    d.last_seen = Some(now);
+                    // Re-checked under the lock: revoked or expired since
+                    // the read above stays as it is.
+                    if d.state(now) == DeviceState::Enrolled {
+                        let current = d.enrolled_until.unwrap_or(now);
+                        let renewed = now + ttl;
+                        if renewed > current.saturating_add(step) {
+                            d.enrolled_until = Some(renewed);
+                        }
+                        until = d.enrolled_until.unwrap_or(until);
+                    }
+                }
+                Self::push_audit(
+                    state,
+                    account,
+                    AuditEvent::new("device_session").device(Some(device)),
+                );
+                Ok(until)
+            })
+            .unwrap_or(until)
+        };
+        let expires = (now + self.policy.session_ttl_secs).min(until);
+        let token = new_session_token();
+        let mut guard = self.sessions.lock().expect("sessions");
+        let (sessions, log) = &mut *guard;
+        sessions.retain(|_, s| s.expires > now);
+        let session = Session {
+            account: account.to_owned(),
+            device: device.to_owned(),
+            expires,
+        };
+        let hash = sha256_hex(&token);
+        sessions.insert(hash.clone(), session.clone());
+        self.journal_sessions(
+            sessions,
+            log,
+            &[SessionLine::Open {
+                open: hash,
+                session,
+            }],
+        );
+        Ok((token, expires))
+    }
+
+    /// Whether device `id` is enrolled right now (not pending, expired or
+    /// revoked).
+    pub fn is_enrolled(&self, id: &str) -> bool {
+        self.get(id)
+            .is_some_and(|d| d.state(now_secs()) == DeviceState::Enrolled)
+    }
+
+    /// Whether device `id` is a phone ([`DeviceRecord::phone`]).
+    pub fn is_phone(&self, id: &str) -> bool {
+        self.get(id).is_some_and(|d| d.is_phone())
+    }
+
+    /// The enrolled device behind session `token` for `account`, if the
+    /// session is live and the device still enrolled.
+    pub fn session_device(&self, account: &str, token: &str) -> Option<String> {
+        let now = now_secs();
+        let session = self
+            .sessions
+            .lock()
+            .expect("sessions")
+            .0
+            .get(&sha256_hex(token))
+            .cloned()?;
+        if session.account != account || session.expires <= now {
+            return None;
+        }
+        self.get(&session.device)
+            .filter(|d| d.state(now) == DeviceState::Enrolled)
+            .map(|d| d.id)
+    }
+
+    /// Renames `id`.
+    pub fn rename(
+        &self,
+        account: &str,
+        actor: &str,
+        id: &str,
+        name: &str,
+    ) -> Result<DeviceRecord, DeviceError> {
+        let name = clean_name(name);
+        if name.is_empty() {
+            return Err(DeviceError::Invalid("empty name".into()));
+        }
+        self.mutate(|state| {
+            let device = state
+                .devices
+                .get_mut(id)
+                .filter(|d| d.account == account)
+                .ok_or(DeviceError::NotFound)?;
+            device.name = name.clone();
+            let renamed = device.clone();
+            Self::push_audit(
+                state,
+                account,
+                AuditEvent::new("device_renamed")
+                    .device(Some(actor))
+                    .subject(id)
+                    .detail(name),
+            );
+            Ok(renamed)
+        })
+    }
+
+    /// Erases everything this store holds for `account` (account deletion):
+    /// its device records are deleted (not revoked), its sessions ended and
+    /// the session journal rewritten without them, its whole audit chain
+    /// dropped (other accounts' chains are separate and still verify) and
+    /// its access-throttle entries forgotten. Idempotent; every file is
+    /// rewritten each call so a retry after a failed write finishes the job.
+    pub fn erase_account(
+        &self,
+        account: &str,
+        emails: &[String],
+    ) -> Result<DeviceErase, DeviceError> {
+        let mut out = DeviceErase::default();
+        // Devices first, persisted before they leave memory.
+        let mut ids: Vec<String> = Vec::new();
+        {
+            let mut gone = Vec::new();
+            self.mutate(|state| {
+                gone = state
+                    .devices
+                    .values()
+                    .filter(|d| d.account == account)
+                    .map(|d| d.id.clone())
+                    .collect();
+                for id in &gone {
+                    state.devices.remove(id);
+                }
+                Ok(())
+            })?;
+            ids.extend(gone);
+        }
+        out.devices = ids.len();
+        // Sessions of those devices (and any other of the account's).
+        {
+            let mut guard = self.sessions.lock().expect("sessions");
+            let (sessions, log) = &mut *guard;
+            let before = sessions.len();
+            sessions.retain(|_, s| s.account != account && !ids.contains(&s.device));
+            out.sessions = before - sessions.len();
+            if log.path.is_some() {
+                // Rewrite the journal: its old `open` lines carry the account.
+                let compacted = log.compact(sessions);
+                self.storage.record(store::SESSIONS, &compacted);
+                compacted.map_err(|e| DeviceError::Storage(e.to_string()))?;
+            }
+        }
+        // Proof fingerprints are hashes of signatures, not tied to an
+        // account, and expire in minutes; the access throttle keys are.
+        self.throttle
+            .lock()
+            .expect("throttle")
+            .retain(|k, _| !k.contains(account));
+        // The account's own audit chain.
+        {
+            let mut audit = self.audit.lock().expect("audit");
+            if let Some(log) = audit.logs.remove(account) {
+                audit.retained -= log.len();
+                out.audit_entries = log.len();
+            }
+            // Other accounts' entries that name this one are rewritten and
+            // their chains re-chained from the first changed entry.
+            let key = self.audit_key;
+            for log in audit.logs.values_mut() {
+                out.audit_rewritten += rewrite_audit(log, account, emails, &key);
+            }
+            if audit.path.is_some() {
+                let compacted = audit.compact();
+                self.storage.record(store::AUDIT, &compacted);
+                compacted.map_err(|e| DeviceError::Storage(e.to_string()))?;
+            }
+        }
+        Ok(out)
+    }
+
+    /// Revokes `id` and ends its sessions.
+    pub fn revoke(
+        &self,
+        account: &str,
+        actor: &str,
+        id: &str,
+        step_up: bool,
+    ) -> Result<DeviceRecord, DeviceError> {
+        let now = now_secs();
+        let revoked = self.mutate(|state| {
+            // A phone may take itself off the account; taking another device
+            // off needs a sign-in made just now.
+            if actor != id && !step_up && state.devices.get(actor).is_some_and(|d| d.is_phone()) {
+                return Err(DeviceError::Forbidden(
+                    "removing another phone or computer from a phone needs you to sign in again just now".into(),
+                ));
+            }
+            let device = state
+                .devices
+                .get_mut(id)
+                .filter(|d| d.account == account)
+                .ok_or(DeviceError::NotFound)?;
+            if device.revoked_at.is_none() {
+                device.revoked_at = Some(now);
+            }
+            device.code_sha256 = None;
+            device.code_expires = None;
+            let revoked = device.clone();
+            Self::push_audit(
+                state,
+                account,
+                AuditEvent::new("device_revoked")
+                    .device(Some(actor))
+                    .subject(id),
+            );
+            Ok(revoked)
+        })?;
+        self.end_sessions(&[id.to_owned()]);
+        Ok(revoked)
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use super::*;
+    use ring::signature::KeyPair as _;
+    use serde_json::json;
+
+    /// A device key for tests.
+    pub(crate) struct TestKey {
+        pair: ring::signature::EcdsaKeyPair,
+    }
+
+    impl TestKey {
+        pub(crate) fn new() -> Self {
+            let rng = ring::rand::SystemRandom::new();
+            let alg = &ring::signature::ECDSA_P256_SHA256_FIXED_SIGNING;
+            let pkcs8 = ring::signature::EcdsaKeyPair::generate_pkcs8(alg, &rng).unwrap();
+            Self {
+                pair: ring::signature::EcdsaKeyPair::from_pkcs8(alg, pkcs8.as_ref(), &rng).unwrap(),
+            }
+        }
+
+        pub(crate) fn public(&self) -> String {
+            b64().encode(self.pair.public_key().as_ref())
+        }
+
+        pub(crate) fn id(&self) -> String {
+            device_id(self.pair.public_key().as_ref())
+        }
+
+        pub(crate) fn sign(&self, message: &str) -> String {
+            let rng = ring::rand::SystemRandom::new();
+            b64().encode(self.pair.sign(&rng, message.as_bytes()).unwrap().as_ref())
+        }
+    }
+
+    /// Registers `key` with an unverified email (the rules before a
+    /// verified email let a fresh sign-in enroll further devices).
+    fn register(
+        store: &DeviceStore,
+        account: &str,
+        key: &TestKey,
+        bootstrap: bool,
+        auth_time: Option<u64>,
+    ) -> Result<Registered, DeviceError> {
+        register_on(
+            store, account, key, bootstrap, auth_time, false, None, false,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn register_on(
+        store: &DeviceStore,
+        account: &str,
+        key: &TestKey,
+        bootstrap: bool,
+        auth_time: Option<u64>,
+        email_verified: bool,
+        machine_id: Option<&str>,
+        mfa: bool,
+    ) -> Result<Registered, DeviceError> {
+        let ts = now_secs();
+        let public = key.public();
+        let sig = key.sign(&register_message(&key.id(), ts));
+        store.register(&Registration {
+            account,
+            user: account,
+            public_key: &public,
+            name: "laptop",
+            platform: "macos",
+            machine_id,
+            ts,
+            sig: &sig,
+            bootstrap,
+            auth_time,
+            email_verified,
+            mfa,
+            phone: false,
+            capabilities: None,
+        })
+    }
+
+    fn session(store: &DeviceStore, account: &str, key: &TestKey) -> Result<String, DeviceError> {
+        let ts = now_secs();
+        store
+            .open_session(
+                account,
+                &key.id(),
+                ts,
+                &key.sign(&session_message(&key.id(), ts)),
+            )
+            .map(|(t, _)| t)
+    }
+
+    fn enforcing() -> DevicePolicy {
+        DevicePolicy {
+            grace_secs: 0,
+            ..DevicePolicy::default()
+        }
+    }
+
+    /// A device enrolled as an iPhone before phones were a class carries no
+    /// mark. It is a phone all the same: by its platform at once, and marked
+    /// (and written back) when the store is opened.
+    #[test]
+    fn a_device_enrolled_as_an_iphone_before_the_mark_is_a_phone() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("devices.json");
+        let store = DeviceStore::open(path.clone(), enforcing()).unwrap();
+        let key = TestKey::new();
+        let ts = now_secs();
+        let public = key.public();
+        let sig = key.sign(&register_message(&key.id(), ts));
+        store
+            .register(&Registration {
+                account: "acct",
+                user: "acct",
+                public_key: &public,
+                name: "Dillon's iPhone",
+                platform: "ios",
+                machine_id: None,
+                ts,
+                sig: &sig,
+                bootstrap: true,
+                auth_time: Some(now_secs()),
+                email_verified: false,
+                mfa: false,
+                // The old relay did not mark it.
+                phone: false,
+                capabilities: None,
+            })
+            .unwrap();
+        assert!(!store.get(&key.id()).unwrap().phone, "no mark was written");
+        assert!(store.get(&key.id()).unwrap().is_phone());
+        assert!(store.is_phone(&key.id()), "a phone by its platform");
+        // Opened again, it carries the mark, and the file does too.
+        let reopened = DeviceStore::open(path.clone(), enforcing()).unwrap();
+        assert!(reopened.get(&key.id()).unwrap().phone);
+        let raw = std::fs::read_to_string(&path).unwrap();
+        assert!(raw.contains("\"phone\":true"), "{raw}");
+        // A computer is not made one.
+        let laptop = TestKey::new();
+        register(&reopened, "acct", &laptop, true, Some(now_secs())).unwrap();
+        assert!(!reopened.is_phone(&laptop.id()));
+    }
+
+    /// A policy with a grace period running (the safe default is ended; a
+    /// few tests exercise the rollout exception explicitly).
+    fn with_grace() -> DevicePolicy {
+        DevicePolicy {
+            grace_secs: 14 * 86_400,
+            ..DevicePolicy::default()
+        }
+    }
+
+    #[test]
+    fn first_device_bootstraps_only_with_a_fresh_sign_in_after_the_grace_period() {
+        let store = DeviceStore::in_memory(enforcing());
+        let first = TestKey::new();
+        // A stale sign-in (a long-lived session) is not enough.
+        let stale = register(&store, "acct", &first, true, Some(now_secs() - 3600)).unwrap();
+        assert_eq!(stale.device.state(now_secs()), DeviceState::Pending);
+        assert!(stale.code.is_some());
+        assert!(session(&store, "acct", &first).is_err());
+        // No auth_time claim at all: not enough either.
+        let first_again = register(&store, "acct", &first, true, None).unwrap();
+        assert!(first_again.code.is_some());
+        let fresh = register(&store, "acct", &first, true, Some(now_secs() - 5)).unwrap();
+        assert_eq!(fresh.device.state(now_secs()), DeviceState::Enrolled);
+        assert_eq!(
+            fresh.device.enrolled_by.as_deref(),
+            Some("bootstrap:fresh-sign-in")
+        );
+        let token = session(&store, "acct", &first).unwrap();
+        assert_eq!(
+            store.session_device("acct", &token).as_deref(),
+            Some(first.id().as_str())
+        );
+        // The session is bound to its account.
+        assert!(store.session_device("other", &token).is_none());
+
+        // On a long-lived session a second device cannot bootstrap.
+        let second = TestKey::new();
+        let pending = register(&store, "acct", &second, true, Some(now_secs() - 3600)).unwrap();
+        assert_eq!(pending.device.state(now_secs()), DeviceState::Pending);
+        let code = pending.code.unwrap();
+        // ...until an enrolled device confirms its code.
+        assert!(matches!(
+            store.approve("acct", &second.id(), Some(&code), None, true),
+            Err(DeviceError::Forbidden(_))
+        ));
+        assert!(matches!(
+            store.approve("other", &first.id(), Some(&code), None, true),
+            Err(DeviceError::Forbidden(_))
+        ));
+        let approved = store
+            .approve(
+                "acct",
+                &first.id(),
+                Some(&code.to_lowercase().replace('-', "")),
+                None,
+                true,
+            )
+            .unwrap();
+        assert_eq!(approved.enrolled_by.as_deref(), Some(first.id().as_str()));
+        assert!(session(&store, "acct", &second).is_ok());
+        // The code is single use.
+        assert!(store
+            .approve("acct", &first.id(), Some(&code), None, true)
+            .is_err());
+
+        let kinds: Vec<_> = store
+            .audit_log("acct", 100)
+            .into_iter()
+            .map(|e| e.kind.clone())
+            .collect();
+        assert!(kinds.contains(&"device_registered".to_string()));
+        assert!(kinds.contains(&"device_enrolled".to_string()));
+        assert!(kinds.contains(&"device_session".to_string()));
+        assert!(store.audit_log("other", 100).is_empty());
+    }
+
+    #[test]
+    fn grace_period_lets_the_first_device_bootstrap_without_a_fresh_sign_in() {
+        let store = DeviceStore::in_memory(with_grace());
+        assert!(store.in_grace(now_secs()));
+        let key = TestKey::new();
+        let r = register(&store, "acct", &key, true, None).unwrap();
+        assert_eq!(r.device.enrolled_by.as_deref(), Some("bootstrap:grace"));
+        // The platform the device reported is kept (cleaned).
+        assert_eq!(r.device.platform, "macos");
+        assert_eq!(clean_platform(" Windows "), "windows");
+        assert_eq!(clean_platform("mac os; drop"), "");
+        // Only the first one.
+        let other = TestKey::new();
+        assert!(register(&store, "acct", &other, true, None)
+            .unwrap()
+            .code
+            .is_some());
+    }
+
+    #[test]
+    fn a_fresh_sign_in_recovers_from_devices_enrolled_on_the_grace_periods_word() {
+        // During the grace period someone with a stolen session enrolls
+        // first. (Strict policy: by default a fresh sign-in enrolls any
+        // device, so the last step below is strict-only.)
+        let store = DeviceStore::in_memory(DevicePolicy {
+            require_approval: true,
+            ..with_grace()
+        });
+        let thief = TestKey::new();
+        let r = register(&store, "acct", &thief, true, None).unwrap();
+        assert_eq!(r.device.enrolled_by.as_deref(), Some("bootstrap:grace"));
+        assert!(!r.device.strong);
+        // Devices it approves are not strong either.
+        let accomplice = TestKey::new();
+        let code = register(&store, "acct", &accomplice, false, None)
+            .unwrap()
+            .code
+            .unwrap();
+        assert!(
+            !store
+                .approve("acct", &thief.id(), Some(&code), None, true)
+                .unwrap()
+                .strong
+        );
+        // The owner signs in freshly and still bootstraps, then revokes them.
+        let owner = TestKey::new();
+        let r = register(&store, "acct", &owner, true, Some(now_secs())).unwrap();
+        assert_eq!(r.device.state(now_secs()), DeviceState::Enrolled);
+        assert!(r.device.strong);
+        store
+            .revoke("acct", &owner.id(), &thief.id(), true)
+            .unwrap();
+        store
+            .revoke("acct", &owner.id(), &accomplice.id(), true)
+            .unwrap();
+        // Now a strong device exists: a fresh sign-in alone no longer
+        // enrolls another one.
+        let next = TestKey::new();
+        assert!(register(&store, "acct", &next, true, Some(now_secs()))
+            .unwrap()
+            .code
+            .is_some());
+    }
+
+    #[test]
+    fn a_malleated_signature_is_still_a_replay() {
+        let store = DeviceStore::in_memory(enforcing());
+        let key = TestKey::new();
+        register(&store, "acct", &key, true, Some(now_secs())).unwrap();
+        let ts = now_secs();
+        let sig = key.sign(&session_message(&key.id(), ts));
+        store.open_session("acct", &key.id(), ts, &sig).unwrap();
+        // (r, n - s) verifies too.
+        let raw = b64().decode(&sig).unwrap();
+        const N: [u8; 32] = [
+            0xff, 0xff, 0xff, 0xff, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+            0xff, 0xff, 0xbc, 0xe6, 0xfa, 0xad, 0xa7, 0x17, 0x9e, 0x84, 0xf3, 0xb9, 0xca, 0xc2,
+            0xfc, 0x63, 0x25, 0x51,
+        ];
+        let s = &raw[32..];
+        let mut twin = [0u8; 32];
+        let mut borrow = 0i16;
+        for i in (0..32).rev() {
+            let v = N[i] as i16 - s[i] as i16 - borrow;
+            borrow = i16::from(v < 0);
+            twin[i] = v.rem_euclid(256) as u8;
+        }
+        let mut malleated = raw[..32].to_vec();
+        malleated.extend_from_slice(&twin);
+        let malleated = b64().encode(malleated);
+        assert!(verify(
+            &decode_public_key(&key.public()).unwrap(),
+            &session_message(&key.id(), ts),
+            &malleated
+        ));
+        assert!(matches!(
+            store.open_session("acct", &key.id(), ts, &malleated),
+            Err(DeviceError::Proof(_))
+        ));
+    }
+
+    #[test]
+    fn proofs_are_bound_fresh_and_single_use() {
+        let store = DeviceStore::in_memory(enforcing());
+        let key = TestKey::new();
+        register(&store, "acct", &key, true, Some(now_secs())).unwrap();
+        let ts = now_secs();
+        let sig = key.sign(&session_message(&key.id(), ts));
+        assert!(store.open_session("acct", &key.id(), ts, &sig).is_ok());
+        // Replayed.
+        assert!(matches!(
+            store.open_session("acct", &key.id(), ts, &sig),
+            Err(DeviceError::Proof(_))
+        ));
+        // Stale.
+        let old = ts - 3600;
+        let sig = key.sign(&session_message(&key.id(), old));
+        assert!(store.open_session("acct", &key.id(), old, &sig).is_err());
+        // Another key's signature.
+        let intruder = TestKey::new();
+        let sig = intruder.sign(&session_message(&key.id(), ts));
+        assert!(store.open_session("acct", &key.id(), ts, &sig).is_err());
+        // A key registered to one account cannot join another.
+        let ts = now_secs();
+        let sig = key.sign(&register_message(&key.id(), ts));
+        let public = key.public();
+        assert!(matches!(
+            store.register(&Registration {
+                account: "other",
+                user: "other",
+                public_key: &public,
+                name: "x",
+                ts,
+                sig: &sig,
+                bootstrap: true,
+                auth_time: Some(ts),
+                email_verified: true,
+                ..Registration::default()
+            }),
+            Err(DeviceError::Conflict(_))
+        ));
+    }
+
+    #[test]
+    fn expiry_needs_one_approval_and_revocation_ends_sessions() {
+        let store = DeviceStore::in_memory(DevicePolicy {
+            grace_secs: 0,
+            ttl_secs: 1,
+            ..DevicePolicy::default()
+        });
+        let a = TestKey::new();
+        let b = TestKey::new();
+        register(&store, "acct", &a, true, Some(now_secs())).unwrap();
+        let code = register(&store, "acct", &b, false, None)
+            .unwrap()
+            .code
+            .unwrap();
+        store
+            .approve("acct", &a.id(), Some(&code), None, true)
+            .unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(2100));
+        assert_eq!(
+            store.get(&a.id()).unwrap().state(now_secs()),
+            DeviceState::Expired
+        );
+        assert!(session(&store, "acct", &a).is_err());
+        // With no enrolled device left, a fresh sign-in re-verifies.
+        let again = register(&store, "acct", &a, true, Some(now_secs())).unwrap();
+        assert_eq!(again.device.state(now_secs()), DeviceState::Enrolled);
+        // b (expired) needs an approval from a; by id this time.
+        store
+            .approve("acct", &a.id(), None, Some(&b.id()), true)
+            .unwrap();
+        let token = session(&store, "acct", &b).unwrap();
+        store.revoke("acct", &a.id(), &b.id(), true).unwrap();
+        assert!(store.session_device("acct", &token).is_none());
+        assert!(session(&store, "acct", &b).is_err());
+        assert!(matches!(
+            register(&store, "acct", &b, false, None),
+            Err(DeviceError::Forbidden(_))
+        ));
+    }
+
+    #[test]
+    fn state_persists_with_the_grace_start() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("devices.json");
+        let store = DeviceStore::open(path.clone(), enforcing()).unwrap();
+        let key = TestKey::new();
+        register(&store, "acct", &key, true, Some(now_secs())).unwrap();
+        let started = store.enforce_after();
+        drop(store);
+        let reopened = DeviceStore::open(path.clone(), enforcing()).unwrap();
+        assert_eq!(reopened.enforce_after(), started);
+        assert_eq!(
+            reopened.get(&key.id()).unwrap().state(now_secs()),
+            DeviceState::Enrolled
+        );
+        // Sessions are not persisted: a restart asks devices for a new one.
+        assert!(!std::fs::read_to_string(&path).unwrap().contains("cds_"));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            assert_eq!(
+                std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
+    }
+
+    #[test]
+    fn the_audit_key_persists_0600_next_to_the_devices_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("devices.json");
+        let key_path = dir.path().join("devices.json.audit-key");
+        let store = DeviceStore::open(path.clone(), enforcing()).unwrap();
+        store.audit("acct", AuditEvent::new("device_registered"));
+        assert!(key_path.exists());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            assert_eq!(
+                std::fs::metadata(&key_path).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
+        drop(store);
+        // A restart keeps the same key: the chain still verifies (a new
+        // random key on every start would break every mac written before).
+        let reopened = DeviceStore::open(path, enforcing()).unwrap();
+        assert!(reopened.verify_audit_chain("acct").is_ok());
+        reopened.audit("acct", AuditEvent::new("device_enrolled"));
+        assert!(reopened.verify_audit_chain("acct").is_ok());
+        assert_eq!(reopened.audit_log("acct", 10).len(), 2);
+    }
+
+    /// Reproduces the relay.cua.ai outage after the S9 hardening deploy
+    /// (cua-sdk ae91099e0): the production state volume's `devices.json`
+    /// predates the hash-chained audit log, so its `audit` entries are
+    /// plain [`AuditEvent`]s with no `seq`/`prev`/`hash`/`mac`. Before this
+    /// fix, deserializing them into `Vec<AuditEntry>` failed with "missing
+    /// field `seq`", `DeviceStore::open` returned `Err`, `Relay::try_new`
+    /// propagated it, and `main` exited non-zero without ever binding the
+    /// listener, so `/healthz` never answered, the pod never passed its
+    /// readiness probe under the production `securityContext` (non-root,
+    /// read-only rootfs), and Traefik had no ready backend ("503 no
+    /// available server"), exactly as it did in production. `DeviceStore`
+    /// must instead migrate the file in place and start normally.
+    #[test]
+    fn opening_a_pre_chain_devices_file_migrates_its_audit_log_instead_of_failing() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("devices.json");
+        // Byte-for-byte the shape the pre-S9 relay (cua-sdk 4f62b9c91)
+        // persists: no `confirmed`-style chain fields on an audit entry.
+        let legacy = serde_json::json!({
+            "grace_started_at": 1_790_000_000u64,
+            "devices": {},
+            "audit": {
+                "acct": [
+                    {
+                        "ts": 1_790_000_001u64,
+                        "kind": "unenrolled_access",
+                        "subject": "ada@example.com"
+                    },
+                    {
+                        "ts": 1_790_000_002u64,
+                        "kind": "machine_registered",
+                        "machine": "machine-0001",
+                        "detail": "test-machine"
+                    }
+                ]
+            }
+        });
+        std::fs::write(&path, serde_json::to_vec(&legacy).unwrap()).unwrap();
+
+        // The bug: this used to be `Err` ("missing field `seq`"), which is
+        // exactly what made `Relay::try_new` (and so the whole process)
+        // fail at startup on the production volume.
+        let store = DeviceStore::open(path.clone(), enforcing())
+            .expect("a pre-chain devices file must load, not fail to start");
+
+        // The migrated chain verifies and keeps the original events, in
+        // order, now sequenced from 1.
+        assert!(store.verify_audit_chain("acct").is_ok());
+        let log = store.audit_log("acct", 10);
+        assert_eq!(log.len(), 2);
+        assert_eq!(log[0].seq, 1);
+        assert_eq!(log[0].kind, "unenrolled_access");
+        assert_eq!(log[1].seq, 2);
+        assert_eq!(log[1].kind, "machine_registered");
+        assert_eq!(log[1].machine.as_deref(), Some("machine-0001"));
+
+        // The migration is persisted, so a second restart (the pod
+        // restarting again) does not re-migrate or duplicate entries, and
+        // the chain still verifies under the same (now persisted) key.
+        // The log moved out of the devices file into its own.
+        let devices: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert!(devices.get("audit").is_none());
+        assert_eq!(devices["grace_started_at"], 1_790_000_000u64);
+        let lines = std::fs::read_to_string(AuditLog::path_for(&path)).unwrap();
+        assert_eq!(lines.lines().count(), 2);
+        drop(store);
+        let reopened = DeviceStore::open(path, enforcing()).unwrap();
+        assert!(reopened.verify_audit_chain("acct").is_ok());
+        assert_eq!(reopened.audit_log("acct", 10).len(), 2);
+    }
+
+    #[test]
+    fn a_chained_log_in_the_devices_file_moves_out_once_and_keeps_verifying() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("devices.json");
+        let audit_key = load_or_create_audit_key(&path).unwrap();
+        let mut log = Vec::new();
+        for kind in ["device_registered", "device_enrolled", "device_session"] {
+            chain_append(&mut log, AuditEvent::new(kind), &audit_key);
+        }
+        let mut other = Vec::new();
+        chain_append(&mut other, AuditEvent::new("machine_access"), &audit_key);
+        // The shape the previous relay persisted: the log inside the file.
+        let previous = serde_json::json!({
+            "grace_started_at": 1_790_000_000u64,
+            "devices": {},
+            "audit": { "acct": log, "other": other },
+        });
+        std::fs::write(&path, serde_json::to_vec_pretty(&previous).unwrap()).unwrap();
+
+        let store = DeviceStore::open(path.clone(), enforcing()).unwrap();
+        assert_eq!(store.audit_log("acct", 10), log);
+        assert!(store.verify_audit_chain("acct").is_ok());
+        assert!(store.verify_audit_chain("other").is_ok());
+        // New entries chain on from the moved ones.
+        store.audit("acct", AuditEvent::new("machine_access"));
+        drop(store);
+
+        let reopened = DeviceStore::open(path.clone(), enforcing()).unwrap();
+        let after = reopened.audit_log("acct", 10);
+        assert_eq!(after.len(), 4);
+        assert_eq!(after[3].seq, 4);
+        assert_eq!(after[3].prev, log[2].hash);
+        assert!(reopened.verify_audit_chain("acct").is_ok());
+        assert_eq!(reopened.audit_log("other", 10).len(), 1);
+    }
+
+    #[test]
+    fn an_audit_event_appends_a_line_and_leaves_the_devices_file_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("devices.json");
+        let store = DeviceStore::open(path.clone(), enforcing()).unwrap();
+        let key = TestKey::new();
+        register(&store, "acct", &key, true, Some(now_secs())).unwrap();
+        let devices = std::fs::read(&path).unwrap();
+        let log_path = AuditLog::path_for(&path);
+        let before = std::fs::read_to_string(&log_path).unwrap();
+        let enrollment = before.lines().count();
+        assert!(enrollment > 0, "the enrollment is audited");
+
+        for _ in 0..200 {
+            store.audit("acct", AuditEvent::new("machine_access"));
+        }
+        assert_eq!(std::fs::read(&path).unwrap(), devices);
+        let after = std::fs::read_to_string(&log_path).unwrap();
+        assert!(
+            after.starts_with(&before),
+            "earlier lines are never rewritten"
+        );
+        assert_eq!(after.lines().count(), enrollment + 200);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            assert_eq!(
+                std::fs::metadata(&log_path).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
+        drop(store);
+        let reopened = DeviceStore::open(path, enforcing()).unwrap();
+        assert_eq!(
+            reopened.audit_log("acct", usize::MAX).len(),
+            enrollment + 200
+        );
+        assert!(reopened.verify_audit_chain("acct").is_ok());
+    }
+
+    #[test]
+    fn a_torn_last_line_is_dropped_and_the_log_stays_appendable() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("devices.json");
+        let store = DeviceStore::open(path.clone(), enforcing()).unwrap();
+        store.audit("acct", AuditEvent::new("device_registered"));
+        store.audit("acct", AuditEvent::new("device_enrolled"));
+        drop(store);
+        // A crash mid-append: half a line, no newline.
+        let log_path = AuditLog::path_for(&path);
+        let mut raw = std::fs::read(&log_path).unwrap();
+        raw.extend_from_slice(br#"{"account":"acct","seq":3,"ts":1"#);
+        std::fs::write(&log_path, raw).unwrap();
+
+        let store = DeviceStore::open(path.clone(), enforcing()).unwrap();
+        assert_eq!(store.audit_log("acct", 10).len(), 2);
+        store.audit("acct", AuditEvent::new("device_session"));
+        drop(store);
+        let reopened = DeviceStore::open(path, enforcing()).unwrap();
+        let log = reopened.audit_log("acct", 10);
+        assert_eq!(log.len(), 3);
+        assert_eq!(log[2].seq, 3);
+        assert!(reopened.verify_audit_chain("acct").is_ok());
+    }
+
+    #[test]
+    fn trimmed_entries_are_compacted_out_of_the_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("devices.json");
+        let store = DeviceStore::open(path.clone(), enforcing()).unwrap();
+        store.audit.lock().unwrap().compact_slack = 100;
+        for _ in 0..(AUDIT_LIMIT + 150) {
+            store.audit("acct", AuditEvent::new("machine_access"));
+        }
+        store.audit("other", AuditEvent::new("machine_access"));
+        let lines = std::fs::read_to_string(AuditLog::path_for(&path))
+            .unwrap()
+            .lines()
+            .count();
+        assert!(lines <= AUDIT_LIMIT + 1 + 100, "{lines} lines");
+        drop(store);
+        let reopened = DeviceStore::open(path, enforcing()).unwrap();
+        let log = reopened.audit_log("acct", usize::MAX);
+        assert_eq!(log.len(), AUDIT_LIMIT);
+        assert_eq!(log.last().unwrap().seq, (AUDIT_LIMIT + 150) as u64);
+        assert!(reopened.verify_audit_chain("acct").is_ok());
+        assert_eq!(reopened.audit_log("other", 10).len(), 1);
+    }
+
+    #[test]
+    fn old_entries_expire_by_age_and_the_chain_still_verifies() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("devices.json");
+        let store = DeviceStore::open(path.clone(), enforcing()).unwrap();
+        let day = 86_400;
+        let now = now_secs();
+        for age_days in [500u64, 450, 410, 100, 1] {
+            let mut event = AuditEvent::new("machine_access");
+            event.ts = now - age_days * day;
+            store.audit("acct", event);
+        }
+        let mut old = AuditEvent::new("machine_access");
+        old.ts = now - 600 * day;
+        store.audit("gone", old);
+        assert_eq!(store.trim_audit(0), 0, "0 keeps everything");
+        assert_eq!(store.trim_audit(400), 4, "3 of acct and all of gone");
+        let log = store.audit_log("acct", 10);
+        assert_eq!(log.len(), 2);
+        assert_eq!(log[0].seq, 4, "seq is kept across the trim");
+        assert!(store.verify_audit_chain("acct").is_ok());
+        assert!(store.audit_log("gone", 10).is_empty());
+        // The file no longer holds the expired lines, and survives a reopen.
+        let lines = std::fs::read_to_string(AuditLog::path_for(&path)).unwrap();
+        assert_eq!(lines.lines().count(), 2, "{lines}");
+        drop(store);
+        let reopened = DeviceStore::open(path, enforcing()).unwrap();
+        assert_eq!(reopened.audit_log("acct", 10).len(), 2);
+        assert!(reopened.verify_audit_chain("acct").is_ok());
+        // New events keep chaining from the retained tail.
+        reopened.audit("acct", AuditEvent::new("machine_access"));
+        assert!(reopened.verify_audit_chain("acct").is_ok());
+        assert_eq!(reopened.audit_log("acct", 10).last().unwrap().seq, 6);
+        assert_eq!(reopened.trim_audit(400), 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_failed_write_is_reported_until_one_succeeds() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let dir = tempfile::tempdir().unwrap();
+        let state = dir.path().join("state");
+        std::fs::create_dir(&state).unwrap();
+        let store = DeviceStore::open(state.join("devices.json"), enforcing()).unwrap();
+        store.audit("acct", AuditEvent::new("device_registered"));
+        assert!(store.writes_ok());
+        // The volume goes read-only (or full): the next write fails.
+        store.audit.lock().unwrap().file = None;
+        std::fs::remove_file(AuditLog::path_for(&state.join("devices.json"))).unwrap();
+        std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o500)).unwrap();
+        store.audit("acct", AuditEvent::new("machine_access"));
+        let blocked = !store.writes_ok();
+        std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o700)).unwrap();
+        // Root ignores directory permissions; nothing to check then.
+        if blocked {
+            assert_eq!(
+                store.audit_log("acct", 10).len(),
+                1,
+                "a failed event is not recorded"
+            );
+            store.audit("acct", AuditEvent::new("machine_access"));
+            assert!(store.writes_ok());
+        }
+    }
+
+    #[test]
+    fn sessions_survive_a_restart_but_not_a_revocation() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("devices.json");
+        let store = DeviceStore::open(path.clone(), enforcing()).unwrap();
+        let laptop = TestKey::new();
+        let phone = TestKey::new();
+        register(&store, "acct", &laptop, true, Some(now_secs())).unwrap();
+        register(&store, "acct", &phone, true, Some(now_secs())).unwrap();
+        let laptop_session = session(&store, "acct", &laptop).unwrap();
+        let phone_session = session(&store, "acct", &phone).unwrap();
+        let saved =
+            std::fs::read_to_string(format!("{}{SESSIONS_FILE_SUFFIX}", path.display())).unwrap();
+        assert!(
+            !saved.contains(&laptop_session),
+            "only token hashes are stored"
+        );
+        drop(store);
+
+        let reopened = DeviceStore::open(path.clone(), enforcing()).unwrap();
+        assert_eq!(
+            reopened.session_device("acct", &laptop_session),
+            Some(laptop.id())
+        );
+        assert_eq!(reopened.session_device("other", &laptop_session), None);
+        reopened
+            .revoke("acct", &laptop.id(), &phone.id(), true)
+            .unwrap();
+        assert_eq!(reopened.session_device("acct", &phone_session), None);
+        drop(reopened);
+        let again = DeviceStore::open(path, enforcing()).unwrap();
+        assert_eq!(again.session_device("acct", &phone_session), None);
+        assert_eq!(
+            again.session_device("acct", &laptop_session),
+            Some(laptop.id())
+        );
+    }
+
+    #[test]
+    fn the_devices_file_is_compact_json() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("devices.json");
+        let store = DeviceStore::open(path.clone(), enforcing()).unwrap();
+        register(&store, "acct", &TestKey::new(), true, Some(now_secs())).unwrap();
+        let raw = std::fs::read_to_string(&path).unwrap();
+        assert!(!raw.contains('\n'), "one line, no indentation: {raw}");
+        assert!(raw.contains("\"devices\":{"));
+    }
+
+    #[test]
+    fn the_session_journal_appends_compacts_and_replaces_the_old_map() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("devices.json");
+        let journal = PathBuf::from(format!("{}{SESSIONS_FILE_SUFFIX}", path.display()));
+        let legacy = PathBuf::from(format!("{}{LEGACY_SESSIONS_FILE_SUFFIX}", path.display()));
+        // An earlier relay's map of one live and one expired session.
+        let now = now_secs();
+        std::fs::write(
+            &legacy,
+            serde_json::to_vec(&json!({
+                "live": {"account": "acct", "device": "dev_a", "expires": now + 600},
+                "gone": {"account": "acct", "device": "dev_a", "expires": now - 1},
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let store = DeviceStore::open(path.clone(), enforcing()).unwrap();
+        assert!(!legacy.exists(), "the old map is replaced by the journal");
+        assert_eq!(
+            std::fs::read_to_string(&journal).unwrap().lines().count(),
+            1
+        );
+        let key = TestKey::new();
+        register(&store, "acct", &key, true, Some(now_secs())).unwrap();
+        // Each session opened is one appended line.
+        for _ in 0..3 {
+            session(&store, "acct", &key).unwrap();
+        }
+        assert_eq!(
+            std::fs::read_to_string(&journal).unwrap().lines().count(),
+            4
+        );
+        // A torn last line (a crash mid-append) is dropped at the next open.
+        let mut f = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&journal)
+            .unwrap();
+        f.write_all(b"{\"open\":\"x").unwrap();
+        drop(f);
+        drop(store);
+        let store = DeviceStore::open(path.clone(), enforcing()).unwrap();
+        let raw = std::fs::read_to_string(&journal).unwrap();
+        assert!(raw.ends_with('\n') && !raw.contains("\"x"), "{raw}");
+        assert_eq!(store.sessions.lock().unwrap().0.len(), 4);
+        // Sessions that end make the journal compact to the live ones.
+        store.sessions.lock().unwrap().1.compact_slack = 8;
+        let phone = TestKey::new();
+        register(&store, "acct", &phone, true, Some(now_secs())).unwrap();
+        for _ in 0..40 {
+            session(&store, "acct", &phone).unwrap();
+        }
+        store.revoke("acct", &key.id(), &phone.id(), true).unwrap();
+        let live = store.sessions.lock().unwrap().0.len();
+        assert_eq!(live, 4);
+        let lines = std::fs::read_to_string(&journal).unwrap().lines().count();
+        assert_eq!(lines, live, "compacted to the live sessions");
+        drop(store);
+        let again = DeviceStore::open(path, enforcing()).unwrap();
+        assert_eq!(again.sessions.lock().unwrap().0.len(), live);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_dropped_audit_event_and_a_refused_change_are_counted() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let dir = tempfile::tempdir().unwrap();
+        let state = dir.path().join("state");
+        std::fs::create_dir(&state).unwrap();
+        let storage = Arc::new(Storage::new(Some(state.clone()), Default::default()));
+        let path = state.join("devices.json");
+        let store = DeviceStore::open_with(path.clone(), enforcing(), storage.clone()).unwrap();
+        store.audit("acct", AuditEvent::new("device_registered"));
+        store.audit.lock().unwrap().file = None;
+        std::fs::remove_file(AuditLog::path_for(&path)).unwrap();
+        std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o500)).unwrap();
+        store.audit("acct", AuditEvent::new("machine_access"));
+        let registered = register(&store, "acct", &TestKey::new(), true, Some(now_secs()));
+        std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o700)).unwrap();
+        // Root ignores directory permissions; nothing to check then.
+        if storage.failures(store::AUDIT) > 0 {
+            assert_eq!(storage.audit_dropped_total(), 1);
+            assert!(
+                matches!(registered, Err(DeviceError::Storage(_))),
+                "{registered:?}"
+            );
+            assert!(storage.failures(store::DEVICES) >= 1);
+            assert!(!store.writes_ok());
+            assert!(
+                store.list("acct").is_empty(),
+                "a refused change is not made"
+            );
+            let (ready, body) = storage.report();
+            assert!(!ready);
+            assert_eq!(body["audit_events_dropped"], 1);
+        }
+    }
+
+    #[test]
+    fn opening_removes_temp_files_an_interrupted_write_left() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("devices.json");
+        let stale = dir.path().join(".devices.json.6852b0d9e7d6.tmp");
+        std::fs::write(&stale, vec![b'{'; 4096]).unwrap();
+        let store = DeviceStore::open(path, enforcing()).unwrap();
+        assert!(!stale.exists());
+        drop(store);
+    }
+
+    #[test]
+    fn erasing_an_account_drops_its_chain_and_leaves_other_chains_verifying() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("devices.json");
+        let store = DeviceStore::open(path.clone(), enforcing()).unwrap();
+        let (ada_key, bob_key) = (TestKey::new(), TestKey::new());
+        let fresh = Some(now_secs() - 5);
+        register(&store, "ada-sub", &ada_key, true, fresh).unwrap();
+        register(&store, "bob-sub", &bob_key, true, fresh).unwrap();
+        let ada_session = session(&store, "ada-sub", &ada_key).unwrap();
+        let bob_session = session(&store, "bob-sub", &bob_key).unwrap();
+        // Interleaved events: the two chains grow side by side in one file.
+        for _ in 0..3 {
+            store.audit(
+                "ada-sub",
+                AuditEvent::new("machine_access").subject("ada@example.test"),
+            );
+            store.audit("bob-sub", AuditEvent::new("machine_access"));
+        }
+        store.audit_throttled(
+            "access:ada-sub:d:m",
+            "ada-sub",
+            AuditEvent::new("machine_access"),
+        );
+        let bob_before = store.audit_log("bob-sub", 1000);
+        assert!(store.verify_audit_chain("bob-sub").is_ok());
+
+        let erased = store.erase_account("ada-sub", &[]).unwrap();
+        assert_eq!(erased.devices, 1);
+        assert_eq!(erased.sessions, 1);
+        assert!(erased.audit_entries >= 7, "{erased:?}");
+        assert!(store.list("ada-sub").is_empty());
+        assert!(store.get(&ada_key.id()).is_none());
+        assert!(store.session_device("ada-sub", &ada_session).is_none());
+        assert!(store.audit_log("ada-sub", 1000).is_empty());
+        // Bob's devices, session and chain are untouched, and still verify.
+        assert_eq!(store.list("bob-sub").len(), 1);
+        assert!(store.session_device("bob-sub", &bob_session).is_some());
+        assert_eq!(store.audit_log("bob-sub", 1000), bob_before);
+        assert!(store.verify_audit_chain("bob-sub").is_ok());
+        // Nothing of Ada is left on disk: not in the devices file, the audit
+        // log, or the session journal.
+        for entry in std::fs::read_dir(dir.path()).unwrap() {
+            let p = entry.unwrap().path();
+            if p.is_file() {
+                let raw = String::from_utf8_lossy(&std::fs::read(&p).unwrap()).into_owned();
+                assert!(
+                    !raw.contains("ada-sub"),
+                    "{} still names the account",
+                    p.display()
+                );
+            }
+        }
+        // Again: nothing to do, same answer; and it survives a restart.
+        assert_eq!(
+            store.erase_account("ada-sub", &[]).unwrap(),
+            DeviceErase::default()
+        );
+        assert_eq!(
+            store.erase_account("nobody", &[]).unwrap(),
+            DeviceErase::default()
+        );
+        drop(store);
+        let again = DeviceStore::open(path, enforcing()).unwrap();
+        assert!(again.list("ada-sub").is_empty());
+        assert!(again.audit_log("ada-sub", 1000).is_empty());
+        assert_eq!(again.audit_log("bob-sub", 1000), bob_before);
+        assert!(again.verify_audit_chain("bob-sub").is_ok());
+        // A new account with the same id starts a fresh chain.
+        again.audit("ada-sub", AuditEvent::new("device_registered"));
+        assert!(again.verify_audit_chain("ada-sub").is_ok());
+    }
+
+    #[test]
+    fn erasing_an_account_rewrites_the_entries_naming_it_in_other_chains() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("devices.json");
+        let store = DeviceStore::open(path.clone(), enforcing()).unwrap();
+        let emails = vec!["ada@example.test".to_owned()];
+        store.audit("bob-sub", AuditEvent::new("device_registered"));
+        store.audit(
+            "bob-sub",
+            AuditEvent::new("shared_access")
+                .machine("m1")
+                .subject("Ada@Example.test"),
+        );
+        store.audit("bob-sub", AuditEvent::new("share_added").subject("ada-sub"));
+        store.audit("bob-sub", AuditEvent::new("machine_access"));
+        store.audit("cy-sub", AuditEvent::new("machine_access"));
+        let cy_before = store.audit_log("cy-sub", 100);
+        let bob_before = store.audit_log("bob-sub", 100);
+
+        let erased = store.erase_account("ada-sub", &emails).unwrap();
+        assert_eq!(erased.audit_rewritten, 2);
+        let bob = store.audit_log("bob-sub", 100);
+        assert!(store.verify_audit_chain("bob-sub").is_ok());
+        assert_eq!(bob.len(), 4);
+        assert_eq!(
+            bob[0], bob_before[0],
+            "entries before the first change are kept"
+        );
+        assert_eq!(bob[1].subject.as_deref(), Some("deleted account"));
+        assert_eq!(bob[1].machine.as_deref(), Some("m1"));
+        assert_eq!(bob[2].subject.as_deref(), Some("deleted account"));
+        assert_ne!(
+            bob[3].hash, bob_before[3].hash,
+            "later entries are re-chained"
+        );
+        assert_eq!(bob[3].event, bob_before[3].event);
+        // An unrelated chain is untouched, byte for byte.
+        assert_eq!(store.audit_log("cy-sub", 100), cy_before);
+        assert!(store.verify_audit_chain("cy-sub").is_ok());
+        for e in std::fs::read_dir(dir.path()).unwrap() {
+            let raw = std::fs::read(e.unwrap().path()).unwrap();
+            let raw = String::from_utf8_lossy(&raw).to_ascii_lowercase();
+            assert!(
+                !raw.contains("ada-sub") && !raw.contains("ada@example"),
+                "left on disk"
+            );
+        }
+        // Idempotent, and persisted: a restart loads a chain that verifies.
+        let again = store.erase_account("ada-sub", &emails).unwrap();
+        assert_eq!(again, DeviceErase::default());
+        assert_eq!(store.audit_log("bob-sub", 100), bob);
+        drop(store);
+        let reopened = DeviceStore::open(path, enforcing()).unwrap();
+        assert_eq!(reopened.audit_log("bob-sub", 100), bob);
+        assert!(reopened.verify_audit_chain("bob-sub").is_ok());
+    }
+
+    #[test]
+    fn audit_is_bounded_and_throttled() {
+        let store = DeviceStore::in_memory(DevicePolicy::default());
+        for _ in 0..(AUDIT_LIMIT + 10) {
+            store.audit("acct", AuditEvent::new("machine_access"));
+        }
+        assert_eq!(store.audit_log("acct", usize::MAX).len(), AUDIT_LIMIT);
+        let other = DeviceStore::in_memory(with_grace());
+        other.audit_throttled("k", "acct", AuditEvent::new("machine_access"));
+        other.audit_throttled("k", "acct", AuditEvent::new("machine_access"));
+        other.audit_throttled("k2", "acct", AuditEvent::new("machine_access"));
+        assert_eq!(other.audit_log("acct", 100).len(), 2);
+    }
+
+    #[test]
+    fn the_audit_log_is_a_verifiable_hash_chain() {
+        let store = DeviceStore::in_memory(DevicePolicy::default());
+        store.audit("acct", AuditEvent::new("device_registered"));
+        store.audit("acct", AuditEvent::new("device_enrolled"));
+        store.audit("acct", AuditEvent::new("device_session"));
+        assert!(store.verify_audit_chain("acct").is_ok());
+        // Untouched, or a different, empty account: also fine.
+        assert!(store.verify_audit_chain("nobody").is_ok());
+
+        let log = store.audit_log("acct", 100);
+        assert_eq!(log[0].prev, AUDIT_GENESIS);
+        assert_eq!(log[1].prev, log[0].hash);
+        assert_eq!(log[2].prev, log[1].hash);
+        assert_ne!(log[0].hash, log[1].hash);
+
+        // Editing the middle entry's content breaks the chain from there:
+        // its own hash/mac no longer match, and the entry after it no
+        // longer chains from a hash that is still valid.
+        let mut tampered = store.audit.lock().unwrap();
+        tampered.logs.get_mut("acct").unwrap()[1].event.kind = "device_revoked".into();
+        drop(tampered);
+        let err = store.verify_audit_chain("acct").unwrap_err();
+        assert_eq!(err.seq, 2);
+        assert_eq!(err.reason, "mac");
+
+        // The wrong key never verifies any of it, even untampered.
+        let store2 = DeviceStore::in_memory(DevicePolicy::default());
+        store2.audit("acct", AuditEvent::new("device_registered"));
+        let wrong_key = [7u8; 32];
+        let log = store2.audit_log("acct", 100);
+        assert!(super::verify_audit_chain(&log, &wrong_key).is_err());
+        assert!(store2.verify_audit_chain("acct").is_ok());
+    }
+
+    #[test]
+    fn an_edited_log_file_does_not_verify_without_the_audit_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("devices.json");
+        let store = DeviceStore::open(path.clone(), DevicePolicy::default()).unwrap();
+        store.audit("acct", AuditEvent::new("device_registered"));
+        store.audit("acct", AuditEvent::new("device_enrolled"));
+        drop(store);
+
+        // Someone with only the state files (a backup, a disk snapshot)
+        // edits an event and recomputes the plain hash chain (no secret
+        // needed for that much), but cannot reproduce a valid mac without
+        // the audit key, which lives in a separate file.
+        let log_path = AuditLog::path_for(&path);
+        let raw = std::fs::read_to_string(&log_path).unwrap();
+        let mut entries: Vec<serde_json::Value> = raw
+            .lines()
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect();
+        entries[0]["kind"] = "device_revoked".into();
+        let seq = entries[0]["seq"].as_u64().unwrap();
+        let event: AuditEvent = serde_json::from_value(entries[0].clone()).unwrap();
+        let hash = chain_hash(AUDIT_GENESIS, seq, &event);
+        entries[0]["hash"] = hash.clone().into();
+        entries[1]["prev"] = hash.into();
+        let edited: String = entries.iter().map(|e| format!("{e}\n")).collect();
+        std::fs::write(&log_path, edited).unwrap();
+
+        let reopened = DeviceStore::open(path, DevicePolicy::default()).unwrap();
+        // The mac on the edited entry no longer matches (it was never
+        // recomputed, since that needs the audit key), so the chain still
+        // does not verify.
+        assert!(reopened.verify_audit_chain("acct").is_err());
+    }
+
+    #[test]
+    fn a_fresh_sign_in_enrolls_another_device_but_a_stale_one_does_not() {
+        let store = DeviceStore::in_memory(enforcing());
+        let first = TestKey::new();
+        register_on(
+            &store,
+            "acct",
+            &first,
+            true,
+            Some(now_secs()),
+            true,
+            None,
+            true,
+        )
+        .unwrap();
+        // A long-lived session (signed in an hour ago) does not enroll a
+        // second device: it waits for an approval.
+        let second = TestKey::new();
+        let stale = register_on(
+            &store,
+            "acct",
+            &second,
+            true,
+            Some(now_secs() - 3600),
+            true,
+            None,
+            true,
+        )
+        .unwrap();
+        assert_eq!(stale.device.state(now_secs()), DeviceState::Pending);
+        assert!(stale.code.is_some());
+        // Nor does a sign-in without an auth_time claim, or one that did not
+        // ask to enroll.
+        assert!(
+            register_on(&store, "acct", &second, true, None, true, None, true)
+                .unwrap()
+                .code
+                .is_some()
+        );
+        assert!(register_on(
+            &store,
+            "acct",
+            &second,
+            false,
+            Some(now_secs()),
+            true,
+            None,
+            true
+        )
+        .unwrap()
+        .code
+        .is_some());
+        // A fresh sign-in (verified email) enrolls it at once.
+        let fresh = register_on(
+            &store,
+            "acct",
+            &second,
+            true,
+            Some(now_secs() - 5),
+            true,
+            None,
+            true,
+        )
+        .unwrap();
+        assert_eq!(fresh.device.state(now_secs()), DeviceState::Enrolled);
+        assert_eq!(fresh.device.enrolled_by.as_deref(), Some(BY_FRESH_SIGN_IN));
+        assert!(fresh.device.strong);
+        assert!(fresh.code.is_none());
+        assert!(session(&store, "acct", &second).is_ok());
+        // Both devices stay: different machines (none reported).
+        assert!(store.get(&first.id()).unwrap().revoked_at.is_none());
+        // Audited as enrolled by a fresh sign-in.
+        let log = store.audit_log("acct", 100);
+        let enrolled = log.iter().rfind(|e| e.kind == "device_enrolled").unwrap();
+        assert_eq!(enrolled.device.as_deref(), Some(second.id().as_str()));
+        assert_eq!(enrolled.subject.as_deref(), Some(BY_FRESH_SIGN_IN));
+        assert_eq!(
+            enrolled.detail.as_deref(),
+            Some("enrolled by fresh sign-in (new device of the account)")
+        );
+    }
+
+    /// The default policy: a fresh interactive sign-in enrolls another
+    /// device of the account at once, whether or not the issuer marked the
+    /// email verified or the token proves MFA (a social login on Keycloak:
+    /// `acr` "1", no `amr`, `email_verified` false).
+    #[test]
+    fn a_fresh_sign_in_enrolls_a_second_device_without_verified_email_or_mfa() {
+        let store = DeviceStore::in_memory(enforcing());
+        assert!(!store.policy().require_approval);
+        let first = TestKey::new();
+        register(&store, "acct", &first, true, Some(now_secs())).unwrap();
+        assert!(store.get(&first.id()).unwrap().strong);
+        // Seconds-old sign-in on a second Mac: enrolled, no code.
+        let second = TestKey::new();
+        let r = register(&store, "acct", &second, true, Some(now_secs() - 5)).unwrap();
+        assert_eq!(r.device.state(now_secs()), DeviceState::Enrolled);
+        assert_eq!(r.device.enrolled_by.as_deref(), Some(BY_FRESH_SIGN_IN));
+        assert!(r.code.is_none());
+        assert!(r.superseded.is_empty());
+        assert!(session(&store, "acct", &second).is_ok());
+        assert!(store.get(&first.id()).unwrap().revoked_at.is_none());
+        let log = store.audit_log("acct", 100);
+        let enrolled = log.iter().rfind(|e| e.kind == "device_enrolled").unwrap();
+        assert_eq!(enrolled.device.as_deref(), Some(second.id().as_str()));
+        assert_eq!(enrolled.subject.as_deref(), Some(BY_FRESH_SIGN_IN));
+        assert_eq!(
+            enrolled.detail.as_deref(),
+            Some("enrolled by fresh sign-in (new device of the account)")
+        );
+        // The account's first device was not a "new device of the account".
+        let first_enrolled = log.iter().find(|e| e.kind == "device_enrolled").unwrap();
+        assert_eq!(
+            first_enrolled.detail.as_deref(),
+            Some("enrolled by fresh sign-in")
+        );
+        // A long-lived (refreshed) session still needs an approval, as does
+        // a token without auth_time or a register that did not ask.
+        let third = TestKey::new();
+        let stale = register(&store, "acct", &third, true, Some(now_secs() - 3600)).unwrap();
+        assert_eq!(stale.device.state(now_secs()), DeviceState::Pending);
+        assert!(stale.code.is_some());
+        assert!(register(&store, "acct", &third, true, None)
+            .unwrap()
+            .code
+            .is_some());
+        assert!(register(&store, "acct", &third, false, Some(now_secs()))
+            .unwrap()
+            .code
+            .is_some());
+        assert!(session(&store, "acct", &third).is_err());
+        // Just past the bootstrap window is stale too.
+        let window = store.policy().bootstrap_max_auth_age_secs;
+        assert!(
+            register(&store, "acct", &third, true, Some(now_secs() - window - 5))
+                .unwrap()
+                .code
+                .is_some()
+        );
+    }
+
+    /// Registers `key` on a fresh sign-in (verified email) as a phone or a
+    /// computer, as the relay does for a token issued to a phone client.
+    fn register_class(
+        store: &DeviceStore,
+        account: &str,
+        key: &TestKey,
+        phone: bool,
+        mfa: bool,
+        platform: &str,
+    ) -> Registered {
+        let ts = now_secs();
+        let public = key.public();
+        let sig = key.sign(&register_message(&key.id(), ts));
+        store
+            .register(&Registration {
+                account,
+                user: account,
+                public_key: &public,
+                name: "device",
+                platform,
+                machine_id: None,
+                ts,
+                sig: &sig,
+                bootstrap: true,
+                auth_time: Some(now_secs()),
+                email_verified: true,
+                mfa,
+                phone,
+                capabilities: None,
+            })
+            .unwrap()
+    }
+
+    #[test]
+    fn the_approval_value_is_parsed_strictly() {
+        for v in ["true", "TRUE", "on", "yes", "1", " true "] {
+            assert_eq!(DevicePolicy::parse_approval(v), Ok((true, false)), "{v}");
+        }
+        for v in ["false", "off", "no", "0", ""] {
+            assert_eq!(DevicePolicy::parse_approval(v), Ok((false, false)), "{v}");
+        }
+        assert_eq!(DevicePolicy::parse_approval("phones"), Ok((true, true)));
+        assert_eq!(DevicePolicy::parse_approval(" Phones "), Ok((true, true)));
+        for v in ["phone", "maybe", "2", "computers"] {
+            assert!(DevicePolicy::parse_approval(v).is_err(), "{v}");
+        }
+    }
+
+    #[test]
+    fn phones_scope_fails_closed_without_phone_clients() {
+        let some = vec!["cua-spaces-mobile".to_owned()];
+        assert!(DevicePolicy::check_approval_scope(true, Some(&some)).is_ok());
+        assert!(DevicePolicy::check_approval_scope(true, Some(&[])).is_err());
+        assert!(DevicePolicy::check_approval_scope(true, None).is_err());
+        // Other values never need phone clients.
+        assert!(DevicePolicy::check_approval_scope(false, None).is_ok());
+    }
+
+    /// {mode} x {phone, computer} x {account already has an enrolled device,
+    /// or not} x {MFA, or not}: whether a fresh sign-in enrolls the new
+    /// device at once (`true`) or leaves it waiting for an approval.
+    #[test]
+    fn approval_mode_matrix_for_a_new_device() {
+        // (require_approval, phones_only)
+        let modes = [
+            ("false", (false, false)),
+            ("true", (true, false)),
+            ("phones", (true, true)),
+        ];
+        for (name, (require, phones_only)) in modes {
+            for phone in [true, false] {
+                for has_device in [false, true] {
+                    for mfa in [false, true] {
+                        let store = DeviceStore::in_memory(DevicePolicy {
+                            require_approval: require,
+                            approval_phones_only: phones_only,
+                            ..enforcing()
+                        });
+                        if has_device {
+                            let first = TestKey::new();
+                            let r = register_class(&store, "acct", &first, false, false, "macos");
+                            assert_eq!(r.device.state(now_secs()), DeviceState::Enrolled);
+                        }
+                        let key = TestKey::new();
+                        let platform = if phone { "ios" } else { "macos" };
+                        let r = register_class(&store, "acct", &key, phone, mfa, platform);
+                        let strict = require && (phone || !phones_only);
+                        let expect = !has_device || !strict || mfa;
+                        let got = r.device.state(now_secs()) == DeviceState::Enrolled;
+                        assert_eq!(
+                            got, expect,
+                            "mode={name} phone={phone} has_device={has_device} mfa={mfa}"
+                        );
+                        assert_eq!(r.code.is_some(), !expect);
+                        assert_eq!(r.device.is_phone(), phone);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Under `phones` a phone must be approved by an enrolled device while a
+    /// computer still enrolls on its fresh sign-in, and the approval then
+    /// works as before.
+    #[test]
+    fn phones_scope_holds_a_new_phone_for_approval_but_not_a_computer() {
+        let store = DeviceStore::in_memory(DevicePolicy {
+            require_approval: true,
+            approval_phones_only: true,
+            ..enforcing()
+        });
+        let first = TestKey::new();
+        register_class(&store, "acct", &first, false, false, "macos");
+        let runner = TestKey::new();
+        let r = register_class(&store, "acct", &runner, false, false, "linux");
+        assert_eq!(r.device.state(now_secs()), DeviceState::Enrolled);
+        assert!(session(&store, "acct", &runner).is_ok());
+        let phone = TestKey::new();
+        let r = register_class(&store, "acct", &phone, true, false, "ios");
+        let code = r.code.expect("waits for approval");
+        let err = session(&store, "acct", &phone).unwrap_err();
+        assert!(
+            matches!(&err, DeviceError::Forbidden(m) if m.contains("waiting for approval")),
+            "{err:?}"
+        );
+        // A phone claim is sticky and registering again on a fresh sign-in
+        // does not skip the approval.
+        let again = register_class(&store, "acct", &phone, true, false, "macos");
+        assert_eq!(again.device.state(now_secs()), DeviceState::Pending);
+        assert_ne!(again.code.as_deref(), Some(code.as_str()), "a new code");
+        store
+            .approve("acct", &first.id(), again.code.as_deref(), None, true)
+            .unwrap();
+        assert!(session(&store, "acct", &phone).is_ok());
+    }
+
+    /// The 30-day idle rule applies per class: after the enrollment ran
+    /// out, a fresh sign-in re-verifies a computer under `phones` but not a
+    /// phone, and the messages say what is needed.
+    #[test]
+    fn phones_scope_applies_the_idle_rule_to_phones_only() {
+        let store = DeviceStore::in_memory(DevicePolicy {
+            require_approval: true,
+            approval_phones_only: true,
+            ttl_secs: 2,
+            ..enforcing()
+        });
+        let anchor = TestKey::new();
+        register_class(&store, "acct", &anchor, false, false, "macos");
+        let computer = TestKey::new();
+        let phone = TestKey::new();
+        register_class(&store, "acct", &computer, false, false, "linux");
+        // The phone enrolls through the anchor (approval), as in production.
+        let code = register_class(&store, "acct", &phone, true, false, "ios")
+            .code
+            .unwrap();
+        store
+            .approve("acct", &anchor.id(), Some(&code), None, false)
+            .unwrap();
+        std::thread::sleep(std::time::Duration::from_secs(3));
+        let now = now_secs();
+        for k in [&anchor, &computer, &phone] {
+            assert_eq!(store.get(&k.id()).unwrap().state(now), DeviceState::Expired);
+        }
+        // Keep one live strong device so "first device" cannot apply.
+        let live = TestKey::new();
+        assert_eq!(
+            register_class(&store, "acct", &live, false, false, "macos")
+                .device
+                .state(now_secs()),
+            DeviceState::Enrolled
+        );
+        let r = register_class(&store, "acct", &computer, false, false, "linux");
+        assert_eq!(
+            r.device.state(now_secs()),
+            DeviceState::Enrolled,
+            "computer re-verifies"
+        );
+        let r = register_class(&store, "acct", &phone, true, false, "ios");
+        assert_eq!(
+            r.device.state(now_secs()),
+            DeviceState::Expired,
+            "phone needs approval"
+        );
+        assert!(r.code.is_some());
+        let err = session(&store, "acct", &phone).unwrap_err();
+        assert!(
+            matches!(&err, DeviceError::Forbidden(m) if m.contains("needs re-verification")),
+            "{err:?}"
+        );
+    }
+
+    /// `require_approval` restores the strict rule: a fresh sign-in enrolls
+    /// the first device, but a brand-new second one needs an approval
+    /// unless the token proves MFA with a verified email.
+    #[test]
+    fn the_strict_switch_requires_approval_for_a_brand_new_device() {
+        let store = DeviceStore::in_memory(DevicePolicy {
+            require_approval: true,
+            ..enforcing()
+        });
+        let first = TestKey::new();
+        let r = register(&store, "acct", &first, true, Some(now_secs())).unwrap();
+        assert_eq!(r.device.state(now_secs()), DeviceState::Enrolled);
+        let second = TestKey::new();
+        let pending = register(&store, "acct", &second, true, Some(now_secs())).unwrap();
+        assert_eq!(pending.device.state(now_secs()), DeviceState::Pending);
+        assert!(pending.code.is_some());
+        let err = session(&store, "acct", &second).unwrap_err();
+        assert!(
+            matches!(&err, DeviceError::Forbidden(m) if m.contains("waiting for approval")),
+            "{err:?}"
+        );
+        // Verified email alone is not enough; with MFA it is.
+        let r = register_on(
+            &store,
+            "acct",
+            &second,
+            true,
+            Some(now_secs()),
+            true,
+            None,
+            false,
+        )
+        .unwrap();
+        assert!(r.code.is_some());
+        let r = register_on(
+            &store,
+            "acct",
+            &second,
+            true,
+            Some(now_secs()),
+            true,
+            None,
+            true,
+        )
+        .unwrap();
+        assert_eq!(r.device.state(now_secs()), DeviceState::Enrolled);
+        // Or an approval from an enrolled device.
+        let third = TestKey::new();
+        let code = register(&store, "acct", &third, true, Some(now_secs()))
+            .unwrap()
+            .code
+            .unwrap();
+        store
+            .approve("acct", &first.id(), Some(&code), None, true)
+            .unwrap();
+        assert!(session(&store, "acct", &third).is_ok());
+    }
+
+    /// A session renews the enrollment (sliding), persisting only a move
+    /// worth recording, and never revives an expired device.
+    #[test]
+    fn a_session_slides_the_enrollment_but_does_not_revive_an_expired_device() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("devices.json");
+        let store = DeviceStore::open(path.clone(), enforcing()).unwrap();
+        let ttl = store.policy().ttl_secs;
+        let key = TestKey::new();
+        register(&store, "acct", &key, true, Some(now_secs())).unwrap();
+        let set_until = |until: u64| {
+            store
+                .state
+                .lock()
+                .unwrap()
+                .devices
+                .get_mut(&key.id())
+                .unwrap()
+                .enrolled_until = Some(until);
+        };
+        let until = || store.get(&key.id()).unwrap().enrolled_until.unwrap();
+        // Three days left: a session moves the end to a full TTL from now,
+        // on disk too.
+        set_until(now_secs() + 3 * 86_400);
+        session(&store, "acct", &key).unwrap();
+        let renewed = until();
+        assert!(renewed + 5 >= now_secs() + ttl, "{renewed}");
+        let reopened = DeviceStore::open(path.clone(), enforcing()).unwrap();
+        assert_eq!(
+            reopened.get(&key.id()).unwrap().enrolled_until,
+            Some(renewed)
+        );
+        drop(reopened);
+        // Within a day of a full TTL: left as it is.
+        let near = now_secs() + ttl - 3600;
+        set_until(near);
+        session(&store, "acct", &key).unwrap();
+        assert_eq!(until(), near);
+        // Expired: no session, no renewal; re-verification is still due.
+        let past = now_secs() - 1;
+        set_until(past);
+        let err = session(&store, "acct", &key).unwrap_err();
+        assert!(
+            matches!(&err, DeviceError::Forbidden(m) if m.contains("sign in again")),
+            "{err:?}"
+        );
+        assert_eq!(until(), past);
+        assert_eq!(
+            store.get(&key.id()).unwrap().state(now_secs()),
+            DeviceState::Expired
+        );
+        // A revoked device is not renewed either.
+        let other = TestKey::new();
+        register(&store, "acct", &other, true, Some(now_secs())).unwrap();
+        set_until(now_secs() + 3 * 86_400);
+        session(&store, "acct", &key).unwrap();
+        store.revoke("acct", &other.id(), &key.id(), true).unwrap();
+        let revoked_until = until();
+        assert!(session(&store, "acct", &key).is_err());
+        assert_eq!(until(), revoked_until);
+    }
+
+    /// CUA-2323: a session that renews nothing does not rewrite the
+    /// devices file (a reconnecting fleet opened several a second, each a
+    /// full rewrite and fsync under the devices lock), and its audit line
+    /// is throttled per device.
+    #[cfg(unix)]
+    #[test]
+    fn a_session_that_renews_nothing_leaves_the_devices_file_alone() {
+        use std::os::unix::fs::MetadataExt as _;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("devices.json");
+        let store = DeviceStore::open(path.clone(), enforcing()).unwrap();
+        let key = TestKey::new();
+        register(&store, "acct", &key, true, Some(now_secs())).unwrap();
+        let before = std::fs::metadata(&path).unwrap().ino();
+        let raw = std::fs::read(&path).unwrap();
+        for _ in 0..5 {
+            session(&store, "acct", &key).unwrap();
+        }
+        assert_eq!(std::fs::metadata(&path).unwrap().ino(), before);
+        assert_eq!(std::fs::read(&path).unwrap(), raw);
+        assert!(store.get(&key.id()).unwrap().last_seen.is_some());
+        let sessions = store
+            .audit_log("acct", 100)
+            .iter()
+            .filter(|e| e.kind == "device_session")
+            .count();
+        assert_eq!(sessions, 1);
+    }
+
+    #[test]
+    fn strict_a_brand_new_device_needs_mfa_or_approval_once_the_account_has_a_strong_device() {
+        let store = DeviceStore::in_memory(DevicePolicy {
+            require_approval: true,
+            ..enforcing()
+        });
+        let first = TestKey::new();
+        register_on(
+            &store,
+            "acct",
+            &first,
+            true,
+            Some(now_secs()),
+            true,
+            None,
+            true,
+        )
+        .unwrap();
+        assert!(store.get(&first.id()).unwrap().strong);
+        // A second, unrelated device (no machine id in common): a fresh
+        // sign-in with a verified email but NO proof of a second factor is
+        // no longer enough on its own (S4) -- it waits for approval.
+        let second = TestKey::new();
+        let pending = register_on(
+            &store,
+            "acct",
+            &second,
+            true,
+            Some(now_secs()),
+            true,
+            None,
+            false,
+        )
+        .unwrap();
+        assert_eq!(pending.device.state(now_secs()), DeviceState::Pending);
+        assert!(pending.code.is_some());
+        // The same fresh sign-in, this time proving MFA, enrolls it at once.
+        let enrolled = register_on(
+            &store,
+            "acct",
+            &second,
+            true,
+            Some(now_secs()),
+            true,
+            None,
+            true,
+        )
+        .unwrap();
+        assert_eq!(enrolled.device.state(now_secs()), DeviceState::Enrolled);
+        assert_eq!(
+            enrolled.device.enrolled_by.as_deref(),
+            Some(BY_FRESH_SIGN_IN)
+        );
+        assert!(enrolled.device.strong);
+        // Or, without MFA, an approval from the first (enrolled) device
+        // still works, exactly like before.
+        let third = TestKey::new();
+        let code = register_on(&store, "acct", &third, false, None, true, None, false)
+            .unwrap()
+            .code
+            .unwrap();
+        let approved = store
+            .approve("acct", &first.id(), Some(&code), None, true)
+            .unwrap();
+        assert_eq!(approved.state(now_secs()), DeviceState::Enrolled);
+    }
+
+    #[test]
+    fn a_new_key_of_the_same_machine_replaces_the_old_record() {
+        let store = DeviceStore::in_memory(enforcing());
+        let old = TestKey::new();
+        let other_machine = TestKey::new();
+        register_on(
+            &store,
+            "acct",
+            &old,
+            true,
+            Some(now_secs()),
+            true,
+            Some("hw-1"),
+            true,
+        )
+        .unwrap();
+        register_on(
+            &store,
+            "acct",
+            &other_machine,
+            true,
+            Some(now_secs()),
+            true,
+            Some("hw-2"),
+            true,
+        )
+        .unwrap();
+        let old_session = session(&store, "acct", &old).unwrap();
+
+        // Another build on the same machine made a new key: registered
+        // without a fresh sign-in it waits, and replaces nothing yet.
+        let new = TestKey::new();
+        let pending = register_on(
+            &store,
+            "acct",
+            &new,
+            true,
+            Some(now_secs() - 3600),
+            true,
+            Some("hw-1"),
+            true,
+        )
+        .unwrap();
+        assert!(pending.code.is_some());
+        assert!(pending.superseded.is_empty());
+        assert_eq!(
+            store.get(&old.id()).unwrap().state(now_secs()),
+            DeviceState::Enrolled
+        );
+
+        // A fresh sign-in enrolls it and it replaces the old key.
+        let r = register_on(
+            &store,
+            "acct",
+            &new,
+            true,
+            Some(now_secs()),
+            true,
+            Some(" hw-1 "),
+            true,
+        )
+        .unwrap();
+        assert_eq!(r.device.state(now_secs()), DeviceState::Enrolled);
+        assert_eq!(r.superseded, vec![old.id()]);
+        let replaced = store.get(&old.id()).unwrap();
+        assert_eq!(replaced.state(now_secs()), DeviceState::Revoked);
+        assert_eq!(replaced.superseded_by.as_deref(), Some(new.id().as_str()));
+        // Its session ends; the other machine's device is untouched.
+        assert!(store.session_device("acct", &old_session).is_none());
+        assert_eq!(
+            store.get(&other_machine.id()).unwrap().state(now_secs()),
+            DeviceState::Enrolled
+        );
+        // The machine lists once.
+        let ids: Vec<_> = store.list("acct").into_iter().map(|d| d.id).collect();
+        assert!(ids.contains(&new.id()) && ids.contains(&other_machine.id()));
+        assert!(!ids.contains(&old.id()));
+        // Audited.
+        let rekeyed = store
+            .audit_log("acct", 100)
+            .into_iter()
+            .find(|e| e.kind == "device_rekeyed")
+            .unwrap();
+        assert_eq!(rekeyed.device.as_deref(), Some(new.id().as_str()));
+        assert_eq!(rekeyed.subject.as_deref(), Some(old.id().as_str()));
+        // The replaced key cannot come back.
+        let err = register_on(
+            &store,
+            "acct",
+            &old,
+            true,
+            Some(now_secs()),
+            true,
+            Some("hw-1"),
+            true,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(&err, DeviceError::Forbidden(m) if m.contains("replaced by")),
+            "{err:?}"
+        );
+
+        // An approval replaces too.
+        let newer = TestKey::new();
+        let code = register_on(
+            &store,
+            "acct",
+            &newer,
+            false,
+            None,
+            true,
+            Some("hw-2"),
+            true,
+        )
+        .unwrap()
+        .code
+        .unwrap();
+        store
+            .approve("acct", &new.id(), Some(&code), None, true)
+            .unwrap();
+        assert_eq!(
+            store
+                .get(&other_machine.id())
+                .unwrap()
+                .superseded_by
+                .as_deref(),
+            Some(newer.id().as_str())
+        );
+
+        // The same machine id on another account is a different machine.
+        let theirs = TestKey::new();
+        let r = register_on(
+            &store,
+            "bob",
+            &theirs,
+            true,
+            Some(now_secs()),
+            true,
+            Some("hw-1"),
+            true,
+        )
+        .unwrap();
+        assert!(r.superseded.is_empty());
+        assert_ne!(
+            store.get(&theirs.id()).unwrap().machine,
+            store.get(&new.id()).unwrap().machine
+        );
+        assert!(machine_key("acct", "").is_none());
+        assert!(machine_key("acct", &"x".repeat(200)).is_none());
+    }
+
+    #[test]
+    fn a_fresh_sign_in_re_verifies_and_renews_only_once_per_sign_in() {
+        let store = DeviceStore::in_memory(DevicePolicy {
+            grace_secs: 0,
+            ttl_secs: 1,
+            ..DevicePolicy::default()
+        });
+        let a = TestKey::new();
+        let b = TestKey::new();
+        register_on(&store, "acct", &a, true, Some(now_secs()), true, None, true).unwrap();
+        register_on(&store, "acct", &b, true, Some(now_secs()), true, None, true).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(2100));
+        // Both expired: re-verification is due (one approval, or a sign-in).
+        assert_eq!(
+            store.get(&b.id()).unwrap().state(now_secs()),
+            DeviceState::Expired
+        );
+        assert!(session(&store, "acct", &b).is_err());
+        // A new sign-in re-verifies it.
+        let signed_in = now_secs();
+        let r = register_on(&store, "acct", &b, true, Some(signed_in), true, None, true).unwrap();
+        assert_eq!(r.device.state(now_secs()), DeviceState::Enrolled);
+        let until = r.device.enrolled_until;
+        // Registering again with the same sign-in keeps the enrollment.
+        let again =
+            register_on(&store, "acct", &b, true, Some(signed_in), true, None, true).unwrap();
+        assert_eq!(again.device.enrolled_until, until);
+        assert_eq!(
+            store
+                .audit_log("acct", 100)
+                .iter()
+                .filter(|e| e.kind == "device_enrolled" && e.device.as_deref() == Some(&b.id()))
+                .count(),
+            2
+        );
+    }
+
+    #[test]
+    fn approve_takes_a_device_id_for_a_code_and_explains_an_unknown_code() {
+        let store = DeviceStore::in_memory(enforcing());
+        let a = TestKey::new();
+        let b = TestKey::new();
+        register(&store, "acct", &a, true, Some(now_secs())).unwrap();
+        register(&store, "acct", &b, false, None).unwrap();
+        let err = store
+            .approve("acct", &a.id(), Some("ZZZZ-ZZZZ"), None, true)
+            .unwrap_err();
+        assert_eq!(err, DeviceError::CodeNotFound);
+        assert!(err.to_string().contains("approve by id"), "{err}");
+        // `cua devices approve dev_…` sends the id as the code.
+        let approved = store
+            .approve("acct", &a.id(), Some(&format!(" {} ", b.id())), None, true)
+            .unwrap();
+        assert_eq!(approved.id, b.id());
+        assert_eq!(approved.state(now_secs()), DeviceState::Enrolled);
+        assert_eq!(
+            store.approve(
+                "acct",
+                &a.id(),
+                Some("dev_000000000000000000000000"),
+                None,
+                true
+            ),
+            Err(DeviceError::NotFound)
+        );
+    }
+}

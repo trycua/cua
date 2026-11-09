@@ -1,0 +1,58 @@
+[package]
+name = "cua-driver-testkit"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Shared harness for cua-driver integration tests: MCP/CLI transports, child reaping, path + response helpers. Dev-dependency only — never shipped."
+publish = false
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+image = { workspace = true }
+tempfile = "3"
+# Tool-call boundary fuzz target bodies (`boundary_fuzz`). The testkit is the
+# only in-workspace home that never ships, so the fuzz-only crates and the
+# core/contract path dependencies they exercise live here rather than behind a
+# feature in `cua-driver-core`.
+cua-driver-core = { path = "../cua-driver-core" }
+cua-driver-contract = { path = "../cua-driver-contract" }
+arbitrary = "1"
+async-trait = "0.1"
+tokio = { workspace = true }
+# Same version `cua-driver-core` already uses in its own tests, so the fuzz
+# schema-agreement check reuses that build.
+jsonschema = { version = "0.46", default-features = false }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+x11rb = "0.13"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+core-foundation = "0.10"
+objc2-app-kit = { version = "0.2", features = [
+    "NSApplication",
+    "NSRunningApplication",
+    "NSWorkspace",
+    "libc",
+] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Storage_FileSystem",
+    # Job Object: assign every spawned test child to a KILL_ON_JOB_CLOSE job so
+    # the OS terminates the whole tree when the test process dies for ANY reason.
+    "Win32_System_JobObjects",
+    "Win32_System_Console",
+    "Win32_System_IO",
+    "Win32_Security",
+    "Win32_System_Pipes",
+    "Win32_System_Threading",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_WindowsAndMessaging",
+] }

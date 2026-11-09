@@ -1,0 +1,51 @@
+[package]
+name = "cua-driver-sdk"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Canonical typed SDK and UniFFI boundary for Cua Driver"
+publish = false
+
+[lib]
+crate-type = ["rlib", "cdylib"]
+
+[dependencies]
+async-trait = "0.1"
+cua-driver-contract = { path = "../cua-driver-contract" }
+cua-driver-core = { path = "../cua-driver-core", default-features = false }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+uniffi = { workspace = true, features = ["tokio"] }
+uuid = { workspace = true }
+cursor-overlay = { path = "../cursor-overlay" }
+cua-cursor-motion = { path = "../cua-cursor-motion" }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+platform-macos = { path = "../platform-macos" }
+core-foundation = "0.10"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+platform-windows = { path = "../platform-windows" }
+
+# A musl Linux build is the static headless guest daemon (cua-spacesd in any
+# OCI image): no desktop platform, so none of the X11/AT-SPI C libraries.
+[target.'cfg(all(target_os = "linux", not(target_env = "musl")))'.dependencies]
+platform-linux = { path = "../platform-linux" }
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+oo7 = { version = "=0.6.0", default-features = false, features = ["async-std", "native_crypto"] }
+
+[features]
+default = []
+portal-input = ["platform-linux/portal-input"]
+portal-capture = ["platform-linux/portal-capture"]
+portal-libei = ["portal-input", "portal-capture"]
+
+[dev-dependencies]
+tempfile = "3"
+uniffi = { workspace = true, features = ["bindgen"] }

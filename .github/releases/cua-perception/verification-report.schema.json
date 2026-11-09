@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/trycua/cua/.github/releases/cua-perception/verification-report.schema.json",
+  "title": "Cua Perception target verification report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "evidenceKind", "gate", "status", "target", "protocolVersion", "extensionId", "extensionVersion", "workerSha256", "runtimeSha256"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "schemaVersion": { "const": 1 },
+    "evidenceKind": { "const": "supplied" },
+    "gate": { "enum": ["health", "self-test", "real-parse"] },
+    "status": { "const": "passed" },
+    "target": { "type": "string", "minLength": 1 },
+    "protocolVersion": { "type": "integer", "minimum": 1 },
+    "extensionId": { "const": "cua-perception" },
+    "extensionVersion": { "type": "string", "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$" },
+    "workerSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "runtimeSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "fixtureSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "observations": { "type": "integer", "minimum": 1 },
+    "mismatchRejectionPassed": { "const": true }
+  }
+}

@@ -1,12 +1,39 @@
 """Unit tests for config and auth modules."""
 
-from cua_sandbox._config import _global_config, configure, get_api_key, get_base_url
+import warnings
+
+import pytest
+from cua_sandbox._config import (
+    _global_config,
+    configure,
+    get_api_key,
+    get_base_url,
+)
+
+_CONFIG_ENV_VARS = (
+    "CUA_API_KEY",
+    "CUA_BASE_URL",
+)
+
+
+@pytest.fixture(autouse=True)
+def isolate_config(monkeypatch):
+    original_config = vars(_global_config).copy()
+    clean_config = type(_global_config)()
+    vars(_global_config).update(vars(clean_config))
+    for variable_name in _CONFIG_ENV_VARS:
+        monkeypatch.delenv(variable_name, raising=False)
+
+    try:
+        yield
+    finally:
+        vars(_global_config).clear()
+        vars(_global_config).update(original_config)
 
 
 class TestConfig:
-    def setup_method(self):
-        _global_config.api_key = None
-        _global_config.base_url = "https://api.trycua.com"
+    def test_default_base_url(self):
+        assert get_base_url() == "https://api.cua.ai"
 
     def test_configure_api_key(self):
         configure(api_key="sk-test-123")
@@ -28,3 +55,8 @@ class TestConfig:
         monkeypatch.setenv("CUA_API_KEY", "sk-env")
         configure(api_key="sk-configured")
         assert get_api_key() == "sk-configured"
+
+    def test_api_key_and_base_url_do_not_warn(self):
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            configure(api_key="sk-test-123", base_url="http://localhost:9000")

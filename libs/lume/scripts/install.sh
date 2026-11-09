@@ -5,12 +5,12 @@ set -e
 # This script installs Lume to your system
 
 # Define colors for output
-BOLD=$(tput bold)
-NORMAL=$(tput sgr0)
-RED=$(tput setaf 1)
-GREEN=$(tput setaf 2)
-BLUE=$(tput setaf 4)
-YELLOW=$(tput setaf 3)
+BOLD=$(tput bold 2>/dev/null || echo "")
+NORMAL=$(tput sgr0 2>/dev/null || echo "")
+RED=$(tput setaf 1 2>/dev/null || echo "")
+GREEN=$(tput setaf 2 2>/dev/null || echo "")
+BLUE=$(tput setaf 4 2>/dev/null || echo "")
+YELLOW=$(tput setaf 3 2>/dev/null || echo "")
 
 # Check if running as root or with sudo
 if [ "$(id -u)" -eq 0 ] || [ -n "$SUDO_USER" ]; then
@@ -31,16 +31,29 @@ APP_INSTALL_DIR="$HOME/.local/share/lume"
 
 # GitHub info
 GITHUB_REPO="trycua/cua"
-LATEST_RELEASE_URL="https://api.github.com/repos/$GITHUB_REPO/releases/latest"
 
 # Option to skip background service setup (default: install it)
 INSTALL_BACKGROUND_SERVICE=true
 
-# Option to skip auto-updater setup (default: install it)
-INSTALL_AUTO_UPDATER=true
-
-# Option to run updater at login (default: false, uses cron instead)
+# Deprecated auto-updater flags are still accepted for compatibility, but
+# scheduled self-updates are no longer installed. Updates are explicit:
+# `lume check-update` and `lume update --apply`.
+INSTALL_AUTO_UPDATER=false
 UPDATE_ON_LOGIN=false
+
+# Release selection:
+#   LUME_VERSION=0.3.10 pins a specific stable `lume-v0.3.10` release.
+#   LUME_VERSION=nightly-lume-v0.3.11-nightly.20260812.42 pins an exact
+#   immutable nightly release. Stable discovery never selects nightlies.
+#   LUME_BAKED_VERSION is updated in the release PR so the default
+#   installer path does not need a GitHub API call.
+LUME_VERSION="${LUME_VERSION:-}"
+LUME_HOME="${LUME_HOME:-$HOME/.lume}"
+LUME_CHANNEL=""
+LUME_CHANNEL_EXPLICIT=false
+# ~~~ BAKED_VERSION: auto-updated in the release PR — do not edit ~~~
+LUME_BAKED_VERSION="0.7.0" # x-release-please-version
+# ~~~ END_BAKED_VERSION ~~~
 
 # Default port for lume serve (default: 7777)
 LUME_PORT=7777
@@ -59,10 +72,22 @@ while [ "$#" -gt 0 ]; do
     --no-background-service)
       INSTALL_BACKGROUND_SERVICE=false
       ;;
+    --channel)
+      [ -n "${2:-}" ] || { echo "${RED}Error: --channel requires stable or nightly.${NORMAL}" >&2; exit 2; }
+      LUME_CHANNEL="$2"
+      LUME_CHANNEL_EXPLICIT=true
+      shift
+      ;;
+    --channel=*)
+      LUME_CHANNEL="${1#*=}"
+      LUME_CHANNEL_EXPLICIT=true
+      ;;
     --no-auto-updater)
+      echo "${YELLOW}Warning: --no-auto-updater is deprecated; scheduled auto-updates are no longer installed.${NORMAL}"
       INSTALL_AUTO_UPDATER=false
       ;;
     --update-on-login)
+      echo "${YELLOW}Warning: --update-on-login is deprecated; use 'lume update --apply' for explicit updates.${NORMAL}"
       UPDATE_ON_LOGIN=true
       ;;
     --help)
@@ -73,8 +98,9 @@ while [ "$#" -gt 0 ]; do
       echo "  --install-dir DIR         Install to the specified directory (default: $DEFAULT_INSTALL_DIR)"
       echo "  --port PORT               Specify the port for lume serve (default: 7777)"
       echo "  --no-background-service   Do not setup the Lume background service (LaunchAgent)"
-      echo "  --no-auto-updater         Do not setup automatic updates"
-      echo "  --update-on-login         Check for updates at login (adds second Login Item)"
+      echo "  --channel CHANNEL         Persist and install the latest stable or nightly release"
+      echo "  --no-auto-updater         Deprecated no-op; scheduled auto-updates are no longer installed"
+      echo "  --update-on-login         Deprecated no-op; use 'lume update --apply'"
       echo "  --help                    Display this help message"
       echo ""
       echo "Examples:"
@@ -93,6 +119,32 @@ while [ "$#" -gt 0 ]; do
   esac
   shift
 done
+
+RELEASE_CHANNEL_PATH="$LUME_HOME/release-channel"
+if [ "$LUME_CHANNEL_EXPLICIT" = true ] && [ -n "$LUME_VERSION" ]; then
+  echo "${RED}Error: --channel cannot be combined with LUME_VERSION; exact pins do not change saved channel state.${NORMAL}" >&2
+  exit 2
+fi
+if [ "$LUME_CHANNEL_EXPLICIT" != true ]; then
+  if [ -n "$LUME_VERSION" ]; then
+    # Exact pins are one-shot and outrank persisted preference. Keep them
+    # usable as a recovery path even if the preference file is malformed.
+    LUME_CHANNEL="stable"
+  elif [ -f "$RELEASE_CHANNEL_PATH" ]; then
+    LUME_CHANNEL=$(tr -d '[:space:]' < "$RELEASE_CHANNEL_PATH")
+  else
+    LUME_CHANNEL="stable"
+  fi
+fi
+case "$LUME_CHANNEL" in
+  stable) LUME_TAG_PREFIX="lume-v" ;;
+  nightly) LUME_TAG_PREFIX="nightly-lume-v" ;;
+  *)
+    echo "${RED}Error: invalid release channel '$LUME_CHANNEL' in $RELEASE_CHANNEL_PATH; expected stable or nightly.${NORMAL}" >&2
+    echo "Repair with: lume channel set stable" >&2
+    exit 1
+    ;;
+esac
 
 echo "${BOLD}${BLUE}"
 echo "  ⠀⣀⣀⡀⠀⠀⠀⠀⢀⣀⣀⣀⡀⠘⠋⢉⠙⣷⠀⠀ ⠀"
@@ -164,12 +216,41 @@ create_temp_dir() {
 
 # Get the latest lume release tag
 get_latest_lume_tag() {
+  if [ -n "$LUME_VERSION" ]; then
+    local selected=""
+    if [[ "$LUME_VERSION" =~ ^(lume-v|v)?([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+      selected="lume-v${BASH_REMATCH[2]}"
+    elif [[ "$LUME_VERSION" =~ ^nightly-lume-v([0-9]+\.[0-9]+\.[0-9]+-nightly\.[0-9]{8}\.[1-9][0-9]*)$ ]]; then
+      selected="nightly-lume-v${BASH_REMATCH[1]}"
+    elif [[ "$LUME_VERSION" =~ ^([0-9]+\.[0-9]+\.[0-9]+-nightly\.[0-9]{8}\.[1-9][0-9]*)$ ]]; then
+      selected="nightly-lume-v${BASH_REMATCH[1]}"
+    else
+      echo "${RED}Error: LUME_VERSION must be an exact x.y.z stable version or canonical nightly tag.${NORMAL}" >&2
+      return 1
+    fi
+    echo "Using Lume release from LUME_VERSION: ${BOLD}$selected${NORMAL}" >&2
+    echo "$selected"
+    return 0
+  fi
+
+  if [ "$LUME_CHANNEL" = "stable" ] && [ -n "$LUME_BAKED_VERSION" ]; then
+    local baked="${LUME_BAKED_VERSION#v}"
+    if ! [[ "$baked" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+      echo "${RED}Error: baked Lume version must be an exact stable x.y.z version.${NORMAL}" >&2
+      return 1
+    fi
+    echo "Using baked Lume release: ${BOLD}lume-v$baked${NORMAL}" >&2
+    echo "lume-v$baked"
+    return 0
+  fi
+
   echo "Finding latest Lume release..." >&2
 
   local page=1
   local per_page=100
   local max_pages=10  # Safety limit (1000 tags max)
   local LUME_TAG=""
+  local versions=""
 
   while [ $page -le $max_pages ]; do
     echo "Checking page $page..." >&2
@@ -186,22 +267,48 @@ get_latest_lume_tag() {
       fi
     fi
 
-    LUME_TAG=$(echo "$response" \
-      | grep -oE '"tag_name":\s*"lume-[^"]*"' \
-      | head -n 1 \
-      | cut -d '"' -f 4)
+    local page_versions
+    page_versions=$(printf '%s' "$response" | awk -v prefix="$LUME_TAG_PREFIX" -v channel="$LUME_CHANNEL" '
+      /"tag_name"[[:space:]]*:/ {
+        tag = $0
+        sub(/^.*"tag_name"[[:space:]]*:[[:space:]]*"/, "", tag)
+        sub(/".*$/, "", tag)
+        next
+      }
+      tag != "" && /"draft"[[:space:]]*:/ {
+        if ($0 ~ /"draft"[[:space:]]*:[[:space:]]*false/ &&
+            index(tag, prefix) == 1) {
+          version = substr(tag, length(prefix) + 1)
+          if ((channel == "stable" && version ~ /^[0-9]+\.[0-9]+\.[0-9]+$/) ||
+              (channel == "nightly" && version ~ /^[0-9]+\.[0-9]+\.[0-9]+-nightly\.[0-9]{8}\.[1-9][0-9]*$/)) {
+            print version
+          }
+        }
+        tag = ""
+      }
+    ')
+    if [ -n "$page_versions" ]; then
+      versions="${versions}${versions:+$'\n'}${page_versions}"
+    fi
 
-    if [ -n "$LUME_TAG" ]; then
-      echo "Found latest Lume release: ${BOLD}$LUME_TAG${NORMAL}" >&2
-      echo "$LUME_TAG"
-      return 0
+    local page_count
+    page_count=$(printf '%s' "$response" | awk '{ count += gsub(/"tag_name"[[:space:]]*:/, "&") } END { print count + 0 }')
+    if [ "$page_count" -lt "$per_page" ]; then
+      break
     fi
 
     page=$((page + 1))
   done
 
-  echo "${RED}Error: Could not find any lume tags after checking $max_pages pages.${NORMAL}" >&2
-  exit 1
+  local latest
+  latest=$(printf '%s\n' "$versions" | sed '/^$/d' | sort -t. -k1,1nr -k2,2nr -k3,3nr -k4,4nr -k5,5nr | head -n 1)
+  if [ -z "$latest" ]; then
+    echo "${RED}Error: Could not find any published $LUME_CHANNEL Lume tags after checking $max_pages pages.${NORMAL}" >&2
+    return 1
+  fi
+  LUME_TAG="$LUME_TAG_PREFIX$latest"
+  echo "Found latest Lume release: ${BOLD}$LUME_TAG${NORMAL}" >&2
+  echo "$LUME_TAG"
 }
 
 # Download the latest release
@@ -250,6 +357,16 @@ download_release() {
   else
     echo "${RED}Error: curl is required but not installed.${NORMAL}"
     exit 1
+  fi
+}
+
+persist_release_channel() {
+  if [ "$LUME_CHANNEL_EXPLICIT" = true ]; then
+    mkdir -p "$LUME_HOME"
+    channel_tmp="$LUME_HOME/.release-channel.$$"
+    printf '%s\n' "$LUME_CHANNEL" > "$channel_tmp"
+    mv -f "$channel_tmp" "$RELEASE_CHANNEL_PATH"
+    echo "Saved release channel: ${BOLD}$LUME_CHANNEL${NORMAL}"
   fi
 }
 
@@ -346,196 +463,19 @@ WRAPPER_EOF
   fi
 }
 
-# Install the auto-updater script
-install_updater_script() {
-  UPDATER_SCRIPT="$INSTALL_DIR/lume-update"
-
-  echo "Installing auto-updater script to $UPDATER_SCRIPT..."
-
-  cat <<'UPDATER_EOF' > "$UPDATER_SCRIPT"
-#!/bin/bash
-# Lume Auto-Updater
-# This script checks for updates and installs them if available
-
-set -e
-
-LOG_FILE="/tmp/lume_updater.log"
-GITHUB_REPO="trycua/cua"
-
-log() {
-  echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> "$LOG_FILE"
-}
-
-log "Starting Lume update check..."
-
-# Find lume binary location
-LUME_BIN=$(command -v lume 2>/dev/null || echo "$HOME/.local/bin/lume")
-INSTALL_DIR=$(dirname "$LUME_BIN")
-APP_INSTALL_DIR="$HOME/.local/share/lume"
-
-if [ ! -x "$LUME_BIN" ]; then
-  log "ERROR: lume binary not found at $LUME_BIN"
-  exit 1
-fi
-
-# Get current version
-CURRENT_VERSION=$("$LUME_BIN" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "0.0.0")
-log "Current version: $CURRENT_VERSION"
-
-# Get latest release tag from GitHub
-get_latest_tag() {
-  local page=1
-  local per_page=100
-  local max_pages=5
-
-  while [ $page -le $max_pages ]; do
-    local response=$(curl -s "https://api.github.com/repos/$GITHUB_REPO/releases?per_page=$per_page&page=$page")
-
-    if [ -z "$response" ]; then
-      return 1
-    fi
-
-    local tag=$(echo "$response" | grep -oE '"tag_name":\s*"lume-[^"]*"' | head -n 1 | cut -d '"' -f 4)
-
-    if [ -n "$tag" ]; then
-      echo "$tag"
-      return 0
-    fi
-
-    page=$((page + 1))
-  done
-
-  return 1
-}
-
-LATEST_TAG=$(get_latest_tag)
-if [ -z "$LATEST_TAG" ]; then
-  log "ERROR: Could not fetch latest release tag"
-  exit 1
-fi
-
-# Extract version from tag (lume-vX.Y.Z -> X.Y.Z)
-LATEST_VERSION=$(echo "$LATEST_TAG" | sed 's/lume-v//' | sed 's/lume-//')
-log "Latest version: $LATEST_VERSION"
-
-# Compare versions (simple string comparison works for semver)
-version_gt() {
-  [ "$(printf '%s\n' "$1" "$2" | sort -V | tail -n1)" = "$1" ] && [ "$1" != "$2" ]
-}
-
-apply_update() {
-  log "Downloading and applying update..."
-
-  TEMP_DIR=$(mktemp -d)
-  trap 'rm -rf "$TEMP_DIR"' EXIT
-
-  DOWNLOAD_URL="https://github.com/$GITHUB_REPO/releases/download/$LATEST_TAG/lume.tar.gz"
-
-  if curl -sL "$DOWNLOAD_URL" -o "$TEMP_DIR/lume.tar.gz"; then
-    if tar -tzf "$TEMP_DIR/lume.tar.gz" > /dev/null 2>&1; then
-      tar -xzf "$TEMP_DIR/lume.tar.gz" -C "$TEMP_DIR"
-
-      # Stop the daemon before updating
-      launchctl unload "$HOME/Library/LaunchAgents/com.trycua.lume_daemon.plist" 2>/dev/null || true
-
-      if [ -d "$TEMP_DIR/lume.app" ]; then
-        # New .app bundle format
-        mkdir -p "$APP_INSTALL_DIR"
-        rm -rf "$APP_INSTALL_DIR/lume.app"
-        mv "$TEMP_DIR/lume.app" "$APP_INSTALL_DIR/"
-
-        # Ensure wrapper script exists
-        mkdir -p "$INSTALL_DIR"
-        cat > "$INSTALL_DIR/lume" <<INNER_WRAPPER_EOF
-#!/bin/sh
-exec "$APP_INSTALL_DIR/lume.app/Contents/MacOS/lume" "\$@"
-INNER_WRAPPER_EOF
-        chmod +x "$INSTALL_DIR/lume"
-
-        # Clean up old standalone files
-        rm -rf "$INSTALL_DIR/lume_lume.bundle"
-
-        log "Successfully updated lume to version $LATEST_VERSION (.app bundle)"
-      else
-        # Legacy standalone binary format
-        mv "$TEMP_DIR/lume" "$INSTALL_DIR/"
-        chmod +x "$INSTALL_DIR/lume"
-
-        if [ -d "$TEMP_DIR/lume_lume.bundle" ]; then
-          rm -rf "$INSTALL_DIR/lume_lume.bundle"
-          mv "$TEMP_DIR/lume_lume.bundle" "$INSTALL_DIR/"
-          log "Resource bundle installed"
-        fi
-
-        log "Successfully updated lume to version $LATEST_VERSION"
-      fi
-
-      # Restart the daemon
-      launchctl load "$HOME/Library/LaunchAgents/com.trycua.lume_daemon.plist" 2>/dev/null || true
-
-      # Show macOS notification
-      osascript -e "display notification \"Updated to version $LATEST_VERSION\" with title \"Lume Updated\"" 2>/dev/null || true
-    else
-      log "ERROR: Downloaded file is not a valid archive"
-      exit 1
-    fi
-  else
-    log "ERROR: Failed to download update"
-    exit 1
-  fi
-}
-
-if version_gt "$LATEST_VERSION" "$CURRENT_VERSION"; then
-  log "New version available: $LATEST_VERSION (current: $CURRENT_VERSION)"
-
-  case "${1:-}" in
-    --apply|--silent)
-      # Silent mode: update immediately without dialog (used by login LaunchAgent)
-      apply_update
-      ;;
-    *)
-      # Interactive mode: show dialog asking user if they want to update (used by cron)
-      RESPONSE=$(osascript -e "display dialog \"Lume $LATEST_VERSION is available (current: $CURRENT_VERSION).\" buttons {\"Later\", \"Update Now\"} default button \"Update Now\" with title \"Lume Update\"" 2>/dev/null || echo "")
-
-      if echo "$RESPONSE" | grep -q "Update Now"; then
-        log "User chose to update"
-        apply_update
-      else
-        log "User chose to skip update"
-      fi
-      ;;
-  esac
-else
-  log "Already up to date (version $CURRENT_VERSION)"
-fi
-
-log "Update check complete"
-UPDATER_EOF
-
-  chmod +x "$UPDATER_SCRIPT"
-  echo "Auto-updater script installed."
-}
-
-# Remove legacy auto-updater LaunchAgent if it exists (now integrated into daemon)
-cleanup_legacy_updater() {
-  UPDATER_SERVICE_NAME="com.trycua.lume_updater"
-  UPDATER_PLIST_PATH="$HOME/Library/LaunchAgents/$UPDATER_SERVICE_NAME.plist"
-
-  if [ -f "$UPDATER_PLIST_PATH" ]; then
-    echo "Removing legacy auto-updater LaunchAgent (now integrated into daemon)..."
-    launchctl unload "$UPDATER_PLIST_PATH" 2>/dev/null || true
-    rm "$UPDATER_PLIST_PATH"
-  fi
-}
-
-# Remove auto-updater if it exists
-remove_auto_updater() {
+# Remove scheduled auto-updater artifacts from older installers.
+cleanup_deprecated_auto_updater() {
   UPDATER_SERVICE_NAME="com.trycua.lume_updater"
   UPDATER_PLIST_PATH="$HOME/Library/LaunchAgents/$UPDATER_SERVICE_NAME.plist"
   UPDATER_SCRIPT="$INSTALL_DIR/lume-update"
 
+  if crontab -l 2>/dev/null | grep -q "lume-update"; then
+    echo "Removing deprecated auto-updater cron job..."
+    crontab -l 2>/dev/null | grep -v "lume-update" | crontab - 2>/dev/null || true
+  fi
+
   if [ -f "$UPDATER_PLIST_PATH" ]; then
-    echo "Removing existing auto-updater LaunchAgent..."
+    echo "Removing deprecated auto-updater LaunchAgent..."
     launchctl unload "$UPDATER_PLIST_PATH" 2>/dev/null || true
     rm "$UPDATER_PLIST_PATH"
   fi
@@ -543,8 +483,29 @@ remove_auto_updater() {
   if [ -f "$UPDATER_SCRIPT" ]; then
     rm "$UPDATER_SCRIPT"
   fi
+}
 
-  echo "Auto-updater removed."
+# Record consent-aware installation and per-version release events through
+# the installed binary so identity, preference precedence, request timeouts,
+# and 2xx-only marker semantics stay in one implementation. This happens
+# before the LaunchAgent can start Lume and race first-run registration.
+record_installation_telemetry() {
+  echo ""
+  echo "${BLUE}Telemetry defaults to enabled for new installations; saved preferences and environment overrides are honored.${NORMAL}"
+  echo "${BLUE}When enabled, Lume collects a pseudonymous installation ID and bounded, content-free usage metadata.${NORMAL}"
+  echo "  No prompts, VM/image names, file paths, or VM contents are collected."
+  echo "  Disable persistently at any time: $INSTALL_DIR/lume config telemetry disable"
+
+  INSTALL_CHANNEL="${LUME_INSTALL_CHANNEL:-install_script}"
+  case "$INSTALL_CHANNEL" in
+    install_script|update_apply|first_run) ;;
+    *) INSTALL_CHANNEL="install_script" ;;
+  esac
+
+  # `--version` is a side-effect-free command after the registration preflight.
+  # Telemetry failure must never turn a successful install into a failure.
+  LUME_INSTALL_CHANNEL="$INSTALL_CHANNEL" \
+    "$INSTALL_DIR/lume" --version >/dev/null 2>&1 || true
 }
 
 # Main installation flow
@@ -553,7 +514,9 @@ main() {
   detect_platform
   create_temp_dir
   download_release
+  persist_release_channel
   install_binary
+  record_installation_telemetry
 
   echo ""
   echo "${GREEN}${BOLD}Lume has been successfully installed!${NORMAL}"
@@ -655,69 +618,12 @@ EOF
     fi
   fi
 
-  # Install updater script and setup update checks
-  if [ "$INSTALL_AUTO_UPDATER" = true ]; then
-    install_updater_script
-    UPDATER_SCRIPT="$INSTALL_DIR/lume-update"
-    UPDATER_SERVICE_NAME="com.trycua.lume_updater"
-    UPDATER_PLIST_PATH="$HOME/Library/LaunchAgents/$UPDATER_SERVICE_NAME.plist"
-
-    if [ "$UPDATE_ON_LOGIN" = true ]; then
-      # Remove cron job if switching to login-based updates
-      crontab -l 2>/dev/null | grep -v "lume-update" | crontab - 2>/dev/null || true
-
-      # Unload existing updater service if present
-      if [ -f "$UPDATER_PLIST_PATH" ]; then
-        launchctl unload "$UPDATER_PLIST_PATH" 2>/dev/null || true
-      fi
-
-      # Create LaunchAgent that runs updater at login (not persistent, silent mode)
-      cat <<EOF > "$UPDATER_PLIST_PATH"
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>$UPDATER_SERVICE_NAME</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>$UPDATER_SCRIPT</string>
-        <string>--silent</string>
-    </array>
-    <key>RunAtLoad</key>
-    <true/>
-    <key>StandardOutPath</key>
-    <string>/tmp/lume_updater.log</string>
-    <key>StandardErrorPath</key>
-    <string>/tmp/lume_updater.error.log</string>
-</dict>
-</plist>
-EOF
-      chmod 644 "$UPDATER_PLIST_PATH"
-      launchctl load "$UPDATER_PLIST_PATH"
-      echo "${GREEN}Auto-updater installed. Checks at login.${NORMAL}"
-    else
-      # Clean up any LaunchAgent updater (we use cron by default)
-      cleanup_legacy_updater
-
-      # Setup cron job for daily update check (doesn't show in Login Items)
-      CRON_ENTRY="0 10 * * 1 $UPDATER_SCRIPT >/tmp/lume_updater.log 2>&1"
-      EXISTING_CRON=$(crontab -l 2>/dev/null || echo "")
-      NEW_CRON=$(echo "$EXISTING_CRON" | grep -v "lume-update" || echo "")
-      echo "${NEW_CRON}${NEW_CRON:+
-}${CRON_ENTRY}" | crontab -
-      echo "${GREEN}Auto-updater installed. Checks weekly on Mondays at 10am via cron.${NORMAL}"
-    fi
-
-    # Run updater once after installation
-    if [ -x "$UPDATER_SCRIPT" ]; then
-      "$UPDATER_SCRIPT" &
-    fi
-  else
-    # Remove updater cron job and LaunchAgent if auto-updater is disabled
-    crontab -l 2>/dev/null | grep -v "lume-update" | crontab - 2>/dev/null || true
-    cleanup_legacy_updater
-  fi
+  cleanup_deprecated_auto_updater
+  echo ""
+  echo "Updates are explicit. To check later, run:"
+  echo "  ${BOLD}lume check-update${NORMAL}"
+  echo "To update, run:"
+  echo "  ${BOLD}lume update --apply${NORMAL}"
 }
 
 # Run the installation

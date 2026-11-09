@@ -1,0 +1,17 @@
+# Dogfoods the cua SDK's image crate: packs the disk that libs/images builds
+# into a KubeVirt containerDisk (OCI layout and/or registry push) with
+# cua_image::containerdisk::pack + PackedImage/push_multiarch, instead of
+# `docker build` of common/containerdisk.Dockerfile (kept as the fallback).
+[package]
+name = "cua-image-pack"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+[workspace]
+
+[dependencies]
+cua-image = { path = "../../../cua/crates/cua-image" }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+anyhow = "1"

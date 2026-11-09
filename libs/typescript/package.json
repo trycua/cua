@@ -9,12 +9,10 @@
     "lint": "prettier --check .",
     "lint:fix": "prettier --write .",
     "build:core": "pnpm --filter @trycua/core build",
-    "build:computer": "pnpm --filter @trycua/computer build",
-    "build": "pnpm build:core && pnpm build:computer",
+    "build": "pnpm build:core",
     "test:core": "pnpm --filter @trycua/core test",
-    "test:computer": "pnpm --filter @trycua/computer test",
     "test": "pnpm -r test",
-    "typecheck": "pnpm -r typecheck",
+    "typecheck": "pnpm build:core && pnpm -r typecheck",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
   },
@@ -28,6 +26,19 @@
       "protobufjs",
       "sharp",
       "unrs-resolver"
-    ]
+    ],
+    "overrides": {
+      "defu": "6.1.5",
+      "happy-dom": "20.8.9",
+      "nanoid": "3.3.18",
+      "picomatch": "4.0.4",
+      "postcss": "8.5.18",
+      "rollup": "4.59.0",
+      "uuid": "11.1.1",
+      "vite": "7.3.5",
+      "vitest": "4.1.0",
+      "ws": "8.21.0",
+      "yaml": "2.8.3"
+    }
   }
 }

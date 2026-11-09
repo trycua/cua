@@ -1,11 +1,16 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 use async_trait::async_trait;
-use cua_driver_core::{protocol::ToolResult, tool::{Tool, ToolDef}};
+use cua_driver_core::{
+    protocol::ToolResult,
+    tool::{Tool, ToolDef},
+};
 use serde_json::Value;
 use std::sync::Arc;
 
 use crate::ax::bindings::{
-    copy_action_names, perform_action, kAXErrorSuccess, AXUIElementRef,
-    copy_string_attr,
+    copy_action_names, copy_string_attr, kAXErrorSuccess, perform_action, AXUIElementRef,
 };
 
 use super::ToolState;
@@ -15,7 +20,9 @@ pub struct RightClickTool {
 }
 
 impl RightClickTool {
-    pub fn new(state: Arc<ToolState>) -> Self { Self { state } }
+    pub fn new(state: Arc<ToolState>) -> Self {
+        Self { state }
+    }
 }
 
 static DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
@@ -25,29 +32,26 @@ fn def() -> &'static ToolDef {
         name: "right_click".into(),
         description:
             "Right-click against a target pid. Two addressing modes:\n\n\
-             - `element_index` + `window_id` (from the last `get_window_state` snapshot) — \
+             - `element_token` (from the last `get_window_state` snapshot) — \
                performs `AXShowMenu` on the cached element. Pure AX RPC, works on backgrounded / \
                hidden windows, no cursor move or focus steal. Requires a prior \
                `get_window_state(pid, window_id)` in this turn.\n\n\
              - `x`, `y` — synthesizes `rightMouseDown` / `rightMouseUp` CGEvent pair posted \
                to the pid. Driver converts image-pixel → screen-point internally. \
                `modifier` forces the CGEvent path (AX actions don't propagate modifier keys).\n\n\
-             Exactly one of `element_index` or (`x` AND `y`) must be provided. `pid` always \
-             required. `window_id` required when `element_index` is used."
+             Exactly one of `element_token` or (`x` AND `y`) must be provided. `pid` is \
+             required with `x`, `y`; an `element_token` carries its own pid."
             .into(),
         input_schema: serde_json::json!({
             "type": "object",
-            "required": ["pid"],
+            "required": [],
             "properties": {
-                "session": { "type": "string", "description": "Optional session id: declares/uses the agent cursor and per-session state for this run. The same id works over MCP, the CLI, or the raw socket, and follows the run across apps/windows. Omit to run cursor-less." },
-                "pid": { "type": "integer", "description": "Target process ID." },
-                "element_index": {
-                    "type": "integer",
-                    "description": "Element index from last get_window_state. Routes through AXShowMenu. Requires window_id."
-                },
+                "session": { "type": "string", "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session." },
+                "pid": { "type": "integer", "description": "Target process ID. Optional with element_token (the token carries the pid)." },
+                "element_token": cua_driver_core::tool_schema::element_token_schema(),
                 "window_id": {
                     "type": "integer",
-                    "description": "CGWindowID. Required when element_index is used."
+                    "description": "CGWindowID. Omit when element_token is supplied (the token carries it)."
                 },
                 "x": {
                     "type": "number",
@@ -61,7 +65,8 @@ fn def() -> &'static ToolDef {
                     "type": "array",
                     "items": { "type": "string" },
                     "description": "Modifier keys held during the right-click: cmd/shift/option/ctrl. Pixel path only."
-                }
+                },
+                "delivery_mode": cua_driver_core::tool_schema::delivery_mode_schema()
             },
             "additionalProperties": false
         }),
@@ -74,94 +79,144 @@ fn def() -> &'static ToolDef {
 
 #[async_trait]
 impl Tool for RightClickTool {
-    fn def(&self) -> &ToolDef { def() }
+    fn def(&self) -> &ToolDef {
+        def()
+    }
 
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
-        let pid = match args.require_i32("pid") { Ok(v) => v, Err(e) => return e };
+        let pid = match super::target_pid(&self.state, &args) {
+            Ok(v) => v,
+            Err(e) => return e,
+        };
+        // delivery_mode: foreground briefly fronts the window before the pixel
+        // right-click (the explicit last resort for surfaces that drop
+        // background CGEvents), via the same skylight assist click uses. The AX
+        // (AXShowMenu) path is background-by-design and untouched.
+        let delivery_mode = super::DeliveryMode::parse(args.opt_str("delivery_mode").as_deref());
         let cursor_key = super::cursor_tools::resolve_cursor_key(&args);
 
-        let element_index = args.opt_u64("element_index").map(|v| v as usize);
-        let window_id     = args.opt_u64("window_id").map(|v| v as u32);
-        let x             = args.opt_f64("x");
-        let y             = args.opt_f64("y");
-        let has_xy        = x.is_some() && y.is_some();
-        let partial_xy    = x.is_some() != y.is_some();
+        let window_id_arg = args.opt_u64("window_id");
+        let resolved = match self.state.snapshots.resolve(pid, &args) {
+            Ok(r) => r,
+            Err(e) => return e,
+        };
+        let (element_index, window_id, element_guard) = resolved.into_parts(window_id_arg);
+        let window_id = match super::native_window_id(window_id) {
+            Ok(window_id) => window_id,
+            Err(error) => return error,
+        };
+        let x = args.opt_f64("x");
+        let y = args.opt_f64("y");
+        let has_xy = x.is_some() && y.is_some();
+        let partial_xy = x.is_some() != y.is_some();
         let modifiers: Vec<String> = args.str_array("modifier");
 
         if partial_xy {
             return ToolResult::error("Provide both x and y together, not just one.");
         }
         if element_index.is_some() && has_xy {
-            return ToolResult::error("Provide either element_index or (x, y), not both.");
+            return ToolResult::error("Provide either element_token or (x, y), not both.");
         }
         if element_index.is_none() && !has_xy {
             return ToolResult::error(
-                "Provide element_index or (x, y) to address the right-click target."
-            );
-        }
-        if element_index.is_some() && window_id.is_none() {
-            return ToolResult::error(
-                "window_id is required when element_index is used."
+                "Provide element_token or (x, y) to address the right-click target.",
             );
         }
 
         // ── AX element path ──────────────────────────────────────────────────
-        if let (Some(idx), Some(wid)) = (element_index, window_id) {
-            // Retain out of the cache so a concurrent get_window_state can't
-            // free the element mid-action (use-after-free → daemon crash).
-            let element_guard = match self.state.element_cache.get_element_retained(pid, wid, idx) {
-                Some(e) => e,
-                None    => return ToolResult::error(format!(
-                    "Element index {idx} not found. Call get_window_state first."
-                )),
-            };
+        if let (Some(idx), Some(wid), Some(element_guard)) =
+            (element_index, window_id, element_guard)
+        {
             let element_ptr = element_guard.as_ptr();
 
+            let _mutation_lease = match super::gate_background_window_action(
+                pid,
+                wid,
+                Some(element_ptr),
+                cua_driver_core::background_input::BackgroundAction::AxSemantic,
+            )
+            .await
+            {
+                Ok(lease) => lease,
+                Err(refusal_result) => return refusal_result,
+            };
+            if let Some(refusal) =
+                super::refuse_if_disabled(pid, wid, &element_guard, "AXShowMenu", false).await
+            {
+                return refusal;
+            }
+
+            // The context menu steals key focus from the user's app when the
+            // target is in the background; the guard hands it back.
             let result = tokio::task::spawn_blocking(move || {
-                ax_show_menu(element_ptr, idx)
-            }).await;
+                let _key_focus = crate::key_focus_guard::protect(pid);
+                ax_show_menu(element_guard.as_ptr(), idx, pid, wid)
+            })
+            .await;
 
             return match result {
-                Ok(Ok(msg))  => ToolResult::text(msg),
-                Ok(Err(e))   => ToolResult::error(format!("AXShowMenu failed: {e}")),
-                Err(e)       => ToolResult::error(format!("Task error: {e}")),
+                Ok(Ok(msg)) => ToolResult::text(msg),
+                Ok(Err(e)) => ToolResult::error(format!("Right-click failed: {e}")),
+                Err(e) => ToolResult::error(format!("Task error: {e}")),
             };
         }
 
         // ── Pixel path ───────────────────────────────────────────────────────
         let (mut cx, mut cy) = (x.unwrap(), y.unwrap());
         // Scale back from downscaled-image space to native pixels when needed.
-        if let Some(ratio) = self.state.resize_registry.ratio(pid) {
-            cx *= ratio;
-            cy *= ratio;
-        }
+        let ratio = match super::screenshot_scale(&self.state, &args, pid, window_id) {
+            Ok(ratio) => ratio,
+            Err(refusal) => return refusal,
+        };
+        cx *= ratio;
+        cy *= ratio;
 
         // Window-local → screen coordinate translation + win-local logical coords
-        // for CGEventSetWindowLocation (matches click.rs enhancement).
+        // for CGEventSetWindowLocation (shared with click.rs via px_frame, which
+        // refuses a window with no live frame).
         let (screen_x, screen_y, win_local_x, win_local_y) = if let Some(wid) = window_id {
-            let result = tokio::task::spawn_blocking(move || {
-                let bounds = crate::windows::window_bounds_by_id(wid);
-                let scale: f64 = if let Some(ref b) = bounds {
-                    if let Ok(png) = crate::capture::screenshot_window_bytes(wid) {
-                        if png.len() >= 24 {
-                            let pw = u32::from_be_bytes([png[16], png[17], png[18], png[19]]) as f64;
-                            let lw = b.width;
-                            if lw > 0.0 && pw > lw { pw / lw } else { 1.0 }
-                        } else { 1.0 }
-                    } else { 1.0 }
-                } else { 1.0 };
-                (bounds, scale)
-            }).await.unwrap_or((None, 1.0));
-            if let (Some(b), scale) = result {
-                let wx = cx / scale;
-                let wy = cy / scale;
-                (b.x + wx, b.y + wy, wx, wy)
-            } else {
-                (cx, cy, cx, cy)
+            match super::px_frame::resolve_or_refuse(wid).await {
+                Ok(frame) => {
+                    let translated = frame.to_screen(cx, cy);
+                    if !delivery_mode.is_foreground()
+                        && (translated.2 < 0.0
+                            || translated.3 < 0.0
+                            || translated.2 > frame.bounds.width
+                            || translated.3 > frame.bounds.height)
+                    {
+                        return ToolResult::error(format!(
+                            "right_click: window-local point ({:.1}, {:.1}) pt lies outside \
+                             window {wid}'s {:.0}×{:.0} pt frame; background delivery refused",
+                            translated.2, translated.3, frame.bounds.width, frame.bounds.height
+                        ));
+                    }
+                    translated
+                }
+                Err(refusal) => return refusal,
             }
         } else {
             (cx, cy, cx, cy)
+        };
+
+        let _mutation_lease = if !delivery_mode.is_foreground() {
+            if let Some(wid) = window_id {
+                match super::gate_background_window_action(
+                    pid,
+                    wid,
+                    None,
+                    cua_driver_core::background_input::BackgroundAction::WindowPointer,
+                )
+                .await
+                {
+                    Ok(lease) => Some(lease),
+                    Err(refusal_result) => return refusal_result,
+                }
+            } else {
+                None
+            }
+        } else {
+            None
         };
 
         // Pin overlay above the target window before animating.
@@ -175,7 +230,10 @@ impl Tool for RightClickTool {
         crate::cursor::overlay::animate_cursor_to(cursor_key.clone(), screen_x, screen_y).await;
         crate::cursor::overlay::send_command(
             cursor_key.clone(),
-            cursor_overlay::OverlayCommand::ClickPulse { x: screen_x, y: screen_y },
+            cursor_overlay::OverlayCommand::ClickPulse {
+                x: screen_x,
+                y: screen_y,
+            },
         );
 
         let mod_suffix = if modifiers.is_empty() {
@@ -184,18 +242,69 @@ impl Tool for RightClickTool {
             format!(" with {}", modifiers.join("+"))
         };
 
-        let result = tokio::task::spawn_blocking(move || {
-            let m: Vec<&str> = modifiers.iter().map(String::as_str).collect();
-            if window_id.is_some() {
-                crate::input::mouse::right_click_at_xy_with_window_local(
-                    pid, screen_x, screen_y, win_local_x, win_local_y, &m,
-                )
-            } else {
-                crate::input::mouse::right_click_at_xy(pid, screen_x, screen_y, &m)
+        let fg = delivery_mode.is_foreground() && window_id.is_some();
+        let route = match super::pixel_route::resolve(pid, fg, window_id, "mouse_right_click").await
+        {
+            Ok(route) => route,
+            Err(refusal) => return refusal,
+        };
+        let result = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+            let _key_focus = (!fg)
+                .then(|| crate::key_focus_guard::protect(pid))
+                .flatten();
+            let do_it = move || -> anyhow::Result<()> {
+                let m: Vec<&str> = modifiers.iter().map(String::as_str).collect();
+                if route == super::pixel_route::PixelClickRoute::ForegroundHid {
+                    // Warp the hardware pointer and post at the HID tap; see
+                    // `pixel_route` for the cross-platform foreground contract.
+                    return crate::input::mouse::click_at_xy_desktop_with_modifiers(
+                        screen_x, screen_y, 1, "right", &m,
+                    );
+                }
+                if let Some(wid) = window_id {
+                    crate::input::mouse::right_click_at_xy_with_window_local(
+                        pid,
+                        screen_x,
+                        screen_y,
+                        win_local_x,
+                        win_local_y,
+                        wid,
+                        &m,
+                    )
+                } else {
+                    crate::input::mouse::right_click_at_xy(pid, screen_x, screen_y, &m)
+                }
+            };
+            // Foreground rung: front the exact window → HID right-click →
+            // restore the prior frontmost. No input is sent unless the exact
+            // window is proven focused.
+            match (route, window_id) {
+                (super::pixel_route::PixelClickRoute::ForegroundHid, Some(wid)) => {
+                    crate::input::skylight::with_foreground_hid_activation(
+                        pid as libc::pid_t,
+                        wid,
+                        do_it,
+                    )
+                }
+                _ => do_it(),
             }
-        }).await;
+        })
+        .await;
         match result {
-            Ok(Ok(())) => ToolResult::text(format!("Right-clicked{mod_suffix} at ({screen_x:.1}, {screen_y:.1}).")),
+            Ok(Ok(())) => ToolResult::text(format!(
+                "Right-clicked{mod_suffix} at ({screen_x:.1}, {screen_y:.1}) ({}).",
+                super::pixel_route::delivery_note(route)
+            ))
+            .with_structured(serde_json::json!({
+                "path": super::pixel_route::path_label(route), "verified": false, "effect": "unverifiable"
+            })),
+            Ok(Err(e)) if route == super::pixel_route::PixelClickRoute::ForegroundHid => {
+                super::pixel_route::foreground_unavailable(
+                    "Right-click",
+                    window_id.unwrap_or_default(),
+                    &e.to_string(),
+                )
+            }
             Ok(Err(e)) => ToolResult::error(format!("Right-click failed: {e}")),
             Err(e)     => ToolResult::error(format!("Task error: {e}")),
         }
@@ -204,31 +313,49 @@ impl Tool for RightClickTool {
 
 // ── Blocking AX path ─────────────────────────────────────────────────────────
 
-fn ax_show_menu(element_ptr: usize, idx: usize) -> anyhow::Result<String> {
+fn ax_show_menu(element_ptr: usize, idx: usize, pid: i32, wid: u32) -> anyhow::Result<String> {
     let element = element_ptr as AXUIElementRef;
 
-    let role  = unsafe { copy_string_attr(element, "AXRole") }.unwrap_or_default();
+    let role = unsafe { copy_string_attr(element, "AXRole") }.unwrap_or_default();
     let title = unsafe { copy_string_attr(element, "AXTitle") }.unwrap_or_default();
 
     let advertised = unsafe { copy_action_names(element) };
-    let err = unsafe { perform_action(element, "AXShowMenu") };
 
-    if err != kAXErrorSuccess {
-        anyhow::bail!("AXUIElementPerformAction(AXShowMenu) returned {err}");
+    // Only attempt the pure-AX AXShowMenu when the element actually advertises
+    // it. Plain controls (NSButton, custom NSView click targets, most web
+    // nodes) DON'T — calling AXShowMenu on them returns kAXErrorActionUnsupported
+    // (-25206), which used to surface as a hard "AXShowMenu failed" error and
+    // forced the agent onto raw pixels. Instead, resolve the element's on-screen
+    // center and synthesize a REAL pixel right-click there — the same actuation
+    // a user performs, delivered to backgrounded windows via the window-local
+    // primitive. This makes "right-click element N" land on any element, not
+    // just ones with a native context-menu AX action.
+    if advertised.iter().any(|a| a == "AXShowMenu") {
+        let err = unsafe { perform_action(element, "AXShowMenu") };
+        if err == kAXErrorSuccess {
+            return Ok(format!(
+                "Shown menu for [{idx}] {role} \"{title}\" (AXShowMenu)."
+            ));
+        }
+        // Advertised but the action failed — fall through to the pixel path
+        // rather than erroring out.
+        tracing::debug!("AXShowMenu returned {err} for [{idx}]; falling back to pixel right-click");
     }
 
-    let mut summary = format!("Shown menu for [{idx}] {role} \"{title}\".");
-    if !advertised.iter().any(|a| a == "AXShowMenu") {
-        let list = if advertised.is_empty() {
-            "none".to_owned()
-        } else {
-            advertised.join(", ")
-        };
-        summary.push_str(&format!(
-            "\n⚠️ Element does not advertise AXShowMenu (actions: {list}). \
-             Action may have been a no-op. Retry with a pixel right-click \
-             (right_click(pid, x, y)) if no menu appeared."
-        ));
-    }
-    Ok(summary)
+    // Pixel right-click at the element's screen-space center.
+    let (cx, cy) =
+        unsafe { crate::ax::bindings::element_screen_center(element) }.ok_or_else(|| {
+            anyhow::anyhow!(
+                "[{idx}] {role} \"{title}\" advertises no AXShowMenu and has no resolvable \
+             on-screen center for a pixel right-click. Pass x, y directly."
+            )
+        })?;
+    let (wx, wy) = crate::windows::window_bounds_by_id(wid)
+        .map(|b| (cx - b.x, cy - b.y))
+        .unwrap_or((cx, cy));
+    crate::input::mouse::right_click_at_xy_with_window_local(pid, cx, cy, wx, wy, wid, &[])?;
+    Ok(format!(
+        "Right-clicked [{idx}] {role} \"{title}\" at element center ({cx:.0}, {cy:.0}) \
+         (pixel right-click; element advertises no AXShowMenu)."
+    ))
 }

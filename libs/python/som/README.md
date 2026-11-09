@@ -11,10 +11,13 @@
 [![Python](https://img.shields.io/badge/Python-333333?logo=python&logoColor=white&labelColor=333333)](#)
 [![macOS](https://img.shields.io/badge/macOS-000000?logo=apple&logoColor=F0F0F0)](#)
 [![Discord](https://img.shields.io/badge/Discord-%235865F2.svg?&logo=discord&logoColor=white)](https://discord.com/invite/mVnXXpdE85)
-[![PyPI](https://img.shields.io/pypi/v/cua-computer?color=333333)](https://pypi.org/project/cua-computer/)
+[![PyPI](https://img.shields.io/pypi/v/cua-som?color=333333)](https://pypi.org/project/cua-som/)
 
 </h1>
 </div>
+
+> [!WARNING]
+> **Deprecated:** `cua-som` is no longer maintained and will not receive updates or fixes. It is licensed under AGPL-3.0, separately from the MIT-licensed Cua packages.
 
 **Som** (Set-of-Mark) is a visual grounding component for the Computer-Use Agent (Cua) framework powering Cua, for detecting and analyzing UI elements in screenshots. Optimized for macOS Silicon with Metal Performance Shaders (MPS), it combines YOLO-based icon detection with EasyOCR text recognition to provide comprehensive UI element analysis.
 
@@ -75,28 +78,13 @@ for elem in result.elements:
         print(f"Text: '{elem.content}', confidence={elem.confidence:.3f}")
 ```
 
-## Docs
-
-- [Configuration](http://localhost:8090/docs/libraries/som/configuration)
-
-## Development
-
-### Test Data
-
-- Place test screenshots in `examples/test_data/`
-- Not tracked in git to keep repository size manageable
-- Default test image: `test_screen.png` (1920x1080)
-
-### Running Tests
-
-```bash
-# Run benchmark with no OCR
-python examples/omniparser_examples.py examples/test_data/test_screen.png --runs 5 --ocr none
-
-# Run benchmark with OCR
-python examples/omniparser_examples.py examples/test_data/test_screen.png --runs 5 --ocr easyocr
-```
-
 ## License
 
-MIT License - See LICENSE file for details.
+`cua-som` is licensed under AGPL-3.0-or-later. See [LICENSE](LICENSE) for the
+complete terms. Its dependencies retain their own licenses. Inspect the exact
+resolved Ultralytics dependency version and its notices before redistribution.
+
+By default, `OmniParser` can download model files from Microsoft's separate
+`OmniParser-v2.0` model repository. Those downloaded files are not relicensed by
+the `cua-som` package. Inspect the license and provenance published with the
+exact model revision before use or redistribution.

@@ -1,0 +1,1972 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
+//! Rust-owned lifecycle for a host-embedded Cua Driver daemon.
+//!
+//! Language bindings deliberately expose this object rather than reimplementing
+//! process, endpoint, readiness, authorization, and cleanup logic per runtime.
+
+use cua_driver_contract::{
+    CAPABILITY_VERSION, CONTRACT_VERSION, MCP_PROTOCOL_VERSION, TOOLS_LIST_SCHEMA_VERSION,
+};
+use cua_driver_core::daemon::{request_daemon_metadata, DaemonMetadata};
+use cua_driver_core::input_pacing::{
+    CLICK_GAP_ENV, MOUSE_PRIMER_ENV, MULTI_CLICK_GAP_ENV, WEBKIT_SETTLE_ENV,
+};
+use cua_driver_core::key_pacing::KEY_GAP_ENV;
+use cua_driver_core::step_pacing::BATCH_PACING_ENV;
+use cua_driver_core::window_observation::{WINDOW_CHANGE_POLL_ENV, WINDOW_CHANGE_TIMEOUT_ENV};
+use std::collections::BTreeMap;
+use std::process::{ExitStatus, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+use thiserror::Error;
+use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+use tokio::process::{Child, ChildStdin, Command};
+use tokio::sync::{mpsc, Notify};
+use tokio::task::JoinHandle;
+use uuid::Uuid;
+
+const DEFAULT_STARTUP_TIMEOUT_MS: u64 = 10_000;
+const DEFAULT_SHUTDOWN_TIMEOUT_MS: u64 = 2_000;
+const HANDSHAKE_ATTEMPT_TIMEOUT_MS: u64 = 500;
+const STDERR_TAIL_LIMIT_BYTES: usize = 65_536;
+const STDERR_DRAIN_TIMEOUT_MS: u64 = 500;
+const STDERR_TEE_QUEUE_CHUNKS: usize = 16;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum EmbeddedPermissionMode {
+    Standard,
+    Bounded,
+    Unrestricted,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct EmbeddedEnvironmentVariable {
+    pub name: String,
+    pub value: String,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct EmbeddedDriverHostOptions {
+    pub binary_path: String,
+    pub host_bundle_id: String,
+    pub socket_path: Option<String>,
+    pub startup_timeout_ms: Option<u64>,
+    pub shutdown_timeout_ms: Option<u64>,
+    pub permission_mode: Option<EmbeddedPermissionMode>,
+    #[uniffi(default = None)]
+    pub capability_manifest_path: Option<String>,
+    #[uniffi(default = false)]
+    pub approve_capability_manifest: bool,
+    /// Deprecated aliases retained for compatibility.
+    pub session_policy_path: Option<String>,
+    pub approve_session_policy: bool,
+    pub dangerously_bypass_approvals: bool,
+    pub environment: Vec<EmbeddedEnvironmentVariable>,
+    pub inherit_stderr: bool,
+    #[uniffi(default = false)]
+    pub no_overlay: bool,
+    #[uniffi(default = false)]
+    pub capture_stderr: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct EmbeddedMcpConfiguration {
+    pub command: String,
+    pub args: Vec<String>,
+    pub environment: Vec<EmbeddedEnvironmentVariable>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct EmbeddedDriverConnection {
+    pub socket_path: String,
+    pub pid: u32,
+    pub generation: String,
+    pub driver_version: String,
+    pub contract_version: String,
+    pub mcp_protocol_version: String,
+    pub mcp: EmbeddedMcpConfiguration,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum EmbeddedDriverHostState {
+    Stopped,
+    Starting,
+    Ready,
+    Stopping,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct EmbeddedDriverExit {
+    pub generation: String,
+    pub code: Option<i32>,
+    pub success: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct EmbeddedDriverDiagnostics {
+    pub lifecycle_phase: String,
+    pub exit_code: Option<i32>,
+    pub stderr_tail: String,
+    pub stderr_truncated: bool,
+}
+
+#[derive(Debug, Error, uniffi::Error)]
+pub enum EmbeddedDriverError {
+    #[error("invalid embedded host configuration: {reason}")]
+    Configuration { reason: String },
+    #[error("embedded endpoint conflict at {path}: {reason}")]
+    EndpointConflict { path: String, reason: String },
+    #[error("failed to spawn embedded cua-driver at {binary_path}: {reason}")]
+    Spawn { binary_path: String, reason: String },
+    #[error("embedded cua-driver startup was cancelled")]
+    StartupCancelled,
+    #[error("embedded cua-driver did not become ready within {timeout_ms}ms")]
+    StartupTimeout { timeout_ms: u64 },
+    #[error("embedded cua-driver exited before readiness (code={code:?})")]
+    ExitedBeforeReady { code: Option<i32> },
+    #[error("embedded daemon is incompatible: {reason}")]
+    IncompatibleDaemon { reason: String },
+    #[error("embedded host lifecycle error: {reason}")]
+    Lifecycle { reason: String },
+}
+
+#[derive(Debug, Clone)]
+struct ValidatedOptions {
+    binary_path: String,
+    host_bundle_id: String,
+    socket_path: Option<String>,
+    startup_timeout: Duration,
+    shutdown_timeout: Duration,
+    permission_mode: EmbeddedPermissionMode,
+    session_policy_path: Option<String>,
+    approve_session_policy: bool,
+    dangerously_bypass_approvals: bool,
+    environment: Vec<EmbeddedEnvironmentVariable>,
+    inherit_stderr: bool,
+    no_overlay: bool,
+    capture_stderr: bool,
+}
+
+#[cfg(unix)]
+#[derive(Debug, Clone)]
+struct EndpointIdentity {
+    device: u64,
+    inode: u64,
+}
+
+#[cfg(not(unix))]
+#[derive(Debug, Clone)]
+struct EndpointIdentity;
+
+struct ManagedChild {
+    child: Child,
+    liveness: Option<ChildStdin>,
+    stderr_pump: Option<StderrPump>,
+    shutdown_timeout: Duration,
+}
+
+struct RunningProcess {
+    connection: EmbeddedDriverConnection,
+    process: ManagedChild,
+    endpoint_identity: EndpointIdentity,
+}
+
+enum HostPhase {
+    Stopped,
+    Starting {
+        generation: String,
+        cancel: Arc<AtomicBool>,
+    },
+    Ready(Box<RunningProcess>),
+    Stopping {
+        generation: String,
+    },
+}
+
+struct HostInner {
+    phase: HostPhase,
+    last_exit: Option<EmbeddedDriverExit>,
+}
+
+type SharedDiagnostics = Arc<Mutex<DiagnosticCapture>>;
+
+struct DiagnosticCapture {
+    exit_code: Option<i32>,
+    stderr: Vec<u8>,
+    truncated: bool,
+}
+
+impl DiagnosticCapture {
+    fn new() -> Self {
+        Self {
+            exit_code: None,
+            stderr: Vec::new(),
+            truncated: false,
+        }
+    }
+
+    fn append(&mut self, bytes: &[u8]) {
+        if bytes.len() >= STDERR_TAIL_LIMIT_BYTES {
+            self.truncated |= bytes.len() > STDERR_TAIL_LIMIT_BYTES || !self.stderr.is_empty();
+            self.stderr.clear();
+            self.stderr
+                .extend_from_slice(&bytes[bytes.len() - STDERR_TAIL_LIMIT_BYTES..]);
+            return;
+        }
+        let overflow = self
+            .stderr
+            .len()
+            .saturating_add(bytes.len())
+            .saturating_sub(STDERR_TAIL_LIMIT_BYTES);
+        if overflow > 0 {
+            self.stderr.drain(..overflow);
+            self.truncated = true;
+        }
+        self.stderr.extend_from_slice(bytes);
+    }
+
+    fn snapshot(&self) -> EmbeddedDriverDiagnostics {
+        EmbeddedDriverDiagnostics {
+            lifecycle_phase: "startup".into(),
+            exit_code: self.exit_code,
+            stderr_tail: String::from_utf8_lossy(&self.stderr).into_owned(),
+            stderr_truncated: self.truncated,
+        }
+    }
+}
+
+struct StderrPump {
+    reader: Option<JoinHandle<()>>,
+    tee: Option<JoinHandle<()>>,
+    diagnostics: SharedDiagnostics,
+}
+
+impl StderrPump {
+    async fn finish(mut self, exit_code: Option<i32>) {
+        tokio::join!(
+            finish_stderr_task(self.reader.take()),
+            finish_stderr_task(self.tee.take())
+        );
+        self.diagnostics.lock().unwrap().exit_code = exit_code;
+    }
+}
+
+impl Drop for StderrPump {
+    fn drop(&mut self) {
+        if let Some(task) = self.reader.take() {
+            task.abort();
+        }
+        if let Some(task) = self.tee.take() {
+            task.abort();
+        }
+    }
+}
+
+impl ManagedChild {
+    fn close_liveness(&mut self) {
+        drop(self.liveness.take());
+    }
+
+    fn kill(&mut self) {
+        self.close_liveness();
+        let _ = self.child.start_kill();
+    }
+
+    async fn finish_stderr(&mut self, exit_code: Option<i32>) {
+        if let Some(stderr_pump) = self.stderr_pump.take() {
+            stderr_pump.finish(exit_code).await;
+        }
+    }
+
+    async fn terminate(&mut self) -> Option<ExitStatus> {
+        if let Some(mut liveness) = self.liveness.take() {
+            let _ = liveness.shutdown().await;
+        }
+        let status = match tokio::time::timeout(self.shutdown_timeout, self.child.wait()).await {
+            Ok(Ok(status)) => Some(status),
+            Ok(Err(_)) | Err(_) => {
+                let _ = self.child.start_kill();
+                self.child.wait().await.ok()
+            }
+        };
+        self.finish_stderr(status.as_ref().and_then(ExitStatus::code))
+            .await;
+        status
+    }
+
+    async fn stop(&mut self) -> Result<ExitStatus, EmbeddedDriverError> {
+        if let Some(mut liveness) = self.liveness.take() {
+            let _ = liveness.shutdown().await;
+        }
+        let status = match tokio::time::timeout(self.shutdown_timeout, self.child.wait()).await {
+            Ok(result) => result.map_err(|error| EmbeddedDriverError::Lifecycle {
+                reason: format!("wait for embedded daemon: {error}"),
+            }),
+            Err(_) => match self.child.start_kill() {
+                Ok(()) => self
+                    .child
+                    .wait()
+                    .await
+                    .map_err(|error| EmbeddedDriverError::Lifecycle {
+                        reason: format!("reap force-killed embedded daemon: {error}"),
+                    }),
+                Err(error) => Err(EmbeddedDriverError::Lifecycle {
+                    reason: format!("force-kill embedded daemon: {error}"),
+                }),
+            },
+        };
+        self.finish_stderr(status.as_ref().ok().and_then(ExitStatus::code))
+            .await;
+        status
+    }
+}
+
+#[derive(uniffi::Object)]
+pub struct EmbeddedCuaDriverHost {
+    options: ValidatedOptions,
+    inner: Mutex<HostInner>,
+    diagnostics: Mutex<Option<SharedDiagnostics>>,
+    changed: Notify,
+}
+
+struct StartupTransitionGuard {
+    host: Arc<EmbeddedCuaDriverHost>,
+    generation: String,
+    armed: bool,
+}
+
+struct StopTransitionGuard {
+    host: Arc<EmbeddedCuaDriverHost>,
+    running: Option<RunningProcess>,
+    armed: bool,
+}
+
+impl StopTransitionGuard {
+    fn running_mut(&mut self) -> &mut RunningProcess {
+        self.running
+            .as_mut()
+            .expect("stop transition must own its process")
+    }
+
+    fn disarm(&mut self) -> RunningProcess {
+        self.armed = false;
+        self.running
+            .take()
+            .expect("stop transition must own its process")
+    }
+}
+
+impl Drop for StopTransitionGuard {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        let Some(mut running) = self.running.take() else {
+            return;
+        };
+        let generation = running.connection.generation.clone();
+        running.process.kill();
+        cleanup_owned_endpoint(&running.connection.socket_path, &running.endpoint_identity);
+        // Drop the kill-on-drop child before waking a concurrent starter.
+        drop(running);
+
+        let mut inner = self.host.inner.lock().unwrap();
+        if matches!(
+            &inner.phase,
+            HostPhase::Stopping { generation: current } if current == &generation
+        ) {
+            inner.phase = HostPhase::Stopped;
+        }
+        drop(inner);
+        self.host.changed.notify_waiters();
+    }
+}
+
+impl StartupTransitionGuard {
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for StartupTransitionGuard {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        let mut inner = self.host.inner.lock().unwrap();
+        if matches!(
+            &inner.phase,
+            HostPhase::Starting { generation, .. } if generation == &self.generation
+        ) {
+            inner.phase = HostPhase::Stopped;
+            drop(inner);
+            self.host.changed.notify_waiters();
+        }
+    }
+}
+
+#[uniffi::export(async_runtime = "tokio")]
+impl EmbeddedCuaDriverHost {
+    #[uniffi::constructor]
+    pub fn new(
+        binary_path: String,
+        host_bundle_id: String,
+    ) -> Result<Arc<Self>, EmbeddedDriverError> {
+        Self::with_options(EmbeddedDriverHostOptions {
+            binary_path,
+            host_bundle_id,
+            socket_path: None,
+            startup_timeout_ms: None,
+            shutdown_timeout_ms: None,
+            permission_mode: None,
+            capability_manifest_path: None,
+            approve_capability_manifest: false,
+            session_policy_path: None,
+            approve_session_policy: false,
+            dangerously_bypass_approvals: false,
+            environment: Vec::new(),
+            inherit_stderr: true,
+            no_overlay: false,
+            capture_stderr: false,
+        })
+    }
+
+    #[uniffi::constructor]
+    pub fn with_options(
+        options: EmbeddedDriverHostOptions,
+    ) -> Result<Arc<Self>, EmbeddedDriverError> {
+        Ok(Arc::new(Self {
+            options: validate_options(options)?,
+            inner: Mutex::new(HostInner {
+                phase: HostPhase::Stopped,
+                last_exit: None,
+            }),
+            diagnostics: Mutex::new(None),
+            changed: Notify::new(),
+        }))
+    }
+
+    pub fn state(&self) -> EmbeddedDriverHostState {
+        let mut inner = self.inner.lock().unwrap();
+        self.refresh_exit_locked(&mut inner);
+        match inner.phase {
+            HostPhase::Stopped => EmbeddedDriverHostState::Stopped,
+            HostPhase::Starting { .. } => EmbeddedDriverHostState::Starting,
+            HostPhase::Ready(_) => EmbeddedDriverHostState::Ready,
+            HostPhase::Stopping { .. } => EmbeddedDriverHostState::Stopping,
+        }
+    }
+
+    pub fn connection(&self) -> Option<EmbeddedDriverConnection> {
+        let mut inner = self.inner.lock().unwrap();
+        self.refresh_exit_locked(&mut inner);
+        match &inner.phase {
+            HostPhase::Ready(running) => Some(running.connection.clone()),
+            _ => None,
+        }
+    }
+
+    pub fn last_diagnostics(&self) -> Option<EmbeddedDriverDiagnostics> {
+        let diagnostics = self.diagnostics.lock().unwrap().clone()?;
+        let snapshot = diagnostics.lock().unwrap().snapshot();
+        Some(snapshot)
+    }
+
+    pub async fn start(self: Arc<Self>) -> Result<EmbeddedDriverConnection, EmbeddedDriverError> {
+        loop {
+            let notified = self.changed.notified();
+            let transition = {
+                let mut inner = self.inner.lock().unwrap();
+                self.refresh_exit_locked(&mut inner);
+                match &inner.phase {
+                    HostPhase::Ready(running) => return Ok(running.connection.clone()),
+                    HostPhase::Stopped => {
+                        let generation = Uuid::new_v4().to_string();
+                        let diagnostics = self
+                            .options
+                            .capture_stderr
+                            .then(|| Arc::new(Mutex::new(DiagnosticCapture::new())));
+                        *self.diagnostics.lock().unwrap() = diagnostics.clone();
+                        let cancel = Arc::new(AtomicBool::new(false));
+                        inner.phase = HostPhase::Starting {
+                            generation: generation.clone(),
+                            cancel: cancel.clone(),
+                        };
+                        Some((generation, cancel, diagnostics))
+                    }
+                    HostPhase::Starting { .. } | HostPhase::Stopping { .. } => None,
+                }
+            };
+            if let Some((generation, cancel, diagnostics)) = transition {
+                return self
+                    .clone()
+                    .perform_start(generation, cancel, diagnostics)
+                    .await;
+            }
+            notified.await;
+        }
+    }
+
+    pub async fn stop(self: Arc<Self>) -> Result<(), EmbeddedDriverError> {
+        loop {
+            let notified = self.changed.notified();
+            enum Action {
+                Done,
+                Wait,
+                Stop(Box<RunningProcess>),
+            }
+            let action = {
+                let mut inner = self.inner.lock().unwrap();
+                self.refresh_exit_locked(&mut inner);
+                match &mut inner.phase {
+                    HostPhase::Stopped => Action::Done,
+                    HostPhase::Starting { cancel, .. } => {
+                        cancel.store(true, Ordering::Release);
+                        Action::Wait
+                    }
+                    HostPhase::Stopping { .. } => Action::Wait,
+                    HostPhase::Ready(_) => {
+                        let phase = std::mem::replace(&mut inner.phase, HostPhase::Stopped);
+                        let HostPhase::Ready(running) = phase else {
+                            unreachable!()
+                        };
+                        inner.phase = HostPhase::Stopping {
+                            generation: running.connection.generation.clone(),
+                        };
+                        Action::Stop(running)
+                    }
+                }
+            };
+            match action {
+                Action::Done => return Ok(()),
+                Action::Wait => notified.await,
+                Action::Stop(running) => return self.clone().finish_stop(*running).await,
+            }
+        }
+    }
+
+    pub async fn restart(self: Arc<Self>) -> Result<EmbeddedDriverConnection, EmbeddedDriverError> {
+        self.clone().stop().await?;
+        self.start().await
+    }
+
+    pub async fn wait_for_exit(
+        self: Arc<Self>,
+        generation: String,
+    ) -> Result<EmbeddedDriverExit, EmbeddedDriverError> {
+        loop {
+            {
+                let mut inner = self.inner.lock().unwrap();
+                self.refresh_exit_locked(&mut inner);
+                if let Some(exit) = &inner.last_exit {
+                    if exit.generation == generation {
+                        return Ok(exit.clone());
+                    }
+                }
+                let still_live = match &inner.phase {
+                    HostPhase::Starting {
+                        generation: current,
+                        ..
+                    }
+                    | HostPhase::Stopping {
+                        generation: current,
+                    } => current == &generation,
+                    HostPhase::Ready(running) => running.connection.generation == generation,
+                    HostPhase::Stopped => false,
+                };
+                if !still_live {
+                    return Err(EmbeddedDriverError::Lifecycle {
+                        reason: format!("generation {generation} is not live or recently exited"),
+                    });
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    }
+}
+
+impl EmbeddedCuaDriverHost {
+    async fn perform_start(
+        self: Arc<Self>,
+        generation: String,
+        cancel: Arc<AtomicBool>,
+        diagnostics: Option<SharedDiagnostics>,
+    ) -> Result<EmbeddedDriverConnection, EmbeddedDriverError> {
+        let mut transition_guard = StartupTransitionGuard {
+            host: self.clone(),
+            generation: generation.clone(),
+            armed: true,
+        };
+        let socket_path = self
+            .options
+            .socket_path
+            .clone()
+            .unwrap_or_else(|| default_socket_path(&generation));
+        prepare_endpoint(&socket_path)?;
+
+        let mut command = Command::new(&self.options.binary_path);
+        command
+            .args(self.serve_args(&socket_path))
+            .env_clear()
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(if diagnostics.is_some() {
+                Stdio::piped()
+            } else if self.options.inherit_stderr {
+                Stdio::inherit()
+            } else {
+                Stdio::null()
+            })
+            .kill_on_drop(true);
+        #[cfg(target_os = "windows")]
+        prevent_console_window(&mut command);
+        for variable in safe_environment(&self.options.environment) {
+            command.env(variable.name, variable.value);
+        }
+        command.env(
+            "CUA_DRIVER_EMBEDDED_HOST_PID",
+            std::process::id().to_string(),
+        );
+
+        let mut child = command
+            .spawn()
+            .map_err(|error| EmbeddedDriverError::Spawn {
+                binary_path: self.options.binary_path.clone(),
+                reason: error.to_string(),
+            })?;
+        let pid = child.id().ok_or_else(|| EmbeddedDriverError::Spawn {
+            binary_path: self.options.binary_path.clone(),
+            reason: "spawned process has no pid".into(),
+        })?;
+        let liveness = child
+            .stdin
+            .take()
+            .ok_or_else(|| EmbeddedDriverError::Spawn {
+                binary_path: self.options.binary_path.clone(),
+                reason: "failed to create parent-liveness stdin pipe".into(),
+            })?;
+        let stderr_pump = if let Some(diagnostics) = diagnostics.clone() {
+            let stderr = child
+                .stderr
+                .take()
+                .ok_or_else(|| EmbeddedDriverError::Spawn {
+                    binary_path: self.options.binary_path.clone(),
+                    reason: "failed to capture embedded daemon stderr".into(),
+                })?;
+            Some(spawn_stderr_pump(
+                stderr,
+                diagnostics,
+                self.options.inherit_stderr,
+            ))
+        } else {
+            None
+        };
+        let mut process = ManagedChild {
+            child,
+            liveness: Some(liveness),
+            stderr_pump,
+            shutdown_timeout: self.options.shutdown_timeout,
+        };
+
+        let deadline = tokio::time::Instant::now() + self.options.startup_timeout;
+        let metadata = loop {
+            if cancel.load(Ordering::Acquire) {
+                process.terminate().await;
+                return Err(EmbeddedDriverError::StartupCancelled);
+            }
+            if let Some(status) =
+                process
+                    .child
+                    .try_wait()
+                    .map_err(|error| EmbeddedDriverError::Lifecycle {
+                        reason: format!("inspect startup child: {error}"),
+                    })?
+            {
+                process.finish_stderr(status.code()).await;
+                return Err(EmbeddedDriverError::ExitedBeforeReady {
+                    code: status.code(),
+                });
+            }
+            if tokio::time::Instant::now() >= deadline {
+                process.terminate().await;
+                return Err(EmbeddedDriverError::StartupTimeout {
+                    timeout_ms: self.options.startup_timeout.as_millis() as u64,
+                });
+            }
+
+            if endpoint_may_be_ready(&socket_path) {
+                let path = socket_path.clone();
+                let attempt = tokio::task::spawn_blocking(move || request_daemon_metadata(&path));
+                match tokio::time::timeout(
+                    Duration::from_millis(HANDSHAKE_ATTEMPT_TIMEOUT_MS),
+                    attempt,
+                )
+                .await
+                {
+                    Ok(Ok(Ok(metadata))) => break metadata,
+                    Ok(Ok(Err(_))) => {}
+                    Ok(Err(join_error)) => {
+                        process.terminate().await;
+                        return Err(EmbeddedDriverError::Lifecycle {
+                            reason: format!("daemon metadata task failed: {join_error}"),
+                        });
+                    }
+                    Err(_) => {
+                        process.terminate().await;
+                        return Err(EmbeddedDriverError::StartupTimeout {
+                            timeout_ms: self.options.startup_timeout.as_millis() as u64,
+                        });
+                    }
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        };
+
+        let endpoint_identity = match capture_endpoint_identity(&socket_path) {
+            Ok(identity) => identity,
+            Err(error) => {
+                process.terminate().await;
+                return Err(error);
+            }
+        };
+        if let Err(error) = validate_metadata(&metadata, pid, &self.options.host_bundle_id) {
+            process.terminate().await;
+            cleanup_owned_endpoint(&socket_path, &endpoint_identity);
+            return Err(error);
+        }
+        let connection = EmbeddedDriverConnection {
+            socket_path: socket_path.clone(),
+            pid,
+            generation: generation.clone(),
+            driver_version: metadata.driver_version,
+            contract_version: metadata.contract_version,
+            mcp_protocol_version: metadata.mcp_protocol_version,
+            mcp: self.mcp_configuration(&socket_path),
+        };
+
+        if cancel.load(Ordering::Acquire) {
+            process.terminate().await;
+            cleanup_owned_endpoint(&socket_path, &endpoint_identity);
+            return Err(EmbeddedDriverError::StartupCancelled);
+        }
+        let mut pending = Some(RunningProcess {
+            connection: connection.clone(),
+            process,
+            endpoint_identity,
+        });
+        let still_starting = {
+            let mut inner = self.inner.lock().unwrap();
+            let still_starting = matches!(
+                &inner.phase,
+                HostPhase::Starting { generation: current, .. } if current == &generation
+            );
+            if still_starting {
+                inner.last_exit = None;
+                inner.phase = HostPhase::Ready(Box::new(pending.take().unwrap()));
+            }
+            still_starting
+        };
+        if !still_starting {
+            let mut running = pending.unwrap();
+            running.process.terminate().await;
+            cleanup_owned_endpoint(&socket_path, &running.endpoint_identity);
+            return Err(EmbeddedDriverError::StartupCancelled);
+        }
+        transition_guard.disarm();
+        if let Some(diagnostics) = diagnostics {
+            let mut current = self.diagnostics.lock().unwrap();
+            if current
+                .as_ref()
+                .is_some_and(|capture| Arc::ptr_eq(capture, &diagnostics))
+            {
+                *current = None;
+            }
+        }
+        self.changed.notify_waiters();
+        Ok(connection)
+    }
+
+    async fn finish_stop(
+        self: Arc<Self>,
+        running: RunningProcess,
+    ) -> Result<(), EmbeddedDriverError> {
+        let mut transition_guard = StopTransitionGuard {
+            host: self.clone(),
+            running: Some(running),
+            armed: true,
+        };
+        let status = transition_guard.running_mut().process.stop().await;
+        let running = transition_guard.disarm();
+        cleanup_owned_endpoint(&running.connection.socket_path, &running.endpoint_identity);
+        {
+            let mut inner = self.inner.lock().unwrap();
+            inner.phase = HostPhase::Stopped;
+            if let Ok(status) = &status {
+                inner.last_exit = Some(EmbeddedDriverExit {
+                    generation: running.connection.generation,
+                    code: status.code(),
+                    success: status.success(),
+                });
+            }
+        }
+        self.changed.notify_waiters();
+        status.map(|_| ())
+    }
+
+    fn serve_args(&self, socket_path: &str) -> Vec<String> {
+        let mut args = vec![
+            "serve".into(),
+            "--embedded".into(),
+            "--parent-liveness-stdio".into(),
+            "--no-permissions-gate".into(),
+            "--socket".into(),
+            socket_path.into(),
+            "--host-bundle-id".into(),
+            self.options.host_bundle_id.clone(),
+            "--permission-mode".into(),
+            match self.options.permission_mode {
+                EmbeddedPermissionMode::Standard => "standard",
+                EmbeddedPermissionMode::Bounded => "bounded",
+                EmbeddedPermissionMode::Unrestricted => "unrestricted",
+            }
+            .into(),
+        ];
+        if let Some(path) = &self.options.session_policy_path {
+            args.extend(["--capability-manifest".into(), path.clone()]);
+        }
+        if self.options.approve_session_policy {
+            args.push("--approve-capability-manifest".into());
+        }
+        if self.options.dangerously_bypass_approvals {
+            args.push("--dangerously-bypass-approvals".into());
+        }
+        if self.options.no_overlay {
+            args.push("--no-overlay".into());
+        }
+        args
+    }
+
+    fn mcp_configuration(&self, socket_path: &str) -> EmbeddedMcpConfiguration {
+        EmbeddedMcpConfiguration {
+            command: self.options.binary_path.clone(),
+            args: vec![
+                "mcp".into(),
+                "--embedded".into(),
+                "--socket".into(),
+                socket_path.into(),
+                "--host-bundle-id".into(),
+                self.options.host_bundle_id.clone(),
+            ],
+            // Arguments carry the complete embedded routing contract. Keeping
+            // this empty avoids leaking daemon-only authorization state into
+            // the generic MCP proxy process.
+            environment: Vec::new(),
+        }
+    }
+
+    fn refresh_exit_locked(&self, inner: &mut HostInner) {
+        let phase = std::mem::replace(&mut inner.phase, HostPhase::Stopped);
+        match phase {
+            HostPhase::Ready(mut running) => match running.process.child.try_wait() {
+                Ok(Some(status)) => {
+                    cleanup_owned_endpoint(
+                        &running.connection.socket_path,
+                        &running.endpoint_identity,
+                    );
+                    inner.last_exit = Some(EmbeddedDriverExit {
+                        generation: running.connection.generation,
+                        code: status.code(),
+                        success: status.success(),
+                    });
+                }
+                Ok(None) | Err(_) => inner.phase = HostPhase::Ready(running),
+            },
+            other => inner.phase = other,
+        }
+    }
+}
+
+impl Drop for EmbeddedCuaDriverHost {
+    fn drop(&mut self) {
+        let mut inner = self.inner.lock().unwrap();
+        let phase = std::mem::replace(&mut inner.phase, HostPhase::Stopped);
+        match phase {
+            HostPhase::Starting { cancel, .. } => cancel.store(true, Ordering::Release),
+            HostPhase::Ready(mut running) => {
+                running.process.kill();
+                cleanup_owned_endpoint(&running.connection.socket_path, &running.endpoint_identity);
+            }
+            HostPhase::Stopped | HostPhase::Stopping { .. } => {}
+        }
+    }
+}
+
+fn validate_options(
+    options: EmbeddedDriverHostOptions,
+) -> Result<ValidatedOptions, EmbeddedDriverError> {
+    if options.binary_path.trim().is_empty() {
+        return configuration_error("binary_path must not be empty");
+    }
+    if !std::path::Path::new(&options.binary_path).is_absolute() {
+        return configuration_error("binary_path must be absolute");
+    }
+    if options.host_bundle_id.trim().is_empty()
+        || options.host_bundle_id.len() > 255
+        || options
+            .host_bundle_id
+            .chars()
+            .any(|character| character.is_control() || character.is_whitespace())
+    {
+        return configuration_error(
+            "host_bundle_id must be 1-255 non-whitespace, non-control characters",
+        );
+    }
+    let startup_timeout_ms = options
+        .startup_timeout_ms
+        .unwrap_or(DEFAULT_STARTUP_TIMEOUT_MS);
+    let shutdown_timeout_ms = options
+        .shutdown_timeout_ms
+        .unwrap_or(DEFAULT_SHUTDOWN_TIMEOUT_MS);
+    if startup_timeout_ms == 0 || shutdown_timeout_ms == 0 {
+        return configuration_error("startup and shutdown timeouts must be positive");
+    }
+    let permission_mode = options
+        .permission_mode
+        .unwrap_or(EmbeddedPermissionMode::Standard);
+    if options.capability_manifest_path.is_some()
+        && options.session_policy_path.is_some()
+        && options.capability_manifest_path != options.session_policy_path
+    {
+        return configuration_error(
+            "capability_manifest_path conflicts with deprecated session_policy_path",
+        );
+    }
+    let capability_manifest_path = options
+        .capability_manifest_path
+        .clone()
+        .or_else(|| options.session_policy_path.clone());
+    let capability_manifest_approved =
+        options.approve_capability_manifest || options.approve_session_policy;
+    let manifest_configured = capability_manifest_path
+        .as_deref()
+        .is_some_and(|path| !path.trim().is_empty());
+    if capability_manifest_path.is_some() && !manifest_configured {
+        return configuration_error("capability manifest path must not be empty");
+    }
+    if manifest_configured != capability_manifest_approved {
+        return configuration_error(
+            "capability manifest path and approval acknowledgement must be supplied together",
+        );
+    }
+    match permission_mode {
+        EmbeddedPermissionMode::Standard => {
+            if options.dangerously_bypass_approvals {
+                return configuration_error(
+                    "dangerously_bypass_approvals is valid only in unrestricted mode",
+                );
+            }
+        }
+        EmbeddedPermissionMode::Bounded => {
+            if !manifest_configured {
+                return configuration_error("bounded mode requires a capability manifest");
+            }
+            if options.dangerously_bypass_approvals {
+                return configuration_error("bounded mode cannot bypass runtime approvals");
+            }
+        }
+        EmbeddedPermissionMode::Unrestricted => {
+            if !options.dangerously_bypass_approvals {
+                return configuration_error(
+                    "unrestricted mode requires dangerously_bypass_approvals=true",
+                );
+            }
+        }
+    }
+    for variable in &options.environment {
+        if !allowed_environment_name(&variable.name)
+            || variable.name.contains('=')
+            || variable.name.contains('\0')
+            || variable.value.contains('\0')
+        {
+            return configuration_error(format!(
+                "environment variable {} is not in the embedded safe allowlist",
+                variable.name
+            ));
+        }
+    }
+    if let Some(socket_path) = &options.socket_path {
+        validate_socket_path(socket_path)?;
+    }
+    Ok(ValidatedOptions {
+        binary_path: options.binary_path,
+        host_bundle_id: options.host_bundle_id,
+        socket_path: options.socket_path,
+        startup_timeout: Duration::from_millis(startup_timeout_ms),
+        shutdown_timeout: Duration::from_millis(shutdown_timeout_ms),
+        permission_mode,
+        session_policy_path: capability_manifest_path,
+        approve_session_policy: capability_manifest_approved,
+        dangerously_bypass_approvals: options.dangerously_bypass_approvals,
+        environment: options.environment,
+        inherit_stderr: options.inherit_stderr,
+        no_overlay: options.no_overlay,
+        capture_stderr: options.capture_stderr,
+    })
+}
+
+fn configuration_error<T>(reason: impl Into<String>) -> Result<T, EmbeddedDriverError> {
+    Err(EmbeddedDriverError::Configuration {
+        reason: reason.into(),
+    })
+}
+
+pub(crate) fn allowed_environment_name(name: &str) -> bool {
+    let upper = name.to_ascii_uppercase();
+    upper.starts_with("LC_")
+        || upper == WINDOW_CHANGE_TIMEOUT_ENV
+        || upper == WINDOW_CHANGE_POLL_ENV
+        || upper == KEY_GAP_ENV
+        || upper == MOUSE_PRIMER_ENV
+        || upper == CLICK_GAP_ENV
+        || upper == MULTI_CLICK_GAP_ENV
+        || upper == WEBKIT_SETTLE_ENV
+        || upper == BATCH_PACING_ENV
+        || matches!(
+            upper.as_str(),
+            "PATH"
+                | "HOME"
+                | "USER"
+                | "LOGNAME"
+                | "SHELL"
+                | "TMPDIR"
+                | "TMP"
+                | "TEMP"
+                | "LANG"
+                | "SYSTEMROOT"
+                | "WINDIR"
+                | "COMSPEC"
+                | "PATHEXT"
+                | "APPDATA"
+                | "LOCALAPPDATA"
+                | "PROGRAMDATA"
+                | "DISPLAY"
+                | "WAYLAND_DISPLAY"
+                | "CUA_DRIVER_RS_ENABLE_WAYLAND"
+                | "XDG_RUNTIME_DIR"
+                | "XDG_SESSION_TYPE"
+                | "DBUS_SESSION_BUS_ADDRESS"
+                | "XDG_CURRENT_DESKTOP"
+                | "XDG_SESSION_DESKTOP"
+                | "DESKTOP_SESSION"
+                | "NO_AT_BRIDGE"
+                | "CUA_DRIVER_RS_DISABLE_A11Y_ADVERTISE"
+                | "CUA_DRIVER_RS_A11Y_ADVERTISE_MODE"
+                | "XAUTHORITY"
+                | "CUA_LOG"
+                | "CUA_DRIVER_RS_HOME"
+                | "CUA_DRIVER_RS_TELEMETRY_ENABLED"
+                | "CUA_TELEMETRY_ENABLED"
+                | "CUA_DRIVER_RS_UPDATE_CHECK"
+        )
+}
+
+pub(crate) fn inherited_managed_environment_name(name: &str) -> bool {
+    matches!(
+        name.to_ascii_uppercase().as_str(),
+        "CUA_DRIVER_PERMISSION_MODE"
+            | "CUA_DRIVER_DANGEROUSLY_BYPASS_APPROVALS"
+            | "CUA_DRIVER_DISABLE_UNRESTRICTED"
+            | "CUA_DRIVER_SESSION_POLICY_FILE"
+            | "CUA_DRIVER_SESSION_POLICY_APPROVED"
+            | "CUA_DRIVER_CAPABILITY_MANIFEST_FILE"
+            | "CUA_DRIVER_CAPABILITY_MANIFEST_APPROVED"
+            | "CUA_DRIVER_POLICY_FILE"
+            | "CUA_DRIVER_MANAGED_POLICY_FILE"
+    )
+}
+
+pub(crate) fn safe_environment(
+    overrides: &[EmbeddedEnvironmentVariable],
+) -> Vec<EmbeddedEnvironmentVariable> {
+    merge_safe_environment(std::env::vars(), overrides)
+}
+
+fn merge_safe_environment(
+    inherited: impl IntoIterator<Item = (String, String)>,
+    overrides: &[EmbeddedEnvironmentVariable],
+) -> Vec<EmbeddedEnvironmentVariable> {
+    let mut values = BTreeMap::new();
+    for (name, value) in inherited {
+        if allowed_environment_name(&name) || inherited_managed_environment_name(&name) {
+            let canonical_name = if inherited_managed_environment_name(&name) {
+                name.to_ascii_uppercase()
+            } else {
+                name
+            };
+            values.insert(
+                canonical_name.to_ascii_uppercase(),
+                EmbeddedEnvironmentVariable {
+                    name: canonical_name,
+                    value,
+                },
+            );
+        }
+    }
+    for variable in overrides {
+        if allowed_environment_name(&variable.name) {
+            values.insert(variable.name.to_ascii_uppercase(), variable.clone());
+        }
+    }
+    values.into_values().collect()
+}
+
+fn validate_metadata(
+    metadata: &DaemonMetadata,
+    expected_pid: u32,
+    host_bundle_id: &str,
+) -> Result<(), EmbeddedDriverError> {
+    let mismatch = if metadata.pid != expected_pid {
+        Some(format!(
+            "endpoint pid {} does not match spawned pid {expected_pid}",
+            metadata.pid
+        ))
+    } else if !metadata.embedded {
+        Some("daemon did not confirm embedded mode".into())
+    } else if metadata.host_bundle_id.as_deref() != Some(host_bundle_id) {
+        Some(format!(
+            "daemon host bundle id {:?} does not match {host_bundle_id}",
+            metadata.host_bundle_id
+        ))
+    } else if metadata.contract_version != CONTRACT_VERSION {
+        Some(format!(
+            "contract version {} does not match SDK {CONTRACT_VERSION}",
+            metadata.contract_version
+        ))
+    } else if metadata.tools_list_schema_version != TOOLS_LIST_SCHEMA_VERSION {
+        Some(format!(
+            "tools-list schema version {} does not match SDK {TOOLS_LIST_SCHEMA_VERSION}",
+            metadata.tools_list_schema_version
+        ))
+    } else if metadata.capability_version != CAPABILITY_VERSION {
+        Some(format!(
+            "capability version {} does not match SDK {CAPABILITY_VERSION}",
+            metadata.capability_version
+        ))
+    } else if metadata.mcp_protocol_version != MCP_PROTOCOL_VERSION {
+        Some(format!(
+            "MCP protocol version {} does not match SDK {MCP_PROTOCOL_VERSION}",
+            metadata.mcp_protocol_version
+        ))
+    } else {
+        None
+    };
+    mismatch.map_or(Ok(()), |reason| {
+        Err(EmbeddedDriverError::IncompatibleDaemon { reason })
+    })
+}
+
+fn default_socket_path(generation: &str) -> String {
+    #[cfg(target_os = "windows")]
+    {
+        format!(r"\\.\pipe\cua-{}-{}", std::process::id(), &generation[..8])
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let filename = format!("cua-{}-{}.sock", std::process::id(), &generation[..8]);
+        let preferred = std::env::temp_dir().join(&filename);
+        if preferred.as_os_str().to_string_lossy().len() < 100 {
+            preferred.to_string_lossy().into_owned()
+        } else {
+            format!("/tmp/{filename}")
+        }
+    }
+}
+
+fn validate_socket_path(socket_path: &str) -> Result<(), EmbeddedDriverError> {
+    if socket_path.trim().is_empty() {
+        return configuration_error("socket_path must not be empty");
+    }
+    #[cfg(unix)]
+    {
+        if !std::path::Path::new(socket_path).is_absolute() {
+            return configuration_error("Unix socket_path must be absolute");
+        }
+        if socket_path.len() >= 104 {
+            return configuration_error(
+                "socket_path exceeds the portable Unix socket length limit",
+            );
+        }
+    }
+    #[cfg(target_os = "windows")]
+    if !socket_path.starts_with(r"\\.\pipe\") {
+        return configuration_error("Windows socket_path must be a named pipe path");
+    }
+    Ok(())
+}
+
+fn prepare_endpoint(socket_path: &str) -> Result<(), EmbeddedDriverError> {
+    validate_socket_path(socket_path)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{FileTypeExt as _, MetadataExt as _};
+        match std::fs::symlink_metadata(socket_path) {
+            Ok(metadata) if metadata.file_type().is_socket() => {
+                if std::os::unix::net::UnixStream::connect(socket_path).is_ok() {
+                    return Err(EmbeddedDriverError::EndpointConflict {
+                        path: socket_path.into(),
+                        reason: "a process is already accepting connections".into(),
+                    });
+                }
+                let current = std::fs::symlink_metadata(socket_path).map_err(|error| {
+                    EmbeddedDriverError::EndpointConflict {
+                        path: socket_path.into(),
+                        reason: format!("stale socket changed during preflight: {error}"),
+                    }
+                })?;
+                if !current.file_type().is_socket()
+                    || current.dev() != metadata.dev()
+                    || current.ino() != metadata.ino()
+                {
+                    return Err(EmbeddedDriverError::EndpointConflict {
+                        path: socket_path.into(),
+                        reason: "stale socket identity changed during preflight".into(),
+                    });
+                }
+                std::fs::remove_file(socket_path).map_err(|error| {
+                    EmbeddedDriverError::EndpointConflict {
+                        path: socket_path.into(),
+                        reason: format!("cannot remove stale socket: {error}"),
+                    }
+                })?;
+            }
+            Ok(_) => {
+                return Err(EmbeddedDriverError::EndpointConflict {
+                    path: socket_path.into(),
+                    reason: "refusing to replace a non-socket path or symlink".into(),
+                });
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(EmbeddedDriverError::EndpointConflict {
+                    path: socket_path.into(),
+                    reason: error.to_string(),
+                });
+            }
+        }
+    }
+    #[cfg(target_os = "windows")]
+    if cua_driver_core::daemon::is_daemon_listening(socket_path) {
+        return Err(EmbeddedDriverError::EndpointConflict {
+            path: socket_path.into(),
+            reason: "a named-pipe server is already listening".into(),
+        });
+    }
+    Ok(())
+}
+
+fn endpoint_may_be_ready(socket_path: &str) -> bool {
+    #[cfg(unix)]
+    {
+        std::fs::symlink_metadata(socket_path)
+            .ok()
+            .is_some_and(|metadata| {
+                use std::os::unix::fs::FileTypeExt as _;
+                metadata.file_type().is_socket()
+            })
+    }
+    #[cfg(target_os = "windows")]
+    {
+        cua_driver_core::daemon::is_daemon_listening(socket_path)
+    }
+    #[cfg(not(any(unix, target_os = "windows")))]
+    {
+        let _ = socket_path;
+        false
+    }
+}
+
+fn capture_endpoint_identity(socket_path: &str) -> Result<EndpointIdentity, EmbeddedDriverError> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{FileTypeExt as _, MetadataExt as _, PermissionsExt as _};
+        let metadata = std::fs::symlink_metadata(socket_path).map_err(|error| {
+            EmbeddedDriverError::Lifecycle {
+                reason: format!("inspect embedded socket after readiness: {error}"),
+            }
+        })?;
+        if !metadata.file_type().is_socket() || metadata.permissions().mode() & 0o777 != 0o600 {
+            return Err(EmbeddedDriverError::Lifecycle {
+                reason: "embedded endpoint is not a private 0600 Unix socket".into(),
+            });
+        }
+        Ok(EndpointIdentity {
+            device: metadata.dev(),
+            inode: metadata.ino(),
+        })
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = socket_path;
+        Ok(EndpointIdentity)
+    }
+}
+
+fn cleanup_owned_endpoint(socket_path: &str, identity: &EndpointIdentity) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt as _;
+        if let Ok(metadata) = std::fs::symlink_metadata(socket_path) {
+            if metadata.dev() == identity.device && metadata.ino() == identity.inode {
+                let _ = std::fs::remove_file(socket_path);
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (socket_path, identity);
+    }
+}
+
+fn spawn_stderr_pump(
+    mut stderr: tokio::process::ChildStderr,
+    diagnostics: SharedDiagnostics,
+    inherit_stderr: bool,
+) -> StderrPump {
+    let (tee_sender, tee) = if inherit_stderr {
+        let (sender, mut receiver) = mpsc::channel::<Vec<u8>>(STDERR_TEE_QUEUE_CHUNKS);
+        let task = tokio::spawn(async move {
+            let mut inherited = tokio::io::stderr();
+            while let Some(bytes) = receiver.recv().await {
+                if inherited.write_all(&bytes).await.is_err() {
+                    break;
+                }
+            }
+        });
+        (Some(sender), Some(task))
+    } else {
+        (None, None)
+    };
+
+    let reader_diagnostics = diagnostics.clone();
+    let reader = tokio::spawn(async move {
+        let mut buffer = [0_u8; 8192];
+        while let Ok(count) = stderr.read(&mut buffer).await {
+            if count == 0 {
+                break;
+            }
+            capture_and_queue_stderr(&reader_diagnostics, &buffer[..count], tee_sender.as_ref());
+        }
+    });
+
+    StderrPump {
+        reader: Some(reader),
+        tee,
+        diagnostics,
+    }
+}
+
+fn capture_and_queue_stderr(
+    diagnostics: &SharedDiagnostics,
+    bytes: &[u8],
+    tee_sender: Option<&mpsc::Sender<Vec<u8>>>,
+) {
+    diagnostics.lock().unwrap().append(bytes);
+    if let Some(sender) = tee_sender {
+        // Diagnostics must keep draining even if inherited stderr is blocked.
+        // The bounded tee is intentionally best effort.
+        let _ = sender.try_send(bytes.to_vec());
+    }
+}
+
+async fn finish_stderr_task(task: Option<JoinHandle<()>>) {
+    let Some(mut task) = task else {
+        return;
+    };
+    if tokio::time::timeout(Duration::from_millis(STDERR_DRAIN_TIMEOUT_MS), &mut task)
+        .await
+        .is_err()
+    {
+        task.abort();
+        let _ = task.await;
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn prevent_console_window(command: &mut Command) {
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn GetConsoleCP() -> u32;
+    }
+    if unsafe { GetConsoleCP() } == 0 {
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn options(mode: EmbeddedPermissionMode) -> EmbeddedDriverHostOptions {
+        EmbeddedDriverHostOptions {
+            binary_path: std::env::current_dir()
+                .expect("test working directory")
+                .join("cua-driver")
+                .to_string_lossy()
+                .into_owned(),
+            host_bundle_id: "com.example.host".into(),
+            socket_path: None,
+            startup_timeout_ms: None,
+            shutdown_timeout_ms: None,
+            permission_mode: Some(mode),
+            capability_manifest_path: None,
+            approve_capability_manifest: false,
+            session_policy_path: None,
+            approve_session_policy: false,
+            dangerously_bypass_approvals: false,
+            environment: Vec::new(),
+            inherit_stderr: false,
+            no_overlay: false,
+            capture_stderr: false,
+        }
+    }
+
+    #[test]
+    fn authorization_modes_require_explicit_acknowledgements() {
+        assert!(validate_options(options(EmbeddedPermissionMode::Standard)).is_ok());
+
+        let mut standard_manifest = options(EmbeddedPermissionMode::Standard);
+        standard_manifest.capability_manifest_path = Some("capabilities.yaml".into());
+        standard_manifest.approve_capability_manifest = true;
+        assert!(validate_options(standard_manifest).is_ok());
+
+        let bounded = options(EmbeddedPermissionMode::Bounded);
+        assert!(validate_options(bounded).is_err());
+        let mut bounded = options(EmbeddedPermissionMode::Bounded);
+        bounded.session_policy_path = Some("policy.json".into());
+        bounded.approve_session_policy = true;
+        assert!(validate_options(bounded).is_ok());
+
+        let unrestricted = options(EmbeddedPermissionMode::Unrestricted);
+        assert!(validate_options(unrestricted).is_err());
+        let mut unrestricted = options(EmbeddedPermissionMode::Unrestricted);
+        unrestricted.dangerously_bypass_approvals = true;
+        assert!(validate_options(unrestricted).is_ok());
+
+        let mut unrestricted_manifest = options(EmbeddedPermissionMode::Unrestricted);
+        unrestricted_manifest.dangerously_bypass_approvals = true;
+        unrestricted_manifest.capability_manifest_path = Some("capabilities.yaml".into());
+        unrestricted_manifest.approve_capability_manifest = true;
+        assert!(validate_options(unrestricted_manifest).is_ok());
+    }
+
+    #[test]
+    fn no_overlay_is_opt_in_on_the_owned_daemon() {
+        let default_host =
+            EmbeddedCuaDriverHost::with_options(options(EmbeddedPermissionMode::Standard)).unwrap();
+        assert!(!default_host
+            .serve_args("/tmp/cua-default.sock")
+            .contains(&"--no-overlay".into()));
+
+        let mut configured = options(EmbeddedPermissionMode::Standard);
+        configured.no_overlay = true;
+        let configured_host = EmbeddedCuaDriverHost::with_options(configured).unwrap();
+        assert!(configured_host
+            .serve_args("/tmp/cua-no-overlay.sock")
+            .contains(&"--no-overlay".into()));
+    }
+
+    #[test]
+    fn capability_manifest_aliases_must_not_conflict() {
+        let mut options = options(EmbeddedPermissionMode::Standard);
+        options.capability_manifest_path = Some("capabilities-v3.yaml".into());
+        options.session_policy_path = Some("legacy-v2.yaml".into());
+        options.approve_capability_manifest = true;
+        assert!(validate_options(options).is_err());
+    }
+
+    #[test]
+    fn environment_is_allowlisted_and_driver_controls_are_reserved() {
+        assert!(allowed_environment_name("PATH"));
+        assert!(allowed_environment_name("WAYLAND_DISPLAY"));
+        assert!(!allowed_environment_name("CUA_DRIVER_PERMISSION_MODE"));
+        assert!(!allowed_environment_name("LD_PRELOAD"));
+        assert!(!allowed_environment_name("NODE_OPTIONS"));
+        assert!(allowed_environment_name(
+            "CUA_DRIVER_WINDOW_CHANGE_TIMEOUT_MS"
+        ));
+        assert!(allowed_environment_name("CUA_DRIVER_WINDOW_CHANGE_POLL_MS"));
+    }
+
+    #[test]
+    fn driver_state_root_is_inherited_and_overridable() {
+        let inherited = [("CUA_DRIVER_RS_HOME".into(), "host-state".into())];
+        for (overrides, expected) in [
+            (Vec::new(), "host-state"),
+            (
+                vec![EmbeddedEnvironmentVariable {
+                    name: "CUA_DRIVER_RS_HOME".into(),
+                    value: "isolated-state".into(),
+                }],
+                "isolated-state",
+            ),
+        ] {
+            let mut host_options = options(EmbeddedPermissionMode::Standard);
+            host_options.environment = overrides;
+            let validated = validate_options(host_options).expect("state root is supported");
+            let values = merge_safe_environment(inherited.clone(), &validated.environment);
+            assert_eq!(values.len(), 1);
+            assert_eq!(values[0].name, "CUA_DRIVER_RS_HOME");
+            assert_eq!(values[0].value, expected);
+        }
+    }
+
+    #[test]
+    fn diagnostic_capture_reports_only_discarded_bytes_as_truncated() {
+        let mut under = DiagnosticCapture::new();
+        under.append(&vec![b'a'; STDERR_TAIL_LIMIT_BYTES - 1]);
+        assert!(!under.snapshot().stderr_truncated);
+
+        let mut exact = DiagnosticCapture::new();
+        exact.append(&vec![b'a'; STDERR_TAIL_LIMIT_BYTES]);
+        assert!(!exact.snapshot().stderr_truncated);
+
+        let mut over = DiagnosticCapture::new();
+        over.append(&vec![b'a'; STDERR_TAIL_LIMIT_BYTES + 1]);
+        assert!(over.snapshot().stderr_truncated);
+        assert_eq!(over.snapshot().stderr_tail.len(), STDERR_TAIL_LIMIT_BYTES);
+
+        let mut replaced = DiagnosticCapture::new();
+        replaced.append(b"discarded");
+        replaced.append(&vec![b'a'; STDERR_TAIL_LIMIT_BYTES]);
+        assert!(replaced.snapshot().stderr_truncated);
+    }
+
+    #[tokio::test]
+    async fn blocked_stderr_tee_does_not_block_or_drop_diagnostics() {
+        let diagnostics = Arc::new(Mutex::new(DiagnosticCapture::new()));
+        let (sender, _receiver) = mpsc::channel(1);
+
+        capture_and_queue_stderr(&diagnostics, b"first-", Some(&sender));
+        capture_and_queue_stderr(&diagnostics, b"second", Some(&sender));
+
+        let snapshot = diagnostics.lock().unwrap().snapshot();
+        assert_eq!(snapshot.stderr_tail, "first-second");
+    }
+
+    #[test]
+    fn telemetry_preferences_are_inherited_and_overridable() {
+        assert!(allowed_environment_name("CUA_DRIVER_RS_TELEMETRY_ENABLED"));
+        assert!(allowed_environment_name("cua_telemetry_enabled"));
+
+        let inherited = [
+            ("CUA_DRIVER_RS_TELEMETRY_ENABLED".into(), "1".into()),
+            ("CUA_TELEMETRY_ENABLED".into(), "true".into()),
+        ];
+        let values = merge_safe_environment(inherited.clone(), &[]);
+        assert!(values.iter().any(|variable| {
+            variable.name == "CUA_DRIVER_RS_TELEMETRY_ENABLED" && variable.value == "1"
+        }));
+        assert!(values.iter().any(|variable| {
+            variable.name == "CUA_TELEMETRY_ENABLED" && variable.value == "true"
+        }));
+
+        let values = merge_safe_environment(
+            inherited,
+            &[
+                EmbeddedEnvironmentVariable {
+                    name: "CUA_DRIVER_RS_TELEMETRY_ENABLED".into(),
+                    value: "0".into(),
+                },
+                EmbeddedEnvironmentVariable {
+                    name: "CUA_TELEMETRY_ENABLED".into(),
+                    value: "false".into(),
+                },
+            ],
+        );
+
+        assert!(values.iter().any(|variable| {
+            variable.name == "CUA_DRIVER_RS_TELEMETRY_ENABLED" && variable.value == "0"
+        }));
+        assert!(values.iter().any(|variable| {
+            variable.name == "CUA_TELEMETRY_ENABLED" && variable.value == "false"
+        }));
+    }
+
+    #[test]
+    fn update_check_preference_is_inherited_and_overridable() {
+        assert!(allowed_environment_name("CUA_DRIVER_RS_UPDATE_CHECK"));
+        assert!(allowed_environment_name("cua_driver_rs_update_check"));
+
+        let inherited = [("CUA_DRIVER_RS_UPDATE_CHECK".into(), "1".into())];
+        let values = merge_safe_environment(inherited.clone(), &[]);
+        assert!(values.iter().any(|variable| {
+            variable.name == "CUA_DRIVER_RS_UPDATE_CHECK" && variable.value == "1"
+        }));
+
+        let values = merge_safe_environment(
+            inherited,
+            &[EmbeddedEnvironmentVariable {
+                name: "CUA_DRIVER_RS_UPDATE_CHECK".into(),
+                value: "false".into(),
+            }],
+        );
+        assert!(values.iter().any(|variable| {
+            variable.name == "CUA_DRIVER_RS_UPDATE_CHECK" && variable.value == "false"
+        }));
+    }
+
+    #[test]
+    fn managed_environment_is_inherited_case_insensitively_but_never_overridden() {
+        assert!(inherited_managed_environment_name(
+            "cua_driver_disable_unrestricted"
+        ));
+        let values = merge_safe_environment(
+            [
+                ("Path".into(), "inherited-path".into()),
+                (
+                    "cua_driver_disable_unrestricted".into(),
+                    "inherited-lock".into(),
+                ),
+            ],
+            &[
+                EmbeddedEnvironmentVariable {
+                    name: "PATH".into(),
+                    value: "host-path".into(),
+                },
+                EmbeddedEnvironmentVariable {
+                    name: "CUA_DRIVER_DISABLE_UNRESTRICTED".into(),
+                    value: "forged-lock".into(),
+                },
+            ],
+        );
+        assert!(values
+            .iter()
+            .any(|variable| variable.name == "PATH" && variable.value == "host-path"));
+        assert!(values.iter().any(|variable| {
+            variable.name == "CUA_DRIVER_DISABLE_UNRESTRICTED" && variable.value == "inherited-lock"
+        }));
+        assert!(!values
+            .iter()
+            .any(|variable| variable.value == "forged-lock"));
+    }
+
+    #[test]
+    fn wayland_backend_opt_in_reaches_embedded_driver() {
+        let name = "CUA_DRIVER_RS_ENABLE_WAYLAND";
+        assert!(allowed_environment_name(name));
+        let inherited = [(name.to_owned(), "1".to_owned())];
+        let values = merge_safe_environment(inherited.clone(), &[]);
+        assert!(values
+            .iter()
+            .any(|variable| variable.name == name && variable.value == "1"));
+
+        // Hosts can opt in without changing their own process environment.
+        let enabled = EmbeddedEnvironmentVariable {
+            name: name.into(),
+            value: "1".into(),
+        };
+        let values = merge_safe_environment(std::iter::empty(), &[enabled]);
+        assert!(values
+            .iter()
+            .any(|variable| variable.name == name && variable.value == "1"));
+
+        // An explicit opt-out still wins over the inherited opt-in.
+        let disabled = EmbeddedEnvironmentVariable {
+            name: name.into(),
+            value: "0".into(),
+        };
+        let values = merge_safe_environment(inherited, &[disabled]);
+        assert!(values
+            .iter()
+            .any(|variable| variable.name == name && variable.value == "0"));
+        assert!(!allowed_environment_name("LD_PRELOAD"));
+        assert!(!allowed_environment_name(
+            "CUA_DRIVER_DANGEROUSLY_BYPASS_APPROVALS"
+        ));
+    }
+
+    #[test]
+    fn interactive_linux_session_environment_is_inherited() {
+        let values = merge_safe_environment(
+            [
+                ("WAYLAND_DISPLAY".into(), "wayland-7".into()),
+                ("XDG_RUNTIME_DIR".into(), "/run/user/1000".into()),
+                ("XDG_SESSION_TYPE".into(), "wayland".into()),
+                (
+                    "DBUS_SESSION_BUS_ADDRESS".into(),
+                    "unix:path=/run/user/1000/bus".into(),
+                ),
+                ("AT_SPI_BUS_ADDRESS".into(), "must-not-leak".into()),
+            ],
+            &[],
+        );
+
+        for (name, value) in [
+            ("WAYLAND_DISPLAY", "wayland-7"),
+            ("XDG_RUNTIME_DIR", "/run/user/1000"),
+            ("XDG_SESSION_TYPE", "wayland"),
+            ("DBUS_SESSION_BUS_ADDRESS", "unix:path=/run/user/1000/bus"),
+        ] {
+            assert!(values
+                .iter()
+                .any(|variable| variable.name == name && variable.value == value));
+        }
+        assert!(!values
+            .iter()
+            .any(|variable| variable.name == "AT_SPI_BUS_ADDRESS"));
+    }
+
+    #[test]
+    fn desktop_identity_and_accessibility_controls_reach_the_child() {
+        for name in [
+            "XDG_CURRENT_DESKTOP",
+            "XDG_SESSION_DESKTOP",
+            "DESKTOP_SESSION",
+            "NO_AT_BRIDGE",
+            "CUA_DRIVER_RS_DISABLE_A11Y_ADVERTISE",
+            "CUA_DRIVER_RS_A11Y_ADVERTISE_MODE",
+        ] {
+            let inherited = [(name.to_owned(), "inherited".to_owned())];
+            let host = EmbeddedEnvironmentVariable {
+                name: name.into(),
+                value: "host".into(),
+            };
+            for (values, expected) in [
+                (merge_safe_environment(inherited.clone(), &[]), "inherited"),
+                (
+                    merge_safe_environment(std::iter::empty(), std::slice::from_ref(&host)),
+                    "host",
+                ),
+                (merge_safe_environment(inherited, &[host]), "host"),
+            ] {
+                let reached: Vec<_> = values
+                    .iter()
+                    .filter(|variable| variable.name == name)
+                    .map(|variable| variable.value.as_str())
+                    .collect();
+                assert_eq!(reached, [expected], "{name}");
+            }
+        }
+    }
+
+    #[test]
+    fn metadata_validation_requires_same_process_and_contract() {
+        let metadata = DaemonMetadata {
+            driver_version: env!("CARGO_PKG_VERSION").into(),
+            contract_version: CONTRACT_VERSION.into(),
+            tools_list_schema_version: TOOLS_LIST_SCHEMA_VERSION.into(),
+            capability_version: CAPABILITY_VERSION.into(),
+            mcp_protocol_version: MCP_PROTOCOL_VERSION.into(),
+            pid: 42,
+            embedded: true,
+            host_bundle_id: Some("com.example.host".into()),
+        };
+        assert!(validate_metadata(&metadata, 42, "com.example.host").is_ok());
+        assert!(validate_metadata(&metadata, 43, "com.example.host").is_err());
+        assert!(validate_metadata(&metadata, 42, "com.other").is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn endpoint_preflight_refuses_non_socket_paths() {
+        let directory = crate::socket_tempdir();
+        let file = directory.path().join("important.txt");
+        std::fs::write(&file, "keep").unwrap();
+        let error = prepare_endpoint(file.to_str().unwrap()).unwrap_err();
+        assert!(matches!(
+            error,
+            EmbeddedDriverError::EndpointConflict { .. }
+        ));
+        assert_eq!(std::fs::read_to_string(file).unwrap(), "keep");
+    }
+
+    #[test]
+    fn generated_default_endpoint_is_short_and_unique() {
+        let first = default_socket_path("01234567-89ab-cdef-0123-456789abcdef");
+        let second = default_socket_path("fedcba98-7654-3210-fedc-ba9876543210");
+        assert_ne!(first, second);
+        #[cfg(unix)]
+        assert!(first.len() < 104);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn cancelled_stop_resets_state_and_cleans_its_endpoint() {
+        let host = EmbeddedCuaDriverHost::new(
+            "/example/cua-driver".into(),
+            "com.example.cancel-stop".into(),
+        )
+        .unwrap();
+        let directory = crate::socket_tempdir();
+        let socket_path = directory.path().join("driver.sock");
+        let listener = std::os::unix::net::UnixListener::bind(&socket_path).unwrap();
+        std::fs::set_permissions(
+            &socket_path,
+            std::os::unix::fs::PermissionsExt::from_mode(0o600),
+        )
+        .unwrap();
+        let endpoint_identity = capture_endpoint_identity(socket_path.to_str().unwrap()).unwrap();
+
+        let mut child = Command::new("/bin/sh");
+        child
+            .args(["-c", "while :; do sleep 1; done"])
+            .stdin(Stdio::piped())
+            .kill_on_drop(true);
+        let mut child = child.spawn().unwrap();
+        let liveness = child.stdin.take();
+        let generation = "cancelled-stop-generation".to_owned();
+        let running = RunningProcess {
+            connection: EmbeddedDriverConnection {
+                socket_path: socket_path.to_string_lossy().into_owned(),
+                pid: child.id().unwrap(),
+                generation: generation.clone(),
+                driver_version: env!("CARGO_PKG_VERSION").into(),
+                contract_version: CONTRACT_VERSION.into(),
+                mcp_protocol_version: MCP_PROTOCOL_VERSION.into(),
+                mcp: EmbeddedMcpConfiguration {
+                    command: "/example/cua-driver".into(),
+                    args: Vec::new(),
+                    environment: Vec::new(),
+                },
+            },
+            process: ManagedChild {
+                child,
+                liveness,
+                stderr_pump: None,
+                shutdown_timeout: Duration::from_millis(DEFAULT_SHUTDOWN_TIMEOUT_MS),
+            },
+            endpoint_identity,
+        };
+        host.inner.lock().unwrap().phase = HostPhase::Stopping { generation };
+
+        drop(StopTransitionGuard {
+            host: host.clone(),
+            running: Some(running),
+            armed: true,
+        });
+        drop(listener);
+
+        assert_eq!(host.state(), EmbeddedDriverHostState::Stopped);
+        assert!(!socket_path.exists());
+    }
+
+    /// `CUA_DRIVER_KEY_GAP_MS` must survive both propagation paths into a child launch —
+    /// inherited from the parent environment and supplied as an explicit
+    /// override. An allowlist miss silently strips the deployment's
+    /// override in embedded/worker modes.
+    #[test]
+    fn key_gap_env_propagates() {
+        for name in [
+            "CUA_DRIVER_MOUSE_PRIMER_MS",
+            "CUA_DRIVER_CLICK_GAP_MS",
+            "CUA_DRIVER_MULTI_CLICK_GAP_MS",
+            "CUA_DRIVER_WEBKIT_SETTLE_MS",
+        ] {
+            assert!(allowed_environment_name(name), "{name}");
+        }
+        assert!(allowed_environment_name("CUA_DRIVER_KEY_GAP_MS"));
+        let merged =
+            merge_safe_environment([("CUA_DRIVER_KEY_GAP_MS".to_owned(), "7".to_owned())], &[]);
+        assert!(merged
+            .iter()
+            .any(|v| v.name.eq_ignore_ascii_case("CUA_DRIVER_KEY_GAP_MS") && v.value == "7"));
+        let overrides = vec![EmbeddedEnvironmentVariable {
+            name: "CUA_DRIVER_KEY_GAP_MS".to_owned(),
+            value: "3".to_owned(),
+        }];
+        let merged = merge_safe_environment(std::iter::empty(), &overrides);
+        assert!(merged
+            .iter()
+            .any(|v| v.name.eq_ignore_ascii_case("CUA_DRIVER_KEY_GAP_MS") && v.value == "3"));
+    }
+
+    /// `CUA_DRIVER_BATCH_PACING` must reach an embedded child, or a host that
+    /// sets it to record full-speed cursor motion is silently overridden.
+    #[test]
+    fn batch_pacing_env_propagates() {
+        assert!(allowed_environment_name("CUA_DRIVER_BATCH_PACING"));
+        let merged = merge_safe_environment(
+            [("CUA_DRIVER_BATCH_PACING".to_owned(), "full".to_owned())],
+            &[],
+        );
+        assert!(merged
+            .iter()
+            .any(|v| v.name.eq_ignore_ascii_case("CUA_DRIVER_BATCH_PACING") && v.value == "full"));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[tokio::test]
+    async fn daemon_console_window_follows_the_host_console() {
+        use std::os::windows::process::CommandExt as _;
+
+        const ROLE: &str = "CUA_DRIVER_SDK_TEST_CONSOLE_ROLE";
+        const HOST_PID: &str = "CUA_DRIVER_SDK_TEST_CONSOLE_HOST_PID";
+        const DETACHED_PROCESS: u32 = 0x0000_0008;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        #[link(name = "kernel32")]
+        unsafe extern "system" {
+            fn GetConsoleWindow() -> *mut std::ffi::c_void;
+            fn GetConsoleProcessList(list: *mut u32, count: u32) -> u32;
+        }
+        let rerun = [
+            "--exact",
+            "embedded::tests::daemon_console_window_follows_the_host_console",
+            "--nocapture",
+        ];
+        let assert_probe_passed = |output: std::process::Output| {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            assert!(
+                output.status.success() && stdout.contains("1 passed"),
+                "{stdout}{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        };
+
+        match std::env::var(ROLE).as_deref() {
+            Ok("probe-without-console") => {
+                let window = unsafe { GetConsoleWindow() };
+                assert!(
+                    window.is_null(),
+                    "a console window was opened for the daemon"
+                );
+            }
+            Ok("probe-with-console") => {
+                let host: u32 = std::env::var(HOST_PID).unwrap().parse().unwrap();
+                let mut attached = [0u32; 64];
+                let count = unsafe { GetConsoleProcessList(attached.as_mut_ptr(), 64) } as usize;
+                assert!(
+                    attached[..count.min(64)].contains(&host),
+                    "the daemon left its host's console"
+                );
+            }
+            Ok(host @ ("host-without-console" | "host-with-console")) => {
+                let mut probe = Command::new(std::env::current_exe().unwrap());
+                probe
+                    .args(rerun)
+                    .env(ROLE, host.replace("host-", "probe-"))
+                    .env(HOST_PID, std::process::id().to_string())
+                    .stdin(Stdio::null());
+                prevent_console_window(&mut probe);
+                assert_probe_passed(probe.output().await.unwrap());
+            }
+            _ => {
+                for (host, flags) in [
+                    ("host-without-console", DETACHED_PROCESS),
+                    ("host-with-console", CREATE_NO_WINDOW),
+                ] {
+                    let output = std::process::Command::new(std::env::current_exe().unwrap())
+                        .args(rerun)
+                        .env(ROLE, host)
+                        .creation_flags(flags)
+                        .output()
+                        .unwrap();
+                    assert_probe_passed(output);
+                }
+            }
+        }
+    }
+}

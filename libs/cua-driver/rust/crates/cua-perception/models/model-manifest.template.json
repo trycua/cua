@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "identity": {
+    "name": "omniparser-v2-ppocrv5-en",
+    "version": "2026-09-17",
+    "source_url": "https://huggingface.co/microsoft/OmniParser-v2.0",
+    "source_revision": "6600256cb0f1b07651e3bc86166196307bad7e2d",
+    "license": "AGPL-3.0 (detector); Apache-2.0 (OCR)"
+  },
+  "onnx_runtime": {
+    "version": "1.26.0",
+    "target": "REPLACE_WITH_RUST_TARGET_TRIPLE",
+    "library_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "intra_threads": 2
+  },
+  "detector": {
+    "model": {
+      "path": "artifacts/omniparser-icon-detect-1280-opset17.onnx",
+      "sha256": "d8a876bf7f9fb73d7da9432904ade7fa78e092e9a91674e5a2806b45562a9ab2"
+    },
+    "input_name": "images",
+    "output_name": "output0",
+    "input_width": 1280,
+    "input_height": 1280,
+    "confidence_threshold": 0.3,
+    "iou_threshold": 0.1,
+    "output_layout": "yolo_v8_cxcywh_class_scores",
+    "max_candidates": 10000,
+    "max_detections": 1000
+  },
+  "ocr": {
+    "detector": {
+      "model": {
+        "path": "artifacts/ppocrv5-mobile-det.onnx",
+        "sha256": "a431985659dc921974177a95adcfbb90fd9e51989a5e04d70d0b75f597b6e61d"
+      },
+      "input_name": "x",
+      "output_name": "fetch_name_0",
+      "input_width": 960,
+      "input_height": 960,
+      "pixel_threshold": 0.3,
+      "box_threshold": 0.6,
+      "unclip_ratio": 1.5,
+      "minimum_area": 3,
+      "minimum_side": 3,
+      "max_candidates": 1000
+    },
+    "recognizer": {
+      "model": {
+        "path": "artifacts/ppocrv5-mobile-rec-en.onnx",
+        "sha256": "b5f833dfc5d0eb71da397b4efa06ebeee9b431b690a47d6af40d77d8eabc557f"
+      },
+      "input_name": "x",
+      "output_name": "fetch_name_0",
+      "input_width": 320,
+      "input_height": 48,
+      "blank_index": 0
+    },
+    "dictionary": {
+      "path": "artifacts/ppocrv5-mobile-rec-en-inference.yml",
+      "sha256": "27e91d0582f40168aa218303c76e184bc78fa7a5d105aad0cfbad8458b441067"
+    },
+    "dictionary_format": "paddle_inference_yaml"
+  }
+}

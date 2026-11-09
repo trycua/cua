@@ -1,7 +1,8 @@
 # Cua Docker XFCE Container
-# Vanilla XFCE desktop with noVNC and computer-server
+# Vanilla XFCE desktop with noVNC and cua-spacesd
+# Uses the official KiCad 9 image as base (Debian Bookworm + KiCad 9 pre-installed)
 
-FROM ubuntu:22.04
+FROM kicad/kicad:9.0
 
 # Avoid prompts from apt
 ENV DEBIAN_FRONTEND=noninteractive
@@ -11,21 +12,22 @@ ENV HOME=/home/cua
 ENV DISPLAY=:1
 ENV VNC_PORT=5901
 ENV NOVNC_PORT=6901
-ENV API_PORT=8000
+ENV CUA_ENV_PORT=3211
 ENV VNC_RESOLUTION=1024x768
 ENV VNC_COL_DEPTH=24
 
-# Install system dependencies first (including sudo)
+USER root
+
+# Install system dependencies
 RUN apt-get update && apt-get install -y \
     # System utilities
     sudo \
     unzip \
     zip \
     xdg-utils \
-    gcc \
     # DHCP client for networking
     isc-dhcp-client \
-    # Qt/XCB runtime deps for PyQt5 (libqxcb.so)
+    # Qt/XCB runtime deps for KiCad/XFCE
     libxcb-icccm4 \
     libxcb-image0 \
     libxcb-keysyms1 \
@@ -44,125 +46,140 @@ RUN apt-get update && apt-get install -y \
     dbus-x11 \
     # VNC server
     tigervnc-standalone-server \
-    tigervnc-common \
+    tigervnc-tools \
     # noVNC dependencies
-    # python will be installed via deadsnakes as 3.12 \
     git \
     net-tools \
-    netcat \
+    netcat-openbsd \
     supervisor \
-    # Computer-server dependencies
-    # python-tk/dev for 3.12 will be installed later \
+    # Desktop tooling (screenshot, window control, clipboard)
     gnome-screenshot \
     wmctrl \
     ffmpeg \
     socat \
     xclip \
-    # Browser
+    # Browser (used by agent)
     wget \
-    software-properties-common \
-    # Build tools
-    build-essential \
-    libncursesw5-dev \
-    libssl-dev \
-    libsqlite3-dev \
-    tk-dev \
-    libgl1-mesa-dev \
-    libgdbm-dev \
-    libc6-dev \
-    libbz2-dev \
-    libffi-dev \
-    zlib1g-dev \
-    && rm -rf /var/lib/apt/lists/*
+    ca-certificates \
+    curl \
+    firefox-esr \
+    # GTK/WebKit for pywebview (cua-bench-ui task display)
 
-# Install Python 3.12 from deadsnakes (keep system python3 for apt)
-RUN add-apt-repository -y ppa:deadsnakes/ppa && \
-    apt-get update && apt-get install -y \
-    python3.12 python3.12-venv python3.12-dev python3.12-tk \
-    && \
-    python3.12 -m ensurepip --upgrade && \
-    python3.12 -m pip install --upgrade pip setuptools wheel && \
-    python3.12 -m pip install uv && \
-    rm -rf /var/lib/apt/lists/*
-
-# Ensure 'python' and 'python3' both point to Python 3.12
-RUN update-alternatives --install /usr/bin/python python /usr/bin/python3.12 2 && \
-    ln -sf /usr/bin/python3.12 /usr/local/bin/python3
-
-# Remove screensavers and power manager to avoid popups and lock screens
-RUN apt-get remove -y \
-    xfce4-power-manager \
-    xfce4-power-manager-data \
-    xfce4-power-manager-plugins \
-    xfce4-screensaver \
-    light-locker \
-    xscreensaver \
-    xscreensaver-data || true
-
-# Create user after sudo is installed
-RUN useradd -m -s /bin/bash -G sudo cua && \
-    echo "cua:cua" | chpasswd && \
-    echo "cua ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
-
-# Install Firefox from Mozilla PPA (snap-free) - inline to avoid script issues
-RUN apt-get update && \
-    add-apt-repository -y ppa:mozillateam/ppa && \
-    echo 'Package: *\nPin: release o=LP-PPA-mozillateam\nPin-Priority: 1001' > /etc/apt/preferences.d/mozilla-firefox && \
-    apt-get update && \
-    apt-get install -y firefox && \
-    echo 'pref("datareporting.policy.firstRunURL", "");\npref("datareporting.policy.dataSubmissionEnabled", false);\npref("datareporting.healthreport.service.enabled", false);\npref("datareporting.healthreport.uploadEnabled", false);\npref("trailhead.firstrun.branches", "nofirstrun-empty");\npref("browser.aboutwelcome.enabled", false);' > /usr/lib/firefox/browser/defaults/preferences/firefox.js && \
-    update-alternatives --install /usr/bin/x-www-browser x-www-browser /usr/bin/firefox 100 && \
-    update-alternatives --install /usr/bin/gnome-www-browser gnome-www-browser /usr/bin/firefox 100 && \
-    rm -rf /var/lib/apt/lists/*
-
-# Install noVNC
-RUN git clone https://github.com/trycua/noVNC.git /opt/noVNC && \
-    git clone https://github.com/novnc/websockify /opt/noVNC/utils/websockify && \
-    ln -s /opt/noVNC/vnc.html /opt/noVNC/index.html
-
-# Pre-create cache directory with correct ownership before pip install
-RUN mkdir -p /home/cua/.cache && \
-    chown -R cua:cua /home/cua/.cache
-
-# Install computer-server and cua-agent
-RUN uv pip install --system cua-computer-server "cua-agent[cloud]>=0.7.35"
-
-# Install GTK and WebKit dependencies for pywebview
-RUN apt-get update && apt-get install -y \
-    python3-gi \
-    python3-gi-cairo \
     gir1.2-gtk-3.0 \
     gir1.2-webkit2-4.1 \
     libgirepository1.0-dev \
     libcairo2-dev \
     pkg-config \
     gobject-introspection \
+    # Python pip to bootstrap uv
+    python3-pip \
     && rm -rf /var/lib/apt/lists/*
 
-# Install pywebview with GTK backend, used by cua-bench for web UIs
-RUN uv pip install --system "pywebview[gtk]"
-RUN uv pip install --system cua-bench-ui>=0.7.0 --no-cache-dir
+# CUA-1948: the compromised eMudhra intermediates. Ubuntu's ca-certificates >= 20260816ubuntu0.<release>.1 drops the
+# roots they chain to; Debian has not shipped that yet, so disable both roots explicitly (a no-op once they are gone).
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates \
+ && sed -i -E 's#^(mozilla/(emSign_ECC_Root_CA_-_G3|Comodo_AAA_Services_root)\.crt)$#!\1#' /etc/ca-certificates.conf \
+ && update-ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
 
-# Install playwright and Firefox dependencies
-RUN uv pip install --system playwright && \
-    python3.12 -m playwright install --with-deps firefox
+# Install uv, Python 3.13, and create venv at /opt/venv
+# Python 3.13 satisfies cua-bench-ui's >=3.12 requirement (Bookworm only has 3.11)
+RUN pip3 install --break-system-packages uv && \
+    uv python install 3.13 && \
+    uv venv /opt/venv --python 3.13 && \
+    ln -sf /opt/venv/bin/python3 /usr/local/bin/python3 && \
+    ln -sf /opt/venv/bin/python3 /usr/local/bin/python
+ENV PATH="/opt/venv/bin:${PATH}"
 
-# Fix any cache files created by pip
-RUN chown -R cua:cua /home/cua/.cache
+# Remove screensavers and power manager to avoid popups and lock screens
+RUN apt-get remove -y \
+    xfce4-power-manager \
+    xfce4-screensaver \
+    light-locker \
+    xscreensaver || true
+
+# Create cua user
+RUN useradd -m -s /bin/bash -G sudo cua && \
+    echo "cua:cua" | chpasswd && \
+    echo "cua ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
+
+# Configure Firefox ESR
+RUN echo 'pref("datareporting.policy.firstRunURL", "");\npref("datareporting.policy.dataSubmissionEnabled", false);\npref("datareporting.healthreport.service.enabled", false);\npref("datareporting.healthreport.uploadEnabled", false);\npref("trailhead.firstrun.branches", "nofirstrun-empty");\npref("browser.aboutwelcome.enabled", false);' > /usr/lib/firefox-esr/browser/defaults/preferences/firefox.js && \
+    update-alternatives --install /usr/bin/x-www-browser x-www-browser /usr/bin/firefox-esr 100 && \
+    update-alternatives --install /usr/bin/gnome-www-browser gnome-www-browser /usr/bin/firefox-esr 100
+
+# Install noVNC
+RUN git clone https://github.com/trycua/noVNC.git /opt/noVNC && \
+    git clone https://github.com/novnc/websockify /opt/noVNC/utils/websockify && \
+    ln -s /opt/noVNC/vnc.html /opt/noVNC/index.html
+
+# Install Python packages into /opt/venv (Python 3.13)
+RUN uv pip install --python /opt/venv/bin/python3 \
+    "cua-agent[all]" \
+    "pywebview[gtk]" \
+    "cua-bench-ui>=0.7.0" \
+    "aiohttp>=3.9.0" \
+    "aiofiles>=23.0.0" \
+    "websockets>=12.0" \
+    "rich>=14.2.0" \
+    "tqdm>=4.66.0" \
+    "jinja2>=3.1.0" \
+    "pyquery>=2.0.1" \
+    "html5lib>=1.1" \
+    "beautifulsoup4>=4.14.2" \
+    "pillow>=11.0.0" \
+    "numpy>=2.0.0" \
+    "python-dotenv>=1.0.0" \
+    "psutil>=5.9.0" \
+    "datasets>=3.0.0" \
+    "matplotlib>=3.8.0" \
+    "anthropic>=0.26.0"
+
+# Install the typed Cua Driver SDK and its bundled executable for co-located
+# applications. The remote API is cua-spacesd (installed below).
+COPY requirements-cua-driver.txt /tmp/requirements-cua-driver.txt
+RUN uv pip install --python /opt/venv/bin/python3 --no-cache-dir \
+        -r /tmp/requirements-cua-driver.txt && \
+    /opt/venv/bin/python3 -c \
+        "from pathlib import Path; from cua_driver import CuaDriver, get_binary_path; assert Path(get_binary_path()).is_file()" && \
+    /opt/venv/bin/cua-driver --version
+
+# Install cua-spacesd, the in-sandbox daemon (gRPC + gRPC-Web on :3211).
+# Same artifact as libs/cua-spacesd/packaging/install.sh installs.
+ARG CUA_SPACESD_VERSION=0.1.0
+# release (default) installs the published cua-spacesd; none leaves it out
+# (pull-request builds before that version is published).
+ARG CUA_SPACESD_SOURCE=release
+ARG TARGETARCH
+RUN set -eux; \
+    if [ "$CUA_SPACESD_SOURCE" = none ]; then \
+      echo "CUA_SPACESD_SOURCE=none: cua-spacesd not installed"; exit 0; \
+    fi; \
+    [ "$CUA_SPACESD_SOURCE" = release ] || { echo "CUA_SPACESD_SOURCE must be release or none" >&2; exit 1; }; \
+    case "${TARGETARCH:-$(dpkg --print-architecture)}" in \
+      amd64|x86_64) arch=x86_64 ;; \
+      arm64|aarch64) arch=aarch64 ;; \
+      *) echo "unsupported arch" >&2; exit 1 ;; \
+    esac; \
+    url="https://github.com/trycua/cua/releases/download/cua-spacesd-v${CUA_SPACESD_VERSION}/cua-spacesd-${arch}-unknown-linux-gnu.tar.gz"; \
+    curl -fsSL "$url" | tar -xz -C /usr/local/bin cua-spacesd; \
+    chmod 0755 /usr/local/bin/cua-spacesd; \
+    ln -s cua-spacesd /usr/local/bin/cua-env-driver; \
+    ln -s cua-spacesd /usr/local/bin/cua-guestd
+RUN install -d -o cua -g cua -m 0700 /run/cua
 
 # Copy startup scripts
 COPY src/supervisor/ /etc/supervisor/conf.d/
 COPY src/scripts/ /usr/local/bin/
-
-# Make scripts executable
 RUN chmod +x /usr/local/bin/*.sh
 
-# Setup VNC
+# Set ownership and switch to cua user
 RUN chown -R cua:cua /home/cua
 USER cua
 WORKDIR /home/cua
 
-# Create VNC directory (no password needed with SecurityTypes None)
+# Create VNC directory
 RUN mkdir -p $HOME/.vnc
 
 # Configure XFCE for first start
@@ -177,17 +194,15 @@ COPY --chown=cua:cua src/xfce-config/xfce4-power-manager.xml $HOME/.config/xfce4
 RUN echo "[Desktop Entry]\nHidden=true" > $HOME/.config/autostart/xfce4-tips-autostart.desktop && \
     echo "[Desktop Entry]\nHidden=true" > $HOME/.config/autostart/xfce4-screensaver.desktop && \
     echo "[Desktop Entry]\nHidden=true" > $HOME/.config/autostart/light-locker.desktop && \
-    echo "[Desktop Entry]\nHidden=true" > $HOME/.config/autostart/xfce4-power-manager.desktop && \
-    chown -R cua:cua $HOME/.config
+    echo "[Desktop Entry]\nHidden=true" > $HOME/.config/autostart/xfce4-power-manager.desktop
 
-# Create storage and shared directories, and Firefox cache directory
-RUN mkdir -p $HOME/storage $HOME/shared $HOME/.cache/dconf $HOME/.mozilla/firefox && \
-    chown -R cua:cua $HOME/storage $HOME/shared $HOME/.cache $HOME/.mozilla $HOME/.vnc
+# Create storage and shared directories
+RUN mkdir -p $HOME/storage $HOME/shared $HOME/.cache/dconf $HOME/.mozilla/firefox
 
 USER root
 
 # Expose ports
-EXPOSE $VNC_PORT $NOVNC_PORT $API_PORT
+EXPOSE $VNC_PORT $NOVNC_PORT $CUA_ENV_PORT
 
 # Start services via supervisor
 CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/supervisord.conf"]

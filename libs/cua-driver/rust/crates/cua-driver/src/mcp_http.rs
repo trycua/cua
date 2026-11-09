@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Streamable-HTTP MCP transport for the daemon (trycua/cua#1799).
 //!
 //! Why: over **stdio**, one `cua-driver mcp` process is a single pipe, so all of
@@ -22,23 +25,41 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use cua_driver_core::protocol::{Request, Response};
-use cua_driver_core::server::handle_request;
-use cua_driver_core::tool::ToolRegistry;
+use cua_driver_core::server::{
+    handle_request_with_transport_session, tool_observation_timer, StdioExecutionPath,
+};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tracing::{debug, info, warn};
 
+const MCP_HTTP_TOKEN_ENV: &str = "CUA_DRIVER_RS_MCP_HTTP_TOKEN";
+
 /// Resolve the configured HTTP MCP port: `CUA_DRIVER_RS_MCP_HTTP_PORT` (> 0), or
 /// `None` (disabled — the daemon spawns the listener only when this is set).
-pub fn configured_port() -> Option<u16> {
-    std::env::var("CUA_DRIVER_RS_MCP_HTTP_PORT")
-        .ok()
-        .and_then(|v| v.parse::<u16>().ok())
-        .filter(|p| *p > 0)
+pub fn configured_port() -> anyhow::Result<Option<u16>> {
+    configured_port_from(std::env::var_os("CUA_DRIVER_RS_MCP_HTTP_PORT"))
+}
+
+fn configured_port_from(value: Option<std::ffi::OsString>) -> anyhow::Result<Option<u16>> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let value = value
+        .into_string()
+        .map_err(|_| anyhow::anyhow!("CUA_DRIVER_RS_MCP_HTTP_PORT must be valid UTF-8"))?;
+    let port = value.parse::<u16>().map_err(|_| {
+        anyhow::anyhow!("CUA_DRIVER_RS_MCP_HTTP_PORT must be an integer from 1 to 65535")
+    })?;
+    if port == 0 {
+        anyhow::bail!("CUA_DRIVER_RS_MCP_HTTP_PORT must be greater than zero");
+    }
+    Ok(Some(port))
 }
 
 /// Spawn the HTTP MCP listener bound to `127.0.0.1:port` (loopback only).
-pub fn spawn(registry: Arc<ToolRegistry>, port: u16) {
+pub fn spawn(sdk: Arc<crate::sdk_adapter::SdkAdapter>, port: u16) -> anyhow::Result<()> {
+    let token = Arc::<str>::from(configured_auth_token().map_err(anyhow::Error::msg)?);
+    let sessions = Arc::new(Sessions::default());
     tokio::spawn(async move {
         let addr: SocketAddr = ([127, 0, 0, 1], port).into();
         match TcpListener::bind(addr).await {
@@ -47,9 +68,11 @@ pub fn spawn(registry: Arc<ToolRegistry>, port: u16) {
                 loop {
                     match listener.accept().await {
                         Ok((stream, peer)) => {
-                            let reg = registry.clone();
+                            let sdk = sdk.clone();
+                            let token = token.clone();
+                            let sessions = sessions.clone();
                             tokio::spawn(async move {
-                                if let Err(e) = serve_conn(stream, reg).await {
+                                if let Err(e) = serve_conn(stream, sdk, token, sessions).await {
                                     debug!(%peer, "MCP HTTP connection closed: {e}");
                                 }
                             });
@@ -64,32 +87,154 @@ pub fn spawn(registry: Arc<ToolRegistry>, port: u16) {
             Err(e) => warn!("MCP HTTP transport disabled — bind {addr} failed: {e}"),
         }
     });
+    Ok(())
+}
+
+/// MCP session ids minted by a successful `initialize`. Bounded: the oldest id
+/// is forgotten first, and its client gets 404 and initializes again.
+#[derive(Default)]
+struct Sessions(std::sync::Mutex<std::collections::VecDeque<String>>);
+
+const MAX_SESSIONS: usize = 256;
+
+impl Sessions {
+    fn mint(&self) -> String {
+        let id = uuid::Uuid::new_v4().to_string();
+        let mut ids = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        if ids.len() >= MAX_SESSIONS {
+            ids.pop_front();
+        }
+        ids.push_back(id.clone());
+        id
+    }
+
+    fn contains(&self, id: &str) -> bool {
+        let ids = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        ids.iter().any(|known| known == id)
+    }
+}
+
+/// Streamable HTTP lifecycle: every request except `initialize` names a live
+/// session. Notifications and unparseable bodies fall through to dispatch.
+fn session_refusal(
+    body: &[u8],
+    session: Option<&str>,
+    sessions: &Sessions,
+) -> Option<(u16, String)> {
+    let body: serde_json::Value = serde_json::from_slice(body).ok()?;
+    let id = body.get("id")?;
+    if body.get("method")?.as_str()? == "initialize" {
+        return None;
+    }
+    let (status, message) = match session {
+        None => (400, "Missing Mcp-Session-Id; send initialize first"),
+        Some(session) if !sessions.contains(session) => {
+            (404, "Unknown MCP session; send initialize again")
+        }
+        Some(_) => return None,
+    };
+    let error = serde_json::json!({
+        "jsonrpc": "2.0", "id": id, "error": {"code": -32600, "message": message}
+    });
+    Some((status, error.to_string()))
+}
+
+fn is_initialize_success(body: &[u8], response: &str) -> bool {
+    let method = serde_json::from_slice::<serde_json::Value>(body)
+        .ok()
+        .and_then(|body| body.get("method")?.as_str().map(str::to_owned));
+    method.as_deref() == Some("initialize")
+        && serde_json::from_str::<serde_json::Value>(response)
+            .is_ok_and(|response| response.get("result").is_some())
 }
 
 /// Handle one TCP connection: a keep-alive loop of HTTP requests. Requests on a
 /// single connection stay FIFO-ordered (so one agent's ordered calls are safe);
 /// parallelism comes from DISTINCT connections, each its own task.
-async fn serve_conn(mut stream: TcpStream, registry: Arc<ToolRegistry>) -> anyhow::Result<()> {
+async fn serve_conn(
+    mut stream: TcpStream,
+    sdk: Arc<crate::sdk_adapter::SdkAdapter>,
+    token: Arc<str>,
+    sessions: Arc<Sessions>,
+) -> anyhow::Result<()> {
+    let transport_session = format!("http-{}", uuid::Uuid::new_v4());
+    struct TransportCleanup {
+        sdk: Arc<crate::sdk_adapter::SdkAdapter>,
+        transport_session: String,
+    }
+    impl Drop for TransportCleanup {
+        fn drop(&mut self) {
+            self.sdk.end_transport_sessions(&self.transport_session);
+        }
+    }
+    let _cleanup = TransportCleanup {
+        sdk: sdk.clone(),
+        transport_session: transport_session.clone(),
+    };
     loop {
-        let Some(req) = read_http_request(&mut stream).await? else {
+        let Some(req) = read_http_request(&mut stream, &token).await? else {
             return Ok(()); // clean EOF
         };
         let keep_alive = req.keep_alive;
-        if !req.method.eq_ignore_ascii_case("POST") {
+        if req.has_origin {
+            write_http(
+                &mut stream,
+                403,
+                br#"{"jsonrpc":"2.0","id":null,"error":{"code":-32600,"message":"Browser-origin requests are forbidden"}}"#,
+                keep_alive,
+                None,
+            )
+            .await?;
+        } else if !req.authorized {
+            write_http(
+                &mut stream,
+                401,
+                br#"{"jsonrpc":"2.0","id":null,"error":{"code":-32001,"message":"Authentication required"}}"#,
+                false,
+                None,
+            )
+            .await?;
+            return Ok(());
+        } else if !req.method.eq_ignore_ascii_case("POST") {
             write_http(
                 &mut stream,
                 405,
                 br#"{"jsonrpc":"2.0","id":null,"error":{"code":-32600,"message":"Use POST /mcp with a JSON-RPC body"}}"#,
                 keep_alive,
+                None,
             )
             .await?;
         } else {
-            match dispatch(&req.body, &registry).await {
-                Some(resp_json) => {
-                    write_http(&mut stream, 200, resp_json.as_bytes(), keep_alive).await?
+            if let Some(error) =
+                unsupported_protocol_error(&req.body, req.protocol_version.as_deref())
+            {
+                write_http(&mut stream, 400, error.as_bytes(), keep_alive, None).await?;
+                if !keep_alive {
+                    return Ok(());
                 }
-                // Notification (no id): MCP wants 202 Accepted, no body.
-                None => write_http(&mut stream, 202, b"", keep_alive).await?,
+                continue;
+            }
+            if let Some((status, error)) =
+                session_refusal(&req.body, req.session_id.as_deref(), &sessions)
+            {
+                write_http(&mut stream, status, error.as_bytes(), keep_alive, None).await?;
+            } else {
+                match dispatch(&req.body, &sdk, &transport_session).await {
+                    Some(resp_json) => {
+                        let session =
+                            is_initialize_success(&req.body, &resp_json).then(|| sessions.mint());
+                        write_http(
+                            &mut stream,
+                            200,
+                            resp_json.as_bytes(),
+                            keep_alive,
+                            session.as_deref(),
+                        )
+                        .await?
+                    }
+                    // Notification (no id): MCP wants 202 Accepted, no body.
+                    None => write_http(&mut stream, 202, b"", keep_alive, None).await?,
+                }
             }
         }
         // Honor the client's Connection: close (and HTTP/1.0 default) — close the
@@ -104,17 +249,89 @@ async fn serve_conn(mut stream: TcpStream, registry: Arc<ToolRegistry>) -> anyho
 /// Parse a JSON-RPC request body and dispatch via the shared MCP handler. Returns
 /// `Some(json)` for a request, or `None` for a notification (no `id`). Applies the
 /// caller-declared `session` identity so HTTP behaves identically to stdio.
-async fn dispatch(body: &[u8], registry: &Arc<ToolRegistry>) -> Option<String> {
+async fn dispatch(
+    body: &[u8],
+    sdk: &Arc<crate::sdk_adapter::SdkAdapter>,
+    transport_session: &str,
+) -> Option<String> {
+    if let Some(error) = unsupported_protocol_error(body, None) {
+        return Some(error);
+    }
     let mut req: Request = match serde_json::from_slice(body) {
         Ok(r) => r,
         Err(_) => return Some(serialize(&Response::parse_error())),
     };
-    if req.id.is_none() {
-        return None; // notification
-    }
+    req.id.as_ref()?;
+    let initialize_metadata = req.initialize_metadata();
+    apply_session_identity(&mut req, transport_session);
+    let session_context = req.tool_call().ok().and_then(|call| {
+        sdk.begin_tool_call(
+            &call.name,
+            &call.args,
+            cua_driver_core::session::SessionTransport::McpHttp,
+            cua_driver_core::session::SessionClientKind::Mcp,
+        )
+    });
     let id = req.id.clone().unwrap_or(serde_json::Value::Null);
-    apply_session_identity(&mut req);
-    Some(serialize(&handle_request(req, id, registry).await))
+    let timer = http_tool_observation_timer(&req, |name| sdk.is_known_tool(name));
+    let response =
+        handle_request_with_transport_session(req, id, sdk.as_ref(), transport_session).await;
+    if let Some(timer) = timer {
+        let outcome = timer.finish(&response);
+        if let Some(context) = session_context {
+            context.complete(&outcome);
+        }
+        crate::telemetry::capture_tool_completed(outcome, crate::telemetry::Transport::McpHttp);
+    }
+    if let Some(metadata) = initialize_metadata {
+        crate::telemetry::capture_mcp_session_started(
+            metadata,
+            crate::telemetry::Transport::McpHttp,
+        );
+    }
+    Some(serialize(&response))
+}
+
+fn is_legacy_protocol(version: &str) -> bool {
+    matches!(version, "2024-11-05" | "2025-03-26" | "2025-06-18")
+}
+
+// HTTP still uses connection-scoped sessions. A legacy error permits dual-era
+// clients to fall back to initialize; -32022 would falsely identify a modern
+// endpoint and tell clients to retry per-request version negotiation here.
+fn unsupported_protocol_error(body: &[u8], header: Option<&str>) -> Option<String> {
+    let body: serde_json::Value = serde_json::from_slice(body).unwrap_or_default();
+    let requested = header
+        .filter(|version| !is_legacy_protocol(version))
+        .map(serde_json::Value::from)
+        .or_else(|| {
+            let params = body.get("params")?;
+            params
+                .get("_meta")
+                .and_then(|meta| meta.get("io.modelcontextprotocol/protocolVersion"))
+                .filter(|version| !version.as_str().is_some_and(is_legacy_protocol))
+                .cloned()
+        })
+        .or_else(|| {
+            (body.get("method")?.as_str()? == "server/discover")
+                .then(|| serde_json::Value::from("2026-07-28"))
+        })?;
+    Some(serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": body.get("id").cloned().unwrap_or(serde_json::Value::Null),
+        "error": {
+            "code": -32600,
+            "message": "This HTTP endpoint supports legacy MCP only. Modern MCP is currently available over stdio; use cua-driver mcp or request HTTP protocol version 2025-06-18.",
+            "data": {"supported": ["2025-06-18"], "requested": requested}
+        }
+    }).to_string())
+}
+
+fn http_tool_observation_timer(
+    req: &Request,
+    is_known_tool: impl Fn(&str) -> bool,
+) -> Option<cua_driver_core::server::ToolObservationTimer> {
+    tool_observation_timer(req, is_known_tool, StdioExecutionPath::DirectDaemon)
 }
 
 fn serialize(resp: &Response) -> String {
@@ -123,40 +340,41 @@ fn serialize(resp: &Response) -> String {
     })
 }
 
-/// Mirror an explicit `session` arg into `_session_id` (the per-session config /
-/// recording key) and refresh its idle-TTL — the HTTP-side equivalent of
-/// `serve.rs::apply_session_identity`. The agent cursor reads `session` directly
-/// (so it already works); this keeps config + recording session-scoping
-/// consistent across transports.
-fn apply_session_identity(req: &mut Request) {
-    let Some(params) = req.params.as_mut() else { return };
-    let Some(args) = params.get_mut("arguments").and_then(|a| a.as_object_mut()) else { return };
-    let session = args
-        .get("session")
-        .and_then(|v| v.as_str())
-        .filter(|s| !s.is_empty())
-        .map(|s| s.to_owned());
-    if let Some(sess) = session {
-        args.entry("_session_id")
-            .or_insert_with(|| serde_json::Value::String(sess.clone()));
-        cua_driver_core::session::touch_session(&sess);
+/// Apply the shared session identity mapping
+/// ([`cua_driver_core::tool_args::apply_session_identity`]) to a tool call's
+/// arguments, with the MCP HTTP session as the transport session.
+/// Runtime-private idle-TTL activity is refreshed later at the authorized
+/// registry boundary.
+fn apply_session_identity(req: &mut Request, transport_session: &str) {
+    if let Some(args) = req
+        .params
+        .as_mut()
+        .and_then(|params| params.get_mut("arguments"))
+    {
+        cua_driver_core::tool_args::apply_session_identity(args, Some(transport_session));
     }
 }
 
 /// One parsed HTTP/1.1 request.
 struct HttpRequest {
     method: String,
-    #[allow(dead_code)]
-    path: String,
     body: Vec<u8>,
+    /// Browser requests carry Origin; native MCP clients normally do not.
+    has_origin: bool,
     /// Whether to keep the connection open after responding (HTTP/1.1 default;
     /// false if the client sent `Connection: close` or spoke HTTP/1.0).
     keep_alive: bool,
+    authorized: bool,
+    protocol_version: Option<String>,
+    session_id: Option<String>,
 }
 
 /// Read one HTTP/1.1 request, or `None` on clean EOF. Minimal: request line +
 /// headers until CRLFCRLF, then `Content-Length` bytes.
-async fn read_http_request(stream: &mut TcpStream) -> anyhow::Result<Option<HttpRequest>> {
+async fn read_http_request(
+    stream: &mut TcpStream,
+    token: &str,
+) -> anyhow::Result<Option<HttpRequest>> {
     let mut head = Vec::with_capacity(1024);
     let mut byte = [0u8; 1];
     loop {
@@ -177,14 +395,19 @@ async fn read_http_request(stream: &mut TcpStream) -> anyhow::Result<Option<Http
     let request_line = lines.next().unwrap_or("");
     let mut parts = request_line.split_whitespace();
     let method = parts.next().unwrap_or("").to_owned();
-    let path = parts.next().unwrap_or("/").to_owned();
-    let version = parts.next().unwrap_or("HTTP/1.1");
+    let version = parts.nth(1).unwrap_or("HTTP/1.1");
     let mut content_length = 0usize;
+    let mut has_origin = false;
     let mut keep_alive = version.eq_ignore_ascii_case("HTTP/1.1"); // 1.1 defaults to keep-alive
+    let mut authorized = false;
+    let mut protocol_version = None;
+    let mut session_id = None;
     for line in lines {
         if let Some((k, v)) = line.split_once(':') {
             let (k, v) = (k.trim(), v.trim());
-            if k.eq_ignore_ascii_case("content-length") {
+            if k.eq_ignore_ascii_case("origin") {
+                has_origin = true;
+            } else if k.eq_ignore_ascii_case("content-length") {
                 content_length = v.parse().unwrap_or(0);
             } else if k.eq_ignore_ascii_case("connection") {
                 if v.eq_ignore_ascii_case("close") {
@@ -192,6 +415,17 @@ async fn read_http_request(stream: &mut TcpStream) -> anyhow::Result<Option<Http
                 } else if v.eq_ignore_ascii_case("keep-alive") {
                     keep_alive = true;
                 }
+            } else if k.eq_ignore_ascii_case("authorization") {
+                authorized = v.split_once(' ').is_some_and(|(scheme, candidate)| {
+                    scheme.eq_ignore_ascii_case("bearer") && constant_time_equal(candidate, token)
+                });
+            } else if k.eq_ignore_ascii_case("mcp-protocol-version") {
+                // Keep an unsupported value even if a later duplicate is legacy.
+                if protocol_version.as_deref().is_none_or(is_legacy_protocol) {
+                    protocol_version = Some(v.to_owned());
+                }
+            } else if k.eq_ignore_ascii_case("mcp-session-id") {
+                session_id = Some(v.to_owned());
             }
         }
     }
@@ -202,7 +436,55 @@ async fn read_http_request(stream: &mut TcpStream) -> anyhow::Result<Option<Http
     if content_length > 0 {
         stream.read_exact(&mut body).await?;
     }
-    Ok(Some(HttpRequest { method, path, body, keep_alive }))
+    Ok(Some(HttpRequest {
+        method,
+        body,
+        has_origin,
+        keep_alive,
+        authorized,
+        protocol_version,
+        session_id,
+    }))
+}
+
+fn configured_auth_token() -> Result<String, String> {
+    configured_auth_token_from(std::env::var_os(MCP_HTTP_TOKEN_ENV))
+}
+
+fn configured_auth_token_from(value: Option<std::ffi::OsString>) -> Result<String, String> {
+    let token = value
+        .ok_or_else(|| {
+            format!(
+                "{MCP_HTTP_TOKEN_ENV} must be set to a host-generated bearer token when the HTTP endpoint is enabled"
+            )
+        })?
+        .into_string()
+        .map_err(|_| format!("{MCP_HTTP_TOKEN_ENV} must be valid UTF-8"))?;
+    if token.len() < 32
+        || token.len() > 4096
+        || token
+            .chars()
+            .any(|character| character.is_control() || character.is_whitespace())
+    {
+        return Err(format!(
+            "{MCP_HTTP_TOKEN_ENV} must contain 32-4096 non-whitespace, non-control characters"
+        ));
+    }
+    Ok(token)
+}
+
+fn constant_time_equal(left: &str, right: &str) -> bool {
+    let left = left.as_bytes();
+    let right = right.as_bytes();
+    let mut difference = left.len() ^ right.len();
+    let width = left.len().max(right.len());
+    for index in 0..width {
+        difference |= usize::from(
+            left.get(index).copied().unwrap_or_default()
+                ^ right.get(index).copied().unwrap_or_default(),
+        );
+    }
+    difference == 0
 }
 
 async fn write_http(
@@ -210,16 +492,24 @@ async fn write_http(
     status: u16,
     body: &[u8],
     keep_alive: bool,
+    session: Option<&str>,
 ) -> anyhow::Result<()> {
     let reason = match status {
         200 => "OK",
         202 => "Accepted",
+        400 => "Bad Request",
+        403 => "Forbidden",
+        401 => "Unauthorized",
+        404 => "Not Found",
         405 => "Method Not Allowed",
         _ => "OK",
     };
     let conn = if keep_alive { "keep-alive" } else { "close" };
+    let session = session
+        .map(|id| format!("Mcp-Session-Id: {id}\r\n"))
+        .unwrap_or_default();
     let head = format!(
-        "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: {conn}\r\n\r\n",
+        "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n{session}Connection: {conn}\r\n\r\n",
         body.len()
     );
     stream.write_all(head.as_bytes()).await?;
@@ -235,36 +525,433 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    #[test]
-    fn apply_session_identity_mirrors_session_to_session_id() {
-        let mut req: Request = serde_json::from_value(json!({
-            "jsonrpc": "2.0", "id": 1, "method": "tools/call",
-            "params": { "name": "click", "arguments": { "pid": 1, "session": "alpha" } }
-        }))
-        .unwrap();
-        apply_session_identity(&mut req);
-        let args = req.params.unwrap();
-        let args = args.get("arguments").unwrap();
-        assert_eq!(args.get("_session_id").unwrap(), "alpha");
-        assert_eq!(args.get("session").unwrap(), "alpha");
+    async fn serve_raw_request(sdk: Arc<crate::sdk_adapter::SdkAdapter>, request: &[u8]) -> String {
+        serve_raw_request_with(sdk, Arc::default(), request).await
+    }
+
+    async fn serve_raw_request_with(
+        sdk: Arc<crate::sdk_adapter::SdkAdapter>,
+        sessions: Arc<Sessions>,
+        request: &[u8],
+    ) -> String {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            serve_conn(
+                stream,
+                sdk,
+                Arc::<str>::from("0123456789abcdef0123456789abcdef"),
+                sessions,
+            )
+            .await
+            .unwrap();
+        });
+
+        let mut client = TcpStream::connect(addr).await.unwrap();
+        client.write_all(request).await.unwrap();
+        let mut response = Vec::new();
+        client.read_to_end(&mut response).await.unwrap();
+        server.await.unwrap();
+        String::from_utf8(response).unwrap()
+    }
+
+    async fn parse_request(request: &str) -> (String, bool) {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let mut client = TcpStream::connect(addr).await.unwrap();
+        let (mut server, _) = listener.accept().await.unwrap();
+        client.write_all(request.as_bytes()).await.unwrap();
+        let req = read_http_request(&mut server, "token")
+            .await
+            .unwrap()
+            .unwrap();
+        (req.method, req.keep_alive)
+    }
+
+    #[tokio::test]
+    async fn keep_alive_follows_http_version_and_connection_header() {
+        for (request, expected) in [
+            ("POST /mcp HTTP/1.1\r\n\r\n", true),
+            ("POST /mcp HTTP/1.0\r\n\r\n", false),
+            ("POST /mcp HTTP/1.1\r\nConnection: close\r\n\r\n", false),
+            ("POST /mcp HTTP/1.0\r\nConnection: keep-alive\r\n\r\n", true),
+        ] {
+            assert_eq!(
+                parse_request(request).await,
+                ("POST".to_owned(), expected),
+                "{request:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn origin_header_is_forbidden_but_originless_request_is_unchanged() {
+        let _runtime_guard = crate::test_runtime_lock().lock().await;
+        let sdk = crate::sdk_adapter::SdkAdapter::load(crate::build_driver_without_cursor())
+            .await
+            .expect("SDK adapter");
+        let without_origin = serve_raw_request(
+            sdk.clone(),
+            b"POST /mcp HTTP/1.1\r\nAuthorization: Bearer 0123456789abcdef0123456789abcdef\r\nContent-Length: 8\r\nConnection: close\r\n\r\nnot-json",
+        )
+        .await;
+        assert!(without_origin.starts_with("HTTP/1.1 200 OK\r\n"));
+
+        let with_origin = serve_raw_request(
+            sdk.clone(),
+            b"POST /mcp HTTP/1.1\r\nAuthorization: Bearer 0123456789abcdef0123456789abcdef\r\noRiGiN:\r\nContent-Length: 8\r\nConnection: close\r\n\r\nnot-json",
+        )
+        .await;
+        assert!(with_origin.starts_with("HTTP/1.1 403 Forbidden\r\n"));
+        sdk.shutdown().await.expect("SDK shutdown");
+    }
+
+    #[tokio::test]
+    async fn http_rejects_modern_requests_before_dispatch() {
+        let _runtime_guard = crate::test_runtime_lock().lock().await;
+        let sdk = crate::sdk_adapter::SdkAdapter::load(crate::build_driver_without_cursor())
+            .await
+            .expect("SDK adapter");
+        let tool_call = json!({
+            "jsonrpc": "2.0", "id": 7, "method": "tools/call",
+            "params": {"name": "unknown", "arguments": {}}
+        });
+        let mut modern_tool_call = tool_call.clone();
+        modern_tool_call["params"]["_meta"] = json!({
+            "io.modelcontextprotocol/protocolVersion": "2026-07-28"
+        });
+        let discover = json!({"jsonrpc": "2.0", "id": 7, "method": "server/discover"});
+        for (headers, body, requested) in [
+            (
+                "mCp-PrOtOcOl-VeRsIoN: 2026-07-28\r\n",
+                &tool_call,
+                "2026-07-28",
+            ),
+            ("MCP-Protocol-Version: future\r\n", &tool_call, "future"),
+            ("", &modern_tool_call, "2026-07-28"),
+            ("", &discover, "2026-07-28"),
+            (
+                "MCP-Protocol-Version: 2025-06-18\r\n",
+                &modern_tool_call,
+                "2026-07-28",
+            ),
+            (
+                "MCP-Protocol-Version: future\r\nMCP-Protocol-Version: 2025-06-18\r\n",
+                &tool_call,
+                "future",
+            ),
+        ] {
+            let body = body.to_string();
+            let request = format!(
+                "POST /mcp HTTP/1.1\r\nAuthorization: Bearer 0123456789abcdef0123456789abcdef\r\n{headers}Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            let response = serve_raw_request(sdk.clone(), request.as_bytes()).await;
+            assert!(
+                response.starts_with("HTTP/1.1 400 Bad Request\r\n"),
+                "{response}"
+            );
+            let response: serde_json::Value =
+                serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap();
+            assert_eq!(response["id"], 7);
+            assert_eq!(response["error"]["code"], -32600);
+            assert_eq!(
+                response["error"]["data"],
+                json!({
+                    "supported": ["2025-06-18"], "requested": requested
+                })
+            );
+            assert!(response["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("stdio"));
+            assert!(response.get("result").is_none());
+        }
+        for body in [&modern_tool_call, &discover] {
+            let response = dispatch(body.to_string().as_bytes(), &sdk, "http-test")
+                .await
+                .unwrap();
+            let response: serde_json::Value = serde_json::from_str(&response).unwrap();
+            assert_eq!(response["error"]["code"], -32600);
+        }
+        for (headers, status) in [
+            ("Authorization: Bearer wrong\r\n", "401 Unauthorized"),
+            ("Authorization: Bearer 0123456789abcdef0123456789abcdef\r\nOrigin: https://example.com\r\n", "403 Forbidden"),
+        ] {
+            let body = discover.to_string();
+            let request = format!(
+                "POST /mcp HTTP/1.1\r\n{headers}MCP-Protocol-Version: 2026-07-28\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            let response = serve_raw_request(sdk.clone(), request.as_bytes()).await;
+            assert!(response.starts_with(&format!("HTTP/1.1 {status}\r\n")));
+            assert!(!response.contains("Modern MCP is currently available"));
+        }
+        sdk.shutdown().await.expect("SDK shutdown");
+    }
+
+    #[tokio::test]
+    async fn http_keeps_legacy_initialize_negotiation() {
+        let _runtime_guard = crate::test_runtime_lock().lock().await;
+        let sdk = crate::sdk_adapter::SdkAdapter::load(crate::build_driver_without_cursor())
+            .await
+            .expect("SDK adapter");
+        let body = json!({
+            "jsonrpc": "2.0", "id": 1, "method": "initialize",
+            "params": {"protocolVersion": "2025-11-25", "capabilities": {},
+                "clientInfo": {"name": "legacy-test", "version": "1"}}
+        })
+        .to_string();
+        for version in [
+            None,
+            Some("2024-11-05"),
+            Some("2025-03-26"),
+            Some("2025-06-18"),
+        ] {
+            let header = version
+                .map(|version| format!("MCP-Protocol-Version: {version}\r\n"))
+                .unwrap_or_default();
+            let request = format!(
+                "POST /mcp HTTP/1.1\r\nAuthorization: Bearer 0123456789abcdef0123456789abcdef\r\n{header}Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            let response = serve_raw_request(sdk.clone(), request.as_bytes()).await;
+            assert!(response.starts_with("HTTP/1.1 200 OK\r\n"), "{response}");
+            let response: serde_json::Value =
+                serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap();
+            assert_eq!(response["result"]["protocolVersion"], "2025-06-18");
+            assert!(response["result"].get("protocolVersions").is_none());
+            assert!(response["result"]["capabilities"].get("apps").is_none());
+        }
+        sdk.shutdown().await.expect("SDK shutdown");
+    }
+
+    #[tokio::test]
+    async fn http_requires_an_initialized_session_across_connections() {
+        let _runtime_guard = crate::test_runtime_lock().lock().await;
+        let sdk = crate::sdk_adapter::SdkAdapter::load(crate::build_driver_without_cursor())
+            .await
+            .expect("SDK adapter");
+        let sessions = Arc::new(Sessions::default());
+        let post = |id: u64, method: &str, session: Option<&str>| {
+            let params = if method == "tools/call" {
+                json!({"name": "get_config", "arguments": {}})
+            } else {
+                json!({})
+            };
+            let body =
+                json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params}).to_string();
+            let session = session
+                .map(|id| format!("Mcp-Session-Id: {id}\r\n"))
+                .unwrap_or_default();
+            format!(
+                "POST /mcp HTTP/1.1\r\nAuthorization: Bearer 0123456789abcdef0123456789abcdef\r\n{session}Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            )
+        };
+        let send = |request: String| {
+            let (sdk, sessions) = (sdk.clone(), sessions.clone());
+            async move {
+                let raw = serve_raw_request_with(sdk, sessions, request.as_bytes()).await;
+                let (head, body) = raw.split_once("\r\n\r\n").unwrap();
+                let session = head
+                    .lines()
+                    .find_map(|line| line.strip_prefix("Mcp-Session-Id: "))
+                    .map(str::to_owned);
+                let status = head.split(' ').nth(1).unwrap().to_owned();
+                let body: serde_json::Value = serde_json::from_str(body).unwrap();
+                (status, session, body)
+            }
+        };
+        for (id, method, session, status) in [
+            (1, "tools/call", None, "400"),
+            (2, "tools/list", None, "400"),
+            (3, "tools/call", Some("forged"), "404"),
+        ] {
+            let (got, minted, body) = send(post(id, method, session)).await;
+            assert_eq!(got, status, "{method}");
+            assert_eq!(body["id"], id);
+            assert_eq!(body["error"]["code"], -32600);
+            assert!(body.get("result").is_none());
+            assert!(minted.is_none());
+        }
+        let (status, minted, body) = send(post(4, "initialize", None)).await;
+        assert_eq!(status, "200");
+        assert!(body["result"]["protocolVersion"].is_string());
+        let session = minted.expect("initialize mints an Mcp-Session-Id");
+        // Each request uses a new connection, as a pooled client may.
+        let (status, _, body) = send(post(5, "tools/call", Some(&session))).await;
+        assert_eq!(status, "200");
+        assert!(body["result"]["content"].is_array(), "{body}");
+        let (status, _, body) = send(post(6, "tools/list", Some(&session))).await;
+        assert_eq!(status, "200");
+        assert!(body["result"]["tools"].is_array());
+        sdk.shutdown().await.expect("SDK shutdown");
     }
 
     #[test]
-    fn apply_session_identity_noop_without_session() {
+    fn session_registry_forgets_the_oldest_id_first() {
+        let sessions = Sessions::default();
+        let first = sessions.mint();
+        let second = sessions.mint();
+        for _ in 2..MAX_SESSIONS {
+            sessions.mint();
+        }
+        assert!(sessions.contains(&first));
+        sessions.mint();
+        assert!(!sessions.contains(&first));
+        assert!(sessions.contains(&second));
+    }
+
+    #[test]
+    fn apply_session_identity_uses_transport_implicit_without_session() {
         let mut req: Request = serde_json::from_value(json!({
             "jsonrpc": "2.0", "id": 1, "method": "tools/call",
             "params": { "name": "list_apps", "arguments": {} }
         }))
         .unwrap();
-        apply_session_identity(&mut req);
+        apply_session_identity(&mut req, "http-test");
         let args = req.params.unwrap();
-        assert!(args.get("arguments").unwrap().get("_session_id").is_none());
+        assert_eq!(args["arguments"]["_session_id"], "http-test");
+        assert_eq!(args["arguments"]["_transport_session_id"], "http-test");
+    }
+
+    #[test]
+    fn http_observes_tool_calls_but_not_initialize_requests() {
+        let tool_call: Request = serde_json::from_value(json!({
+            "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+            "params": { "name": "unknown", "arguments": {} }
+        }))
+        .unwrap();
+        assert!(http_tool_observation_timer(&tool_call, |_| false).is_some());
+
+        let initialize: Request = serde_json::from_value(json!({
+            "jsonrpc": "2.0", "id": 2, "method": "initialize", "params": {}
+        }))
+        .unwrap();
+        assert!(http_tool_observation_timer(&initialize, |_| false).is_none());
     }
 
     #[test]
     fn configured_port_parses_env() {
-        // Default (unset) → None is environment-dependent; just assert the parse
-        // helper handles a bad value gracefully.
-        assert!(configured_port().is_none() || configured_port().is_some());
+        assert_eq!(configured_port_from(None).unwrap(), None);
+        assert_eq!(
+            configured_port_from(Some("43123".into())).unwrap(),
+            Some(43123)
+        );
+        assert!(configured_port_from(Some("0".into())).is_err());
+        assert!(configured_port_from(Some("not-a-port".into())).is_err());
+    }
+
+    #[test]
+    fn bearer_comparison_requires_the_exact_value() {
+        assert!(constant_time_equal(
+            "0123456789abcdef0123456789abcdef",
+            "0123456789abcdef0123456789abcdef"
+        ));
+        assert!(!constant_time_equal(
+            "0123456789abcdef0123456789abcdee",
+            "0123456789abcdef0123456789abcdef"
+        ));
+        assert!(!constant_time_equal(
+            "0123456789abcdef0123456789abcdef-extra",
+            "0123456789abcdef0123456789abcdef"
+        ));
+    }
+
+    #[test]
+    fn configured_auth_token_fails_closed() {
+        assert!(configured_auth_token_from(None).is_err());
+        assert!(configured_auth_token_from(Some("too-short".into())).is_err());
+        assert!(
+            configured_auth_token_from(Some("0123456789abcdef 123456789abcdef".into())).is_err()
+        );
+        assert_eq!(
+            configured_auth_token_from(Some("0123456789abcdef0123456789abcdef".into())).unwrap(),
+            "0123456789abcdef0123456789abcdef"
+        );
+    }
+
+    #[tokio::test]
+    async fn http_tools_list_is_the_sdk_inventory() {
+        let _runtime_guard = crate::test_runtime_lock().lock().await;
+        let sdk = crate::sdk_adapter::SdkAdapter::load(crate::build_driver_without_cursor())
+            .await
+            .expect("SDK adapter");
+        let expected = sdk.tools_list();
+        let response = dispatch(
+            br#"{"jsonrpc":"2.0","id":7,"method":"tools/list","params":{}}"#,
+            &sdk,
+            "http-test",
+        )
+        .await
+        .expect("JSON-RPC response");
+        let response: serde_json::Value = serde_json::from_str(&response).expect("response JSON");
+        assert_eq!(response["result"]["tools"], expected["tools"]);
+        sdk.shutdown().await.expect("SDK shutdown");
+    }
+
+    #[tokio::test]
+    async fn http_tool_call_waits_for_the_permission_gate() {
+        let _runtime_guard = crate::test_runtime_lock().lock().await;
+        let (driver, sdk, calls) = crate::probe_sdk().await;
+        let call = || {
+            dispatch(
+                br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"get_screen_size","arguments":{}}}"#,
+                &sdk,
+                "http-pending",
+            )
+        };
+
+        driver.set_awaiting_permissions(true);
+        let pending: serde_json::Value =
+            serde_json::from_str(&call().await.expect("JSON-RPC response")).unwrap();
+        assert_eq!(
+            pending["result"]["structuredContent"]["refusal"]["code"], "permissions_pending",
+            "{pending}"
+        );
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+
+        driver.set_awaiting_permissions(false);
+        call().await.expect("JSON-RPC response");
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+        sdk.shutdown().await.expect("SDK shutdown");
+    }
+
+    #[tokio::test]
+    async fn invalid_bearer_receives_401_before_json_rpc_dispatch() {
+        let _runtime_guard = crate::test_runtime_lock().lock().await;
+        let sdk = crate::sdk_adapter::SdkAdapter::load(crate::build_driver_without_cursor())
+            .await
+            .expect("SDK adapter");
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server_sdk = sdk.clone();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            serve_conn(
+                stream,
+                server_sdk,
+                Arc::<str>::from("0123456789abcdef0123456789abcdef"),
+                Arc::default(),
+            )
+            .await
+            .unwrap();
+        });
+        let mut client = TcpStream::connect(address).await.unwrap();
+        client
+            .write_all(
+                b"POST /mcp HTTP/1.1\r\nAuthorization: Bearer wrong\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}",
+            )
+            .await
+            .unwrap();
+        let mut response = Vec::new();
+        client.read_to_end(&mut response).await.unwrap();
+        let response = String::from_utf8(response).unwrap();
+        assert!(response.starts_with("HTTP/1.1 401 Unauthorized\r\n"));
+        assert!(response.contains("Authentication required"));
+        server.await.unwrap();
+        sdk.shutdown().await.expect("SDK shutdown");
     }
 }

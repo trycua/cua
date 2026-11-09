@@ -1,0 +1,262 @@
+{
+  "packaged": [
+    {
+      "id": "154d0750",
+      "submission_id": "154d0750-3c05-419d-92a5-a08ba74bbcb2",
+      "difficulty": "easy",
+      "circuit_prompt": "Modify R2 to produce an output of 1.8V.  Select R2 to the closest standard E96 1% resistor value.",
+      "pcb_filename": "kicad_AdjustableLDO_circuit_modified.zip",
+      "netlist_filename": "kicad_AdjustableLDO_netlist_modified.zip",
+      "task_path": "scripts/tasks/154d0750"
+    },
+    {
+      "id": "1625e97a",
+      "submission_id": "1625e97a-b9b2-4e00-bacc-389cab5e5640",
+      "difficulty": "medium",
+      "circuit_prompt": "Modify the existing uA7805 regulated 5V power supply by adding a power-on indicator LED with a 1 k\u03a9 series resistor across the 5V output to indicate when the supply is active. Add a 1 k\u03a9 minimum load resistor across the 5V output to help maintain stable regulation. Also add a 1N4001 diode between the regulator output and input to protect the regulator. Keep all existing components and connections unchanged.",
+      "pcb_filename": "kicad_voltage regulator_circuit_modify.zip",
+      "netlist_filename": "kicad_voltage regulator_netlist_modify.zip",
+      "task_path": "scripts/tasks/1625e97a"
+    },
+    {
+      "id": "2c11fe94",
+      "submission_id": "2c11fe94-d9da-47e4-8526-89fb97b19b6e",
+      "difficulty": "medium",
+      "circuit_prompt": "The given schematic shows a cascaded active filter system implemented with a TL072 dual op-amp. The first stage is a Sallen-Key high-pass filter followed by a Sallen-Key low-pass filter.\n\nModify the circuit to lower the cutoff frequency of the low-pass stage by changing the low-pass capacitor from 47nF to 100nF. In addition, add a 10k\u2126 load resistor from the final output node (Vo2) to ground to evaluate its behavior under practical loading conditions. Keep all other components unchanged and provide the updated schematic.",
+      "pcb_filename": "kicad_BandPassFilter_circuit_modify.zip",
+      "netlist_filename": "kicad_BandPassFilter_netlist_modify.zip",
+      "task_path": "scripts/tasks/2c11fe94"
+    },
+    {
+      "id": "34877be3",
+      "submission_id": "34877be3-b628-4b67-bfef-6ac7007e4514",
+      "difficulty": "easy",
+      "circuit_prompt": "Please draw a clean schematic in KiCAD for a 9V battery driving two infrared LN271 LEDs.  The battery positive terminal is first connected to a 100 ohm current limiting resistor followed by the two LEDs.",
+      "pcb_filename": "kicad_twoleds_circuit.zip",
+      "netlist_filename": "kicad_twoleds_netlist.zip",
+      "task_path": "scripts/tasks/34877be3"
+    },
+    {
+      "id": "458f5f5c",
+      "submission_id": "458f5f5c-1347-479c-a94b-9bf4748de65a",
+      "difficulty": "medium",
+      "circuit_prompt": "Design a microphone preamplifier that conditions a raw mic signal into a clean, ADC-safe input for a 3.3 V microcontroller.\nUse an LM741 op-amp powered from a +12 V single supply. Create a mid-rail bias reference using three 56 k\u03a9 resistors, and AC-couple the microphone input with a 4.7 \u00b5F electrolytic capacitor into the biased input stage. Configure adjustable gain using a 50 k\u03a9 potentiometer (RV1) in the feedback path, and include a 1.1 k\u03a9 resistor and a 4.7 \u00b5F capacitor connected to the inverting input as part of the gain-setting and low-frequency shaping network. At the output, include a 1.1 k\u03a9 load resistor and AC-couple the output using a 4.7 \u00b5F capacitor. After the coupling capacitor, add an ADC interface that attenuates the signal using an 18 k\u03a9 / 1.1 k\u03a9 divider and clamps the ADC node with two Schottky diodes to the 3.3 V rail and ground for input protection. Tie all grounds together and generate the complete schematic.",
+      "pcb_filename": "kicad_Mic Preamp_circuit.zip",
+      "netlist_filename": "kicad_Mic Preamp_netlist.zip",
+      "task_path": "scripts/tasks/458f5f5c"
+    },
+    {
+      "id": "4bd3e530",
+      "submission_id": "4bd3e530-8e59-43cf-9c1f-1e9cdb742ef2",
+      "difficulty": "easy",
+      "circuit_prompt": "Give me a KiCad schematic for a simple +5V LED flasher using a 2N3904 transistor where a 2-lead self-flashing LED drives a second brighter LED. Use a 1k resistor and 100uF capacitor in the collector timing network, and use 10k and 4.7k resistors to bias the base and load the output.",
+      "pcb_filename": "kicad_SingleTransistorLEDFlasher_circuit.zip",
+      "netlist_filename": "kicad_SingleTransistorLEDFlasher_netlist.zip",
+      "task_path": "scripts/tasks/4bd3e530"
+    },
+    {
+      "id": "4c913e30",
+      "submission_id": "4c913e30-9720-46b2-be29-408c558a54cd",
+      "difficulty": "medium",
+      "circuit_prompt": "Design a third-order Butterworth low-pass filter with a cutoff frequency of approximately 45 Hz. Implement it using an LM358 operational amplifier powered by \u00b112 V supplies. Use 10 k\u03a9 resistors and 0.352 \u00b5F capacitors for the filter sections, and 1 k\u03a9 resistors for the feedback network. Include a 2-pin input connector, a 2-pin output connector, and a 3-pin power connector for +12 V, GND, and \u221212 V. Generate the KiCad schematic and the KiCad netlist for the design.",
+      "pcb_filename": "kicad_butterworth3_lp_circuit.zip",
+      "netlist_filename": "kicad_butterworth3_lp_netlist.zip",
+      "task_path": "scripts/tasks/4c913e30"
+    },
+    {
+      "id": "55f2eefb",
+      "submission_id": "55f2eefb-6870-4d02-b68f-0c5c553c24ed",
+      "difficulty": "easy",
+      "circuit_prompt": "Change the voltage source of the circuit from a 9V to 5V.",
+      "pcb_filename": "kicad_555timer_circuit_modify.net.zip",
+      "netlist_filename": "kicad_555timer_circuit_modify.net.zip",
+      "task_path": "scripts/tasks/55f2eefb"
+    },
+    {
+      "id": "589da233",
+      "submission_id": "589da233-8be6-4506-868f-29df3cf0d0d1",
+      "difficulty": "easy",
+      "circuit_prompt": "Change the value of R2 so that R1 sees twice as much current as R2.",
+      "pcb_filename": "kicad_currentdivider_circuit_modified.zip",
+      "netlist_filename": "kicad_currentdivider_netlist_modified.zip",
+      "task_path": "scripts/tasks/589da233"
+    },
+    {
+      "id": "5dbc9e02",
+      "submission_id": "5dbc9e02-3a8f-49bb-8561-40e4b0c5353e",
+      "difficulty": "easy",
+      "circuit_prompt": "Design a 555 timer-based LED flasher circuit in astable mode using an NE555P. Use a 1k\u2126 resistor for R1, a 50k\u2126 resistor for R2, and a 10\u00b5F electrolytic capacitor for C1 to set the timing. Include a 0.01\u00b5F decoupling capacitor on the control pin, a 330\u2126 current-limiting resistor for the LED, and screw terminals for power input and signal output.",
+      "pcb_filename": "kicad_multivibrator_circuit.zip",
+      "netlist_filename": "kicad_multivibrator_netlist.zip",
+      "task_path": "scripts/tasks/5dbc9e02"
+    },
+    {
+      "id": "6cb23037",
+      "submission_id": "6cb23037-01ec-48f7-9d6b-7d92da21b66d",
+      "difficulty": "easy",
+      "circuit_prompt": "Give me a KiCad schematic for a 12V push-to-on LED timer circuit using a BC547 NPN and a BC557 PNP transistor. Use a 1000\u00b5F capacitor and a 2.2M resistor for the timing network, and use 1k resistors for the pull-up and base drive, with a 470\u03a9 resistor for the LED.",
+      "pcb_filename": "kicad_PushToOnTimer_circuit.zip",
+      "netlist_filename": "kicad_PushToOnTimer_netlist.zip",
+      "task_path": "scripts/tasks/6cb23037"
+    },
+    {
+      "id": "733d278a",
+      "submission_id": "733d278a-fae9-4489-8b54-87385b83cfca",
+      "difficulty": "medium",
+      "circuit_prompt": "Modify the discrete BJT-based H-bridge motor driver shown in the attached schematic to improve switching behavior and reduce motor noise. Add a 100 nF ceramic capacitor across the motor terminals to suppress high-frequency switching spikes and electromagnetic interference (EMI). Add two 10 k\u03a9 pull-down resistors on the two control input lines so the bridge defaults to OFF when the inputs are floating. Keep all existing components and connections unchanged.",
+      "pcb_filename": "kicad_motor driver_circuit_modify.zip",
+      "netlist_filename": "kicad_motor driver_netlist_modify.zip",
+      "task_path": "scripts/tasks/733d278a"
+    },
+    {
+      "id": "83490c3a",
+      "submission_id": "83490c3a-a8cb-4595-b795-5648c3d5bb0e",
+      "difficulty": "medium",
+      "circuit_prompt": "Design a power tree in Kicad with the following attributes:  \n\t\u2022 Convert the input voltage of +12V to the backbone power of 3.3V by using the voltage switching module OKI-78SR-3.3/1.5-W36E-C.\n\t\u2022 From the 3.3V power, use LDO regulators from the LT1761 series to create voltages of 2.5V, 1.8V, and 1.2V.\n\t\t\u25cb To reduce noise, connect a 0.01uF capacitor to the BYPASS pin of each LDO.\n\t\u2022 To reduce noise and increase stability for each voltage rail, add additional capacitors. For the switching module and each LDO, add for each\n\t\t\u25cb An unpolarized input bypass capacitor of 1uF\n\t\t\u25cb A polarized output capacitor of 10uF\n\t\u2022 Label the output voltages as 3p3V, 2p5V, 1p8V, and 1p2V respectively.",
+      "pcb_filename": "kicad_PowerTreeOKI78SRLT1761_circuit.zip",
+      "netlist_filename": "kicad_PowerTreeOKI78SRLT1761_netlist.zip",
+      "task_path": "scripts/tasks/83490c3a"
+    },
+    {
+      "id": "84ec333e",
+      "submission_id": "84ec333e-3a9d-4aa6-ab8b-8575bbf2dbab",
+      "difficulty": "easy",
+      "circuit_prompt": "Modify the circuit to set the pole frequency to 4kHz but keep the passband gain the same.",
+      "pcb_filename": "kicad_activelowpass_circuit_modified.zip",
+      "netlist_filename": "kicad_activelowpass_netlist_modified.zip",
+      "task_path": "scripts/tasks/84ec333e"
+    },
+    {
+      "id": "854b8a80",
+      "submission_id": "854b8a80-36a7-4ba9-8acd-fdb7ddf40806",
+      "difficulty": "easy",
+      "circuit_prompt": "Design a transistor-based astable multivibrator circuit. Use two BF457 NPN transistors. For the timing network, use two 10k\u2126 base resistors and two 10\u00b5F electrolytic capacitors. Each collector should drive an LED through a 330\u2126 current-limiting resistor.",
+      "pcb_filename": "KiCad_FlipFlop_circuit.zip",
+      "netlist_filename": "KiCad_FlipFlop_netlist.zip",
+      "task_path": "scripts/tasks/854b8a80"
+    },
+    {
+      "id": "9ca3ef44",
+      "submission_id": "9ca3ef44-a054-461a-94ee-f76b39ca8147",
+      "difficulty": "medium",
+      "circuit_prompt": "Modify the value of R1 to center the DC bias of the electret microphone output and provide the maximum, non-distorted voltage output range. Treat the electret microphone as a current sink with a typical draw of 0.5 mA.",
+      "pcb_filename": "kicad_MicrophoneAmp_circuit_modified.zip",
+      "netlist_filename": "kicad_MicrophoneAmp_netlist_modified.zip",
+      "task_path": "scripts/tasks/9ca3ef44"
+    },
+    {
+      "id": "a6dd38a9",
+      "submission_id": "a6dd38a9-71df-42b7-99a4-d3e33bb01c5b",
+      "difficulty": "easy",
+      "circuit_prompt": "Design a passive RC band-pass filter for audio signals with corner frequencies near 1 kHz and 10 kHz. Implement it as a cascaded high-pass stage followed by a low-pass stage using 10 k\u03a9 resistors, a 15 nF capacitor for the high-pass section, and a 1.5 nF capacitor for the low-pass section. Include 2-pin input and output connectors sharing a common ground. Create the KiCad schematic and export the KiCad netlist for the design.",
+      "pcb_filename": "kicad_rcbandpass_circuit.zip",
+      "netlist_filename": "kicad_rcbandpass_netlist.zip",
+      "task_path": "scripts/tasks/a6dd38a9"
+    },
+    {
+      "id": "b7148878",
+      "submission_id": "b7148878-ca7a-409c-a6c5-e1c6cff7858b",
+      "difficulty": "medium",
+      "circuit_prompt": "Design a KiCad-style schematic of a two opamp circuit that converts a bipolar +/- 10 V analog signal to a positive 0 to 5V analog signal that can be delivered to an ADC or microcontroller.\n\n\t\u2022 The first opamp (U1) buffers the input signal and is configured as a follower:  \n\t\t\u25cb Pin 1 is directly connected to overall circuit input.\n\t\t\u25cb Pin 2 is connected directly to Pin 5\n\t\t\u25cb Pin 3 is connected to a +15 Vdc power supply and a 0.1 uF decoupling capacitor.\n\t\t\u25cb Pin 4 is connected to a -15 Vdc power supply and a 0.1 uF decoupling capacitor.\n\t\t\u25cb Pin 5 is  also connected to a 100 kOhm resistor (R1).\n\t\u2022 The second opamp (U2) is configured to provide voltage division and shifting.\n\t\t\u25cb Pin 1 is connected to the shift voltage. This is generated by connecting a 4.096 Vdc reference to a 10 kOhm resistor (R3) followed by a 162 ohm resistor (R4). The other end of R4 is connected in parallel to a 10  kOhm resistor, 1 uF unpolarized capacitor, and Pin 1.\n\t\t\u25cb Pin 2 is connected to the other side of R1 mentioned above.\n\t\t\u25cb Pin 2 is also connected to a parallel combination of a 23 kOhm resistor (R2) and a 43 pF unpolarized capacitor (C1). The other end of this combination is connected to Pin 5\n\t\t\u25cb Pin 3 is connected to a +5 Vdc power supply and a 0.1 uF decoupling capacitor.\n\t\t\u25cb Pin 4 is connected to ground.\n\t\t\u25cb Pin 5 is also connected to a 10 kOhm load, which provides a path to ground during startup transients.\n\t\t\u25cb Pin 5 also provides the overall circuit output.\n\t\u2022 Reference:   This circuit is modified from \"Analog Engineer's Circuit Cookbook:  Amplifiers\",  Texas Instruments, 2nd Ed 2019, p. 162.",
+      "pcb_filename": "kicad_bipolartosinglesupply_circuit.zip",
+      "netlist_filename": "kicad_bipolartosinglesupply_netlist.zip",
+      "task_path": "scripts/tasks/b7148878"
+    },
+    {
+      "id": "b7e51b92",
+      "submission_id": "b7e51b92-fe0a-4e3c-b87f-e9f445fd288d",
+      "difficulty": "easy",
+      "circuit_prompt": "Design a dual-rail schematic using an LM358 configured as an inverting amplifier with a 10x gain and a grounded buffer. Connect the non-inverting input of the first stage to ground via a 1k\u03a9 resistor (R1), apply the input signal through a 1k\u03a9 resistor (R3) to the inverting input, and place a 10k\u03a9 feedback resistor (R2) between the output and inverting input. For the second stage, create a unity-gain buffer by shorting the output to the inverting input while grounding the non-inverting input, and ensure the entire IC is powered at \u00b115V.",
+      "pcb_filename": "kicad_negativamplifier_circuit.zip",
+      "netlist_filename": "kicad_negativamplifier_netlist.zip",
+      "task_path": "scripts/tasks/b7e51b92"
+    },
+    {
+      "id": "ba34f1c3",
+      "submission_id": "ba34f1c3-3460-413b-9849-e70dcda1954a",
+      "difficulty": "easy",
+      "circuit_prompt": "Draw a KiCad schematic for a voltage reference circuit using the AD586.  It must be powered off an analog 9V power supply. The reference needs to be low noise, so connect a 1 uF capacitor to the noise reduction pin. We also need very high accuracy output, so connect an external 10k trim resistor to the IC as well. Finally, clearly label the output.",
+      "pcb_filename": "kicad_voltageref_circuit.zip",
+      "netlist_filename": "kicad_voltageref_netlist.zip",
+      "task_path": "scripts/tasks/ba34f1c3"
+    },
+    {
+      "id": "c4baee36",
+      "submission_id": "c4baee36-ea0a-4451-81f0-fd540d47326c",
+      "difficulty": "easy",
+      "circuit_prompt": "Design a KiCad-style schematic of a switching, step-down voltage regulator to convert 48 Vdc to 3.3 Vdc. Use the LM2576HVS-3.3 from Texas Instruments.  \n\n\t\u2022 Pin 1 is the input and should be connected to both the input of 48 Vdc and a polarized capacitor (C1) of 100 uF. C1 has its negative terminal connected to ground.  \n\t\u2022 Pin 2 is connected to both a catch diode 1N5822 cathode and an inductor of 100 uH.  The other end of the diode is connected to ground. The other end of the inductor is connected to both Pin 4 and the positive end of polarized capacitor (C2) of 1000 uF. The other end of C2 is grounded.\nPins 3 and 5 should be connected directly to ground.",
+      "pcb_filename": "kicad_smps3p3V_circuit.zip",
+      "netlist_filename": "kicad_smps3p3V_netlist.zip",
+      "task_path": "scripts/tasks/c4baee36"
+    },
+    {
+      "id": "d1c655da",
+      "submission_id": "d1c655da-ce1c-446d-bee2-1e8cde8a62cc",
+      "difficulty": "medium",
+      "circuit_prompt": "Modify the overall gain of the circuit by changing R10 to 2.80kOhm.",
+      "pcb_filename": "kicad_InstrumentationAmp_circuit_modified.zip",
+      "netlist_filename": "kicad_InstrumentationAmp_netlist_modified.zip",
+      "task_path": "scripts/tasks/d1c655da"
+    },
+    {
+      "id": "d5947ae7",
+      "submission_id": "d5947ae7-19bf-42dc-92c4-c9ca182d6d8d",
+      "difficulty": "medium",
+      "circuit_prompt": "Revise the 5V fixed-output LM2596S-5 buck converter shown in the attached schematic to improve stability and transient performance by strengthening both input and output filtering while keeping the overall topology unchanged. Add a 100 nF ceramic capacitor for improved high-frequency output noise suppression and include a 10 \u00b5F ceramic capacitor to enhance input decoupling during switching events. Increase the output bulk capacitance from 220 \u00b5F to 470 \u00b5F to improve load transient response and energy buffering capability. All other components and connections remain unchanged.",
+      "pcb_filename": "kicad_buck converter_circuit_modify.zip",
+      "netlist_filename": "kicad_buck converter_netlist_modify.zip",
+      "task_path": "scripts/tasks/d5947ae7"
+    },
+    {
+      "id": "ff6dfdde",
+      "submission_id": "ff6dfdde-721f-4044-99ce-b6fdd26350dd",
+      "difficulty": "easy",
+      "circuit_prompt": "Design a circuit in KiCad using the chip ISO1211 to connect a 24V field input digital signal in a noisy environment to a 3.3V microcontroller.  \n\t\u2022 From the field input, add in a low pass filter with a resistor of 2.5k and capacitor of 10nF before connecting to the SENSE pin. \n\t\u2022 The SENSE pin should also be connected to pin 7 with a 562 ohm resistor.\n\t\u2022 The second side of the digital isolator will be used to directly interface to the microcontroller.\n\t\u2022 ENABLE should be tied to the microcontroller power for robustness in a noisy environment.\n\t\u2022 The ground on the field side of the isolator should be connected to FGND, and the ground on the microcontroller side should be connected to GND1.\nClearly label the FIELD_INPUT, the HEAT_SINK connection on pin 5, and the circuit OUTPUT to the microcontroller.",
+      "pcb_filename": "kicad_digitalisolator_circuit.zip",
+      "netlist_filename": "kicad_digitalisolator_netlist.zip",
+      "task_path": "scripts/tasks/ff6dfdde"
+    }
+  ],
+  "unpackaged": [
+    {
+      "id": "4bb21f65",
+      "submission_id": "4bb21f65-ee3c-4442-bfb9-228f47fde6f6",
+      "difficulty": "easy",
+      "circuit_prompt": "Design an electric circuit with DC input voltage of 48 Volts. Add two resistors of 4 Ohms each in series and two more in parallel. Add one more capacitor of 0.2 micro Farad. Also add a GND (ground) terminal. Calculate the DC output voltage (V_{out}) across parallel load.",
+      "pcb_filename": "librepcb_mdfd_electrickt_Schematic.zip",
+      "netlist_filename": "librepcb_mdfd_electrickt_Netlist.zip",
+      "task_path": "scripts/tasks/4bb21f65",
+      "reason": "LibrePCB format (unsupported netlist)"
+    },
+    {
+      "id": "4d3ae973",
+      "submission_id": "4d3ae973-f981-4195-a630-535343254caa",
+      "difficulty": "easy",
+      "circuit_prompt": "Create voltage divider circuit with following input data:\nInput Voltage Vin=+12 V ; V stands for voltage.\nVout=5 V\nR1=14 K Ohm ; resister one\nR2=10 K Ohm ; resister 2\nConnect the three header PIN with last one to ground and it is GND with voltage 0. Connect other part of the PIN as you create the dividercircuit.\nPlease follow the IEEE symbols.",
+      "pcb_filename": "librepcb_voltagedivider_circuit.zip",
+      "netlist_filename": "librepcb_voltagedividers_netlist.zip",
+      "task_path": "scripts/tasks/4d3ae973",
+      "reason": "LibrePCB format (unsupported netlist)"
+    },
+    {
+      "id": "6c1f47d1",
+      "submission_id": "6c1f47d1-d922-4231-b02a-aaa59b89a260",
+      "difficulty": "medium",
+      "circuit_prompt": "Design and analyze a single stage NPN BJT amplifier. Create an schematic and investigate that how an external load may be named as R_{L} impacts the voltage gain for the whole system. Use following inputs: \nan NPN transsistor, VCC of 12 volts as input. Bias resistors as R1 and R2 of 47 and 10 K Ohms respectively. \nEmitter resistance 1 K Ohm. \nThe capacitors used are: 100 micro farad with Emitter. C_{IN} and C_{OUT} are 10 micro fard each.",
+      "pcb_filename": "librepcb_BJT_modified_schematic.zip",
+      "netlist_filename": "librepcb_BJT_modfd_Netlist.zip",
+      "task_path": "scripts/tasks/6c1f47d1",
+      "reason": "LibrePCB format (unsupported netlist)"
+    },
+    {
+      "id": "bab769a8",
+      "submission_id": "bab769a8-8a03-4fcf-b9b9-cbd43a19c135",
+      "difficulty": "easy",
+      "circuit_prompt": "Design a voltage divider circuit by using a 220 Volts AC input transformer to DC outpt of 12 Volts. Use 1N4007 diodes, four of them to create a full wave bridge. Use a 1000 micro Farad capacitor and a resistor of 1 Ohm. Also include L7812 voltage regulator. Label the components and run the ERC to check that the circuit works.",
+      "pcb_filename": "librepcb_modfd_circuit.zip",
+      "netlist_filename": "librepcb_netlist.zip",
+      "task_path": "scripts/tasks/bab769a8",
+      "reason": "LibrePCB format (unsupported netlist)"
+    }
+  ]
+}

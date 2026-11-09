@@ -185,7 +185,7 @@ final class Server: @unchecked Sendable {
 
     // MARK: - Initialization
 
-    init(port: UInt16 = 7777) {
+    init(port: UInt16 = LumeChannel.current.lumePort) {
         self.portNumber = port
         self.controller = LumeController()
         self.routes = []
@@ -270,17 +270,49 @@ final class Server: @unchecked Sendable {
                         "Processing stop VM request",
                         metadata: ["method": request.method, "path": request.path])
                     var storage: String? = nil
+                    var force = false
+                    var timeout = VM.defaultStopTimeout
                     if let bodyData = request.body, !bodyData.isEmpty {
                         do {
                             if let json = try JSONSerialization.jsonObject(with: bodyData)
-                                as? [String: Any],
-                                let bodyStorage = json["storage"] as? String
+                                as? [String: Any]
                             {
-                                storage = bodyStorage
+                                if let bodyStorage = json["storage"] as? String {
+                                    storage = bodyStorage
+                                }
+                                if let bodyForce = json["force"] as? Bool {
+                                    force = bodyForce
+                                }
+                                if let bodyTimeout = json["timeout"] as? NSNumber {
+                                    timeout = max(bodyTimeout.doubleValue, 0)
+                                }
                             }
                         } catch {}
                     }
-                    return try await self.handleStopVM(name: name, storage: storage)
+                    return try await self.handleStopVM(
+                        name: name, storage: storage, force: force, timeout: timeout)
+                }),
+            Route(
+                method: "POST", path: "/lume/vms/:name/suspend",
+                handler: { [weak self] request in
+                    guard let self else { throw HTTPError.internalError }
+                    let params = self.extractPathParams(
+                        pattern: "/lume/vms/:name/suspend", from: request)
+                    guard let name = params["name"] else {
+                        return HTTPResponse(statusCode: .badRequest, body: "Missing VM name")
+                    }
+                    return try await self.handleSuspendVM(name: name)
+                }),
+            Route(
+                method: "POST", path: "/lume/vms/:name/rename",
+                handler: { [weak self] request in
+                    guard let self else { throw HTTPError.internalError }
+                    let params = self.extractPathParams(
+                        pattern: "/lume/vms/:name/rename", from: request)
+                    guard let name = params["name"] else {
+                        return HTTPResponse(statusCode: .badRequest, body: "Missing VM name")
+                    }
+                    return try await self.handleRenameVM(name: name, body: request.body)
                 }),
             Route(
                 method: "POST", path: "/lume/vms/:name/setup",
@@ -310,6 +342,12 @@ final class Server: @unchecked Sendable {
                 handler: { [weak self] request in
                     guard let self else { throw HTTPError.internalError }
                     return try await self.handlePullStart(request.body)
+                }),
+            Route(
+                method: "POST", path: "/lume/pull/cancel",
+                handler: { [weak self] request in
+                    guard let self else { throw HTTPError.internalError }
+                    return try await self.handlePullCancel(request.body)
                 }),
             Route(
                 method: "POST", path: "/lume/prune",
@@ -473,7 +511,37 @@ final class Server: @unchecked Sendable {
             return HTTPResponse(statusCode: .notFound, body: "Not found")
         }
 
-        let response = try await route.handler(request)
+        let operation = TelemetryClient.httpOperation(method: route.method, routePath: route.path)
+        let startedAt = Date()
+        let response: HTTPResponse
+        do {
+            response = try await route.handler(request)
+            let success = response.statusCode.rawValue < 400
+            let errorClass: TelemetryErrorClass
+            switch response.statusCode {
+            case .badRequest: errorClass = .invalidParams
+            case .notFound: errorClass = .notFound
+            case .internalServerError: errorClass = .internalError
+            default: errorClass = .none
+            }
+            TelemetryClient.shared.recordOperationCompleted(
+                operation: operation,
+                transport: .http,
+                success: success,
+                errorClass: errorClass,
+                elapsed: Date().timeIntervalSince(startedAt),
+                phase: response.statusCode == .accepted ? "accepted" : "completed"
+            )
+        } catch {
+            TelemetryClient.shared.recordOperationCompleted(
+                operation: operation,
+                transport: .http,
+                success: false,
+                errorClass: .internalError,
+                elapsed: Date().timeIntervalSince(startedAt)
+            )
+            throw error
+        }
 
         Logger.info(
             "Sending response",

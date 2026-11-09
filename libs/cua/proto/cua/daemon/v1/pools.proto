@@ -1,0 +1,115 @@
+// Pools (cua.daemon.v1): sandboxes of one shape the daemon keeps ready on
+// its machine, so that a create from the pool takes one in about 0.1 s
+// instead of booting. Without pools the daemon keeps sandboxes ready only
+// where repeated creates of a shape pay for it (its adaptive policy; `cua
+// daemon status` says why); a pool asks for them explicitly and bypasses
+// that policy.
+syntax = "proto3";
+
+package cua.daemon.v1;
+
+import "cua/daemon/v1/sandboxes.proto";
+import "google/protobuf/duration.proto";
+
+// Pools of the daemon's machine. Pools are kept across daemon restarts.
+service PoolService {
+  // Creates a pool, or updates the pool of that name.
+  rpc CreatePool(CreatePoolRequest) returns (CreatePoolResponse);
+  // One pool, with what it holds now.
+  rpc GetPool(GetPoolRequest) returns (GetPoolResponse);
+  // Every pool, with what each holds now.
+  rpc ListPools(ListPoolsRequest) returns (ListPoolsResponse);
+  // Deletes a pool and its ready sandboxes; sandboxes created from it stay.
+  rpc DeletePool(DeletePoolRequest) returns (DeletePoolResponse);
+}
+
+// Request for `PoolService.CreatePool`.
+message CreatePoolRequest {
+  // Pool name (a DNS label). Empty: the daemon names it.
+  string name = 1;
+  // What its sandboxes are: a create request's image, location (only
+  // `local` today), kind, runtime, cpus, memory, env, ports and services.
+  // Its name, token and pool are ignored.
+  CreateSandboxRequest spec = 2;
+  // Sandboxes kept ready at all times: one is started again as soon as one
+  // is created from the pool.
+  uint32 min = 3;
+  // Most sandboxes kept ready (not counting those created from the pool).
+  // 0: `min`. Above `min`, more are kept ready only while creates from the
+  // pool come faster than sandboxes start.
+  uint32 max = 4;
+  // After this long without a create from the pool, it keeps none ready
+  // until the next create (which starts on the default tier and refills
+  // the pool). Unset: never.
+  google.protobuf.Duration idle = 5;
+}
+
+// Response for `PoolService.CreatePool`.
+message CreatePoolResponse {
+  // The pool as created or updated.
+  Pool pool = 1;
+}
+
+// Request for `PoolService.GetPool`.
+message GetPoolRequest {
+  // Pool name.
+  string name = 1;
+}
+
+// Response for `PoolService.GetPool`.
+message GetPoolResponse {
+  // The pool.
+  Pool pool = 1;
+}
+
+// Request for `PoolService.ListPools`.
+message ListPoolsRequest {}
+
+// Response for `PoolService.ListPools`.
+message ListPoolsResponse {
+  // Every pool.
+  repeated Pool pools = 1;
+}
+
+// Request for `PoolService.DeletePool`.
+message DeletePoolRequest {
+  // Pool name.
+  string name = 1;
+}
+
+// Response for `PoolService.DeletePool`.
+message DeletePoolResponse {
+  // Whether a pool of that name existed.
+  bool deleted = 1;
+}
+
+// A pool (`PoolService.CreatePool`).
+message Pool {
+  // Name.
+  string name = 1;
+  // Image, as given.
+  string image = 2;
+  // Where its sandboxes run (`local`).
+  string location = 3;
+  // Kind, as given (empty: auto).
+  string kind = 4;
+  // Runtime, as given (empty: auto).
+  string runtime = 5;
+  // CPUs of each sandbox.
+  uint32 cpus = 6;
+  // Memory of each sandbox (MiB).
+  uint64 memory_mb = 7;
+  // Sandboxes kept ready at all times.
+  uint32 min = 8;
+  // Most sandboxes kept ready.
+  uint32 max = 9;
+  // Idle time after which it keeps none ready (unset: never).
+  google.protobuf.Duration idle = 10;
+  // Sandboxes ready now.
+  uint32 ready = 11;
+  // Sandboxes starting.
+  uint32 starting = 12;
+  // Why it holds what it holds, or why it cannot (an image that does not
+  // pool here, too little memory, idle).
+  string status = 13;
+}

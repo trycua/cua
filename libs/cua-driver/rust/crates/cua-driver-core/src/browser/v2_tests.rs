@@ -1,0 +1,4321 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
+//! End-to-end tests for the v2 DOM-ref slice against a deterministic
+//! mock CDP endpoint: composed shadow DOM, same-process iframes,
+//! capability-tested OOPIFs with containment, frame/document identity
+//! revalidation, navigation invalidation, and unproven-capability
+//! omission/refusal.
+
+use std::io::Cursor;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc, Mutex as StdMutex,
+};
+
+use async_trait::async_trait;
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+use image::{DynamicImage, ImageFormat, Rgba, RgbaImage};
+use serde_json::{json, Value};
+
+use crate::action_record::ActionExecutionRecord;
+use crate::protocol::{Content, ToolResult};
+use crate::tool::Tool;
+
+use super::engine::BrowserEngine;
+use super::mock_cdp::{MockCdpServer, MockEvent, MockHandler, MockReply};
+use super::platform::{
+    BrowserConsentOutcome, BrowserConsentRequest, BrowserPlatform, ExistingProfileSetupOutcome,
+    ExistingProfileSetupRequest, PrepareAction, PrepareOutcome, PrepareRequest,
+};
+use super::pointer::BrowserPointerTool;
+use super::refusal::BrowserRefusal;
+use super::tools::{
+    browser_protected_resource_scope, BrowserClickTool, BrowserDialogTool, BrowserNavigateTool,
+    BrowserPrepareTool, BrowserSelectTool, BrowserTypeTool, GetBrowserStateTool,
+};
+use super::types::{
+    BrowserClassification, BrowserEngineFamily, BrowserProcessRole, BrowserProduct,
+    EndpointOwnershipMethod, EndpointOwnershipProof, EndpointTransport, NativeOwnershipMethod,
+    NativeOwnershipProof, NativeWindowInfo, OwnedEndpoint, ProcessFingerprint, Rect,
+};
+
+// ── Scripted Chromium fixture ────────────────────────────────────────────────
+
+/// Mutable knobs + a call log, shared between the mock handler and the
+/// test body. Tests flip loaders/capabilities mid-run to simulate
+/// navigations, frame removal, and capability regression.
+#[derive(Debug)]
+pub(super) struct FixtureState {
+    pub(super) endpoint_responses:
+        std::collections::VecDeque<Result<Option<OwnedEndpoint>, BrowserRefusal>>,
+    pub(super) endpoint_discovery_count: usize,
+    oopif_supported: bool,
+    oopif_present: bool,
+    emit_rogue_attach: bool,
+    main_url: String,
+    main_loader: String,
+    iframe_loader: String,
+    oopif_loader: String,
+    tab_sessions: u64,
+    oopif_sessions: u64,
+    fail_key_down_after: Option<usize>,
+    completed_key_pairs: usize,
+    /// A synthetic `this.click()` opens a confirm() dialog: the mock emits
+    /// `Page.javascriptDialogOpening` and never answers the call.
+    click_opens_dialog: bool,
+    /// The renderer dropped its dialog without `Page.javascriptDialogClosed`
+    /// (a crash, a lost event): resolving it answers Chromium's
+    /// `No dialog is showing`.
+    dialog_vanished: bool,
+    /// The trusted mouse event (`mousePressed` or `mouseReleased`) that opens
+    /// a confirm() dialog. Like Chromium, the renderer then answers no input
+    /// or emulation command until it closes.
+    trusted_click_opens_dialog: Option<&'static str>,
+    renderer_blocked: bool,
+    /// Something outside the driver detaches the dialog's Page session on
+    /// the next attach. While `dialog_blocks_page`, the renderer cannot
+    /// answer `Page.enable` on the new session.
+    detach_dialog_session: bool,
+    dialog_blocks_page: bool,
+    /// Tab sessions that enabled the Page domain. Chromium reports a dialog
+    /// to each of them, not to the session whose call opened it.
+    page_sessions: Vec<String>,
+    semantic_large_page: bool,
+    semantic_html_style: String,
+    semantic_full_dom_fails: bool,
+    semantic_full_dom_times_out: bool,
+    semantic_truncated_dom: bool,
+    screenshot_data: String,
+    viewport_css_width: f64,
+    viewport_css_height: f64,
+    tab_visible: bool,
+    select_outcome: Value,
+    /// Extra page targets Chromium reports but cannot map to any browser
+    /// window (`Browser.getWindowForTarget` → `-32000 Browser window not
+    /// found`): an extension side panel, an offscreen document.
+    windowless_targets: Vec<Value>,
+    /// Extra page targets living in the bound window, after T1 in the
+    /// browser's `Target.getTargets` order.
+    sibling_tabs: Vec<Value>,
+    /// Drop the primary tab target T1 from `Target.getTargets`.
+    omit_primary_target: bool,
+    /// Make `Browser.getWindowForTarget` for T1 answer this CDP error.
+    primary_window_error: Option<(i64, String)>,
+    /// A page-owned JavaScript dialog is open in T1: `Page.enable` on a tab
+    /// session announces it, and the renderer answers nothing else.
+    dialog_open: bool,
+    /// `Page.enable` on a tab session never answers (a renderer blocked by a
+    /// dialog it has not yet announced).
+    page_enable_hangs: bool,
+    dom_click_changes_readback: bool,
+    dom_click_readback_available: bool,
+    dom_click_stall_after: Option<usize>,
+    dom_click_generation: u64,
+    dom_click_focused: bool,
+    dom_click_reads_before_failure: Option<usize>,
+    /// Answer every post-snapshot semantic readback after this delay.
+    dom_click_readback_delay: Option<std::time::Duration>,
+    /// Every incoming CDP call: (sessionId, method, params).
+    calls: Vec<(Option<String>, String, Value)>,
+}
+
+impl Default for FixtureState {
+    fn default() -> Self {
+        Self {
+            endpoint_responses: Default::default(),
+            endpoint_discovery_count: 0,
+            oopif_supported: true,
+            oopif_present: true,
+            emit_rogue_attach: false,
+            main_url: "https://fixture.test/".into(),
+            windowless_targets: Vec::new(),
+            sibling_tabs: Vec::new(),
+            omit_primary_target: false,
+            primary_window_error: None,
+            dialog_open: false,
+            page_enable_hangs: false,
+            main_loader: "L_MAIN_1".into(),
+            iframe_loader: "L_IFRAME_1".into(),
+            oopif_loader: "L_OOPIF_1".into(),
+            tab_sessions: 0,
+            oopif_sessions: 0,
+            fail_key_down_after: None,
+            completed_key_pairs: 0,
+            click_opens_dialog: false,
+            dialog_vanished: false,
+            trusted_click_opens_dialog: None,
+            renderer_blocked: false,
+            detach_dialog_session: false,
+            dialog_blocks_page: false,
+            page_sessions: Vec::new(),
+            semantic_large_page: false,
+            semantic_html_style: String::new(),
+            semantic_full_dom_fails: false,
+            semantic_full_dom_times_out: false,
+            semantic_truncated_dom: false,
+            screenshot_data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9ZJrAAAAAASUVORK5CYII=".into(),
+            viewport_css_width: 800.0,
+            viewport_css_height: 600.0,
+            tab_visible: true,
+            select_outcome: Value::Null,
+            dom_click_changes_readback: true,
+            dom_click_readback_available: true,
+            dom_click_stall_after: None,
+            dom_click_generation: 0,
+            dom_click_focused: false,
+            dom_click_reads_before_failure: None,
+            dom_click_readback_delay: None,
+            calls: Vec::new(),
+        }
+    }
+}
+
+fn screenshot_png_base64(width: u32, height: u32) -> String {
+    let image = RgbaImage::from_pixel(width, height, Rgba([18, 171, 52, 255]));
+    let mut encoded = Cursor::new(Vec::new());
+    DynamicImage::ImageRgba8(image)
+        .write_to(&mut encoded, ImageFormat::Png)
+        .expect("encode screenshot fixture PNG");
+    BASE64.encode(encoded.into_inner())
+}
+
+type SharedState = Arc<StdMutex<FixtureState>>;
+
+/// Main-frame document: a plain button, an open shadow root with an
+/// input, a user-agent shadow root (must be skipped), a same-process
+/// iframe with a button, and an OOPIF placeholder (no contentDocument).
+fn main_document() -> Value {
+    json!({
+        "root": {
+            "nodeType": 9,
+            "nodeName": "#document",
+            "documentURL": "https://fixture.test/",
+            "frameId": "F_MAIN",
+            "children": [{
+                "nodeType": 1,
+                "nodeName": "HTML",
+                "backendNodeId": 1,
+                "children": [
+                    {
+                        "nodeType": 1,
+                        "nodeName": "BUTTON",
+                        "backendNodeId": 10,
+                        "attributes": ["id", "main-btn"],
+                    },
+                    {
+                        "nodeType": 1,
+                        "nodeName": "DIV",
+                        "backendNodeId": 11,
+                        "shadowRoots": [{
+                            "nodeType": 11,
+                            "nodeName": "#document-fragment",
+                            "shadowRootType": "open",
+                            "backendNodeId": 12,
+                            "children": [{
+                                "nodeType": 1,
+                                "nodeName": "INPUT",
+                                "backendNodeId": 20,
+                                "attributes": ["aria-label", "Shadow Input", "type", "text"],
+                            }]
+                        }]
+                    },
+                    {
+                        "nodeType": 1,
+                        "nodeName": "INPUT",
+                        "backendNodeId": 21,
+                        "attributes": ["type", "text"],
+                        "shadowRoots": [{
+                            "nodeType": 11,
+                            "nodeName": "#document-fragment",
+                            "shadowRootType": "user-agent",
+                            "backendNodeId": 23,
+                            "children": [{
+                                "nodeType": 1,
+                                "nodeName": "DIV",
+                                "backendNodeId": 22,
+                                "attributes": ["role", "button"],
+                            }]
+                        }]
+                    },
+                    {
+                        "nodeType": 1,
+                        "nodeName": "IFRAME",
+                        "backendNodeId": 13,
+                        "frameId": "F_IFRAME",
+                        "contentDocument": {
+                            "nodeType": 9,
+                            "nodeName": "#document",
+                            "frameId": "F_IFRAME",
+                            "children": [{
+                                "nodeType": 1,
+                                "nodeName": "BUTTON",
+                                "backendNodeId": 30,
+                                "attributes": ["id", "inner-btn"],
+                            }]
+                        }
+                    },
+                    {
+                        "nodeType": 1,
+                        "nodeName": "IFRAME",
+                        "backendNodeId": 14,
+                        "frameId": "F_OOPIF",
+                    }
+                ]
+            }]
+        }
+    })
+}
+
+/// Large application document used to prove that hidden retained controls do
+/// not consume the semantic snapshot budget ahead of the active view.
+fn large_semantic_document(html_style: &str) -> Value {
+    let mut children = Vec::new();
+    for id in 0..320_i64 {
+        children.push(json!({
+            "nodeType": 1,
+            "nodeName": "BUTTON",
+            "backendNodeId": 1_000 + id,
+            "attributes": [
+                "aria-hidden", "true",
+                "style", "display:none",
+                "aria-label", format!("Retained control {id}"),
+            ],
+        }));
+    }
+    children.extend([
+        json!({
+            "nodeType": 1,
+            "nodeName": "H1",
+            "backendNodeId": 2_000,
+            "children": [{
+                "nodeType": 3,
+                "nodeName": "#text",
+                "nodeValue": "Visible message",
+                "backendNodeId": 2_001,
+            }],
+        }),
+        json!({
+            "nodeType": 1,
+            "nodeName": "P",
+            "backendNodeId": 2_002,
+            "children": [{
+                "nodeType": 3,
+                "nodeName": "#text",
+                "nodeValue": "Please review the attached fixture report.",
+                "backendNodeId": 2_003,
+            }],
+        }),
+        json!({
+            "nodeType": 1,
+            "nodeName": "TEXTAREA",
+            "backendNodeId": 2_010,
+            "attributes": ["aria-label", "Reply body"],
+        }),
+        json!({
+            "nodeType": 1,
+            "nodeName": "BUTTON",
+            "backendNodeId": 2_011,
+            "attributes": ["aria-label", "Reply"],
+        }),
+    ]);
+    for id in 0..305_i64 {
+        children.push(json!({
+            "nodeType": 1,
+            "nodeName": "BUTTON",
+            "backendNodeId": 3_000 + id,
+            "attributes": ["aria-label", format!("Archive item {id}")],
+        }));
+    }
+    json!({
+        "root": {
+            "nodeType": 9,
+            "nodeName": "#document",
+            "documentURL": "https://fixture.test/inbox/item-2",
+            "frameId": "F_MAIN",
+            "children": [{
+                "nodeType": 1,
+                "nodeName": "HTML",
+                "backendNodeId": 999,
+                "attributes": ["style", html_style],
+                "children": children,
+            }]
+        }
+    })
+}
+
+fn truncated_semantic_document() -> Value {
+    json!({
+        "root": {
+            "nodeType": 9,
+            "nodeName": "#document",
+            "documentURL": "https://fixture.test/inbox/item-2",
+            "frameId": "F_MAIN",
+            "children": [{
+                "nodeType": 1,
+                "nodeName": "HTML",
+                "backendNodeId": 999,
+                "childNodeCount": 629,
+                "children": [],
+            }]
+        }
+    })
+}
+
+fn large_semantic_ax_tree(frame_id: &str) -> Value {
+    if frame_id != "F_MAIN" {
+        return json!({"nodes": [{
+            "nodeId": format!("root-{frame_id}"),
+            "ignored": false,
+            "role": {"value": "RootWebArea"},
+            "name": {"value": "Inner fixture"},
+            "childIds": []
+        }]});
+    }
+    let mut child_ids = vec![
+        "heading".to_owned(),
+        "body".to_owned(),
+        "editor".to_owned(),
+        "reply".to_owned(),
+    ];
+    child_ids.extend((0..305).map(|id| format!("archive-{id}")));
+    let mut nodes = vec![
+        json!({
+            "nodeId": "root-main",
+            "ignored": false,
+            "role": {"value": "RootWebArea"},
+            "name": {"value": "Fixture inbox"},
+            "childIds": child_ids
+        }),
+        json!({
+            "nodeId": "heading",
+            "parentId": "root-main",
+            "ignored": false,
+            "backendDOMNodeId": 2000,
+            "role": {"value": "heading"},
+            "name": {"value": "Visible message"},
+            "childIds": []
+        }),
+        json!({
+            "nodeId": "body",
+            "parentId": "root-main",
+            "ignored": false,
+            "backendDOMNodeId": 2003,
+            "role": {"value": "StaticText"},
+            "name": {"value": "Please review the attached fixture report."},
+            "childIds": []
+        }),
+        json!({
+            "nodeId": "editor",
+            "parentId": "root-main",
+            "ignored": false,
+            "backendDOMNodeId": 2010,
+            "role": {"value": "textbox"},
+            "name": {"value": "Reply body"},
+            "value": {"value": ""},
+            "properties": [
+                {"name": "editable", "value": {"value": "plaintext"}},
+                {"name": "focusable", "value": {"value": true}}
+            ],
+            "childIds": []
+        }),
+        json!({
+            "nodeId": "reply",
+            "parentId": "root-main",
+            "ignored": false,
+            "backendDOMNodeId": 2011,
+            "role": {"value": "button"},
+            "name": {"value": "Reply"},
+            "properties": [
+                {"name": "disabled", "value": {"value": false}},
+                {"name": "focusable", "value": {"value": true}}
+            ],
+            "childIds": []
+        }),
+    ];
+    for id in 0..305_i64 {
+        nodes.push(json!({
+            "nodeId": format!("archive-{id}"),
+            "parentId": "root-main",
+            "ignored": false,
+            "backendDOMNodeId": 3_000 + id,
+            "role": {"value": "button"},
+            "name": {"value": format!("Archive item {id}")},
+            "childIds": []
+        }));
+    }
+    json!({"nodes": nodes})
+}
+
+fn semantic_layout_snapshot(backends: &[i64], bounds: &[[f64; 4]]) -> Value {
+    let styles = (0..backends.len())
+        .map(|_| json!([0, 1, 2, 3, 3]))
+        .collect::<Vec<_>>();
+    let node_indices = (0..backends.len()).collect::<Vec<_>>();
+    let paint_orders = (1..=backends.len()).collect::<Vec<_>>();
+    json!({
+        "strings": ["block", "visible", "1", "auto", "pointer"],
+        "documents": [{
+            "nodes": {"backendNodeId": backends},
+            "layout": {
+                "nodeIndex": node_indices,
+                "bounds": bounds,
+                "styles": styles,
+                "paintOrders": paint_orders
+            }
+        }]
+    })
+}
+
+fn oopif_document() -> Value {
+    json!({
+        "root": {
+            "nodeType": 9,
+            "nodeName": "#document",
+            "documentURL": "https://ads.example/frame",
+            "frameId": "F_OOPIF",
+            "children": [{
+                "nodeType": 1,
+                "nodeName": "HTML",
+                "backendNodeId": 90,
+                "children": [{
+                    "nodeType": 1,
+                    "nodeName": "INPUT",
+                    "backendNodeId": 100,
+                    "attributes": ["id", "ad-input", "type", "text"],
+                }]
+            }]
+        }
+    })
+}
+
+fn fixture_handler(state: SharedState) -> MockHandler {
+    Arc::new(move |call| {
+        let mut st = state.lock().unwrap();
+        st.calls.push((
+            call.session_id.clone(),
+            call.method.clone(),
+            call.params.clone(),
+        ));
+        let sess = call.session_id.clone().unwrap_or_default();
+        let is_tab = sess.starts_with("tab-sess-");
+        let is_oopif = sess.starts_with("oopif-sess-");
+
+        match call.method.as_str() {
+            "Target.getTargets" => {
+                let mut infos: Vec<Value> = Vec::new();
+                if !st.omit_primary_target {
+                    infos.push(json!({
+                        "targetId": "T1",
+                        "type": "page",
+                        "title": "Fixture",
+                        "url": "https://fixture.test/",
+                        "attached": false,
+                    }));
+                }
+                infos.extend(st.sibling_tabs.iter().cloned());
+                infos.extend(st.windowless_targets.iter().cloned());
+                MockReply::ok(json!({ "targetInfos": infos }))
+            }
+            "Target.getTargetInfo" => MockReply::ok(json!({
+                "targetInfo": {
+                    "targetId": "T1",
+                    "type": "page",
+                    "title": "Fixture after navigation",
+                    "url": "https://fixture.test/",
+                    "attached": true,
+                }
+            })),
+            "Browser.getWindowForTarget" => {
+                let target_id = call.params["targetId"].as_str().unwrap_or("");
+                let windowless = st
+                    .windowless_targets
+                    .iter()
+                    .any(|t| t["targetId"].as_str() == Some(target_id));
+                if windowless {
+                    MockReply::err(-32000, "Browser window not found")
+                } else if let Some((code, message)) = st.primary_window_error.clone() {
+                    MockReply::err(code, &message)
+                } else {
+                    MockReply::ok(json!({ "windowId": 11 }))
+                }
+            }
+            "Browser.getWindowBounds" => MockReply::ok(json!({
+                "bounds": { "left": 0.0, "top": 0.0, "width": 800.0, "height": 600.0 }
+            })),
+            "Target.attachToTarget" => {
+                st.tab_sessions += 1;
+                let reply =
+                    MockReply::ok(json!({ "sessionId": format!("tab-sess-{}", st.tab_sessions) }));
+                if !std::mem::take(&mut st.detach_dialog_session) {
+                    return reply;
+                }
+                let detached = std::mem::take(&mut st.page_sessions);
+                reply.with_events(
+                    detached
+                        .into_iter()
+                        .map(|session| MockEvent {
+                            method: "Target.detachedFromTarget".into(),
+                            params: json!({ "sessionId": session, "targetId": "T1" }),
+                            session_id: None,
+                        })
+                        .collect(),
+                )
+            }
+            "Page.enable" if is_tab && (st.page_enable_hangs || st.dialog_blocks_page) => {
+                MockReply::hang()
+            }
+            "Page.enable" if is_tab => {
+                st.page_sessions.push(sess.clone());
+                let mut reply = MockReply::ok(json!({}));
+                if st.dialog_open {
+                    reply = reply.with_events(vec![MockEvent {
+                        method: "Page.javascriptDialogOpening".into(),
+                        params: json!({ "type": "alert", "message": "hi", "url": st.main_url }),
+                        session_id: Some(sess.clone()),
+                    }]);
+                }
+                reply
+            }
+            "Page.getFrameTree" if is_tab && st.dialog_open => MockReply::err(
+                -32000,
+                "the renderer is blocked by a dialog and never answers",
+            ),
+            "Page.getFrameTree" if is_tab => MockReply::ok(json!({
+                "frameTree": {
+                    "frame": {
+                        "id": "F_MAIN",
+                        "loaderId": st.main_loader.clone(),
+                        "url": st.main_url.clone(),
+                    },
+                    "childFrames": [{
+                        "frame": {
+                            "id": "F_IFRAME",
+                            "parentId": "F_MAIN",
+                            "loaderId": st.iframe_loader.clone(),
+                            "url": "https://fixture.test/inner",
+                        }
+                    }]
+                }
+            })),
+            "Page.getFrameTree" if is_oopif => MockReply::ok(json!({
+                "frameTree": {
+                    "frame": {
+                        "id": "F_OOPIF",
+                        "loaderId": st.oopif_loader.clone(),
+                        "url": "https://ads.example/frame",
+                    }
+                }
+            })),
+            "DOM.getDocument" if is_tab => {
+                let depth = call.params["depth"].as_i64().unwrap_or(-1);
+                if st.semantic_full_dom_times_out && (depth == -1 || depth > 8) {
+                    MockReply::err(-32000, "CDP DOM.getDocument timed out after 20s")
+                } else if st.semantic_full_dom_fails && (depth == -1 || depth > 8) {
+                    MockReply::err(-32000, "Object reference chain is too long")
+                } else if st.semantic_truncated_dom && depth == 8 {
+                    MockReply::ok(truncated_semantic_document())
+                } else {
+                    MockReply::ok(if st.semantic_large_page {
+                        large_semantic_document(&st.semantic_html_style)
+                    } else {
+                        main_document()
+                    })
+                }
+            }
+            "DOM.describeNode" if is_tab && call.params["backendNodeId"] == 999 => {
+                MockReply::ok(json!({
+                    "node": large_semantic_document(&st.semantic_html_style)["root"]["children"][0].clone()
+                }))
+            }
+            "DOM.getDocument" if is_oopif => MockReply::ok(oopif_document()),
+            "Accessibility.getFullAXTree" if is_tab => {
+                let frame_id = call.params["frameId"].as_str().unwrap_or("F_MAIN");
+                if st.semantic_large_page {
+                    MockReply::ok(large_semantic_ax_tree(frame_id))
+                } else {
+                    MockReply::ok(json!({"nodes": []}))
+                }
+            }
+            "Accessibility.getFullAXTree" if is_oopif => MockReply::ok(json!({"nodes": [
+                {"nodeId": "oopif-root", "ignored": false,
+                 "role": {"value": "RootWebArea"}, "childIds": ["oopif-input"]},
+                {"nodeId": "oopif-input", "parentId": "oopif-root", "ignored": false,
+                 "backendDOMNodeId": 100, "role": {"value": "textbox"},
+                 "name": {"value": "Embedded input"},
+                 "properties": [{"name": "editable", "value": {"value": "plaintext"}}],
+                 "childIds": []}
+            ]})),
+            "DOMSnapshot.captureSnapshot" if is_tab => {
+                if st.semantic_large_page {
+                    let mut backends = vec![999, 2000, 2003, 2010, 2011];
+                    let mut bounds = vec![
+                        [0.0, 0.0, 800.0, 600.0],
+                        [20.0, 20.0, 500.0, 40.0],
+                        [20.0, 80.0, 600.0, 80.0],
+                        [20.0, 180.0, 600.0, 120.0],
+                        [20.0, 320.0, 100.0, 36.0],
+                    ];
+                    for id in 0..305_i64 {
+                        backends.push(3_000 + id);
+                        bounds.push([20.0, 2_000.0 + id as f64 * 40.0, 160.0, 30.0]);
+                    }
+                    MockReply::ok(semantic_layout_snapshot(&backends, &bounds))
+                } else {
+                    MockReply::ok(semantic_layout_snapshot(&[], &[]))
+                }
+            }
+            "DOMSnapshot.captureSnapshot" if is_oopif => MockReply::ok(semantic_layout_snapshot(
+                &[90, 100],
+                &[[0.0, 0.0, 300.0, 100.0], [10.0, 10.0, 120.0, 30.0]],
+            )),
+            "Page.getLayoutMetrics" => MockReply::ok(json!({
+                "cssVisualViewport": {
+                    "pageX": 0.0,
+                    "pageY": 0.0,
+                    "clientWidth": st.viewport_css_width,
+                    "clientHeight": st.viewport_css_height
+                }
+            })),
+            "Runtime.evaluate"
+                if call.params["expression"] == "document.visibilityState === 'visible'" =>
+            {
+                MockReply::ok(json!({
+                    "result": {
+                        "type": "boolean",
+                        "value": st.tab_visible
+                    }
+                }))
+            }
+            "Page.captureScreenshot" if is_tab => {
+                MockReply::ok(json!({"data": st.screenshot_data.clone()}))
+            }
+            "Page.navigate" if is_tab => MockReply::ok(json!({
+                "frameId": "F_MAIN",
+                "loaderId": "L_MAIN_NAVIGATED",
+            })),
+            "Target.setAutoAttach" if is_tab => {
+                if call.params["autoAttach"].as_bool() == Some(false) {
+                    return MockReply::ok(json!({}));
+                }
+                if !st.oopif_supported {
+                    return MockReply::method_not_found("Target.setAutoAttach");
+                }
+                let mut events = Vec::new();
+                if st.oopif_present {
+                    st.oopif_sessions += 1;
+                    events.push(MockEvent {
+                        method: "Target.attachedToTarget".into(),
+                        session_id: Some(sess.clone()),
+                        params: json!({
+                            "sessionId": format!("oopif-sess-{}", st.oopif_sessions),
+                            "targetInfo": {
+                                "targetId": "T_OOPIF",
+                                "type": "iframe",
+                                "url": "https://ads.example/frame",
+                                "attached": true,
+                            },
+                            "waitingForDebugger": false,
+                        }),
+                    });
+                }
+                if st.emit_rogue_attach {
+                    // A child announced on a session we never proved.
+                    events.push(MockEvent {
+                        method: "Target.attachedToTarget".into(),
+                        session_id: Some("unproven-sess".into()),
+                        params: json!({
+                            "sessionId": "rogue-sess",
+                            "targetInfo": {
+                                "targetId": "T_ROGUE",
+                                "type": "iframe",
+                                "url": "https://evil.example/",
+                                "attached": true,
+                            },
+                            "waitingForDebugger": false,
+                        }),
+                    });
+                    // A popup page target beneath the tab — wrong type.
+                    events.push(MockEvent {
+                        method: "Target.attachedToTarget".into(),
+                        session_id: Some(sess.clone()),
+                        params: json!({
+                            "sessionId": "popup-sess",
+                            "targetInfo": {
+                                "targetId": "T_POPUP",
+                                "type": "page",
+                                "url": "https://fixture.test/popup",
+                                "attached": true,
+                            },
+                            "waitingForDebugger": false,
+                        }),
+                    });
+                }
+                MockReply::ok(json!({})).with_events(events)
+            }
+            "DOM.scrollIntoViewIfNeeded" => MockReply::ok(json!({})),
+            "DOM.getBoxModel" => {
+                let backend = call.params["backendNodeId"].as_i64().unwrap_or(0);
+                let known = if is_oopif {
+                    backend == 100
+                } else {
+                    [10, 20, 21, 30].contains(&backend)
+                };
+                if known {
+                    let (x, y) = ((backend * 10) as f64, (backend * 10) as f64);
+                    MockReply::ok(json!({
+                        "model": {
+                            "content": [x, y, x + 20.0, y, x + 20.0, y + 10.0, x, y + 10.0]
+                        }
+                    }))
+                } else {
+                    MockReply::err(-32000, "No node with given id")
+                }
+            }
+            "Input.dispatchKeyEvent" => {
+                let event_type = call.params["type"].as_str().unwrap_or_default();
+                if event_type == "keyDown" && st.fail_key_down_after == Some(st.completed_key_pairs)
+                {
+                    MockReply::err(-32000, "fixture key delivery failure")
+                } else {
+                    if event_type == "keyUp" {
+                        st.completed_key_pairs += 1;
+                    }
+                    MockReply::ok(json!({}))
+                }
+            }
+            "Input.dispatchMouseEvent" | "Emulation.setFocusEmulationEnabled"
+                if st.renderer_blocked =>
+            {
+                MockReply::hang()
+            }
+            "Input.dispatchMouseEvent"
+                if st
+                    .trusted_click_opens_dialog
+                    .is_some_and(|opener| call.params["type"] == opener) =>
+            {
+                st.renderer_blocked = true;
+                let events = st
+                    .page_sessions
+                    .iter()
+                    .map(|page_session| MockEvent {
+                        method: "Page.javascriptDialogOpening".into(),
+                        session_id: Some(page_session.clone()),
+                        params: json!({ "type": "confirm", "message": "Delete?", "url": st.main_url }),
+                    })
+                    .collect();
+                MockReply::hang().with_events(events)
+            }
+            "DOM.focus"
+            | "Emulation.setFocusEmulationEnabled"
+            | "Input.dispatchMouseEvent"
+            | "Input.insertText" => MockReply::ok(json!({})),
+            "DOM.resolveNode" => MockReply::ok(json!({
+                "object": { "objectId": format!("obj-{}", call.params["backendNodeId"]) }
+            })),
+            "Runtime.callFunctionOn"
+                if call.params["functionDeclaration"]
+                    .as_str()
+                    .is_some_and(|declaration| declaration.contains("HTMLSelectElement")) =>
+            {
+                MockReply::ok(json!({ "result": { "value": st.select_outcome.clone() } }))
+            }
+            "Runtime.callFunctionOn"
+                if call.params["functionDeclaration"]
+                    .as_str()
+                    .is_some_and(|function| function.contains("ariaPressed")) =>
+            {
+                if let Some(remaining) = st.dom_click_stall_after.as_mut() {
+                    if *remaining == 0 {
+                        let mut reply = MockReply::ok(json!({}));
+                        reply.suppress_response = true;
+                        return reply;
+                    }
+                    *remaining -= 1;
+                }
+                if let Some(remaining) = st.dom_click_reads_before_failure.as_mut() {
+                    if *remaining == 0 {
+                        return MockReply::err(-32000, "execution context destroyed");
+                    }
+                    *remaining -= 1;
+                }
+                if !st.dom_click_readback_available {
+                    return MockReply::err(-32000, "semantic click readback unavailable");
+                }
+                assert!(!call.params["functionDeclaration"]
+                    .as_str()
+                    .unwrap()
+                    .contains("activeElement"));
+                let value = json!({
+                    "innerText": format!("counter={}", st.dom_click_generation)
+                });
+                let mut reply = MockReply::ok(json!({ "result": { "value": value } }));
+                reply.delay = st.dom_click_readback_delay;
+                reply
+            }
+            "Runtime.callFunctionOn" => {
+                st.dom_click_focused = true;
+                if st.dom_click_changes_readback {
+                    st.dom_click_generation += 1;
+                }
+                let declaration = call.params["functionDeclaration"]
+                    .as_str()
+                    .unwrap_or_default();
+                if st.click_opens_dialog && declaration.contains("const el = this;") {
+                    let events = st
+                        .page_sessions
+                        .iter()
+                        .map(|page_session| MockEvent {
+                            method: "Page.javascriptDialogOpening".into(),
+                            session_id: Some(page_session.clone()),
+                            params: json!({
+                                "url": "https://fixture.test/",
+                                "message": "Delete?",
+                                "type": "confirm",
+                                "hasBrowserHandler": false,
+                            }),
+                        })
+                        .collect();
+                    return MockReply::hang().with_events(events);
+                }
+                MockReply::ok(json!({ "result": { "value": true } }))
+            }
+            "Page.handleJavaScriptDialog" if is_tab && st.dialog_vanished => {
+                MockReply::err(-32602, "No dialog is showing")
+            }
+            "Page.handleJavaScriptDialog" if is_tab => {
+                st.renderer_blocked = false;
+                MockReply::ok(json!({})).with_events(vec![MockEvent {
+                    method: "Page.javascriptDialogClosed".into(),
+                    session_id: Some(sess.clone()),
+                    params: json!({ "result": call.params["accept"], "userInput": "" }),
+                }])
+            }
+            other => MockReply::method_not_found(other),
+        }
+    })
+}
+
+/// Platform adapter pointing at the fixture endpoint: pid 1 is a
+/// Chromium browser owning native window 7 at (0,0,800,600).
+struct FixturePlatform {
+    endpoint_state: Option<SharedState>,
+    ws_url: String,
+    trusted_input_limited: bool,
+    managed_endpoint_visible: bool,
+    process_role: BrowserProcessRole,
+    managed_discovery_invoked: Arc<AtomicBool>,
+    existing_endpoint_visible: Arc<AtomicBool>,
+    setup_invoked: Arc<AtomicBool>,
+    setup_aborted: Arc<AtomicBool>,
+    stall_consent: bool,
+    focus: Arc<FixtureFocus>,
+}
+
+/// Foreground model for existing-profile attachment: whether attaching
+/// brings the browser forward on this "platform", which pid is in front,
+/// and which restores core asked for.
+#[derive(Default)]
+struct FixtureFocus {
+    attach_activates_browser: bool,
+    frontmost: StdMutex<Option<i64>>,
+    restores: StdMutex<Vec<(i64, i64)>>,
+    /// The browser window is on another Space than the user's: the platform
+    /// can guard a background attach.
+    browser_off_space: bool,
+    guards: StdMutex<Vec<(i64, u64)>>,
+}
+
+#[async_trait]
+impl BrowserPlatform for FixturePlatform {
+    fn standalone_trusted_input_background_limitation(&self) -> Option<&'static str> {
+        self.trusted_input_limited
+            .then_some("fixture trusted input raises the standalone window")
+    }
+
+    fn existing_profile_attach_background_limitation(&self) -> Option<&'static str> {
+        self.focus
+            .attach_activates_browser
+            .then_some("fixture browser comes to the front to show its consent prompt")
+    }
+
+    fn frontmost_app_pid(&self) -> Option<i64> {
+        *self.focus.frontmost.lock().unwrap()
+    }
+
+    fn guard_background_attach(
+        &self,
+        browser_pid: i64,
+        window_id: u64,
+    ) -> Option<Box<dyn std::any::Any + Send>> {
+        if !self.focus.browser_off_space {
+            return None;
+        }
+        self.focus
+            .guards
+            .lock()
+            .unwrap()
+            .push((browser_pid, window_id));
+        Some(Box::new(()))
+    }
+
+    fn restore_frontmost_app(&self, previous_pid: i64, browser_pid: i64) -> bool {
+        self.focus
+            .restores
+            .lock()
+            .unwrap()
+            .push((previous_pid, browser_pid));
+        true
+    }
+
+    async fn classify_browser(&self, _pid: i64) -> Result<BrowserClassification, BrowserRefusal> {
+        Ok(BrowserClassification {
+            is_browser: true,
+            engine: BrowserEngineFamily::Chromium,
+            product_kind: BrowserProduct::GoogleChrome,
+            product: Some("MockChrome".into()),
+            channel: Some("stable".into()),
+            // The mock endpoint is an explicit in-process harness, not a
+            // personal standalone browser profile.
+            process_role: self.process_role,
+            supports_cdp: true,
+        })
+    }
+
+    async fn native_window(
+        &self,
+        pid: i64,
+        window_id: u64,
+    ) -> Result<NativeWindowInfo, BrowserRefusal> {
+        Ok(NativeWindowInfo {
+            pid,
+            window_id,
+            title: "Fixture - Chrome".into(),
+            bounds: Rect::new(0.0, 0.0, 800.0, 600.0),
+            geometry_exact: true,
+            ownership: NativeOwnershipProof {
+                method: NativeOwnershipMethod::WindowServerOwner,
+                owner_pid: pid,
+                detail: None,
+            },
+        })
+    }
+
+    async fn is_only_exact_native_window(
+        &self,
+        _pid: i64,
+        _window_id: u64,
+    ) -> Result<Option<bool>, BrowserRefusal> {
+        Ok(Some(true))
+    }
+
+    async fn discover_owned_endpoint(
+        &self,
+        pid: i64,
+    ) -> Result<Option<OwnedEndpoint>, BrowserRefusal> {
+        self.managed_discovery_invoked.store(true, Ordering::SeqCst);
+        if let Some(state) = &self.endpoint_state {
+            let mut state = state.lock().unwrap();
+            state.endpoint_discovery_count += 1;
+            if state.endpoint_responses.len() > 1 {
+                return state.endpoint_responses.pop_front().unwrap();
+            }
+            if let Some(response) = state.endpoint_responses.front() {
+                return response.clone();
+            }
+        }
+        if !self.managed_endpoint_visible {
+            return Ok(None);
+        }
+        self.discover_existing_profile_endpoint(pid).await
+    }
+
+    async fn discover_existing_profile_endpoint(
+        &self,
+        pid: i64,
+    ) -> Result<Option<OwnedEndpoint>, BrowserRefusal> {
+        if !self.existing_endpoint_visible.load(Ordering::SeqCst) {
+            return Ok(None);
+        }
+        Ok(Some(OwnedEndpoint {
+            ws_url: self.ws_url.clone(),
+            http_port: None,
+            transport: EndpointTransport::LegacyJsonVersion,
+            ownership: EndpointOwnershipProof {
+                method: EndpointOwnershipMethod::ListeningSocketPid,
+                owner_pid: pid,
+                listener_pid: None,
+                detail: None,
+            },
+        }))
+    }
+
+    async fn reprove_existing_profile_endpoint(
+        &self,
+        pid: i64,
+        expected_ws_url: &str,
+    ) -> Result<Option<OwnedEndpoint>, BrowserRefusal> {
+        if expected_ws_url != self.ws_url {
+            return Ok(None);
+        }
+        Ok(Some(OwnedEndpoint {
+            ws_url: self.ws_url.clone(),
+            http_port: None,
+            transport: EndpointTransport::LegacyJsonVersion,
+            ownership: EndpointOwnershipProof {
+                method: EndpointOwnershipMethod::ListeningSocketPid,
+                owner_pid: pid,
+                listener_pid: None,
+                detail: Some("fixture exact approved endpoint".to_owned()),
+            },
+        }))
+    }
+
+    async fn setup_existing_profile_endpoint(
+        &self,
+        _request: ExistingProfileSetupRequest,
+    ) -> Result<ExistingProfileSetupOutcome, BrowserRefusal> {
+        self.setup_invoked.store(true, Ordering::SeqCst);
+        Ok(ExistingProfileSetupOutcome {
+            opened_setup_page: true,
+            closed_setup_page: false,
+            enabled_remote_debugging: true,
+            used_bounded_pixel_fallback: false,
+            focused_setup_address_field: true,
+            foregrounded_window: false,
+            injected_global_input: false,
+            endpoint: Some(OwnedEndpoint {
+                ws_url: self.ws_url.clone(),
+                http_port: None,
+                transport: EndpointTransport::DevToolsActivePort,
+                ownership: EndpointOwnershipProof {
+                    method: EndpointOwnershipMethod::ListeningSocketPid,
+                    owner_pid: 1,
+                    listener_pid: None,
+                    detail: Some("fixture exact setup transition".to_owned()),
+                },
+            }),
+        })
+    }
+
+    async fn commit_existing_profile_setup(
+        &self,
+        _request: ExistingProfileSetupRequest,
+    ) -> Result<bool, BrowserRefusal> {
+        Ok(true)
+    }
+
+    async fn abort_existing_profile_setup(
+        &self,
+        _request: ExistingProfileSetupRequest,
+        error: BrowserRefusal,
+    ) -> BrowserRefusal {
+        self.setup_aborted.store(true, Ordering::SeqCst);
+        error
+    }
+
+    async fn handle_existing_profile_consent(
+        &self,
+        _request: BrowserConsentRequest,
+    ) -> Result<BrowserConsentOutcome, BrowserRefusal> {
+        if self.stall_consent {
+            tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+            return Ok(BrowserConsentOutcome::NotPresent);
+        }
+        Err(BrowserRefusal::new(
+            super::refusal::BrowserRefusalCode::BrowserRouteUnavailable,
+            "fixture consent prompt is unavailable",
+        ))
+    }
+
+    async fn process_fingerprint(&self, pid: i64) -> Result<ProcessFingerprint, BrowserRefusal> {
+        Ok(ProcessFingerprint {
+            pid,
+            start_time: Some(1),
+            executable: None,
+        })
+    }
+
+    async fn prepare_endpoint(
+        &self,
+        _request: PrepareRequest,
+    ) -> Result<PrepareOutcome, BrowserRefusal> {
+        Ok(PrepareOutcome {
+            action: PrepareAction::NoOp,
+            endpoint: None,
+            message: "fixture: nothing to do".into(),
+            prepared_pid: None,
+            side_effects: Default::default(),
+            attachment: None,
+        })
+    }
+}
+
+// ── Scaffolding ──────────────────────────────────────────────────────────────
+
+pub(super) struct Fixture {
+    pub(super) state: SharedState,
+    // Kept alive for the test's duration; dropping it kills the endpoint.
+    _server: MockCdpServer,
+    pub(super) engine: Arc<BrowserEngine>,
+    setup_invoked: Arc<AtomicBool>,
+}
+
+async fn fixture_with(configure: impl FnOnce(&mut FixtureState)) -> Fixture {
+    fixture_with_platform(configure, false).await
+}
+
+async fn fixture_with_platform(
+    configure: impl FnOnce(&mut FixtureState),
+    trusted_input_limited: bool,
+) -> Fixture {
+    let mut initial = FixtureState::default();
+    configure(&mut initial);
+    let state = Arc::new(StdMutex::new(initial));
+    let server = MockCdpServer::start(fixture_handler(state.clone())).await;
+    let setup_invoked = Arc::new(AtomicBool::new(false));
+    let engine = BrowserEngine::new(Arc::new(FixturePlatform {
+        endpoint_state: Some(state.clone()),
+        ws_url: server.ws_url(),
+        trusted_input_limited,
+        managed_endpoint_visible: true,
+        process_role: BrowserProcessRole::EmbeddedApplication,
+        managed_discovery_invoked: Arc::new(AtomicBool::new(false)),
+        existing_endpoint_visible: Arc::new(AtomicBool::new(true)),
+        setup_invoked: setup_invoked.clone(),
+        setup_aborted: Arc::new(AtomicBool::new(false)),
+        stall_consent: false,
+        focus: Default::default(),
+    }));
+    Fixture {
+        state,
+        _server: server,
+        engine,
+        setup_invoked,
+    }
+}
+
+pub(super) async fn fixture() -> Fixture {
+    fixture_with(|_| {}).await
+}
+
+struct FixtureProtectedProvider {
+    consent_seen: AtomicBool,
+}
+
+#[async_trait]
+impl crate::consent::ProtectedConsentProvider for FixtureProtectedProvider {
+    fn provider_id(&self) -> &'static str {
+        "test.browser-protected-provider"
+    }
+
+    async fn request_consent(
+        &self,
+        request: &crate::consent::ConsentRequest,
+    ) -> Result<crate::consent::ProviderDecision, String> {
+        self.consent_seen.store(true, Ordering::SeqCst);
+        Ok(crate::consent::ProviderDecision {
+            action: crate::consent::ConsentAction::Accept,
+            request_digest: request.request_digest.clone(),
+        })
+    }
+}
+
+async fn protected_existing_profile_fixture() -> (Fixture, Arc<FixtureProtectedProvider>) {
+    let state = Arc::new(StdMutex::new(FixtureState::default()));
+    let server = MockCdpServer::start(fixture_handler(state.clone())).await;
+    let setup_invoked = Arc::new(AtomicBool::new(false));
+    let provider = Arc::new(FixtureProtectedProvider {
+        consent_seen: AtomicBool::new(false),
+    });
+    let engine = BrowserEngine::new_with_protected_consent_provider(
+        Arc::new(FixturePlatform {
+            endpoint_state: None,
+            ws_url: server.ws_url(),
+            trusted_input_limited: false,
+            managed_endpoint_visible: false,
+            process_role: BrowserProcessRole::StandaloneConsumer,
+            managed_discovery_invoked: Arc::new(AtomicBool::new(false)),
+            existing_endpoint_visible: Arc::new(AtomicBool::new(true)),
+            setup_invoked: setup_invoked.clone(),
+            setup_aborted: Arc::new(AtomicBool::new(false)),
+            stall_consent: false,
+            focus: Default::default(),
+        }),
+        Some(provider.clone()),
+    );
+    (
+        Fixture {
+            state,
+            _server: server,
+            engine,
+            setup_invoked,
+        },
+        provider,
+    )
+}
+
+async fn existing_profile_setup_fixture() -> (Fixture, Arc<AtomicBool>) {
+    let state = Arc::new(StdMutex::new(FixtureState::default()));
+    let server = MockCdpServer::start(fixture_handler(state.clone())).await;
+    let setup_invoked = Arc::new(AtomicBool::new(false));
+    let engine = BrowserEngine::new_with_protected_consent_provider(
+        Arc::new(FixturePlatform {
+            endpoint_state: None,
+            ws_url: server.ws_url(),
+            trusted_input_limited: false,
+            managed_endpoint_visible: false,
+            process_role: BrowserProcessRole::StandaloneConsumer,
+            managed_discovery_invoked: Arc::new(AtomicBool::new(false)),
+            existing_endpoint_visible: Arc::new(AtomicBool::new(false)),
+            setup_invoked: setup_invoked.clone(),
+            setup_aborted: Arc::new(AtomicBool::new(false)),
+            stall_consent: false,
+            focus: Default::default(),
+        }),
+        Some(Arc::new(FixtureProtectedProvider {
+            consent_seen: AtomicBool::new(false),
+        })),
+    );
+    (
+        Fixture {
+            state,
+            _server: server,
+            engine,
+            setup_invoked: setup_invoked.clone(),
+        },
+        setup_invoked,
+    )
+}
+
+/// Existing-profile setup fixture whose platform brings the browser forward
+/// on attach, with `frontmost` in front when the call starts.
+async fn foreground_attach_fixture(
+    frontmost: i64,
+) -> (Fixture, Arc<FixtureFocus>, Arc<FixtureProtectedProvider>) {
+    attach_fixture_with_space(frontmost, false).await
+}
+
+async fn attach_fixture_with_space(
+    frontmost: i64,
+    browser_off_space: bool,
+) -> (Fixture, Arc<FixtureFocus>, Arc<FixtureProtectedProvider>) {
+    let state = Arc::new(StdMutex::new(FixtureState::default()));
+    let server = MockCdpServer::start(fixture_handler(state.clone())).await;
+    let setup_invoked = Arc::new(AtomicBool::new(false));
+    let focus = Arc::new(FixtureFocus {
+        attach_activates_browser: true,
+        frontmost: StdMutex::new(Some(frontmost)),
+        restores: StdMutex::new(Vec::new()),
+        browser_off_space,
+        guards: StdMutex::new(Vec::new()),
+    });
+    let provider = Arc::new(FixtureProtectedProvider {
+        consent_seen: AtomicBool::new(false),
+    });
+    let engine = BrowserEngine::new_with_protected_consent_provider(
+        Arc::new(FixturePlatform {
+            endpoint_state: None,
+            ws_url: server.ws_url(),
+            trusted_input_limited: false,
+            managed_endpoint_visible: false,
+            process_role: BrowserProcessRole::StandaloneConsumer,
+            managed_discovery_invoked: Arc::new(AtomicBool::new(false)),
+            existing_endpoint_visible: Arc::new(AtomicBool::new(false)),
+            setup_invoked: setup_invoked.clone(),
+            setup_aborted: Arc::new(AtomicBool::new(false)),
+            stall_consent: false,
+            focus: focus.clone(),
+        }),
+        Some(provider.clone()),
+    );
+    (
+        Fixture {
+            state,
+            _server: server,
+            engine,
+            setup_invoked,
+        },
+        focus,
+        provider,
+    )
+}
+
+fn structured(result: &ToolResult) -> &Value {
+    result
+        .structured_content
+        .as_ref()
+        .expect("structured content")
+}
+
+const SESSION: &str = "run-v2";
+
+async fn bind(f: &Fixture) -> (String, String) {
+    let tool = GetBrowserStateTool::new(f.engine.clone());
+    let result = tool
+        .invoke(json!({ "pid": 1, "window_id": 7, "session": SESSION }))
+        .await;
+    let s = structured(&result);
+    assert_eq!(s["status"], "ok", "bind must succeed: {s}");
+    assert_eq!(s["binding_quality"], "exact");
+    let target_id = s["target_id"].as_str().unwrap().to_owned();
+    let tab_id = s["tabs"][0]["tab_id"].as_str().unwrap().to_owned();
+    (target_id, tab_id)
+}
+
+#[tokio::test]
+async fn standalone_consumer_bind_without_grant_refuses_before_endpoint_discovery() {
+    let state = Arc::new(StdMutex::new(FixtureState::default()));
+    let server = MockCdpServer::start(fixture_handler(state)).await;
+    let managed_discovery_invoked = Arc::new(AtomicBool::new(false));
+    let setup_invoked = Arc::new(AtomicBool::new(false));
+    let engine = BrowserEngine::new(Arc::new(FixturePlatform {
+        endpoint_state: None,
+        ws_url: server.ws_url(),
+        trusted_input_limited: false,
+        managed_endpoint_visible: true,
+        process_role: BrowserProcessRole::StandaloneConsumer,
+        managed_discovery_invoked: managed_discovery_invoked.clone(),
+        existing_endpoint_visible: Arc::new(AtomicBool::new(true)),
+        setup_invoked: setup_invoked.clone(),
+        setup_aborted: Arc::new(AtomicBool::new(false)),
+        stall_consent: false,
+        focus: Default::default(),
+    }));
+
+    let result = GetBrowserStateTool::new(engine)
+        .invoke(json!({ "pid": 1, "window_id": 7, "session": SESSION }))
+        .await;
+    let refusal = structured(&result);
+    assert_eq!(refusal["status"], "refused");
+    assert_eq!(refusal["refusal"]["code"], "browser_consent_required");
+    assert_eq!(
+        refusal["refusal"]["detail"]["reason"],
+        "consumer_profile_endpoint_requires_grant"
+    );
+    assert_eq!(
+        refusal["refusal"]["detail"]["next_action"],
+        "browser_prepare"
+    );
+    // The refusal names the exact call that attaches, so an agent does not
+    // read it as a request for the user's approval (Bench v2 PR-02).
+    assert_eq!(
+        refusal["refusal"]["detail"]["next_call"],
+        json!({
+            "tool": "browser_prepare",
+            "arguments": {
+                "pid": 1,
+                "window_id": 7,
+                "session": SESSION,
+                "strategy": { "kind": "existing_profile" },
+            },
+        })
+    );
+    let message = refusal["refusal"]["message"].as_str().unwrap();
+    assert!(message.contains("not attached to this browser window yet"));
+    assert!(message.contains("Call browser_prepare"));
+    assert!(!message.contains("approval before"));
+    assert!(
+        !managed_discovery_invoked.load(Ordering::SeqCst),
+        "read-only bind must not inspect a consent-gated endpoint"
+    );
+    assert!(
+        !setup_invoked.load(Ordering::SeqCst),
+        "read-only bind must never invoke browser setup UI"
+    );
+}
+
+#[tokio::test]
+async fn approved_existing_profile_attach_claims_then_binds_one_generation() {
+    // Match Chrome's per-instance toggle: the endpoint is discoverable only
+    // through the approved existing-profile route, never as driver-managed.
+    let (f, provider) = protected_existing_profile_fixture().await;
+    let prepare = BrowserPrepareTool::new(f.engine.clone())
+        .invoke(json!({
+            "pid": 1,
+            "window_id": 7,
+            "session": SESSION,
+            "_transport_session_id": "transport-v2-attach",
+            "strategy": { "kind": "existing_profile" }
+        }))
+        .await;
+    let prepared = structured(&prepare);
+    assert_eq!(prepared["status"], "ok", "{prepared}");
+    assert_eq!(prepared["action"], "attached_existing_profile");
+    assert_eq!(prepared["attachment"]["kind"], "existing_profile");
+    assert_eq!(prepared["attachment"]["capabilities_invalidated"], true);
+    assert_eq!(prepared["side_effects"]["displayed_consent_prompt"], false);
+    assert!(provider.consent_seen.load(Ordering::SeqCst));
+    assert!(!f.setup_invoked.load(Ordering::SeqCst));
+
+    let state = GetBrowserStateTool::new(f.engine.clone())
+        .invoke(json!({
+            "pid": 1,
+            "window_id": 7,
+            "session": SESSION,
+            "_transport_session_id": "transport-v2-attach"
+        }))
+        .await;
+    assert_eq!(structured(&state)["status"], "ok", "{}", structured(&state));
+    crate::session::fire_session_end("transport-v2-attach");
+}
+
+#[tokio::test]
+async fn approved_existing_profile_tools_stay_within_the_reviewed_cdp_surface() {
+    const TRANSPORT: &str = "transport-v2-method-policy";
+    let (f, _) = protected_existing_profile_fixture().await;
+    let prepare = BrowserPrepareTool::new(f.engine.clone())
+        .invoke(json!({
+            "pid": 1,
+            "window_id": 7,
+            "session": SESSION,
+            "_transport_session_id": TRANSPORT,
+            "strategy": { "kind": "existing_profile" }
+        }))
+        .await;
+    assert_eq!(
+        structured(&prepare)["status"],
+        "ok",
+        "{}",
+        structured(&prepare)
+    );
+
+    let state = GetBrowserStateTool::new(f.engine.clone())
+        .invoke(json!({
+            "pid": 1,
+            "window_id": 7,
+            "session": SESSION,
+            "_transport_session_id": TRANSPORT
+        }))
+        .await;
+    let bound = structured(&state);
+    assert_eq!(bound["status"], "ok", "{bound}");
+    let target = bound["target_id"].as_str().unwrap().to_owned();
+    let tab = bound["tabs"][0]["tab_id"].as_str().unwrap().to_owned();
+
+    let snap = snapshot(&f, &target, &tab).await;
+    let button = ref_of(&snap, "main", "main-btn");
+    let input = ref_of(&snap, "main", "Shadow Input");
+    let clicked = BrowserClickTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "ref": button,
+            "input_route": "dom_event",
+            "session": SESSION
+        }))
+        .await;
+    assert_eq!(
+        clicked
+            .action_record
+            .as_ref()
+            .expect("click action record")
+            .effect,
+        crate::action_record::ActionEffect::Confirmed
+    );
+    let typed = BrowserTypeTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "ref": input,
+            "text": "policy-check",
+            "session": SESSION
+        }))
+        .await;
+    assert_eq!(structured(&typed)["status"], "ok", "{}", structured(&typed));
+    let navigated = BrowserNavigateTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "url": "https://fixture.test/policy-check",
+            "session": SESSION
+        }))
+        .await;
+    assert_eq!(
+        structured(&navigated)["status"],
+        "ok",
+        "{}",
+        structured(&navigated)
+    );
+
+    let forbidden = [
+        "Runtime.enable",
+        "Target.setDiscoverTargets",
+        "Page.addScriptToEvaluateOnNewDocument",
+        "Network.enable",
+        "Fetch.enable",
+        "Emulation.setUserAgentOverride",
+        "Emulation.setDeviceMetricsOverride",
+        "Emulation.setTimezoneOverride",
+    ];
+    let calls = f.state.lock().unwrap().calls.clone();
+    for method in forbidden {
+        assert!(
+            calls.iter().all(|(_, observed, _)| observed != method),
+            "existing-profile operation emitted forbidden CDP method {method}: {calls:?}"
+        );
+    }
+
+    crate::session::fire_session_end(TRANSPORT);
+}
+
+#[tokio::test]
+async fn existing_profile_sessions_share_one_browser_connection_across_session_ends() {
+    // Chrome asks the person to approve every new browser-level WebSocket.
+    // Sessions for the same browser instance must therefore multiplex over
+    // the one approved socket, survive each other's session end, and let a
+    // later session reuse the parked socket without a new browser prompt.
+    let (f, _provider) = protected_existing_profile_fixture().await;
+    let prepare = |session: &'static str, transport: &'static str| {
+        let engine = f.engine.clone();
+        async move {
+            let prepared = BrowserPrepareTool::new(engine)
+                .invoke(json!({
+                    "pid": 1,
+                    "window_id": 7,
+                    "session": session,
+                    "_transport_session_id": transport,
+                    "strategy": { "kind": "existing_profile" }
+                }))
+                .await;
+            structured(&prepared).clone()
+        }
+    };
+    let state = |session: &'static str, transport: &'static str| {
+        let engine = f.engine.clone();
+        async move {
+            let state = GetBrowserStateTool::new(engine)
+                .invoke(json!({
+                    "pid": 1,
+                    "window_id": 7,
+                    "session": session,
+                    "_transport_session_id": transport
+                }))
+                .await;
+            structured(&state).clone()
+        }
+    };
+
+    let a = prepare("shared-socket-a", "shared-transport-a").await;
+    assert_eq!(a["status"], "ok", "{a}");
+    let after_first_attach = f._server.accepted_connections();
+    assert!(after_first_attach >= 1);
+
+    let b = prepare("shared-socket-b", "shared-transport-b").await;
+    assert_eq!(b["status"], "ok", "{b}");
+    assert_eq!(b["side_effects"]["displayed_consent_prompt"], false);
+    let a_state = state("shared-socket-a", "shared-transport-a").await;
+    assert_eq!(a_state["status"], "ok", "{a_state}");
+    let b_state = state("shared-socket-b", "shared-transport-b").await;
+    assert_eq!(b_state["status"], "ok", "{b_state}");
+    assert_eq!(
+        f._server.accepted_connections(),
+        after_first_attach,
+        "a second session must not open another browser-level socket"
+    );
+
+    // Ending A must neither close nor invalidate B's use of the socket.
+    crate::session::fire_session_end("shared-transport-a");
+    tokio::task::yield_now().await;
+    let b_state = state("shared-socket-b", "shared-transport-b").await;
+    assert_eq!(b_state["status"], "ok", "{b_state}");
+
+    // After every session ended, the next approved session reuses the
+    // parked socket instead of dialing (which would prompt again).
+    crate::session::fire_session_end("shared-transport-b");
+    tokio::task::yield_now().await;
+    let c = prepare("shared-socket-c", "shared-transport-c").await;
+    assert_eq!(c["status"], "ok", "{c}");
+    let c_state = state("shared-socket-c", "shared-transport-c").await;
+    assert_eq!(c_state["status"], "ok", "{c_state}");
+    assert_eq!(f._server.accepted_connections(), after_first_attach);
+    crate::session::fire_session_end("shared-transport-c");
+}
+
+#[tokio::test]
+async fn protected_provider_accepts_exact_attach_and_session_end_revokes_the_grant() {
+    const PROTECTED_SESSION: &str = "protected-provider-v2";
+    const PROTECTED_TRANSPORT: &str = "protected-transport-v2";
+    let (f, provider) = protected_existing_profile_fixture().await;
+    let prepare = BrowserPrepareTool::new(f.engine.clone())
+        .invoke(json!({
+            "pid": 1,
+            "window_id": 7,
+            "session": PROTECTED_SESSION,
+            "_transport_session_id": PROTECTED_TRANSPORT,
+            "strategy": { "kind": "existing_profile" }
+        }))
+        .await;
+    assert_eq!(
+        structured(&prepare)["status"],
+        "ok",
+        "{}",
+        structured(&prepare)
+    );
+    assert!(provider.consent_seen.load(Ordering::SeqCst));
+
+    crate::session::fire_session_end(PROTECTED_TRANSPORT);
+    tokio::task::yield_now().await;
+
+    let state = GetBrowserStateTool::new(f.engine.clone())
+        .invoke(json!({
+            "pid": 1,
+            "window_id": 7,
+            "session": PROTECTED_SESSION,
+            "_transport_session_id": PROTECTED_TRANSPORT
+        }))
+        .await;
+    assert_eq!(structured(&state)["status"], "refused");
+}
+
+#[tokio::test]
+async fn approved_existing_profile_setup_reports_exact_side_effects() {
+    let (f, setup_invoked) = existing_profile_setup_fixture().await;
+    let prepare = BrowserPrepareTool::new(f.engine.clone())
+        .invoke(json!({
+            "pid": 1,
+            "window_id": 7,
+            "session": SESSION,
+            "strategy": { "kind": "existing_profile" }
+        }))
+        .await;
+    let prepared = structured(&prepare);
+    assert_eq!(prepared["status"], "ok", "{prepared}");
+    assert!(setup_invoked.load(Ordering::SeqCst));
+    assert_eq!(prepared["side_effects"]["opened_setup_page"], true);
+    assert_eq!(prepared["side_effects"]["closed_setup_page"], true);
+    assert_eq!(prepared["side_effects"]["enabled_remote_debugging"], true);
+    assert_eq!(prepared["side_effects"]["changed_preferences"], true);
+    assert_eq!(
+        prepared["side_effects"]["focused_setup_address_field"],
+        true
+    );
+
+    let state = GetBrowserStateTool::new(f.engine.clone())
+        .invoke(json!({
+            "pid": 1,
+            "window_id": 7,
+            "session": SESSION
+        }))
+        .await;
+    assert_eq!(structured(&state)["status"], "ok", "{}", structured(&state));
+}
+
+#[tokio::test]
+async fn background_existing_profile_attach_refuses_before_any_visible_effect() {
+    // pid 99 (the user's app) is in front; attaching would bring pid 1 forward.
+    let (f, focus, provider) = foreground_attach_fixture(99).await;
+    let result = BrowserPrepareTool::new(f.engine.clone())
+        .invoke(json!({
+            "pid": 1,
+            "window_id": 7,
+            "session": SESSION,
+            "strategy": { "kind": "existing_profile" }
+        }))
+        .await;
+    assert_eq!(result.is_error, Some(true));
+    let refused = structured(&result);
+    assert_eq!(refused["code"], "background_unavailable", "{refused}");
+    assert_eq!(refused["escalation"]["recommended"], "foreground");
+    let suggestion = refused["suggestion"].as_str().unwrap();
+    assert!(
+        suggestion.starts_with("Not blocked: use get_window_state"),
+        "the refusal must lead with the working route: {suggestion}"
+    );
+    let message = refused["refusal"]["message"].as_str().unwrap();
+    assert!(message.contains("use get_window_state"), "{message}");
+    assert_eq!(refused["status"], "refused");
+    assert_eq!(refused["refusal"]["code"], "background_unavailable");
+    assert_eq!(refused["refusal"]["detail"]["frontmost_pid"], 99);
+    assert_eq!(refused["refusal"]["detail"]["visible_effects"], false);
+    assert!(
+        !f.setup_invoked.load(Ordering::SeqCst),
+        "a background refusal must not open the setup page"
+    );
+    assert!(
+        !provider.consent_seen.load(Ordering::SeqCst),
+        "a background refusal must not ask for consent"
+    );
+    assert!(focus.restores.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn background_existing_profile_attach_runs_guarded_when_the_browser_is_off_space() {
+    // pid 99 (the user's app) is in front on its Space; the browser window is
+    // on another Space, so the platform guards a background attach.
+    let (f, focus, _) = attach_fixture_with_space(99, true).await;
+    let result = BrowserPrepareTool::new(f.engine.clone())
+        .invoke(json!({
+            "pid": 1,
+            "window_id": 7,
+            "session": SESSION,
+            "strategy": { "kind": "existing_profile" }
+        }))
+        .await;
+    let prepared = structured(&result);
+    assert_eq!(prepared["status"], "ok", "{prepared}");
+    assert_eq!(prepared["action"], "attached_existing_profile");
+    assert!(f.setup_invoked.load(Ordering::SeqCst));
+    assert_eq!(*focus.guards.lock().unwrap(), vec![(1, 7)]);
+    // The user's app is brought back if the browser is left in front.
+    assert_eq!(*focus.restores.lock().unwrap(), vec![(99, 1)]);
+    assert_eq!(prepared["side_effects"]["restored_frontmost_app"], true);
+}
+
+#[tokio::test]
+async fn background_existing_profile_attach_on_the_users_space_still_refuses() {
+    let (f, focus, _) = attach_fixture_with_space(99, false).await;
+    let result = BrowserPrepareTool::new(f.engine.clone())
+        .invoke(json!({
+            "pid": 1,
+            "window_id": 7,
+            "session": SESSION,
+            "strategy": { "kind": "existing_profile" }
+        }))
+        .await;
+    let refused = structured(&result);
+    assert_eq!(refused["code"], "background_unavailable", "{refused}");
+    assert_eq!(
+        refused["refusal"]["detail"]["background_attach_requires"],
+        "browser_window_on_another_space"
+    );
+    assert!(!f.setup_invoked.load(Ordering::SeqCst));
+    assert!(focus.guards.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn foreground_existing_profile_attach_does_not_use_the_background_guard() {
+    let (f, focus, _) = attach_fixture_with_space(99, true).await;
+    let result = BrowserPrepareTool::new(f.engine.clone())
+        .invoke(json!({
+            "pid": 1,
+            "window_id": 7,
+            "session": SESSION,
+            "delivery_mode": "foreground",
+            "strategy": { "kind": "existing_profile" }
+        }))
+        .await;
+    assert_eq!(structured(&result)["status"], "ok");
+    assert!(focus.guards.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn existing_profile_attach_proceeds_when_the_browser_is_already_in_front() {
+    let (f, focus, _) = foreground_attach_fixture(1).await;
+    let result = BrowserPrepareTool::new(f.engine.clone())
+        .invoke(json!({
+            "pid": 1,
+            "window_id": 7,
+            "session": SESSION,
+            "strategy": { "kind": "existing_profile" }
+        }))
+        .await;
+    let prepared = structured(&result);
+    assert_eq!(prepared["status"], "ok", "{prepared}");
+    assert!(f.setup_invoked.load(Ordering::SeqCst));
+    assert_eq!(prepared["side_effects"]["restored_frontmost_app"], false);
+    assert!(focus.restores.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn foreground_existing_profile_attach_brings_the_previous_app_back() {
+    let (f, focus, _) = foreground_attach_fixture(99).await;
+    let result = BrowserPrepareTool::new(f.engine.clone())
+        .invoke(json!({
+            "pid": 1,
+            "window_id": 7,
+            "session": SESSION,
+            "delivery_mode": "foreground",
+            "strategy": { "kind": "existing_profile" }
+        }))
+        .await;
+    let prepared = structured(&result);
+    assert_eq!(prepared["status"], "ok", "{prepared}");
+    assert!(f.setup_invoked.load(Ordering::SeqCst));
+    assert_eq!(prepared["side_effects"]["restored_frontmost_app"], true);
+    assert_eq!(*focus.restores.lock().unwrap(), vec![(99, 1)]);
+}
+
+#[tokio::test]
+async fn existing_profile_attach_rejects_an_unknown_delivery_mode() {
+    let (f, _, _) = foreground_attach_fixture(99).await;
+    let result = BrowserPrepareTool::new(f.engine.clone())
+        .invoke(json!({
+            "pid": 1,
+            "window_id": 7,
+            "session": SESSION,
+            "delivery_mode": "auto",
+            "strategy": { "kind": "existing_profile" }
+        }))
+        .await;
+    assert_eq!(result.is_error, Some(true));
+    assert!(!f.setup_invoked.load(Ordering::SeqCst));
+}
+
+#[tokio::test]
+async fn refused_consent_cancels_stalled_claim_before_revoking_grant() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let stalled_server = tokio::spawn(async move {
+        let (_stream, _) = listener.accept().await.unwrap();
+        tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+    });
+    let engine = BrowserEngine::new_with_protected_consent_provider(
+        Arc::new(FixturePlatform {
+            endpoint_state: None,
+            ws_url: format!("ws://{address}/devtools/browser"),
+            trusted_input_limited: false,
+            managed_endpoint_visible: false,
+            process_role: BrowserProcessRole::StandaloneConsumer,
+            managed_discovery_invoked: Arc::new(AtomicBool::new(false)),
+            existing_endpoint_visible: Arc::new(AtomicBool::new(false)),
+            setup_invoked: Arc::new(AtomicBool::new(false)),
+            setup_aborted: Arc::new(AtomicBool::new(false)),
+            stall_consent: false,
+            focus: Default::default(),
+        }),
+        Some(Arc::new(FixtureProtectedProvider {
+            consent_seen: AtomicBool::new(false),
+        })),
+    );
+    let prepared = tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        BrowserPrepareTool::new(engine).invoke(json!({
+            "pid": 1,
+            "window_id": 7,
+            "session": SESSION,
+            "strategy": { "kind": "existing_profile" }
+        })),
+    )
+    .await
+    .expect("a refused consent route must not deadlock grant revocation");
+    assert_eq!(structured(&prepared)["status"], "refused");
+    assert_eq!(
+        structured(&prepared)["refusal"]["code"],
+        "browser_route_unavailable"
+    );
+    stalled_server.abort();
+}
+
+#[tokio::test]
+async fn cancelled_prepare_aborts_the_exact_pending_setup() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let stalled_server = tokio::spawn(async move {
+        let (_stream, _) = listener.accept().await.unwrap();
+        tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+    });
+    let setup_aborted = Arc::new(AtomicBool::new(false));
+    let engine = BrowserEngine::new_with_protected_consent_provider(
+        Arc::new(FixturePlatform {
+            endpoint_state: None,
+            ws_url: format!("ws://{address}/devtools/browser"),
+            trusted_input_limited: false,
+            managed_endpoint_visible: false,
+            process_role: BrowserProcessRole::StandaloneConsumer,
+            managed_discovery_invoked: Arc::new(AtomicBool::new(false)),
+            existing_endpoint_visible: Arc::new(AtomicBool::new(false)),
+            setup_invoked: Arc::new(AtomicBool::new(false)),
+            setup_aborted: setup_aborted.clone(),
+            stall_consent: true,
+            focus: Default::default(),
+        }),
+        Some(Arc::new(FixtureProtectedProvider {
+            consent_seen: AtomicBool::new(false),
+        })),
+    );
+    let cancelled = tokio::time::timeout(
+        std::time::Duration::from_millis(750),
+        BrowserPrepareTool::new(engine).invoke(json!({
+            "pid": 1,
+            "window_id": 7,
+            "session": SESSION,
+            "strategy": { "kind": "existing_profile" }
+        })),
+    )
+    .await;
+    assert!(
+        cancelled.is_err(),
+        "fixture must cancel during consent handling"
+    );
+    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        while !setup_aborted.load(Ordering::SeqCst) {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("dropping prepare must schedule exact pending-setup rollback");
+    stalled_server.abort();
+}
+
+struct DecliningProtectedProvider;
+
+#[async_trait]
+impl crate::consent::ProtectedConsentProvider for DecliningProtectedProvider {
+    fn provider_id(&self) -> &'static str {
+        "test.browser-declining-provider"
+    }
+
+    async fn request_consent(
+        &self,
+        request: &crate::consent::ConsentRequest,
+    ) -> Result<crate::consent::ProviderDecision, String> {
+        Ok(crate::consent::ProviderDecision {
+            action: crate::consent::ConsentAction::Decline,
+            request_digest: request.request_digest.clone(),
+        })
+    }
+}
+
+#[tokio::test]
+async fn declined_consent_rolls_back_pending_setup_before_refusing() {
+    let setup_aborted = Arc::new(AtomicBool::new(false));
+    let engine = BrowserEngine::new_with_protected_consent_provider(
+        Arc::new(FixturePlatform {
+            endpoint_state: None,
+            ws_url: "ws://127.0.0.1:9/devtools/browser".to_owned(),
+            trusted_input_limited: false,
+            managed_endpoint_visible: false,
+            process_role: BrowserProcessRole::StandaloneConsumer,
+            managed_discovery_invoked: Arc::new(AtomicBool::new(false)),
+            existing_endpoint_visible: Arc::new(AtomicBool::new(false)),
+            setup_invoked: Arc::new(AtomicBool::new(false)),
+            setup_aborted: setup_aborted.clone(),
+            stall_consent: false,
+            focus: Default::default(),
+        }),
+        Some(Arc::new(DecliningProtectedProvider)),
+    );
+    let refused = BrowserPrepareTool::new(engine)
+        .invoke(json!({
+            "pid": 1,
+            "window_id": 7,
+            "session": SESSION,
+            "strategy": { "kind": "existing_profile" }
+        }))
+        .await;
+    assert_eq!(
+        structured(&refused)["refusal"]["code"],
+        "browser_consent_required",
+        "{}",
+        structured(&refused)
+    );
+    // Checked before yielding: a rollback left to the Drop backstop would
+    // only be spawned, not finished, when the refusal returns.
+    assert!(
+        setup_aborted.load(Ordering::SeqCst),
+        "declined consent must roll back the pending setup before refusing"
+    );
+}
+
+async fn snapshot(f: &Fixture, target_id: &str, tab_id: &str) -> Value {
+    let tool = GetBrowserStateTool::new(f.engine.clone());
+    let result = tool
+        .invoke(json!({ "target_id": target_id, "tab_id": tab_id, "session": SESSION }))
+        .await;
+    structured(&result).clone()
+}
+
+async fn semantic_snapshot(f: &Fixture, target_id: &str, tab_id: &str) -> Value {
+    let tool = GetBrowserStateTool::new(f.engine.clone());
+    let result = tool
+        .invoke(json!({
+            "target_id": target_id,
+            "tab_id": tab_id,
+            "session": SESSION,
+            "snapshot_format": "semantic_v2"
+        }))
+        .await;
+    structured(&result).clone()
+}
+
+async fn semantic_snapshot_with(f: &Fixture, target_id: &str, tab_id: &str, extra: Value) -> Value {
+    let mut args = json!({
+        "target_id": target_id,
+        "tab_id": tab_id,
+        "session": SESSION,
+        "snapshot_format": "semantic_v2"
+    });
+    args.as_object_mut()
+        .unwrap()
+        .extend(extra.as_object().unwrap().clone());
+    let result = GetBrowserStateTool::new(f.engine.clone())
+        .invoke(args)
+        .await;
+    structured(&result).clone()
+}
+
+/// The `ref` string of the first snapshot entry in the given frame kind
+/// with the given backing label fragment (or any, if empty).
+fn ref_of(snapshot: &Value, frame: &str, label_fragment: &str) -> String {
+    snapshot["refs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| {
+            r["frame"] == frame
+                && (label_fragment.is_empty()
+                    || r["label"].as_str().unwrap_or("").contains(label_fragment))
+        })
+        .unwrap_or_else(|| panic!("no {frame} ref with label ~{label_fragment:?}: {snapshot}"))
+        ["ref"]
+        .as_str()
+        .unwrap()
+        .to_owned()
+}
+
+fn recorded_calls(f: &Fixture, method: &str) -> Vec<(Option<String>, Value)> {
+    f.state
+        .lock()
+        .unwrap()
+        .calls
+        .iter()
+        .filter(|(_, m, _)| m == method)
+        .map(|(s, _, p)| (s.clone(), p.clone()))
+        .collect()
+}
+
+// ── Snapshot composition ─────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn snapshot_composes_shadow_iframe_and_oopif_refs() {
+    let f = fixture().await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+
+    assert_eq!(snap["status"], "ok", "{snap}");
+    let frames: Vec<&str> = snap["refs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["frame"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        frames,
+        vec!["main", "main", "main", "iframe", "oopif"],
+        "main button + shadow input + plain input, iframe button, oopif input: {snap}"
+    );
+    assert_eq!(snap["oopif"]["status"], "attached");
+    assert_eq!(snap["oopif"]["frames"], 1);
+    assert_eq!(snap["truncated"], false);
+
+    // Composed shadow content keeps its labels; user-agent shadow
+    // internals (backend 22, role=button) must not have been minted.
+    let labels: Vec<&str> = snap["refs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["label"].as_str().unwrap_or(""))
+        .collect();
+    assert!(labels.iter().any(|l| l.contains("Shadow Input")), "{snap}");
+    assert!(
+        !labels.iter().any(|l| l.contains("role=button")),
+        "user-agent shadow content leaked: {snap}"
+    );
+}
+
+#[tokio::test]
+async fn semantic_snapshot_refreshes_bind_time_title_from_main_document() {
+    let f = fixture_with(|st| st.semantic_large_page = true).await;
+    let (target, tab) = bind(&f).await;
+    let snap = semantic_snapshot(&f, &target, &tab).await;
+
+    assert_eq!(snap["status"], "ok", "{snap}");
+    assert_eq!(snap["page"]["title"], "Fixture inbox", "{snap}");
+}
+
+#[tokio::test]
+async fn semantic_snapshot_keeps_visible_content_after_hidden_node_pressure() {
+    let f = fixture_with(|st| st.semantic_large_page = true).await;
+    let (target, tab) = bind(&f).await;
+    let snap = semantic_snapshot(&f, &target, &tab).await;
+
+    assert_eq!(snap["status"], "ok", "{snap}");
+    assert_eq!(snap["snapshot"]["format"], "semantic_v2", "{snap}");
+    assert!(
+        snap["outline"]
+            .as_str()
+            .is_some_and(|outline| outline.contains("Visible message")
+                && outline.contains("Please review the attached fixture report.")),
+        "visible semantic content was omitted: {snap}"
+    );
+    let refs = snap["refs"].as_array().expect("semantic refs");
+    assert!(
+        refs.iter().any(|entry| entry["name"] == "Reply"
+            && entry["actions"]
+                .as_array()
+                .is_some_and(|actions| actions.iter().any(|action| action == "click"))),
+        "visible Reply action was omitted: {snap}"
+    );
+    assert!(
+        refs.iter().any(|entry| entry["name"] == "Reply body"
+            && entry["actions"]
+                .as_array()
+                .is_some_and(|actions| actions.iter().any(|action| action == "type"))),
+        "visible editor was omitted: {snap}"
+    );
+    assert!(
+        refs.iter().all(|entry| !entry["name"]
+            .as_str()
+            .unwrap_or("")
+            .starts_with("Retained control")),
+        "CSS-hidden retained controls leaked into refs: {snap}"
+    );
+    assert_eq!(snap["snapshot"]["omitted"]["css_hidden"], 320);
+}
+
+#[tokio::test]
+async fn semantic_snapshot_can_capture_an_inactive_tab_without_activation_calls() {
+    let f = fixture().await;
+    let (target, tab) = bind(&f).await;
+    let result = GetBrowserStateTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "session": SESSION,
+            "snapshot_format": "semantic_v2",
+            "include_screenshot": true
+        }))
+        .await;
+    let snapshot = structured(&result);
+    assert_eq!(snapshot["status"], "ok", "{snapshot}");
+    assert_eq!(snapshot["screenshot"]["mime_type"], "image/png");
+    assert_eq!(snapshot["screenshot"]["width"], 1);
+    assert_eq!(snapshot["screenshot"]["height"], 1);
+    assert_eq!(snapshot["screenshot"]["source"], "cdp_tab");
+    assert_eq!(snapshot["screenshot_width"], 1);
+    assert_eq!(snapshot["screenshot_height"], 1);
+    assert_eq!(snapshot["screenshot_mime_type"], "image/png");
+    assert_eq!(
+        snapshot["screenshot"]["coordinate_space"],
+        "viewport_css_px"
+    );
+    assert_eq!(snapshot["screenshot"]["viewport_css_width"], 800.0);
+    assert_eq!(snapshot["screenshot"]["viewport_css_height"], 600.0);
+    assert_eq!(snapshot["screenshot"]["pixel_to_css_scale_x"], 800.0);
+    assert_eq!(snapshot["screenshot"]["pixel_to_css_scale_y"], 600.0);
+    assert!(result.content.iter().any(|content| matches!(
+        content,
+        Content::Image { mime_type, .. } if mime_type == "image/png"
+    )));
+
+    let state = f.state.lock().unwrap();
+    assert!(state.calls.iter().any(|(_, method, params)| {
+        method == "Page.captureScreenshot"
+            && params["format"] == "png"
+            && params["fromSurface"] == true
+            && params["captureBeyondViewport"] == false
+            && params["clip"]["x"] == 0.0
+            && params["clip"]["y"] == 0.0
+            && params["clip"]["width"] == 800.0
+            && params["clip"]["height"] == 600.0
+            && params["clip"]["scale"] == 1.0
+    }));
+    assert!(state.calls.iter().all(|(_, method, _)| {
+        method != "Target.activateTarget" && method != "Page.bringToFront"
+    }));
+}
+
+#[tokio::test]
+async fn semantic_background_tab_without_layout_reports_not_rendered() {
+    let visible = fixture_with(|st| st.oopif_present = false).await;
+    let (target, tab) = bind(&visible).await;
+    let visible_snap = semantic_snapshot(&visible, &target, &tab).await;
+
+    let f = fixture_with(|st| {
+        st.oopif_present = false;
+        st.tab_visible = false;
+    })
+    .await;
+    let (target, tab) = bind(&f).await;
+    let snap = semantic_snapshot(&f, &target, &tab).await;
+
+    assert_eq!(snap["status"], "ok", "{snap}");
+    assert_eq!(snap["snapshot"]["complete"], false, "{snap}");
+    assert_eq!(snap["snapshot"]["omitted"]["not_rendered"], 1, "{snap}");
+    assert!(snap["snapshot"]["hint"].is_string(), "{snap}");
+    assert_eq!(snap["outline"], visible_snap["outline"]);
+    let without_ref_ids = |refs: &Value| {
+        let mut refs = refs.clone();
+        for entry in refs.as_array_mut().unwrap() {
+            entry.as_object_mut().unwrap().remove("ref");
+        }
+        refs
+    };
+    assert_eq!(
+        without_ref_ids(&snap["refs"]),
+        without_ref_ids(&visible_snap["refs"])
+    );
+    assert_eq!(
+        without_ref_ids(&snap["content_refs"]),
+        without_ref_ids(&visible_snap["content_refs"])
+    );
+    for method in [
+        "Page.bringToFront",
+        "Target.activateTarget",
+        "Page.setWebLifecycleState",
+        "Emulation.setFocusEmulationEnabled",
+    ] {
+        assert!(recorded_calls(&f, method).is_empty(), "{method} was called");
+    }
+}
+
+#[tokio::test]
+async fn semantic_background_tab_with_layout_is_not_flagged() {
+    let f = fixture_with(|st| {
+        st.semantic_large_page = true;
+        st.tab_visible = false;
+    })
+    .await;
+    let (target, tab) = bind(&f).await;
+    let snap = semantic_snapshot(&f, &target, &tab).await;
+
+    assert_eq!(snap["status"], "ok", "{snap}");
+    assert_eq!(snap["snapshot"]["omitted"]["not_rendered"], 0, "{snap}");
+    assert_eq!(snap["snapshot"]["hint"], Value::Null, "{snap}");
+    assert_eq!(snap["snapshot"]["omitted"]["css_hidden"], 320);
+    assert!(recorded_calls(&f, "Runtime.evaluate").is_empty());
+}
+
+#[tokio::test]
+async fn semantic_background_tab_with_faded_in_wrapper_is_not_flagged() {
+    let f = fixture_with(|st| {
+        st.semantic_large_page = true;
+        st.semantic_html_style = "opacity: 0.98; transition: opacity 0.3s".into();
+        st.oopif_present = false;
+        st.tab_visible = false;
+    })
+    .await;
+    let (target, tab) = bind(&f).await;
+    let snap = semantic_snapshot(&f, &target, &tab).await;
+
+    assert_eq!(snap["status"], "ok", "{snap}");
+    assert_eq!(snap["snapshot"]["omitted"]["not_rendered"], 0, "{snap}");
+    assert_eq!(snap["snapshot"]["omitted"]["css_hidden"], 320, "{snap}");
+    let outline = snap["outline"].as_str().unwrap();
+    assert!(outline.contains("Reply body"), "{outline}");
+    assert!(!outline.contains("Retained control"), "{outline}");
+}
+
+#[tokio::test]
+async fn semantic_background_tab_with_rendered_oopif_is_not_flagged() {
+    let f = fixture_with(|st| st.tab_visible = false).await;
+    let (target, tab) = bind(&f).await;
+    let snap = semantic_snapshot(&f, &target, &tab).await;
+
+    assert_eq!(snap["status"], "ok", "{snap}");
+    assert_eq!(snap["oopif"]["frames"], 1, "{snap}");
+    assert_eq!(snap["snapshot"]["omitted"]["not_rendered"], 0, "{snap}");
+    assert_eq!(snap["snapshot"]["hint"], Value::Null, "{snap}");
+}
+
+#[tokio::test]
+async fn semantic_visible_tab_without_layout_is_not_flagged() {
+    let f = fixture_with(|st| st.oopif_present = false).await;
+    let (target, tab) = bind(&f).await;
+    let snap = semantic_snapshot(&f, &target, &tab).await;
+
+    assert_eq!(snap["status"], "ok", "{snap}");
+    assert_eq!(snap["snapshot"]["complete"], true, "{snap}");
+    assert_eq!(snap["snapshot"]["omitted"]["not_rendered"], 0, "{snap}");
+    assert_eq!(snap["snapshot"]["hint"], Value::Null, "{snap}");
+    let probes = recorded_calls(&f, "Runtime.evaluate");
+    assert_eq!(probes.len(), 1, "{probes:?}");
+    assert_eq!(
+        probes[0].1["expression"],
+        "document.visibilityState === 'visible'"
+    );
+}
+
+#[tokio::test]
+async fn semantic_snapshot_does_not_capture_unless_requested() {
+    let f = fixture().await;
+    let (target, tab) = bind(&f).await;
+    let snapshot = semantic_snapshot(&f, &target, &tab).await;
+    assert_eq!(snapshot["status"], "ok", "{snapshot}");
+    assert_eq!(snapshot["screenshot"], Value::Null);
+    assert_eq!(snapshot["screenshot_width"], Value::Null);
+    assert_eq!(snapshot["screenshot_height"], Value::Null);
+    assert_eq!(snapshot["screenshot_mime_type"], Value::Null);
+    assert!(recorded_calls(&f, "Page.captureScreenshot").is_empty());
+}
+
+#[tokio::test]
+async fn requested_tab_screenshot_maps_non_unit_png_pixels_to_viewport_css() {
+    let f = fixture_with(|state| {
+        state.viewport_css_width = 2.0;
+        state.viewport_css_height = 1.0;
+        state.screenshot_data = screenshot_png_base64(4, 2);
+    })
+    .await;
+    let (target, tab) = bind(&f).await;
+    let result = GetBrowserStateTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "session": SESSION,
+            "snapshot_format": "dom_refs_v1",
+            "include_screenshot": true
+        }))
+        .await;
+    let snapshot = structured(&result);
+    assert_eq!(snapshot["status"], "ok", "{snapshot}");
+    assert_eq!(snapshot["screenshot_width"], 4);
+    assert_eq!(snapshot["screenshot_height"], 2);
+    assert_eq!(snapshot["screenshot_mime_type"], "image/png");
+    assert_eq!(snapshot["screenshot"]["viewport_css_width"], 2.0);
+    assert_eq!(snapshot["screenshot"]["viewport_css_height"], 1.0);
+    assert_eq!(snapshot["screenshot"]["pixel_to_css_scale_x"], 0.5);
+    assert_eq!(snapshot["screenshot"]["pixel_to_css_scale_y"], 0.5);
+    let capture = recorded_calls(&f, "Page.captureScreenshot");
+    assert_eq!(capture.len(), 1, "{capture:?}");
+    assert_eq!(capture[0].1["clip"]["width"], 2.0);
+    assert_eq!(capture[0].1["clip"]["height"], 1.0);
+    assert_eq!(capture[0].1["clip"]["scale"], 1.0);
+}
+
+#[tokio::test]
+async fn requested_tab_screenshot_refuses_invalid_viewport_metrics_before_capture() {
+    let f = fixture_with(|state| state.viewport_css_width = 0.0).await;
+    let (target, tab) = bind(&f).await;
+    let result = GetBrowserStateTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "session": SESSION,
+            "snapshot_format": "dom_refs_v1",
+            "include_screenshot": true
+        }))
+        .await;
+    let refusal = structured(&result);
+    assert_eq!(refusal["status"], "refused", "{refusal}");
+    assert_eq!(refusal["refusal"]["code"], "browser_route_unavailable");
+    assert!(recorded_calls(&f, "Page.captureScreenshot").is_empty());
+}
+
+#[tokio::test]
+async fn requested_tab_screenshot_refuses_malformed_image_data() {
+    let f = fixture_with(|state| state.screenshot_data = "not-base64".into()).await;
+    let (target, tab) = bind(&f).await;
+    let result = GetBrowserStateTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "session": SESSION,
+            "snapshot_format": "semantic_v2",
+            "include_screenshot": true
+        }))
+        .await;
+    let refusal = structured(&result);
+    assert_eq!(refusal["status"], "refused", "{refusal}");
+    assert_eq!(refusal["refusal"]["code"], "browser_route_unavailable");
+    assert!(result
+        .content
+        .iter()
+        .all(|content| !matches!(content, Content::Image { .. })));
+}
+
+#[tokio::test]
+async fn semantic_continuation_is_opaque_single_use_and_reaches_offscreen_content() {
+    let f = fixture_with(|st| st.semantic_large_page = true).await;
+    let (target, tab) = bind(&f).await;
+    let first = semantic_snapshot(&f, &target, &tab).await;
+    let token = first["snapshot"]["continuation"]
+        .as_str()
+        .expect("large fixture continuation")
+        .to_owned();
+    assert!(token.starts_with("bc-"), "{first}");
+
+    let continued = semantic_snapshot_with(&f, &target, &tab, json!({"continuation": token})).await;
+    assert_eq!(continued["status"], "ok", "{continued}");
+    assert_eq!(continued["snapshot"]["scope"], "continuation");
+    assert_eq!(continued["page"]["title"], "Fixture inbox", "{continued}");
+    assert!(
+        continued["refs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|entry| { entry["name"] == "Archive item 304" }),
+        "last offscreen action was not reachable: {continued}"
+    );
+
+    let reused = semantic_snapshot_with(&f, &target, &tab, json!({"continuation": token})).await;
+    assert_eq!(reused["status"], "refused", "{reused}");
+    assert_eq!(reused["refusal"]["code"], "browser_ref_stale");
+}
+
+#[tokio::test]
+async fn newer_semantic_snapshot_invalidates_prior_continuations() {
+    let f = fixture_with(|st| st.semantic_large_page = true).await;
+    let (target, tab) = bind(&f).await;
+    let first = semantic_snapshot(&f, &target, &tab).await;
+    let token = first["snapshot"]["continuation"]
+        .as_str()
+        .expect("large fixture continuation")
+        .to_owned();
+    let newer = semantic_snapshot(&f, &target, &tab).await;
+    assert_eq!(newer["status"], "ok", "{newer}");
+
+    let stale = semantic_snapshot_with(&f, &target, &tab, json!({"continuation": token})).await;
+    assert_eq!(stale["status"], "refused", "{stale}");
+    assert_eq!(stale["refusal"]["code"], "browser_ref_stale");
+}
+
+#[tokio::test]
+async fn main_frame_navigation_invalidates_semantic_continuations() {
+    let f = fixture_with(|st| st.semantic_large_page = true).await;
+    let (target, tab) = bind(&f).await;
+    let first = semantic_snapshot(&f, &target, &tab).await;
+    let token = first["snapshot"]["continuation"]
+        .as_str()
+        .expect("large fixture continuation")
+        .to_owned();
+
+    f.state.lock().unwrap().main_loader = "L_MAIN_2".into();
+
+    let stale = semantic_snapshot_with(&f, &target, &tab, json!({"continuation": token})).await;
+    assert_eq!(stale["status"], "refused", "{stale}");
+    assert_eq!(stale["refusal"]["code"], "browser_ref_stale");
+}
+
+#[tokio::test]
+async fn semantic_query_and_content_scope_are_read_only_and_precise() {
+    let f = fixture_with(|st| st.semantic_large_page = true).await;
+    let (target, tab) = bind(&f).await;
+    let queried =
+        semantic_snapshot_with(&f, &target, &tab, json!({"query": "Archive item 304"})).await;
+    assert_eq!(queried["snapshot"]["scope"], "query", "{queried}");
+    assert_eq!(queried["refs"].as_array().unwrap().len(), 1, "{queried}");
+    assert_eq!(queried["refs"][0]["name"], "Archive item 304");
+
+    let natural =
+        semantic_snapshot_with(&f, &target, &tab, json!({"query": "reply archive 304"})).await;
+    assert_eq!(natural["snapshot"]["scope"], "query", "{natural}");
+    assert_eq!(natural["refs"][0]["name"], "Archive item 304", "{natural}");
+    assert!(
+        natural["refs"]
+            .as_array()
+            .is_some_and(|refs| refs.iter().any(|entry| entry["name"] == "Reply")),
+        "{natural}"
+    );
+
+    let fresh = semantic_snapshot(&f, &target, &tab).await;
+    let heading_ref = fresh["content_refs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["name"] == "Visible message")
+        .and_then(|entry| entry["ref"].as_str())
+        .expect("heading content ref")
+        .to_owned();
+    let scoped = semantic_snapshot_with(&f, &target, &tab, json!({"scope_ref": heading_ref})).await;
+    assert_eq!(scoped["snapshot"]["scope"], "subtree", "{scoped}");
+    assert_eq!(scoped["refs"].as_array().unwrap().len(), 0, "{scoped}");
+    assert_eq!(
+        scoped["content_refs"].as_array().unwrap().len(),
+        1,
+        "{scoped}"
+    );
+    assert_eq!(scoped["content_refs"][0]["name"], "Visible message");
+    assert!(recorded_calls(&f, "Page.bringToFront").is_empty());
+    assert!(recorded_calls(&f, "Target.activateTarget").is_empty());
+}
+
+#[tokio::test]
+async fn navigation_targets_an_inactive_tab_without_activating_it() {
+    let f = fixture().await;
+    let (target, tab) = bind(&f).await;
+    let result = BrowserNavigateTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "url": "https://fixture.test/background-navigation",
+            "session": SESSION,
+        }))
+        .await;
+
+    let structured = result
+        .structured_content
+        .as_ref()
+        .expect("navigation structured content");
+    assert_eq!(structured["status"], "ok", "{structured}");
+    let navigate = recorded_calls(&f, "Page.navigate");
+    assert_eq!(navigate.len(), 1, "{navigate:?}");
+    assert_eq!(
+        navigate[0].1["url"],
+        "https://fixture.test/background-navigation"
+    );
+    assert!(recorded_calls(&f, "Page.bringToFront").is_empty());
+    assert!(recorded_calls(&f, "Target.activateTarget").is_empty());
+}
+
+#[tokio::test]
+async fn browser_visual_feedback_probes_live_tab_visibility_without_activating_it() {
+    let f = fixture_with(|state| state.tab_visible = false).await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let main_ref = ref_of(&snap, "main", "main-btn");
+
+    let result = BrowserClickTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "ref": main_ref,
+            "input_route": "dom_event",
+            "session": SESSION,
+        }))
+        .await;
+
+    assert_eq!(
+        result.action_record.as_ref().map(|record| record.effect),
+        Some(crate::action_record::ActionEffect::Confirmed)
+    );
+    let visibility = recorded_calls(&f, "Runtime.evaluate");
+    assert_eq!(visibility.len(), 1, "{visibility:?}");
+    assert_eq!(
+        visibility[0].1["expression"],
+        "document.visibilityState === 'visible'"
+    );
+    assert_eq!(visibility[0].1["returnByValue"], true);
+    assert_eq!(visibility[0].1["awaitPromise"], false);
+    assert!(recorded_calls(&f, "Page.bringToFront").is_empty());
+    assert!(recorded_calls(&f, "Target.activateTarget").is_empty());
+}
+
+#[tokio::test]
+async fn semantic_refs_enforce_declared_action_kinds_before_delivery() {
+    let f = fixture_with(|st| st.semantic_large_page = true).await;
+    let (target, tab) = bind(&f).await;
+    let snap = semantic_snapshot(&f, &target, &tab).await;
+    let content_ref = snap["content_refs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["name"] == "Visible message")
+        .and_then(|entry| entry["ref"].as_str())
+        .unwrap();
+    let click = BrowserClickTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "session": SESSION,
+            "ref": content_ref,
+            "input_route": "dom_event"
+        }))
+        .await;
+    assert_eq!(
+        structured(&click)["refusal"]["code"],
+        "browser_action_unavailable"
+    );
+
+    let pointer = BrowserPointerTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "session": SESSION,
+            "ref": content_ref,
+            "action": "hover",
+            "input_route": "dom_event"
+        }))
+        .await;
+    assert_eq!(
+        structured(&pointer)["refusal"]["code"],
+        "browser_action_unavailable"
+    );
+
+    let button_ref = snap["refs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["name"] == "Reply")
+        .and_then(|entry| entry["ref"].as_str())
+        .unwrap();
+    let typed = BrowserTypeTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "session": SESSION,
+            "ref": button_ref,
+            "text": "must not deliver"
+        }))
+        .await;
+    assert_eq!(
+        structured(&typed)["refusal"]["code"],
+        "browser_action_unavailable"
+    );
+    assert!(recorded_calls(&f, "Input.insertText").is_empty());
+    assert!(recorded_calls(&f, "Runtime.callFunctionOn").is_empty());
+}
+
+#[tokio::test]
+async fn semantic_snapshot_uses_bounded_dom_fallback_only_for_known_size_failures() {
+    let f = fixture_with(|st| {
+        st.semantic_large_page = true;
+        st.semantic_full_dom_fails = true;
+    })
+    .await;
+    let (target, tab) = bind(&f).await;
+    let snap = semantic_snapshot_with(&f, &target, &tab, json!({"query": "Reply"})).await;
+    assert_eq!(snap["status"], "ok", "{snap}");
+    assert_eq!(snap["snapshot"]["complete"], false, "{snap}");
+    let document_calls = recorded_calls(&f, "DOM.getDocument");
+    assert!(document_calls
+        .iter()
+        .any(|(_, params)| params["depth"] == -1));
+    assert!(document_calls
+        .iter()
+        .any(|(_, params)| params["depth"] == 256));
+    assert!(document_calls
+        .iter()
+        .any(|(_, params)| params["depth"] == 8));
+}
+
+#[tokio::test]
+async fn semantic_snapshot_uses_bounded_dom_fallback_for_full_tree_timeout() {
+    let f = fixture_with(|st| {
+        st.semantic_large_page = true;
+        st.semantic_full_dom_times_out = true;
+    })
+    .await;
+    let (target, tab) = bind(&f).await;
+    let snap = semantic_snapshot_with(&f, &target, &tab, json!({"query": "Reply"})).await;
+    assert_eq!(snap["status"], "ok", "{snap}");
+    assert_eq!(snap["snapshot"]["complete"], false, "{snap}");
+    let document_calls = recorded_calls(&f, "DOM.getDocument");
+    assert!(document_calls
+        .iter()
+        .any(|(_, params)| params["depth"] == -1));
+    assert!(document_calls
+        .iter()
+        .any(|(_, params)| params["depth"] == 8));
+    assert!(document_calls.iter().all(|(_, params)| {
+        params["depth"] == -1 || params["depth"].as_i64().is_some_and(|depth| depth <= 8)
+    }));
+}
+
+#[tokio::test]
+async fn semantic_snapshot_hydrates_truncated_fallback_branches() {
+    let f = fixture_with(|st| {
+        st.semantic_large_page = true;
+        st.semantic_full_dom_fails = true;
+        st.semantic_truncated_dom = true;
+    })
+    .await;
+    let (target, tab) = bind(&f).await;
+    let snap = semantic_snapshot_with(&f, &target, &tab, json!({"query": "Reply"})).await;
+    assert_eq!(snap["status"], "ok", "{snap}");
+    assert_eq!(snap["snapshot"]["complete"], false, "{snap}");
+    assert!(snap["refs"]
+        .as_array()
+        .is_some_and(|refs| refs.iter().any(|entry| entry["name"] == "Reply")));
+    assert!(recorded_calls(&f, "DOM.describeNode")
+        .iter()
+        .any(|(_, params)| params["backendNodeId"] == 999));
+}
+
+#[tokio::test]
+async fn unproven_oopif_capability_is_omitted_not_guessed() {
+    let f = fixture_with(|st| st.oopif_supported = false).await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+
+    assert_eq!(
+        snap["status"], "ok",
+        "capability gap is not an error: {snap}"
+    );
+    assert_eq!(snap["oopif"]["status"], "unsupported");
+    assert_eq!(snap["oopif"]["frames"], 0);
+    let frames: Vec<&str> = snap["refs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["frame"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        frames,
+        vec!["main", "main", "main", "iframe"],
+        "OOPIF content omitted, everything provable kept: {snap}"
+    );
+}
+
+#[tokio::test]
+async fn rogue_attach_announcements_are_contained() {
+    let f = fixture_with(|st| st.emit_rogue_attach = true).await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+
+    let oopif_refs: Vec<&Value> = snap["refs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|r| r["frame"] == "oopif")
+        .collect();
+    assert_eq!(
+        oopif_refs.len(),
+        1,
+        "only the child attached beneath the proven tab session mints refs: {snap}"
+    );
+    assert_eq!(snap["oopif"]["frames"], 1);
+
+    // The rogue/popup sessions must never have been spoken to.
+    let touched: Vec<String> = f
+        .state
+        .lock()
+        .unwrap()
+        .calls
+        .iter()
+        .filter_map(|(s, _, _)| s.clone())
+        .collect();
+    assert!(
+        !touched
+            .iter()
+            .any(|s| s == "rogue-sess" || s == "popup-sess"),
+        "core issued commands to an unproven session: {touched:?}"
+    );
+}
+
+#[tokio::test]
+async fn stale_profile_path_redials_only_the_exact_endpoint() {
+    use tokio_tungstenite::tungstenite::handshake::server::{Request, Response};
+    let f = fixture().await;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let mut server = tokio::spawn(async move {
+        let mut paths = Vec::new();
+        for _ in 0..2 {
+            let (stream, _) = listener.accept().await.unwrap();
+            let result =
+                tokio_tungstenite::accept_hdr_async(stream, |request: &Request, _: Response| {
+                    paths.push(request.uri().path().to_owned());
+                    Err(tokio_tungstenite::tungstenite::http::Response::builder()
+                        .status(404)
+                        .body(Some("stale browser path".to_owned()))
+                        .unwrap())
+                })
+                .await;
+            assert!(result.is_err());
+        }
+        paths
+    });
+    f.state
+        .lock()
+        .unwrap()
+        .endpoint_responses
+        .push_back(Ok(Some(OwnedEndpoint {
+            ws_url: format!("ws://127.0.0.1:{port}/devtools/browser/stale"),
+            http_port: Some(port),
+            transport: EndpointTransport::DevToolsActivePort,
+            ownership: EndpointOwnershipProof {
+                method: EndpointOwnershipMethod::DevtoolsActivePortsFile,
+                owner_pid: 1,
+                listener_pid: None,
+                detail: None,
+            },
+        })));
+    let exchange = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        let result = GetBrowserStateTool::new(f.engine.clone())
+            .invoke(json!({ "pid": 1, "window_id": 7, "session": SESSION }))
+            .await;
+        (result, (&mut server).await.unwrap())
+    })
+    .await;
+    server.abort();
+    let (result, paths) = exchange.expect("both exact-path attempts must finish");
+    assert_eq!(
+        structured(&result)["refusal"]["code"],
+        "browser_route_unavailable"
+    );
+    assert_eq!(paths, ["/devtools/browser/stale"; 2]);
+    assert!(f.state.lock().unwrap().calls.is_empty());
+}
+
+#[tokio::test]
+async fn owned_endpoint_transitions_refuse_before_dispatch() {
+    use super::refusal::BrowserRefusalCode;
+    for initial in [
+        EndpointTransport::LegacyJsonVersion,
+        EndpointTransport::DevToolsActivePort,
+    ] {
+        for change in ["transport", "url", "missing", "malformed", "unreadable"] {
+            let f = fixture().await;
+            let endpoint = OwnedEndpoint {
+                ws_url: f._server.ws_url(),
+                http_port: None,
+                transport: initial,
+                ownership: EndpointOwnershipProof {
+                    method: EndpointOwnershipMethod::ListeningSocketPid,
+                    owner_pid: 1,
+                    listener_pid: None,
+                    detail: None,
+                },
+            };
+            f.state
+                .lock()
+                .unwrap()
+                .endpoint_responses
+                .push_back(Ok(Some(endpoint.clone())));
+            let (target, tab) = bind(&f).await;
+            let snapshot = snapshot(&f, &target, &tab).await;
+            let reference = ref_of(&snapshot, "main", "main-btn");
+            let mut changed = endpoint;
+            let (response, code) = match change {
+                "transport" => {
+                    changed.transport = if initial == EndpointTransport::LegacyJsonVersion {
+                        EndpointTransport::DevToolsActivePort
+                    } else {
+                        EndpointTransport::LegacyJsonVersion
+                    };
+                    (Ok(Some(changed)), "browser_binding_stale")
+                }
+                "url" => {
+                    changed.ws_url.push_str("-changed");
+                    (Ok(Some(changed)), "browser_binding_stale")
+                }
+                "missing" => (Ok(None), "browser_requires_setup"),
+                "malformed" => (
+                    Err(BrowserRefusal::new(
+                        BrowserRefusalCode::BrowserEndpointOwnerMismatch,
+                        "malformed profile",
+                    )),
+                    "browser_endpoint_owner_mismatch",
+                ),
+                _ => (
+                    Err(BrowserRefusal::new(
+                        BrowserRefusalCode::BrowserRouteUnavailable,
+                        "unreadable profile",
+                    )),
+                    "browser_route_unavailable",
+                ),
+            };
+            f.state.lock().unwrap().endpoint_responses = [response].into();
+            let result = BrowserClickTool::new(f.engine.clone())
+                .invoke(json!({
+                    "target_id": target, "tab_id": tab, "ref": reference, "session": SESSION
+                }))
+                .await;
+            assert_eq!(
+                structured(&result)["refusal"]["code"],
+                code,
+                "{initial:?} {change}: {}",
+                structured(&result)
+            );
+            assert!(recorded_calls(&f, "Input.dispatchMouseEvent").is_empty());
+        }
+    }
+}
+
+// ── Mutation routing + frame identity revalidation ──────────────────────────
+
+#[tokio::test]
+async fn protected_browser_scope_reproves_live_origin_and_omits_sensitive_url_text() {
+    let f = fixture().await;
+    let (target, tab) = bind(&f).await;
+    let args = json!({
+        "target_id": target,
+        "tab_id": tab,
+        "session": SESSION,
+        "x": 10,
+        "y": 20,
+    });
+
+    let first = browser_protected_resource_scope(&f.engine, &args, "browser_click")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(first["live_origin"], "https://fixture.test");
+    assert!(
+        !first.to_string().contains("secret"),
+        "the resource must not contain a full URL"
+    );
+    let observation = browser_protected_resource_scope(&f.engine, &args, "get_browser_state")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(observation["action_class"], "page_observation");
+    assert_eq!(first["action_class"], "page_input");
+
+    f.state.lock().unwrap().main_url = "https://bank.example/transfer?secret=one-time-token".into();
+    let second = browser_protected_resource_scope(&f.engine, &args, "browser_click")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(second["live_origin"], "https://bank.example");
+    assert_ne!(
+        first, second,
+        "cross-origin navigation must rotate the grant scope"
+    );
+    assert!(
+        !second.to_string().contains("one-time-token"),
+        "query text must never reach the consent resource"
+    );
+}
+
+#[tokio::test]
+async fn an_open_dialog_moves_the_origin_proof_off_the_blocked_renderer() {
+    let f = fixture_with(|st| st.dialog_open = true).await;
+    let (target, tab) = bind(&f).await;
+    let args = json!({ "target_id": target, "tab_id": tab, "session": SESSION, "x": 10, "y": 20 });
+
+    let scope = browser_protected_resource_scope(&f.engine, &args, "browser_click")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(scope["live_origin"], "https://fixture.test");
+    assert!(
+        recorded_calls(&f, "Page.getFrameTree").is_empty(),
+        "a renderer blocked by a dialog must not be asked for its frame tree"
+    );
+    assert_eq!(recorded_calls(&f, "Target.getTargetInfo").len(), 1);
+
+    browser_protected_resource_scope(&f.engine, &args, "browser_click")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        recorded_calls(&f, "Page.enable").len(),
+        1,
+        "the first tab session subscribes to dialog events for every later caller"
+    );
+}
+
+#[tokio::test]
+async fn browser_dialog_resubscribe_uses_the_short_dialog_deadline() {
+    let f = fixture_with(|st| st.page_enable_hangs = true).await;
+    let (target, tab) = bind(&f).await;
+
+    let started = std::time::Instant::now();
+    let inspected = BrowserDialogTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "action": "inspect", "session": SESSION
+        }))
+        .await;
+    // Revalidation's attach spends one short deadline on its best-effort
+    // subscribe and the tool's retry spends one more; the 20 s CDP call
+    // timeout must never be reached.
+    let elapsed = started.elapsed();
+    assert!(
+        elapsed
+            < 2 * super::engine::DIALOG_SUBSCRIPTION_TIMEOUT + std::time::Duration::from_secs(2),
+        "browser_dialog must not wait out the CDP call timeout: {elapsed:?}"
+    );
+    assert!(
+        recorded_calls(&f, "Page.enable").len() >= 2,
+        "browser_dialog retries the subscription the attach could not complete"
+    );
+    let s = structured(&inspected);
+    assert_eq!(s["refusal"]["code"], "browser_action_unavailable", "{s}");
+}
+
+#[tokio::test]
+async fn a_stale_binding_keeps_its_refusal_code_through_scope_attestation() {
+    use crate::authorization::PermissionMode;
+    use crate::session_authorization::{SessionAuthorizationRegistry, SessionModeCeiling};
+
+    let f = fixture().await;
+    let mut registry = crate::tool::ToolRegistry::new_with_protected_consent_provider(Some(
+        Arc::new(FixtureProtectedProvider {
+            consent_seen: AtomicBool::new(false),
+        }),
+    ));
+    super::tools::register_browser_tools(&f.engine, &mut registry);
+    let ceiling = SessionModeCeiling::for_trusted_sessions(
+        [PermissionMode::Standard],
+        false,
+        std::time::Duration::from_secs(60),
+        std::time::Duration::from_secs(30),
+    )
+    .unwrap();
+    let context = SessionAuthorizationRegistry::with_ceiling(ceiling)
+        .compatibility_context(PermissionMode::Standard, None)
+        .unwrap();
+    let args = json!({
+        "target_id": "bt-gone",
+        "tab_id": "tab-gone",
+        "ref": "p1:0",
+        "session": SESSION,
+    });
+
+    for tool in ["get_browser_state", "browser_click"] {
+        let result = registry
+            .invoke_with_context(tool, args.clone(), context.clone())
+            .await;
+        let refusal = &result.structured_content.unwrap()["refusal"];
+        assert_eq!(refusal["code"], "browser_binding_stale", "{tool}");
+        assert!(
+            refusal["message"].as_str().unwrap().contains("bt-gone"),
+            "{tool}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn click_routes_oopif_refs_through_the_contained_child_session() {
+    let f = fixture().await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let oopif_ref = ref_of(&snap, "oopif", "ad-input");
+
+    let result = BrowserClickTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "ref": oopif_ref, "session": SESSION
+        }))
+        .await;
+    let s = structured(&result);
+    assert_eq!(s["status"], "ok", "{s}");
+    assert_eq!(s["frame"], "oopif");
+    // Box-model center of backend 100 in the child session's space.
+    assert_eq!(s["x"], 1010.0);
+    assert_eq!(s["y"], 1005.0);
+
+    let mouse = recorded_calls(&f, "Input.dispatchMouseEvent");
+    assert!(!mouse.is_empty());
+    assert!(
+        mouse
+            .iter()
+            .all(|(sess, _)| sess.as_deref().unwrap_or("").starts_with("oopif-sess-")),
+        "OOPIF input must dispatch on the child session: {mouse:?}"
+    );
+    let focus_emulation = recorded_calls(&f, "Emulation.setFocusEmulationEnabled");
+    assert_eq!(focus_emulation.len(), 2);
+    assert_eq!(focus_emulation[0].1["enabled"], true);
+    assert_eq!(focus_emulation[1].1["enabled"], false);
+    assert!(recorded_calls(&f, "Page.bringToFront").is_empty());
+    assert!(recorded_calls(&f, "Target.activateTarget").is_empty());
+}
+
+#[tokio::test]
+async fn click_validates_same_process_iframe_loader_and_uses_the_tab_session() {
+    let f = fixture().await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let iframe_ref = ref_of(&snap, "iframe", "inner-btn");
+
+    let result = BrowserClickTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "ref": iframe_ref, "session": SESSION
+        }))
+        .await;
+    let s = structured(&result);
+    assert_eq!(s["status"], "ok", "{s}");
+    assert_eq!(s["frame"], "iframe");
+
+    let mouse = recorded_calls(&f, "Input.dispatchMouseEvent");
+    assert!(
+        mouse
+            .iter()
+            .all(|(sess, _)| sess.as_deref().unwrap_or("").starts_with("tab-sess-")),
+        "same-process iframe input stays on the tab session: {mouse:?}"
+    );
+    assert!(
+        !recorded_calls(&f, "Page.getFrameTree").is_empty(),
+        "frame identity must have been re-proven"
+    );
+}
+
+#[tokio::test]
+async fn semantic_snapshot_reports_the_live_page_title() {
+    let f = fixture().await;
+    let (target, tab) = bind(&f).await;
+    let snap = semantic_snapshot(&f, &target, &tab).await;
+    assert_eq!(snap["status"], "ok", "{snap}");
+    assert_eq!(snap["page"]["title"], "Fixture after navigation", "{snap}");
+}
+
+#[tokio::test]
+async fn foreground_delivery_mode_accepts_window_activation_for_trusted_click() {
+    let f = fixture_with_platform(|_| {}, true).await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let main_ref = ref_of(&snap, "main", "main-btn");
+
+    let bad = BrowserClickTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "ref": main_ref,
+            "delivery_mode": "sideways", "session": SESSION
+        }))
+        .await;
+    assert!(
+        bad.is_error.unwrap_or(false),
+        "an unknown delivery_mode is refused"
+    );
+    assert!(recorded_calls(&f, "Input.dispatchMouseEvent").is_empty());
+
+    let refused = BrowserClickTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "ref": main_ref, "session": SESSION
+        }))
+        .await;
+    assert_eq!(
+        structured(&refused)["refusal"]["detail"]["alternative_delivery_mode"],
+        "foreground"
+    );
+
+    let foreground_args = json!({
+        "target_id": target, "tab_id": tab, "ref": main_ref,
+        "delivery_mode": "foreground", "session": SESSION
+    });
+    let foreground = BrowserClickTool::new(f.engine.clone())
+        .invoke(foreground_args.clone())
+        .await;
+    let s = structured(&foreground);
+    assert_eq!(s["status"], "ok", "{s}");
+    assert_eq!(s["route"], "trusted");
+    assert_eq!(s["delivery_mode"], "foreground");
+    let mouse = recorded_calls(&f, "Input.dispatchMouseEvent");
+    assert_eq!(mouse.len(), 2, "press and release: {mouse:?}");
+    let public = ActionExecutionRecord::from_legacy("browser_click", &foreground_args, s)
+        .expect("browser click action record")
+        .public_result()
+        .expect("public browser click result");
+    let public = serde_json::to_value(public).expect("serialize public result");
+    assert_eq!(public["delivery"]["mode"], "foreground", "{public}");
+
+    let pointer_args = json!({
+        "target_id": target, "tab_id": tab, "action": "hover", "x": 10, "y": 10,
+        "delivery_mode": "foreground", "session": SESSION
+    });
+    let pointer = BrowserPointerTool::new(f.engine.clone())
+        .invoke(pointer_args.clone())
+        .await;
+    let p = structured(&pointer);
+    assert_eq!(p["status"], "ok", "{p}");
+    assert_eq!(p["delivery_mode"], "foreground", "{p}");
+    let public = ActionExecutionRecord::from_legacy("browser_pointer", &pointer_args, p)
+        .expect("browser pointer action record")
+        .public_result()
+        .expect("public browser pointer result");
+    let public = serde_json::to_value(public).expect("serialize public result");
+    assert_eq!(public["delivery"]["mode"], "foreground", "{public}");
+}
+
+#[tokio::test]
+async fn synthetic_scroll_awaits_page_readback_without_changing_routes() {
+    let f = fixture().await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let main_ref = ref_of(&snap, "main", "main-btn");
+    let result = BrowserPointerTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "ref": main_ref,
+            "action": "scroll", "input_route": "dom_event",
+            "delta_y": 240, "session": SESSION
+        }))
+        .await;
+    assert_eq!(structured(&result)["status"], "ok");
+    let calls = recorded_calls(&f, "Runtime.callFunctionOn");
+    let scroll_calls: Vec<_> = calls
+        .iter()
+        .filter(|call| {
+            call.1["functionDeclaration"]
+                .as_str()
+                .is_some_and(|s| s.contains("target.scrollBy"))
+        })
+        .collect();
+    assert_eq!(scroll_calls.len(), 1, "scroll must not be retried");
+    assert_eq!(scroll_calls[0].1["awaitPromise"], true);
+    assert!(recorded_calls(&f, "Input.dispatchMouseEvent").is_empty());
+    assert!(recorded_calls(&f, "Page.bringToFront").is_empty());
+    assert!(recorded_calls(&f, "Target.activateTarget").is_empty());
+}
+
+#[tokio::test]
+async fn trusted_click_refuses_when_standalone_background_posture_is_unavailable() {
+    let f = fixture_with_platform(|_| {}, true).await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let main_ref = ref_of(&snap, "main", "main-btn");
+
+    let trusted = BrowserClickTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "ref": main_ref,
+            "input_route": "trusted", "session": SESSION
+        }))
+        .await;
+    assert_eq!(
+        structured(&trusted)["refusal"]["code"],
+        "browser_input_trust_unavailable"
+    );
+    assert_eq!(
+        structured(&trusted)["refusal"]["detail"]["alternative_route"],
+        "dom_event"
+    );
+    assert_eq!(
+        structured(&trusted)["refusal"]["detail"]["trusted_delivery_attempted"],
+        false
+    );
+    assert!(recorded_calls(&f, "Input.dispatchMouseEvent").is_empty());
+
+    let synthetic_args = json!({
+        "target_id": target, "tab_id": tab, "ref": main_ref,
+        "input_route": "dom_event", "session": SESSION
+    });
+    let synthetic = BrowserClickTool::new(f.engine.clone())
+        .invoke(synthetic_args)
+        .await;
+    assert!(synthetic.content.iter().any(|content| matches!(
+        content,
+        crate::protocol::Content::Text { text, .. }
+            if text.contains("confirmed a target-state change")
+    )));
+    let public = synthetic
+        .action_record
+        .as_ref()
+        .expect("typed browser click action record")
+        .public_result()
+        .expect("public browser click result");
+    let public = serde_json::to_value(public).expect("serialize public result");
+    assert_eq!(public["effect"], "confirmed", "{public}");
+    assert_eq!(public["route"], "dom", "{public}");
+    assert_eq!(public["delivery"]["mode"], "background", "{public}");
+    assert_eq!(public["evidence"][0]["kind"], "value_readback", "{public}");
+    assert!(public["escalation"].is_null(), "{public}");
+    assert!(public.get("status").is_none(), "{public}");
+    let dispatches = recorded_calls(&f, "Runtime.callFunctionOn");
+    let click_sequence = dispatches
+        .iter()
+        .filter_map(|(_, params)| params["functionDeclaration"].as_str())
+        .find(|declaration| declaration.contains("'pointerdown'"))
+        .expect("dom_event click dispatches a pointer sequence, not a bare click()");
+    // Apps that open rows from pointer/mouse down+up ignore a bare click(),
+    // so the synthetic route must replay the whole primary-button sequence
+    // at the element's center, in order.
+    let order = [
+        "'pointermove'",
+        "'pointerdown'",
+        "'mousedown'",
+        "'pointerup'",
+        "'mouseup'",
+        "'click'",
+    ];
+    let positions: Vec<usize> = order
+        .iter()
+        .map(|event| {
+            click_sequence
+                .find(event)
+                .unwrap_or_else(|| panic!("missing {event}"))
+        })
+        .collect();
+    assert!(
+        positions.windows(2).all(|w| w[0] < w[1]),
+        "{click_sequence}"
+    );
+    assert!(click_sequence.contains("clientX: x"), "{click_sequence}");
+    assert!(!click_sequence.contains("this.click()"), "{click_sequence}");
+    assert!(recorded_calls(&f, "Input.dispatchMouseEvent").is_empty());
+    assert!(recorded_calls(&f, "Page.bringToFront").is_empty());
+    assert!(recorded_calls(&f, "Target.activateTarget").is_empty());
+}
+
+#[tokio::test]
+async fn dom_event_click_remains_unverifiable_when_only_focus_changes() {
+    let f = fixture_with(|state| state.dom_click_changes_readback = false).await;
+    assert!(!f.state.lock().unwrap().dom_click_focused);
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let main_ref = ref_of(&snap, "main", "main-btn");
+
+    let result = BrowserClickTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "ref": main_ref,
+            "input_route": "dom_event",
+            "session": SESSION,
+        }))
+        .await;
+
+    assert!(result.content.iter().any(|content| matches!(
+        content,
+        Content::Text { text, .. }
+            if text.contains("target state remained unchanged; application effect is unverifiable")
+    )));
+    let public = result
+        .action_record
+        .as_ref()
+        .expect("typed browser click action record")
+        .public_result()
+        .expect("public browser click result");
+    let public = serde_json::to_value(public).expect("serialize public result");
+    assert!(f.state.lock().unwrap().dom_click_focused);
+    assert_eq!(public["effect"], "unverifiable", "{public}");
+    assert_eq!(public["evidence"][0]["kind"], "value_readback", "{public}");
+    assert_eq!(public["escalation"]["target"], "page", "{public}");
+    assert_eq!(
+        public["escalation"]["reason"], "effect_unconfirmed",
+        "{public}"
+    );
+}
+
+#[tokio::test]
+async fn dom_event_click_remains_unverifiable_when_semantic_readback_is_unavailable() {
+    let f = fixture_with(|state| state.dom_click_readback_available = false).await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let main_ref = ref_of(&snap, "main", "main-btn");
+
+    let result = BrowserClickTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "ref": main_ref,
+            "input_route": "dom_event",
+            "session": SESSION,
+        }))
+        .await;
+
+    assert!(result.content.iter().any(|content| matches!(
+        content,
+        Content::Text { text, .. }
+            if text.contains("semantic target readback was unavailable")
+    )));
+    let public = result
+        .action_record
+        .as_ref()
+        .expect("typed browser click action record")
+        .public_result()
+        .expect("public browser click result");
+    let public = serde_json::to_value(public).expect("serialize public result");
+    assert_eq!(public["effect"], "unverifiable", "{public}");
+    assert!(public["evidence"].is_null(), "{public}");
+    assert_eq!(
+        public["escalation"]["reason"], "effect_unconfirmed",
+        "{public}"
+    );
+}
+
+#[tokio::test]
+async fn dom_event_click_bounds_stalled_readbacks() {
+    for reads in [0, 1, 2] {
+        let f = fixture_with(|state| {
+            state.dom_click_stall_after = Some(reads);
+            state.dom_click_changes_readback = false;
+        })
+        .await;
+        let (target, tab) = bind(&f).await;
+        let snap = snapshot(&f, &target, &tab).await;
+        let main_ref = ref_of(&snap, "main", "main-btn");
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            BrowserClickTool::new(f.engine.clone()).invoke(json!({
+                "target_id": target,
+                "tab_id": tab,
+                "ref": main_ref,
+                "input_route": "dom_event",
+                "session": SESSION,
+            })),
+        )
+        .await
+        .expect("click must not wait for CALL_TIMEOUT");
+        assert!(result.content.iter().any(|content| matches!(
+            content,
+            Content::Text { text, .. }
+                if text.contains("semantic target readback was unavailable")
+        )));
+        let public = result.action_record.unwrap().public_result().unwrap();
+        let public = serde_json::to_value(public).unwrap();
+        assert_eq!(public["effect"], "unverifiable");
+        assert!(public["evidence"].is_null());
+        assert_eq!(public["escalation"]["reason"], "effect_unconfirmed");
+    }
+}
+
+#[tokio::test]
+async fn dom_event_click_keeps_readback_when_reads_are_slow() {
+    // Each read answers in 150 ms, so the third post-click read starts with
+    // only ~50 ms of the 400 ms window left. It must still be waited for:
+    // a slow page whose state did not change is "unchanged", not
+    // "readback unavailable".
+    let f = fixture_with(|state| {
+        state.dom_click_changes_readback = false;
+        state.dom_click_readback_delay = Some(std::time::Duration::from_millis(150));
+    })
+    .await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let main_ref = ref_of(&snap, "main", "main-btn");
+    let result = BrowserClickTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "ref": main_ref,
+            "input_route": "dom_event",
+            "session": SESSION,
+        }))
+        .await;
+    assert!(result.content.iter().any(|content| matches!(
+        content,
+        Content::Text { text, .. }
+            if text.contains("target state remained unchanged; application effect is unverifiable")
+    )));
+    let public = result.action_record.unwrap().public_result().unwrap();
+    let public = serde_json::to_value(public).unwrap();
+    assert_eq!(public["effect"], "unverifiable", "{public}");
+    assert_eq!(public["evidence"][0]["kind"], "value_readback", "{public}");
+}
+
+#[tokio::test]
+async fn dom_event_click_is_unverifiable_when_readback_disappears() {
+    let f = fixture_with(|state| {
+        state.dom_click_changes_readback = false;
+        state.dom_click_reads_before_failure = Some(2);
+    })
+    .await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let main_ref = ref_of(&snap, "main", "main-btn");
+    let result = BrowserClickTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "ref": main_ref,
+            "input_route": "dom_event",
+            "session": SESSION,
+        }))
+        .await;
+    let public = result.action_record.unwrap().public_result().unwrap();
+    let public = serde_json::to_value(public).unwrap();
+    assert_eq!(public["effect"], "unverifiable", "{public}");
+    assert!(public["evidence"].is_null(), "{public}");
+    assert_eq!(
+        f.state.lock().unwrap().dom_click_reads_before_failure,
+        Some(0)
+    );
+}
+
+#[tokio::test]
+async fn main_frame_navigation_invalidates_refs_via_loader_identity() {
+    let f = fixture().await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let main_ref = ref_of(&snap, "main", "main-btn");
+
+    f.state.lock().unwrap().main_loader = "L_MAIN_2".into();
+
+    let click = BrowserClickTool::new(f.engine.clone());
+    let result = click
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "ref": main_ref, "session": SESSION
+        }))
+        .await;
+    assert_eq!(
+        structured(&result)["refusal"]["code"],
+        "browser_ref_stale",
+        "loader change means a new document"
+    );
+    assert!(
+        recorded_calls(&f, "Input.dispatchMouseEvent").is_empty(),
+        "no input may reach a document that cannot be re-proven"
+    );
+
+    // The whole snapshot namespace was invalidated, so a retry refuses
+    // at resolution already.
+    let retry = click
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "ref": main_ref, "session": SESSION
+        }))
+        .await;
+    assert_eq!(structured(&retry)["refusal"]["code"], "browser_ref_stale");
+}
+
+#[tokio::test]
+async fn same_process_iframe_navigation_invalidates_its_refs() {
+    let f = fixture().await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let iframe_ref = ref_of(&snap, "iframe", "inner-btn");
+
+    f.state.lock().unwrap().iframe_loader = "L_IFRAME_2".into();
+
+    let result = BrowserClickTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "ref": iframe_ref, "session": SESSION
+        }))
+        .await;
+    assert_eq!(structured(&result)["refusal"]["code"], "browser_ref_stale");
+    assert!(recorded_calls(&f, "Input.dispatchMouseEvent").is_empty());
+}
+
+#[tokio::test]
+async fn oopif_navigation_invalidates_its_refs() {
+    let f = fixture().await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let oopif_ref = ref_of(&snap, "oopif", "ad-input");
+
+    f.state.lock().unwrap().oopif_loader = "L_OOPIF_2".into();
+
+    let result = BrowserClickTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "ref": oopif_ref, "session": SESSION
+        }))
+        .await;
+    assert_eq!(structured(&result)["refusal"]["code"], "browser_ref_stale");
+    assert!(recorded_calls(&f, "Input.dispatchMouseEvent").is_empty());
+}
+
+#[tokio::test]
+async fn removed_oopif_frame_is_stale_not_guessed() {
+    let f = fixture().await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let oopif_ref = ref_of(&snap, "oopif", "ad-input");
+
+    f.state.lock().unwrap().oopif_present = false;
+
+    let result = BrowserClickTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "ref": oopif_ref, "session": SESSION
+        }))
+        .await;
+    assert_eq!(structured(&result)["refusal"]["code"], "browser_ref_stale");
+    assert!(recorded_calls(&f, "Input.dispatchMouseEvent").is_empty());
+}
+
+#[tokio::test]
+async fn oopif_capability_regression_refuses_rather_than_reroutes() {
+    let f = fixture().await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let oopif_ref = ref_of(&snap, "oopif", "ad-input");
+
+    f.state.lock().unwrap().oopif_supported = false;
+
+    let result = BrowserClickTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "ref": oopif_ref, "session": SESSION
+        }))
+        .await;
+    assert_eq!(
+        structured(&result)["refusal"]["code"],
+        "browser_route_unavailable",
+        "a lost capability is a refusal, never a fallback to the wrong session"
+    );
+    assert!(recorded_calls(&f, "Input.dispatchMouseEvent").is_empty());
+}
+
+// ── Typing routes ────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn typing_into_composed_shadow_input_uses_the_tab_session() {
+    let f = fixture().await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let shadow_ref = ref_of(&snap, "main", "Shadow Input");
+
+    let result = BrowserTypeTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "ref": shadow_ref,
+            "text": "hi", "session": SESSION
+        }))
+        .await;
+    let s = structured(&result);
+    assert_eq!(s["status"], "ok", "{s}");
+    assert_eq!(s["frame"], "main");
+
+    let inserts = recorded_calls(&f, "Input.insertText");
+    assert_eq!(inserts.len(), 1);
+    assert!(inserts[0].0.as_deref().unwrap().starts_with("tab-sess-"));
+    assert_eq!(inserts[0].1["text"], "hi");
+    assert!(
+        !recorded_calls(&f, "Runtime.callFunctionOn").is_empty(),
+        "editability must be checked on the node itself"
+    );
+    assert!(recorded_calls(&f, "Page.bringToFront").is_empty());
+    assert!(recorded_calls(&f, "Target.activateTarget").is_empty());
+}
+
+#[tokio::test]
+async fn typing_into_an_oopif_input_routes_to_the_child_session() {
+    let f = fixture().await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let oopif_ref = ref_of(&snap, "oopif", "ad-input");
+
+    let result = BrowserTypeTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "ref": oopif_ref,
+            "text": "q", "session": SESSION
+        }))
+        .await;
+    let s = structured(&result);
+    assert_eq!(s["status"], "ok", "{s}");
+    assert_eq!(s["frame"], "oopif");
+
+    let inserts = recorded_calls(&f, "Input.insertText");
+    assert_eq!(inserts.len(), 1);
+    assert!(
+        inserts[0].0.as_deref().unwrap().starts_with("oopif-sess-"),
+        "typing must land in the contained child session: {inserts:?}"
+    );
+    let focuses = recorded_calls(&f, "DOM.focus");
+    assert!(focuses
+        .iter()
+        .all(|(sess, _)| sess.as_deref().unwrap().starts_with("oopif-sess-")));
+}
+
+#[tokio::test]
+async fn partial_keystrokes_report_exact_delivered_prefix() {
+    let f = fixture_with(|state| state.fail_key_down_after = Some(2)).await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let shadow_ref = ref_of(&snap, "main", "Shadow Input");
+
+    let result = BrowserTypeTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "ref": shadow_ref,
+            "text": "four",
+            "mode": "keystrokes",
+            "session": SESSION
+        }))
+        .await;
+    let refusal = &structured(&result)["refusal"];
+    assert_eq!(refusal["code"], "browser_input_incomplete");
+    assert_eq!(refusal["detail"]["requested_chars"], 4);
+    assert_eq!(refusal["detail"]["delivered_chars"], 2);
+    assert_eq!(refusal["detail"]["retryable"], false);
+}
+
+#[tokio::test]
+async fn keystrokes_use_char_events_for_text_delivery() {
+    let f = fixture().await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let shadow_ref = ref_of(&snap, "main", "Shadow Input");
+
+    let result = BrowserTypeTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "ref": shadow_ref,
+            "text": "a\n",
+            "mode": "keystrokes",
+            "session": SESSION
+        }))
+        .await;
+    assert_eq!(structured(&result)["status"], "ok");
+
+    let events = recorded_calls(&f, "Input.dispatchKeyEvent");
+    assert_eq!(events.len(), 6);
+    let params: Vec<&Value> = events.iter().map(|(_, params)| params).collect();
+    assert_eq!(params[0]["type"], "keyDown");
+    assert!(params[0].get("text").is_none());
+    assert_eq!(params[1]["type"], "char");
+    assert_eq!(params[1]["text"], "a");
+    assert_eq!(params[1]["unmodifiedText"], "a");
+    assert_eq!(params[2]["type"], "keyUp");
+    assert!(params[2].get("text").is_none());
+    assert_eq!(params[3]["type"], "keyDown");
+    assert_eq!(params[3]["key"], "Enter");
+    assert_eq!(params[4]["type"], "char");
+    assert_eq!(params[4]["key"], "Enter");
+    assert_eq!(params[4]["text"], "\r");
+    assert_eq!(params[4]["unmodifiedText"], "\r");
+    assert_eq!(params[5]["type"], "keyUp");
+    let focus_emulation = recorded_calls(&f, "Emulation.setFocusEmulationEnabled");
+    assert_eq!(focus_emulation.len(), 2);
+    assert_eq!(focus_emulation[0].1["enabled"], true);
+    assert_eq!(focus_emulation[1].1["enabled"], false);
+    let readiness_checks = recorded_calls(&f, "Runtime.callFunctionOn");
+    assert!(readiness_checks.iter().any(|(_, params)| {
+        params["functionDeclaration"]
+            .as_str()
+            .is_some_and(|declaration| {
+                declaration.contains("document.hasFocus()")
+                    && declaration.contains("active === this")
+            })
+    }));
+    assert!(recorded_calls(&f, "Page.bringToFront").is_empty());
+    assert!(recorded_calls(&f, "Target.activateTarget").is_empty());
+}
+
+async fn select_with(f: &Fixture, frame: &str, element: &str, matcher: Value) -> Value {
+    let (target, tab) = bind(f).await;
+    let snap = snapshot(f, &target, &tab).await;
+    let mut args = json!({
+        "target_id": target,
+        "tab_id": tab,
+        "ref": ref_of(&snap, frame, element),
+        "session": SESSION
+    });
+    args.as_object_mut()
+        .unwrap()
+        .extend(matcher.as_object().unwrap().clone());
+    let result = BrowserSelectTool::new(f.engine.clone()).invoke(args).await;
+    result
+        .structured_content
+        .clone()
+        .unwrap_or_else(|| json!({ "error": result.is_error }))
+}
+
+fn select_scripts(f: &Fixture) -> Vec<(Option<String>, Value)> {
+    recorded_calls(f, "Runtime.callFunctionOn")
+        .into_iter()
+        .filter(|(_, params)| {
+            params["functionDeclaration"]
+                .as_str()
+                .is_some_and(|declaration| declaration.contains("HTMLSelectElement"))
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn select_passes_the_matcher_as_cdp_arguments_and_reports_the_readback() {
+    for (field, wanted) in [("label", "Q3 report"), ("value", "q3-report")] {
+        let f = fixture_with(|st| {
+            st.select_outcome =
+                json!({ "changed": true, "value": "q3-report", "label": "Q3 report" });
+        })
+        .await;
+        let s = select_with(&f, "main", "Shadow Input", json!({ field: wanted })).await;
+        assert_eq!(s["status"], "ok", "{s}");
+        assert_eq!(s["changed"], true);
+        assert_eq!(s["value"], "q3-report");
+        assert_eq!(s["label"], "Q3 report");
+        assert_eq!(s["frame"], "main");
+
+        let scripts = select_scripts(&f);
+        assert_eq!(scripts.len(), 1);
+        let (session, params) = &scripts[0];
+        assert!(session.as_deref().unwrap().starts_with("tab-sess-"));
+        assert_eq!(params["objectId"], "obj-20");
+        assert_eq!(params["returnByValue"], true);
+        assert_eq!(
+            params["arguments"],
+            json!([{ "value": field }, { "value": wanted }])
+        );
+        assert!(!params["functionDeclaration"]
+            .as_str()
+            .unwrap()
+            .contains(wanted));
+        assert!(recorded_calls(&f, "Runtime.evaluate")
+            .iter()
+            .all(|(_, params)| params["expression"] == "document.visibilityState === 'visible'"));
+    }
+}
+
+#[tokio::test]
+async fn select_requires_exactly_one_of_label_or_value_before_touching_the_page() {
+    for matcher in [json!({}), json!({ "label": "Beta", "value": "b" })] {
+        let f = fixture().await;
+        let s = select_with(&f, "main", "Shadow Input", matcher).await;
+        assert_eq!(s, json!({ "error": true }));
+        assert!(select_scripts(&f).is_empty());
+    }
+}
+
+#[tokio::test]
+async fn select_reports_live_refusals_and_script_failures_as_refused() {
+    for (outcome, message) in [
+        (
+            json!({ "refused": "the ref is not a native HTML select element" }),
+            "the ref is not a native HTML select element",
+        ),
+        (
+            json!({ "refused": "2 options match the requested label; exactly one must" }),
+            "2 options match the requested label; exactly one must",
+        ),
+        (
+            json!({ "refused": "the matching option is disabled" }),
+            "the matching option is disabled",
+        ),
+        (
+            Value::Null,
+            "the select script failed before reporting a selection",
+        ),
+    ] {
+        let f = fixture_with(|st| st.select_outcome = outcome).await;
+        let s = select_with(&f, "main", "Shadow Input", json!({ "label": "Beta" })).await;
+        assert_eq!(s["status"], "refused", "{s}");
+        assert_eq!(s["refusal"]["code"], "browser_action_unavailable");
+        assert_eq!(s["refusal"]["message"], message);
+    }
+}
+
+#[tokio::test]
+async fn select_of_the_current_option_reports_no_change() {
+    let f = fixture_with(|st| {
+        st.select_outcome = json!({ "changed": false, "value": "a", "label": "Alpha" });
+    })
+    .await;
+    let s = select_with(&f, "main", "Shadow Input", json!({ "value": "a" })).await;
+    assert_eq!(s["status"], "ok", "{s}");
+    assert_eq!(s["changed"], false);
+    assert_eq!(s["label"], "Alpha");
+}
+
+#[tokio::test]
+async fn select_in_an_oopif_routes_to_the_child_session() {
+    let f = fixture_with(|st| {
+        st.select_outcome = json!({ "changed": true, "value": "b", "label": "Beta" });
+    })
+    .await;
+    let s = select_with(&f, "oopif", "ad-input", json!({ "label": "Beta" })).await;
+    assert_eq!(s["status"], "ok", "{s}");
+    assert_eq!(s["frame"], "oopif");
+    let scripts = select_scripts(&f);
+    assert_eq!(scripts.len(), 1);
+    assert!(scripts[0].0.as_deref().unwrap().starts_with("oopif-sess-"));
+}
+
+// ---- window-less page targets (trycua/cua#3540) ------------------------------------------
+//
+// Chromium exposes page targets that live in no browser window — an extension
+// side panel, an offscreen document — and answers `Browser.getWindowForTarget`
+// for them with `-32000 Browser window not found`. Such a target can never be
+// the tab of the requested native window, so candidate enumeration skips it;
+// every other error keeps failing the whole proof.
+
+fn side_panel_target() -> Value {
+    json!({
+        "targetId": "T_SIDEPANEL",
+        "type": "page",
+        "title": "Claude",
+        "url": "chrome-extension://fcoeoabgfenejglbffodgkkbkcdhcgfn/sidepanel.html?tabId=42",
+        "attached": false,
+    })
+}
+
+async fn bind_result(f: &Fixture) -> Value {
+    let tool = GetBrowserStateTool::new(f.engine.clone());
+    let result = tool
+        .invoke(json!({ "pid": 1, "window_id": 7, "session": SESSION }))
+        .await;
+    structured(&result).clone()
+}
+
+#[tokio::test]
+async fn windowless_side_panel_target_is_skipped_and_bind_stays_exact() {
+    let f = fixture_with(|st| st.windowless_targets.push(side_panel_target())).await;
+    let s = bind_result(&f).await;
+    assert_eq!(s["status"], "ok", "bind must succeed: {s}");
+    assert_eq!(s["binding_quality"], "exact");
+    let tabs = s["tabs"].as_array().expect("tabs");
+    assert_eq!(
+        tabs.len(),
+        1,
+        "the side panel is not a tab of the bound window: {s}"
+    );
+    assert_eq!(tabs[0]["url"], "https://fixture.test/");
+    // The window-less target was asked for its window (and skipped), never attached to.
+    let st = f.state.lock().unwrap();
+    assert!(st
+        .calls
+        .iter()
+        .any(|(_, m, p)| { m == "Browser.getWindowForTarget" && p["targetId"] == "T_SIDEPANEL" }));
+    assert!(!st
+        .calls
+        .iter()
+        .any(|(_, m, p)| { m == "Target.attachToTarget" && p["targetId"] == "T_SIDEPANEL" }));
+}
+
+#[tokio::test]
+async fn bound_tabs_keep_the_browser_order_across_binds() {
+    let urls: Vec<String> = (1..=5).map(|n| format!("https://tab{n}.test/")).collect();
+    let f = fixture_with(|st| {
+        for (n, url) in urls.iter().enumerate().skip(1) {
+            st.sibling_tabs.push(json!({
+                "targetId": format!("T_SIBLING_{n}"),
+                "type": "page",
+                "title": format!("Sibling {n}"),
+                "url": url,
+                "attached": false,
+            }));
+        }
+    })
+    .await;
+    let mut expected = vec!["https://fixture.test/".to_owned()];
+    expected.extend(urls.into_iter().skip(1));
+    for _ in 0..2 {
+        let s = bind_result(&f).await;
+        assert_eq!(s["status"], "ok", "{s}");
+        let listed: Vec<&str> = s["tabs"]
+            .as_array()
+            .expect("tabs")
+            .iter()
+            .map(|t| t["url"].as_str().unwrap())
+            .collect();
+        assert_eq!(listed, expected, "{s}");
+        assert_eq!(s["tabs"][0]["active"], true, "{s}");
+    }
+}
+
+#[tokio::test]
+async fn only_windowless_targets_refuse_wrong_target_never_route_unavailable() {
+    let f = fixture_with(|st| {
+        st.omit_primary_target = true;
+        st.windowless_targets.push(side_panel_target());
+    })
+    .await;
+    let s = bind_result(&f).await;
+    assert_eq!(s["status"], "refused", "{s}");
+    assert_eq!(
+        s["refusal"]["code"], "browser_wrong_target_refused",
+        "no windowed candidate → refuse rather than guess, and never a route failure: {s}"
+    );
+}
+
+#[tokio::test]
+async fn other_window_lookup_errors_still_fail_the_whole_proof() {
+    let f = fixture_with(|st| {
+        st.primary_window_error = Some((-32000, "Target closed".into()));
+    })
+    .await;
+    let s = bind_result(&f).await;
+    assert_eq!(s["status"], "refused", "{s}");
+    assert_eq!(s["refusal"]["code"], "browser_route_unavailable", "{s}");
+    assert!(
+        s["refusal"]["message"]
+            .as_str()
+            .unwrap_or("")
+            .contains("Browser.getWindowForTarget failed while proving the native window"),
+        "{s}"
+    );
+}
+
+#[tokio::test]
+async fn method_unsupported_keeps_the_electron_none_path() {
+    // Electron omits the Browser domain method entirely: the candidate keeps a
+    // None geometry and binds through the single-page, single-native-window
+    // cardinality proof; the window-less skip must not drop it.
+    let f = fixture_with(|st| {
+        st.primary_window_error =
+            Some((-32601, "'Browser.getWindowForTarget' wasn't found".into()));
+    })
+    .await;
+    let s = bind_result(&f).await;
+    assert_eq!(s["status"], "ok", "{s}");
+    assert_eq!(s["binding_quality"], "exact", "{s}");
+    let tabs = s["tabs"].as_array().expect("tabs");
+    assert_eq!(tabs.len(), 1, "{s}");
+    assert_eq!(tabs[0]["url"], "https://fixture.test/");
+}
+
+#[tokio::test]
+async fn dom_event_click_returns_when_its_handler_opens_a_dialog() {
+    let f = fixture_with(|state| state.click_opens_dialog = true).await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let button = ref_of(&snap, "main", "main-btn");
+
+    let started = std::time::Instant::now();
+    let clicked = BrowserClickTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "ref": button,
+            "input_route": "dom_event", "session": SESSION
+        }))
+        .await;
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(5),
+        "the click must not wait out the CDP call timeout: {:?}",
+        started.elapsed()
+    );
+    let s = structured(&clicked);
+    assert_eq!(s["status"], "ok", "{s}");
+    assert_eq!(s["effect"], "unverifiable", "{s}");
+    assert_eq!(s["route"], "dom_event", "{s}");
+    assert_eq!(s["dialog"]["present"], true, "{s}");
+    assert_eq!(s["dialog"]["kind"], "confirm", "{s}");
+    let dialog_id = s["dialog"]["dialog_id"]
+        .as_str()
+        .expect("dialog id")
+        .to_owned();
+    assert!(dialog_id.starts_with("dialog-"), "{s}");
+    assert!(clicked.content.iter().any(|content| matches!(
+        content,
+        crate::protocol::Content::Text { text, .. } if text.contains("browser_dialog")
+    )));
+
+    // Page events were enabled on the tab session before the click went out.
+    {
+        let state = f.state.lock().unwrap();
+        let enable_at = state
+            .calls
+            .iter()
+            .position(|(_, m, _)| m == "Page.enable")
+            .expect("Page.enable recorded");
+        let click_at = state
+            .calls
+            .iter()
+            .position(|(_, m, p)| {
+                m == "Runtime.callFunctionOn"
+                    && p["functionDeclaration"]
+                        .as_str()
+                        .is_some_and(|d| d.contains("const el = this;"))
+            })
+            .expect("click recorded");
+        assert!(enable_at < click_at, "Page.enable must precede the click");
+    }
+
+    // The dialog is reachable without a second Page.enable, and resolvable.
+    let inspected = BrowserDialogTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "action": "inspect", "session": SESSION
+        }))
+        .await;
+    let i = structured(&inspected);
+    assert_eq!(i["present"], true, "{i}");
+    assert_eq!(i["dialog_id"], dialog_id, "{i}");
+    assert_eq!(recorded_calls(&f, "Page.enable").len(), 1);
+
+    let accepted = BrowserDialogTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "action": "accept",
+            "dialog_id": dialog_id, "session": SESSION, "delivery_mode": "foreground"
+        }))
+        .await;
+    let a = structured(&accepted);
+    assert_eq!(a["status"], "ok", "{a}");
+    assert_eq!(a["action"], "accept", "{a}");
+    let handled = recorded_calls(&f, "Page.handleJavaScriptDialog");
+    assert_eq!(handled.len(), 1);
+    assert_eq!(handled[0].1["accept"], true);
+}
+
+#[tokio::test]
+async fn dom_event_click_without_a_dialog_reports_none() {
+    let f = fixture().await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let button = ref_of(&snap, "main", "main-btn");
+
+    let clicked = BrowserClickTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "ref": button,
+            "input_route": "dom_event", "session": SESSION
+        }))
+        .await;
+    assert_ne!(clicked.is_error, Some(true));
+    assert!(clicked.action_record.is_some());
+    assert!(recorded_calls(&f, "Page.handleJavaScriptDialog").is_empty());
+}
+
+#[tokio::test]
+async fn dom_event_click_refuses_while_a_dialog_is_already_open() {
+    let f = fixture_with(|state| state.click_opens_dialog = true).await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let button = ref_of(&snap, "main", "main-btn");
+    let args = json!({
+        "target_id": target, "tab_id": tab, "ref": button,
+        "input_route": "dom_event", "session": SESSION
+    });
+    let first = BrowserClickTool::new(f.engine.clone())
+        .invoke(args.clone())
+        .await;
+    assert_eq!(structured(&first)["dialog"]["present"], true);
+    let frame_trees_before = recorded_calls(&f, "Page.getFrameTree").len();
+
+    let second = BrowserClickTool::new(f.engine.clone()).invoke(args).await;
+    assert_eq!(
+        recorded_calls(&f, "Page.getFrameTree").len(),
+        frame_trees_before,
+        "a blocked renderer must not be asked for its frame tree"
+    );
+    let s = structured(&second);
+    assert_eq!(s["refusal"]["code"], "browser_action_unavailable", "{s}");
+    assert_eq!(s["refusal"]["detail"]["dialog"]["present"], true, "{s}");
+    let clicks = recorded_calls(&f, "Runtime.callFunctionOn")
+        .into_iter()
+        .filter(|(_, p)| {
+            p["functionDeclaration"]
+                .as_str()
+                .is_some_and(|d| d.contains("const el = this;"))
+        })
+        .count();
+    assert_eq!(
+        clicks, 1,
+        "no second click may be sent into a blocked frame"
+    );
+
+    // The trusted coordinate route is refused the same way.
+    let trusted = BrowserClickTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "session": SESSION, "x": 10, "y": 20
+        }))
+        .await;
+    let t = structured(&trusted);
+    assert_eq!(t["refusal"]["code"], "browser_action_unavailable", "{t}");
+    assert!(recorded_calls(&f, "Input.dispatchMouseEvent").is_empty());
+}
+
+#[tokio::test]
+async fn a_dialog_chromium_no_longer_shows_stops_locking_the_tab() {
+    let f = fixture_with(|state| state.click_opens_dialog = true).await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let button = ref_of(&snap, "main", "main-btn");
+    let first = BrowserClickTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "ref": button,
+            "input_route": "dom_event", "session": SESSION
+        }))
+        .await;
+    let dialog_id = structured(&first)["dialog"]["dialog_id"]
+        .as_str()
+        .expect("dialog id")
+        .to_owned();
+    {
+        // The renderer drops the dialog and Chromium never says it closed.
+        let mut state = f.state.lock().unwrap();
+        state.click_opens_dialog = false;
+        state.dialog_vanished = true;
+    }
+
+    let dismissed = BrowserDialogTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "action": "dismiss",
+            "dialog_id": dialog_id, "session": SESSION, "delivery_mode": "foreground"
+        }))
+        .await;
+    let d = structured(&dismissed);
+    assert_eq!(d["refusal"]["code"], "browser_action_unavailable", "{d}");
+    assert_eq!(d["refusal"]["detail"]["dialog"]["present"], false, "{d}");
+
+    let inspected = BrowserDialogTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "action": "inspect", "session": SESSION
+        }))
+        .await;
+    assert_eq!(structured(&inspected)["present"], false);
+
+    let clicked = BrowserClickTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "session": SESSION, "x": 10, "y": 20
+        }))
+        .await;
+    assert_ne!(clicked.is_error, Some(true), "{:?}", structured(&clicked));
+    assert!(!recorded_calls(&f, "Input.dispatchMouseEvent").is_empty());
+}
+
+#[tokio::test]
+async fn trusted_coordinate_click_returns_when_its_handler_opens_a_dialog() {
+    for opener in ["mouseReleased", "mousePressed"] {
+        trusted_click_returns_when_a_dialog_opens_on(opener).await;
+    }
+}
+
+async fn trusted_click_returns_when_a_dialog_opens_on(opener: &'static str) {
+    let f = fixture_with(|state| state.trusted_click_opens_dialog = Some(opener)).await;
+    let (target, tab) = bind(&f).await;
+
+    let started = std::time::Instant::now();
+    let clicked = BrowserClickTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "session": SESSION, "x": 10, "y": 20,
+            "delivery_mode": "foreground"
+        }))
+        .await;
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(5),
+        "the click must not wait out the CDP call timeout ({opener}): {:?}",
+        started.elapsed()
+    );
+    let s = structured(&clicked);
+    assert_eq!(s["status"], "ok", "{s}");
+    assert_eq!(s["route"], "trusted", "{s}");
+    assert_eq!(s["dialog"]["present"], true, "{s}");
+    assert_eq!(s["dialog"]["kind"], "confirm", "{s}");
+    let dialog_id = s["dialog"]["dialog_id"]
+        .as_str()
+        .expect("dialog id")
+        .to_owned();
+    let mouse: Vec<_> = recorded_calls(&f, "Input.dispatchMouseEvent")
+        .into_iter()
+        .map(|(_, p)| p["type"].clone())
+        .collect();
+    assert_eq!(
+        mouse,
+        [json!("mousePressed"), json!("mouseReleased")],
+        "the press must always be released ({opener})"
+    );
+    let focus_emulation = recorded_calls(&f, "Emulation.setFocusEmulationEnabled");
+    assert_eq!(
+        focus_emulation.last().map(|(_, p)| p["enabled"].clone()),
+        Some(json!(false)),
+        "focus emulation must still be switched off: {focus_emulation:?}"
+    );
+
+    let accepted = BrowserDialogTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "action": "accept",
+            "dialog_id": dialog_id, "session": SESSION, "delivery_mode": "foreground"
+        }))
+        .await;
+    assert_eq!(structured(&accepted)["status"], "ok");
+}
+
+/// Opens a confirm with a dom_event click, then has the next attach detach
+/// the session that saw it open.
+async fn click_then_detach_dialog_session(f: &Fixture, page_blocked: bool) -> (String, String) {
+    let (target, tab) = bind(f).await;
+    let snap = snapshot(f, &target, &tab).await;
+    let button = ref_of(&snap, "main", "main-btn");
+    let first = BrowserClickTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "ref": button,
+            "input_route": "dom_event", "session": SESSION
+        }))
+        .await;
+    assert_eq!(structured(&first)["dialog"]["present"], true);
+    let mut state = f.state.lock().unwrap();
+    state.click_opens_dialog = false;
+    state.detach_dialog_session = true;
+    state.dialog_blocks_page = page_blocked;
+    (target, tab)
+}
+
+#[tokio::test]
+async fn a_dialog_whose_session_detached_refuses_clicks_without_waiting() {
+    let f = fixture_with(|state| state.click_opens_dialog = true).await;
+    let (target, tab) = click_then_detach_dialog_session(&f, true).await;
+
+    let started = std::time::Instant::now();
+    let clicked = BrowserClickTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "session": SESSION, "x": 10, "y": 20
+        }))
+        .await;
+    let c = structured(&clicked);
+    assert_eq!(c["refusal"]["code"], "browser_action_unavailable", "{c}");
+    assert_eq!(c["refusal"]["detail"]["dialog"]["present"], true, "{c}");
+    assert_eq!(c["refusal"]["detail"]["dialog"]["resolvable"], false, "{c}");
+    // Only the bounded dialog subscription waits; the 20 s call timeout never runs.
+    assert!(started.elapsed() < std::time::Duration::from_secs(10));
+    assert!(recorded_calls(&f, "Input.dispatchMouseEvent").is_empty());
+
+    let inspected = BrowserDialogTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "action": "inspect", "session": SESSION
+        }))
+        .await;
+    let i = structured(&inspected);
+    assert_eq!(i["present"], true, "{i}");
+    assert_eq!(i["resolvable"], false, "{i}");
+    let dismissed = BrowserDialogTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "action": "dismiss",
+            "dialog_id": i["dialog_id"], "session": SESSION, "delivery_mode": "foreground"
+        }))
+        .await;
+    let d = structured(&dismissed);
+    assert_eq!(d["refusal"]["code"], "browser_action_unavailable", "{d}");
+    assert_eq!(d["refusal"]["detail"]["dialog"]["resolvable"], false, "{d}");
+    assert!(recorded_calls(&f, "Page.handleJavaScriptDialog").is_empty());
+}
+
+#[tokio::test]
+async fn a_detached_dialog_that_closed_unseen_stops_blocking_clicks() {
+    let f = fixture_with(|state| state.click_opens_dialog = true).await;
+    let (target, tab) = click_then_detach_dialog_session(&f, false).await;
+
+    // The new session's Page.enable answers, so the renderer is no longer blocked.
+    let clicked = BrowserClickTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "session": SESSION, "x": 10, "y": 20
+        }))
+        .await;
+    assert_ne!(clicked.is_error, Some(true), "{:?}", structured(&clicked));
+    assert!(!recorded_calls(&f, "Input.dispatchMouseEvent").is_empty());
+}

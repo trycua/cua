@@ -1,6 +1,0 @@
-{
-  "title": "Guide",
-  "description": "Learn how to use Lume",
-  "icon": "Book",
-  "pages": ["getting-started", "fundamentals", "advanced"]
-}

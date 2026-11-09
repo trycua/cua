@@ -8,9 +8,12 @@ import Network
 @MainActor
 protocol VNCService {
     var url: String? { get }
-    func start(port: Int, password: String?, virtualMachine: Any?) async throws
+    func start(port: Int, password: String?, virtualMachine: VZVirtualMachine?) async throws
     func stop()
     func openClient(url: String) async throws
+    /// The VM directory moved (the VM was renamed while running): its
+    /// session file lives there now.
+    func relocate(to vmDirectory: VMDirectory)
 
     // Automation support
     var virtualMachine: VZVirtualMachine? { get }
@@ -49,7 +52,7 @@ struct VNCKeyModifiers: OptionSet, Sendable {
 @MainActor
 final class DefaultVNCService: VNCService {
     private var vncServer: Any?
-    private let vmDirectory: VMDirectory
+    private var vmDirectory: VMDirectory
     private var _virtualMachine: VZVirtualMachine?
     private var vncClient: VNCClient?
     private var vncPort: UInt16 = 0
@@ -62,14 +65,19 @@ final class DefaultVNCService: VNCService {
     init(vmDirectory: VMDirectory) {
         self.vmDirectory = vmDirectory
     }
+
+    func relocate(to vmDirectory: VMDirectory) {
+        self.vmDirectory = vmDirectory
+    }
     
     var url: String? {
         get {
-            return try? vmDirectory.loadSession().url
+            // A VNC-disabled marker has no URL, so this stays nil for those runs.
+            return (try? vmDirectory.loadSession())?.url
         }
     }
     
-    func start(port: Int, password: String? = nil, virtualMachine: Any?) async throws {
+    func start(port: Int, password: String? = nil, virtualMachine: VZVirtualMachine?) async throws {
         let password = password ?? Array(PassphraseGenerator().prefix(4)).joined(separator: "-")
         let securityConfiguration = Dynamic._VZVNCAuthenticationSecurityConfiguration(password: password)
 
@@ -80,9 +88,9 @@ final class DefaultVNCService: VNCService {
         let server = Dynamic._VZVNCServer(port: port, queue: DispatchQueue.main,
                                       securityConfiguration: securityConfiguration)
 
-        if let vm = virtualMachine as? VZVirtualMachine {
-            server.virtualMachine = vm
-            _virtualMachine = vm
+        if let virtualMachine {
+            server.virtualMachine = virtualMachine
+            _virtualMachine = virtualMachine
         }
         server.start()
 

@@ -1858,15 +1858,24 @@ mod tests {
     }
 
     async fn assert_owned_discovery_profile_case(case: &str) {
+        use std::ffi::CString;
         use std::os::fd::AsRawFd;
-        use std::os::unix::process::CommandExt;
         use std::sync::atomic::{AtomicUsize, Ordering};
 
-        struct ChildGuard(std::process::Child);
+        unsafe extern "C" {
+            // In <spawn.h> since macOS 10.7; the libc crate does not bind it.
+            fn posix_spawn_file_actions_addinherit_np(
+                actions: *mut libc::posix_spawn_file_actions_t,
+                fd: libc::c_int,
+            ) -> libc::c_int;
+        }
+        struct ChildGuard(libc::pid_t);
         impl Drop for ChildGuard {
             fn drop(&mut self) {
-                let _ = self.0.kill();
-                let _ = self.0.wait();
+                unsafe {
+                    libc::kill(self.0, libc::SIGKILL);
+                    libc::waitpid(self.0, std::ptr::null_mut(), 0);
+                }
             }
         }
         let mut listeners = (0..3)
@@ -1908,38 +1917,83 @@ mod tests {
             .unwrap(),
             _ => {}
         }
-        let descriptors = listeners.iter().map(AsRawFd::as_raw_fd).collect::<Vec<_>>();
-        let mut command = std::process::Command::new("/bin/sh");
-        command
-            .args(["-c", "read -r line", "endpoint-fixture"])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
+        let mut args = vec![
+            "/bin/sh".to_owned(),
+            "-c".to_owned(),
+            "read -r line".to_owned(),
+            "endpoint-fixture".to_owned(),
+        ];
         match case {
-            "relative" => {
-                command.arg("--user-data-dir=relative-profile");
-            }
+            "relative" => args.push("--user-data-dir=relative-profile".to_owned()),
             "absent_profile" => {}
-            "conflicting" => {
-                command.args(["--user-data-dir=/tmp/one", "--user-data-dir=/tmp/two"]);
-            }
-            _ => {
-                command.arg(format!("--user-data-dir={}", profile.path().display()));
-            }
+            "conflicting" => args.extend([
+                "--user-data-dir=/tmp/one".to_owned(),
+                "--user-data-dir=/tmp/two".to_owned(),
+            ]),
+            _ => args.push(format!("--user-data-dir={}", profile.path().display())),
         }
-        // Only the child's explicitly named listeners lose CLOEXEC.
-        unsafe {
-            command.pre_exec(move || {
-                for &fd in &descriptors {
-                    if libc::fcntl(fd, libc::F_SETFD, 0) == -1 {
-                        return Err(std::io::Error::last_os_error());
-                    }
-                }
-                Ok(())
-            });
-        }
-        let child = ChildGuard(command.spawn().unwrap());
-        let pid = i64::from(child.0.id());
+        let args = args
+            .into_iter()
+            .map(|arg| CString::new(arg).unwrap())
+            .collect::<Vec<_>>();
+        let mut argv = args
+            .iter()
+            .map(|arg| arg.as_ptr().cast_mut())
+            .collect::<Vec<_>>();
+        argv.push(std::ptr::null_mut());
+        // `read` blocks until the guard kills the child: the test holds the writer.
+        let (stdin, _stdin_writer) = std::io::pipe().unwrap();
+        // The child must own exactly the named listeners. CLOEXEC_DEFAULT keeps
+        // a socket a parallel test has not yet marked CLOEXEC out of the child,
+        // and posix_spawn avoids fork, whose child-side atfork handlers can crash
+        // while another test thread is inside libnotify.
+        let pid = unsafe {
+            let mut actions = std::ptr::null_mut();
+            let mut attributes = std::ptr::null_mut();
+            assert_eq!(libc::posix_spawn_file_actions_init(&mut actions), 0);
+            assert_eq!(libc::posix_spawnattr_init(&mut attributes), 0);
+            assert_eq!(
+                libc::posix_spawnattr_setflags(
+                    &mut attributes,
+                    libc::POSIX_SPAWN_CLOEXEC_DEFAULT as libc::c_short
+                ),
+                0
+            );
+            for fd in [1, 2] {
+                assert_eq!(
+                    libc::posix_spawn_file_actions_addopen(
+                        &mut actions,
+                        fd,
+                        c"/dev/null".as_ptr(),
+                        libc::O_WRONLY,
+                        0
+                    ),
+                    0
+                );
+            }
+            assert_eq!(
+                libc::posix_spawn_file_actions_adddup2(&mut actions, stdin.as_raw_fd(), 0),
+                0
+            );
+            for fd in listeners.iter().map(AsRawFd::as_raw_fd) {
+                assert_eq!(posix_spawn_file_actions_addinherit_np(&mut actions, fd), 0);
+            }
+            let mut pid = 0;
+            let spawned = libc::posix_spawn(
+                &mut pid,
+                args[0].as_ptr(),
+                &actions,
+                &attributes,
+                argv.as_ptr(),
+                *libc::_NSGetEnviron(),
+            );
+            libc::posix_spawn_file_actions_destroy(&mut actions);
+            libc::posix_spawnattr_destroy(&mut attributes);
+            assert_eq!(spawned, 0, "posix_spawn fixture");
+            pid
+        };
+        let _child = ChildGuard(pid);
+        let pid = i64::from(pid);
         assert_eq!(loopback_ports_for_pid(pid).await.unwrap(), ports);
         let counts = Arc::new([
             AtomicUsize::new(0),

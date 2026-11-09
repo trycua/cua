@@ -476,7 +476,7 @@ export function SpacesTreePage({ search = {}, onSearchDone }: { search?: Compute
         {/* One quiet sentence, level with the names above it (past the caret slot and the icon). */}
         <div role="cell" className="col-span-4 flex min-w-0 items-center gap-3" style={{ paddingLeft: INDENT_PX }}>
           <span className="min-w-0 truncate">
-            {t("computers.page.offline_hidden", { count: folded.length })}
+            {t(showOffline ? "computers.page.offline_shown" : "computers.page.offline_hidden", { count: folded.length })}
             {"\u00a0"}
             <button
               type="button"

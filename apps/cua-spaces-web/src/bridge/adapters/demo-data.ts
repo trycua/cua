@@ -112,8 +112,8 @@ export function demoBusyMachines(now: number): MachineRow[] {
   return [
     m("ip-172-31-46-222", "ip-172-31-46-222", "linux", false, 95),
     m("mac-studio", "cua's Mac Studio", "macos", true, 1),
-    m("macbook-pro-2", "Dillon's MacBook Pro", "macos", false, 14 * 24 * 60),
-    m("updmac-vm-host", "updmac-vm-host", "macos", false, 20 * 24 * 60),
+    m("macbook-pro-2", "Dillon's MacBook Pro", "macos", false, 35 * 24 * 60),
+    m("updmac-vm-host", "updmac-vm-host", "macos", false, 45 * 24 * 60),
   ];
 }
 

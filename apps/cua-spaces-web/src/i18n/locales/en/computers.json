@@ -192,6 +192,7 @@
   "computers.page.rename_hint": "Enter to save, Esc to cancel",
   "computers.page.not_set_up": "Not set up",
   "computers.page.offline_hidden": "{count, plural, one {# offline computer hidden} other {# offline computers hidden}}",
+  "computers.page.offline_shown": "{count, plural, one {# offline computer} other {# offline computers}}",
   "computers.page.offline_show": "Show",
   "computers.page.offline_hide": "Hide",
   "computers.page.title": "Computers",

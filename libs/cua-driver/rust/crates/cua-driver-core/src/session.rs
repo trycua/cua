@@ -3233,6 +3233,31 @@ mod tests {
     }
 
     #[test]
+    fn an_end_session_deferred_behind_a_late_call_keeps_its_label_refused() {
+        let label = "test-late-explicit-end-L4T3";
+        let owner_a = "test-late-explicit-end-transport-a";
+        let owner_b = "test-late-explicit-end-transport-b";
+        let call = begin_session_dispatch(
+            label,
+            Some("label"),
+            owner_a,
+            false,
+            SessionTransport::McpStdio,
+            SessionClientKind::Mcp,
+        )
+        .unwrap();
+        // The end's second critical section, reached after its in-flight check.
+        finish_session_end(label, SessionEndReason::Explicit, true, None, None);
+        drop(call);
+        assert!(is_session_ended(label));
+        end_sessions_for_owner(owner_a, SessionEndReason::ProcessExit);
+        assert!(
+            !recreates_on_next_call(label, owner_b),
+            "a label ended with end_session waits for a start_session"
+        );
+    }
+
+    #[test]
     fn a_terminal_end_overrides_an_idle_end_deferred_behind_a_dispatch() {
         let sid = "__cua_runtime_deferred-idle:named";
         let owner = "deferred-idle-owner";

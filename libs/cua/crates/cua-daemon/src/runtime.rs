@@ -75,7 +75,7 @@ pub struct PoolInfo {
 }
 
 /// A sandbox creation request (union of the providers' options).
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Default)]
 pub struct CreateRequest {
     /// Where: `local`, `cloud`, `direct:<addr>` or a registered provider.
     /// `None`: the older `provider` / `url` fields, else the user default
@@ -151,6 +151,47 @@ pub struct CreateRequest {
     /// shared file, so its checkpoints take milliseconds and forks of them
     /// share its pages. Other kinds ignore it.
     pub forkable: bool,
+}
+
+impl std::fmt::Debug for CreateRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CreateRequest")
+            .field("location", &self.location)
+            .field("kind", &self.kind)
+            .field("runtime", &self.runtime)
+            .field("provider", &self.provider)
+            .field("name", &self.name)
+            .field("image", &self.image)
+            .field("url", &self.url)
+            .field("token", &self.token.as_ref().map(|_| "<redacted>"))
+            .field("pool", &self.pool)
+            .field("os", &self.os)
+            .field("cpus", &self.cpus)
+            .field("memory_mb", &self.memory_mb)
+            .field("ports", &self.ports)
+            .field("services", &self.services)
+            .field("wait_for", &self.wait_for)
+            .field("ready_timeout", &self.ready_timeout)
+            .field("env", &self.env)
+            .field("command", &self.command)
+            .field("labels", &self.labels)
+            .field("sidecars", &self.sidecars)
+            .field(
+                "registry_credentials",
+                &self.registry_credentials.as_ref().map(|_| "<redacted>"),
+            )
+            .field("build", &self.build)
+            .field("container_runtime", &self.container_runtime)
+            .field("network", &self.network)
+            .field("owner_pid", &self.owner_pid)
+            .field("keep_on_failure", &self.keep_on_failure)
+            .field("gpu", &self.gpu)
+            .field("headless", &self.headless)
+            .field("spacesd", &self.spacesd)
+            .field("profile", &self.profile)
+            .field("forkable", &self.forkable)
+            .finish()
+    }
 }
 
 /// What callers see of a sandbox, identical in both topologies.

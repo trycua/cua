@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.45.4](https://github.com/trycua/cua/compare/cua-driver-rs-v0.45.3...cua-driver-rs-v0.45.4) (2026-11-09)
+
+
+### Bug Fixes
+
+* **cua-driver:** route macOS element-token middle clicks to the target window ([#7074](https://github.com/trycua/cua/issues/7074)) ([4c5793f](https://github.com/trycua/cua/commit/4c5793faf8d83d52a2a33b82fba21908453dd25a))
+
+## [0.45.3](https://github.com/trycua/cua/compare/cua-driver-rs-v0.45.2...cua-driver-rs-v0.45.3) (2026-11-09)
+
+
+### Bug Fixes
+
+* **cua-driver:** wait for the child's exec in the NO_AT_BRIDGE test ([#7080](https://github.com/trycua/cua/issues/7080)) ([5cd6bd5](https://github.com/trycua/cua/commit/5cd6bd5d2d6a24b46bd61a30103a6133a6c932a7))
+
+## [0.45.2](https://github.com/trycua/cua/compare/cua-driver-rs-v0.45.1...cua-driver-rs-v0.45.2) (2026-11-09)
+
+
+### Bug Fixes
+
+* **cua-driver:** report the KWin capture switch and desktop entry as KWin reads them ([#7042](https://github.com/trycua/cua/issues/7042)) ([566df43](https://github.com/trycua/cua/commit/566df437c5d833b51d9b1940f2e6e31ffcca2946))
+* **cua-driver:** wait for a foreground-activated macOS control to report enabled ([#7041](https://github.com/trycua/cua/issues/7041)) ([29a630e](https://github.com/trycua/cua/commit/29a630ec84f1e3eb70d3d9c3b29a03309309000c))
+* **platform-macos:** spawn owned-discovery fixture with only its named listeners ([#7048](https://github.com/trycua/cua/issues/7048)) ([29d881e](https://github.com/trycua/cua/commit/29d881e99e676dcd5932a8893e5ca691d597b735))
+
 ## [0.45.1](https://github.com/trycua/cua/compare/cua-driver-rs-v0.45.0...cua-driver-rs-v0.45.1) (2026-11-08)
 
 

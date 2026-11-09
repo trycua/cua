@@ -86,6 +86,11 @@ export interface AgentKeysReport {
   unavailable: string | null;
   /** Keys are kept in an unencrypted file (a Local development build without the Keychain). */
   insecure?: string | null;
+  /**
+   * "Copy my sign-in to my other computers" is on: a saved Claude Code or ChatGPT sign-in reaches runs on
+   * other computers. Off by default (CUA-3907): each computer signs the agent in itself. Absent: an older host.
+   */
+  copySignIn?: boolean;
 }
 
 declare module "../protocol" {
@@ -124,6 +129,8 @@ declare module "../protocol" {
     "agentKeys.shell": { args: Record<string, never>; result: { names: string[] } };
     /** Saves the key `env` from your login shell (the value goes straight to the store). Answers the list after. */
     "agentKeys.fromShell": { args: { env: string } & KeyChoices; result: AgentKeysReport };
+    /** Turns "Copy my sign-in to my other computers" on or off (off by default). Answers the list after. */
+    "agentKeys.copySignIn": { args: { on: boolean }; result: AgentKeysReport };
   }
 }
 
@@ -136,6 +143,7 @@ export const AGENT_KEYS_OPERATIONS = [
   "agentKeys.rename",
   "agentKeys.shell",
   "agentKeys.fromShell",
+  "agentKeys.copySignIn",
 ] as const;
 export type AgentKeysOp = (typeof AGENT_KEYS_OPERATIONS)[number];
 
@@ -152,6 +160,7 @@ export const AGENT_KEYS_METHODS = {
   "agentKeys.rename": "agent_keys.rename",
   "agentKeys.shell": "agent_keys.shell",
   "agentKeys.fromShell": "agent_keys.from_shell",
+  "agentKeys.copySignIn": "agent_keys.copy_sign_in",
 } as const satisfies { [K in AgentKeysOp]: string };
 
 export const AGENT_KEYS_COVERAGE = {
@@ -163,6 +172,7 @@ export const AGENT_KEYS_COVERAGE = {
   "agentKeys.rename": { webkit: { methods: ["agentKeys.rename"] }, tauri: ["agents_tool"] },
   "agentKeys.shell": { webkit: { methods: ["agentKeys.shell"] }, tauri: ["agents_tool"] },
   "agentKeys.fromShell": { webkit: { methods: ["agentKeys.fromShell"] }, tauri: ["agents_tool"] },
+  "agentKeys.copySignIn": { webkit: { methods: ["agentKeys.copySignIn"] }, tauri: ["agents_tool"] },
 } as const satisfies Record<AgentKeysOp, OpCoverage>;
 
 /** Arguments that take each operation down its usual path (the coverage test). */
@@ -175,6 +185,7 @@ export const AGENT_KEYS_ARGS: { [K in AgentKeysOp]: OpArgs<K> } = {
   "agentKeys.rename": { env: "OPENAI_API_KEY", label: "Work key" },
   "agentKeys.shell": {},
   "agentKeys.fromShell": { env: "ANTHROPIC_API_KEY" },
+  "agentKeys.copySignIn": { on: false },
 };
 
 /* ---- The daemon's answer ---------------------------------------------------------- */
@@ -239,6 +250,7 @@ export function agentKeysFromWire(raw: unknown): AgentKeysReport {
     available: o.available !== false,
     unavailable: typeof o.unavailable === "string" && o.unavailable ? o.unavailable : null,
     ...(typeof o.insecure === "string" && o.insecure ? { insecure: o.insecure } : {}),
+    ...(typeof o.copy_sign_in === "boolean" ? { copySignIn: o.copy_sign_in } : typeof o.copySignIn === "boolean" ? { copySignIn: o.copySignIn } : {}),
   };
 }
 
@@ -283,6 +295,7 @@ export function tauriAgentKeysOps(invoke: Invoke): Handlers {
     "agentKeys.rename": ({ env, slot, label }) => tool("agentKeys.rename", { env, label, ...(slot ? { slot } : {}) }),
     "agentKeys.shell": async () => shellNamesFromWire(await invoke<unknown>("agents_tool", { tool: AGENT_KEYS_METHODS["agentKeys.shell"], args: {} })),
     "agentKeys.fromShell": ({ env, region, fields }) => tool("agentKeys.fromShell", { env, ...choicesOf({ region, fields }) }),
+    "agentKeys.copySignIn": ({ on }) => tool("agentKeys.copySignIn", { on }),
   };
 }
 
@@ -298,5 +311,6 @@ export function webkitAgentKeysOps(request: Request): Handlers {
     "agentKeys.rename": ({ env, slot, label }) => call("agentKeys.rename", { env, label, ...(slot ? { slot } : {}) }),
     "agentKeys.shell": async () => shellNamesFromWire(await request<unknown>("agentKeys.shell", {})),
     "agentKeys.fromShell": ({ env, region, fields }) => call("agentKeys.fromShell", { env, ...choicesOf({ region, fields }) }),
+    "agentKeys.copySignIn": ({ on }) => call("agentKeys.copySignIn", { on }),
   };
 }

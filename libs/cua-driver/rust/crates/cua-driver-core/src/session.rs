@@ -1456,7 +1456,8 @@ fn fire_session_end_for_owner(session_id: &str, owner_transport: Option<&str>) -
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum EndTransition {
     /// The idle sweep's candidate was used, or ended, after it was picked, or
-    /// an owner-bound end found the episode held by another transport.
+    /// an owner-bound end found the episode held by another transport, or a
+    /// call was admitted after the end decided; that call finishes it.
     StillLive,
     /// The episode's first end.
     First,
@@ -1501,6 +1502,16 @@ fn mark_session_ended(
         // section, so a call that started and finished after the sweep picked
         // the session keeps it alive.
         if idle.is_some_and(|idle| !records.get(session_id).is_some_and(|r| idle.expired(r))) {
+            return EndTransition::StillLive;
+        }
+        // A call admitted after the end released this lock owns the session
+        // now; its guard drop finishes the end.
+        if let Some(record) = records.get_mut(session_id).filter(|r| r.in_flight > 0) {
+            let pending = record.pending_end.get_or_insert(reason);
+            if *pending == SessionEndReason::IdleTimeout {
+                *pending = reason;
+            }
+            record.pending_explicit_end |= explicit;
             return EndTransition::StillLive;
         }
         records.remove(session_id)
@@ -3178,6 +3189,47 @@ mod tests {
         assert!(crate::capture_scope::get_session(sid).is_some());
         drop(reader);
         end_session(sid);
+    }
+
+    /// An end that found no call in flight and released the records lock
+    /// still loses to a call admitted before it removes the record: the
+    /// removal waits for that call instead of running cleanup under it.
+    #[test]
+    fn an_end_waits_for_a_call_admitted_after_it_decided() {
+        let sid = "test-end-after-admit-SE5";
+        let reasons = Arc::new(Mutex::new(Vec::new()));
+        let seen = reasons.clone();
+        let _hook = register_scoped_session_end_hook(move |id| {
+            if id == sid {
+                seen.lock().unwrap().push(session_end_reason(id));
+            }
+        });
+        use_session(sid).unwrap();
+        let call = begin_session_dispatch(
+            sid,
+            None,
+            sid,
+            false,
+            SessionTransport::Daemon,
+            SessionClientKind::Direct,
+        )
+        .unwrap();
+        // The end's second critical section, reached after its in-flight check.
+        finish_session_end(sid, SessionEndReason::Explicit, true, None, None);
+        assert!(
+            !is_session_ended(sid),
+            "the admitted call keeps its session"
+        );
+        assert!(
+            reasons.lock().unwrap().is_empty(),
+            "no cleanup under a live call"
+        );
+        drop(call);
+        assert!(
+            is_session_ended(sid),
+            "the end completes when the call ends"
+        );
+        assert_eq!(*reasons.lock().unwrap(), [Some(SessionEndReason::Explicit)]);
     }
 
     #[test]

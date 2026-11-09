@@ -70,6 +70,7 @@ import { THREAD_OPERATIONS, type ThreadOps } from "./ops/thread";
 import { PRESENCE_OPERATIONS, type PresenceOps } from "./ops/presence";
 import { CLOUD_APPROVE_OPERATIONS, type CloudApproveOps } from "./ops/cloud-approve";
 import { AGENT_THREADS_OPERATIONS, type AgentThreadsOps } from "./ops/agent-threads";
+import { AGENT_SIGN_IN_OPERATIONS, type AgentSignInOps } from "./ops/agent-sign-in";
 import { RUNTIME_FIX_OPERATIONS, type RuntimeFixOps } from "./ops/runtime-fix";
 import { DRIVER_OPERATIONS, type DriverOps } from "./ops/driver";
 import { TELEMETRY_OPERATIONS, type TelemetryOps } from "./ops/telemetry";
@@ -282,6 +283,7 @@ export interface HostOperations
     PresenceOps,
     CloudApproveOps,
     AgentThreadsOps,
+    AgentSignInOps,
     RuntimeFixOps,
     DriverOps {
   "spaces.list": { args: Record<string, never>; result: SpaceRow[] };
@@ -601,6 +603,7 @@ export const OPERATIONS = [
   ...PRESENCE_OPERATIONS,
   ...CLOUD_APPROVE_OPERATIONS,
   ...AGENT_THREADS_OPERATIONS,
+  ...AGENT_SIGN_IN_OPERATIONS,
   ...RUNTIME_FIX_OPERATIONS,
   ...DRIVER_OPERATIONS,
   ...SETTINGS_OPERATIONS,

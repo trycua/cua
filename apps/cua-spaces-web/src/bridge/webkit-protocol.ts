@@ -40,6 +40,7 @@ import { KEYVAULT_MANAGE_WEBKIT_METHODS } from "./ops/keyvault-manage";
 import { KEYVAULT_SETUP_WEBKIT_METHODS } from "./ops/keyvault-setup";
 import { THREAD_WEBKIT_METHODS } from "./ops/thread";
 import { AGENT_THREADS_WEBKIT_METHODS } from "./ops/agent-threads";
+import { AGENT_SIGN_IN_WEBKIT_METHODS } from "./ops/agent-sign-in";
 import { SPACES_SETTINGS_WEBKIT_METHODS } from "./ops/spaces-settings";
 
 export const WEBKIT_HANDLER_NAME = "cua";
@@ -230,6 +231,7 @@ export const WEBKIT_METHODS = [
   ...CI_WEBKIT_METHODS,
   ...THREAD_WEBKIT_METHODS,
   ...AGENT_THREADS_WEBKIT_METHODS,
+  ...AGENT_SIGN_IN_WEBKIT_METHODS,
 ] as const;
 
 export type WebkitMethod = (typeof WEBKIT_METHODS)[number];

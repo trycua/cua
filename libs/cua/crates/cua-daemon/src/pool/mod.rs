@@ -558,7 +558,7 @@ pub struct Explicit {
 }
 
 /// A member's record (`<state>/.pool/<member>.json`, 0600).
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 struct Record {
     name: String,
     key: String,
@@ -570,6 +570,20 @@ struct Record {
     /// The agent stack was installed before the member was ready.
     #[serde(default)]
     prepared: bool,
+}
+
+impl std::fmt::Debug for Record {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Record")
+            .field("name", &self.name)
+            .field("key", &"<redacted>")
+            .field("backend", &self.backend)
+            .field("secret", &"<redacted>")
+            .field("template", &self.template)
+            .field("keep", &self.keep)
+            .field("prepared", &self.prepared)
+            .finish()
+    }
 }
 
 /// What the pool holds now ([`WarmPool::status`]).

@@ -137,7 +137,15 @@ export function at(r: PreviewRect, f: PreviewRect) {
 }
 
 /** A miniature window: its frame, a title bar with three buttons, `children`. */
-export function MiniWindow({ window: w, role, children }: { window: PreviewWindow; role: string; children: ReactNode }) {
+export function MiniWindow({
+  window: w,
+  role,
+  children,
+}: {
+  window: PreviewWindow;
+  role: string;
+  children: ReactNode;
+}) {
   const f = w.frame;
   return (
     <div

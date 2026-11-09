@@ -87,9 +87,7 @@ describe("a create's stages without the core", () => {
     // Nothing is promised without a rate; work after the download counts in the time left.
     const MB = 2 ** 20;
     expect(transferText({ bytesDone: 440 * MB, bytesTotal: 456 * MB, bytesPerSecond: 20 * MB })).toMatch(/less than a minute$/);
-    expect(
-      transferText({ bytesDone: 440 * MB, bytesTotal: 456 * MB, bytesPerSecond: 20 * MB }, { bytes: 1100 * MB, secs: 26 }),
-    ).toMatch(/about 1 min$/);
+    expect(transferText({ bytesDone: 440 * MB, bytesTotal: 456 * MB, bytesPerSecond: 20 * MB }, { bytes: 1100 * MB, secs: 26 })).toMatch(/about 1 min$/);
     expect(transferText({ bytesDone: 0, bytesTotal: 1100 * MB }, { bytes: 0, secs: 26, pace: 9_100_000 })).toMatch(/about 3 min$/);
     expect(transferText({ bytesDone: MB, bytesTotal: 10 * MB })).toBe("1.0 of 10.0 MB");
   });

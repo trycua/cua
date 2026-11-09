@@ -27,8 +27,23 @@ describe.skipIf(!wasmBuilt)("sharing facts on every Space", () => {
       ["jordan@example.com", "viewer"],
       ["morgan@example.com", "viewer"],
     ]);
-    expect(by("relay:space-sam-qa-shared")).toMatchObject({ kind: "withMe", role: "editor", ownerName: "Sam Rivera", place: "Sam's Mac mini", canPower: true, canLeave: true, canDelete: false });
-    expect(by("relay:space-priya-checkout")).toMatchObject({ kind: "withMe", role: "viewer", place: "Priya's PC", canPower: false, canTeleport: false, canLeave: true });
+    expect(by("relay:space-sam-qa-shared")).toMatchObject({
+      kind: "withMe",
+      role: "editor",
+      ownerName: "Sam Rivera",
+      place: "Sam's Mac mini",
+      canPower: true,
+      canLeave: true,
+      canDelete: false,
+    });
+    expect(by("relay:space-priya-checkout")).toMatchObject({
+      kind: "withMe",
+      role: "viewer",
+      place: "Priya's PC",
+      canPower: false,
+      canTeleport: false,
+      canLeave: true,
+    });
     expect(by("relay:space-qa-regression")).toMatchObject({ kind: "team", teamName: "QA team", place: "QA team", canLeave: true, canDelete: false });
     // A Space without facts is yours.
     expect(by("local:agent-sandbox")).toMatchObject({ kind: "mine", people: [] });
@@ -44,7 +59,20 @@ describe.skipIf(!wasmBuilt)("sharing facts on every Space", () => {
       NOW,
     );
     for (const s of first) expect(again.find((x) => x.id === s.id)?.access, s.id).toEqual(s.access);
-    expect(sharingOf({ kind: "mine", role: "owner", place: "This Mac", people: [], canPower: true, canTeleport: true, canShare: true, canRename: true, canDelete: true, canLeave: false })).toBeUndefined();
+    expect(
+      sharingOf({
+        kind: "mine",
+        role: "owner",
+        place: "This Mac",
+        people: [],
+        canPower: true,
+        canTeleport: true,
+        canShare: true,
+        canRename: true,
+        canDelete: true,
+        canLeave: false,
+      }),
+    ).toBeUndefined();
   });
 });
 

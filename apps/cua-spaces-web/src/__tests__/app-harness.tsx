@@ -28,7 +28,16 @@ export const GHOST_ID = "relay:mac-mini/space-46e0d8654707222d";
 /** jsdom has no matchMedia (the theme reads it) or ResizeObserver (the tiles' video slots). */
 export function stubBrowserApis(): void {
   beforeEach(() => {
-    window.matchMedia ??= ((query: string) => ({ matches: false, media: query, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {}, dispatchEvent: () => false, onchange: null })) as unknown as typeof window.matchMedia;
+    window.matchMedia ??= ((query: string) => ({
+      matches: false,
+      media: query,
+      addEventListener() {},
+      removeEventListener() {},
+      addListener() {},
+      removeListener() {},
+      dispatchEvent: () => false,
+      onchange: null,
+    })) as unknown as typeof window.matchMedia;
     globalThis.ResizeObserver ??= class {
       observe() {}
       unobserve() {}
@@ -113,7 +122,17 @@ export async function mountApp(path: string, host: TestHost = { failsCreates: tr
       if (own !== undefined) return own;
       const out = host.answer ? host.answer(op, await demo.call(op as never, args)) : await demo.call(op as never, args);
       if (op !== "spaces.list" || !host.listsGhost) return out;
-      const ghost = { id: GHOST_ID, name: NAME, provider: "relay", spacesdVersion: "", features: [], reachable: false, host: "mac-mini", hostName: "Mac mini", addedAt: new Date(Date.now() + 9_000).toISOString() };
+      const ghost = {
+        id: GHOST_ID,
+        name: NAME,
+        provider: "relay",
+        spacesdVersion: "",
+        features: [],
+        reachable: false,
+        host: "mac-mini",
+        hostName: "Mac mini",
+        addedAt: new Date(Date.now() + 9_000).toISOString(),
+      };
       return [...(out as unknown[]), ghost];
     }) as DataAdapter["call"],
   };

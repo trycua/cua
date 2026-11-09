@@ -18,7 +18,11 @@ export function useChildren(): ChildrenPreview | null {
   const { data } = useBridge();
   const on = useExperiments().data?.experiments.childSpaces === true;
   const store = on ? (data?.children ?? null) : null;
-  useSyncExternalStore(store ? store.subscribe : noop, () => store?.version() ?? 0, () => 0);
+  useSyncExternalStore(
+    store ? store.subscribe : noop,
+    () => store?.version() ?? 0,
+    () => 0,
+  );
   return store;
 }
 

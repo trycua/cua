@@ -11,8 +11,15 @@ describe("notifications", () => {
   });
 
   it("posts each thing waiting on the reader once, by Space and entry", () => {
-    const list = { spaces: [{ id: "relay:a", name: "checkout-api", tone: "you", statusLine: "Waiting for you in checkout-api" }, { id: "relay:b", name: "x", tone: "working", statusLine: "" }] } as unknown as SpaceList;
+    const list = {
+      spaces: [
+        { id: "relay:a", name: "checkout-api", tone: "you", statusLine: "Waiting for you in checkout-api" },
+        { id: "relay:b", name: "x", tone: "working", statusLine: "" },
+      ],
+    } as unknown as SpaceList;
     const needs = new Map([["relay:a", [{ seq: 7, kind: "approval" as const, text: "Claude Code wants to push" }]]]);
-    expect(needsYouIn(list, needs)).toEqual([{ key: "relay:a#7", spaceName: "checkout-api", payload: { spaceId: "relay:a", seq: 7, kind: "approval" }, text: "Claude Code wants to push" }]);
+    expect(needsYouIn(list, needs)).toEqual([
+      { key: "relay:a#7", spaceName: "checkout-api", payload: { spaceId: "relay:a", seq: 7, kind: "approval" }, text: "Claude Code wants to push" },
+    ]);
   });
 });

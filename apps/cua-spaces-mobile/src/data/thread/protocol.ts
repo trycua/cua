@@ -108,7 +108,17 @@ export interface ThreadFailure {
 
 /** A subagent the agent started, or a child Space it made, on a system note. */
 export type ChildNote =
-  | { kind: "subagent"; id: string; agent: string; title: string; state: "running" | "done" | "failed"; steps: number; result: string | null; startedMs: number | null; endedMs: number | null }
+  | {
+      kind: "subagent";
+      id: string;
+      agent: string;
+      title: string;
+      state: "running" | "done" | "failed";
+      steps: number;
+      result: string | null;
+      startedMs: number | null;
+      endedMs: number | null;
+    }
   | { kind: "child_space"; space: string; name: string; os: string; agent: string };
 
 /** A subagent that runs now, on the agent's live row. */
@@ -419,7 +429,14 @@ export function threadReadArgs(a: ThreadReadArgs): Json {
 export function threadPostArgs(a: ThreadPostArgs): Json {
   const out: Json = { space: a.spaceId, text: a.text };
   if (a.replyTo != null) out.reply_to = a.replyTo;
-  if (a.answer) out.answer = { approval: a.answer.approval, approve: a.answer.approve, ...(a.answer.note ? { note: a.answer.note } : {}), ...(a.answer.scope && a.answer.approve ? { scope: a.answer.scope } : {}), ...(a.answer.clientId ? { client_id: a.answer.clientId } : {}) };
+  if (a.answer)
+    out.answer = {
+      approval: a.answer.approval,
+      approve: a.answer.approve,
+      ...(a.answer.note ? { note: a.answer.note } : {}),
+      ...(a.answer.scope && a.answer.approve ? { scope: a.answer.scope } : {}),
+      ...(a.answer.clientId ? { client_id: a.answer.clientId } : {}),
+    };
   if (a.clientId) out.client_id = a.clientId;
   if (a.toSession != null) out.to_session = a.toSession;
   if (a.view) out.view = threadViewArgs(a.view);
@@ -570,9 +587,20 @@ function childNote(v: unknown): ChildNote | null {
   if (!e) return null;
   if (e.kind === "subagent" && str(e.id)) {
     const state = e.state === "done" || e.state === "failed" ? e.state : "running";
-    return { kind: "subagent", id: str(e.id), agent: str(e.agent), title: str(e.title) || "Subagent", state, steps: num(e.steps) ?? 0, result: str(e.result) || null, startedMs: num(e.started_ms), endedMs: num(e.ended_ms) };
+    return {
+      kind: "subagent",
+      id: str(e.id),
+      agent: str(e.agent),
+      title: str(e.title) || "Subagent",
+      state,
+      steps: num(e.steps) ?? 0,
+      result: str(e.result) || null,
+      startedMs: num(e.started_ms),
+      endedMs: num(e.ended_ms),
+    };
   }
-  if (e.kind === "child_space" && str(e.space)) return { kind: "child_space", space: str(e.space), name: str(e.name) || str(e.space), os: str(e.os), agent: str(e.agent) };
+  if (e.kind === "child_space" && str(e.space))
+    return { kind: "child_space", space: str(e.space), name: str(e.name) || str(e.space), os: str(e.os), agent: str(e.agent) };
   return null;
 }
 
@@ -625,7 +653,16 @@ export function threadEntryFromTool(v: unknown): ThreadEntry | null {
           ...(strs(approval.scope_choices).length ? { scopeChoices: strs(approval.scope_choices).filter((c) => c === "once" || c === "space") } : {}),
         }
       : null,
-    answer: answer && num(answer.approval) !== null ? { approval: num(answer.approval)!, approve: answer.approve === true, note: str(answer.note) || null, scope: answer.scope === "space" ? "space" : answer.scope === "once" ? "once" : null, clientId: str(answer.client_id) || null } : null,
+    answer:
+      answer && num(answer.approval) !== null
+        ? {
+            approval: num(answer.approval)!,
+            approve: answer.approve === true,
+            note: str(answer.note) || null,
+            scope: answer.scope === "space" ? "space" : answer.scope === "once" ? "once" : null,
+            clientId: str(answer.client_id) || null,
+          }
+        : null,
     ...(str(e.client_id) ? { clientId: str(e.client_id) } : {}),
     update:
       update && num(update.task) !== null && updateState
@@ -742,7 +779,12 @@ function agentOverview(m: Json): { dm?: AgentDm | null; needsYou?: NeedsYou[] } 
   const last = obj(d?.last);
   const needs = Array.isArray(m.needs_you) ? m.needs_you : [];
   return {
-    dm: d ? { unread: num(d.unread) ?? 0, last: last && num(last.seq) !== null ? { seq: num(last.seq)!, tsMs: num(last.ts_ms) ?? 0, text: str(last.text), author: author(last.author) } : null } : null,
+    dm: d
+      ? {
+          unread: num(d.unread) ?? 0,
+          last: last && num(last.seq) !== null ? { seq: num(last.seq)!, tsMs: num(last.ts_ms) ?? 0, text: str(last.text), author: author(last.author) } : null,
+        }
+      : null,
     needsYou: needs.flatMap((n) => {
       const x = obj(n);
       const seq = num(x?.seq);
@@ -842,4 +884,3 @@ export function isMissingThreadTool(e: unknown): boolean {
   const message = e instanceof Error ? e.message : typeof e === "string" ? e : "";
   return /\b(unknown tool|no such tool)\b.*\b(thread_\w+|agent_members)\b|\bspaces tool (thread_\w+|agent_members)\b/i.test(message);
 }
-

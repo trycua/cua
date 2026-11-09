@@ -61,7 +61,10 @@ export function ComputerWarnings({ snapshot, machines }: { snapshot: ResourcesSn
           data-low-disk={w.level}
           className="flex min-h-9 items-center gap-2.5 rounded-lg bg-tile px-3 py-2 text-[13px] text-muted-foreground"
         >
-          <span aria-hidden className={w.level === "critical" ? "size-1.5 shrink-0 rounded-full bg-destructive" : "size-1.5 shrink-0 rounded-full bg-[#d18a12]"} />
+          <span
+            aria-hidden
+            className={w.level === "critical" ? "size-1.5 shrink-0 rounded-full bg-destructive" : "size-1.5 shrink-0 rounded-full bg-[#d18a12]"}
+          />
           <span className="min-w-0 flex-1">{w.text}</span>
           {w.local ? (
             // This computer's page: the Spaces made on it, each with what it takes on the disk.

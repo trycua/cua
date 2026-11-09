@@ -4,7 +4,19 @@
 import { describe, expect, it } from "vitest";
 
 import type { Machine } from "@/bridge";
-import { chatComputers, connectionLabel, machineOs, machineSubtitle, presenceLabel, presenceWord, reachable, spaceCount, THIS_COMPUTER, computerFor, spacesLabel } from "./machines";
+import {
+  chatComputers,
+  connectionLabel,
+  machineOs,
+  machineSubtitle,
+  presenceLabel,
+  presenceWord,
+  reachable,
+  spaceCount,
+  THIS_COMPUTER,
+  computerFor,
+  spacesLabel,
+} from "./machines";
 
 const NOW = Date.parse("2026-10-03T12:00:00Z");
 
@@ -84,7 +96,10 @@ describe("machines", () => {
   it("counts Spaces and finds a computer for its page", () => {
     expect([0, 1, 3].map(spaceCount)).toEqual(["No Spaces", "1 Space", "3 Spaces"]);
     // A computer's page finds it by its id, and this one by `this-mac` whatever its own id.
-    const mine = [{ id: "a", current: false }, { id: "mac-7", current: true }];
+    const mine = [
+      { id: "a", current: false },
+      { id: "mac-7", current: true },
+    ];
     expect(computerFor(mine, "a")?.id).toBe("a");
     expect(computerFor(mine, THIS_COMPUTER)?.id).toBe("mac-7");
     expect(computerFor(mine, "gone")).toBeUndefined();
@@ -92,7 +107,18 @@ describe("machines", () => {
 });
 
 describe("chatComputers", () => {
-  const m = (over: Partial<Machine>): Machine => ({ id: "m", name: "M", os: "macos", via: "relay", connection: "relay", online: true, current: false, spaceIds: [], limits: [], ...over });
+  const m = (over: Partial<Machine>): Machine => ({
+    id: "m",
+    name: "M",
+    os: "macos",
+    via: "relay",
+    connection: "relay",
+    online: true,
+    current: false,
+    spaceIds: [],
+    limits: [],
+    ...over,
+  });
 
   it("keeps your other online computers once each, and leaves out this one, devices and offline ones", () => {
     const rows = [

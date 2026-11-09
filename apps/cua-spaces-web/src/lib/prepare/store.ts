@@ -65,7 +65,11 @@ export function resetPrepare(): void {
 
 /** The driver's state, as the page reads it. */
 export function usePrepare(): { state: PrepareState | null; view: PrepareView | null; driver: PrepareDriver | null } {
-  const d = useSyncExternalStore(subscribe, () => driver, () => null);
+  const d = useSyncExternalStore(
+    subscribe,
+    () => driver,
+    () => null,
+  );
   useSyncExternalStore(
     d ? d.subscribe : (l) => (listeners.add(l), () => listeners.delete(l)),
     () => d?.state ?? null,
@@ -89,9 +93,11 @@ export function usePreparingSpace(spaceId: string | undefined): PrepareState | n
 /** The messages kept for the home that are not in its thread yet. */
 export function usePreparedQueue(spaceId: string): PrepareMessage[] {
   const { state } = usePrepare();
-  return useMemo(() => (state?.wanted && (state.pendingId === spaceId || state.homeSpaceId === spaceId) ? state.messages.filter((m) => m.state !== "delivered") : []), [state, spaceId]);
+  return useMemo(
+    () => (state?.wanted && (state.pendingId === spaceId || state.homeSpaceId === spaceId) ? state.messages.filter((m) => m.state !== "delivered") : []),
+    [state, spaceId],
+  );
 }
-
 
 /**
  * The Spaces no list shows: the home that warms for Home's box until a person wrote into it (the core's

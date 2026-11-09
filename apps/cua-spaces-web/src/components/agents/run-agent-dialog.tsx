@@ -20,7 +20,21 @@ export const runAgentPrompt = (spaceName: string) => `Open the Cua Space "${spac
  * first (one button) and then shows the request. The agent's work shows up
  * on the Agents page.
  */
-export function RunAgentDialog({ open, space, onOpenChange, onManual, onConnected, prompt: asked }: { open: boolean; space: Space; onOpenChange: (open: boolean) => void; onManual?: () => void; onConnected?: () => void; /** The request to show; the default only looks at the screen. */ prompt?: string }) {
+export function RunAgentDialog({
+  open,
+  space,
+  onOpenChange,
+  onManual,
+  onConnected,
+  prompt: asked,
+}: {
+  open: boolean;
+  space: Space;
+  onOpenChange: (open: boolean) => void;
+  onManual?: () => void;
+  onConnected?: () => void;
+  /** The request to show; the default only looks at the screen. */ prompt?: string;
+}) {
   const { agentSetup, configureAgents } = useAgents();
   const navigate = useNavigate();
   const [rows, setRows] = useState<AgentSetupRow[] | null>(null);
@@ -67,7 +81,10 @@ export function RunAgentDialog({ open, space, onOpenChange, onManual, onConnecte
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogPopup data-run-agent={rows === null ? "loading" : ready.length ? "ready" : "setup"} className="top-[12vh] w-[min(520px,calc(100vw-2rem))] bg-popover">
+      <DialogPopup
+        data-run-agent={rows === null ? "loading" : ready.length ? "ready" : "setup"}
+        className="top-[12vh] w-[min(520px,calc(100vw-2rem))] bg-popover"
+      >
         <div className="px-6 pt-5 pb-6">
           <DialogTitle className="text-[15px] font-semibold">Run an agent in {space.name}</DialogTitle>
           {rows === null ? (

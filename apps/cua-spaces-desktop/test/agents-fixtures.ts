@@ -126,14 +126,20 @@ export class FakeAgentKeysTools {
       }
       case "agent_keys.use": {
         const app = String(args.app ?? "");
-        if (typeof args.env === "string") this.uses[app] = { provider: "anthropic", env: args.env, ...(typeof args.slot === "string" ? { slot: args.slot } : {}) };
+        if (typeof args.env === "string")
+          this.uses[app] = { provider: "anthropic", env: args.env, ...(typeof args.slot === "string" ? { slot: args.slot } : {}) };
         else delete this.uses[app];
         break;
       }
       default:
         throw new ToolError(`unknown tool ${tool}`);
     }
-    const report: Record<string, unknown> = { keys: this.keys, providers: [], available: this.available, ...(Object.keys(this.uses).length ? { uses: this.uses } : {}) };
+    const report: Record<string, unknown> = {
+      keys: this.keys,
+      providers: [],
+      available: this.available,
+      ...(Object.keys(this.uses).length ? { uses: this.uses } : {}),
+    };
     if (!this.available) report.unavailable = "this build keeps credentials in a file";
     if (this.insecure) report.insecure = this.insecure;
     return report;
@@ -147,9 +153,45 @@ export class FixtureAgentSetup implements AgentSetupRunning {
 
   constructor(statuses?: AppAgentSetupStatus[]) {
     this.current = statuses ?? [
-      { id: "claude-code", name: "Claude Code", installed: true, skillsDir: "~/.claude/skills", mcpConfig: "~/.claude.json", cuaConfigured: false, skillsInstalled: [], skillsOutdated: [], error: undefined, signIn: undefined, signedIn: false },
-      { id: "codex", name: "Codex", installed: true, skillsDir: "~/.agents/skills", mcpConfig: "~/.codex/config.toml", cuaConfigured: true, skillsInstalled: ["cua-spaces", "cua-sandbox"], skillsOutdated: [], error: undefined, signIn: "ChatGPT", signedIn: false },
-      { id: "cursor", name: "Cursor", installed: false, skillsDir: undefined, mcpConfig: undefined, cuaConfigured: false, skillsInstalled: [], skillsOutdated: [], error: undefined, signIn: undefined, signedIn: false },
+      {
+        id: "claude-code",
+        name: "Claude Code",
+        installed: true,
+        skillsDir: "~/.claude/skills",
+        mcpConfig: "~/.claude.json",
+        cuaConfigured: false,
+        skillsInstalled: [],
+        skillsOutdated: [],
+        error: undefined,
+        signIn: undefined,
+        signedIn: false,
+      },
+      {
+        id: "codex",
+        name: "Codex",
+        installed: true,
+        skillsDir: "~/.agents/skills",
+        mcpConfig: "~/.codex/config.toml",
+        cuaConfigured: true,
+        skillsInstalled: ["cua-spaces", "cua-sandbox"],
+        skillsOutdated: [],
+        error: undefined,
+        signIn: "ChatGPT",
+        signedIn: false,
+      },
+      {
+        id: "cursor",
+        name: "Cursor",
+        installed: false,
+        skillsDir: undefined,
+        mcpConfig: undefined,
+        cuaConfigured: false,
+        skillsInstalled: [],
+        skillsOutdated: [],
+        error: undefined,
+        signIn: undefined,
+        signedIn: false,
+      },
     ];
   }
 
@@ -201,7 +243,10 @@ export class FixtureAgentSetup implements AgentSetupRunning {
       signin_imported: false,
       signin_import: a.signIn === undefined ? "unsupported" : "missing",
       state: !a.installed ? "not_installed" : !a.cuaConfigured ? "not_connected" : a.signIn !== undefined && !a.signedIn ? "attention" : "connected",
-      problem: a.installed && a.cuaConfigured && a.signIn !== undefined && !a.signedIn ? { line: `Connected. No ${a.signIn} sign-in on This Mac yet.`, action: "sign_in" } : null,
+      problem:
+        a.installed && a.cuaConfigured && a.signIn !== undefined && !a.signedIn
+          ? { line: `Connected. No ${a.signIn} sign-in on This Mac yet.`, action: "sign_in" }
+          : null,
       checked_at_ms: 0,
     }));
     return JSON.stringify({ agents, checked_at_ms: 0 });
@@ -231,7 +276,11 @@ export class FixtureAgentSetup implements AgentSetupRunning {
 
   async deviceSignInWaitJson(id: string) {
     this.calls.push(`device-wait:${id}`);
-    return JSON.stringify({ imported: { source: "codex", env: "CODEX_AUTH_JSON", label: "ChatGPT sign-in for Codex", expires_ms: null, added_ms: 1 }, refused: null, line: null });
+    return JSON.stringify({
+      imported: { source: "codex", env: "CODEX_AUTH_JSON", label: "ChatGPT sign-in for Codex", expires_ms: null, added_ms: 1 },
+      refused: null,
+      line: null,
+    });
   }
 
   /** The sign-in finishes at once (no browser in a fixture). */
@@ -254,13 +303,44 @@ export class FixtureAgentSetup implements AgentSetupRunning {
 
 /** The methods test/agents.test.ts checks (their answers need a daemon's tools, which the shared bridge test has none of). */
 export const AGENT_METHODS = [
-  "agents.list", "agents.runs", "agents.events", "agents.start", "agents.message", "agents.pause", "agents.resume", "agents.setup", "agents.configure", "agents.signIn", "agents.setupDriver",
-  "agents.detail", "agents.readFile", "agents.restoreFile", "agents.addRoutine", "agents.setRoutine", "agents.removeRoutine",
-  "agents.allowComputer", "agents.revokeComputer",
-  "agents.status", "agents.connect", "agents.disconnect", "agents.signInStart", "agents.signInWait",
+  "agents.list",
+  "agents.runs",
+  "agents.events",
+  "agents.start",
+  "agents.message",
+  "agents.pause",
+  "agents.resume",
+  "agents.setup",
+  "agents.configure",
+  "agents.signIn",
+  "agents.setupDriver",
+  "agents.detail",
+  "agents.readFile",
+  "agents.restoreFile",
+  "agents.addRoutine",
+  "agents.setRoutine",
+  "agents.removeRoutine",
+  "agents.allowComputer",
+  "agents.revokeComputer",
+  "agents.status",
+  "agents.connect",
+  "agents.disconnect",
+  "agents.signInStart",
+  "agents.signInWait",
   // "Pick up where you left off" (test/agent-threads.test.ts): the daemon's person-only tools agent_threads and agent_thread_history.
-  "agents.recentThreads", "agents.threadHistory",
-  "agentKeys.list", "agentKeys.check", "agentKeys.set", "agentKeys.remove", "agentKeys.use", "agentKeys.rename", "agentKeys.shell", "agentKeys.fromShell",
+  "agents.recentThreads",
+  "agents.threadHistory",
+  "agentKeys.list",
+  "agentKeys.check",
+  "agentKeys.set",
+  "agentKeys.remove",
+  "agentKeys.use",
+  "agentKeys.rename",
+  "agentKeys.shell",
+  "agentKeys.fromShell",
   // Settings, Connections, GitHub (test/github.test.ts): answered by the daemon's tools.
-  "github.status", "github.rescan", "github.use", "github.enable",
+  "github.status",
+  "github.rescan",
+  "github.use",
+  "github.enable",
 ];

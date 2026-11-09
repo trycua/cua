@@ -37,7 +37,8 @@ const PATHS: Record<string, string> = {
   "square.grid.2x2": "M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z",
   shippingbox: "M12 3 20 7.5v9L12 21l-8-4.5v-9zM4 7.5l8 4.5 8-4.5M12 12v9",
   sparkles: "M12 3v6M9 6h6M18 12v5M15.5 14.5h5M7 14v6M4 17h6",
-  "lock.shield": "M12 3 19.5 6v5.5c0 4.6-3.2 8.2-7.5 9.5-4.3-1.3-7.5-4.9-7.5-9.5V6zM9.5 11.5v-1a2.5 2.5 0 0 1 5 0v1M8.75 11.5h6.5v4.5h-6.5z",
+  "lock.shield":
+    "M12 3 19.5 6v5.5c0 4.6-3.2 8.2-7.5 9.5-4.3-1.3-7.5-4.9-7.5-9.5V6zM9.5 11.5v-1a2.5 2.5 0 0 1 5 0v1M8.75 11.5h6.5v4.5h-6.5z",
 };
 
 export function Sym({ name, className, size = 16 }: { name: string; className?: string; size?: number }) {

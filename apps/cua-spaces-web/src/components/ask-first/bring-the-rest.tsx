@@ -20,6 +20,7 @@ import { PermissionStatus, type PermissionsView } from "@/components/app-permiss
 import { Button } from "@/components/ui/button";
 import { GroupedSection } from "@/components/ui/grouped";
 import { toastError } from "@/components/ui/toast";
+import { useT } from "@/i18n";
 import { allowHint, homeAppsRowLine, homeAppsRowShown, permissionWords } from "@/lib/app-permissions";
 import { taskState, useAskTasks, type AskTask } from "@/lib/ask-first";
 import { bringRestView, firstJobDone, placeName, type BringRestView } from "@/lib/first-run-new";
@@ -31,7 +32,24 @@ const ICON = { invite: UserPlusIcon, "add-computer": MonitorIcon, apps: ShieldIc
  * The card itself, drawn from its view (tests draw every state). `apps` and `cli` are the rows' opened panels. `done`:
  * rows whose setup is finished (both permissions on), which show a check and "On" in place of nothing.
  */
-export function BringTheRestCard({ view, onRow, onDismiss, open, apps, cli, done }: { view: BringRestView; onRow: (id: RowId) => void; onDismiss: () => void; open?: RowId | null; apps?: ReactNode; cli?: ReactNode; done?: Partial<Record<RowId, boolean>> }) {
+export function BringTheRestCard({
+  view,
+  onRow,
+  onDismiss,
+  open,
+  apps,
+  cli,
+  done,
+}: {
+  view: BringRestView;
+  onRow: (id: RowId) => void;
+  onDismiss: () => void;
+  open?: RowId | null;
+  apps?: ReactNode;
+  cli?: ReactNode;
+  done?: Partial<Record<RowId, boolean>>;
+}) {
+  const t = useT();
   return (
     <section aria-labelledby="bring-rest-heading" data-bring-rest="">
       <div className="mb-3 flex items-start justify-between gap-4">
@@ -65,10 +83,13 @@ export function BringTheRestCard({ view, onRow, onDismiss, open, apps, cli, done
                 </span>
                 {done?.[r.id] ? (
                   <span className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground" data-bring-rest-done={r.id}>
-                    <CheckIcon aria-hidden className="size-3.5" /> On
+                    <CheckIcon aria-hidden className="size-3.5" /> {t("home.bring_rest.on")}
                   </span>
                 ) : null}
-                <ChevronRightIcon aria-hidden className={expands && open === r.id ? "size-4 shrink-0 rotate-90 text-muted-foreground" : "size-4 shrink-0 text-muted-foreground"} />
+                <ChevronRightIcon
+                  aria-hidden
+                  className={expands && open === r.id ? "size-4 shrink-0 rotate-90 text-muted-foreground" : "size-4 shrink-0 text-muted-foreground"}
+                />
               </button>
               {open === r.id ? (r.id === "apps" ? apps : r.id === "cli" ? cli : null) : null}
             </div>
@@ -81,6 +102,7 @@ export function BringTheRestCard({ view, onRow, onDismiss, open, apps, cli, done
 
 /** The apps row, opened: this Mac's two permissions for Cua Spaces, each with its live status and Allow. */
 export function AppsPanel({ perms }: { perms: PermissionsView }) {
+  const t = useT();
   const data = perms.data;
   if (!data?.permissions.length) return null;
   const waiting = Boolean(perms.waiting);
@@ -96,20 +118,32 @@ export function AppsPanel({ perms }: { perms: PermissionsView }) {
             </span>
             <PermissionStatus permission={p} waiting={waiting} className="text-xs text-muted-foreground" />
             {!p.granted && p.settingsUrl ? (
-              <Button variant="outline" size="sm" onClick={() => void perms.allow(p.id).catch(toastError("Couldn't open System Settings"))}>
-                Allow
+              <Button variant="outline" size="sm" onClick={() => void perms.allow(p.id).catch(toastError(t("home.bring_rest.open_settings_failed")))}>
+                {t("home.bring_rest.allow")}
               </Button>
             ) : null}
           </div>
         );
       })}
-      <p className="mt-1 text-xs text-muted-foreground">{allowHint(data.appName, data.permissions.every((p) => p.granted))}</p>
+      <p className="mt-1 text-xs text-muted-foreground">
+        {allowHint(
+          data.appName,
+          data.permissions.every((p) => p.granted),
+        )}
+      </p>
     </div>
   );
 }
 
 /** The Terminal row, opened: where the command goes and Install, or the line to try once it's there. */
-export function CliPanel({ view, onInstall }: { view: { status: string; installed: boolean; busy: boolean; tryCommand: string | null; error: string | null; primary: { id: string; label: string } | null }; onInstall: () => void }) {
+export function CliPanel({
+  view,
+  onInstall,
+}: {
+  view: { status: string; installed: boolean; busy: boolean; tryCommand: string | null; error: string | null; primary: { id: string; label: string } | null };
+  onInstall: () => void;
+}) {
+  const t = useT();
   const install = view.primary?.id === "install" ? view.primary : null;
   return (
     <div className="px-4 pb-3 pl-11 text-xs text-muted-foreground" data-bring-rest-cli={view.installed ? "installed" : "missing"}>
@@ -117,7 +151,7 @@ export function CliPanel({ view, onInstall }: { view: { status: string; installe
       {view.error ? <p className="mt-1 text-destructive">{view.error}</p> : null}
       {install ? (
         <Button variant="outline" size="sm" className="mt-2" disabled={view.busy} onClick={onInstall} data-bring-rest-cli-install="">
-          {view.busy ? "Installing…" : install.label}
+          {view.busy ? t("home.bring_rest.installing") : install.label}
         </Button>
       ) : view.tryCommand ? (
         <code className="mt-2 block font-mono text-foreground select-text" data-bring-rest-cli-try="">
@@ -140,7 +174,7 @@ function WaitForFirstJob({ sinceMs }: { sinceMs: number }) {
   const { data: agents } = useAgents();
   const done = firstJobDone(
     {
-      tasks: tasks.map((t) => ({ state: stateOf(t, agents?.runs), ending: t.ending })),
+      tasks: tasks.map((task) => ({ state: stateOf(task, agents?.runs), ending: task.ending })),
       runs: (agents?.runs ?? []).map((r) => ({ startedMs: r.startedMs, status: r.status ?? null })),
     },
     sinceMs,
@@ -202,6 +236,7 @@ function Shown() {
  * off, and the two permissions with their live status and Allow. Tests draw every state.
  */
 export function AppsOnThisMacCard({ perms, os }: { perms: PermissionsView & { allGranted: boolean }; os: string }) {
+  const t = useT();
   const permissions = perms.data?.permissions ?? [];
   return (
     <section aria-labelledby="home-apps-heading" data-home-apps="">
@@ -211,13 +246,13 @@ export function AppsOnThisMacCard({ perms, os }: { perms: PermissionsView & { al
             <ShieldIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
             <span className="min-w-0 flex-1">
               <span id="home-apps-heading" className="block text-[13px] font-medium">
-                Let agents use apps on {placeName(os)}
+                {t("home.bring_rest.apps_title", { place: placeName(os) })}
               </span>
               <span className="block text-xs text-muted-foreground">{homeAppsRowLine(permissions)}</span>
             </span>
             {perms.allGranted ? (
               <span className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground" data-home-apps-done="">
-                <CheckIcon aria-hidden className="size-3.5" /> On
+                <CheckIcon aria-hidden className="size-3.5" /> {t("home.bring_rest.on")}
               </span>
             ) : null}
           </div>

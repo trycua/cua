@@ -5,6 +5,7 @@ import { useMemo } from "react";
 
 import { useAgents, useBridge, useSession, useSpaces, type SpacesDefaultHook } from "@/bridge";
 import { useMachinesLive } from "@/hooks/use-machines-live";
+import { currentLocale, useT } from "@/i18n";
 import { useHiddenSpaceIds } from "@/lib/prepare/store";
 import { buildSpacesTree, type SpacesTree } from "@/lib/spaces-tree";
 
@@ -26,6 +27,8 @@ export function useRunningBySpace(): ReadonlyMap<string, number> {
  * them.
  */
 export function useSpacesTreeData(running: ReadonlyMap<string, number> = NO_RUNS): { tree: SpacesTree | null; loaded: boolean; defaults: SpacesDefaultHook } {
+  useT(); // re-renders on a language change: the tree's words are built in it
+  const lng = currentLocale();
   const { data: spaces, listStatus } = useSpaces();
   // The sidebar counts the tree on every page, so nothing else asks for the computers again: without this a computer that went
   // offline keeps its green dot (and "Online, Default") while Home already says it is offline.
@@ -41,7 +44,7 @@ export function useSpacesTreeData(running: ReadonlyMap<string, number> = NO_RUNS
       spaces && machines
         ? buildSpacesTree({ spaces: spaces.filter((s) => !warming.has(s.id)), machines, defaultSpace, running, me: session?.identity ?? null, relayOnline })
         : null,
-    [spaces, machines, warming, defaultSpace, running, session?.identity, relayOnline],
+    [spaces, machines, warming, defaultSpace, running, session?.identity, relayOnline, lng],
   );
   return { tree, loaded: Boolean(spaces && machines && listStatus.loaded), defaults };
 }

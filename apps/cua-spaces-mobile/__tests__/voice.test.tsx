@@ -13,7 +13,11 @@ beforeAll(installFixtureCore);
 afterAll(uninstallCore);
 afterEach(() => setVoiceForTests(undefined));
 
-type Handlers = { onResult: ((e: { text: string; final: boolean }) => void)[]; onEnd: (() => void)[]; onError: ((e: { kind: string; message: string }) => void)[] };
+type Handlers = {
+  onResult: ((e: { text: string; final: boolean }) => void)[];
+  onEnd: (() => void)[];
+  onError: ((e: { kind: string; message: string }) => void)[];
+};
 
 /** A speech module that records what the app asks of it and lets the test play the recognizer. */
 function fakeVoice(status: { microphone: string; speech: string; recognizer?: boolean; onDevice?: boolean }) {
@@ -30,11 +34,16 @@ function fakeVoice(status: { microphone: string; speech: string; recognizer?: bo
     stop: jest.fn(async () => {}),
     addListener: jest.fn((event: keyof Handlers, cb: never) => {
       (h[event] as unknown[]).push(cb);
-      return { remove: () => void ((h[event] as unknown[]).splice((h[event] as unknown[]).indexOf(cb), 1)) };
+      return { remove: () => void (h[event] as unknown[]).splice((h[event] as unknown[]).indexOf(cb), 1) };
     }),
   };
   setVoiceForTests(mod as never);
-  return { mod, say: (text: string, final = false) => act(() => h.onResult.forEach((f) => f({ text, final }))), end: () => act(() => h.onEnd.forEach((f) => f())), error: (kind: string) => act(() => h.onError.forEach((f) => f({ kind, message: kind }))) };
+  return {
+    mod,
+    say: (text: string, final = false) => act(() => h.onResult.forEach((f) => f({ text, final }))),
+    end: () => act(() => h.onEnd.forEach((f) => f())),
+    error: (kind: string) => act(() => h.onError.forEach((f) => f({ kind, message: kind }))),
+  };
 }
 
 const composer = async () => {

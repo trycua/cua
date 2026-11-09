@@ -3,7 +3,6 @@
 
 import { beforeEach, describe, expect, it } from "vitest";
 
-
 import type { Space } from "@/bridge";
 
 import {
@@ -81,7 +80,16 @@ describe("Ask-first tasks", () => {
   });
 });
 
-const row = (id: string, more: Partial<Space> = {}): Space => ({ id, name: id, os: "linux", status: "running", detail: "", lastUsedAt: 0, scene: "linux-terminal", ...more });
+const row = (id: string, more: Partial<Space> = {}): Space => ({
+  id,
+  name: id,
+  os: "linux",
+  status: "running",
+  detail: "",
+  lastUsedAt: 0,
+  scene: "linux-terminal",
+  ...more,
+});
 const thisMac = row("this-mac", { name: "This computer", os: "macos", status: "local", provider: "local" });
 const LINUX: NewKind = { os: "linux", note: "Free.", blocked: null };
 const MAC: NewKind = { os: "macos", note: "Free.", blocked: null };

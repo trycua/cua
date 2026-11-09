@@ -158,7 +158,7 @@ function SpaceDetailPage() {
   // device is not enrolled.
   const access = thisMachine?.accessNotice ?? null;
   const devices = useDevices();
-  const { detail, stream, windowsUnsupported, pip, query, setQuery, agents, copy } = useSpaceDetail(space, hostArch, { access });
+  const { detail, stream, windowsUnsupported, windowsLoaded, pip, query, setQuery, agents, copy } = useSpaceDetail(space, hostArch, { access });
   // Call view or thread view, remembered per Space.
   const [layout, setLayout] = useSpaceLayout(space?.id ?? "");
   const volumeError = useSpaceVolumeError(space, space ? spaceState(space) === "running" : false);
@@ -617,7 +617,7 @@ function SpaceDetailPage() {
           childSpaces={<ChildSpacesSection spaceId={space.id} spaceName={space.name} />}
           more={sections}
           windows={creating ? [] : (stream?.rows.filter((r) => r.kind === "window") ?? [])}
-          streamReady={!creating && Boolean(stream)}
+          streamReady={!creating && Boolean(stream) && windowsLoaded}
           desktop={creating ? null : (desktopRow ?? null)}
           selected={shownRow?.id ?? null}
           onSelect={(row) => setShown(row.kind === "window" ? { spaceId: space.id, row: row.id } : null)}

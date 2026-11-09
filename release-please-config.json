@@ -434,8 +434,7 @@
       "version-file": "VERSION",
       "additional-paths": [
         "libs/cua",
-        "apps/cua-spaces-web",
-        "apps/cua-spaces-desktop"
+        "apps/cua-spaces-web"
       ],
       "changelog-path": "CHANGELOG.md",
       "extra-files": [

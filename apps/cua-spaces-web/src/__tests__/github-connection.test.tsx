@@ -35,7 +35,12 @@ const click = (el: Element) =>
   act(async () => {
     fireEvent.click(el);
   });
-const host = (calls: Call[], github?: "gh" | "none" | "saved" | "warning") => ({ failsCreates: false, listsGhost: false, demo: { ...(github ? { github } : {}) }, intercept: (op: string, args: unknown) => (calls.push({ op, args }), undefined) });
+const host = (calls: Call[], github?: "gh" | "none" | "saved" | "warning") => ({
+  failsCreates: false,
+  listsGhost: false,
+  demo: { ...(github ? { github } : {}) },
+  intercept: (op: string, args: unknown) => (calls.push({ op, args }), undefined),
+});
 const line = (h: string) => q(`[data-github-host="${h}"] [data-github-line]`)?.textContent;
 const openRow = async (h: string) => {
   await click(await found(`[data-github-host="${h}"]`));

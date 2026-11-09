@@ -197,6 +197,7 @@ impl Scoped {
     async fn scoped_pool_request(
         &self,
         root: &str,
+        max_depth: u32,
         mut r: pb::PoolRequestRequest,
     ) -> R<pb::PoolRequestResponse> {
         use serde_json::json;
@@ -220,12 +221,38 @@ impl Scoped {
                     run = format!("p-{:08x}", rand::random::<u32>());
                     params["run"] = json!(run);
                 }
+                // The job's Space is a child of this one wherever it runs
+                // ([`cua_cluster::model::ENV_PARENT_SPACE`]).
+                let (_, depth) = position(self.spaces(), &self.space);
+                if depth.saturating_add(1) > max_depth {
+                    return Err(Status::resource_exhausted(format!(
+                        "this Space is {depth} level(s) below its tree's root and the tree allows                          {max_depth}: a run is a child Space, so it cannot start one"
+                    )));
+                }
+                if let Err(why) = super::runs::confine_submit(
+                    &mut params,
+                    &run,
+                    &self.space,
+                    root,
+                    depth,
+                    &self.own_network(),
+                ) {
+                    self.audit("refuse", &run, &why);
+                    return Err(refused(&why));
+                }
                 let now = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .map(|d| d.as_secs())
                     .unwrap_or(0);
                 let (space, root) = (self.space.clone(), root.to_string());
-                let ok = super::runs::Ledger::update(&home, |l| l.claim(&run, &space, &root, now));
+                let (jname, jgpu) = super::runs::job_facts(&params);
+                let ok = super::runs::Ledger::update(&home, |l| {
+                    let ok = l.claim(&run, &space, &root, now);
+                    if ok {
+                        l.describe(&run, &jname, jgpu);
+                    }
+                    ok
+                });
                 if !ok {
                     return Err(not_found(&run));
                 }
@@ -1226,7 +1253,7 @@ impl SpaceService for Scoped {
         req: Request<pb::PoolRequestRequest>,
     ) -> R<pb::PoolRequestResponse> {
         let claims = claims(&req)?;
-        self.scoped_pool_request(&claims.root, req.into_inner())
+        self.scoped_pool_request(&claims.root, claims.max_depth, req.into_inner())
             .await
     }
 

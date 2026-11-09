@@ -37,10 +37,14 @@ class TestCuaSpacesReleaseWiring(unittest.TestCase):
         # The Tauri app must not be a package: its commits never open a release PR.
         self.assertNotIn(TAURI, packages)
         self.assertNotIn(TAURI, self.manifest)
-        # Nor the Electron app: its prereleases ride the cua-spaces version.
+        # Nor the Electron app: it rides the cua-spaces version, and its
+        # commits count through additional-paths.
         self.assertNotIn(ELECTRON, packages)
         self.assertNotIn(ELECTRON, self.manifest)
-        self.assertNotIn(ELECTRON, packages[MACOS].get("additional-paths", []))
+        self.assertEqual(
+            packages[MACOS]["additional-paths"],
+            ["libs/cua", "apps/cua-spaces-web", ELECTRON],
+        )
         self.assertEqual(
             self.manifest[MACOS], (REPO_ROOT / MACOS / "VERSION").read_text().strip()
         )

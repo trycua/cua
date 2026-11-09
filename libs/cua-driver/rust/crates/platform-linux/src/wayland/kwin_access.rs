@@ -186,18 +186,61 @@ fn setting_path() -> Option<PathBuf> {
     pip_preview::default_config_path().map(|config| config.with_file_name(SETTING_FILE))
 }
 
+/// The switch, whether a saved portal Deny keeps it off, and what the desktop
+/// entry names: what `cua-driver kwin-capture status`, the installer and the
+/// health report all read, so none of them guesses.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Status {
+    pub setting: Setting,
+    /// Switched on, but a saved screenshot Deny (or a portal permission store
+    /// that did not answer) keeps the adapter off.
+    pub kept_off: bool,
+    pub entry: Entry,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Entry {
+    None,
+    /// Names this executable: KWin 6.7 and older grant it.
+    Current(PathBuf),
+    /// Names another executable: KWin 6.7 and older refuse this one.
+    Other(PathBuf),
+    /// Names this executable without the interfaces capture needs.
+    Ungranted(PathBuf),
+}
+
+impl Status {
+    /// Whether the KWin adapter runs: the same answer as [`allowed`].
+    pub fn on(&self) -> bool {
+        self.setting != Setting::Off && !self.kept_off
+    }
+}
+
+pub fn status() -> Status {
+    let setting = Setting::saved();
+    let kept_off = setting == Setting::On && portal_denies_screenshots();
+    let entry = match desktop_entry_path().filter(|path| path.exists()) {
+        None => Entry::None,
+        Some(path) => match (entry_exe(), std::fs::read_to_string(&path)) {
+            (Ok(exe), Ok(text)) => classify(path, &text, &exe),
+            _ => Entry::Other(path),
+        },
+    };
+    Status {
+        setting,
+        kept_off,
+        entry,
+    }
+}
+
 /// What `cua-driver kwin-capture status` prints.
 pub fn report() -> String {
-    let setting = Setting::saved();
-    let denied = setting == Setting::On && portal_denies_screenshots();
-    let entry = desktop_entry_path().filter(|path| path.exists());
-    let current = entry.as_deref().is_some_and(|path| {
-        let exe = entry_exe();
-        let text = std::fs::read_to_string(path);
-        matches!((exe, text), (Ok(exe), Ok(text)) if desktop_entry(&exe).is_ok_and(|entry| entry == text))
-    });
-    let mut lines = vec![format!("kwin window capture: {}", setting.as_str())];
-    if denied {
+    describe(&status())
+}
+
+fn describe(status: &Status) -> String {
+    let mut lines = vec![format!("kwin window capture: {}", status.setting.as_str())];
+    if status.kept_off {
         lines.push(
             "kept off: the desktop portal has a saved screenshot Deny, or its permission \
              store did not answer; run `cua-driver kwin-capture on --override-portal-deny` \
@@ -205,15 +248,80 @@ pub fn report() -> String {
                 .into(),
         );
     }
-    lines.push(match (entry, current) {
-        (Some(path), true) => format!("desktop entry: {}", path.display()),
-        (Some(path), false) => format!(
+    lines.push(match &status.entry {
+        Entry::Current(path) => format!("desktop entry: {}", path.display()),
+        Entry::Other(path) => format!(
             "desktop entry: {} names another executable; run `cua-driver kwin-capture on` again",
             path.display()
         ),
-        (None, _) => "desktop entry: none".into(),
+        Entry::Ungranted(path) => format!(
+            "desktop entry: {} doesn't grant window management and ScreenShot2; run \
+             `cua-driver kwin-capture on` again",
+            path.display()
+        ),
+        Entry::None => "desktop entry: none".into(),
     });
     lines.join("\n") + "\n"
+}
+
+/// The grants capture needs, by the key KWin 6.7 and older read them from.
+/// `org_kde_kwin_keystate` is left out: only typing uses it.
+const CAPTURE_GRANTS: [(&str, &str); 2] = [
+    (
+        "X-KDE-Wayland-Interfaces",
+        "org_kde_plasma_window_management",
+    ),
+    (
+        "X-KDE-DBUS-Restricted-Interfaces",
+        "org.kde.KWin.ScreenShot2",
+    ),
+];
+
+/// Judge an existing entry by what KWin reads from it, the `Exec` program and
+/// the granted interfaces, so an edited `Name` or comment still counts.
+pub(crate) fn classify(path: PathBuf, text: &str, exe: &Path) -> Entry {
+    let found = fields(text);
+    let program = exec_program(&found).map(Path::new);
+    if !program.is_some_and(|program| same_file(program, exe)) {
+        return Entry::Other(path);
+    }
+    let granted = CAPTURE_GRANTS.iter().all(|(key, interface)| {
+        found
+            .get(key)
+            .is_some_and(|list| list.split(',').any(|item| item.trim() == *interface))
+    });
+    if granted {
+        Entry::Current(path)
+    } else {
+        Entry::Ungranted(path)
+    }
+}
+
+/// KWin resolves links when it matches `Exec`, so two paths to one file match.
+fn same_file(a: &Path, b: &Path) -> bool {
+    a == b || matches!((a.canonicalize(), b.canonicalize()), (Ok(a), Ok(b)) if a == b)
+}
+
+/// The keys of the `[Desktop Entry]` group.
+fn fields(text: &str) -> HashMap<&str, &str> {
+    text.lines()
+        .map(str::trim)
+        .skip_while(|line| *line != "[Desktop Entry]")
+        .skip(1)
+        .take_while(|line| !line.starts_with('['))
+        .filter(|line| !line.starts_with('#'))
+        .filter_map(|line| line.split_once('='))
+        .map(|(key, value)| (key.trim(), value.trim()))
+        .collect()
+}
+
+/// The program the `Exec` line runs: its first, possibly quoted, word.
+fn exec_program<'a>(fields: &HashMap<&str, &'a str>) -> Option<&'a str> {
+    let exec = fields.get("Exec")?;
+    Some(match exec.strip_prefix('"') {
+        Some(rest) => rest.split('"').next().unwrap_or(rest),
+        None => exec.split_whitespace().next().unwrap_or(""),
+    })
 }
 
 fn desktop_entry_path() -> Option<PathBuf> {
@@ -225,7 +333,7 @@ fn desktop_entry_path() -> Option<PathBuf> {
 }
 
 /// KWin matches the entry's `Exec` program to the client's executable.
-fn desktop_entry(exe: &Path) -> anyhow::Result<String> {
+pub(crate) fn desktop_entry(exe: &Path) -> anyhow::Result<String> {
     let exe = exe.to_str().unwrap_or("\"");
     anyhow::ensure!(
         !exe.contains(['"', '\\', '$', '`', '%', '\n']),
@@ -278,6 +386,92 @@ mod tests {
     }
 
     #[test]
+    fn the_status_names_the_switch_a_kept_off_deny_and_the_entry() {
+        let entry = PathBuf::from("/home/u/.local/share/applications/ai.cua.driver.desktop");
+        let on = Status {
+            setting: Setting::On,
+            kept_off: false,
+            entry: Entry::Current(entry.clone()),
+        };
+        assert!(on.on());
+        assert_eq!(
+            describe(&on),
+            format!(
+                "kwin window capture: on\ndesktop entry: {}\n",
+                entry.display()
+            )
+        );
+        let kept_off = Status {
+            kept_off: true,
+            ..on.clone()
+        };
+        assert!(!kept_off.on());
+        assert!(describe(&kept_off).contains("\nkept off: the desktop portal"));
+        let other = Status {
+            entry: Entry::Other(entry.clone()),
+            ..on.clone()
+        };
+        assert!(other.on());
+        assert!(describe(&other).contains("names another executable"));
+        let ungranted = Status {
+            entry: Entry::Ungranted(entry.clone()),
+            ..on.clone()
+        };
+        assert!(describe(&ungranted).contains("doesn't grant window management and ScreenShot2"));
+        let off = Status {
+            setting: Setting::Off,
+            kept_off: false,
+            entry: Entry::None,
+        };
+        assert!(!off.on());
+        assert_eq!(
+            describe(&off),
+            "kwin window capture: off\ndesktop entry: none\n"
+        );
+        let overridden = Status {
+            setting: Setting::OverridePortalDeny,
+            ..off
+        };
+        assert!(overridden.on());
+    }
+
+    #[test]
+    fn an_entry_is_judged_by_its_exec_program_and_grants_not_its_whole_text() {
+        let exe = Path::new("/opt/cua driver/cua-driver");
+        let path = PathBuf::from("/home/u/.local/share/applications/ai.cua.driver.desktop");
+        let written = desktop_entry(exe).unwrap();
+        let judge = |text: &str| classify(path.clone(), text, exe);
+        assert_eq!(judge(&written), Entry::Current(path.clone()));
+        // Edits KWin doesn't read keep the grant.
+        let renamed = written.replace("Name=Cua Driver", "Name=Mine\n# a note\nComment=x");
+        assert_eq!(judge(&renamed), Entry::Current(path.clone()));
+        let reordered = written.replace(
+            "org_kde_plasma_window_management,org_kde_kwin_keystate",
+            "org_kde_kwin_keystate, org_kde_plasma_window_management",
+        );
+        assert_eq!(judge(&reordered), Entry::Current(path.clone()));
+        // Another program, quoted or not, is another executable.
+        let moved = written.replace("/opt/cua driver/cua-driver", "/usr/bin/cua-driver");
+        assert_eq!(judge(&moved), Entry::Other(path.clone()));
+        let unquoted = written.replace("\"/opt/cua driver/cua-driver\"", "/opt/cua");
+        assert_eq!(judge(&unquoted), Entry::Other(path.clone()));
+        assert_eq!(judge(""), Entry::Other(path.clone()));
+        // This program without the interfaces capture needs is not granted.
+        let no_screenshot = written.replace("=org.kde.KWin.ScreenShot2", "=");
+        assert_eq!(judge(&no_screenshot), Entry::Ungranted(path.clone()));
+        let no_windows = written.replace("org_kde_plasma_window_management,", "");
+        assert_eq!(judge(&no_windows), Entry::Ungranted(path.clone()));
+        let no_keystate = written.replace(",org_kde_kwin_keystate", "");
+        assert_eq!(judge(&no_keystate), Entry::Current(path.clone()));
+        // Keys outside the [Desktop Entry] group don't count.
+        let other_group = written.replace(
+            "X-KDE-DBUS-Restricted-Interfaces",
+            "[Desktop Action x]\nX-KDE-DBUS-Restricted-Interfaces",
+        );
+        assert_eq!(judge(&other_group), Entry::Ungranted(path.clone()));
+    }
+
+    #[test]
     fn only_a_saved_no_for_unsandboxed_apps_is_a_deny() {
         let store = |app: &str, value: &str| HashMap::from([(app.into(), vec![value.into()])]);
         assert!(denies(&store("", "no")));
@@ -300,6 +494,37 @@ mod tests {
         // KWin compares the raw path, so a character Exec would escape can't be written.
         assert!(desktop_entry(Path::new("/opt/$x/cua-driver")).is_err());
         assert!(desktop_entry(Path::new("/opt/100%/cua-driver")).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_entry_naming_a_link_to_this_executable_names_this_executable() {
+        let root = std::env::temp_dir().join(format!("kwin-entry-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let root = root.canonicalize().unwrap();
+        let (exe, link, other) = (
+            root.join("cua-driver"),
+            root.join("link"),
+            root.join("other"),
+        );
+        std::fs::write(&exe, "").unwrap();
+        std::fs::write(&other, "").unwrap();
+        std::os::unix::fs::symlink(&exe, &link).unwrap();
+        let path = root.join("ai.cua.driver.desktop");
+        let entry = |named: &Path| desktop_entry(named).unwrap();
+        assert_eq!(
+            classify(path.clone(), &entry(&link), &exe),
+            Entry::Current(path.clone())
+        );
+        assert_eq!(
+            classify(path.clone(), &entry(&exe), &link),
+            Entry::Current(path.clone())
+        );
+        assert_eq!(
+            classify(path.clone(), &entry(&other), &exe),
+            Entry::Other(path.clone())
+        );
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[cfg(unix)]

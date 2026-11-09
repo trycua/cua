@@ -15,7 +15,11 @@ const noop = () => () => {};
 export function useNetworkPreview(): NetworkPreview | null {
   const { data } = useBridge();
   const store = data?.network ?? null;
-  useSyncExternalStore(store ? store.subscribe : noop, () => store?.version() ?? 0, () => 0);
+  useSyncExternalStore(
+    store ? store.subscribe : noop,
+    () => store?.version() ?? 0,
+    () => 0,
+  );
   return store;
 }
 

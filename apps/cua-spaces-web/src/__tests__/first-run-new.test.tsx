@@ -140,7 +140,12 @@ describe("1b, sign-in", () => {
 
   it("says 'Sign-in didn't finish' with its reason, and Try again becomes the white button", () => {
     const v = signInView({ kind: "failed", reason: "notConfirmed", message: "x" }, null);
-    expect(v).toMatchObject({ title: "Sign-in didn't finish", line: "The browser didn't confirm in time. Try again, or use a code if your browser is on another device.", tryAgainPrimary: true, waiting: null });
+    expect(v).toMatchObject({
+      title: "Sign-in didn't finish",
+      line: "The browser didn't confirm in time. Try again, or use a code if your browser is on another device.",
+      tryAgainPrimary: true,
+      waiting: null,
+    });
     // Other reasons keep the core's own line.
     expect(signInView({ kind: "failed", reason: "offline", message: "You're offline." }, null).line).toBe("You're offline.");
   });
@@ -157,7 +162,14 @@ describe("1b, sign-in", () => {
 
   it("with a code shows the code and the page to enter it on", () => {
     const onOpen = vi.fn();
-    render(<SignInScreen view={signInView({ kind: "waiting", userCode: "WXYZ-1234" }, "https://cua.ai/device")} onTryAgain={noop} onUseCode={noop} onOpen={onOpen} />);
+    render(
+      <SignInScreen
+        view={signInView({ kind: "waiting", userCode: "WXYZ-1234" }, "https://cua.ai/device")}
+        onTryAgain={noop}
+        onUseCode={noop}
+        onOpen={onOpen}
+      />,
+    );
     expect(document.querySelector("[data-new-run-code]")!.textContent).toContain("WXYZ-1234");
     fireEvent.click(screen.getByRole("button", { name: "Open the sign-in page" }));
     expect(onOpen).toHaveBeenCalledWith("https://cua.ai/device");
@@ -171,7 +183,16 @@ describe("screen 3, the coding agents", () => {
     const onPick = vi.fn();
     const onContinue = vi.fn();
     const onLater = vi.fn();
-    render(<AgentScreen view={agentView({ os: "macos", found, off, error: null })} onPick={onPick} onContinue={onContinue} onLater={onLater} onInstall={onInstall} busy={false} />);
+    render(
+      <AgentScreen
+        view={agentView({ os: "macos", found, off, error: null })}
+        onPick={onPick}
+        onContinue={onContinue}
+        onLater={onLater}
+        onInstall={onInstall}
+        busy={false}
+      />,
+    );
     return { onInstall, onPick, onContinue, onLater };
   };
 
@@ -392,15 +413,38 @@ describe("after the first job, on Home: the rest of setup", () => {
   it("opens the Terminal row in place: Install where the command is missing, the line to try once it's there", () => {
     const onRow = vi.fn();
     const onInstall = vi.fn();
-    const missing = { status: "Installs the cua command in ~/.local/bin.", installed: false, busy: false, tryCommand: null, error: null, primary: { id: "install", label: "Install" } };
-    const { rerender } = render(<BringTheRestCard view={bringRestView({ os: "linux", cli: true })} open="cli" onRow={onRow} onDismiss={noop} cli={<CliPanel view={missing} onInstall={onInstall} />} />);
+    const missing = {
+      status: "Installs the cua command in ~/.local/bin.",
+      installed: false,
+      busy: false,
+      tryCommand: null,
+      error: null,
+      primary: { id: "install", label: "Install" },
+    };
+    const { rerender } = render(
+      <BringTheRestCard
+        view={bringRestView({ os: "linux", cli: true })}
+        open="cli"
+        onRow={onRow}
+        onDismiss={noop}
+        cli={<CliPanel view={missing} onInstall={onInstall} />}
+      />,
+    );
     fireEvent.click(document.querySelector("[data-bring-rest-row=cli]")!);
     expect(onRow).toHaveBeenCalledWith("cli");
     expect(document.querySelector("[data-bring-rest-cli]")!.getAttribute("data-bring-rest-cli")).toBe("missing");
     fireEvent.click(document.querySelector("[data-bring-rest-cli-install]")!);
     expect(onInstall).toHaveBeenCalledTimes(1);
     const done = { ...missing, status: "Installed in ~/.local/bin.", installed: true, tryCommand: "cua spaces list", primary: null };
-    rerender(<BringTheRestCard view={bringRestView({ os: "linux", cli: true })} open="cli" onRow={onRow} onDismiss={noop} cli={<CliPanel view={done} onInstall={onInstall} />} />);
+    rerender(
+      <BringTheRestCard
+        view={bringRestView({ os: "linux", cli: true })}
+        open="cli"
+        onRow={onRow}
+        onDismiss={noop}
+        cli={<CliPanel view={done} onInstall={onInstall} />}
+      />,
+    );
     expect(document.querySelector("[data-bring-rest-cli-install]")).toBeNull();
     expect(document.querySelector("[data-bring-rest-cli-try]")!.textContent).toBe("cua spaces list");
   });
@@ -408,13 +452,35 @@ describe("after the first job, on Home: the rest of setup", () => {
   it("waits for a job that finished: a done Home task, or a run since setup ended that finished its turn", () => {
     const since = 1_000;
     expect(firstJobDone({ tasks: [], runs: [] }, since)).toBe(false);
-    expect(firstJobDone({ tasks: [{ state: "working", ending: null }, { state: "starting", ending: null }], runs: [] }, since)).toBe(false);
+    expect(
+      firstJobDone(
+        {
+          tasks: [
+            { state: "working", ending: null },
+            { state: "starting", ending: null },
+          ],
+          runs: [],
+        },
+        since,
+      ),
+    ).toBe(false);
     expect(firstJobDone({ tasks: [{ state: "failed", ending: null }], runs: [] }, since)).toBe(false);
     expect(firstJobDone({ tasks: [{ state: "done", ending: null }], runs: [] }, since)).toBe(true);
     expect(firstJobDone({ tasks: [{ state: null, ending: "thrown" }], runs: [] }, since)).toBe(true);
     // Runs from before setup ended don't count; a run still going or one that failed doesn't either.
     expect(firstJobDone({ tasks: [], runs: [{ startedMs: 500, status: "idle" }] }, since)).toBe(false);
-    expect(firstJobDone({ tasks: [], runs: [{ startedMs: 2_000, status: "running" }, { startedMs: 2_000, status: "failed" }] }, since)).toBe(false);
+    expect(
+      firstJobDone(
+        {
+          tasks: [],
+          runs: [
+            { startedMs: 2_000, status: "running" },
+            { startedMs: 2_000, status: "failed" },
+          ],
+        },
+        since,
+      ),
+    ).toBe(false);
     expect(firstJobDone({ tasks: [], runs: [{ startedMs: 2_000, status: "idle" }] }, since)).toBe(true);
   });
 });
@@ -725,7 +791,8 @@ describe.skipIf(!wasmBuilt)("the new first run on its route", () => {
           ],
         }
       : undefined;
-  const status = (id: string) => document.querySelector(`[data-home-apps] [data-app-permission=${id}] [data-permission-status]`)?.getAttribute("data-permission-status") ?? null;
+  const status = (id: string) =>
+    document.querySelector(`[data-home-apps] [data-app-permission=${id}] [data-permission-status]`)?.getAttribute("data-permission-status") ?? null;
 
   for (const offer of ["waiting", "dismissed", null] as const) {
     it(`Home shows the apps row at launch while a permission is missing, each switch live (offer ${offer ?? "none"})`, { timeout: 60_000 }, async () => {
@@ -759,7 +826,9 @@ describe.skipIf(!wasmBuilt)("the new first run on its route", () => {
     await mountApp("/home", { failsCreates: false, listsGhost: false, demo: { signedIn: true, onboarded: true }, intercept: axOff(() => false) });
     await waitFor(() => expect(document.querySelector("[data-bring-rest-apps]")).not.toBeNull(), { timeout: 15_000 });
     expect(document.querySelector("[data-bring-rest-row=apps]")!.getAttribute("aria-expanded")).toBe("true");
-    expect(document.querySelector("[data-bring-rest-apps] [data-app-permission=accessibility] [data-permission-status]")!.getAttribute("data-permission-status")).toBe("off");
+    expect(
+      document.querySelector("[data-bring-rest-apps] [data-app-permission=accessibility] [data-permission-status]")!.getAttribute("data-permission-status"),
+    ).toBe("off");
     // One card, not two.
     expect(document.querySelector("[data-home-apps]")).toBeNull();
   });

@@ -399,7 +399,10 @@ export class SettingsFeature {
 
   private every(key: string, ms: number, f: () => unknown): void {
     if (this.timers.has(key) || this.disposed) return;
-    this.timers.set(key, setInterval(() => void f(), ms));
+    this.timers.set(
+      key,
+      setInterval(() => void f(), ms),
+    );
   }
 
   private stop(key: string): void {

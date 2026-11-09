@@ -52,7 +52,17 @@ import { unsupportedChecklistOps } from "../ops/checklist";
 import { demoTeleportHandlers } from "./demo/teleport";
 import { createDemoSettings } from "./demo/settings";
 import { demoChooseRuntime, demoRuntimesInput, demoRuntimesState, type DemoRuntimes } from "./demo/runtimes";
-import { demoAgentSetup, demoConnections, demoPersistentAgents, demoReply, demoRunRecords, demoStartedRun, runAt, writtenEvents, type DemoRunRecord } from "./demo-agents";
+import {
+  demoAgentSetup,
+  demoConnections,
+  demoPersistentAgents,
+  demoReply,
+  demoRunRecords,
+  demoStartedRun,
+  runAt,
+  writtenEvents,
+  type DemoRunRecord,
+} from "./demo-agents";
 import { demoVolumeHandlers, demoVolumeState, type DemoVolumeState } from "./demo/volume";
 import { demoGithubHandlers, demoGithubState, type DemoGithubStart } from "./demo/github";
 import { demoCiHandlers, demoCiState, type DemoCiStart } from "./demo/ci";
@@ -240,9 +250,29 @@ const DEMO_NOTES = "https://github.com/trycua/cua/releases/tag/cua-spaces-v0.9.3
 function demoSignedInRows(nowMs: number): MachineRow[] {
   const t = Math.floor(nowMs / 1000);
   return [
-    { id: "dev_laptop", name: "Ana's laptop", via: "relay", online: false, os: "macos", device: true, deviceState: "enrolled", lastSeen: t - 2 * 3600, limits: [] },
+    {
+      id: "dev_laptop",
+      name: "Ana's laptop",
+      via: "relay",
+      online: false,
+      os: "macos",
+      device: true,
+      deviceState: "enrolled",
+      lastSeen: t - 2 * 3600,
+      limits: [],
+    },
     { id: "dev_work", name: "Work laptop", via: "relay", online: false, os: "windows", device: true, deviceState: "pending", lastSeen: t - 120, limits: [] },
-    { id: "dev_old", name: "Old laptop", via: "relay", online: false, os: "linux", device: true, deviceState: "expired", lastSeen: t - 33 * 86_400, limits: [] },
+    {
+      id: "dev_old",
+      name: "Old laptop",
+      via: "relay",
+      online: false,
+      os: "linux",
+      device: true,
+      deviceState: "expired",
+      lastSeen: t - 33 * 86_400,
+      limits: [],
+    },
   ];
 }
 
@@ -278,7 +308,13 @@ export function demoOptionsFromSearch(search: string): DemoOptions {
     ...(flags.has("slow") ? { latencyMs: 4000 } : {}),
     signedIn: !flags.has("fresh"),
     onboarded: !flags.has("fresh"),
-    ...(flags.has("github-none") ? { github: "none" as const } : flags.has("github-saved") ? { github: "saved" as const } : flags.has("github-warning") ? { github: "warning" as const } : {}),
+    ...(flags.has("github-none")
+      ? { github: "none" as const }
+      : flags.has("github-saved")
+        ? { github: "saved" as const }
+        : flags.has("github-warning")
+          ? { github: "warning" as const }
+          : {}),
     ...(flags.has("ci-fresh") ? { ci: "fresh" as const } : flags.has("ci-connected") ? { ci: "connected" as const } : {}),
     keyvaultLocked: flags.has("locked"),
     noVault: flags.has("novault"),
@@ -286,7 +322,13 @@ export function demoOptionsFromSearch(search: string): DemoOptions {
     ...(flags.has("signin-wait") ? { signIn: "wait" as const } : flags.has("signin-timeout") ? { signIn: "timeout" as const } : {}),
     ...(flags.has("rejected-key") ? { rejectedKeys: ["OPENAI_API_KEY"] } : {}),
     ...(flags.has("no-keys") ? { keys: "none" as const } : flags.has("connections") ? { keys: "several" as const, rejectedKeys: ["DEEPSEEK_API_KEY"] } : {}),
-    ...(flags.has("claude-expired") ? { claudeLogin: "expired" as const } : flags.has("claude-signed-in") ? { claudeLogin: "signed-in" as const } : flags.has("claude-none") ? { claudeLogin: "none" as const } : {}),
+    ...(flags.has("claude-expired")
+      ? { claudeLogin: "expired" as const }
+      : flags.has("claude-signed-in")
+        ? { claudeLogin: "signed-in" as const }
+        : flags.has("claude-none")
+          ? { claudeLogin: "none" as const }
+          : {}),
     ...(flags.has("chatgpt-signed-in") ? { chatgptLogin: true } : {}),
     ...(flags.has("accounts") ? { accounts: true } : {}),
     noSpaces: flags.has("empty"),
@@ -327,10 +369,10 @@ export function demoOptionsFromSearch(search: string): DemoOptions {
               : flags.has("clouds-revoked")
                 ? "revoked"
                 : flags.has("clouds-approval")
-            ? "approval"
-            : flags.has("clouds") || flags.has("clouds-many")
-              ? "connected"
-              : undefined,
+                  ? "approval"
+                  : flags.has("clouds") || flags.has("clouds-many")
+                    ? "connected"
+                    : undefined,
     manyMachines: flags.has("clouds-many"),
     unenrolled: flags.has("unenrolled"),
     usage: (["idle", "warn", "limit", "pro", "teams"] as const).find((u) => flags.has(`usage-${u}`)),
@@ -356,7 +398,13 @@ export function demoOptionsFromSearch(search: string): DemoOptions {
     ...(flags.has("slow-create") ? { stepMs: 5000 } : {}),
     ...(flags.has("slow-home") ? { slowHome: true } : {}),
     creatingElsewhere: flags.has("creating-elsewhere"),
-    failCreates: flags.has("create-fail-runtime") ? "runtime-once" : flags.has("create-fail-disk") ? "disk" : flags.has("create-fail-unsupported") ? "unsupported" : undefined,
+    failCreates: flags.has("create-fail-runtime")
+      ? "runtime-once"
+      : flags.has("create-fail-disk")
+        ? "disk"
+        : flags.has("create-fail-unsupported")
+          ? "unsupported"
+          : undefined,
     ...(flags.has("intel-mac") ? { platform: { os: "macos" as const, arch: "amd64" as const } } : {}),
     ...(flags.has("linux-pc") ? { platform: { os: "linux" as const, arch: "amd64" as const } } : {}),
     ...(flags.has("update-ready")
@@ -406,7 +454,15 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
   const timers = new Set<ReturnType<typeof setTimeout>>();
 
   const state: DemoState = {
-    rows: options.noSpaces ? [] : [...(options.network ? demoNetworkSpaceRows(now()) : []), ...(options.agentHome ? demoAgentHomeRows(now()) : []), ...demoSpaceRows(now()), ...(options.desktops ? demoDesktopRows(now()) : []), ...demoScaleRows(now(), options.extraSpaces ?? 0)],
+    rows: options.noSpaces
+      ? []
+      : [
+          ...(options.network ? demoNetworkSpaceRows(now()) : []),
+          ...(options.agentHome ? demoAgentHomeRows(now()) : []),
+          ...demoSpaceRows(now()),
+          ...(options.desktops ? demoDesktopRows(now()) : []),
+          ...demoScaleRows(now(), options.extraSpaces ?? 0),
+        ],
     items: demoKeyvaultItems(now()),
     keyvaultLocked: Boolean(options.keyvaultLocked),
     keyvaultDisabled: false,
@@ -426,7 +482,10 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
       return options.accounts ? { ...store, keys: demoAccountKeys(now) } : store;
     })(),
     readOnlyAgents: options.agentsReadOnly ?? [],
-    agentSetup: demoAgentSetup(options.onboarded === false || options.agents === "unset", options.agents === "none" ? [] : options.agents === "codex" ? ["codex"] : null),
+    agentSetup: demoAgentSetup(
+      options.onboarded === false || options.agents === "unset",
+      options.agents === "none" ? [] : options.agents === "codex" ? ["codex"] : null,
+    ),
     platform: options.platform ?? MAC_DEMO_PLATFORM,
     paired: [],
     renamed: {},
@@ -488,7 +547,12 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     return row;
   };
   // Child Spaces: research-swarm's tree with `?demo=network`, the agent's Home with `?demo=agent-home`, else none.
-  const children = createDemoChildren({ rows: () => state.rows, findRow: (id) => findRow(id), network: Boolean(options.network), agentHome: Boolean(options.agentHome) });
+  const children = createDemoChildren({
+    rows: () => state.rows,
+    findRow: (id) => findRow(id),
+    network: Boolean(options.network),
+    agentHome: Boolean(options.agentHome),
+  });
   const replaceRow = (id: string, patch: Partial<SpaceRow>) => {
     state.rows = state.rows.map((r) => (r.id === id ? { ...r, ...patch } : r));
   };
@@ -573,7 +637,13 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
       try {
         // A failure the options ask for, after the create starts preparing.
         const failure =
-          options.failCreates === "disk" ? DEMO_CREATE_FAILURES.disk : options.failCreates === "unsupported" ? DEMO_CREATE_FAILURES.unsupported : options.failCreates === "runtime-once" && createAttempts++ === 0 ? DEMO_CREATE_FAILURES.runtime : null;
+          options.failCreates === "disk"
+            ? DEMO_CREATE_FAILURES.disk
+            : options.failCreates === "unsupported"
+              ? DEMO_CREATE_FAILURES.unsupported
+              : options.failCreates === "runtime-once" && createAttempts++ === 0
+                ? DEMO_CREATE_FAILURES.runtime
+                : null;
         if (failure) {
           for (const fraction of [0, 0.3]) {
             emit({ type: "spaces.createProgress", progress: { pendingId, phase: "preparing", fraction, detail: "preparing", space: id } });
@@ -592,7 +662,10 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
           for (const [phase, detail, total] of legs) {
             for (const fraction of [0, 0.15, 0.4, 0.7, 0.9]) {
               if (job.cancelled) throw new HostError("cancelled: the create was stopped and what it made was removed", "cancelled");
-              emit({ type: "spaces.createProgress", progress: { pendingId, phase, fraction, detail, space: id, bytesDone: Math.round(fraction * total), bytesTotal: total, bytesPerSecond: 5 * MB } });
+              emit({
+                type: "spaces.createProgress",
+                progress: { pendingId, phase, fraction, detail, space: id, bytesDone: Math.round(fraction * total), bytesTotal: total, bytesPerSecond: 5 * MB },
+              });
               await wait(homeStep / 2);
             }
           }
@@ -601,23 +674,23 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
             await wait(homeStep / 2);
           }
         } else
-        for (const phase of CREATE_PHASES) {
-          for (const fraction of [0, 0.5]) {
-            if (job.cancelled) throw new HostError("cancelled: the create was stopped and what it made was removed", "cancelled");
-            emit({
-              type: "spaces.createProgress",
-              progress: {
-                pendingId,
-                phase,
-                fraction,
-                detail: phase,
-                space: id,
-                ...(phase === "pulling" ? { bytesDone: fraction * 4.2e9, bytesTotal: 4.2e9, bytesPerSecond: 85e6 } : {}),
-              },
-            });
-            await wait(step / 2);
+          for (const phase of CREATE_PHASES) {
+            for (const fraction of [0, 0.5]) {
+              if (job.cancelled) throw new HostError("cancelled: the create was stopped and what it made was removed", "cancelled");
+              emit({
+                type: "spaces.createProgress",
+                progress: {
+                  pendingId,
+                  phase,
+                  fraction,
+                  detail: phase,
+                  space: id,
+                  ...(phase === "pulling" ? { bytesDone: fraction * 4.2e9, bytesTotal: 4.2e9, bytesPerSecond: 85e6 } : {}),
+                },
+              });
+              await wait(step / 2);
+            }
           }
-        }
         if (job.cancelled) throw new HostError("cancelled: the create was stopped and what it made was removed", "cancelled");
         const row: SpaceRow = {
           id,
@@ -691,7 +764,8 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
       for (const id of ids) {
         const row = state.rows.find((r) => r.id === id);
         if (!row) results.push({ id, ok: false, error: `Couldn't leave ${id}: it isn't listed.` });
-        else if (!row.sharing || row.sharing.role === "owner") results.push({ id, ok: false, error: `Couldn't leave ${row.name}: it's yours; delete it instead.` });
+        else if (!row.sharing || row.sharing.role === "owner")
+          results.push({ id, ok: false, error: `Couldn't leave ${row.name}: it's yours; delete it instead.` });
         else {
           await wait(step);
           state.rows = state.rows.filter((r) => r.id !== id);
@@ -820,8 +894,8 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     "keyvault.setUnattended": ({ itemIds, unattended }) => {
       const idp = state.items.find((i) => itemIds.includes(i.id) && i.identity_provider);
       if (unattended && idp) throw new HostError(`${idp.domain ?? idp.app_display} signs you in elsewhere, so it never runs unattended.`, "identity_provider");
-      state.items = state.items.map((i): KvItem =>
-        itemIds.includes(i.id) ? { ...i, policy: { ...i.policy, unattended }, rev: i.rev + 1, updated_ms: now() } : i,
+      state.items = state.items.map(
+        (i): KvItem => (itemIds.includes(i.id) ? { ...i, policy: { ...i.policy, unattended }, rev: i.rev + 1, updated_ms: now() } : i),
       );
       emit({ type: "keyvault.changed" });
       return state.items.filter((i) => itemIds.includes(i.id));
@@ -944,7 +1018,15 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
         const last = written[written.length - 1];
         rec.events = [
           ...written,
-          { seq: (last?.seq ?? 0) + 1, ts_ms: t, turn: last?.turn ?? 0, kind: "turn_ended", stop_reason: "cancelled", category: "activity", summary: `Turn ${last?.turn ?? 0} ended (cancelled)` },
+          {
+            seq: (last?.seq ?? 0) + 1,
+            ts_ms: t,
+            turn: last?.turn ?? 0,
+            kind: "turn_ended",
+            stop_reason: "cancelled",
+            category: "activity",
+            summary: `Turn ${last?.turn ?? 0} ended (cancelled)`,
+          },
         ];
         rec.stoppedAt = t;
       }
@@ -972,7 +1054,12 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
           ? state.readOnlyAgents.includes(r.agent)
             ? { ...r, configured: false, skillsInstalled: 0, detail: "Permission denied (os error 13)" }
             : part
-              ? { ...r, configured: false, skillsInstalled: skills === false ? 0 : r.skillsTotal, detail: skills === false ? "MCP server set up" : "Skills set up" }
+              ? {
+                  ...r,
+                  configured: false,
+                  skillsInstalled: skills === false ? 0 : r.skillsTotal,
+                  detail: skills === false ? "MCP server set up" : "Skills set up",
+                }
               : { ...r, configured: true, skillsInstalled: r.skillsTotal, detail: "Skills and MCP server set up" }
           : r,
       );
@@ -998,13 +1085,18 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
           agent,
           tools_ok: Boolean(row?.installed),
           tools_line: row?.installed ? null : `Couldn't add Cua to ${row?.mcpConfig ?? agent}`,
-          sign_in: !signIn || !["hermes", "claude-code", "codex"].includes(agent)
-            ? null
-            : copyable
-              ? { imported: { source: agent, env: "", label: "", expires_ms: null, added_ms: now() }, refused: null, line: null }
-              : agent === "claude-code"
-                ? { imported: null, refused: "not_signed_in", line: "Claude Code isn't signed in on This Mac. Run `claude auth login` in Terminal, then try again." }
-                : { imported: null, refused: "not_signed_in", line: "No ChatGPT sign-in on This Mac yet." },
+          sign_in:
+            !signIn || !["hermes", "claude-code", "codex"].includes(agent)
+              ? null
+              : copyable
+                ? { imported: { source: agent, env: "", label: "", expires_ms: null, added_ms: now() }, refused: null, line: null }
+                : agent === "claude-code"
+                  ? {
+                      imported: null,
+                      refused: "not_signed_in",
+                      line: "Claude Code isn't signed in on This Mac. Run `claude auth login` in Terminal, then try again.",
+                    }
+                  : { imported: null, refused: "not_signed_in", line: "No ChatGPT sign-in on This Mac yet." },
         };
       });
     },
@@ -1016,9 +1108,16 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     },
     "agents.signInWait": async () => {
       await wait(step * 20);
-      state.keyStore.keys = [...state.keyStore.keys.filter((k) => k.env !== "CODEX_AUTH_JSON"), { provider: "other", env: "CODEX_AUTH_JSON", last4: "", addedMs: now() }];
+      state.keyStore.keys = [
+        ...state.keyStore.keys.filter((k) => k.env !== "CODEX_AUTH_JSON"),
+        { provider: "other", env: "CODEX_AUTH_JSON", last4: "", addedMs: now() },
+      ];
       emit({ type: "agents.changed" });
-      return { imported: { source: "codex", env: "CODEX_AUTH_JSON", label: "Signed in with ChatGPT", expires_ms: null, added_ms: now() }, refused: null, line: null };
+      return {
+        imported: { source: "codex", env: "CODEX_AUTH_JSON", label: "Signed in with ChatGPT", expires_ms: null, added_ms: now() },
+        refused: null,
+        line: null,
+      };
     },
     "agents.disconnect": async ({ agents, signIn, skills, mcp }) => {
       await wait(step);
@@ -1029,7 +1128,12 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
         if (!part) return { ...r, configured: false, skillsInstalled: 0, detail: "Not set up" };
         const hasSkills = skills ? false : r.skillsInstalled > 0;
         const hasMcp = mcp ? false : r.configured || /MCP/.test(r.detail);
-        return { ...r, configured: false, skillsInstalled: hasSkills ? r.skillsTotal : 0, detail: hasSkills && hasMcp ? "Skills and MCP server set up" : hasSkills ? "Skills set up" : hasMcp ? "MCP server set up" : "Not set up" };
+        return {
+          ...r,
+          configured: false,
+          skillsInstalled: hasSkills ? r.skillsTotal : 0,
+          detail: hasSkills && hasMcp ? "Skills and MCP server set up" : hasSkills ? "Skills set up" : hasMcp ? "MCP server set up" : "Not set up",
+        };
       });
       const removed = signIn ? state.imported.filter((a) => agents.includes(a)) : [];
       if (signIn && agents.includes("claude-code")) state.keyStore.keys = state.keyStore.keys.filter((k) => k.env !== "CLAUDE_CODE_OAUTH_TOKEN");
@@ -1073,20 +1177,42 @@ export function createDemoAdapter(options: DemoOptions = {}): DataAdapter & { re
     ...demoAgentKeysHandlers({ wait, stepMs: step, now, store: state.keyStore }),
     ...demoGithubHandlers({ state: githubState, wait, stepMs: step, now }),
     ...demoVolumeHandlers({ state: state.volume, now, wait, step, emit, platform: state.platform }),
-    ...createDemoSettings({ now, wait, emit, stepMs: step, platform: state.platform, unenrolled: options.unenrolled, update: options.update, experiments: state.volume.experiments, signedIn: () => Boolean(state.identity), settings: () => state.settings, setSettings: (p) => ((state.settings = { ...state.settings, ...p }), emit({ type: "settings.changed" })), addMachine: (m) => ((state.paired = [...state.paired, m]), emit({ type: "machines.changed" })) }),
+    ...createDemoSettings({
+      now,
+      wait,
+      emit,
+      stepMs: step,
+      platform: state.platform,
+      unenrolled: options.unenrolled,
+      update: options.update,
+      experiments: state.volume.experiments,
+      signedIn: () => Boolean(state.identity),
+      settings: () => state.settings,
+      setSettings: (p) => ((state.settings = { ...state.settings, ...p }), emit({ type: "settings.changed" })),
+      addMachine: (m) => ((state.paired = [...state.paired, m]), emit({ type: "machines.changed" })),
+    }),
     ...demoTelemetryHandlers(ctx),
     ...(options.noTeam ? { "teams.list": () => ({ teams: [], currentTeamId: null }) } : {}),
     ...demoRelayUsageHandlers(ctx),
     ...demoSpacesSettingsHandlers(ctx, () => handlers["machines.list"]({}) as MachineRow[]),
     ...demoLinksHandlers(ctx),
     ...((): ReturnType<typeof demoThreadHandlers> => {
-      const h = demoThreadHandlers({ now, wait, stepMs: step, enabled: !options.noThread, role: options.threadRole ?? "owner", lookalike: options.threadLookalike ?? false, authFailed: options.threadAuthFailed ?? false, stranger: options.threadStranger ?? false, paused: options.threadPaused ?? false,
-      joinRedeemMs: options.joinRedeemMs,
-      joinExpireMs: options.joinExpireMs,
-      request: options.threadRequest ?? false,
-      pushCard: options.threadPushCard ?? false,
-      cards: options.threadCards ?? false,
-    });
+      const h = demoThreadHandlers({
+        now,
+        wait,
+        stepMs: step,
+        enabled: !options.noThread,
+        role: options.threadRole ?? "owner",
+        lookalike: options.threadLookalike ?? false,
+        authFailed: options.threadAuthFailed ?? false,
+        stranger: options.threadStranger ?? false,
+        paused: options.threadPaused ?? false,
+        joinRedeemMs: options.joinRedeemMs,
+        joinExpireMs: options.joinExpireMs,
+        request: options.threadRequest ?? false,
+        pushCard: options.threadPushCard ?? false,
+        cards: options.threadCards ?? false,
+      });
       if (options.threadLongDm && !options.noThread) seedLongDm(h, options.threadLongDm);
       return options.threadSlow ? hangingSpace(h, DEMO_THREAD_SPACE) : h;
     })(),
@@ -1141,7 +1267,19 @@ interface DemoLinksStateField {
   links: DemoLinksState;
 }
 
-export interface DemoState extends DemoDriverState, DemoLinksStateField, DemoTelemetryState, DemoRelayUsageState, DemoSpacesSettingsState, DemoResourcesState, DemoSpaceDetailState, DemoHostSetupState, DemoStartupState, DemoNewSpaceState, DemoKeyvaultSetupState, DemoKeyvaultManageState {
+export interface DemoState
+  extends DemoDriverState,
+    DemoLinksStateField,
+    DemoTelemetryState,
+    DemoRelayUsageState,
+    DemoSpacesSettingsState,
+    DemoResourcesState,
+    DemoSpaceDetailState,
+    DemoHostSetupState,
+    DemoStartupState,
+    DemoNewSpaceState,
+    DemoKeyvaultSetupState,
+    DemoKeyvaultManageState {
   rows: SpaceRow[];
   items: KvItem[];
   keyvaultLocked: boolean;

@@ -24,9 +24,29 @@ import type { AgentKeyProvider, AgentKeysReport, KeyChoices } from "./ops/agent-
 /** What the section shows (`agent_keys::AgentKeysInput`). */
 export interface AgentKeysInput {
   /** The first key saved for each variable. */
-  keys: { provider: string; env: string; slot?: string; last4: string; addedMs: number; expired?: boolean; label?: string; region?: string; fields?: Record<string, string> }[];
+  keys: {
+    provider: string;
+    env: string;
+    slot?: string;
+    last4: string;
+    addedMs: number;
+    expired?: boolean;
+    label?: string;
+    region?: string;
+    fields?: Record<string, string>;
+  }[];
   /** Keys saved beside the first for the same variable (named; an app that takes any provider can use one). */
-  extras?: { provider: string; env: string; slot?: string; last4: string; addedMs: number; expired?: boolean; label?: string; region?: string; fields?: Record<string, string> }[];
+  extras?: {
+    provider: string;
+    env: string;
+    slot?: string;
+    last4: string;
+    addedMs: number;
+    expired?: boolean;
+    label?: string;
+    region?: string;
+    fields?: Record<string, string>;
+  }[];
   /** Which credential each app that takes any provider uses, by app. */
   uses?: Record<string, { provider: string; env: string; slot?: string }>;
   unavailable?: string | null;
@@ -126,8 +146,7 @@ export const agentKeyRemoveConfirm = (core: CoreClient, input: AgentKeysInput, e
   core.tryCall<AgentKeyConfirm | null>("agentKeys.removeConfirm", { input: input as unknown as Json, env }) ?? null;
 
 /** Why `name` can't hold an Other key (null: it can). */
-export const agentKeyNameProblemOf = (core: CoreClient, name: string): string | null =>
-  core.tryCall<string | null>("agentKeys.nameProblem", { name }) ?? null;
+export const agentKeyNameProblemOf = (core: CoreClient, name: string): string | null => core.tryCall<string | null>("agentKeys.nameProblem", { name }) ?? null;
 
 /* ---- The store ------------------------------------------------------------------- */
 
@@ -240,7 +259,13 @@ export class AgentKeysStore {
   }
 
   /** Saves a key; the list after it replaces the shown one. Throws the host's words. */
-  async save(provider: AgentKeyProvider, value: string, env: string | null, choices: KeyChoices = {}, more: { add?: boolean; label?: string } = {}): Promise<void> {
+  async save(
+    provider: AgentKeyProvider,
+    value: string,
+    env: string | null,
+    choices: KeyChoices = {},
+    more: { add?: boolean; label?: string } = {},
+  ): Promise<void> {
     this.epoch++;
     const report = await this.adapter.call("agentKeys.set", { provider, value, env, ...choices, ...more });
     this.epoch++;
@@ -353,7 +378,11 @@ export function useAgentKeys({ watch = false }: { watch?: boolean } = {}): Agent
   const store = ctx.adapter ? agentKeysStore(ctx.adapter) : null;
   store?.ensure();
   useEffect(() => (watch && store ? store.watch() : undefined), [watch, store]);
-  const state = useSyncExternalStore(store ? store.subscribe : noopSubscribe, () => (store ? store.get() : INITIAL), () => INITIAL);
+  const state = useSyncExternalStore(
+    store ? store.subscribe : noopSubscribe,
+    () => (store ? store.get() : INITIAL),
+    () => INITIAL,
+  );
   const input = agentKeysInputOf(state.report, state.error);
   const need = () => {
     if (!store) throw new Error("The app isn't connected yet");

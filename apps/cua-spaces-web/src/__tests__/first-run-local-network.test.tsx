@@ -73,7 +73,9 @@ describe("the permissions step on a Mac that runs macOS Spaces", () => {
     expect(row.textContent).toContain("Local Network, given to Cua Spaces Local");
     // Nothing checked yet, so no status: just Allow.
     expect(row.querySelector("[data-permission-status]")).toBeNull();
-    expect(text()).toContain("macOS Spaces run on a small network inside this Mac. After Allow, macOS asks if Cua Spaces Local can find devices on your local network. Click Allow there too.");
+    expect(text()).toContain(
+      "macOS Spaces run on a small network inside this Mac. After Allow, macOS asks if Cua Spaces Local can find devices on your local network. Click Allow there too.",
+    );
     fireEvent.click(row.querySelector("button")!);
     expect(n.allow).toHaveBeenCalled();
   });
@@ -159,7 +161,9 @@ describe("useLocalNetwork", () => {
     fireEvent.click(screen.getByRole("button", { name: "Allow" }));
     await waitFor(() => expect(calls.some((c) => c.op === "host.openSettings" && c.args.url === LN)).toBe(true));
     expect(Number(window.localStorage.getItem(LOCAL_NETWORK_ASKED_KEY))).toBeGreaterThan(0);
-    await waitFor(() => expect(document.querySelector("[data-app-permission=local-network] [data-permission-status]")?.getAttribute("data-permission-status")).toBe("on"));
+    await waitFor(() =>
+      expect(document.querySelector("[data-app-permission=local-network] [data-permission-status]")?.getAttribute("data-permission-status")).toBe("on"),
+    );
     expect(calls.filter((c) => c.op === "host.status").at(-1)!.args.localNetworkCheck).toBe(true);
   });
 

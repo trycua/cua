@@ -29,6 +29,7 @@ import { usePrepare } from "@/lib/prepare/store";
 import { usePrepareAction } from "@/components/prepare/use-prepare-action";
 import { useAskTasks } from "@/lib/ask-first";
 import { ConfirmDialog } from "@/components/ui/alert-dialog";
+import { t as tr, useT } from "@/i18n";
 import { Button } from "@/components/ui/button";
 import { toast } from "@/components/ui/toast";
 import { thisComputerLabel, thisComputerText } from "@/lib/host-labels";
@@ -55,6 +56,7 @@ type Confirm = "stop" | "delete" | null;
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 function SpaceDetailPage() {
+  const t = useT();
   const { spaceId } = Route.useParams();
   const { dropped } = Route.useSearch();
   const navigate = useNavigate();
@@ -143,18 +145,18 @@ function SpaceDetailPage() {
         <BackLink />
         <EmptyState
           icon={<MonitorIcon />}
-          title={error ? "Couldn't load this Space" : removedAccess ? "You no longer have access" : "This Space isn't here"}
+          title={error ? t("computers.page.space_load_failed") : removedAccess ? t("computers.page.space_no_access") : t("computers.page.space_missing")}
           action={
             <Button variant="outline" render={<Link to="/spaces" />}>
-              Back to Spaces
+              {t("computers.page.back_to_spaces")}
             </Button>
           }
         >
           {error
             ? error.message
             : removedAccess
-              ? `${removedAccess.owner ?? "The owner"} stopped sharing this Space with you.`
-              : "It may have been deleted, or it runs on a computer this app can't see."}
+              ? t("computers.page.space_unshared", { owner: removedAccess.owner ?? t("computers.page.the_owner") })
+              : t("computers.page.space_missing_body")}
         </EmptyState>
       </Page>
     );
@@ -168,10 +170,10 @@ function SpaceDetailPage() {
   const turnOn = powerLabel(core, space, true);
   const turnOff = powerLabel(core, space, false);
 
-  const run = (label: string, action: () => Promise<void>) =>
-    action().catch((e: unknown) => toast(`Couldn't ${label} ${space.name}`, { description: message(e), type: "error" }));
+  const run = (failed: string, action: () => Promise<void>) =>
+    action().catch((e: unknown) => toast(t(failed, { name: space.name }), { description: message(e), type: "error" }));
 
-  const start = () => run("start", () => startSpace(space.id));
+  const start = () => run("computers.tile.start_failed", () => startSpace(space.id));
   // The core's detail actions: present only where they apply (Share follows
   // Settings, Experiments), enabled only when the Space can stream and this
   // device may connect.
@@ -187,9 +189,9 @@ function SpaceDetailPage() {
     devices.startEnroll();
     void navigate({ to: "/spaces/computer/$computerId", params: { computerId: THIS_COMPUTER } });
   };
-  const teleportApp = () => run("open Teleport for", () => teleport.open(space));
-  const share = () => run("share", () => sharing.open(space, session?.signedIn ?? false));
-  const stop = () => run("stop", () => stopSpace(space.id));
+  const teleportApp = () => run("computers.page.teleport_failed", () => teleport.open(space));
+  const share = () => run("computers.page.share_failed", () => sharing.open(space, session?.signedIn ?? false));
+  const stop = () => run("computers.tile.stop_failed", () => stopSpace(space.id));
   // Leaving a Space that is going away: the grid takes this page's place in
   // the history, so Back never returns to a page for a Space that is gone.
   const leave = () => navigate({ to: "/spaces", replace: true });
@@ -197,16 +199,16 @@ function SpaceDetailPage() {
   // keep it running there; `AppModel.delete(_:removeOnly:)`).
   const remove = (removeOnly = false) => {
     void leave();
-    void run(removeOnly ? "remove" : "delete", async () => {
+    void run(removeOnly ? "computers.page.remove_failed" : "computers.page.delete_failed", async () => {
       await deleteSpace(space.id, removeOnly);
-      toast(removeOnly ? `Removed ${space.name} from the list` : `Deleted ${space.name}`, { type: "success" });
+      toast(removeOnly ? t("computers.page.removed_from_list", { name: space.name }) : t("computers.page.deleted", { name: space.name }), { type: "success" });
     });
   };
   // A failed create only leaves the list (here and on the host). The grid
   // opens first, then the row goes: this page never shows "isn't here" in
   // between, and nothing else decides where the person lands.
   const dismiss = () => {
-    void leave().then(() => run("remove", () => dismissCreate(space.id)));
+    void leave().then(() => run("computers.page.remove_failed", () => dismissCreate(space.id)));
   };
   // Try again: the same create as a new row; this page follows it.
   const retry = canRetryCreate(space.id)
@@ -231,18 +233,18 @@ function SpaceDetailPage() {
         void runCreateFix(createFix, {
           copy: async (text) => {
             await navigator.clipboard?.writeText(text);
-            toast(`Copied ${text}`, { description: "Paste it in Terminal.", type: "success" });
+            toast(t("computers.page.copied", { text }), { description: t("computers.page.paste_in_terminal"), type: "success" });
           },
           openExternal: (url) => openExternal(url),
           details: openReport,
-        }).catch((e: unknown) => toast("Couldn't do that", { description: message(e), type: "error" }))
+        }).catch((e: unknown) => toast(t("computers.page.fix_failed"), { description: message(e), type: "error" }))
     : undefined;
   // Picture in picture where the host has panels; its own window where it doesn't.
   const onPip = (row: StreamRow) =>
-    run("open", async () => {
+    run("computers.page.open_failed", async () => {
       if ((await pip(row.id)) === "open-window") {
         await openSpace(space.id);
-        toast(`Opening ${space.name}`, { description: "Picture in picture isn't available here, so its desktop opens in a separate window." });
+        toast(t("computers.page.opening", { name: space.name }), { description: t("computers.page.no_pip") });
       }
     });
 
@@ -259,9 +261,9 @@ function SpaceDetailPage() {
   const poppedOutState = poppedOut ? (
     <div data-popped-out="" className="flex flex-col items-center gap-2">
       <PictureInPicture2Icon className="size-7 text-muted-foreground" />
-      <p className="text-xs text-muted-foreground">Playing in a floating window</p>
+      <p className="text-xs text-muted-foreground">{t("computers.page.floating")}</p>
       <Button variant="outline" size="sm" onClick={() => void onPip(desktopRow!)}>
-        Bring it back
+        {t("computers.page.bring_back")}
       </Button>
     </div>
   ) : undefined;
@@ -297,11 +299,11 @@ function SpaceDetailPage() {
       ) : null}
       {state === "failed" ? (
         <Button variant="outline" data-dismiss-create="" onClick={dismiss}>
-          <Trash2Icon className="text-destructive" /> Remove
+          <Trash2Icon className="text-destructive" /> {t("computers.account.remove")}
         </Button>
       ) : null}
       {canDelete(space) ? (
-        <Button variant="outline" aria-label={`${detail.deleteLabel} ${space.name}`} onClick={() => setConfirm("delete")}>
+        <Button variant="outline" aria-label={t("computers.tile.power_label", { action: detail.deleteLabel, name: space.name })} onClick={() => setConfirm("delete")}>
           <Trash2Icon className="text-destructive" /> {detail.deleteLabel}
         </Button>
       ) : null}
@@ -313,7 +315,7 @@ function SpaceDetailPage() {
       {pending ? (
         <span className="text-xs">{pending}</span>
       ) : space.id === "this-mac" ? (
-        <StateLabel state={isUnsharedDesktop(space) ? "stopped" : "running"} word={isUnsharedDesktop(space) ? "Not sharing" : "Sharing"} />
+        <StateLabel state={isUnsharedDesktop(space) ? "stopped" : "running"} word={isUnsharedDesktop(space) ? t("computers.row.not_sharing") : t("computers.tile.sharing")} />
       ) : (
         <StateLabel state={state} space={space} />
       )}
@@ -353,7 +355,7 @@ function SpaceDetailPage() {
 
       <div className="mt-8 grid items-start gap-x-6 first:mt-0 md:grid-cols-2">
         <div>
-          <FactList title="Details" facts={detail.facts} extra={<RunsOnMachinesRow spaceId={space.id} />} />
+          <FactList title={t("computers.page.details_title")} facts={detail.facts} extra={<RunsOnMachinesRow spaceId={space.id} />} />
           <SecurityRows spaceId={space.id} className="mt-6" />
           {volumeError ? (
             <p className="mt-3 px-1 text-[13px] text-muted-foreground" data-volume-note="" title={volumeError}>
@@ -363,9 +365,9 @@ function SpaceDetailPage() {
           {showTeleport ? (
             <div className="mt-7">
               <DropWell
-                title="Teleport"
+                title={t("computers.page.teleport_title")}
                 space={space}
-                copy={{ caption: copy?.dropCaption ?? "Drop a file or window", sendFile: copy?.sendFile ?? "Send file…", teleportApp: copy?.teleportApp ?? "Teleport an app…" }}
+                copy={{ caption: copy?.dropCaption ?? t("computers.page.drop_caption"), sendFile: copy?.sendFile ?? t("computers.page.send_file"), teleportApp: copy?.teleportApp ?? t("computers.page.teleport_app") }}
                 onTeleport={teleportApp}
               />
             </div>
@@ -374,7 +376,7 @@ function SpaceDetailPage() {
         <div>
           {showStream ? (
             <StreamSection
-              title="Stream"
+              title={t("computers.page.stream_title")}
               section={stream}
               query={query}
               onQuery={setQuery}
@@ -384,13 +386,13 @@ function SpaceDetailPage() {
           ) : null}
           {showAgents ? (
             <AgentsSection
-              title="Agents"
+              title={t("computers.page.agents_title")}
               runs={agents.runs}
               failed={agents.failed}
               copy={{
-                loading: copy?.agentsLoading ?? "Looking for this Space’s agents…",
-                empty: copy?.agentsEmpty ?? "No agents have been started in this Space.",
-                failed: copy?.agentsFailed ?? "Could not read this Space’s agents.",
+                loading: copy?.agentsLoading ?? t("computers.page.agents_loading"),
+                empty: copy?.agentsEmpty ?? t("computers.page.agents_empty"),
+                failed: copy?.agentsFailed ?? t("computers.page.agents_failed"),
               }}
             />
           ) : null}
@@ -403,11 +405,11 @@ function SpaceDetailPage() {
       <ConfirmDialog
         open={confirm === "stop"}
         onOpenChange={(o) => !o && setConfirm(null)}
-        title={`${turnOff} ${space.name}?`}
+        title={t("computers.page.power_confirm_title", { action: turnOff, name: space.name })}
         description={
           space.power?.control === "suspend"
-            ? "It's suspended in memory and picks up where it left off when you start it again."
-            : "It shuts down. Anything unsaved inside it is lost."
+            ? t("computers.page.suspend_body")
+            : t("computers.page.shutdown_body")
         }
         confirmLabel={turnOff}
         destructive={space.power?.control !== "suspend"}
@@ -439,7 +441,7 @@ function SpaceDetailPage() {
   const powerError = detail.powerError ? <p className="mb-4 text-[13px] text-destructive">{detail.powerError}</p> : null;
   // One tip at a time (the core's `tips.view`, place `space`).
   // A Space made for an Ask-first job is busy with its agent: no tip (it would also appear once ready and move the page).
-  const askSpace = tasks.some((t) => t.pendingId === space.id || (t.inSpace && t.spaceId === space.id));
+  const askSpace = tasks.some((task) => task.pendingId === space.id || (task.inSpace && task.spaceId === space.id));
   const tip = askSpace ? null : <PageTip place="space" space={space} onShare={shareAction?.enabled ? share : undefined} />;
   // In the call layout the tip sits directly on the stage and the rail: no gap under it, so the rail meets it flush.
   const callTip = askSpace ? null : <PageTip place="space" space={space} onShare={shareAction?.enabled ? share : undefined} className="mb-0" />;
@@ -450,9 +452,9 @@ function SpaceDetailPage() {
   // A create still in progress has no thread yet: its progress shows on the classic page.
   // A Space being made for an Ask-first job: the same page in its creating state (progress on
   // the stage, the job queued in the thread); a failed create keeps the classic page's fixes.
-  const creating = space.id.startsWith("pending:") && (state !== "failed" || (preparing != null && preparing.phase !== "failed")) && (tasks.some((t) => t.pendingId === space.id) || preparing != null);
+  const creating = space.id.startsWith("pending:") && (state !== "failed" || (preparing != null && preparing.phase !== "failed")) && (tasks.some((task) => task.pendingId === space.id) || preparing != null);
   const callThread = creating ? creatingThread(space.id) : thread;
-  const later = "Available once the Space is ready";
+  const later = t("computers.page.later");
   // This Mac's own desktop row: a Space's page as any other, with the share prompt where the stream would be.
   if (space.id === "this-mac") {
     return (
@@ -485,7 +487,7 @@ function SpaceDetailPage() {
               place={place}
               power={
                 creating
-                  ? { state: "pending", label: "Being made", onClick: () => {} }
+                  ? { state: "pending", label: t("computers.page.being_made"), onClick: () => {} }
                   : canPower(space)
                   ? pending
                     ? { state: "pending", label: pending, onClick: () => {} }
@@ -496,13 +498,13 @@ function SpaceDetailPage() {
               }
               pip={
                 !creating && desktopPip
-                  ? { id: desktopRow!.id, label: desktopPip.help ?? "Pop out", help: desktopPip.help ?? undefined, enabled: true, active: desktopPip.active, onClick: () => void onPip(desktopRow!) }
+                  ? { id: desktopRow!.id, label: desktopPip.help ?? t("computers.page.pop_out"), help: desktopPip.help ?? undefined, enabled: true, active: desktopPip.active, onClick: () => void onPip(desktopRow!) }
                   : undefined
               }
-              teleport={creating ? { label: "Teleport an app", help: later, enabled: false, onClick: () => {} } : teleportAction ? { label: teleportAction.label, help: teleportAction.help ?? undefined, enabled: teleportAction.enabled, onClick: teleportApp } : undefined}
-              share={creating ? { label: "Share", help: later, enabled: false, onClick: () => {} } : shareAction ? { label: shareAction.label, help: shareAction.help ?? undefined, enabled: shareAction.enabled, onClick: share } : undefined}
+              teleport={creating ? { label: t("computers.page.teleport_app_short"), help: later, enabled: false, onClick: () => {} } : teleportAction ? { label: teleportAction.label, help: teleportAction.help ?? undefined, enabled: teleportAction.enabled, onClick: teleportApp } : undefined}
+              share={creating ? { label: t("computers.page.share"), help: later, enabled: false, onClick: () => {} } : shareAction ? { label: shareAction.label, help: shareAction.help ?? undefined, enabled: shareAction.enabled, onClick: share } : undefined}
               remove={!creating && canDelete(space) ? { label: detail.deleteLabel, enabled: true, onClick: () => setConfirm("delete") } : undefined}
-              dismiss={state === "failed" ? { label: "Remove", enabled: true, onClick: dismiss } : undefined}
+              dismiss={state === "failed" ? { label: t("computers.account.remove"), enabled: true, onClick: dismiss } : undefined}
             />
           }
           notice={
@@ -522,7 +524,7 @@ function SpaceDetailPage() {
           onLayout={setLayout}
           smallStage={surface("h-full", shownRow?.id ?? null, shownView?.app ?? null, false)}
           aspect={aspect}
-          stageLabel={shownRow?.label ?? "Desktop"}
+          stageLabel={shownRow?.label ?? t("computers.tile.desktop")}
           thread={callThread}
           creating={creating}
           facts={detail.facts}
@@ -572,7 +574,7 @@ function SpaceDetailPage() {
           action={
             detail.isHost ? (
               <Button variant="outline" size="sm" data-host-desktop-action="" render={<Link to="/spaces/computer/$computerId" params={{ computerId: THIS_COMPUTER }} />}>
-                Open {thisComputerLabel()}
+                {t("computers.page.open_named", { name: thisComputerLabel() })}
               </Button>
             ) : null
           }
@@ -599,6 +601,7 @@ function hostedSpaces(spaces: readonly Space[], machineSpaceId: string): Space[]
  * screen (never streamed here): the core's line and its one action, then
  * the Spaces it provides when it provides any. */
 function MachineSpaces({ note, listSpaces, spaces, action }: { note: string; listSpaces: boolean; spaces: Space[]; action?: ReactNode }) {
+  const t = useT();
   return (
     <section data-machine-desktop-note="">
       <div className="flex items-center justify-between gap-4 rounded-xl border px-4 py-3">
@@ -607,9 +610,9 @@ function MachineSpaces({ note, listSpaces, spaces, action }: { note: string; lis
       </div>
       {listSpaces ? (
         <div data-machine-spaces="" className="mt-6">
-          <h2 className="mb-2 px-1 text-[13px] font-semibold">Spaces</h2>
+          <h2 className="mb-2 px-1 text-[13px] font-semibold">{t("computers.page.spaces_title")}</h2>
           {spaces.length === 0 ? (
-            <p className="px-1 text-[13px] text-muted-foreground">No Spaces yet</p>
+            <p className="px-1 text-[13px] text-muted-foreground">{t("computers.page.no_spaces")}</p>
           ) : (
             <ul className="divide-y rounded-xl border">
               {spaces.map((s) => (
@@ -651,9 +654,9 @@ function surfaceState(
     const fix = space.progress?.fix;
     return (
       <>
-        <p className="text-[13px] font-medium">Couldn't create this Space</p>
+        <p className="text-[13px] font-medium">{tr("computers.page.create_failed")}</p>
         <p data-create-error="" className="mt-2 max-w-md text-center text-xs text-destructive">
-          {createError(space) || "No reason was reported."}
+          {createError(space) || tr("computers.page.no_reason")}
         </p>
         {fix ? (
           <p data-create-fix="" className="mt-2 max-w-md text-center text-xs text-muted-foreground">
@@ -666,14 +669,14 @@ function surfaceState(
               {fix.label}
             </Button>
           ) : onRetry ? (
-            <Button onClick={onRetry}>Try again</Button>
+            <Button onClick={onRetry}>{tr("computers.page.try_again")}</Button>
           ) : null}
           <Button variant="outline" onClick={onDismiss}>
-            Remove from list
+            {tr("computers.page.remove_from_list")}
           </Button>
           {onReport && fix?.action !== "details" ? (
             <Button variant="outline" data-send-report="" onClick={onReport}>
-              Send a report…
+              {tr("computers.page.send_report")}
             </Button>
           ) : null}
         </div>
@@ -683,7 +686,7 @@ function surfaceState(
   if (state === "creating") {
     return (
       <>
-        <p className="text-[13px] font-medium">{space.progress?.label ?? "Creating…"}</p>
+        <p className="text-[13px] font-medium">{space.progress?.label ?? tr("computers.page.creating")}</p>
         <div className="mt-3 h-1 w-56 overflow-hidden rounded-full bg-foreground/10">
           <div className="h-full rounded-full bg-brand transition-[width]" style={{ width: `${Math.round(createProgress(space) * 100)}%` }} />
         </div>
@@ -692,13 +695,13 @@ function surfaceState(
       </>
     );
   }
-  if (state === "deleting") return <p className="text-[13px] text-muted-foreground">Deleting…</p>;
+  if (state === "deleting") return <p className="text-[13px] text-muted-foreground">{tr("spaces.status.deleting")}</p>;
   if (state === "stopped") {
     return (
       <>
         <OsIcon os={space.os} className="mb-4 size-8 text-muted-foreground/30" />
         <p className="text-[13px] text-muted-foreground">
-          {canPower(space) ? "Start this Space to open its desktop." : "This Space is stopped, and it can't be started from this app."}
+          {canPower(space) ? tr("computers.page.start_to_open") : tr("computers.page.stopped_no_start")}
         </p>
         {canPower(space) ? (
           <Button className="mt-4" variant="outline" disabled={Boolean(pending)} onClick={onStart}>
@@ -722,7 +725,7 @@ function SpaceResources({ space, spaces, snapshot, machines }: { space: Space; s
   if (!local && mine.powerState === "running" && !mine.usage) return null;
   const machine = local ? machines.find((m) => m.current) : machines.find((m) => m.id === space.host || m.spaceIds.includes(space.id));
   const host = hostResources(snapshot, machine);
-  const computer = local ? thisComputerText() : (machine?.name ?? space.hostName ?? "its computer");
+  const computer = local ? thisComputerText() : (machine?.name ?? space.hostName ?? tr("computers.page.its_computer"));
   // The Spaces on the same computer, with the numbers it sent, for how it fits.
   const sameComputer = (s: Space) => (local ? s.provider === "local" : s.host === space.host);
   const onComputer = spaces.flatMap((s) => {

@@ -16,7 +16,11 @@ test("the image list is not clipped by the System card", async ({ page }) => {
   // A click that lands before the page has wired its handlers (a slow runner)
   // opens nothing: click again until the wizard is there.
   await expect(async () => {
-    if (!(await wizard.isVisible())) await page.getByRole("button", { name: /New Space/ }).first().click();
+    if (!(await wizard.isVisible()))
+      await page
+        .getByRole("button", { name: /New Space/ })
+        .first()
+        .click();
     await expect(wizard).toHaveAttribute("data-step", "0", { timeout: 2000 });
   }).toPass({ timeout: 20_000 });
   await wizard.locator("[data-image-toggle]").click();

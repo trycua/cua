@@ -333,8 +333,10 @@ fi
         self.assertIn("resolve_release_please_request.py", workflow)
         self.assertIn('"--path=$RELEASE_PATH"', workflow)
         self.assertIn('ARGS+=("--release-as=$RELEASE_AS")', workflow)
-        self.assertIn("release-please@17.3.0", workflow)
-        self.assertIn("EXPECTED_INTEGRITY=", workflow)
+        self.assertIn('.github/scripts/release_please.sh "${ARGS[@]}"', workflow)
+        runner = self.read(".github/scripts/release_please.sh")
+        self.assertIn("ENGINE_VERSION=17.3.0", runner)
+        self.assertIn("EXPECTED_INTEGRITY=", runner)
 
     def test_required_release_metadata_check_runs_for_every_pull_request(self) -> None:
         workflow = self.read(".github/workflows/ci-release-metadata.yml")

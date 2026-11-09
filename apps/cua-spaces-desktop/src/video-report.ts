@@ -152,7 +152,12 @@ export function streamReport(before: StreamStatsLike | undefined, after: StreamS
 }
 
 /** The report over the window between two snapshots, with the CPU (% of one core) and memory (MB) sampled meanwhile. */
-export function videoReport(app: string, before: StatsSnapshot, after: StatsSnapshot, load: { cpu: readonly number[]; memoryMB: readonly number[] }): VideoReport {
+export function videoReport(
+  app: string,
+  before: StatsSnapshot,
+  after: StatsSnapshot,
+  load: { cpu: readonly number[]; memoryMB: readonly number[] },
+): VideoReport {
   const seconds = Math.max(0, after.t - before.t);
   const was = merge(before.streams);
   const streams = [...merge(after.streams).entries()].map(([key, s]) => streamReport(was.get(key), s, seconds));

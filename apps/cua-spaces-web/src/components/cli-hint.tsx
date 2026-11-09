@@ -12,6 +12,7 @@ import { useState } from "react";
 
 import { useSettings } from "@/bridge";
 import { Button } from "@/components/ui/button";
+import { useT } from "@/i18n";
 import { shownCli } from "@/lib/cli-commands";
 import { cn } from "@/lib/utils";
 
@@ -32,6 +33,7 @@ function useCopy(text: string): [boolean, () => void] {
 }
 
 function CopyButton({ text, className }: { text: string; className?: string }) {
+  const t = useT();
   const [copied, copy] = useCopy(text);
   return (
     <Button
@@ -39,8 +41,8 @@ function CopyButton({ text, className }: { text: string; className?: string }) {
       size="icon-sm"
       variant="ghost"
       data-cli-copy=""
-      aria-label={copied ? "Copied" : `Copy ${text}`}
-      title={copied ? "Copied" : "Copy"}
+      aria-label={copied ? t("settings.cli_hint.copied") : t("settings.cli_hint.copy_command", { command: text })}
+      title={copied ? t("settings.cli_hint.copied") : t("settings.cli_hint.copy")}
       onClick={copy}
       className={cn("size-6 shrink-0 text-muted-foreground hover:text-foreground", className)}
     >
@@ -50,11 +52,12 @@ function CopyButton({ text, className }: { text: string; className?: string }) {
 }
 
 /** The empty state's line: "Prefer the terminal?" and each command, copyable. */
-export function CliHintLine({ commands, className, label = "Prefer the terminal?" }: { commands: string[]; className?: string; label?: string | null }) {
+export function CliHintLine({ commands, className, label }: { commands: string[]; className?: string; label?: string | null }) {
+  const t = useT();
   if (!commands.length) return null;
   return (
     <div data-cli-hint="line" className={cn("flex flex-wrap items-center justify-center gap-x-2 gap-y-1.5 text-xs text-muted-foreground", className)}>
-      {label ? <span>{label}</span> : null}
+      {label === undefined ? <span>{t("settings.cli_hint.prefer_terminal")}</span> : label ? <span>{label}</span> : null}
       {commands.map((command) => (
         <span key={command} className="inline-flex items-center rounded-md bg-foreground/[0.05] py-0.5 pr-0.5 pl-2">
           <code data-cli-command="" className="font-mono text-[11px] text-foreground/80 select-all">
@@ -69,19 +72,30 @@ export function CliHintLine({ commands, className, label = "Prefer the terminal?
 
 /** New Space's Summary block: "Or run this in Terminal", the commands, one copy. */
 export function CliHintBlock({ commands }: { commands: string[] }) {
+  const t = useT();
   const text = commands.join("\n");
   const [copied, copy] = useCopy(text);
   if (!commands.length) return null;
   return (
     <div data-cli-hint="block" className="mt-4">
       <div className="flex items-center justify-between px-1 pb-1.5">
-        <span className="text-xs text-muted-foreground">Or run this in Terminal</span>
-        <Button type="button" size="sm" variant="ghost" data-cli-copy="" onClick={copy} className="h-6 gap-1 px-1.5 text-xs text-muted-foreground hover:text-foreground">
+        <span className="text-xs text-muted-foreground">{t("settings.cli_hint.run_in_terminal")}</span>
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          data-cli-copy=""
+          onClick={copy}
+          className="h-6 gap-1 px-1.5 text-xs text-muted-foreground hover:text-foreground"
+        >
           {copied ? <CheckIcon className="size-3" /> : <CopyIcon className="size-3" />}
-          {copied ? "Copied" : "Copy"}
+          {copied ? t("settings.cli_hint.copied") : t("settings.cli_hint.copy")}
         </Button>
       </div>
-      <pre data-cli-command="" className="overflow-x-auto rounded-lg bg-foreground/[0.04] px-3 py-2.5 font-mono text-[11.5px] leading-[1.6] whitespace-pre-wrap [overflow-wrap:anywhere] text-foreground/85 select-all dark:bg-black/25">
+      <pre
+        data-cli-command=""
+        className="overflow-x-auto rounded-lg bg-foreground/[0.04] px-3 py-2.5 font-mono text-[11.5px] leading-[1.6] whitespace-pre-wrap [overflow-wrap:anywhere] text-foreground/85 select-all dark:bg-black/25"
+      >
         {text}
       </pre>
     </div>

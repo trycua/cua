@@ -91,7 +91,8 @@ describe.skipIf(!wasmBuilt)("the Agents page while Spaces are slow", () => {
     await mountApp(`/agents?agent=${encodeURIComponent(HERMES)}`, {
       failsCreates: false,
       listsGhost: false,
-      intercept: (op, args) => (op === "thread.read" && (args as { spaceId?: string; with?: string }).spaceId === UBUNTU && (args as { with?: string }).with ? never() : undefined),
+      intercept: (op, args) =>
+        op === "thread.read" && (args as { spaceId?: string; with?: string }).spaceId === UBUNTU && (args as { with?: string }).with ? never() : undefined,
     });
     // release-checks' messages show though ubuntu-build's DM is still loading.
     await found(`[data-dm='${HERMES}'][data-dm-space='all']`);

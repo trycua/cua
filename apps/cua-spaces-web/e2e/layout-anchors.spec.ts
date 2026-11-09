@@ -46,7 +46,9 @@ function expectSteady(rows: Record<string, Record<string, Box | null>>, edges: R
     expect(seen.length, `${where}: ${name} on no step`).toBeGreaterThan(0);
     const [firstStep, first] = seen[0]!;
     for (const [step, v] of seen) {
-      expect(Math.abs(v - first), `${where}: ${name} ${side} on ${step} is ${v.toFixed(1)}, on ${firstStep} ${first.toFixed(1)}`).toBeLessThanOrEqual(TOLERANCE);
+      expect(Math.abs(v - first), `${where}: ${name} ${side} on ${step} is ${v.toFixed(1)}, on ${firstStep} ${first.toFixed(1)}`).toBeLessThanOrEqual(
+        TOLERANCE,
+      );
     }
   }
 }

@@ -25,11 +25,11 @@ class ReleasePleaseTagGuardWiringTest(unittest.TestCase):
     def test_guard_runs_before_release_please_tags(self) -> None:
         text = (WORKFLOWS / "release-please.yml").read_text()
         guard = text.index("- name: Guard merged release PRs against tagging other components")
-        tagging = text.index("- name: Open or update automatic release pull requests")
+        tagging = text.index("- name: Tag merged release pull requests")
         self.assertLess(guard, tagging)
         body = step("release-please.yml", "Guard merged release PRs against tagging other components")
         # Same condition as the tagging step, so it can never be skipped alone.
-        tagging_if = step("release-please.yml", "Open or update automatic release pull requests").split("uses:", 1)[0]
+        tagging_if = step("release-please.yml", "Tag merged release pull requests").split("uses:", 1)[0]
         self.assertEqual(body.split("env:", 1)[0].strip(), tagging_if.split("id: release-auto", 1)[1].strip())
         self.assertIn('--label "autorelease: pending"', body)
         self.assertIn(f"GUARD={GUARD}", body)

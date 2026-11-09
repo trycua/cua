@@ -13,7 +13,12 @@ import { electronUpdater } from "../src/electron-updater";
 const loader = path.join(__dirname, "../src/electron-updater.ts");
 
 const inNode = (script: string) =>
-  JSON.parse(execFileSync(process.execPath, ["--experimental-strip-types", "--no-warnings", "--input-type=module", "-e", script], { cwd: path.dirname(loader), encoding: "utf8" }));
+  JSON.parse(
+    execFileSync(process.execPath, ["--experimental-strip-types", "--no-warnings", "--input-type=module", "-e", script], {
+      cwd: path.dirname(loader),
+      encoding: "utf8",
+    }),
+  );
 
 describe("electronUpdater", () => {
   it("finds autoUpdater where Node's import() of the package puts it", () => {

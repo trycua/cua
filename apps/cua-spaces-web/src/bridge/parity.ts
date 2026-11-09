@@ -60,17 +60,7 @@ import { ciReduce, ciView } from "./ci-runners";
 import { prepareHidden, prepareListed, prepareMetrics, prepareReduce, prepareView } from "./prepare-core";
 import { hostFormInitial, hostFormReduce, hostFormView, type HostFormView } from "./this-machine";
 import type { AccountMenuInput, ProBannerInput } from "./contracts/spaces-page";
-import {
-  accountMenu,
-  bulkConfirm,
-  bulkDone,
-  bulkProgress,
-  chooseSettings,
-  proBanner,
-  spaceMenu,
-  tipsReduce,
-  tipsView,
-} from "./spaces-page";
+import { accountMenu, bulkConfirm, bulkDone, bulkProgress, chooseSettings, proBanner, spaceMenu, tipsReduce, tipsView } from "./spaces-page";
 
 type Args = Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
 
@@ -176,7 +166,21 @@ function bridgeMethods(core: CoreClient, record: (c: ParityCheckpoint) => void):
       const view = core.tryCall<MachinesView>("machines.view", {
         input: {
           page: { hostOs: "macos", spaces: [], now: 0 },
-          rows: [{ id: "this-mac", name: "This Mac", online: true, os: "macos", via: "local", current: true, device: null, deviceOnly: false, spaceId: null, stoppedSharing: false, lastSeen: null }],
+          rows: [
+            {
+              id: "this-mac",
+              name: "This Mac",
+              online: true,
+              os: "macos",
+              via: "local",
+              current: true,
+              device: null,
+              deviceOnly: false,
+              spaceId: null,
+              stoppedSharing: false,
+              lastSeen: null,
+            },
+          ],
           host: a.state,
         },
       });

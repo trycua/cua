@@ -175,7 +175,7 @@ def relevant_paths(config: dict, branch: str) -> tuple[list[str], list[str]]:
     excluded: list[str] = []
     for path, package in config.get("packages", {}).items():
         if package.get("component") == component:
-            paths.append(path)
+            paths.extend([path, *package.get("additional-paths", [])])
             excluded.extend(package.get("exclude-paths", []))
     return paths, excluded
 

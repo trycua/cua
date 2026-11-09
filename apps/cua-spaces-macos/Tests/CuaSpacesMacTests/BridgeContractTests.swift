@@ -414,6 +414,8 @@ struct BridgeContractTests {
         "driver.pause": "as driver.config (it stops the driver); EmbeddedDriverTests covers the marker path",
         "driver.setup": "writes the coding agents' configs and restarts the driver",
         "driver.setApp": "as driver.setup, for one agent",
+        "disk.get": "runs the bundled cua storage; DiskStorageTests covers the shape and arguments",
+        "disk.do": "runs the bundled cua storage, a folder panel or the uninstall script; DiskStorageTests covers the arguments",
     ]
 
     static func shapes() throws -> [String: Any] {

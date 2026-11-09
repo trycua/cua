@@ -278,6 +278,8 @@ export const HOST_COVERAGE = {
   "repoCache.get": { webkit: { methods: ["repoCache.get"] }, tauri: ST["repoCache.get"], unsupported: { tauri: "the Tauri app has no repo cache" } },
   "repoCache.set": { webkit: { methods: ["repoCache.set"] }, tauri: ST["repoCache.set"], unsupported: { tauri: "the Tauri app has no repo cache" } },
   "repoCache.clear": { webkit: { methods: ["repoCache.clear"] }, tauri: ST["repoCache.clear"], unsupported: { tauri: "the Tauri app has no repo cache" } },
+  "disk.get": { webkit: { methods: ["disk.get"] }, tauri: ST["disk.get"], unsupported: { tauri: "the Tauri app has no storage settings" } },
+  "disk.do": { webkit: { methods: ["disk.do"] }, tauri: ST["disk.do"], unsupported: { tauri: "the Tauri app has no storage settings" } },
   "devices.get": { webkit: { methods: ["devices.get"] }, tauri: ST["devices.get"] },
   "devices.enroll": { webkit: { methods: ["devices.enroll"] }, tauri: ST["devices.enroll"] },
   "devices.checkEnrolled": { webkit: { methods: ["devices.checkEnrolled"] }, tauri: ST["devices.checkEnrolled"] },

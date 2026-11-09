@@ -399,6 +399,28 @@ class UninstallMacTest(unittest.TestCase):
         self.assertEqual(box.index("security: delete-generic-password"), -1)
         self.assertIn("keeping the Keychain items", result.stdout)
 
+    def test_wait_for_pid_waits_for_the_process_to_exit(self):
+        import subprocess, time
+        box = self.box()
+        installed_mac(box)
+        sleeper = subprocess.Popen(["sleep", "3"])
+        started = time.time()
+        try:
+            result = box.run("--yes", "--wait-for-pid", str(sleeper.pid), "--prefix", str(box.home))
+        finally:
+            sleeper.kill()
+            sleeper.wait()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertGreaterEqual(time.time() - started, 2.0)
+        self.assertFalse(box.exists("Applications/Cua Spaces.app"))
+
+    def test_wait_for_pid_needs_a_number(self):
+        box = self.box()
+        installed_mac(box)
+        result = box.run("--yes", "--wait-for-pid", "abc")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("needs a number", result.stdout + result.stderr)
+
     def test_stray_test_preferences_and_sparkle_staging_are_removed(self):
         box = self.box()
         installed_mac(box)

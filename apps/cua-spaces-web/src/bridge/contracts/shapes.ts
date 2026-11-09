@@ -67,7 +67,20 @@ import type {
   WizardEnv,
 } from "./new-space";
 import type { NotificationInput } from "./notifications";
-import type { AboutInput, DriveCheckInput, DriveStorageInput, LoginItemReport, RepoCacheView, StorageInput, UpdateState } from "./settings";
+import type {
+  AboutInput,
+  DiskKind,
+  DiskItem,
+  DiskOldLocation,
+  DiskResult,
+  DiskView,
+  DriveCheckInput,
+  DriveStorageInput,
+  LoginItemReport,
+  RepoCacheView,
+  StorageInput,
+  UpdateState,
+} from "./settings";
 import type { ShareEntry, ShareRemoval } from "./share";
 import type { BulkResult } from "./spaces-page";
 import type { CreateFix, CreatingElsewhere, SpaceAccess, SpaceProgress, SpaceRow, SpaceSharingFacts } from "./spaces";
@@ -572,6 +585,35 @@ const RepoCacheShape = ref(
     hits: num,
     misses: num,
     secondsSaved: num,
+  }),
+);
+
+const DiskViewShape = ref(
+  "DiskView",
+  obj<DiskView>()({
+    home: str,
+    homeBytes: num,
+    freeBytes: nullable(num),
+    daemonRunning: bool,
+    kinds: list(obj<DiskKind>()({ kind: str, path: str, source: str, movable: bool, bytes: num })),
+    items: list(obj<DiskItem>()({ family: str, name: str, path: str, bytes: num })),
+    oldLocations: list(obj<DiskOldLocation>()({ path: str, bytes: num })),
+    trajectoriesMaxBytes: num,
+    trajectoriesMaxDays: num,
+    canUninstall: bool,
+  }),
+);
+
+const DiskResultShape = ref(
+  "DiskResult",
+  obj<DiskResult>()({
+    ok: bool,
+    path: nullable(str),
+    error: nullable(str),
+    warnings: list(str),
+    neededBytes: nullable(num),
+    availableBytes: nullable(num),
+    freedBytes: nullable(num),
   }),
 );
 
@@ -1852,6 +1894,8 @@ export const OP_SHAPES: Record<OpName, Schema> = {
   "repoCache.get": RepoCacheShape,
   "repoCache.set": RepoCacheShape,
   "repoCache.clear": RepoCacheShape,
+  "disk.get": DiskViewShape,
+  "disk.do": DiskResultShape,
   "devices.get": DevicesShape,
   "devices.enroll": obj<EnrollResult>()({ enrolled: bool, code: nullable(str) }),
   "devices.checkEnrolled": bool,
@@ -2305,6 +2349,8 @@ export const WEBKIT_SHAPES: Partial<Record<WebkitMethod, Schema>> = {
   "repoCache.get": RepoCacheShape,
   "repoCache.set": RepoCacheShape,
   "repoCache.clear": RepoCacheShape,
+  "disk.get": DiskViewShape,
+  "disk.do": DiskResultShape,
   "devices.get": DevicesShape,
   "devices.enroll": OP_SHAPES["devices.enroll"],
   "devices.checkEnrolled": bool,

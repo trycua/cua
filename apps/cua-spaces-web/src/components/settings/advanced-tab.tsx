@@ -10,6 +10,7 @@ import { SharedLinks } from "@/components/links/shared-links";
 import { SharingSettings } from "@/components/links/sharing-settings";
 import { SettingRow } from "@/components/ui/grouped";
 import { CoreSettingsRow } from "@/components/settings/core-section";
+import { DiskGroup } from "@/components/settings/disk-group";
 import { RuntimeKindRows } from "@/components/settings/runtime-rows";
 import { AddComputerSheet } from "@/components/add-computer-sheet";
 import { HostSetupForm } from "@/components/this-machine";
@@ -70,6 +71,7 @@ export function AdvancedTab() {
           ) : null}
         </SettingsGroup>
       ) : null}
+      <DiskGroup />
       <OwnConnection />
     </div>
   );

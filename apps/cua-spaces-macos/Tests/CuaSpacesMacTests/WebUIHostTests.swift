@@ -476,7 +476,7 @@ struct WebUIHostTests {
         for m in ["spaces.add", "clouds.status", "teleport.catalog", "teleport.run", "sharing.share", "volume.overview",
                   "agents.setupDriver", "about.set", "update.get", "update.install", "loginItem.set", "devices.approve", "storage.run",
                   "notifications.list", "telemetry.track", "telemetry.linkNotice", "telemetry.acknowledgeLinkNotice", "spaces.windows", "stream.pip", "spaces.thumbnail", "spaces.sendFiles", "host.setUp", "host.action",
-                  "host.limits", "host.openSettings", "repoCache.get", "repoCache.set", "repoCache.clear"] {
+                  "host.limits", "host.openSettings", "repoCache.get", "repoCache.set", "repoCache.clear", "disk.get", "disk.do"] {
             #expect(WebUIBridge.methods.contains(m), "\(m)")
         }
         #expect(!WebUIBridge.methods.contains("spaces.new"))

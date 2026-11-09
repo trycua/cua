@@ -182,6 +182,9 @@ rm -rf "$icon_tmp"
 cp "$icons/tray-template.png" "$app/Contents/Resources/tray-template.png"
 cp "$icons/tray-template@2x.png" "$app/Contents/Resources/tray-template@2x.png"
 cp "$here/THIRD_PARTY_NOTICES.md" "$app/Contents/Resources/THIRD_PARTY_NOTICES.md"
+# Settings, Advanced, Uninstall runs this script (the same one `curl cua.ai/uninstall.sh | sh` runs).
+cp "$here/../../scripts/install/uninstall.sh" "$app/Contents/Resources/uninstall.sh"
+chmod 0644 "$app/Contents/Resources/uninstall.sh"
 # New UI (preview): the shared web UI's build (apps/cua-spaces-web, `dist`),
 # served from Contents/Resources/WebUI at cua-spaces://app/. CUA_WEBUI_DIST
 # points at another build; without one the window says how to add it.

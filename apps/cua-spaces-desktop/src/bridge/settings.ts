@@ -380,6 +380,13 @@ export function settingsMethods(ctx: BridgeContext): Handlers {
       }
     },
     "repoCache.clear": async () => repoCacheView(await model.backend.clearRepoCache()),
+    // Settings, Advanced, Storage: the Mac app's. Here the page hides the group.
+    "disk.get": async () => {
+      throw Failure.unsupported("Storage settings are in the Mac app for now");
+    },
+    "disk.do": async () => {
+      throw Failure.unsupported("Storage settings are in the Mac app for now");
+    },
     // The page's tips (`AppSettings.tips`) and the notch's pins (`AppSettings.notchPinned`), saved as given.
     "settings.update": (args) => {
       save(settingsUpdate(args));

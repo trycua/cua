@@ -151,6 +151,8 @@ export const WEBKIT_METHODS = [
   "repoCache.get",
   "repoCache.set",
   "repoCache.clear",
+  "disk.get",
+  "disk.do",
   "devices.get",
   "devices.enroll",
   "devices.checkEnrolled",

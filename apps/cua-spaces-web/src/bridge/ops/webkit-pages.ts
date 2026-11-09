@@ -81,6 +81,8 @@ export const WEBKIT_PAGE_OPS = [
   "repoCache.get",
   "repoCache.set",
   "repoCache.clear",
+  "disk.get",
+  "disk.do",
   "devices.get",
   "devices.enroll",
   "devices.checkEnrolled",
@@ -270,6 +272,9 @@ export function webkitPageOps(request: Request, toHostStatus: (h: WkHostState) =
     "repoCache.get": call("repoCache.get"),
     "repoCache.set": call("repoCache.set"),
     "repoCache.clear": call("repoCache.clear"),
+    "disk.get": call("disk.get"),
+    // The folder panel waits for the person: no timeout. Moves copy large files: no timeout either.
+    "disk.do": async (args) => (await request("disk.do", { ...args }, null)) as never,
     "devices.get": call("devices.get"),
     "devices.enroll": call("devices.enroll"),
     "devices.checkEnrolled": async () => Boolean(await request("devices.checkEnrolled")),

@@ -33,6 +33,9 @@ Options:
                      (Space disks, the local Cua Volume files, the Keyvault).
                      Running Spaces are listed and stopped first. Cannot be
                      undone; asks you to type "delete" unless --yes is given
+  --wait-for-pid N   wait (up to 60 s) for process N to exit before removing
+                     anything: the Cua Spaces app's Uninstall starts this script
+                     and quits, so the app is gone when its folder is removed
   --keep-keychain    leave every Keychain / Secret Service item alone (your
                      sign-in, device key and Keyvault). The Cua Spaces app's
                      Uninstall passes this unless you tick the box
@@ -75,6 +78,7 @@ SESSION_FILES="credentials.json spaces-session.json spaces-credentials.json"
 keep_data=0
 keep_permissions=0
 keep_keychain=0
+wait_pid=""
 delete_spaces=0
 all_tools=0
 prefix=""
@@ -109,6 +113,12 @@ parse_args() {
         --keep-data) keep_data=1 ;;
         --keep-permissions) keep_permissions=1 ;;
         --keep-keychain) keep_keychain=1 ;;
+        --wait-for-pid)
+            [ $# -ge 2 ] || die "--wait-for-pid needs a process id"
+            wait_pid="$2"
+            shift
+            ;;
+        --wait-for-pid=*) wait_pid="${1#--wait-for-pid=}" ;;
         --delete-spaces) delete_spaces=1 ;;
         --all) all_tools=1 ;;
         --prefix)
@@ -131,6 +141,9 @@ parse_args() {
     if [ "$keep_data" = 1 ] && [ "$delete_spaces" = 1 ]; then
         die "--keep-data and --delete-spaces contradict each other"
     fi
+    case "$wait_pid" in
+    "" | *[!0-9]*) [ -z "$wait_pid" ] || die "--wait-for-pid needs a number" ;;
+    esac
     case "$prefix" in
     "" | /*) ;;
     *) prefix="$(pwd)/$prefix" ;;
@@ -1256,6 +1269,20 @@ confirm_plan() {
     fi
 }
 
+# Waits for the process that started this uninstall (the app) to exit.
+wait_for_pid() {
+    [ -n "$wait_pid" ] || return 0
+    [ "$dry_run" = 0 ] || return 0
+    waited=0
+    while kill -0 "$wait_pid" 2>/dev/null && [ "$waited" -lt 60 ]; do
+        sleep 1
+        waited=$((waited + 1))
+    done
+    if kill -0 "$wait_pid" 2>/dev/null; then
+        warn "process $wait_pid is still running after 60 s; continuing"
+    fi
+}
+
 main() {
     parse_args "$@"
     detect_platform
@@ -1272,6 +1299,7 @@ main() {
     recognise_home
     spaces="$(local_spaces)"
     confirm_plan
+    wait_for_pid
     quit_app
     stop_spaces
     delete_spaces_now

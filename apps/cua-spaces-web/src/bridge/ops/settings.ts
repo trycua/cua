@@ -20,6 +20,9 @@ import type {
   DriveStorageInput,
   Experiments,
   LoginItemReport,
+  DiskCommand,
+  DiskResult,
+  DiskView,
   RepoCacheChange,
   RepoCacheView,
   StorageInput,
@@ -67,6 +70,11 @@ export interface SettingsOperations {
   "repoCache.set": { args: RepoCacheChange; result: RepoCacheView };
   /** Deletes every repository it holds; answers the cache after. */
   "repoCache.clear": { args: Empty; result: RepoCacheView };
+
+  /** What Cua keeps on this computer and where (Settings, Advanced, Storage). */
+  "disk.get": { args: Empty; result: DiskView };
+  /** One storage action: pick a folder, check it, move a kind there, reset, remove, uninstall. */
+  "disk.do": { args: DiskCommand; result: DiskResult };
 
   /** The account's devices and access log (`devices_snapshot`). */
   "devices.get": { args: Empty; result: DevicesInput };
@@ -116,6 +124,8 @@ export const SETTINGS_OPERATIONS = [
   "repoCache.get",
   "repoCache.set",
   "repoCache.clear",
+  "disk.get",
+  "disk.do",
   "devices.get",
   "devices.enroll",
   "devices.checkEnrolled",
@@ -213,6 +223,8 @@ export function tauriSettingsOps(invoke: Invoke, ui: { read(key: string): string
     "repoCache.get": () => Promise.reject(new UnsupportedOperationError("tauri", "repoCache.get")),
     "repoCache.set": () => Promise.reject(new UnsupportedOperationError("tauri", "repoCache.set")),
     "repoCache.clear": () => Promise.reject(new UnsupportedOperationError("tauri", "repoCache.clear")),
+    "disk.get": () => Promise.reject(new UnsupportedOperationError("tauri", "disk.get")),
+    "disk.do": () => Promise.reject(new UnsupportedOperationError("tauri", "disk.do")),
 
     // The Tauri app keeps the switches in its UI storage, as its own Settings does.
     "experiments.get": async () => readExperiments(),
@@ -299,6 +311,8 @@ export const TAURI_SETTINGS_UNSUPPORTED = [
   "repoCache.get",
   "repoCache.set",
   "repoCache.clear",
+  "disk.get",
+  "disk.do",
 ] as const satisfies readonly SettingsOpName[];
 
 /** The Tauri commands each operation calls (`coverage.ts`). */
@@ -318,6 +332,8 @@ export const SETTINGS_TAURI_COMMANDS = {
   "repoCache.get": [],
   "repoCache.set": [],
   "repoCache.clear": [],
+  "disk.get": [],
+  "disk.do": [],
   "devices.get": ["devices_snapshot"],
   "devices.enroll": ["devices_enroll"],
   "devices.checkEnrolled": ["devices_check_enrolled"],

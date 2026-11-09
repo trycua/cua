@@ -250,3 +250,72 @@ export interface RepoCacheChange {
   /** GB; null: automatic (the smaller of 5 GB and a tenth of the free disk). */
   sizeGb?: number | null;
 }
+
+/** One folder Cua uses (`cua storage show --json`, `kinds`). */
+export interface DiskKind {
+  /** `runtimes`, `images`, `cache`, `logs`, `trajectories`; the rest cannot be moved. */
+  kind: string;
+  path: string;
+  /** `default`, `settings` or `environment` (an environment variable wins and cannot be changed here). */
+  source: string;
+  movable: boolean;
+  bytes: number;
+}
+
+/** A computer image or runtime below the computers folder. */
+export interface DiskItem {
+  /** `linux` or `lume`. */
+  family: string;
+  name: string;
+  path: string;
+  bytes: number;
+}
+
+/** An old copy left by a move; removing it needs a confirmation. */
+export interface DiskOldLocation {
+  path: string;
+  bytes: number;
+}
+
+/** What Cua keeps on this computer (`disk.get`). */
+export interface DiskView {
+  home: string;
+  homeBytes: number;
+  /** Free bytes on the volume of the home; null when unknown. */
+  freeBytes: number | null;
+  /** Computers are running: moving or removing their files waits. */
+  daemonRunning: boolean;
+  kinds: DiskKind[];
+  items: DiskItem[];
+  oldLocations: DiskOldLocation[];
+  /** Trajectory limits in force. */
+  trajectoriesMaxBytes: number;
+  trajectoriesMaxDays: number;
+  /** The host can uninstall Cua from here (macOS app only). */
+  canUninstall: boolean;
+}
+
+/** One storage action (`disk.do`). */
+export type DiskCommand =
+  | { op: "locate"; kind: string }
+  | { op: "check"; kind: string; path: string }
+  | { op: "set"; kind: string; path: string; move: boolean }
+  | { op: "reset"; kind: string }
+  | { op: "remove"; path: string }
+  | { op: "uninstall"; keychain: boolean };
+
+/** The answer to a storage action. */
+export interface DiskResult {
+  ok: boolean;
+  /** `locate`: the chosen folder (null: cancelled). */
+  path: string | null;
+  /** A plain-words reason when `ok` is false. */
+  error: string | null;
+  /** Notes to show (an external drive, a folder that is not empty). */
+  warnings: string[];
+  /** `check`: bytes a move would copy, and the free bytes at the new place. */
+  neededBytes: number | null;
+  availableBytes: number | null;
+  /** `remove`: bytes freed. */
+  freedBytes: number | null;
+}

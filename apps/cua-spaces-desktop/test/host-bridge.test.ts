@@ -733,6 +733,7 @@ describe.skipIf(!built)("This machine, Devices and Settings on the app core", ()
     expect(await code("repoCache.set", { sizeGb: "lots" })).toBe("bad_args");
     expect(await code("repoCache.set", { enabled: "yes" })).toBe("bad_args");
     expect(await call("repoCache.clear")).toMatchObject({ repos: 0, bytes: 0 });
+    expect(await code("disk.get")).toBe("unsupported");
   });
 
   it("lists the coding agents under AI agents, and a row's button sets one up", async () => {

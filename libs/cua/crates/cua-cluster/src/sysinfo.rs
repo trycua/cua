@@ -1017,3 +1017,16 @@ mod tests {
         assert!(a[0].starts_with("apple:") && a[0].ends_with(" GB"), "{a:?}");
     }
 }
+
+#[cfg(all(test, windows))]
+mod windows_memory_tests {
+    #[test]
+    fn a_windows_computer_reports_its_memory() {
+        let total = super::total_memory_mb().expect("total memory");
+        let avail = super::available_memory_mb().expect("available memory");
+        assert!(
+            total > 256 && avail > 0 && avail <= total,
+            "{avail} of {total}"
+        );
+    }
+}

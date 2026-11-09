@@ -1,0 +1,54 @@
+name: "CI: CLA report"
+
+# Privileged half of the CLA check (see cla.yml). Runs from the default branch after "CI: CLA"
+# finishes on a pull request, including fork pull requests. It never checks out or executes pull
+# request code: the only input from the pull request is a number in an artifact, which is
+# validated as an integer and used to read everything else from the GitHub API.
+
+on:
+  workflow_run:
+    workflows: ["CI: CLA"]
+    types: [completed]
+
+permissions:
+  actions: read
+  contents: read
+  pull-requests: write
+  statuses: write
+
+jobs:
+  report:
+    name: cla-report
+    if: >-
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out the report script from the default branch
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            .github/scripts/cla_pr_report.py
+            .github/scripts/release_attribution.py
+            .github/release-attribution-config.json
+            .github/workflows/cla.yml
+          persist-credentials: false
+
+      - name: Download the pull request number
+        uses: actions/download-artifact@v4
+        with:
+          name: cla-pr
+          path: ${{ runner.temp }}/cla-pr
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Report the CLA status
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          NUMBER_FILE: ${{ runner.temp }}/cla-pr/number
+        run: |
+          set -euo pipefail
+          number=$(head -c 12 "$NUMBER_FILE" | tr -d '[:space:]')
+          python3 .github/scripts/cla_pr_report.py --number "$number" --head-sha "$HEAD_SHA"

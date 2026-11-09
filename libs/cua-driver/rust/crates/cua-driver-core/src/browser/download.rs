@@ -29,7 +29,48 @@ use super::store::BrowserActionKind;
 /// It is intentionally absent from the public input schema.
 pub const MCP_HOST_DOWNLOAD_APPROVAL_ARG: &str = "_cua_browser_download_mcp_host_approved";
 
-const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(30);
+/// Deadline for an approved download when the caller does not ask for one.
+const DEFAULT_DOWNLOAD_TIMEOUT_MS: u64 = 30_000;
+
+/// Ceiling for a caller-supplied `timeout_ms`. The download gate below is
+/// process-wide, so an unbounded deadline would let one slow download hold off
+/// every other exact-tab download for as long as the caller liked.
+const MAX_DOWNLOAD_TIMEOUT_MS: u64 = 600_000;
+
+/// Resolve the download deadline from `timeout_ms`, falling back to
+/// [`DEFAULT_DOWNLOAD_TIMEOUT_MS`]. Out-of-range values are refused rather than
+/// clamped: a caller that asked for an hour should learn the cap instead of
+/// silently getting ten minutes and failing again on a deadline it never set.
+fn resolve_download_timeout(args: &Value) -> Result<Duration, ToolResult> {
+    // Read the raw value rather than `opt_u64`, which reports a wrong-typed
+    // field as absent. Falling back to the default on `"60000"` would recreate
+    // the bug this parameter exists to fix: a deadline the caller cannot move.
+    let Some(raw) = args.get("timeout_ms") else {
+        return Ok(Duration::from_millis(DEFAULT_DOWNLOAD_TIMEOUT_MS));
+    };
+    let Some(timeout_ms) = raw.as_u64() else {
+        return Err(ToolResult::error(
+            "timeout_ms must be a positive integer number of milliseconds",
+        ));
+    };
+    if !(1..=MAX_DOWNLOAD_TIMEOUT_MS).contains(&timeout_ms) {
+        return Err(ToolResult::error(format!(
+            "timeout_ms must be between 1 and {MAX_DOWNLOAD_TIMEOUT_MS}"
+        )));
+    }
+    Ok(Duration::from_millis(timeout_ms))
+}
+
+/// Render a deadline for the timeout refusal. Whole seconds read naturally for
+/// the default and the usual overrides; sub-second values stay in milliseconds
+/// so they are not reported as "0 seconds".
+fn describe_timeout(timeout: Duration) -> String {
+    if timeout.subsec_millis() == 0 {
+        format!("{} seconds", timeout.as_secs())
+    } else {
+        format!("{} ms", timeout.as_millis())
+    }
+}
 
 fn browser_download_gate() -> &'static tokio::sync::Mutex<()> {
     static GATE: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
@@ -66,6 +107,12 @@ impl BrowserDownloadTool {
                         "destination_root": {
                             "type": "string",
                             "description": "Absolute, existing, canonical directory approved to receive the download."
+                        },
+                        "timeout_ms": {
+                            "type": "integer",
+                            "description": "How long to wait for the approved download to finish, in milliseconds. Defaults to 30000; raise it for downloads that legitimately take longer than 30 seconds.",
+                            "minimum": 1,
+                            "maximum": MAX_DOWNLOAD_TIMEOUT_MS
                         }
                     },
                     "required": ["session", "target_id", "tab_id", "ref", "destination_root"],
@@ -307,6 +354,10 @@ impl Tool for BrowserDownloadTool {
             Ok(root) => root,
             Err(error) => return error,
         };
+        let timeout = match resolve_download_timeout(&args) {
+            Ok(timeout) => timeout,
+            Err(error) => return error,
+        };
 
         let _mutation = match self
             .engine
@@ -463,7 +514,7 @@ impl Tool for BrowserDownloadTool {
 
         let mut observed_guid = None;
         let outcome = tokio::time::timeout(
-            DOWNLOAD_TIMEOUT,
+            timeout,
             await_download(&mut events, &expected_frame_id, &mut observed_guid),
         )
         .await;
@@ -498,7 +549,10 @@ impl Tool for BrowserDownloadTool {
                 remove_proven_partial(&destination_root, observed_guid.as_deref());
                 BrowserRefusal::new(
                     BrowserRefusalCode::BrowserActionUnavailable,
-                    "the approved browser download did not complete within 30 seconds",
+                    format!(
+                        "the approved browser download did not complete within {}",
+                        describe_timeout(timeout)
+                    ),
                 )
                 .to_tool_result()
             }
@@ -577,6 +631,49 @@ mod tests {
     fn cdp_download_path_preserves_ordinary_paths() {
         let path = Path::new("/tmp/approved-downloads");
         assert_eq!(download_path_for_cdp(path), path.to_string_lossy());
+    }
+
+    #[test]
+    fn timeout_defaults_when_the_caller_does_not_ask_for_one() {
+        assert_eq!(
+            resolve_download_timeout(&json!({})).unwrap(),
+            Duration::from_millis(DEFAULT_DOWNLOAD_TIMEOUT_MS)
+        );
+    }
+
+    #[test]
+    fn timeout_honours_a_caller_override() {
+        assert_eq!(
+            resolve_download_timeout(&json!({ "timeout_ms": 120_000 })).unwrap(),
+            Duration::from_secs(120)
+        );
+    }
+
+    #[test]
+    fn timeout_accepts_the_cap_and_refuses_beyond_it() {
+        assert_eq!(
+            resolve_download_timeout(&json!({ "timeout_ms": MAX_DOWNLOAD_TIMEOUT_MS })).unwrap(),
+            Duration::from_millis(MAX_DOWNLOAD_TIMEOUT_MS)
+        );
+        assert!(
+            resolve_download_timeout(&json!({ "timeout_ms": MAX_DOWNLOAD_TIMEOUT_MS + 1 }))
+                .is_err()
+        );
+        assert!(resolve_download_timeout(&json!({ "timeout_ms": 0 })).is_err());
+    }
+
+    #[test]
+    fn timeout_refuses_a_value_of_the_wrong_type() {
+        // Silently defaulting here would hand the caller a deadline it never
+        // asked for, which is the failure this parameter exists to remove.
+        assert!(resolve_download_timeout(&json!({ "timeout_ms": "60000" })).is_err());
+    }
+
+    #[test]
+    fn timeout_is_described_in_the_units_it_was_set_in() {
+        assert_eq!(describe_timeout(Duration::from_secs(30)), "30 seconds");
+        assert_eq!(describe_timeout(Duration::from_secs(120)), "120 seconds");
+        assert_eq!(describe_timeout(Duration::from_millis(1_500)), "1500 ms");
     }
 
     #[cfg(target_os = "windows")]

@@ -33,6 +33,23 @@ or cross-component contract change):
 - Manual or platform evidence:
 - Known gaps or CI still required:
 
+## Screenshots (before/after)
+
+<!--
+UI changes only. Show before and after at desktop (1440x900) and mobile
+(390x844), with demo data only: no real accounts, hostnames, chats or
+credentials. Add a short recording when motion or timing matters. Upload the
+images to GitHub and embed them here. Never commit PR-only images.
+The "CI: PR screenshots" workflow links rendered images for the Spaces web UI.
+To render more routes, add a line: Screenshot routes: /settings/connections
+No UI change? Replace this section with: Screenshots: not needed - <reason>
+-->
+
+| | Before | After |
+| --- | --- | --- |
+| Desktop | | |
+| Mobile | | |
+
 ## Contributor and release checks
 
 - [ ] The PR is focused and the description matches the final diff.

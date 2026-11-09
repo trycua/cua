@@ -56,7 +56,7 @@ query($q: String!, $after: String) {
 """
 
 # Workflow runs the gate never waits for (see ci-gate.yml); they must not count as "the last check".
-GATE_IGNORES = ("claude-auto-fix", "ci-release-reminder", "review-cua-perception-candidates", "cla.yml")
+GATE_IGNORES = ("claude-auto-fix", "ci-release-reminder", "ci-pr-screenshots", "review-cua-perception-candidates", "cla.yml")
 
 
 def gh(*args: str, check: bool = True) -> str:

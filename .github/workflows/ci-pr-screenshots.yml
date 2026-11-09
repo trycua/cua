@@ -1,0 +1,237 @@
+name: "CI: PR screenshots"
+
+# UI pull requests show before/after screenshots at desktop (1440x900) and
+# mobile (390x844), from demo data only. This workflow:
+#   1. renders the key Cua Spaces web screens (first run, sign in, Home,
+#      Computers, Settings, plus any `Screenshot routes: /a, /b` line in the PR
+#      description) for the PR head and for its merge-base, in parallel;
+#   2. uploads each side as a workflow artifact and posts ONE sticky comment
+#      with what changed per screen and size, and links to the artifacts;
+#   3. checks that the description itself carries screenshots (or says why none
+#      are needed). The author embeds them: images are never committed to a
+#      branch, and GitHub-hosted artifacts cannot be embedded in a comment.
+#
+# Not a required check. Fork PRs skip steps 1 and 2: the read-only fork token
+# cannot comment, and whether fork PRs run our CI at all is an open decision
+# (5a299b9c). Step 3 still runs for forks, and only reads the description.
+# SwiftUI screens cannot render on Linux; see the PR that added this for the
+# macOS-lane follow-up.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, edited]
+    paths:
+      - "apps/cua-spaces-web/**"
+      - "apps/cua-spaces-desktop/src/**"
+      - "libs/cua/crates/cua-spaces-app-core/src/onboarding*.rs"
+      - "libs/cua/crates/cua-spaces-app-core/src/first_run.rs"
+      - "libs/cua/crates/cua-spaces-app-core/src/first_prompts.rs"
+      - "libs/cua/crates/cua-spaces-app-core/src/sign_in.rs"
+      - "libs/cua/crates/cua-spaces-app-core/src/nudges.rs"
+      - "libs/cua/crates/cua-spaces-app-core/src/checklist.rs"
+      - ".github/workflows/ci-pr-screenshots.yml"
+      - ".github/scripts/check_pr_screenshots.py"
+      - ".github/scripts/pr_screenshots_comment.mjs"
+
+permissions:
+  contents: read
+
+# A description edit only re-renders when it adds a routes line; any other edit
+# gets its own group so it cannot cancel a render in progress.
+concurrency:
+  group: ci-pr-screenshots-${{ github.event.pull_request.number }}-${{ github.event.action == 'edited' && !contains(github.event.pull_request.body, 'Screenshot routes:') }}
+  cancel-in-progress: true
+
+env:
+  CARGO_NET_RETRY: "10"
+  CARGO_HTTP_TIMEOUT: "120"
+  CARGO_HTTP_MULTIPLEXING: "false"
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+
+jobs:
+  plan:
+    name: plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      render: ${{ steps.plan.outputs.render }}
+      base_sha: ${{ steps.plan.outputs.base_sha }}
+      routes: ${{ steps.plan.outputs.routes }}
+    steps:
+      - id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          ACTION: ${{ github.event.action }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          DRAFT: ${{ github.event.pull_request.draft }}
+        run: |
+          set -euo pipefail
+          # The description is data: read one line of it, never run it.
+          routes=$(printf '%s\n' "$PR_BODY" | tr -d '\r' | sed -n 's/^[[:space:]]*[Ss]creenshot routes:[[:space:]]*//p' | head -n1 | cut -c1-300)
+          render=true
+          if [[ "$HEAD_REPO" != "$GITHUB_REPOSITORY" ]]; then
+            render=false
+            echo "Fork pull request: no screenshots rendered (read-only token; fork CI decision 5a299b9c is open)."
+          elif [[ "$ACTION" == edited && -z "$routes" ]]; then
+            render=false
+          fi
+          base_sha=""
+          if [[ "$render" == true ]]; then
+            base_sha=$(gh api "repos/$GITHUB_REPOSITORY/compare/$BASE_SHA...$HEAD_SHA" --jq .merge_base_commit.sha)
+          fi
+          {
+            echo "render=$render"
+            echo "base_sha=$base_sha"
+            echo "routes=$routes"
+          } >> "$GITHUB_OUTPUT"
+
+  render:
+    name: render (${{ matrix.side }})
+    needs: plan
+    if: needs.plan.outputs.render == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        side: [head, base]
+    steps:
+      # The tree to render: the PR head, or its merge-base.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.side == 'head' && github.event.pull_request.head.sha || needs.plan.outputs.base_sha }}
+          path: src
+      # The screenshot script and the shared actions always come from the PR
+      # head, so the same script renders both sides.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: tools
+          sparse-checkout: |
+            apps/cua-spaces-web/scripts/pr-screenshots.mjs
+            .github/actions/rust-cache
+            .github/actions/wasm-bindgen
+          sparse-checkout-cone-mode: false
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          package_json_file: tools/apps/cua-spaces-web/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: src/apps/cua-spaces-web/pnpm-lock.yaml
+      - name: Install Rust and the wasm32 target
+        working-directory: src/apps/cua-spaces/core-wasm
+        run: |
+          rustup show active-toolchain || rustup toolchain install
+          rustup target add wasm32-unknown-unknown
+      - uses: ./tools/.github/actions/rust-cache
+        with:
+          workspaces: src/apps/cua-spaces/core-wasm
+      - uses: ./tools/.github/actions/wasm-bindgen
+      - name: Install and build the web UI
+        working-directory: src/apps/cua-spaces-web
+        run: |
+          pnpm install --ignore-workspace --frozen-lockfile
+          pnpm build
+      - name: Cache the Playwright browser
+        id: pw
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('src/apps/cua-spaces-web/pnpm-lock.yaml') }}
+      - name: Install Chromium
+        working-directory: src/apps/cua-spaces-web
+        run: |
+          if [[ "${{ steps.pw.outputs.cache-hit }}" == true ]]; then
+            npx playwright install-deps chromium
+          else
+            npx playwright install --with-deps chromium
+          fi
+      - name: Screenshot the key screens (demo data)
+        working-directory: src/apps/cua-spaces-web
+        env:
+          EXTRA_ROUTES: ${{ needs.plan.outputs.routes }}
+          OUT_DIR: ${{ github.workspace }}/screens
+        run: node "$GITHUB_WORKSPACE/tools/apps/cua-spaces-web/scripts/pr-screenshots.mjs"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: screens-${{ matrix.side }}
+          path: screens/
+          if-no-files-found: error
+          retention-days: 30
+
+  report:
+    name: sticky comment
+    needs: [plan, render]
+    if: ${{ !cancelled() && needs.render.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          sparse-checkout: .github/scripts/pr_screenshots_comment.mjs
+          sparse-checkout-cone-mode: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: screens-head
+          path: screens/head
+      - uses: actions/download-artifact@v4
+        with:
+          name: screens-base
+          path: screens/base
+      - name: Post or update the sticky comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_SHA: ${{ needs.plan.outputs.base_sha }}
+        run: |
+          set -euo pipefail
+          run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          art() {
+            id=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts" --jq ".artifacts[] | select(.name == \"$1\") | .id" | head -n1)
+            echo "$run_url/artifacts/$id"
+          }
+          HEAD_ARTIFACT_URL=$(art screens-head) BASE_ARTIFACT_URL=$(art screens-base) RUN_URL=$run_url \
+            node .github/scripts/pr_screenshots_comment.mjs screens/head screens/base comment.md
+          cat comment.md >> "$GITHUB_STEP_SUMMARY"
+          existing=$(gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$PR/comments?per_page=100" \
+            --jq '[.[] | select(.user.type == "Bot" and (.body | startswith("<!-- pr-ui-screenshots -->")))] | first | .id // empty')
+          if [[ -n "$existing" ]]; then
+            gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$existing" -F body=@comment.md >/dev/null
+          else
+            gh api -X POST "repos/$GITHUB_REPOSITORY/issues/$PR/comments" -F body=@comment.md >/dev/null
+          fi
+
+  evidence:
+    name: UI pull requests include screenshots
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      # The base branch's copy of the checker: a pull request cannot loosen the check it is judged by.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          sparse-checkout: .github/scripts/check_pr_screenshots.py
+          sparse-checkout-cone-mode: false
+      - name: Check the description
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          if [[ ! -f .github/scripts/check_pr_screenshots.py ]]; then
+            echo "The checker is not on the base branch yet; skipping."
+            exit 0
+          fi
+          python3 .github/scripts/check_pr_screenshots.py

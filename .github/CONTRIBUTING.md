@@ -199,6 +199,25 @@ uv run pre-commit install
 Mypy is configured but is not currently a pre-commit gate. Rust, TypeScript,
 Swift, and documentation checks remain component-owned.
 
+## Show UI Changes
+
+A pull request that changes what a user sees needs before and after
+screenshots in its description, at a desktop size (1440x900) and a mobile size
+(390x844). Add a short recording when motion, timing, transitions, or
+interaction details matter. Use demo data only: no real accounts, hostnames,
+chats, or credentials. Upload the images to GitHub and embed them in the
+description. Never commit pull-request-only images to the repository.
+
+For the Cua Spaces web UI, the `CI: PR screenshots` workflow renders the key
+screens at both sizes for your branch and its merge-base and attaches them to
+the run as artifacts (a sticky comment links them). Download them and embed
+the ones that show your change. To add a screen, put a line such as
+`Screenshot routes: /settings/connections` in the description.
+
+A UI pull request without this evidence can be closed without review. If the
+change has no visible effect, say so with `Screenshots: not needed - <reason>`.
+The check named `UI pull requests include screenshots` reports a missing one.
+
 ## Desktop Behavior Changes
 
 cua-driver behavior must be verified through the canonical Rust harnesses. A

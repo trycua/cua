@@ -8,7 +8,7 @@
 import { act, cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { setFlagOverride } from "@/bridge";
+import { writeFirstRun } from "@/bridge";
 import { wasmBuilt } from "@/bridge/__tests__/testCore";
 import { resetConnectState } from "@/hooks/use-connectors";
 import { resetAskTasks } from "@/lib/ask-first";
@@ -18,11 +18,11 @@ import { mountApp, pickNewLinux, stubBrowserApis } from "./app-harness";
 stubBrowserApis();
 beforeEach(() => {
   localStorage.clear();
+  // Set up with this app's first run: the home warms only after one.
+  writeFirstRun({ newRun: { screen: "next" } });
   resetAskTasks();
   resetConnectState();
   resetPrepare();
-  setFlagOverride("spaces_ask_first_home", true);
-  setFlagOverride("spaces_new_onboarding", true);
 });
 afterEach(() => {
   cleanup();
@@ -55,7 +55,19 @@ describe.skipIf(!wasmBuilt)("no Space is made unless the person chooses one", ()
   });
 
   it("makes nothing when the app opens with a record an older version saved, wanted or with its home gone", { timeout: 40_000 }, async () => {
-    localStorage.setItem("cua.prepare.v1", JSON.stringify({ wanted: true, harness: "claude-code", pendingId: "pending:old", homeSpaceId: "local:home-claude-code", readyMs: 1, messages: [], askedMs: null, online: true }));
+    localStorage.setItem(
+      "cua.prepare.v1",
+      JSON.stringify({
+        wanted: true,
+        harness: "claude-code",
+        pendingId: "pending:old",
+        homeSpaceId: "local:home-claude-code",
+        readyMs: 1,
+        messages: [],
+        askedMs: null,
+        online: true,
+      }),
+    );
     const calls: Call[] = [];
     await mountApp("/home", { failsCreates: false, listsGhost: false, demo: { onboarded: true, noSpaces: true }, intercept: record(calls) });
     await screen.findByLabelText("What should it do?");

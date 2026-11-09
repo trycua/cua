@@ -35,7 +35,9 @@ afterEach(() => {
 
 /** Renders the split in a column `width` by `height`. */
 function setup(width = W, height = H) {
-  const view = render(<CallSplit stage={<div data-testid="stage" />} below={<div data-testid="below" />} leading={<button type="button">Thread view</button>} />);
+  const view = render(
+    <CallSplit stage={<div data-testid="stage" />} below={<div data-testid="below" />} leading={<button type="button">Thread view</button>} />,
+  );
   const root = view.container.querySelector<HTMLElement>("[data-call-split]")!;
   Object.defineProperty(root, "clientWidth", { configurable: true, value: width });
   Object.defineProperty(root, "clientHeight", { configurable: true, value: height });

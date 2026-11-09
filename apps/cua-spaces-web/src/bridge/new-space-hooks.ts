@@ -7,7 +7,17 @@ import { useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore 
 import { isUnsupported } from "./adapter";
 import { BridgeContext } from "./BridgeProvider";
 import type { CoreClient } from "./core";
-import type { CloudConnectWire, CloudSheetAction, CloudSheetView, CloudTarget, RuntimeFix, RuntimeSwitch, WizardAction, WizardEnv, WizardView } from "./contracts/new-space";
+import type {
+  CloudConnectWire,
+  CloudSheetAction,
+  CloudSheetView,
+  CloudTarget,
+  RuntimeFix,
+  RuntimeSwitch,
+  WizardAction,
+  WizardEnv,
+  WizardView,
+} from "./contracts/new-space";
 import type { Space, SpaceOs } from "./contracts/spaces";
 import { useMachines, useSettings, useSpaces } from "./hooks";
 import { newPendingId } from "./store";
@@ -239,9 +249,7 @@ export function useNewSpaceRequests(): void {
   }, [s.requested, ready, wizard.offered]);
   // The machine is offered once the host's options and machines are in:
   // until then the request waits (the wizard opens on the default).
-  const offeredNow = Boolean(
-    ready && s.open && s.state && s.placeOn && wizardView(core, s.state, env).placements.some((p) => p.id === s.placeOn && p.enabled),
-  );
+  const offeredNow = Boolean(ready && s.open && s.state && s.placeOn && wizardView(core, s.state, env).placements.some((p) => p.id === s.placeOn && p.enabled));
   useEffect(() => {
     if (!offeredNow || !s.placeOn) return;
     const on = s.placeOn;
@@ -451,4 +459,3 @@ export function useRuntimeFix(): RuntimeFixHook {
     },
   };
 }
-

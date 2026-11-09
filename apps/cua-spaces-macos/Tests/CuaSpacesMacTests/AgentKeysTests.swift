@@ -94,7 +94,7 @@ struct AgentKeysTests {
         #expect(!m.view.canEdit)
         #expect(m.view.notice?.contains("keeps credentials in a file") == true)
         let none = AgentKeysModel(tools: nil)
-        #expect(none.view.notice?.contains("need the cua daemon") == true)
+        #expect(none.view.notice?.contains("background service") == true)
     }
 
     @Test func aDevelopmentBuildWarnsThatKeysAreUnencryptedAndKeepsTheButtonsOn() async {

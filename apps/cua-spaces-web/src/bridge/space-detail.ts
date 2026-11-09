@@ -95,7 +95,13 @@ export function pipClick(core: CoreClient, open: string[], row: string): PipComm
 /* Stand-ins without the core: enough to draw the page, not the product. */
 
 function fallbackCover(input: DesktopCoverInput): DesktopCover {
-  const cover = (kind: DesktopCover["kind"], text: string | null, button: string | null = null): DesktopCover => ({ kind, text, button, openStream: false, retry: false });
+  const cover = (kind: DesktopCover["kind"], text: string | null, button: string | null = null): DesktopCover => ({
+    kind,
+    text,
+    button,
+    openStream: false,
+    retry: false,
+  });
   if (input.access) return { ...cover("connect", input.access.text, "Connect"), buttonDisabled: true, action: input.access.actionLabel };
   if (!input.canStream) return cover("status", input.previewText);
   if (input.stream === "streaming" || input.stream === "suspended") return cover("stream", null);
@@ -125,7 +131,13 @@ function fallbackDetail(space: Space): SpaceDetailView {
       { id: "teleport", label: "Teleport an app", help: "Teleport an app into this Space", enabled: running, destructive: false, primary: false },
       { id: "share", label: "Share", help: "Share this Space", enabled: running, destructive: false, primary: false },
     ],
-    confirm: { title: `Delete ${space.name}?`, message: "Everything inside it, including its files, is deleted and can't be recovered.", confirmLabel: "Delete Space", confirmEnabled: true, cancelLabel: "Keep" },
+    confirm: {
+      title: `Delete ${space.name}?`,
+      message: "Everything inside it, including its files, is deleted and can't be recovered.",
+      confirmLabel: "Delete Space",
+      confirmEnabled: true,
+      cancelLabel: "Keep",
+    },
     sections: running ? ["Stream"] : [],
   };
 }
@@ -141,11 +153,36 @@ function fallbackSection(input: StreamSectionInput): StreamSection {
   const desktopHelp = res ? `Desktop (${res})` : "Desktop";
   const windows = (input.windows ?? []).map((w) => {
     const label = w.title.trim() || w.appName.trim() || w.appId;
-    return { id: w.id, kind: "window" as const, label, help: label, icon: { kind: "app" as const, appName: w.appName, appId: w.appId, pid: w.pid ?? 0 }, actions: pip(w.id) };
+    return {
+      id: w.id,
+      kind: "window" as const,
+      label,
+      help: label,
+      icon: { kind: "app" as const, appName: w.appName, appId: w.appId, pid: w.pid ?? 0 },
+      actions: pip(w.id),
+    };
   });
   return {
-    rows: [{ id: "desktop", kind: "desktop", label: desktop, help: desktopHelp, resolution: res, icon: { kind: "os", id: `os-${input.os}` }, actions: pip("desktop") }, ...windows],
-    statusText: input.windows === null ? "Looking for this Space’s windows…" : windows.length ? null : input.failed ? "No windows: the Space’s window host is not up." : "No open windows in this Space yet.",
+    rows: [
+      {
+        id: "desktop",
+        kind: "desktop",
+        label: desktop,
+        help: desktopHelp,
+        resolution: res,
+        icon: { kind: "os", id: `os-${input.os}` },
+        actions: pip("desktop"),
+      },
+      ...windows,
+    ],
+    statusText:
+      input.windows === null
+        ? "Looking for this Space’s windows…"
+        : windows.length
+          ? null
+          : input.failed
+            ? "Can’t see this Space’s windows yet."
+            : "No open windows in this Space yet.",
   };
 }
 

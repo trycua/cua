@@ -41,6 +41,7 @@ pub mod phone;
 pub mod push_card;
 pub(crate) use phases::DISPATCH_BUDGET;
 pub mod rights;
+mod sleep;
 pub mod wake;
 
 use crate::DriveResult as _;
@@ -508,6 +509,8 @@ pub(crate) struct Live {
     /// The credential hash an agent's run would start with now, by agent
     /// name, and when it was worked out.
     cred_hashes: HashMap<String, (std::time::Instant, Option<String>)>,
+    /// Spaces that sleep on their own: what the last checks found ([`sleep`]).
+    sleep: HashMap<String, sleep::Watch>,
 }
 
 /// How long a worked-out credential hash is reused.
@@ -1113,6 +1116,8 @@ impl Persistent {
                 "{name} is paused; resume it first (agent_resume)"
             )));
         }
+        // A Space the host put to sleep wakes for the message.
+        self.wake_space(&rec.space).await?;
         if k == 1 {
             self.take_lease(&rec).await?;
         }
@@ -1220,7 +1225,7 @@ impl Persistent {
                     }),
                     durable,
                     // A standby run waits for its messages for as long as it lives.
-                    idle_exit_secs: rec.policy.standby.then_some(7 * 24 * 3600),
+                    idle_exit_secs: self.idle_exit_for(&rec),
                     ..Default::default()
                 },
             )
@@ -1303,6 +1308,7 @@ impl Persistent {
         if rec.paused {
             return Err(Error::Agent(format!("{name} is paused")));
         }
+        self.wake_space(&rec.space).await?;
         if let Some(run) = &rec.run_id {
             let agents = self.agents_for(&rec.space).await?;
             let status = match known {
@@ -1948,16 +1954,17 @@ impl Persistent {
         // A Space someone stopped or suspended is left alone: its durable
         // members wait for it to run again instead of waking it.
         let off = self.spaces_off();
+        let asleep = self.asleep_spaces();
         if self.detach_dispatch {
             // A posted message is handed to its member first, ahead of
             // anything below that can wait on a Space; each session is read
             // on a task of its own (see `serve_sessions`).
             self.dispatch(&mut report).await;
-            self.serve_sessions(&records, &off, &mut report);
+            self.serve_sessions(&records, &off, &asleep, &mut report);
         } else {
             let live_sessions: Vec<AgentRecord> = records
                 .iter()
-                .filter(|r| !r.paused && !(r.policy.durable && off.contains(&r.space)))
+                .filter(|r| !r.paused && !sleep::waits_for_space(r, &off, &asleep))
                 .flat_map(|r| r.session_views())
                 .filter(|r| r.run_id.is_some())
                 .collect();
@@ -1983,6 +1990,7 @@ impl Persistent {
         }
         self.tick_setups(&mut report).await;
         self.tick_standby(&mut report, false).await;
+        self.tick_sleep(&mut report).await;
         // Thread tasks for members that are free (after the turns that
         // ended above closed theirs).
         if !self.detach_dispatch {
@@ -2004,6 +2012,7 @@ impl Persistent {
         &self,
         records: &[AgentRecord],
         off: &std::collections::BTreeSet<String>,
+        asleep: &std::collections::BTreeSet<String>,
         report: &mut TickReport,
     ) {
         report.errors.append(
@@ -2014,7 +2023,7 @@ impl Persistent {
         );
         let live_sessions = records
             .iter()
-            .filter(|r| !r.paused && !(r.policy.durable && off.contains(&r.space)))
+            .filter(|r| !r.paused && !sleep::waits_for_space(r, off, asleep))
             .flat_map(|r| r.session_views())
             .filter(|r| r.run_id.is_some());
         for rec in live_sessions {
@@ -2094,7 +2103,8 @@ impl Persistent {
         self.tick_standby(&mut report, true).await;
         self.dispatch(&mut report).await;
         if let (Ok(records), off) = (self.list(), self.spaces_off()) {
-            self.serve_sessions(&records, &off, &mut report);
+            let asleep = self.asleep_spaces();
+            self.serve_sessions(&records, &off, &asleep, &mut report);
         }
         if !report.errors.is_empty() {
             self.detached_errors
@@ -2285,7 +2295,13 @@ impl Persistent {
         let last = store.last_seq()?;
         let recent = store.read(last.saturating_sub(RECENT), RECENT as usize + 1)?;
         let mut drafts = vec![];
+        // The first stretch of a run is its opening line; every later one is either the closing message
+        // or narration between tool calls ("Let me look at it..."), which the thread does not carry.
+        let opening = said.iter().map(|s| s.first_seq).min();
         for s in said {
+            if Some(s.first_seq) != opening && is_process_narration(&s.text) {
+                continue;
+            }
             let prefix = format!("seg:{run}:{}:", s.first_seq);
             // How much of this stretch an earlier pass posted (it grows only when the agent paused
             // mid-sentence for longer than [`QUIET`]).
@@ -3264,5 +3280,65 @@ mod power_tests {
         assert!(space_is_off("suspended"));
         assert!(!space_is_off("running"));
         assert!(!space_is_off(""));
+    }
+}
+
+/// Whether a stretch of an agent's words is narration of its own process ("Let me look at the
+/// logo", "I'll check the packages", "Now I'm writing the script"): the agent speaks as the
+/// person's computers, and narrates neither tools nor plans. Held back in the thread; the app's own
+/// working line shows that it is busy.
+fn is_process_narration(text: &str) -> bool {
+    let t = text.trim().to_lowercase();
+    let first: String = t
+        .split(['.', '!', '\n'])
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    // "Got the logo. Let me look at it": any sentence that starts a plan counts.
+    let sentences: Vec<String> = t
+        .split(['.', '!', '\n'])
+        .map(|x| x.trim().to_string())
+        .filter(|x| !x.is_empty())
+        .collect();
+    const STARTS: [&str; 12] = [
+        "let me ",
+        "let's ",
+        "i'll ",
+        "i will ",
+        "i'm going to ",
+        "i am going to ",
+        "now i",
+        "next, i",
+        "first, i",
+        "i need to ",
+        "i'm checking",
+        "i'm looking",
+    ];
+    let narrates = |x: &str| STARTS.iter().any(|p| x.starts_with(p));
+    narrates(&first) || (sentences.len() <= 3 && sentences.iter().any(|x| narrates(x)))
+}
+
+#[cfg(test)]
+mod voice_tests {
+    use super::is_process_narration;
+
+    #[test]
+    fn narration_of_the_process_is_held_back_and_a_final_message_is_not() {
+        for n in [
+            "Got the logo. Let me look at it and see which packages exist for rasterizing.",
+            "I'll check the pool skill first.",
+            "Now I'm writing the training script.",
+            "Let's try a longer run.",
+        ] {
+            assert!(is_process_narration(n), "{n}");
+        }
+        for ok in [
+            "Training on your Mac with MLX, about 90 seconds.",
+            "Your Cua logo has grown from a single cell. The window is open in your Stream: click it to erase a patch and watch it regrow.",
+            "Opening the window now.",
+        ] {
+            assert!(!is_process_narration(ok), "{ok}");
+        }
     }
 }

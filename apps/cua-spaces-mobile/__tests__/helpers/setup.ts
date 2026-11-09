@@ -9,17 +9,35 @@ import "react-native-gesture-handler/jestSetup";
 // Reanimated's own mock needs the native worklets runtime; the screens use four things from it.
 jest.mock("react-native-reanimated", () => {
   const { View } = require("react-native");
-  return { __esModule: true, default: { View, createAnimatedComponent: (c: unknown) => c }, FadeIn: { duration: () => ({}) }, useSharedValue: (v: unknown) => ({ value: v }), useAnimatedStyle: (f: () => unknown) => f() };
+  return {
+    __esModule: true,
+    default: { View, createAnimatedComponent: (c: unknown) => c },
+    FadeIn: { duration: () => ({}) },
+    useSharedValue: (v: unknown) => ({ value: v }),
+    useAnimatedStyle: (f: () => unknown) => f(),
+  };
 });
 jest.mock("react-native-gesture-handler/ReanimatedSwipeable", () => {
   const React = require("react");
   return { __esModule: true, default: React.forwardRef(({ children }: { children: unknown }, _ref: unknown) => children) };
 });
 jest.mock("react-native-keyboard-controller", () => require("react-native-keyboard-controller/jest"));
-jest.mock("expo-haptics", () => ({ selectionAsync: jest.fn(async () => {}), impactAsync: jest.fn(async () => {}), notificationAsync: jest.fn(async () => {}), ImpactFeedbackStyle: { Light: 0, Medium: 1 }, NotificationFeedbackType: { Success: 0, Warning: 1 } }));
+jest.mock("expo-haptics", () => ({
+  selectionAsync: jest.fn(async () => {}),
+  impactAsync: jest.fn(async () => {}),
+  notificationAsync: jest.fn(async () => {}),
+  ImpactFeedbackStyle: { Light: 0, Medium: 1 },
+  NotificationFeedbackType: { Success: 0, Warning: 1 },
+}));
 jest.mock("expo-secure-store", () => {
   const m = new Map<string, string>();
-  return { getItemAsync: jest.fn(async (k: string) => m.get(k) ?? null), setItemAsync: jest.fn(async (k: string, v: string) => void m.set(k, v)), deleteItemAsync: jest.fn(async (k: string) => void m.delete(k)), AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY: 1, WHEN_UNLOCKED_THIS_DEVICE_ONLY: 2 };
+  return {
+    getItemAsync: jest.fn(async (k: string) => m.get(k) ?? null),
+    setItemAsync: jest.fn(async (k: string, v: string) => void m.set(k, v)),
+    deleteItemAsync: jest.fn(async (k: string) => void m.delete(k)),
+    AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY: 1,
+    WHEN_UNLOCKED_THIS_DEVICE_ONLY: 2,
+  };
 });
 jest.mock("@react-native-async-storage/async-storage", () => require("@react-native-async-storage/async-storage/jest/async-storage-mock"));
 jest.mock("react-native-webview", () => ({ WebView: "WebView" }));

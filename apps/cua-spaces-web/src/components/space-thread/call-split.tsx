@@ -147,7 +147,12 @@ export function CallSplit({
       ref={ref}
       data-call-split={fraction.toFixed(2)}
       data-call-dock={dock}
-      className={cn("relative flex min-h-0 min-w-0 flex-1", horizontal ? (dock === "right" ? "flex-row-reverse" : "flex-row") : "flex-col", drag && "select-none", className)}
+      className={cn(
+        "relative flex min-h-0 min-w-0 flex-1",
+        horizontal ? (dock === "right" ? "flex-row-reverse" : "flex-row") : "flex-col",
+        drag && "select-none",
+        className,
+      )}
     >
       <div data-call-stage="" className={cn("relative min-h-0 min-w-0 shrink-0", horizontal ? "h-full" : "w-full")} style={stageStyle}>
         <div className={cn("size-full", dock === "top" ? "px-5 pt-4" : dock === "left" ? "py-4 pr-1 pl-5" : "py-4 pr-5 pl-1")}>{stage}</div>
@@ -183,7 +188,10 @@ export function CallSplit({
           onLostPointerCapture={cancel}
           onDoubleClick={reset}
           onKeyDown={onKeyDown}
-          className={cn("group flex shrink-0 touch-none items-center justify-center outline-none", horizontal ? "h-full w-5 cursor-col-resize" : "h-5 cursor-row-resize")}
+          className={cn(
+            "group flex shrink-0 touch-none items-center justify-center outline-none",
+            horizontal ? "h-full w-5 cursor-col-resize" : "h-5 cursor-row-resize",
+          )}
         >
           {/* The grabber stays small and quiet, and shows more on hover, focus or a drag; the whole divider (DIVIDER_HIT_PX) takes the drag. */}
           <span

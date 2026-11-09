@@ -6,6 +6,7 @@ import { Link } from "@tanstack/react-router";
 import { hostResources, type Machine, type ResourcesSnapshot } from "@/bridge";
 import { thisComputerLabel } from "@/lib/host-labels";
 import { lowDiskWarning, size } from "@/lib/resources";
+import { THIS_COMPUTER } from "@/lib/machines";
 
 /** One thing on a computer that needs action, as Home says it. */
 export interface ComputerWarning {
@@ -46,7 +47,7 @@ export function computerWarnings(snapshot: ResourcesSnapshot | null, machines: r
   return out;
 }
 
-/** Home's warning lines: one quiet row each, only while there is one, on a soft fill in the one radius (no outline). */
+/** The warning lines above your computers: one quiet row each, only while there is one, on a soft fill in the one radius (no outline). */
 export function ComputerWarnings({ snapshot, machines }: { snapshot: ResourcesSnapshot | null; machines: readonly Machine[] }) {
   const warnings = computerWarnings(snapshot, machines);
   if (!warnings.length) return null;
@@ -60,13 +61,16 @@ export function ComputerWarnings({ snapshot, machines }: { snapshot: ResourcesSn
           data-low-disk={w.level}
           className="flex min-h-9 items-center gap-2.5 rounded-lg bg-tile px-3 py-2 text-[13px] text-muted-foreground"
         >
-          <span aria-hidden className={w.level === "critical" ? "size-1.5 shrink-0 rounded-full bg-destructive" : "size-1.5 shrink-0 rounded-full bg-[#d18a12]"} />
+          <span
+            aria-hidden
+            className={w.level === "critical" ? "size-1.5 shrink-0 rounded-full bg-destructive" : "size-1.5 shrink-0 rounded-full bg-[#d18a12]"}
+          />
           <span className="min-w-0 flex-1">{w.text}</span>
           {w.local ? (
-            // The list of this computer's Spaces, biggest first: the cleanup path.
+            // This computer's page: the Spaces made on it, each with what it takes on the disk.
             <Link
-              to="/spaces"
-              search={{ view: "list", on: w.machineId, sort: "size" }}
+              to="/spaces/computer/$computerId"
+              params={{ computerId: THIS_COMPUTER }}
               data-see-space-use=""
               className="shrink-0 text-[13px] font-medium text-foreground underline-offset-2 hover:underline"
             >

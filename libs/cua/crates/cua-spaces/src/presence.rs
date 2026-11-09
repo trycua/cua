@@ -414,6 +414,17 @@ pub const SEND_INTERVAL: Duration = Duration::from_millis(33);
 /// Roster heartbeat interval the SDK asks for.
 pub const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
 
+/// How a join treats the QUIC datagram channel.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Datagrams {
+    /// Not asked for.
+    Off,
+    /// The join waits (up to its timeout) for the channel.
+    Wait,
+    /// The join returns at once; the channel opens behind it.
+    Background,
+}
+
 /// A joined presence session.
 pub struct PresenceSession {
     space: Space,
@@ -426,6 +437,10 @@ pub struct PresenceSession {
     queue: VecDeque<PresenceEvent>,
     sender: CursorSender,
     datagram_events: Option<tokio::sync::mpsc::Receiver<PresenceEvent>>,
+    /// The datagram channel's events, while it is still being opened in the
+    /// background ([`Space::join_presence`]): they arrive here once it is.
+    late_datagrams:
+        Option<tokio::sync::oneshot::Receiver<tokio::sync::mpsc::Receiver<PresenceEvent>>>,
     stream_ended: bool,
     left: bool,
 }
@@ -526,7 +541,8 @@ impl Space {
         identity: Identity,
         timeout: Duration,
     ) -> Result<PresenceSession> {
-        self.join_presence_with(identity, timeout, true).await
+        self.join_presence_inner(identity, timeout, Datagrams::Background)
+            .await
     }
 
     /// [`Space::join_presence`], choosing whether to ask for the QUIC
@@ -537,6 +553,20 @@ impl Space {
         identity: Identity,
         timeout: Duration,
         datagrams: bool,
+    ) -> Result<PresenceSession> {
+        let mode = if datagrams {
+            Datagrams::Wait
+        } else {
+            Datagrams::Off
+        };
+        self.join_presence_inner(identity, timeout, mode).await
+    }
+
+    async fn join_presence_inner(
+        &self,
+        identity: Identity,
+        timeout: Duration,
+        datagrams: Datagrams,
     ) -> Result<PresenceSession> {
         self.require("presence")?;
         let principal = pb::Principal {
@@ -553,7 +583,7 @@ impl Space {
         // one behind its gateway) keeps cursors on the stream instead of
         // waiting out a datagram channel that cannot open.
         let channel = PRESENCE_DATAGRAMS.get().cloned();
-        let want_datagrams = datagrams
+        let want_datagrams = datagrams != Datagrams::Off
             && channel.is_some()
             && !matches!(
                 self.provider(),
@@ -589,15 +619,37 @@ impl Space {
         let me: Participant = joined.participant.unwrap_or_default().into();
         let sender = CursorSender::new(self.clone(), me.participant_id.clone());
         let mut datagram_events = None;
+        let mut late_datagrams = None;
         if let (Some(channel), Some(info)) = (
             channel.as_ref(),
             joined.datagrams.as_ref().filter(|_| want_datagrams),
         ) {
             // Best effort: the stream and UpdateCursor carry cursors when the
             // channel cannot be opened (UDP blocked, NAT, older daemon).
-            if let Ok((link, events)) = channel.connect(self, info, timeout).await {
-                sender.attach(link);
-                datagram_events = Some(events);
+            match datagrams {
+                Datagrams::Wait => {
+                    if let Ok((link, events)) = channel.connect(self, info, timeout).await {
+                        sender.attach(link);
+                        datagram_events = Some(events);
+                    }
+                }
+                // The join returns now: a viewer waiting out a UDP route that
+                // does not exist (a container behind a port forward, a VPN)
+                // would hold its stream for the whole timeout. Cursors ride
+                // the stream until the channel is up.
+                Datagrams::Background => {
+                    let (channel, space, info, sender) =
+                        (channel.clone(), self.clone(), info.clone(), sender.clone());
+                    let (tx, rx) = tokio::sync::oneshot::channel();
+                    late_datagrams = Some(rx);
+                    tokio::spawn(async move {
+                        if let Ok((link, events)) = channel.connect(&space, &info, timeout).await {
+                            sender.attach(link);
+                            let _ = tx.send(events);
+                        }
+                    });
+                }
+                Datagrams::Off => {}
             }
         }
         let viewer = JoinedParticipant::register(self.id().to_string(), &me.participant_id);
@@ -619,6 +671,7 @@ impl Space {
             queue: VecDeque::new(),
             sender,
             datagram_events,
+            late_datagrams,
             stream_ended: false,
             left: false,
         })
@@ -916,6 +969,12 @@ impl PresenceSession {
                     None => std::future::pending().await,
                 }
             };
+            let late = async {
+                match self.late_datagrams.as_mut() {
+                    Some(rx) => rx.await,
+                    None => std::future::pending().await,
+                }
+            };
             tokio::select! {
                 biased;
                 msg = self.stream.message() => {
@@ -936,6 +995,13 @@ impl PresenceSession {
                             self.datagram_events = None;
                             *self.sender.uplink.lock().unwrap() = None;
                         }
+                    }
+                }
+                late = late => {
+                    // The channel opened (or never will): cursors move to it.
+                    self.late_datagrams = None;
+                    if let Ok(events) = late {
+                        self.datagram_events = Some(events);
                     }
                 }
                 _ = tokio::time::sleep_until(deadline) => {

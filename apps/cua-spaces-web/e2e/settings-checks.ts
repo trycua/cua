@@ -14,7 +14,7 @@ import { expect, type Locator, type Page } from "@playwright/test";
 import type { ParityCheckpoint } from "../src/bridge/parity";
 import type { SettingsCheckpoint } from "../src/bridge/parity-settings";
 import type { SettingsRow } from "../src/bridge/contracts/host";
-import { LAUNCH_HELP, LAUNCH_LABEL, lastChecked, plainStorage } from "../src/lib/settings-copy";
+import { launchHelp, launchLabel, lastChecked, plainStorage } from "../src/lib/settings-copy";
 import { checkAgentKeys } from "./agent-keys";
 
 type Of<K extends SettingsCheckpoint["kind"]> = Extract<SettingsCheckpoint, { kind: K }>;
@@ -116,7 +116,7 @@ async function checkAbout(page: Page, checkpoints: ParityCheckpoint[]): Promise<
   return states.length;
 }
 
-/* ---- Machines: this machine's trust, the machines waiting, the enroll sheet ---------- */
+/* ---- Your computers: this computer's trust, the ones waiting, the enroll sheet ------ */
 
 async function checkDevices(page: Page, checkpoints: ParityCheckpoint[]): Promise<number> {
   let checked = 0;
@@ -135,9 +135,11 @@ async function checkDevices(page: Page, checkpoints: ParityCheckpoint[]): Promis
       await expect(page.locator("[data-machine-trust-action]"), step).toHaveCount(v.thisDevice.actionLabel ? 1 : 0);
       if (v.banner) await expect(page.locator("[data-machine-trust-text]"), step).toHaveText(v.banner.text);
       else await expect(page.locator("[data-machine-trust-text]"), step).toHaveCount(0);
-      // The machines waiting to be added are the top group.
+      // The computers waiting to be added are the top group of your computers.
       const waiting = [...v.unconfirmedMachines.map((m) => m.id), ...v.approvals.map((a) => a.deviceId)];
+      await page.evaluate((p) => window.__cuaParity!.navigate(p), "/spaces");
       await expect.poll(() => attrs(page.locator("[data-pending-machine]"), "data-pending-machine"), { message: step }).toEqual(waiting);
+      await page.evaluate((p) => window.__cuaParity!.navigate(p), "/spaces/computer/this-mac");
       checked++;
     } else if (cp.kind === "enroll" && last) {
       const { state, view: v } = cp;
@@ -167,9 +169,11 @@ async function checkLoginItem(page: Page, checkpoints: ParityCheckpoint[]): Prom
   for (const { loginItem, experiments, rows } of states) {
     await page.evaluate(([l, x]) => window.__cuaParity!.settings.showLoginItem(l, x), [loginItem, experiments] as const);
     // The page words the switch itself and puts its one line (the core's note) under the label.
-    const shown = rows.filter((r) => r.id !== "launch-at-login-note").map((r) => (r.id === "launch-at-login" ? { ...r, label: LAUNCH_LABEL } : r));
+    const shown = rows.filter((r) => r.id !== "launch-at-login-note").map((r) => (r.id === "launch-at-login" ? { ...r, label: launchLabel() } : r));
     await expectRows(page.locator('[data-setting-row^="launch-at-login"]'), shown, `launch at login, ${JSON.stringify(loginItem)}`);
-    await expect(page.locator('[data-setting-row="launch-at-login"] [data-row-description]'), `launch at login, ${JSON.stringify(loginItem)}`).toHaveText(LAUNCH_HELP);
+    await expect(page.locator('[data-setting-row="launch-at-login"] [data-row-description]'), `launch at login, ${JSON.stringify(loginItem)}`).toHaveText(
+      launchHelp(),
+    );
   }
   return states.length;
 }
@@ -192,13 +196,13 @@ async function checkStorage(page: Page, checkpoints: ParityCheckpoint[]): Promis
 /** Advanced keeps Labs: a switch for every experiment, on or off. Sharing, Your cloud and the New UI have no switch. */
 const LABS: Record<string, { label?: string; note: string }> = {
   "experiment:cua_volume": { note: "Memory and files your agents share across every Space." },
-  "experiment:secure_spaces": { note: "A Space reaches the internet and nothing else on your network unless you open it." },
   "experiment:child_spaces": { note: "A Space can make Spaces of its own, inside a budget you set." },
-  "experiment:ask_first": { note: "An agent asks you on a card before anything leaves its Space, such as a push to GitHub." },
   "experiment:ci_runners": { note: "Run GitHub Actions jobs in a fresh Space each, on this computer. Adds CI Runners to the sidebar." },
   "experiment:tcp_shares": { note: "Share a game server or another TCP service in a Space at a public address." },
   "experiment:mobile": { note: "Your computers answer the Cua Spaces phone app: start a task, follow the thread and review changes." },
-  "experiment:warm_pools": { note: "Keep one Linux Space ready on this computer, with its coding apps installed, so the next Create from Home starts at once." },
+  "experiment:warm_pools": {
+    note: "Keep one Linux Space ready on this computer, with its coding apps installed, so the next Create from Home starts at once.",
+  },
 };
 
 async function checkExperiments(page: Page, checkpoints: ParityCheckpoint[]): Promise<number> {
@@ -208,7 +212,11 @@ async function checkExperiments(page: Page, checkpoints: ParityCheckpoint[]): Pr
     const toggles = tabPage.sections.flatMap((s) => s.rows).filter((r) => r.kind === "toggle" && r.id in LABS);
     const step = `Advanced, Labs, ${JSON.stringify(experiments)}`;
     const drawn = page.locator('[data-settings-tab="advanced"] [data-setting-row^="experiment:"]');
-    await expectRows(drawn, toggles.map((t) => ({ ...t, label: LABS[t.id]!.label ?? t.label })), step);
+    await expectRows(
+      drawn,
+      toggles.map((t) => ({ ...t, label: LABS[t.id]!.label ?? t.label })),
+      step,
+    );
     expect(await texts(drawn.locator("[data-row-description]")), step).toEqual(toggles.map((t) => LABS[t.id]!.note));
     checked++;
   }
@@ -216,7 +224,9 @@ async function checkExperiments(page: Page, checkpoints: ParityCheckpoint[]): Pr
   await navigate(page, "/volume");
   for (const { experiments, sections } of of(checkpoints, "with-storage")) {
     await page.evaluate((x) => window.__cuaParity!.settings.showExperiments(x), experiments);
-    await expect(page.locator('[data-settings-section="storage"]'), `Storage with ${JSON.stringify(experiments)}`).toHaveCount(sections.includes("storage") ? 1 : 0);
+    await expect(page.locator('[data-settings-section="storage"]'), `Storage with ${JSON.stringify(experiments)}`).toHaveCount(
+      sections.includes("storage") ? 1 : 0,
+    );
     checked++;
   }
   await navigate(page, "/settings/general");

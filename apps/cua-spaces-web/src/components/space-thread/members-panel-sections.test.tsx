@@ -30,7 +30,14 @@ function panel() {
 }
 
 beforeEach(() => {
-  vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  );
   useSpaceLayoutStore.setState({ ...DEFAULT_PREFS });
   localStorage.clear();
 });

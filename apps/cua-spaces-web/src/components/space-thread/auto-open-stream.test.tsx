@@ -12,7 +12,15 @@ type P = { windows: StreamEntry[]; ready?: boolean; enabled?: boolean; spaceId?:
 function setup(initial: P) {
   const onOpen = vi.fn();
   const view = renderHook(
-    (p: P) => useAutoOpenFirstStream({ spaceId: p.spaceId ?? "home", enabled: p.enabled ?? true, ready: p.ready ?? true, windows: p.windows, chosen: () => p.chosen ?? false, onOpen }),
+    (p: P) =>
+      useAutoOpenFirstStream({
+        spaceId: p.spaceId ?? "home",
+        enabled: p.enabled ?? true,
+        ready: p.ready ?? true,
+        windows: p.windows,
+        chosen: () => p.chosen ?? false,
+        onOpen,
+      }),
     { initialProps: initial },
   );
   return { onOpen, rerender: (p: P) => view.rerender(p) };

@@ -332,8 +332,26 @@ export function demoHostStatus(now = Date.now(), firstRun = false): HostStatus {
     totalMemoryGb: 32,
     totalDiskGb: 994,
     providedSpaces: [
-      { relayMachine: "space-build-1", localSpace: "local:build-1", name: "build-1", image: "ghcr.io/trycua/linux", os: "linux", kind: "container", createdBy: "Mac mini", createdAtMs: now - 40 * 60_000 },
-      { relayMachine: "space-build-2", localSpace: "local:build-2", name: "build-2", image: "ghcr.io/trycua/linux", os: "linux", kind: "container", createdBy: "Linux box", createdAtMs: now - 12 * 60_000 },
+      {
+        relayMachine: "space-build-1",
+        localSpace: "local:build-1",
+        name: "build-1",
+        image: "ghcr.io/trycua/linux",
+        os: "linux",
+        kind: "container",
+        createdBy: "Mac mini",
+        createdAtMs: now - 40 * 60_000,
+      },
+      {
+        relayMachine: "space-build-2",
+        localSpace: "local:build-2",
+        name: "build-2",
+        image: "ghcr.io/trycua/linux",
+        os: "linux",
+        kind: "container",
+        createdBy: "Linux box",
+        createdAtMs: now - 12 * 60_000,
+      },
     ],
     recentAccess: [
       { atMs: now - 4 * 60_000, via: "relay", who: DEMO_IDENTITY, what: "DesktopService" },
@@ -348,7 +366,7 @@ export function demoTelemetry(enabled: boolean): TelemetryView {
     source: "config ~/.cua/config.toml",
     sourceKind: "config",
     noticeShown: true,
-    noticeText: "Cua collects usage data, like which features you use and when something goes wrong. When you're signed in, it's linked to your account through a random ID. Never your files, what you type or your screen.",
+    noticeText: "Features you use and errors, linked to your account. Never your files, typing or screen.",
     docsUrl: "https://cua.ai/docs/cua-sdk/concepts/telemetry",
   };
 }
@@ -454,7 +472,17 @@ export function demoKeyvaultOverview(now: number, items: KvItem[], locked: boole
   };
   const empty = { grants: [], rules: [], deliveries: [], audit: [], partialErrors: [] };
   if (locked) {
-    return { availability: "locked", message: "The Keyvault is locked.", status, serverVerified: true, items: [], namesVisible: false, itemsTotal: items.length, pending: [], ...empty };
+    return {
+      availability: "locked",
+      message: "The Keyvault is locked.",
+      status,
+      serverVerified: true,
+      items: [],
+      namesVisible: false,
+      itemsTotal: items.length,
+      pending: [],
+      ...empty,
+    };
   }
   const caller = {
     pid: 4242,
@@ -515,8 +543,26 @@ export function demoKeyvaultOverview(now: number, items: KvItem[], locked: boole
     deliveries: [],
     audit: [
       { seq: 1, ts_ms: now - 20 * 60_000, kind: "consent.request", actor: "Codex", caller_fp: "fp-codex", item: "kv-linear", decision: "ok" },
-      { seq: 2, ts_ms: now - 20 * 60_000 + 8_000, kind: "consent.allow", actor: "you", caller_fp: "fp-codex", item: "kv-linear", target: "relay:linux-box/ubuntu-build", decision: "allow" },
-      { seq: 3, ts_ms: now - 19 * 60_000, kind: "teleport.deliver", actor: "Codex", caller_fp: "fp-codex", item: "kv-linear", target: "relay:linux-box/ubuntu-build", decision: "ok" },
+      {
+        seq: 2,
+        ts_ms: now - 20 * 60_000 + 8_000,
+        kind: "consent.allow",
+        actor: "you",
+        caller_fp: "fp-codex",
+        item: "kv-linear",
+        target: "relay:linux-box/ubuntu-build",
+        decision: "allow",
+      },
+      {
+        seq: 3,
+        ts_ms: now - 19 * 60_000,
+        kind: "teleport.deliver",
+        actor: "Codex",
+        caller_fp: "fp-codex",
+        item: "kv-linear",
+        target: "relay:linux-box/ubuntu-build",
+        decision: "ok",
+      },
       { seq: 4, ts_ms: now - 45_000, kind: "consent.request", actor: "Claude Code", caller_fp: "fp-claude", item: "kv-gh-session", decision: "ok" },
     ],
     auditVerification: { ok: true, entries: 4, unauthenticated: 0 },

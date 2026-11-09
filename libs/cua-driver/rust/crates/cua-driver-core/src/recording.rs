@@ -163,26 +163,26 @@ pub fn set_budgeted_ax_snapshot_fn(
     let _ = AX_SNAPSHOT_FN.set(Arc::new(f));
 }
 
-/// Hooks abandoned at their backstop and still running, per target pid. While
-/// one is outstanding the recorder does not start another walk of the same
-/// application, so a hung accessibility provider cannot accumulate threads.
-static ABANDONED_STATE_CAPTURES: OnceLock<Mutex<HashMap<i64, usize>>> = OnceLock::new();
+/// A state walk in flight for one target pid. At most one exists per pid, so
+/// a hung accessibility provider cannot accumulate threads and two turns
+/// cannot walk the same application at once.
+#[derive(Debug, Clone, Copy)]
+enum Worker {
+    /// The turn that started the walk is still waiting for it.
+    Running,
+    /// The turn gave up at its backstop; the thread is left to finish.
+    Abandoned { since: Instant },
+}
 
-fn abandoned_state_captures() -> std::sync::MutexGuard<'static, HashMap<i64, usize>> {
-    ABANDONED_STATE_CAPTURES
+/// Per-pid state workers. Every check, insert, transition and removal holds
+/// this lock, which guards nothing else.
+static STATE_CAPTURE_WORKERS: OnceLock<Mutex<HashMap<i64, Worker>>> = OnceLock::new();
+
+fn state_capture_workers() -> std::sync::MutexGuard<'static, HashMap<i64, Worker>> {
+    STATE_CAPTURE_WORKERS
         .get_or_init(Default::default)
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
-}
-
-fn release_abandoned_state_capture(key: i64) {
-    let mut abandoned = abandoned_state_captures();
-    if let Some(count) = abandoned.get_mut(&key) {
-        *count = count.saturating_sub(1);
-        if *count == 0 {
-            abandoned.remove(&key);
-        }
-    }
 }
 
 /// Outcome of one phase's application-state capture.
@@ -256,50 +256,74 @@ fn run_state_hook(
     pid: Option<i64>,
     budget: StateCaptureBudget,
 ) -> StateCapture {
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::collections::hash_map::Entry;
     let key = pid.unwrap_or(-1);
-    if abandoned_state_captures()
-        .get(&key)
-        .is_some_and(|count| *count > 0)
-    {
+    let busy = match state_capture_workers().entry(key) {
+        Entry::Occupied(worker) => Some(*worker.get()),
+        Entry::Vacant(slot) => {
+            slot.insert(Worker::Running);
+            None
+        }
+    };
+    if let Some(worker) = busy {
+        if let Worker::Abandoned { since } = worker {
+            tracing::debug!(
+                target: "recording",
+                "application-state capture for pid {key} skipped; a walk abandoned {} ms ago \
+                 is still running",
+                since.elapsed().as_millis()
+            );
+        }
         return StateCapture::unavailable("state_capture_busy");
     }
-    let abandoned = Arc::new(AtomicBool::new(false));
     let (sender, receiver) = std::sync::mpsc::sync_channel(1);
-    let worker_abandoned = abandoned.clone();
     let spawned = std::thread::Builder::new()
         .name("cua-recording-state".into())
         .spawn(move || {
-            let result = hook(window_id, pid, budget);
-            if worker_abandoned.swap(true, Ordering::SeqCst) {
-                release_abandoned_state_capture(key);
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                hook(window_id, pid, budget)
+            }))
+            .unwrap_or(None);
+            let mut workers = state_capture_workers();
+            if let Some(Worker::Abandoned { .. }) = workers.get(&key) {
+                workers.remove(&key);
             } else {
                 let _ = sender.send(result);
             }
         });
     if spawned.is_err() {
+        state_capture_workers().remove(&key);
         return StateCapture::unavailable("capture_failed");
     }
     let received = match receiver.recv_timeout(budget.backstop()) {
         Ok(result) => Some(result),
         Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => None,
         Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-            *abandoned_state_captures().entry(key).or_insert(0) += 1;
-            if abandoned.swap(true, Ordering::SeqCst) {
-                // The worker finished between the timeout and the mark.
-                release_abandoned_state_capture(key);
-                receiver.try_recv().ok()
-            } else {
-                tracing::warn!(
-                    target: "recording",
-                    "application-state capture for pid {key} exceeded its {} ms budget; \
-                     recording the turn without state",
-                    budget.timeout_ms
-                );
-                return StateCapture::unavailable("state_capture_timeout");
+            let mut workers = state_capture_workers();
+            // The worker sends under this lock, so a result is either here
+            // now or the worker will see `Abandoned` and clean up itself.
+            match receiver.try_recv() {
+                Ok(result) => Some(result),
+                Err(_) => {
+                    workers.insert(
+                        key,
+                        Worker::Abandoned {
+                            since: Instant::now(),
+                        },
+                    );
+                    drop(workers);
+                    tracing::warn!(
+                        target: "recording",
+                        "application-state capture for pid {key} exceeded its {} ms budget; \
+                         recording the turn without state",
+                        budget.timeout_ms
+                    );
+                    return StateCapture::unavailable("state_capture_timeout");
+                }
             }
         }
     };
+    state_capture_workers().remove(&key);
     match received.flatten() {
         Some(bytes) => StateCapture::captured(bytes),
         None => StateCapture::unavailable("capture_failed"),
@@ -329,6 +353,8 @@ enum StatePlan {
 /// Classification for application state that was not walked because the
 /// action was refused before any input was dispatched.
 pub const STATE_SKIPPED_REFUSED: &str = "action_refused_before_dispatch";
+/// Classification for a turn whose pid has no window to photograph or walk.
+pub const TARGET_UNAVAILABLE: &str = "target_unavailable";
 /// Classification for application state disabled by `start_recording`.
 pub const STATE_SKIPPED_DISABLED: &str = "state_capture_disabled";
 /// Classification for before-state skipped on a predicted refusal that the
@@ -1150,10 +1176,16 @@ fn capture_turn(window_id: Option<u64>, pid: Option<i64>, state: StatePlan) -> T
         .get()
         .map(|capture| capture(window_id, pid))
         .unwrap_or_else(|| ScreenshotCapture::unavailable("capture_hook_unavailable"));
+    // The platform found no window for the pid, so there is no tree to walk
+    // either. Say so instead of letting the walk fail as `capture_failed`.
+    let no_target_window = window_id.is_none()
+        && pid.is_some()
+        && screenshot.classification == Some(TARGET_UNAVAILABLE);
     TurnCapture {
         state: match state {
             // No target application: there is no state to walk.
             _ if pid.is_none() => StateCapture::default(),
+            _ if no_target_window => StateCapture::skipped(TARGET_UNAVAILABLE),
             StatePlan::Capture(budget) => capture_state(window_id, pid, budget),
             StatePlan::Skip(classification) => StateCapture::skipped(classification),
         },
@@ -2644,7 +2676,7 @@ mod tests {
 
         release.send(()).unwrap();
         let deadline = Instant::now() + Duration::from_secs(5);
-        while abandoned_state_captures().contains_key(&PID) {
+        while state_capture_workers().contains_key(&PID) {
             assert!(Instant::now() < deadline, "abandoned walk never released");
             std::thread::sleep(Duration::from_millis(10));
         }
@@ -2654,6 +2686,42 @@ mod tests {
             serde_json::json!(50),
             "the hook receives the configured budget"
         );
+    }
+
+    #[test]
+    fn state_hook_admits_one_running_walk_per_pid() {
+        const PID: i64 = 990_101;
+        let (entered_tx, entered) = std::sync::mpsc::channel::<()>();
+        let (release, gate) = std::sync::mpsc::channel::<()>();
+        let entered_tx = Mutex::new(entered_tx);
+        let gate = Mutex::new(gate);
+        let slow: AxSnapshotFn = Arc::new(move |_, _, _| {
+            let _ = entered_tx.lock().unwrap().send(());
+            let _ = gate.lock().unwrap().recv();
+            Some(b"{}".to_vec())
+        });
+        let budget = StateCaptureBudget { timeout_ms: 10_000 };
+        let first = std::thread::spawn(move || run_state_hook(slow, None, Some(PID), budget));
+        entered.recv().unwrap();
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let counting_calls = calls.clone();
+        let fast: AxSnapshotFn = Arc::new(move |_, _, _| {
+            counting_calls.fetch_add(1, Ordering::SeqCst);
+            Some(b"{}".to_vec())
+        });
+        let second = run_state_hook(fast.clone(), None, Some(PID), budget);
+        assert_eq!(second.classification, Some("state_capture_busy"));
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            0,
+            "one walk per app at a time"
+        );
+
+        release.send(()).unwrap();
+        assert!(first.join().unwrap().bytes.is_some());
+        let after = run_state_hook(fast, None, Some(PID), budget);
+        assert!(after.bytes.is_some(), "a finished walk frees its pid");
     }
 
     #[test]

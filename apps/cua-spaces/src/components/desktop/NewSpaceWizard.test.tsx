@@ -39,7 +39,14 @@ const AWS: ConnectedCloud = {
   ttlHours: 8,
   offers: [
     { image: "linux", kind: "container", supported: true, reason: "", machineType: "t4g.medium", usdPerHour: 0.0368 },
-    { image: "windows", kind: "vm", supported: false, reason: "Windows on AWS is not offered yet.", machineType: "", usdPerHour: 0 },
+    {
+      image: "windows",
+      kind: "vm",
+      supported: false,
+      reason: "Windows on AWS is not offered yet.",
+      machineType: "",
+      usdPerHour: 0,
+    },
   ],
 };
 
@@ -105,9 +112,7 @@ describe("the image field", () => {
     renderWizard();
     fireEvent.change(imageField(), { target: { value: "macos" } });
     // Every published macOS image in the catalog, in catalog order (tiers appear once published).
-    expect(suggestionRefs()).toEqual(
-      list.images.filter((i) => i.published && i.os === "macos").map((i) => i.ref),
-    );
+    expect(suggestionRefs()).toEqual(list.images.filter((i) => i.published && i.os === "macos").map((i) => i.ref));
     fireEvent.keyDown(imageField(), { key: "ArrowDown" });
     fireEvent.keyDown(imageField(), { key: "ArrowDown" });
     fireEvent.keyDown(imageField(), { key: "ArrowUp" });
@@ -157,9 +162,7 @@ describe("the image field", () => {
 describe("New Space wizard", () => {
   it("walks System, Resources, Options, Summary and creates a local VM with its resources", () => {
     const { onCreate } = renderWizard({ localBackends: ["docker", "lume", "qemu"] });
-    expect(screen.getByRole("list", { name: "Steps" })).toHaveTextContent(
-      "1System2Resources3Options4Summary",
-    );
+    expect(screen.getByRole("list", { name: "Steps" })).toHaveTextContent("1System2Resources3Options4Summary");
     fireEvent.change(imageField(), { target: { value: "ghcr.io/trycua/linux:24.04-disk" } });
     runOn("local");
     next();
@@ -191,7 +194,14 @@ describe("New Space wizard", () => {
     const onConnectCloud = vi.fn();
     renderWizard({ clouds: [AWS], hosts: [MINI, STUDIO], onConnectCloud });
     expect(screen.queryByText(/Cua Cloud/)).toBeNull();
-    expect(entries()).toEqual(["Auto", "This Mac", "Mac mini", "Studio (offline) (disabled)", "AWS \u00b7 us-west-2", "Add your cloud account…"]);
+    expect(entries()).toEqual([
+      "Auto",
+      "This Mac",
+      "Mac mini",
+      "Studio (offline) (disabled)",
+      "AWS \u00b7 us-west-2",
+      "Add your cloud account…",
+    ]);
     runOn("add:cloud");
     expect(onConnectCloud).toHaveBeenCalled();
   });
@@ -313,7 +323,12 @@ describe("the Resources step", () => {
     next();
     const p = size("ghcr.io/trycua/linux:24.04", "arm64");
     const gb = (b: number) => (b / GB < 10 ? (b / GB).toFixed(1) : Math.round(b / GB)) + " GB";
-    expect(facts()).toEqual(["Container", "ARM", `${gb(p.unpacked).replace(" GB", "")}–${gb(p.unpacked + p.disk + p.download)} initially; grows with use (download ${gb(p.download)})`, "40 GB on Colima"]);
+    expect(facts()).toEqual([
+      "Container",
+      "ARM",
+      `${gb(p.unpacked).replace(" GB", "")}–${gb(p.unpacked + p.disk + p.download)} initially; grows with use (download ${gb(p.download)})`,
+      "40 GB on Colima",
+    ]);
     expect(screen.queryByRole("slider", { name: "Disk" })).toBeNull();
     expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled();
   });
@@ -349,7 +364,11 @@ describe("the Resources step", () => {
   });
 
   it("grows a Linux VM's disk with a slider and creates with it", () => {
-    const { onCreate } = renderWizard({ hostArch: "arm64", storage: storage(), localBackends: ["docker", "lume", "qemu"] });
+    const { onCreate } = renderWizard({
+      hostArch: "arm64",
+      storage: storage(),
+      localBackends: ["docker", "lume", "qemu"],
+    });
     fireEvent.change(imageField(), { target: { value: "ghcr.io/trycua/linux:24.04-disk" } });
     runOn("local");
     next();
@@ -430,7 +449,7 @@ describe("Connect by address", () => {
 describe("friendlyAddError", () => {
   it("names a rejected token and keeps the raw detail", () => {
     const text = friendlyAddError("unauthenticated: missing or invalid bearer token (Unauthenticated)");
-    expect(text).toMatch(/^The Space rejected the token/);
+    expect(text).toMatch(/^This Space didn’t accept the access token/);
     expect(text).toContain("invalid bearer token");
   });
   it("passes other errors through", () => {

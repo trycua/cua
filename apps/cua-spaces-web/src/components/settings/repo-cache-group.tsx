@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { toastError } from "@/components/ui/toast";
+import { useT } from "@/i18n";
 
 /** How often what the cache holds is read again while Settings is open. */
 const REFRESH_MS = 15_000;
@@ -20,6 +21,7 @@ const REFRESH_MS = 15_000;
  * The host owns all of it (the repo cache of the Cua daemon); a host without one draws nothing.
  */
 export function RepoCacheGroup() {
+  const t = useT();
   const { data: adapter } = useBridge();
   // Sharing above draws once the machines are known: this group waits for the same moment, so it never moves when Sharing arrives.
   const { data: machines } = useMachines();
@@ -47,14 +49,14 @@ export function RepoCacheGroup() {
 
   useEffect(() => {
     void read();
-    const t = setInterval(() => void read(), REFRESH_MS);
-    return () => clearInterval(t);
+    const timer = setInterval(() => void read(), REFRESH_MS);
+    return () => clearInterval(timer);
   }, [read]);
 
   if (!adapter || machines === undefined) return null;
   if (!view) {
     return answered ? null : (
-      <SettingsGroup title="Cache" data-settings-group="repo-cache" aria-busy="true">
+      <SettingsGroup title={t("settings.repo_cache.title")} data-settings-group="repo-cache" aria-busy="true">
         <div className="h-[233px]" />
       </SettingsGroup>
     );
@@ -78,17 +80,17 @@ export function RepoCacheGroup() {
     const n = text === "" ? null : Number(text);
     if (n !== null && (!Number.isFinite(n) || n < 0)) return setDraft(shown);
     if ((n === null ? "" : String(n)) === shown) return setDraft(shown);
-    void run("repoCache.set", { sizeGb: n }, "Couldn't change the cache size");
+    void run("repoCache.set", { sizeGb: n }, t("settings.repo_cache.size_failed"));
   };
 
   return (
-    <SettingsGroup title="Cache" data-settings-group="repo-cache">
+    <SettingsGroup title={t("settings.repo_cache.title")} data-settings-group="repo-cache">
       <SettingsRow
-        label="Repo and dependency cache"
+        label={t("settings.repo_cache.label")}
         htmlFor="repo-cache"
         description={
           <>
-            Keeps copies of public repositories on this machine, so cloning one again in a Space is fast. Nothing private is kept.
+            {t("settings.repo_cache.help")}
             <span className="block" data-repo-cache-summary>
               {view.summary}
             </span>
@@ -103,16 +105,15 @@ export function RepoCacheGroup() {
             data-setting-row="repo-cache"
             checked={view.enabled}
             disabled={busy}
-            onCheckedChange={(on) => void run("repoCache.set", { enabled: on }, "Couldn't change the cache")}
+            onCheckedChange={(on) => void run("repoCache.set", { enabled: on }, t("settings.repo_cache.toggle_failed"))}
           />
         }
       />
       {view.enabled ? (
         <>
           <SettingsRow
-            label="Size limit"
+            label={t("settings.repo_cache.size_limit")}
             htmlFor="repo-cache-size"
-            description="The least recently used repositories go first. Empty is automatic: the smaller of 5 GB and a tenth of the free disk."
             control={
               <span className="flex items-center gap-2">
                 <Input
@@ -122,7 +123,8 @@ export function RepoCacheGroup() {
                   inputMode="decimal"
                   min={0}
                   className="w-28 text-right"
-                  placeholder="Automatic"
+                  placeholder={t("settings.repo_cache.size_automatic")}
+                  title={t("settings.repo_cache.size_help")}
                   value={draft}
                   disabled={busy}
                   onValueChange={setDraft}
@@ -131,16 +133,22 @@ export function RepoCacheGroup() {
                     if (e.key === "Enter") (e.target as HTMLInputElement).blur();
                   }}
                 />
-                <span className="w-12 text-[13px] text-muted-foreground">GB</span>
+                <span className="w-12 text-[13px] text-muted-foreground">{t("settings.repo_cache.unit_gb")}</span>
               </span>
             }
           />
           <SettingsRow
-            label="Clear cache"
-            description="Deletes the copies. They are made again the next time a Space clones them."
+            label={t("settings.repo_cache.clear")}
+            description={t("settings.repo_cache.clear_help")}
             control={
-              <Button size="sm" variant="outline" data-setting-row="repo-cache-clear" disabled={busy || view.repos === 0} onClick={() => void run("repoCache.clear", {}, "Couldn't clear the cache")}>
-                Clear cache
+              <Button
+                size="sm"
+                variant="outline"
+                data-setting-row="repo-cache-clear"
+                disabled={busy || view.repos === 0}
+                onClick={() => void run("repoCache.clear", {}, t("settings.repo_cache.clear_failed"))}
+              >
+                {t("settings.repo_cache.clear")}
               </Button>
             }
           />

@@ -487,10 +487,25 @@ impl Space {
         frames: Arc<dyn FrameSink>,
         audio: Option<Arc<dyn AudioSink>>,
     ) -> Result<StreamSession> {
+        let started = std::time::Instant::now();
         let ticket = self.open_stream(target, options).await?;
+        // `stream.open` timing (debug): the ticket is the OpenMedia call,
+        // which also waits for the guest's first frame.
+        tracing::debug!(
+            target: "cua::stream::timing",
+            hop = "ticket",
+            ms = started.elapsed().as_secs_f64() * 1e3,
+            "stream.open"
+        );
         let headers = self.websocket_headers().await?;
         match StreamSession::attach(&ticket, &headers, frames, audio).await {
             Ok(mut s) => {
+                tracing::debug!(
+                    target: "cua::stream::timing",
+                    hop = "attached",
+                    ms = started.elapsed().as_secs_f64() * 1e3,
+                    "stream.open"
+                );
                 s.rpc = Some((self.clone(), ticket.media_session_id.clone()));
                 Ok(s)
             }

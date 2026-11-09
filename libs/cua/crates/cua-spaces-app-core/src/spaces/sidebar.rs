@@ -717,7 +717,7 @@ pub fn detail_copy() -> DetailCopy {
     DetailCopy {
         stream_loading: "Looking for this Space\u{2019}s windows\u{2026}".into(),
         stream_empty: "No open windows in this Space yet.".into(),
-        stream_failed: "No windows: the Space\u{2019}s window host is not up.".into(),
+        stream_failed: "Can\u{2019}t see this Space\u{2019}s windows yet.".into(),
         stream_no_match: "No windows match your filter.".into(),
         agents_loading: "Looking for this Space\u{2019}s agents\u{2026}".into(),
         agents_empty: "No agents have been started in this Space.".into(),
@@ -743,13 +743,13 @@ fn delete_confirm(space: &Space, remove_only: bool, delete_label: &str) -> Delet
             .or(space.cloud.as_deref())
             .unwrap_or_default();
         let elsewhere = space.cloud_delete.as_deref() == Some("elsewhere");
+        // Created elsewhere: only Remove from List works (the disabled reason says why).
+        // Yours: the deletion's reach stays said, since it can't be undone.
         let message = if elsewhere {
-            format!(
-                "It runs in {place} and was created on another machine. Remove from List keeps it running there."
-            )
+            format!("Remove from List keeps it running in {place}.")
         } else {
             format!(
-                "Delete Permanently deletes it and everything Cua created for it in {place}. Remove from List keeps it running there."
+                "Delete Permanently deletes everything Cua created for it in {place}. Remove from List keeps it running."
             )
         };
         return DeleteConfirm {

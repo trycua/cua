@@ -30,7 +30,9 @@ function files(dir: string, out: string[] = []): string[] {
 
 describe("provider marks", () => {
   it("every provider is drawn from a bundled mark, except the ones listed here", () => {
-    const missing = PROVIDER_REGISTRY.filter((p) => !(`provider:${p.id}` in APP_MARKS) && !["anthropic", "openai", "google", "github"].includes(p.id)).map((p) => p.id);
+    const missing = PROVIDER_REGISTRY.filter((p) => !(`provider:${p.id}` in APP_MARKS) && !["anthropic", "openai", "google", "github"].includes(p.id)).map(
+      (p) => p.id,
+    );
     expect(missing).toEqual(NO_MARK);
   });
 
@@ -50,7 +52,8 @@ describe("provider marks", () => {
   });
 
   it("no component, style or page names an icon host or a favicon service", () => {
-    const hosts = /(?:s2\/favicons|faviconV2|favicon\.ico\?|gstatic\.com\/faviconV2|google\.com\/s2|simpleicons\.org|cdn\.simpleicons|lobehub|lobe-icons|logo\.clearbit|icons\.duckduckgo|cdn\.jsdelivr\.net\/npm\/@lobehub|unpkg\.com\/@lobehub|iconify\.design)/i;
+    const hosts =
+      /(?:s2\/favicons|faviconV2|favicon\.ico\?|gstatic\.com\/faviconV2|google\.com\/s2|simpleicons\.org|cdn\.simpleicons|lobehub|lobe-icons|logo\.clearbit|icons\.duckduckgo|cdn\.jsdelivr\.net\/npm\/@lobehub|unpkg\.com\/@lobehub|iconify\.design)/i;
     const imageUrl = /(?:src|href|url\()\s*=?\s*[\("'`]\s*https?:\/\/[^"'`)\s]+\.(?:svg|png|ico|jpe?g|webp)/i;
     const bad: string[] = [];
     for (const f of files(src)) {

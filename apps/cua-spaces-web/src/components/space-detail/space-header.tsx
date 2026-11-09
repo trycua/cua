@@ -92,7 +92,11 @@ export function SpaceHeader(p: SpaceHeaderProps) {
           {p.childOf ? (
             <p data-child-of={p.childOf.id} className="mt-0.5 text-xs text-muted-foreground">
               Child of{" "}
-              <Link to="/spaces/$spaceId" params={{ spaceId: p.childOf.id }} className="cursor-default font-medium text-foreground outline-none hover:underline focus-visible:underline">
+              <Link
+                to="/spaces/$spaceId"
+                params={{ spaceId: p.childOf.id }}
+                className="cursor-default font-medium text-foreground outline-none hover:underline focus-visible:underline"
+              >
                 {p.childOf.name}
               </Link>
             </p>
@@ -134,7 +138,14 @@ export function SpaceHeader(p: SpaceHeaderProps) {
             </Button>
           ) : null}
           {p.share ? (
-            <Button variant="secondary" data-share-space="" className={cn(filled, accent)} disabled={!p.share.enabled} title={p.share.help} onClick={p.share.onClick}>
+            <Button
+              variant="secondary"
+              data-share-space=""
+              className={cn(filled, accent)}
+              disabled={!p.share.enabled}
+              title={p.share.help}
+              onClick={p.share.onClick}
+            >
               <UserPlusIcon className="size-3.5" /> {p.share.label}
             </Button>
           ) : null}

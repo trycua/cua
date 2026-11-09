@@ -12,7 +12,6 @@
 import { act, cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { setFlagOverride } from "@/bridge";
 import { wasmBuilt } from "@/bridge/__tests__/testCore";
 import { DEMO_THREAD_SPACE } from "@/bridge/adapters/demo/thread";
 import { resetWakeNotes } from "@/components/space-thread/summon";
@@ -28,7 +27,6 @@ beforeEach(() => {
   resetWakeNotes();
   resetConnectState();
   resetConnectedAppsState();
-  setFlagOverride("spaces_ask_first_home", true);
 });
 afterEach(() => {
   cleanup();
@@ -104,7 +102,7 @@ describe.skipIf(!wasmBuilt)("Ask first: nothing connected", () => {
   it("has no agent to start with: the box says to sign in and Start waits", { timeout: 40000 }, async () => {
     await mountApp("/home", { failsCreates: false, listsGhost: false, demo: { keys: "none" } });
     fireEvent.change(await screen.findByLabelText("What should it do?"), { target: { value: "fix the build" } });
-    expect(q("[data-ask-agent]")!.textContent).toBe("Sign in to an agent");
+    expect(q("[data-ask-agent]")!.textContent).toBe("Choose an agent");
     expect((screen.getByRole("button", { name: "Start" }) as HTMLButtonElement).disabled).toBe(true);
   });
 });
@@ -149,7 +147,9 @@ describe.skipIf(!wasmBuilt)("Send again when the agent can't join", () => {
     });
     calls.length = 0;
     await compose("@ghost are you there");
-    await waitFor(() => expect(calls.some((c) => c.op === "thread.post" && String(c.args.text).includes("@ghost are you there"))).toBe(true), { timeout: 15000 });
+    await waitFor(() => expect(calls.some((c) => c.op === "thread.post" && String(c.args.text).includes("@ghost are you there"))).toBe(true), {
+      timeout: 15000,
+    });
     const note = await found("[data-wake-note=ghost]", 15000);
     expect(note.textContent).toContain("Nobody called @ghost is in this Space");
     expect(note.textContent).toContain("Only visible to you");
@@ -206,7 +206,9 @@ describe.skipIf(!wasmBuilt)("notes only you see", () => {
     expect(queued.textContent).toContain("Only visible to you");
     expect(queued.textContent).toContain("Sends when the Space is ready");
     release();
-    await waitFor(() => expect(calls.some((c) => c.op === "thread.post" && (c.args as { text: string }).text === "@codex fix the build")).toBe(true), { timeout: 15000 });
+    await waitFor(() => expect(calls.some((c) => c.op === "thread.post" && (c.args as { text: string }).text === "@codex fix the build")).toBe(true), {
+      timeout: 15000,
+    });
     const sent = JSON.stringify(calls.map((c) => c.args));
     for (const words of ["Only visible to you", "isn't connected yet", "Sends when the Space is ready", "Sent again"]) expect(sent).not.toContain(words);
     expect(calls.filter((c) => c.op === "thread.post").map((c) => (c.args as { text: string }).text)).toEqual(["@codex fix the build"]);
@@ -227,7 +229,6 @@ describe.skipIf(!wasmBuilt)("notes only you see", () => {
 
 describe.skipIf(!wasmBuilt)("@ any agent in a Space ", () => {
   it("offers the agents that can start here and adds one on send", async () => {
-    setFlagOverride("spaces_ask_first_home", null);
     const calls: { op: string; args: Record<string, unknown> }[] = [];
     await mountApp(`/spaces/${encodeURIComponent(DEMO_THREAD_SPACE)}`, {
       failsCreates: false,

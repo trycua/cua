@@ -2,19 +2,19 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 /**
- * Spaces as a tree (CUA-3413, Labs `spaces_tree`): every computer you added
+ * Your computers as a tree (CUA-3413, CUA-3551): every computer you added
  * is a top row, and the Spaces made on it sit under it. One pure function
- * builds it for the sidebar, the Spaces page, Home's "in" picker and
+ * builds it for the sidebar, the Computers page, Home's "in" picker and
  * Settings, from what the app already has: the Spaces list (`Space.host`,
  * `provider`), the machines (`Machine.current`, `relayId`) and the agent
  * runs. Nothing new is stored; the default Space is the relay's
  * (`spaces.settings`).
  */
 
-import type { DefaultCandidate, Machine, Space, SpaceOs } from "@/bridge";
+import type { Machine, Space, SpaceOs } from "@/bridge";
+import { t } from "@/i18n";
 import { ownerLabel, peopleNames } from "@/lib/space-access";
 import { machineOs, reachable } from "@/lib/machines";
-import { plural } from "@/lib/plural";
 import { isMachineDesktop, spaceState, type SpaceState } from "@/lib/spaces";
 import { relativeTime } from "@/lib/utils";
 import { thisComputerLabel } from "./host-labels";
@@ -96,7 +96,10 @@ export function buildRelayOnline(order: readonly { space: string; online: boolea
 }
 
 /** Whether the relay calls this computer offline, whatever the computer list still counts. */
-export function relayCallsOffline(m: Pick<Machine, "id" | "current" | "relayId" | "connection">, relayOnline: ReadonlyMap<string, boolean> | undefined): boolean {
+export function relayCallsOffline(
+  m: Pick<Machine, "id" | "current" | "relayId" | "connection">,
+  relayOnline: ReadonlyMap<string, boolean> | undefined,
+): boolean {
   const id = computerSpaceId(m);
   return id !== null && !m.current && relayOnline?.get(id) === false;
 }
@@ -120,15 +123,24 @@ function ghostMachineIds(spaces: readonly Space[], machines: readonly Machine[])
 /** A Space id the relay knows (`relay:<machine>` or `relay:<machine>/<name>`): one that can be the default. */
 const relayId = (id: string): string | null => (id.startsWith("relay:") ? id : null);
 
-const SPACE_WORD: Record<SpaceState, string> = { running: "Online", stopped: "Stopped", creating: "Getting ready", deleting: "Deleting", failed: "Didn't start" };
+const spaceWord = (state: SpaceState): string =>
+  ({
+    running: t("computers.row.online"),
+    stopped: t("spaces.status.stopped"),
+    creating: t("computers.tree.space_creating"),
+    deleting: t("computers.status.deleting"),
+    failed: t("computers.tree.space_failed"),
+  })[state];
+
+const withDefault = (word: string): string => t("computers.tree.status_default", { status: word });
 
 function offlineWord(m: Pick<Machine, "lastSeen">, now: number): string {
-  return m.lastSeen ? `Offline, seen ${relativeTime(m.lastSeen * 1000, now)}` : "Offline";
+  return m.lastSeen ? t("computers.tree.offline_seen", { when: relativeTime(m.lastSeen * 1000, now) }) : t("computers.row.offline");
 }
 
 function tasksText(running: number, waits: boolean): string {
-  if (running === 0) return "None";
-  return waits ? "Paused" : `${running} running`;
+  if (running === 0) return t("computers.tree.tasks_none");
+  return waits ? t("computers.tree.tasks_paused") : t("computers.tree.tasks_running", { count: running });
 }
 
 function peopleOf(space: Space | null, me: string | null): string[] {
@@ -170,7 +182,11 @@ export function buildSpacesTree({ spaces, machines, defaultSpace, running = new 
     const id = computerSpaceId(m);
     return m.online && !(id !== null && relayOnline?.get(id) === false);
   };
-  const fallbackDefault = others.filter(isOnline).map(computerSpaceId).find((id): id is string => id !== null) ?? (here ? (computerSpaceId(here) ?? "this-mac") : null);
+  const fallbackDefault =
+    others
+      .filter(isOnline)
+      .map(computerSpaceId)
+      .find((id): id is string => id !== null) ?? (here ? (computerSpaceId(here) ?? "this-mac") : null);
   const defaultKey = defaultSpace && ids.has(defaultSpace) ? defaultSpace : fallbackDefault;
 
   const runningOf = (id: string | null | undefined) => (id ? (running.get(id) ?? 0) : 0);
@@ -180,7 +196,7 @@ export function buildSpacesTree({ spaces, machines, defaultSpace, running = new 
     const state = spaceState(s);
     const settingsId = relayId(s.id);
     const isDefault = settingsId !== null && settingsId === defaultKey;
-    const word = waits ? `Waits for ${parent.name}` : SPACE_WORD[state];
+    const word = waits ? t("computers.tree.waits_for", { name: parent.name }) : spaceWord(state);
     const n = runningOf(s.id);
     return {
       key: s.id,
@@ -192,8 +208,16 @@ export function buildSpacesTree({ spaces, machines, defaultSpace, running = new 
       machine: null,
       current: false,
       online: !waits && state === "running",
-      tone: waits ? "waits" : state === "running" ? "online" : state === "creating" || state === "deleting" ? "busy" : state === "failed" ? "offline" : "stopped",
-      status: isDefault && !waits ? `${word}, Default` : word,
+      tone: waits
+        ? "waits"
+        : state === "running"
+          ? "online"
+          : state === "creating" || state === "deleting"
+            ? "busy"
+            : state === "failed"
+              ? "offline"
+              : "stopped",
+      status: isDefault && !waits ? withDefault(word) : word,
       isDefault,
       dim: waits,
       running: n,
@@ -209,12 +233,14 @@ export function buildSpacesTree({ spaces, machines, defaultSpace, running = new 
     const own = m.current ? (spaces.find((s) => s.id === "this-mac") ?? null) : (spaces.find((s) => s.id === `relay:${m.id}`) ?? null);
     const id = computerSpaceId(m);
     const key = id ?? (m.current ? "this-mac" : `machine:${m.id}`);
-    const kids = listed.filter((s) => !placed.has(s.id) && (m.current ? s.provider === "local" || (m.relayId !== undefined && s.host === m.relayId) : s.host === m.id));
+    const kids = listed.filter(
+      (s) => !placed.has(s.id) && (m.current ? s.provider === "local" || (m.relayId !== undefined && s.host === m.relayId) : s.host === m.id),
+    );
     // This Mac before it is shared, with no Space on it: not a Space yet (the empty state offers "Add this Mac").
     if (m.current && !id && !m.connection && kids.length === 0) continue;
     const online = reachable(m) && !relayCallsOffline(m, relayOnline);
     const isDefault = key === defaultKey;
-    const word = online ? "Online" : m.online && m.notSharing ? "Not sharing" : offlineWord(m, now);
+    const word = online ? t("computers.row.online") : m.online && m.notSharing ? t("computers.row.not_sharing") : offlineWord(m, now);
     const node: TreeNode = {
       key,
       kind: "computer",
@@ -226,7 +252,7 @@ export function buildSpacesTree({ spaces, machines, defaultSpace, running = new 
       current: m.current,
       online,
       tone: online ? "online" : "offline",
-      status: isDefault ? `${word}, Default` : word,
+      status: isDefault ? withDefault(word) : word,
       isDefault,
       dim: false,
       running: 0,
@@ -239,7 +265,7 @@ export function buildSpacesTree({ spaces, machines, defaultSpace, running = new 
     node.children = kids.map((s) => spaceNode(s, node));
     node.running = runningOf(id) + (m.current ? runningOf("this-mac") : 0) + node.children.reduce((sum, c) => sum + c.running, 0);
     node.tasks = tasksText(node.running, false);
-    if (!online && node.running > 0) node.tasks = "Paused";
+    if (!online && node.running > 0) node.tasks = t("computers.tree.tasks_paused");
     // A computer shared with you: whoever is on its Spaces is on it too.
     if (node.people.length <= 1) node.people = [...new Set([...node.people, ...node.children.flatMap((c) => c.people)])];
     roots.push(node);
@@ -279,37 +305,20 @@ export function treeRows(tree: Pick<SpacesTree, "roots">): TreeNode[] {
   return tree.roots.flatMap((r) => [r, ...r.children]);
 }
 
-/** The Spaces page's line under its title. */
+/** The Computers page's line under its title. */
 export function treeSummary(tree: SpacesTree): string {
   if (tree.offlineParent) {
     const p = tree.offlineParent;
-    return `${p.name} is offline, so the ${plural(p.children.length, "Space")} on it ${p.children.length === 1 ? "is" : "are"} too. ${p.children.length === 1 ? "It comes" : "They come"} back when it does.`;
+    return t("computers.tree.summary_offline", { name: p.name, count: p.children.length });
   }
   if (tree.computers === 1 && tree.spaces === 0) {
     const only = tree.roots[0]!;
-    return `1 computer. New tasks run on ${only.name} until you add another.`;
+    return t("computers.tree.summary_single", { name: only.name });
   }
   const total = tree.computers + tree.spaces;
-  const made = tree.spaces === 0 ? "" : ` and ${plural(tree.spaces, "Space")} made on ${tree.computers === 1 ? "it" : "them"}`;
-  return `${plural(tree.computers, "computer")}${made}. ${total} in all, ${tree.online} online.`;
-}
-
-/**
- * The computers a task may go to, in the account's order, for the
- * resolution when the host can't ask the relay (`resolveDefaultSpace`):
- * the default first if it's a Space, then each computer, This Mac last.
- */
-export function defaultCandidates(tree: SpacesTree): DefaultCandidate[] {
-  const out: DefaultCandidate[] = [];
-  for (const n of treeRows(tree)) {
-    if (!n.settingsId) continue;
-    if (n.kind === "space" && !n.isDefault) continue;
-    out.push({ space: n.settingsId, name: n.name, online: n.online, here: n.current });
-  }
-  // This Mac before it is on the relay is still the last resort.
-  const here = tree.roots.find((r) => r.current);
-  if (here && !here.settingsId) out.push({ space: here.key, name: here.name, online: true, here: true });
-  return out;
+  return tree.spaces === 0
+    ? t("computers.tree.summary_computers", { computers: tree.computers, total, online: tree.online })
+    : t("computers.tree.summary_spaces", { computers: tree.computers, spaces: tree.spaces, total, online: tree.online });
 }
 
 /** A node by key. */

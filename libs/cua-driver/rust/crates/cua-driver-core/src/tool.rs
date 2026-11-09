@@ -1891,6 +1891,10 @@ impl ToolRegistry {
         evidence: &TrustedInvocationEvidence,
     ) -> ToolResult {
         let seed = crate::recovery_hint::Seed::from_args(&args);
+        let nudge_args = serde_json::json!({
+            "pid": args.get("pid"),
+            "window_id": args.get("window_id"),
+        });
         let session = args
             .get("session")
             .and_then(Value::as_str)
@@ -1934,7 +1938,7 @@ impl ToolRegistry {
             crate::fast_path::wire::attach_delta(&mut result, delta);
         }
         crate::recovery_hint::annotate(tool, &seed, &mut result);
-        crate::batch_nudge::annotate(tool, session.as_deref(), in_batch, &mut result);
+        crate::batch_nudge::annotate(tool, session.as_deref(), in_batch, &nudge_args, &mut result);
         result
     }
 
@@ -2695,18 +2699,15 @@ impl ToolRegistry {
         // entirely to avoid wasted capture work). We push for the same set
         // of action tools the recording pipeline cares about (non-read-only,
         // not the recording-control meta-tools) so the live view matches
-        // what the recorder would have captured for the turn.
+        // what the recorder would have captured for the turn. The frame is
+        // only a preview, so it is captured off the request path: capturing
+        // and encoding a large window held the result back for up to 2 s.
         if pip_hook::pip_enabled() && should_record && !private_consent_turn {
-            let window_id = args.opt_u64("window_id");
-            let pid = args.opt_i64("pid");
-            if let Some(png_bytes) = screenshot_for(window_id, pid) {
-                let label = synthesize_action_label(name, &public_args);
-                pip_hook::push_pip_frame(pip_hook::PipHookFrame {
-                    png_bytes,
-                    action_label: label,
-                    timestamp_ms: now_ms(),
-                });
-            }
+            push_pip_frame_in_background(
+                args.opt_u64("window_id"),
+                args.opt_i64("pid"),
+                synthesize_action_label(name, &public_args),
+            );
         }
 
         if renamed_tool(original_name).is_some() {
@@ -7052,6 +7053,40 @@ impl Default for ToolRegistry {
     }
 }
 
+/// A PiP frame capture is running; a newer request waits for the next action
+/// instead of queueing behind it.
+static PIP_CAPTURE_BUSY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Capture the action's window for the PiP preview on its own thread, so the
+/// tool result does not wait for it. At most one capture runs at a time.
+fn push_pip_frame_in_background(window_id: Option<u64>, pid: Option<i64>, label: String) {
+    use std::sync::atomic::Ordering;
+    struct Busy;
+    impl Drop for Busy {
+        fn drop(&mut self) {
+            PIP_CAPTURE_BUSY.store(false, Ordering::Release);
+        }
+    }
+    if PIP_CAPTURE_BUSY.swap(true, Ordering::AcqRel) {
+        return;
+    }
+    let spawned = std::thread::Builder::new()
+        .name("pip-frame".into())
+        .spawn(move || {
+            let _busy = Busy;
+            if let Some(png_bytes) = screenshot_for(window_id, pid) {
+                pip_hook::push_pip_frame(pip_hook::PipHookFrame {
+                    png_bytes,
+                    action_label: label,
+                    timestamp_ms: now_ms(),
+                });
+            }
+        });
+    if spawned.is_err() {
+        PIP_CAPTURE_BUSY.store(false, Ordering::Release);
+    }
+}
+
 /// Build a short, human-friendly label for the PiP overlay from the
 /// tool name + raw args. Kept under ~60 chars so the macOS NSTextField
 /// has room without truncation at default geometry.
@@ -7691,7 +7726,13 @@ mod capability_tests {
         // Keys old consumers (Swift Hermes, the .NET driver, etc.)
         // already read — must still be present.
         assert_eq!(entry["name"], "click");
-        assert_eq!(entry["description"], "Click an element.");
+        // `click` also carries the one-line batching pointer.
+        let description = entry["description"].as_str().unwrap();
+        assert!(
+            description.starts_with("Click an element."),
+            "{description}"
+        );
+        assert!(description.contains("run_steps"), "{description}");
         assert!(entry["inputSchema"].is_object());
         assert_eq!(entry["annotations"]["readOnlyHint"], false);
         assert_eq!(entry["annotations"]["destructiveHint"], true);

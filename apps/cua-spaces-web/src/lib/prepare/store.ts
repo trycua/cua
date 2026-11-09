@@ -5,9 +5,14 @@ import { useMemo, useSyncExternalStore } from "react";
 
 import type { CoreClient } from "@/bridge/core";
 import type { PrepareMessage, PrepareState, PrepareView } from "@/bridge/contracts/prepare";
+import { useSpaces } from "@/bridge";
 import { prepareHidden } from "@/bridge/prepare-core";
+import { spaceState } from "@/lib/spaces";
 
 import type { PrepareDriver } from "./driver";
+
+/** The warming home's fixed name for a coding app: a create the host still runs is found by it. */
+export const homeNameOf = (harness: string) => `home-${harness}`;
 
 /** Where the driver is kept: one for the page, made once the app core is there. */
 let driver: PrepareDriver | null = null;
@@ -60,7 +65,11 @@ export function resetPrepare(): void {
 
 /** The driver's state, as the page reads it. */
 export function usePrepare(): { state: PrepareState | null; view: PrepareView | null; driver: PrepareDriver | null } {
-  const d = useSyncExternalStore(subscribe, () => driver, () => null);
+  const d = useSyncExternalStore(
+    subscribe,
+    () => driver,
+    () => null,
+  );
   useSyncExternalStore(
     d ? d.subscribe : (l) => (listeners.add(l), () => listeners.delete(l)),
     () => d?.state ?? null,
@@ -84,9 +93,11 @@ export function usePreparingSpace(spaceId: string | undefined): PrepareState | n
 /** The messages kept for the home that are not in its thread yet. */
 export function usePreparedQueue(spaceId: string): PrepareMessage[] {
   const { state } = usePrepare();
-  return useMemo(() => (state?.wanted && (state.pendingId === spaceId || state.homeSpaceId === spaceId) ? state.messages.filter((m) => m.state !== "delivered") : []), [state, spaceId]);
+  return useMemo(
+    () => (state?.wanted && (state.pendingId === spaceId || state.homeSpaceId === spaceId) ? state.messages.filter((m) => m.state !== "delivered") : []),
+    [state, spaceId],
+  );
 }
-
 
 /**
  * The Spaces no list shows: the home that warms for Home's box until a person wrote into it (the core's
@@ -94,7 +105,17 @@ export function usePreparedQueue(spaceId: string): PrepareMessage[] {
  */
 export function useHiddenSpaceIds(core: CoreClient): ReadonlySet<string> {
   const { state } = usePrepare();
-  return useMemo(() => new Set(prepareHidden(core, state)), [core, state]);
+  const { data: spaces } = useSpaces();
+  return useMemo(() => {
+    const ids = new Set(prepareHidden(core, state));
+    // A create that outlived the app (it was quit meanwhile) is followed before the driver knows its id: still the
+    // warming home, so still off every list.
+    if (state?.wanted && state.askedMs == null && state.harness) {
+      const name = homeNameOf(state.harness);
+      for (const s of spaces ?? []) if (s.name === name && spaceState(s) === "creating") ids.add(s.id);
+    }
+    return ids;
+  }, [core, state, spaces]);
 }
 
 /** A person wrote in this Space's own thread: when it is the warming home, it is listed from now on. */

@@ -78,6 +78,10 @@ pub struct Attachment {
     pub bytes: Vec<u8>,
 }
 
+/// How long a run waits for its next prompt before it exits, unless the
+/// caller says otherwise.
+pub const DEFAULT_IDLE_EXIT_SECS: u32 = 1800;
+
 /// Options for [`Agents::start`]. Everything is optional.
 #[derive(Clone, Debug, Default)]
 pub struct RunOptions {
@@ -107,7 +111,7 @@ pub struct RunOptions {
     pub install: Option<bool>,
     /// Exit (resumably) once the queue is empty: fire-and-forget batch runs.
     pub exit_when_idle: bool,
-    /// Exit after this long without a prompt. Default 1800.
+    /// Exit after this long without a prompt. Default `DEFAULT_IDLE_EXIT_SECS` (30 minutes).
     pub idle_exit_secs: Option<u32>,
     /// A label for listings.
     pub label: Option<String>,
@@ -1193,7 +1197,7 @@ impl Agents {
             "files": files,
             "mcpServers": mcp,
             "exitWhenIdle": opts.exit_when_idle || opts.durable.is_some(),
-            "idleExitSecs": opts.idle_exit_secs.unwrap_or(1800),
+            "idleExitSecs": opts.idle_exit_secs.unwrap_or(DEFAULT_IDLE_EXIT_SECS),
             "authMethod": h.auth_method,
             "authHint": h.auth_hint(),
             "keyCheck": harness::key_check(h, &opts.env, endpoint.as_ref()),
@@ -1394,11 +1398,15 @@ impl Agents {
     pub async fn events(&self, run_id: &str, cursor: u64, max: usize) -> Result<EventPage> {
         valid_run_id(run_id)?;
         let path = format!("{}/events.jsonl", self.run_dir(run_id));
-        let bytes = self
-            .read(&path, cursor, PAGE_BYTES)
-            .await?
-            .unwrap_or_default();
-        Ok(events::page(&bytes, cursor, max.max(1)))
+        // A line (an event with an image in it) can be bigger than a page: the
+        // window grows until it holds one, so the reader never stops at it.
+        events::read_page(
+            |offset, length| self.read(&path, offset, length),
+            cursor,
+            max.max(1),
+            PAGE_BYTES,
+        )
+        .await
     }
 
     /// Every event (bounded to the last 8 MiB).

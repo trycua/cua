@@ -262,10 +262,44 @@ driver selects a backend from compositor capabilities:
   qualification and validation limits below. Do not inherit Sway coverage.
 - GNOME/Mutter uses the bundled WinRects Shell helper for target geometry and
   activation, plus portal/libei for foreground raw input.
-- KDE/KWin uses AT-SPI and portal facilities where available. Target-specific
-  foreground activation remains experimental, so unsafe raw input refuses.
+- KDE/KWin uses AT-SPI and portal facilities where available. Where the
+  operator has enabled it, it also gets exact window geometry, stacking,
+  capture of a covered window, and `bring_to_front`; otherwise window capture
+  returns `surface_identity_unproven`. Raw input at a window refuses with
+  `foreground_unavailable`.
 - The optional `cua-compositor` is a separate nested session enabled
   explicitly for controlled automation. GNOME and KDE never switch into it.
+
+**Desktop `type_text` gives the exact text or a refusal.** A refused text sends
+no key at all and returns `code: "foreground_unavailable"`, `effect: "none"` and
+a detail ending in `nothing was typed`, on libei, niri, wtype and Hyprland alike.
+Enter such text with `set_value`, or `clipboard_write` and then `hotkey ctrl+v`.
+
+- On libei, keys follow the active layout and the lock keys. KWin 6.8 and Mutter
+  report them over libei. When nothing has been reported yet, the driver taps
+  Shift once before its first text, because KWin 6.8 reports only changes. Earlier
+  KWin is asked over D-Bus (`org.kde.keyboard`, through `gdbus`) and
+  `org_kde_kwin_keystate` version 5, which reports the lock keys and whether a
+  modifier key is held.
+- KWin 6.3 to 6.5 offers `org_kde_kwin_keystate` only to a program whose desktop
+  entry lists it in `X-KDE-Wayland-Interfaces`. Without that, or on KWin before
+  6.3, whose version doesn't report modifier keys, typing keys is refused, since
+  a held Shift would change digits as well as letters. A keymap with several
+  layouts is refused when the active one can't be read.
+- Also refused: a character the active layout has only behind Ctrl, Alt or Super
+  or on a key apps drop, while a modifier key is held or latched, and any control
+  character except a line feed, carriage return or tab. A carriage return and
+  line feed pair is one press of Return.
+- On KWin 6.8, a line with no line break goes through `ei_text`, which types
+  characters the layout lacks, unless an X11 app has or may have focus: X11 apps
+  lose those characters, so that text goes as keys or is refused. A compositor
+  with `ei_text` and no keyboard types a line only when no X11 app may have
+  focus, and refuses line breaks. If the driver
+  can't tell, because the X server doesn't answer within 250 ms or `DISPLAY` is
+  unset while an X socket exists, it treats an X11 app as focused.
+- A long text waits as long as it keeps moving. Text with line breaks that needs
+  `ei_text` takes about 100 ms per line. If EIS stops acknowledging for 5 s, the
+  error says how far the text got, so read the field before retrying.
 
 Sway recording works through the wlroots recorder path and is exercised by the
 canonical harness runner. Compositors that expose no wlr-screencopy protocol,
@@ -474,7 +508,7 @@ ask the user.
 | Sway/wlroots            | AT-SPI, native discovery, full-display and cropped-window screencopy, foreground input, semantic background actions, and video | Raw background pointer and keyboard input remains focus-bound                                                                                                                                                  |
 | Hyprland/Omarchy        | Experimental source candidate with separate discovery-foundation and bounded two-seat app evidence                             | Default plugin is discovery-only; raw background v3 qualification is limited to the exact native Calc/Inkscape packages and a private agent US keymap; user Caps-to-Ctrl/Super remaps do not alter agent semantics; complete native harness and release acceptance are separate gates |
 | GNOME/Mutter            | AT-SPI, WinRects geometry and activation, capture, and portal/libei foreground input                                           | Requires the helper and portal grant; portal video parity remains open                                                                                                                                         |
-| KDE/KWin                | AT-SPI and generic discovery where exposed                                                                                     | Target-specific activation and behavioral coverage remain experimental; video needs a `portal-capture` build and a portal monitor grant                                                                        |
+| KDE/KWin                | AT-SPI and generic discovery where exposed; where the operator enabled it, exact window geometry, capture and `bring_to_front` | Raw input at a window refuses with `foreground_unavailable`; otherwise window capture returns `surface_identity_unproven`; video needs a `portal-capture` build and a portal monitor grant                     |
 | Nested `cua-compositor` | Versioned direct per-surface input, native GTK 31/31, capture/scope 5/5, and partial Electron coverage                         | The complete shared matrix remains experimental; do not infer standard-Wayland support                                                                                                                         |
 
 See [WORKFLOW.md](WORKFLOW.md) for exact targeting and verification and `RECORDING.md` for session

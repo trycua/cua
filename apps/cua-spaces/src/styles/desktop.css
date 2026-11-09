@@ -1593,7 +1593,6 @@ html.is-main body {
   }
 }
 
-
 /* Components shared with the notch (settings, window and agent lists, the
    drop zone) read the older token names; map them onto this window's
    opaque palette. */
@@ -2736,11 +2735,7 @@ html.is-teleport-picker .hp-panel {
   display: flex;
   border: 0.5px solid var(--obdp-edge);
   border-radius: 2px;
-  background: color-mix(
-    in srgb,
-    var(--dw-accent) calc(var(--obdp-checked) * 100%),
-    var(--obdp-window)
-  );
+  background: color-mix(in srgb, var(--dw-accent) calc(var(--obdp-checked) * 100%), var(--obdp-window));
 }
 .dw .obdp-checkbox svg {
   overflow: visible;
@@ -3157,7 +3152,11 @@ html.is-teleport-picker .hp-panel {
   padding: 8px 10px;
   max-height: 240px;
   overflow: auto;
-  font: 12px ui-monospace, SFMono-Regular, Menlo, monospace;
+  font:
+    12px ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
   white-space: pre-wrap;
 }
 /* The Volume page's head: Open in Finder, and where it is mounted. */

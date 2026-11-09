@@ -15,7 +15,6 @@
  * was, only while no page shows one.
  */
 
-import { useNavigate } from "@tanstack/react-router";
 import { CheckIcon, CopyIcon, LightbulbIcon, XIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { create } from "zustand";
@@ -38,15 +37,8 @@ import {
 } from "@/bridge";
 import { Button } from "@/components/ui/button";
 import { useHiddenSpaceIds } from "@/lib/prepare/store";
-import { canDelete, canPower, realSpaces, spaceState } from "@/lib/spaces";
+import { realSpaces, spaceState } from "@/lib/spaces";
 import { cn } from "@/lib/utils";
-
-/** Where Select stopped goes: the list for This Mac, biggest first, the
- * stopped ones picked. The list view (`/spaces?view=list`) reads these:
- * `view=list` the list (not tiles), `on=this-mac` only This Mac's Spaces,
- * `sort=size` biggest on disk first, `select=stopped` the stopped ones you
- * may delete selected. */
-export const SELECT_STOPPED_SEARCH = { view: "list", on: "this-mac", sort: "size", select: "stopped" } as const;
 
 /** Whether a page shows a tip now (the sidebar's waits until none does). */
 const usePageTip = create<{ shown: number; add(): () => void }>((set) => ({
@@ -61,8 +53,6 @@ const usePageTip = create<{ shown: number; add(): () => void }>((set) => ({
 type Access = { kind?: string; people?: unknown[]; canDelete?: boolean; canPower?: boolean };
 const accessOf = (s: Space): Access | undefined => (s as Space & { access?: Access }).access;
 const mine = (s: Space) => (accessOf(s)?.kind ?? "mine") === "mine";
-const deletable = (s: Space) => canDelete(s) && (accessOf(s)?.canDelete ?? mine(s));
-const powerable = (s: Space) => canPower(s) && (accessOf(s)?.canPower ?? true);
 
 /** The newest running Space: started last (else used last). */
 export function newestRunning(spaces: readonly Space[]): Space | undefined {
@@ -120,7 +110,6 @@ export function useTipFacts(space?: Space): TipFacts | null {
     // Until the agents are read the try-agent tip can't name yours: no tip for that moment.
     if (!agents) return null;
     const spaces = realSpaces(all);
-    const stopped = spaces.filter((s) => spaceState(s) === "stopped");
     const here = machines.find((m) => m.current);
     const disk = hostResources(resources, here)?.warning.level;
     return {
@@ -128,8 +117,10 @@ export function useTipFacts(space?: Space): TipFacts | null {
       spacePage: space && spaceState(space) === "running" ? space.name : null,
       agentsConnected: agents.filter((a) => a.configured).map((a) => a.agent),
       agentsInstalled: agents.filter((a) => a.installed).map((a) => a.agent),
-      hasStopped: stopped.some(powerable),
-      deletableStopped: stopped.filter(deletable).length,
+      // The list of your computers has no power on hover and no picking several Spaces (CUA-3551): the tips that teach
+      // those never come up.
+      hasStopped: false,
+      deletableStopped: 0,
       diskNearlyFull: disk === "low" || disk === "critical",
       secondComputerOnline: machines.filter((m) => m.online).length >= 2,
       sharedAny: spaces.some((s) => mine(s) && (accessOf(s)?.people?.length ?? 0) > 0),
@@ -185,18 +176,13 @@ export function PageTip({ place, space, onShare, className }: { place: "spaces" 
   const tip = useTip(place, space);
   const { send } = useTips();
   const { openExternal } = useSession();
-  const navigate = useNavigate();
   const add = usePageTip((s) => s.add);
   useEffect(() => (tip ? add() : undefined), [tip, add]);
   if (!tip) return null;
   const close = () => void send({ type: "close", id: tip.id });
   const { action } = tip;
   const button =
-    action.kind === "selectStopped" ? (
-      <Button size="sm" variant="secondary" data-tip-action="select-stopped" onClick={() => void navigate({ to: "/spaces", search: { ...SELECT_STOPPED_SEARCH } })}>
-        {action.label}
-      </Button>
-    ) : action.kind === "share" && onShare ? (
+    action.kind === "share" && onShare ? (
       <Button size="sm" variant="secondary" data-tip-action="share" onClick={onShare}>
         {action.label}
       </Button>
@@ -236,7 +222,13 @@ export function PageTip({ place, space, onShare, className }: { place: "spaces" 
           />
           {action.value && action.label ? <CopyButton text={action.value} label={action.label} doneLabel={action.doneLabel ?? action.label} /> : null}
           {tip.openIn ? (
-            <Button size="sm" variant="ghost" data-tip-open-in="" className="text-muted-foreground hover:text-foreground" onClick={() => void openExternal(tip.openIn!.url).catch(() => {})}>
+            <Button
+              size="sm"
+              variant="ghost"
+              data-tip-open-in=""
+              className="text-muted-foreground hover:text-foreground"
+              onClick={() => void openExternal(tip.openIn!.url).catch(() => {})}
+            >
               {tip.openIn.label}
             </Button>
           ) : null}
@@ -274,7 +266,9 @@ export function SidebarTip() {
           <code data-tip-code="" className="min-w-0 flex-1 truncate rounded-lg bg-background px-2 py-1 font-mono text-[11px] leading-5 select-all">
             {tip.code}
           </code>
-          {tip.action.value ? <CopyButton iconOnly text={tip.action.value} label={tip.action.label || "Copy"} doneLabel={tip.action.doneLabel ?? "Copied"} /> : null}
+          {tip.action.value ? (
+            <CopyButton iconOnly text={tip.action.value} label={tip.action.label || "Copy"} doneLabel={tip.action.doneLabel ?? "Copied"} />
+          ) : null}
         </div>
       ) : null}
     </div>

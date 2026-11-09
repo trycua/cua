@@ -151,7 +151,15 @@ export function foldThread(entries: readonly ThreadEntry[], opts: { readSeq?: nu
   }
   const readSeq = opts.readSeq;
   if (readSeq == null) return items;
-  const first = items.findIndex((i) => i.type !== "unread" && i.type !== "system" && i.type !== "subagent" && i.type !== "child_space" && !isCreatorHeader(i) && unreadIn(i, readSeq, opts.me ?? null));
+  const first = items.findIndex(
+    (i) =>
+      i.type !== "unread" &&
+      i.type !== "system" &&
+      i.type !== "subagent" &&
+      i.type !== "child_space" &&
+      !isCreatorHeader(i) &&
+      unreadIn(i, readSeq, opts.me ?? null),
+  );
   if (first < 0) return items;
   // A note just above the first unread entry belongs below the divider.
   let at = first;
@@ -187,7 +195,11 @@ export const isCreatorHeader = (i: ThreadItem): boolean => i.type === "message" 
  * right above. The creator is the agent that made it, or the person (`by`) when a person did; with neither the row stands alone.
  */
 function creatorHeader(items: readonly ThreadItem[], note: ThreadEntry, agent: string, by: { id: string; name: string } | null): ThreadItem | null {
-  const author: ThreadEntry["author"] | null = by ? { kind: "person", id: by.id, name: by.name } : agent ? { kind: "agent", id: `agent:${agent}`, name: agent } : null;
+  const author: ThreadEntry["author"] | null = by
+    ? { kind: "person", id: by.id, name: by.name }
+    : agent
+      ? { kind: "agent", id: `agent:${agent}`, name: agent }
+      : null;
   if (!author) return null;
   for (let i = items.length - 1; i >= 0; i--) {
     const it = items[i]!;

@@ -229,7 +229,7 @@ export function createTauriAdapter(win: HostWindow = globalThis.window as HostWi
       const selfId = status?.machineId ?? "local";
       const self: MachineRow = {
         id: selfId,
-        name: status?.name ?? "This machine",
+        name: status?.name ?? "This computer",
         via: "local",
         online: true,
         os: env?.platform ?? "macos",
@@ -279,8 +279,7 @@ export function createTauriAdapter(win: HostWindow = globalThis.window as HostWi
       else await invoke("keyvault_unlock");
       return null;
     },
-    "keyvault.setUnattended": ({ itemIds, unattended }) =>
-      invoke("keyvault_set_unattended", { args: { itemIds, unattended } }),
+    "keyvault.setUnattended": ({ itemIds, unattended }) => invoke("keyvault_set_unattended", { args: { itemIds, unattended } }),
     "keyvault.setDisabled": async ({ disabled }) => {
       await invoke("keyvault_set_disabled", { disabled });
       return null;

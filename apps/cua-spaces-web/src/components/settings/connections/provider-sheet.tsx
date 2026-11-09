@@ -1,7 +1,18 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-import { CheckIcon, ChevronLeftIcon, ChevronRightIcon, CopyIcon, KeyRoundIcon, Loader2Icon, LogInIcon, ServerIcon, SmartphoneIcon, TerminalIcon } from "lucide-react";
+import {
+  CheckIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  CopyIcon,
+  KeyRoundIcon,
+  Loader2Icon,
+  LogInIcon,
+  ServerIcon,
+  SmartphoneIcon,
+  TerminalIcon,
+} from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { importSheet, useBridge, type ProviderWay, type WayField } from "@/bridge";
@@ -11,9 +22,17 @@ import { Dialog, DialogDescription, DialogPopup, DialogTitle } from "@/component
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { useSession } from "@/bridge";
+import { useT } from "@/i18n";
 import { closeDeviceSignIn, closeImport, useConnectors, useDeviceSignIn, useImporting, useProviderSheetOpen, useSheetWay } from "@/hooks/use-connectors";
 
-const ICON = { "app-token": LogInIcon, "app-device": SmartphoneIcon, token: KeyRoundIcon, key: KeyRoundIcon, endpoint: ServerIcon, shell: TerminalIcon } as const;
+const ICON = {
+  "app-token": LogInIcon,
+  "app-device": SmartphoneIcon,
+  token: KeyRoundIcon,
+  key: KeyRoundIcon,
+  endpoint: ServerIcon,
+  shell: TerminalIcon,
+} as const;
 
 /** Ways that ask for something typed (a key, a token, a URL) open a form; the others run at once. */
 const hasForm = (w: ProviderWay) => w.id === "key" || w.id === "token" || w.id === "endpoint" || (w.id === "shell" && w.fields.length > 0);
@@ -49,6 +68,7 @@ function SheetOrPicker() {
  * on in order: sign in with Claude Code, paste a token, use an API key.
  */
 function ImportSheet() {
+  const t = useT();
   const { core } = useBridge();
   const c = useConnectors();
   const importing = useImporting();
@@ -89,7 +109,7 @@ function ImportSheet() {
                               }}
                             >
                               {copied ? <CheckIcon /> : <CopyIcon />}
-                              {copied ? "Copied" : "Copy"}
+                              {copied ? t("settings.connections.copied") : t("settings.connections.copy")}
                             </Button>
                           </span>
                         ) : null}
@@ -124,11 +144,14 @@ function ImportSheet() {
                 {v.title}
               </DialogTitle>
               <DialogDescription className="mt-1 text-[13px] text-muted-foreground">{v.lede}</DialogDescription>
-              <ul data-import-points="" className="mt-3 space-y-2 text-[13px]">
-                {v.points.map((p) => (
-                  <li key={p}>{p}</li>
-                ))}
-              </ul>
+              <details className="mt-3 text-[13px]">
+                <summary className="cursor-pointer text-muted-foreground select-none">{t("settings.connections.sheet.how_it_works")}</summary>
+                <ul data-import-points="" className="mt-2 space-y-2">
+                  {v.points.map((p) => (
+                    <li key={p}>{p}</li>
+                  ))}
+                </ul>
+              </details>
               {reading ? (
                 <p className="mt-4 flex items-center gap-2 text-xs text-muted-foreground" data-import-reading="">
                   <Loader2Icon className="size-3.5 animate-spin" /> {v.readingLabel}
@@ -156,6 +179,7 @@ function ImportSheet() {
  * the sign-in was made for Cua in a folder Cua owns.
  */
 function DeviceCodeSheet() {
+  const t = useT();
   const device = useDeviceSignIn();
   const { openExternal } = useSession();
   const [copied, setCopied] = useState(false);
@@ -164,8 +188,8 @@ function DeviceCodeSheet() {
     <Dialog open onOpenChange={(o) => !o && closeDeviceSignIn()}>
       <DialogPopup data-device-sign-in={device.app} className="top-[12vh] w-[min(440px,calc(100vw-2rem))]">
         <div className="px-6 pt-5 pb-5">
-          <DialogTitle className="text-[15px] font-semibold">Sign in with ChatGPT</DialogTitle>
-          <DialogDescription className="mt-1 text-[13px] text-muted-foreground">Enter this code on the sign-in page. It works once and expires in 15 minutes.</DialogDescription>
+          <DialogTitle className="text-[15px] font-semibold">{t("settings.connections.device.title")}</DialogTitle>
+          <DialogDescription className="mt-1 text-[13px] text-muted-foreground">{t("settings.connections.device.help")}</DialogDescription>
           <div className="mt-4 flex items-center justify-between gap-3 rounded-lg bg-muted px-4 py-3">
             <span data-device-code="" className="font-mono text-[20px] font-semibold tracking-[0.12em] select-all">
               {device.code}
@@ -179,18 +203,18 @@ function DeviceCodeSheet() {
               }}
             >
               {copied ? <CheckIcon /> : <CopyIcon />}
-              {copied ? "Copied" : "Copy"}
+              {copied ? t("settings.connections.copied") : t("settings.connections.copy")}
             </Button>
           </div>
           <p className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
-            <Loader2Icon className="size-3.5 animate-spin" /> Waiting for you to enter it…
+            <Loader2Icon className="size-3.5 animate-spin" /> {t("settings.connections.device.waiting")}
           </p>
           <div className="mt-4 flex justify-end gap-2">
             <Button variant="outline" onClick={() => closeDeviceSignIn()}>
-              Close
+              {t("settings.connections.close")}
             </Button>
             <Button data-device-open="" onClick={() => void openExternal(device.url).catch(() => {})}>
-              Open sign-in page
+              {t("settings.connections.device.open")}
             </Button>
           </div>
         </div>
@@ -295,7 +319,13 @@ function FieldInput({ field, value, onChange }: { field: WayField; value: string
     <label className="mt-3 block" data-provider-field={field.id}>
       <span className="mb-1 block text-xs font-medium">{field.label}</span>
       {field.kind === "choice" ? (
-        <Select value={value} options={field.options.map((o) => ({ value: o.id, label: o.label }))} onValueChange={onChange} aria-label={field.label} className="w-full" />
+        <Select
+          value={value}
+          options={field.options.map((o) => ({ value: o.id, label: o.label }))}
+          onValueChange={onChange}
+          aria-label={field.label}
+          className="w-full"
+        />
       ) : (
         <Input
           value={value}
@@ -312,6 +342,7 @@ function FieldInput({ field, value, onChange }: { field: WayField; value: string
 }
 
 function ProviderSheet() {
+  const t = useT();
   const c = useConnectors();
   const v = c.sheet;
   const [way, setWay] = useState<ProviderWay | null>(null);
@@ -343,11 +374,24 @@ function ProviderSheet() {
     setBusy(false);
     if (ok) close();
     else if (w.id === "key" || w.id === "token" || w.id === "endpoint") {
-      setError(w.id === "token" ? "Couldn't save the token. Check it and try again." : w.id === "endpoint" ? "Couldn't save the endpoint. Check it and try again." : "Couldn't save the key. Check it and try again.");
+      setError(
+        w.id === "token"
+          ? t("settings.connections.sheet.save_token_failed")
+          : w.id === "endpoint"
+            ? t("settings.connections.sheet.save_endpoint_failed")
+            : t("settings.connections.sheet.save_key_failed"),
+      );
     }
   };
   const switcher = (
-    <Button type="button" variant="ghost" className="mr-auto text-muted-foreground" data-provider-switch="" disabled={busy} onClick={() => c.openProvider(null, c.sheetApp)}>
+    <Button
+      type="button"
+      variant="ghost"
+      className="mr-auto text-muted-foreground"
+      data-provider-switch=""
+      disabled={busy}
+      onClick={() => c.openProvider(null, c.sheetApp)}
+    >
       {v.switchLabel}
     </Button>
   );
@@ -365,7 +409,7 @@ function ProviderSheet() {
               <DialogTitle className="flex items-center gap-1.5 text-[15px] font-semibold">
                 <button
                   type="button"
-                  aria-label="Back"
+                  aria-label={t("settings.connections.sheet.back")}
                   onClick={() => setWay(null)}
                   className="-ml-1.5 inline-flex size-6 cursor-default items-center justify-center rounded-lg text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60"
                 >
@@ -375,13 +419,21 @@ function ProviderSheet() {
               </DialogTitle>
               <DialogDescription className="mt-1 text-[13px] text-muted-foreground">{way.help}</DialogDescription>
               {way.fields.map((f) => (
-                <FieldInput key={f.id} field={f} value={filled.fields[f.id] ?? ""} onChange={(x) => setFilled((p) => ({ ...p, fields: { ...p.fields, [f.id]: x } }))} />
+                <FieldInput
+                  key={f.id}
+                  field={f}
+                  value={filled.fields[f.id] ?? ""}
+                  onChange={(x) => setFilled((p) => ({ ...p, fields: { ...p.fields, [f.id]: x } }))}
+                />
               ))}
               {way.secret !== "none" ? (
                 <label className="mt-3 block">
                   <span className="mb-1 block text-xs font-medium">
-                    {way.id === "token" ? v.tokenLabel : v.keyLabel}
-                    {way.secret === "optional" ? " (optional)" : ""}
+                    {way.secret === "optional"
+                      ? t("settings.connections.sheet.field_optional", { label: way.id === "token" ? v.tokenLabel : v.keyLabel })
+                      : way.id === "token"
+                        ? v.tokenLabel
+                        : v.keyLabel}
                   </span>
                   <Input
                     type="password"

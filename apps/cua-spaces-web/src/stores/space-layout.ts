@@ -4,7 +4,15 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
-import { DEFAULT_PREFS, migrateLegacySplit, SPACE_LAYOUT_STORAGE_KEY, sanitizePrefs, type Dock, type SectionId, type SpaceLayoutPrefs } from "@/lib/space-layout";
+import {
+  DEFAULT_PREFS,
+  migrateLegacySplit,
+  SPACE_LAYOUT_STORAGE_KEY,
+  sanitizePrefs,
+  type Dock,
+  type SectionId,
+  type SpaceLayoutPrefs,
+} from "@/lib/space-layout";
 
 interface SpaceLayoutState extends SpaceLayoutPrefs {
   setDock: (dock: Dock) => void;

@@ -21,14 +21,78 @@ export function permissionWords(id: DriverPermission["id"], appName: string): Pe
     : { title: "Use the mouse and keyboard", sub: `Accessibility, given to ${appName}` };
 }
 
-/** What Allow does, under the rows. */
-export function allowHint(appName: string): string {
-  return `Allow opens System Settings. Turn on ${appName} there, then come back.`;
+export type PermissionState = NonNullable<DriverPermission["state"]>;
+
+/** Where one permission stands, from the host's answer (an older host says only granted or not). */
+export function permissionState(p: Pick<DriverPermission, "granted" | "state">): PermissionState {
+  if (p.granted) return "on";
+  return p.state && p.state !== "on" ? p.state : "unknown";
 }
 
-/** Under the Cua Driver page's rows: one set of permissions, no second app. */
-export function driverUsesAppPermissions(appName: string): string {
-  return `Cua Driver uses the permissions you give ${appName}. It never asks for its own.`;
+/**
+ * A row's live status, beside Allow: "On" once granted; while the person is in System Settings after Allow (and
+ * after the app reopens for Screen Recording), that it is being checked; otherwise what System Settings shows now.
+ */
+export function permissionStatus(p: Pick<DriverPermission, "granted" | "state">, waiting: boolean): { label: string; done: boolean; checking: boolean } | null {
+  const state = permissionState(p);
+  if (state === "on") return { label: "On", done: true, checking: false };
+  if (waiting) return { label: "Waiting for the switch", done: false, checking: true };
+  if (state === "off") return { label: "Off", done: false, checking: false };
+  if (state === "absent") return { label: "Not in the list yet", done: false, checking: false };
+  return null;
+}
+
+/** What Allow does, under the rows; once both are on, that they are. */
+export function allowHint(appName: string, allGranted = false): string {
+  return allGranted ? "Both are on. Agents can use apps on this Mac." : `Allow opens System Settings. Turn on ${appName} there, then come back.`;
+}
+
+/**
+ * Whether Home shows its apps row on its own, outside "Now bring the rest in" (CUA-3551): on a Mac, whenever a
+ * permission is missing, at every launch, whatever setup did; and, once shown, until Home is left, so a switch turned
+ * on in System Settings shows as On there instead of the row vanishing.
+ */
+export function homeAppsRowShown(input: { os: string; available: boolean; allGranted: boolean; shownBefore: boolean }): boolean {
+  if (input.os !== "macos" || !input.available) return false;
+  return !input.allGranted || input.shownBefore;
+}
+
+/** The line under Home's apps row title: how many switches are still off, or that both are on. */
+export function homeAppsRowLine(permissions: readonly Pick<DriverPermission, "granted">[]): string {
+  const off = permissions.filter((p) => !p.granted).length;
+  if (off === 0) return allowHint("", true);
+  return off === 1 ? "One switch in System Settings is still off." : "Two switches in System Settings are still off.";
+}
+
+/** Local Network, on a Mac that runs macOS Spaces: its row's words, the same wherever it shows. */
+export function localNetworkWords(appName: string): PermissionWords {
+  return { title: "Run macOS Spaces on this Mac", sub: `Local Network, given to ${appName}` };
+}
+
+/**
+ * The Local Network row's live status: On once allowed; after Allow, while macOS's question waits for an answer;
+ * Off once the person said no; nothing before Allow (nothing was checked, so nothing is known).
+ */
+export function localNetworkStatus(input: { granted: boolean; waiting: boolean; denied: boolean }): { label: string; done: boolean; checking: boolean } | null {
+  if (input.granted) return { label: "On", done: true, checking: false };
+  if (input.waiting) return { label: "Waiting for your answer", done: false, checking: true };
+  if (input.denied) return { label: "Off", done: false, checking: false };
+  return null;
+}
+
+/** The Local Network row's button: Allow makes macOS ask; once it said no, the button opens the settings instead. */
+export function localNetworkButton(denied: boolean): string {
+  return denied ? "Open Settings" : "Allow";
+}
+
+/**
+ * Said just before macOS asks (under the rows), so its question is no surprise; once it said no, where to turn it on.
+ * Plain words: macOS's own question says "find and connect to devices on your local network".
+ */
+export function localNetworkNote(appName: string, denied: boolean): string {
+  return denied
+    ? `macOS Spaces can't start until you turn on ${appName} in System Settings, under Privacy & Security, Local Network.`
+    : `macOS Spaces run on a small network inside this Mac. After Allow, macOS asks if ${appName} can find devices on your local network. Click Allow there too.`;
 }
 
 /** The first run's permissions step. */
@@ -41,12 +105,30 @@ export interface PermissionsStepView {
   primary: { label: "Continue" | "Later"; white: boolean };
 }
 
-export function permissionsStepView(input: { appName: string; allGranted: boolean }): PermissionsStepView {
+/**
+ * `localNetwork`: this Mac runs macOS Spaces, so the step also asks for Local Network (`off` until allowed, `denied`
+ * once macOS was told no); `none` on any other computer.
+ */
+export function permissionsStepView(input: { appName: string; allGranted: boolean; localNetwork?: "none" | "off" | "denied" | "on" }): PermissionsStepView {
+  const ln = input.localNetwork ?? "none";
+  if (ln === "none") {
+    return {
+      title: `Let ${input.appName} see and use apps`,
+      line: "Agents can then use the apps on this Mac. Your own pointer never moves.",
+      note: input.allGranted ? allowHint(input.appName, true) : `${allowHint(input.appName)} You can also do this later on the Cua Driver page.`,
+      primary: input.allGranted ? { label: "Continue", white: true } : { label: "Later", white: false },
+    };
+  }
+  const done = input.allGranted && ln === "on";
   return {
-    title: `Let ${input.appName} see and use apps`,
-    line: `This lets your agents work in the apps on this Mac, in the background. Cua Driver uses these same permissions, so there's no second app to allow.`,
-    note: input.allGranted ? "Both are on." : `${allowHint(input.appName)} You can also do this later on the Cua Driver page.`,
-    primary: input.allGranted ? { label: "Continue", white: true } : { label: "Later", white: false },
+    title: `Let ${input.appName} use this Mac`,
+    line: "Agents can then use the apps on this Mac, and macOS Spaces can run here. Your own pointer never moves.",
+    note: done
+      ? "All on. Agents can use apps on this Mac, and macOS Spaces can run here."
+      : ln === "on"
+        ? `${allowHint(input.appName)} You can also do this later on the Cua Driver page.`
+        : localNetworkNote(input.appName, ln === "denied"),
+    primary: done ? { label: "Continue", white: true } : { label: "Later", white: false },
   };
 }
 
@@ -79,7 +161,7 @@ export function driverReadiness(input: { permissions: { available: boolean; allG
 export function readinessLede(readiness: Exclude<DriverReadiness, "ready">, appName: string, problem: string | null): string {
   switch (readiness) {
     case "permissions":
-      return `One more step: turn on two switches for ${appName}, so Cua Driver can see and use apps. Allow opens System Settings.`;
+      return `Turn on two switches for ${appName} in System Settings.`;
     case "starting":
       return "Cua Driver is starting. This takes a few seconds.";
     case "driver":
@@ -123,5 +205,9 @@ export function repairOutcome(after: {
     return { kind: "failed", title: "Cua Driver is off", description: "Agents can't use apps on this Mac. Turn on Let agents use apps, then Repair." };
   }
   const reason = after.lastError ?? after.lastTest?.failure ?? "Cua Driver isn't answering.";
-  return { kind: "failed", title: "Cua Driver still isn't working", description: `${reason.replace(/\.$/, "")}. Quit and reopen ${app}, then try Repair again.` };
+  return {
+    kind: "failed",
+    title: "Cua Driver still isn't working",
+    description: `${reason.replace(/\.$/, "")}. Quit and reopen ${app}, then try Repair again.`,
+  };
 }

@@ -2007,6 +2007,12 @@ RustBuffer uniffi_cua_spaces_ffi_fn_func_app_stream_pip_reduce(RustBuffer open, 
 RustBuffer uniffi_cua_spaces_ffi_fn_func_app_stream_section(RustBuffer input, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_FN_FUNC_APP_TARGET
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_FN_FUNC_APP_TARGET
+RustBuffer uniffi_cua_spaces_ffi_fn_func_app_target(RustCallStatus *_Nonnull out_status
+
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_FN_FUNC_APP_TEAMS
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_FN_FUNC_APP_TEAMS
 uint64_t uniffi_cua_spaces_ffi_fn_func_app_teams(RustBuffer account_token
@@ -4257,6 +4263,12 @@ uint16_t uniffi_cua_spaces_ffi_checksum_func_app_stream_pip_reduce(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_CHECKSUM_FUNC_APP_STREAM_SECTION
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_CHECKSUM_FUNC_APP_STREAM_SECTION
 uint16_t uniffi_cua_spaces_ffi_checksum_func_app_stream_section(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_CHECKSUM_FUNC_APP_TARGET
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_CHECKSUM_FUNC_APP_TARGET
+uint16_t uniffi_cua_spaces_ffi_checksum_func_app_target(void
 
 );
 #endif

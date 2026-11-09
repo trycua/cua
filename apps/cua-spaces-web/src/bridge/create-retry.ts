@@ -10,8 +10,8 @@
  * the failure counts are kept between launches, and what a fix button does.
  */
 
-import type { BridgeMode } from './adapter';
-import type { CreateFix, FailureStreak } from './contracts/spaces';
+import type { BridgeMode } from "./adapter";
+import type { CreateFix, FailureStreak } from "./contracts/spaces";
 
 /** Hosts whose own model runs every create the page starts (the SwiftUI
  * and Electron apps' `AppModel.runCreate`): they retry a passing failure
@@ -24,7 +24,7 @@ export const HOST_RUNS_CREATES: Record<BridgeMode, boolean> = {
   demo: false,
 };
 
-const STREAKS_KEY = 'cua.spaces.createStreaks';
+const STREAKS_KEY = "cua.spaces.createStreaks";
 
 /** The failure counts kept from earlier launches (per install: the page's
  * own storage). Only cause words, machine ids and image names. */
@@ -34,12 +34,7 @@ export function loadCreateStreaks(): FailureStreak[] {
     const parsed: unknown = raw ? JSON.parse(raw) : [];
     if (!Array.isArray(parsed)) return [];
     return parsed.filter(
-      (s): s is FailureStreak =>
-        !!s &&
-        typeof s.kind === 'string' &&
-        typeof s.place === 'string' &&
-        typeof s.image === 'string' &&
-        typeof s.count === 'number'
+      (s): s is FailureStreak => !!s && typeof s.kind === "string" && typeof s.place === "string" && typeof s.image === "string" && typeof s.count === "number",
     );
   } catch {
     return [];
@@ -62,7 +57,7 @@ export interface CreateFixActions {
 }
 
 export async function runCreateFix(fix: CreateFix, act: CreateFixActions): Promise<void> {
-  if (fix.action === 'copy-command' && fix.value) await act.copy(fix.value);
-  else if (fix.action === 'open-url' && fix.value) await act.openExternal(fix.value);
+  if (fix.action === "copy-command" && fix.value) await act.copy(fix.value);
+  else if (fix.action === "open-url" && fix.value) await act.openExternal(fix.value);
   else act.details();
 }

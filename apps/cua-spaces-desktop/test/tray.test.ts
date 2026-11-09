@@ -7,7 +7,13 @@
 import { describe, expect, it, vi } from "vitest";
 
 const quit = vi.fn();
-vi.mock("electron", () => ({ app: { quit, on: () => {}, isPackaged: false }, Menu: {}, nativeImage: {}, nativeTheme: { on: () => {}, shouldUseDarkColors: false }, Tray: class {} }));
+vi.mock("electron", () => ({
+  app: { quit, on: () => {}, isPackaged: false },
+  Menu: {},
+  nativeImage: {},
+  nativeTheme: { on: () => {}, shouldUseDarkColors: false },
+  Tray: class {},
+}));
 const { accelerator, linuxTrayIconName, trayTemplate } = await import("../src/tray");
 
 const items = [
@@ -34,7 +40,16 @@ describe("the menu bar item and the tray", () => {
   it("is the core's menu on macOS, with its shortcuts and no Space list", () => {
     const { log, actions: a } = actions();
     const t = trayTemplate(items, spaces, a, "darwin");
-    expect(t.map((i) => (i.type === "separator" ? "---" : i.label))).toEqual(["2 Spaces", "---", "Open Cua Spaces", "New Space…", "Settings…", "1 conflict", "---", "Quit Cua Spaces"]);
+    expect(t.map((i) => (i.type === "separator" ? "---" : i.label))).toEqual([
+      "2 Spaces",
+      "---",
+      "Open Cua Spaces",
+      "New Space…",
+      "Settings…",
+      "1 conflict",
+      "---",
+      "Quit Cua Spaces",
+    ]);
     expect(t[0]!.enabled).toBe(false);
     expect(t.find((i) => i.label === "Settings…")!.accelerator).toBe("Command+,");
     expect(t.find((i) => i.label === "Quit Cua Spaces")!.accelerator).toBe("Command+Q");

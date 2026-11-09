@@ -15,11 +15,11 @@ Read [the feature map](features/README.md) first. This verifies the daemon's des
 | `platform-macos`, AppKit/SwiftUI/TextEdit harnesses, `scripts/ci/macos/**`, `tests/runners/macos-lume/**` | macOS Lume guest | `scripts/verify-macos.sh` ([macOS lane](macos-lume.md)) |
 | Shared code with macOS behavior | both | both |
 
-Run every lane the change touches that the host can run, and name the lanes you skip in the report. Launch through Cleanup below cover Linux. The macOS lane keeps the same proof standards; its wrapper owns the worker VM, preflight and evidence collection.
+Run every lane the change touches that the host can run, and name the lanes you skip in the report. A change for one compositor (KWin, GNOME, niri) also needs a session of that compositor. X11 and Sway results don't cover it, so name it as skipped when you can't start one. Launch through Cleanup below cover Linux. The macOS lane keeps the same proof standards; its wrapper owns the worker VM, preflight and evidence collection.
 
 ## Launch
 
-Run from the repository root. Use the CI toolchain (Rust 1.97.1, Node 22) and install the Linux dependencies from `.github/workflows/e2e-rust-linux.yml`:
+Run from the repository root. Use the CI toolchain (Rust 1.97.1, Node 22) and install the Linux dependencies from `.github/workflows/e2e-rust-linux.yml`. Electron needs a writable `/dev/shm` (mode 1777). A root-owned 755 one fails preflight before any cell runs:
 
 ```bash
 sudo apt-get update
@@ -49,7 +49,7 @@ Nested Wayland uses the existing CI wrapper, with its default runner and the sam
 timeout 1260 .cursor/skills/verify-cua-driver/scripts/verify-linux.sh wayland --no-build
 ```
 
-Install the compositor dependencies from `.github/workflows/e2e-rust-linux-wayland.yml` before this lane. `scripts/ci/linux/run-rust-e2e-wayland.sh` provisions its runtime, Sway and AT-SPI; do not duplicate its bootstrap. Compositor and AT-SPI logs honor the unique artifact directory. Wayland is unverified here; X11 results do not certify its capture or input routes.
+Install the compositor dependencies from `.github/workflows/e2e-rust-linux-wayland.yml` before this lane. `scripts/ci/linux/run-rust-e2e-wayland.sh` provisions its runtime, Sway and AT-SPI; do not duplicate its bootstrap. On Debian the AT-SPI launcher is off `PATH`: set `CUA_AT_SPI_BUS_LAUNCHER=/usr/libexec/at-spi-bus-launcher`. Compositor and AT-SPI logs honor the unique artifact directory. Wayland is unverified here; X11 results do not certify its capture or input routes.
 
 ## Doctor
 
@@ -75,7 +75,7 @@ let response = fixture.driver.call("click", args);
 
 `action_target_args` sends `pid`, `window_id`, `delivery_mode: "background"`, and the discovered `element_token` from `require_element`. Do not paste numeric handles or reuse a token after another snapshot. The fixture journal must independently report `last_action=left_click`; an accepted response alone is insufficient. The typed SDK sibling additionally exercises stale/mismatched handle refusals before a valid click.
 
-Use the commands in the feature map to select other user journeys. Prefer AX handles; use existing `action_target_args` pixel conversion only for pixel coverage, not guessed screen coordinates. Do not use DOM setters, fixture control endpoints, or direct journal writes to make target state pass. The fixture journal observes effects; the real driver performs the action.
+Use the commands in the feature map to select other user journeys. Prefer AX handles; use existing `action_target_args` pixel conversion only for pixel coverage, not guessed screen coordinates. The same holds when you drive a real app with the installed driver: on macOS a foreground pixel click can miss a sheet or a web-view menu row that an `element_token` press hits, on the host as well as in a guest. A missed pixel click is not an app bug until the AX press also fails. Do not use DOM setters, fixture control endpoints, or direct journal writes to make target state pass. The fixture journal observes effects; the real driver performs the action.
 
 ## Evidence
 
@@ -120,6 +120,10 @@ Windows needs an interactive desktop, native UIA and named-pipe transport; testk
 
 ## Execution status and maintenance
 
-Linux X11 CI proof is pending in `.github/workflows/e2e-rust-linux.yml`, job `verify-skill`. It runs on relevant skill/driver pull requests or `workflow_dispatch` with `lane=verify`, with retries disabled and a 25-minute job bound. The helper owns Electron staging and desktop setup; `check-evidence.sh` gates success after cleanup. The `verify-cua-driver-evidence` artifact retains the printed evidence directory even on failure. No successful CI run is claimed. See [execution instructions, historical attempts and remaining stand-ins](execution.md), including the same command for a networked local host. Claim proof only after both click cells deliver and all required evidence survives cleanup; setup logs alone do not prove delivery or owned-process teardown.
+The Linux X11 proof runs in CI: `.github/workflows/e2e-rust-linux.yml`, job "Linux / verification skill proof" (`verify-skill`), on skill and driver pull requests or `workflow_dispatch` with `lane=verify`, with retries off and a 25-minute bound. Its first recorded pass is [run 42399619203](https://github.com/trycua/cua/actions/runs/42399619203), and its `verify-cua-driver-evidence` artifact keeps the evidence even on failure. When the host can't run X11, cite that job at the PR head instead of skipping the lane. See [execution instructions and stand-ins](execution.md). Claim proof only after both click cells deliver and all required evidence survives cleanup; setup logs alone do not prove delivery or owned-process teardown.
+
+## Verdict
+
+A FAIL names a defect the diff introduces. Before you report one, rerun the failing check at the base. A failure main has too, with the same message in code the diff doesn't touch, is a note on the verdict unless the diff claims to fix it. A failure that is only something a merge-first PR adds (for example a command that lands in that PR) stays a failure at the tested head. Name that PR, and call it a merge-order dependency rather than a defect.
 
 Use `/maintain-verification-skill` when tools, fixture markers, CI lanes or supported input routes change.

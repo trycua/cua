@@ -13,7 +13,13 @@ describe("the Spaces tree", () => {
 
   it("nests children under their parent to any depth, in order, and the rest stays top level", () => {
     const rows = nestRows(items, null, new Set());
-    expect(rows.map((r) => [r.item.space.id, r.depth])).toEqual([["a", 0], ["c", 1], ["d", 2], ["b", 0], ["z", 0]]);
+    expect(rows.map((r) => [r.item.space.id, r.depth])).toEqual([
+      ["a", 0],
+      ["c", 1],
+      ["d", 2],
+      ["b", 0],
+      ["z", 0],
+    ]);
     expect(rows.find((r) => r.item.space.id === "a")).toMatchObject({ kids: 1, below: 2 });
   });
 

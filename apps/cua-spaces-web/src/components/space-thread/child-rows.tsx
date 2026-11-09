@@ -110,7 +110,12 @@ export function ChildSpaceRow({ item }: { item: Extract<ThreadItem, { type: "chi
     );
   return (
     <div data-child-space={space.space} data-child-space-state={state} className="ml-10 py-1">
-      <Link to="/spaces/$spaceId" params={{ spaceId: childPageId(space) }} className="flex min-w-0 items-start gap-2.5 rounded-lg hover:bg-muted/40" aria-label={`Open ${space.name}`}>
+      <Link
+        to="/spaces/$spaceId"
+        params={{ spaceId: childPageId(space) }}
+        className="flex min-w-0 items-start gap-2.5 rounded-lg hover:bg-muted/40"
+        aria-label={`Open ${space.name}`}
+      >
         <span className="mt-[5px] flex size-3.5 shrink-0 items-center justify-center">
           <ChildMark state={mark} />
         </span>

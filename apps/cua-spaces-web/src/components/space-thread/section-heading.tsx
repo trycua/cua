@@ -12,7 +12,21 @@ import { useSpaceLayoutStore } from "@/stores/space-layout";
  * button (`aria-expanded`) that folds the section's body shut. Remembered per
  * person (`stores/space-layout.ts`).
  */
-export function SectionHeading({ id, folded, bodyId, children, className, inRow }: { id: SectionId; folded: boolean; bodyId: string; children: ReactNode; className?: string; /** The heading shares a row with controls: the row takes the hover, the button fills what is left of it. */ inRow?: boolean }) {
+export function SectionHeading({
+  id,
+  folded,
+  bodyId,
+  children,
+  className,
+  inRow,
+}: {
+  id: SectionId;
+  folded: boolean;
+  bodyId: string;
+  children: ReactNode;
+  className?: string;
+  /** The heading shares a row with controls: the row takes the hover, the button fills what is left of it. */ inRow?: boolean;
+}) {
   const toggle = useSpaceLayoutStore((s) => s.toggleSection);
   return (
     <h2 className={cn("text-[11px] font-semibold tracking-wide text-muted-foreground uppercase", inRow && "flex-1 self-stretch", className)}>

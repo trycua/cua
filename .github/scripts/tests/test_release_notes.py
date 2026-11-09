@@ -31,9 +31,9 @@ def components() -> dict[str, str]:
     ("tag", "component", "paths", "excludes"),
     [
         ("cua-sdk-v0.4.2", "cua-sdk", ["libs/cua"], ["libs/cua/proto/MEDIA.md", "libs/cua/README.md"]),
-        # additional-paths is not a release-please 17.3.0 option: the changelog
-        # covers the package path only, so the notes do too.
-        ("cua-spaces-v0.8.0", "cua-spaces", ["apps/cua-spaces-macos"], []),
+        # The additional paths count toward the changelog, so the notes cover them.
+        ("cua-spaces-v0.8.0", "cua-spaces",
+         ["apps/cua-spaces-macos", "libs/cua", "apps/cua-spaces-web", "apps/cua-spaces-desktop"], []),
         ("cua-spacesd-v0.5.4", "cua-spacesd", ["libs/cua-spacesd"], None),
         ("sandbox-v0.9.1", "sandbox", ["libs/python/cua-sandbox"], []),
         ("bench-v0.3.1", "bench", ["libs/cua-bench"], []),
@@ -167,6 +167,18 @@ def test_publish_draft_keeps_the_body_and_never_takes_latest():
     assert published.patches == []
     # No draft: the legacy workflow creates the release as before.
     assert not release_notes.publish_draft(FakeApi([]), "trycua/cua", "agent-v0.9.1", asset_dir=None, prerelease=False)
+
+
+def test_publish_draft_adopts_an_untagged_release_please_draft():
+    draft = {"id": 5, "tag_name": "untagged-abc", "name": "cua-spacesd: v0.12.5", "draft": True, "body": "rp"}
+    other = {"id": 6, "tag_name": "untagged-def", "name": "cua-spacesd: v0.12.4", "draft": True}
+    api = FakeApi([other, draft])
+    assert release_notes.publish_draft(api, "trycua/cua", "cua-spacesd-v0.12.5", asset_dir=None, prerelease=False)
+    assert api.patches == [(
+        "repos/trycua/cua/releases/5",
+        {"draft": False, "prerelease": False, "make_latest": "false", "tag_name": "cua-spacesd-v0.12.5"},
+    )]
+    assert not release_notes.publish_draft(FakeApi([other]), "trycua/cua", "cua-spacesd-v0.12.5", asset_dir=None, prerelease=False)
 
 
 def test_version_check_catches_a_package_file_that_drifted(tmp_path):

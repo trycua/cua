@@ -850,13 +850,10 @@ jobs:
         uses: ./.github/actions/setup-protoc
       - name: Install Linux build dependencies
         if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            build-essential cmake pkg-config libssl-dev file \
-            libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev \
-            libx11-dev libxkbcommon-dev libwayland-dev libxcb1-dev libx11-xcb-dev \
-            libxkbcommon-x11-dev libxrandr-dev libxi-dev libudev-dev
+        uses: ./.github/actions/apt-install
+        with:
+          packages: >-
+            build-essential cmake pkg-config libssl-dev file libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev libx11-dev libxkbcommon-dev libwayland-dev libxcb1-dev libx11-xcb-dev libxkbcommon-x11-dev libxrandr-dev libxi-dev libudev-dev
       - run: pnpm install --frozen-lockfile
       - name: Resolve version
         id: version
@@ -2429,6 +2426,13 @@ jobs:
             fi
           fi
           gh release edit "$TAG" "${flags[@]}" --repo "$GITHUB_REPOSITORY"
+          # Release Please's own draft is listed as untagged-<hash>, which the
+          # tag lookup above never sees; drop it now that the tagged release is
+          # published, or it piles up for good (42 drafts on 8 Nov 2026).
+          for id in $(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+            --jq ".[] | select(.draft and (.tag_name | startswith(\"untagged-\")) and .name == \"cua-spaces: v${VERSION}\") | .id"); do
+            gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/$id"
+          done
       # Say which platforms a patch release contains (CUA-2068). A full release
       # keeps its notes as they are.
       - name: Name the platforms in the release notes

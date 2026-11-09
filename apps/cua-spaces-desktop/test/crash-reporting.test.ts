@@ -107,14 +107,21 @@ describe("consent", () => {
   it("reads $CUA_HOME, and an unreadable file is not consent to turn off", () => {
     const m = machine({ "/tmp/cua/telemetry/notice_shown": "", "/tmp/cua/config.toml": '[telemetry]\nenabled = "off"' }, { CUA_HOME: "/tmp/cua" });
     expect(crashConsent(m).allowed).toBe(false);
-    const broken: ConsentSource = { ...machine(NOTICE), read: () => { throw new Error("EACCES"); } };
+    const broken: ConsentSource = {
+      ...machine(NOTICE),
+      read: () => {
+        throw new Error("EACCES");
+      },
+    };
     expect(crashConsent(broken).allowed).toBe(true);
   });
 });
 
 describe("the runtime switch", () => {
   it("tells the listeners, and one that throws does not stop the rest", () => {
-    const a = vi.fn(() => { throw new Error("x"); });
+    const a = vi.fn(() => {
+      throw new Error("x");
+    });
     const b = vi.fn();
     const offA = onConsentMayHaveChanged(a);
     const offB = onConsentMayHaveChanged(b);
@@ -179,7 +186,13 @@ describe("scrubbing", () => {
           module: "main",
           stacktrace: {
             frames: [
-              { filename: "/Users/jane/Cua Spaces.app/Contents/Resources/app.asar/dist-electron/main.cjs", function: "open", lineno: 3, vars: { secret: "x" }, context_line: "const secret = 1" },
+              {
+                filename: "/Users/jane/Cua Spaces.app/Contents/Resources/app.asar/dist-electron/main.cjs",
+                function: "open",
+                lineno: 3,
+                vars: { secret: "x" },
+                context_line: "const secret = 1",
+              },
               { abs_path: "file:///C:/Users/Jane/app/main.cjs?x=1#y", function: "Foo#bar" },
             ],
           },

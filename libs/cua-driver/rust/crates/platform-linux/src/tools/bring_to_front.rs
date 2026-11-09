@@ -63,7 +63,7 @@ impl Tool for BringToFrontTool {
                     }
                 },
             };
-            if crate::wayland::wayland_input_enabled() && crate::wayland::hyprland::is_session() {
+            if crate::wayland::is_wayland() && crate::wayland::hyprland::is_session() {
                 if args.opt_u64("window_id").is_none() {
                     return foreground_hyprland_refusal("an exact window_id is required");
                 }
@@ -76,7 +76,7 @@ impl Tool for BringToFrontTool {
                 .await;
             }
             let result = tokio::task::spawn_blocking(move || {
-                crate::wayland::activate_window_for_input_target(window_id, Some(pid))
+                crate::wayland::activate_window(window_id, Some(pid))
             })
             .await;
             return match result {

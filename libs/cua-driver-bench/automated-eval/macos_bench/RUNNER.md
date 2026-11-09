@@ -164,6 +164,45 @@ The unit of completeness is a task block (one task, every arm, one run).
   processes by exact name, and with `CDB_BENCH_DISPOSABLE=1` the task apps too,
   so nothing else may use those apps during a run.
 
+## Interrupts and resume
+
+To resume a run that stopped, however it stopped, rerun the same `run` command with the same `--run-id`.
+The run's only state is `results.jsonl`. Each attempt appends one row and fsyncs it.
+
+* Trials with a final row are kept and skipped. A trial with only non-final rows continues at the next
+  attempt number, and the retries it already used still count.
+* An attempt cut short before its row was written (SIGKILL, a lost VM or host, a full disk) has no row. Its
+  directory is cleared and redone under the same number. `tools/check_run_evidence.py` accepts that one
+  directory until the run reaches `DONE`.
+* A row cut off halfway by a crash is dropped when the run starts again. A recorded trial whose video
+  compression was cut short or failed is compressed again from its raw recording, which is deleted only
+  after a successful `video.json` is written. A run whose videos are not all compressed ends `STOPPED_COMPRESS`, not
+  `DONE`.
+* A `--smoke` run resumes the same way, from its own smoke rows.
+* SIGTERM, SIGINT, SIGHUP and `STOP` end the current trial cleanly and write `STOPPED_USER`. Resuming
+  clears that flag.
+* `run.lock` is a kernel lock and is released when its holder dies. A second `run` or `finalize` on a live
+  run exits 5.
+* Options that change what a trial measures (for example `--no-gui-only-enforce`, `--no-tell-budget`,
+  `--tool-search`) must match the run's recorded argv. Only operational options (paths, ledger, cutoff,
+  budget cap, quota and disk floors, preflight switches) and the schedule options may change.
+* Every row records the hash of the runner, probes and briefs (`bench_src_sha256`). A start from a
+  checkout that hashes differently exits 6. Pack tasks are checked against their pinned digests by every
+  preflight.
+* A Cua Driver row records the driver binary and skill tree it ran. A start with a different build for a
+  recorded trial exits 6, whatever the pins say. `preflight` refuses a run directory that has trials, so
+  the recorded manifest stays the one the run started with.
+* Every row records its trial's place in the schedule (phase, block, run, position in the order, task position, arm slot) and its
+  setup (condition, model, effort, turn cap, time limit). A start that would give a recorded trial id other values, or drop it
+  from the schedule, exits 6 before anything in the run directory changes. Extending the schedule, for
+  example adding phase 2 to a finished phase 1, is a resume.
+* `tools/make_linux_pins.py` rerun against the same build is a no-op, so the whole Linux session command
+  can be rerun. Pins from a different build are still refused.
+
+The runner does not restart itself. Retries cover rate limits, overload and setup failures inside one
+process (Gates, above). After a crash, or after the host or VM was lost, a person or the calling job
+reruns the command once.
+
 ## Per-trial output
 
 `runs/<run>/trials/<trial id>/a<attempt>/` holds the stripped stream

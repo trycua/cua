@@ -106,6 +106,7 @@ fn events(fx: &Fx, k: u32, evs: &[Value]) {
 }
 
 /// Prompts session `k`'s runner was handed, in order.
+#[allow(dead_code)]
 fn inbox(fx: &Fx, k: u32) -> Vec<String> {
     let prefix = format!("{RUNS}/{}/inbox/", run(k));
     let mut files: Vec<(String, Vec<u8>)> = fx

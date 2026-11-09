@@ -62,7 +62,8 @@ export function deleteAllText(parentName: string, kids: readonly Pick<Space, "na
 export function childrenEffect(kind: "stop" | "delete", kids: readonly Pick<Space, "name">[], total: number): string {
   if (!kids.length) return "";
   const names = kids.map((k) => k.name).join(", ");
-  if (kind === "stop") return ` Its ${plural(kids.length, "child Space")} (${names}) keep${kids.length === 1 ? "s" : ""} running. Stop ${kids.length === 1 ? "it" : "them"} from the Child Spaces list if you want.`;
+  if (kind === "stop")
+    return ` Its ${plural(kids.length, "child Space")} (${names}) keep${kids.length === 1 ? "s" : ""} running. Stop ${kids.length === 1 ? "it" : "them"} from the Child Spaces list if you want.`;
   const deeper = total - kids.length;
   return ` Its ${plural(kids.length, "child Space")} (${names}) ${kids.length === 1 ? "is" : "are"} deleted with it${deeper > 0 ? `, and so ${deeper === 1 ? "is the 1 Space" : `are the ${deeper} Spaces`} made under ${kids.length === 1 ? "it" : "them"}` : ""}.`;
 }
@@ -88,54 +89,56 @@ export function ChildSpacesSection({ spaceId, spaceName }: { spaceId: string; sp
         </SectionHeading>
       </div>
       <div id="section-children" hidden={folded}>
-      <ul>
-        {kids.map((k) => {
-          const state = spaceState(k);
-          const off = state === "stopped";
-          const busy = state === "creating" || state === "deleting";
-          return (
-            <li key={k.id} data-child-space-row={k.id} className="group/child relative">
-              <Link
-                to="/spaces/$spaceId"
-                params={{ spaceId: k.id }}
-                className="flex min-h-8 w-full cursor-default items-center gap-2.5 rounded-lg py-1 pr-2 pl-2 text-left text-[13px] outline-none hover:bg-accent focus-visible:bg-accent"
-              >
-                <OsIcon os={k.os} className="size-3.5 shrink-0 text-muted-foreground" />
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate">{k.name}</span>
-                  {createError(k) ? (
-                    <span className="block truncate text-[11px] text-destructive">{createError(k)}</span>
-                  ) : null}
-                </span>
-                <StateLabel state={state} space={k} className="shrink-0" />
-              </Link>
-              {!busy ? (
-                <span className="absolute top-1 right-1 rounded-lg bg-accent opacity-0 group-focus-within/child:opacity-100 group-hover/child:opacity-100">
-                  <Menu
-                    label={k.name}
-                    trigger={
-                      <button type="button" aria-label={`${k.name} actions`} className="inline-flex size-6 cursor-default items-center justify-center rounded-lg text-muted-foreground outline-none hover:bg-background hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60">
-                        <MoreHorizontalIcon className="size-3.5" />
-                      </button>
-                    }
-                    items={[
-                      off
-                        ? { label: "Start", onSelect: () => void startSpace(k.id).catch(toastError(`Couldn't start ${k.name}`)) }
-                        : { label: "Stop", onSelect: () => void stopSpace(k.id).catch(toastError(`Couldn't stop ${k.name}`)) },
-                      { label: "Delete", destructive: true, onSelect: () => setConfirm(k.id) },
-                    ]}
-                  />
-                </span>
-              ) : null}
-            </li>
-          );
-        })}
-      </ul>
-      {budget ? (
-        <p data-child-budget="" className="mt-1 px-2 text-[11px] text-muted-foreground">
-          {budget.spaces} of {budget.maxSpaces} Spaces in this tree&rsquo;s budget
-        </p>
-      ) : null}
+        <ul>
+          {kids.map((k) => {
+            const state = spaceState(k);
+            const off = state === "stopped";
+            const busy = state === "creating" || state === "deleting";
+            return (
+              <li key={k.id} data-child-space-row={k.id} className="group/child relative">
+                <Link
+                  to="/spaces/$spaceId"
+                  params={{ spaceId: k.id }}
+                  className="flex min-h-8 w-full cursor-default items-center gap-2.5 rounded-lg py-1 pr-2 pl-2 text-left text-[13px] outline-none hover:bg-accent focus-visible:bg-accent"
+                >
+                  <OsIcon os={k.os} className="size-3.5 shrink-0 text-muted-foreground" />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate">{k.name}</span>
+                    {createError(k) ? <span className="block truncate text-[11px] text-destructive">{createError(k)}</span> : null}
+                  </span>
+                  <StateLabel state={state} space={k} className="shrink-0" />
+                </Link>
+                {!busy ? (
+                  <span className="absolute top-1 right-1 rounded-lg bg-accent opacity-0 group-focus-within/child:opacity-100 group-hover/child:opacity-100">
+                    <Menu
+                      label={k.name}
+                      trigger={
+                        <button
+                          type="button"
+                          aria-label={`${k.name} actions`}
+                          className="inline-flex size-6 cursor-default items-center justify-center rounded-lg text-muted-foreground outline-none hover:bg-background hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60"
+                        >
+                          <MoreHorizontalIcon className="size-3.5" />
+                        </button>
+                      }
+                      items={[
+                        off
+                          ? { label: "Start", onSelect: () => void startSpace(k.id).catch(toastError(`Couldn't start ${k.name}`)) }
+                          : { label: "Stop", onSelect: () => void stopSpace(k.id).catch(toastError(`Couldn't stop ${k.name}`)) },
+                        { label: "Delete", destructive: true, onSelect: () => setConfirm(k.id) },
+                      ]}
+                    />
+                  </span>
+                ) : null}
+              </li>
+            );
+          })}
+        </ul>
+        {budget ? (
+          <p data-child-budget="" className="mt-1 px-2 text-[11px] text-muted-foreground">
+            {budget.spaces} of {budget.maxSpaces} Spaces in this tree&rsquo;s budget
+          </p>
+        ) : null}
       </div>
       {text ? (
         <ConfirmDialog

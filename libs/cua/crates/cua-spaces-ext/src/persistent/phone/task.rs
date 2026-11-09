@@ -565,6 +565,8 @@ impl Job {
         if created {
             self.record.space = Some(space.clone());
             save(&self.p, self.record.clone())?;
+        } else {
+            self.p.wake_space(&space).await?;
         }
         self.add_agent(&space, matches!(self.place, Where::Space(_)))?;
         let t = self.p.thread(&self.caller, &space).await?;
@@ -633,6 +635,11 @@ impl Job {
             labels: [
                 (LABEL_HOME.to_string(), "1".to_string()),
                 (LABEL_AGENT.to_string(), self.agent.harness.to_string()),
+                // A home is made for a task: it sleeps when the task is done.
+                (
+                    cua_spaces::sleep::LABEL_SLEEP.to_string(),
+                    cua_spaces::sleep::Sleep::Auto.word(),
+                ),
             ]
             .into(),
             // No network, egress or mount argument: the secure default

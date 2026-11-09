@@ -260,7 +260,6 @@ export interface SpaceDetailOps {
   "spaces.sendFiles": { args: { spaceId: string; paths: string[] }; result: SentFileInfo[] };
 }
 
-
 /* ---- Hosts ------------------------------------------------------------------------- */
 
 type Invoke = <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;

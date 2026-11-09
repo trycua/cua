@@ -313,13 +313,25 @@ export const connectorsView = (core: CoreClient, input: ConnectorsInput, os: Hos
 export const connectPlan = (core: CoreClient, input: ConnectorsInput, agent: string): ConnectPlan | null =>
   core.tryCall<ConnectPlan>("connectors.connectPlan", { input: input as unknown as Json, agent }) ?? null;
 
-export const providerSheet = (core: CoreClient, input: ConnectorsInput, provider: string, os: HostOs = hostOs(), forApp: string | null = null): ProviderSheetView | null =>
+export const providerSheet = (
+  core: CoreClient,
+  input: ConnectorsInput,
+  provider: string,
+  os: HostOs = hostOs(),
+  forApp: string | null = null,
+): ProviderSheetView | null =>
   core.tryCall<ProviderSheetView | null>("connectors.providerSheet", { input: input as unknown as Json, provider, hostOs: os, forApp }) ?? null;
 
 export const importSheet = (core: CoreClient, os: HostOs = hostOs()): ImportSheetView | null =>
   core.tryCall<ImportSheetView>("connectors.importSheet", { hostOs: os }) ?? null;
 
-export const providerPicker = (core: CoreClient, input: ConnectorsInput, forApp: string | null = null, query = "", expanded = false): ProviderPickerView | null =>
+export const providerPicker = (
+  core: CoreClient,
+  input: ConnectorsInput,
+  forApp: string | null = null,
+  query = "",
+  expanded = false,
+): ProviderPickerView | null =>
   core.tryCall<ProviderPickerView>("connectors.providerPicker", { input: input as unknown as Json, forApp, query, expanded }) ?? null;
 
 /** One model row of the prompt box's model menu. */
@@ -330,6 +342,8 @@ export interface ModelChoice {
   fast: boolean;
   /** The provider's own default. */
   default: boolean;
+  /** An older id kept so a saved choice still works: accepted, but not shown in the menu. */
+  legacy?: boolean;
 }
 
 export interface ModelGroup {

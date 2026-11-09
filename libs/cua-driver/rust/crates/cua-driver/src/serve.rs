@@ -82,6 +82,7 @@ async fn resume_trusted_connection(
     bind_trusted_connection(sdk, record.options, record.transport_session)
 }
 
+#[cfg(unix)]
 fn reap_finished_connections(connection_tasks: &mut tokio::task::JoinSet<()>) {
     while let Some(result) = connection_tasks.try_join_next() {
         if let Err(error) = result {
@@ -153,6 +154,7 @@ fn active_proxy_sessions() -> &'static Mutex<HashSet<String>> {
     ACTIVE_PROXY_SESSIONS.get_or_init(|| Mutex::new(HashSet::new()))
 }
 
+#[cfg(unix)]
 fn release_active_proxy_sessions() {
     if let Some(sessions) = ACTIVE_PROXY_SESSIONS.get() {
         let mut sessions = sessions.lock().unwrap();
@@ -3311,6 +3313,180 @@ mod permission_gate_tests {
         connection.session.close();
         sdk.shutdown().await.unwrap();
     }
+
+    /// The `trusted_session_call` socket arm binds only for an embedded peer
+    /// whose process is the daemon's parent, so the daemon runs in a child
+    /// copy of this test binary and this process is that host. The child
+    /// starts with the gate pending and opens it when stdin says `open`.
+    #[cfg(unix)]
+    #[test]
+    fn socket_trusted_session_call_waits_for_the_permission_gate() {
+        use std::io::{BufRead as _, BufReader, Write as _};
+        const CHILD_SOCKET_ENV: &str = "CUA_DRIVER_TRUSTED_GATE_TEST_SOCKET";
+
+        if let Some(socket) = std::env::var_os(CHILD_SOCKET_ENV) {
+            let socket = socket.into_string().expect("UTF-8 socket path");
+            let runtime = tokio::runtime::Runtime::new().unwrap();
+            runtime.block_on(async {
+                let (driver, sdk, calls) = crate::probe_sdk().await;
+                driver.set_awaiting_permissions(true);
+                let opener = driver.clone();
+                std::thread::spawn(move || {
+                    for line in std::io::stdin().lock().lines() {
+                        if line.as_deref().is_ok_and(|line| line == "open") {
+                            opener.set_awaiting_permissions(false);
+                        }
+                    }
+                });
+                super::run_serve(sdk.clone(), &socket, None)
+                    .await
+                    .expect("serve");
+                assert_eq!(
+                    calls.load(Ordering::SeqCst),
+                    1,
+                    "only the call after the gate opened may run"
+                );
+                sdk.shutdown().await.unwrap();
+            });
+            return;
+        }
+
+        let directory = tempfile::Builder::new()
+            .prefix("cua-tg-")
+            .tempdir_in("/tmp")
+            .expect("socket directory");
+        let socket = directory.path().join("d.sock");
+        struct Reaped(std::process::Child);
+        impl Drop for Reaped {
+            fn drop(&mut self) {
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+            }
+        }
+        let mut child = Reaped(
+            std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "serve::permission_gate_tests::socket_trusted_session_call_waits_for_the_permission_gate",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env(CHILD_SOCKET_ENV, &socket)
+            .env(cua_driver_core::EMBEDDED_ENV, "1")
+            .env_remove(cua_driver_core::PARENT_LIVENESS_STDIN_ENV)
+            .env_remove("CUA_DRIVER_RS_MCP_HTTP_PORT")
+            .env_remove("CUA_DRIVER_ENVELOPE_HTTP_PORT")
+            .stdin(std::process::Stdio::piped())
+            .spawn()
+            .expect("spawn embedded daemon"),
+        );
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while !socket.exists() {
+            assert!(
+                std::time::Instant::now() < deadline && child.0.try_wait().unwrap().is_none(),
+                "embedded daemon never bound {}",
+                socket.display()
+            );
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+
+        let stream = std::os::unix::net::UnixStream::connect(&socket).expect("connect");
+        stream
+            .set_read_timeout(Some(std::time::Duration::from_secs(10)))
+            .unwrap();
+        let mut replies = BufReader::new(stream.try_clone().unwrap());
+        let mut send = |method: &str, name: Option<&str>, args: Option<serde_json::Value>| {
+            let request = super::DaemonRequest {
+                method: method.into(),
+                name: name.map(str::to_owned),
+                args,
+                session_id: None,
+                observation_origin: None,
+                client_kind: None,
+            };
+            let mut line = serde_json::to_string(&request).unwrap();
+            line.push('\n');
+            (&stream).write_all(line.as_bytes()).unwrap();
+            let mut reply = String::new();
+            replies.read_line(&mut reply).expect("daemon reply");
+            serde_json::from_str::<super::DaemonResponse>(&reply).expect("daemon response")
+        };
+        let tool_result = |reply: super::DaemonResponse| {
+            assert!(reply.ok, "{:?}", reply.error);
+            reply.result.expect("tool result")
+        };
+        let probe = || Some(serde_json::json!({}));
+
+        let bound = send(
+            "trusted_session_begin",
+            None,
+            Some(
+                serde_json::to_value(cua_driver_sdk::TrustedSessionOptions {
+                    public_session: "pending-trusted-socket".into(),
+                    mode: cua_driver_sdk::SessionPermissionMode::Standard,
+                    ttl_seconds: 60,
+                    idle_ttl_seconds: 30,
+                    capability_manifest_path: None,
+                    bounded_manifest_path: None,
+                })
+                .unwrap(),
+            ),
+        );
+        assert!(bound.ok, "parent peer must bind: {:?}", bound.error);
+
+        let pending = tool_result(send(
+            "trusted_session_call",
+            Some("get_screen_size"),
+            probe(),
+        ));
+        assert_eq!(refusal_code(&pending), Some("permissions_pending"));
+
+        let mut stdin = child.0.stdin.take().unwrap();
+        writeln!(stdin, "open").unwrap();
+        // A refused call never reaches the tool, so polling keeps the
+        // child's exactly-once count meaningful.
+        let opened = loop {
+            let result = tool_result(send(
+                "trusted_session_call",
+                Some("get_screen_size"),
+                probe(),
+            ));
+            if refusal_code(&result) != Some("permissions_pending") {
+                break result;
+            }
+            assert!(std::time::Instant::now() < deadline, "gate never opened");
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        };
+        assert_eq!(refusal_code(&opened), None, "{opened}");
+        assert_eq!(opened["content"][0]["text"], "probe ran");
+
+        drop(replies);
+        drop(stream);
+        let socket = socket.to_str().unwrap().to_owned();
+        let _ = super::send_request(
+            &socket,
+            &super::DaemonRequest {
+                method: "shutdown".into(),
+                name: None,
+                args: None,
+                session_id: None,
+                observation_origin: None,
+                client_kind: None,
+            },
+        );
+        drop(stdin);
+        let status = loop {
+            if let Some(status) = child.0.try_wait().unwrap() {
+                break status;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "embedded daemon did not exit after shutdown"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        };
+        assert!(status.success(), "embedded daemon child failed: {status}");
+    }
 }
 
 #[cfg(test)]
@@ -3410,7 +3586,7 @@ mod trusted_resume_tests {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod connection_reaping_tests {
     use super::reap_finished_connections;
 

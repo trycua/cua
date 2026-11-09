@@ -180,9 +180,13 @@ function fallbackView(input: DriveInput, state: DriveState): DriveView {
   return {
     title: "Volume",
     requestsTitle: "Requests",
-    requests: (input.requests ?? []).map((r) => line(r.id, `${r.principal} asks to ${r.mode === "rw" ? "read and write" : "read"} ${r.prefix}`, "Approve", "Deny")),
+    requests: (input.requests ?? []).map((r) =>
+      line(r.id, `${r.principal} asks to ${r.mode === "rw" ? "read and write" : "read"} ${r.prefix}`, "Approve", "Deny"),
+    ),
     grantsTitle: "Grants",
-    grants: (input.grants ?? []).filter((g) => !g.revoked).map((g) => line(g.id, `${g.principal} can ${g.mode === "rw" ? "read and write" : "read"} ${g.prefix}`, "Revoke")),
+    grants: (input.grants ?? [])
+      .filter((g) => !g.revoked)
+      .map((g) => line(g.id, `${g.principal} can ${g.mode === "rw" ? "read and write" : "read"} ${g.prefix}`, "Revoke")),
     grantsEmpty: "Agents have only their own folders.",
     busy: state.busy,
     error: state.error ?? null,
@@ -360,7 +364,13 @@ export function useVolume(now: () => number = Date.now): VolumeHook {
     );
   };
 
-  if (pinned) return { view: driveView(core, pinned.input, pinned.state), unsupported: false, act, spaceErrors: spaceVolumeErrors(pinned.input.sync, pinned.input.mount) };
+  if (pinned)
+    return {
+      view: driveView(core, pinned.input, pinned.state),
+      unsupported: false,
+      act,
+      spaceErrors: spaceVolumeErrors(pinned.input.sync, pinned.input.mount),
+    };
   return {
     view: input ? driveView(core, { ...input, nowMs: now() }, state) : null,
     unsupported,
@@ -426,10 +436,7 @@ export function useOnboardingVolume(flow: OnboardingFlow): void {
 
   const check = useCallback(async () => {
     if (!data) return;
-    const [overview, storage] = await Promise.all([
-      data.call("volume.overview", {}).catch(() => null),
-      data.call("volume.storage", {}).catch(() => null),
-    ]);
+    const [overview, storage] = await Promise.all([data.call("volume.overview", {}).catch(() => null), data.call("volume.storage", {}).catch(() => null)]);
     if (storage) send.current({ type: "drive-storage-loaded", storage, home: overview?.home ?? null });
     send.current({ type: "drive-checked", os: overview?.os ?? "macos", status: overview?.mount ?? null });
   }, [data]);

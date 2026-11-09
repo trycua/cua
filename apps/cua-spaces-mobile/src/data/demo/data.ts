@@ -61,7 +61,14 @@ const identity = (handle: string, displayName: string, harness: string) => ({
   lastSeenMs: null,
 });
 
-const member = (handle: string, displayName: string, harness: string, status: string, activity: string | null, needsYou: AgentMember["needsYou"] = []): AgentMember => ({
+const member = (
+  handle: string,
+  displayName: string,
+  harness: string,
+  status: string,
+  activity: string | null,
+  needsYou: AgentMember["needsYou"] = [],
+): AgentMember => ({
   name: handle,
   handle,
   harness,
@@ -76,7 +83,16 @@ const member = (handle: string, displayName: string, harness: string, status: st
   needsYou,
 });
 
-const person = (a: { id: string; name: string }, role: string, here: boolean): SpaceMemberRow => ({ id: a.id, name: a.name, kind: "person", harness: null, status: here ? "here" : "away", activity: null, role, here });
+const person = (a: { id: string; name: string }, role: string, here: boolean): SpaceMemberRow => ({
+  id: a.id,
+  name: a.name,
+  kind: "person",
+  harness: null,
+  status: here ? "here" : "away",
+  activity: null,
+  role,
+  here,
+});
 
 export function spaces(now: number): SampleSpace[] {
   const you = person(ME, "Owner", true);
@@ -89,7 +105,12 @@ export function spaces(now: number): SampleSpace[] {
       kindLabel: "macOS VM",
       scene: "code",
       role: "owner",
-      members: [member("claude", "Claude Code", "claude-code", "waiting", "waiting for your approval", [{ seq: 7, kind: "approval", text: "Claude Code wants to push a branch and open a pull request", tsMs: now - 2 * MIN }, { seq: 8, kind: "approval", text: "Claude Code wants to download packages from registry.npmjs.org", tsMs: now - 1 * MIN }])],
+      members: [
+        member("claude", "Claude Code", "claude-code", "waiting", "waiting for your approval", [
+          { seq: 7, kind: "approval", text: "Claude Code wants to push a branch and open a pull request", tsMs: now - 2 * MIN },
+          { seq: 8, kind: "approval", text: "Claude Code wants to download packages from registry.npmjs.org", tsMs: now - 1 * MIN },
+        ]),
+      ],
       people: [you, person(SAM, "Editor", true), person(JORDAN, "Viewer", false)],
     },
     {
@@ -133,7 +154,11 @@ export function spaces(now: number): SampleSpace[] {
       kindLabel: "Linux",
       scene: "terminal",
       role: "editor",
-      members: [member("researcher", "Researcher", "claude-code", "working", "reading 3 reports"), member("researcher-2", "Researcher 2", "claude-code", "working", "summarising"), member("researcher-3", "Researcher 3", "claude-code", "idle", null)],
+      members: [
+        member("researcher", "Researcher", "claude-code", "working", "reading 3 reports"),
+        member("researcher-2", "Researcher 2", "claude-code", "working", "summarising"),
+        member("researcher-3", "Researcher 3", "claude-code", "idle", null),
+      ],
       people: [you, person(JORDAN, "Owner", true)],
     },
     {
@@ -211,22 +236,42 @@ export function checkoutThread(now: number): ThreadEntry[] {
     entry(2, t(88), SAM, "I'm on the tax one. @claude take partial refunds?", { mentions: ["claude"], task: { to: "claude", session: null } }),
     entry(3, t(86), ME, "@claude yes, fix it and open a PR", { mentions: ["claude"], task: { to: "claude", session: null } }),
     entry(4, t(85), CLAUDE, "On it. Shipping was dropped on partial refunds; fixing that in refunds.ts and adding a test.", { replyTo: 3 }),
-    entry(5, t(42), CLAUDE, "Fixed: partial refunds keep the shipping line. **149 passed**, 0 failed.\n\n```\nnpm test\n149 passed, 0 failed\n```\nDiff in `refunds.ts`.", {
-      replyTo: 3,
-      attachments: [
-        { path: "refunds.diff", name: "refunds.diff", size: 1312, mime: "text/x-diff" },
-        { path: "test.log", name: "test log", size: 9120, mime: "text/plain" },
-      ],
-    }),
+    entry(
+      5,
+      t(42),
+      CLAUDE,
+      "Fixed: partial refunds keep the shipping line. **149 passed**, 0 failed.\n\n```\nnpm test\n149 passed, 0 failed\n```\nDiff in `refunds.ts`.",
+      {
+        replyTo: 3,
+        attachments: [
+          { path: "refunds.diff", name: "refunds.diff", size: 1312, mime: "text/x-diff" },
+          { path: "test.log", name: "test log", size: 9120, mime: "text/plain" },
+        ],
+      },
+    ),
     entry(6, t(41), ME, "@claude open the PR", { mentions: ["claude"], task: { to: "claude", session: null } }),
     entry(7, t(2), CUA, "Claude Code wants to push a branch and open a pull request on acme/checkout-api.", {
       kind: "approval",
-      approval: { action: "export:repo.push", details: "Branch fix/retry-backoff on acme/checkout-api.", state: "open", card: SAMPLE_CARD_INPUT, kind: "push", scopeChoices: ["once"] },
+      approval: {
+        action: "export:repo.push",
+        details: "Branch fix/retry-backoff on acme/checkout-api.",
+        state: "open",
+        card: SAMPLE_CARD_INPUT,
+        kind: "push",
+        scopeChoices: ["once"],
+      },
     }),
     // A second approval that waits, from the agent itself: plain text and exact detail, never a card.
     entry(8, t(1), CLAUDE, "Allow reaching registry.npmjs.org to install the test dependencies?", {
       kind: "approval",
-      approval: { action: "network:registry.npmjs.org", details: "GET https://registry.npmjs.org/ (npm install)", state: "open", card: null, kind: "request", scopeChoices: ["once", "space"] },
+      approval: {
+        action: "network:registry.npmjs.org",
+        details: "GET https://registry.npmjs.org/ (npm install)",
+        state: "open",
+        card: null,
+        kind: "request",
+        scopeChoices: ["once", "space"],
+      },
     }),
   ];
 }
@@ -244,7 +289,14 @@ export const CHECKOUT_TOOL_ROWS_WIRE = {
       calls: [
         { id: "tc_1", cat: "read", line: "Read refunds.ts", detail: "src/orders/refunds.ts, 212 lines", state: "done", at_ms: 1 },
         { id: "tc_2", cat: "read", line: "Read refunds.test.ts", detail: "src/orders/refunds.test.ts, 96 lines", state: "done", at_ms: 2 },
-        { id: "tc_3", cat: "edited", line: "Edited refunds.ts", detail: "+6 -2 in applyPartialRefund(): keep the shipping line when the refund is partial.", state: "done", at_ms: 3 },
+        {
+          id: "tc_3",
+          cat: "edited",
+          line: "Edited refunds.ts",
+          detail: "+6 -2 in applyPartialRefund(): keep the shipping line when the refund is partial.",
+          state: "done",
+          at_ms: 3,
+        },
         { id: "tc_4", cat: "edited", line: "Edited refunds.test.ts", detail: '+18 -0: adds "keeps shipping on a partial refund".', state: "done", at_ms: 4 },
         { id: "tc_5", cat: "ran", line: "Ran npm test", detail: "$ npm test\n149 passed, 0 failed (14.2s)", state: "done", at_ms: 5 },
       ],
@@ -291,9 +343,15 @@ const sampleAgents = (ready: string[]) =>
  * backend asks every online machine and merges the answers through the same mapper a live relay's answers go through.
  */
 export const SAMPLE_TASK_OPTIONS_BY_HOST: Record<string, unknown> = {
-  "studio-mac": { machine: { id: "studio-mac", os: ["macos"], online: true, can_create: true, why: null }, agents: sampleAgents(["claude-code", "hermes", "openclaw"]) },
+  "studio-mac": {
+    machine: { id: "studio-mac", os: ["macos"], online: true, can_create: true, why: null },
+    agents: sampleAgents(["claude-code", "hermes", "openclaw"]),
+  },
   "desktop-pc": { machine: { id: "desktop-pc", os: ["windows"], online: true, can_create: true, why: null }, agents: sampleAgents(["claude-code", "hermes"]) },
-  "cloud-eu": { machine: { id: "cloud-eu", os: ["linux"], online: true, can_create: false, why: "Budget reached this month" }, agents: sampleAgents(["claude-code"]) },
+  "cloud-eu": {
+    machine: { id: "cloud-eu", os: ["linux"], online: true, can_create: false, why: "Budget reached this month" },
+    agents: sampleAgents(["claude-code"]),
+  },
 };
 
 /** The checkout-api change set, from the same files the push card lists (`space_changes`, wire shape). */
@@ -303,7 +361,16 @@ export const SAMPLE_CHANGES_WIRE = {
   base: "main",
   head_sha: "0a1b2c3",
   verified: true,
-  files: SAMPLE_CARD_INPUT.files.map((f) => ({ path: f.path, old_path: (f as { oldPath?: string }).oldPath, status: f.status, additions: f.additions, deletions: f.deletions, binary: f.binary, size: f.binary ? 283 : 1200, mime: f.binary ? "image/png" : f.path.endsWith(".md") ? "text/markdown" : "text/x-python" })),
+  files: SAMPLE_CARD_INPUT.files.map((f) => ({
+    path: f.path,
+    old_path: (f as { oldPath?: string }).oldPath,
+    status: f.status,
+    additions: f.additions,
+    deletions: f.deletions,
+    binary: f.binary,
+    size: f.binary ? 283 : 1200,
+    mime: f.binary ? "image/png" : f.path.endsWith(".md") ? "text/markdown" : "text/x-python",
+  })),
   truncated: false,
 };
 
@@ -385,7 +452,24 @@ index 1d2e3f4..5a6b7c8 100644
 
 /** A file's content for the preview (`space_file_preview`, wire shape). The image is a made up 160 by 100 status panel. */
 export const SAMPLE_PREVIEWS: Record<string, { mime: string; encoding: "base64" | "utf8"; content: string; size: number }> = {
-  "assets/status.png": { mime: "image/png", encoding: "base64", size: 283, content: "iVBORw0KGgoAAAANSUhEUgAAAKAAAABkCAIAAACO1KzYAAAA4klEQVR42u3ZsQ2AIBCGUUaxsKZiE5d0FApKRsHYuoINxJwv+Sa41/2Xtj0rcMkJAAuwAAuwAAuwAAMWYAEWYAEWYAEGLMACLMACLMB6CTyuW4EDDFiABViABViABRiwAAuwAAuwVgGX8wgfYMCAAQMGDBgwYMCAAQMGDBgwYMCAAQP2bBBgAQYswAIswAKsVcC1dU0KMGDAgAEDBgxYgAVY3wOWJUuABViABViAAcs/2BwBGDBgwIABAwYMGDBgwIANHQIswAIswIAFWIAFWIAFWIAFGLAAC7AAC7AAC/AvewAptVN4n4p4lwAAAABJRU5ErkJggg==" },
-  "src/net/ws_reconnect.py": { mime: "text/x-python", encoding: "utf8", size: 612, content: "import asyncio\nimport logging\n\nlog = logging.getLogger(__name__)\n\n\nclass Reconnector:\n    def __init__(self, transport, base=1.0, cap=30.0):\n        self.transport = transport\n        self.attempt = 0\n        self.base = base\n        self.cap = cap\n" },
-  "docs/retry-notes.md": { mime: "text/markdown", encoding: "utf8", size: 108, content: "# Retry notes\n\nReconnects wait one second. This is a placeholder until backoff lands.\nSee the sync test for the flaky case.\n" },
+  "assets/status.png": {
+    mime: "image/png",
+    encoding: "base64",
+    size: 283,
+    content:
+      "iVBORw0KGgoAAAANSUhEUgAAAKAAAABkCAIAAACO1KzYAAAA4klEQVR42u3ZsQ2AIBCGUUaxsKZiE5d0FApKRsHYuoINxJwv+Sa41/2Xtj0rcMkJAAuwAAuwAAuwAAMWYAEWYAEWYAEGLMACLMACLMB6CTyuW4EDDFiABViABViABRiwAAuwAAuwVgGX8wgfYMCAAQMGDBgwYMCAAQMGDBgwYMCAAQP2bBBgAQYswAIswAKsVcC1dU0KMGDAgAEDBgxYgAVY3wOWJUuABViABViAAcs/2BwBGDBgwIABAwYMGDBgwIANHQIswAIswIAFWIAFWIAFWIAFGLAAC7AAC7AAC/AvewAptVN4n4p4lwAAAABJRU5ErkJggg==",
+  },
+  "src/net/ws_reconnect.py": {
+    mime: "text/x-python",
+    encoding: "utf8",
+    size: 612,
+    content:
+      "import asyncio\nimport logging\n\nlog = logging.getLogger(__name__)\n\n\nclass Reconnector:\n    def __init__(self, transport, base=1.0, cap=30.0):\n        self.transport = transport\n        self.attempt = 0\n        self.base = base\n        self.cap = cap\n",
+  },
+  "docs/retry-notes.md": {
+    mime: "text/markdown",
+    encoding: "utf8",
+    size: 108,
+    content: "# Retry notes\n\nReconnects wait one second. This is a placeholder until backoff lands.\nSee the sync test for the flaky case.\n",
+  },
 };

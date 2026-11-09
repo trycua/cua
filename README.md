@@ -7,7 +7,7 @@
     </picture>
   </a>
 
-  <p align="center"><strong>Give AI agents computers they can use.</strong><br>Cua Spaces gives your agents full desktops on your Mac and on computers you own. This repository also holds Cua Driver for desktop automation, Lume for local VMs, CUA-S1 decision models and Cua Bench for evaluating computer-use agents.</p>
+  <p align="center"><strong>Combine your existing computers into one supercomputer.</strong><br>Cua Spaces: your computers, shared by your team and its agents. This repository also holds Cua Driver for desktop automation, Lume for local VMs, CUA-S1 decision models and Cua Bench for evaluating computer-use agents.</p>
 
   <p align="center"><strong><a href="https://spaces.cua.ai">Get Cua Spaces</a></strong></p>
 
@@ -65,6 +65,8 @@ Bring your own agent and model, or explore CUA-S1 for specialized decisions. Cua
 ---
 
 ## Cua Spaces
+
+**Combine your existing computers into one supercomputer.** Your computers, shared by your team and its agents.
 
 Cua Spaces is a desktop app that gives your agents full desktops. Each desktop is a Space: a macOS VM built locally on your Mac, or a Linux or Omarchy image. Spaces run on your Mac, on other computers you own, and in [your own cloud account](https://cua.ai/docs/cua-sdk/guides/local-runtimes#your-own-cloud) (AWS, Google Cloud or Modal), and the app keeps them in your menu bar and notch.
 

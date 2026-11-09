@@ -42,4 +42,3 @@ describe("useStreamHidden", () => {
     expect(renderHook(() => useStreamHidden("home", true)).result.current[0]).toBe(false);
   });
 });
-

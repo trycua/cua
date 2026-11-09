@@ -199,7 +199,7 @@ async fn browser_pkce_login_then_onboards_the_named_agents() {
         !seen.contains("WXYZ"),
         "no device code in the browser flow: {seen}"
     );
-    assert!(seen.contains("[5/5]"), "{seen}");
+    assert!(seen.contains("[6/6]"), "{seen}");
     assert!(
         seen.contains("Kiro: ~/.kiro/settings/mcp.json (added)"),
         "{seen}"
@@ -927,6 +927,7 @@ async fn agents_remove_keeps_cua_driver_and_dry_run_lists_what_it_removes() {
         "cua-volume",
         "cua-sandboxes",
         "gui-automation",
+        "supercomputer",
     ] {
         assert!(
             out.contains(&format!(
@@ -1211,16 +1212,16 @@ async fn interactive_login_onboarding_prompts() {
         p.send("y\r");
         let at = p.expect("✓ Claude Code", at);
         let at = p.expect("✗ Cursor", at);
-        let at = p.expect("Install 5 default cua skills? [Y/n]", at);
+        let at = p.expect("Install 6 default cua skills? [Y/n]", at);
         p.send("\r");
-        let at = p.expect("[1/5] ✓ cua-driver (installed, 2 locations)", at);
-        let at = p.expect("[5/5]", at);
+        let at = p.expect("[1/6] ✓ cua-driver (installed, 2 locations)", at);
+        let at = p.expect("[6/6]", at);
         p.expect("Configure cua MCP server connection? [Y/n]", at);
         p.send("n\r");
         let (code, out) = p.wait();
         assert_eq!(code, 0, "{out}");
         assert!(
-            out.contains("Done: 5 skills in 2 locations; MCP configured for 0 agents."),
+            out.contains("Done: 6 skills in 2 locations; MCP configured for 0 agents."),
             "{out}"
         );
         assert!(

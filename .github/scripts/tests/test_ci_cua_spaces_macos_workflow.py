@@ -57,8 +57,9 @@ def test_the_library_is_compiled_once_and_downloaded_by_the_rest():
     for name in SWIFT_JOBS:
         job = JOBS[name]
         needs = [job["needs"]] if isinstance(job["needs"], str) else job["needs"]
-        # Downloads the library from `ffi`; `changes` (the packaging-path filter) is the only other job it may wait for.
-        assert "ffi" in needs and set(needs) <= {"ffi", "changes"}, name
+        # Downloads the library from `ffi`; `changes` (the packaging-path filter) and `quick` (the shared
+        # stage and its scope decision) are the only other jobs it may wait for.
+        assert "ffi" in needs and set(needs) <= {"ffi", "changes", "quick"}, name
         download = [s for s in job["steps"] if str(s.get("uses", "")).startswith("actions/download-artifact")]
         assert len(download) == 1 and download[0]["with"]["name"] == ARTIFACT, name
         assert download[0]["with"]["path"] == "libs/cua/target/release", name
@@ -120,7 +121,7 @@ def test_the_slice_action_builds_by_default_and_restores_only_on_request():
     assert action["inputs"]["build"]["default"] == "true"
     steps = action["runs"]["steps"]
     by_id = {s.get("id"): s for s in steps if s.get("id")}
-    assert by_id["cache"]["uses"].startswith("actions/cache@") and by_id["cache"]["if"] == "inputs.build == 'true'"
+    assert by_id["cache"]["uses"].startswith("actions/cache/restore@") and by_id["cache"]["if"] == "inputs.build == 'true'"
     assert by_id["restore"]["uses"].startswith("actions/cache/restore@")
     assert by_id["restore"]["if"] == "inputs.build != 'true'"
     # Nothing compiles unless build is on.

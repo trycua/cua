@@ -148,7 +148,7 @@ describe("SpaceWindowList (the Stream section)", () => {
         },
       }),
     );
-    expect(await screen.findByRole("status")).toHaveTextContent("No windows: the Space’s window host is not up.");
+    expect(await screen.findByRole("status")).toHaveTextContent("Can’t see this Space’s windows yet.");
     expect(screen.getByText("Desktop")).toBeInTheDocument();
   });
   it("tracks open picture-in-picture panels: pip.exit and Close while open", async () => {

@@ -3,8 +3,6 @@
 
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { flagOn, setFlagOverride } from "@/bridge";
-
 import type { Space } from "@/bridge";
 
 import {
@@ -36,16 +34,6 @@ import {
 beforeEach(() => {
   localStorage.clear();
   resetAskTasks();
-});
-
-describe("the spaces_ask_first_home flag", () => {
-  it("is off unless this device turns it on", () => {
-    expect(flagOn("spaces_ask_first_home")).toBe(false);
-    setFlagOverride("spaces_ask_first_home", true);
-    expect(flagOn("spaces_ask_first_home")).toBe(true);
-    setFlagOverride("spaces_ask_first_home", null);
-    expect(flagOn("spaces_ask_first_home")).toBe(false);
-  });
 });
 
 describe("Ask-first tasks", () => {
@@ -92,8 +80,17 @@ describe("Ask-first tasks", () => {
   });
 });
 
-const row = (id: string, more: Partial<Space> = {}): Space => ({ id, name: id, os: "linux", status: "running", detail: "", lastUsedAt: 0, scene: "linux-terminal", ...more });
-const thisMac = row("this-mac", { name: "This machine", os: "macos", status: "local", provider: "local" });
+const row = (id: string, more: Partial<Space> = {}): Space => ({
+  id,
+  name: id,
+  os: "linux",
+  status: "running",
+  detail: "",
+  lastUsedAt: 0,
+  scene: "linux-terminal",
+  ...more,
+});
+const thisMac = row("this-mac", { name: "This computer", os: "macos", status: "local", provider: "local" });
 const LINUX: NewKind = { os: "linux", note: "Free.", blocked: null };
 const MAC: NewKind = { os: "macos", note: "Free.", blocked: null };
 const shared = { configured: true, mode: "relay" as const, machineId: "m-ada-mbp", sharing: true, shareDesktop: true };
@@ -159,8 +156,8 @@ describe("where a task runs", () => {
   });
 
   it("says plainly what working on this Mac means", () => {
-    expect(thisMacConfirmText("Codex").description).toContain("Codex will work directly on this Mac, with your files and apps. It can't be undone by throwing the computer away.");
-    expect(thisMacConfirmText("Codex").description).toContain("doesn't ask before each step");
+    expect(thisMacConfirmText("Codex").description).toContain("Codex will use your own files and apps, without asking before each step.");
+    expect(thisMacConfirmText("Codex").description).toContain("You can't throw this computer away afterwards.");
   });
 });
 

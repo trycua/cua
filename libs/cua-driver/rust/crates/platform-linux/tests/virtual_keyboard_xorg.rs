@@ -158,6 +158,48 @@ fn a_key_the_server_reads_down_but_not_up_is_not_repeated() {
 
 #[test]
 #[ignore = "requires a real Xorg (CUA_TEST_XORG_PID) with libinput hotplug and /dev/uinput"]
+fn a_keyboard_whose_warm_up_key_the_server_never_reads_is_not_kept() {
+    let _server = SERVER
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let input_thread = input_thread();
+    let (conn, window) = key_window(EventMask::KEY_PRESS);
+    let cursor = "virtual-keyboard-xorg-warm-up";
+    let null = std::ptr::null_mut::<libc::c_void>();
+    // The server lists the new keyboard, but reads nothing from it.
+    unsafe {
+        assert_eq!(
+            libc::ptrace(libc::PTRACE_SEIZE, input_thread, null, null),
+            0
+        );
+        assert_eq!(
+            libc::ptrace(libc::PTRACE_INTERRUPT, input_thread, null, null),
+            0
+        );
+        let mut status = 0;
+        libc::waitpid(input_thread, &mut status, libc::__WALL);
+    }
+    let typed =
+        send_virtual_keyboard_text_paced(cursor, u64::from(window), "a", TypePacing::default());
+    unsafe { libc::ptrace(libc::PTRACE_DETACH, input_thread, null, null) };
+    let retried =
+        send_virtual_keyboard_text_paced(cursor, u64::from(window), "a", TypePacing::default());
+    forget_master_pointer(cursor);
+
+    let error = typed.expect_err("the server never read the warm-up key");
+    assert!(format!("{error:#}").contains("warm-up key"), "{error:#}");
+    let report = retried.expect("the retry plugs in a new keyboard");
+    assert!(report.delivery_confirmed, "{report:?}");
+    std::thread::sleep(Duration::from_millis(300));
+    let mut pressed = 0;
+    while let Some(event) = conn.poll_for_event().unwrap() {
+        pressed += usize::from(matches!(event, Event::KeyPress(_)));
+    }
+    assert_eq!(pressed, 1, "only the retry's key reaches the window");
+}
+
+#[test]
+#[ignore = "requires a real Xorg (CUA_TEST_XORG_PID) with libinput hotplug and /dev/uinput"]
 fn a_stalled_server_never_reads_borrowed_keys_after_their_keycodes_are_restored() {
     let _server = SERVER
         .lock()

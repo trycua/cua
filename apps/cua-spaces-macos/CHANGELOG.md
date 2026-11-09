@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.26.1](https://github.com/trycua/cua/compare/cua-spaces-v0.26.0...cua-spaces-v0.26.1) (2026-11-09)
+
+
+### Bug Fixes
+
+* **cua-vmm:** one constant for the oldest Lume cua runs on ([#6946](https://github.com/trycua/cua/issues/6946)) ([311d525](https://github.com/trycua/cua/commit/311d525ab705dcebdc82dceefa175c32d2da1e18))
+
 ## [0.26.0](https://github.com/trycua/cua/compare/cua-spaces-v0.25.2...cua-spaces-v0.26.0) (2026-11-09)
 
 

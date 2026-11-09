@@ -148,7 +148,7 @@ jobs:
           exit "$FAILED"
 
       # release-please-action v4.4.1, embedding release-please 17.3.0.
-      - name: Open or update automatic release pull requests
+      - name: Tag merged release pull requests
         id: release-auto
         if: >-
           github.event_name == 'push' ||
@@ -158,6 +158,23 @@ jobs:
           token: ${{ steps.app-token.outputs.token }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+          skip-github-pull-request: true
+
+      # The action's engine ignores `additional-paths`, so release PRs come from
+      # the same engine with that option added (release_please.sh).
+      - name: Open or update automatic release pull requests
+        if: >-
+          github.event_name == 'push' ||
+          (inputs.component == 'automatic' && inputs.bump == 'automatic')
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          .github/scripts/release_please.sh release-pr \
+            "--token=$GH_TOKEN" \
+            "--repo-url=$GITHUB_REPOSITORY" \
+            "--target-branch=${{ github.event.repository.default_branch }}" \
+            "--config-file=release-please-config.json" \
+            "--manifest-file=.release-please-manifest.json"
 
       - name: Open or update the targeted release pull request
         if: >-
@@ -170,13 +187,6 @@ jobs:
           RELEASE_AS: ${{ steps.request.outputs.release_as }}
         run: |
           set -euo pipefail
-          EXPECTED_INTEGRITY='sha512-dB7HsFUpAvU1Wj9RGCINUz8Zi2qQDZiGbDEEVnJ7baNfJmk5XdYhuUFL6RcuDGjReGhp1gzY8Tc2g7vHlM4zpg=='
-          ACTUAL_INTEGRITY=$(npm view release-please@17.3.0 dist.integrity)
-          if [[ "$ACTUAL_INTEGRITY" != "$EXPECTED_INTEGRITY" ]]; then
-            echo "::error::release-please@17.3.0 integrity mismatch"
-            exit 1
-          fi
-
           ARGS=(
             release-pr
             "--token=$GH_TOKEN"
@@ -189,7 +199,7 @@ jobs:
           if [[ -n "$RELEASE_AS" ]]; then
             ARGS+=("--release-as=$RELEASE_AS")
           fi
-          npx --yes release-please@17.3.0 "${ARGS[@]}"
+          .github/scripts/release_please.sh "${ARGS[@]}"
 
       - name: Synchronize generated files on release pull requests
         env:

@@ -7,8 +7,8 @@ name: "CI: gate recheck"
 # the gate's own run, so the required check keeps its name (`ci-gate`), its event and its place in
 # branch protection and auto-merge. The gate then recomputes its verdict from every run, as always.
 #
-# The list below must name every workflow the gate waits for (every pull_request or
-# pull_request_target workflow except the ones the gate skips). .github/scripts/tests/
+# The list below must name every workflow the gate waits for (every pull_request
+# workflow except the ones the gate skips). .github/scripts/tests/
 # test_ci_gate_recheck.py fails when a workflow is added or renamed without updating it.
 #
 # Safe for fork pull requests: this runs from the default branch, never checks out pull request code,
@@ -116,6 +116,7 @@ on:
       - "Perf: cua channel"
       - "CD: Auto Release on Merge"
       - "Release: Auto-merge release PRs"
+      - "CI: PR title"
       - "Smoke: Cua Driver live agent loop"
       - "Space egress (nightly)"
   status:
@@ -135,7 +136,7 @@ jobs:
     name: recheck
     if: >-
       (github.event_name == 'workflow_run'
-        && (github.event.workflow_run.event == 'pull_request' || github.event.workflow_run.event == 'pull_request_target')
+        && (github.event.workflow_run.event == 'pull_request')
         && contains(fromJSON('["success","neutral","skipped"]'), github.event.workflow_run.conclusion))
       || (github.event_name == 'status' && github.event.context == 'local-ci' && github.event.state == 'success')
     runs-on: ubuntu-latest

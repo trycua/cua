@@ -39,7 +39,7 @@ def test_gate_wiring():
     # still leaves headroom over the longest gate run observed on main.
     assert GATE['jobs']['ci-gate']['timeout-minutes'] == 180
     assert '.workflow_id != $GITHUB_WORKFLOW_ID' in SCRIPT
-    assert 'list_runs "$sha" \'.event == "pull_request" or .event == "pull_request_target"\'' in SCRIPT
+    assert 'list_runs "$sha" \'.event == "pull_request"\'' in SCRIPT
     assert 'list_runs "$queue_sha" \'.event == "merge_group" and .conclusion != "skipped"\'' in SCRIPT
     assert 'claude-auto-fix|ci-release-reminder|review-cua-perception-candidates|/cla[.]yml($|@)' in SCRIPT
 
@@ -57,7 +57,7 @@ def filtered_runs(ignore_re):
     ]
     runs_json = json.dumps({'workflow_runs': [
         {'workflow_id': i + 1, 'id': 100 + i, 'name': path.rsplit('/', 1)[1], 'path': path,
-         'event': 'pull_request_target', 'conclusion': conclusion or None, 'status': status}
+         'event': 'pull_request', 'conclusion': conclusion or None, 'status': status}
         for i, (path, conclusion, status) in enumerate(paths)
     ]})
     script = ('api() { jq -r "${@: -1}" <<<"$RUNS_JSON"; }\n' + runs_src + 'runs\n')
@@ -353,7 +353,7 @@ GH_STUB = """
 sleep() { :; }
 gh() {
   case "$*" in
-    *'/pulls/'*) printf '%s\\t%s\\n' "deadbeefcafe" "$HEAD_REPO" ;;
+    *'/pulls/'*) printf '%s\\t%s\\t%s\\t%s\\n' "deadbeefcafe" "$HEAD_REPO" "${HEAD_REF:-feat/x}" "${PR_LABELS:-}" ;;
     *'/statuses'*) echo statuses >> "$SOURCE"; printf '%s\\n' "$STATE" ;;
     *'/workflows/ci-quick.yml/runs'*) echo quick-run >> "$SOURCE"; printf '%s\\n' "$STATE" ;;
   esac
@@ -361,13 +361,13 @@ gh() {
 """
 
 
-def run_local_ci(head_repo='test/repo', state='', require='true'):
+def run_local_ci(head_repo='test/repo', state='', require='true', head_ref='feat/x', pr_labels=''):
     """Run the two sign-off steps in order, as the job does: the fast check, then the wait that is
     the last step. Returns the first failure, or the last result; `.source` is what was asked."""
     import tempfile
     with tempfile.NamedTemporaryFile('r+') as out, tempfile.NamedTemporaryFile('r+') as source:
         env = {**os.environ, 'PR_NUMBER': '7', 'QUEUE_REF': '', 'GITHUB_REPOSITORY': 'test/repo',
-               'HEAD_REPO': head_repo, 'STATE': state, 'SOURCE': source.name,
+               'HEAD_REPO': head_repo, 'HEAD_REF': head_ref, 'PR_LABELS': pr_labels, 'STATE': state, 'SOURCE': source.name,
                'REQUIRE_LOCAL_CI': require, 'GITHUB_OUTPUT': out.name}
         fast = subprocess.run(['bash', '-e', '-c', GH_STUB + LOCAL_CI_FAST], env=env,
                               capture_output=True, text=True, timeout=20)
@@ -387,9 +387,22 @@ def test_every_pull_request_needs_a_sign_off_whoever_opens_it():
     # The author, the labels and the commit trailers are not read: a branch of this repository
     # always needs the local-ci status, a fork always needs the CI: Quick run.
     assert 'author' not in LOCAL_CI_FAST.lower().replace('author:', '')
-    for word in ('labels', 'trailer', 'agent/'):
+    for word in ('trailer', 'agent/'):
         assert word not in LOCAL_CI_FAST
         assert word not in LOCAL_CI_WAIT
+
+
+RP_REF = 'release-please--branches--main--components--cua-spaces'
+
+
+def test_release_please_pull_request_is_exempt_from_the_sign_off():
+    ok = run_local_ci(head_ref=RP_REF, pr_labels='autorelease: pending')
+    assert ok.returncode == 0 and ok.source == []
+    # Branch prefix, label and a branch of this repository are all required.
+    for kwargs in ({'head_ref': RP_REF, 'pr_labels': 'other'},
+                   {'head_ref': 'feat/x', 'pr_labels': 'autorelease: pending'},
+                   {'head_ref': RP_REF, 'pr_labels': 'autorelease: pending', 'head_repo': 'fork/repo'}):
+        assert run_local_ci(**kwargs).returncode == 1, kwargs
 
 
 def test_branch_of_this_repo_needs_a_local_ci_status():

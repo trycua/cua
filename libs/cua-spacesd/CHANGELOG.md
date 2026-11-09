@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.13.0](https://github.com/trycua/cua/compare/cua-spacesd-v0.12.8...cua-spacesd-v0.13.0) (2026-11-09)
+
+
+### Features
+
+* **spaces-macos:** install-local.sh --development for fast dev-loop builds ([#7019](https://github.com/trycua/cua/issues/7019)) ([7f9f5c2](https://github.com/trycua/cua/commit/7f9f5c20440510a999851010c00034d2afd433d1))
+
+## [0.12.8](https://github.com/trycua/cua/compare/cua-spacesd-v0.12.7...cua-spacesd-v0.12.8) (2026-11-09)
+
+
+### Bug Fixes
+
+* **cluster:** GPU jobs are admitted by free video memory and run on Windows hosts ([#6943](https://github.com/trycua/cua/issues/6943)) ([c62abf3](https://github.com/trycua/cua/commit/c62abf39ba407f385701b0a82a5a4d8b8eacc426))
+
 ## [0.12.7](https://github.com/trycua/cua/compare/cua-spacesd-v0.12.6...cua-spacesd-v0.12.7) (2026-11-07)
 
 

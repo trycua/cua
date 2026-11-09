@@ -1,7 +1,7 @@
 [package]
 # Not `cua-spaces`: that is the SDK crate this app links (libs/cua).
 name = "cua-spaces-app"
-version = "0.24.0"
+version = "0.26.1"
 description = "Cua Spaces desktop app: notch portal, viewers and teleport over the cua SDK"
 authors = ["Cua"]
 edition = "2021"
@@ -54,6 +54,8 @@ cua-spaces = { path = "../../../libs/cua/crates/cua-spaces", default-features = 
     "spaces-presence",
     "spaces-hotspot",
     "spaces-agents",
+    # The S3 checkpoint fallback stays in the shipped app (see cua-spaces `s3`).
+    "s3",
 ] }
 cua-daemon = { path = "../../../libs/cua/crates/cua-daemon", default-features = false, features = ["client"] }
 # The canonical image names ("Local" Spaces start from the canonical Linux image).

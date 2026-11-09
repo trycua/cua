@@ -44,11 +44,9 @@ async function throughOnboarding(hold?: Promise<void>, calls: { op: string }[] =
     intercept: (op) => (calls.push({ op }), undefined),
     demo: { signedIn: false, onboarded: false, noSpaces: true, keys: "several" },
   });
-  // The new first run (CUA-3318): Skip for now, this computer, the agent found here, Ready, then Home.
-  await waitFor(() => expect(heading()).toBe("Combine your existing computers into one supercomputer."));
+  // The new first run (CUA-3318): Skip for now, the agent found here, Ready, then Home.
+  await waitFor(() => expect(heading()).toBe("Combine all your computers into one supercomputer."));
   click("[data-onboarding-later]");
-  await waitFor(() => expect(heading()).toBe("Pick where your agents work"));
-  click("[data-onboarding-primary]");
   // On a Mac, Cua Spaces' permissions come next (CUA-3550); a person can go on without them.
   await waitFor(() => expect(document.querySelector("[data-new-run=permissions], [data-new-run=agent]")).not.toBeNull(), { timeout: 15_000 });
   if (document.querySelector("[data-new-run=permissions]")) click("[data-onboarding-primary]");

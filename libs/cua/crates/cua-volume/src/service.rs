@@ -83,7 +83,7 @@ pub struct StorageInfo {
 }
 
 /// A storage change (or, with `dry_run`, a connection test).
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StorageUpdate {
     pub backend: String,
     #[serde(default)]
@@ -94,6 +94,21 @@ pub struct StorageUpdate {
     pub secret_access_key: Option<String>,
     #[serde(default)]
     pub dry_run: bool,
+}
+
+impl std::fmt::Debug for StorageUpdate {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StorageUpdate")
+            .field("backend", &self.backend)
+            .field("s3", &self.s3)
+            .field("access_key_id", &self.access_key_id)
+            .field(
+                "secret_access_key",
+                &self.secret_access_key.as_ref().map(|_| "<redacted>"),
+            )
+            .field("dry_run", &self.dry_run)
+            .finish()
+    }
 }
 
 /// What a storage test found.

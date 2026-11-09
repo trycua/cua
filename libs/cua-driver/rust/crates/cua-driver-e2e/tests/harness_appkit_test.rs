@@ -2012,7 +2012,8 @@ fn harness_appkit_disabled_control_is_published_and_its_press_refused() {
 /// activation can enable the control, and reads it again before input. A
 /// control enabled only while its app is active reads `enabled: false` from
 /// behind another app and is acted on; one that stays disabled is refused as
-/// `element_disabled`, not clicked, double-clicked or typed into.
+/// `element_disabled`, not clicked, double-clicked, middle-clicked or typed
+/// into.
 #[test]
 #[ignore]
 fn harness_appkit_foreground_from_the_background_rereads_enablement_after_activation() {
@@ -2053,6 +2054,12 @@ fn harness_appkit_foreground_from_the_background_rereads_enablement_after_activa
                 "btn-active-only",
                 serde_json::json!({}),
                 Some("active_only=double_click"),
+            ),
+            (
+                "click",
+                "btn-active-only",
+                serde_json::json!({ "button": "middle" }),
+                Some("active_only=middle_click"),
             ),
             (
                 "type_text",

@@ -235,7 +235,8 @@
    "paths": [
     "apps/cua-spaces-macos/**",
     "libs/spaces-app-swift/**",
-    "libs/spaces-notch-swift/**"
+    "libs/spaces-notch-swift/**",
+    ".github/actions/push-generated/**"
    ],
    "workflows": [
     "ci-check-docs-image-refs.yml",

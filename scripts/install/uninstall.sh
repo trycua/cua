@@ -71,7 +71,8 @@ MARKER="# Added by the cua installer"
 # Settings and local state inside the cua home, removed unless --keep-data.
 # Spaces and their data (sandboxes, vmm, images, volume/data, the Keyvault,
 # trajectories, spaces.json) are not on this list: only --delete-spaces removes them.
-DISPOSABLE="cache cache.json cua.sock keyvault.sock x.sock daemon.json daemon.starting fleet-gc.lock config config.toml env-tokens.json do_target.json host_consented host spacesd telemetry skills bin runtimes spaces-install-mode volume/cache"
+# `runtimes` is not here: it holds the built-in Linux computers' disks, so only --delete-spaces removes it.
+DISPOSABLE="cache cache.json cua.sock keyvault.sock x.sock daemon.json daemon.starting fleet-gc.lock config config.toml env-tokens.json do_target.json host_consented host spacesd telemetry skills bin spaces-install-mode volume/cache logs storage.toml"
 # The sign-in goes with the uninstall even with --keep-data.
 SESSION_FILES="credentials.json spaces-session.json spaces-credentials.json"
 
@@ -471,6 +472,11 @@ EOF
     if [ -d "$cua_home" ]; then
         add_found "cua state: $cua_home"
     fi
+    while IFS=' ' read -r rk rp; do
+        [ -n "$rk" ] && [ -d "$rp" ] && add_found "relocated $rk folder: $rp"
+    done <<LIST
+$(relocated_folders)
+LIST
     if [ "$os" = darwin ] && [ "$keep_keychain" = 0 ] && { kc_has run.cua.ai || kc_has staging.run.cua.ai; }; then
         add_found "macOS Keychain items: run.cua.ai (sign-in, device key)"
     fi
@@ -1008,9 +1014,64 @@ clean_profiles() {
     done
 }
 
+# relocated_folders: "kind path" lines for the large folders Cua was told to keep
+# somewhere else: the CUA_<KIND>_DIR environment variables, else the [paths] table of
+# $CUA_HOME/storage.toml (the same order `cua storage` uses). Only folders outside the
+# cua home are listed.
+relocated_folders() {
+    for kind in runtimes images cache logs trajectories; do
+        var="CUA_$(printf '%s' "$kind" | tr '[:lower:]' '[:upper:]')_DIR"
+        eval "val=\${$var:-}"
+        if [ -z "$val" ] && [ -f "$cua_home/storage.toml" ]; then
+            val="$(awk -v k="$kind" '
+                /^\[/ { in_paths = ($0 == "[paths]"); next }
+                in_paths {
+                    line = $0; sub(/^[ \t]+/, "", line)
+                    if (index(line, k) == 1) {
+                        rest = substr(line, length(k) + 1)
+                        if (sub(/^[ \t]*=[ \t]*"/, "", rest)) { sub(/"[ \t]*$/, "", rest); print rest; exit }
+                    }
+                }' "$cua_home/storage.toml" 2>/dev/null || true)"
+        fi
+        [ -n "$val" ] || continue
+        case "$val" in "$cua_home" | "$cua_home"/*) continue ;; esac
+        printf '%s %s\n' "$kind" "$val"
+    done
+}
+
+# clean_relocated: what lives in relocated folders. cache and logs go like the rest of the
+# settings and caches (unless --keep-data); runtimes, images and trajectories hold Spaces'
+# disks and recordings, so only --delete-spaces removes them. A folder is removed only when
+# Cua created it (its .cua-storage marker says owned=1); a folder that already had other
+# files is never emptied, only listed.
+clean_relocated() {
+    list="$(relocated_folders)"
+    [ -n "$list" ] || return 0
+    while IFS=' ' read -r kind path; do
+        [ -n "$kind" ] || continue
+        [ -d "$path" ] || continue
+        case "$kind" in
+        cache | logs) removable=$([ "$keep_data" = 0 ] && echo 1 || echo 0); why="--keep-data" ;;
+        *) removable=$([ "$delete_spaces" = 1 ] && echo 1 || echo 0); why="--delete-spaces removes it" ;;
+        esac
+        if [ "$removable" = 0 ]; then
+            info "kept $kind in $path ($why)"
+            continue
+        fi
+        if grep -q '^owned=1' "$path/.cua-storage" 2>/dev/null; then
+            rm_path "$path"
+        else
+            warn "$path was not created by Cua (or holds other files), so it is left as it is; remove Cua's $kind there by hand"
+        fi
+    done <<LIST
+$list
+LIST
+}
+
 # clean_state: the cua home. Settings and local state go unless --keep-data;
 # Spaces and their data only with --delete-spaces.
 clean_state() {
+    clean_relocated
     [ -d "$cua_home" ] || return 0
     if [ "$delete_spaces" = 1 ]; then
         if [ "$volume_mounted" = 1 ]; then

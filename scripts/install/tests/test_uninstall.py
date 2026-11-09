@@ -391,6 +391,52 @@ class UninstallMacTest(unittest.TestCase):
         dry = box.run("--dry-run", "--keep-permissions")
         self.assertNotIn("tccutil", dry.stdout)
 
+    def relocated(self, box):
+        """A cua home whose five large folders live on another drive (storage.toml)."""
+        ext = box.home / "ext"
+        names = {"runtimes": "rt", "images": "img", "cache": "ca", "logs": "lg", "trajectories": "tr"}
+        for kind, d in names.items():
+            box.put(f"ext/{d}/{kind}-data", "data\n")
+            box.put(f"ext/{d}/.cua-storage", f"kind={kind}\nowned=1\n")
+        lines = "".join(f'{kind} = "{ext}/{d}"\n' for kind, d in names.items())
+        box.put(".cua/storage.toml", "[paths]\n" + lines)
+        box.put(".cua/config.toml", "x\n")
+        box.put(".cua/sandboxes/a.json", "{}\n")
+        box.put(".cua/runtimes/linux/vm/disk", "vm\n")
+        return ext
+
+    def test_a_plain_uninstall_lists_relocated_folders_and_keeps_computers_and_recordings(self):
+        box = self.box()
+        installed_mac(box)
+        self.relocated(box)
+        dry = box.run("--dry-run", "--prefix", str(box.home))
+        self.assertIn("relocated runtimes folder", dry.stdout)
+        result = box.run("--yes", "--prefix", str(box.home))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        # cache and logs go; computers' disks, images and recordings stay, on and off the drive.
+        self.assertFalse(box.exists("ext/ca"))
+        self.assertFalse(box.exists("ext/lg"))
+        for kept in ("ext/rt/runtimes-data", "ext/img/images-data", "ext/tr/trajectories-data",
+                     ".cua/runtimes/linux/vm/disk", ".cua/sandboxes/a.json"):
+            self.assertTrue(box.exists(kept), kept)
+        self.assertFalse(box.exists(".cua/storage.toml"))
+        self.assertIn("kept runtimes in", result.stdout)
+
+    def test_delete_spaces_removes_relocated_computers_but_only_folders_cua_created(self):
+        box = self.box()
+        installed_mac(box)
+        self.relocated(box)
+        # The person pointed trajectories at a folder that already had their files.
+        box.put("ext/tr/.cua-storage", "kind=trajectories\nowned=0\n")
+        box.put("ext/tr/holiday.mov", "mine\n")
+        result = box.run("--yes", "--delete-spaces", "--prefix", str(box.home))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertFalse(box.exists("ext/rt"))
+        self.assertFalse(box.exists("ext/img"))
+        self.assertTrue(box.exists("ext/tr/holiday.mov"))
+        self.assertIn("was not created by Cua", result.stdout + result.stderr)
+        self.assertTrue(box.exists("ext"), "the drive itself is never touched")
+
     def test_keep_keychain_leaves_every_secret_alone(self):
         box = self.box()
         installed_mac(box)

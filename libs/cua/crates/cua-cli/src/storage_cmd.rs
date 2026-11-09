@@ -167,6 +167,12 @@ pub fn report() -> serde_json::Value {
         "items": items,
         "old_locations": old,
         "daemon_running": storage::daemon_running(&home),
+        "not_moved": [
+            "macOS virtual machine disks (~/.lume)",
+            "QEMU, microVM and other virtual machine disks (<home>/vmm)",
+            "build outputs, job caches and the Volume cache",
+            "helper logs in ~/Library/Logs",
+        ],
         "caps": {
             "trajectories_max_bytes": traj_bytes,
             "trajectories_max_days": traj_age.as_secs() / 86_400,
@@ -219,6 +225,14 @@ fn run_inner(cmd: StorageCmd, json: bool, out: &mut dyn Write) -> Result<(), Cua
                     ),
                 );
             }
+            hint_line(
+                out,
+                "Source: default, settings (storage.toml, used by the app and its daemon) or environment (this shell only; the app and its background service do not see it).",
+            );
+            hint_line(
+                out,
+                "Moves only what is listed: macOS and other virtual machine disks (~/.lume, <home>/vmm), build outputs, job caches, the Volume cache and helper logs in ~/Library/Logs stay where they are.",
+            );
             hint_line(out, "Change a folder: cua storage set <kind> <path> --move");
             Ok(())
         }

@@ -538,8 +538,13 @@ impl ContainerRuntime {
         }
         // The engine stores images in its own VM or data root; on this host
         // that grows the engine's disk image, so the host volume is checked.
+        let target = if crate::managed::in_use() {
+            crate::managed::root()
+        } else {
+            crate::host::cua_home()
+        };
         crate::disk::ensure_space(
-            &crate::host::cua_home(),
+            &target,
             crate::disk::CONTAINER_PULL_ESTIMATE,
             &format!("pull {reference}"),
         )?;

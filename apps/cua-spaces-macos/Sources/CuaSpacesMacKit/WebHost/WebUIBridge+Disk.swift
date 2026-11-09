@@ -10,6 +10,12 @@ import Foundation
 /// tests need no process.
 enum DiskStorage {
     /// `cua --json storage show` as the page reads it (camelCase).
+    static func freeBytes(_ json: [String: Any]) -> Int? {
+        var all = (json["kinds"] as? [[String: Any]] ?? []).compactMap { ($0["free_bytes"] as? NSNumber)?.intValue }
+        if let home = (json["free_bytes"] as? NSNumber)?.intValue { all.append(home) }
+        return all.min()
+    }
+
     static func view(from json: [String: Any], canUninstall: Bool) -> [String: Any] {
         func num(_ v: Any?) -> Int { (v as? NSNumber)?.intValue ?? 0 }
         let kinds = (json["kinds"] as? [[String: Any]] ?? []).map { k -> [String: Any] in
@@ -26,8 +32,10 @@ enum DiskStorage {
         }
         let caps = json["caps"] as? [String: Any] ?? [:]
         return [
-            "home": json["home"] as? String ?? "", "homeBytes": num(json["home_bytes"]),
-            "freeBytes": (json["free_bytes"] as? NSNumber).map { $0.intValue as Any } ?? NSNull(),
+            // Everything Cua keeps (the home plus relocated folders), and the least free space on any
+            // volume Cua writes to, so a nearly full external drive shows.
+            "home": json["home"] as? String ?? "", "homeBytes": num(json["total_bytes"] ?? json["home_bytes"]),
+            "freeBytes": freeBytes(json).map { $0 as Any } ?? NSNull(),
             "daemonRunning": json["daemon_running"] as? Bool ?? false,
             "kinds": kinds, "items": items, "oldLocations": old,
             "trajectoriesMaxBytes": num(caps["trajectories_max_bytes"]),

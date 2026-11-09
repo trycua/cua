@@ -25,6 +25,8 @@ const PIXEL_FORMAT_BGRA: u32 = u32::from_be_bytes(*b"BGRA");
 const CODEC_H264: u32 = u32::from_be_bytes(*b"avc1");
 const CM_TIME_VALID: u32 = 1;
 const CF_NUMBER_SINT32: isize = 3;
+const VT_PROPERTY_NOT_SUPPORTED_ERR: i32 = -12900;
+const VT_PARAMETER_ERR: i32 = -12902;
 
 #[repr(C, packed(4))]
 #[derive(Clone, Copy)]
@@ -103,6 +105,7 @@ extern "C" {
     static kVTCompressionPropertyKey_MaxKeyFrameInterval: *const c_void;
     static kVTCompressionPropertyKey_ProfileLevel: *const c_void;
     static kVTProfileLevel_H264_ConstrainedBaseline_AutoLevel: *const c_void;
+    static kVTProfileLevel_H264_Baseline_AutoLevel: *const c_void;
     static kVTEncodeFrameOptionKey_ForceKeyFrame: *const c_void;
 }
 
@@ -506,8 +509,12 @@ impl NativeEncoder {
             unsafe { kVTCompressionPropertyKey_MaxKeyFrameInterval },
             i32::from(fps).saturating_mul(2),
         )?;
-        self.set_property_raw(unsafe { kVTCompressionPropertyKey_ProfileLevel }, unsafe {
-            kVTProfileLevel_H264_ConstrainedBaseline_AutoLevel
+        configure_h264_profile(|profile| unsafe {
+            VTSessionSetProperty(
+                self.session.as_ptr(),
+                kVTCompressionPropertyKey_ProfileLevel,
+                profile,
+            )
         })?;
         let status = unsafe { VTCompressionSessionPrepareToEncodeFrames(self.session.as_ptr()) };
         (status == 0)
@@ -794,11 +801,100 @@ fn avcc_to_annex_b(avcc: &[u8], nal_header_length: usize) -> Option<(Vec<u8>, bo
     (!output.is_empty()).then_some((output, keyframe))
 }
 
+/// Some macOS VM encoders support Baseline but reject ConstrainedBaseline.
+/// Keep the preferred profile when accepted and retry only profile rejections,
+/// rather than hiding unrelated session or resource errors.
+fn configure_h264_profile(mut set_profile: impl FnMut(*const c_void) -> i32) -> Result<(), String> {
+    let preferred_status =
+        set_profile(unsafe { kVTProfileLevel_H264_ConstrainedBaseline_AutoLevel });
+    if preferred_status == 0 {
+        return Ok(());
+    }
+    if !matches!(
+        preferred_status,
+        VT_PROPERTY_NOT_SUPPORTED_ERR | VT_PARAMETER_ERR
+    ) {
+        return Err(format!(
+            "VTSessionSetProperty(ProfileLevel, ConstrainedBaseline) returned {preferred_status}"
+        ));
+    }
+    let fallback_status = set_profile(unsafe { kVTProfileLevel_H264_Baseline_AutoLevel });
+    if fallback_status != 0 {
+        return Err(format!(
+            "VTSessionSetProperty(ProfileLevel): ConstrainedBaseline returned {preferred_status}; Baseline returned {fallback_status}"
+        ));
+    }
+    tracing::warn!(
+        preferred_status,
+        "VideoToolbox rejected ConstrainedBaseline; using Baseline"
+    );
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::mpsc;
 
     use super::*;
+
+    #[test]
+    fn accepted_h264_profile_does_not_try_a_fallback() {
+        let mut profiles = Vec::new();
+        configure_h264_profile(|profile| {
+            profiles.push(profile);
+            0
+        })
+        .unwrap();
+        assert_eq!(
+            profiles,
+            [unsafe { kVTProfileLevel_H264_ConstrainedBaseline_AutoLevel }]
+        );
+    }
+
+    #[test]
+    fn rejected_h264_profile_falls_back_to_baseline() {
+        for rejection in [VT_PROPERTY_NOT_SUPPORTED_ERR, VT_PARAMETER_ERR] {
+            let mut profiles = Vec::new();
+            configure_h264_profile(|profile| {
+                profiles.push(profile);
+                if profiles.len() == 1 {
+                    rejection
+                } else {
+                    0
+                }
+            })
+            .unwrap();
+            assert_eq!(
+                profiles,
+                [
+                    unsafe { kVTProfileLevel_H264_ConstrainedBaseline_AutoLevel },
+                    unsafe { kVTProfileLevel_H264_Baseline_AutoLevel },
+                ]
+            );
+        }
+    }
+
+    #[test]
+    fn unrelated_h264_profile_error_is_not_retried() {
+        let mut calls = 0;
+        let error = configure_h264_profile(|_| {
+            calls += 1;
+            -12903
+        })
+        .unwrap_err();
+        assert_eq!(calls, 1);
+        assert_eq!(
+            error,
+            "VTSessionSetProperty(ProfileLevel, ConstrainedBaseline) returned -12903"
+        );
+    }
+
+    #[test]
+    fn failed_h264_profile_fallback_preserves_both_errors() {
+        let mut statuses = [VT_PARAMETER_ERR, -12903].into_iter();
+        let error = configure_h264_profile(|_| statuses.next().unwrap()).unwrap_err();
+        assert_eq!(error, "VTSessionSetProperty(ProfileLevel): ConstrainedBaseline returned -12902; Baseline returned -12903");
+    }
 
     #[test]
     fn avcc_conversion_marks_idr_and_rejects_truncation() {
@@ -870,6 +966,17 @@ mod tests {
                 let _ = self.0.send(frame);
             }
         }
+    }
+
+    #[test]
+    fn videotoolbox_initializes_a_desktop_encoder_in_a_macos_vm() {
+        let (tx, _rx) = mpsc::channel();
+        let result = NativeEncoder::new(1024, 768, 30, Some(4_000), Arc::new(Sink(tx)));
+        assert!(
+            result.is_ok(),
+            "desktop encoder initialization failed: {:?}",
+            result.err()
+        );
     }
 
     #[test]

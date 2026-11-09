@@ -316,19 +316,17 @@ fn ensure_master_keyboard(
             .and_then(|(_, _, name)| name.strip_suffix(" keyboard").map(str::to_owned))
             .ok_or_else(|| anyhow!("master keyboard {} vanished", ids.keyboard_id))?;
         let device_name = slave_keyboard_name(&base);
-        if let Some(old) = ids.slave_keyboard_id {
-            // A keyboard unplugged by an earlier call can still be listed
-            // under the same name; never attach it in place of the new one.
-            let deadline = crate::interaction::operation_deadline(Duration::from_secs(5));
-            while xi2_query_devices(display)?
-                .iter()
-                .any(|(id, _, _)| *id == old)
-            {
-                if std::time::Instant::now() >= deadline {
-                    bail!("unplugged uinput keyboard {old} is still listed");
-                }
-                crate::interaction::pause(Duration::from_millis(20));
+        // A keyboard unplugged by an earlier call can still be listed under
+        // this name; never attach it in place of the new one.
+        let deadline = crate::interaction::operation_deadline(Duration::from_secs(5));
+        while xi2_query_devices(display)?
+            .iter()
+            .any(|(_, _, name)| *name == device_name)
+        {
+            if std::time::Instant::now() >= deadline {
+                bail!("the unplugged '{device_name}' is still listed");
             }
+            crate::interaction::pause(Duration::from_millis(20));
         }
         let mut device = create_uinput_keyboard(&device_name)?;
         let slave_keyboard_id = wait_for_slave_id(
@@ -360,7 +358,7 @@ fn ensure_master_keyboard(
 
 /// evdev `KEY_UNKNOWN`: X keycode 248, `NoSymbol` in every evdev keymap, so
 /// it types nothing anywhere.
-const WARM_UP_EVDEV_CODE: u16 = 240;
+pub(super) const WARM_UP_EVDEV_CODE: u16 = 240;
 
 /// The first key events of a freshly hot-plugged keyboard were observed to
 /// vanish (the master switches to the slave's keymap on its first event and

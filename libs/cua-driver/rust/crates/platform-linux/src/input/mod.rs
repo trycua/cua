@@ -4735,6 +4735,23 @@ mod key_name_alias_tests {
     }
 
     #[test]
+    fn the_virtual_keyboard_warm_up_keycode_is_never_borrowed() {
+        let mut keysyms = vec![0; (255 - 8 + 1) * 2];
+        let free = |keycode: usize| (keycode - 8) * 2;
+        keysyms[free(255)..free(255) + 2].copy_from_slice(&['a' as u32, 'A' as u32]);
+        keysyms[..free(247)].fill('b' as u32);
+        keysyms[free(249)..free(255)].fill('b' as u32);
+        let mut mapping = GetKeyboardMappingReply {
+            keysyms_per_keycode: 2,
+            sequence: 0,
+            keysyms,
+        };
+        let mut reserve = || reserve_spare_keycode(&mut mapping, 0x100_4f60, |_, _, _, _| Ok(()));
+        assert_eq!(reserve().unwrap().0, 247);
+        assert!(reserve().is_err());
+    }
+
+    #[test]
     fn text_batches_do_not_count_keycode_8_as_spare() {
         let mapping = GetKeyboardMappingReply {
             keysyms_per_keycode: 2,
@@ -4905,10 +4922,11 @@ impl Drop for RemappedKeycode<'_> {
 
 /// Whether a text may borrow `keycode`: every keysym slot is NoSymbol (0) — i.e.
 /// completely unused — so borrowing it cannot clobber a real key. Keycode 8 is
-/// evdev KEY_RESERVED, which a virtual keyboard cannot send, so it is never
-/// borrowed.
+/// evdev KEY_RESERVED, which a virtual keyboard cannot send, and the virtual
+/// keyboard's warm-up taps its own keycode, so neither is ever borrowed.
 fn is_spare_keycode(keycode: usize, keysyms: &[u32]) -> bool {
-    keycode > 8 && keysyms.iter().all(|&s| s == 0)
+    let warm_up = usize::from(mpx_keyboard::WARM_UP_EVDEV_CODE) + 8;
+    keycode > 8 && keycode != warm_up && keysyms.iter().all(|&s| s == 0)
 }
 
 /// Reserve a fully unused keycode for `keysym`, calling `bind` before updating

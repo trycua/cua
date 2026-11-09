@@ -125,9 +125,7 @@ fn a_stalled_server_never_reads_borrowed_keys_after_their_keycodes_are_restored(
             }
             Some(Event::KeyPress(press)) => {
                 pressed += 1;
-                // The retry's new keyboard taps X keycode 248 (evdev
-                // KEY_UNKNOWN) to warm up; it is NoSymbol once restored.
-                if press.detail != 248 && restored.get(&press.detail) == Some(&true) {
+                if restored.get(&press.detail) == Some(&true) {
                     late.push(press.detail);
                 }
             }

@@ -131,6 +131,8 @@ fn spare_keycodes(conn: &RustConnection) -> Result<Vec<u8>> {
         .enumerate()
         .filter(|(_, keysyms)| keysyms.iter().all(|&keysym| keysym == 0))
         .map(|(index, _)| min + index as u8)
+        // The virtual keyboard's warm-up key is never borrowed.
+        .filter(|&keycode| keycode != 248)
         .collect())
 }
 

@@ -10,15 +10,8 @@ import Foundation
 /// used to leave one plist per suite behind (90 `cua-ln-*` and
 /// `cua-relay-usage-*` files on a dev Mac). `make` hands out a suite with a
 /// unique name, and one `atexit` handler removes the domains and their files
-/// when the test process ends, however the tests were written. A run also
-/// sweeps leftovers of earlier runs that matched these test-only prefixes.
+/// when the test process ends, however the tests were written.
 enum TestDefaults {
-    /// Prefixes only tests use; `<prefix>-<UUID>` leftovers are swept.
-    private static let testPrefixes = [
-        "cua-ln-", "cua-relay-usage-", "cua-spaces-launch-", "webui-video-",
-        "PermissionGuideTests.",
-    ]
-
     private nonisolated(unsafe) static var names: [String] = []
     private static let lock = NSLock()
     private nonisolated(unsafe) static var registered = false
@@ -29,7 +22,6 @@ enum TestDefaults {
         lock.lock()
         if !registered {
             registered = true
-            sweepLeftovers()
             atexit { TestDefaults.cleanUp() }
         }
         names.append(name)
@@ -54,18 +46,5 @@ enum TestDefaults {
     static func plistURL(_ name: String) -> URL {
         FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Preferences/\(name).plist")
-    }
-
-    /// Plists earlier runs left: `<test prefix><UUID>` and nothing else.
-    private static func sweepLeftovers() {
-        let dir = plistURL("x").deletingLastPathComponent()
-        let files = (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []
-        for f in files where f.hasSuffix(".plist") {
-            let stem = String(f.dropLast(".plist".count))
-            guard let p = testPrefixes.first(where: { stem.hasPrefix($0) }) else { continue }
-            // The tail must be a UUID, so a real preference file can never match.
-            guard stem.count >= p.count + 36, UUID(uuidString: String(stem.suffix(36))) != nil else { continue }
-            try? FileManager.default.removeItem(at: dir.appendingPathComponent(f))
-        }
     }
 }

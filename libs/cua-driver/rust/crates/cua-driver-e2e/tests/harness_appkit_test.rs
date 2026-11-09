@@ -1074,6 +1074,26 @@ fn harness_appkit_invoke_menu_live_path() {
             // and key-window status. The target menu item validates against
             // both, so an AXFocused-only implementation cannot pass this cell.
             let _distractor = Harness::launch();
+            // The target revalidates the item only once it has processed
+            // losing activation, and until then AppKit still reports it
+            // enabled. Wait for that, so the call below runs in the background
+            // state it is meant to test.
+            let deadline = std::time::Instant::now() + Duration::from_secs(10);
+            loop {
+                let state = snapshot_elements(driver, pid, wid);
+                if state
+                    .tree_text()
+                    .contains("[id=menu-window-arrange-left enabled=false")
+                {
+                    break;
+                }
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "Window > Arrange > Left stayed enabled with the distractor in front: {}",
+                    state.tree_text()
+                );
+                std::thread::sleep(Duration::from_millis(100));
+            }
 
             // invoke_menu does not activate a background app (#4955): with
             // the distractor in front, the item stays disabled and the call

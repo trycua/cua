@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import functools
 import json
 import logging
 import shlex
@@ -55,6 +56,36 @@ def _b64(data: bytes) -> str:
 
 def _unb64(text: str) -> bytes:
     return base64.b64decode(text or "")
+
+
+@functools.lru_cache(maxsize=1)
+def _unreachable_errors() -> Tuple[type, ...]:
+    """Error types that mean the sandbox did not answer (what is installed of them)."""
+    errors: List[type] = [TimeoutError, ConnectionError]
+    try:
+        from cua_sandbox import SpacesdNotAvailable
+
+        errors.append(SpacesdNotAvailable)
+    except Exception:  # noqa: BLE001 - cua-sandbox not importable here
+        pass
+    try:
+        from cua import CuaError
+    except Exception:  # noqa: BLE001 - no native SDK in this environment
+        CuaError = None
+    for name in ("Transport", "Timeout", "Closed", "SpacesdNotAvailable", "DaemonNotRunning"):
+        cls = getattr(CuaError, name, None)
+        if isinstance(cls, type):
+            errors.append(cls)
+    return tuple(errors)
+
+
+def _unreachable(error: BaseException) -> bool:
+    """True when ``error`` means the sandbox could not be reached or timed out.
+
+    cua-sandbox already answers a path that does not exist with False rather
+    than an error, so these are never a "not found".
+    """
+    return isinstance(error, _unreachable_errors())
 
 
 class LegacyInterface:
@@ -435,17 +466,27 @@ class SandboxInterface(LegacyInterface):
     # direct paths (no base64 round trip) -------------------------------------
 
     async def file_exists(self, path: str) -> bool:
+        """Whether ``path`` is an existing file.
+
+        A sandbox that could not be reached raises: that is not an answer, and
+        a task scoring "missing" from it would record a reward of 0.
+        """
         files = self._sb.files
         try:
             return bool(await files.exists(path)) and not bool(await files.is_dir(path))
-        except Exception:  # noqa: BLE001
+        except Exception as error:  # noqa: BLE001
+            if _unreachable(error):
+                raise
             return False
 
     async def directory_exists(self, path: str) -> bool:
+        """Whether ``path`` is an existing directory; raises like :meth:`file_exists`."""
         files = self._sb.files
         try:
             return bool(await files.exists(path)) and bool(await files.is_dir(path))
-        except Exception:  # noqa: BLE001
+        except Exception as error:  # noqa: BLE001
+            if _unreachable(error):
+                raise
             return False
 
     async def read_bytes(self, path: str, offset: int = 0, length: Optional[int] = None) -> bytes:

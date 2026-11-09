@@ -381,12 +381,34 @@
     }
    },
    {
+    "id": "disabled_control",
+    "kind": "toggle",
+    "description": "Opt-in (CUA_APPKIT_DISABLED_CONTROL=1): a disabled NSButton checkbox. Tests that get_window_state publishes it with enabled: false and that pressing it is refused without changing it (#3949). disabled_checked= label. Also a button and a text field enabled only while the app is active, for foreground calls that activation enables. active_only= label, and activations= counts the app's activations.",
+    "controls": {
+     "checkbox_aid": "chk-disabled",
+     "state_label_aid": "lbl-disabled-state",
+     "active_only_button_aid": "btn-active-only",
+     "active_only_field_aid": "txt-active-only",
+     "active_only_label_aid": "lbl-active-only",
+     "activations_label_aid": "lbl-activations"
+    }
+   },
+   {
     "id": "context_menu",
     "kind": "context_menu",
     "description": "NSButton with an attached NSMenu (Cut/Copy/Paste). Right-click opens the native context menu; selecting an item sets menu_action=. menu_action= label.",
     "controls": {
      "button_aid": "btn-context",
      "action_label_aid": "lbl-menu-action"
+    }
+   },
+   {
+    "id": "popup_select",
+    "kind": "popup_select",
+    "description": "NSPopUpButton (Choose a team/Design/Research/Finance). AXPress opens its menu; choosing an item sets popup_value=. Background tests check the front window keeps key status while the menu is open.",
+    "controls": {
+     "popup_aid": "pop-team",
+     "value_label_aid": "lbl-popup-value"
     }
    },
    {

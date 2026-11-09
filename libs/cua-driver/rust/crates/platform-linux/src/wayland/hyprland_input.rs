@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Local Hyprland input after the common Driver registry admits the action.
 //! Production v3 uses per-action target binding, not a second approval system.
 //! Protocol 0 remains an explicitly selected, nonshipping test experiment.
@@ -10,6 +13,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, TryLockError};
 use std::time::{Duration, Instant};
 
+use crate::interaction::operation_deadline;
 use anyhow::{bail, ensure, Context, Result};
 use serde_json::{json, Value};
 
@@ -18,13 +22,6 @@ const CANCELLATION_POLL: Duration = Duration::from_millis(25);
 const TEXT_ACTION_GAP: Duration = Duration::from_millis(25);
 const MAX_PACKET: usize = 2048;
 const MAX_LANES: usize = 2;
-/// Retries of an action the plugin refused as `stale_geometry` (the target's
-/// surface box changed between TARGET and the action). Hyprland animates a
-/// window for a few hundred milliseconds after a click activates it or the
-/// layout changes, so an immediate retry lands in the same animation: wait
-/// `STALE_GEOMETRY_BACKOFF * attempt` before each (at most ~0.6 s in all).
-const MAX_STALE_GEOMETRY_RETRIES: usize = 4;
-const STALE_GEOMETRY_BACKOFF: Duration = Duration::from_millis(60);
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum DeliveryRoute {
@@ -61,10 +58,12 @@ fn validate_target_route(target: &Value, route: DeliveryRoute) -> Result<()> {
 /// Validate the whole string before dispatching any keys. Physical key delivery
 /// uses the compositor's keyboard layout; these codes describe US ASCII keys.
 pub(crate) fn text_actions(text: &str) -> Result<Vec<Action>> {
-    ensure!(
-        text.len() <= 4096 && text.is_ascii(),
-        "Hyprland text requires at most 4096 ASCII bytes"
-    );
+    let text = super::text_keys::typable_text(text)?;
+    if text.len() > 4096 || !text.is_ascii() {
+        return Err(super::text_keys::refused(
+            "Hyprland text takes at most 4096 ASCII bytes",
+        ));
+    }
     text.bytes()
         .map(|byte| {
             let (keycode, shift) = match byte {
@@ -108,7 +107,12 @@ pub(crate) fn text_actions(text: &str) -> Result<Vec<Action>> {
                 b'*' => (9, true),
                 b'(' => (10, true),
                 b')' => (11, true),
-                _ => bail!("unsupported Hyprland text control character"),
+                other => {
+                    return Err(super::text_keys::refused(format!(
+                        "Hyprland text has no key for {:?}",
+                        char::from(other)
+                    )))
+                }
             };
             Ok(Action::TextKey { keycode, shift })
         })
@@ -237,7 +241,7 @@ pub(crate) fn unknown_dispatch(error: anyhow::Error, acknowledged_phases: u32) -
 }
 
 pub fn enabled() -> bool {
-    super::wayland_input_enabled()
+    super::is_wayland()
         && super::hyprland::is_session()
         && (protocol() == InputProtocol::Experiment
             || (0..MAX_LANES).any(|lane| {
@@ -252,14 +256,14 @@ pub fn enabled() -> bool {
             }))
 }
 
-/// Whether background (isolated seat) input is admitted for `pid`'s windows,
-/// the check a background action makes before dispatch. `Err` carries the
-/// refusal reason (`client_not_qualified`, ...). Only meaningful while
-/// [`enabled`]: without the isolated seats the tools route background input
-/// elsewhere.
-pub fn background_admission(pid: u32) -> std::result::Result<(), &'static str> {
+/// Whether background (isolated seat) input can reach window `address` of
+/// `pid`, the check a background session makes when it opens. `Err` carries
+/// the refusal reason (`client_xwayland`, ...). Per-action checks, such as a
+/// toolkit that drops background keys, still apply to each action. Only
+/// meaningful while [`enabled`].
+pub fn background_admission(pid: u32, address: u64) -> std::result::Result<(), &'static str> {
     if protocol() == InputProtocol::Production {
-        super::hyprland_compatibility::qualify(pid)
+        super::hyprland_compatibility::admit(pid, address, false)
     } else {
         Ok(())
     }
@@ -462,8 +466,8 @@ impl Client {
         let wayland = super::hyprland::wayland_connection()?;
         super::hyprland::verify_capture_peer(&wayland)?;
         ensure!(
-            super::hyprland::peer_pid(self.socket.as_raw_fd())?
-                == super::hyprland::peer_pid(wayland.backend().poll_fd().as_raw_fd())?,
+            super::compositor_peer::peer_pid(self.socket.as_raw_fd())?
+                == super::compositor_peer::peer_pid(wayland.backend().poll_fd().as_raw_fd())?,
             "input plugin and Wayland name different compositor processes"
         );
         Ok(())
@@ -552,7 +556,7 @@ impl Client {
     }
 
     fn request(&self, packet: &str) -> Result<Value> {
-        let deadline = Instant::now() + TIMEOUT;
+        let deadline = operation_deadline(TIMEOUT);
         self.send_packet(packet, deadline)?;
         self.receive(deadline)
     }
@@ -653,53 +657,36 @@ impl Client {
         self.delivery_route = Some(route);
         let is_drag = matches!(&action, Action::Drag { .. });
         let mut started = started;
-        for attempt in 0..=MAX_STALE_GEOMETRY_RETRIES {
-            // Foreground's first attestation covers the whole logical call.
-            // A retry must establish fresh compositor identity before it can
-            // request another exact target grant. Background attests here on
-            // every attempt because it has no call-level attestation.
-            if route == DeliveryRoute::Background || attempt > 0 {
-                attest(self)?;
-            }
-            let target = self.bind_target(&action, route)?;
-            if target["ok"] == false {
-                return Ok(target);
-            }
-            let token = hex_field(&target, "target")?;
-            let revision = target["revision"]
-                .as_u64()
-                .context("missing target revision")?;
-            let width = target["width"].as_f64().context("missing target width")?;
-            let height = target["height"].as_f64().context("missing target height")?;
-            ensure!(
-                width.is_finite() && height.is_finite() && width > 0.0 && height > 0.0,
-                "invalid target geometry"
-            );
-            self.sequence = self.sequence.checked_add(1).context("sequence exhausted")?;
-            let packet = action.packet(self.sequence, &token, revision, width, height)?;
-            let mut reply =
-                self.dispatch_routed_with_started(&packet, is_drag, &mut started, route)?;
-            if self.protocol == InputProtocol::Production
-                && reply["ok"] == false
-                && reply["code"] == "stale_geometry"
-                && reply["detail"] == "stale_geometry"
-                && reply.get("effect").is_none()
-                && reply.get("delivery").is_none()
-                && attempt < MAX_STALE_GEOMETRY_RETRIES
-            {
-                std::thread::sleep(STALE_GEOMETRY_BACKOFF * (attempt as u32 + 1));
-                continue;
-            }
-            if reply["ok"] == false && self.protocol == InputProtocol::Experiment {
-                // Never report a pending operator grant as successful dispatch.
-                reply["epoch"] = json!(self.epoch);
-                reply["challenge"] = json!(self.challenge);
-                reply["target"] = json!(token);
-                reply["revision"] = json!(revision);
-            }
-            return Ok(reply);
+        // Foreground's attestation covers the whole logical call. Background
+        // attests here because it has no call-level attestation.
+        if route == DeliveryRoute::Background {
+            attest(self)?;
         }
-        unreachable!("bounded stale geometry retry loop always returns")
+        let target = self.bind_target(&action, route)?;
+        if target["ok"] == false {
+            return Ok(target);
+        }
+        let token = hex_field(&target, "target")?;
+        let revision = target["revision"]
+            .as_u64()
+            .context("missing target revision")?;
+        let width = target["width"].as_f64().context("missing target width")?;
+        let height = target["height"].as_f64().context("missing target height")?;
+        ensure!(
+            width.is_finite() && height.is_finite() && width > 0.0 && height > 0.0,
+            "invalid target geometry"
+        );
+        self.sequence = self.sequence.checked_add(1).context("sequence exhausted")?;
+        let packet = action.packet(self.sequence, &token, revision, width, height)?;
+        let mut reply = self.dispatch_routed_with_started(&packet, is_drag, &mut started, route)?;
+        if reply["ok"] == false && self.protocol == InputProtocol::Experiment {
+            // Never report a pending operator grant as successful dispatch.
+            reply["epoch"] = json!(self.epoch);
+            reply["challenge"] = json!(self.challenge);
+            reply["target"] = json!(token);
+            reply["revision"] = json!(revision);
+        }
+        Ok(reply)
     }
 
     fn dispatch_routed_with_started(
@@ -709,7 +696,7 @@ impl Client {
         started: &mut Option<tokio::sync::oneshot::Sender<()>>,
         route: DeliveryRoute,
     ) -> Result<Value> {
-        let deadline = Instant::now() + TIMEOUT;
+        let deadline = operation_deadline(TIMEOUT);
         self.send_packet(packet, deadline).map_err(|error| {
             // Cancellation here precedes sending the action. Once sent, even
             // cancellation while waiting for its first reply is indeterminate.
@@ -734,7 +721,7 @@ impl Client {
                 let _ = started.send(());
             }
             reply = self
-                .receive(Instant::now() + TIMEOUT)
+                .receive(operation_deadline(TIMEOUT))
                 .map_err(|error| unknown_dispatch(error, 1))?;
         }
         if route == DeliveryRoute::Foreground
@@ -915,7 +902,10 @@ impl SessionClient {
                     }
                     return Ok(slot);
                 }
-                Err(TryLockError::WouldBlock) => std::thread::sleep(CANCELLATION_POLL),
+                Err(TryLockError::WouldBlock) => {
+                    crate::input::action::admit(|| ())?;
+                    crate::interaction::pause(CANCELLATION_POLL);
+                }
                 Err(TryLockError::Poisoned(_)) => bail!("input connection poisoned"),
             }
         }
@@ -1220,7 +1210,10 @@ fn execute_actions_routed(
         "foreground input requires production protocol; no downgrade is permitted"
     );
     if route == DeliveryRoute::Background && protocol() == InputProtocol::Production {
-        if let Err(reason) = super::hyprland_compatibility::qualify(pid) {
+        let keyboard = actions
+            .iter()
+            .any(|action| matches!(action, Action::Key { .. } | Action::TextKey { .. }));
+        if let Err(reason) = super::hyprland_compatibility::admit(pid, address, keyboard) {
             return Ok(json!({"ok":false,"code":reason,"detail":reason}));
         }
     }
@@ -1312,7 +1305,8 @@ fn execute_text_actions(
                 // fence. Give the target event loop a bounded turn before the
                 // next character so native GTK clients do not drop a burst.
                 if index + 1 < action_count {
-                    std::thread::sleep(TEXT_ACTION_GAP);
+                    let gap = operation_deadline(TEXT_ACTION_GAP);
+                    std::thread::sleep(gap.saturating_duration_since(Instant::now()));
                 }
             }
             Err(error) => {
@@ -1901,66 +1895,6 @@ mod tests {
     }
 
     #[test]
-    fn production_entry_bounds_stale_geometry_retry_with_fresh_authority() {
-        for (route, succeeds) in [
-            (DeliveryRoute::Foreground, true),
-            (DeliveryRoute::Background, true),
-            (DeliveryRoute::Foreground, false),
-            (DeliveryRoute::Background, false),
-        ] {
-            reset_test_attestations();
-            let (client, peer) = production_test_client();
-            let acknowledgement = route.acknowledgement();
-            // Success on the second attempt, or every attempt refused.
-            let attempts = if succeeds {
-                2
-            } else {
-                MAX_STALE_GEOMETRY_RETRIES as u64 + 1
-            };
-            let server = std::thread::spawn(move || {
-                for sequence in 1..=attempts {
-                    serve_key_target(&peer, route, sequence, sequence * 11);
-                    let reply = if sequence == attempts && succeeds {
-                        json!({"ok":true,"effect":"unverifiable","route":acknowledgement})
-                    } else {
-                        json!({"ok":false,"code":"stale_geometry","detail":"stale_geometry"})
-                    };
-                    peer.send(reply.to_string().as_bytes()).unwrap();
-                }
-                let mut byte = [0u8];
-                assert_eq!(
-                    unsafe { libc::recv(peer.as_raw_fd(), byte.as_mut_ptr().cast(), 1, 0) },
-                    0
-                );
-            });
-
-            let mut slot = Some(client);
-            let started = Instant::now();
-            let reply = dispatch_production_key(&mut slot, route).unwrap();
-            assert_eq!(reply["ok"], succeeds);
-            // Each retry waits for the window to settle, a little longer
-            // every time.
-            let waited: Duration = (1..attempts as u32)
-                .map(|n| STALE_GEOMETRY_BACKOFF * n)
-                .sum();
-            assert!(
-                started.elapsed() >= waited,
-                "{:?} < {waited:?}",
-                started.elapsed()
-            );
-            if !succeeds {
-                assert_eq!(reply["code"], "stale_geometry");
-                assert!(reply.get("effect").is_none());
-                assert!(reply.get("delivery").is_none());
-            }
-            assert_eq!(slot.as_ref().unwrap().sequence, attempts);
-            assert_eq!(test_attestations(), attempts as usize);
-            drop(slot);
-            server.join().unwrap();
-        }
-    }
-
-    #[test]
     fn production_entry_never_retries_an_uncertain_dispatch() {
         for route in [DeliveryRoute::Foreground, DeliveryRoute::Background] {
             reset_test_attestations();
@@ -1985,13 +1919,13 @@ mod tests {
     }
 
     #[test]
-    fn production_entry_retries_only_the_canonical_stale_geometry_refusal() {
+    fn production_entry_never_retries_a_stale_geometry_refusal() {
         for route in [DeliveryRoute::Foreground, DeliveryRoute::Background] {
             reset_test_attestations();
             let (client, peer) = production_test_client();
             let server = std::thread::spawn(move || {
                 serve_key_target(&peer, route, 1, 11);
-                peer.send(br#"{"ok":false,"code":"stale_geometry","detail":"geometry_changed"}"#)
+                peer.send(br#"{"ok":false,"code":"stale_geometry","detail":"stale_geometry"}"#)
                     .unwrap();
                 let mut byte = [0u8];
                 assert_eq!(
@@ -2004,7 +1938,7 @@ mod tests {
             let reply = dispatch_production_key(&mut slot, route).unwrap();
             assert_eq!(reply["ok"], false);
             assert_eq!(reply["code"], "stale_geometry");
-            assert_eq!(reply["detail"], "geometry_changed");
+            assert_eq!(reply["detail"], "stale_geometry");
             assert_eq!(slot.as_ref().unwrap().sequence, 1);
             assert_eq!(test_attestations(), 1);
             drop(slot);
@@ -2176,10 +2110,24 @@ mod tests {
 
     #[test]
     fn hyprland_text_is_bounded_and_fully_prevalidated() {
-        for text in ["valid prefix\u{00e9}", "valid prefix\0", "\r", "\u{007f}"] {
-            assert!(text_actions(text).is_err());
+        let too_much = "foreground_unavailable: Hyprland text takes at most 4096 ASCII bytes; \
+             nothing was typed";
+        for (text, refusal) in [
+            ("valid prefix\u{00e9}".to_owned(), too_much),
+            ("a".repeat(4097), too_much),
+            (
+                "valid prefix\0".to_owned(),
+                "foreground_unavailable: control character U+0000 cannot be typed; nothing was typed",
+            ),
+            (
+                "\u{007f}".to_owned(),
+                "foreground_unavailable: control character U+007F cannot be typed; nothing was typed",
+            ),
+        ] {
+            let error = text_actions(&text).err().map(|error| error.to_string());
+            assert_eq!(error.as_deref(), Some(refusal));
         }
-        assert!(text_actions(&"a".repeat(4097)).is_err());
+        assert_eq!(text_actions("a\r\nb").unwrap().len(), 3);
         assert_eq!(text_actions(&"a".repeat(4096)).unwrap().len(), 4096);
         let actions = text_actions("Aa!? \t\n").unwrap();
         let packets: Vec<_> = actions

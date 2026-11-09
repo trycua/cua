@@ -58,9 +58,16 @@ def commit(
 
 
 class SourceGitHub:
-    def __init__(self, authors, source_emails):
+    def __init__(self, authors, source_emails, comparisons=None):
         self.authors = authors
         self.source_emails = source_emails
+        self.comparisons = comparisons or {}
+
+    def get(self, path):
+        value = self.comparisons[path]
+        if isinstance(value, Exception):
+            raise value
+        return value
 
     def pull(self, repository: str, number: int):
         assert repository == "trycua/cua"
@@ -81,6 +88,8 @@ def validate(
     changes=None,
     authors=None,
     source_emails=None,
+    comparisons=None,
+    main_sha="",
 ):
     base = base or config()
     validate_pr_attribution(
@@ -89,7 +98,8 @@ def validate(
         commits=commits or [],
         base_config=base,
         identity_changes=changes or {},
-        github=SourceGitHub(authors or {}, source_emails or {}),
+        github=SourceGitHub(authors or {}, source_emails or {}, comparisons),
+        main_sha=main_sha,
     )
 
 
@@ -456,3 +466,68 @@ def test_compare_pages_that_stop_short_are_refused():
     client = PagedCompareGitHub(total=250, reported_total=300)
     with pytest.raises(release_attribution.ReleaseError, match="refusing partial"):
         client.all_pull_commits("trycua/cua-staging", large_pull())
+
+
+@pytest.mark.parametrize(
+    "status, branch_files, main_files, failure, clean",
+    [
+        ("ahead", ["main-change"], ["branch-change"], False, True),
+        ("identical", ["main-change"], ["branch-change"], False, True),
+        ("ahead", ["conflict"], ["conflict"], False, False),
+        ("ahead", [{"filename": "q", "previous_filename": "p"}], ["p"], False, False),
+        ("diverged", ["main-change"], ["branch-change"], False, False),
+        ("ahead", [str(i) for i in range(300)], ["branch-change"], False, False),
+        ("ahead", ["main-change"], [str(i) for i in range(300)], False, False),
+        ("ahead", ["main-change"], ["branch-change"], True, False),
+        (None, ["main-change"], ["branch-change"], False, False),
+        ("ahead", ["main-change"], ["branch-change"], "missing-files", False),
+    ],
+)
+def test_main_sync_merge_authorship(status, branch_files, main_files, failure, clean):
+    comparisons = {
+        "repos/trycua/cua/compare/main-tip...trusted-main": {"status": status} if status else {},
+        "repos/trycua/cua/compare/feature-tip...sync-merge": {
+            "files": [
+                name if isinstance(name, dict) else {"filename": name} for name in branch_files
+            ]
+        },
+        "repos/trycua/cua/compare/main-tip...sync-merge": (
+            ReleaseError("API failed")
+            if failure is True
+            else (
+                {}
+                if failure == "missing-files"
+                else {"files": [{"filename": name} for name in main_files]}
+            )
+        ),
+    }
+    values = dict(
+        commits=[
+            commit(sha="feature-tip", login="landing-author"),
+            commit(
+                sha="sync-merge",
+                login="injaneity",
+                email="44902825+injaneity@users.noreply.github.com",
+                parent_shas=("feature-tip", "main-tip"),
+            ),
+        ],
+        comparisons=comparisons,
+        main_sha="trusted-main",
+    )
+    if clean:
+        validate(**values)
+        unlinked = commit(
+            sha="sync-merge",
+            email="unlinked@institution.example",
+            parent_shas=("feature-tip", "main-tip"),
+        )
+        with pytest.raises(ReleaseError, match="unlinked commit author"):
+            validate(**{**values, "commits": [values["commits"][0], unlinked]})
+        values["commits"][1]["commit"][
+            "message"
+        ] += "\n\nCo-authored-by: Pair <pair@institution.example>"
+        with pytest.raises(ReleaseError, match="has no explicit same-repository source PR"):
+            validate(**values)
+    else:
+        with pytest.raises(ReleaseError, match="base synchronization merge"):
+            validate(**values)

@@ -51,7 +51,7 @@ fn with_severity(mut check: Check, required: bool) -> Check {
 /// sandbox's runtime needs.
 /// The user defaults (`cua config`): each effective value and where it
 /// comes from, informational. A value that does not parse fails (every
-/// create would); a cloud default without cloud credentials warns.
+/// create would).
 pub fn defaults_checks() -> Vec<Check> {
     use cua_sandbox_core::settings::Settings;
     let settings = match Settings::load() {
@@ -84,25 +84,65 @@ pub fn defaults_checks() -> Vec<Check> {
         let failed = check.status == Status::Fail;
         checks.push(with_severity(check, failed));
     }
-    if let Ok((cua_sandbox_core::placement::On::Cloud, source)) = settings.default_on()
-        && !crate::auth::fleet_maybe_configured()
-        && let Some(hint) = cua_sandbox_core::settings::cloud_default_hint(&source)
-    {
-        checks.push(with_severity(
-            Check::new(
-                "host.defaults.cloud_credentials",
-                Status::Warn,
-                "the default location is cloud, but no cloud credentials are configured",
-            )
-            .fix(hint),
-            false,
-        ));
-    }
     checks
+}
+
+/// `host.service`: how this machine's host service (`cua host setup`)
+/// runs, informational. On a Mac it says whether it is the Cua Spaces
+/// app's own login item or the old LaunchAgent, and warns when both
+/// are there or the app is gone. `None` when the machine is not
+/// set up for access.
+pub fn host_service_check(s: &cua_host::HostStatus) -> Option<Check> {
+    if !s.configured {
+        return None;
+    }
+    let state = if s.service.running {
+        "running"
+    } else if s.service.installed {
+        "installed, not running"
+    } else {
+        "not installed"
+    };
+    let check = match s.service.kind.as_str() {
+        "app-helper" if !s.helper_available => Check::new(
+            "host.service",
+            Status::Warn,
+            "the host service is set up to run inside the Cua Spaces app, but the app is not installed",
+        )
+        .fix("install Cua Spaces again, or `cua host setup --runner launchd`"),
+        "app-helper" if s.legacy_service => Check::new(
+            "host.service",
+            Status::Warn,
+            format!("the Cua Spaces app's login item ({state}), and the old LaunchAgent is still there"),
+        )
+        .fix("`cua host migrate` removes the old LaunchAgent"),
+        "app-helper" => Check::new(
+            "host.service",
+            Status::Pass,
+            format!("the Cua Spaces app's login item ({state})"),
+        ),
+        "launchd" if s.helper_available => Check::new(
+            "host.service",
+            Status::Pass,
+            format!("LaunchAgent com.trycua.spacesd.host ({state}); the Cua Spaces app can run it instead"),
+        )
+        .fix("`cua host migrate` (macOS then asks once for Screen Recording and Accessibility)"),
+        kind => Check::new("host.service", Status::Pass, format!("{kind} ({state})")),
+    };
+    Some(with_severity(check, false))
 }
 
 pub async fn host_checks(cua: &Arc<Cua>, runtime_type: Option<&str>, arch: &str) -> Vec<Check> {
     let mut checks = defaults_checks();
+    if let Ok(Ok(status)) = tokio::time::timeout(
+        Duration::from_secs(15),
+        cua_host::Host::new(crate::util::cua_home()).status(),
+    )
+    .await
+        && let Some(check) = host_service_check(&status)
+    {
+        checks.push(check);
+    }
     let needed = runtime_type.and_then(backend_for);
     let report = match tokio::time::timeout(Duration::from_secs(60), cua.local().doctor()).await {
         Ok(Ok(report)) => report,
@@ -180,6 +220,17 @@ pub async fn host_checks(cua: &Arc<Cua>, runtime_type: Option<&str>, arch: &str)
         ),
         wants_gvisor,
     ));
+    if gvisor && vmm["container"]["gvisor_allow_suid"].as_bool() == Some(false) {
+        checks.push(with_severity(
+            Check::new(
+                "host.gvisor_setuid",
+                Status::Warn,
+                "runsc is registered without --allow-suid: the Space user cannot sudo or mount FUSE",
+            )
+            .fix("`sudo runsc install -- --allow-suid && sudo systemctl restart docker` (Colima: add `runtimeArgs: [--allow-suid]` under docker.runtimes.runsc and `colima restart`)"),
+            wants_gvisor,
+        ));
+    }
     let qemu_arch = if arch == "arm64" { "aarch64" } else { "x86_64" };
     let accel = vmm["host"]["accel"][qemu_arch]
         .as_str()
@@ -245,7 +296,38 @@ pub async fn host_checks(cua: &Arc<Cua>, runtime_type: Option<&str>, arch: &str)
         }
     }
     checks.extend(host_sharing_checks());
+    checks.push(local_network_check(&report.checks, &vmm).await);
     checks
+}
+
+/// `host.local_network`: on a Mac that runs macOS VMs (lume answers, or
+/// it provides Spaces), the daemon's own probe from its runtime doctor
+/// report (it talks to the VMs, under its own app's grant), else one
+/// bounded connect from this process for a daemon that predates it.
+async fn local_network_check(
+    runtime: &[cua_sdk::RuntimeCheck],
+    report_json: &serde_json::Value,
+) -> Check {
+    use super::local_network as ln;
+    let os = std::env::consts::OS;
+    let lume = runtime
+        .iter()
+        .any(|c| c.name == "lume" && c.status == RuntimeCheckStatus::Ok);
+    let provides = os == "macos"
+        && matches!(
+            cua_host::Host::new(cua_daemon::cua_home()).config(),
+            Ok(Some(c)) if c.provide_spaces
+        );
+    let macos_vms = lume || provides;
+    let probe = if os == "macos" && macos_vms {
+        match ln::from_daemon(report_json) {
+            Some(p) => Some(p),
+            None => Some(ln::from_this_process().await),
+        }
+    } else {
+        None
+    };
+    ln::check(os, macos_vms, probe)
 }
 
 /// This machine's `cua host` readiness: a GUI (Aqua) session for the
@@ -283,6 +365,21 @@ fn host_sharing_checks() -> Vec<Check> {
         ),
         false,
     ));
+    // Not readable from here (macOS answers only the process it asks), so
+    // a reminder with exactly what to allow, not a pass or a failure.
+    if let Some(hint) =
+        cua_host::local_network_hint("macos", config.provide_spaces, &config.driver_bin)
+    {
+        checks.push(with_severity(
+            Check::new(
+                format!("host.permissions.{}", hint.id),
+                Status::Warn,
+                hint.instructions.clone(),
+            )
+            .fix(format!("open {}", hint.settings_url)),
+            false,
+        ));
+    }
     if config.share_desktop
         && let Some((sr, ax)) = probe.permission_status(&config.driver_bin)
     {
@@ -452,6 +549,48 @@ pub fn cross_runtime(runtime_type: &str, guest: &Report) -> Vec<Check> {
         ),
         true,
     )]
+}
+
+#[cfg(test)]
+mod host_service_tests {
+    use super::*;
+
+    fn status(kind: &str, helper: bool, legacy: bool) -> cua_host::HostStatus {
+        cua_host::HostStatus {
+            configured: true,
+            service: cua_host::ServiceState {
+                installed: true,
+                running: true,
+                kind: kind.into(),
+                detail: String::new(),
+            },
+            helper_available: helper,
+            legacy_service: legacy,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn the_host_service_check_names_the_helper_and_warns_about_two() {
+        assert!(host_service_check(&cua_host::HostStatus::default()).is_none());
+        let c = host_service_check(&status("app-helper", true, false)).unwrap();
+        assert_eq!(c.status, Status::Pass);
+        assert!(
+            c.message.contains("Cua Spaces app's login item"),
+            "{}",
+            c.message
+        );
+        let c = host_service_check(&status("app-helper", true, true)).unwrap();
+        assert_eq!(c.status, Status::Warn);
+        assert!(c.remediation.contains("cua host migrate"));
+        let c = host_service_check(&status("app-helper", false, false)).unwrap();
+        assert_eq!(c.status, Status::Warn);
+        let c = host_service_check(&status("launchd", true, true)).unwrap();
+        assert_eq!(c.status, Status::Pass);
+        assert!(c.remediation.contains("cua host migrate"));
+        let c = host_service_check(&status("systemd", false, false)).unwrap();
+        assert_eq!(c.message, "systemd (running)");
+    }
 }
 
 #[cfg(test)]

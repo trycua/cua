@@ -47,6 +47,9 @@ pub trait ScreenMapper: Send + Sync {
     fn to_screen(&self, cursor: &CursorPosition) -> Option<(f64, f64, String)>;
 }
 
+/// How long an idle worker sleeps between checks that its hub still exists.
+const IDLE_WAIT: Duration = Duration::from_secs(5);
+
 /// Largest element rect (in backend units squared) reused from the cache.
 const MAX_CACHED_RECT_AREA: f64 = 256.0 * 256.0;
 
@@ -237,6 +240,9 @@ impl ShapeProber {
 impl Drop for ShapeProber {
     fn drop(&mut self) {
         self.inner.stop.store(true, Ordering::SeqCst);
+        // Under the queue lock, so the worker cannot miss it between its
+        // stop check and its wait.
+        let _queue = self.inner.queue.lock().unwrap();
         self.inner.wake.notify_all();
     }
 }
@@ -253,6 +259,9 @@ impl Inner {
             }
             let next = {
                 let mut queue = self.queue.lock().unwrap();
+                if self.stop.load(Ordering::SeqCst) {
+                    return;
+                }
                 let now = Instant::now();
                 let due = queue
                     .pending
@@ -267,8 +276,11 @@ impl Inner {
                     Some(id) => queue.pending.remove(&id),
                     None => {
                         // Sleep until woken or the soonest throttle ends.
+                        // With nothing queued, requests and `Drop` both
+                        // notify; the long wait only notices a dropped hub,
+                        // so an idle Space keeps this thread asleep.
                         let wait = if queue.pending.is_empty() {
-                            Duration::from_millis(250)
+                            IDLE_WAIT
                         } else {
                             Duration::from_millis(10)
                         };

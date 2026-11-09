@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! macOS identity and endpoint evidence for the first-class browser tools.
 
 use std::hash::{Hash, Hasher};
@@ -19,11 +22,10 @@ use cua_driver_core::browser::types::{
     NativeOwnershipProof, NativeWindowInfo, OwnedEndpoint, ProcessFingerprint, Rect,
 };
 use cua_driver_core::browser::{
-    existing_profile_setup_descriptor, is_firefox, loopback_websocket_port,
-    parse_devtools_active_port, BrowserCursorTracker,
+    existing_profile_setup_descriptor, fetch_json_version_ws_url, is_firefox,
+    loopback_websocket_port, parse_devtools_active_port, BrowserCursorTracker,
 };
 use serde::Serialize;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 const CONSENT_CLEANUP_PASSES: usize = 20;
 
@@ -189,7 +191,7 @@ where
         let mut error = cleanup_error
             .or_else(|| dismiss_error.clone())
             .unwrap_or_else(|| {
-                refusal(
+                BrowserRefusal::new(
                     BrowserRefusalCode::BrowserWrongTargetRefused,
                     "remote-debugging cleanup retained browser consent UI",
                 )
@@ -244,7 +246,7 @@ impl MacOsBrowserPlatform {
                 continue;
             };
             if discovered.is_some() {
-                return Err(refusal(
+                return Err(BrowserRefusal::new(
                     BrowserRefusalCode::BrowserBindingAmbiguous,
                     "multiple browser-level DevTools endpoints are owned by the approved process",
                 ));
@@ -275,8 +277,126 @@ impl Default for MacOsBrowserPlatform {
     }
 }
 
-fn refusal(code: BrowserRefusalCode, message: impl Into<String>) -> BrowserRefusal {
-    BrowserRefusal::new(code, message)
+/// Number of live [`SelfActivationGuard`]s. Setup reads it to choose the
+/// background routes.
+static GUARDED_ATTACHES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Whether a background existing-profile attach may run under the guard: only
+/// when WindowServer places the approved window on another Space than the
+/// user's active one. Chrome's consent window then opens on that Space, out of
+/// the user's sight; on the user's Space it would sit over their window.
+/// Whether an attach or cleanup is running under [`SelfActivationGuard`]: the
+/// setup then uses its background routes.
+pub(crate) fn guarded_attach_active() -> bool {
+    GUARDED_ATTACHES.load(std::sync::atomic::Ordering::SeqCst) > 0
+}
+
+fn guarded_attach_allowed(window_on_current_space: Option<bool>) -> bool {
+    window_on_current_space == Some(false)
+}
+
+/// While alive, reverts every self-activation of `pid` within milliseconds:
+/// gives the user's exact key window front and key status back, re-keys it
+/// if key status stayed with Chrome, and puts it back above Chrome's window
+/// if Chrome lifted it. It holds off while the driver's own foreground or
+/// background-key turns run, so it never undoes the driver's input.
+struct SelfActivationGuard {
+    stop: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl SelfActivationGuard {
+    fn start(pid: i32) -> Self {
+        GUARDED_ATTACHES.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let flag = stop.clone();
+        let user_front = crate::apps::frontmost_pid().filter(|front| *front != pid);
+        std::thread::spawn(move || {
+            if let Some(front) = user_front {
+                watch_self_activation(pid, front, &flag);
+            }
+        });
+        Self { stop }
+    }
+}
+
+impl Drop for SelfActivationGuard {
+    fn drop(&mut self) {
+        self.stop.store(true, std::sync::atomic::Ordering::SeqCst);
+        GUARDED_ATTACHES.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+fn watch_self_activation(pid: i32, front: i32, stop: &std::sync::atomic::AtomicBool) {
+    use crate::focus_arbiter::{Decision, UndoWatch};
+    use std::sync::atomic::Ordering;
+    use std::time::Instant;
+    // Read before anything happens: after a key loss the user's app may
+    // report no focused window.
+    let user_key_window = crate::input::skylight::key_window_of_pid(front);
+    // A Chrome window the user had placed above their own stays there.
+    let above_before = crate::key_focus_guard::target_window_above_front(pid, front);
+    let rekey =
+        || user_key_window.is_some_and(|wid| crate::input::skylight::return_key_to(front, wid));
+    let mut last_rekey = Instant::now();
+    let mut last_order_check = Instant::now();
+    // The watch outlives single driver activations and user switches: once
+    // the driver or the user has put Chrome in front, it leaves Chrome alone
+    // until Chrome is no longer in front, then holds off briefly and re-arms.
+    let mut undo = UndoWatch::arm();
+    let mut quiet_until = Instant::now();
+    while !stop.load(Ordering::SeqCst) {
+        if (undo.has_left() || !undo.epoch().is_current())
+            && crate::input::skylight::front_process_pid() != Some(pid)
+        {
+            undo = UndoWatch::arm();
+            quiet_until = Instant::now() + Duration::from_millis(400);
+        }
+        let calm = !crate::input::skylight::foreground_turn_active()
+            && !super::setup_ui::BACKGROUND_KEY_TURN.load(Ordering::SeqCst)
+            && Instant::now() >= quiet_until;
+        if calm {
+            let front_now = crate::input::skylight::front_process_pid();
+            if front_now == Some(pid) {
+                // Not when the user switched to Chrome themselves.
+                if undo.decide() == Decision::Undo && !rekey() {
+                    crate::key_focus_guard::revert_now(pid, front, &undo);
+                }
+                last_rekey = Instant::now();
+            } else if front_now == Some(front) {
+                if !above_before && last_order_check.elapsed() >= Duration::from_millis(20) && {
+                    last_order_check = Instant::now();
+                    crate::key_focus_guard::target_window_above_front(pid, front)
+                } {
+                    // Chrome orders its window front a few ms after it
+                    // activates itself.
+                    rekey();
+                    if crate::key_focus_guard::target_window_above_front(pid, front) {
+                        crate::key_focus_guard::restore_order_now(pid, front);
+                    }
+                } else if crate::input::skylight::key_focus_pid() != Some(front)
+                    && last_rekey.elapsed() >= Duration::from_millis(30)
+                {
+                    // In front again, but key status stayed with Chrome.
+                    rekey();
+                    last_rekey = Instant::now();
+                }
+            }
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+}
+
+/// Bring `previous_pid` back to the front when `browser_pid` is in front.
+/// Leaves things alone when some other app took the front in the meantime.
+fn restore_front_app_if_browser_front(previous_pid: i64, browser_pid: i64) -> bool {
+    let (Ok(previous), Ok(browser)) = (i32::try_from(previous_pid), i32::try_from(browser_pid))
+    else {
+        return false;
+    };
+    if previous == browser || crate::apps::frontmost_pid() != Some(browser) {
+        return false;
+    }
+    crate::apps::reactivate_app(previous)
 }
 
 fn is_chromium(name: &str, bundle_id: &str) -> bool {
@@ -418,7 +538,7 @@ fn default_user_data_dir(product: BrowserProduct) -> Option<PathBuf> {
 
 fn process_arguments(pid: i64) -> Result<Vec<Vec<u8>>, BrowserRefusal> {
     let pid = libc::pid_t::try_from(pid).map_err(|_| {
-        refusal(
+        BrowserRefusal::new(
             BrowserRefusalCode::BrowserWrongTargetRefused,
             "browser pid is outside the macOS process-id range",
         )
@@ -436,7 +556,7 @@ fn process_arguments(pid: i64) -> Result<Vec<Vec<u8>>, BrowserRefusal> {
         )
     };
     if size_result != 0 || size < std::mem::size_of::<libc::c_int>() {
-        return Err(refusal(
+        return Err(BrowserRefusal::new(
             BrowserRefusalCode::BrowserBindingStale,
             format!("browser process {pid} arguments are unavailable"),
         ));
@@ -453,7 +573,7 @@ fn process_arguments(pid: i64) -> Result<Vec<Vec<u8>>, BrowserRefusal> {
         )
     };
     if read_result != 0 {
-        return Err(refusal(
+        return Err(BrowserRefusal::new(
             BrowserRefusalCode::BrowserBindingStale,
             format!("browser process {pid} arguments changed during inspection"),
         ));
@@ -515,11 +635,11 @@ fn user_data_dir_from_arguments_with_relative_fallback(
         [] => Ok(default),
         [path] if path.is_absolute() => Ok(Some(path.clone())),
         [_] if allow_relative_fallback => Ok(None),
-        [_] => Err(refusal(
+        [_] => Err(BrowserRefusal::new(
             BrowserRefusalCode::BrowserRouteUnavailable,
             "the browser uses a relative --user-data-dir that cannot be attested without its launch working directory",
         )),
-        _ => Err(refusal(
+        _ => Err(BrowserRefusal::new(
             BrowserRefusalCode::BrowserBindingAmbiguous,
             "browser process has multiple distinct --user-data-dir arguments",
         )),
@@ -541,7 +661,7 @@ async fn user_data_dir_for_pid(
     })
     .await
     .map_err(|error| {
-        refusal(
+        BrowserRefusal::new(
             BrowserRefusalCode::BrowserRouteUnavailable,
             format!("browser argument inspection task failed: {error}"),
         )
@@ -580,14 +700,14 @@ async fn process_details(pid: i64) -> Result<(String, String), BrowserRefusal> {
             )
         })?;
     if !output.status.success() {
-        return Err(refusal(
+        return Err(BrowserRefusal::new(
             BrowserRefusalCode::BrowserBindingStale,
             format!("browser process {pid} is no longer available"),
         ));
     }
     let text = String::from_utf8_lossy(&output.stdout).trim().to_owned();
     if text.is_empty() {
-        return Err(refusal(
+        return Err(BrowserRefusal::new(
             BrowserRefusalCode::BrowserBindingStale,
             format!("browser process {pid} has no process identity"),
         ));
@@ -672,14 +792,14 @@ async fn active_port_endpoint_with_relative_fallback(
         Ok(text) => text,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => {
-            return Err(refusal(
+            return Err(BrowserRefusal::new(
                 BrowserRefusalCode::BrowserRouteUnavailable,
                 format!("could not read the browser's DevToolsActivePort file: {error}"),
             ))
         }
     };
     let Some((port, path)) = parse_devtools_active_port(&text) else {
-        return Err(refusal(
+        return Err(BrowserRefusal::new(
             BrowserRefusalCode::BrowserEndpointOwnerMismatch,
             "the browser's DevToolsActivePort file did not contain one exact browser endpoint",
         ));
@@ -704,47 +824,8 @@ async fn active_port_endpoint_with_relative_fallback(
 }
 
 async fn browser_websocket_url(port: u16) -> Option<String> {
-    tokio::time::timeout(Duration::from_secs(2), async move {
-        let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
-            .await
-            .ok()?;
-        let request = format!(
-            "GET /json/version HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"
-        );
-        stream.write_all(request.as_bytes()).await.ok()?;
-        let mut bytes = Vec::new();
-        let mut chunk = [0u8; 4096];
-        loop {
-            let read = stream.read(&mut chunk).await.ok()?;
-            if read == 0 {
-                break;
-            }
-            bytes.extend_from_slice(&chunk[..read]);
-            if bytes.len() > 256 * 1024 {
-                return None;
-            }
-            if let Some(header_end) = bytes.windows(4).position(|part| part == b"\r\n\r\n") {
-                let headers = String::from_utf8_lossy(&bytes[..header_end]);
-                if let Some(length) = headers.lines().find_map(|line| {
-                    let (name, value) = line.split_once(':')?;
-                    name.eq_ignore_ascii_case("content-length")
-                        .then(|| value.trim().parse::<usize>().ok())
-                        .flatten()
-                }) {
-                    if bytes.len() >= header_end + 4 + length {
-                        break;
-                    }
-                }
-            }
-        }
-        let body_start = bytes.windows(4).position(|part| part == b"\r\n\r\n")? + 4;
-        let value: serde_json::Value = serde_json::from_slice(&bytes[body_start..]).ok()?;
-        let url = value.get("webSocketDebuggerUrl")?.as_str()?.to_owned();
-        (loopback_websocket_port(&url) == Some(port)).then_some(url)
-    })
-    .await
-    .ok()
-    .flatten()
+    let url = fetch_json_version_ws_url(port).await?;
+    (loopback_websocket_port(&url) == Some(port)).then_some(url)
 }
 
 #[async_trait]
@@ -762,14 +843,54 @@ impl BrowserPlatform for MacOsBrowserPlatform {
                 return Ok(executable);
             }
         }
-        Err(refusal(
+        Err(BrowserRefusal::new(
             BrowserRefusalCode::BrowserRouteUnavailable,
             "no vendor-signed system Chromium executable is available for isolated launch",
         ))
     }
 
     fn standalone_trusted_input_background_limitation(&self) -> Option<&'static str> {
-        Some("Chromium's trusted CDP Input route activates its standalone browser window on macOS")
+        // Measured on Chrome 155 with another app frontmost: CDP
+        // Input.dispatchMouseEvent (with and without focus emulation) into a
+        // hidden background tab, and into the active tab of a window behind
+        // another app, delivered trusted events (isTrusted=true) without
+        // changing the frontmost app or raising the browser window, including
+        // clicks that focus inputs, buttons, links and selects. The
+        // background click route never calls Page.bringToFront or
+        // Target.activateTarget.
+        None
+    }
+
+    fn existing_profile_attach_background_limitation(&self) -> Option<&'static str> {
+        // Measured on Chrome 154 (no driver input involved): Chrome activates
+        // itself ~50 ms after any new DevTools client connects, to show its
+        // "Allow remote debugging?" sheet. Turning the per-instance setting on
+        // also activates it: its New Tab action does, and its address bar
+        // only navigates on real keystrokes.
+        Some(
+            "Chrome brings itself to the front to show its \"Allow remote debugging?\" prompt \
+             whenever a new DevTools connection opens (sessions then share that one connection), \
+             and turning remote debugging on needs Chrome in front",
+        )
+    }
+
+    fn guard_background_attach(
+        &self,
+        browser_pid: i64,
+        window_id: u64,
+    ) -> Option<Box<dyn std::any::Any + Send>> {
+        let pid = i32::try_from(browser_pid).ok()?;
+        let window_id = u32::try_from(window_id).ok()?;
+        guarded_attach_allowed(crate::windows::window_on_current_space_by_id(window_id))
+            .then(|| Box::new(SelfActivationGuard::start(pid)) as Box<dyn std::any::Any + Send>)
+    }
+
+    fn frontmost_app_pid(&self) -> Option<i64> {
+        crate::apps::frontmost_pid().map(i64::from)
+    }
+
+    fn restore_frontmost_app(&self, previous_pid: i64, browser_pid: i64) -> bool {
+        restore_front_app_if_browser_front(previous_pid, browser_pid)
     }
 
     async fn visualize_browser_action(&self, action: BrowserVisualAction) {
@@ -927,7 +1048,7 @@ impl BrowserPlatform for MacOsBrowserPlatform {
         window_id: u64,
     ) -> Result<NativeWindowInfo, BrowserRefusal> {
         let window_id_u32 = u32::try_from(window_id).map_err(|_| {
-            refusal(
+            BrowserRefusal::new(
                 BrowserRefusalCode::BrowserWrongTargetRefused,
                 format!("window_id {window_id} is outside the macOS window-id range"),
             )
@@ -941,13 +1062,13 @@ impl BrowserPlatform for MacOsBrowserPlatform {
         .ok()
         .flatten()
         .ok_or_else(|| {
-            refusal(
+            BrowserRefusal::new(
                 BrowserRefusalCode::BrowserBindingStale,
                 format!("macOS window {window_id} is no longer available"),
             )
         })?;
         if i64::from(window.pid) != pid {
-            return Err(refusal(
+            return Err(BrowserRefusal::new(
                 BrowserRefusalCode::BrowserWrongTargetRefused,
                 format!("window {window_id} is not owned by pid {pid}"),
             ));
@@ -981,7 +1102,7 @@ impl BrowserPlatform for MacOsBrowserPlatform {
         })
         .await
         .map_err(|error| {
-            refusal(
+            BrowserRefusal::new(
                 BrowserRefusalCode::BrowserRouteUnavailable,
                 format!("could not enumerate macOS browser windows: {error}"),
             )
@@ -1009,7 +1130,7 @@ impl BrowserPlatform for MacOsBrowserPlatform {
         expected_ws_url: &str,
     ) -> Result<Option<OwnedEndpoint>, BrowserRefusal> {
         let Some(port) = loopback_websocket_port(expected_ws_url) else {
-            return Err(refusal(
+            return Err(BrowserRefusal::new(
                 BrowserRefusalCode::BrowserEndpointOwnerMismatch,
                 "the approved existing-profile endpoint is not loopback-only",
             ));
@@ -1020,7 +1141,7 @@ impl BrowserPlatform for MacOsBrowserPlatform {
         let classification = self.classify_browser(pid).await?;
         if let Some(endpoint) = active_port_endpoint(pid, classification.product_kind).await? {
             if endpoint.ws_url != expected_ws_url {
-                return Err(refusal(
+                return Err(BrowserRefusal::new(
                     BrowserRefusalCode::BrowserEndpointOwnerMismatch,
                     "the browser's exact DevTools endpoint changed after approval",
                 ));
@@ -1045,7 +1166,7 @@ impl BrowserPlatform for MacOsBrowserPlatform {
         request: ExistingProfileSetupRequest,
     ) -> Result<ExistingProfileSetupOutcome, BrowserRefusal> {
         let descriptor = existing_profile_setup_descriptor(request.browser).ok_or_else(|| {
-            refusal(
+            BrowserRefusal::new(
                 BrowserRefusalCode::BrowserRouteUnavailable,
                 format!(
                     "approved existing-profile setup is not implemented for {:?}",
@@ -1054,28 +1175,23 @@ impl BrowserPlatform for MacOsBrowserPlatform {
             )
         })?;
         let pid = i32::try_from(request.pid).map_err(|_| {
-            refusal(
+            BrowserRefusal::new(
                 BrowserRefusalCode::BrowserWrongTargetRefused,
                 "the approved browser pid is outside the macOS process-id range",
             )
         })?;
         let window_id = u32::try_from(request.window_id).map_err(|_| {
-            refusal(
+            BrowserRefusal::new(
                 BrowserRefusalCode::BrowserWrongTargetRefused,
                 "the approved browser window is outside the macOS window-id range",
             )
         })?;
         let listeners_before = loopback_ports_for_pid(request.pid).await?;
-        let handle = crate::focus_guard::with_focus_suppressed_now(
-            Some(pid),
-            "browser_prepare.remote_debugging",
-            || async move {
-                tokio::task::spawn_blocking(move || {
-                    super::setup_ui::enable(pid, window_id, descriptor)
-                })
+        let run_setup = move || async move {
+            tokio::task::spawn_blocking(move || super::setup_ui::enable(pid, window_id, descriptor))
                 .await
                 .map_err(|error| {
-                    refusal(
+                    BrowserRefusal::new(
                         BrowserRefusalCode::BrowserRouteUnavailable,
                         format!(
                             "could not inspect {}'s remote-debugging setup UI: {error}",
@@ -1083,9 +1199,21 @@ impl BrowserPlatform for MacOsBrowserPlatform {
                         ),
                     )
                 })?
-            },
-        )
-        .await?;
+        };
+        // Under the self-activation guard, the setup's background key turns make
+        // Chrome's window key on purpose; the generic focus-steal lease would
+        // re-activate the user's app in the middle of them and drop Chrome's
+        // input. The guard reverts Chrome's own activations instead.
+        let handle = if GUARDED_ATTACHES.load(std::sync::atomic::Ordering::SeqCst) > 0 {
+            run_setup().await?
+        } else {
+            crate::focus_guard::with_focus_suppressed_now(
+                Some(pid),
+                "browser_prepare.remote_debugging",
+                run_setup,
+            )
+            .await?
+        };
         let opened_setup_page = handle.opened_setup_page;
         let enabled_remote_debugging = handle.enabled_remote_debugging;
         let used_bounded_pixel_fallback = handle.used_bounded_pixel_fallback;
@@ -1123,7 +1251,7 @@ impl BrowserPlatform for MacOsBrowserPlatform {
                         "new PID-owned listener correlated with exact approved setup",
                     ));
                 } else if correlated.len() > 1 {
-                    break Err(refusal(
+                    break Err(BrowserRefusal::new(
                         BrowserRefusalCode::BrowserBindingAmbiguous,
                         format!(
                             "{} exposed multiple newly correlated PID-owned listeners",
@@ -1150,7 +1278,7 @@ impl BrowserPlatform for MacOsBrowserPlatform {
                     tokio::time::sleep(Duration::from_millis(100)).await;
                 }
                 [] => {
-                    break Err(refusal(
+                    break Err(BrowserRefusal::new(
                         BrowserRefusalCode::BrowserRequiresSetup,
                         format!(
                             "{} did not expose a uniquely PID-owned loopback endpoint after the exact setup action",
@@ -1159,7 +1287,7 @@ impl BrowserPlatform for MacOsBrowserPlatform {
                     ))
                 }
                 _ => {
-                    break Err(refusal(
+                    break Err(BrowserRefusal::new(
                         BrowserRefusalCode::BrowserBindingAmbiguous,
                         format!(
                             "{} exposed multiple PID-owned endpoint candidates after the exact setup action",
@@ -1176,7 +1304,7 @@ impl BrowserPlatform for MacOsBrowserPlatform {
                     tokio::task::spawn_blocking(move || handle.abort(pid, window_id, error))
                         .await
                         .map_err(|join_error| {
-                            refusal(
+                            BrowserRefusal::new(
                                 BrowserRefusalCode::BrowserRouteUnavailable,
                                 format!("could not roll back browser setup: {join_error}"),
                             )
@@ -1203,13 +1331,13 @@ impl BrowserPlatform for MacOsBrowserPlatform {
         request: ExistingProfileSetupRequest,
     ) -> Result<bool, BrowserRefusal> {
         let pid = i32::try_from(request.pid).map_err(|_| {
-            refusal(
+            BrowserRefusal::new(
                 BrowserRefusalCode::BrowserWrongTargetRefused,
                 "the approved browser pid is outside the macOS process-id range",
             )
         })?;
         let window_id = u32::try_from(request.window_id).map_err(|_| {
-            refusal(
+            BrowserRefusal::new(
                 BrowserRefusalCode::BrowserWrongTargetRefused,
                 "the approved browser window is outside the macOS window-id range",
             )
@@ -1217,7 +1345,7 @@ impl BrowserPlatform for MacOsBrowserPlatform {
         tokio::task::spawn_blocking(move || super::setup_ui::commit_pending(pid, window_id))
             .await
             .map_err(|error| {
-                refusal(
+                BrowserRefusal::new(
                     BrowserRefusalCode::BrowserRouteUnavailable,
                     format!("could not commit exact browser setup cleanup: {error}"),
                 )
@@ -1229,7 +1357,7 @@ impl BrowserPlatform for MacOsBrowserPlatform {
         request: ExistingProfileSetupRequest,
     ) -> Result<bool, BrowserRefusal> {
         let descriptor = existing_profile_setup_descriptor(request.browser).ok_or_else(|| {
-            refusal(
+            BrowserRefusal::new(
                 BrowserRefusalCode::BrowserRouteUnavailable,
                 format!(
                     "existing-profile cleanup is not implemented for {:?}",
@@ -1238,24 +1366,38 @@ impl BrowserPlatform for MacOsBrowserPlatform {
             )
         })?;
         let pid = i32::try_from(request.pid).map_err(|_| {
-            refusal(
+            BrowserRefusal::new(
                 BrowserRefusalCode::BrowserWrongTargetRefused,
                 "the approved browser pid is outside the macOS process-id range",
             )
         })?;
         let window_id = u32::try_from(request.window_id).map_err(|_| {
-            refusal(
+            BrowserRefusal::new(
                 BrowserRefusalCode::BrowserWrongTargetRefused,
                 "the approved browser window is outside the macOS window-id range",
             )
         })?;
-        run_committed_consent_cleanup(
+        // Turning remote debugging back off reopens Chrome's setup page,
+        // which brings Chrome to the front; hand the front back afterwards.
+        let previous_front = crate::apps::frontmost_pid().filter(|front| *front != pid);
+        // Chrome on another Space: the same guarded background routes as the
+        // attach, so the cleanup does not bring Chrome forward either.
+        let _guard = previous_front
+            .filter(|_| {
+                guarded_attach_allowed(crate::windows::window_on_current_space_by_id(window_id))
+            })
+            .map(|_| SelfActivationGuard::start(pid));
+        let result = run_committed_consent_cleanup(
             CONSENT_CLEANUP_PASSES,
             || super::consent_ui::dismiss(pid, window_id),
             || super::setup_ui::disable(pid, window_id, descriptor),
             || visible_consent_surfaces(pid),
             || std::thread::sleep(Duration::from_millis(100)),
-        )
+        );
+        if let Some(previous) = previous_front {
+            restore_front_app_if_browser_front(i64::from(previous), request.pid);
+        }
+        result
     }
 
     async fn abort_existing_profile_setup(
@@ -1281,7 +1423,7 @@ impl BrowserPlatform for MacOsBrowserPlatform {
         })
         .await
         .unwrap_or_else(|join_error| {
-            refusal(
+            BrowserRefusal::new(
                 BrowserRefusalCode::BrowserRouteUnavailable,
                 format!("could not roll back exact browser setup: {join_error}"),
             )
@@ -1309,7 +1451,7 @@ impl BrowserPlatform for MacOsBrowserPlatform {
         request: PrepareRequest,
     ) -> Result<PrepareOutcome, BrowserRefusal> {
         let Some(pid) = request.pid else {
-            return Err(refusal(
+            return Err(BrowserRefusal::new(
                 BrowserRefusalCode::BrowserRequiresSetup,
                 "pid-free isolated launch is handled by shared core",
             ));
@@ -1324,7 +1466,7 @@ impl BrowserPlatform for MacOsBrowserPlatform {
                 attachment: None,
             });
         }
-        Err(refusal(
+        Err(BrowserRefusal::new(
             BrowserRefusalCode::BrowserRequiresSetup,
             "No owned endpoint is available. Acting setup is handled by shared core only for a verified driver-owned isolated profile.",
         ))
@@ -1334,6 +1476,7 @@ impl BrowserPlatform for MacOsBrowserPlatform {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     fn consent_surface(window_id: u32) -> ConsentSurfaceEvidence {
         ConsentSurfaceEvidence {
@@ -1373,7 +1516,7 @@ mod tests {
         ]
         .into_iter();
         let error = run_failed_prepare_consent_cleanup(
-            refusal(
+            BrowserRefusal::new(
                 BrowserRefusalCode::BrowserWrongTargetRefused,
                 "prepare failed",
             ),
@@ -1408,13 +1551,13 @@ mod tests {
     fn failed_prepare_cleanup_returns_bounded_evidence_for_retained_surfaces() {
         let mut rollback_calls = 0;
         let error = run_failed_prepare_consent_cleanup(
-            refusal(
+            BrowserRefusal::new(
                 BrowserRefusalCode::BrowserWrongTargetRefused,
                 "prepare failed",
             ),
             3,
             || {
-                Err(refusal(
+                Err(BrowserRefusal::new(
                     BrowserRefusalCode::BrowserWrongTargetRefused,
                     "ambiguous cancel actions",
                 ))
@@ -1507,7 +1650,7 @@ mod tests {
         let error = run_committed_consent_cleanup(
             1,
             || {
-                Err(refusal(
+                Err(BrowserRefusal::new(
                     BrowserRefusalCode::BrowserWrongTargetRefused,
                     "truncated scan",
                 ))
@@ -1525,13 +1668,13 @@ mod tests {
         );
         let mut rolled_back = false;
         let error = run_failed_prepare_consent_cleanup(
-            refusal(
+            BrowserRefusal::new(
                 BrowserRefusalCode::BrowserConsentRevoked,
                 "original prepare failure",
             ),
             1,
             || {
-                Err(refusal(
+                Err(BrowserRefusal::new(
                     BrowserRefusalCode::BrowserWrongTargetRefused,
                     "truncated scan",
                 ))
@@ -1676,21 +1819,63 @@ mod tests {
     }
 
     #[test]
+    fn existing_profile_attach_declares_its_foreground_limitation() {
+        let platform = MacOsBrowserPlatform::default();
+        let limitation = platform
+            .existing_profile_attach_background_limitation()
+            .expect("macOS Chrome attachment brings Chrome forward");
+        assert!(limitation.contains("Allow remote debugging?"));
+    }
+
+    #[test]
+    fn guarded_background_attach_only_for_a_window_on_another_space() {
+        assert!(guarded_attach_allowed(Some(false)));
+        assert!(!guarded_attach_allowed(Some(true)));
+        // Unknown Space placement keeps the honest refusal.
+        assert!(!guarded_attach_allowed(None));
+    }
+
+    #[test]
+    fn guarded_attach_flag_follows_live_guards() {
+        assert!(!guarded_attach_active());
+        let guard = SelfActivationGuard::start(i32::MAX);
+        assert!(guarded_attach_active());
+        drop(guard);
+        assert!(!guarded_attach_active());
+    }
+
+    #[test]
+    fn front_restore_never_targets_the_browser_or_an_invalid_pid() {
+        assert!(!restore_front_app_if_browser_front(42, 42));
+        assert!(!restore_front_app_if_browser_front(i64::MAX, 42));
+        assert!(!restore_front_app_if_browser_front(42, i64::MIN));
+    }
+
+    #[test]
     fn lsof_parser_accepts_only_loopback_listeners() {
         let input = "n127.0.0.1:9222\nn*:9333\nn[::1]:9444\nn0.0.0.0:9555\n";
         assert_eq!(parse_loopback_lsof_ports(input), vec![9222, 9444]);
     }
 
     async fn assert_owned_discovery_profile_case(case: &str) {
+        use std::ffi::CString;
         use std::os::fd::AsRawFd;
-        use std::os::unix::process::CommandExt;
         use std::sync::atomic::{AtomicUsize, Ordering};
 
-        struct ChildGuard(std::process::Child);
+        unsafe extern "C" {
+            // In <spawn.h> since macOS 10.7; the libc crate does not bind it.
+            fn posix_spawn_file_actions_addinherit_np(
+                actions: *mut libc::posix_spawn_file_actions_t,
+                fd: libc::c_int,
+            ) -> libc::c_int;
+        }
+        struct ChildGuard(libc::pid_t);
         impl Drop for ChildGuard {
             fn drop(&mut self) {
-                let _ = self.0.kill();
-                let _ = self.0.wait();
+                unsafe {
+                    libc::kill(self.0, libc::SIGKILL);
+                    libc::waitpid(self.0, std::ptr::null_mut(), 0);
+                }
             }
         }
         let mut listeners = (0..3)
@@ -1732,38 +1917,83 @@ mod tests {
             .unwrap(),
             _ => {}
         }
-        let descriptors = listeners.iter().map(AsRawFd::as_raw_fd).collect::<Vec<_>>();
-        let mut command = std::process::Command::new("/bin/sh");
-        command
-            .args(["-c", "read -r line", "endpoint-fixture"])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
+        let mut args = vec![
+            "/bin/sh".to_owned(),
+            "-c".to_owned(),
+            "read -r line".to_owned(),
+            "endpoint-fixture".to_owned(),
+        ];
         match case {
-            "relative" => {
-                command.arg("--user-data-dir=relative-profile");
-            }
+            "relative" => args.push("--user-data-dir=relative-profile".to_owned()),
             "absent_profile" => {}
-            "conflicting" => {
-                command.args(["--user-data-dir=/tmp/one", "--user-data-dir=/tmp/two"]);
-            }
-            _ => {
-                command.arg(format!("--user-data-dir={}", profile.path().display()));
-            }
+            "conflicting" => args.extend([
+                "--user-data-dir=/tmp/one".to_owned(),
+                "--user-data-dir=/tmp/two".to_owned(),
+            ]),
+            _ => args.push(format!("--user-data-dir={}", profile.path().display())),
         }
-        // Only the child's explicitly named listeners lose CLOEXEC.
-        unsafe {
-            command.pre_exec(move || {
-                for &fd in &descriptors {
-                    if libc::fcntl(fd, libc::F_SETFD, 0) == -1 {
-                        return Err(std::io::Error::last_os_error());
-                    }
-                }
-                Ok(())
-            });
-        }
-        let child = ChildGuard(command.spawn().unwrap());
-        let pid = i64::from(child.0.id());
+        let args = args
+            .into_iter()
+            .map(|arg| CString::new(arg).unwrap())
+            .collect::<Vec<_>>();
+        let mut argv = args
+            .iter()
+            .map(|arg| arg.as_ptr().cast_mut())
+            .collect::<Vec<_>>();
+        argv.push(std::ptr::null_mut());
+        // `read` blocks until the guard kills the child: the test holds the writer.
+        let (stdin, _stdin_writer) = std::io::pipe().unwrap();
+        // The child must own exactly the named listeners. CLOEXEC_DEFAULT keeps
+        // a socket a parallel test has not yet marked CLOEXEC out of the child,
+        // and posix_spawn avoids fork, whose child-side atfork handlers can crash
+        // while another test thread is inside libnotify.
+        let pid = unsafe {
+            let mut actions = std::ptr::null_mut();
+            let mut attributes = std::ptr::null_mut();
+            assert_eq!(libc::posix_spawn_file_actions_init(&mut actions), 0);
+            assert_eq!(libc::posix_spawnattr_init(&mut attributes), 0);
+            assert_eq!(
+                libc::posix_spawnattr_setflags(
+                    &mut attributes,
+                    libc::POSIX_SPAWN_CLOEXEC_DEFAULT as libc::c_short
+                ),
+                0
+            );
+            for fd in [1, 2] {
+                assert_eq!(
+                    libc::posix_spawn_file_actions_addopen(
+                        &mut actions,
+                        fd,
+                        c"/dev/null".as_ptr(),
+                        libc::O_WRONLY,
+                        0
+                    ),
+                    0
+                );
+            }
+            assert_eq!(
+                libc::posix_spawn_file_actions_adddup2(&mut actions, stdin.as_raw_fd(), 0),
+                0
+            );
+            for fd in listeners.iter().map(AsRawFd::as_raw_fd) {
+                assert_eq!(posix_spawn_file_actions_addinherit_np(&mut actions, fd), 0);
+            }
+            let mut pid = 0;
+            let spawned = libc::posix_spawn(
+                &mut pid,
+                args[0].as_ptr(),
+                &actions,
+                &attributes,
+                argv.as_ptr(),
+                *libc::_NSGetEnviron(),
+            );
+            libc::posix_spawn_file_actions_destroy(&mut actions);
+            libc::posix_spawnattr_destroy(&mut attributes);
+            assert_eq!(spawned, 0, "posix_spawn fixture");
+            pid
+        };
+        let _child = ChildGuard(pid);
+        let pid = i64::from(pid);
         assert_eq!(loopback_ports_for_pid(pid).await.unwrap(), ports);
         let counts = Arc::new([
             AtomicUsize::new(0),

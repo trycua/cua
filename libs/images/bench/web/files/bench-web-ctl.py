@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """bench-web-ctl: a small HTTP API over the in-guest Chromium's DevTools.
 
-Adapters reach it the same way locally and on Fleet (plain HTTP through the
-sandbox's service gateway), so they never need a WebSocket to the guest.
+Adapters reach it the same way locally and through a sandbox service gateway
+(plain HTTP), so they never need a WebSocket to the guest.
 
     GET  /healthz            {"ok": true, "browser": "...", "tabs": N}   503 until CDP answers
     POST /reset   {"url"}    clear cookies, cache and storage; close every tab

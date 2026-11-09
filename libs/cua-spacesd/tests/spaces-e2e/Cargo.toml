@@ -35,7 +35,6 @@ path = "src/bin/cua-test-fixtures.rs"
 [dependencies]
 cua-spaces = { path = "../../../cua/crates/cua-spaces", features = ["mcp-client"] }
 cua-spacesd-client = { path = "../../../cua/crates/cua-spacesd-client", features = ["testing"] }
-cua-fleet = { path = "../../../cua/crates/cua-fleet", features = ["testing"] }
 cua-daemon = { path = "../../../cua/crates/cua-daemon", features = ["server", "client", "test-fixtures"] }
 cua-spacesd-server = { path = "../../crates/cua-spacesd-server" }
 cua-spacesd-teleport = { path = "../../crates/cua-spacesd-teleport" }

@@ -96,7 +96,16 @@ pub async fn service_tool(
                 .drive()?;
             Ok(ToolOutcome::json(&check))
         }
-        "volume_mount_status" => Ok(ToolOutcome::json(&svc.mount_status().await)),
+        "volume_mount_status" => {
+            // This machine's mount, plus the Spaces' own: mounted, or why
+            // not (a local Linux Space on runc has no /dev/fuse).
+            let mut v = serde_json::to_value(svc.mount_status().await)
+                .map_err(|e| Error::invalid(e.to_string()))?;
+            let (volumes, errors) = space_volumes(spaces, &ctx).await?;
+            v["volumes"] = volumes;
+            v["volume_errors"] = errors;
+            Ok(ToolOutcome::json(&v))
+        }
         "volume_mount" => Ok(ToolOutcome::json(&svc.mount().await.drive()?)),
         "volume_unmount" => Ok(ToolOutcome::json(&svc.unmount().await.drive()?)),
         "volume_sync_events" => {
@@ -130,7 +139,6 @@ pub async fn service_tool(
 pub async fn sync_status_for(spaces: &cua_spaces::Spaces, ctx: &Context) -> Result<Value> {
     let svc = spaces.drive_service().await?;
     let mut s = svc.sync_status().await;
-    let mut volumes = spaces.volumes().await;
     if ctx.principal != Principal::User {
         let session = spaces.drive().session(ctx.clone());
         let readable = |p: &str| session.mode(p).ok().flatten().is_some();
@@ -142,23 +150,44 @@ pub async fn sync_status_for(spaces: &cua_spaces::Spaces, ctx: &Context) -> Resu
         if let Some(c) = s.cache.as_mut() {
             c.dir.clear();
         }
-        volumes.retain(|v| ctx.space.as_deref() == Some(v.space.as_str()));
     }
+    let mut v = serde_json::to_value(&s).map_err(|e| Error::invalid(e.to_string()))?;
+    let (volumes, errors) = space_volumes(spaces, ctx).await?;
+    v["volumes"] = volumes;
+    v["volume_errors"] = errors;
+    // Present only while the Volume is kept on more than one machine.
+    if ctx.principal == Principal::User
+        && let Some(rt) = spaces
+            .drive_extension()
+            .ok()
+            .and_then(|e| e.runtime.replica.get().cloned())
+        && let Some((status, words)) = rt.status().await
+    {
+        v["replication"] = serde_json::json!({"status": status, "words": words});
+    }
+    Ok(v)
+}
+
+/// The volumes mounted in Spaces, and the Spaces that connected without
+/// one and why (`space`, `error`), as `ctx` may see them: the user sees
+/// every Space, anyone else only their own.
+async fn space_volumes(spaces: &cua_spaces::Spaces, ctx: &Context) -> Result<(Value, Value)> {
+    let mut volumes = spaces.volumes().await;
     let mut unavailable = spaces
         .drive_extension()
         .map(|e| e.runtime.unavailable())
         .unwrap_or_default();
     if ctx.principal != Principal::User {
-        unavailable.retain(|(space, _)| ctx.space.as_deref() == Some(space.as_str()));
+        let own = |space: &str| ctx.space.as_deref() == Some(space);
+        volumes.retain(|v| own(&v.space));
+        unavailable.retain(|(space, _)| own(space));
     }
-    let mut v = serde_json::to_value(&s).map_err(|e| Error::invalid(e.to_string()))?;
-    v["volumes"] = serde_json::to_value(&volumes).map_err(|e| Error::invalid(e.to_string()))?;
-    // Spaces that connected without a volume, and why.
-    v["volume_errors"] = unavailable
+    let volumes = serde_json::to_value(&volumes).map_err(|e| Error::invalid(e.to_string()))?;
+    let errors = unavailable
         .into_iter()
         .map(|(space, error)| json!({"space": space, "error": error}))
         .collect();
-    Ok(v)
+    Ok((volumes, errors))
 }
 
 fn args<T: DeserializeOwned>(tool: &str, value: Value) -> Result<T> {
@@ -187,6 +216,54 @@ pub fn host_context(arguments: &Value) -> Result<Context> {
     }
 }
 
+/// Rewrites a `space:<id>` or `tree:<root>` principal in `args` to the
+/// names the Volume gives Spaces (the id and the Space's uid), so a grant
+/// typed as `space:local:work` is for that Space and not for a later one of
+/// the same name. Anything else is left as written.
+pub fn name_principal(spaces: &cua_spaces::Spaces, args: &mut Value) {
+    let Some(p) = args.get("principal").and_then(Value::as_str) else {
+        return;
+    };
+    let fix = |s: &str| -> String {
+        let folder = cua_volume::path::space_folder_name(s);
+        let already = cua_volume::path::folder_uid(&folder);
+        if already.is_some() {
+            s.to_string()
+        } else {
+            spaces.volume_space_id(s).unwrap_or_else(|_| s.to_string())
+        }
+    };
+    let named = match Principal::parse(p) {
+        Ok(Principal::Space(s)) => format!("space:{}", fix(&s)),
+        Ok(Principal::Tree(r)) => format!("tree:{}", fix(&r)),
+        _ => return,
+    };
+    args["principal"] = Value::String(named);
+}
+
+/// [`host_context`] with the Space as the Volume names it (its folder
+/// carries the Space's id).
+pub fn host_context_for(spaces: &cua_spaces::Spaces, arguments: &Value) -> Result<Context> {
+    let ctx = host_context(arguments)?;
+    match (&ctx.principal, str_arg(arguments, "in_space")) {
+        (Principal::Agent(a), Some(space)) => {
+            Ok(crate::drive_runtime::agent_context(spaces, a, Some(space)))
+        }
+        _ => Ok(ctx),
+    }
+}
+
+/// Whether `mine` (the Space a session is in, as the Volume names it:
+/// `local:work--0a1b2c3d`) is the Space `claimed` (an id or name as a
+/// caller wrote it).
+fn same_space(mine: &str, claimed: &str) -> bool {
+    mine == claimed
+        || mine
+            .strip_prefix(claimed)
+            .and_then(|r| r.strip_prefix(cua_volume::path::UID_SEP))
+            .is_some_and(cua_volume::path::valid_uid)
+}
+
 /// Refuses an agent context that names another identity.
 fn check_identity(ctx: &Context, arguments: &Value) -> Result<()> {
     if ctx.principal == Principal::User {
@@ -202,7 +279,7 @@ fn check_identity(ctx: &Context, arguments: &Value) -> Result<()> {
         ))));
     }
     if let (Some(s), Some(mine)) = (str_arg(arguments, "in_space"), ctx.space.as_deref())
-        && s != mine
+        && !same_space(mine, s)
     {
         return Err(crate::drive_err(cua_volume::Error::Forbidden(format!(
             "{} is in {mine}, not {s}",
@@ -529,6 +606,16 @@ mod tests {
             .session(Context::user())
             .write("public/a.md", b"x".to_vec(), Condition::None)
             .await
+            .unwrap();
+        // public/ is readable only through a grant: this Space has one.
+        spaces
+            .drive()
+            .grant_migrated(
+                "space:local-lab",
+                "public/",
+                cua_volume::acl::Mode::Read,
+                "test",
+            )
             .unwrap();
         // Files still uploading: the user sees them all, an agent only
         // those it can read, and each file says so.

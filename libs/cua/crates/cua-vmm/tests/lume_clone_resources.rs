@@ -50,7 +50,7 @@ async fn fake_runtime_with(mut st: FakeLume) -> (LumeRuntime, Arc<Mutex<FakeLume
 }
 
 fn spec(name: &str, reference: &str) -> StartSpec {
-    StartSpec::new(
+    let mut s = StartSpec::new(
         name,
         ImageSource::Oci {
             reference: reference.into(),
@@ -58,7 +58,12 @@ fn spec(name: &str, reference: &str) -> StartSpec {
     )
     .os(GuestOs::Macos)
     .cpus(2)
-    .memory_mb(4096)
+    .memory_mb(4096);
+    // These tests are about the clone and the pull, not the network.
+    s.network = Some(cua_vmm::network::NetworkSettings::preset(
+        cua_vmm::network::NetworkPreset::Unprotected,
+    ));
+    s
 }
 
 #[tokio::test]

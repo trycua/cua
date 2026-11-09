@@ -1,7 +1,9 @@
 ---
 title: How Cua Driver works
-description: Observation, targets, the background-first action ladder, verification, and who owns the runtime.
+description: Observation, targets, the background-first action ladder, verification, choosing an integration, who owns the runtime, and the optional perception extension.
 ---
+
+import { Callout } from 'fumadocs-ui/components/callout';
 
 Cua Driver is the UI layer of a computer-use agent. The harness runs the model
 and the loop; Cua Driver turns each proposed step into an observation or an
@@ -21,8 +23,8 @@ one, and shows what the tree omits or gets wrong. Pass
 `get_desktop_state` captures the whole primary display.
 
 When neither the tree nor typed browser state exposes the target, the optional
-[perception extension](/cua-driver/concepts/perception-extension) can parse
-that same screenshot into labelled regions.
+[perception extension](#the-optional-perception-extension) can parse that same
+screenshot into labelled regions.
 
 ## Act: one exact target per call
 
@@ -83,6 +85,22 @@ compositor's seat sends input to, so the driver refuses rather than risk typing
 into the wrong app. A structured `background_unavailable` is part of the
 contract, not a failure to hide.
 
+## Choose an integration
+
+Pick by who owns the runtime: the process that holds the OS permissions,
+sessions and browser connections.
+
+| You are building                                    | Use                                                                          | Runtime owner                                        |
+| --------------------------------------------------- | ---------------------------------------------------------------------------- | ---------------------------------------------------- |
+| An agent or harness (Claude Code, Codex, Cursor, …) | [MCP](/cua-driver/guides/connect-your-agent): `cua-driver mcp`               | The MCP process; on macOS, the `CuaDriver.app` daemon |
+| An agent that can only run shell commands           | [CLI](/cua-driver/reference/cli): `cua-driver call <tool>`                   | The `cua-driver serve` daemon                        |
+| An app with built-in computer use                   | [SDK](/cua-driver/guides/use-the-sdk): `CuaDriver.create()`                  | On macOS, the `CuaDriver.app` daemon; elsewhere your app process |
+| A signed desktop app that serves an external agent  | [App-hosted service](/cua-driver/guides/use-the-sdk#expose-mcp-from-a-desktop-app) | The permission-owning desktop app               |
+| Several clients sharing one desktop                 | `cua-driver serve --socket <path>` plus `cua-driver mcp --socket <path>`     | The daemon                                           |
+
+Inside a [Cua Sandbox](/cua-sdk) you do not install Cua Driver: the sandbox's
+guest service bundles its tools.
+
 ## Processes and sessions
 
 The runtime owns permissions, sessions, element caches, recordings, and browser
@@ -122,6 +140,75 @@ user.
 CLI, MCP, SDK, and daemon calls all pass the same authorization check inside
 the runtime. The launcher fixes the mode, manifest, and grants at startup; an
 agent cannot widen them. See [Set permissions](/cua-driver/guides/permissions).
+
+## The optional perception extension
+
+Canvas apps, custom-drawn views, games, remote desktops, and some web pages
+have no useful accessibility tree or page structure, so an agent has nothing to
+address by role or label. The optional `cua-perception` extension gives those
+screens a structure: it parses one screenshot into labelled regions (text,
+icons, controls) on your own machine, without sending the screenshot to a
+remote model. Cua Driver then acts on exactly the region the agent chose.
+
+It never replaces the tree and never captures on its own. Without it installed,
+`parse_visual_regions` returns `not_installed`, and agents continue with the
+accessibility tree or page structure. To run the loop step by step, see
+[Parse visual regions](/cua-driver/guides/visual-regions).
+
+### Every action is bound to one screenshot
+
+A region only means something on the screen it was found on, so Cua Driver ties
+each perception-based action to its capture:
+
+| Situation | Result |
+| --- | --- |
+| The click carries the `capture_id` of the screenshot the region came from | Delivered |
+| The same capture is reused for another action | Refused with `capture_not_found` |
+| The capture is older than 60 seconds | Refused with `capture_expired` |
+
+Agents receive region bounds and text, never screenshot bytes, and Cua Driver
+keeps the authority to capture and to act. A stale or reused screen is refused
+instead of guessed at.
+
+### What it contains
+
+Each release packs local models and a CPU runtime, so parsing needs no GPU and
+no network access.
+
+| Component | Role | License |
+| --- | --- | --- |
+| OmniParser icon detector | Finds icons and controls | AGPL-3.0-only |
+| PP-OCR detector and recognizer | Finds and reads on-screen text | Apache-2.0 |
+| ONNX Runtime (CPU) | Runs the models locally | Shipped with its own notices |
+
+Releases are published as `cua-perception-v<version>` GitHub releases for macOS
+arm64, Linux x64, and Windows x64. Each target has a signed catalog, the
+archive, an SBOM, provenance, a runtime contract, and an install check, plus
+one `SHA256SUMS`. Cua Driver verifies the signed catalog before it installs
+anything, and a verified install reports `publisher-verified`.
+
+<Callout type="warning" title="License precautions">
+  The extension is not MIT licensed. Its OmniParser icon detector is AGPL-3.0-only, and Cua does
+  not relicense it. Installing the extension does not change Cua Driver's MIT license, but
+  redistributing the extension, or offering it to users over a network (for example, inside a
+  hosted product), can require you to provide the AGPL corresponding source. If your organization
+  does not accept AGPL components, skip the extension: Cua Driver keeps working, and
+  `parse_visual_regions` returns `not_installed`. This is not legal advice. See the [third-party
+  notices and
+  precautions](https://github.com/trycua/cua/blob/main/libs/cua-driver/docs/perception-third-party-notices.md#before-you-install-redistribute-or-host-the-extension).
+</Callout>
+
+### Install and speed
+
+Capture, parsing, Cua Driver startup, and update checks never install the
+extension. You inspect a catalog first, then install, check, update, or remove
+the extension with `cua-driver extension` commands. A running Driver picks up
+an install or removal without a restart.
+
+Parsing runs on the CPU. Measured per screenshot on the canonical harnesses:
+about 2 to 2.5 seconds on macOS, 3.5 to 4 seconds on Linux, and 8 to 9 seconds
+on Windows. Prefer accessibility or page targets when they exist, and keep
+perception for surfaces that expose nothing addressable.
 
 ## How it is validated
 

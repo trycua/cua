@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Background input injection for Linux via X11 XSendEvent.
 //!
 //! XSendEvent sends synthetic events directly to a window without changing
@@ -11,6 +14,7 @@
 //! them, because XTest delivers to the *focused* window and would break the
 //! no-focus-steal contract.
 
+pub mod action;
 /// Shared `delivery_mode` contract (background|foreground) — mirrors macOS
 /// `tools::DeliveryMode` and Windows `input::delivery`.
 pub mod delivery;
@@ -25,24 +29,26 @@ mod mpx_owner;
 pub mod targeted;
 
 pub use focus_guard::{FocusGuardReport, FocusSnapshot, SameAppWindow};
-pub use foreground::{with_x11_foreground_opts, FocusAfter, ForegroundOptions, ForegroundReport};
+pub use foreground::{FocusAfter, ForegroundOptions, ForegroundReport};
 pub use mpx_keyboard::{
-    real_keyboard_input_available, send_virtual_keyboard_key, send_virtual_keyboard_text,
-    KeyboardDeliveryReport, MPX_UINPUT_PATH,
+    real_keyboard_input_available, send_popup_keyboard_key, send_popup_keyboard_text,
+    send_popup_keyboard_text_paced, send_virtual_keyboard_key, send_virtual_keyboard_text,
+    send_virtual_keyboard_text_paced, KeyboardDeliveryReport, MPX_UINPUT_PATH,
 };
 
 use anyhow::{anyhow, bail, Context, Result};
 use evdev::uinput::VirtualDevice;
 use evdev::{AttributeSet, EventType, InputEvent, Key, RelativeAxisType};
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ffi::{CStr, CString};
 use std::fs;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::ptr;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread::sleep;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use x11rb::connection::Connection;
 use x11rb::protocol::xproto::*;
 use x11rb::rust_connection::RustConnection;
@@ -50,6 +56,51 @@ use x11rb::rust_connection::RustConnection;
 const CLICK_DELAY_MS: u64 = 35;
 const DOUBLE_CLICK_DELAY_MS: u64 = 50;
 const KEY_DELAY_MS: u64 = 10;
+
+/// How `type_text` paces key delivery on X11 (see
+/// [`cua_driver_core::type_pacing`] for the shared contract). The default,
+/// `delay_ms` 0, sends keys back to back with a server round trip every
+/// [`cua_driver_core::type_pacing::BATCH_UNITS`] keys. A positive `delay_ms`
+/// holds each key [`KEY_DELAY_MS`] and then waits `delay_ms`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TypePacing {
+    pub delay_ms: u64,
+}
+
+impl TypePacing {
+    pub fn from_args(args: &serde_json::Value) -> Self {
+        Self {
+            delay_ms: cua_driver_core::type_pacing::delay_from_args(args),
+        }
+    }
+
+    pub fn is_batched(self) -> bool {
+        cua_driver_core::type_pacing::is_batched(self.delay_ms)
+    }
+
+    /// How long a key stays down before its release.
+    pub(crate) fn hold(self) -> Duration {
+        if self.is_batched() {
+            Duration::ZERO
+        } else {
+            Duration::from_millis(KEY_DELAY_MS)
+        }
+    }
+
+    /// The pause after a key's release.
+    pub(crate) fn gap(self) -> Duration {
+        Duration::from_millis(self.delay_ms)
+    }
+
+    /// Whether the key just sent (the `sent`-th) ends a batch and needs a
+    /// server round trip before the next one. Never in paced mode, where each
+    /// key already has its own pause.
+    pub(crate) fn batch_boundary(self, sent: usize) -> bool {
+        self.is_batched() && sent.is_multiple_of(cua_driver_core::type_pacing::BATCH_UNITS)
+    }
+}
+const PING_TIMEOUT: Duration = Duration::from_secs(1);
+static PING_SERIAL: AtomicU32 = AtomicU32::new(1);
 
 #[derive(Clone, Debug)]
 pub struct VirtualPointerDrag {
@@ -152,6 +203,7 @@ static XLIB_THREADS_READY: OnceLock<Result<(), String>> = OnceLock::new();
 static MPX_OP_LOCK: Mutex<()> = Mutex::new(());
 static MPX_LAST_USE: OnceLock<Mutex<HashMap<String, std::time::Instant>>> = OnceLock::new();
 static MPX_IDLE_REAPER: std::sync::Once = std::sync::Once::new();
+static MPX_CLICK_POPUPS: OnceLock<Mutex<HashMap<String, ClickPopups>>> = OnceLock::new();
 /// A session's retained master pair is removed after this much inactivity;
 /// `end_session` and the startup reaper cover the explicit and crash cases.
 /// `XIRemoveMaster` churns the XInput hierarchy, and mutter 42.x segfaults when
@@ -162,6 +214,7 @@ static MPX_IDLE_REAPER: std::sync::Once = std::sync::Once::new();
 /// `end_session`; the startup reaper reclaims anything it misses.
 const MPX_IDLE_TTL: Duration = Duration::from_secs(1800);
 const MPX_IDLE_REAPER_PERIOD: Duration = Duration::from_secs(60);
+const MPX_POPUP_QUIET: Duration = Duration::from_millis(250);
 static MPX_NAME_COUNTER: AtomicU64 = AtomicU64::new(1);
 // evdev 0.12.2 asserts `name.len() + 1 < UINPUT_MAX_NAME_SIZE` while building
 // a device. Linux defines UINPUT_MAX_NAME_SIZE as 80, leaving 78 usable bytes.
@@ -186,6 +239,66 @@ fn mpx_last_use() -> &'static Mutex<HashMap<String, std::time::Instant>> {
     MPX_LAST_USE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+#[derive(Default)]
+struct ClickPopups {
+    windows: Vec<u64>,
+    removal_due: Option<Instant>,
+}
+
+fn mpx_click_popups() -> &'static Mutex<HashMap<String, ClickPopups>> {
+    MPX_CLICK_POPUPS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn mark_mpx_use(cursor_id: &str) {
+    mpx_last_use()
+        .lock()
+        .unwrap()
+        .insert(cursor_id.to_owned(), Instant::now());
+    if let Some(popups) = mpx_click_popups().lock().unwrap().get_mut(cursor_id) {
+        popups.removal_due = None;
+    }
+}
+
+fn track_click_popups(cursor_id: &str, opened: impl IntoIterator<Item = u64>) {
+    let opened: Vec<u64> = opened.into_iter().collect();
+    let mut tracked = mpx_click_popups().lock().unwrap();
+    for (id, popups) in tracked.iter_mut() {
+        if id != cursor_id {
+            popups.windows.retain(|window| !opened.contains(window));
+        }
+    }
+    let windows = &mut tracked.entry(cursor_id.to_owned()).or_default().windows;
+    windows.extend(opened);
+    windows.sort_unstable();
+    windows.dedup();
+}
+
+fn popup_owner(
+    window: u64,
+    appeared: &HashMap<String, ClickPopups>,
+    live: impl Fn(&str) -> bool,
+) -> Option<String> {
+    appeared
+        .iter()
+        .find(|(id, popups)| popups.windows.contains(&window) && live(id))
+        .map(|(id, _)| id.clone())
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("no live session's click opened the popup")]
+pub struct PopupOwnerGone;
+
+fn popup_owner_guard(popup: u64) -> Result<(std::sync::MutexGuard<'static, ()>, String)> {
+    let guard = MPX_OP_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let appeared = mpx_click_popups().lock().unwrap();
+    let pointers = mpx_pointers().lock().unwrap();
+    let owner = popup_owner(popup, &appeared, |id| pointers.contains_key(id));
+    drop((pointers, appeared));
+    Ok((guard, owner.ok_or(PopupOwnerGone)?))
+}
+
 /// Take the MPX operation lock for one call on `cursor_id`, stamp its last
 /// use, and make sure the idle reaper is running. Hold the guard for the
 /// whole operation.
@@ -193,10 +306,7 @@ fn mpx_op_guard(cursor_id: &str) -> std::sync::MutexGuard<'static, ()> {
     let guard = MPX_OP_LOCK
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    mpx_last_use()
-        .lock()
-        .unwrap()
-        .insert(cursor_id.to_owned(), std::time::Instant::now());
+    mark_mpx_use(cursor_id);
     MPX_IDLE_REAPER.call_once(|| {
         std::thread::Builder::new()
             .name("cua-mpx-idle-reaper".into())
@@ -211,7 +321,7 @@ fn mpx_op_guard(cursor_id: &str) -> std::sync::MutexGuard<'static, ()> {
                 };
                 for cursor_id in stale {
                     tracing::info!(cursor_id, "removing idle MPX master pair");
-                    forget_master_pointer(&cursor_id);
+                    forget_master_pointer_locked(&cursor_id);
                 }
             })
             .ok();
@@ -318,6 +428,10 @@ fn master_keyboard_device_name(master_name: &str) -> String {
 }
 
 fn open_display() -> Result<*mut x11::xlib::Display> {
+    open_named_display(ptr::null())
+}
+
+fn open_named_display(name: *const std::ffi::c_char) -> Result<*mut x11::xlib::Display> {
     match XLIB_THREADS_READY.get_or_init(|| {
         let rc = unsafe { x11::xlib::XInitThreads() };
         if rc == 0 {
@@ -329,7 +443,7 @@ fn open_display() -> Result<*mut x11::xlib::Display> {
         Ok(()) => {}
         Err(err) => bail!("{err}"),
     }
-    let display = unsafe { x11::xlib::XOpenDisplay(ptr::null()) };
+    let display = unsafe { x11::xlib::XOpenDisplay(name) };
     if display.is_null() {
         bail!("XOpenDisplay returned null");
     }
@@ -712,7 +826,81 @@ fn ensure_master_pointer_for_session(
 }
 
 pub fn forget_master_pointer(cursor_id: &str) {
-    mpx_last_use().lock().unwrap().remove(cursor_id);
+    let _op = MPX_OP_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    forget_master_pointer_locked(cursor_id);
+}
+
+fn forget_master_pointer_locked(cursor_id: &str) {
+    let mut tracked = mpx_click_popups().lock().unwrap();
+    let mut last_use = mpx_last_use().lock().unwrap();
+    match tracked.get_mut(cursor_id) {
+        Some(popups) if popups.removal_due.is_some() => {}
+        Some(popups) if !popups.windows.is_empty() => {
+            let remove_by = *last_use.get(cursor_id).unwrap_or(&Instant::now()) + MPX_IDLE_TTL;
+            match spawn_popup_waiter(cursor_id.to_owned(), remove_by) {
+                Ok(_) => {
+                    popups.removal_due = Some(remove_by);
+                    last_use.remove(cursor_id);
+                }
+                Err(error) => tracing::warn!(cursor_id, %error, "MPX popup waiter not started"),
+            }
+        }
+        _ => {
+            tracked.remove(cursor_id);
+            last_use.remove(cursor_id);
+            remove_master_pair(cursor_id);
+        }
+    }
+}
+
+fn popups_mapped(windows: &[u64]) -> Option<bool> {
+    let (conn, _) = RustConnection::connect(None).ok()?;
+    let mut mapped = false;
+    for &window in windows {
+        match conn.get_window_attributes(window as Window).ok()?.reply() {
+            Ok(attrs) => mapped |= attrs.map_state == MapState::VIEWABLE,
+            Err(x11rb::errors::ReplyError::X11Error(_)) => {}
+            Err(_) => return None,
+        }
+    }
+    Some(mapped)
+}
+
+fn popup_wait_over(mapped: Option<bool>, quiet: &mut Option<Instant>, remove_by: Instant) -> bool {
+    let now = Instant::now();
+    *quiet = (mapped == Some(false)).then(|| quiet.unwrap_or(now));
+    quiet.is_some_and(|since| now - since >= MPX_POPUP_QUIET) || now >= remove_by
+}
+
+fn spawn_popup_waiter(cursor_id: String, remove_by: Instant) -> Result<()> {
+    std::thread::Builder::new()
+        .name("cua-mpx-popup-wait".into())
+        .spawn(move || {
+            let mut quiet = None;
+            loop {
+                sleep(Duration::from_millis(100));
+                let _op = MPX_OP_LOCK
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                let mut tracked = mpx_click_popups().lock().unwrap();
+                let Some(popups) = tracked.get(&cursor_id) else {
+                    return;
+                };
+                if popups.removal_due != Some(remove_by) {
+                    return;
+                }
+                if popup_wait_over(popups_mapped(&popups.windows), &mut quiet, remove_by) {
+                    tracked.remove(&cursor_id);
+                    return remove_master_pair(&cursor_id);
+                }
+            }
+        })?;
+    Ok(())
+}
+
+fn remove_master_pair(cursor_id: &str) {
     // Drop the uinput slaves first: closing the fds unplugs them, so the master
     // removal below never has to hand a live slave back to the user's core
     // devices (XIAttachToMaster only re-homes slaves that still exist).
@@ -768,7 +956,7 @@ fn remove_master_pointer(display: *mut x11::xlib::Display, pointer_id: i32) -> R
 /// Recover only versioned masters whose local owner is provably gone. A PID
 /// alone cannot identify an owner on a shared/remote X server or across restarts.
 pub(crate) fn reap_orphaned_master_pointers() {
-    if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+    if crate::desktop::desktop() != crate::desktop::Desktop::X11 {
         return;
     }
     let Ok(owner) = mpx_owner::Owner::current() else {
@@ -851,7 +1039,7 @@ fn wait_for_slave_id(
     use_: i32,
     timeout: Duration,
 ) -> Result<i32> {
-    let deadline = std::time::Instant::now() + timeout;
+    let deadline = crate::interaction::operation_deadline(timeout);
     loop {
         for (device_id, seen_use, seen_name) in xi2_query_devices(display)? {
             if seen_use == use_ && seen_name == device_name {
@@ -861,7 +1049,7 @@ fn wait_for_slave_id(
         if std::time::Instant::now() >= deadline {
             bail!("timed out waiting for X input slave device '{device_name}'");
         }
-        sleep(Duration::from_millis(50));
+        crate::interaction::pause(Duration::from_millis(50));
     }
 }
 
@@ -1298,21 +1486,6 @@ fn ewmh_activate_window(
     }
 }
 
-/// Foreground rung for X11 (`delivery_mode:"foreground"`): activate `xid`
-/// (EWMH `_NET_ACTIVE_WINDOW` + core input focus), confirm the transition
-/// against both the WM's active window and the X input-focus tree, then run
-/// `body` (which injects the input while the window holds focus). The target
-/// is left active afterwards; see [`foreground`] for the rationale and the
-/// deadline/watchdog behaviour. `settle_ms` is a minimum confirmation budget.
-pub fn with_x11_foreground<T>(
-    xid: u64,
-    settle_ms: u64,
-    body: impl FnOnce() -> Result<T>,
-) -> Result<T> {
-    with_x11_foreground_opts(xid, ForegroundOptions::from_settle_hint(settle_ms), body)
-        .map(|(value, _report)| value)
-}
-
 /// Activate `xid` and LEAVE it active (no restore) — the persistent foreground
 /// swap behind `bring_to_front`. Returns the window that was active before, so
 /// the caller can report/inspect it. Best-effort; returns `None` prior on a
@@ -1433,11 +1606,8 @@ pub fn send_parallel_virtual_pointer_drags(drags: &[(String, VirtualPointerDrag)
             .map(|(id, _)| id.as_str())
             .unwrap_or("default"),
     );
-    {
-        let mut last_use = mpx_last_use().lock().unwrap();
-        for (cursor_id, _) in drags {
-            last_use.insert(cursor_id.clone(), std::time::Instant::now());
-        }
+    for (cursor_id, _) in drags {
+        mark_mpx_use(cursor_id);
     }
     let display = open_display()?;
     supports_parallel_pointer_injection(display)?;
@@ -1499,7 +1669,7 @@ pub fn send_parallel_virtual_pointer_drags(drags: &[(String, VirtualPointerDrag)
 
         let now = std::time::Instant::now();
         if start_at > now {
-            std::thread::sleep(start_at - now);
+            crate::interaction::pause(start_at - now);
         }
 
         // Press each drag straight from its virtual master (see
@@ -1523,7 +1693,7 @@ pub fn send_parallel_virtual_pointer_drags(drags: &[(String, VirtualPointerDrag)
                 emit_button(&mut device, item.drag.button, true)?;
             }
         }
-        sleep(Duration::from_millis(40));
+        crate::interaction::pause(Duration::from_millis(40));
 
         while active.iter().any(|item| item.current_step < item.steps) {
             let now = std::time::Instant::now();
@@ -1571,7 +1741,7 @@ pub fn send_parallel_virtual_pointer_drags(drags: &[(String, VirtualPointerDrag)
                 if let Some(deadline) = next_deadline {
                     let now = std::time::Instant::now();
                     if deadline > now {
-                        std::thread::sleep(deadline - now);
+                        crate::interaction::pause(deadline - now);
                     }
                 }
             }
@@ -1800,11 +1970,7 @@ fn popup_info(display: *mut x11::xlib::Display, child: x11::xlib::Window) -> Opt
     if attrs.width <= 1 || attrs.height <= 1 {
         return None;
     }
-    let pid = crate::x11::window_pid(child).or_else(|| {
-        window_children(display, child)
-            .into_iter()
-            .find_map(crate::x11::window_pid)
-    });
+    let pid = window_or_child_pid(display, child);
     Some(PopupWindow {
         window: child,
         x: attrs.x,
@@ -1813,6 +1979,14 @@ fn popup_info(display: *mut x11::xlib::Display, child: x11::xlib::Window) -> Opt
         height: attrs.height as u32,
         title: window_title_for_report(display, child),
         pid,
+    })
+}
+
+fn window_or_child_pid(display: *mut x11::xlib::Display, window: x11::xlib::Window) -> Option<u32> {
+    crate::x11::window_pid(window).or_else(|| {
+        window_children(display, window)
+            .into_iter()
+            .find_map(crate::x11::window_pid)
     })
 }
 
@@ -2391,8 +2565,7 @@ fn window_title_for_report(display: *mut x11::xlib::Display, window: x11::xlib::
     title.unwrap_or_default()
 }
 
-/// Direct children of `window` (empty on error). Caller installs the error
-/// handler.
+/// Direct children of `window` (empty on error).
 fn window_children(
     display: *mut x11::xlib::Display,
     window: x11::xlib::Window,
@@ -2401,6 +2574,7 @@ fn window_children(
     let mut parent: x11::xlib::Window = 0;
     let mut children: *mut x11::xlib::Window = ptr::null_mut();
     let mut count: std::os::raw::c_uint = 0;
+    let previous_handler = unsafe { x11::xlib::XSetErrorHandler(Some(ignore_x_error)) };
     let rc = unsafe {
         x11::xlib::XQueryTree(
             display,
@@ -2411,6 +2585,7 @@ fn window_children(
             &mut count,
         )
     };
+    unsafe { x11::xlib::XSetErrorHandler(previous_handler) };
     if rc == 0 || children.is_null() {
         return Vec::new();
     }
@@ -2525,7 +2700,7 @@ fn pointer_effect(
     y: i32,
 ) -> PointerEffect {
     unsafe { x11::xlib::XSync(display, 0) };
-    sleep(EFFECT_SETTLE);
+    crate::interaction::pause(EFFECT_SETTLE);
     let after = root_region_pixels(x, y);
     let popups = new_popups(popups_before, mapped_popups(display));
     let foreign_window = foreign_window_effect(foreign_before);
@@ -2554,10 +2729,6 @@ pub fn send_virtual_pointer_click(
     click: &VirtualPointerClick,
 ) -> Result<PointerEffect> {
     let _op = mpx_op_guard(cursor_id);
-    mpx_last_use()
-        .lock()
-        .unwrap()
-        .insert(cursor_id.to_owned(), std::time::Instant::now());
     let display = open_display()?;
     supports_parallel_pointer_injection(display)?;
     let saved_focus = save_focus_state(display);
@@ -2597,14 +2768,14 @@ pub fn send_virtual_pointer_click(
                     emit_button(&mut device, click.button, true)?;
                     // A real press and release are separate evdev frames; give
                     // the toolkit a press it can see before the release lands.
-                    sleep(Duration::from_millis(press_ms));
+                    crate::interaction::pause(Duration::from_millis(press_ms));
                     emit_button(&mut device, click.button, false)?;
                 }
                 // Multi-click cadence: keep press→press well under the toolkit
                 // double-click threshold (GTK default 250 ms) so count=2 lands
                 // as a real double-click, not two singles.
                 if count > 1 && i + 1 < count {
-                    sleep(Duration::from_millis(gap_ms));
+                    crate::interaction::pause(Duration::from_millis(gap_ms));
                 }
             }
             Ok(())
@@ -2624,6 +2795,19 @@ pub fn send_virtual_pointer_click(
             click.y,
         );
         effect.retargeted_to = retargeted_to;
+        let target_pid = if effect.popups.is_empty() {
+            None
+        } else {
+            window_or_child_pid(display, click.target_window as x11::xlib::Window)
+        };
+        track_click_popups(
+            cursor_id,
+            effect
+                .popups
+                .iter()
+                .filter(|popup| popup.pid.is_some() && popup.pid == target_pid)
+                .map(|popup| popup.window),
+        );
         Ok(effect)
     })();
 
@@ -2643,10 +2827,6 @@ pub fn send_virtual_pointer_drag(
     drag: &VirtualPointerDrag,
 ) -> Result<PointerEffect> {
     let _op = mpx_op_guard(cursor_id);
-    mpx_last_use()
-        .lock()
-        .unwrap()
-        .insert(cursor_id.to_owned(), std::time::Instant::now());
     let display = open_display()?;
     supports_parallel_pointer_injection(display)?;
     let saved_focus = save_focus_state(display);
@@ -2687,7 +2867,7 @@ pub fn send_virtual_pointer_drag(
             }
             // Let the toolkit register the press (and arm its drag threshold)
             // before the first motion.
-            sleep(Duration::from_millis(40));
+            crate::interaction::pause(Duration::from_millis(40));
             let (mut last_x, mut last_y) = start;
             for step in 1..=steps {
                 let t = step as f64 / steps as f64;
@@ -2707,12 +2887,12 @@ pub fn send_virtual_pointer_drag(
                 }
                 last_x = ix;
                 last_y = iy;
-                sleep(step_delay);
+                crate::interaction::pause(step_delay);
             }
             // Relative motion accumulates libinput rounding; pin the release
             // to the exact end point before letting go.
             warp_master_pointer(display, ids, end.0, end.1)?;
-            sleep(Duration::from_millis(20));
+            crate::interaction::pause(Duration::from_millis(20));
             let mut device = device.lock().unwrap();
             emit_button(&mut device, drag.button, false)?;
             Ok(())
@@ -2786,7 +2966,7 @@ pub fn send_virtual_pointer_scroll(cursor_id: &str, scroll: &VirtualPointerScrol
                 let mut device = device.lock().unwrap();
                 emit_scroll(&mut device, scroll.horizontal, unit)?;
             }
-            sleep(Duration::from_millis(CLICK_DELAY_MS));
+            crate::interaction::pause(Duration::from_millis(CLICK_DELAY_MS));
         }
         Ok(())
     })();
@@ -2828,6 +3008,10 @@ unsafe extern "C" fn ignore_x_error(
 }
 
 fn restore_focus_state(display: *mut x11::xlib::Display, saved: &SavedFocus) {
+    let cleanup = std::time::Instant::now() + crate::interaction::CLEANUP_CAP;
+    let nap = |wait: Duration| {
+        sleep(wait.min(cleanup.saturating_duration_since(std::time::Instant::now())))
+    };
     // Let the release/focus events from the drag settle before reading the
     // post-drag state, so we don't race the WM's own focus update.
     unsafe { x11::xlib::XSync(display, 0) };
@@ -2839,7 +3023,7 @@ fn restore_focus_state(display: *mut x11::xlib::Display, saved: &SavedFocus) {
         if ewmh_active_window(display) == Some(prev) {
             let mut stable = 0;
             for _ in 0..4 {
-                sleep(Duration::from_millis(25));
+                nap(Duration::from_millis(25));
                 if ewmh_active_window(display) == Some(prev) {
                     stable += 1;
                 } else {
@@ -2858,15 +3042,36 @@ fn restore_focus_state(display: *mut x11::xlib::Display, saved: &SavedFocus) {
         // ours has landed — so don't stop at first success: require the
         // active window to hold stable for consecutive checks, re-sending on
         // every regression, within a bounded budget.
-        sleep(Duration::from_millis(300));
+        let name = unsafe { std::ffi::CStr::from_ptr(x11::xlib::XDisplayString(display)) };
+        let conn = name
+            .to_str()
+            .ok()
+            .and_then(|name| RustConnection::connect(Some(name)).ok())
+            .map(|(conn, _)| conn);
+        let prev_pid = conn
+            .as_ref()
+            .zip(u32::try_from(prev).ok())
+            .and_then(|(conn, prev)| crate::x11::get_window_pid(conn, prev).ok().flatten());
+        let own_dialog = |now: Option<x11::xlib::Window>| match (&conn, prev_pid, now) {
+            (Some(conn), Some(pid), Some(now)) => now != prev && is_own_dialog(conn, pid, now),
+            _ => false,
+        };
+        if own_dialog(ewmh_active_window(display)) || !window_exists(display, prev) {
+            return;
+        }
+        nap(Duration::from_millis(150));
         let mut stable = 0;
-        for attempt in 0..15 {
+        let mut attempt = 0;
+        while std::time::Instant::now() < cleanup {
+            attempt += 1;
             let now = ewmh_active_window(display);
             if now == Some(prev) {
                 stable += 1;
                 if stable >= 3 {
                     return;
                 }
+            } else if own_dialog(now) || !window_exists(display, prev) {
+                return;
             } else {
                 stable = 0;
                 // MPX clicks can leave a core-protocol WM believing the
@@ -2876,7 +3081,7 @@ fn restore_focus_state(display: *mut x11::xlib::Display, saved: &SavedFocus) {
                 // updates. Bounce the core focus onto the window the WM
                 // believes active so the activation produces a real focus
                 // transition the WM can observe.
-                if attempt >= 2 {
+                if attempt > 2 {
                     if let Some(now_win) = now {
                         unsafe {
                             let prev_handler = x11::xlib::XSetErrorHandler(Some(ignore_x_error));
@@ -2889,12 +3094,12 @@ fn restore_focus_state(display: *mut x11::xlib::Display, saved: &SavedFocus) {
                             x11::xlib::XSync(display, 0);
                             x11::xlib::XSetErrorHandler(prev_handler);
                         }
-                        sleep(Duration::from_millis(100));
+                        nap(Duration::from_millis(50));
                     }
                 }
                 ewmh_activate_window(display, prev, now.unwrap_or(0));
             }
-            sleep(Duration::from_millis(200));
+            nap(Duration::from_millis(50));
         }
         if stable == 0 {
             tracing::warn!("focus restore: WM did not re-activate 0x{prev:x}");
@@ -2926,6 +3131,48 @@ fn restore_focus_state(display: *mut x11::xlib::Display, saved: &SavedFocus) {
         x11::xlib::XSync(display, 0);
         x11::xlib::XSetErrorHandler(prev_handler);
     }
+}
+
+/// Whether `window` still exists; a click that closed the saved window leaves
+/// nothing to restore.
+fn window_exists(display: *mut x11::xlib::Display, window: x11::xlib::Window) -> bool {
+    unsafe {
+        let prev_handler = x11::xlib::XSetErrorHandler(Some(ignore_x_error));
+        let mut attributes: x11::xlib::XWindowAttributes = std::mem::zeroed();
+        let exists = x11::xlib::XGetWindowAttributes(display, window, &mut attributes) != 0;
+        x11::xlib::XSetErrorHandler(prev_handler);
+        exists
+    }
+}
+
+fn is_own_dialog(conn: &RustConnection, previous_pid: u32, active: x11::xlib::Window) -> bool {
+    let Ok(active) = u32::try_from(active) else {
+        return false;
+    };
+    if crate::x11::get_window_pid(conn, active).ok().flatten() != Some(previous_pid) {
+        return false;
+    }
+    let windows = |property: Atom, kind: Atom| -> Vec<u32> {
+        conn.get_property(false, active, property, kind, 0, 32)
+            .ok()
+            .and_then(|cookie| cookie.reply().ok())
+            .and_then(|reply| reply.value32().map(|values| values.collect()))
+            .unwrap_or_default()
+    };
+    if windows(AtomEnum::WM_TRANSIENT_FOR.into(), AtomEnum::WINDOW.into())
+        .iter()
+        .any(|&parent| parent != x11rb::NONE)
+    {
+        return true;
+    }
+    let atom = |name: &str| crate::x11::get_atom(conn, name).ok();
+    let (Some(window_type), Some(dialog)) = (
+        atom("_NET_WM_WINDOW_TYPE"),
+        atom("_NET_WM_WINDOW_TYPE_DIALOG"),
+    ) else {
+        return false;
+    };
+    windows(window_type, AtomEnum::ATOM.into()).contains(&dialog)
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -3069,12 +3316,115 @@ fn connect_x11_for_input() -> Result<(RustConnection, usize)> {
     if let Some(reason) = crate::wayland::wayland_input_unavailable_reason() {
         bail!("{reason}");
     }
-    RustConnection::connect(None).map_err(|e| {
+    let (conn, screen) = RustConnection::connect(None).map_err(|e| {
         anyhow!(
             "cannot inject input: X11 connection failed (DISPLAY={:?}): {e}",
             std::env::var("DISPLAY").ok()
         )
-    })
+    })?;
+    action::fence(conn.stream())?;
+    Ok((conn, screen))
+}
+
+fn admitted<T, E: Into<anyhow::Error>>(send: impl FnOnce() -> Result<T, E>) -> Result<T> {
+    action::admit(send)?.map_err(Into::into)
+}
+
+/// How long dropping an abandoned call's [`Delivered`] waits for its
+/// releases. It bounds the wait only: the releasing thread is not stopped,
+/// and keeps the call's desktop lease until its X11 requests return.
+const ABANDONED_RELEASE_WAIT: Duration = Duration::from_secs(2);
+
+/// XTest presses this call queued, and whether each is still held. A route
+/// releases what is held on its own connection, even after a failure.
+/// Abandoning the call shuts that connection, so the releases it still owes
+/// cannot go out there: dropping this then sends them on a fresh connection
+/// from a thread that holds the call's [`action::Action`], and with it the
+/// desktop, until those releases are done. The drop waits for them at most
+/// [`ABANDONED_RELEASE_WAIT`]; past it the thread still holds the desktop.
+/// The server ignores a release for a key or button that is already up.
+#[derive(Default)]
+struct Delivered(Vec<(u8, u8, bool)>);
+
+impl Delivered {
+    fn press<C>(
+        &mut self,
+        kind: u8,
+        detail: u8,
+        send: impl FnOnce() -> Result<C, x11rb::errors::ConnectionError>,
+    ) -> Result<C> {
+        let sent = admitted(send)?;
+        self.0.push((kind + 1, detail, true));
+        Ok(sent)
+    }
+
+    /// The release of the latest held `detail` pressed by `kind + 1` went out.
+    fn released(&mut self, release: u8, detail: u8) {
+        if let Some(press) = self
+            .0
+            .iter_mut()
+            .rev()
+            .find(|press| **press == (release, detail, true))
+        {
+            press.2 = false;
+        }
+    }
+
+    /// Release on `conn` whatever is still held, latest first.
+    fn release_held(&mut self, conn: &RustConnection) -> Result<()> {
+        use x11rb::protocol::xtest::ConnectionExt as _;
+        let mut result = Ok(());
+        for (release, detail, held) in self.0.iter_mut().rev().filter(|press| press.2) {
+            *held = false;
+            if let Err(error) = conn.xtest_fake_input(*release, *detail, 0, x11rb::NONE, 0, 0, 0) {
+                result = result.and(Err(error.into()));
+            }
+        }
+        result
+    }
+
+    /// The server took every release: nothing is owed after abandon.
+    fn confirmed(&mut self) {
+        self.0.clear();
+    }
+}
+
+impl Drop for Delivered {
+    fn drop(&mut self) {
+        let Some(action) = action::current().filter(|action| action.is_abandoned()) else {
+            return;
+        };
+        if self.0.is_empty() {
+            return;
+        }
+        let presses = self
+            .0
+            .drain(..)
+            .map(|(release, detail, _)| (release, detail));
+        if let Err(error) = release_abandoned(action, presses.collect()) {
+            tracing::warn!("releasing the input of an abandoned call failed: {error:#}");
+        }
+    }
+}
+
+fn release_abandoned(action: Arc<action::Action>, presses: Vec<(u8, u8)>) -> Result<()> {
+    use x11rb::protocol::xtest::ConnectionExt as _;
+    let (done, finished) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _desktop = action;
+        let released = (|| -> Result<()> {
+            let (conn, _) = RustConnection::connect(None)?;
+            for &(kind, detail) in presses.iter().rev() {
+                conn.xtest_fake_input(kind, detail, 0, x11rb::NONE, 0, 0, 0)?;
+            }
+            conn.get_input_focus()?.reply()?;
+            Ok(())
+        })();
+        let _ = done.send(released);
+    });
+    finished.recv_timeout(ABANDONED_RELEASE_WAIT).map_err(|_| {
+        anyhow!("the X server did not take the releases within {ABANDONED_RELEASE_WAIT:?}")
+    })?
 }
 
 /// Send a synthetic FocusIn event to a window without changing the actual X11 input focus.
@@ -3092,7 +3442,7 @@ pub fn send_focus_in(xid: u64) -> Result<()> {
         mode: NotifyMode::NORMAL,
     };
 
-    conn.send_event(false, window, EventMask::FOCUS_CHANGE, focus_in)?;
+    admitted(|| conn.send_event(false, window, EventMask::FOCUS_CHANGE, focus_in))?;
     conn.flush()?;
     Ok(())
 }
@@ -3110,7 +3460,7 @@ pub fn send_focus_out(xid: u64) -> Result<()> {
         mode: NotifyMode::NORMAL,
     };
 
-    conn.send_event(false, window, EventMask::FOCUS_CHANGE, focus_out)?;
+    admitted(|| conn.send_event(false, window, EventMask::FOCUS_CHANGE, focus_out))?;
     conn.flush()?;
     Ok(())
 }
@@ -3184,120 +3534,19 @@ pub fn send_click_with_modifiers(
         // The event mask selects recipients independently of the payload type.
         // Select the press client for both payloads so a press-only toolkit
         // binding (such as Tk's <Button-1>) receives one coherent click.
-        conn.send_event(false, target.window, EventMask::BUTTON_PRESS, press)?
+        admitted(|| conn.send_event(false, target.window, EventMask::BUTTON_PRESS, press))?
             .check()?;
-        sleep(Duration::from_millis(CLICK_DELAY_MS));
-        conn.send_event(false, target.window, EventMask::BUTTON_PRESS, release)?
+        crate::interaction::pause(Duration::from_millis(CLICK_DELAY_MS));
+        admitted(|| conn.send_event(false, target.window, EventMask::BUTTON_PRESS, release))?
             .check()?;
 
         if count > 1 {
-            sleep(Duration::from_millis(80));
+            crate::interaction::pause(Duration::from_millis(80));
         }
     }
     settle_synthetic_events(&conn);
     Ok(())
 }
-
-/// Send a press-drag-release gesture via XSendEvent (ButtonPress + MotionNotify steps + ButtonRelease).
-///
-/// `xid` — target window XID. `from_x/y`, `to_x/y` — window-local coords.
-/// `duration_ms` — total budget. `steps` — interpolated MotionNotify events.
-/// `button` — X11 button number (1=left, 2=middle, 3=right).
-pub fn send_drag(
-    xid: u64,
-    from: (i32, i32),
-    to: (i32, i32),
-    duration_ms: u64,
-    steps: usize,
-    button: u8,
-) -> Result<()> {
-    let ((from_x, from_y), (to_x, to_y)) = (from, to);
-    let (conn, _) = connect_x11_for_input()?;
-    let root = conn.setup().roots[0].root;
-    let steps = steps.max(1);
-    let step_delay_ms = if steps > 1 {
-        duration_ms / steps as u64
-    } else {
-        duration_ms
-    };
-    let press_target = resolve_event_target(&conn, xid, from_x, from_y)?;
-
-    // ButtonPress at start.
-    let press = ButtonPressEvent {
-        response_type: BUTTON_PRESS_EVENT,
-        detail: button,
-        sequence: 0,
-        time: x11rb::CURRENT_TIME,
-        root,
-        event: press_target.window,
-        child: x11rb::NONE,
-        root_x: press_target.root_x,
-        root_y: press_target.root_y,
-        event_x: press_target.local_x,
-        event_y: press_target.local_y,
-        state: KeyButMask::from(0u16),
-        same_screen: true,
-    };
-    conn.send_event(false, press_target.window, EventMask::BUTTON_PRESS, press)?;
-    conn.flush()?;
-    sleep(Duration::from_millis(CLICK_DELAY_MS));
-
-    // Interpolated MotionNotify steps.
-    for i in 1..=steps {
-        let t = i as f64 / steps as f64;
-        let ix = from_x + ((to_x - from_x) as f64 * t).round() as i32;
-        let iy = from_y + ((to_y - from_y) as f64 * t).round() as i32;
-        let target = resolve_event_target(&conn, xid, ix, iy)?;
-        let motion = MotionNotifyEvent {
-            response_type: MOTION_NOTIFY_EVENT,
-            detail: Motion::NORMAL,
-            sequence: 0,
-            time: x11rb::CURRENT_TIME,
-            root,
-            event: target.window,
-            child: x11rb::NONE,
-            root_x: target.root_x,
-            root_y: target.root_y,
-            event_x: target.local_x,
-            event_y: target.local_y,
-            state: button_state_mask(button),
-            same_screen: true,
-        };
-        conn.send_event(false, target.window, EventMask::POINTER_MOTION, motion)?;
-        conn.flush()?;
-        if step_delay_ms > 0 {
-            sleep(Duration::from_millis(step_delay_ms));
-        }
-    }
-
-    // ButtonRelease at end.
-    let release_target = resolve_event_target(&conn, xid, to_x, to_y)?;
-    let release = ButtonReleaseEvent {
-        response_type: BUTTON_RELEASE_EVENT,
-        detail: button,
-        sequence: 0,
-        time: x11rb::CURRENT_TIME,
-        root,
-        event: release_target.window,
-        child: x11rb::NONE,
-        root_x: release_target.root_x,
-        root_y: release_target.root_y,
-        event_x: release_target.local_x,
-        event_y: release_target.local_y,
-        state: button_state_mask(button),
-        same_screen: true,
-    };
-    conn.send_event(
-        false,
-        release_target.window,
-        EventMask::BUTTON_RELEASE,
-        release,
-    )?;
-    conn.flush()?;
-    settle_synthetic_events(&conn);
-    Ok(())
-}
-
 pub fn send_button_down(xid: u64, x: i32, y: i32, button: u8) -> Result<()> {
     let (conn, _) = connect_x11_for_input()?;
     let root = conn.setup().roots[0].root;
@@ -3317,8 +3566,7 @@ pub fn send_button_down(xid: u64, x: i32, y: i32, button: u8) -> Result<()> {
         state: KeyButMask::from(0u16),
         same_screen: true,
     };
-    conn.send_event(false, target.window, EventMask::BUTTON_PRESS, &press)?
-        .check()?;
+    admitted(|| conn.send_event(false, target.window, EventMask::BUTTON_PRESS, press))?.check()?;
     settle_synthetic_events(&conn);
     Ok(())
 }
@@ -3344,7 +3592,7 @@ pub fn send_motion(xid: u64, x: i32, y: i32, button: Option<u8>) -> Result<()> {
             .unwrap_or_else(|| KeyButMask::from(0u16)),
         same_screen: true,
     };
-    conn.send_event(false, target.window, EventMask::POINTER_MOTION, motion)?;
+    admitted(|| conn.send_event(false, target.window, EventMask::POINTER_MOTION, motion))?;
     conn.flush()?;
     settle_synthetic_events(&conn);
     Ok(())
@@ -3369,7 +3617,7 @@ pub fn send_button_up(xid: u64, x: i32, y: i32, button: u8) -> Result<()> {
         state: button_state_mask(button),
         same_screen: true,
     };
-    conn.send_event(false, target.window, EventMask::BUTTON_RELEASE, &release)?
+    conn.send_event(false, target.window, EventMask::BUTTON_RELEASE, release)?
         .check()?;
     settle_synthetic_events(&conn);
     Ok(())
@@ -3380,85 +3628,187 @@ pub fn send_type_text(xid: u64, text: &str) -> Result<()> {
     send_type_text_with_delay(xid, text, 0)
 }
 
+/// Pause for `d` unless it is zero.
+fn pause_unless_zero(d: Duration) {
+    if !d.is_zero() {
+        crate::interaction::pause(d);
+    }
+}
+
+fn type_text_with_preflight<G>(
+    text: &str,
+    keymap: &GetKeyboardMappingReply,
+    mut remap: impl FnMut(char, &mut GetKeyboardMappingReply) -> Result<(u8, Option<G>)>,
+    mut send: impl FnMut(u8, bool) -> Result<()>,
+) -> Result<Vec<G>> {
+    let mut mapping = keymap.clone();
+    let mut guards = Vec::new();
+    let mut resolved = std::collections::HashMap::new();
+    let mut keys = Vec::new();
+    for ch in text.chars() {
+        let key = match resolved.get(&ch).copied() {
+            Some(key) => key,
+            None => {
+                let key = match char_to_keycode_shift(&mapping, mpx_keyboard::keysym_for_char(ch)) {
+                    Some(key) => key,
+                    None => {
+                        let (keycode, guard) = remap(ch, &mut mapping).map_err(|error| {
+                            let needed = text
+                                .chars()
+                                .map(mpx_keyboard::keysym_for_char)
+                                .filter(|keysym| !keymap.keysyms.contains(keysym))
+                                .collect::<std::collections::HashSet<_>>()
+                                .len();
+                            anyhow::anyhow!(
+                                "typed 0 of {} characters: the text needs {needed} spare keycodes: {error:#}",
+                                text.chars().count()
+                            )
+                        })?;
+                        guards.extend(guard);
+                        (keycode, false)
+                    }
+                };
+                resolved.insert(ch, key);
+                key
+            }
+        };
+        keys.push(key);
+    }
+    for (keycode, needs_shift) in keys {
+        send(keycode, needs_shift)?;
+    }
+    Ok(guards)
+}
+
+fn type_text_in_spare_batches<G>(
+    text: &str,
+    mapping: &GetKeyboardMappingReply,
+    mut remap: impl FnMut(char, &mut GetKeyboardMappingReply) -> Result<(u8, Option<G>)>,
+    mut send: impl FnMut(u8, bool) -> Result<()>,
+    mut finish: impl FnMut() -> bool,
+) -> Result<()> {
+    let total = text.chars().count();
+    let spares = match mapping.keysyms_per_keycode as usize {
+        0 => 0,
+        per => mapping
+            .keysyms
+            .chunks(per)
+            .enumerate()
+            .filter(|&(i, syms)| is_spare_keycode(8 + i, syms))
+            .count(),
+    };
+    let mut rest = text.chars().peekable();
+    let mut typed = 0;
+    while rest.peek().is_some() {
+        let mut mapping = mapping.clone();
+        let mut guards = Vec::new();
+        let mut resolved = std::collections::HashMap::new();
+        let mut remapped = 0;
+        let mut keys = Vec::new();
+        while let Some(&ch) = rest.peek() {
+            let key = match resolved
+                .get(&ch)
+                .copied()
+                .or_else(|| char_to_keycode_shift(&mapping, mpx_keyboard::keysym_for_char(ch)))
+            {
+                Some(key) => key,
+                None if spares > 0 && remapped == spares => break,
+                None => {
+                    let (keycode, guard) = remap(ch, &mut mapping).map_err(|error| {
+                        anyhow::anyhow!("typed {typed} of {total} characters: {error:#}")
+                    })?;
+                    remapped += 1;
+                    guards.extend(guard);
+                    resolved.insert(ch, (keycode, false));
+                    (keycode, false)
+                }
+            };
+            keys.push(key);
+            rest.next();
+        }
+        for (keycode, needs_shift) in keys {
+            send(keycode, needs_shift)?;
+            typed += 1;
+        }
+        if !finish() && rest.peek().is_some() {
+            bail!(
+                "typed {typed} of {total} characters: the client has not confirmed reading the keys on the spare keycodes the next characters need"
+            );
+        }
+    }
+    Ok(())
+}
+
 /// Type a string with an additional `inter_char_ms` delay between each character.
 pub fn send_type_text_with_delay(xid: u64, text: &str, inter_char_ms: u64) -> Result<()> {
+    let pacing = TypePacing {
+        delay_ms: inter_char_ms,
+    };
+    let sent = std::cell::Cell::new(0usize);
     let (conn, _) = connect_x11_for_input()?;
     let window = xid as u32;
     let root = conn.setup().roots[0].root;
     let mapping = conn.get_keyboard_mapping(8, 248)?.reply()?;
-    // Remap guards live until the function returns: a character outside the
-    // keymap (CJK, emoji, ...) borrows a spare keycode rather than being
-    // silently dropped — see keycode_for_keysym's doc and the analogous fix
-    // in mpx_keyboard::plan_text_with_fallback for the background path.
-    let mut remap_guards = Vec::new();
-
-    for ch in text.chars() {
-        // Resolve the keycode and whether Shift must be held — without it,
-        // uppercase and shifted symbols would otherwise type their unshifted
-        // form (e.g. "A" arriving as "a").
-        let (keycode, needs_shift) =
-            match char_to_keycode_shift(&mapping, mpx_keyboard::keysym_for_char(ch)) {
-                Some(found) => found,
-                None => match keycode_for_keysym(
-                    &conn,
-                    &mapping,
-                    mpx_keyboard::keysym_for_char(ch),
-                    &ch.to_string(),
-                ) {
-                    Ok((keycode, guard)) => {
-                        remap_guards.extend(guard);
-                        (keycode, false)
-                    }
-                    Err(_) => continue,
-                },
+    let client = RefCell::new(TextClient::new(&conn, Some(window)));
+    type_text_in_spare_batches(
+        text,
+        &mapping,
+        |ch, mapping| text_keycode(&mut client.borrow_mut(), mapping, ch),
+        |keycode, needs_shift| {
+            client.borrow_mut().record_recipient(keycode);
+            let state = if needs_shift {
+                KeyButMask::SHIFT
+            } else {
+                KeyButMask::from(0u16)
             };
-        let state = if needs_shift {
-            KeyButMask::SHIFT
-        } else {
-            KeyButMask::from(0u16)
-        };
 
-        let press = KeyPressEvent {
-            response_type: KEY_PRESS_EVENT,
-            detail: keycode,
-            sequence: 0,
-            time: x11rb::CURRENT_TIME,
-            root,
-            event: window,
-            child: x11rb::NONE,
-            root_x: 0,
-            root_y: 0,
-            event_x: 0,
-            event_y: 0,
-            state,
-            same_screen: true,
-        };
-        let release = KeyReleaseEvent {
-            response_type: KEY_RELEASE_EVENT,
-            detail: keycode,
-            sequence: 0,
-            time: x11rb::CURRENT_TIME,
-            root,
-            event: window,
-            child: x11rb::NONE,
-            root_x: 0,
-            root_y: 0,
-            event_x: 0,
-            event_y: 0,
-            state,
-            same_screen: true,
-        };
+            let press = KeyPressEvent {
+                response_type: KEY_PRESS_EVENT,
+                detail: keycode,
+                sequence: 0,
+                time: x11rb::CURRENT_TIME,
+                root,
+                event: window,
+                child: x11rb::NONE,
+                root_x: 0,
+                root_y: 0,
+                event_x: 0,
+                event_y: 0,
+                state,
+                same_screen: true,
+            };
+            let release = KeyReleaseEvent {
+                response_type: KEY_RELEASE_EVENT,
+                detail: keycode,
+                sequence: 0,
+                time: x11rb::CURRENT_TIME,
+                root,
+                event: window,
+                child: x11rb::NONE,
+                root_x: 0,
+                root_y: 0,
+                event_x: 0,
+                event_y: 0,
+                state,
+                same_screen: true,
+            };
 
-        conn.send_event(false, window, EventMask::KEY_PRESS, press)?;
-        // Start the hold interval after sending the press, not while it is buffered.
-        conn.flush()?;
-        sleep(Duration::from_millis(KEY_DELAY_MS));
-        conn.send_event(false, window, EventMask::KEY_RELEASE, release)?;
-        conn.flush()?;
-        if inter_char_ms > 0 {
-            sleep(Duration::from_millis(inter_char_ms));
-        }
-    }
+            admitted(|| conn.send_event(false, window, EventMask::KEY_PRESS, press))?;
+            // Start the hold interval after sending the press, not while it is buffered.
+            conn.flush()?;
+            pause_unless_zero(pacing.hold());
+            conn.send_event(false, window, EventMask::KEY_RELEASE, release)?;
+            conn.flush()?;
+            pause_unless_zero(pacing.gap());
+            sent.set(sent.get() + 1);
+            if pacing.batch_boundary(sent.get()) {
+                // Bound what the client has queued before sending more.
+                conn.get_input_focus()?.reply()?;
+            }
+            Ok(())
+        },
+        || client.borrow_mut().release(),
+    )?;
     // Deliver the final release before this short-lived connection closes.
     conn.get_input_focus()?.reply()?;
     Ok(())
@@ -3472,7 +3822,13 @@ pub fn send_type_text_with_delay(xid: u64, text: &str, inter_char_ms: u64) -> Re
 /// argument because XTest always delivers to the focused window; the caller
 /// focuses the target by clicking it first. `\n`/`\t` map to Return/Tab.
 pub fn send_type_text_xtest(text: &str) -> Result<()> {
+    send_type_text_xtest_paced(text, TypePacing::default())
+}
+
+/// [`send_type_text_xtest`] with the `delay_ms` contract in `pacing`.
+pub fn send_type_text_xtest_paced(text: &str, pacing: TypePacing) -> Result<()> {
     use x11rb::protocol::xtest::ConnectionExt as _;
+    let sent = std::cell::Cell::new(0usize);
     let (conn, _) = connect_x11_for_input()?;
     let mapping = conn.get_keyboard_mapping(8, 248)?.reply()?;
     // Shift keycode (modifier index 0) for shifted characters.
@@ -3483,31 +3839,35 @@ pub fn send_type_text_xtest(text: &str) -> Result<()> {
         .get(..kpm)
         .and_then(|s| s.iter().copied().find(|&k| k != 0))
         .unwrap_or(50);
-    // Remap guards live until the function returns — see send_type_text_with_delay.
-    let mut remap_guards = Vec::new();
-    for ch in text.chars() {
-        let cp = mpx_keyboard::keysym_for_char(ch);
-        let (keycode, needs_shift) = match char_to_keycode_shift(&mapping, cp) {
-            Some(found) => found,
-            None => match keycode_for_keysym(&conn, &mapping, cp, &ch.to_string()) {
-                Ok((keycode, guard)) => {
-                    remap_guards.extend(guard);
-                    (keycode, false)
-                }
-                Err(_) => continue,
-            },
-        };
-        if needs_shift {
-            conn.xtest_fake_input(KEY_PRESS_EVENT, shift_kc, 0, x11rb::NONE, 0, 0, 0)?;
-        }
-        conn.xtest_fake_input(KEY_PRESS_EVENT, keycode, 0, x11rb::NONE, 0, 0, 0)?;
-        conn.xtest_fake_input(KEY_RELEASE_EVENT, keycode, 0, x11rb::NONE, 0, 0, 0)?;
-        if needs_shift {
-            conn.xtest_fake_input(KEY_RELEASE_EVENT, shift_kc, 0, x11rb::NONE, 0, 0, 0)?;
-        }
-        conn.flush()?;
-        sleep(Duration::from_millis(KEY_DELAY_MS));
-    }
+    let client = RefCell::new(TextClient::new(&conn, None));
+    type_text_in_spare_batches(
+        text,
+        &mapping,
+        |ch, mapping| text_keycode(&mut client.borrow_mut(), mapping, ch),
+        |keycode, needs_shift| {
+            client.borrow_mut().record_recipient(keycode);
+            let mut delivered = Delivered::default();
+            for kc in needs_shift.then_some(shift_kc).into_iter().chain([keycode]) {
+                delivered.press(KEY_PRESS_EVENT, kc, || {
+                    conn.xtest_fake_input(KEY_PRESS_EVENT, kc, 0, x11rb::NONE, 0, 0, 0)
+                })?;
+            }
+            conn.xtest_fake_input(KEY_RELEASE_EVENT, keycode, 0, x11rb::NONE, 0, 0, 0)?;
+            if needs_shift {
+                conn.xtest_fake_input(KEY_RELEASE_EVENT, shift_kc, 0, x11rb::NONE, 0, 0, 0)?;
+            }
+            conn.flush()?;
+            delivered.confirmed();
+            pause_unless_zero(pacing.hold() + pacing.gap());
+            sent.set(sent.get() + 1);
+            if pacing.batch_boundary(sent.get()) {
+                // Bound what the server and client have queued before sending more.
+                conn.get_input_focus()?.reply()?;
+            }
+            Ok(())
+        },
+        || client.borrow_mut().release(),
+    )?;
     // Round-trip so the server delivers the final character's key events before
     // this short-lived connection drops (see send_key_xtest — keyboard XTEST
     // events queued on a connection that closes immediately can be lost).
@@ -3532,7 +3892,7 @@ pub fn send_type_text_xtest(text: &str) -> Result<()> {
 pub fn send_key_xtest(key: &str, modifiers: &[&str]) -> Result<()> {
     use x11rb::protocol::xtest::ConnectionExt as _;
     let (conn, _) = connect_x11_for_input()?;
-    let mapping = conn.get_keyboard_mapping(8, 248)?.reply()?;
+    let mut mapping = conn.get_keyboard_mapping(8, 248)?.reply()?;
 
     // Resolve modifier keycodes first. Keep any spare-keycode remap guards alive
     // until after the events are delivered (drop at end of fn).
@@ -3540,7 +3900,7 @@ pub fn send_key_xtest(key: &str, modifiers: &[&str]) -> Result<()> {
     let mut mod_keycodes = Vec::new();
     for m in modifiers {
         let ks = key_name_to_keysym(m)?;
-        let (kc, guard) = keycode_for_keysym(&conn, &mapping, ks, m)?;
+        let (kc, guard) = keycode_for_keysym(&conn, &mut mapping, ks, m)?;
         if let Some(g) = guard {
             guards.push(g);
         }
@@ -3558,7 +3918,7 @@ pub fn send_key_xtest(key: &str, modifiers: &[&str]) -> Result<()> {
     let (keycode, needs_shift) = match char_to_keycode_shift(&mapping, keysym) {
         Some(found) => found,
         None => {
-            let (kc, guard) = keycode_for_keysym(&conn, &mapping, keysym, key)?;
+            let (kc, guard) = keycode_for_keysym(&conn, &mut mapping, keysym, key)?;
             if let Some(g) = guard {
                 guards.push(g);
             }
@@ -3582,16 +3942,20 @@ pub fn send_key_xtest(key: &str, modifiers: &[&str]) -> Result<()> {
     };
 
     // Press modifiers (+ auto-Shift), tap the key, release in reverse order.
-    for &kc in &mod_keycodes {
-        conn.xtest_fake_input(KEY_PRESS_EVENT, kc, 0, x11rb::NONE, 0, 0, 0)?;
+    let mut delivered = Delivered::default();
+    for kc in mod_keycodes
+        .iter()
+        .copied()
+        .chain(auto_shift_kc)
+        .chain([keycode])
+    {
+        delivered.press(KEY_PRESS_EVENT, kc, || {
+            conn.xtest_fake_input(KEY_PRESS_EVENT, kc, 0, x11rb::NONE, 0, 0, 0)
+        })?;
     }
-    if let Some(sk) = auto_shift_kc {
-        conn.xtest_fake_input(KEY_PRESS_EVENT, sk, 0, x11rb::NONE, 0, 0, 0)?;
-    }
-    conn.xtest_fake_input(KEY_PRESS_EVENT, keycode, 0, x11rb::NONE, 0, 0, 0)?;
     // Flush modifiers and key-down before measuring the delivered hold interval.
     conn.flush()?;
-    sleep(Duration::from_millis(KEY_DELAY_MS));
+    crate::interaction::pause(Duration::from_millis(KEY_DELAY_MS));
     conn.xtest_fake_input(KEY_RELEASE_EVENT, keycode, 0, x11rb::NONE, 0, 0, 0)?;
     if let Some(sk) = auto_shift_kc {
         conn.xtest_fake_input(KEY_RELEASE_EVENT, sk, 0, x11rb::NONE, 0, 0, 0)?;
@@ -3600,6 +3964,7 @@ pub fn send_key_xtest(key: &str, modifiers: &[&str]) -> Result<()> {
         conn.xtest_fake_input(KEY_RELEASE_EVENT, kc, 0, x11rb::NONE, 0, 0, 0)?;
     }
     conn.flush()?;
+    delivered.confirmed();
 
     // Round-trip so the server actually PROCESSES (delivers) the injected XTEST
     // key events before this function returns and drops its short-lived
@@ -3647,70 +4012,57 @@ pub fn send_click_xtest_desktop_with_modifiers(
     use x11rb::protocol::xtest::ConnectionExt as _;
     let (conn, screen_num) = connect_x11_for_input()?;
     let root = conn.setup().roots[screen_num].root;
-    let mapping = conn.get_keyboard_mapping(8, 248)?.reply()?;
+    let mut mapping = conn.get_keyboard_mapping(8, 248)?.reply()?;
     let mut guards = Vec::new();
     let mut modifier_keycodes = Vec::new();
     for modifier in modifiers {
         let keysym = key_name_to_keysym(modifier)?;
-        let (keycode, guard) = keycode_for_keysym(&conn, &mapping, keysym, modifier)?;
+        let (keycode, guard) = keycode_for_keysym(&conn, &mut mapping, keysym, modifier)?;
         if let Some(guard) = guard {
             guards.push(guard);
         }
         modifier_keycodes.push(keycode);
     }
-    let mut pressed = Vec::new();
-    let mut button_pressed = false;
+    let mut delivered = Delivered::default();
     let gesture_result = (|| -> Result<()> {
         for &keycode in &modifier_keycodes {
-            conn.xtest_fake_input(KEY_PRESS_EVENT, keycode, 0, x11rb::NONE, 0, 0, 0)?;
-            pressed.push(keycode);
+            delivered.press(KEY_PRESS_EVENT, keycode, || {
+                conn.xtest_fake_input(KEY_PRESS_EVENT, keycode, 0, x11rb::NONE, 0, 0, 0)
+            })?;
         }
         // Absolute pointer warp (MotionNotify, detail=0 => absolute) so the
         // button events that follow are delivered at (x, y).
-        conn.xtest_fake_input(MOTION_NOTIFY_EVENT, 0, 0, root, x as i16, y as i16, 0)?;
+        admitted(|| conn.xtest_fake_input(MOTION_NOTIFY_EVENT, 0, 0, root, x as i16, y as i16, 0))?;
         let count = count.max(1);
         for click_index in 0..count {
-            let press =
-                conn.xtest_fake_input(BUTTON_PRESS_EVENT, button, 0, root, x as i16, y as i16, 0)?;
+            let press = delivered.press(BUTTON_PRESS_EVENT, button, || {
+                conn.xtest_fake_input(BUTTON_PRESS_EVENT, button, 0, root, x as i16, y as i16, 0)
+            })?;
             // Confirm delivery before sleeping; buffering both edges produces a zero-ms click.
             press.check()?;
-            button_pressed = true;
-            sleep(Duration::from_millis(CLICK_DELAY_MS));
+            crate::interaction::pause(Duration::from_millis(CLICK_DELAY_MS));
             conn.xtest_fake_input(BUTTON_RELEASE_EVENT, button, 0, root, x as i16, y as i16, 0)?
                 .check()?;
-            button_pressed = false;
+            delivered.released(BUTTON_RELEASE_EVENT, button);
             if click_index + 1 < count {
                 // Keep the existing gap between completed click pairs.
-                sleep(Duration::from_millis(DOUBLE_CLICK_DELAY_MS));
+                crate::interaction::pause(Duration::from_millis(DOUBLE_CLICK_DELAY_MS));
             }
         }
         Ok(())
     })();
 
     // Attempt all releases after a partial failure. Do not strand buttons or modifiers.
-    let mut release_result: Result<()> = Ok(());
-    if button_pressed {
-        release_result = (|| -> Result<()> {
-            conn.xtest_fake_input(BUTTON_RELEASE_EVENT, button, 0, root, x as i16, y as i16, 0)?
-                .check()?;
-            Ok(())
-        })();
-    }
-    for &keycode in pressed.iter().rev() {
-        if let Err(error) =
-            conn.xtest_fake_input(KEY_RELEASE_EVENT, keycode, 0, x11rb::NONE, 0, 0, 0)
-        {
-            if release_result.is_ok() {
-                release_result = Err(error.into());
-            }
-        }
-    }
+    let release_result = delivered.release_held(&conn);
     // Complete queued modifier releases before the short-lived connection closes,
     // while preserving the primary gesture or cleanup error when one exists.
     let completion_result = (|| -> Result<()> {
         conn.get_input_focus()?.reply()?;
         Ok(())
     })();
+    if completion_result.is_ok() {
+        delivered.confirmed();
+    }
     drop(guards);
     gesture_result?;
     release_result?;
@@ -3723,7 +4075,7 @@ pub fn send_move_xtest_desktop(x: i32, y: i32) -> Result<()> {
     use x11rb::protocol::xtest::ConnectionExt as _;
     let (conn, screen_num) = connect_x11_for_input()?;
     let root = conn.setup().roots[screen_num].root;
-    conn.xtest_fake_input(MOTION_NOTIFY_EVENT, 0, 0, root, x as i16, y as i16, 0)?;
+    admitted(|| conn.xtest_fake_input(MOTION_NOTIFY_EVENT, 0, 0, root, x as i16, y as i16, 0))?;
     conn.flush()?;
     let _ = conn.get_input_focus()?.reply();
     Ok(())
@@ -3742,42 +4094,21 @@ pub fn send_scroll_xtest_desktop(x: i32, y: i32, direction: &str, amount: usize)
     };
     let (conn, screen_num) = connect_x11_for_input()?;
     let root = conn.setup().roots[screen_num].root;
-    conn.xtest_fake_input(MOTION_NOTIFY_EVENT, 0, 0, root, x as i16, y as i16, 0)?;
+    admitted(|| conn.xtest_fake_input(MOTION_NOTIFY_EVENT, 0, 0, root, x as i16, y as i16, 0))?;
+    let mut delivered = Delivered::default();
     for _ in 0..amount.max(1) {
-        conn.xtest_fake_input(BUTTON_PRESS_EVENT, button, 0, root, x as i16, y as i16, 0)?;
+        delivered.press(BUTTON_PRESS_EVENT, button, || {
+            conn.xtest_fake_input(BUTTON_PRESS_EVENT, button, 0, root, x as i16, y as i16, 0)
+        })?;
         conn.xtest_fake_input(BUTTON_RELEASE_EVENT, button, 0, root, x as i16, y as i16, 0)?;
     }
     conn.flush()?;
+    delivered.confirmed();
     let _ = conn.get_input_focus()?.reply();
     Ok(())
 }
 
-/// Screen-absolute drag via XTest. The caller activates the target first; XTest
-/// then supplies one real press, interpolated pointer motion, and one release.
-/// This is the foreground counterpart to the window-addressed XSendEvent drag.
-pub fn send_drag_xtest_desktop(
-    from_x: i32,
-    from_y: i32,
-    to_x: i32,
-    to_y: i32,
-    button: u8,
-    duration_ms: u64,
-    steps: usize,
-) -> Result<()> {
-    send_drag_xtest_desktop_with_modifiers(
-        from_x,
-        from_y,
-        to_x,
-        to_y,
-        button,
-        duration_ms,
-        steps,
-        &[],
-    )
-}
-
-/// Screen-absolute drag via XTest with physical modifier transitions around
-/// the complete press/motion/release gesture.
+#[allow(clippy::too_many_arguments)]
 pub fn send_drag_xtest_desktop_with_modifiers(
     from_x: i32,
     from_y: i32,
@@ -3791,12 +4122,12 @@ pub fn send_drag_xtest_desktop_with_modifiers(
     use x11rb::protocol::xtest::ConnectionExt as _;
     let (conn, screen_num) = connect_x11_for_input()?;
     let root = conn.setup().roots[screen_num].root;
-    let mapping = conn.get_keyboard_mapping(8, 248)?.reply()?;
+    let mut mapping = conn.get_keyboard_mapping(8, 248)?.reply()?;
     let mut guards = Vec::new();
     let mut modifier_keycodes = Vec::new();
     for modifier in modifiers {
         let keysym = key_name_to_keysym(modifier)?;
-        let (keycode, guard) = keycode_for_keysym(&conn, &mapping, keysym, modifier)?;
+        let (keycode, guard) = keycode_for_keysym(&conn, &mut mapping, keysym, modifier)?;
         if let Some(guard) = guard {
             guards.push(guard);
         }
@@ -3804,50 +4135,55 @@ pub fn send_drag_xtest_desktop_with_modifiers(
     }
     let steps = steps.max(1);
     let delay = duration_ms / steps as u64;
-    let mut pressed_modifiers = Vec::new();
-    let mut button_pressed = false;
+    let mut delivered = Delivered::default();
 
     let gesture_result = (|| -> Result<()> {
         for &keycode in &modifier_keycodes {
-            conn.xtest_fake_input(KEY_PRESS_EVENT, keycode, 0, x11rb::NONE, 0, 0, 0)?;
-            pressed_modifiers.push(keycode);
+            delivered.press(KEY_PRESS_EVENT, keycode, || {
+                conn.xtest_fake_input(KEY_PRESS_EVENT, keycode, 0, x11rb::NONE, 0, 0, 0)
+            })?;
         }
-        conn.xtest_fake_input(
-            MOTION_NOTIFY_EVENT,
-            0,
-            0,
-            root,
-            from_x as i16,
-            from_y as i16,
-            0,
-        )?;
-        conn.xtest_fake_input(
-            BUTTON_PRESS_EVENT,
-            button,
-            0,
-            root,
-            from_x as i16,
-            from_y as i16,
-            0,
-        )?;
-        button_pressed = true;
-        conn.flush()?;
-        for step in 1..=steps {
-            let t = step as f64 / steps as f64;
-            let x = from_x as f64 + (to_x - from_x) as f64 * t;
-            let y = from_y as f64 + (to_y - from_y) as f64 * t;
+        admitted(|| {
             conn.xtest_fake_input(
                 MOTION_NOTIFY_EVENT,
                 0,
                 0,
                 root,
-                x.round() as i16,
-                y.round() as i16,
+                from_x as i16,
+                from_y as i16,
                 0,
-            )?;
+            )
+        })?;
+        delivered.press(BUTTON_PRESS_EVENT, button, || {
+            conn.xtest_fake_input(
+                BUTTON_PRESS_EVENT,
+                button,
+                0,
+                root,
+                from_x as i16,
+                from_y as i16,
+                0,
+            )
+        })?;
+        conn.flush()?;
+        for step in 1..=steps {
+            let t = step as f64 / steps as f64;
+            let x = from_x as f64 + (to_x - from_x) as f64 * t;
+            let y = from_y as f64 + (to_y - from_y) as f64 * t;
+            admitted(|| {
+                conn.xtest_fake_input(
+                    MOTION_NOTIFY_EVENT,
+                    0,
+                    0,
+                    root,
+                    x.round() as i16,
+                    y.round() as i16,
+                    0,
+                )
+            })?;
             conn.flush()?;
             if delay > 0 {
-                sleep(Duration::from_millis(delay));
+                crate::interaction::pause(Duration::from_millis(delay));
             }
         }
         conn.xtest_fake_input(
@@ -3859,39 +4195,18 @@ pub fn send_drag_xtest_desktop_with_modifiers(
             to_y as i16,
             0,
         )?;
-        button_pressed = false;
+        delivered.released(BUTTON_RELEASE_EVENT, button);
         Ok(())
     })();
 
     // Always attempt to release the button and every modifier queued above,
     // including when a later motion request fails.
-    let mut cleanup_result: Result<()> = Ok(());
-    if button_pressed {
-        if let Err(error) = conn.xtest_fake_input(
-            BUTTON_RELEASE_EVENT,
-            button,
-            0,
-            root,
-            to_x as i16,
-            to_y as i16,
-            0,
-        ) {
-            cleanup_result = Err(error.into());
-        }
-    }
-    for &keycode in pressed_modifiers.iter().rev() {
-        if let Err(error) =
-            conn.xtest_fake_input(KEY_RELEASE_EVENT, keycode, 0, x11rb::NONE, 0, 0, 0)
-        {
-            if cleanup_result.is_ok() {
-                cleanup_result = Err(error.into());
-            }
-        }
-    }
+    let mut cleanup_result = delivered.release_held(&conn);
     if let Err(error) = conn.flush() {
-        if cleanup_result.is_ok() {
-            cleanup_result = Err(error.into());
-        }
+        cleanup_result = cleanup_result.and(Err(error.into()));
+    }
+    if cleanup_result.is_ok() {
+        delivered.confirmed();
     }
     let _ = conn.get_input_focus()?.reply();
     drop(guards);
@@ -3932,8 +4247,8 @@ fn send_key_to_target(
     // `keycode_for_keysym` instead borrows a spare keycode and hands back a guard
     // that restores the original mapping once the event has been delivered.
     let keysym = key_name_to_keysym(key)?;
-    let mapping = conn.get_keyboard_mapping(8, 248)?.reply()?;
-    let (keycode, remap_guard) = keycode_for_keysym(&conn, &mapping, keysym, key)?;
+    let mut mapping = conn.get_keyboard_mapping(8, 248)?.reply()?;
+    let (keycode, remap_guard) = keycode_for_keysym(&conn, &mut mapping, keysym, key)?;
 
     // XSendEvent's state mask describes modifiers for one key event, but does
     // not update Chromium's internal modifier state by itself. Emit the
@@ -3945,7 +4260,7 @@ fn send_key_to_target(
     for modifier in modifiers {
         let modifier_keysym = key_name_to_keysym(modifier)?;
         let (modifier_keycode, guard) =
-            keycode_for_keysym(&conn, &mapping, modifier_keysym, modifier)?;
+            keycode_for_keysym(&conn, &mut mapping, modifier_keysym, modifier)?;
         if let Some(guard) = guard {
             remap_guards.push(guard);
         }
@@ -3968,7 +4283,7 @@ fn send_key_to_target(
             state,
             same_screen: true,
         };
-        conn.send_event(false, window, event_mask, event)
+        admitted(|| conn.send_event(false, window, event_mask, event))
     };
 
     let mut state_bits = 0u16;
@@ -3985,7 +4300,7 @@ fn send_key_to_target(
     send_key_event(KEY_PRESS_EVENT, keycode, state, EventMask::KEY_PRESS)?;
     // Otherwise X11 receives both transitions together after the sleep.
     conn.flush()?;
-    sleep(Duration::from_millis(KEY_DELAY_MS));
+    crate::interaction::pause(Duration::from_millis(KEY_DELAY_MS));
     send_key_event(KEY_RELEASE_EVENT, keycode, state, EventMask::KEY_RELEASE)?;
     for &(modifier_keycode, modifier_mask) in modifier_keycodes.iter().rev() {
         send_key_event(
@@ -4100,8 +4415,443 @@ pub(crate) fn key_name_to_keysym(key: &str) -> Result<u32> {
 }
 
 #[cfg(test)]
+mod admission_tests {
+    use super::*;
+
+    #[test]
+    fn an_x11_send_past_its_action_is_refused_before_it_is_queued() {
+        let action = action::Action::new(Duration::from_secs(60));
+        let _bound = action::bind(action.clone());
+        assert_eq!(admitted(|| Ok::<_, anyhow::Error>(1)).unwrap(), 1);
+        action.abandon();
+        admitted(|| -> Result<()> { panic!("queued after abandon") }).unwrap_err();
+
+        let _expired = action::bind(action::Action::new(Duration::ZERO));
+        admitted(|| -> Result<()> { panic!("queued past the deadline") }).unwrap_err();
+    }
+
+    #[test]
+    fn a_drag_abandoned_after_its_press_still_releases_the_button() {
+        use std::io::{BufRead, BufReader};
+        struct Server(std::process::Child);
+        impl Drop for Server {
+            fn drop(&mut self) {
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+            }
+        }
+        let mut server = Server(
+            std::process::Command::new("Xvfb")
+                .args(["-displayfd", "1", "-nolisten", "tcp"])
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .expect("install xvfb to run X11 input tests"),
+        );
+        let mut number = String::new();
+        BufReader::new(server.0.stdout.take().unwrap())
+            .read_line(&mut number)
+            .unwrap();
+        let display = format!(":{}", number.trim());
+        let _display = crate::test_env::x11_display(&display);
+        let action = action::Action::new(Duration::from_secs(60));
+        let dragging = {
+            let action = action.clone();
+            std::thread::spawn(move || {
+                let _bound = action::bind(action);
+                send_drag_xtest_desktop_with_modifiers(10, 10, 200, 200, 1, 3000, 30, &[])
+            })
+        };
+        let (observer, screen) = RustConnection::connect(Some(&display)).unwrap();
+        let root = observer.setup().roots[screen].root;
+        let held = || {
+            let mask = observer.query_pointer(root).unwrap().reply().unwrap().mask;
+            mask.contains(KeyButMask::BUTTON1)
+        };
+        let pressed_by = std::time::Instant::now() + Duration::from_secs(2);
+        while !held() {
+            assert!(
+                std::time::Instant::now() < pressed_by,
+                "the drag never pressed"
+            );
+            sleep(Duration::from_millis(20));
+        }
+        action.abandon();
+        dragging.join().unwrap().unwrap_err();
+        assert!(!held(), "the abandoned drag left button 1 held");
+    }
+}
+
+#[cfg(test)]
+mod own_dialog_tests {
+    use super::*;
+    use std::io::{BufRead, BufReader};
+    use std::process::{Command, Stdio};
+    use x11rb::protocol::Event;
+    use x11rb::wrapper::ConnectionExt as _;
+
+    struct Server(std::process::Child);
+    impl Drop for Server {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+    fn set32(conn: &RustConnection, win: u32, name: &str, ty: AtomEnum, values: &[u32]) {
+        let atom = crate::x11::get_atom(conn, name).unwrap();
+        conn.change_property32(PropMode::REPLACE, win, atom, ty, values)
+            .unwrap();
+    }
+    #[test]
+    fn focus_restore_leaves_focus_on_a_dialog_the_app_opened() {
+        let mut server = Server(
+            Command::new("Xvfb")
+                .args(["-displayfd", "1", "-nolisten", "tcp"])
+                .stdout(Stdio::piped())
+                .spawn()
+                .expect("install xvfb to run focus tests"),
+        );
+        let mut number = String::new();
+        BufReader::new(server.0.stdout.take().unwrap())
+            .read_line(&mut number)
+            .unwrap();
+        let name = format!(":{}", number.trim());
+        let (conn, screen) = RustConnection::connect(Some(&name)).unwrap();
+        let root = conn.setup().roots[screen].root;
+        let window = |pid, transient| {
+            let win = conn.generate_id().unwrap();
+            conn.create_window(
+                0,
+                win,
+                root,
+                0,
+                0,
+                50,
+                50,
+                0,
+                WindowClass::INPUT_OUTPUT,
+                0,
+                &CreateWindowAux::new(),
+            )
+            .unwrap();
+            if pid != 0 {
+                set32(&conn, win, "_NET_WM_PID", AtomEnum::CARDINAL, &[pid]);
+            }
+            if transient != 0 {
+                set32(
+                    &conn,
+                    win,
+                    "WM_TRANSIENT_FOR",
+                    AtomEnum::WINDOW,
+                    &[transient],
+                );
+            }
+            conn.map_window(win).unwrap();
+            win
+        };
+        let main = window(4242, 0);
+        let dialog = window(4242, main);
+        let sibling = window(4242, 0);
+        let foreign = window(4343, main);
+        let typed = window(4242, 0);
+        let pidless = window(0, main);
+        set32(
+            &conn,
+            typed,
+            "_NET_WM_WINDOW_TYPE",
+            AtomEnum::ATOM,
+            &[crate::x11::get_atom(&conn, "_NET_WM_WINDOW_TYPE_DIALOG").unwrap()],
+        );
+        assert!(is_own_dialog(&conn, 4242, dialog.into()));
+        assert!(is_own_dialog(&conn, 4242, typed.into()));
+        for win in [sibling, foreign, pidless] {
+            assert!(!is_own_dialog(&conn, 4242, win.into()));
+        }
+        conn.get_input_focus().unwrap().reply().unwrap();
+        let cname = std::ffi::CString::new(name.clone()).unwrap();
+        let display = open_named_display(cname.as_ptr()).unwrap();
+        // The WM honors every activation, except the first delayed request opens a dialog.
+        for delayed in [false, true] {
+            let (wm, _) = RustConnection::connect(Some(&name)).unwrap();
+            wm.change_window_attributes(
+                root,
+                &ChangeWindowAttributesAux::new().event_mask(EventMask::SUBSTRUCTURE_REDIRECT),
+            )
+            .unwrap()
+            .check()
+            .unwrap();
+            set32(
+                &conn,
+                root,
+                "_NET_ACTIVE_WINDOW",
+                AtomEnum::WINDOW,
+                &[sibling],
+            );
+            conn.set_input_focus(InputFocus::PARENT, sibling, 0u32)
+                .unwrap();
+            conn.get_input_focus().unwrap().reply().unwrap();
+            let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let done = stop.clone();
+            let thread = std::thread::spawn(move || {
+                let mut first = delayed;
+                while !done.load(std::sync::atomic::Ordering::Relaxed) {
+                    match wm.poll_for_event().unwrap() {
+                        Some(Event::ClientMessage(event)) => {
+                            let target = if first { dialog } else { event.window };
+                            first = false;
+                            set32(&wm, root, "_NET_ACTIVE_WINDOW", AtomEnum::WINDOW, &[target]);
+                            wm.set_input_focus(InputFocus::PARENT, target, 0u32)
+                                .unwrap();
+                            wm.flush().unwrap();
+                        }
+                        _ => std::thread::sleep(Duration::from_millis(1)),
+                    }
+                }
+            });
+            restore_focus_state(
+                display,
+                &SavedFocus {
+                    ewmh_active: Some(main.into()),
+                    core_focus: 0,
+                    core_revert_to: 0,
+                },
+            );
+            let focus = conn.get_input_focus().unwrap().reply().unwrap().focus;
+            stop.store(true, std::sync::atomic::Ordering::Relaxed);
+            thread.join().unwrap();
+            assert_eq!(focus, if delayed { dialog } else { main });
+        }
+        // A click that closed the saved window leaves nothing to re-activate.
+        let (wm, _) = RustConnection::connect(Some(&name)).unwrap();
+        wm.change_window_attributes(
+            root,
+            &ChangeWindowAttributesAux::new().event_mask(EventMask::SUBSTRUCTURE_REDIRECT),
+        )
+        .unwrap()
+        .check()
+        .unwrap();
+        set32(
+            &conn,
+            root,
+            "_NET_ACTIVE_WINDOW",
+            AtomEnum::WINDOW,
+            &[sibling],
+        );
+        conn.destroy_window(main).unwrap();
+        conn.get_input_focus().unwrap().reply().unwrap();
+        restore_focus_state(
+            display,
+            &SavedFocus {
+                ewmh_active: Some(main.into()),
+                core_focus: 0,
+                core_revert_to: 0,
+            },
+        );
+        let mut activations = 0;
+        while let Some(event) = wm.poll_for_event().unwrap() {
+            activations += usize::from(matches!(event, Event::ClientMessage(_)));
+        }
+        assert_eq!(activations, 0);
+        unsafe { x11::xlib::XCloseDisplay(display) };
+    }
+}
+
+#[cfg(test)]
 mod key_name_alias_tests {
-    use super::key_name_to_keysym;
+    use super::{
+        char_to_keycode_shift, key_name_to_keysym, reserve_spare_keycode,
+        type_text_in_spare_batches, GetKeyboardMappingReply,
+    };
+
+    #[test]
+    fn text_batches_types_more_distinct_unmapped_characters_than_spares() {
+        use std::cell::RefCell;
+        struct Restore<'a>(u8, &'a RefCell<Vec<(&'static str, u8)>>);
+        impl Drop for Restore<'_> {
+            fn drop(&mut self) {
+                self.1.borrow_mut().push(("restore", self.0));
+            }
+        }
+        let mapping = GetKeyboardMappingReply {
+            keysyms_per_keycode: 2,
+            sequence: 0,
+            keysyms: vec!['a' as u32, 'A' as u32, 0, 0, 0, 0],
+        };
+        let log = RefCell::new(Vec::new());
+        type_text_in_spare_batches(
+            "a你好你世a世",
+            &mapping,
+            |ch, mapping| {
+                reserve_spare_keycode(
+                    mapping,
+                    super::mpx_keyboard::keysym_for_char(ch),
+                    |spare, _, _, _| {
+                        log.borrow_mut().push(("remap", spare));
+                        Ok(Restore(spare, &log))
+                    },
+                )
+                .map(|(keycode, guard)| (keycode, Some(guard)))
+            },
+            |keycode, _| {
+                log.borrow_mut().push(("send", keycode));
+                Ok(())
+            },
+            || true,
+        )
+        .unwrap();
+        assert_eq!(
+            log.into_inner(),
+            [
+                ("remap", 10),
+                ("remap", 9),
+                ("send", 8),
+                ("send", 10),
+                ("send", 9),
+                ("send", 10),
+                ("restore", 10),
+                ("restore", 9),
+                ("remap", 10),
+                ("send", 10),
+                ("send", 8),
+                ("send", 10),
+                ("restore", 10),
+            ]
+        );
+    }
+
+    #[test]
+    fn spare_keycodes_skip_keycode_8() {
+        let mut mapping = GetKeyboardMappingReply {
+            keysyms_per_keycode: 2,
+            sequence: 0,
+            keysyms: vec![0, 0, 0, 0, 'a' as u32, 'A' as u32],
+        };
+        let mut reserve = || reserve_spare_keycode(&mut mapping, 0x100_4f60, |_, _, _, _| Ok(()));
+        assert_eq!(reserve().unwrap().0, 9);
+        assert_eq!(
+            reserve().unwrap_err().to_string(),
+            "no spare keycode available to remap keysym 0x1004F60"
+        );
+    }
+
+    #[test]
+    fn text_batches_do_not_count_keycode_8_as_spare() {
+        let mapping = GetKeyboardMappingReply {
+            keysyms_per_keycode: 2,
+            sequence: 0,
+            keysyms: vec![0, 0, 0, 0, 'a' as u32, 'A' as u32],
+        };
+        let mut events = Vec::new();
+        type_text_in_spare_batches(
+            "你好",
+            &mapping,
+            |ch, mapping| {
+                reserve_spare_keycode(
+                    mapping,
+                    super::mpx_keyboard::keysym_for_char(ch),
+                    |_, _, _, _| Ok(()),
+                )
+                .map(|(keycode, guard)| (keycode, Some(guard)))
+            },
+            |keycode, _| {
+                events.push(keycode);
+                Ok(())
+            },
+            || true,
+        )
+        .unwrap();
+        assert_eq!(events, [9, 9]);
+    }
+
+    #[test]
+    fn text_batches_reports_progress_when_a_later_batch_fails() {
+        let mapping = GetKeyboardMappingReply {
+            keysyms_per_keycode: 2,
+            sequence: 0,
+            keysyms: vec!['a' as u32, 'A' as u32, 0, 0],
+        };
+        let mut events = Vec::new();
+        let error = type_text_in_spare_batches::<()>(
+            "你a好",
+            &mapping,
+            |ch, _| match ch {
+                '你' => Ok((9, None)),
+                _ => anyhow::bail!("keymap changed"),
+            },
+            |keycode, _| {
+                events.push(keycode);
+                Ok(())
+            },
+            || true,
+        )
+        .unwrap_err();
+        assert_eq!(error.to_string(), "typed 2 of 3 characters: keymap changed");
+        assert_eq!(events, [9, 8]);
+    }
+
+    #[test]
+    fn text_batches_stop_before_rebinding_keycodes_the_client_has_not_read() {
+        let mapping = GetKeyboardMappingReply {
+            keysyms_per_keycode: 2,
+            sequence: 0,
+            keysyms: vec!['a' as u32, 'A' as u32, 0, 0],
+        };
+        for (text, result) in [
+            ("你", Ok(vec![9])),
+            ("你好", Err("typed 1 of 2 characters: the client has not confirmed reading the keys on the spare keycodes the next characters need")),
+        ] {
+            let mut events = Vec::new();
+            let typed = type_text_in_spare_batches(
+                text,
+                &mapping,
+                |ch, mapping| {
+                    reserve_spare_keycode(
+                        mapping,
+                        super::mpx_keyboard::keysym_for_char(ch),
+                        |_, _, _, _| Ok(()),
+                    )
+                    .map(|(keycode, guard)| (keycode, Some(guard)))
+                },
+                |keycode, _| {
+                    events.push(keycode);
+                    Ok(())
+                },
+                || false,
+            )
+            .map(|()| events)
+            .map_err(|error| error.to_string());
+            assert_eq!(typed, result.map_err(String::from), "{text}");
+        }
+    }
+
+    #[test]
+    fn shifted_column_glyphs_need_shift_and_base_glyphs_do_not() {
+        let per = 2usize;
+        let mut keysyms = vec![0u32; (248 - 8 + 1) * per];
+        let mut set = |keycode: usize, syms: [u32; 2]| {
+            let idx = (keycode - 8) * per;
+            keysyms[idx..idx + per].copy_from_slice(&syms);
+        };
+        set(43, [0x68, 0x48]);
+        set(11, [0x32, 0x40]);
+        let mapping = GetKeyboardMappingReply {
+            keysyms_per_keycode: per as u8,
+            sequence: 0,
+            keysyms,
+        };
+        for (ch, keycode, needs_shift) in [
+            ('H', 43, true),
+            ('@', 11, true),
+            ('h', 43, false),
+            ('2', 11, false),
+        ] {
+            assert_eq!(
+                char_to_keycode_shift(&mapping, ch as u32),
+                Some((keycode, needs_shift)),
+                "{ch:?}"
+            );
+        }
+    }
 
     #[test]
     fn common_key_name_aliases_resolve_to_the_expected_keysym() {
@@ -4143,43 +4893,44 @@ pub(crate) struct RemappedKeycode<'a> {
 
 impl Drop for RemappedKeycode<'_> {
     fn drop(&mut self) {
-        // Best-effort restore: re-install the original keysyms for this keycode
-        // and flush. Errors are swallowed deliberately — Drop must not panic in
-        // the daemon, and the worst case of a failed restore is a single spare
-        // keycode left mapped (it was unused to begin with), never a crash.
         let _ = self.conn.change_keyboard_mapping(
             1,
             self.keycode,
             self.keysyms_per_keycode,
             &self.original_keysyms,
         );
-        let _ = self.conn.flush();
+        let _ = self.conn.get_input_focus().map(|cookie| cookie.reply());
     }
 }
 
-/// Temporarily bind `keysym` onto a spare (fully unused) keycode so it can be
-/// injected even when no existing keycode emits it. Returns a guard that
-/// restores the original mapping on drop. Errors only if the keymap has no free
-/// keycode left to borrow.
-fn remap_spare_keycode<'a>(
-    conn: &'a RustConnection,
-    mapping: &GetKeyboardMappingReply,
+/// Whether a text may borrow `keycode`: every keysym slot is NoSymbol (0) — i.e.
+/// completely unused — so borrowing it cannot clobber a real key. Keycode 8 is
+/// evdev KEY_RESERVED, which a virtual keyboard cannot send, so it is never
+/// borrowed.
+fn is_spare_keycode(keycode: usize, keysyms: &[u32]) -> bool {
+    keycode > 8 && keysyms.iter().all(|&s| s == 0)
+}
+
+/// Reserve a fully unused keycode for `keysym`, calling `bind` before updating
+/// the local mapping. Returns the keycode and the value produced by `bind`.
+fn reserve_spare_keycode<G>(
+    mapping: &mut GetKeyboardMappingReply,
     keysym: u32,
-) -> Result<RemappedKeycode<'a>> {
+    mut bind: impl FnMut(u8, u8, &[u32], &[u32]) -> Result<G>,
+) -> Result<(u8, G)> {
     let per = mapping.keysyms_per_keycode as usize;
     if per == 0 {
         bail!("empty keyboard mapping; cannot remap keysym 0x{keysym:X}");
     }
 
-    // Find a keycode whose every keysym slot is NoSymbol (0) — i.e. completely
-    // unused — so borrowing it cannot clobber a real key. Scan high-to-low:
-    // high keycodes are far likelier to be free than the low, populated ones.
+    // Scan high-to-low: high keycodes are far likelier to be free than the
+    // low, populated ones.
     let spare = mapping
         .keysyms
         .chunks(per)
         .enumerate()
         .rev()
-        .find(|(_, syms)| syms.iter().all(|&s| s == 0))
+        .find(|&(i, syms)| is_spare_keycode(8 + i, syms))
         .map(|(i, _)| (8 + i) as u8)
         .ok_or_else(|| anyhow!("no spare keycode available to remap keysym 0x{keysym:X}"))?;
 
@@ -4189,17 +4940,9 @@ fn remap_spare_keycode<'a>(
     let idx = (spare as usize - 8) * per;
     let original_keysyms = mapping.keysyms[idx..idx + per].to_vec();
     let new_keysyms = vec![keysym; per];
-    conn.change_keyboard_mapping(1, spare, per as u8, &new_keysyms)?;
-    // Round-trip so the server has installed the new mapping before we emit the
-    // key event against it.
-    let _ = conn.get_input_focus()?.reply();
-
-    Ok(RemappedKeycode {
-        conn,
-        keycode: spare,
-        keysyms_per_keycode: per as u8,
-        original_keysyms,
-    })
+    let guard = bind(spare, per as u8, &original_keysyms, &new_keysyms)?;
+    mapping.keysyms[idx..idx + per].copy_from_slice(&new_keysyms);
+    Ok((spare, guard))
 }
 
 /// Resolve `keysym` to a keycode usable in a synthetic key event. First scans
@@ -4209,7 +4952,7 @@ fn remap_spare_keycode<'a>(
 /// The guard is `None` when the keysym was already present (no cleanup needed).
 fn keycode_for_keysym<'a>(
     conn: &'a RustConnection,
-    mapping: &GetKeyboardMappingReply,
+    mapping: &mut GetKeyboardMappingReply,
     keysym: u32,
     key: &str,
 ) -> Result<(u8, Option<RemappedKeycode<'a>>)> {
@@ -4223,11 +4966,181 @@ fn keycode_for_keysym<'a>(
     }
 
     // Not in the map — fall back to remapping a spare keycode.
-    let guard = remap_spare_keycode(conn, mapping, keysym).with_context(|| {
+    let (keycode, guard) = reserve_spare_keycode(mapping, keysym, |spare, per, original, new| {
+        conn.change_keyboard_mapping(1, spare, per, new)?;
+        let guard = RemappedKeycode {
+            conn,
+            keycode: spare,
+            keysyms_per_keycode: per,
+            original_keysyms: original.to_vec(),
+        };
+        let _ = conn.get_input_focus()?.reply();
+        Ok(guard)
+    })
+    .with_context(|| {
         format!("Keysym 0x{keysym:X} not in keyboard map for key '{key}' and no spare keycode could be remapped")
     })?;
-    let keycode = guard.keycode;
     Ok((keycode, Some(guard)))
+}
+
+fn text_keycode(
+    client: &mut TextClient<'_>,
+    mapping: &mut GetKeyboardMappingReply,
+    ch: char,
+) -> Result<(u8, Option<()>)> {
+    let keysym = mpx_keyboard::keysym_for_char(ch);
+    let (keycode, guard) = keycode_for_keysym(client.conn, mapping, keysym, &ch.to_string())?;
+    let Some(guard) = guard else {
+        return Ok((keycode, None));
+    };
+    client.borrowed.push(guard);
+    if let Some(window) = client.recipient() {
+        client.ping(window);
+    }
+    Ok((keycode, Some(())))
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ClientSync {
+    Confirmed,
+    Unsupported,
+    Unanswered,
+}
+
+struct TextClient<'a> {
+    conn: &'a RustConnection,
+    target: Option<Window>,
+    borrowed: Vec<RemappedKeycode<'a>>,
+    sent: Vec<Window>,
+    unanswered: Vec<Window>,
+}
+
+impl<'a> TextClient<'a> {
+    fn new(conn: &'a RustConnection, target: Option<Window>) -> Self {
+        Self {
+            conn,
+            target,
+            borrowed: Vec::new(),
+            sent: Vec::new(),
+            unanswered: Vec::new(),
+        }
+    }
+
+    fn recipient(&self) -> Option<Window> {
+        self.target.or_else(|| {
+            let cookie = self.conn.get_input_focus().ok()?;
+            cookie.reply().ok().map(|reply| reply.focus)
+        })
+    }
+
+    fn record_recipient(&mut self, keycode: u8) {
+        if !self.borrowed.iter().any(|guard| guard.keycode == keycode) {
+            return;
+        }
+        if let Some(window) = self.recipient() {
+            if !self.sent.contains(&window) {
+                self.sent.push(window);
+            }
+        }
+    }
+
+    fn ping(&mut self, window: Window) {
+        if self.unanswered.contains(&window) {
+            return;
+        }
+        if sync_client(self.conn, Some(window)) == ClientSync::Unanswered {
+            self.unanswered.push(window);
+        }
+    }
+
+    fn release(&mut self) -> bool {
+        let sent = std::mem::take(&mut self.sent);
+        for &window in &sent {
+            self.ping(window);
+        }
+        self.borrowed.clear();
+        let unanswered = std::mem::take(&mut self.unanswered);
+        !sent.iter().any(|window| unanswered.contains(window))
+    }
+}
+
+impl Drop for TextClient<'_> {
+    fn drop(&mut self) {
+        self.release();
+    }
+}
+
+fn sync_client(conn: &RustConnection, window: Option<Window>) -> ClientSync {
+    let atom = |name: &str| {
+        conn.intern_atom(false, name.as_bytes())
+            .ok()?
+            .reply()
+            .ok()
+            .map(|reply| reply.atom)
+    };
+    let (Some(window), Some(protocols), Some(ping)) =
+        (window, atom("WM_PROTOCOLS"), atom("_NET_WM_PING"))
+    else {
+        return ClientSync::Unsupported;
+    };
+    let Some(window) = ping_window(conn, window, protocols, ping) else {
+        return ClientSync::Unsupported;
+    };
+    let root = conn.setup().roots[0].root;
+    let listen = ChangeWindowAttributesAux::new().event_mask(EventMask::SUBSTRUCTURE_NOTIFY);
+    let serial = PING_SERIAL.fetch_add(1, Ordering::Relaxed).max(1);
+    let event = ClientMessageEvent::new(32, window, protocols, [ping, serial, window, 0, 0]);
+    if conn.change_window_attributes(root, &listen).is_err()
+        || conn
+            .send_event(false, window, EventMask::NO_EVENT, event)
+            .is_err()
+        || conn.flush().is_err()
+    {
+        return ClientSync::Unanswered;
+    }
+    let deadline = std::time::Instant::now() + PING_TIMEOUT;
+    while std::time::Instant::now() < deadline {
+        match conn.poll_for_event() {
+            Ok(Some(x11rb::protocol::Event::ClientMessage(pong)))
+                if pong.type_ == protocols
+                    && pong.data.as_data32()[..3] == [ping, serial, window] =>
+            {
+                return ClientSync::Confirmed;
+            }
+            Ok(Some(_)) => {}
+            Ok(None) => sleep(Duration::from_millis(1)),
+            Err(_) => return ClientSync::Unanswered,
+        }
+    }
+    ClientSync::Unanswered
+}
+
+fn ping_window(
+    conn: &RustConnection,
+    focus: Window,
+    protocols: Atom,
+    ping: Atom,
+) -> Option<Window> {
+    if focus == x11rb::NONE || focus == u32::from(InputFocus::POINTER_ROOT) {
+        return None;
+    }
+    let client = !conn.setup().resource_id_mask;
+    let mut window = focus;
+    while window != x11rb::NONE && window & client == focus & client {
+        let protocols = conn
+            .get_property(false, window, protocols, AtomEnum::ATOM, 0, 64)
+            .ok()?
+            .reply()
+            .ok()?;
+        if protocols
+            .value32()
+            .is_some_and(|mut atoms| atoms.any(|atom| atom == ping))
+        {
+            return Some(window);
+        }
+        window = conn.query_tree(window).ok()?.reply().ok()?.parent;
+    }
+    None
 }
 
 fn modifiers_to_state(modifiers: &[&str]) -> KeyButMask {
@@ -4463,6 +5376,181 @@ mod path_tests {
         stale.sort();
         assert_eq!(stale, vec!["edge".to_owned(), "old".to_owned()]);
         assert!(stale_cursor_ids(&std::collections::HashMap::new(), now, MPX_IDLE_TTL).is_empty());
+    }
+
+    fn popup_removal_due(cursor_id: &str) -> Option<Option<std::time::Instant>> {
+        super::mpx_click_popups()
+            .lock()
+            .unwrap()
+            .get(cursor_id)
+            .map(|popups| popups.removal_due)
+    }
+
+    fn mpx_op_lock() -> std::sync::MutexGuard<'static, ()> {
+        super::MPX_OP_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn end_session_after_click(cursor_id: &str, opened: &[u64]) {
+        super::mark_mpx_use(cursor_id);
+        super::track_click_popups(cursor_id, opened.iter().copied());
+        super::forget_master_pointer_locked(cursor_id);
+    }
+
+    #[test]
+    fn a_second_end_leaves_the_master_to_the_pending_popup_waiter() {
+        let _op = mpx_op_lock();
+        let cursor_id = "popup-test-double-end";
+        end_session_after_click(cursor_id, &[0x7fff_0001]);
+        let due = popup_removal_due(cursor_id);
+        assert!(matches!(due, Some(Some(_))));
+        super::forget_master_pointer_locked(cursor_id);
+        assert_eq!(popup_removal_due(cursor_id), due);
+        assert!(!super::mpx_last_use()
+            .lock()
+            .unwrap()
+            .contains_key(cursor_id));
+    }
+
+    #[test]
+    fn an_end_without_tracked_popups_removes_the_master_at_once() {
+        let _op = mpx_op_lock();
+        end_session_after_click("popup-test-no-popup", &[]);
+        assert_eq!(popup_removal_due("popup-test-no-popup"), None);
+        assert!(!super::mpx_last_use()
+            .lock()
+            .unwrap()
+            .contains_key("popup-test-no-popup"));
+    }
+
+    #[test]
+    fn a_click_that_opens_nothing_keeps_earlier_tracked_popups() {
+        let _op = mpx_op_lock();
+        let cursor_id = "popup-test-union";
+        super::track_click_popups(cursor_id, [5, 3]);
+        super::track_click_popups(cursor_id, []);
+        super::track_click_popups(cursor_id, [3, 7]);
+        let windows = super::mpx_click_popups().lock().unwrap()[cursor_id]
+            .windows
+            .clone();
+        assert_eq!(windows, vec![3, 5, 7]);
+    }
+
+    #[test]
+    fn reusing_an_ended_session_disowns_its_popup_waiter() {
+        let _op = mpx_op_lock();
+        let cursor_id = "popup-test-reuse";
+        end_session_after_click(cursor_id, &[0x7fff_0003]);
+        assert!(matches!(popup_removal_due(cursor_id), Some(Some(_))));
+        super::mark_mpx_use(cursor_id);
+        assert_eq!(popup_removal_due(cursor_id), Some(None));
+        super::forget_master_pointer_locked(cursor_id);
+        assert!(matches!(popup_removal_due(cursor_id), Some(Some(_))));
+    }
+
+    #[test]
+    fn a_popup_that_remaps_during_the_quiet_wait_keeps_the_master_until_the_deadline() {
+        use super::{popup_wait_over, MPX_POPUP_QUIET};
+        let now = std::time::Instant::now();
+        let deadline = now + std::time::Duration::from_secs(60);
+        let quiet_elapsed = Some(now - MPX_POPUP_QUIET * 2);
+        let mut quiet = quiet_elapsed;
+        assert!(!popup_wait_over(Some(true), &mut quiet, deadline));
+        assert_eq!(quiet, None);
+        assert!(!popup_wait_over(Some(false), &mut quiet, deadline));
+        assert!(quiet.is_some());
+        let mut quiet = quiet_elapsed;
+        assert!(!popup_wait_over(None, &mut quiet, deadline));
+        assert_eq!(quiet, None);
+        let mut quiet = quiet_elapsed;
+        assert!(popup_wait_over(Some(false), &mut quiet, deadline));
+        assert!(popup_wait_over(Some(true), &mut None, now));
+    }
+
+    #[test]
+    fn a_popup_belongs_to_the_live_session_whose_click_saw_it_appear() {
+        use super::{popup_owner, ClickPopups};
+        use std::collections::HashMap;
+        let appeared = HashMap::from([
+            (
+                "ctx".to_owned(),
+                ClickPopups {
+                    windows: vec![25165852],
+                    removal_due: None,
+                },
+            ),
+            ("combo".to_owned(), ClickPopups::default()),
+        ]);
+        let live = |_: &str| true;
+        assert_eq!(
+            popup_owner(25165852, &appeared, live).as_deref(),
+            Some("ctx")
+        );
+        assert_eq!(popup_owner(25165982, &appeared, live), None);
+        assert_eq!(
+            popup_owner(25165852, &appeared, |id: &str| id != "ctx"),
+            None
+        );
+    }
+
+    #[test]
+    fn a_click_that_sees_a_popup_appear_takes_it_from_other_sessions() {
+        use super::{mpx_click_popups, popup_owner, track_click_popups};
+        let _op = mpx_op_lock();
+        track_click_popups("popup-reuse-a", [77_001, 77_002]);
+        track_click_popups("popup-reuse-b", [77_001]);
+        let mut tracked = mpx_click_popups().lock().unwrap();
+        assert_eq!(tracked["popup-reuse-a"].windows, vec![77_002]);
+        assert_eq!(
+            popup_owner(77_001, &tracked, |_: &str| true).as_deref(),
+            Some("popup-reuse-b")
+        );
+        tracked.remove("popup-reuse-a");
+        tracked.remove("popup-reuse-b");
+    }
+
+    #[test]
+    fn keys_for_a_popup_neither_stamp_nor_recreate_the_owner_pair() {
+        use super::{
+            mpx_last_use, mpx_pointers, popup_owner_guard, MasterPointerIds, PopupOwnerGone,
+        };
+        let gone = popup_owner_guard(90_001).unwrap_err();
+        assert!(gone.is::<PopupOwnerGone>());
+        super::track_click_popups("popup-owner-live", [90_001]);
+        mpx_pointers().lock().unwrap().insert(
+            "popup-owner-live".to_owned(),
+            MasterPointerIds {
+                pointer_id: 90,
+                keyboard_id: 91,
+                _slave_pointer_id: 92,
+                slave_keyboard_id: None,
+            },
+        );
+        assert_eq!(popup_owner_guard(90_001).unwrap().1, "popup-owner-live");
+        super::track_click_popups("popup-owner-next", [90_001]);
+        assert!(popup_owner_guard(90_001)
+            .unwrap_err()
+            .is::<PopupOwnerGone>());
+        mpx_pointers().lock().unwrap().insert(
+            "popup-owner-next".to_owned(),
+            MasterPointerIds {
+                pointer_id: 93,
+                keyboard_id: 94,
+                _slave_pointer_id: 95,
+                slave_keyboard_id: None,
+            },
+        );
+        assert_eq!(popup_owner_guard(90_001).unwrap().1, "popup-owner-next");
+        mpx_pointers().lock().unwrap().remove("popup-owner-next");
+        mpx_pointers().lock().unwrap().remove("popup-owner-live");
+        let mut tracked = super::mpx_click_popups().lock().unwrap();
+        tracked.remove("popup-owner-live");
+        tracked.remove("popup-owner-next");
+        drop(tracked);
+        let last_use = mpx_last_use().lock().unwrap();
+        assert!(!last_use.contains_key("popup-owner-live"));
+        assert!(!last_use.contains_key("popup-owner-next"));
     }
 
     #[test]
@@ -4710,5 +5798,46 @@ mod path_tests {
         let (cum, total) = path_cumulative(&path);
         assert!((total - 0.0).abs() < 1e-9);
         assert_eq!(point_on_path(&path, &cum, total, 0.3), (5, 5));
+    }
+}
+
+#[cfg(test)]
+mod type_pacing_tests {
+    use super::*;
+
+    #[test]
+    fn default_pacing_is_batched_with_no_pauses() {
+        let pacing = TypePacing::default();
+        assert!(pacing.is_batched());
+        assert_eq!(pacing.hold(), Duration::ZERO);
+        assert_eq!(pacing.gap(), Duration::ZERO);
+        assert_eq!(
+            TypePacing::from_args(&serde_json::json!({})),
+            TypePacing::default()
+        );
+    }
+
+    #[test]
+    fn a_positive_delay_holds_each_key_and_waits() {
+        let pacing = TypePacing::from_args(&serde_json::json!({"delay_ms": 30}));
+        assert!(!pacing.is_batched());
+        assert_eq!(pacing.hold(), Duration::from_millis(KEY_DELAY_MS));
+        assert_eq!(pacing.gap(), Duration::from_millis(30));
+        assert!((1..100).all(|sent| !pacing.batch_boundary(sent)));
+    }
+
+    #[test]
+    fn batches_sync_with_the_server_every_sixteen_keys() {
+        let pacing = TypePacing::default();
+        let boundaries: Vec<usize> = (1..=48)
+            .filter(|&sent| pacing.batch_boundary(sent))
+            .collect();
+        assert_eq!(boundaries, vec![16, 32, 48]);
+    }
+
+    #[test]
+    fn the_delay_is_clamped() {
+        let pacing = TypePacing::from_args(&serde_json::json!({"delay_ms": 100_000}));
+        assert_eq!(pacing.delay_ms, 200);
     }
 }

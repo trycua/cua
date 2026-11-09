@@ -1,7 +1,7 @@
 # Typed Driver envelopes over MCP
 
-This opt-in candidate implements the [accepted RFC 2512 transport addendum](../../../rfcs/2512-mcp-envelope-carrier.md).
-It is not a released SDK feature or a qualification of an existing Fleet image.
+This opt-in candidate implements the [accepted RFC 2512 transport addendum](../../../docs/rfcs/2512-mcp-envelope-carrier.md).
+It is not a released SDK feature or a qualification of an existing guest image.
 The extension carries the canonical Driver envelopes through an existing MCP
 transport. It does not replace cua-spacesd, add agent tools, or open a port.
 
@@ -81,8 +81,8 @@ EOF, output failure, or task cancellation invalidates owned receivers before
 aborting transport work. Closing a proxy stream does not shut down a shared
 daemon. Direct stdio still shuts down its owned runtime. Interrupted native
 effects can outlive the request: cancellation is not rollback, and unknown
-completion remains unknown. Closing the MCP HTTP session is not Fleet claim or
-pool cleanup.
+completion remains unknown. Closing the MCP HTTP session is not guest resource
+cleanup.
 
 ## Verification and release gate
 

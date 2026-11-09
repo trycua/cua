@@ -411,7 +411,7 @@ fn observe(info: &ca::RunInfo) {
     if let Some((outcome, variant)) = cua_telemetry::events::agent_run_end(
         info.status.as_str(),
         info.stop_reason.as_deref(),
-        info.error.is_some(),
+        info.error.as_deref(),
     ) {
         cua_telemetry::global().agent_run_finished(&info.run_id, outcome, variant);
     }
@@ -498,6 +498,13 @@ fn run_options(o: AgentRunOptions) -> Result<ca::RunOptions> {
         home: None,
         home_dir: None,
         bridge: false,
+        // Durable runs are started through a session (`cua agent run --durable`).
+        durable: None,
+        // The saved connections are the Cua Spaces app's; an SDK run names its own keys.
+        hermes_config: None,
+        // Continuing a chat from this computer's own agent store is the Spaces app's (CUA-3319).
+        resume_session: None,
+        resume_context: None,
     })
 }
 

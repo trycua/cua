@@ -3,8 +3,9 @@
 
 use bytes::Bytes;
 use cua_spacesd_client::{
-    Command, ConnectOptions, Error, Keepalive, ProcessEvent, ProcessRef, Replay, RetryPolicy,
-    SpacesdClient, StaticBearer, Transport, TransportPreference, UploadOptions, pb,
+    Command, ConnectOptions, Error, FileAccess, Keepalive, ProcessEvent, ProcessRef, Replay,
+    RetryPolicy, RunAsMode, SpacesdClient, StaticBearer, Transport, TransportPreference,
+    UploadOptions, pb,
     testing::{CutProxy, MockAuth, MockGateway, MockServer},
 };
 use sha2::{Digest, Sha256};
@@ -66,18 +67,33 @@ fn data(len: usize, seed: u64) -> Bytes {
     out.into()
 }
 
+/// Per-test watchdog. A hung test (`grpc_web::stdin_roundtrip` once sat until
+/// the CI job's 60 minute timeout) fails here with its name and transport
+/// instead. The budget is generous for a loopback test; the large transfers
+/// and the keepalive test get more.
+async fn watchdog<F: std::future::Future<Output = ()>>(name: &str, transport: &str, fut: F) {
+    let budget = if name.contains("256_mib") || name.contains("keepalive") {
+        Duration::from_secs(300)
+    } else {
+        Duration::from_secs(90)
+    };
+    if tokio::time::timeout(budget, fut).await.is_err() {
+        panic!("{transport}::{name} hung: no result within {budget:?}");
+    }
+}
+
 macro_rules! both_transports {
     ($($name:ident),* $(,)?) => {
         mod native {
             $(
                 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-                async fn $name() { super::$name(cua_spacesd_client::Transport::Native).await }
+                async fn $name() { super::watchdog(stringify!($name), "native", super::$name(cua_spacesd_client::Transport::Native)).await }
             )*
         }
         mod grpc_web {
             $(
                 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-                async fn $name() { super::$name(cua_spacesd_client::Transport::GrpcWeb).await }
+                async fn $name() { super::watchdog(stringify!($name), "grpc_web", super::$name(cua_spacesd_client::Transport::GrpcWeb)).await }
             )*
         }
     };
@@ -87,6 +103,7 @@ both_transports!(
     capabilities_and_transport,
     run_collects_output_and_exit_codes,
     run_timeout,
+    a_silent_start_times_out,
     spawn_reattach_by_tag_with_scrollback,
     stdin_roundtrip,
     small_upload_download_and_typed_errors,
@@ -100,6 +117,7 @@ both_transports!(
     long_running_stream_with_keepalive,
     process_stream_resumes_after_disconnect,
     relay_url_prefix,
+    run_as_and_metadata_on_file_calls,
 );
 
 async fn capabilities_and_transport(t: Transport) {
@@ -145,6 +163,32 @@ async fn run_timeout(t: Transport) {
         .await
         .unwrap();
     assert!(out.status.timed_out);
+}
+
+/// A start whose stream never answers (a relay that went quiet) fails with
+/// a timeout instead of hanging, with or without a command timeout.
+async fn a_silent_start_times_out(t: Transport) {
+    let srv = server().await;
+    let opts = ConnectOptions::parse(&srv.url())
+        .unwrap()
+        .token(TOKEN)
+        .transport(pref(t))
+        .start_timeout(Duration::from_millis(300));
+    let env = SpacesdClient::connect(opts).await.expect("connect");
+    srv.state.silent_start.store(true, Ordering::Relaxed);
+    let started = Instant::now();
+    let err = env.run(Command::shell("echo hi")).await.unwrap_err();
+    assert!(
+        matches!(err, Error::Timeout(d) if d == Duration::from_millis(300)),
+        "{err:?}"
+    );
+    let err = env.spawn(Command::shell("echo hi")).await.unwrap_err();
+    assert!(matches!(err, Error::Timeout(_)), "{err:?}");
+    assert!(started.elapsed() < Duration::from_secs(10));
+    // The deadline covers the start only: a reply that comes ends normally.
+    srv.state.silent_start.store(false, Ordering::Relaxed);
+    let out = env.run(Command::shell("echo hi")).await.unwrap();
+    assert_eq!(out.stdout_str(), "hi\n");
 }
 
 async fn spawn_reattach_by_tag_with_scrollback(t: Transport) {
@@ -203,6 +247,120 @@ async fn stdin_roundtrip(t: Transport) {
     h.close_stdin().await.unwrap();
     let out = h.wait().await.unwrap();
     assert_eq!(out.stdout_str(), "hello stdin");
+}
+
+/// `run_as` and extended-attribute metadata through every typed file call
+/// (the mock guest knows alice and bob and refuses `locked`).
+async fn run_as_and_metadata_on_file_calls(t: Transport) {
+    let srv = server().await;
+    let env = connect_to(&srv.url(), t).await;
+    assert!(
+        env.has_feature(cua_spacesd_client::RUN_AS_FEATURE)
+            .await
+            .unwrap()
+    );
+    assert!(
+        env.has_feature(cua_spacesd_client::XATTR_FEATURE)
+            .await
+            .unwrap()
+    );
+
+    let options = UploadOptions {
+        run_as: Some("alice".into()),
+        metadata: [("origin".to_owned(), "test".to_owned())].into(),
+        xattr_namespace: Some("user.e2b.".into()),
+        ..Default::default()
+    };
+    let res = env
+        .upload("/tmp/m.bin", Bytes::from_static(b"hello"), options.clone())
+        .await
+        .unwrap();
+    let written = res.entry.unwrap();
+    assert_eq!(written.owner, "alice");
+    assert_eq!(
+        written.metadata.get("origin").map(String::as_str),
+        Some("test")
+    );
+    assert_eq!(srv.state.file_owner("/tmp/m.bin").as_deref(), Some("alice"));
+
+    // Read back under the same namespace, and under none.
+    let access = FileAccess {
+        run_as: Some("alice".into()),
+        xattr_namespace: Some("user.e2b.".into()),
+    };
+    let stat = env.stat_with("/tmp/m.bin", false, &access).await.unwrap();
+    assert_eq!(
+        stat.metadata.get("origin").map(String::as_str),
+        Some("test")
+    );
+    assert!(env.stat("/tmp/m.bin").await.unwrap().metadata.is_empty());
+    let listed = env.list_dir_with("/tmp", 1, &access).await.unwrap();
+    assert_eq!(
+        listed[0].metadata.get("origin").map(String::as_str),
+        Some("test")
+    );
+    assert_eq!(
+        env.make_dir_with("/tmp/d", &FileAccess::user("bob"))
+            .await
+            .unwrap()
+            .owner,
+        "bob"
+    );
+    let moved = env
+        .move_path("/tmp/m.bin", "/tmp/n.bin", false, true, &access)
+        .await
+        .unwrap();
+    assert_eq!(moved.path, "/tmp/n.bin");
+    env.remove_with("/tmp/n.bin", false, &access).await.unwrap();
+
+    // Downloads as a user.
+    env.upload(
+        "/tmp/r.bin",
+        Bytes::from_static(b"r"),
+        UploadOptions::default(),
+    )
+    .await
+    .unwrap();
+    let mut out = Vec::new();
+    env.download_with(
+        "/tmp/r.bin",
+        cua_spacesd_client::DownloadOptions {
+            run_as: Some("bob".into()),
+            ..Default::default()
+        },
+        &mut out,
+    )
+    .await
+    .unwrap();
+    assert_eq!(out, b"r");
+
+    // Refusals keep their kind and name the user.
+    assert!(matches!(
+        env.stat_with("/tmp/r.bin", false, &FileAccess::user("locked"))
+            .await
+            .unwrap_err(),
+        Error::PermissionDenied(_)
+    ));
+    let unknown = env
+        .stat_with("/tmp/r.bin", false, &FileAccess::user("nobody-here"))
+        .await
+        .unwrap_err();
+    assert!(unknown.to_string().contains("nobody-here"), "{unknown}");
+    // A namespace outside `user.` is refused, writes are not half done.
+    let bad = env
+        .upload(
+            "/tmp/bad.bin",
+            Bytes::from_static(b"x"),
+            UploadOptions {
+                metadata: [("k".to_owned(), "v".to_owned())].into(),
+                xattr_namespace: Some("trusted.x.".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap_err();
+    assert!(bad.to_string().contains("xattr_namespace"), "{bad}");
+    assert!(srv.state.file("/tmp/bad.bin").is_none());
 }
 
 async fn small_upload_download_and_typed_errors(t: Transport) {
@@ -535,33 +693,24 @@ async fn auto_prefers_native_for_direct() {
 }
 
 #[tokio::test]
-async fn fleet_gateway_uses_grpc_web_bearer_and_claim() {
-    let prefix = "/api/svc/cua-e2e-pool/sbx-1-env";
+async fn gateway_uses_grpc_web_and_the_bearer() {
+    let prefix = "/m/abcd1234";
     let srv = MockServer::start(MockAuth {
         token: Some(TOKEN.into()),
         gateway: Some(MockGateway {
             prefix: prefix.into(),
-            bearer: "fleet-bearer".into(),
-            claim: "claim-abc".into(),
+            bearer: "gateway-bearer".into(),
         }),
         prefix: None,
     })
     .await;
-    let endpoint =
-        cua_spacesd_client::Endpoint::fleet_service(&srv.url(), "cua-e2e-pool", "sbx-1", "env")
-            .unwrap();
+    let endpoint = cua_spacesd_client::Endpoint::parse(&format!("{}{prefix}", srv.url())).unwrap();
     let opts = ConnectOptions::new(endpoint.clone())
         .token(TOKEN)
-        .fleet_gateway(
-            Arc::new(StaticBearer("fleet-bearer".into())),
-            Some("claim-abc".into()),
-        );
+        .transport(TransportPreference::GrpcWeb)
+        .gateway(Arc::new(StaticBearer("gateway-bearer".into())));
     let env = SpacesdClient::connect(opts).await.unwrap();
-    assert_eq!(
-        env.transport(),
-        Transport::GrpcWeb,
-        "gateway must auto-select gRPC-Web"
-    );
+    assert_eq!(env.transport(), Transport::GrpcWeb);
     assert_eq!(
         env.run("echo via gateway").await.unwrap().stdout_str(),
         "via gateway\n"
@@ -578,17 +727,18 @@ async fn fleet_gateway_uses_grpc_web_bearer_and_claim() {
         0
     );
 
-    // A token-provider closure also works, and a wrong claim is refused.
+    // A token-provider closure also works, and a wrong bearer is refused.
     let refreshes = Arc::new(AtomicU64::new(0));
     let counter = refreshes.clone();
     let provider = move |_force: bool| {
         counter.fetch_add(1, Ordering::Relaxed);
-        async { Ok::<_, cua_spacesd_client::error::BoxError>("fleet-bearer".to_string()) }
+        async { Ok::<_, cua_spacesd_client::error::BoxError>("other-bearer".to_string()) }
     };
     let err = SpacesdClient::connect(
         ConnectOptions::new(endpoint)
             .token(TOKEN)
-            .fleet_gateway(Arc::new(provider), Some("other-claim".into())),
+            .transport(TransportPreference::GrpcWeb)
+            .gateway(Arc::new(provider)),
     )
     .await
     .unwrap_err();
@@ -596,7 +746,7 @@ async fn fleet_gateway_uses_grpc_web_bearer_and_claim() {
     assert!(
         matches!(
             err,
-            Error::SpacesdNotAvailable { .. } | Error::PermissionDenied(_)
+            Error::SpacesdNotAvailable { .. } | Error::Unauthenticated(_)
         ),
         "{err:?}"
     );
@@ -713,4 +863,249 @@ async fn desktop_readiness_follows_the_health_component() {
         .await
         .unwrap();
     assert!(r.ready && r.reported, "{r:?}");
+}
+
+/// An agent that predates `run_as` and file metadata would ignore both
+/// fields and act as its own user. The client says so instead.
+#[tokio::test]
+async fn an_older_agent_is_refused_instead_of_ignoring_run_as() {
+    let srv = server().await;
+    srv.state
+        .older_files
+        .store(true, std::sync::atomic::Ordering::Relaxed);
+    let env = connect_to(&srv.url(), Transport::Native).await;
+    let as_alice = FileAccess::user("alice");
+    for result in [
+        env.stat_with("/tmp/x", false, &as_alice).await.map(|_| ()),
+        env.list_dir_with("/tmp", 1, &as_alice).await.map(|_| ()),
+        env.make_dir_with("/tmp/d", &as_alice).await.map(|_| ()),
+        env.remove_with("/tmp/x", false, &as_alice).await,
+        env.move_path("/tmp/x", "/tmp/y", false, false, &as_alice)
+            .await
+            .map(|_| ()),
+        env.upload(
+            "/tmp/x",
+            Bytes::from_static(b"x"),
+            UploadOptions {
+                run_as: Some("alice".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .map(|_| ()),
+        env.upload(
+            "/tmp/x",
+            Bytes::from_static(b"x"),
+            UploadOptions {
+                metadata: [("k".to_owned(), "v".to_owned())].into(),
+                ..Default::default()
+            },
+        )
+        .await
+        .map(|_| ()),
+    ] {
+        match result.unwrap_err() {
+            Error::FeatureUnsupported { feature, details } => {
+                assert!(feature.starts_with("fs."), "{feature}");
+                assert!(details.message.contains("older spacesd"), "{details}");
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+    // Nothing reached the guest.
+    assert!(srv.state.file("/tmp/x").is_none());
+    // Plain calls are unaffected.
+    env.upload(
+        "/tmp/ok",
+        Bytes::from_static(b"x"),
+        UploadOptions::default(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(env.stat("/tmp/ok").await.unwrap().size, 1);
+}
+
+fn set_run_as(srv: &MockServer, mode: Option<&str>, refuse: bool) {
+    *srv.state.run_as_mode.lock().unwrap() = mode.map(str::to_owned);
+    srv.state
+        .switch_refused
+        .store(refuse, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// An agent that switches users itself (root, or holding CAP_SETUID and
+/// CAP_SETGID) is asked once and never wrapped in `sudo`, whatever it
+/// answers: its refusal is a real one.
+#[tokio::test]
+async fn a_native_run_as_agent_is_never_wrapped_in_sudo() {
+    for mode in ["root", "capabilities"] {
+        let srv = server().await;
+        let env = connect_to(&srv.url(), Transport::Native).await;
+        set_run_as(&srv, Some(mode), false);
+        env.refresh_capabilities().await.unwrap();
+        assert!(env.run_as_mode().await.is_native(), "{mode}");
+        let h = env
+            .spawn(Command::shell("echo hi").user("alice"))
+            .await
+            .unwrap();
+        assert!(!h.via_sudo(), "{mode}");
+        assert_eq!(
+            srv.state
+                .sudo_runs
+                .load(std::sync::atomic::Ordering::Relaxed),
+            0
+        );
+
+        // Refused (for example an unknown account the agent cannot map):
+        // the refusal comes back, `sudo` is not tried.
+        let srv = server().await;
+        let env = connect_to(&srv.url(), Transport::Native).await;
+        set_run_as(&srv, Some(mode), true);
+        env.refresh_capabilities().await.unwrap();
+        let err = env
+            .spawn(Command::shell("echo hi").user("alice"))
+            .await
+            .expect_err("refused");
+        assert!(matches!(err, Error::PermissionDenied(_)), "{err:?}");
+        assert_eq!(
+            srv.state
+                .sudo_runs
+                .load(std::sync::atomic::Ordering::Relaxed),
+            0,
+            "{mode}"
+        );
+    }
+}
+
+/// An agent that reports no way to switch users is not sent through `sudo`
+/// either: the client returns the agent's own explanation.
+#[tokio::test]
+async fn an_agent_without_run_as_is_refused_without_sudo() {
+    let srv = server().await;
+    let env = connect_to(&srv.url(), Transport::Native).await;
+    set_run_as(&srv, Some("none"), true);
+    env.refresh_capabilities().await.unwrap();
+    assert_eq!(env.run_as_mode().await, RunAsMode::None);
+    let err = env
+        .spawn(Command::shell("echo hi").user("alice"))
+        .await
+        .expect_err("refused");
+    assert!(
+        matches!(&err, Error::PermissionDenied(d) if d.message.contains("cannot switch")),
+        "{err:?}"
+    );
+    assert_eq!(
+        srv.state
+            .sudo_runs
+            .load(std::sync::atomic::Ordering::Relaxed),
+        0
+    );
+}
+
+/// Only an agent that says `sudo`, or predates the feature, gets the
+/// command wrapped in `sudo -n`.
+#[tokio::test]
+async fn sudo_is_the_fallback_for_older_and_sudo_agents_only() {
+    for mode in [Some("sudo"), None] {
+        let srv = server().await;
+        let env = connect_to(&srv.url(), Transport::Native).await;
+        set_run_as(&srv, mode, true);
+        env.refresh_capabilities().await.unwrap();
+        let want = if mode.is_some() {
+            RunAsMode::Sudo
+        } else {
+            RunAsMode::Unknown
+        };
+        assert_eq!(env.run_as_mode().await, want);
+        let h = env
+            .spawn(Command::shell("echo hi").user("alice"))
+            .await
+            .unwrap();
+        assert!(h.via_sudo(), "{mode:?}");
+        assert_eq!(
+            srv.state.process_user(h.pid()).as_deref(),
+            Some("alice"),
+            "{mode:?}"
+        );
+        assert_eq!(
+            srv.state
+                .sudo_runs
+                .load(std::sync::atomic::Ordering::Relaxed),
+            1
+        );
+    }
+}
+
+/// The mock agent runs as `cua`, not root, as on the Linux images: a
+/// command that names no user runs as `cua`, root work has to name root,
+/// and `sudo` runs as its `-u` user. The answers are what the guest's own
+/// `id` and `$HOME` say.
+#[tokio::test]
+async fn the_mock_runs_a_command_as_the_user_it_names() {
+    let srv = server().await;
+    let env = connect_to(&srv.url(), Transport::Native).await;
+    let run = |cmd: Command| {
+        let env = env.clone();
+        async move {
+            let out = env.run(cmd).await.unwrap();
+            assert!(out.success(), "{out:?}");
+            out.stdout_str().trim().to_string()
+        }
+    };
+    assert_eq!(run(Command::new("id").arg("-u")).await, "1000");
+    assert_eq!(run(Command::shell("whoami")).await, "cua");
+    assert_eq!(
+        srv.state
+            .process_user(srv.state.last_pid().unwrap())
+            .as_deref(),
+        Some("cua")
+    );
+    assert_eq!(run(Command::new("id").arg("-u").user("root")).await, "0");
+    assert_eq!(
+        run(Command::shell("printf %s \"$HOME\"").user("root")).await,
+        "/root"
+    );
+    assert_eq!(run(Command::shell("id -un").user("alice")).await, "alice");
+    assert_eq!(
+        run(Command::shell("printf %s \"$HOME\"")).await,
+        "/home/cua"
+    );
+    let sudo = |args: &[&str]| Command::new("sudo").args(args.iter().copied());
+    assert_eq!(run(sudo(&["-n", "id", "-u"])).await, "0");
+    assert_eq!(
+        run(sudo(&[
+            "-n", "-H", "-u", "bob", "--", "env", "A=1", "whoami"
+        ]))
+        .await,
+        "bob"
+    );
+    let as_bob = ["-n", "-H", "-u", "bob", "--preserve-env", "--", "whoami"];
+    assert_eq!(run(Command::new("/usr/bin/sudo").args(as_bob)).await, "bob");
+    assert_eq!(
+        run(sudo(&["-n", "-u", "alice", "-g", "staff", "id", "-un"])).await,
+        "alice"
+    );
+    // `sudo` refuses a user the guest does not have, or may not act as.
+    for user in ["nosuch", "locked"] {
+        env.run(sudo(&["-n", "-u", user, "whoami"]))
+            .await
+            .expect_err(user);
+    }
+
+    // A file written without a user belongs to the agent's user.
+    env.upload(
+        "/tmp/plain",
+        Bytes::from_static(b"x"),
+        UploadOptions::default(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(srv.state.file_owner("/tmp/plain").as_deref(), Some("cua"));
+    assert_eq!(env.stat("/tmp/plain").await.unwrap().owner, "cua");
+
+    // An agent that is root itself runs unnamed work as root.
+    set_run_as(&srv, Some("root"), false);
+    assert_eq!(run(Command::new("id").arg("-u")).await, "0");
+    // One that reports no way to switch users has no `sudo` either.
+    set_run_as(&srv, Some("none"), false);
+    env.run(sudo(&["-n", "whoami"])).await.expect_err("no sudo");
 }

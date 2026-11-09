@@ -1,0 +1,40 @@
+name: "Security: push watch"
+
+# Flags pushes that look like someone else's history (no common ancestor with
+# main) or an unusually large push, from the public Events feed. It runs on a
+# schedule from the default branch on purpose: a push workflow runs the workflow
+# files of the pushed commit, so a branch carrying another repository's history
+# would never run this check. A finding fails the run, which notifies the
+# workflow's owner. See .github/scripts/push_watch.py.
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: security-push-watch
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    name: Check recent pushes
+    if: github.repository == 'trycua/cua'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          sparse-checkout: .github
+      - name: Check pushes since the last run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >
+          python3 .github/scripts/push_watch.py
+          --repo "$GITHUB_REPOSITORY"
+          --since-last-run security-push-watch.yml
+          --orphan-branches .github/push-watch-orphan-branches.txt

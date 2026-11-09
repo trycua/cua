@@ -1,6 +1,6 @@
 {
   "name": "teleport-sign-ins",
-  "about": "The signed-in state move's opt-ins: \"Keep me signed in\" (the session cookies) and the separate, unchecked \"Saved passwords\" and \"Browsing history\"; an app that offers none shows none.",
+  "about": "The signed-in state move's opt-ins: \"Keep me signed in\" (the session cookies) and the separate, unchecked \"Saved passwords\" and \"Browsing history\"; an app that offers none shows none. Ticking \"Saved passwords\" in the review lists them to pick, like the sites: reading the app, its sites with counts (starting from the sites kept signed in); from the Keyvault, each saved password's site and username, never a value. A Keyvault daemon that does not advertise password_domains gets no picker: the chosen sites' passwords, as before.",
   "spaceName": "Space B",
   "entries": [
     {
@@ -156,6 +156,140 @@
     },
     {
       "type": "planned"
+    },
+    {
+      "type": "domains-loaded",
+      "inventory": {
+        "provider_id": "chrome",
+        "app_display": "Google Chrome",
+        "domains": [
+          {
+            "domain": "github.com",
+            "cookies": 12,
+            "session_cookies": 0,
+            "local_storage": 0,
+            "passwords": 2,
+            "signin": true,
+            "identity_provider": false,
+            "unavailable": 0,
+            "unavailable_reason": ""
+          },
+          {
+            "domain": "google.com",
+            "cookies": 30,
+            "session_cookies": 0,
+            "local_storage": 0,
+            "passwords": 1,
+            "signin": true,
+            "identity_provider": true,
+            "unavailable": 0,
+            "unavailable_reason": ""
+          },
+          {
+            "domain": "bank.example",
+            "cookies": 0,
+            "session_cookies": 0,
+            "local_storage": 0,
+            "passwords": 1,
+            "signin": false,
+            "identity_provider": false,
+            "unavailable": 0,
+            "unavailable_reason": ""
+          }
+        ],
+        "notes": []
+      },
+      "remembered": null
+    },
+    {
+      "type": "vault-items",
+      "count": 0,
+      "newestMs": 0,
+      "nowMs": 1800000000000,
+      "selected": [],
+      "passwordIds": [],
+      "passwords": [],
+      "passwordPicks": false
+    },
+    {
+      "type": "toggle-passwords",
+      "value": true
+    },
+    {
+      "type": "toggle-password",
+      "key": "bank.example"
+    },
+    {
+      "type": "vault-items",
+      "count": 0,
+      "newestMs": 0,
+      "nowMs": 1800000000000,
+      "selected": [],
+      "passwordIds": [],
+      "passwords": [],
+      "passwordPicks": true
+    },
+    {
+      "type": "toggle-passwords",
+      "value": true
+    },
+    {
+      "type": "toggle-password",
+      "key": "bank.example"
+    },
+    {
+      "type": "password-query",
+      "text": "bank"
+    },
+    {
+      "type": "select-shown-passwords",
+      "value": false
+    },
+    {
+      "type": "password-query",
+      "text": ""
+    },
+    {
+      "type": "vault-items",
+      "count": 1,
+      "newestMs": 1800000000000,
+      "nowMs": 1800000000000,
+      "selected": [
+        "c1"
+      ],
+      "passwordIds": [
+        "p1",
+        "p2"
+      ],
+      "passwords": [
+        {
+          "id": "p1",
+          "site": "github.com",
+          "username": "octocat"
+        },
+        {
+          "id": "p2",
+          "site": "https://accounts.google.com/",
+          "username": "ada@example.test"
+        }
+      ],
+      "passwordPicks": true
+    },
+    {
+      "type": "send-from",
+      "source": "vault"
+    },
+    {
+      "type": "toggle-password",
+      "key": "p2"
+    },
+    {
+      "type": "send-from",
+      "source": "live"
+    },
+    {
+      "type": "toggle-password",
+      "key": "bank.example"
     },
     {
       "type": "confirm"

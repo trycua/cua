@@ -669,7 +669,8 @@ def run(args):
                 assert len(matches) == 1 and matches[0].get('window_id') == target['window_id'], \
                     'reviewed PID/window identity is stale or ambiguous'
             result = mcp.tool('get_window_state', {**target,
-                              **({'timeout_ms': OBSERVATION_TIMEOUT_MS} if full else {'max_elements': 100, 'max_depth': 6}),
+                              **({'timeout_ms': OBSERVATION_TIMEOUT_MS, 'full_output': True} if full
+                                 else {'max_elements': 100, 'max_depth': 6}),
                               **({'session': session} if session else {})})
             assert not result.get('isError'), result
             content = result['structuredContent']

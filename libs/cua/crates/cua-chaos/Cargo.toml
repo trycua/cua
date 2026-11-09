@@ -1,0 +1,27 @@
+[package]
+name = "cua-chaos"
+description = "Chaos testing tooling for Cua Spaces clients: a seeded scheduler that replays every failure from its seed, fault injectors, and leak-check inventories (host and cloud) whose before/after diff proves no Space, VM, process, port, state record or cloud resource is left behind."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+name = "cua_chaos"
+path = "src/lib.rs"
+
+[[bin]]
+name = "cua-chaos"
+path = "src/main.rs"
+
+[dependencies]
+clap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

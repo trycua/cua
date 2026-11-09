@@ -16,12 +16,12 @@
 # usable, else TCG (slow; an amd64 guest on Apple Silicon is TCG).
 # Firmware: arm64 -> edk2-aarch64-code.fd (UEFI); amd64 -> SeaBIOS (QEMU's
 # default, = KubeVirt `bios`), or --uefi for edk2-x86_64-code.fd.
-# The guest always gets a NoCloud seed (cidata ISO), like Fleet's cloud-init:
-# without a datasource cloud-init disables itself and never generates the SSH
+# The guest always gets a NoCloud seed (cidata ISO), like a KubeVirt VM's
+# cloud-init: without a datasource cloud-init disables itself and never generates the SSH
 # host keys, so sshd stays down. --ssh adds a throwaway key to the `cua` user
 # (then logs in and lists the cua-* units); --env-token writes
-# /etc/cua/env-token and restarts cua-spacesd if it raced cloud-init.
-# --claim-secrets DIR simulates Fleet's per-claim Secret share on KubeVirt
+# /etc/cua/env-token and restarts cua-spacesd only if it raced cloud-init.
+# --claim-secrets DIR simulates a per-claim Secret share on KubeVirt
 # (virtiofs tag cua-claim-secrets -> /run/cua). QEMU on macOS has no
 # virtiofsd, so DIR is shared over virtio-9p with the same tag, read-only,
 # and the seed's bootcmd installs a run-cua.mount drop-in switching Type= to
@@ -40,7 +40,9 @@ DISK="${1:?disk.img}"; shift
 host_arch() { case "$(uname -m)" in arm64|aarch64) echo arm64 ;; *) echo amd64 ;; esac; }
 ARCH="$(host_arch)"; MEM=4G; SMP=4; FWD="3211,22"; PROBE=""; RFB_OUT=""
 CLAIM_DIR=""; RUN_CMD=""
-SSH=0; SSH_CMD='uname -a; systemctl is-system-running || true; systemctl --no-pager --plain list-units "cua-*"'; ENV_TOKEN=""; TIMEOUT=300; LOG=""; KEEP=0; UEFI=0
+# The default SSH check also fails when cloud-init rewrote apt's sources with
+# a release it could not read ("UNAVAILABLE"), which breaks apt-get.
+SSH=0; SSH_CMD='uname -a; systemctl is-system-running || true; systemctl --no-pager --plain list-units "cua-*"; if grep -rsl UNAVAILABLE /etc/apt/sources.list /etc/apt/sources.list.d/; then echo "apt sources name no release (UNAVAILABLE)" >&2; exit 1; fi'; ENV_TOKEN=""; TIMEOUT=300; LOG=""; KEEP=0; UEFI=0
 while [ $# -gt 0 ]; do
     case "$1" in
         --arch) ARCH="$2"; shift 2 ;;
@@ -127,7 +129,12 @@ if [ "$SSH" = 1 ]; then ssh-keygen -q -t ed25519 -N "" -f "$SSH_KEY"; fi
             echo "write_files:"
             echo "  - {path: /etc/cua/env-token, permissions: '0640', owner: 'root:root', content: '$ENV_TOKEN'}"
             echo "runcmd:"
-            echo "  - [systemctl, try-restart, cua-spacesd.service]"
+            # Restart cua-spacesd only if it started before cloud-init's files
+            # landed (the unit is ordered after cloud-init.service, so it
+            # normally did not). runcmd runs in cloud-final, seconds after
+            # spacesd first answers: an unconditional restart aborts every
+            # call in flight. Same rule as cua-vmm's cloudinit.rs.
+            echo "  - [sh, -c, 'ts() { systemctl show -p ActiveEnterTimestampMonotonic \"\$1\" 2>/dev/null | cut -d= -f2; }; ci=\$(ts cloud-init.service); up=\$(ts cua-spacesd.service); if [ \"\${ci:-0}\" -gt 0 ] 2>/dev/null && [ \"\${up:-0}\" -gt \"\${ci:-0}\" ] 2>/dev/null; then exit 0; fi; systemctl try-restart cua-spacesd.service >/dev/null 2>&1 || true']"
         fi
         if [ -n "$CLAIM_DIR" ] && [ -z "$VIRTIOFSD_PLANNED" ]; then
             # 9p only (no virtiofsd): runs in cloud-init.service, before

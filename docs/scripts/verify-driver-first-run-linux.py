@@ -72,6 +72,7 @@ class MCP:
     def __init__(self, binary, endpoint, env, evidence):
         self.evidence = evidence
         self.sequence = 0
+        self.read_arguments = {}
         self.lines = queue.Queue()
         self.log = (evidence / "mcp-stderr.log").open("w")
         self.process = subprocess.Popen(
@@ -176,7 +177,7 @@ def button(snapshot, labels):
 
 
 def snapshot(mcp, target, label):
-    state, images = mcp.call("get_window_state", target, label)
+    state, images = mcp.call("get_window_state", {**target, **mcp.read_arguments}, label)
     require(images, f"{label} did not produce an actual snapshot image")
     require(not state.get("degraded") and state.get("elements"),
             f"{label} lacks usable AT-SPI controls")
@@ -237,7 +238,13 @@ def main():
         save(evidence, "provenance.json", provenance)
         require(top == ROOT and sha == os.environ["CUA_DOCS_SOURCE_SHA"] and not dirty,
                 "Source preflight must match the exact clean checkout SHA")
-        require(source_version == baked, "Source and baked release differ; review the intended release before running")
+        # The installer bakes the last published release, which lags the source
+        # version between a release-please bump and its publish. Only a baked
+        # release newer than the source is wrong.
+        def release(text):
+            return tuple(int(part) for part in text.split("."))
+        require(release(baked) <= release(source_version),
+                "Installer bakes a release newer than the source version; review before running")
         # Fixed legacy cleanup is outside the overridden package home. Refuse
         # any existing installation, symlink or service rather than sweeping it.
         for relative in (".cua-driver-rs", ".cua-driver", ".local/bin/cua-driver",
@@ -323,6 +330,13 @@ def main():
         save(evidence, "mcp-tools.json", listing)
         require({"launch_app", "get_window_state", "click", "get_desktop_state"}.issubset(
             {tool["name"] for tool in listing["tools"]}), "MCP discovery lacks required tools")
+        # The buttons and the display come from structured `elements`. From
+        # 0.35 a read returns them only with tree_format "elements"; earlier
+        # releases always return them and refuse the unknown argument.
+        read_schema = next(tool for tool in listing["tools"] if tool["name"] == "get_window_state")
+        mcp.read_arguments = ({"tree_format": "elements"}
+                              if "tree_format" in read_schema.get("inputSchema", {}).get("properties", {})
+                              else {})
         mcp.call("get_desktop_state", {}, "before-launch-desktop")
         before_launch = observe(evidence, "before-launch")
         launch, _ = mcp.call("launch_app", {"name": "galculator"}, "launch-calculator")

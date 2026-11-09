@@ -1,13 +1,13 @@
-# Fleet per-claim secrets on KubeVirt: the claim Secret is shared into the VM
-# over virtiofs tag `cua-claim-secrets` and mounted read-only at /run/cua, so
-# /run/cua/env-token is the claim's env token (root 0600; empty until a claim
-# binds, rewritten on rotation, emptied on release). The token-sync helper and
-# the driver (await-token-file mode) follow it.
+# Per-claim secrets on KubeVirt: a token Secret written by the orchestrator is
+# shared into the VM over virtiofs tag `cua-claim-secrets` and mounted
+# read-only at /run/cua, so /run/cua/env-token is the claim's env token (root
+# 0600; empty until a claim binds, rewritten on rotation, emptied on release).
+# The token-sync helper and the driver (await-token-file mode) follow it.
 #
 # Optional ("nofail"): pulled in only by the udev rule
 # 70-cua-claim-secrets.rules when a virtio-fs device exists, never required
-# and not part of local-fs.target. A VM without the share (local QEMU,
-# non-Fleet KubeVirt) never tries it and the driver keeps its local token.
+# and not part of local-fs.target. A VM without the share (for example local
+# QEMU) never tries it and the driver keeps its local token.
 # Local simulation without virtiofs (macOS QEMU has no virtiofsd): boot-qemu.sh
 # --claim-secrets DIR shares DIR over 9p with the same tag and installs a
 # drop-in switching Type= to 9p (see common/boot-qemu.sh).

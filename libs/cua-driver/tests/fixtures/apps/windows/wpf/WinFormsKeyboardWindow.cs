@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -47,6 +50,8 @@ public sealed class WinFormsKeyboardWindow : Form
         };
         _target.KeyUp += (_, e) => { _targetUp++; Count(_targetUpByKey, e.KeyCode); Publish(); };
         _decoy.KeyDown += (_, e) => { _decoyDown++; Count(_decoyDownByKey, e.KeyCode); Publish(); };
+        _target.TextChanged += (_, _) => Publish();
+        _decoy.TextChanged += (_, _) => Publish();
     }
 
     private static void Count(Dictionary<string, int> receipts, Keys key)
@@ -71,6 +76,8 @@ public sealed class WinFormsKeyboardWindow : Form
             last_modifiers = _lastModifiers,
             target_focused = _target.Focused,
             decoy_focused = _decoy.Focused,
+            target_text = _target.Text,
+            decoy_text = _decoy.Text,
         };
         var temporaryPath = $"{_statePath}.{Environment.ProcessId}.tmp";
         File.WriteAllText(temporaryPath, JsonSerializer.Serialize(state));

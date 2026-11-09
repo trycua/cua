@@ -102,8 +102,8 @@ native sandbox through cua-spacesd, so the image must ship it (the default
 
 ## Check it
 
-Scaffold a task, check its functions, then score it with its oracle in a local
-Linux sandbox:
+Scaffold a task, check that `cb` found its functions, then score it with its
+oracle in a local Linux sandbox:
 
 ```bash test="cli-shape" id="bench-task-create"
 cb task create first-task
@@ -111,15 +111,10 @@ cb task info first-task
 cb run first-task --variant-id 0 --oracle
 ```
 
-![cb task info: a native Linux task with 2 variants and setup, solve and evaluate](/img/cua-bench/cb-task-info.png)
+A missing check mark in `info` means a function is not decorated with the split
+being loaded. To solve the task yourself or hand it to an agent, follow
+[Create your own task](/cua-bench/quickstart#create-your-own-task) in the
+quickstart.
 
-A missing check mark in `info` means a function is not decorated with the
-split being loaded. To solve it yourself, `cb interact first-task --variant-id 0`
-opens the sandbox; press Enter to evaluate and release it:
-
-![cb interact: setup complete, evaluation result 1.0, sandbox released](/img/cua-bench/cb-interact.png)
-
-![The task sandbox mid-task: a terminal writing hello to /tmp/answer.txt](/img/cua-bench/cb-interact-desktop.png)
-
-To publish tasks as a taskset, pin their directory in a registry index: see
+To publish tasks as a taskset, pin their directory in a registry index. See
 [Your own registry](/cua-bench/guides/benchmarks#your-own-registry).

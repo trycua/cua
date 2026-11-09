@@ -1,6 +1,0 @@
-d cyclops_sdk_schema
-d fleet_sdk
-f cyclops_sdk_schema/cyclops_sdk_schema.go
-f cyclops_sdk_schema/cyclops_sdk_schema.h
-f fleet_sdk/fleet_sdk.go
-f fleet_sdk/fleet_sdk.h

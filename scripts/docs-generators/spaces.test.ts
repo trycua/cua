@@ -1,21 +1,24 @@
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import test from 'node:test';
-import { SOURCES, errorKinds, paramsTable, readProtocol, renderAll, statedDefault, type Manifest, type Tool } from './spaces';
+import { PAGES, SOURCES, errorKinds, pageOfCategory, paramsTable, readProtocol, renderAll, statedDefault, type Manifest, type Tool } from './spaces';
 
 const read = (p: string) => fs.readFileSync(p, 'utf-8');
 const manifest = (): Manifest => JSON.parse(read(SOURCES.manifest));
 
-test('the checked-in contract renders one page per category, plus index and errors', () => {
+test('the checked-in contract renders the index (with errors) and one page per category group', () => {
   const m = manifest();
   const files = renderAll(m, readProtocol(read(SOURCES.mcp), read(SOURCES.cliMcp)));
   const names = [...files.keys()].map((f) => f.split('/').pop());
-  assert.deepEqual(names, ['index.mdx', ...m.categories.map((c) => `${c.id}.mdx`), 'errors.mdx', 'meta.json']);
-  // Every tool is documented exactly once, under its category.
+  assert.deepEqual(names, ['index.mdx', ...PAGES.map((p) => `${p.slug}.mdx`), 'meta.json']);
+  const pages = pageOfCategory(m.categories);
+  // Every tool is documented exactly once, on its category's page.
   for (const t of m.tools) {
-    const page = [...files].find(([f]) => f.endsWith(`/${t.category}.mdx`))![1];
-    assert.equal(page.split(`\n## ${t.name}\n`).length, 2, t.name);
+    const page = [...files].find(([f]) => f.endsWith(`/${pages.get(t.category)}.mdx`))![1];
+    assert.equal(page.split(`\n### ${t.name}\n`).length, 2, t.name);
   }
+  const index = [...files].find(([f]) => f.endsWith('/index.mdx'))![1];
+  for (const k of m.error_kinds) assert.ok(index.includes(`\n#### ${k.kind}\n`), k.kind);
   for (const [, content] of files) assert.ok(content.length < 150_000);
 });
 

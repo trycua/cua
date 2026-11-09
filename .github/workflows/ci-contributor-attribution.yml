@@ -3,6 +3,7 @@ name: "CI: Contributor attribution"
 on:
   pull_request_target:
     types: [opened, edited, synchronize, reopened]
+  merge_group:
 
 permissions:
   contents: read
@@ -11,6 +12,7 @@ permissions:
 jobs:
   contributor-attribution:
     name: contributor-attribution
+    if: github.event_name != 'merge_group'
     runs-on: ubuntu-latest
     steps:
       # For pull_request_target, github.sha is the current commit on the trusted

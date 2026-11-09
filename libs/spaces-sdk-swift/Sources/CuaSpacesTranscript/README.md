@@ -5,7 +5,7 @@ Terminal scrollback in, structured UI out.
 `AgentTypes.swift` carries `output_tail`: the Spaces harness publishes what the
 agent's terminal looks like, not what the agent did. Every proposal for
 `agent.events` is blocked on that, and
-[`samples/openkoalabot-example-swift/FRICTION.md`](../../../../samples/openkoalabot-example-swift/FRICTION.md) §19 and
+[`examples/openkoalabot-example-swift/FRICTION.md`](../../../../examples/openkoalabot-example-swift/FRICTION.md) §19 and
 §20 predicted the consequence: one undifferentiated text stream with no turn
 boundary, so every app writes its own parser and they all guess differently.
 
@@ -90,4 +90,4 @@ CUA_TRANSCRIPT_RECORD=1 swift test --filter GoldenTests
 Read every changed file before committing it. Re-blessing without reading the
 diff defeats the mechanism.
 
-To re-record against a newer CLI, see [`tools/cli-cast/`](../../../../tools/cli-cast/README.md).
+To re-record against a newer CLI, see [`scripts/cli-cast/`](../../../../scripts/cli-cast/README.md).

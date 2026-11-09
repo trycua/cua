@@ -11,7 +11,7 @@ Needs egress in the guest, ``OPENAI_API_KEY`` and the dataset access.
 ::
 
     cb run dataset libs/cua-bench/tasks/online_mind2web --agent <agent> --max-variants 10
-    CUA_BENCH_OM2W_LEVEL=easy cb run dataset libs/cua-bench/tasks/online_mind2web --on cloud
+    CUA_BENCH_OM2W_LEVEL=easy cb run dataset libs/cua-bench/tasks/online_mind2web
 """
 
 from __future__ import annotations

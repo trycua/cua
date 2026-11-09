@@ -52,6 +52,16 @@ def _scale_coordinate(coord: int, scale: float) -> int:
 
 # Model version mapping to tool version and beta flag
 MODEL_TOOL_MAPPING = [
+    {
+        "pattern": r"anthropic\.claude-(?:opus|sonnet|haiku)-5-5(?:-\d{8})?(?=$|@|-v\d)",
+        "tool_version": "computer_20251124",
+        "beta_flag": "computer-use-2025-11-24",
+    },
+    {
+        "pattern": r"claude-(?:opus|sonnet)-5(?:-\d{8})?(?=$|@|-v\d)",
+        "tool_version": "computer_20251124",
+        "beta_flag": "computer-use-2025-11-24",
+    },
     # Claude Opus 4.6/4.5 and Sonnet 4.6 require the 2025-11-24 computer-use beta
     {
         "pattern": r"claude-opus-4-6|claude-opus-4-5|claude-sonnet-4-6",

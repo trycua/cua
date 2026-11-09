@@ -63,6 +63,9 @@ public struct VideoFrameDescriptor: Sendable, Hashable {
     public var capture_timestamp_us: UInt64
     public var codec: String
     public var keyframe: Bool
+    /// When the frame arrived from the SDK (`ProcessInfo.systemUptime`, s;
+    /// 0 when unknown): the video bench's arrival-to-presented time.
+    public var receivedAt: TimeInterval = 0
 
     public init(session_id: SessionID, sequence: UInt64, geometry_epoch: UInt64,
                 codec_epoch: UInt64, width_px: Int, height_px: Int,
@@ -85,6 +88,7 @@ public struct VideoFrameDescriptor: Sendable, Hashable {
                   width_px: Int(frame.width), height_px: Int(frame.height),
                   capture_timestamp_us: frame.captureTimestampUs, codec: frame.codec,
                   keyframe: frame.keyframe)
+        receivedAt = ProcessInfo.processInfo.systemUptime
     }
 }
 

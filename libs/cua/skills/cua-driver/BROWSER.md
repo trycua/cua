@@ -199,6 +199,22 @@ transition on that same control. Unsupported appearance, scale, zoom,
 window-size, or toolbar geometry refuses without a click; the fallback does not
 authorize generic pixel interaction.
 
+On macOS this attachment cannot stay in the background. Chrome brings itself
+to the front to show its "Allow remote debugging?" prompt for every new
+DevTools connection, and turning remote debugging on needs Chrome in front.
+When the Chrome window is on another Space than the user's, the attach runs in
+the background: the driver turns remote debugging on without bringing Chrome
+forward, and reverts Chrome's own brief activations (its consent window opens
+on Chrome's Space, out of the user's sight) within milliseconds, giving the
+user's window front and key status back. On the user's Space, while another
+app is in front, `browser_prepare` with `strategy.kind:"existing_profile"`
+refuses with `background_unavailable` before it opens a tab or connects. Keep
+or put Chrome on another Space, or pass `delivery_mode:"foreground"` only when
+nobody is using the screen or the user agreed to Chrome coming forward; the
+driver then brings the previous app back and reports
+`side_effects.restored_frontmost_app`. If the user is working in another app,
+read the Chrome window with `get_window_state` instead.
+
 Chrome 144 and later can expose its agent auto-connect bridge from the running
 profile. After approval, Cua reads the exact port and browser WebSocket path
 from that process's `DevToolsActivePort` file, cross-checks the loopback socket
@@ -348,11 +364,12 @@ browser_click
 Before dispatch, the driver refreshes the element box and hit-tests the point.
 It refuses stale, covered, or ambiguous targets.
 
-Standalone Chromium on macOS and Linux can activate its native window when
-trusted CDP pointer input is used. CUA Driver detects that limitation and
-returns `browser_input_trust_unavailable` before dispatch instead of claiming
-background delivery. Windows Chrome and Edge have validated trusted
-background delivery.
+Standalone Chromium on Linux can activate its native window when trusted CDP
+pointer input is used. CUA Driver detects that limitation and returns
+`browser_input_trust_unavailable` before dispatch instead of claiming
+background delivery. Chrome and Edge on Windows, and Chrome on macOS, deliver
+trusted input in the background, including to an inactive (hidden) tab,
+without activating or raising the browser window.
 
 When the application semantics allow a synthetic JavaScript click, request it
 explicitly with a current ref:
@@ -363,8 +380,11 @@ browser_click
     "input_route":"dom_event","session":"browser-run-1"}'
 ```
 
-`dom_event` calls the page element's click behavior without pretending that a
-trusted pointer event occurred. It requires a ref and is the full-background
+`dom_event` replays a primary-button click as synthetic DOM events at the
+element's center: pointer and mouse over, move, down, up, then `click`. Apps
+that open rows or menus from pointer or mouse down/up, as many React tables
+do, respond to it; it does not pretend that a trusted pointer event occurred.
+Controls that check `event.isTrusted` still need the trusted route. It requires a ref and is the full-background
 alternative where supported. Dispatch is not proof that the control activated:
 trust-gated controls can ignore synthetic events, so refresh page state and
 verify the expected postcondition. Never silently change trust class or

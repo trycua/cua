@@ -91,7 +91,12 @@ export function thisMachineSpace(status: HostStatus | null, now: number, os: Spa
 }
 
 /** The roster with "This machine" first. */
-export function withThisMachine(spaces: Space[], status: HostStatus | null, now: number, os: SpaceOs = hostOs()): Space[] {
+export function withThisMachine(
+  spaces: Space[],
+  status: HostStatus | null,
+  now: number,
+  os: SpaceOs = hostOs(),
+): Space[] {
   return core("host.withThisMachine", { spaces, status: summaryInput(status), now, os });
 }
 

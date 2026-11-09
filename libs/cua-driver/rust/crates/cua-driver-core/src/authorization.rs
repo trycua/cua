@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Immutable daemon permission-mode configuration.
 //!
 //! Capability policy answers whether an operation is inside the configured
@@ -352,6 +355,7 @@ const BROWSER_BOUND_INPUT_OPERATIONS: &[&str] = &[
     "browser_navigate",
     "browser_click",
     "browser_type",
+    "browser_select",
     "browser_pointer",
 ];
 const BROWSER_BOUND_INPUT_SCOPE_KEYS: &[&str] = &[
@@ -873,6 +877,7 @@ pub fn advertised_risk_for(tool: &str) -> RiskAssessment {
         | "get_agent_cursor_state"
         | "get_recording_state"
         | "check_for_update"
+        | "get_guide"
         | "health_report"
         | "probe" => RiskClass::R0,
 
@@ -892,7 +897,8 @@ pub fn advertised_risk_for(tool: &str) -> RiskAssessment {
         | "press_key"
         | "hotkey"
         | "set_value"
-        | "run_actions"
+        | "run_steps"
+        | "run_script"
         | "invoke_menu"
         | "launch_app"
         | "bring_to_front"
@@ -924,12 +930,20 @@ pub fn advertised_risk_for(tool: &str) -> RiskAssessment {
         | "browser_navigate"
         | "browser_click"
         | "browser_type"
+        | "browser_select"
         | "browser_pointer"
         | "history_status"
         | "history_query"
         | "parse_visual_regions" => RiskClass::R2,
 
         // External/file side effects or generic compound action surfaces.
+        // A Space's own child-Space tools (cua-spacesd, spawn channel): the host answers them for
+        // the Space's subtree only, inside its budget and network rules. Reading the list is
+        // R2; making, changing, deleting, running commands in or sharing from a child is R3.
+        "list_spaces" | "list_tcp_shares" => RiskClass::R2,
+        "create_space" | "fork_space" | "delete_space" | "stop_space" | "start_space"
+        | "space_bash" | "share_tcp_port" | "stop_tcp_share" => RiskClass::R3,
+
         "get_desktop_state"
         | "get_window_state"
         | "kill_app"
@@ -1129,6 +1143,7 @@ pub fn authorize_tool_call_with_context(
     args: &Value,
     context: &crate::session_authorization::EffectiveAuthorizationContext,
 ) -> Result<RiskAssessment, crate::policy::AuthorizationError> {
+    let tool = crate::tool::renamed_tool(tool).unwrap_or(tool);
     enforce_hard_invariants(tool, args)?;
     if context.is_expired() {
         return Err(crate::policy::AuthorizationError::Denied(
@@ -1425,6 +1440,31 @@ pub fn status_json_with_provider(authorization_host: Option<&'static str>) -> se
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_spaces_child_tools_have_a_reviewed_classification() {
+        // Without one the call is refused before it runs ("no reviewed risk classification"), and
+        // an agent in a Space cannot make a child Space through its MCP tools.
+        for tool in [
+            "create_space",
+            "fork_space",
+            "delete_space",
+            "stop_space",
+            "start_space",
+            "space_bash",
+            "share_tcp_port",
+            "stop_tcp_share",
+        ] {
+            assert_eq!(advertised_risk_for(tool).class, RiskClass::R3, "{tool}");
+        }
+        for tool in ["list_spaces", "list_tcp_shares"] {
+            assert_eq!(advertised_risk_for(tool).class, RiskClass::R2, "{tool}");
+        }
+        assert_eq!(
+            advertised_risk_for("create_a_computer").class,
+            RiskClass::Unclassified
+        );
+    }
 
     #[test]
     fn standard_is_the_default() {
@@ -1809,6 +1849,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "yaml")]
     #[test]
     fn standard_manifest_scope_is_checked_before_existing_profile_approval() {
         use std::io::Write as _;
@@ -1940,6 +1981,10 @@ mod tests {
         );
         assert_eq!(
             ids("browser_click", serde_json::json!({})),
+            vec!["browser_bound_input"]
+        );
+        assert_eq!(
+            ids("browser_select", serde_json::json!({})),
             vec!["browser_bound_input"]
         );
         assert_eq!(

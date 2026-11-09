@@ -1,4 +1,7 @@
-//! `run_actions` v2 against a fake two-screen app: steps that name their
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
+//! `run_steps` v2 against a fake two-screen app: steps that name their
 //! target, waits, checks and the end-of-batch summary.
 
 use std::sync::{Arc, Mutex};
@@ -208,7 +211,7 @@ impl Harness {
     }
 
     async fn run(&self, args: Value) -> ToolResult {
-        self.registry.invoke(super::RUN_ACTIONS_TOOL, args).await
+        self.registry.invoke(super::RUN_STEPS_TOOL, args).await
     }
 
     fn calls(&self, tool: &str) -> Vec<Value> {

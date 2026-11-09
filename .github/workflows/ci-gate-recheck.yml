@@ -116,6 +116,7 @@ on:
       - "Perf: cua channel"
       - "CD: Auto Release on Merge"
       - "Release: Auto-merge release PRs"
+      - "CI: PR title"
       - "Smoke: Cua Driver live agent loop"
       - "Space egress (nightly)"
   status:

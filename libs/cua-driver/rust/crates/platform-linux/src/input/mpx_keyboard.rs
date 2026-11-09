@@ -640,7 +640,6 @@ fn deliver(
             );
         }
 
-        let mut last = None;
         let mut held: Vec<u16> = Vec::new();
         let confirm_at = confirm_points(steps);
         let mut read = 0;
@@ -674,7 +673,6 @@ fn deliver(
             } else {
                 held.retain(|code| *code != step.evdev_code);
             }
-            last = Some(*step);
             let pause = if step.press {
                 pacing.step
             } else {
@@ -684,36 +682,24 @@ fn deliver(
                 sleep(pause);
             }
             if confirm_at.binary_search(&sent).is_ok() {
-                let mut deadline = std::time::Instant::now() + DELIVERY_CONFIRM_TIMEOUT;
-                while read <= sent {
-                    let Some((_, _, deviceid)) =
-                        next_raw_key(display, xi_opcode, &[slave_keyboard_id], deadline)
-                    else {
-                        bail!(
-                            "virtual keyboard: the X server read {} of the first {} characters, \
-                             then nothing for {DELIVERY_CONFIRM_TIMEOUT:?}; the rest was not sent",
-                            characters(&steps[..read]),
-                            characters(&steps[..=sent])
-                        );
-                    };
-                    if deviceid == slave_keyboard_id {
-                        read += 1;
-                        deadline = std::time::Instant::now() + DELIVERY_CONFIRM_TIMEOUT;
-                    }
+                if !read_through(display, xi_opcode, slave_keyboard_id, &mut read, sent + 1) {
+                    bail!(
+                        "virtual keyboard: the X server read {} of the first {} characters, \
+                         then nothing for {DELIVERY_CONFIRM_TIMEOUT:?}; the rest was not sent",
+                        characters(&steps[..read]),
+                        characters(&steps[..=sent])
+                    );
                 }
                 unread = false;
             }
         }
-        let delivery_confirmed = match last {
-            Some(last) => wait_for_raw_key(
-                display,
-                xi_opcode,
-                &[slave_keyboard_id, ids.keyboard_id],
-                last,
-                DELIVERY_CONFIRM_TIMEOUT,
-            ),
-            None => true,
-        };
+        let delivery_confirmed = read_through(
+            display,
+            xi_opcode,
+            slave_keyboard_id,
+            &mut read,
+            steps.len(),
+        );
         unread &= !delivery_confirmed;
         // The raw event proves the server consumed the transition; give the
         // toolkit a beat to translate it under any temporary remap before the
@@ -754,6 +740,30 @@ fn deliver(
     let _ = cursor_id;
     unsafe { x11::xlib::XCloseDisplay(display) };
     result
+}
+
+/// Count the slave's raw key events into `read` until it reaches `sent`.
+/// False when the server reports none for [`DELIVERY_CONFIRM_TIMEOUT`].
+fn read_through(
+    display: *mut x11::xlib::Display,
+    xi_opcode: std::os::raw::c_int,
+    slave_keyboard_id: i32,
+    read: &mut usize,
+    sent: usize,
+) -> bool {
+    let mut deadline = std::time::Instant::now() + DELIVERY_CONFIRM_TIMEOUT;
+    while *read < sent {
+        let Some((_, _, deviceid)) =
+            next_raw_key(display, xi_opcode, &[slave_keyboard_id], deadline)
+        else {
+            return false;
+        };
+        if deviceid == slave_keyboard_id {
+            *read += 1;
+            deadline = std::time::Instant::now() + DELIVERY_CONFIRM_TIMEOUT;
+        }
+    }
+    true
 }
 
 fn characters(steps: &[KeyStep]) -> usize {

@@ -772,7 +772,14 @@ pub fn end_session_for_owner(session_id: &str, owner_transport: &str) -> bool {
     if !session_owner_matches(session_id, owner_transport) {
         return false;
     }
-    end_session(session_id);
+    // Bound to the checked owner, so a release and another transport's claim
+    // landing between the check and the end leave the new episode alone.
+    end_session_with_reason(
+        session_id,
+        SessionEndReason::Explicit,
+        true,
+        Some(owner_transport),
+    );
     true
 }
 
@@ -2671,6 +2678,38 @@ mod tests {
         assert_eq!(
             end_sessions_for_owner(owner_b, SessionEndReason::ProcessExit),
             1
+        );
+    }
+
+    #[test]
+    fn an_explicit_end_checked_for_one_owner_spares_the_next_owner() {
+        let label = "test-explicit-bound-end-P1Q2R3";
+        let owner_a = "test-explicit-bound-end-transport-a";
+        let owner_b = "test-explicit-bound-end-transport-b";
+        let begin = |owner: &str| {
+            begin_session_dispatch(
+                label,
+                Some("label"),
+                owner,
+                false,
+                SessionTransport::McpStdio,
+                SessionClientKind::Mcp,
+            )
+        };
+        drop(begin(owner_a).unwrap());
+        assert!(session_owner_matches(label, owner_a));
+        // A closes and B claims the label after A's end_session passed its
+        // owner check but before it ended anything.
+        end_sessions_for_owner(owner_a, SessionEndReason::ProcessExit);
+        drop(begin(owner_b).expect("B claims the released label"));
+        end_session_with_reason(label, SessionEndReason::Explicit, true, Some(owner_a));
+        assert!(session_snapshot(label, owner_b, DEFAULT_SESSION_IDLE_TTL).is_some());
+        assert!(!end_session_for_owner(label, owner_a));
+        assert!(end_session_for_owner(label, owner_b));
+        assert!(is_session_ended(label));
+        assert_eq!(
+            end_sessions_for_owner(owner_b, SessionEndReason::ProcessExit),
+            0
         );
     }
 

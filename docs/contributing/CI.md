@@ -19,6 +19,7 @@ each failure. Run it before you push. It catches in minutes what otherwise costs
 - stale generated reference docs, docs code blocks with no disposition, and image refs outside the catalog;
 - Python isort, black and ruff; TypeScript typecheck, tests and the design lint for the web packages you touched;
 - actionlint for workflows, SPDX headers, and the unit tests of the crates you changed.
+- Prettier on the Cua Spaces app files you changed, with each app's own `.prettierrc.yaml` (double quotes).
 
 `CI: Quick` runs `bin/ci --quick` on every pull request, so these checks have no workflow of their own: SPDX
 headers, lockfiles, actionlint, the larger-runner ban, image refs, Python lint, rustfmt and the docs image

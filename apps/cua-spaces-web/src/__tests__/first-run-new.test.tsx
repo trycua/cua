@@ -21,7 +21,25 @@ import { placeKeys } from "@/components/first-run-new/float-keys";
 import { resetConnectedAppsState } from "@/hooks/use-connected-apps";
 import type { AppPermissions } from "@/bridge/app-permissions";
 import { permissionsStepView } from "@/lib/app-permissions";
-import { addingView, afterSignIn, agentView, bringRestView, chosenAgents, dotFor, dotStep, firstJobDone, installedWhere, NEW_RUN_SCREENS, reachedAfter, readyComputers, readyView, signInView, stepDots, toggleAgentOff, welcomeUsage } from "@/lib/first-run-new";
+import {
+  addingView,
+  afterSignIn,
+  agentView,
+  bringRestView,
+  chosenAgents,
+  dotFor,
+  dotStep,
+  firstJobDone,
+  installedWhere,
+  NEW_RUN_SCREENS,
+  reachedAfter,
+  readyComputers,
+  readyView,
+  signInView,
+  stepDots,
+  toggleAgentOff,
+  welcomeUsage,
+} from "@/lib/first-run-new";
 import { addAskTask, resetAskTasks } from "@/lib/ask-first";
 import { getDriver, resetPrepare } from "@/lib/prepare/store";
 import { mountApp, stubBrowserApis } from "./app-harness";
@@ -65,7 +83,14 @@ describe("1b, adding this computer once signed in", () => {
 
   it("when adding failed, says why with Try again", () => {
     const onTryAgain = vi.fn();
-    render(<SignInScreen view={addingView({ os: "macos", state: "failed", error: "The relay didn't answer." })} onTryAgain={onTryAgain} onUseCode={noop} onOpen={noop} />);
+    render(
+      <SignInScreen
+        view={addingView({ os: "macos", state: "failed", error: "The relay didn't answer." })}
+        onTryAgain={onTryAgain}
+        onUseCode={noop}
+        onOpen={noop}
+      />,
+    );
     expect(screen.getByRole("heading").textContent).toBe("Couldn't add this Mac to your account");
     expect(text()).toContain("The relay didn't answer.");
     fireEvent.click(screen.getByRole("button", { name: "Try again" }));
@@ -75,8 +100,16 @@ describe("1b, adding this computer once signed in", () => {
 
   it("when the account wants proof, asks to confirm it's you with a code from another computer", () => {
     const onUseCode = vi.fn();
-    const message = "To add this Mac to your account, enter a code from a computer you already added. On that computer, open Cua Spaces, go to Computers and click Add a computer.";
-    render(<SignInScreen view={addingView({ os: "macos", state: "failed", error: message, needsProof: true })} onTryAgain={noop} onUseCode={onUseCode} onOpen={noop} />);
+    const message =
+      "To add this Mac to your account, enter a code from a computer you already added. On that computer, open Cua Spaces, go to Computers and click Add a computer.";
+    render(
+      <SignInScreen
+        view={addingView({ os: "macos", state: "failed", error: message, needsProof: true })}
+        onTryAgain={noop}
+        onUseCode={onUseCode}
+        onOpen={noop}
+      />,
+    );
     expect(text()).toContain(`Confirm it's you. ${message}`);
     fireEvent.click(screen.getByRole("button", { name: "Use a code from another computer" }));
     expect(onUseCode).toHaveBeenCalled();
@@ -210,7 +243,9 @@ describe("screen 3, the coding agents", () => {
     const { onPick, onContinue, onLater } = draw(["codex", "claude-code", "hermes"]);
     expect(screen.getByRole("heading").textContent).toBe("Which agents do you use?");
     expect(text()).toContain("Cua has no AI of its own. Claude Code, Codex and Hermes do the work, each on your own plan.");
-    expect(document.querySelector("[data-new-run-agent-note]")!.textContent).toBe("You choose the agent each time you start a job. You can change this later in Settings.");
+    expect(document.querySelector("[data-new-run-agent-note]")!.textContent).toBe(
+      "You choose the agent each time you start a job. You can change this later in Settings.",
+    );
     expect(text()).not.toContain("Pick the coding agent");
     expect(document.querySelectorAll("[data-check=on]").length).toBe(3);
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
@@ -287,7 +322,9 @@ describe("screen 4, Ready", () => {
   });
 
   it("names up to four computers, then counts the others", () => {
-    expect(readyView({ os: "macos", agent: "codex", computers: ["this", "Mac mini", "Build server", "Gaming PC"] }).title).toBe("Codex can now use this Mac, Mac mini, Build server and Gaming PC");
+    expect(readyView({ os: "macos", agent: "codex", computers: ["this", "Mac mini", "Build server", "Gaming PC"] }).title).toBe(
+      "Codex can now use this Mac, Mac mini, Build server and Gaming PC",
+    );
     expect(readyView({ os: "macos", agent: "codex", computers: ["this", "A", "B", "C", "D", "E"] })).toMatchObject({
       title: "Codex can now use this Mac and 5 other computers",
       command: 'codex "Build this branch on A"',
@@ -833,30 +870,34 @@ describe.skipIf(!wasmBuilt)("the new first run on its route", () => {
     expect(document.querySelector("[data-home-apps]")).toBeNull();
   });
 
-  it("signed in: Add this computer opens the sign-in, adds this Mac there, then goes straight on; Ready names every ready computer", { timeout: 60_000 }, async () => {
-    const calls: Calls = [];
-    await mountApp("/onboarding", {
-      failsCreates: false,
-      listsGhost: false,
-      demo: { signedIn: false, onboarded: false, noSpaces: true },
-      intercept: (op, args) => (calls.push({ op, args }), undefined),
-      answer: (op, out) => (op === "agents.setup" || op === "agents.configure" ? onlyCodex(out as AgentSetupRow[]) : out),
-    });
-    await waitFor(() => expect(heading()).toBe("Combine all your computers into one supercomputer."));
-    click("[data-onboarding-primary]");
-    await waitFor(() => expect(heading()).toBe("Finish signing in in your browser"));
-    expect(calls.some((c) => c.op === "session.signIn")).toBe(true);
-    // No "Pick where your agents work": on a Mac, the permissions come next.
-    await waitFor(() => expect(heading()).toBe("Let Cua Spaces see and use apps"), { timeout: 15_000 });
-    expect(document.body.textContent).not.toContain("Pick where your agents work");
-    click("[data-new-run-permissions-next=Later]");
-    await waitFor(() => expect(heading()).toBe("Which agents do you use?"), { timeout: 15_000 });
-    click("[data-onboarding-primary]");
-    await waitFor(() => expect(document.querySelector("[data-new-run=ready]")).not.toBeNull(), { timeout: 15_000 });
-    // The demo account's ready computers are all named (or counted), not only this Mac.
-    await waitFor(() => expect(heading()).not.toBe("Codex can now use this Mac"), { timeout: 15_000 });
-    expect(heading()).toMatch(/^Codex can now use this Mac(, | and )/);
-  });
+  it(
+    "signed in: Add this computer opens the sign-in, adds this Mac there, then goes straight on; Ready names every ready computer",
+    { timeout: 60_000 },
+    async () => {
+      const calls: Calls = [];
+      await mountApp("/onboarding", {
+        failsCreates: false,
+        listsGhost: false,
+        demo: { signedIn: false, onboarded: false, noSpaces: true },
+        intercept: (op, args) => (calls.push({ op, args }), undefined),
+        answer: (op, out) => (op === "agents.setup" || op === "agents.configure" ? onlyCodex(out as AgentSetupRow[]) : out),
+      });
+      await waitFor(() => expect(heading()).toBe("Combine all your computers into one supercomputer."));
+      click("[data-onboarding-primary]");
+      await waitFor(() => expect(heading()).toBe("Finish signing in in your browser"));
+      expect(calls.some((c) => c.op === "session.signIn")).toBe(true);
+      // No "Pick where your agents work": on a Mac, the permissions come next.
+      await waitFor(() => expect(heading()).toBe("Let Cua Spaces see and use apps"), { timeout: 15_000 });
+      expect(document.body.textContent).not.toContain("Pick where your agents work");
+      click("[data-new-run-permissions-next=Later]");
+      await waitFor(() => expect(heading()).toBe("Which agents do you use?"), { timeout: 15_000 });
+      click("[data-onboarding-primary]");
+      await waitFor(() => expect(document.querySelector("[data-new-run=ready]")).not.toBeNull(), { timeout: 15_000 });
+      // The demo account's ready computers are all named (or counted), not only this Mac.
+      await waitFor(() => expect(heading()).not.toBe("Codex can now use this Mac"), { timeout: 15_000 });
+      expect(heading()).toMatch(/^Codex can now use this Mac(, | and )/);
+    },
+  );
 
   it("Add this computer waits for the browser: nothing is set up or registered while it waits", { timeout: 60_000 }, async () => {
     const calls: Calls = [];

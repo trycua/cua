@@ -79,7 +79,11 @@ const LINK =
 
 function Title({ children }: { children: ReactNode }) {
   return (
-    <h1 tabIndex={-1} data-onboarding-heading="" className="font-display text-[clamp(34px,min(4.9vw,6.6vh),76px)] leading-[1.04] font-semibold tracking-[-0.03em] text-balance text-white outline-none">
+    <h1
+      tabIndex={-1}
+      data-onboarding-heading=""
+      className="font-display text-[clamp(34px,min(4.9vw,6.6vh),76px)] leading-[1.04] font-semibold tracking-[-0.03em] text-balance text-white outline-none"
+    >
       {children}
     </h1>
   );
@@ -147,7 +151,9 @@ function Row({
     <>
       {icon}
       <span className="min-w-0 flex-1 text-left">
-        <span className={cn("block text-[15px] leading-5 font-medium transition-colors", check && !picked && onClick ? "text-white/60" : "text-white")}>{name}</span>
+        <span className={cn("block text-[15px] leading-5 font-medium transition-colors", check && !picked && onClick ? "text-white/60" : "text-white")}>
+          {name}
+        </span>
         <span className={cn("flex items-center gap-1.5 text-[13.5px] leading-[19px] font-medium", GREY)}>{sub}</span>
       </span>
       {extra}
@@ -177,7 +183,6 @@ function Row({
     </div>
   );
 }
-
 
 /** How far above the footer the content fades out. */
 const FADE_PX = 28;
@@ -314,14 +319,25 @@ export function WelcomeScreen({
 }) {
   return (
     <div data-new-run="welcome">
-      <Title><SuperTitle text={WELCOME.title} /></Title>
+      <Title>
+        <SuperTitle text={WELCOME.title} />
+      </Title>
       <Line>{WELCOME.line}</Line>
       {usage ? (
         // Before anything is sent: the hosts hold every usage event until the run leaves this screen.
-        <div className={cn("mt-6 flex max-w-[520px] items-start gap-3 text-[13px] leading-[19px] font-medium", GREY)} data-new-run-usage={usage.on ? "on" : "off"}>
+        <div
+          className={cn("mt-6 flex max-w-[520px] items-start gap-3 text-[13px] leading-[19px] font-medium", GREY)}
+          data-new-run-usage={usage.on ? "on" : "off"}
+        >
           {/* The switch sits in a box one text line tall, so it centres on the label line whatever the font metrics. */}
           <span className="flex h-[19px] shrink-0 items-center">
-            <Switch checked={usage.on} disabled={!usage.enabled} onCheckedChange={(on) => onUsage?.(on)} aria-label={usage.label} data-new-run-usage-switch="" />
+            <Switch
+              checked={usage.on}
+              disabled={!usage.enabled}
+              onCheckedChange={(on) => onUsage?.(on)}
+              aria-label={usage.label}
+              data-new-run-usage-switch=""
+            />
           </span>
           <span className="min-w-0">
             <span className="block text-white">{usage.label}</span>
@@ -344,7 +360,17 @@ export function WelcomeScreen({
   );
 }
 
-export function SignInScreen({ view, onTryAgain, onUseCode, onOpen }: { view: SignInView; onTryAgain: () => void; onUseCode: () => void; onOpen: (url: string) => void }) {
+export function SignInScreen({
+  view,
+  onTryAgain,
+  onUseCode,
+  onOpen,
+}: {
+  view: SignInView;
+  onTryAgain: () => void;
+  onUseCode: () => void;
+  onOpen: (url: string) => void;
+}) {
   // The code line waits 12 s: most sign-ins finish in the browser before then.
   const [codeHint, setCodeHint] = useState(false);
   useEffect(() => {
@@ -397,7 +423,21 @@ export function SignInScreen({ view, onTryAgain, onUseCode, onOpen }: { view: Si
   );
 }
 
-export function AgentScreen({ view, onPick, onContinue, onLater, onInstall, busy }: { view: AgentView; onPick: (id: string) => void; onContinue: () => void; onLater: () => void; onInstall: (agent: "claude-code" | "codex") => void; busy: boolean }) {
+export function AgentScreen({
+  view,
+  onPick,
+  onContinue,
+  onLater,
+  onInstall,
+  busy,
+}: {
+  view: AgentView;
+  onPick: (id: string) => void;
+  onContinue: () => void;
+  onLater: () => void;
+  onInstall: (agent: "claude-code" | "codex") => void;
+  busy: boolean;
+}) {
   const later = view.later ? (
     <button type="button" className={cn(LINK, "text-[15px]")} disabled={busy} onClick={onLater} data-new-run-agent-later="">
       {view.later}
@@ -980,7 +1020,11 @@ export function NewFirstRun() {
     case "signin":
       body = (
         <SignInScreen
-          view={authed ? addingView({ os, state: thisState === "failed" ? "failed" : "adding", error: addError, needsProof: addNeedsProof }) : signInView(phase, session.data?.signInUrl ?? null)}
+          view={
+            authed
+              ? addingView({ os, state: thisState === "failed" ? "failed" : "adding", error: addError, needsProof: addNeedsProof })
+              : signInView(phase, session.data?.signInUrl ?? null)
+          }
           onTryAgain={() => {
             if (authed) return void addThis();
             session.cancelSignIn();

@@ -195,43 +195,56 @@ export function FloatKeys({ copyRight }: { copyRight: number }) {
         const sc = k.width / sp.w;
         const l = loop(i);
         return (
-          <div key={k.src} className="absolute" style={{ left: k.left, top: k.top, width: k.width, height: k.height, zIndex: Math.round(k.depth * 10) }} data-key={k.src} data-mark={k.mark}>
+          <div
+            key={k.src}
+            className="absolute"
+            style={{ left: k.left, top: k.top, width: k.width, height: k.height, zIndex: Math.round(k.depth * 10) }}
+            data-key={k.src}
+            data-mark={k.mark}
+          >
             {/* The site's entrance timing for this key (FloatEarly.astro). */}
             <div
               className="first-run-key-in absolute inset-0"
-              style={{ "--ed": `${(0.85 + k.depth * 0.35).toFixed(2)}s`, "--edl": `${(0.04 + (1 - k.depth) * 0.2 + (i % 4) * 0.04).toFixed(2)}s`, "--fy": `${(24 + k.depth * 70).toFixed(0)}px`, "--fs": (0.86 - k.depth * 0.12).toFixed(2) } as CSSProperties}
-            >
-            <div
-              className="first-run-key absolute inset-0"
               style={
                 {
-                  "--r": `${k.rot}deg`,
-                  "--dx": `${l.dx}px`,
-                  "--dy": `${l.dy}px`,
-                  "--dr": `${l.dr}deg`,
-                  "--dur": `${l.dur}s`,
-                  "--delay": `${l.delay}s`,
+                  "--ed": `${(0.85 + k.depth * 0.35).toFixed(2)}s`,
+                  "--edl": `${(0.04 + (1 - k.depth) * 0.2 + (i % 4) * 0.04).toFixed(2)}s`,
+                  "--fy": `${(24 + k.depth * 70).toFixed(0)}px`,
+                  "--fs": (0.86 - k.depth * 0.12).toFixed(2),
                 } as CSSProperties
               }
             >
-              <img
-                src={`/onboarding/float/${k.src}.webp`}
-                alt=""
-                draggable={false}
-                className="absolute inset-0 size-full select-none"
-                style={k.soft ? { opacity: 0.72 } : undefined}
-              />
-              {k.mark && sp.quad ? (
-                <div
-                  className="absolute top-0 left-0 size-[100px]"
-                  style={{ transformOrigin: "0 0", transform: homography(sp.quad.map(([x, y]) => [x! * sc, y! * sc])) }}
-                >
-                  <svg viewBox={OS_MARKS[k.mark].viewBox} fill="currentColor" className="absolute inset-[24%] size-[52%]" style={MARK_STYLE[k.mark]}>
-                    <path d={OS_MARKS[k.mark].d} />
-                  </svg>
-                </div>
-              ) : null}
-            </div>
+              <div
+                className="first-run-key absolute inset-0"
+                style={
+                  {
+                    "--r": `${k.rot}deg`,
+                    "--dx": `${l.dx}px`,
+                    "--dy": `${l.dy}px`,
+                    "--dr": `${l.dr}deg`,
+                    "--dur": `${l.dur}s`,
+                    "--delay": `${l.delay}s`,
+                  } as CSSProperties
+                }
+              >
+                <img
+                  src={`/onboarding/float/${k.src}.webp`}
+                  alt=""
+                  draggable={false}
+                  className="absolute inset-0 size-full select-none"
+                  style={k.soft ? { opacity: 0.72 } : undefined}
+                />
+                {k.mark && sp.quad ? (
+                  <div
+                    className="absolute top-0 left-0 size-[100px]"
+                    style={{ transformOrigin: "0 0", transform: homography(sp.quad.map(([x, y]) => [x! * sc, y! * sc])) }}
+                  >
+                    <svg viewBox={OS_MARKS[k.mark].viewBox} fill="currentColor" className="absolute inset-[24%] size-[52%]" style={MARK_STYLE[k.mark]}>
+                      <path d={OS_MARKS[k.mark].d} />
+                    </svg>
+                  </div>
+                ) : null}
+              </div>
             </div>
           </div>
         );

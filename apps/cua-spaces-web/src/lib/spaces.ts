@@ -94,7 +94,9 @@ export function listedSpaces<T extends Pick<Space, "id" | "status" | "provider" 
 export const countedSpaces = <T extends Pick<Space, "id" | "status">>(listed: readonly T[]): T[] => listed.filter((s) => !isUnsharedDesktop(s));
 
 /** Running Spaces first, then the most recently used (Home, the Spaces page, the switcher and ⌘K). */
-export function orderSpaces<T extends Pick<Space, "id" | "status" | "power" | "lastUsedAt" | "provider" | "host"> & { progress?: Space["progress"] }>(spaces: readonly T[]): T[] {
+export function orderSpaces<T extends Pick<Space, "id" | "status" | "power" | "lastUsedAt" | "provider" | "host"> & { progress?: Space["progress"] }>(
+  spaces: readonly T[],
+): T[] {
   // A machine's desktop follows the Spaces in its state, and This Mac's unshared one is last.
   const rank = (s: T) => (isUnsharedDesktop(s) ? 9 : ORDER[spaceState(s)] + (isMachineDesktop(s) ? 0.5 : 0));
   // A desktop has no "last used": the host stamps it with the time it read the list (This Mac's

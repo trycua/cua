@@ -136,7 +136,16 @@ export interface SignInView {
 export function addingView(input: { os: string; state: "adding" | "failed"; error: string | null; needsProof?: boolean }): SignInView {
   const place = placeName(input.os);
   if (input.state === "adding")
-    return { state: "adding", title: `Adding ${place} to your account`, line: "You're signed in. This takes a few seconds.", waiting: `Adding ${place}`, code: null, tryAgainPrimary: false, tryAgain: null, useCode: null };
+    return {
+      state: "adding",
+      title: `Adding ${place} to your account`,
+      line: "You're signed in. This takes a few seconds.",
+      waiting: `Adding ${place}`,
+      code: null,
+      tryAgainPrimary: false,
+      tryAgain: null,
+      useCode: null,
+    };
   return {
     state: "add-failed",
     title: `Couldn't add ${place} to your account`,
@@ -239,10 +248,26 @@ export function installedWhere(os: string, elsewhere: readonly string[] = []): s
  * knows (it doesn't yet, so every row says "On this Mac"). Nothing has to be picked: every agent found starts ticked,
  * Continue connects the ticked ones (or, with none ticked, goes on like Choose later), and each job picks its own agent.
  */
-export function agentView(input: { os: string; found: string[] | null; off?: readonly string[]; elsewhere?: Readonly<Record<string, readonly string[]>>; error: string | null }): AgentView {
+export function agentView(input: {
+  os: string;
+  found: string[] | null;
+  off?: readonly string[];
+  elsewhere?: Readonly<Record<string, readonly string[]>>;
+  error: string | null;
+}): AgentView {
   const place = placeName(input.os);
   if (input.found === null)
-    return { state: "looking", title: "Looking for your coding agents…", line: "", agents: [], note: null, continueEnabled: false, later: null, install: null, error: null };
+    return {
+      state: "looking",
+      title: "Looking for your coding agents…",
+      line: "",
+      agents: [],
+      note: null,
+      continueEnabled: false,
+      later: null,
+      install: null,
+      error: null,
+    };
   const found = CODING_AGENTS.filter((a) => input.found!.includes(a.id));
   if (found.length === 0) {
     return {

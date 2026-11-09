@@ -167,12 +167,34 @@
 /* The entrance, as on cua.ai (FloatEarly.astro): near keys first, rising further and growing more,
    far keys after, all in by about 1.4 s. It only eases the wrapper back to no transform, so the drift
    inside carries on without a snap. Timing per key comes from float-keys.tsx (--ed, --edl, --fy, --fs). */
-.first-run-key-in { animation: first-run-enter var(--ed, 1s) cubic-bezier(0.16, 1, 0.3, 1) var(--edl, 0s) backwards; }
-@keyframes first-run-enter { from { opacity: 0; transform: translate3d(0, var(--fy, 40px), 0) scale(var(--fs, 0.8)); } }
-.first-run-star { position: absolute; border-radius: 9999px; background: rgb(240 243 250); box-shadow: 0 0 3px rgb(240 243 250 / 0.7); opacity: var(--o); animation: first-run-twinkle var(--t) ease-in-out var(--d) infinite alternate; }
-@keyframes first-run-twinkle { from { opacity: calc(var(--o) * 0.3); } }
+.first-run-key-in {
+  animation: first-run-enter var(--ed, 1s) cubic-bezier(0.16, 1, 0.3, 1) var(--edl, 0s) backwards;
+}
+@keyframes first-run-enter {
+  from {
+    opacity: 0;
+    transform: translate3d(0, var(--fy, 40px), 0) scale(var(--fs, 0.8));
+  }
+}
+.first-run-star {
+  position: absolute;
+  border-radius: 9999px;
+  background: rgb(240 243 250);
+  box-shadow: 0 0 3px rgb(240 243 250 / 0.7);
+  opacity: var(--o);
+  animation: first-run-twinkle var(--t) ease-in-out var(--d) infinite alternate;
+}
+@keyframes first-run-twinkle {
+  from {
+    opacity: calc(var(--o) * 0.3);
+  }
+}
 @media (prefers-reduced-motion: reduce) {
-  .first-run-key, .first-run-key-in, .first-run-star { animation: none; }
+  .first-run-key,
+  .first-run-key-in,
+  .first-run-star {
+    animation: none;
+  }
 }
 
 @theme {

@@ -1932,10 +1932,10 @@ pub(crate) fn menu_groups(input: &ConnectorsInput) -> Vec<AgentGroup> {
         // Nothing saved in Cua, but the app is signed in on This Mac: a run here uses that sign-in, as the app
         // itself would, so the menu offers it and asks for nothing. Another computer needs its own sign-in.
         let mut accounts = accounts;
-        if accounts.is_empty() {
-            if let Some(acc) = this_mac_account(input, h.app, true) {
-                accounts.push(acc);
-            }
+        if accounts.is_empty()
+            && let Some(acc) = this_mac_account(input, h.app, true)
+        {
+            accounts.push(acc);
         }
         let expired = accounts.is_empty()
             && app_sign_in(h.app).is_some_and(|a| {

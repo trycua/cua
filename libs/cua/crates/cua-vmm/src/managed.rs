@@ -256,7 +256,7 @@ pub fn in_use() -> bool {
 
 /// `$CUA_HOME/runtimes/linux`: everything the built-in runtime has.
 pub fn root() -> PathBuf {
-    host::cua_home().join("runtimes").join("linux")
+    cua_home::storage::dir(cua_home::storage::Kind::Runtimes).join("linux")
 }
 
 /// The pinned Colima and Lima.

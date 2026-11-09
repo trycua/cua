@@ -1411,6 +1411,7 @@ version = "0.17.1"
 dependencies = [
  "async-trait",
  "bollard",
+ "cua-home",
  "cua-image",
  "cua-vmm",
  "serde",
@@ -1480,6 +1481,7 @@ dependencies = [
  "async-trait",
  "base64 0.22.1",
  "bytes",
+ "cua-home",
  "cua-vmm",
  "flate2",
  "futures",

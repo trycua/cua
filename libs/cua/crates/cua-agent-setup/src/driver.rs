@@ -182,7 +182,9 @@ pub fn check(command: &Path) -> Result<String, String> {
 /// Runs cua-driver's release installer (the same one `cua.ai/install.sh
 /// --only cua-driver` runs) for `env`'s home. Err is a plain reason.
 pub fn install(env: &HostEnv) -> Result<(), String> {
-    let log_dir = env.cua_home().join("logs");
+    let log_dir = cua_home::storage::dir_in(&env.cua_home(), cua_home::storage::Kind::Logs, |k| {
+        env.var(k).map(str::to_owned)
+    });
     let _ = std::fs::create_dir_all(&log_dir);
     let log_path = log_dir.join("cua-driver-install.log");
     let log = std::fs::File::create(&log_path)

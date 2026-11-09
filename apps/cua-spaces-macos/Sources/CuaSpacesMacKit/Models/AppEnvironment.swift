@@ -61,11 +61,18 @@ public enum AppEnvironment {
             _ = appTelemetryStart(version: info.version, onboardingEligible: due)
         }
         var refresh: UpdateRefresh?
-        if !fixtures || env["CUA_SPACES_REFRESH"] == "1",
-           UpdateRefresh.record(settingsPath: settingsPath, version: info.version, build: info.build,
-                                onboarded: OnboardingModel.readCompleted(onboardingPath) ?? false),
-           let cua = bundledCua {
+        let followedUpdate = !fixtures || env["CUA_SPACES_REFRESH"] == "1"
+            ? UpdateRefresh.record(settingsPath: settingsPath, version: info.version, build: info.build,
+                                   onboarded: OnboardingModel.readCompleted(onboardingPath) ?? false)
+            : false
+        if followedUpdate, let cua = bundledCua {
             refresh = UpdateRefresh(cua: cua, bundle: Bundle.main.bundlePath)
+        }
+        // Sparkle's downloads and staged installers: gone after an update, capped otherwise.
+        if !fixtures, let id = Bundle.main.bundleIdentifier {
+            DispatchQueue.global(qos: .utility).async {
+                SparkleCache.trim(bundleID: id, afterUpdate: followedUpdate)
+            }
         }
         let updateRefresh = refresh
         // This app's own daemon, started before the SDK connects (it

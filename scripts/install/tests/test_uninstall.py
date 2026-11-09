@@ -391,6 +391,30 @@ class UninstallMacTest(unittest.TestCase):
         dry = box.run("--dry-run", "--keep-permissions")
         self.assertNotIn("tccutil", dry.stdout)
 
+    def test_keep_keychain_leaves_every_secret_alone(self):
+        box = self.box()
+        installed_mac(box)
+        result = box.run("--yes", "--keep-keychain", "--prefix", str(box.home))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(box.index("security: delete-generic-password"), -1)
+        self.assertIn("keeping the Keychain items", result.stdout)
+
+    def test_stray_test_preferences_and_sparkle_staging_are_removed(self):
+        box = self.box()
+        installed_mac(box)
+        prefs = "Library/Preferences"
+        stray = [f"{prefs}/cua-ln-1B4E28BA-2FA1-11D2-883F-B9A761BDE3FB.plist",
+                 f"{prefs}/cua-relay-usage-1B4E28BA-2FA1-11D2-883F-B9A761BDE3FB.plist"]
+        keep = f"{prefs}/com.apple.finder.plist"
+        for f in stray + [keep, "Library/Caches/com.trycua.spaces.macos.ShipIt/x"]:
+            box.put(f, "x\n")
+        result = box.run("--yes", "--prefix", str(box.home))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        for f in stray:
+            self.assertFalse(box.exists(f), f)
+        self.assertFalse(box.exists("Library/Caches/com.trycua.spaces.macos.ShipIt"))
+        self.assertTrue(box.exists(keep))
+
     def test_permissions_are_reset_before_the_app_is_removed(self):
         box = self.box()
         installed_mac(box)

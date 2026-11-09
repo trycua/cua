@@ -33,6 +33,7 @@ pub mod env;
 pub mod experimental;
 pub mod filetable;
 pub mod plan_limit;
+pub mod storage;
 pub mod version;
 
 /// Environment variable that marks a test process.

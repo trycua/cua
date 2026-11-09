@@ -553,7 +553,7 @@ impl IconCache {
 
 /// `$CUA_HOME/cache/icons`.
 pub fn default_dir() -> PathBuf {
-    cua_home::cua_home().join("cache").join("icons")
+    cua_home::storage::dir(cua_home::storage::Kind::Cache).join("icons")
 }
 
 fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {

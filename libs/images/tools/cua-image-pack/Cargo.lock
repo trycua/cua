@@ -411,6 +411,7 @@ dependencies = [
  "async-trait",
  "base64 0.22.1",
  "bytes",
+ "cua-home",
  "cua-vmm",
  "flate2",
  "futures",

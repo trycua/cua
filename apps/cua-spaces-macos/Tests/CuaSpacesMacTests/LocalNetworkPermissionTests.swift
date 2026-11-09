@@ -54,7 +54,7 @@ struct LocalNetworkPermissionTests {
     }
 
     func gate(_ probe: FakeProbe, click: Bool = true, shown: Shown) -> LocalNetworkGate {
-        let defaults = UserDefaults(suiteName: "cua-ln-\(UUID().uuidString)")!
+        let defaults = TestDefaults.make("cua-ln")
         let g = LocalNetworkGate(probe: probe, present: { step in
             shown.steps.append(step)
             return click
@@ -245,7 +245,7 @@ struct LocalNetworkWhenProvidingTests {
     @Test func aCreateDuringTheHostingAskExplainsOnce() async throws {
         let host = FixtureHost()
         let probe = LocalNetworkPermissionTests.FakeProbe([.blocked, .allowed], prompts: [0, 1, 1])
-        let defaults = UserDefaults(suiteName: "cua-ln-\(UUID().uuidString)")!
+        let defaults = TestDefaults.make("cua-ln")
         var explained = 0
         let gate = LocalNetworkGate(probe: probe, present: { _ in
             explained += 1

@@ -33,6 +33,9 @@ Options:
                      (Space disks, the local Cua Volume files, the Keyvault).
                      Running Spaces are listed and stopped first. Cannot be
                      undone; asks you to type "delete" unless --yes is given
+  --keep-keychain    leave every Keychain / Secret Service item alone (your
+                     sign-in, device key and Keyvault). The Cua Spaces app's
+                     Uninstall passes this unless you tick the box
   --keep-permissions keep the macOS permissions (Screen Recording,
                      Accessibility, ...) granted to the Cua Spaces app; by
                      default they are reset while the app is still installed
@@ -71,6 +74,7 @@ SESSION_FILES="credentials.json spaces-session.json spaces-credentials.json"
 
 keep_data=0
 keep_permissions=0
+keep_keychain=0
 delete_spaces=0
 all_tools=0
 prefix=""
@@ -104,6 +108,7 @@ parse_args() {
         case "$1" in
         --keep-data) keep_data=1 ;;
         --keep-permissions) keep_permissions=1 ;;
+        --keep-keychain) keep_keychain=1 ;;
         --delete-spaces) delete_spaces=1 ;;
         --all) all_tools=1 ;;
         --prefix)
@@ -386,6 +391,14 @@ library_dirs_removed_always() {
         "$HOME/Library/HTTPStorages/com.trycua.spaces.macos" \
         "$HOME/Library/HTTPStorages/com.trycua.spaces.macos.binarycookies" \
         "$HOME/Library/WebKit/com.trycua.spaces.macos"
+    # Sparkle's downloads and installer staging, and the preference files that
+    # test runs of the app used to leave (cua-ln-<uuid>, cua-relay-usage-<uuid>).
+    printf '%s\n' "$HOME/Library/Caches/com.trycua.spaces.macos.ShipIt"
+    for stray in "$HOME"/Library/Preferences/cua-ln-*.plist "$HOME"/Library/Preferences/cua-relay-usage-*.plist \
+        "$HOME"/Library/Preferences/cua-spaces-launch-*.plist "$HOME"/Library/Preferences/webui-video-*.plist; do
+        [ -e "$stray" ] && printf '%s\n' "$stray"
+    done
+    return 0
 }
 
 library_dirs_removed_unless_keep() {
@@ -445,7 +458,7 @@ EOF
     if [ -d "$cua_home" ]; then
         add_found "cua state: $cua_home"
     fi
-    if [ "$os" = darwin ] && { kc_has run.cua.ai || kc_has staging.run.cua.ai; }; then
+    if [ "$os" = darwin ] && [ "$keep_keychain" = 0 ] && { kc_has run.cua.ai || kc_has staging.run.cua.ai; }; then
         add_found "macOS Keychain items: run.cua.ai (sign-in, device key)"
     fi
     while IFS= read -r lib; do
@@ -1084,6 +1097,10 @@ kc_delete_account() { # service account
 }
 
 remove_secrets() {
+    if [ "$keep_keychain" = 1 ]; then
+        info "keeping the Keychain items (--keep-keychain)"
+        return 0
+    fi
     case "$os" in
     darwin)
         has security || return 0

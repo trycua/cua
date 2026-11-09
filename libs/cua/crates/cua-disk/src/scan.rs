@@ -36,6 +36,9 @@ pub enum Category {
     Checkpoints,
     /// Logs.
     Logs,
+    /// Built-in runtimes and their VM disks (`runtimes/`), listed so the
+    /// person can see and remove each (never evicted by GC).
+    Runtimes,
     /// User data: state files, trajectories, skills, bench registry, bench
     /// runs (never evicted).
     #[default]
@@ -46,7 +49,7 @@ pub enum Category {
 
 impl Category {
     /// Every category, in display order.
-    pub const ALL: [Category; 11] = [
+    pub const ALL: [Category; 12] = [
         Category::Images,
         Category::DockerImages,
         Category::LumeBases,
@@ -56,6 +59,7 @@ impl Category {
         Category::Sandboxes,
         Category::Checkpoints,
         Category::Logs,
+        Category::Runtimes,
         Category::Data,
         Category::Legacy,
     ];
@@ -72,6 +76,7 @@ impl Category {
             Category::Sandboxes => "sandboxes",
             Category::Checkpoints => "checkpoints",
             Category::Logs => "logs",
+            Category::Runtimes => "runtimes",
             Category::Data => "data",
             Category::Legacy => "legacy",
         }
@@ -966,6 +971,23 @@ impl Scanner {
 
     fn scan_data(&self, items: &mut Vec<Item>) {
         let home = self.layout.home();
+        // Linux images the built-in runtime downloaded: cache, evictable.
+        if let Ok(rd) = std::fs::read_dir(&self.layout.linux_image_downloads()) {
+            for e in rd.flatten() {
+                let p = e.path();
+                items.push(Item {
+                    category: Category::Images,
+                    kind: "linux-image".into(),
+                    name: e.file_name().to_string_lossy().into_owned(),
+                    location: p.display().to_string(),
+                    bytes: disk::allocated_size(&p),
+                    last_used: disk::last_used(&p).map(unix),
+                    evictable: true,
+                    target: Target::Path(p),
+                    ..Default::default()
+                });
+            }
+        }
         let mut push = |category: Category, kind: &str, p: PathBuf| {
             if p.exists() {
                 items.push(Item {
@@ -997,6 +1019,24 @@ impl Scanner {
         for l in self.layout.legacy() {
             push(Category::Legacy, "legacy", l);
         }
+        // Built-in runtimes: one item per family and version (`linux/vm`,
+        // `lume/<version>`), removable by the person from Settings.
+        if let Ok(rd) = std::fs::read_dir(self.layout.runtimes()) {
+            for fam in rd.flatten() {
+                let fname = fam.file_name().to_string_lossy().to_string();
+                let Ok(sub) = std::fs::read_dir(fam.path()) else {
+                    push(Category::Runtimes, "runtime", fam.path());
+                    continue;
+                };
+                for e in sub.flatten() {
+                    // The Linux image downloads are cache (below).
+                    if fname == "linux" && e.file_name() == "home" {
+                        continue;
+                    }
+                    push(Category::Runtimes, &fname, e.path());
+                }
+            }
+        }
         // Everything else directly under the cua home (credentials, small
         // registries, unknown files from other versions).
         let known = Layout::known_top_level();
@@ -1010,7 +1050,7 @@ impl Scanner {
             }
         }
         // `cache/` besides the install cache (accounted above).
-        if let Ok(rd) = std::fs::read_dir(home.join("cache")) {
+        if let Ok(rd) = std::fs::read_dir(self.layout.cache()) {
             for e in rd.flatten() {
                 if e.file_name() != "installables" && e.file_name() != "icons" {
                     push(Category::Data, "other", e.path());

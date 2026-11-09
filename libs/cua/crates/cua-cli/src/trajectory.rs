@@ -12,7 +12,7 @@ use std::{
 
 /// `~/.cua/trajectories`.
 pub fn root() -> PathBuf {
-    util::cua_home().join("trajectories")
+    cua_home::storage::dir(cua_home::storage::Kind::Trajectories)
 }
 
 fn pid_file() -> PathBuf {
@@ -21,6 +21,14 @@ fn pid_file() -> PathBuf {
 
 /// A new session directory for `machine`.
 pub fn new_session(machine: &str) -> Result<PathBuf, CuaError> {
+    // Old sessions go first: age and size caps (CUA_TRAJECTORY_DAYS, CUA_TRAJECTORY_MAX).
+    let (max_bytes, max_age) = cua_disk::scratch::trajectory_caps();
+    cua_disk::scratch::prune_trajectories(
+        &root(),
+        max_bytes,
+        max_age,
+        std::time::SystemTime::now(),
+    );
     let dir = root()
         .join(sanitize(machine))
         .join(util::timestamp("%Y%m%d-%H%M%S"));

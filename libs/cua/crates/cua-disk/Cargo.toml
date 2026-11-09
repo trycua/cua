@@ -8,6 +8,7 @@ repository.workspace = true
 description = "Disk accounting, cache budget and garbage collection for the cua SDK: every location it writes, `cua cache ls|du|prune`."
 
 [dependencies]
+cua-home.workspace = true
 async-trait.workspace = true
 bollard = "0.21"
 cua-image.workspace = true

@@ -110,9 +110,7 @@ struct WebUIVideoSurfacesTests {
     }
 
     @Test func theExperimentFlagReadsTheEnvironmentAndDefaults() throws {
-        let suite = "webui-video-\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: suite))
-        defer { defaults.removePersistentDomain(forName: suite) }
+        let defaults = TestDefaults.make("webui-video")
         // On by default with the New UI.
         #expect(WebUIVideoSurfaces.enabled(environment: [:], defaults: defaults))
         // `=0` turns it off whatever the default says.

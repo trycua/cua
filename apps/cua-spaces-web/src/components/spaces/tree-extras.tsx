@@ -21,6 +21,7 @@ import { ConfirmDialog } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { GroupedAction, GroupedRow, GroupedSection } from "@/components/ui/grouped";
 import { toast } from "@/components/ui/toast";
+import { useT } from "@/i18n";
 import { machineOs } from "@/lib/machines";
 
 const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -93,12 +94,13 @@ export function CloudsSection() {
  * listed apart, each opening its page (Rename, Revoke).
  */
 export function DevicesSection() {
+  const t = useT();
   const { data = [], view } = useMachines();
   const signedIn = new Set(data.filter((m) => m.device && !m.current).map((m) => m.id));
   const rows = (view?.machines ?? []).filter((m) => signedIn.has(m.id));
   if (rows.length === 0) return null;
   return (
-    <GroupedSection title="Also signed in" className="mt-8" data-tree-signed-in="">
+    <GroupedSection title={t("computers.tree.also_signed_in")} className="mt-8" data-tree-signed-in="">
       {rows.map((m) => {
         const os = machineOs(m);
         return (
@@ -120,6 +122,7 @@ export function DevicesSection() {
 
 /** "Remove old computers" beside the offline row, while some were offline for 30+ days. */
 export function RemoveOldButton() {
+  const t = useT();
   const { view, remove } = useMachines();
   const [asking, setAsking] = useState(false);
   const removeOld = view?.groups.find((g) => g.removeAll)?.removeAll ?? null;
@@ -148,11 +151,11 @@ export function RemoveOldButton() {
               try {
                 await remove(r.machine ?? null, r.device ?? null);
               } catch (e) {
-                toast("Couldn't remove a computer", { description: errorText(e), type: "error" });
+                toast(t("computers.tree.remove_old_failed"), { description: errorText(e), type: "error" });
                 return;
               }
             }
-            toast(removeOld.removes.length === 1 ? "Removed 1 old computer" : `Removed ${removeOld.removes.length} old computers`, { type: "success" });
+            toast(t("computers.tree.removed_old", { count: removeOld.removes.length }), { type: "success" });
           })();
         }}
       />

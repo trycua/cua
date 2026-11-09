@@ -5,6 +5,7 @@ import { AlertDialog as AlertDialogPrimitive } from "@base-ui/react/alert-dialog
 import { useRef, type ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
+import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 
 export const AlertDialog = AlertDialogPrimitive.Root;
@@ -46,7 +47,8 @@ interface ConfirmDialogProps {
 }
 
 /** A yes-or-no question before an action that is hard to undo. */
-export function ConfirmDialog({ open, onOpenChange, title, description, confirmLabel, destructive, cancelLabel = "Cancel", disabledReason, onConfirm, alternative, cancelFirst }: ConfirmDialogProps) {
+export function ConfirmDialog({ open, onOpenChange, title, description, confirmLabel, destructive, cancelLabel, disabledReason, onConfirm, alternative, cancelFirst }: ConfirmDialogProps) {
+  const t = useT();
   const cancelRef = useRef<HTMLButtonElement>(null);
   return (
     <AlertDialog open={open} onOpenChange={onOpenChange}>
@@ -57,7 +59,7 @@ export function ConfirmDialog({ open, onOpenChange, title, description, confirmL
           {disabledReason ? <p className="mt-2 text-xs text-muted-foreground">{disabledReason}</p> : null}
         </div>
         <div className="flex justify-end gap-2 border-t bg-muted/60 px-5 py-3">
-          <AlertDialogPrimitive.Close render={<Button variant="outline" ref={cancelRef} />}>{cancelLabel}</AlertDialogPrimitive.Close>
+          <AlertDialogPrimitive.Close render={<Button variant="outline" ref={cancelRef} />}>{cancelLabel ?? t("shell.dialog.cancel")}</AlertDialogPrimitive.Close>
           {alternative ? (
             <Button
               variant="outline"

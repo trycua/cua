@@ -18,6 +18,7 @@ import { OsIcon } from "@/components/os-icon";
 import { AlertDialog, AlertDialogPopup } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { toast } from "@/components/ui/toast";
+import { useT } from "@/i18n";
 import { avatarColor, initial } from "@/lib/spaces-page";
 import { cn } from "@/lib/utils";
 
@@ -60,6 +61,7 @@ export interface BulkRemove {
  * every result is in (the selection clears).
  */
 export function useBulkRemove(present: ReadonlySet<string>, onDone: (results: BulkResult[]) => void): BulkRemove {
+  const t = useT();
   const { core } = useBridge();
   const { deleteSpaces, leaveSpaces } = useSpaces();
   const [asked, setAsked] = useState<{ items: BulkItem[]; picked: readonly SpaceItem[]; view: BulkConfirmView } | null>(null);
@@ -98,7 +100,7 @@ export function useBulkRemove(present: ReadonlySet<string>, onDone: (results: Bu
       const failed = results.filter((r) => !r.ok);
       toast(said.text, {
         type: said.tone === "ok" ? "success" : "error",
-        description: failed.length ? failed.map((r) => `${items.find((i) => i.id === r.id)?.name ?? r.id}: ${r.error ?? "failed"}`).join("\n") : undefined,
+        description: failed.length ? failed.map((r) => `${items.find((i) => i.id === r.id)?.name ?? r.id}: ${r.error ?? t("computers.bulk.failed")}`).join("\n") : undefined,
         group: "spaces-bulk",
       });
       onDone(results);

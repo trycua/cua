@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.25.1](https://github.com/trycua/cua/compare/cua-spaces-v0.25.0...cua-spaces-v0.25.1) (2026-11-09)
+
+
+### Bug Fixes
+
+* **cua-volume:** a saved presence heartbeat replaces the last one, and a saved change whose bytes are gone is forgotten (fixes [#6859](https://github.com/trycua/cua/issues/6859)) ([#6864](https://github.com/trycua/cua/issues/6864)) ([2349735](https://github.com/trycua/cua/commit/2349735830d4f6e8391c97557d578374e79a4ee2))
+
 ## [0.25.0](https://github.com/trycua/cua/compare/cua-spaces-v0.24.0...cua-spaces-v0.25.0) (2026-11-09)
 
 

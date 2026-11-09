@@ -113,9 +113,16 @@ jobs:
             [[ "$QUEUE_REF" =~ /pr-([0-9]+) ]] || { echo "::error::cannot read the pull request from $QUEUE_REF"; exit 1; }
             pr=${BASH_REMATCH[1]}
           fi
-          info=$(api "repos/$GITHUB_REPOSITORY/pulls/$pr" --jq '[.head.sha, (.head.repo.full_name // "")] | @tsv')
-          IFS=$'\t' read -r sha head_repo <<<"$info"
-          if [[ "$head_repo" == "$GITHUB_REPOSITORY" ]]; then
+          info=$(api "repos/$GITHUB_REPOSITORY/pulls/$pr" --jq '[.head.sha, (.head.repo.full_name // ""), .head.ref, ([.labels[].name] | join(","))] | @tsv')
+          IFS=$'\t' read -r sha head_repo head_ref pr_labels <<<"$info"
+          # Release Please PRs are opened by the bot and have no local-ci sign-off: nobody runs bin/ci on
+          # them. They are exempt only when all three hold: a branch of this repository (so a fork cannot
+          # claim it), the release-please branch prefix and the `autorelease: pending` label. Every other
+          # workflow is still waited on.
+          if [[ "$head_repo" == "$GITHUB_REPOSITORY" && "$head_ref" == release-please--branches--* && ",$pr_labels," == *",autorelease: pending,"* ]]; then
+            kind=release
+            what="no sign-off (Release Please pull request)"
+          elif [[ "$head_repo" == "$GITHUB_REPOSITORY" ]]; then
             kind=local
             what="a successful local-ci status (bin/ci --quick, then bin/ci --signoff)"
           else
@@ -124,6 +131,10 @@ jobs:
           fi
           echo "Requiring $what on ${sha:0:10}."
           { echo "kind=$kind"; echo "sha=$sha"; } >> "$GITHUB_OUTPUT"
+          if [[ "$kind" == release ]]; then
+            echo "Release Please pull request: exempt from the sign-off."
+            exit 0
+          fi
           if [[ "$kind" == local ]]; then
             state=$(api "repos/$GITHUB_REPOSITORY/commits/$sha/statuses?per_page=100" --jq '[.[] | select(.context == "local-ci")][0].state // ""')
           else
@@ -287,6 +298,7 @@ jobs:
           set -euo pipefail
           api() { local out; for _ in 1 2 3 4 5 6; do out=$(gh api "$@") && { printf '%s\n' "$out"; return; }; sleep 20; done; return 1; }
           sha=$SHA
+          if [[ "$KIND" == release ]]; then echo "sign-off: not required (Release Please pull request)"; exit 0; fi
           tries=1
           # Polled every 15 s (it was 60 s, so a sign-off that landed just after a poll cost up to a
           # minute). Still bounded at 75 minutes.

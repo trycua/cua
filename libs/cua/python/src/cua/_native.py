@@ -1207,6 +1207,8 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_spaces_cancel_create() != 14647:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_sdk_checksum_method_spaces_clear_keep_awake() != 32046:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_spaces_cloud_add_host() != 59195:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_spaces_cloud_approve() != 27417:
@@ -1262,6 +1264,8 @@ def _uniffi_check_api_checksums(lib):
     if lib.uniffi_cua_sdk_checksum_method_spaces_gpu_support() != 3623:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_spaces_hosts() != 23309:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_sdk_checksum_method_spaces_keep_awake() != 12612:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_spaces_leave_many() != 34815:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -1334,6 +1338,8 @@ def _uniffi_check_api_checksums(lib):
     if lib.uniffi_cua_sdk_checksum_method_spaces_set_lifetime() != 62609:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_spaces_set_network() != 64671:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_sdk_checksum_method_spaces_set_sleep() != 40921:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_spaces_set_tree_budget() != 8418:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -4181,6 +4187,11 @@ _UniffiLib.uniffi_cua_sdk_fn_method_spaces_cancel_create.argtypes = (
     _UniffiRustBuffer,
 )
 _UniffiLib.uniffi_cua_sdk_fn_method_spaces_cancel_create.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cua_sdk_fn_method_spaces_clear_keep_awake.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+)
+_UniffiLib.uniffi_cua_sdk_fn_method_spaces_clear_keep_awake.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cua_sdk_fn_method_spaces_cloud_add_host.argtypes = (
     ctypes.c_uint64,
     _UniffiRustBuffer,
@@ -4338,6 +4349,13 @@ _UniffiLib.uniffi_cua_sdk_fn_method_spaces_hosts.argtypes = (
     ctypes.c_uint64,
 )
 _UniffiLib.uniffi_cua_sdk_fn_method_spaces_hosts.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cua_sdk_fn_method_spaces_keep_awake.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+)
+_UniffiLib.uniffi_cua_sdk_fn_method_spaces_keep_awake.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cua_sdk_fn_method_spaces_leave_many.argtypes = (
     ctypes.c_uint64,
     _UniffiRustBuffer,
@@ -4539,6 +4557,12 @@ _UniffiLib.uniffi_cua_sdk_fn_method_spaces_set_network.argtypes = (
     ctypes.c_int8,
 )
 _UniffiLib.uniffi_cua_sdk_fn_method_spaces_set_network.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cua_sdk_fn_method_spaces_set_sleep.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+    _UniffiRustBuffer,
+)
+_UniffiLib.uniffi_cua_sdk_fn_method_spaces_set_sleep.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cua_sdk_fn_method_spaces_set_tree_budget.argtypes = (
     ctypes.c_uint64,
     _UniffiRustBuffer,
@@ -6185,6 +6209,9 @@ _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_call_tool_json.restype = ctypes
 _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_cancel_create.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_cancel_create.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_sdk_checksum_method_spaces_clear_keep_awake.argtypes = (
+)
+_UniffiLib.uniffi_cua_sdk_checksum_method_spaces_clear_keep_awake.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_cloud_add_host.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_cloud_add_host.restype = ctypes.c_uint16
@@ -6269,6 +6296,9 @@ _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_gpu_support.restype = ctypes.c_
 _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_hosts.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_hosts.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_sdk_checksum_method_spaces_keep_awake.argtypes = (
+)
+_UniffiLib.uniffi_cua_sdk_checksum_method_spaces_keep_awake.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_leave_many.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_leave_many.restype = ctypes.c_uint16
@@ -6377,6 +6407,9 @@ _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_set_lifetime.restype = ctypes.c
 _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_set_network.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_set_network.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_sdk_checksum_method_spaces_set_sleep.argtypes = (
+)
+_UniffiLib.uniffi_cua_sdk_checksum_method_spaces_set_sleep.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_set_tree_budget.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_spaces_set_tree_budget.restype = ctypes.c_uint16
@@ -18806,6 +18839,45 @@ class _UniffiFfiConverterTypeImageInfo(_UniffiConverterRustBuffer):
         _UniffiFfiConverterString.write(value.os, buf)
         _UniffiFfiConverterBoolean.write(value.emulated, buf)
         _UniffiFfiConverterOptionalBoolean.write(value.spacesd, buf)
+
+@dataclass
+class KeepAwakeInfo:
+    """
+    A keep-awake that holds ([`Spaces::keep_awake`]).
+"""
+    def __init__(self, *, until_unix:int, capped:bool):
+        self.until_unix = until_unix
+        self.capped = capped
+
+
+
+
+    def __str__(self):
+        return "KeepAwakeInfo(until_unix={}, capped={})".format(self.until_unix, self.capped)
+    def __eq__(self, other):
+        if self.until_unix != other.until_unix:
+            return False
+        if self.capped != other.capped:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeKeepAwakeInfo(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return KeepAwakeInfo(
+            until_unix=_UniffiFfiConverterInt64.read(buf),
+            capped=_UniffiFfiConverterBoolean.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterInt64.check_lower(value.until_unix)
+        _UniffiFfiConverterBoolean.check_lower(value.capped)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterInt64.write(value.until_unix, buf)
+        _UniffiFfiConverterBoolean.write(value.capped, buf)
 
 @dataclass
 class LocalImage:
@@ -44162,6 +44234,11 @@ class SpacesProtocol(typing.Protocol):
         for a create another process runs, and one a daemon restart cut off.
 """
         raise NotImplementedError
+    async def clear_keep_awake(self, space: str) -> None:
+        """
+        Ends a keep-awake of `space` now.
+"""
+        raise NotImplementedError
     async def cloud_add_host(self, provider: str,instance_type: str,region: typing.Optional[str],count: typing.Optional[int],ttl_hours: typing.Optional[int]) -> typing.List[ElasticHost]:
         """
         Adds `count` hosts of `instance_type` in a linked cloud by hand
@@ -44355,6 +44432,13 @@ class SpacesProtocol(typing.Protocol):
         the hosts added by their Tailscale or LAN address), each asked for
         its limits: what `create` takes as `on="host:<id>"`. One that does
         not answer is listed offline when it provided a Space before.
+"""
+        raise NotImplementedError
+    async def keep_awake(self, space: str,seconds: int,reason: str) -> KeepAwakeInfo:
+        """
+        Keeps `space` awake for `seconds` (at most two hours; a longer ask is
+        cut and `capped` says so), whatever its sleep setting says. `reason`
+        is shown to the person.
 """
         raise NotImplementedError
     async def leave_many(self, ids: typing.List[str]) -> typing.List[BulkResult]:
@@ -44604,6 +44688,13 @@ class SpacesProtocol(typing.Protocol):
         children the same settings. They hold at once where the runtime can
         change a running guest's network, else from its next start
         (`applied`). A Space another computer runs is `Unsupported`.
+"""
+        raise NotImplementedError
+    async def set_sleep(self, space: str,sleep: str) -> None:
+        """
+        Sets when `space` goes to sleep on its own: `never` (Keep running),
+        `auto` (once nothing in it runs) or a duration such as `10m`. A Space
+        with no setting is `never`, except a home an agent works in (`auto`).
 """
         raise NotImplementedError
     async def set_tree_budget(self, space: str,limits: TreeBudgetLimits) -> TreeBudget:
@@ -45113,6 +45204,26 @@ class Spaces(SpacesProtocol):
             _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
             _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
             _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
+            _uniffi_lift_return,
+            _uniffi_error_converter,
+        )
+    async def clear_keep_awake(self, space: str) -> None:
+        """
+        Ends a keep-awake of `space` now.
+"""
+
+        _UniffiFfiConverterString.check_lower(space)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterString.lower(space),
+        )
+        _uniffi_lift_return = lambda val: None
+        _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
+        return await _uniffi_rust_call_async(
+            _UniffiLib.uniffi_cua_sdk_fn_method_spaces_clear_keep_awake(*_uniffi_lowered_args),
+            _UniffiLib.ffi_cua_sdk_rust_future_poll_void,
+            _UniffiLib.ffi_cua_sdk_rust_future_complete_void,
+            _UniffiLib.ffi_cua_sdk_rust_future_free_void,
             _uniffi_lift_return,
             _uniffi_error_converter,
         )
@@ -45784,6 +45895,34 @@ class Spaces(SpacesProtocol):
         _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
         return await _uniffi_rust_call_async(
             _UniffiLib.uniffi_cua_sdk_fn_method_spaces_hosts(*_uniffi_lowered_args),
+            _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
+            _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
+            _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
+            _uniffi_lift_return,
+            _uniffi_error_converter,
+        )
+    async def keep_awake(self, space: str,seconds: int,reason: str) -> KeepAwakeInfo:
+        """
+        Keeps `space` awake for `seconds` (at most two hours; a longer ask is
+        cut and `capped` says so), whatever its sleep setting says. `reason`
+        is shown to the person.
+"""
+
+        _UniffiFfiConverterString.check_lower(space)
+
+        _UniffiFfiConverterUInt64.check_lower(seconds)
+
+        _UniffiFfiConverterString.check_lower(reason)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterString.lower(space),
+            _UniffiFfiConverterUInt64.lower(seconds),
+            _UniffiFfiConverterString.lower(reason),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeKeepAwakeInfo.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
+        return await _uniffi_rust_call_async(
+            _UniffiLib.uniffi_cua_sdk_fn_method_spaces_keep_awake(*_uniffi_lowered_args),
             _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
             _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
             _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
@@ -46639,6 +46778,31 @@ class Spaces(SpacesProtocol):
             _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
             _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
             _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
+            _uniffi_lift_return,
+            _uniffi_error_converter,
+        )
+    async def set_sleep(self, space: str,sleep: str) -> None:
+        """
+        Sets when `space` goes to sleep on its own: `never` (Keep running),
+        `auto` (once nothing in it runs) or a duration such as `10m`. A Space
+        with no setting is `never`, except a home an agent works in (`auto`).
+"""
+
+        _UniffiFfiConverterString.check_lower(space)
+
+        _UniffiFfiConverterString.check_lower(sleep)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterString.lower(space),
+            _UniffiFfiConverterString.lower(sleep),
+        )
+        _uniffi_lift_return = lambda val: None
+        _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
+        return await _uniffi_rust_call_async(
+            _UniffiLib.uniffi_cua_sdk_fn_method_spaces_set_sleep(*_uniffi_lowered_args),
+            _UniffiLib.ffi_cua_sdk_rust_future_poll_void,
+            _UniffiLib.ffi_cua_sdk_rust_future_complete_void,
+            _UniffiLib.ffi_cua_sdk_rust_future_free_void,
             _uniffi_lift_return,
             _uniffi_error_converter,
         )
@@ -50032,6 +50196,7 @@ __all__ = [
     "HttpResponse",
     "ImageBuild",
     "ImageInfo",
+    "KeepAwakeInfo",
     "LocalImage",
     "StorageVolume",
     "LocalStorage",

@@ -28,6 +28,7 @@ use cua_spacesd_client::Command;
 use super::{AgentRecord, Persistent, RunStatus, TickReport};
 use crate::Result;
 use crate::SpacesDrive as _;
+use cua_spaces::sleep::KeepAwake;
 
 /// How often one Space is looked at.
 pub(super) const CHECK_EVERY: Duration = Duration::from_secs(10);
@@ -174,7 +175,7 @@ impl Persistent {
                 continue;
             }
             // Cheap reasons first, from the records alone.
-            let kept = self.spaces.keep_awake_of(&row.id).map(|k| {
+            let kept = KeepAwake::from_labels(&row.labels).map(|k| {
                 format!(
                     "kept awake: {}",
                     if k.reason.is_empty() {

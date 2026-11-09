@@ -551,6 +551,18 @@ export const PAGES: PageSpec[] = [
     members: [{ object: 'Spaces', title: 'Resize', methods: ['resize'] }],
   },
   {
+    slug: 'spaces/sleep',
+    title: 'Sleep, keep awake and settings',
+    description: 'When a Space goes to sleep on its own, keeping it awake for a while, and its clipboard and Volume settings.',
+    intro:
+      '`set_sleep` says when a Space goes to sleep on its own: `never` (it keeps running), `auto` (once nothing in it runs; it wakes when something needs it) or a duration such as `10m`. A Space with no setting is `never`, except a home an agent works in. `keep_awake` holds a Space awake for up to two hours, whatever its setting says.',
+    items: ['KeepAwakeInfo'],
+    members: [
+      { object: 'Spaces', title: 'Sleep', methods: ['set_sleep', 'keep_awake', 'clear_keep_awake'] },
+      { object: 'Spaces', title: 'Clipboard and Volume', methods: ['set_clipboard', 'set_volume'] },
+    ],
+  },
+  {
     slug: 'spaces/lifetime',
     title: 'Lifetime and egress',
     description: 'How long a Space lives and which destinations it may reach, set after it exists.',

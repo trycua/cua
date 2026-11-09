@@ -6,6 +6,7 @@
     "children",
     "services",
     "resize",
+    "sleep",
     "lifetime",
     "space",
     "sharing",

@@ -120,6 +120,10 @@ service SpaceService {
   // ends the Space's spawn capability at once; children it already made
   // keep running until they are deleted or their lifetime ends.
   rpc SetSpaceChildren(SetSpaceChildrenRequest) returns (SetSpaceChildrenResponse);
+  // Sets when the Space goes to sleep on its own (`sleep`: "never", "auto" or
+  // a duration such as "10m") and/or keeps it awake for a while. The setting
+  // is the Space's `cua.sleep` label.
+  rpc SetSpaceSleep(SetSpaceSleepRequest) returns (SetSpaceSleepResponse);
   // A tree's budget (kept on its top-level Space) and what its children
   // use now. `space` may be any Space of the tree.
   rpc GetTreeBudget(GetTreeBudgetRequest) returns (GetTreeBudgetResponse);
@@ -350,6 +354,31 @@ message SetSpaceClipboardRequest {
 
 // Response for `SpaceService.SetSpaceClipboard`.
 message SetSpaceClipboardResponse {}
+
+// Request for `SpaceService.SetSpaceSleep`.
+message SetSpaceSleepRequest {
+  // Id or name.
+  string space = 1;
+  // "never", "auto" or a duration ("90s", "10m", "2h"). Unset: unchanged.
+  optional string sleep = 2;
+  // Keep the Space awake for this many seconds (at most 7200). Unset:
+  // unchanged.
+  optional uint64 keep_awake_secs = 3;
+  // Why, shown to the person.
+  string keep_awake_reason = 4;
+  // End a keep-awake now.
+  bool clear_keep_awake = 5;
+}
+
+// Response for `SpaceService.SetSpaceSleep`.
+message SetSpaceSleepResponse {
+  // The Space as it is now.
+  Space space = 1;
+  // The keep-awake that holds now, as Unix seconds; 0 for none.
+  uint64 keep_awake_until_unix = 2;
+  // The ask was longer than the limit and was cut.
+  bool keep_awake_capped = 3;
+}
 
 // Request for `SpaceService.SetSpaceVolume`.
 message SetSpaceVolumeRequest {

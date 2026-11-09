@@ -2488,6 +2488,11 @@ const DEFINITIONS = {
       ret: FfiType.Handle,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_sdk_fn_method_spaces_clear_keep_awake": {
+      args: [FfiType.Handle, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_sdk_fn_method_spaces_cloud_add_host": {
       args: [FfiType.Handle, FfiType.RustBuffer, FfiType.RustBuffer, FfiType.RustBuffer, FfiType.RustBuffer, FfiType.RustBuffer],
       ret: FfiType.Handle,
@@ -2625,6 +2630,11 @@ const DEFINITIONS = {
     },
     "uniffi_cua_sdk_fn_method_spaces_hosts": {
       args: [FfiType.Handle],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_sdk_fn_method_spaces_keep_awake": {
+      args: [FfiType.Handle, FfiType.RustBuffer, FfiType.UInt64, FfiType.RustBuffer],
       ret: FfiType.Handle,
       hasRustCallStatus: false,
     },
@@ -2805,6 +2815,11 @@ const DEFINITIONS = {
     },
     "uniffi_cua_sdk_fn_method_spaces_set_network": {
       args: [FfiType.Handle, FfiType.RustBuffer, FfiType.RustBuffer, FfiType.Int8, FfiType.Int8],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_sdk_fn_method_spaces_set_sleep": {
+      args: [FfiType.Handle, FfiType.RustBuffer, FfiType.RustBuffer],
       ret: FfiType.Handle,
       hasRustCallStatus: false,
     },
@@ -5133,6 +5148,11 @@ const DEFINITIONS = {
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_sdk_checksum_method_spaces_clear_keep_awake": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_sdk_checksum_method_spaces_cloud_add_host": {
       args: [],
       ret: FfiType.UInt16,
@@ -5269,6 +5289,11 @@ const DEFINITIONS = {
       hasRustCallStatus: false,
     },
     "uniffi_cua_sdk_checksum_method_spaces_hosts": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_sdk_checksum_method_spaces_keep_awake": {
       args: [],
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
@@ -5449,6 +5474,11 @@ const DEFINITIONS = {
       hasRustCallStatus: false,
     },
     "uniffi_cua_sdk_checksum_method_spaces_set_network": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_sdk_checksum_method_spaces_set_sleep": {
       args: [],
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
@@ -6622,6 +6652,7 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_fn_method_spaces_builds(uniffiSelf: bigint): bigint;
     uniffi_cua_sdk_fn_method_spaces_call_tool_json(uniffiSelf: bigint, tool: Uint8Array, argumentsJson: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_spaces_cancel_create(uniffiSelf: bigint, space: Uint8Array): bigint;
+    uniffi_cua_sdk_fn_method_spaces_clear_keep_awake(uniffiSelf: bigint, space: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_spaces_cloud_add_host(uniffiSelf: bigint, provider: Uint8Array, instanceType: Uint8Array, region: Uint8Array, count: Uint8Array, ttlHours: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_spaces_cloud_approve(uniffiSelf: bigint, provider: Uint8Array, deny: number): bigint;
     uniffi_cua_sdk_fn_method_spaces_cloud_audit(uniffiSelf: bigint, limit: Uint8Array): bigint;
@@ -6650,6 +6681,7 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_fn_method_spaces_fork(uniffiSelf: bigint, source: Uint8Array, name: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_spaces_gpu_support(uniffiSelf: bigint, on: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_spaces_hosts(uniffiSelf: bigint): bigint;
+    uniffi_cua_sdk_fn_method_spaces_keep_awake(uniffiSelf: bigint, space: Uint8Array, seconds: bigint, reason: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_spaces_leave_many(uniffiSelf: bigint, ids: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_spaces_list(uniffiSelf: bigint): bigint;
     uniffi_cua_sdk_fn_method_spaces_list_known(uniffiSelf: bigint): bigint;
@@ -6686,6 +6718,7 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_fn_method_spaces_set_egress(uniffiSelf: bigint, space: Uint8Array, policy: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_spaces_set_lifetime(uniffiSelf: bigint, space: Uint8Array, seconds: bigint, onExpire: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_spaces_set_network(uniffiSelf: bigint, space: Uint8Array, settings: Uint8Array, widen: number, tree: number): bigint;
+    uniffi_cua_sdk_fn_method_spaces_set_sleep(uniffiSelf: bigint, space: Uint8Array, sleep: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_spaces_set_tree_budget(uniffiSelf: bigint, space: Uint8Array, limits: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_spaces_set_volume(uniffiSelf: bigint, space: Uint8Array, volume: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_spaces_space(uniffiSelf: bigint, space: Uint8Array): bigint;
@@ -7151,6 +7184,7 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_checksum_method_spaces_builds(): number;
     uniffi_cua_sdk_checksum_method_spaces_call_tool_json(): number;
     uniffi_cua_sdk_checksum_method_spaces_cancel_create(): number;
+    uniffi_cua_sdk_checksum_method_spaces_clear_keep_awake(): number;
     uniffi_cua_sdk_checksum_method_spaces_cloud_add_host(): number;
     uniffi_cua_sdk_checksum_method_spaces_cloud_approve(): number;
     uniffi_cua_sdk_checksum_method_spaces_cloud_audit(): number;
@@ -7179,6 +7213,7 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_checksum_method_spaces_fork(): number;
     uniffi_cua_sdk_checksum_method_spaces_gpu_support(): number;
     uniffi_cua_sdk_checksum_method_spaces_hosts(): number;
+    uniffi_cua_sdk_checksum_method_spaces_keep_awake(): number;
     uniffi_cua_sdk_checksum_method_spaces_leave_many(): number;
     uniffi_cua_sdk_checksum_method_spaces_list(): number;
     uniffi_cua_sdk_checksum_method_spaces_list_known(): number;
@@ -7215,6 +7250,7 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_checksum_method_spaces_set_egress(): number;
     uniffi_cua_sdk_checksum_method_spaces_set_lifetime(): number;
     uniffi_cua_sdk_checksum_method_spaces_set_network(): number;
+    uniffi_cua_sdk_checksum_method_spaces_set_sleep(): number;
     uniffi_cua_sdk_checksum_method_spaces_set_tree_budget(): number;
     uniffi_cua_sdk_checksum_method_spaces_set_volume(): number;
     uniffi_cua_sdk_checksum_method_spaces_space(): number;

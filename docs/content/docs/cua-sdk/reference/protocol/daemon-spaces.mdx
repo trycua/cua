@@ -60,6 +60,7 @@ without touching it.
 | [`SetSpaceClipboard`](#spaceservicesetspaceclipboard) | [`SetSpaceClipboardRequest`](#setspaceclipboardrequest) | [`SetSpaceClipboardResponse`](#setspaceclipboardresponse) | unary |
 | [`SetSpaceVolume`](#spaceservicesetspacevolume) | [`SetSpaceVolumeRequest`](#setspacevolumerequest) | [`SetSpaceVolumeResponse`](#setspacevolumeresponse) | unary |
 | [`SetSpaceChildren`](#spaceservicesetspacechildren) | [`SetSpaceChildrenRequest`](#setspacechildrenrequest) | [`SetSpaceChildrenResponse`](#setspacechildrenresponse) | unary |
+| [`SetSpaceSleep`](#spaceservicesetspacesleep) | [`SetSpaceSleepRequest`](#setspacesleeprequest) | [`SetSpaceSleepResponse`](#setspacesleepresponse) | unary |
 | [`GetTreeBudget`](#spaceservicegettreebudget) | [`GetTreeBudgetRequest`](#gettreebudgetrequest) | [`GetTreeBudgetResponse`](#gettreebudgetresponse) | unary |
 | [`SetTreeBudget`](#spaceservicesettreebudget) | [`SetTreeBudgetRequest`](#settreebudgetrequest) | [`SetTreeBudgetResponse`](#settreebudgetresponse) | unary |
 | [`ListOrphans`](#spaceservicelistorphans) | [`ListOrphansRequest`](#listorphansrequest) | [`ListOrphansResponse`](#listorphansresponse) | unary |
@@ -289,6 +290,14 @@ Sets what the Space sees of the Cua Volume ("own" or "off"), now.
 Lets a Space make child Spaces of its own, or stops it. Turning it off
 ends the Space's spawn capability at once; children it already made
 keep running until they are deleted or their lifetime ends.
+
+### SpaceService.SetSpaceSleep
+
+`/cua.daemon.v1.SpaceService/SetSpaceSleep`, unary: [`SetSpaceSleepRequest`](#setspacesleeprequest) to [`SetSpaceSleepResponse`](#setspacesleepresponse).
+
+Sets when the Space goes to sleep on its own (`sleep`: "never", "auto" or
+a duration such as "10m") and/or keeps it awake for a while. The setting
+is the Space's `cua.sleep` label.
 
 ### SpaceService.GetTreeBudget
 
@@ -523,6 +532,28 @@ Request for `SpaceService.SetSpaceClipboard`.
 Response for `SpaceService.SetSpaceClipboard`.
 
 No fields.
+
+### SetSpaceSleepRequest
+
+Request for `SpaceService.SetSpaceSleep`.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `space` | 1 | `string` | Id or name. |
+| `sleep` | 2 | optional `string` | "never", "auto" or a duration ("90s", "10m", "2h"). Unset: unchanged. |
+| `keep_awake_secs` | 3 | optional `uint64` | Keep the Space awake for this many seconds (at most 7200). Unset: unchanged. |
+| `keep_awake_reason` | 4 | `string` | Why, shown to the person. |
+| `clear_keep_awake` | 5 | `bool` | End a keep-awake now. |
+
+### SetSpaceSleepResponse
+
+Response for `SpaceService.SetSpaceSleep`.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `space` | 1 | [`Space`](#space) | The Space as it is now. |
+| `keep_awake_until_unix` | 2 | `uint64` | The keep-awake that holds now, as Unix seconds; 0 for none. |
+| `keep_awake_capped` | 3 | `bool` | The ask was longer than the limit and was cut. |
 
 ### SetSpaceVolumeRequest
 

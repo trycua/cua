@@ -1138,6 +1138,44 @@ impl SpaceService for Scoped {
         deny()
     }
 
+    async fn set_space_sleep(
+        &self,
+        req: Request<pb::SetSpaceSleepRequest>,
+    ) -> R<pb::SetSpaceSleepResponse> {
+        // The sleep setting is the owner's; a Space may only ask to be kept
+        // awake (the host caps it at two hours) or end its own keep-awake.
+        let r = req.into_inner();
+        if r.sleep.is_some() {
+            return deny();
+        }
+        let space = self.resolve(&r.space)?;
+        let mut capped = false;
+        if r.clear_keep_awake {
+            self.spaces()
+                .clear_keep_awake(&space.id)
+                .map_err(|e| Status::internal(e.to_string()))?;
+        } else if let Some(secs) = r.keep_awake_secs {
+            capped = self
+                .spaces()
+                .keep_awake(
+                    &space.id,
+                    std::time::Duration::from_secs(secs),
+                    &r.keep_awake_reason,
+                )
+                .map_err(|e| Status::internal(e.to_string()))?
+                .capped;
+        }
+        let until = self
+            .spaces()
+            .keep_awake_of(&space.id)
+            .map_or(0, |k| k.until_unix);
+        Ok(Response::new(pb::SetSpaceSleepResponse {
+            space: Some(space),
+            keep_awake_until_unix: until,
+            keep_awake_capped: capped,
+        }))
+    }
+
     async fn set_space_children(
         &self,
         req: Request<pb::SetSpaceChildrenRequest>,

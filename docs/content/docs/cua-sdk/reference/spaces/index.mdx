@@ -40,8 +40,6 @@ Returned by [`Cua.spaces`](/cua-sdk/reference/cua#cua).
 | [`remove`](#spacesremove) | Unregisters a Space (the sandbox is not touched). |
 | [`rename`](#spacesrename) | Gives a Space a new name; its id stays the same. |
 | [`resolve`](#spacesresolve) | Resolves an id, legacy id, URL or display name. |
-| [`set_clipboard`](#spacesset_clipboard) |  |
-| [`set_volume`](#spacesset_volume) | Sets when a Space's viewers may move the clipboard between this computer and the Space: `viewing` (only while you're viewing, the default), `ask` or `off`. |
 | [`space`](#spacesspace) | A connected handle to a registered Space. |
 | [`start`](#spacesstart) | Turns a Space on again: resumes a suspended one, boots a stopped one (a Space one of your machines provides joins the relay again), and leaves a running one as it is. |
 | [`stop`](#spacesstop) | Turns a Space off the way its provider can (`SpaceInfo.power`): stops it, keeping its disk and freeing its memory (a local VM; a Space one of your machines provides, which that machine stops), or suspends it, keeping its memory (a local container that cannot stop). `Spaces.suspend` suspends a local container or QEMU VM on purpose. |
@@ -53,6 +51,7 @@ Returned by [`Cua.spaces`](/cua-sdk/reference/cua#cua).
 | [`build`](/cua-sdk/reference/spaces/build#spacesbuild) | Builds an image from a Dockerfile or steps in a Space, as pinned layer checkpoints on this machine. |
 | [`build_with_progress`](/cua-sdk/reference/spaces/build#spacesbuild_with_progress) | `Spaces.build`, reporting each step and the lines it prints to `listener` as they happen. |
 | [`builds`](/cua-sdk/reference/spaces/build#spacesbuilds) | The builds on this machine, oldest first, with their tags. |
+| [`clear_keep_awake`](/cua-sdk/reference/spaces/sleep#spacesclear_keep_awake) | Ends a keep-awake of `space` now. |
 | [`cloud_add_host`](/cua-sdk/reference/spaces/elastic#spacescloud_add_host) | Adds `count` hosts of `instance_type` in a linked cloud by hand (the scaler never removes them); each ends at its TTL. |
 | [`cloud_approve`](/cua-sdk/reference/spaces/persistent-agents#spacescloud_approve) | Approves what an agent asked for on `provider` (its link, or a raise of its limits), or with `deny` declines it. |
 | [`cloud_audit`](/cua-sdk/reference/spaces/persistent-agents#spacescloud_audit) | What Cua did in your clouds, newest last (default the newest 50). |
@@ -76,6 +75,7 @@ Returned by [`Cua.spaces`](/cua-sdk/reference/cua#cua).
 | [`delete_tree`](/cua-sdk/reference/spaces/network#spacesdelete_tree) | `Spaces.delete`, with `keep_children`: its child Spaces become top-level Spaces and keep running instead of being deleted first. |
 | [`delete_volume`](/cua-sdk/reference/spaces/volume#spacesdelete_volume) | Deletes the named volume `name` and its files (their history stays in the Cua Volume). |
 | [`fork`](/cua-sdk/reference/sandbox/checkpoints#spacesfork) | Starts Space `name` from `source` (a Space id such as `local:<name>`, a sandbox name, a checkpoint name, or the tag of a build (`Spaces.build`) or its checkpoint; a sandbox wins) and returns it connected. |
+| [`keep_awake`](/cua-sdk/reference/spaces/sleep#spaceskeep_awake) | Keeps `space` awake for `seconds` (at most two hours; a longer ask is cut and `capped` says so), whatever its sleep setting says. |
 | [`leave_many`](/cua-sdk/reference/spaces/sharing#spacesleave_many) | Takes this account off Spaces shared with it (through the relay): a direct share ends, a team's Space leaves this account's list. |
 | [`machine_health`](/cua-sdk/reference/spaces/host#spacesmachine_health) | A machine's health as its own cua daemon checks it: Local Network access (and which app macOS holds responsible), free disk, virtualization, memory left by running Spaces, the permissions sharing its desktop needs. |
 | [`network`](/cua-sdk/reference/spaces/network#spacesnetwork) | A Space's network: its settings, what they open, where they are enforced (or why its network is cut), and what is always blocked. |
@@ -101,10 +101,13 @@ Returned by [`Cua.spaces`](/cua-sdk/reference/cua#cua).
 | [`routine_set_enabled`](/cua-sdk/reference/spaces/persistent-agents#spacesroutine_set_enabled) | Turns a routine on or off. |
 | [`routines`](/cua-sdk/reference/spaces/persistent-agents#spacesroutines) | Routines (of one agent, or all). |
 | [`set_children`](/cua-sdk/reference/spaces/children#spacesset_children) | Lets a Space make child Spaces of its own, or stops it. |
+| [`set_clipboard`](/cua-sdk/reference/spaces/sleep#spacesset_clipboard) |  |
 | [`set_egress`](/cua-sdk/reference/spaces/lifetime#spacesset_egress) | Replaces a Space's egress policy; an empty one removes it (see `EgressPolicy`). |
 | [`set_lifetime`](/cua-sdk/reference/spaces/lifetime#spacesset_lifetime) | Gives a Space a lifetime of `seconds` from now, replacing any earlier one: when it passes, the cua daemon deletes the Space (`on_expire` `"delete"`, the default) or turns it off (`"suspend"`), whether or not this process is still running. |
 | [`set_network`](/cua-sdk/reference/spaces/network#spacesset_network) | Replaces a Space's network settings (see `NetworkSettings`). |
+| [`set_sleep`](/cua-sdk/reference/spaces/sleep#spacesset_sleep) | Sets when `space` goes to sleep on its own: `never` (Keep running), `auto` (once nothing in it runs) or a duration such as `10m`. |
 | [`set_tree_budget`](/cua-sdk/reference/spaces/children#spacesset_tree_budget) | Sets the budget of `space`'s tree: how many child Spaces, vCPUs and memory its children may hold at once, and what they may cost. |
+| [`set_volume`](/cua-sdk/reference/spaces/sleep#spacesset_volume) | Sets when a Space's viewers may move the clipboard between this computer and the Space: `viewing` (only while you're viewing, the default), `ask` or `off`. |
 | [`tree_budget`](/cua-sdk/reference/spaces/children#spacestree_budget) | The budget of `space`'s tree (any Space of it) and what its children use now. |
 | [`volume_approve`](/cua-sdk/reference/spaces/volume#spacesvolume_approve) | `volume_approve`: the request becomes a grant (with presence). |
 | [`volume_audit`](/cua-sdk/reference/spaces/volume#spacesvolume_audit) | `volume_audit`: the newest events (default 50) and whether the log verified. |
@@ -1005,111 +1008,6 @@ pub async fn resolve(&self, space: String) -> Result<SpaceInfo, CuaError>
 | `space` | `String` | required |
 
 **Returns** [`SpaceInfo`](/cua-sdk/reference/spaces/info#spaceinfo-record) · **Async** · **Raises** [`CuaError`](/cua-sdk/reference/errors)
-
-### `Spaces.set_clipboard`
-
-<Tabs items={['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust']} groupId="sdk-lang" persist>
-<Tab value="Python">
-
-```python
-async def set_clipboard(self, space: str, clipboard: str) -> None
-```
-
-</Tab>
-<Tab value="TypeScript">
-
-```ts
-setClipboard(space: string, clipboard: string, asyncOpts_?: { signal: AbortSignal }): Promise<void>
-```
-
-</Tab>
-<Tab value="Swift">
-
-```swift
-func setClipboard(space: String, clipboard: String) async throws
-```
-
-</Tab>
-<Tab value="Kotlin">
-
-```kotlin
-@Throws(CuaException::class)
-suspend fun setClipboard(space: String, clipboard: String)
-```
-
-</Tab>
-<Tab value="Rust">
-
-```rust
-pub async fn set_clipboard(&self, space: String, clipboard: String) -> Result<(), CuaError>
-```
-
-</Tab>
-</Tabs>
-
-| Parameter | Type | Default |
-| --- | --- | --- |
-| `space` | `String` | required |
-| `clipboard` | `String` | required |
-
-**Async** · **Raises** [`CuaError`](/cua-sdk/reference/errors)
-
-### `Spaces.set_volume`
-
-Sets when a Space's viewers may move the clipboard between this
-computer and the Space: `viewing` (only while you're viewing, the
-default), `ask` or `off`. It applies to viewers opened afterwards.
-The agent tools `computer_clipboard_*` act inside the Space and are
-not affected. Another word is `InvalidArgument`.
-Sets what a Space sees of the Cua Volume: `own` (its own folder) or
-`off`. Applies now: `off` unmounts the Volume (named volumes it
-mounted stay).
-
-<Tabs items={['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust']} groupId="sdk-lang" persist>
-<Tab value="Python">
-
-```python
-async def set_volume(self, space: str, volume: str) -> None
-```
-
-</Tab>
-<Tab value="TypeScript">
-
-```ts
-setVolume(space: string, volume: string, asyncOpts_?: { signal: AbortSignal }): Promise<void>
-```
-
-</Tab>
-<Tab value="Swift">
-
-```swift
-func setVolume(space: String, volume: String) async throws
-```
-
-</Tab>
-<Tab value="Kotlin">
-
-```kotlin
-@Throws(CuaException::class)
-suspend fun setVolume(space: String, volume: String)
-```
-
-</Tab>
-<Tab value="Rust">
-
-```rust
-pub async fn set_volume(&self, space: String, volume: String) -> Result<(), CuaError>
-```
-
-</Tab>
-</Tabs>
-
-| Parameter | Type | Default |
-| --- | --- | --- |
-| `space` | `String` | required |
-| `volume` | `String` | required |
-
-**Async** · **Raises** [`CuaError`](/cua-sdk/reference/errors) ([`InvalidArgument`](/cua-sdk/reference/errors#invalidargument))
 
 ### `Spaces.space`
 

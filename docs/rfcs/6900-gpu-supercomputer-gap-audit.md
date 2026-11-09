@@ -22,6 +22,36 @@ kept current by each fixing PR.
 | G8 | Budgets and roots: each Home request is its own tree root with 16 live children, 16 vCPU, 32 GiB, $2/h; depth 2. No pool-wide concurrency view or queue UI. | 10 concurrent agents | `cua-daemon/src/children/budget.rs:24-30`; `cua-spaces/src/tree.rs:38-40` | open |
 | G9 | Host or daemon death: queued/running jobs outlive the parent; a host that never returns keeps its `cj-*` Spaces and bundle directories until a sweep. | no orphans | `host_jobs.rs:217-224`; `coordinator/mod.rs:13-20` | open (fault tests pending) |
 
+### Found while running it
+
+| # | Gap | Fix |
+|---|---|---|
+| G10 | A Space cannot put a window on the person's screen (the scoped channel refused the stream tools). | #6945: allowed for the Space itself and its children |
+| G11 | `cua` inside a Space started a daemon of its own and answered "this cua daemon does not have them" (`ensure_daemon` ignored the spawn channel). | #6945 |
+| G12 | The first `cua` command in a Space can run before the spawn channel is up (the first probe lands while cua-spacesd starts; the retry was 60 s). | a Space younger than 3 minutes is probed every 5 s |
+| G13 | A Windows computer reported no memory, so no pool job fit it ("not enough memory free"). | #6943 |
+| G14 | The built-in runtime on Windows refused every mount, and a job member needs its work, data, cache and tools directories. | the job directories are mounted into the distribution with `drvfs` (`/mnt/cua-host/<name>`) |
+| G15 | OS invariance (audit below). | shim and CLI fixes in this series |
+| G16 | A published image carries an older cua-spacesd than a daemon built from main wants after a version bump, so an agent's Space has no children channel until images are rebuilt. | release process; noted |
+
+### OS invariance audit (Linux, macOS and Windows submitter, member and host)
+
+A job's member is a Linux container Space on a Windows or Linux host, so its
+paths and shell are Linux whatever the host OS. What follows the host or a
+Windows guest:
+
+| Assumption | Where | Status |
+|---|---|---|
+| `fcntl` in the shim's store lock: `import cua._store` raised on Windows, so every job died before user code | `cua/_store.py` | fixed (`msvcrt` fallback; test) |
+| `fsync` on a read-only handle fails on Windows | `cua/_store.py` | fixed |
+| Windows `file://` store URLs rejected | `cua/__init__.py`, `_store.py` | fixed (`file_url_path`) |
+| Only SIGTERM stops a member | `_cua_entry.py` | fixed (SIGBREAK on Windows) |
+| NVIDIA is detected only on Linux | `_cua_entry.py` | fixed (Windows too) |
+| `python3` is the submitter's Python | `jobs_cmd.rs` | fixed (`python3`, `python`, `py -3` on Windows) |
+| uv is pinned for macOS and Linux only; `member_env` joins PATH with `:` | `cua-host/uv.rs`, `member.rs` | open: only a native Windows member (kind `machine`) needs it; containers do not |
+| MLX needs a macOS member: a Linux container on a Mac has no Metal | `host_jobs.rs` | by design: `accelerator=apple` runs in a macOS VM (Lume) |
+| Apple GPUs report no free memory, so `gpu_memory` is not enforced there | `sysinfo.rs` | unified memory; noted |
+
 ## What already works
 
 Gang scheduler with SQLite queue, retries and fences; checkpoint save/resume

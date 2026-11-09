@@ -16,6 +16,7 @@ import { pickAccount, pickOf, rememberAgent, resolveAgent, usePickedAgent } from
 import { reusableHome } from "@/lib/agent-home/home-space";
 import { useRepos } from "@/lib/ask-first-repo";
 import { useListedSpaces } from "@/components/spaces/listed";
+import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 
 import { AskBox, type TaskWhere } from "./ask-box";
@@ -41,7 +42,15 @@ export function taskRun(runs: readonly AgentRunSummary[] | undefined, task: AskT
 
 export function StateDot({ state }: { state: TaskState }) {
   const tone =
-    state === "working" ? "bg-success" : state === "needs-you" || state === "stuck" ? "bg-warning" : state === "failed" || state === "didnt-start" ? "bg-destructive" : state === "done" ? "bg-success" : "bg-muted-foreground/40";
+    state === "working"
+      ? "bg-success"
+      : state === "needs-you" || state === "stuck"
+        ? "bg-warning"
+        : state === "failed" || state === "didnt-start"
+          ? "bg-destructive"
+          : state === "done"
+            ? "bg-success"
+            : "bg-muted-foreground/40";
   return (
     <span className={cn("relative inline-flex size-2 shrink-0 rounded-full", tone)}>
       {state === "working" ? <span className="absolute inset-0 animate-ping rounded-full bg-success/60" /> : null}
@@ -55,6 +64,7 @@ export function StateDot({ state }: { state: TaskState }) {
  * conversations (the one that needs you first), and your Spaces underneath.
  */
 export function AskFirstHome() {
+  const t = useT();
   const tasks = useAskTasks();
   const { data: spaces } = useSpaces();
   const listed = useListedSpaces(spaces);
@@ -97,7 +107,11 @@ export function AskFirstHome() {
     // The default can be This Mac itself: it asks once, as picking it does.
     if (w.kind === "this-mac" && thisMac.readiness === "needs-setup") return;
     if (w.kind === "this-mac" && !thisMacConfirmed()) {
-      pick.choose(w, (ok) => submit(prompt, ok), () => setWhereOpen(true));
+      pick.choose(
+        w,
+        (ok) => submit(prompt, ok),
+        () => setWhereOpen(true),
+      );
       return;
     }
     // The run uses the app's own choice of account: make it the one shown.
@@ -108,14 +122,17 @@ export function AskFirstHome() {
   // A sign-in that did not work says so, in plain words, where the person clicked.
   const signInTo = async (app: string, label: string) => {
     if ((await connectors.connectApp(app)) === "failed") {
-      toast(`Couldn't sign in to ${label}`, { description: connectFailureLine(app) || "Try again, or sign in from Settings, then Connections.", type: "error", group: `sign-in:${app}` });
+      toast(t("home.ask_box.sign_in_failed", { label }), {
+        description: connectFailureLine(app) || t("home.ask_box.sign_in_failed_hint"),
+        type: "error",
+        group: `sign-in:${app}`,
+      });
     }
   };
   const useAccount = (group: AgentGroup, account: AgentAccount) => {
     rememberAgent(pickAccount(group, account, picked));
     if (!account.selected) void connectors.useCredential(group.app, { env: account.env, slot: account.slot });
   };
-
 
   // Home lists agents and Spaces, not tasks: with neither (a first run,
   // or tasks whose Spaces are gone), Home is the welcome again.
@@ -203,8 +220,8 @@ export function AskFirstHome() {
 function useElapsed(ms: number): boolean {
   const [done, setDone] = useState(false);
   useEffect(() => {
-    const t = setTimeout(() => setDone(true), ms);
-    return () => clearTimeout(t);
+    const timer = setTimeout(() => setDone(true), ms);
+    return () => clearTimeout(timer);
   }, [ms]);
   return done;
 }

@@ -7,7 +7,9 @@ import { createExtrasOf } from "../src/model/backend";
 
 describe("a create's extras", () => {
   it("carries the warming home's labels (hidden, off the relay) as they come", () => {
-    expect(createExtrasOf({ image: "x", labels: { "cua.hidden": "home", "cua.relay": "off" } })).toEqual({ labels: { "cua.hidden": "home", "cua.relay": "off" } });
+    expect(createExtrasOf({ image: "x", labels: { "cua.hidden": "home", "cua.relay": "off" } })).toEqual({
+      labels: { "cua.hidden": "home", "cua.relay": "off" },
+    });
   });
 
   it("carry an agent home's children and labels", () => {

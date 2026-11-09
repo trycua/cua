@@ -145,7 +145,9 @@ export function DevicesSection({
           <h3 className="st-title">{tr("devices.section.title")}</h3>
         </div>
         <div className="st-rows">
-          <p className="st-note">{signedIn ? (error ?? "Loading…") : "Sign in to Cua to see the devices that can reach your computers."}</p>
+          <p className="st-note">
+            {signedIn ? (error ?? "Loading…") : "Sign in to Cua to see the devices that can reach your computers."}
+          </p>
         </div>
       </section>
     );
@@ -330,12 +332,15 @@ export function EnrollSheet({
           fail(new Error("The code expired. Go back and start again."));
           return;
         }
-        void bridge.checkEnrolled().then((ok) => {
-          if (ok && !cancelled) {
-            window.clearInterval(timer);
-            send({ type: "approved" });
-          }
-        }, () => {});
+        void bridge.checkEnrolled().then(
+          (ok) => {
+            if (ok && !cancelled) {
+              window.clearInterval(timer);
+              send({ type: "approved" });
+            }
+          },
+          () => {},
+        );
       }, pollMs);
       return () => {
         cancelled = true;
@@ -436,7 +441,11 @@ export function ApproveSheet({
     if (!v.canApprove || !v.request) return;
     send({ type: "submit" });
     try {
-      await bridge.approve({ code: v.request.code, deviceId: v.request.deviceId, passphrase: needsPassphrase ? passphrase : null });
+      await bridge.approve({
+        code: v.request.code,
+        deviceId: v.request.deviceId,
+        passphrase: needsPassphrase ? passphrase : null,
+      });
       onDone();
     } catch (e) {
       send({ type: "failed", error: message(e) });

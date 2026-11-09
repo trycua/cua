@@ -9,6 +9,7 @@
  */
 
 import type { HostStatus } from "@/bridge/contracts/host";
+import { t } from "@/i18n";
 
 import { defaultWhere, hostSpaceId, type NewKind, type TaskWhere } from "./ask-first";
 
@@ -50,8 +51,8 @@ export function thisMacSetupSteps(status: HostStatus | null | undefined): ThisMa
 
 /** The chip's words when this computer isn't ready: `place` is "This Mac", "This PC" ... */
 export const thisMacChipText = (place: string) => ({
-  note: "not set up for agents yet",
-  action: "Set up",
-  actionLabel: `Set up ${place} so agents can work on it`,
-  busy: "Setting up…",
+  note: t("computers.this_mac.chip_note"),
+  action: t("computers.this_mac.chip_action"),
+  actionLabel: t("computers.this_mac.chip_action_label", { place }),
+  busy: t("computers.this_mac.chip_busy"),
 });

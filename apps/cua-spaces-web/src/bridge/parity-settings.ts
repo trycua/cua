@@ -10,15 +10,7 @@
  */
 
 import type { CoreClient } from "./core";
-import type {
-  ApproveSheetState,
-  ApproveSheetView,
-  DeviceInput,
-  DevicesInput,
-  DevicesView,
-  EnrollState,
-  EnrollView,
-} from "./contracts/devices";
+import type { ApproveSheetState, ApproveSheetView, DeviceInput, DevicesInput, DevicesView, EnrollState, EnrollView } from "./contracts/devices";
 import type { SettingsPage, SettingsRow, SettingsSection } from "./contracts/host";
 import type { NotificationInput, NotificationsView } from "./contracts/notifications";
 import type { AboutInput, AboutView, Experiments, LoginItemInput, StorageInput, StorageState } from "./contracts/settings";
@@ -76,7 +68,14 @@ export function settingsParityMethods(core: CoreClient, record: (c: SettingsChec
     "settings.page": (a) =>
       seen(settingsPageOf(core, a.input), (page) => {
         if (a.input.loginItem) {
-          const loginItem: LoginItemInput = { status: "notRegistered", busy: false, error: null, providesSpaces: false, runsAgents: false, ...a.input.loginItem };
+          const loginItem: LoginItemInput = {
+            status: "notRegistered",
+            busy: false,
+            error: null,
+            providesSpaces: false,
+            runsAgents: false,
+            ...a.input.loginItem,
+          };
           record({ kind: "login-item", loginItem, experiments: a.input.experiments ?? {}, rows: generalLoginRows(page) });
         }
       }),
@@ -93,8 +92,7 @@ export function settingsParityMethods(core: CoreClient, record: (c: SettingsChec
     "devices.enrollView": (a) => seen(enrollView(core, a.state), (view) => record({ kind: "enroll", state: a.state, view })),
     "devices.approveOpen": (a) => approveOpen(core, a.prompt),
     "devices.approveReduce": (a) => approveReduce(core, a.state, a.action, a.devices),
-    "devices.approveView": (a) =>
-      seen(approveView(core, a.state, a.devices), (view) => record({ kind: "approve", state: a.state, devices: a.devices, view })),
+    "devices.approveView": (a) => seen(approveView(core, a.state, a.devices), (view) => record({ kind: "approve", state: a.state, devices: a.devices, view })),
 
     "storage.initial": () => storageInitial(core),
     "storage.reduce": (a) => storageReduce(core, a.state, a.action),
@@ -105,7 +103,8 @@ export function settingsParityMethods(core: CoreClient, record: (c: SettingsChec
     "storage.requestText": (a) => storageRequestText(core, a.request),
 
     "notifications.plan": (a) => notificationsPlan(core, a.feed, a.seenMs),
-    "notifications.view": (a) => seen(notificationsView(core, a.feed, a.nowMs), (view) => record({ kind: "notifications", feed: a.feed, nowMs: a.nowMs, view })),
+    "notifications.view": (a) =>
+      seen(notificationsView(core, a.feed, a.nowMs), (view) => record({ kind: "notifications", feed: a.feed, nowMs: a.nowMs, view })),
   };
 }
 

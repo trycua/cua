@@ -57,7 +57,11 @@ const BASES: Record<string, NonNullable<SpaceResources["base"]>> = {
 };
 
 function spaceResources(row: SpaceRow, now: number, index: number): SpaceResources {
-  const a = ALLOCATION[row.id] ?? (row.os === "linux" ? { cores: 2, memory: 4, disk: 40, onHost: 6, inside: 5, shared: false } : { cores: 4, memory: 8, disk: 80, onHost: 22, inside: 30, shared: true });
+  const a =
+    ALLOCATION[row.id] ??
+    (row.os === "linux"
+      ? { cores: 2, memory: 4, disk: 40, onHost: 6, inside: 5, shared: false }
+      : { cores: 4, memory: 8, disk: 80, onHost: 22, inside: 30, shared: true });
   const on = running(row);
   const cpu = Math.round(drift(now, 18 + index * 4, 7, index) * 10) / 10;
   return {

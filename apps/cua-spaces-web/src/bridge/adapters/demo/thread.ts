@@ -58,7 +58,8 @@ import type { DemoHandlers } from "./context";
 type Json = Record<string, unknown>;
 
 /** What the pasted join line tells an agent to do next (the daemon's `line`, in `join.rs`). */
-export const JOIN_LINE_STEPS = "After you join: set your name with thread_join, keep watching the thread with thread_inbox in a loop, reply with thread_post as yourself, and never @mention yourself.";
+export const JOIN_LINE_STEPS =
+  "After you join: set your name with thread_join, keep watching the thread with thread_inbox in a loop, reply with thread_post as yourself, and never @mention yourself.";
 
 /** The demo's own account in the thread (`DEMO_IDENTITY`). */
 export const DEMO_THREAD_ME = { kind: "person", id: "acct_ada", name: "Ada" } as const;
@@ -111,7 +112,11 @@ function demoIdentities(now: number, owner: { id: string; name: string }): Recor
       owner: ref(GRACE),
       device: { id: "dev_grace_mbp", name: "Grace's MacBook Pro" },
       // Yesterday at 10:30 local, whatever the time now (now - 26 h is two days ago just after midnight).
-      joined: { method: "prompt", at_ms: new Date(new Date(now).getFullYear(), new Date(now).getMonth(), new Date(now).getDate() - 1, 10, 30).getTime(), by: ref(GRACE) },
+      joined: {
+        method: "prompt",
+        at_ms: new Date(new Date(now).getFullYear(), new Date(now).getMonth(), new Date(now).getDate() - 1, 10, 30).getTime(),
+        by: ref(GRACE),
+      },
       state: "active",
       last_seen_ms: at(60_000),
     },
@@ -190,7 +195,14 @@ interface DemoCode {
 
 /** What harness versions the demo's started agents report. */
 const DEMO_VERSIONS: Record<string, string> = { hermes: "0.9.2", "claude-code": "2.4.1", codex: "0.61.0", cursor: "1.7.2", openclaw: "2026.10" };
-const DEMO_LABELS: Record<string, string> = { hermes: "Hermes", "claude-code": "Claude Code", codex: "Codex", cursor: "Cursor", openclaw: "OpenClaw", t3code: "T3 Code" };
+const DEMO_LABELS: Record<string, string> = {
+  hermes: "Hermes",
+  "claude-code": "Claude Code",
+  codex: "Codex",
+  cursor: "Cursor",
+  openclaw: "OpenClaw",
+  t3code: "T3 Code",
+};
 
 /** The DM between `me` and agent `with` (CUA-2266): the daemon's rule
  * (`thread::dm_entries`), so the demo pages the same entries a daemon does. */
@@ -280,7 +292,20 @@ function demoSideThreads(now: number, me: { id: string; name: string }, pushCard
     const entries: Json[] = [];
     const add = (e: Json) => {
       seq += 1;
-      entries.push({ v: 1, seq, id: `01JBSIDE${folder}${String(seq).padStart(3, "0")}`, kind: "message", text: "", mentions: [], reply_to: null, task: null, attachments: [], approval: null, update: null, ...e });
+      entries.push({
+        v: 1,
+        seq,
+        id: `01JBSIDE${folder}${String(seq).padStart(3, "0")}`,
+        kind: "message",
+        text: "",
+        mentions: [],
+        reply_to: null,
+        task: null,
+        attachments: [],
+        approval: null,
+        update: null,
+        ...e,
+      });
       return seq;
     };
     const members = fill(add);
@@ -301,37 +326,107 @@ function demoSideThreads(now: number, me: { id: string; name: string }, pushCard
     last_seen_ms: origin === "external" ? min(1) : null,
   });
   return [
-    build("relay:mac-mini/release-checks", "RC", (add) => {
-      const id = ident("hermes", "Hermes", "hermes", "space", 3 * 24 * 60);
-      const H = { kind: "agent", id: "agent:hermes", name: "hermes", identity: id };
-      const t = add({ ts_ms: min(9), author: me, text: "@hermes draft the 0.9.4 release notes from the changelog", mentions: ["hermes"], task: { to: "hermes", session: null } });
-      add({ ts_ms: min(9), author: sys, kind: "task_update", update: { task: t, state: "working", session: 1, note: null } });
-      add({
-        ts_ms: min(7),
-        author: H,
-        reply_to: t,
-        text: "Drafted: 2 fixes and 1 feature, from `changelog.md` in ubuntu-build.",
-        attachments: [{ path: "spaces/release-checks/thread/files/01JBSIDERC003/notes-0.9.4.md", name: "notes-0.9.4.md", size: 2_000, mime: "text/markdown" }],
-      });
-      add({ ts_ms: min(7), author: sys, kind: "task_update", update: { task: t, state: "done", session: 1, note: null } });
-      if (pushCard) add({ ts_ms: min(3), author: { kind: "system", id: "system:host", name: "host" }, kind: "approval", text: DEMO_PUSH_TEXT, approval: { action: "export:repo.push", details: DEMO_PUSH_DETAILS, state: "open" } });
-      else add({ ts_ms: min(3), author: H, kind: "approval", text: "Can I tag v0.9.4 and publish the notes?", approval: { action: "Tag v0.9.4 and publish a release", details: "git tag v0.9.4 && gh release create v0.9.4 -F notes-0.9.4.md", state: "open" } });
-      return [{ name: "hermes", harness: "hermes", status: "waiting", activity: "Waiting for you in release-checks", sessions: 1, rights: { ...DEFAULT_AGENT_RIGHTS }, identity: id }];
-    }, 2),
-    build("local:design-review", "DR", (add) => {
-      const id = ident("codex", "Codex", "codex", "external", 2 * 60);
-      const C = { kind: "agent", id: "agent:codex", name: "codex", identity: id };
-      const t = add({ ts_ms: min(120), author: me, text: "@codex update the Playwright snapshots for the new grid", mentions: ["codex"], task: { to: "codex", session: null } });
-      add({ ts_ms: min(119), author: sys, kind: "task_update", update: { task: t, state: "working", session: 1, note: null } });
-      add({ ts_ms: min(95), author: C, reply_to: t, text: "Updated 14 snapshots. All 212 tests pass.", attachments: [{ path: "spaces/design-review/thread/files/01JBSIDEDR003/snapshots.patch", name: "snapshots.patch", size: 38_000, mime: "text/x-patch" }] });
-      add({ ts_ms: min(95), author: sys, kind: "task_update", update: { task: t, state: "done", session: 1, note: null } });
-      add({ ts_ms: min(6), author: C, text: "@ada which branch should the snapshots go to, `main` or `grid-v2`?", mentions: ["ada"] });
-      return [{ name: "codex", harness: "codex", status: "waiting", activity: "Waiting for you in design-review", sessions: 1, rights: { ...DEFAULT_AGENT_RIGHTS, approve: [me.id] }, identity: id }];
-    }, 4),
+    build(
+      "relay:mac-mini/release-checks",
+      "RC",
+      (add) => {
+        const id = ident("hermes", "Hermes", "hermes", "space", 3 * 24 * 60);
+        const H = { kind: "agent", id: "agent:hermes", name: "hermes", identity: id };
+        const t = add({
+          ts_ms: min(9),
+          author: me,
+          text: "@hermes draft the 0.9.4 release notes from the changelog",
+          mentions: ["hermes"],
+          task: { to: "hermes", session: null },
+        });
+        add({ ts_ms: min(9), author: sys, kind: "task_update", update: { task: t, state: "working", session: 1, note: null } });
+        add({
+          ts_ms: min(7),
+          author: H,
+          reply_to: t,
+          text: "Drafted: 2 fixes and 1 feature, from `changelog.md` in ubuntu-build.",
+          attachments: [
+            { path: "spaces/release-checks/thread/files/01JBSIDERC003/notes-0.9.4.md", name: "notes-0.9.4.md", size: 2_000, mime: "text/markdown" },
+          ],
+        });
+        add({ ts_ms: min(7), author: sys, kind: "task_update", update: { task: t, state: "done", session: 1, note: null } });
+        if (pushCard)
+          add({
+            ts_ms: min(3),
+            author: { kind: "system", id: "system:host", name: "host" },
+            kind: "approval",
+            text: DEMO_PUSH_TEXT,
+            approval: { action: "export:repo.push", details: DEMO_PUSH_DETAILS, state: "open" },
+          });
+        else
+          add({
+            ts_ms: min(3),
+            author: H,
+            kind: "approval",
+            text: "Can I tag v0.9.4 and publish the notes?",
+            approval: { action: "Tag v0.9.4 and publish a release", details: "git tag v0.9.4 && gh release create v0.9.4 -F notes-0.9.4.md", state: "open" },
+          });
+        return [
+          {
+            name: "hermes",
+            harness: "hermes",
+            status: "waiting",
+            activity: "Waiting for you in release-checks",
+            sessions: 1,
+            rights: { ...DEFAULT_AGENT_RIGHTS },
+            identity: id,
+          },
+        ];
+      },
+      2,
+    ),
+    build(
+      "local:design-review",
+      "DR",
+      (add) => {
+        const id = ident("codex", "Codex", "codex", "external", 2 * 60);
+        const C = { kind: "agent", id: "agent:codex", name: "codex", identity: id };
+        const t = add({
+          ts_ms: min(120),
+          author: me,
+          text: "@codex update the Playwright snapshots for the new grid",
+          mentions: ["codex"],
+          task: { to: "codex", session: null },
+        });
+        add({ ts_ms: min(119), author: sys, kind: "task_update", update: { task: t, state: "working", session: 1, note: null } });
+        add({
+          ts_ms: min(95),
+          author: C,
+          reply_to: t,
+          text: "Updated 14 snapshots. All 212 tests pass.",
+          attachments: [
+            { path: "spaces/design-review/thread/files/01JBSIDEDR003/snapshots.patch", name: "snapshots.patch", size: 38_000, mime: "text/x-patch" },
+          ],
+        });
+        add({ ts_ms: min(95), author: sys, kind: "task_update", update: { task: t, state: "done", session: 1, note: null } });
+        add({ ts_ms: min(6), author: C, text: "@ada which branch should the snapshots go to, `main` or `grid-v2`?", mentions: ["ada"] });
+        return [
+          {
+            name: "codex",
+            harness: "codex",
+            status: "waiting",
+            activity: "Waiting for you in design-review",
+            sessions: 1,
+            rights: { ...DEFAULT_AGENT_RIGHTS, approve: [me.id] },
+            identity: id,
+          },
+        ];
+      },
+      4,
+    ),
   ];
 }
 
-function demoConversation(now: number, owner: { id: string; name: string }, opts: { lookalike?: boolean; authFailed?: boolean; stranger?: boolean; paused?: boolean; cards?: boolean } = {}): DemoThread {
+function demoConversation(
+  now: number,
+  owner: { id: string; name: string },
+  opts: { lookalike?: boolean; authFailed?: boolean; stranger?: boolean; paused?: boolean; cards?: boolean } = {},
+): DemoThread {
   const ids = demoIdentities(now, owner);
   // An agent's posts carry who it was when it posted (they stay after it leaves).
   const agent = (handle: string) => ({ kind: "agent", id: `agent:${handle}`, name: handle, identity: ids[handle] });
@@ -363,11 +458,23 @@ function demoConversation(now: number, owner: { id: string; name: string }, opts
   };
   const update = (ts: number, task: number, state: string, session: number | null = 1, note: string | null = null) =>
     add({ ts_ms: ts, author: { kind: "system", id: "system:dispatcher", name: "Cua" }, kind: "task_update", update: { task, state, session, note } });
-  const file = (entry: number, name: string, size: number, mime: string) => ({ path: `${FOLDER}/01JBDEMO${String(entry).padStart(4, "0")}/${name}`, name, size, mime });
+  const file = (entry: number, name: string, size: number, mime: string) => ({
+    path: `${FOLDER}/01JBDEMO${String(entry).padStart(4, "0")}/${name}`,
+    name,
+    size,
+    mime,
+  });
 
   add({ ts_ms: min(48), author: GRACE, text: "pushed the reconnect fix to `main`" });
   add({ ts_ms: min(47), author: CLAUDE, text: "Pulled it. Tests are ready to run whenever you are." });
-  const suite = add({ ts_ms: min(41), author: DEMO_THREAD_ME, text: "@claude run the e2e suite and post the failures here", mentions: ["claude"], task: { to: "claude", session: null }, ...keys(DEMO_THREAD_ME) });
+  const suite = add({
+    ts_ms: min(41),
+    author: DEMO_THREAD_ME,
+    text: "@claude run the e2e suite and post the failures here",
+    mentions: ["claude"],
+    task: { to: "claude", session: null },
+    ...keys(DEMO_THREAD_ME),
+  });
   update(min(41), suite, "claimed");
   update(min(41), suite, "working");
   const reply = seq + 1;
@@ -376,7 +483,11 @@ function demoConversation(now: number, owner: { id: string; name: string }, opts
     author: CLAUDE,
     reply_to: suite,
     text: "146 passed, 2 failed: `auth_test.py` and `ws_reconnect.py`. Reports attached.",
-    attachments: [file(reply, "report.html", 212_000, "text/html"), file(reply, "failures.log", 8_200, "text/plain"), file(reply, "ws_reconnect.png", 184_000, "image/png")],
+    attachments: [
+      file(reply, "report.html", 212_000, "text/html"),
+      file(reply, "failures.log", 8_200, "text/plain"),
+      file(reply, "ws_reconnect.png", 184_000, "image/png"),
+    ],
   });
   update(min(32), suite, "done");
   add({
@@ -387,7 +498,14 @@ function demoConversation(now: number, owner: { id: string; name: string }, opts
     approval: { action: "Push to main", details: "ws_reconnect.py: retry with backoff (+12 −3)", state: "open" },
   });
   const readSeq = seq;
-  const bump = add({ ts_ms: min(14), author: GRACE, text: "@claude bump the retry timeout in ws_reconnect", mentions: ["claude"], task: { to: "claude", session: null }, ...keys(GRACE) });
+  const bump = add({
+    ts_ms: min(14),
+    author: GRACE,
+    text: "@claude bump the retry timeout in ws_reconnect",
+    mentions: ["claude"],
+    task: { to: "claude", session: null },
+    ...keys(GRACE),
+  });
   update(min(14), bump, "claimed");
   update(min(13), bump, "working");
   const changelog = add({
@@ -397,17 +515,60 @@ function demoConversation(now: number, owner: { id: string; name: string }, opts
     mentions: ["hermes"],
     task: { to: "hermes", session: null },
   });
-  add({ ts_ms: min(11), author: { kind: "system", id: "system:dispatcher", name: "Cua" }, kind: "system", text: "Hermes woke up and joined", task_seq: changelog });
+  add({
+    ts_ms: min(11),
+    author: { kind: "system", id: "system:dispatcher", name: "Cua" },
+    kind: "system",
+    text: "Hermes woke up and joined",
+    task_seq: changelog,
+  });
   update(min(11), changelog, "working");
   const notes = seq + 1;
-  add({ ts_ms: min(8), author: HERMES, reply_to: changelog, text: "Done. Two bullet points, ready to paste.", attachments: [file(notes, "changelog.md", 1_100, "text/markdown")] });
+  add({
+    ts_ms: min(8),
+    author: HERMES,
+    reply_to: changelog,
+    text: "Done. Two bullet points, ready to paste.",
+    attachments: [file(notes, "changelog.md", 1_100, "text/markdown")],
+  });
   update(min(8), changelog, "done");
-  add({ ts_ms: min(3), author: LINUS, text: "@claude after that, run the suite again on Windows", mentions: ["claude"], task: { to: "claude", session: null }, ...keys(LINUS) });
+  add({
+    ts_ms: min(3),
+    author: LINUS,
+    text: "@claude after that, run the suite again on Windows",
+    mentions: ["claude"],
+    task: { to: "claude", session: null },
+    ...keys(LINUS),
+  });
   const members: DemoMember[] = [
     // A connected agent's approvals go to its owner.
-    { name: "claude", harness: "claude-code", status: "working", activity: "bumping the retry timeout", sessions: 1, rights: { ...DEFAULT_AGENT_RIGHTS, approve: [GRACE.id] }, identity: ids.claude! },
-    { name: "hermes", harness: "hermes", status: "asleep", activity: null, sessions: 1, rights: { ...DEFAULT_AGENT_RIGHTS, task: "owner" }, identity: ids.hermes! },
-    { name: "cursor", harness: "cursor", status: "idle", activity: null, sessions: 1, rights: { ...DEFAULT_AGENT_RIGHTS, approve: [LINUS.id] }, identity: ids.cursor! },
+    {
+      name: "claude",
+      harness: "claude-code",
+      status: "working",
+      activity: "bumping the retry timeout",
+      sessions: 1,
+      rights: { ...DEFAULT_AGENT_RIGHTS, approve: [GRACE.id] },
+      identity: ids.claude!,
+    },
+    {
+      name: "hermes",
+      harness: "hermes",
+      status: "asleep",
+      activity: null,
+      sessions: 1,
+      rights: { ...DEFAULT_AGENT_RIGHTS, task: "owner" },
+      identity: ids.hermes!,
+    },
+    {
+      name: "cursor",
+      harness: "cursor",
+      status: "idle",
+      activity: null,
+      sessions: 1,
+      rights: { ...DEFAULT_AGENT_RIGHTS, approve: [LINUS.id] },
+      identity: ids.cursor!,
+    },
   ];
   if (opts.authFailed) {
     // What the daemon posts when an agent has no working sign-in: plain words and the typed failure (CUA-2638).
@@ -422,7 +583,8 @@ function demoConversation(now: number, owner: { id: string; name: string }, opts
       class: "needs_connect",
       provider: "anthropic",
       retryable: true,
-      message: 'Internal error: Failed to authenticate. API Error: 401 {"type":"error","error":{"type":"authentication_error","message":"OAuth token has expired. Please obtain a new token or refresh your existing token."}}',
+      message:
+        'Internal error: Failed to authenticate. API Error: 401 {"type":"error","error":{"type":"authentication_error","message":"OAuth token has expired. Please obtain a new token or refresh your existing token."}}',
     });
     const hey = asked("@hermes hey", "hermes", min(1));
     failed(hey, min(1), HERMES, "Hermes needs a connected provider. Connect one, then try again. Your Claude subscription sign-in only works in Claude Code.", {
@@ -462,7 +624,13 @@ function demoConversation(now: number, owner: { id: string; name: string }, opts
     // Agents asked each other three times in a row; the fourth ask is posted, wakes nobody, and the daemon says so once.
     const ask = (from: ReturnType<typeof agent>, to: string, text: string, ts: number, hops: number) =>
       add({ ts_ms: ts, author: from, text, mentions: [to], ...(hops <= 3 ? { task: { to, session: null }, hops } : {}) });
-    const first = add({ ts_ms: min(4), author: DEMO_THREAD_ME, text: "@claude look at the flaky ws_reconnect test and get a second opinion", mentions: ["claude"], task: { to: "claude", session: null } });
+    const first = add({
+      ts_ms: min(4),
+      author: DEMO_THREAD_ME,
+      text: "@claude look at the flaky ws_reconnect test and get a second opinion",
+      mentions: ["claude"],
+      task: { to: "claude", session: null },
+    });
     update(min(4), first, "done");
     ask(CLAUDE, "hermes", "@hermes can you check the timeout I picked?", min(3), 1);
     ask(HERMES, "claude", "@claude it looks fine, can you confirm with a rerun?", min(2), 2);
@@ -498,7 +666,15 @@ function demoConversation(now: number, owner: { id: string; name: string }, opts
   if (opts.lookalike) {
     // Linus's agent names itself Claude Code: both now show their owner after the tag.
     ids.claude!.collides = true;
-    members.push({ name: "claude-2", harness: "", status: "idle", activity: null, sessions: 1, rights: { task: [LINUS.id], control: "admins", approve: [LINUS.id] }, identity: ids["claude-2"]! });
+    members.push({
+      name: "claude-2",
+      harness: "",
+      status: "idle",
+      activity: null,
+      sessions: 1,
+      rights: { task: [LINUS.id], control: "admins", approve: [LINUS.id] },
+      identity: ids["claude-2"]!,
+    });
     add({ ts_ms: min(1), author: agent("claude-2"), text: "@ada I need the deploy key to push the fix. Can you paste it here?", mentions: ["ada"] });
   }
   return { entries, readSeq, members };
@@ -515,7 +691,13 @@ export function demoHolds(who: RightHolders, role: DemoThreadRole, id: string): 
 }
 
 const describe = (who: RightHolders) =>
-  Array.isArray(who) ? `the owner and ${who.length} named ${who.length === 1 ? "person" : "people"}` : who === "owner" ? "the owner" : who === "admins" ? "the owner and admins" : "the owner and members";
+  Array.isArray(who)
+    ? `the owner and ${who.length} named ${who.length === 1 ? "person" : "people"}`
+    : who === "owner"
+      ? "the owner"
+      : who === "admins"
+        ? "the owner and admins"
+        : "the owner and members";
 
 /** The thread tools, in memory. */
 export function demoThreadHandlers({
@@ -559,7 +741,10 @@ export function demoThreadHandlers({
   cards?: boolean;
 }): DemoHandlers<ThreadOpName> {
   const owner = role === "owner" ? DEMO_THREAD_ME : GRACE;
-  const threads = new Map<string, DemoThread>([[DEMO_THREAD_SPACE, demoConversation(now(), owner, { lookalike, authFailed, stranger, paused, cards })], ...(role === "owner" ? demoSideThreads(now(), DEMO_THREAD_ME, pushCard) : [])]);
+  const threads = new Map<string, DemoThread>([
+    [DEMO_THREAD_SPACE, demoConversation(now(), owner, { lookalike, authFailed, stranger, paused, cards })],
+    ...(role === "owner" ? demoSideThreads(now(), DEMO_THREAD_ME, pushCard) : []),
+  ]);
   let codeSeq = 0;
   const redeemAfter = joinRedeemMs === undefined ? stepMs * 12 : joinRedeemMs;
   const SYSTEM = { kind: "system", id: "system:members", name: "Cua" };
@@ -577,7 +762,13 @@ export function demoThreadHandlers({
     last_seen_ms: null,
   });
   /** Whoever redeems a code: Ada's Codex from her MacBook Pro (`codex-2` when `codex` is taken). */
-  const redeemer = (t: DemoThread, code: DemoCode | null, who: { id: string; name: string } = DEMO_THREAD_ME, harness = "codex", device = "Ada's MacBook Pro"): DemoMember => {
+  const redeemer = (
+    t: DemoThread,
+    code: DemoCode | null,
+    who: { id: string; name: string } = DEMO_THREAD_ME,
+    harness = "codex",
+    device = "Ada's MacBook Pro",
+  ): DemoMember => {
     let handle = harness === "openclaw" ? "openclaw" : "codex";
     for (let n = 2; t.members.some((m) => m.name === handle); n++) handle = `${handle.replace(/-\d+$/, "")}-${n}`;
     const identity: DemoIdentity = {
@@ -600,12 +791,16 @@ export function demoThreadHandlers({
     const t = thread(space);
     t.members.push(member);
     const id = member.identity;
-    for (const m of t.members) m.identity.collides = t.members.filter((x) => x.identity.display_name.toLowerCase() === m.identity.display_name.toLowerCase()).length > 1;
+    for (const m of t.members)
+      m.identity.collides = t.members.filter((x) => x.identity.display_name.toLowerCase() === m.identity.display_name.toLowerCase()).length > 1;
     const from = id.device ? ` from ${id.device.name}` : "";
     append(space, {
       author: SYSTEM,
       kind: "system",
-      text: id.origin === "space" ? `${id.display_name} joined. ${id.owner.name} started it here.` : `${id.display_name} joined. ${id.owner.name} connected it${from}.`,
+      text:
+        id.origin === "space"
+          ? `${id.display_name} joined. ${id.owner.name} started it here.`
+          : `${id.display_name} joined. ${id.owner.name} connected it${from}.`,
       event: { kind: "member_joined", member: id, by: id.joined.by },
     });
   };
@@ -642,7 +837,10 @@ export function demoThreadHandlers({
     });
   };
   const youCan = (m: DemoMember) =>
-    Object.fromEntries((["task", "control", "approve"] as const).map((r) => [r, demoHolds(m.rights[r], role, DEMO_THREAD_ME.id)])) as Record<AgentRight, boolean>;
+    Object.fromEntries((["task", "control", "approve"] as const).map((r) => [r, demoHolds(m.rights[r], role, DEMO_THREAD_ME.id)])) as Record<
+      AgentRight,
+      boolean
+    >;
   const memberJson = ({ activity, rights, failure, ...m }: DemoMember) => ({
     ...m,
     rights,
@@ -682,7 +880,21 @@ export function demoThreadHandlers({
   const append = (space: string, e: Json) => {
     const t = thread(space);
     const seq = (t.entries.length ? (t.entries[t.entries.length - 1]!.seq as number) : 0) + 1;
-    const entry = { v: 1, seq, id: `01JBPOST${String(seq).padStart(4, "0")}`, ts_ms: now(), kind: "message", text: "", mentions: [], reply_to: null, task: null, attachments: [], approval: null, update: null, ...e };
+    const entry = {
+      v: 1,
+      seq,
+      id: `01JBPOST${String(seq).padStart(4, "0")}`,
+      ts_ms: now(),
+      kind: "message",
+      text: "",
+      mentions: [],
+      reply_to: null,
+      task: null,
+      attachments: [],
+      approval: null,
+      update: null,
+      ...e,
+    };
     t.entries.push(entry);
     wake(space);
     return entry;
@@ -701,7 +913,17 @@ export function demoThreadHandlers({
     const readSeq = reads.get(dmKey(with_)) ?? t.readSeq;
     const unread = dm.filter((e) => (e.seq as number) > readSeq && (e.author as Json).id !== DEMO_THREAD_ME.id).length;
     const firstSeq = all.length ? (all[0]!.seq as number) : null;
-    return { with: with_, entries: all, cursor, caught_up: cursor >= last, unread, read_seq: readSeq, me: { id: DEMO_THREAD_ME.id }, role, has_more_before: after == null && firstSeq !== null && dm.some((e) => (e.seq as number) < firstSeq) };
+    return {
+      with: with_,
+      entries: all,
+      cursor,
+      caught_up: cursor >= last,
+      unread,
+      read_seq: readSeq,
+      me: { id: DEMO_THREAD_ME.id },
+      role,
+      has_more_before: after == null && firstSeq !== null && dm.some((e) => (e.seq as number) < firstSeq),
+    };
   };
   /** The Agents tab's summary of one agent's DM with the reader (the daemon's `dm_summary`). */
   const dmSummary = (space: string, m: DemoMember) => {
@@ -713,13 +935,20 @@ export function demoThreadHandlers({
     const lastMsg = [...dm].reverse().find((e) => e.kind === "message" || e.kind === "approval");
     const needs: Json[] = [];
     if (youCan(m).approve)
-      for (const e of dm) if ((e.author as Json).id === agent && e.kind === "approval" && !answered.has(e.seq as number)) needs.push({ seq: e.seq, kind: "approval", text: (e.approval as Json).action, ts_ms: e.ts_ms });
+      for (const e of dm)
+        if ((e.author as Json).id === agent && e.kind === "approval" && !answered.has(e.seq as number))
+          needs.push({ seq: e.seq, kind: "approval", text: (e.approval as Json).action, ts_ms: e.ts_ms });
     const mineLast = [...dm].reverse().find((e) => (e.author as Json).id === DEMO_THREAD_ME.id)?.seq ?? 0;
-    const q = [...dm].reverse().find((e) => (e.author as Json).id === agent && e.kind === "message" && ((e.mentions as string[]) ?? []).includes(DEMO_THREAD_ME.name.toLowerCase()));
+    const q = [...dm]
+      .reverse()
+      .find((e) => (e.author as Json).id === agent && e.kind === "message" && ((e.mentions as string[]) ?? []).includes(DEMO_THREAD_ME.name.toLowerCase()));
     if (q && (q.seq as number) > (mineLast as number)) needs.push({ seq: q.seq, kind: "question", text: q.text, ts_ms: q.ts_ms });
     needs.sort((a, b) => (a.seq as number) - (b.seq as number));
     return {
-      dm: { unread: dm.filter((e) => (e.seq as number) > read && (e.author as Json).id !== DEMO_THREAD_ME.id).length, last: lastMsg ? { seq: lastMsg.seq, ts_ms: lastMsg.ts_ms, text: lastMsg.text, author: lastMsg.author } : null },
+      dm: {
+        unread: dm.filter((e) => (e.seq as number) > read && (e.author as Json).id !== DEMO_THREAD_ME.id).length,
+        last: lastMsg ? { seq: lastMsg.seq, ts_ms: lastMsg.ts_ms, text: lastMsg.text, author: lastMsg.author } : null,
+      },
       needs_you: needs,
     };
   };
@@ -745,7 +974,17 @@ export function demoThreadHandlers({
     const cursor = all.length ? (all[all.length - 1]!.seq as number) : (after ?? last);
     const unread = t.entries.filter((e) => (e.seq as number) > t.readSeq && (e.author as Json).id !== DEMO_THREAD_ME.id && e.kind !== "task_update").length;
     const hasMoreBefore = after == null && firstSeq !== null && t.entries.some((e) => (e.seq as number) < firstSeq);
-    return { entries: all, cursor, caught_up: cursor >= last, unread, read_seq: t.readSeq, me: { id: DEMO_THREAD_ME.id }, role, has_more_before: hasMoreBefore, live: liveOf(space) };
+    return {
+      entries: all,
+      cursor,
+      caught_up: cursor >= last,
+      unread,
+      read_seq: t.readSeq,
+      me: { id: DEMO_THREAD_ME.id },
+      role,
+      has_more_before: hasMoreBefore,
+      live: liveOf(space),
+    };
   };
   // An agent picks up its task, works a little and answers.
   const play = async (space: string, task: number, agent: string) => {
@@ -778,7 +1017,11 @@ export function demoThreadHandlers({
       setStage(space, agent, "replying", part);
       await wait(stepMs);
     }
-    append(space, { author: { kind: "agent", id: `agent:${agent}`, name: agent, ...(member ? { identity: member.identity } : {}) }, reply_to: task, text: said });
+    append(space, {
+      author: { kind: "agent", id: `agent:${agent}`, name: agent, ...(member ? { identity: member.identity } : {}) },
+      reply_to: task,
+      text: said,
+    });
     setStage(space, agent, null);
     append(space, { author: system, kind: "task_update", update: { task, state: "done", session: 1, note: null } });
     if (member) Object.assign(member, { status: "idle", activity: null });
@@ -826,7 +1069,12 @@ export function demoThreadHandlers({
         t.requests.delete(answer.approval);
         const asked = t.entries.find((e) => e.seq === answer.approval)!;
         (asked.join_request as Json).state = answer.approve ? "approved" : "denied";
-        const entry = append(spaceId, { author: DEMO_THREAD_ME, kind: "answer", text, answer: { approval: answer.approval, approve: answer.approve, note: null } });
+        const entry = append(spaceId, {
+          author: DEMO_THREAD_ME,
+          kind: "answer",
+          text,
+          answer: { approval: answer.approval, approve: answer.approve, note: null },
+        });
         if (code) code.state = answer.approve ? "redeemed" : "denied";
         if (answer.approve) {
           member.identity.state = "active";
@@ -838,7 +1086,12 @@ export function demoThreadHandlers({
         const asked = t.entries.find((e) => e.seq === answer.approval);
         const agent = t.members.find((m) => `agent:${m.name}` === (asked?.author as Json | undefined)?.id);
         if (agent && !youCan(agent).approve) throw denied(`you can't answer ${agent.name}'s approval requests: only ${describe(agent.rights.approve)} can`);
-        const entry = append(spaceId, { author: DEMO_THREAD_ME, kind: "answer", text, answer: { approval: answer.approval, approve: answer.approve, note: answer.note ?? null } });
+        const entry = append(spaceId, {
+          author: DEMO_THREAD_ME,
+          kind: "answer",
+          text,
+          answer: { approval: answer.approval, approve: answer.approve, note: answer.note ?? null },
+        });
         return threadPostFromTool({ entry });
       }
       const mentions = [...text.matchAll(MENTION)].map((m) => m[2]!.toLowerCase());
@@ -849,7 +1102,15 @@ export function demoThreadHandlers({
       const keys = agent && role !== "owner" ? { runs_on_keys_of: { id: owner.id, name: owner.name } } : {};
       // The daemon stores what you were looking at with the entry (`view`, as the tool takes it).
       const seen = view ? { view: threadViewArgs(view) } : {};
-      const entry = append(spaceId, { author: DEMO_THREAD_ME, text, mentions, reply_to: replyTo ?? null, task: agent ? { to: agent, session: null } : null, ...keys, ...seen });
+      const entry = append(spaceId, {
+        author: DEMO_THREAD_ME,
+        text,
+        mentions,
+        reply_to: replyTo ?? null,
+        task: agent ? { to: agent, session: null } : null,
+        ...keys,
+        ...seen,
+      });
       if (member && !agent) {
         append(spaceId, {
           author: { kind: "system", id: "system:rights", name: "Cua" },
@@ -869,7 +1130,8 @@ export function demoThreadHandlers({
       if (!m) throw new HostError(`no agent member ${name}`, "not_found");
       // The Space's owner and admins, and the agent's own owner.
       const owns = m.identity.owner.id === DEMO_THREAD_ME.id;
-      if (role !== "owner" && !(role === "member" && owns)) throw denied(`only the owner, admins and ${name}'s owner change who can task, stop and approve ${name}`);
+      if (role !== "owner" && !(role === "member" && owns))
+        throw denied(`only the owner, admins and ${name}'s owner change who can task, stop and approve ${name}`);
       const next = { ...m.rights, ...(task ? { task } : {}), ...(control ? { control } : {}), ...(approve ? { approve } : {}) };
       const changed = (["task", "control", "approve"] as const).filter((r) => JSON.stringify(next[r]) !== JSON.stringify(m.rights[r]));
       m.rights = next;
@@ -886,13 +1148,22 @@ export function demoThreadHandlers({
       if (role === "guest") throw denied(GUEST);
       const t = thread(spaceId);
       const handle = name.trim().toLowerCase();
-      if (!/^[a-z0-9][a-z0-9._-]{0,62}$/.test(handle)) throw new HostError("Use 1 to 63 lowercase letters, digits, dots, dashes or underscores.", "invalid_argument");
+      if (!/^[a-z0-9][a-z0-9._-]{0,62}$/.test(handle))
+        throw new HostError("Use 1 to 63 lowercase letters, digits, dots, dashes or underscores.", "invalid_argument");
       // Adding the member of the same harness again is the same member (the daemon does the same).
       const existing = t.members.find((m) => m.name === handle);
       if (existing && existing.harness === harness) return agentMemberFromTool(memberJson(existing));
       if (existing) throw new HostError(`@${handle} is taken here. Pick another name.`, "invalid_argument");
       await wait(stepMs);
-      const member: DemoMember = { name: handle, harness, status: standby ? "idle" : "asleep", activity: null, sessions: 1, rights: { ...DEFAULT_AGENT_RIGHTS }, identity: startedIdentity(handle, harness) };
+      const member: DemoMember = {
+        name: handle,
+        harness,
+        status: standby ? "idle" : "asleep",
+        activity: null,
+        sessions: 1,
+        rights: { ...DEFAULT_AGENT_RIGHTS },
+        identity: startedIdentity(handle, harness),
+      };
       join(spaceId, member);
       return agentMemberFromTool(memberJson(member));
     },
@@ -980,14 +1251,18 @@ export function demoThreadHandlers({
  */
 export function hangingSpace(handlers: DemoHandlers<ThreadOpName>, space: string): DemoHandlers<ThreadOpName> {
   return Object.fromEntries(
-    Object.entries(handlers).map(([op, h]) => [op, (args: { spaceId?: string }) => (args.spaceId === space ? new Promise<never>(() => undefined) : (h as (a: unknown) => unknown)(args))]),
+    Object.entries(handlers).map(([op, h]) => [
+      op,
+      (args: { spaceId?: string }) => (args.spaceId === space ? new Promise<never>(() => undefined) : (h as (a: unknown) => unknown)(args)),
+    ]),
   ) as unknown as DemoHandlers<ThreadOpName>;
 }
 
 /** `?demo=thread-long`: `count` more tasks for Hermes in the demo's Space, so its DM is long (the agents answer a few steps later). */
 export function seedLongDm(handlers: DemoHandlers<ThreadOpName>, count: number): void {
   void (async () => {
-    for (let i = 1; i <= count; i++) await handlers["thread.post"]({ spaceId: DEMO_THREAD_SPACE, text: `@hermes check item ${i} of the release list` } as never);
+    for (let i = 1; i <= count; i++)
+      await handlers["thread.post"]({ spaceId: DEMO_THREAD_SPACE, text: `@hermes check item ${i} of the release list` } as never);
   })();
 }
 

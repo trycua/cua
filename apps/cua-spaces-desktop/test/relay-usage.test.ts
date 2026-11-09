@@ -12,9 +12,18 @@ import { relayUsageMethods } from "../src/bridge/relay-usage";
 
 /** As the generated bindings give the record: optionals are `undefined`. */
 const NATIVE = {
-  metered: true, period: "2026-10", plan: "free", team: { id: "acme", seats: 2 },
-  liveSessions: 1, liveSessionsLimit: 2, hoursUsed: 20.4, hoursLimit: 20, myHoursUsed: 3.4,
-  softLimitReached: true, reasons: ["hours"], upgradeUrl: "https://cua.ai/pricing",
+  metered: true,
+  period: "2026-10",
+  plan: "free",
+  team: { id: "acme", seats: 2 },
+  liveSessions: 1,
+  liveSessionsLimit: 2,
+  hoursUsed: 20.4,
+  hoursLimit: 20,
+  myHoursUsed: 3.4,
+  softLimitReached: true,
+  reasons: ["hours"],
+  upgradeUrl: "https://cua.ai/pricing",
 };
 
 function context(o: { signedIn?: boolean; devices?: boolean; usage?: unknown } = {}) {

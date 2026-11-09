@@ -160,6 +160,57 @@ pub(crate) fn reap_runs(shared: &Arc<Shared>) {
     }
 }
 
+/// Writes the job rows of the child Spaces list (`spawn/job-rows.json`): one per run of a
+/// Space's tree, from the run ledger and the pool's own answer, wherever the run is placed
+/// (this computer, another one, a native machine job with no Space at all). The app reads it
+/// with the tree, so a job shows under its submitting Space as the logical child it is.
+pub(crate) async fn write_job_rows(shared: &Arc<Shared>) {
+    use cua_proto::daemon::v1::space_service_server::SpaceService as _;
+    let home = shared.runtime.spaces().home_dir().to_path_buf();
+    let ledger = super::runs::Ledger::load(&home);
+    let path = home.join("spawn").join("job-rows.json");
+    if ledger.runs.is_empty() {
+        if path.exists() {
+            let _ = std::fs::write(&path, b"[]");
+        }
+        return;
+    }
+    // What the pool says of each run: the pool's list, and the local coordinator's.
+    let mut known: std::collections::BTreeMap<String, serde_json::Value> = Default::default();
+    for target in ["pool", "local"] {
+        let owner = crate::server::Svc(shared.clone());
+        let r = owner
+            .pool_request(tonic::Request::new(
+                cua_proto::daemon::v1::PoolRequestRequest {
+                    target: target.into(),
+                    method: "runs".into(),
+                    params_json: "{}".into(),
+                },
+            ))
+            .await;
+        let Ok(r) = r else { continue };
+        let body: serde_json::Value =
+            serde_json::from_str(&r.into_inner().body_json).unwrap_or_default();
+        for run in body["runs"].as_array().into_iter().flatten() {
+            if let Some(id) = run["run"].as_str() {
+                known.insert(id.to_string(), run.clone());
+            }
+        }
+    }
+    let rows: Vec<super::runs::JobRowOut> = ledger
+        .runs
+        .iter()
+        .filter_map(|(run, owned)| super::runs::job_row(run, owned, known.get(run)))
+        .collect();
+    let json = serde_json::to_vec_pretty(&rows).unwrap_or_default();
+    if std::fs::read(&path).ok().as_deref() != Some(json.as_slice()) {
+        let tmp = path.with_extension("tmp");
+        if std::fs::write(&tmp, &json).is_ok() {
+            let _ = std::fs::rename(tmp, path);
+        }
+    }
+}
+
 /// Only Spaces this computer runs itself hold a channel to it.
 fn runs_here(id: &str) -> bool {
     id.starts_with("local:")
@@ -176,6 +227,7 @@ pub(crate) fn spawn(shared: Arc<Shared>, mut shutdown: watch::Receiver<bool>) ->
         loop {
             reconcile(&shared, &mut bridges);
             reap_runs(&shared);
+            write_job_rows(&shared).await;
             if last_reap.elapsed() >= REAP_EVERY {
                 last_reap = std::time::Instant::now();
                 reap(&shared);

@@ -9,7 +9,13 @@ import { crashConfigFromHost } from "../../bridge/ops/telemetry";
 import { sentryOptions, startCrashReporting, wantsUiTestCrash, type SentryLike } from "..";
 import { scrubEvent, scrubString, stripUrl } from "../scrub";
 
-const ON: CrashReportingConfig = { allowed: true, dsn: "https://k@o1.ingest.sentry.io/2", release: "cua-spaces-desktop@1.0.0", environment: "stable", shell: "electron" };
+const ON: CrashReportingConfig = {
+  allowed: true,
+  dsn: "https://k@o1.ingest.sentry.io/2",
+  release: "cua-spaces-desktop@1.0.0",
+  environment: "stable",
+  shell: "electron",
+};
 
 function fakeSentry() {
   const calls: { init: Record<string, unknown>[]; close: number } = { init: [], close: 0 };
@@ -34,7 +40,12 @@ function fakeAdapter(mode: BridgeMode, answer: () => Promise<CrashReportingConfi
     if (op !== "crashReporting.config") throw new Error(`unexpected ${op}`);
     return answer();
   });
-  const adapter = { mode, call, subscribe: (l: (e: HostEvent) => void) => (listeners.add(l), () => listeners.delete(l)), dispose: vi.fn() } as unknown as DataAdapter;
+  const adapter = {
+    mode,
+    call,
+    subscribe: (l: (e: HostEvent) => void) => (listeners.add(l), () => listeners.delete(l)),
+    dispose: vi.fn(),
+  } as unknown as DataAdapter;
   return { adapter, call, emit: (e: HostEvent) => listeners.forEach((l) => l(e)), listeners };
 }
 
@@ -140,7 +151,11 @@ describe("starting", () => {
     try {
       const crash = vi.fn();
       const { sentry } = fakeSentry();
-      await startCrashReporting({ adapter: fakeAdapter("electron", async () => ({ ...ON, environment: "local", crashTest: "ui" })).adapter, load: async () => sentry, crash });
+      await startCrashReporting({
+        adapter: fakeAdapter("electron", async () => ({ ...ON, environment: "local", crashTest: "ui" })).adapter,
+        load: async () => sentry,
+        crash,
+      });
       expect(crash).not.toHaveBeenCalled();
       vi.advanceTimersByTime(3500);
       expect(crash).toHaveBeenCalledTimes(1);
@@ -174,7 +189,18 @@ describe("scrubbing", () => {
           type: "TypeError",
           value: "bad file /Users/jane/x.txt",
           module: "ui",
-          stacktrace: { frames: [{ filename: "app://cua/assets/index.js?v=1", abs_path: "app://cua/assets/index.js#x", function: "go", lineno: 4, vars: { a: 1 }, context_line: "secret" }] },
+          stacktrace: {
+            frames: [
+              {
+                filename: "app://cua/assets/index.js?v=1",
+                abs_path: "app://cua/assets/index.js#x",
+                function: "go",
+                lineno: 4,
+                vars: { a: 1 },
+                context_line: "secret",
+              },
+            ],
+          },
         },
       ],
     },

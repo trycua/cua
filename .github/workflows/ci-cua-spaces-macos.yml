@@ -48,6 +48,7 @@ on:
       - ".github/actions/spaces-rust-slice/**"
       - ".github/scripts/spaces_rust_slice_inputs.py"
       - ".github/workflows/ci-cua-spaces-macos.yml"
+  merge_group:
   push:
     branches: [main]
     paths:
@@ -91,7 +92,7 @@ env:
 jobs:
   quick:
     name: quick
-    if: github.event_name == 'pull_request'
+    if: (github.event_name == 'pull_request' || github.event_name == 'merge_group')
     uses: ./.github/workflows/ci-quick.yml
 
   # What the app bundle job (bundle, launch check, XCUITest; about an hour on a
@@ -104,7 +105,7 @@ jobs:
   changes:
     name: changes
     needs: quick
-    if: ${{ !failure() && !cancelled() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) }}
+    if: ${{ !failure() && !cancelled() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && needs.quick.outputs.skip != 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
@@ -137,7 +138,7 @@ jobs:
 
   core:
     needs: quick
-    if: ${{ !failure() && !cancelled() && ((github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--'))) }}
+    if: ${{ !failure() && !cancelled() && ((github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--'))) && needs.quick.outputs.skip != 'true' }}
     name: app core (Rust) + FFI mirror gate
     runs-on: ubuntu-24.04
     defaults:
@@ -177,7 +178,7 @@ jobs:
   # the small bindgen tools).
   ffi:
     needs: quick
-    if: ${{ !failure() && !cancelled() && ((github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--'))) }}
+    if: ${{ !failure() && !cancelled() && ((github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--'))) && needs.quick.outputs.skip != 'true' }}
     name: Cua Spaces app library (built once)
     runs-on: macos-26
     # A cold build takes 20 to 60+ minutes (a push to main ran 73 minutes). 45
@@ -217,9 +218,9 @@ jobs:
           retention-days: 1
 
   swift-tests:
-    if: ${{ !failure() && !cancelled() && needs.ffi.result == 'success' && ((github.event_name != 'pull_request' || !github.event.pull_request.draft)) }}
+    if: ${{ !failure() && !cancelled() && needs.ffi.result == 'success' && ((github.event_name != 'pull_request' || !github.event.pull_request.draft)) && needs.quick.outputs.skip != 'true' }}
     name: SwiftUI app (swift tests, bridge contract)
-    needs: ffi
+    needs: [quick, ffi]
     runs-on: macos-26
     timeout-minutes: 45
     steps:
@@ -291,9 +292,9 @@ jobs:
   # shell's TypeScript) still match the library. These run the bindgen tools
   # with cargo, so this job has the Rust toolchain; the other Swift jobs do not.
   bindings:
-    if: ${{ !failure() && !cancelled() && needs.ffi.result == 'success' && ((github.event_name != 'pull_request' || !github.event.pull_request.draft)) }}
+    if: ${{ !failure() && !cancelled() && needs.ffi.result == 'success' && ((github.event_name != 'pull_request' || !github.event.pull_request.draft)) && needs.quick.outputs.skip != 'true' }}
     name: SwiftUI and Electron bindings are up to date
-    needs: ffi
+    needs: [quick, ffi]
     runs-on: macos-26
     timeout-minutes: 45
     env:
@@ -337,9 +338,9 @@ jobs:
   app-bundle:
     # On a pull request only when it changes a packaging path (see `changes`);
     # always on main and on a manual run.
-    if: ${{ !failure() && !cancelled() && needs.ffi.result == 'success' && needs.changes.result == 'success' && ((github.event_name != 'pull_request' || !github.event.pull_request.draft) && (github.event_name != 'pull_request' || needs.changes.outputs.packaging == 'true')) }}
+    if: ${{ !failure() && !cancelled() && needs.ffi.result == 'success' && needs.changes.result == 'success' && ((github.event_name != 'pull_request' || !github.event.pull_request.draft) && (github.event_name != 'pull_request' || needs.changes.outputs.packaging == 'true')) && needs.quick.outputs.skip != 'true' }}
     name: SwiftUI app (bundle, launch check, XCUITest)
-    needs: [ffi, changes]
+    needs: [quick, ffi, changes]
     runs-on: macos-26
     timeout-minutes: 45
     steps:

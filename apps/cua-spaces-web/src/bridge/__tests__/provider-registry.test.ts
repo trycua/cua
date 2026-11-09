@@ -19,7 +19,9 @@ describe.skipIf(!wasmBuilt)("the registry in the web app", () => {
     const picker = providerPicker(core, input, null, "", true)!;
     expect(picker.items.map((i) => i.provider)).toEqual(PROVIDER_REGISTRY.map((p) => p.id));
     // Up front is the same eight the core says are the first tier.
-    expect(PROVIDER_REGISTRY.filter((p) => p.tier === "top").map((p) => p.id)).toEqual(providerPicker(core, input, null, "", false)!.items.map((i) => i.provider));
+    expect(PROVIDER_REGISTRY.filter((p) => p.tier === "top").map((p) => p.id)).toEqual(
+      providerPicker(core, input, null, "", false)!.items.map((i) => i.provider),
+    );
   });
 
   it("offers only method kinds from the closed set, and a key way for every provider that takes a key", async () => {
@@ -62,7 +64,10 @@ describe.skipIf(!wasmBuilt)("the model menu in the web app", () => {
 
   it("marks a sign-in as its own app's and an expired one as needing a reconnect, listed last", async () => {
     const core = await testCore();
-    const view = modelsView(core, connectorsInputOf([], { keys: [key("anthropic", "CLAUDE_CODE_OAUTH_TOKEN", { expired: true }), key("openai", "CODEX_AUTH_JSON")] } as never))!;
+    const view = modelsView(
+      core,
+      connectorsInputOf([], { keys: [key("anthropic", "CLAUDE_CODE_OAUTH_TOKEN", { expired: true }), key("openai", "CODEX_AUTH_JSON")] } as never),
+    )!;
     expect(view.groups.map((g) => [g.provider, g.state, g.harness])).toEqual([
       ["openai", "connected", "openai-codex"],
       ["anthropic", "needs-reconnect", null],
@@ -74,7 +79,13 @@ describe("agent key operations for connections", () => {
   const WIRE = {
     keys: [
       { provider: "zai", env: "GLM_API_KEY", last4: "7d1f", added_ms: 1, region: "coding-global", value: "must-not-pass" },
-      { provider: "custom", env: "CUSTOM_ENDPOINT_API_KEY", last4: "", added_ms: 2, fields: { base_url: "http://127.0.0.1:1234/v1", model: "qwen", "bad key!": "x", wire: "line\nbreak" } },
+      {
+        provider: "custom",
+        env: "CUSTOM_ENDPOINT_API_KEY",
+        last4: "",
+        added_ms: 2,
+        fields: { base_url: "http://127.0.0.1:1234/v1", model: "qwen", "bad key!": "x", wire: "line\nbreak" },
+      },
     ],
     providers: [],
     available: true,
@@ -89,7 +100,10 @@ describe("agent key operations for connections", () => {
 
   it("sends the plan and fields on both hosts, and nothing extra for a plain key", async () => {
     const seen: { cmd: string; args: unknown }[] = [];
-    const invoke = async <T>(cmd: string, args?: Record<string, unknown>) => (seen.push({ cmd, args: args?.args }), { keys: [], providers: [], available: true } as T);
+    const invoke = async <T>(cmd: string, args?: Record<string, unknown>) => (
+      seen.push({ cmd, args: args?.args }),
+      { keys: [], providers: [], available: true } as T
+    );
     const tauri = tauriAgentKeysOps(invoke);
     await tauri["agentKeys.set"]({ provider: "zai", value: "k", region: "coding-global" });
     await tauri["agentKeys.set"]({ provider: "custom", value: "", fields: { base_url: "http://h/v1", model: "m", wire: "openai-chat" } });
@@ -102,7 +116,9 @@ describe("agent key operations for connections", () => {
       { env: "DEEPINFRA_API_KEY", fields: { model: "x/y" } },
     ]);
     const sent: unknown[] = [];
-    const webkit = webkitAgentKeysOps(async <T>(_m: string, args?: Record<string, unknown>) => (sent.push(args), { keys: [], providers: [], available: true } as T));
+    const webkit = webkitAgentKeysOps(
+      async <T>(_m: string, args?: Record<string, unknown>) => (sent.push(args), { keys: [], providers: [], available: true } as T),
+    );
     await webkit["agentKeys.set"]({ provider: "zai", value: "k", region: "global" });
     expect(sent).toEqual([{ provider: "zai", value: "k", region: "global" }]);
   });

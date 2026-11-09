@@ -36,4 +36,3 @@ module.exports = {
   extraMetadata: { ...base.extraMetadata, name: "cua-spaces-local" },
   afterSign: undefined,
 };
-

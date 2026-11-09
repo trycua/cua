@@ -92,6 +92,8 @@ pub struct Candidate {
     pub pending_memory_mb: u64,
     /// Jobs sent since the report.
     pub pending_jobs: u32,
+    /// Video memory sent since the report (MiB).
+    pub pending_vram_mb: u64,
     /// Elastic capacity (a cloud provider that bills by the second): used
     /// only when no host fits, or when asked for by name.
     pub elastic: bool,
@@ -267,7 +269,8 @@ impl Candidate {
                 self.name
             ));
         }
-        if !crate::model::accelerator_fits(&need.accelerator, &s.accelerators) {
+        let after_pending = crate::model::reserve_vram(&s.accelerators, self.pending_vram_mb);
+        if !crate::model::accelerator_fits(&need.accelerator, &after_pending) {
             return Some(if s.accelerators.is_empty() {
                 format!("{} has no {} accelerator", self.name, need.accelerator)
             } else {
@@ -662,6 +665,39 @@ mod tests {
         };
         assert_eq!(names(&nvidia), ["gpu"]);
         assert!(hosts[0].misfit(&nvidia).unwrap().contains("apple:M2 Max"));
+    }
+
+    #[test]
+    fn a_gpu_job_is_not_sent_where_the_video_memory_is_taken() {
+        let mut busy = host("busy", 16000, 32768);
+        if let Some(s) = busy.status.as_mut() {
+            s.accelerators = vec!["nvidia:L4:24 GB:6 GB free".into()];
+        }
+        let mut free = host("free", 16000, 32768);
+        if let Some(s) = free.status.as_mut() {
+            s.accelerators = vec!["nvidia:L4:24 GB:22 GB free".into()];
+        }
+        let hosts = vec![busy, free];
+        let want = Need {
+            accelerator: "nvidia:16GB".into(),
+            ..need(1000, 1024)
+        };
+        let ranked: Vec<&str> = rank(&hosts, &want, Policy::Spread)
+            .into_iter()
+            .map(|i| hosts[i].name.as_str())
+            .collect();
+        assert_eq!(ranked, ["free"]);
+        assert!(hosts[0].misfit(&want).unwrap().contains("6 GB free"));
+        // What the scheduler already sent there since the report counts too.
+        let mut sent = hosts[1].clone();
+        sent.pending_vram_mb = 10 * 1024;
+        assert!(sent.misfit(&want).is_some(), "22 - 10 GB leaves 12 GB");
+        // No memory asked: a busy GPU is still a GPU.
+        let any = Need {
+            accelerator: "nvidia".into(),
+            ..need(1000, 1024)
+        };
+        assert!(hosts[0].misfit(&any).is_none());
     }
 
     #[test]

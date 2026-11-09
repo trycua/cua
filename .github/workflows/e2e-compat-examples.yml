@@ -32,6 +32,7 @@ on:
       - "tests/compat/examples/**"
       - "tests/compat/SDK_VERSIONS.json"
       - ".github/workflows/e2e-compat-examples.yml"
+  merge_group:
   schedule:
     - cron: "47 5 * * *"
   workflow_dispatch:
@@ -60,13 +61,13 @@ env:
 jobs:
   quick:
     name: quick
-    if: github.event_name == 'pull_request'
+    if: (github.event_name == 'pull_request' || github.event_name == 'merge_group')
     uses: ./.github/workflows/ci-quick.yml
 
   hermetic:
     name: manifest, pins and licenses
     needs: quick
-    if: ${{ !failure() && !cancelled() && (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch') }}
+    if: ${{ !failure() && !cancelled() && (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch') && needs.quick.outputs.skip != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -88,7 +89,7 @@ jobs:
   nightly:
     name: examples on real Spaces (QEMU)
     needs: quick
-    if: ${{ !failure() && !cancelled() && (github.event_name != 'pull_request') }}
+    if: ${{ !failure() && !cancelled() && (github.event_name != 'pull_request') && needs.quick.outputs.skip != 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 330
     steps:

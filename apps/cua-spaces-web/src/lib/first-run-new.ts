@@ -87,9 +87,24 @@ export interface WelcomeUsage {
   help: string | null;
 }
 
-export function welcomeUsage(view: { notice?: string | null; noticeLinkLabel?: string | null; noticeLinkUrl?: string | null; usage?: { label: string; on: boolean; enabled: boolean; help?: string | null } | null } | null): WelcomeUsage | null {
+export function welcomeUsage(
+  view: {
+    notice?: string | null;
+    noticeLinkLabel?: string | null;
+    noticeLinkUrl?: string | null;
+    usage?: { label: string; on: boolean; enabled: boolean; help?: string | null } | null;
+  } | null,
+): WelcomeUsage | null {
   if (!view?.usage || !view.notice || !view.noticeLinkLabel || !view.noticeLinkUrl) return null;
-  return { notice: view.notice, label: view.usage.label, linkLabel: view.noticeLinkLabel, linkUrl: view.noticeLinkUrl, on: view.usage.on, enabled: view.usage.enabled, help: view.usage.help ?? null };
+  return {
+    notice: view.notice,
+    label: view.usage.label,
+    linkLabel: view.noticeLinkLabel,
+    linkUrl: view.noticeLinkUrl,
+    on: view.usage.on,
+    enabled: view.usage.enabled,
+    help: view.usage.help ?? null,
+  };
 }
 
 export const WELCOME = {
@@ -283,18 +298,35 @@ export function whereView(input: WhereInput): WhereView {
       return { title, sub, disabled: true, state: "offer" as const, action: null };
     }
     const s = input.separate;
-    if (s.phase === "making") return { title, sub: `Making ${s.name ?? "it"} now. You can continue; it keeps going.`, disabled: false, state: "making" as const, action: null };
+    if (s.phase === "making")
+      return { title, sub: `Making ${s.name ?? "it"} now. You can continue; it keeps going.`, disabled: false, state: "making" as const, action: null };
     if (s.phase === "ready") return { title, sub: `${s.name ?? "It"} is ready.`, disabled: false, state: "ready" as const, action: null };
-    if (s.phase === "failed") return { title, sub: `Couldn't make it. ${s.error ?? ""}`.trim(), disabled: false, state: "failed" as const, action: "Try again" };
-    if (input.canMakeSeparate === null) return { title, sub: "Checking whether this computer can make one…", disabled: true, state: "checking" as const, action: null };
-    return { title, sub: "A Linux computer just for your agents, away from your files. About 2 minutes.", disabled: false, state: "offer" as const, action: null };
+    if (s.phase === "failed")
+      return { title, sub: `Couldn't make it. ${s.error ?? ""}`.trim(), disabled: false, state: "failed" as const, action: "Try again" };
+    if (input.canMakeSeparate === null)
+      return { title, sub: "Checking whether this computer can make one…", disabled: true, state: "checking" as const, action: null };
+    return {
+      title,
+      sub: "A Linux computer just for your agents, away from your files. About 2 minutes.",
+      disabled: false,
+      state: "offer" as const,
+      action: null,
+    };
   })();
 
   if (!input.signedIn) {
     return {
       title: "Pick where your agents work",
       line: `No account needed for ${place}. Sign in to use your other computers too.`,
-      thisRow: { name: Place, status: "not added yet", tick: false, model: input.model, modelFirst: true, picked: thisPicked, action: { id: "add", label: "Add" } },
+      thisRow: {
+        name: Place,
+        status: "not added yet",
+        tick: false,
+        model: input.model,
+        modelFirst: true,
+        picked: thisPicked,
+        action: { id: "add", label: "Add" },
+      },
       others: null,
       offlineFold: null,
       othersLabel: "Other computers in your account",
@@ -396,7 +428,18 @@ export function agentView(input: { os: string; found: string[] | null; off?: rea
   const place = placeName(input.os);
   const label = `Found on ${place}`;
   if (input.found === null)
-    return { state: "looking", title: "Looking for your coding agents…", line: "", label, agents: [], note: null, continueEnabled: false, later: null, install: null, error: null };
+    return {
+      state: "looking",
+      title: "Looking for your coding agents…",
+      line: "",
+      label,
+      agents: [],
+      note: null,
+      continueEnabled: false,
+      later: null,
+      install: null,
+      error: null,
+    };
   const found = CODING_AGENTS.filter((a) => input.found!.includes(a.id));
   if (found.length === 0) {
     return {
@@ -500,7 +543,15 @@ export function bringRestView(input: { os: string; apps?: boolean; cli?: boolean
     rows: [
       { id: "invite", title: "Invite a teammate", sub: "They can use these computers and agents too." },
       { id: "add-computer", title: "Add another computer", sub: "Install Cua Spaces on it and sign in." },
-      ...(apps ? [{ id: "apps" as const, title: `Let agents use apps on ${place}`, sub: "They can see the screen and use the mouse and keyboard, after you allow it." }] : []),
+      ...(apps
+        ? [
+            {
+              id: "apps" as const,
+              title: `Let agents use apps on ${place}`,
+              sub: "They can see the screen and use the mouse and keyboard, after you allow it.",
+            },
+          ]
+        : []),
       ...(input.cli ? [{ id: "cli" as const, title: "Use Cua from Terminal", sub: "Adds the cua command." }] : []),
     ],
     dismiss: "Not now",

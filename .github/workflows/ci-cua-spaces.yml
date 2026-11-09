@@ -39,6 +39,7 @@ on:
       - ".github/scripts/flaky/**"
       - ".github/actions/nextest/**"
       - ".github/actions/flaky-upload/**"
+  merge_group:
   push:
     branches: [main]
     paths:
@@ -70,12 +71,12 @@ env:
 jobs:
   quick:
     name: quick
-    if: github.event_name == 'pull_request'
+    if: (github.event_name == 'pull_request' || github.event_name == 'merge_group')
     uses: ./.github/workflows/ci-quick.yml
 
   changes:
     needs: quick
-    if: ${{ !failure() && !cancelled() && ((github.event_name != 'pull_request' || !github.event.pull_request.draft)) }}
+    if: ${{ !failure() && !cancelled() && ((github.event_name != 'pull_request' || !github.event.pull_request.draft)) && needs.quick.outputs.skip != 'true' }}
     name: changes
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -138,7 +139,7 @@ jobs:
 
   rust:
     needs: quick
-    if: ${{ !failure() && !cancelled() && ((github.event_name != 'pull_request' || !github.event.pull_request.draft)) }}
+    if: ${{ !failure() && !cancelled() && ((github.event_name != 'pull_request' || !github.event.pull_request.draft)) && needs.quick.outputs.skip != 'true' }}
     name: rust command-layer tests
     runs-on: ubuntu-22.04
     timeout-minutes: 60
@@ -196,7 +197,7 @@ jobs:
 
   frontend:
     needs: quick
-    if: ${{ !failure() && !cancelled() && ((github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--'))) }}
+    if: ${{ !failure() && !cancelled() && ((github.event_name != 'pull_request' || !github.event.pull_request.draft) && (!startsWith(github.head_ref, 'release-please--branches--'))) && needs.quick.outputs.skip != 'true' }}
     name: vitest + typecheck
     runs-on: ubuntu-24.04
     steps:
@@ -242,8 +243,8 @@ jobs:
     # `ci:full` label and change something the installers package, and on
     # release-please PRs (fast checks only). Main pushes, manual runs and
     # `ci:full` PRs build them.
-    needs: changes
-    if: ${{ !failure() && !cancelled() && needs.changes.result == 'success' && ((github.event_name != 'pull_request' || !github.event.pull_request.draft) && (needs.changes.outputs.bundle == 'true' && !startsWith(github.head_ref, 'release-please--branches--') && (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:full')))) }}
+    needs: [quick, changes]
+    if: ${{ !failure() && !cancelled() && needs.changes.result == 'success' && ((github.event_name != 'pull_request' || !github.event.pull_request.draft) && (needs.changes.outputs.bundle == 'true' && !startsWith(github.head_ref, 'release-please--branches--') && (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:full')))) && needs.quick.outputs.skip != 'true' }}
     strategy:
       fail-fast: false
       matrix:

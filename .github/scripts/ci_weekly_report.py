@@ -135,7 +135,7 @@ def pr_metrics(pr: dict, runs: List[dict]) -> Optional[dict]:
 def fetch_runs(oid: str) -> List[dict]:
     repo = os.environ["GITHUB_REPOSITORY"]
     out = gh("api", f"repos/{repo}/actions/runs?head_sha={oid}&per_page=100", "--jq",
-             '.workflow_runs[] | select(.event == "pull_request" or .event == "pull_request_target")'
+             '.workflow_runs[] | select(.event == "pull_request")'
              ' | {name, path, started: .run_started_at, updated: .updated_at, conclusion}')
     return [json.loads(line) for line in out.splitlines() if line.strip()]
 

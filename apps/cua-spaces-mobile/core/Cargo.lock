@@ -194,7 +194,7 @@ dependencies = [
 
 [[package]]
 name = "cua-auth"
-version = "0.17.0"
+version = "0.17.1"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -216,7 +216,7 @@ dependencies = [
 
 [[package]]
 name = "cua-connections"
-version = "0.17.0"
+version = "0.17.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -225,14 +225,14 @@ dependencies = [
 
 [[package]]
 name = "cua-create-failure"
-version = "0.17.0"
+version = "0.17.1"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "cua-home"
-version = "0.17.0"
+version = "0.17.1"
 dependencies = [
  "libc",
  "windows-sys 0.61.2",
@@ -240,7 +240,7 @@ dependencies = [
 
 [[package]]
 name = "cua-host"
-version = "0.17.0"
+version = "0.17.1"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -266,7 +266,7 @@ dependencies = [
 
 [[package]]
 name = "cua-spaces-app-core"
-version = "0.17.0"
+version = "0.17.1"
 dependencies = [
  "cua-connections",
  "cua-create-failure",
@@ -278,7 +278,7 @@ dependencies = [
 
 [[package]]
 name = "cua-spaces-contract"
-version = "0.17.0"
+version = "0.17.1"
 dependencies = [
  "schemars",
  "serde",

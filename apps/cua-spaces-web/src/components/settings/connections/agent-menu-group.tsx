@@ -8,6 +8,7 @@ import { SettingsGroup } from "@/components/settings-group";
 import { GroupedRow } from "@/components/ui/grouped";
 import { Switch } from "@/components/ui/switch";
 import { toastError } from "@/components/ui/toast";
+import { useT } from "@/i18n";
 import { useAgentMenu } from "@/hooks/use-agent-menu";
 import type { Connectors } from "@/hooks/use-connectors";
 
@@ -18,6 +19,7 @@ import type { Connectors } from "@/hooks/use-connectors";
  * the group says so. Every word and rule is the core's (`agentMenu.view`).
  */
 export function AgentMenuGroup({ c }: { c: Connectors }) {
+  const t = useT();
   const { view, choose } = useAgentMenu(c);
   const [refused, setRefused] = useState<string | null>(null);
   if (!view) return null;
@@ -26,7 +28,7 @@ export function AgentMenuGroup({ c }: { c: Connectors }) {
     setRefused(null);
     void choose(app, on)
       .then((no) => setRefused(no))
-      .catch(toastError("Couldn't change the agent menu"));
+      .catch(toastError(t("settings.connections.agent_menu.change_failed")));
   };
   return (
     <SettingsGroup

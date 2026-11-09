@@ -26,11 +26,16 @@ export interface BridgeIpc {
   platform: NodeJS.Platform;
   /** The pages count their video for the bench. */
   videoStats?: boolean;
+  /** The system's preferred languages (read when a page asks, so a change
+   * in System Settings applies to the next window). */
+  languages?: () => string[];
 }
 
-export function installBridgeIpc({ registry, events, platform, videoStats }: BridgeIpc): void {
+export function installBridgeIpc({ registry, events, platform, videoStats, languages }: BridgeIpc): void {
   ipcMain.on(PRELOAD_INIT_CHANNEL, (event) => {
     const init: PreloadInit = videoStats ? { platform, videoStats } : { platform };
+    const langs = languages?.() ?? [];
+    if (langs.length > 0) init.languages = langs;
     event.returnValue = init;
   });
 

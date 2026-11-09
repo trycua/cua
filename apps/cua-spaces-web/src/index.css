@@ -211,6 +211,19 @@
     -moz-osx-font-smoothing: grayscale;
     text-rendering: optimizeLegibility;
   }
+  /* Chinese and Japanese (src/i18n): the system's CJK faces, so the right
+     glyphs are chosen, and line breaks between phrases, not mid-word. */
+  html:lang(ja) {
+    font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic UI", "Meiryo UI", system-ui, sans-serif;
+  }
+  html:lang(zh-Hans) {
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei UI", "Microsoft YaHei", system-ui, sans-serif;
+  }
+  :lang(ja),
+  :lang(zh) {
+    word-break: auto-phrase;
+    line-break: strict;
+  }
   body {
     font-size: 13px;
     line-height: 1.45;

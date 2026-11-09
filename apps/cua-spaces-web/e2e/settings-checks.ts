@@ -14,7 +14,7 @@ import { expect, type Locator, type Page } from "@playwright/test";
 import type { ParityCheckpoint } from "../src/bridge/parity";
 import type { SettingsCheckpoint } from "../src/bridge/parity-settings";
 import type { SettingsRow } from "../src/bridge/contracts/host";
-import { LAUNCH_HELP, LAUNCH_LABEL, lastChecked, plainStorage } from "../src/lib/settings-copy";
+import { launchHelp, launchLabel, lastChecked, plainStorage } from "../src/lib/settings-copy";
 import { checkAgentKeys } from "./agent-keys";
 
 type Of<K extends SettingsCheckpoint["kind"]> = Extract<SettingsCheckpoint, { kind: K }>;
@@ -169,9 +169,9 @@ async function checkLoginItem(page: Page, checkpoints: ParityCheckpoint[]): Prom
   for (const { loginItem, experiments, rows } of states) {
     await page.evaluate(([l, x]) => window.__cuaParity!.settings.showLoginItem(l, x), [loginItem, experiments] as const);
     // The page words the switch itself and puts its one line (the core's note) under the label.
-    const shown = rows.filter((r) => r.id !== "launch-at-login-note").map((r) => (r.id === "launch-at-login" ? { ...r, label: LAUNCH_LABEL } : r));
+    const shown = rows.filter((r) => r.id !== "launch-at-login-note").map((r) => (r.id === "launch-at-login" ? { ...r, label: launchLabel() } : r));
     await expectRows(page.locator('[data-setting-row^="launch-at-login"]'), shown, `launch at login, ${JSON.stringify(loginItem)}`);
-    await expect(page.locator('[data-setting-row="launch-at-login"] [data-row-description]'), `launch at login, ${JSON.stringify(loginItem)}`).toHaveText(LAUNCH_HELP);
+    await expect(page.locator('[data-setting-row="launch-at-login"] [data-row-description]'), `launch at login, ${JSON.stringify(loginItem)}`).toHaveText(launchHelp());
   }
   return states.length;
 }

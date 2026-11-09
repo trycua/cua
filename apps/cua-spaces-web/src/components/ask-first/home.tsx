@@ -16,6 +16,7 @@ import { pickAccount, pickOf, rememberAgent, resolveAgent, usePickedAgent } from
 import { reusableHome } from "@/lib/agent-home/home-space";
 import { useRepos } from "@/lib/ask-first-repo";
 import { useListedSpaces } from "@/components/spaces/listed";
+import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 
 import { AskBox, type TaskWhere } from "./ask-box";
@@ -55,6 +56,7 @@ export function StateDot({ state }: { state: TaskState }) {
  * conversations (the one that needs you first), and your Spaces underneath.
  */
 export function AskFirstHome() {
+  const t = useT();
   const tasks = useAskTasks();
   const { data: spaces } = useSpaces();
   const listed = useListedSpaces(spaces);
@@ -108,7 +110,7 @@ export function AskFirstHome() {
   // A sign-in that did not work says so, in plain words, where the person clicked.
   const signInTo = async (app: string, label: string) => {
     if ((await connectors.connectApp(app)) === "failed") {
-      toast(`Couldn't sign in to ${label}`, { description: connectFailureLine(app) || "Try again, or sign in from Settings, then Connections.", type: "error", group: `sign-in:${app}` });
+      toast(t("home.ask_box.sign_in_failed", { label }), { description: connectFailureLine(app) || t("home.ask_box.sign_in_failed_hint"), type: "error", group: `sign-in:${app}` });
     }
   };
   const useAccount = (group: AgentGroup, account: AgentAccount) => {
@@ -203,8 +205,8 @@ export function AskFirstHome() {
 function useElapsed(ms: number): boolean {
   const [done, setDone] = useState(false);
   useEffect(() => {
-    const t = setTimeout(() => setDone(true), ms);
-    return () => clearTimeout(t);
+    const timer = setTimeout(() => setDone(true), ms);
+    return () => clearTimeout(timer);
   }, [ms]);
   return done;
 }

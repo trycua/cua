@@ -4,7 +4,7 @@
 // The sidebar's account area (CUA-2204) on the real routes, the wasm core
 // and the demo host: one line (the initial and the email) that opens
 // Settings, Plan (with its word) and Sign out; no "Signed in as", no plan
-// line, no sign-out icon. On Free only, "Run more Spaces at once with Pro"
+// line, no sign-out icon. On Free only, "Use more computers at once with Pro"
 // and Upgrade above it, with no way to close it; a paid plan never sees it.
 
 import { cleanup, fireEvent, waitFor, within } from "@testing-library/react";
@@ -88,11 +88,18 @@ describe.skipIf(!wasmBuilt)("the account area", () => {
     expect(banner()).toBeNull();
   });
 
-  it("shows the Pro line on Free; Upgrade opens the plan and nothing closes it", async () => {
-    const { h, opened } = host("idle");
+  it("shows no Pro line on Free while far from a limit", async () => {
+    const { h } = host("idle");
+    await mountApp("/spaces", h);
+    await openMenu();
+    expect(banner()).toBeNull();
+  });
+
+  it("shows the Pro line on Free near a limit, saying how close; Upgrade opens the plan and nothing closes it", async () => {
+    const { h, opened } = host("warn");
     await mountApp("/spaces", h);
     const b = await waitFor(() => banner() ?? Promise.reject(new Error("no banner")));
-    expect(b.textContent).toContain("Run more Spaces at once with Pro");
+    expect(b.textContent).toContain("16.5 of 20 remote hours used. Pro allows 200.");
     const copy = b.querySelector<HTMLElement>("[data-pro-copy]")!;
     expect(copy.className).toContain("whitespace-normal");
     expect(copy.className).not.toContain("truncate");

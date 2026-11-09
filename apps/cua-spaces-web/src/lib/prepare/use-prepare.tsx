@@ -11,7 +11,7 @@ import { spaceState } from "@/lib/spaces";
 
 import { localPrepareStorage, PrepareDriver, type PrepareEnv } from "./driver";
 import { homeCreateRequest } from "./home-request";
-import { getDriver, setDriver } from "./store";
+import { getDriver, homeNameOf, setDriver } from "./store";
 
 /** The coding app the first Space is for when it is on this computer: the first installed one otherwise. */
 export const DEFAULT_HARNESS = "claude-code";
@@ -21,7 +21,7 @@ const SESSION_TIMEOUT_MS = 4 * 60_000;
 /** How long a create the host started before this page loaded may take (a slow first run). */
 const CREATE_FOLLOW_MS = 40 * 60_000;
 /** The name of the Space this prepares: fixed, so a second page load finds the first one's create. */
-export const homeNameOf = (harness: string) => `home-${harness}`;
+export { homeNameOf } from "./store";
 const POLL_MS = 800;
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -107,7 +107,10 @@ export function PrepareRoot(): null {
     agentReplied: async ({ spaceId, sinceMs }) => {
       if (!host) return false;
       const page = await host.call("thread.read", { spaceId, limit: 20 });
-      return page.live.agents.some((a) => (a.text ?? "").length > 0) || page.entries.some((e) => e.author.kind === "agent" && e.kind === "message" && e.tsMs >= sinceMs);
+      return (
+        page.live.agents.some((a) => (a.text ?? "").length > 0) ||
+        page.entries.some((e) => e.author.kind === "agent" && e.kind === "message" && e.tsMs >= sinceMs)
+      );
     },
     homeExists: (id) => (spaces ? spaces.some((s) => s.id === id && s.status !== "deleting") : null),
     delivered: (m, spaceId) => updateAskTask(m.id, { spaceId, pendingId: null, inSpace: true }),
@@ -145,7 +148,13 @@ export function PrepareRoot(): null {
       const d = getDriver();
       // This page's own create, or the one the host kept running for the home when the app was quit.
       if (!d?.state?.wanted || (d.state.pendingId !== e.progress.pendingId && e.progress.space !== `local:${homeNameOf(d.state.harness)}`)) return;
-      d.progress({ phase: e.progress.phase, detail: e.progress.detail, bytesDone: e.progress.bytesDone, bytesTotal: e.progress.bytesTotal, bytesPerSecond: e.progress.bytesPerSecond });
+      d.progress({
+        phase: e.progress.phase,
+        detail: e.progress.detail,
+        bytesDone: e.progress.bytesDone,
+        bytesTotal: e.progress.bytesTotal,
+        bytesPerSecond: e.progress.bytesPerSecond,
+      });
     });
   }, [ready, host]);
 

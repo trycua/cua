@@ -15,18 +15,9 @@ struct SpaceReadyNote: Equatable {
     /// "<Space name> is ready".
     var title: String { "\(name) is ready" }
 
-    /// "A fresh macOS computer inside this Mac. Your agent can use it now."
-    /// (no OS word when the Space's is not known).
-    var body: String {
-        let word: String
-        switch os {
-        case .macos: word = "macOS "
-        case .linux: word = "Linux "
-        case .windows: word = "Windows "
-        case .unknown: word = ""
-        }
-        return "A fresh \(word)computer inside this Mac. Your agent can use it now."
-    }
+    /// "Ready for your agent." (the title names the Space; what a Space is
+    /// was said once, in setup).
+    var body: String { "Ready for your agent." }
 
     /// The notification's identifier; clicking it carries the Space's id back.
     var identifier: String { Self.identifierPrefix + spaceId }

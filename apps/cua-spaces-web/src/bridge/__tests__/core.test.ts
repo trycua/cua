@@ -52,7 +52,11 @@ describe("without the core", () => {
   });
 
   it("keeps an OS that was not reported unknown, never Linux", () => {
-    const [space] = rowsToSpaces(noCore, [{ id: "direct:10.0.0.5:3211", name: "10.0.0.5:3211", provider: "direct", spacesdVersion: "", features: [], reachable: true }], NOW);
+    const [space] = rowsToSpaces(
+      noCore,
+      [{ id: "direct:10.0.0.5:3211", name: "10.0.0.5:3211", provider: "direct", spacesdVersion: "", features: [], reachable: true }],
+      NOW,
+    );
     expect(space).toMatchObject({ os: "unknown", scene: "blank" });
   });
 });
@@ -116,12 +120,27 @@ describe.skipIf(!wasmBuilt)("with the wasm core", () => {
   it("draws This machine from the SwiftUI host's whole state: the paused notice and the log preview", async () => {
     const core = await testCore();
     const base = {
-      configured: true, mode: "relay", relayUrl: "https://relay.cua.ai", directUrl: null, machineId: "m1", name: "Studio",
-      serviceKind: "launchd", clients: [], permissions: [], error: null, shareDesktop: true, provideSpaces: false, maxSpaces: 0,
-      owner: "user-1", ownerEmail: "ada@example.com",
+      configured: true,
+      mode: "relay",
+      relayUrl: "https://relay.cua.ai",
+      directUrl: null,
+      machineId: "m1",
+      name: "Studio",
+      serviceKind: "launchd",
+      clients: [],
+      permissions: [],
+      error: null,
+      shareDesktop: true,
+      provideSpaces: false,
+      maxSpaces: 0,
+      owner: "user-1",
+      ownerEmail: "ada@example.com",
     };
     // Signed out: one line and Sign In, in place of the summary.
-    const paused = hostPanel(core, toHostStatus({ ...base, sharing: false, serviceInstalled: false, serviceRunning: false, online: false, pausedSignedOut: true, account: null }));
+    const paused = hostPanel(
+      core,
+      toHostStatus({ ...base, sharing: false, serviceInstalled: false, serviceRunning: false, online: false, pausedSignedOut: true, account: null }),
+    );
     expect(paused.summary).toBe("Paused · signed out");
     expect(paused.notice).toMatch(/^Sign in to share this Mac through Cua/);
     expect(paused.noticeAction).toMatchObject({ id: "sign-in", label: "Sign In" });
@@ -129,7 +148,15 @@ describe.skipIf(!wasmBuilt)("with the wasm core", () => {
     const recentAccess = Array.from({ length: 7 }, (_, i) => ({ atMs: NOW - i * 60_000, via: "relay", who: `user${i}@example.com`, what: "connect" }));
     const mine = hostPanel(
       core,
-      toHostStatus({ ...base, sharing: true, serviceInstalled: true, serviceRunning: true, online: true, account: { id: "user-1", email: "ada@example.com", display: "Ada" }, recentAccess }),
+      toHostStatus({
+        ...base,
+        sharing: true,
+        serviceInstalled: true,
+        serviceRunning: true,
+        online: true,
+        account: { id: "user-1", email: "ada@example.com", display: "Ada" },
+        recentAccess,
+      }),
     );
     expect(mine.notice ?? null).toBeNull();
     expect(mine.facts.find((f) => f.label === "Shared with")?.value).toBe("Your account (Ada)");
@@ -196,7 +223,10 @@ describe.skipIf(!wasmBuilt)("with the wasm core", () => {
     const flows = core.parity!.flows();
     expect(flows.length).toBeGreaterThanOrEqual(30);
     for (const f of flows) {
-      expect(core.parity!.run(f.name, f.flow, (m, a) => core.call(m, a)), f.name).toEqual(JSON.parse(f.golden));
+      expect(
+        core.parity!.run(f.name, f.flow, (m, a) => core.call(m, a)),
+        f.name,
+      ).toEqual(JSON.parse(f.golden));
     }
   });
 
@@ -229,7 +259,17 @@ describe.skipIf(!wasmBuilt)("with the wasm core", () => {
     const rows = [
       { id: "this-mac", name: "This Mac", via: "local", online: true, os: "macos", current: true, limits: [] },
       { id: "96fedb7e", name: "gamma-4 Mac Studio", via: "relay", online: false, presence: true, os: "macos", limits: [] },
-      { id: "dev_2278", name: "gamma-4.example.com", via: "relay", online: false, os: "macos", limits: [], device: true, lastSeen: 1791044974, detail: "macOS · Enrolled" },
+      {
+        id: "dev_2278",
+        name: "gamma-4.example.com",
+        via: "relay",
+        online: false,
+        os: "macos",
+        limits: [],
+        device: true,
+        lastSeen: 1791044974,
+        detail: "macOS · Enrolled",
+      },
       { id: "dev_lap", name: "Laptop", via: "relay", online: false, os: "windows", limits: [], device: true, lastSeen: 1791000000 },
     ];
     const machines = toMachines(rows, [], core, 1791045000);
@@ -274,12 +314,13 @@ describe.skipIf(!wasmBuilt)("with the wasm core", () => {
     const core = await testCore();
     const guide = hostSetupGuide(core);
     expect(guide.choices.map((c) => c.id)).toEqual(["desktop", "spare"]);
-    expect(guide.intro).toMatch(/no network setup/);
+    expect(guide.intro).toMatch(/Its screen stays private unless you share it/);
     expect(guide.form?.fields.map((f) => [f.id, f.advanced])).toEqual([
       ["name", false],
       ["profile", false],
       ["allow", false],
     ]);
-    expect(hostSetupGuide(noCore)).toMatchObject({ form: null, choices: guide.choices, intro: guide.intro });
+    // Without the core: the same choices and no intro of its own (one copy, the core's).
+    expect(hostSetupGuide(noCore)).toMatchObject({ form: null, choices: guide.choices, intro: "" });
   });
 });

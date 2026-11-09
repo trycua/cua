@@ -172,9 +172,8 @@ public struct HostSetupFailure: Equatable, Sendable {
     static func words(_ kind: Kind, raw: String = "") -> (String, String) {
         switch kind {
         case .download:
-            return ("Couldn\u{2019}t download the Cua host service",
-                    "The service this Mac needs to accept connections isn\u{2019}t available right now. "
-                        + "Check your internet connection and try again; if it keeps failing, update Cua Spaces.")
+            return ("Couldn\u{2019}t set up sharing for this Mac",
+                    "Check your internet connection and try again.")
         case .network:
             return ("Couldn\u{2019}t connect",
                     "Cua Spaces couldn\u{2019}t reach the internet. Check your connection and try again.")
@@ -201,7 +200,7 @@ public struct HostSetupFailure: Equatable, Sendable {
         case .needsProof:
             return ("Confirm it\u{2019}s you",
                     "To add this Mac to your account, enter a code from a computer you already added. "
-                        + "On that computer, open Cua Spaces, go to Machines and click Add machine.")
+                        + "On that computer, open Cua Spaces, go to Computers and click Add a computer.")
         case .other:
             return ("Couldn\u{2019}t set up this Mac for access",
                     "Something went wrong. Try again, or open Details to see what happened.")

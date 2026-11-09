@@ -35,7 +35,8 @@ function mentionTokens(text: string): string[] {
 export function parseMentions(text: string, place: Place): HomeMentions {
   const spaces = new Map<string, Named>();
   const machines = new Map<string, Named>();
-  const by = <T extends Named>(list: readonly T[], t: string) => list.find((x) => norm(x.name) === norm(t) || x.id === t) ?? list.find((x) => firstWord(x.name) === norm(t));
+  const by = <T extends Named>(list: readonly T[], t: string) =>
+    list.find((x) => norm(x.name) === norm(t) || x.id === t) ?? list.find((x) => firstWord(x.name) === norm(t));
   for (const t of mentionTokens(text)) {
     const machine = by(place.machines, t);
     if (machine) machines.set(machine.id, { id: machine.id, name: machine.name });

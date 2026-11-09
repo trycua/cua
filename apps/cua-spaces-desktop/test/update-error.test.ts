@@ -11,7 +11,11 @@ describe("describeUpdateError", () => {
   });
 
   it("carries the code, HTTP status and URL host, not the path or query", () => {
-    const e = Object.assign(new Error(""), { code: "ERR_UPDATER_INVALID_RELEASE_FEED", statusCode: 404, url: "https://github.com/trycua/cua/releases/download/x/app.exe?token=secret" });
+    const e = Object.assign(new Error(""), {
+      code: "ERR_UPDATER_INVALID_RELEASE_FEED",
+      statusCode: 404,
+      url: "https://github.com/trycua/cua/releases/download/x/app.exe?token=secret",
+    });
     expect(describeUpdateError(e)).toBe("Error with no message (code ERR_UPDATER_INVALID_RELEASE_FEED, HTTP 404, host github.com)");
   });
 

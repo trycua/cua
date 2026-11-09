@@ -202,11 +202,13 @@ export interface CoreAppSettings {
 export interface ProBannerInput {
   /** The relay's plan word (`free`, `pro`, `team`; empty: not known). */
   plan: string;
+  /** The month's usage (`relay.usage`): with it the line shows only near a limit, saying how close. */
+  usage?: { liveSessions: number; liveSessionsLimit: number | null; hoursUsed: number; hoursLimit: number | null };
 }
 
 export interface ProBanner {
   visible: boolean;
-  /** "Run more Spaces at once with Pro". */
+  /** "2 of 2 computers in use. Pro allows 5." (with usage), else "Use more computers at once with Pro". */
   text: string;
   /** "Upgrade". */
   button: string;

@@ -8,7 +8,8 @@ use std::time::{Duration, Instant};
 
 use anyhow::{bail, Result};
 use platform_linux::input::{
-    send_click, send_key, send_key_at, send_key_xtest, send_type_text, send_type_text_xtest,
+    send_click, send_key, send_key_at, send_key_xtest, send_type_text, send_type_text_with_delay,
+    send_type_text_xtest, send_type_text_xtest_paced, TypePacing,
 };
 use x11rb::connection::Connection;
 use x11rb::protocol::xproto::*;
@@ -320,10 +321,13 @@ fn text_delivers_distinct_unmapped_keysyms_on_both_paths() -> Result<()> {
     for xtest in [false, true] {
         std::thread::scope(|scope| -> Result<()> {
             let sender = scope.spawn(move || {
+                // Paced: the test reads each key's keysym from the server's
+                // keymap while the keycode is still borrowed, so it needs the
+                // time between keys that batched delivery no longer takes.
                 if xtest {
-                    send_type_text_xtest("你好")
+                    send_type_text_xtest_paced("你好", TypePacing { delay_ms: 30 })
                 } else {
-                    send_type_text(u64::from(window), "你好")
+                    send_type_text_with_delay(u64::from(window), "你好", 30)
                 }
             });
             let mut keycodes = Vec::new();
@@ -910,4 +914,68 @@ fn xtest_text_syncs_before_restoring_when_sending_a_key_fails() -> Result<()> {
     );
     assert_eq!(spare_keycodes(&conn)?, before);
     Ok(())
+}
+
+/// Counts down the keys of `events` as characters: one press and one release
+/// per character, in order, each carrying the character's keysym.
+fn assert_typed(conn: &RustConnection, events: &[(bool, KeyPressEvent)], text: &str) -> Result<()> {
+    assert_eq!(events.len(), text.chars().count() * 2);
+    for (pair, ch) in events.chunks_exact(2).zip(text.chars()) {
+        assert!(pair[0].0 && !pair[1].0, "press then release for {ch:?}");
+        assert_eq!(pair[0].1.detail, pair[1].1.detail);
+        let keysym = match ch {
+            '\n' => 0xff0d,
+            '\t' => 0xff09,
+            other => u32::from(other),
+        };
+        let mapping = conn.get_keyboard_mapping(pair[0].1.detail, 1)?.reply()?;
+        assert!(
+            mapping.keysyms.contains(&keysym),
+            "{ch:?} -> keycode {}",
+            pair[0].1.detail
+        );
+    }
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires an isolated X11 display with XTEST"]
+fn xtest_text_batches_deliver_every_key_in_order() -> Result<()> {
+    let (conn, screen) = connect()?;
+    focused_input_window(&conn, screen)?;
+    // More than one batch of 16, with Return and Tab between batches.
+    // Lower case only: a capital adds Shift events to the stream.
+    let text = "the quick brown fox\njumps over\tthe lazy dog 0123456789";
+    send_type_text_xtest(text)?;
+    let events = keyboard_events(&conn, text.chars().count() * 2)?;
+    assert_typed(&conn, &events, text)
+}
+
+#[test]
+#[ignore = "requires an isolated X11 display with XTEST"]
+fn xtest_text_with_a_delay_paces_each_key() -> Result<()> {
+    let (conn, screen) = connect()?;
+    focused_input_window(&conn, screen)?;
+    let text = "pace me";
+    let started = Instant::now();
+    send_type_text_xtest_paced(text, TypePacing { delay_ms: 25 })?;
+    let elapsed = started.elapsed();
+    let events = keyboard_events(&conn, text.chars().count() * 2)?;
+    assert_typed(&conn, &events, text)?;
+    assert!(
+        elapsed >= Duration::from_millis(25 * text.chars().count() as u64),
+        "paced typing took only {elapsed:?}"
+    );
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires an isolated X11 display"]
+fn xsendevent_text_batches_deliver_every_key_in_order() -> Result<()> {
+    let (conn, screen) = connect()?;
+    let window = input_window(&conn, conn.setup().roots[screen].root, 0, 0)?;
+    let text = "batched synthetic keys, over sixteen of them";
+    send_type_text(u64::from(window), text)?;
+    let events = keyboard_events(&conn, text.chars().count() * 2)?;
+    assert_typed(&conn, &events, text)
 }

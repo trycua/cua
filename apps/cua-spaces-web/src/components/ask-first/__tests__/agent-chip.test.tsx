@@ -8,6 +8,7 @@ import { act, cleanup, fireEvent, render } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { AgentAccount, AgentGroup, AgentsView } from "@/bridge";
+import { t } from "@/i18n";
 import { chipLine, resolveAgent } from "@/lib/ask-first-model";
 import { chipWords, effortLevels, effortOf, shortModelName } from "@/lib/model-effort";
 
@@ -27,7 +28,14 @@ const account = (models: AgentAccount["models"]): AgentAccount => ({
   models,
   defaultModel: models[0]!.id,
 });
-const group = (app: string, harness: string, label: string, models: AgentAccount["models"]): AgentGroup => ({ harness, app, label, state: "connected", accounts: [account(models)], signInLabel: "Sign in" });
+const group = (app: string, harness: string, label: string, models: AgentAccount["models"]): AgentGroup => ({
+  harness,
+  app,
+  label,
+  state: "connected",
+  accounts: [account(models)],
+  signInLabel: "Sign in",
+});
 const CLAUDE = group("claude-code", "claude-code", "Claude Code", [
   { id: "claude-sonnet-5-5", label: "Claude Sonnet 5.5", fast: false, default: true },
   { id: "claude-haiku-5-5", label: "Claude Haiku 5.5", fast: true, default: false },
@@ -35,12 +43,11 @@ const CLAUDE = group("claude-code", "claude-code", "Claude Code", [
 const OPENCODE = group("opencode", "opencode", "OpenCode", [{ id: "kimi-k3", label: "Kimi K3", fast: false, default: true }]);
 const CODEX = group("codex", "openai-codex", "OpenAI Codex", [{ id: "gpt-5.5", label: "GPT-5.5", fast: false, default: true }]);
 const view = (groups: AgentGroup[]): AgentsView => ({ groups, default: null, empty: null });
-const accounts = { onUse: vi.fn(), onRemove: vi.fn(), onRename: vi.fn(), onAdd: vi.fn() };
 
 function mount(g: AgentGroup, pick: { model?: string; effort?: string } = {}, onEffort = vi.fn()) {
   const v = view([g]);
   const selected = resolveAgent(v, { harness: g.harness, env: "KEY", ...pick })!;
-  const r = render(<AgentPicker view={v} selected={selected} onPick={vi.fn()} onModel={vi.fn()} onEffort={onEffort} onSignIn={vi.fn()} accounts={accounts} />);
+  const r = render(<AgentPicker view={v} selected={selected} onPick={vi.fn()} onModel={vi.fn()} onEffort={onEffort} onSignIn={vi.fn()} />);
   return { ...r, selected, onEffort };
 }
 const chip = () => document.querySelector<HTMLElement>('[data-picker="agent"]')!;
@@ -68,7 +75,10 @@ describe("the words of the chip", () => {
     expect(chip().querySelector("[data-chip-lead]")!.textContent).toBe("OpenCode");
     expect(chip().querySelector("[data-chip-trail]")!.textContent).toBe("Kimi K3");
     mount(CLAUDE, { model: "claude-haiku-5-5" });
-    expect(chipLine(resolveAgent(view([CLAUDE]), { harness: "claude-code", env: "KEY", model: "claude-haiku-5-5" })!)).toEqual({ lead: "Claude Code", trail: "Haiku 5.5" });
+    expect(chipLine(resolveAgent(view([CLAUDE]), { harness: "claude-code", env: "KEY", model: "claude-haiku-5-5" })!, t)).toEqual({
+      lead: "Claude Code",
+      trail: "Haiku 5.5",
+    });
   });
 
   it("never puts a dot or a pipe between the parts", () => {
@@ -92,7 +102,7 @@ describe("the reasoning data", () => {
   });
   it("shortens model names", () => {
     expect(shortModelName("Claude Sonnet 5.5")).toBe("Sonnet 5.5");
-    expect(chipWords("Claude Code", "GPT-5.5", "medium")).toEqual({ lead: "GPT-5.5", trail: "Medium" });
+    expect(chipWords("Claude Code", "GPT-5.5", "medium", t)).toEqual({ lead: "GPT-5.5", trail: "Medium" });
   });
 });
 

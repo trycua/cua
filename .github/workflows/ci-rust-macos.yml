@@ -18,6 +18,7 @@ on:
       - "libs/cua-driver/rust/crates/cua-driver-testkit/**"
       - "libs/cua-driver/rust/crates/cua-driver-e2e/**"
       - ".github/workflows/ci-rust-macos.yml"
+  merge_group:
   push:
     branches: [main]
     paths:
@@ -53,12 +54,12 @@ env:
 jobs:
   quick:
     name: quick
-    if: github.event_name == 'pull_request'
+    if: (github.event_name == 'pull_request' || github.event_name == 'merge_group')
     uses: ./.github/workflows/ci-quick.yml
 
   unit:
     needs: quick
-    if: ${{ !failure() && !cancelled() && (!startsWith(github.head_ref, 'release-please--branches--')) }}
+    if: ${{ !failure() && !cancelled() && (!startsWith(github.head_ref, 'release-please--branches--')) && needs.quick.outputs.skip != 'true' }}
     name: Rust macOS unit
     runs-on: macos-latest
     timeout-minutes: 30

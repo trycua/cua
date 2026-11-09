@@ -49,14 +49,24 @@ pub(super) struct Watch {
     reason: Option<String>,
 }
 
-/// Prints `procs=<n> files=<n> up=<secs>`: processes started after the
-/// guest's start-up window (not the probe's own, which live under 2 s), and files changed in the home folder since boot
+/// Prints `procs=<n> files=<n> up=<secs>`: processes that are not the
+/// Space's own. The Space's own are its start-up (anything started within
+/// the first seconds) and the desktop's helpers (by name, unless started
+/// through cua-spacesd, which is how every run, exec and job starts): under
+/// load a desktop starts well after the first 30 s. The probe's own
+/// processes live under 2 s and are skipped, and files changed in the home folder since boot
 /// (hidden folders hold tool state and are skipped).
 const PROBE: &str = r#"
 up=$(ps -o etimes= -p 1 2>/dev/null | tr -d ' ')
 [ -n "$up" ] || { echo "procs=? files=? up=?"; exit 0; }
 me=$$
-procs=$(ps -eo pid=,ppid=,etimes= | awk -v up="$up" -v me="$me" -v w=__WINDOW__ '$1!=me && $2!=me && $3 >= 2 && $3 < up-w {c++} END{print c+0}')
+procs=$(ps -eo pid=,ppid=,etimes=,comm= | awk -v up="$up" -v w=__WINDOW__ -v me="$me" '{ids[NR]=$1; pp[$1]=$2; et[$1]=$3; cm[$1]=$4}
+END{for(i=1;i<=NR;i++){p=ids[i]; if(p==me||pp[p]==me||et[p]<2) continue; under=0; q=p; d=0
+ while(q>1 && d<64){ if(cm[q]=="cua-spacesd"){under=1;break}; q=pp[q]; d++ }
+ boot=(et[p]>=up-w); sys=(cm[p] ~ /^(xfce|xfwm|xfdesktop|xfsettingsd|Thunar|panel-|wrapper-2|dbus|pipewire|wireplumber|at-spi|dconf|gpg-agent|Xvfb|pulse)/)
+ if(!under && (boot||sys)) continue
+ if(under && boot) continue
+ c++ } print c+0 }')
 files=$(find "$HOME" -xdev -name '.*' -prune -o -type f -mmin -$((up/60+1)) -print 2>/dev/null | head -n 1 | wc -l | tr -d ' ')
 echo "procs=$procs files=$files up=$up"
 "#;

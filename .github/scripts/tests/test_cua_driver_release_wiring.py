@@ -7,6 +7,7 @@ import re
 import subprocess
 import tempfile
 import textwrap
+import tomllib
 import unittest
 
 
@@ -332,8 +333,10 @@ fi
         self.assertIn("resolve_release_please_request.py", workflow)
         self.assertIn('"--path=$RELEASE_PATH"', workflow)
         self.assertIn('ARGS+=("--release-as=$RELEASE_AS")', workflow)
-        self.assertIn("release-please@17.3.0", workflow)
-        self.assertIn("EXPECTED_INTEGRITY=", workflow)
+        self.assertIn('.github/scripts/release_please.sh "${ARGS[@]}"', workflow)
+        runner = self.read(".github/scripts/release_please.sh")
+        self.assertIn("ENGINE_VERSION=17.3.0", runner)
+        self.assertIn("EXPECTED_INTEGRITY=", runner)
 
     def test_required_release_metadata_check_runs_for_every_pull_request(self) -> None:
         workflow = self.read(".github/workflows/ci-release-metadata.yml")
@@ -442,6 +445,16 @@ fi
                 workflow,
                 relative_path,
             )
+
+    def test_linux_unit_triggers_on_every_member_its_workspace_clippy_lints(self) -> None:
+        manifest = tomllib.loads(self.read("libs/cua-driver/rust/Cargo.toml"))
+        workflow = self.read(".github/workflows/ci-rust-linux.yml")
+        triggers = workflow.split("\n  workflow_dispatch:", 1)[0]
+        _, pull_request, push = re.split(r"\n  (?:pull_request|push):\n", triggers)
+        for member in manifest["workspace"]["members"]:
+            entry = f'      - "libs/cua-driver/rust/{member}/**"\n'
+            self.assertIn(entry, pull_request, member)
+            self.assertIn(entry, push, member)
 
     def test_release_please_keeps_release_version_sources_synced(self) -> None:
         config = self.read("release-please-config.json")

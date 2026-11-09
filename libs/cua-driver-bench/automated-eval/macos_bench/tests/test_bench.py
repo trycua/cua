@@ -176,6 +176,7 @@ class ScheduleTest(unittest.TestCase):
         ]
         self.assertFalse(core.block_status(rows, blocks)["P1-MB-01"]["complete"])
         self.assertEqual(core.completed_trial_ids(rows), set())
+        self.assertEqual(len(core.completed_trial_ids(rows, smoke=True)), len(rows))
 
     def test_phase2_gate(self) -> None:
         blocks = core.build_blocks(TASKS[:2], ARMS, 1, 1, 1)
@@ -271,6 +272,37 @@ class LedgerTest(unittest.TestCase):
             self.assertTrue(core.budget_allows(1e9, 6.0, None))  # no cap by default
             self.assertTrue(core.budget_allows(10.0, 4.0, 15.0))
             self.assertFalse(core.budget_allows(12.0, 4.0, 15.0))
+
+
+class ResumeStateTest(unittest.TestCase):
+    def test_prior_attempts_counts_from_the_last_final_row(self) -> None:
+        rows = [
+            {"trial_id": "T", "attempt": 1, "final": False, "infra_failure": "rate_limit"},
+            {"trial_id": "U", "attempt": 4, "final": True},
+            {"trial_id": "T", "attempt": 2, "final": False, "infra_failure": "overloaded"},
+        ]
+        self.assertEqual(core.prior_attempts(rows, "T"), (2, ["rate_limit", "overloaded"]))
+        self.assertEqual(core.prior_attempts(rows, "U"), (4, []))
+        self.assertEqual(core.prior_attempts(rows, "V"), (0, []))
+
+    def test_torn_last_line_is_cut_and_the_next_row_starts_clean(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "results.jsonl"
+            core.append_row(path, {"trial_id": "A"})
+            with path.open("a") as handle:
+                handle.write('{"trial_id": "B", "att')  # the write a SIGKILL cut short
+            self.assertEqual(core.drop_torn_tail(path), len('{"trial_id": "B", "att'))
+            core.append_row(path, {"trial_id": "C"})
+            self.assertEqual([r["trial_id"] for r in core.load_rows(path)], ["A", "C"])
+            self.assertEqual(core.drop_torn_tail(path), 0)
+
+    def test_run_lock_is_exclusive_and_released_by_the_holder(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            held = core.lock_run(Path(tmp))
+            self.assertIsNotNone(held)
+            self.assertIsNone(core.lock_run(Path(tmp)))
+            held.close()
+            self.assertIsNotNone(core.lock_run(Path(tmp)))
 
 
 @unittest.skipUnless(sys.platform == "darwin", "assembly requires macOS plutil and zsh")

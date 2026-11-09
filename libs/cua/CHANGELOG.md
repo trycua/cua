@@ -1,5 +1,95 @@
 # Changelog
 
+## [0.18.0](https://github.com/trycua/cua/compare/cua-sdk-v0.17.1...cua-sdk-v0.18.0) (2026-11-09)
+
+
+### Features
+
+* **agents:** official sign-in on each computer, stop copying sign-ins by default (CUA-3907) ([#7045](https://github.com/trycua/cua/issues/7045)) ([5a14a01](https://github.com/trycua/cua/commit/5a14a01e43fc350dead0f5098d08958b68cff3ce))
+* **spaces-macos:** install-local.sh --development for fast dev-loop builds ([#7019](https://github.com/trycua/cua/issues/7019)) ([7f9f5c2](https://github.com/trycua/cua/commit/7f9f5c20440510a999851010c00034d2afd433d1))
+
+
+### Bug Fixes
+
+* **auth:** redact tokens in Debug output ([#7071](https://github.com/trycua/cua/issues/7071)) ([#7097](https://github.com/trycua/cua/issues/7097)) ([646d5eb](https://github.com/trycua/cua/commit/646d5eb76db3ffaef409aef77986ac7d368be1a6))
+* **crash:** scrub tokens before sending to Sentry ([#7098](https://github.com/trycua/cua/issues/7098)) ([0d1eb93](https://github.com/trycua/cua/commit/0d1eb93c301e6ab1a9b1492ddb1db93f11f5fe7d))
+* **spaces:** dogfood fixes from 8 Nov (setup, sign-in, Cua Driver, Local Network, Home) ([#7046](https://github.com/trycua/cua/issues/7046)) ([14f9e88](https://github.com/trycua/cua/commit/14f9e8845134af1c13a71e2f57e5b18565df0320))
+
+## [0.17.1](https://github.com/trycua/cua/compare/cua-sdk-v0.17.0...cua-sdk-v0.17.1) (2026-11-09)
+
+
+### Bug Fixes
+
+* **cluster:** GPU jobs are admitted by free video memory and run on Windows hosts ([#6943](https://github.com/trycua/cua/issues/6943)) ([c62abf3](https://github.com/trycua/cua/commit/c62abf39ba407f385701b0a82a5a4d8b8eacc426))
+* **cua-volume:** a saved presence heartbeat replaces the last one, and a saved change whose bytes are gone is forgotten (fixes [#6859](https://github.com/trycua/cua/issues/6859)) ([#6864](https://github.com/trycua/cua/issues/6864)) ([2349735](https://github.com/trycua/cua/commit/2349735830d4f6e8391c97557d578374e79a4ee2))
+* **spaces:** runs from a Space are confined children and a Space cannot start its own daemon ([#7055](https://github.com/trycua/cua/issues/7055)) ([8275285](https://github.com/trycua/cua/commit/82752858f6256eaf4e8eccf9033cf27ad3163cea))
+
+## [0.17.0](https://github.com/trycua/cua/compare/cua-sdk-v0.16.0...cua-sdk-v0.17.0) (2026-11-09)
+
+
+### Features
+
+* **spaces:** a Space uses the pool, its runs are its children and are cleaned up with it ([#6945](https://github.com/trycua/cua/issues/6945)) ([a35099d](https://github.com/trycua/cua/commit/a35099d7bcc5548d9d1b86b901d20e025a0594b9))
+* **spaces:** Ask first and Secure Spaces are always on, their Labs switches are gone (CUA-3551) ([#6775](https://github.com/trycua/cua/issues/6775)) ([cc67e71](https://github.com/trycua/cua/commit/cc67e715d11b7450a82663bf7e308e6680422beb))
+
+
+### Bug Fixes
+
+* **cua-agents:** an agent's log event bigger than the read window no longer stalls the reader, and the journal keeps lines small ([#7004](https://github.com/trycua/cua/issues/7004)) ([8b339c5](https://github.com/trycua/cua/commit/8b339c56feb1b03252d3e72ff7a6e3d961af856f))
+* **spaces:** hold back an agent's narration of its own process in the thread ([#7027](https://github.com/trycua/cua/issues/7027)) ([fa605be](https://github.com/trycua/cua/commit/fa605be7c8dc15c7042205ae98d5a85699c36a47))
+
+## [0.16.0](https://github.com/trycua/cua/compare/cua-sdk-v0.15.1...cua-sdk-v0.16.0) (2026-11-08)
+
+
+### Features
+
+* **spaces:** show "Local · Staging" or "Local · Prod" in the title bar (CUA-3814) ([#6962](https://github.com/trycua/cua/issues/6962)) ([17b37ef](https://github.com/trycua/cua/commit/17b37ef5775b4b06f0d1483bf0a9db6074a8d2ff))
+
+
+### Bug Fixes
+
+* **cua-agents:** say a lost provider connection in plain words, not raw http2 ([#6963](https://github.com/trycua/cua/issues/6963)) ([a2bbc28](https://github.com/trycua/cua/commit/a2bbc280957e5ca674d5ca5a0422da22be1d6cdf))
+* **spaces:** Ready lists only the picked agent's chats, and shows at once (CUA-3774) ([#6916](https://github.com/trycua/cua/issues/6916)) ([4392fe0](https://github.com/trycua/cua/commit/4392fe0502790f4fdd1d9b9e5bc42c1418281146))
+* **vmm:** the runtime doctor's report makes no Local Network connect, so macOS doesn't ask at launch ([#6969](https://github.com/trycua/cua/issues/6969)) ([e002d4f](https://github.com/trycua/cua/commit/e002d4f29f58a1457fe998874ba4ea2e8dbc3016))
+
+## [0.15.1](https://github.com/trycua/cua/compare/cua-sdk-v0.15.0...cua-sdk-v0.15.1) (2026-11-08)
+
+
+### Bug Fixes
+
+* **cua:** ship the static cua-spacesd in every platform wheel ([#6959](https://github.com/trycua/cua/issues/6959)) ([16ac156](https://github.com/trycua/cua/commit/16ac1561354530107bd86cc721b044587d448f6c))
+
+## [0.15.0](https://github.com/trycua/cua/compare/cua-sdk-v0.14.0...cua-sdk-v0.15.0) (2026-11-08)
+
+
+### Features
+
+* **spaces:** record the Ready screen, Copy, chat pickup and Done in the first-run funnel ([#6924](https://github.com/trycua/cua/issues/6924)) ([2a1b66e](https://github.com/trycua/cua/commit/2a1b66e731d446c05fa443916eaaaa6ba26c22aa))
+
+
+### Bug Fixes
+
+* **cua-vmm:** forward the agent port of a macOS Space behind the secure gateway ([#6793](https://github.com/trycua/cua/issues/6793)) ([55eaa9b](https://github.com/trycua/cua/commit/55eaa9b6c618bbe2f723ec392436ceb9e2b4e541))
+* **spaces:** a slow-starting desktop no longer keeps a sleeping Space awake ([#6868](https://github.com/trycua/cua/issues/6868)) ([066f837](https://github.com/trycua/cua/commit/066f837d6e9a84483d02076dcd8a3ea5f67fe29c))
+* **spaces:** start Claude agents on Sonnet 5.5 and list the Claude 5 family ([#6810](https://github.com/trycua/cua/issues/6810)) ([1511490](https://github.com/trycua/cua/commit/15114908cae2b3d70a85356651142faa1414ebf8))
+
+
+### Performance Improvements
+
+* **spaces:** connect Space desktop streams in under a second ([#6818](https://github.com/trycua/cua/issues/6818)) ([1f060b6](https://github.com/trycua/cua/commit/1f060b62491bce2fb010b64a6569bb1974decdc0))
+
+## [0.14.0](https://github.com/trycua/cua/compare/cua-sdk-v0.13.0...cua-sdk-v0.14.0) (2026-11-07)
+
+
+### Features
+
+* **spaces:** setup says what Spaces is for, asks for the rest after the first job, offers only what this computer can make ([#6787](https://github.com/trycua/cua/issues/6787)) ([7ecb202](https://github.com/trycua/cua/commit/7ecb202e25329e41985b19b66025f9c02480e25d))
+
+
+### Bug Fixes
+
+* **spaces:** Home's apps row opens again after a relaunch and shows each switch live (CUA-3551) ([#6872](https://github.com/trycua/cua/issues/6872)) ([26858cd](https://github.com/trycua/cua/commit/26858cd5050728f64aaa1ef78a9bf3a248fdccc8))
+
 ## [0.13.0](https://github.com/trycua/cua/compare/cua-sdk-v0.12.1...cua-sdk-v0.13.0) (2026-11-07)
 
 

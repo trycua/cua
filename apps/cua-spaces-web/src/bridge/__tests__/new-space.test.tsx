@@ -7,8 +7,35 @@ import { createDemoAdapter } from "../adapters/demo";
 import { DEMO_NEW_SPACE_OPTIONS, demoMacHostOptions } from "../adapters/demo/new-space";
 import type { DataAdapter } from "../adapter";
 import type { CoreClient } from "../core";
-import { BridgeProvider, useConnectCloud, useFirstSpaceOffers, useNewSpaceRequests, useNewSpaceWizard, useSettings, useSpaces, type ConnectCloudHook, type FirstSpaceHook, type NewSpaceWizardHook, type SettingsHook, type SpacesHook } from "../index";
-import { connectedClouds, firstSpaceOffers, localBlocked, readNewSpaceSession, requestNewSpace, resetNewSpaceSession, sizeText, wizardCreateArgs, wizardEnv, wizardInitial, wizardOffered, wizardReduce, wizardView } from "../new-space";
+import {
+  BridgeProvider,
+  useConnectCloud,
+  useFirstSpaceOffers,
+  useNewSpaceRequests,
+  useNewSpaceWizard,
+  useSettings,
+  useSpaces,
+  type ConnectCloudHook,
+  type FirstSpaceHook,
+  type NewSpaceWizardHook,
+  type SettingsHook,
+  type SpacesHook,
+} from "../index";
+import {
+  connectedClouds,
+  firstSpaceOffers,
+  localBlocked,
+  readNewSpaceSession,
+  requestNewSpace,
+  resetNewSpaceSession,
+  sizeText,
+  wizardCreateArgs,
+  wizardEnv,
+  wizardInitial,
+  wizardOffered,
+  wizardReduce,
+  wizardView,
+} from "../new-space";
 import { noCore, testCore, wasmBuilt } from "./testCore";
 
 beforeEach(resetNewSpaceSession);
@@ -67,7 +94,12 @@ describe.skipIf(!wasmBuilt)("New Space (wasm core)", () => {
     expect(env.hosts!.map((h) => h.id)).toEqual(["mac-mini"]);
     expect(env.clouds).toEqual([]);
 
-    const none = wizardEnv(core, { options: { ...DEMO_NEW_SPACE_OPTIONS, local: { available: false, backends: [], error: "no runtime", macosImage: null } }, clouds: null, defaultLocation: "local", machines: [] });
+    const none = wizardEnv(core, {
+      options: { ...DEMO_NEW_SPACE_OPTIONS, local: { available: false, backends: [], error: "no runtime", macosImage: null } },
+      clouds: null,
+      defaultLocation: "local",
+      machines: [],
+    });
     expect(none).toMatchObject({ localAvailable: false, localReason: "no runtime" });
   });
 
@@ -114,7 +146,7 @@ describe.skipIf(!wasmBuilt)("New Space (wasm core)", () => {
     await waitFor(() => expect(hooks.wizard.view?.step).toBe(0));
     // With machines of yours, Auto comes first; This Mac stays the default.
     expect(hooks.wizard.view!.placements.find((p) => p.id === "local")).toMatchObject({ label: "This Mac", selected: true });
-    // Your machines follow This Mac; the offline one can't be chosen.
+    // Your computers follow This Mac; the offline one can't be chosen.
     await waitFor(() => expect(hooks.wizard.view!.placements.map((p) => [p.id, p.enabled])).toContainEqual(["host:studio-pc", false]));
 
     act(() => hooks.wizard.send({ type: "choose-os", os: "macos" }));
@@ -171,19 +203,25 @@ describe.skipIf(!wasmBuilt)("New Space (wasm core)", () => {
     await waitFor(() => expect(hooks.settings.data).toBeDefined());
     act(() => hooks.wizard.show());
     act(() => hooks.connect.show());
-    await waitFor(() => expect(hooks.connect.view?.rows.map((r) => [r.id, r.auth, r.note])).toEqual([
-      ["aws", "OIDC", ""],
-      ["gcp", "OIDC", "Coming soon"],
-      ["azure", "OIDC", "Coming soon"],
-      ["hetzner", "API token", ""],
-      ["modal", "API token", ""],
-    ]));
+    await waitFor(() =>
+      expect(hooks.connect.view?.rows.map((r) => [r.id, r.auth, r.note])).toEqual([
+        ["aws", "OIDC", ""],
+        ["gcp", "OIDC", "Coming soon"],
+        ["azure", "OIDC", "Coming soon"],
+        ["hetzner", "API token", ""],
+        ["modal", "API token", ""],
+      ]),
+    );
     expect(hooks.connect.view!.prompt).toContain("`cua cloud status` says connected.");
 
     await act(() => hooks.connect.send({ type: "choose", id: "aws" }));
     const v = () => hooks.connect.view!;
     expect(v().title).toBe("Connect AWS");
-    expect(v().fields.map((f) => [f.id, f.value])).toEqual([["place", "us-west-2"], ["budget", "200"], ["size", "4x16"]]);
+    expect(v().fields.map((f) => [f.id, f.value])).toEqual([
+      ["place", "us-west-2"],
+      ["budget", "200"],
+      ["size", "4x16"],
+    ]);
     expect(v().prompt).toContain("region us-west-2, $200 monthly budget, machines up to 4 vCPU and 16 GB.");
     await act(() => hooks.connect.send({ type: "set-budget", text: "300" }));
     expect(v().prompt).toContain("$300 monthly budget");
@@ -261,7 +299,11 @@ describe.skipIf(!wasmBuilt)("New Space (wasm core)", () => {
     act(() => hooks.connect.show("aws", { limits: true }));
     await waitFor(() => expect(hooks.connect.view?.title).toBe("AWS limits"));
     expect(hooks.connect.view).toMatchObject({ primaryLabel: "Save", prompt: "", backLabel: "" });
-    expect(hooks.connect.view!.fields.map((f) => [f.id, f.value])).toEqual([["place", "us-west-2"], ["budget", "200"], ["size", "4x16"]]);
+    expect(hooks.connect.view!.fields.map((f) => [f.id, f.value])).toEqual([
+      ["place", "us-west-2"],
+      ["budget", "200"],
+      ["size", "4x16"],
+    ]);
   });
 
   it("Add a machine by its address (New Space's arrow) adds the Space, and says why when it can't", async () => {
@@ -283,12 +325,14 @@ describe.skipIf(!wasmBuilt)("New Space (wasm core)", () => {
 });
 
 describe.skipIf(!wasmBuilt)("First Space in one click (wasm core)", () => {
-  const env = (core: CoreClient, options = DEMO_NEW_SPACE_OPTIONS) =>
-    wizardEnv(core, { options, clouds: null, defaultLocation: "local", machines: [] });
+  const env = (core: CoreClient, options = DEMO_NEW_SPACE_OPTIONS) => wizardEnv(core, { options, clouds: null, defaultLocation: "local", machines: [] });
 
   it("offers Linux first with its size and time, then macOS with its real download", async () => {
     const core = await testCore();
-    const fresh = { ...DEMO_NEW_SPACE_OPTIONS, local: { ...DEMO_NEW_SPACE_OPTIONS.local!, storage: { ...DEMO_NEW_SPACE_OPTIONS.local!.storage!, pulled: [] } } };
+    const fresh = {
+      ...DEMO_NEW_SPACE_OPTIONS,
+      local: { ...DEMO_NEW_SPACE_OPTIONS.local!, storage: { ...DEMO_NEW_SPACE_OPTIONS.local!.storage!, pulled: [] } },
+    };
     const [linux, macos, ...rest] = firstSpaceOffers(core, env(core, fresh));
     expect(rest).toEqual([]);
     expect(linux).toMatchObject({ os: "linux", image: "ghcr.io/trycua/linux:24.04", time: "about 2 min", blocked: null });
@@ -316,7 +360,9 @@ describe.skipIf(!wasmBuilt)("First Space in one click (wasm core)", () => {
     expect(tight.map((o) => o.id)).toEqual(["linux"]);
     expect(tight[0]!.blocked).toBeNull();
     // The wizard still says why, for the New Space sheet.
-    expect(localBlocked(core, env(core, withFree(40)), "ghcr.io/trycua/macos:26")).toMatch(/^Not enough space on Macintosh HD: needs \d+ GB, 40 GB available\.$/);
+    expect(localBlocked(core, env(core, withFree(40)), "ghcr.io/trycua/macos:26")).toMatch(
+      /^Not enough space on Macintosh HD: needs \d+ GB, 40 GB available\.$/,
+    );
     expect(firstSpaceOffers(core, env(core, withFree(200))).map((o) => o.id)).toEqual(["linux", "macos"]);
   });
 
@@ -553,7 +599,17 @@ describe.skipIf(!wasmBuilt)("A create the host runs (wasm core)", () => {
       call: (async (op: string, args: never) => {
         const out = await demo.call(op as never, args);
         if (op !== "spaces.list") return out;
-        const ghost = { id: "pending:host1", name: "macOS", provider: "local", os: "macos", spacesdVersion: "", features: [], reachable: false, powerState: "suspended", hostProgress: { phase: "booting", permille: 900, label: "Failed", error } };
+        const ghost = {
+          id: "pending:host1",
+          name: "macOS",
+          provider: "local",
+          os: "macos",
+          spacesdVersion: "",
+          features: [],
+          reachable: false,
+          powerState: "suspended",
+          hostProgress: { phase: "booting", permille: 900, label: "Failed", error },
+        };
         return [...(out as unknown[]), ghost];
       }) as DataAdapter["call"],
     };

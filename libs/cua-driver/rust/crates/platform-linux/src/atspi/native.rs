@@ -168,6 +168,9 @@ pub(crate) const INDEX_RESOLVE_BUDGET: Duration = Duration::from_secs(6);
 /// Budget the toolkit lookup in front of an EditableText write leaves unspent,
 /// so the write itself still answers before the operation's deadline.
 const EDITABLE_WRITE_RESERVE: Duration = Duration::from_millis(250);
+/// Budget a walk in front of an EditableText write leaves unspent: the toolkit
+/// lookup gets what is above [`EDITABLE_WRITE_RESERVE`].
+const EDITABLE_WALK_RESERVE: Duration = Duration::from_millis(500);
 
 /// Emit a one-line diagnostic to stderr when `CUA_ATSPI_DEBUG` is set. The
 /// driver's stderr is surfaced in the test logs, so this is how we see what the
@@ -2843,29 +2846,61 @@ fn list_windows_blocking(filter_pid: Option<u32>) -> Vec<crate::x11::WindowInfo>
     })
 }
 
-/// Pick the editable node to write into, by priority:
+fn pick_editable<'v, 'a>(visited: &'v [Visited<'a>], complete: bool) -> Option<&'v Visited<'a>> {
+    let flags = visited.iter().map(|v| EditableFlags {
+        editable: v.has_editable,
+        focused: v.focused,
+        in_web_doc: v.in_web_doc,
+    });
+    visited.get(pick_editable_index(flags, complete)?)
+}
+
+#[derive(Clone, Copy)]
+struct EditableFlags {
+    editable: bool,
+    focused: bool,
+    in_web_doc: bool,
+}
+
+/// Index of the sole editable node, or `None` when there are none or several.
+fn only_editable(nodes: impl Iterator<Item = EditableFlags>) -> Option<usize> {
+    let mut editables = nodes.enumerate().filter(|(_, n)| n.editable);
+    match (editables.next(), editables.next()) {
+        (Some((index, _)), None) => Some(index),
+        _ => None,
+    }
+}
+
+/// Index of the editable to write into, by priority:
 ///   1. the focused editable (if the toolkit exposes focus),
 ///   2. an editable inside web/document content — for a browser this is the
 ///      page's field, not the address bar (which sorts first in the tree but is
 ///      chrome),
-///   3. the first editable anywhere (covers single-field apps like a GTK dialog
-///      entry, or a GTK4 GtkEntry).
+///   3. the *only* editable, when the app has exactly one (covers single-field
+///      apps like a GTK dialog entry, or a GTK4 GtkEntry).
 ///
-/// Choose the editable to write into. `complete` says whether `visited` is the
-/// whole tree: on a *partial* walk the "first editable anywhere" fallback is
-/// withheld, because the field the user means (the focused one) may simply not
-/// have been reached yet and writing into an arbitrary earlier field (a name
-/// box, a search entry) would be a silent misdelivery.
-fn pick_editable<'v, 'a>(visited: &'v [Visited<'a>], complete: bool) -> Option<&'v Visited<'a>> {
-    visited
-        .iter()
-        .find(|v| v.has_editable && v.focused)
-        .or_else(|| visited.iter().find(|v| v.has_editable && v.in_web_doc))
-        .or_else(|| {
-            complete
-                .then(|| visited.iter().find(|v| v.has_editable))
-                .flatten()
-        })
+/// Rule 3 used to take the first editable in tree order. In Geany that is the
+/// toolbar search entry, several nodes above the document, so text written
+/// while nothing reported focus landed in the search box and the write was
+/// still reported as confirmed. With more than one candidate and no focus to
+/// choose between them, no pick is safe, so this returns `None` and the caller
+/// falls through to a route that follows the app's real focus.
+///
+/// `complete` says whether the nodes are the whole tree. A *partial* walk keeps
+/// only rule 1: the focused field may not have been reached yet, and rules 2
+/// and 3 would then write into an earlier field (a second page input, a search
+/// box), a silent misdelivery.
+fn pick_editable_index(
+    nodes: impl Iterator<Item = EditableFlags> + Clone,
+    complete: bool,
+) -> Option<usize> {
+    let first =
+        |rule: fn(&EditableFlags) -> bool| nodes.clone().position(|n| n.editable && rule(&n));
+    first(|n| n.focused).or_else(|| {
+        complete
+            .then(|| first(|n| n.in_web_doc).or_else(|| only_editable(nodes.clone())))
+            .flatten()
+    })
 }
 
 /// Try to write `text` into the best editable node in `visited` via AT-SPI
@@ -2986,12 +3021,28 @@ async fn before_write_reserve<T>(lookup: impl std::future::Future<Output = T>) -
     tokio::time::timeout(budget, lookup).await.ok()
 }
 
+/// Run a walk that finds the element to write into, so it stops early enough
+/// for the toolkit lookup and the write. A big app's tree outlasts any budget,
+/// and with none left the write would be skipped or answer past the deadline.
+async fn walk_before_write<T>(walk: impl std::future::Future<Output = T>) -> T {
+    let early = OP_DEADLINE
+        .try_with(|deadline| deadline.checked_sub(EDITABLE_WALK_RESERVE))
+        .ok()
+        .flatten();
+    match early {
+        Some(deadline) => OP_DEADLINE.scope(deadline, walk).await,
+        None => walk.await,
+    }
+}
+
 /// `length` for `EditableText.InsertText`. The unit depends on the toolkit. Qt
 /// resizes the string to exactly `length` UTF-16 units, so a shorter count drops
-/// the tail and a longer one appends uninitialized memory. GTK and the others
-/// read bytes, the unit the string travels in. ASCII is the same in every unit.
-/// Any other text for an unknown toolkit has no safe length: UTF-16 units cut
-/// GTK short and bytes over-read in Qt.
+/// the tail and a longer one appends uninitialized memory. GTK3 reads bytes, the
+/// unit AT-SPI documents. Every other toolkit gets bytes too because no count is
+/// larger: one that ignores or clamps `length` still inserts the whole text, and
+/// only one that reads a smaller unit exactly would over-read. ASCII is the same
+/// in every unit. Any other text for an unknown toolkit has no safe length:
+/// UTF-16 units cut GTK3 short and bytes over-read in Qt.
 fn editable_insert_length(toolkit: Option<&str>, text: &str) -> Option<i32> {
     let length = match toolkit {
         _ if text.is_ascii() => text.len(),
@@ -3030,7 +3081,7 @@ pub fn type_into_editable(pid: u32, text: &str) -> Result<()> {
                 visited,
                 truncation,
                 ..
-            } = collect_visited_bounded(conn, pid, 0, None, None)
+            } = walk_before_write(collect_visited_bounded(conn, pid, 0, None, None))
                 .await?
                 .ok_or_else(|| anyhow!("no AT-SPI application for pid {pid}"))?;
             if write_into_editable(&visited, truncation.is_none(), text).await? {
@@ -3049,7 +3100,7 @@ pub fn type_into_editable_at(pid: u32, idx: usize, text: &str) -> Result<()> {
         INDEX_RESOLVE_BUDGET,
         async {
             let conn = shared_connection().await?;
-            let visited = collect_visited(conn, pid)
+            let visited = walk_before_write(collect_visited(conn, pid))
                 .await?
                 .ok_or_else(|| anyhow!("no AT-SPI application for pid {pid}"))?;
             let target = visited
@@ -3063,7 +3114,7 @@ pub fn type_into_editable_at(pid: u32, idx: usize, text: &str) -> Result<()> {
                 // GrabFocus can rebuild WebKitGTK's accessibility object. Walk
                 // the same index space again and retry only that exact element;
                 // never fall through to a different focused/first editable.
-                let refreshed = collect_visited(conn, pid)
+                let refreshed = walk_before_write(collect_visited(conn, pid))
                     .await?
                     .ok_or_else(|| anyhow!("no AT-SPI application for pid {pid}"))?;
                 let refreshed_target = refreshed
@@ -3102,7 +3153,7 @@ pub fn insert_text(pid: u32, text: &str) -> Result<bool> {
                 visited,
                 truncation,
                 ..
-            } = match collect_visited_bounded(conn, pid, 0, None, None).await? {
+            } = match walk_before_write(collect_visited_bounded(conn, pid, 0, None, None)).await? {
                 Some(v) => v,
                 None => return Ok(false),
             };
@@ -5500,7 +5551,7 @@ pub fn set_value(pid: u32, idx: usize, value: &str) -> Result<()> {
         INDEX_RESOLVE_BUDGET,
         async {
             let conn = shared_connection().await?;
-            let visited = collect_visited(conn, pid)
+            let visited = walk_before_write(collect_visited(conn, pid))
                 .await?
                 .ok_or_else(|| anyhow!("no AT-SPI application for pid {pid}"))?;
             let action_nodes: Vec<&Visited> = visited.iter().filter(|v| is_indexable(v)).collect();
@@ -8793,9 +8844,78 @@ mod token_scope_tests {
 }
 
 #[cfg(test)]
+mod pick_editable_tests {
+    use super::{pick_editable_index, EditableFlags};
+
+    const ENTRY: EditableFlags = EditableFlags {
+        editable: true,
+        focused: false,
+        in_web_doc: false,
+    };
+    const PAGE_FIELD: EditableFlags = EditableFlags {
+        in_web_doc: true,
+        ..ENTRY
+    };
+    const LABEL: EditableFlags = EditableFlags {
+        editable: false,
+        ..ENTRY
+    };
+
+    fn pick(nodes: &[EditableFlags], complete: bool) -> Option<usize> {
+        pick_editable_index(nodes.iter().copied(), complete)
+    }
+
+    #[test]
+    fn a_reached_focused_editable_wins_on_any_walk() {
+        let focused = EditableFlags {
+            focused: true,
+            ..PAGE_FIELD
+        };
+        let tree = [ENTRY, PAGE_FIELD, LABEL, focused];
+        assert_eq!(pick(&tree, true), Some(3));
+        assert_eq!(pick(&tree, false), Some(3));
+    }
+
+    #[test]
+    fn a_partial_walk_writes_nowhere_but_the_focused_editable() {
+        // The focused field may sit past where the walk stopped, so neither an
+        // earlier page field nor an earlier entry is a safe target.
+        assert_eq!(pick(&[ENTRY, LABEL, PAGE_FIELD], false), None);
+        assert_eq!(pick(&[PAGE_FIELD], false), None);
+        assert_eq!(pick(&[ENTRY], false), None);
+    }
+
+    #[test]
+    fn a_complete_walk_without_focus_prefers_page_content_then_the_only_editable() {
+        assert_eq!(pick(&[ENTRY, LABEL, PAGE_FIELD], true), Some(2));
+        assert_eq!(pick(&[LABEL, ENTRY, LABEL], true), Some(1));
+        assert_eq!(pick(&[LABEL], true), None);
+    }
+
+    #[test]
+    fn several_editables_with_no_focus_and_no_page_content_pick_nothing() {
+        // Geany: the toolbar search entry sorts above the document, and tree
+        // order is not a reason to write into it.
+        assert_eq!(pick(&[LABEL, ENTRY, ENTRY], true), None);
+        assert_eq!(pick(&[ENTRY, ENTRY], true), None);
+    }
+
+    #[test]
+    fn focus_on_a_non_editable_node_is_not_a_target() {
+        let focused_label = EditableFlags {
+            focused: true,
+            ..LABEL
+        };
+        assert_eq!(pick(&[focused_label, PAGE_FIELD], false), None);
+        assert_eq!(pick(&[focused_label, PAGE_FIELD], true), Some(1));
+    }
+}
+
+#[cfg(test)]
 mod editable_insert_length_tests {
     use super::{
-        editable_insert_length, editable_insert_length_for, EDITABLE_WRITE_RESERVE, OP_DEADLINE,
+        deadline_passed, editable_insert_length, editable_insert_length_for, walk_before_write,
+        EDITABLE_WRITE_RESERVE, INPUT_QUERY_BUDGET, OP_DEADLINE,
     };
     use std::time::Duration;
     use tokio::time::{sleep, Instant};
@@ -8813,6 +8933,25 @@ mod editable_insert_length_tests {
                 let lookup = answers_after(Duration::from_secs(1), "GTK");
                 assert_eq!(editable_insert_length_for("ñ🙂ab", lookup).await, None);
                 assert_eq!(deadline - Instant::now(), EDITABLE_WRITE_RESERVE);
+            })
+            .await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_walk_that_outlasts_the_budget_leaves_the_lookup_and_the_write_their_time() {
+        let deadline = Instant::now() + INPUT_QUERY_BUDGET;
+        OP_DEADLINE
+            .scope(deadline, async {
+                walk_before_write(async {
+                    while !deadline_passed() {
+                        sleep(Duration::from_millis(10)).await;
+                    }
+                })
+                .await;
+                assert!(!deadline_passed());
+                let lookup = answers_after(Duration::from_millis(100), "Qt");
+                assert_eq!(editable_insert_length_for("ñ🙂ab", lookup).await, Some(5));
+                assert!(deadline - Instant::now() >= EDITABLE_WRITE_RESERVE);
             })
             .await;
     }

@@ -87,7 +87,7 @@ export function TeleportReview({
             <span className="min-w-0 flex-1">
               <span className="block text-[13px]">{r.passwordsLabel}</span>
               <span className="block text-xs text-muted-foreground">
-                Off by default. Passwords are re-encrypted for the browser in the Space and need that browser to have been opened once.
+                The Space's browser must have been opened once.
               </span>
             </span>
             {r.includePasswords && r.passwordSummary ? (
@@ -150,7 +150,7 @@ export function TeleportReview({
               data="ack-relay"
               checked={r.acknowledgedRelayPlaintext}
               onChange={(value) => teleport.send({ type: "acknowledge-relay-plaintext", value })}
-              note="This Space predates end-to-end sealing. The relay could read these secrets in transit."
+              note="This Space is too old for end-to-end encryption. Cua's servers could read these while sending."
             >
               Send without end-to-end encryption
             </Gate>

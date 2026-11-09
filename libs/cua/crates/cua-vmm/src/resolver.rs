@@ -16,8 +16,15 @@
 //!    local stub (`127.0.0.53`, a dnsmasq) has none a guest can reach.
 //!
 //! A server counts only when a guest can reach it: not a loopback, link
-//! local, multicast or unspecified address (those are the host's own), and
-//! an IPv6 server only on a network that has IPv6. At most [`MAX_SERVERS`]
+//! local, multicast or unspecified address (those are the host's own), not a
+//! cloud metadata endpoint (always denied), and an IPv6 server only on a
+//! network that has IPv6. One exception: a cloud platform's own resolver
+//! ([`PLATFORM_RESOLVERS`]: Azure's `168.63.129.16`, AWS's
+//! `169.254.169.253`, GCP's `169.254.169.254`) is kept when the host uses
+//! it, so a private DNS zone still resolves. Two of them sit on the
+//! metadata or link-local ranges, so the egress rules open each on port 53
+//! only, before the metadata deny ([`crate::network::compile`]); its other
+//! ports (the wireserver's and metadata server's HTTP) stay closed. At most [`MAX_SERVERS`]
 //! (what a `resolv.conf` honours). The list is both written into the guest
 //! and allowed on port 53 by the Space's egress rules
 //! ([`crate::network::NetworkContext::resolvers`]), so the guest can reach
@@ -35,8 +42,49 @@ pub const FALLBACK: [&str; 2] = ["1.1.1.1", "8.8.8.8"];
 /// The most servers a `resolv.conf` honours (glibc's `MAXNS`).
 pub const MAX_SERVERS: usize = 3;
 
+/// The DNS resolvers a cloud platform runs at a fixed address. A host on
+/// that cloud names one in its `resolv.conf` (directly, or behind the
+/// `127.0.0.53` stub), and private DNS zones answer only there. They are
+/// exact addresses, never a range: Azure's wireserver, AWS's Route 53
+/// resolver (IPv4 and IPv6) and GCP's metadata server (which also answers
+/// DNS). The VPC `.2` resolver of AWS is an ordinary private address.
+pub const PLATFORM_RESOLVERS: [&str; 4] = [
+    "168.63.129.16",
+    "169.254.169.253",
+    "169.254.169.254",
+    "fd00:ec2::253",
+];
+
+/// Whether `ip` is one of [`PLATFORM_RESOLVERS`].
+pub fn is_platform_resolver(ip: IpAddr) -> bool {
+    PLATFORM_RESOLVERS
+        .iter()
+        .filter_map(|r| r.parse::<IpAddr>().ok())
+        .any(|r| r == ip)
+}
+
+/// Whether `ip` is a cloud metadata endpoint ([`crate::network::METADATA`]).
+/// Those are denied to every Space before any resolver is allowed, so a
+/// resolver there would be written into the guest and never answer. It is
+/// the only resolver of a GitHub-hosted runner (Azure answers DNS at
+/// `168.63.129.16`, behind the `127.0.0.53` stub); see [`usable`].
+fn is_metadata(ip: IpAddr) -> bool {
+    crate::network::METADATA
+        .iter()
+        .filter_map(|n| crate::egress::Net::parse(n).ok())
+        .any(|n| n.contains(ip))
+}
+
 /// Whether a guest could send DNS to `ip`.
 pub fn usable(ip: IpAddr, ipv6: bool) -> bool {
+    // A platform resolver is reachable on port 53 only; the egress rules
+    // open it that way. Everything else here stays as strict as before.
+    if is_platform_resolver(ip) {
+        return ip.is_ipv4() || ipv6;
+    }
+    if is_metadata(ip) {
+        return false;
+    }
     match ip {
         IpAddr::V4(a) => {
             !(a.is_loopback()
@@ -51,7 +99,9 @@ pub fn usable(ip: IpAddr, ipv6: bool) -> bool {
                 || a.is_multicast()
                 || is_link_local_v6(a)
                 // IPv4 inside IPv6: judged as the IPv4 address it is.
-                || a.to_ipv4_mapped().is_some_and(|m| !usable(IpAddr::V4(m), false)))
+                || a.to_ipv4_mapped().is_some_and(|m| {
+                    is_platform_resolver(IpAddr::V4(m)) || !usable(IpAddr::V4(m), false)
+                }))
         }
     }
 }
@@ -160,6 +210,71 @@ mod tests {
         // The usable one among them is kept.
         let conf = "nameserver 127.0.0.53\nnameserver 10.1.2.3\n";
         assert_eq!(select(None, &nameservers(conf), false), [ip("10.1.2.3")]);
+    }
+
+    #[test]
+    fn a_cloud_platform_resolver_is_kept_not_replaced_by_public_dns() {
+        // Azure (GitHub-hosted runner: 127.0.0.53 stub, wireserver upstream):
+        // private DNS zones answer only there.
+        let conf = "nameserver 127.0.0.53\nnameserver 168.63.129.16\n";
+        assert_eq!(
+            select(None, &nameservers(conf), false),
+            [ip("168.63.129.16")]
+        );
+        // AWS: the Route 53 resolver; the VPC `.2` resolver is plain private.
+        let conf = "nameserver 169.254.169.253\n";
+        assert_eq!(
+            select(None, &nameservers(conf), false),
+            [ip("169.254.169.253")]
+        );
+        let conf = "nameserver 10.0.0.2\n";
+        assert_eq!(select(None, &nameservers(conf), false), [ip("10.0.0.2")]);
+        // GCP: the metadata server answers DNS.
+        let conf = "nameserver 169.254.169.254\n";
+        assert_eq!(
+            select(None, &nameservers(conf), false),
+            [ip("169.254.169.254")]
+        );
+        // AWS IPv6 only where the network has IPv6.
+        assert!(usable(ip("fd00:ec2::253"), true));
+        assert!(!usable(ip("fd00:ec2::253"), false));
+        // Kept beside a private resolver, in order.
+        let conf = "nameserver 168.63.129.16\nnameserver 10.0.0.2\n";
+        assert_eq!(
+            select(None, &nameservers(conf), false),
+            [ip("168.63.129.16"), ip("10.0.0.2")]
+        );
+        // Through the environment too.
+        assert_eq!(
+            select(Some("168.63.129.16"), &[], false),
+            [ip("168.63.129.16")]
+        );
+    }
+
+    #[test]
+    fn other_metadata_endpoints_and_look_alikes_stay_rejected() {
+        // Metadata endpoints that serve no DNS, a neighbour of a platform
+        // resolver, an IPv4-mapped form, loopback and link-local servers.
+        for m in [
+            "169.254.170.2",
+            "fd00:ec2::254",
+            "100.100.100.200",
+            "169.254.169.252",
+            "::ffff:168.63.129.16",
+            "::ffff:169.254.169.254",
+            "127.0.0.1",
+            "127.0.0.53",
+            "::1",
+            "169.254.1.1",
+        ] {
+            assert!(!usable(ip(m), true), "{m}");
+        }
+        // A host with only those falls back to public resolvers.
+        let conf = "nameserver 127.0.0.53\nnameserver 169.254.170.2\nnameserver 127.0.0.1\n";
+        assert_eq!(
+            select(None, &nameservers(conf), false),
+            [ip("1.1.1.1"), ip("8.8.8.8")]
+        );
     }
 
     #[test]

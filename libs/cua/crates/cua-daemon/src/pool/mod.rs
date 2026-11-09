@@ -558,7 +558,7 @@ pub struct Explicit {
 }
 
 /// A member's record (`<state>/.pool/<member>.json`, 0600).
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 struct Record {
     name: String,
     key: String,
@@ -570,6 +570,20 @@ struct Record {
     /// The agent stack was installed before the member was ready.
     #[serde(default)]
     prepared: bool,
+}
+
+impl std::fmt::Debug for Record {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Record")
+            .field("name", &self.name)
+            .field("key", &"<redacted>")
+            .field("backend", &self.backend)
+            .field("secret", &"<redacted>")
+            .field("template", &self.template)
+            .field("keep", &self.keep)
+            .field("prepared", &self.prepared)
+            .finish()
+    }
 }
 
 /// What the pool holds now ([`WarmPool::status`]).
@@ -3850,12 +3864,14 @@ mod tests {
                 1,
                 Some(1),
                 None,
-                Some(Duration::from_millis(1)),
+                // Long enough that the first fill (the fake boots at once) lands before the pool
+                // counts as idle; a 1 ms window raced that fill.
+                Some(Duration::from_millis(500)),
                 Some(vec!["claude-code".into()]),
             )
             .unwrap();
         until_ready(&f, &key, 1).await;
-        tokio::time::sleep(Duration::from_millis(20)).await;
+        tokio::time::sleep(Duration::from_millis(600)).await;
         // Idle now: the next tick gives the member back, nothing refills it,
         // and a create never waits for one.
         f.pool.tick().await;

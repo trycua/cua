@@ -22,6 +22,7 @@ name: "CI: openkoalabot-example (TypeScript and Swift)"
 
 on:
   pull_request:
+  merge_group:
   push:
     branches: [main]
   # The full build on main, whatever changed (a push builds only when it touches
@@ -59,12 +60,12 @@ env:
 jobs:
   quick:
     name: quick
-    if: github.event_name == 'pull_request'
+    if: (github.event_name == 'pull_request' || github.event_name == 'merge_group')
     uses: ./.github/workflows/ci-quick.yml
 
   typescript:
-    needs: changes
-    if: ${{ !failure() && !cancelled() && needs.changes.outputs.typescript == 'true' && !startsWith(github.head_ref, 'release-please--branches--') }}
+    needs: [quick, changes]
+    if: ${{ !failure() && !cancelled() && needs.changes.outputs.typescript == 'true' && !startsWith(github.head_ref, 'release-please--branches--') && needs.quick.outputs.skip != 'true' }}
     name: openkoalabot-example-ts (npm test)
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -117,7 +118,7 @@ jobs:
 
   changes:
     needs: quick
-    if: ${{ !failure() && !cancelled() }}
+    if: ${{ !failure() && !cancelled() && needs.quick.outputs.skip != 'true' }}
     name: scope (macOS Swift sample)
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -157,11 +158,11 @@ jobs:
           python3 .github/scripts/ci_swift_samples_scope.py scope openkoalabot <<< "$files" | tee -a "$GITHUB_STEP_SUMMARY"
 
   swift:
-    needs: changes
-    if: ${{ !failure() && !cancelled() && needs.changes.outputs.run == 'true' && !startsWith(github.head_ref, 'release-please--branches--') }}
+    needs: [quick, changes]
+    if: ${{ !failure() && !cancelled() && needs.changes.outputs.run == 'true' && !startsWith(github.head_ref, 'release-please--branches--') && needs.quick.outputs.skip != 'true' }}
     name: openkoalabot-example-swift (swift test)
     runs-on: macos-26
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:

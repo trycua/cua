@@ -4,7 +4,7 @@
 /**
  * The sidebar's account area (CUA-2204): one line, the avatar's initial
  * and the name (or email), that opens a menu with Settings, Plan (with the
- * plan's word) and Sign out; and, on Free only, a calm "Run more Spaces
+ * plan's word) and Sign out; and, on Free only, a calm "Use more computers
  * at once with Pro" banner right above it. The menu's items and the
  * banner's rule are the core's (`account.menu`, `upsell.proBanner`): the
  * banner has Upgrade and no way to close it, and a paid plan never sees it.
@@ -29,6 +29,7 @@ import {
 } from "@/bridge";
 import { Button } from "@/components/ui/button";
 import { toast } from "@/components/ui/toast";
+import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 
 /** Where Plan and Upgrade go: the plan card's link (Pro's checkout on
@@ -50,17 +51,25 @@ function usePlanLink(): { plan: string; open(): void } {
   };
 }
 
-/** The Pro line and Upgrade: Free only (the core's `upsell.proBanner`). */
+/** The Pro line and Upgrade: Free only, near a limit (the core's `upsell.proBanner` with the month's usage). */
 export function ProBanner() {
   const { core } = useBridge();
   const usage = useRelayUsage();
   const link = usePlanLink();
-  const banner = useMemo(() => (core.status !== "ready" || !usage ? null : proBanner(core, { plan: usage.plan })), [core, usage]);
+  const banner = useMemo(() => (core.status !== "ready" || !usage ? null : proBanner(core, { plan: usage.plan, usage })), [core, usage]);
   if (!banner?.visible) return null;
   return (
     <div data-pro-banner="" className="mx-2.5 mb-1.5 flex min-h-9 items-center gap-1 rounded-lg bg-brand-surface py-1 pr-1 pl-3">
-      <span data-pro-copy="" className="min-w-0 flex-1 whitespace-normal text-xs leading-4 font-medium">{banner.text}</span>
-      <Button size="sm" variant="ghost" data-pro-upgrade="" className="h-6 bg-background/60 px-2 hover:bg-background dark:bg-white/10 dark:hover:bg-white/15" onClick={link.open}>
+      <span data-pro-copy="" className="min-w-0 flex-1 whitespace-normal text-xs leading-4 font-medium">
+        {banner.text}
+      </span>
+      <Button
+        size="sm"
+        variant="ghost"
+        data-pro-upgrade=""
+        className="h-6 bg-background/60 px-2 hover:bg-background dark:bg-white/10 dark:hover:bg-white/15"
+        onClick={link.open}
+      >
         {banner.button}
       </Button>
     </div>
@@ -69,6 +78,7 @@ export function ProBanner() {
 
 /** The signed-in line and its menu. `identity`: the name, else the email. */
 export function AccountLine({ identity }: { identity: string }) {
+  const t = useT();
   const { core } = useBridge();
   const { data: session, signOut } = useSession();
   const navigate = useNavigate();
@@ -78,10 +88,10 @@ export function AccountLine({ identity }: { identity: string }) {
     return core.status === "ready"
       ? accountMenu(core, input)
       : [
-          { id: "settings", label: "Settings", value: null, separatorBefore: false },
-          ...(input.authMode === "user" ? [{ id: "signOut" as const, label: "Sign out", value: null, separatorBefore: true }] : []),
+          { id: "settings", label: t("shell.account.settings"), value: null, separatorBefore: false },
+          ...(input.authMode === "user" ? [{ id: "signOut" as const, label: t("shell.account.sign_out"), value: null, separatorBefore: true }] : []),
         ];
-  }, [core, link.plan, session?.account.authMode]);
+  }, [core, link.plan, session?.account.authMode, t]);
   const run = (item: AccountMenuItem) => {
     switch (item.id) {
       case "settings":
@@ -89,7 +99,7 @@ export function AccountLine({ identity }: { identity: string }) {
       case "plan":
         return link.open();
       case "signOut":
-        return void signOut().catch((e: unknown) => toast("Couldn't sign out", { description: e instanceof Error ? e.message : String(e) }));
+        return void signOut().catch((e: unknown) => toast(t("shell.account.sign_out_failed"), { description: e instanceof Error ? e.message : String(e) }));
     }
   };
   return (
@@ -98,7 +108,10 @@ export function AccountLine({ identity }: { identity: string }) {
         data-account-line=""
         className="flex h-9 w-full items-center gap-2.5 rounded-lg px-2 text-left outline-none hover:bg-foreground/5 focus-visible:ring-2 focus-visible:ring-ring/60 data-popup-open:bg-foreground/[0.07] dark:data-popup-open:bg-white/[0.08]"
       >
-        <span aria-hidden className="flex size-6 shrink-0 items-center justify-center rounded-full bg-brand-surface text-2xs font-semibold text-brand-strong uppercase">
+        <span
+          aria-hidden
+          className="flex size-6 shrink-0 items-center justify-center rounded-full bg-brand-surface text-2xs font-semibold text-brand-strong uppercase"
+        >
           {identity.slice(0, 1)}
         </span>
         <span className="min-w-0 flex-1 truncate text-xs font-medium" data-signin-identity="">

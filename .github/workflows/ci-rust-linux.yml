@@ -16,6 +16,12 @@ on:
       - "libs/cua-driver/rust/crates/cursor-overlay/**"
       - "libs/cua-driver/rust/crates/pip-preview/**"
       - "libs/cua-driver/rust/crates/platform-linux/**"
+      - "libs/cua-driver/rust/crates/platform-macos/**"
+      - "libs/cua-driver/rust/crates/platform-windows/**"
+      - "libs/cua-driver/rust/crates/cua-driver-bindgen/**"
+      - "libs/cua-driver/rust/crates/cua-driver-uia/**"
+      - "libs/cua-driver/rust/crates/cursor-theme-cli/**"
+      - "libs/cua-driver/rust/crates/cua-perception/**"
       - "libs/cua-driver/wayland-helper/**"
       - "libs/cua-driver/tests/fixtures/**"
       - "scripts/ci/linux/test-pacman-updates.sh"
@@ -23,6 +29,7 @@ on:
       - "flake.nix"
       - "flake.lock"
       - ".github/workflows/ci-rust-linux.yml"
+  merge_group:
   push:
     branches: [main]
     paths:
@@ -39,6 +46,12 @@ on:
       - "libs/cua-driver/rust/crates/cursor-overlay/**"
       - "libs/cua-driver/rust/crates/pip-preview/**"
       - "libs/cua-driver/rust/crates/platform-linux/**"
+      - "libs/cua-driver/rust/crates/platform-macos/**"
+      - "libs/cua-driver/rust/crates/platform-windows/**"
+      - "libs/cua-driver/rust/crates/cua-driver-bindgen/**"
+      - "libs/cua-driver/rust/crates/cua-driver-uia/**"
+      - "libs/cua-driver/rust/crates/cursor-theme-cli/**"
+      - "libs/cua-driver/rust/crates/cua-perception/**"
       - "libs/cua-driver/wayland-helper/**"
       - "libs/cua-driver/tests/fixtures/**"
       - "scripts/ci/linux/test-pacman-updates.sh"
@@ -66,12 +79,12 @@ env:
 jobs:
   quick:
     name: quick
-    if: github.event_name == 'pull_request'
+    if: (github.event_name == 'pull_request' || github.event_name == 'merge_group')
     uses: ./.github/workflows/ci-quick.yml
 
   pacman:
     needs: quick
-    if: ${{ !failure() && !cancelled() && (!startsWith(github.head_ref, 'release-please--branches--')) }}
+    if: ${{ !failure() && !cancelled() && (!startsWith(github.head_ref, 'release-please--branches--')) && needs.quick.outputs.skip != 'true' }}
     name: Arch native pacman updates
     runs-on: ubuntu-latest
     container: archlinux:base-devel
@@ -128,7 +141,7 @@ jobs:
 
   unit:
     needs: quick
-    if: ${{ !failure() && !cancelled() && (!startsWith(github.head_ref, 'release-please--branches--')) }}
+    if: ${{ !failure() && !cancelled() && (!startsWith(github.head_ref, 'release-please--branches--')) && needs.quick.outputs.skip != 'true' }}
     name: Rust Linux unit and compile
     runs-on: ubuntu-latest
     # 10 to 14 minutes warm. The headroom covers a run with neither the
@@ -171,14 +184,14 @@ jobs:
             echo "::error::cua-driver resolves atspi-connection with its p2p feature; see the atspi-connection entry in crates/platform-linux/Cargo.toml"
             exit 1
           fi
-      - name: Clippy platform-linux (all targets)
+      - name: Clippy the Cua Driver workspace (all targets)
         working-directory: libs/cua-driver/rust
-        run: cargo clippy --locked -p platform-linux --all-targets -- -D warnings
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
       - name: Run Linux Rust tests
         working-directory: libs/cua-driver/rust
         env:
           CUA_TEST_REQUIRE_DRIVER_BIN: "1"
-        run: cargo test -p cua-driver -p cua-driver-e2e -p cua-driver-contract -p cua-driver-core -p cua-driver-testkit -p cursor-overlay -p cursor-theme-cli -p platform-linux --all-targets --locked
+        run: cargo test -p cua-driver -p cua-driver-e2e -p cua-driver-contract -p cua-driver-core -p cua-driver-testkit -p cursor-overlay -p cursor-theme-cli -p platform-linux -p platform-windows --all-targets --locked
       - name: Run Wayland portal tests (portal-input + portal-capture)
         working-directory: libs/cua-driver/rust
         run: cargo test --locked -p platform-linux --features portal-input,portal-capture --lib

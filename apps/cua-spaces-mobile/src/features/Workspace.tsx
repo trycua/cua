@@ -50,12 +50,28 @@ export function Workspace({ selected, onSelect, entry }: { selected: string | nu
     </View>
   );
   const thread = selected ? (
-    <ThreadScreen key={selected} spaceId={selected} focusSeq={entry ?? null} onFullStream={() => router.push({ pathname: "/stream/[id]", params: { id: selected } })} onOpenChanges={() => router.push({ pathname: "/diff/[id]", params: { id: selected } })} hideHeaderStream={layout === "triple" || layout === "duo"} onBack={layout === "duo" ? () => onSelect(null) : undefined} />
+    <ThreadScreen
+      key={selected}
+      spaceId={selected}
+      focusSeq={entry ?? null}
+      onFullStream={() => router.push({ pathname: "/stream/[id]", params: { id: selected } })}
+      onOpenChanges={() => router.push({ pathname: "/diff/[id]", params: { id: selected } })}
+      hideHeaderStream={layout === "triple" || layout === "duo"}
+      onBack={layout === "duo" ? () => onSelect(null) : undefined}
+    />
   ) : (
     empty
   );
   const stream = selected ? (
-    <StreamView spaceId={selected} scene={space?.scene ?? "blank"} mode="full" embedded controlled={controlled} onClose={() => {}} onToggleControl={toggleControl} />
+    <StreamView
+      spaceId={selected}
+      scene={space?.scene ?? "blank"}
+      mode="full"
+      embedded
+      controlled={controlled}
+      onClose={() => {}}
+      onToggleControl={toggleControl}
+    />
   ) : (
     <View style={{ flex: 1, backgroundColor: "#000" }} />
   );

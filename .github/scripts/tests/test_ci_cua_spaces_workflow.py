@@ -19,7 +19,7 @@ def test_bundle_is_skipped_on_plain_pull_requests():
     condition = JOBS["bundle"]["if"]
     assert "github.event_name != 'pull_request'" in condition
     assert "contains(github.event.pull_request.labels.*.name, 'ci:full')" in condition
-    assert JOBS["bundle"]["needs"] == "changes"
+    assert JOBS["bundle"]["needs"] == ["quick", "changes"]
 
 
 def test_bundle_still_builds_on_main_and_manual_runs():

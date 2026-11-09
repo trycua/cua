@@ -34,18 +34,8 @@ export function effortLevels(harness: string, modelId: string): EffortLevels | n
   return null;
 }
 
-/** "High", "Extra high": a level as the person reads it. */
-export function effortLabel(level: string): string {
-  if (level === "xhigh") return "Extra high";
-  return level.charAt(0).toUpperCase() + level.slice(1);
-}
-
-/** A level as a segment of the menu's row says it: "Low", "Med", "High", "XHigh", "Max". */
-export function effortShort(level: string): string {
-  if (level === "medium") return "Med";
-  if (level === "xhigh") return "XHigh";
-  return effortLabel(level);
-}
+/** The catalog key of a level's name; `short` for the segment of the menu's row ("Med"), else the chip's ("Medium"). */
+export const effortKey = (level: string, short = false) => `home.agent_picker.effort_${short ? "short_" : ""}${level}`;
 
 /** The model as the chip names it: "Sonnet 5.5", not "Claude Sonnet 5.5". */
 export function shortModelName(label: string): string {
@@ -60,7 +50,7 @@ export function effortOf(harness: string, modelId: string, chosen?: string | nul
 }
 
 /** The chip's words: `lead` in the normal weight, `trail` quiet after it. */
-export function chipWords(harnessLabel: string, modelLabel: string, effort: string | null): { lead: string; trail: string } {
+export function chipWords(harnessLabel: string, modelLabel: string, effort: string | null, say: (key: string) => string): { lead: string; trail: string } {
   const model = shortModelName(modelLabel);
-  return effort ? { lead: model, trail: effortLabel(effort) } : { lead: harnessLabel, trail: model };
+  return effort ? { lead: model, trail: say(effortKey(effort)) } : { lead: harnessLabel, trail: model };
 }

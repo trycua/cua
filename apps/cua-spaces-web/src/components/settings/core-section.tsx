@@ -10,6 +10,7 @@ import { GroupedRow, GroupedSection, SectionHeading } from "@/components/ui/grou
 import { Input } from "@/components/ui/input";
 import { Segmented } from "@/components/ui/segmented";
 import { Select } from "@/components/ui/select";
+import { useT } from "@/i18n";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 
@@ -49,7 +50,14 @@ export function CoreSettingsSection({
         className="mt-0"
         action={
           section.button ? (
-            <Button size="sm" variant="outline" disabled={!section.buttonEnabled} title={section.buttonHelp ?? undefined} onClick={onHeaderButton} data-section-button>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={!section.buttonEnabled}
+              title={section.buttonHelp ?? undefined}
+              onClick={onHeaderButton}
+              data-section-button
+            >
               {section.button}
             </Button>
           ) : null
@@ -79,6 +87,7 @@ export function CoreSettingsRow({
   onChoose,
   onEdit,
 }: CoreRowHandlers & { row: SettingsRow; description?: string; /** Draw a choice as a drop-down, however few options it has. */ asSelect?: boolean }) {
+  const t = useT();
   const { openExternal } = useSession();
   const attrs = { "data-setting-row": row.id, "data-kind": row.kind, "data-enabled": String(row.enabled) };
   const id = `setting-${row.id.replace(/[^a-z0-9-]/gi, "-")}`;
@@ -130,7 +139,7 @@ export function CoreSettingsRow({
           <div className="text-[13px]" data-row-label>
             {row.label}
           </div>
-          <PromptBox text={row.value ?? ""} copyLabel={row.button ?? "Copy"} />
+          <PromptBox text={row.value ?? ""} copyLabel={row.button ?? t("settings.core.copy")} />
         </div>
       );
     case "link":
@@ -209,6 +218,7 @@ function Label({ label, description, htmlFor }: { label: string; description?: s
 }
 
 function PromptBox({ text, copyLabel }: { text: string; copyLabel: string }) {
+  const t = useT();
   const [copied, setCopied] = useState(false);
   return (
     <div className="mt-2 flex items-start gap-2 rounded-lg bg-muted p-2.5">
@@ -226,7 +236,7 @@ function PromptBox({ text, copyLabel }: { text: string; copyLabel: string }) {
         }}
       >
         {copied ? <CheckIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />}
-        {copied ? "Copied" : copyLabel}
+        {copied ? t("settings.core.copied") : copyLabel}
       </Button>
     </div>
   );

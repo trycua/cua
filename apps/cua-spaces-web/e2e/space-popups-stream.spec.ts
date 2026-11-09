@@ -61,7 +61,10 @@ async function viewer(page: Page): Promise<Surface> {
 
 /** Tells the page the host's stream is live, as the host does when frames arrive. */
 async function live(page: Page, surfaceId: string) {
-  await page.evaluate((id) => window.dispatchEvent(new CustomEvent("cua:event", { detail: { event: "video.surface", payload: { surfaceId: id, state: "live" } } })), surfaceId);
+  await page.evaluate(
+    (id) => window.dispatchEvent(new CustomEvent("cua:event", { detail: { event: "video.surface", payload: { surfaceId: id, state: "live" } } })),
+    surfaceId,
+  );
 }
 
 const overlaps = (a: Surface["rect"], b: Surface["rect"]) => a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
@@ -84,24 +87,35 @@ test("every popup on a Space's page leaves the stream drawn, the same size, with
   async function expectDrawn(name: string, popup: string, modal: boolean) {
     const el = page.locator(popup).first();
     await expect(el, name).toBeVisible();
-    // Reports follow layout over a few frames.
-    await page.waitForTimeout(400);
-    const box = (await el.boundingBox())!;
-    expect(box, name).not.toBeNull();
-    const over = overlaps(box, before.rect);
-    if (over && !modal) {
-      await expect
-        .poll(async () => ((await viewer(page)).holes ?? []).some((h) => overlaps(h, box)), { message: `${name}: a hole where the popup is`, timeout: 5_000 })
-        .toBe(true);
-    }
-    // A modal dialog hides the video (no hole, nothing drawn over its edge); anything else leaves it drawn.
-    await expect.poll(async () => (await viewer(page)).occluded, { message: `${name}: ${modal ? "hidden under a modal dialog" : "not hidden"}`, timeout: 5_000 }).toBe(modal);
-    const drawn = await viewer(page);
-    if (modal) expect((await viewer(page)).holes ?? [], `${name}: no hole to leak through`).toEqual([]);
-    expect(drawn.visible, `${name}: still visible`).toBe(true);
-    expect({ w: drawn.rect.width, h: drawn.rect.height }, `${name}: not resized`).toEqual({ w: before.rect.width, h: before.rect.height });
-    expect({ x: drawn.rect.x, y: drawn.rect.y }, `${name}: not moved`).toEqual({ x: before.rect.x, y: before.rect.y });
-    expect(drawn.interactive, `${name}: ${modal ? "takes no input under a modal dialog" : "stays interactive"}`).toBe(!modal);
+    // The popup settles and the reports follow layout over a few frames, so
+    // poll until the popup's box holds still and the report matches it.
+    let box: Surface["rect"] | null = null;
+    let over = false;
+    await expect
+      .poll(
+        async () => {
+          const prev = box;
+          box = await el.boundingBox();
+          if (!box) return "popup has no box";
+          over = overlaps(box, before.rect);
+          const now = await viewer(page);
+          const holes = now.holes ?? [];
+          return {
+            settled: prev !== null && prev.x === box.x && prev.y === box.y && prev.width === box.width && prev.height === box.height,
+            // A modal dialog hides the video, so no hole may leak through; a popup over the picture needs a hole under it.
+            holes: modal ? (holes.length ? "a hole to leak through" : "ok") : over && !holes.some((h) => overlaps(h, box!)) ? "no hole under the popup" : "ok",
+            occluded: now.occluded,
+            visible: now.visible,
+            interactive: now.interactive,
+            rect: now.rect,
+          };
+        },
+        {
+          message: `${name}: drawn at the same size and place, ${modal ? "hidden and non-interactive under a modal dialog" : "interactive, with a hole where the popup floats over it"}`,
+          timeout: 5_000,
+        },
+      )
+      .toEqual({ settled: true, holes: "ok", occluded: modal, visible: true, interactive: !modal, rect: before.rect });
     return over;
   }
 

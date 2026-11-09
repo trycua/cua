@@ -3,7 +3,9 @@
 
 import AppKit
 import Combine
+import CoreVideo
 import CuaSpacesStreaming
+import os
 import WebKit
 
 /// Native live video for the web UI's video slots: the Space tiles on the
@@ -57,6 +59,8 @@ final class WebUIVideoSurfaces: NSObject, WKScriptMessageHandler {
     }
 
     /// Opens a Space's stream for a tier through the app's existing path.
+    static let timingLog = Logger(subsystem: "ai.cua.spaces", category: "stream.timing")
+
     typealias Opener = (_ spaceId: String, _ tier: VideoTier) async throws -> SpaceStreamSourceProviding
 
     private weak var webView: WKWebView?
@@ -95,6 +99,14 @@ final class WebUIVideoSurfaces: NSObject, WKScriptMessageHandler {
         /// the window is hidden, and outlives its slots.
         var holds = 0
         var opening: Task<Void, Never>?
+        /// The click (a slot first asked for this stream) and the resolved
+        /// source, stamped into the session's `stream.open` span.
+        /// Opened for an intent (`prewarm`), not yet for a slot.
+        var prewarmed = false
+        /// Its session has streamed (a later stop is a loss, not a start).
+        var streamed = false
+        var requestedAt = ProcessInfo.processInfo.systemUptime
+        var resolvedAt: TimeInterval?
         var failure: String?
         var status: AnyCancellable?
         /// Arrival to presented per presented frame, ms, newest last (the video bench).
@@ -120,6 +132,10 @@ final class WebUIVideoSurfaces: NSObject, WKScriptMessageHandler {
         var frames: AnyCancellable?
         var presence: AnyCancellable?
         var bound = false
+        /// When the slot attached, and whether its first frame has painted:
+        /// the click-to-first-frame time of this slot (`stream.open`).
+        let attachedAt = ProcessInfo.processInfo.systemUptime
+        var painted = false
         init(_ update: VideoSurfaceUpdate) {
             id = update.surfaceId
             key = StreamKey(spaceId: update.spaceId, tier: update.tier)
@@ -153,6 +169,40 @@ final class WebUIVideoSurfaces: NSObject, WKScriptMessageHandler {
             // The page moved the keyboard: no viewer takes it back by itself.
             userMovedKeyboard()
             focus(id)
+        case let .prewarm(spaceId):
+            prewarm(spaceId: spaceId)
+        }
+    }
+
+    // MARK: - Intent
+
+    /// How long a stream opened for an intent (hover, press) waits for its
+    /// slot before it is let go.
+    var prewarmGrace: Duration = .seconds(15)
+
+    /// Opens a Space's viewer stream before its page does: the pointer is on
+    /// the Space's tile, row or link, so the click that follows finds the
+    /// stream connected (or already connecting) instead of starting it. Does
+    /// nothing for a Space whose viewer stream is open, opening or warm, or
+    /// while the window is hidden. It counts as a warm stream with no slot
+    /// (`maxWarm`, the oldest going first) and is let go after
+    /// `prewarmGrace` if no slot takes it; a stream that fails to open is
+    /// forgotten when its slot comes, which opens it again.
+    func prewarm(spaceId: String) {
+        guard !paused else { return }
+        let key = StreamKey(spaceId: spaceId, tier: .full)
+        guard streams[key] == nil else { return }
+        Self.timingLog.debug("stream.prewarm space=\(spaceId, privacy: .public)")
+        let stream = Stream()
+        stream.users = 1
+        stream.prewarmed = true
+        streams[key] = stream
+        openStream(stream, key: key)
+        goWarm(key)
+        Task { @MainActor [weak self, weak stream] in
+            try? await Task.sleep(for: self?.prewarmGrace ?? .zero)
+            guard let self, let stream else { return }
+            self.letGo(stream, key: key)
         }
     }
 
@@ -205,12 +255,22 @@ final class WebUIVideoSurfaces: NSObject, WKScriptMessageHandler {
         streams[surface.key] = stream
         stream.users += 1
         warm.removeAll { $0 == surface.key }
+        // A stream opened for an intent that failed is no verdict on the slot:
+        // it opens again for it.
+        if stream.prewarmed, stream.failure != nil {
+            stream.failure = nil
+            stream.requestedAt = ProcessInfo.processInfo.systemUptime
+        }
+        stream.prewarmed = false
         if let failure = stream.failure {
             setPhase(surface, .failed(failure, opening: true))
         } else if let session = stream.session {
             bind(surface, to: session)
-        } else if stream.opening == nil {
-            openStream(stream, key: surface.key)
+        } else {
+            // Nothing to draw yet: the Space's last picture stands in while
+            // its stream opens.
+            showPoster(surface)
+            if stream.opening == nil { openStream(stream, key: surface.key) }
         }
         return surface
     }
@@ -221,7 +281,10 @@ final class WebUIVideoSurfaces: NSObject, WKScriptMessageHandler {
             do {
                 let provider = try await self.open(key.spaceId, key.tier)
                 guard self.streams[key] === stream, stream.users > 0, !Task.isCancelled else { return }
+                stream.resolvedAt = ProcessInfo.processInfo.systemUptime
                 let session = LiveStreamSession(provider: provider)
+                session.stampOpen(.slot, at: stream.requestedAt)
+                if let t = stream.resolvedAt { session.stampOpen(.resolved, at: t) }
                 stream.session = session
                 stream.status = session.$status.receive(on: DispatchQueue.main).sink { [weak self] status in
                     self?.statusChanged(key, status)
@@ -255,9 +318,16 @@ final class WebUIVideoSurfaces: NSObject, WKScriptMessageHandler {
         // transport and its capture on a Space nobody is looking at. The
         // slot that comes back opens a fresh stream and says why if it can't.
         if isUnattended(key) {
-            if status != .streaming, !isSuspended(status) { dropWarm(key) }
+            // A stream opened for an intent (`prewarm`) is still connecting:
+            // that is not a stream that stopped. Only one that was
+            // streaming and is not any more, or one that failed, goes.
+            if status == .streaming { streams[key]?.streamed = true }
+            let lost: Bool
+            if case .failed = status { lost = true } else { lost = streams[key]?.streamed == true && status != .streaming && !isSuspended(status) }
+            if lost { dropWarm(key) }
             return
         }
+        if status == .streaming { streams[key]?.streamed = true }
         guard case let .failed(reason) = status else { return }
         for s in surfaces.values where s.key == key { setPhase(s, .failed(reason)) }
     }
@@ -280,6 +350,9 @@ final class WebUIVideoSurfaces: NSObject, WKScriptMessageHandler {
         surface.frames = session.$frame.receive(on: DispatchQueue.main).sink { [weak self, weak session, weak surface] frame in
             guard let self, let session, let surface else { return }
             let input = surface.view.input
+            // No picture yet: the Space's last one stands in for it.
+            if frame == nil, self.showPoster(surface) { return }
+            surface.view.posterOnly = false
             input.surfaceSize = session.surfaceSize
             input.present(frame)
             session.presentation.viewDidPresent(pixels: input.layerHasPixels,
@@ -290,6 +363,12 @@ final class WebUIVideoSurfaces: NSObject, WKScriptMessageHandler {
                 Self.appendSample(&stream.presentedMs, max(0, ms))
             }
             if frame != nil {
+                session.stampOpen(.painted, space: surface.key.spaceId, tier: surface.key.tier.rawValue)
+                if !surface.painted {
+                    surface.painted = true
+                    let ms = Int(((self.now() - surface.attachedAt) * 1000).rounded())
+                    Self.timingLog.debug("stream.slot space=\(surface.key.spaceId, privacy: .public) tier=\(surface.key.tier.rawValue, privacy: .public) first_frame_ms=\(ms)")
+                }
                 self.setPhase(surface, .live)
             } else if case .failed = surface.phase {
                 // Stays failed until the slot is placed again.
@@ -344,7 +423,54 @@ final class WebUIVideoSurfaces: NSObject, WKScriptMessageHandler {
 
     /// A surface shows once it has a frame and the page says it can be seen.
     private func show(_ surface: Surface) {
-        surface.view.isHidden = surface.layout.hidden || surface.phase != .live
+        let poster = surface.view.posterOnly && surface.phase == .connecting
+        surface.view.isHidden = surface.layout.hidden || (surface.phase != .live && !poster)
+        // A poster is the last picture of the Space, not the Space: dimmed
+        // enough that the page's own "Connecting…" shows through it.
+        surface.view.alphaValue = poster ? Self.posterAlpha : 1
+    }
+
+    // MARK: - Posters
+
+    /// How opaque a poster draws.
+    static let posterAlpha: CGFloat = 0.55
+    /// The most posters kept, and how long one is good for.
+    static let posterCap = 8
+    static let posterMaxAge: TimeInterval = 30 * 60
+
+    private struct Poster {
+        let buffer: CVPixelBuffer
+        let at: TimeInterval
+    }
+    private var posters: [String: Poster] = [:]
+    private var posterOrder: [String] = []
+
+    /// Keeps a Space's last picture, so its next viewer shows it while it
+    /// connects instead of black.
+    private func rememberPoster(of session: LiveStreamSession, key: StreamKey) {
+        guard key.tier == .full, let buffer = session.frame else { return }
+        posters[key.spaceId] = Poster(buffer: buffer, at: now())
+        posterOrder.removeAll { $0 == key.spaceId }
+        posterOrder.append(key.spaceId)
+        while posterOrder.count > Self.posterCap { posters[posterOrder.removeFirst()] = nil }
+    }
+
+    /// Draws the Space's last picture in a connecting slot; false when there is none to draw.
+    @discardableResult
+    private func showPoster(_ surface: Surface) -> Bool {
+        guard surface.phase == .connecting, let poster = poster(for: surface.key) else { return false }
+        let input = surface.view.input
+        input.surfaceSize = CGSize(width: CVPixelBufferGetWidth(poster), height: CVPixelBufferGetHeight(poster))
+        input.present(poster)
+        surface.view.posterOnly = true
+        show(surface)
+        return true
+    }
+
+    /// The Space's last picture, if a recent one is kept.
+    func poster(for key: StreamKey) -> CVPixelBuffer? {
+        guard key.tier == .full, let p = posters[key.spaceId], now() - p.at < Self.posterMaxAge else { return nil }
+        return p.buffer
     }
 
     private func remove(_ surfaceId: String, grace: Bool = false) {
@@ -428,7 +554,10 @@ final class WebUIVideoSurfaces: NSObject, WKScriptMessageHandler {
         streams[key] = nil
         stream.opening?.cancel()
         stream.status?.cancel()
-        if let session = stream.session { Task { await session.stop() } }
+        if let session = stream.session {
+            rememberPoster(of: session, key: key)
+            Task { await session.stop() }
+        }
     }
 
     // MARK: - Picture in picture
@@ -571,6 +700,7 @@ final class WebUIVideoSurfaces: NSObject, WKScriptMessageHandler {
         for stream in streams.values {
             // The picture-in-picture panel shows a held stream: it keeps going.
             guard let session = stream.session, stream.holds == 0 else { continue }
+            if hidden, let key = streams.first(where: { $0.value === stream })?.key { rememberPoster(of: session, key: key) }
             Task { hidden ? await session.stop() : await session.start() }
         }
     }
@@ -587,6 +717,9 @@ final class VideoSurfaceView: NSView {
     /// The viewer's presence cursors, over the picture (none on tiles).
     private(set) var presence: PresenceOverlayView?
     var interactive = false
+    /// Showing a Space's last picture while it connects: it takes no pointer
+    /// or keys, since they would land on a picture, not on the Space.
+    var posterOnly = false
     /// Where scrolls go while the viewer doesn't have the keyboard.
     weak var focusOwner: NSView?
 
@@ -655,7 +788,7 @@ final class VideoSurfaceView: NSView {
     }
 
     override func hitTest(_ point: NSPoint) -> NSView? {
-        guard interactive, !isHidden else { return nil }
+        guard interactive, !isHidden, !posterOnly else { return nil }
         // Over a hole the page's own UI (a menu, the key bar) takes the click.
         if layout.inHole(convert(point, from: superview)) { return nil }
         if NSApp.currentEvent?.type == .scrollWheel, window?.firstResponder !== input { return nil }

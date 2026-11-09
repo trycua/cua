@@ -12,13 +12,14 @@ const WORDS = {
     help: "It's saved in the Keychain on this Mac and won't be shown again.",
   },
   windows: {
-    intro: "Agents in your Spaces need a provider key to run. Keys stay on this PC in Windows Credential Manager, and each one is only given to the agents that use it.",
+    intro:
+      "Agents in your Spaces need a provider key to run. Keys stay on this PC in Windows Credential Manager, and each one is only given to the agents that use it.",
     help: "It's saved in Windows Credential Manager on this PC and won't be shown again.",
   },
   // cua keeps no agent key in a file and has no vault on Linux: no store is named.
   linux: {
-    intro: "Agents in your Spaces need a provider key to run. Keys stay on this machine, and each one is only given to the agents that use it.",
-    help: "It's saved on this machine and won't be shown again.",
+    intro: "Agents in your Spaces need a provider key to run. Keys stay on this computer, and each one is only given to the agents that use it.",
+    help: "It's saved on this computer and won't be shown again.",
   },
 } as const;
 
@@ -38,7 +39,10 @@ describe.skipIf(!wasmBuilt)("Settings, Connections says where keys stay in the s
     const [mac, win] = [agentKeysView(core, input, "macos")!, agentKeysView(core, input, "windows")!];
     expect({ ...win, intro: "" }).toEqual({ ...mac, intro: "" });
     for (const os of ["windows", "linux"] as const) {
-      const words = JSON.stringify([agentKeysView(core, { keys: [{ provider: "openai", env: "OPENAI_API_KEY", last4: "3f9a", addedMs: 1 }] }, os), agentKeyForm(core, input, { provider: "other" }, os)]);
+      const words = JSON.stringify([
+        agentKeysView(core, { keys: [{ provider: "openai", env: "OPENAI_API_KEY", last4: "3f9a", addedMs: 1 }] }, os),
+        agentKeyForm(core, input, { provider: "other" }, os),
+      ]);
       expect(words, os).not.toMatch(/Keychain|Mac/);
     }
   });

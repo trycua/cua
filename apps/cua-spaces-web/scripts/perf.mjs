@@ -68,9 +68,17 @@ const routes = Object.keys(manifest)
   .map((k) => ({ name: routeName(k), js: sum([...closure(k)].filter((d) => !entryKeys.has(d))) }))
   .sort((a, b) => a.name.localeCompare(b.name));
 
-const jsFiles = new Set(Object.values(manifest).map((c) => c.file).filter((f) => f.endsWith(".js")));
+const jsFiles = new Set(
+  Object.values(manifest)
+    .map((c) => c.file)
+    .filter((f) => f.endsWith(".js")),
+);
 const cssFiles = new Set(Object.values(manifest).flatMap((c) => c.css ?? []));
-const wasmFiles = new Set(Object.values(manifest).map((c) => c.file).filter((f) => f.endsWith(".wasm")));
+const wasmFiles = new Set(
+  Object.values(manifest)
+    .map((c) => c.file)
+    .filter((f) => f.endsWith(".wasm")),
+);
 const filesSize = (files) => [...files].reduce((acc, f) => add(acc, size(f)), ZERO);
 
 const sizes = {
@@ -137,7 +145,11 @@ async function measureTiming() {
           if (t.fcp !== null) fcp.push(t.fcp);
           await context.close();
         }
-        out[route] = { firstRenderMs: Math.round(median(firstRender)), fcpMs: fcp.length ? Math.round(median(fcp)) : null, cls: Math.round(median(cls) * 10000) / 10000 };
+        out[route] = {
+          firstRenderMs: Math.round(median(firstRender)),
+          fcpMs: fcp.length ? Math.round(median(fcp)) : null,
+          cls: Math.round(median(cls) * 10000) / 10000,
+        };
       }
     } finally {
       await browser.close();
@@ -187,7 +199,13 @@ const row = (name, s, limit) => {
   if (SHIFT_ONLY) return;
   if (over) failures.push(`${name} is ${kb(s.raw)}, over its ${kb(limit)} budget`);
   if (limit === undefined) warnings.push(`${name} has no budget; run \`pnpm perf --update\` to add one`);
-  rows.push([name, kb(s.raw), kb(s.gzip), limit === undefined ? "none" : kb(limit), over ? "OVER" : limit === undefined ? "" : `${Math.round((s.raw / limit) * 100)}%`]);
+  rows.push([
+    name,
+    kb(s.raw),
+    kb(s.gzip),
+    limit === undefined ? "none" : kb(limit),
+    over ? "OVER" : limit === undefined ? "" : `${Math.round((s.raw / limit) * 100)}%`,
+  ]);
 };
 
 row("entry (shell, router, bridge)", sizes.entry, budget.entry);
@@ -197,17 +215,23 @@ row("total CSS", sizes.totalCss, budget.totalCss);
 row("app core wasm", sizes.wasm, budget.wasm);
 
 const widths = [34, 11, 11, 11, 6];
-if (!SHIFT_ONLY) console.log(`\n${pad("Chunk", widths[0])}${lpad("Size", widths[1])}${lpad("Gzip", widths[2])}${lpad("Budget", widths[3])}${lpad("Used", widths[4] + 2)}`);
-for (const r of SHIFT_ONLY ? [] : rows) console.log(`${pad(r[0], widths[0])}${lpad(r[1], widths[1])}${lpad(r[2], widths[2])}${lpad(r[3], widths[3])}${lpad(r[4], widths[4] + 2)}`);
+if (!SHIFT_ONLY)
+  console.log(`\n${pad("Chunk", widths[0])}${lpad("Size", widths[1])}${lpad("Gzip", widths[2])}${lpad("Budget", widths[3])}${lpad("Used", widths[4] + 2)}`);
+for (const r of SHIFT_ONLY ? [] : rows)
+  console.log(`${pad(r[0], widths[0])}${lpad(r[1], widths[1])}${lpad(r[2], widths[2])}${lpad(r[3], widths[3])}${lpad(r[4], widths[4] + 2)}`);
 
 if (timing) {
-  console.log(`\n${pad("Time to first render (median of " + RUNS + ")", widths[0])}${lpad("Render", widths[1])}${lpad("FCP", widths[2])}${lpad("Budget", widths[3])}${lpad("CLS", widths[4] + 4)}`);
+  console.log(
+    `\n${pad("Time to first render (median of " + RUNS + ")", widths[0])}${lpad("Render", widths[1])}${lpad("FCP", widths[2])}${lpad("Budget", widths[3])}${lpad("CLS", widths[4] + 4)}`,
+  );
   for (const [route, t] of Object.entries(timing)) {
     const over = budget.firstRenderMs !== undefined && t.firstRenderMs > budget.firstRenderMs;
     if (over) failures.push(`/${route} first rendered after ${t.firstRenderMs} ms, over the ${budget.firstRenderMs} ms budget`);
     const shifted = budget.cls !== undefined && t.cls >= budget.cls;
     if (shifted) failures.push(`/${route} shifted by ${t.cls} while loading, over the ${budget.cls} layout-shift budget`);
-    console.log(`${pad("/" + route, widths[0])}${lpad(t.firstRenderMs + " ms", widths[1])}${lpad(t.fcpMs === null ? "n/a" : t.fcpMs + " ms", widths[2])}${lpad((budget.firstRenderMs ?? "none") + " ms", widths[3])}${lpad(t.cls, widths[4] + 4)}${over || shifted ? "  OVER" : ""}`);
+    console.log(
+      `${pad("/" + route, widths[0])}${lpad(t.firstRenderMs + " ms", widths[1])}${lpad(t.fcpMs === null ? "n/a" : t.fcpMs + " ms", widths[2])}${lpad((budget.firstRenderMs ?? "none") + " ms", widths[3])}${lpad(t.cls, widths[4] + 4)}${over || shifted ? "  OVER" : ""}`,
+    );
   }
 }
 

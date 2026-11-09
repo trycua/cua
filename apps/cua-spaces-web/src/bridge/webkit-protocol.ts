@@ -40,6 +40,7 @@ import { KEYVAULT_MANAGE_WEBKIT_METHODS } from "./ops/keyvault-manage";
 import { KEYVAULT_SETUP_WEBKIT_METHODS } from "./ops/keyvault-setup";
 import { THREAD_WEBKIT_METHODS } from "./ops/thread";
 import { AGENT_THREADS_WEBKIT_METHODS } from "./ops/agent-threads";
+import { AGENT_SIGN_IN_WEBKIT_METHODS } from "./ops/agent-sign-in";
 import { SPACES_SETTINGS_WEBKIT_METHODS } from "./ops/spaces-settings";
 
 export const WEBKIT_HANDLER_NAME = "cua";
@@ -230,6 +231,7 @@ export const WEBKIT_METHODS = [
   ...CI_WEBKIT_METHODS,
   ...THREAD_WEBKIT_METHODS,
   ...AGENT_THREADS_WEBKIT_METHODS,
+  ...AGENT_SIGN_IN_WEBKIT_METHODS,
 ] as const;
 
 export type WebkitMethod = (typeof WEBKIT_METHODS)[number];
@@ -278,7 +280,11 @@ export interface WebkitRequest {
 
 export type WebkitResponse =
   | { id: string; ok: true; result: unknown }
-  | { id: string; ok: false; error: { code: string; message: string; title?: string; details?: string; actionLabel?: string; kind?: string; refusalCode?: string } };
+  | {
+      id: string;
+      ok: false;
+      error: { code: string; message: string; title?: string; details?: string; actionLabel?: string; kind?: string; refusalCode?: string };
+    };
 
 /** `CustomEvent("cua:event").detail`. */
 export interface WebkitEventDetail {
@@ -414,6 +420,8 @@ export interface WkSettings {
   /** The CLI the app installs (its install plan's file name) and whether it
    * is on this computer; absent or null: not known. */
   cli?: { name: string; installed: boolean } | null;
+  /** The channel and environment the app runs as (`app_target`); absent or null: not known. */
+  target?: { channel: string; env: string; authHost: string } | null;
   /** `AppSettings.tips`; absent: an older host that keeps none. Saved with `settings.update`. */
   tips?: { off: boolean; done: string[] };
   /** `AppSettings.notchPinned`: the Spaces and desktops pinned to the notch, in pin order; absent: an older host. Saved with `settings.update`. */

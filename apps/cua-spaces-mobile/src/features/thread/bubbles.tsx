@@ -25,27 +25,47 @@ export function MentionText({ text, color }: { text: string; color: string }) {
   const parts = text.split(/(@[a-z0-9._-]+)/gi);
   return (
     <Text variant="body" style={{ color }}>
-      {parts.map((p, i) => (p.startsWith("@") ? <Text key={i} variant="body" weight="600" style={{ color: scheme === "dark" ? c.brand : c.brandStrong }}>{p}</Text> : p))}
+      {parts.map((p, i) =>
+        p.startsWith("@") ? (
+          <Text key={i} variant="body" weight="600" style={{ color: scheme === "dark" ? c.brand : c.brandStrong }}>
+            {p}
+          </Text>
+        ) : (
+          p
+        ),
+      )}
     </Text>
   );
 }
 
 export function DayLine({ text }: { text: string }) {
   return (
-    <Text variant="caption" color="muted" style={{ textAlign: "center", marginTop: 14, marginBottom: 6 }}>{text}</Text>
+    <Text variant="caption" color="muted" style={{ textAlign: "center", marginTop: 14, marginBottom: 6 }}>
+      {text}
+    </Text>
   );
 }
 
 export function SystemNote({ text }: { text: string }) {
-  return <Text variant="footnote" color="muted" style={{ textAlign: "center", marginVertical: 6, paddingHorizontal: 32 }}>{text}</Text>;
+  return (
+    <Text variant="footnote" color="muted" style={{ textAlign: "center", marginVertical: 6, paddingHorizontal: 32 }}>
+      {text}
+    </Text>
+  );
 }
 
 export function UnreadLine() {
   const { c } = useTheme();
   return (
-    <View style={{ flexDirection: "row", alignItems: "center", gap: 10, marginHorizontal: 16, marginVertical: 10 }} accessible accessibilityLabel="Since you were here">
+    <View
+      style={{ flexDirection: "row", alignItems: "center", gap: 10, marginHorizontal: 16, marginVertical: 10 }}
+      accessible
+      accessibilityLabel="Since you were here"
+    >
       <View style={{ flex: 1, height: 0.5, backgroundColor: c.warning }} />
-      <Text variant="caption" weight="600" color="warning">Since you were here</Text>
+      <Text variant="caption" weight="600" color="warning">
+        Since you were here
+      </Text>
       <View style={{ flex: 1, height: 0.5, backgroundColor: c.warning }} />
     </View>
   );
@@ -56,15 +76,25 @@ export function AuthorLine({ author, tsMs, inset = 2 }: { author: { kind: string
   const { c } = useTheme();
   const a = authorView(author);
   return (
-    <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 4, marginLeft: inset }} accessible accessibilityLabel={`${a.name}${a.tag ? `, ${a.tag}` : ""}, ${clock(tsMs)}`}>
+    <View
+      style={{ flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 4, marginLeft: inset }}
+      accessible
+      accessibilityLabel={`${a.name}${a.tag ? `, ${a.tag}` : ""}, ${clock(tsMs)}`}
+    >
       <Avatar name={a.name} kind={a.kind} size={20} />
-      <Text variant="caption" weight="600">{a.name}</Text>
+      <Text variant="caption" weight="600">
+        {a.name}
+      </Text>
       {a.tag ? (
         <View style={{ backgroundColor: c.muted, borderRadius: 4, paddingHorizontal: 5, paddingVertical: 1 }}>
-          <Text variant="caption" weight="700" color="muted" style={{ fontSize: 10, lineHeight: 13 }}>{a.tag}</Text>
+          <Text variant="caption" weight="700" color="muted" style={{ fontSize: 10, lineHeight: 13 }}>
+            {a.tag}
+          </Text>
         </View>
       ) : null}
-      <Text variant="caption" color="muted">{clock(tsMs)}</Text>
+      <Text variant="caption" color="muted">
+        {clock(tsMs)}
+      </Text>
     </View>
   );
 }
@@ -96,12 +126,23 @@ export function Bubble({ entry, mine, showAuthor, quote, onReply, onOpenAttachme
         accessibilityRole="text"
         accessibilityLabel={`${mine ? "You" : a.name}: ${entry.text}`}
         accessibilityHint="Double tap and hold for actions"
-        style={{ maxWidth: "82%", backgroundColor: mine ? c.bubbleMine : c.bubbleOther, borderRadius: 18, paddingHorizontal: 13, paddingVertical: 8, borderBottomLeftRadius: !mine && showAuthor ? 6 : 18 }}
+        style={{
+          maxWidth: "82%",
+          backgroundColor: mine ? c.bubbleMine : c.bubbleOther,
+          borderRadius: 18,
+          paddingHorizontal: 13,
+          paddingVertical: 8,
+          borderBottomLeftRadius: !mine && showAuthor ? 6 : 18,
+        }}
       >
         {quote ? (
           <View style={{ borderLeftWidth: 2, borderLeftColor: mine ? c.bubbleMineText : c.mutedForeground, paddingLeft: 8, marginBottom: 6, opacity: 0.8 }}>
-            <Text variant="caption" weight="600" style={{ color: textColor }}>{quote.author}</Text>
-            <Text variant="caption" numberOfLines={2} style={{ color: textColor }}>{quote.text}</Text>
+            <Text variant="caption" weight="600" style={{ color: textColor }}>
+              {quote.author}
+            </Text>
+            <Text variant="caption" numberOfLines={2} style={{ color: textColor }}>
+              {quote.text}
+            </Text>
           </View>
         ) : null}
         {mine ? <MentionText text={entry.text} color={textColor} /> : <Markdown text={entry.text} color={textColor} />}
@@ -109,7 +150,21 @@ export function Bubble({ entry, mine, showAuthor, quote, onReply, onOpenAttachme
       {entry.attachments.length ? (
         <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 6 }}>
           {entry.attachments.map((f) => (
-            <Pressable key={f.path} onPress={() => onOpenAttachment(f.name)} accessibilityRole="button" accessibilityLabel={`${f.name}${f.size ? `, ${f.size} bytes` : ""}`} style={{ flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: c.tile, borderRadius: 14, paddingHorizontal: 10, paddingVertical: 6 }}>
+            <Pressable
+              key={f.path}
+              onPress={() => onOpenAttachment(f.name)}
+              accessibilityRole="button"
+              accessibilityLabel={`${f.name}${f.size ? `, ${f.size} bytes` : ""}`}
+              style={{
+                flexDirection: "row",
+                alignItems: "center",
+                gap: 6,
+                backgroundColor: c.tile,
+                borderRadius: 14,
+                paddingHorizontal: 10,
+                paddingVertical: 6,
+              }}
+            >
               <Icon name="doc" size={13} color={c.mutedForeground} />
               <Text variant="footnote">{f.name}</Text>
             </Pressable>
@@ -128,20 +183,46 @@ export function LiveRow({ agent, stage, text, children = [] }: { agent: string; 
     <Wrap {...(reduceMotion ? {} : { entering: FadeIn.duration(180) })} style={{ paddingHorizontal: 12, marginTop: 10 }} accessibilityLiveRegion="polite">
       <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 4, marginLeft: 2 }}>
         <Avatar name={agent} kind="agent" size={20} />
-        <Text variant="caption" weight="600">{agent}</Text>
-        <Text variant="caption" color="success">{stage}</Text>
+        <Text variant="caption" weight="600">
+          {agent}
+        </Text>
+        <Text variant="caption" color="success">
+          {stage}
+        </Text>
       </View>
       {text ? (
-        <View style={{ maxWidth: "82%", alignSelf: "flex-start", backgroundColor: c.bubbleOther, borderRadius: 18, borderBottomLeftRadius: 6, paddingHorizontal: 13, paddingVertical: 8 }}>
+        <View
+          style={{
+            maxWidth: "82%",
+            alignSelf: "flex-start",
+            backgroundColor: c.bubbleOther,
+            borderRadius: 18,
+            borderBottomLeftRadius: 6,
+            paddingHorizontal: 13,
+            paddingVertical: 8,
+          }}
+        >
           <Markdown text={text} color={c.foreground} />
         </View>
       ) : null}
       {children.map((k) => (
-        <View key={k.id} style={{ flexDirection: "row", gap: 8, marginTop: 6, marginLeft: 26 }} testID={`live-child-${k.id}`} accessible accessibilityLabel={`Subagent running: ${k.title}`}>
+        <View
+          key={k.id}
+          style={{ flexDirection: "row", gap: 8, marginTop: 6, marginLeft: 26 }}
+          testID={`live-child-${k.id}`}
+          accessible
+          accessibilityLabel={`Subagent running: ${k.title}`}
+        >
           <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: c.success, marginTop: 6 }} />
           <View style={{ flex: 1 }}>
-            <Text variant="footnote" numberOfLines={1}>{k.title}</Text>
-            <Text variant="caption" color="muted" numberOfLines={1}>{`${k.step ?? "Starting"}${k.steps > 0 ? `, ${k.steps === 1 ? "1 step" : `${k.steps} steps`}` : ""}`}</Text>
+            <Text variant="footnote" numberOfLines={1}>
+              {k.title}
+            </Text>
+            <Text
+              variant="caption"
+              color="muted"
+              numberOfLines={1}
+            >{`${k.step ?? "Starting"}${k.steps > 0 ? `, ${k.steps === 1 ? "1 step" : `${k.steps} steps`}` : ""}`}</Text>
           </View>
         </View>
       ))}
@@ -157,14 +238,35 @@ export function PendingRow({ row, onRetry, onDiscard }: { row: OutboxRow; onRetr
   const { c } = useTheme();
   const failed = row.state === "failed";
   return (
-    <View style={{ paddingHorizontal: 12, marginTop: 6, alignItems: "flex-end" }} testID={`pending-${row.state}`} accessible accessibilityLabel={`${row.text}. ${row.label}`}>
-      <View style={{ maxWidth: "82%", backgroundColor: c.bubbleMine, opacity: failed ? 0.55 : 0.7, borderRadius: 18, paddingHorizontal: 13, paddingVertical: 8 }}>
+    <View
+      style={{ paddingHorizontal: 12, marginTop: 6, alignItems: "flex-end" }}
+      testID={`pending-${row.state}`}
+      accessible
+      accessibilityLabel={`${row.text}. ${row.label}`}
+    >
+      <View
+        style={{ maxWidth: "82%", backgroundColor: c.bubbleMine, opacity: failed ? 0.55 : 0.7, borderRadius: 18, paddingHorizontal: 13, paddingVertical: 8 }}
+      >
         <MentionText text={row.text} color={c.bubbleMineText} />
       </View>
       <View style={{ flexDirection: "row", gap: 14, marginTop: 4 }}>
-        <Text variant="caption" color={failed ? "destructive" : "muted"}>{row.label}</Text>
-        {row.canRetry ? <Pressable onPress={onRetry} accessibilityRole="button" accessibilityLabel={`${row.retryLabel} sending`} hitSlop={8}><Text variant="caption" weight="600" color="brand">{row.retryLabel}</Text></Pressable> : null}
-        {row.canDiscard ? <Pressable onPress={onDiscard} accessibilityRole="button" accessibilityLabel={`${row.discardLabel} this message`} hitSlop={8}><Text variant="caption" color="muted">{row.discardLabel}</Text></Pressable> : null}
+        <Text variant="caption" color={failed ? "destructive" : "muted"}>
+          {row.label}
+        </Text>
+        {row.canRetry ? (
+          <Pressable onPress={onRetry} accessibilityRole="button" accessibilityLabel={`${row.retryLabel} sending`} hitSlop={8}>
+            <Text variant="caption" weight="600" color="brand">
+              {row.retryLabel}
+            </Text>
+          </Pressable>
+        ) : null}
+        {row.canDiscard ? (
+          <Pressable onPress={onDiscard} accessibilityRole="button" accessibilityLabel={`${row.discardLabel} this message`} hitSlop={8}>
+            <Text variant="caption" color="muted">
+              {row.discardLabel}
+            </Text>
+          </Pressable>
+        ) : null}
       </View>
     </View>
   );
@@ -188,12 +290,24 @@ export function SubagentRow({ sub }: { sub: Extract<ChildNote, { kind: "subagent
     >
       <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: color, marginTop: 6 }} />
       <View style={{ flex: 1 }}>
-        <Text variant="footnote" numberOfLines={open ? undefined : 2}>{sub.title}</Text>
+        <Text variant="footnote" numberOfLines={open ? undefined : 2}>
+          {sub.title}
+        </Text>
         <View style={{ flexDirection: "row", gap: 10 }}>
-          <Text variant="caption" color="muted">{word}</Text>
-          {steps ? <Text variant="caption" color="muted">{steps}</Text> : null}
+          <Text variant="caption" color="muted">
+            {word}
+          </Text>
+          {steps ? (
+            <Text variant="caption" color="muted">
+              {steps}
+            </Text>
+          ) : null}
         </View>
-        {open && sub.result ? <Text variant="caption" color="muted" style={{ marginTop: 4 }}>{sub.result}</Text> : null}
+        {open && sub.result ? (
+          <Text variant="caption" color="muted" style={{ marginTop: 4 }}>
+            {sub.result}
+          </Text>
+        ) : null}
       </View>
     </Pressable>
   );
@@ -205,8 +319,15 @@ export function ChildSpaceRow({ space }: { space: Extract<ChildNote, { kind: "ch
   return (
     <View style={{ marginLeft: 38, marginRight: 16, marginTop: 6, flexDirection: "row", alignItems: "center", gap: 12 }} testID={`child-space-${space.space}`}>
       <Text variant="footnote" style={{ flex: 1 }} numberOfLines={1}>{`Made a ${space.os || "new"} computer ${space.name}`}</Text>
-      <Pressable onPress={() => router.push({ pathname: "/space/[id]", params: { id: space.space } })} accessibilityRole="link" accessibilityLabel={`Open ${space.name}`} hitSlop={10}>
-        <Text variant="footnote" color="success" weight="600">Open</Text>
+      <Pressable
+        onPress={() => router.push({ pathname: "/space/[id]", params: { id: space.space } })}
+        accessibilityRole="link"
+        accessibilityLabel={`Open ${space.name}`}
+        hitSlop={10}
+      >
+        <Text variant="footnote" color="success" weight="600">
+          Open
+        </Text>
       </Pressable>
     </View>
   );

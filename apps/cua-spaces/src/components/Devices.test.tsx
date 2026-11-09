@@ -4,7 +4,15 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
-import { approveOpen, approveView, devicesView, enrollInitial, enrollView, reduceEnroll, type DevicesInput } from "../model/devices";
+import {
+  approveOpen,
+  approveView,
+  devicesView,
+  enrollInitial,
+  enrollView,
+  reduceEnroll,
+  type DevicesInput,
+} from "../model/devices";
 import { createFakeDevicesBridge } from "../native/devices";
 import { ApproveSheet, DevicesBanner, DevicesSection, EnrollSheet, RevokeSheet, useDevices } from "./Devices";
 
@@ -37,7 +45,7 @@ describe("devices model", () => {
     const v = devicesView(snapshot, NOW);
     expect(v.enrolled).toBe(true);
     expect(v.thisDevice).toMatchObject({ kind: "enrolled", title: "Trusted until", at: NOW + 30 * 86_400 });
-    expect(v.rows.map((r) => r.title)).toEqual(["MacBook Pro (this machine)", "Old laptop", "Work laptop"]);
+    expect(v.rows.map((r) => r.title)).toEqual(["MacBook Pro (this computer)", "Old laptop", "Work laptop"]);
     expect(v.recent.map((r) => r.text)).toEqual(["bob@example.com opened studio-mac", "MacBook Pro opened studio-mac"]);
     expect(v.approvals.map((a) => a.deviceId)).toEqual(["dev_p", "dev_o"]);
     let s = enrollInitial();
@@ -68,10 +76,10 @@ describe("Settings → Devices", () => {
       />,
     );
     expect(screen.getByTestId("this-device-status").textContent).toMatch(/^Trusted until /);
-    const devices = screen.getByRole("region", { name: "Your Machines" });
-    expect(within(devices).getByText("MacBook Pro (this machine)")).toBeInTheDocument();
+    const devices = screen.getByRole("region", { name: "Your Computers" });
+    expect(within(devices).getByText("MacBook Pro (this computer)")).toBeInTheDocument();
     expect(within(devices).getByText(/macOS, Trusted, check again in 30 days, Last seen/)).toBeInTheDocument();
-    expect(within(devices).getAllByRole("button", { name: "Add machine" })).toHaveLength(2);
+    expect(within(devices).getAllByRole("button", { name: "Add computer" })).toHaveLength(2);
     const denyButtons = within(devices).getAllByRole("button", { name: "Not me" });
     expect(denyButtons).toHaveLength(2);
     // Rows sort this device first, then alphabetically: "Old laptop" (expired) before "Work laptop" (pending).
@@ -91,16 +99,36 @@ describe("Settings → Devices", () => {
       <>
         <DevicesBanner view={v} onEnroll={onEnroll} />
         <DevicesSection
-        onConfirmMachine={() => {}} view={v} error={null} signedIn nowMs={NOW * 1000} onEnroll={onEnroll} onApprove={() => {}} onDeny={() => {}} onRename={() => {}} onRevoke={() => {}} />
+          onConfirmMachine={() => {}}
+          view={v}
+          error={null}
+          signedIn
+          nowMs={NOW * 1000}
+          onEnroll={onEnroll}
+          onApprove={() => {}}
+          onDeny={() => {}}
+          onRename={() => {}}
+          onRevoke={() => {}}
+        />
       </>,
     );
     expect(screen.getByRole("status", { name: "Device enrollment" }).textContent).toContain("within 5 days");
     expect(screen.getByTestId("this-device-status").textContent).toMatch(/grace ends/);
-    fireEvent.click(screen.getAllByRole("button", { name: "Trust this machine" })[0]!);
+    fireEvent.click(screen.getAllByRole("button", { name: "Trust this computer" })[0]!);
     expect(onEnroll).toHaveBeenCalled();
     rerender(
       <DevicesSection
-        onConfirmMachine={() => {}} view={null} error={null} signedIn={false} nowMs={0} onEnroll={() => {}} onApprove={() => {}} onDeny={() => {}} onRename={() => {}} onRevoke={() => {}} />,
+        onConfirmMachine={() => {}}
+        view={null}
+        error={null}
+        signedIn={false}
+        nowMs={0}
+        onEnroll={() => {}}
+        onApprove={() => {}}
+        onDeny={() => {}}
+        onRename={() => {}}
+        onRevoke={() => {}}
+      />,
     );
     expect(screen.getByText(/Sign in to Cua/)).toBeInTheDocument();
   });
@@ -124,8 +152,10 @@ describe("enroll sheet", () => {
     try {
       const bridge = createFakeDevicesBridge({ approvedAfterChecks: 2 });
       const onEnrolled = vi.fn();
-      render(<EnrollSheet bridge={bridge} signIn={async () => {}} onClose={() => {}} onEnrolled={onEnrolled} pollMs={10} />);
-      fireEvent.click(screen.getByRole("button", { name: /Add it from another machine/ }));
+      render(
+        <EnrollSheet bridge={bridge} signIn={async () => {}} onClose={() => {}} onEnrolled={onEnrolled} pollMs={10} />,
+      );
+      fireEvent.click(screen.getByRole("button", { name: /Add it from another computer/ }));
       await act(async () => {});
       expect(screen.getByLabelText("One-time code").textContent).toBe("K7QX-M2RP");
       expect(screen.getByRole("status").textContent).toBe("Waiting to be added…");
@@ -144,7 +174,9 @@ describe("enroll sheet", () => {
     const bridge = createFakeDevicesBridge({ firstDevice: true });
     const onEnrolled = vi.fn();
     const signIn = vi.fn(async () => {});
-    const { unmount } = render(<EnrollSheet bridge={bridge} signIn={signIn} onClose={() => {}} onEnrolled={onEnrolled} />);
+    const { unmount } = render(
+      <EnrollSheet bridge={bridge} signIn={signIn} onClose={() => {}} onEnrolled={onEnrolled} />,
+    );
     fireEvent.click(screen.getByRole("button", { name: /Sign in again/ }));
     await waitFor(() => expect(onEnrolled).toHaveBeenCalled());
     expect(signIn).toHaveBeenCalled();
@@ -163,7 +195,7 @@ describe("enroll sheet", () => {
     fireEvent.click(screen.getByRole("button", { name: /Sign in again/ }));
     expect(await screen.findByRole("alert")).toHaveTextContent("sign-in was cancelled");
     fireEvent.click(screen.getByRole("button", { name: "Back" }));
-    expect(screen.getByRole("button", { name: /Add it from another machine/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Add it from another computer/ })).toBeInTheDocument();
   });
 });
 
@@ -174,7 +206,7 @@ describe("approval sheet", () => {
     const bridge = createFakeDevicesBridge({ snapshot, presenceFails: "authentication was cancelled" });
     const onDone = vi.fn();
     render(<ApproveSheet bridge={bridge} prompt={prompt} onClose={() => {}} onDone={onDone} />);
-    const approve = screen.getByRole("button", { name: "Add machine" });
+    const approve = screen.getByRole("button", { name: "Add computer" });
     expect(approve).toBeDisabled();
     fireEvent.change(screen.getByPlaceholderText("XXXX-XXXX"), { target: { value: "k7qx m2rp" } });
     expect(screen.getByPlaceholderText("XXXX-XXXX")).toHaveValue("K7QX-M2RP");
@@ -206,10 +238,10 @@ describe("approval sheet", () => {
       <ApproveSheet bridge={bridge} prompt={prompt} devices={snapshot.devices} onClose={() => {}} onDone={onDone} />,
     );
     fireEvent.change(screen.getByPlaceholderText("XXXX-XXXX"), { target: { value: "z9wy4tpn" } });
-    fireEvent.click(screen.getByRole("button", { name: "Add machine" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add computer" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("The code expired.");
     expect(screen.getByText(/without it instead/)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Add machine" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add computer" }));
     await waitFor(() => expect(onDone).toHaveBeenCalledTimes(1));
     expect(base.calls).toContain("approve::dev_p");
   });
@@ -219,7 +251,7 @@ describe("approval sheet", () => {
     const onDone = vi.fn();
     const { unmount } = render(<ApproveSheet bridge={bridge} prompt={prompt} onClose={() => {}} onDone={onDone} />);
     fireEvent.change(screen.getByPlaceholderText("XXXX-XXXX"), { target: { value: "K7QXM2RP" } });
-    fireEvent.click(screen.getByRole("button", { name: "Add machine" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add computer" }));
     await waitFor(() => expect(onDone).toHaveBeenCalledTimes(1));
     unmount();
     render(<ApproveSheet bridge={bridge} prompt={prompt} onClose={() => {}} onDone={onDone} />);
@@ -236,9 +268,9 @@ describe("approval sheet", () => {
     expect(screen.queryByPlaceholderText("XXXX-XXXX")).toBeNull();
     // No OS prompt on this system: the Keyvault passphrase is asked for.
     const passphrase = await screen.findByLabelText("Keyvault passphrase");
-    expect(screen.getByRole("button", { name: "Keep machine" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Keep computer" })).toBeDisabled();
     fireEvent.change(passphrase, { target: { value: "hunter2" } });
-    expect(screen.getByRole("button", { name: "Keep machine" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Keep computer" })).toBeEnabled();
     fireEvent.click(screen.getByRole("button", { name: "Not now" }));
     expect(onClose).toHaveBeenCalled();
     expect(bridge.calls.some((c) => c.startsWith("revoke"))).toBe(false);
@@ -257,8 +289,8 @@ describe("approval watch", () => {
     await waitFor(() => expect(screen.getByTestId("approving").textContent).toBe("dev_p"));
     const notes = bridge.calls.filter((c) => c.startsWith("notify:"));
     expect(notes).toEqual([
-      "notify:Add “Work laptop”?:A machine signed in to your Cua account and asks to be added.",
-      "notify:Keep “Old laptop”?:It needs one approval to keep reaching your machines.",
+      "notify:Add “Work laptop”?:A computer signed in to your Cua account and asks to be added.",
+      "notify:Keep “Old laptop”?:It needs one approval to keep reaching your computers.",
     ]);
   });
 

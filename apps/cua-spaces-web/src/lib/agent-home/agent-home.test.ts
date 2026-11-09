@@ -106,7 +106,9 @@ describe("the container home", () => {
 
   it("runs on the slim Linux image of the catalog", () => {
     const root = resolve(__dirname, "../../../../../");
-    const catalog = JSON.parse(readFileSync(resolve(root, "libs/images/sandbox-images.json"), "utf8")) as { images: { ref: string; variant: string; os: string; spacesd: boolean; tier?: string }[] };
+    const catalog = JSON.parse(readFileSync(resolve(root, "libs/images/sandbox-images.json"), "utf8")) as {
+      images: { ref: string; variant: string; os: string; spacesd: boolean; tier?: string }[];
+    };
     const entry = catalog.images.find((i) => i.ref === AGENT_HOME_IMAGE);
     expect(entry).toMatchObject({ variant: "container", os: "linux", spacesd: true, tier: "slim" });
   });
@@ -117,11 +119,24 @@ describe("the agent's prompt", () => {
   it("says where it is, what it can do and how to ask", () => {
     const p = homePrompt("test https://github.com/acme/app", setup, containerHome.abilities());
     expect(p).toContain("your own small Linux Space");
-    expect(p).toContain("posted to the thread, in order, as its own message, and none is replaced");
+    expect(p).toContain("posted to the thread as its own message");
     expect(p).toContain("cua spaces ls");
+    // GPU work goes to the person's computers through the pool.
+    expect(p).toContain("@app.function(gpu=");
+    expect(p).toContain("cua run file.py::fn");
+    // What it needs is in the brief: nothing sends it to read a skill in the thread.
+    expect(p).not.toMatch(/read the .* skill/i);
     expect(p).toContain(approvalAction("machines.use"));
     expect(p).toContain("Unless the person says where");
     expect(p.endsWith("test https://github.com/acme/app")).toBe(true);
+  });
+  it("makes the agent speak as the person's supercomputer, not narrate its process", () => {
+    const p = homePrompt("train a model", setup, containerHome.abilities());
+    expect(p).toContain("You are the person's supercomputer");
+    expect(p).toContain("one short final message");
+    expect(p).toContain("no narration of steps, tools, skills, files, commands, plans or checks");
+    expect(p).toContain("Do not ask the person which computer or tool to use");
+    expect(p).toContain("stream_space_window");
   });
   it("treats a named Space or machine as the grant", () => {
     const p = homePrompt("x", { ...setup, mentions: { spaces: [], machines: [{ id: "m-air", name: "my Air" }] } }, containerHome.abilities());
@@ -135,8 +150,27 @@ describe("the agent's prompt", () => {
 });
 
 describe("the agent's requests", () => {
-  const entry = (seq: number, e: Partial<ThreadEntry>): ThreadEntry => ({ seq, id: String(seq), tsMs: seq, kind: "message", text: "", mentions: [], replyTo: null, task: null, attachments: [], approval: null, answer: null, noteFor: null, update: null, runsOnKeysOf: null, event: null, author: { kind: "agent", id: "agent:claude", name: "claude" }, ...e });
-  const ask = (seq: number, id: string, details = "") => entry(seq, { kind: "approval", approval: { action: approvalAction(id as never), details, state: "open" } });
+  const entry = (seq: number, e: Partial<ThreadEntry>): ThreadEntry => ({
+    seq,
+    id: String(seq),
+    tsMs: seq,
+    kind: "message",
+    text: "",
+    mentions: [],
+    replyTo: null,
+    task: null,
+    attachments: [],
+    approval: null,
+    answer: null,
+    noteFor: null,
+    update: null,
+    runsOnKeysOf: null,
+    event: null,
+    author: { kind: "agent", id: "agent:claude", name: "claude" },
+    ...e,
+  });
+  const ask = (seq: number, id: string, details = "") =>
+    entry(seq, { kind: "approval", approval: { action: approvalAction(id as never), details, state: "open" } });
 
   it("lists the open ones and skips answered and other approvals", () => {
     const entries = [
@@ -231,7 +265,10 @@ describe("the home Space is made once and reused", () => {
     expect(homeSpaceId("claude-code")).toBe("local:home-b");
     expect(isHomeSpaceId("local:home-a")).toBe(false);
     // Explicitly continuing the existing home reuses it (the newest, found again by label on a new device).
-    const both = [{ id: "local:home-a", status: "running" as const }, { id: "local:home-b", status: "running" as const }];
+    const both = [
+      { id: "local:home-a", status: "running" as const },
+      { id: "local:home-b", status: "running" as const },
+    ];
     expect(homeForRequest({ kind: "agent", reuse: true }, "claude-code", both, ["local:home-a"])).toBe("local:home-b");
     // A home that is gone is not reused even when asked.
     expect(homeForRequest({ kind: "agent", reuse: true }, "claude-code", [], [])).toBeNull();

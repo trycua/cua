@@ -146,7 +146,7 @@ pub struct DeviceArg {
 }
 
 /// What a connected agent sends with each call (`_member`).
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Default, Deserialize)]
 pub struct MemberCredential {
     pub member_id: String,
     pub key: String,
@@ -156,6 +156,17 @@ pub struct MemberCredential {
     /// [`cua_host::device::member_message`]`(member_id, ts_ms)`.
     #[serde(default)]
     pub signature: Option<String>,
+}
+
+impl std::fmt::Debug for MemberCredential {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MemberCredential")
+            .field("member_id", &self.member_id)
+            .field("key", &"<redacted>")
+            .field("ts_ms", &self.ts_ms)
+            .field("signature", &self.signature)
+            .finish()
+    }
 }
 
 /// The per-process counters: wrong codes and posts.

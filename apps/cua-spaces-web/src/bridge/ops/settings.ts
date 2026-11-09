@@ -137,20 +137,34 @@ type Invoke = <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
 /** A tool answer that is a JSON object, or null. */
 const objectOrNull = <T>(v: unknown): T | null => (v !== null && typeof v === "object" && !Array.isArray(v) ? (v as T) : null);
 
-const osOf = (platform: string | undefined): StorageInput["os"] =>
-  platform === "linux" || platform === "windows" ? platform : "macos";
+const osOf = (platform: string | undefined): StorageInput["os"] => (platform === "linux" || platform === "windows" ? platform : "macos");
 
 /* ---- Tauri ----------------------------------------------------------------- */
 
 /** Tauri: the shell's commands, and the daemon's Spaces tools through `agents_tool`. */
 export function tauriSettingsOps(invoke: Invoke, ui: { read(key: string): string | undefined; write(key: string, value: string): Promise<void> }): Handlers {
   const tool = (name: string, args: Record<string, unknown> = {}) => invoke<unknown>("agents_tool", { tool: name, args });
-  const platform = () => invoke<{ platform?: string } | null>("get_environment").then((e) => e?.platform, () => undefined);
+  const platform = () =>
+    invoke<{ platform?: string } | null>("get_environment").then(
+      (e) => e?.platform,
+      () => undefined,
+    );
 
   const about = async (): Promise<AboutInput> => {
     const [version, p] = await Promise.all([invoke<string | null>("plugin:app|version").catch(() => null), platform()]);
     // The Tauri updater has one feed and no controls to offer.
-    return { platform: osOf(p), version: version ?? "", build: "", os: "", updater: false, autoCheck: false, autoInstall: false, channel: "stable", lastCheck: null, checking: false };
+    return {
+      platform: osOf(p),
+      version: version ?? "",
+      build: "",
+      os: "",
+      updater: false,
+      autoCheck: false,
+      autoInstall: false,
+      channel: "stable",
+      lastCheck: null,
+      checking: false,
+    };
   };
 
   const loginItem = async (): Promise<LoginItemReport> => {
@@ -170,7 +184,13 @@ export function tauriSettingsOps(invoke: Invoke, ui: { read(key: string): string
       tool("volume_mount_status").catch(() => null),
       tool("volume_cache_stats").catch(() => null),
     ]);
-    return { os: osOf(p), home: null, storage: objectOrNull<DriveStorageInput>(s), mount: objectOrNull<DriveMountInput>(m), cache: objectOrNull<DriveCacheInput>(c) };
+    return {
+      os: osOf(p),
+      home: null,
+      storage: objectOrNull<DriveStorageInput>(s),
+      mount: objectOrNull<DriveMountInput>(m),
+      cache: objectOrNull<DriveCacheInput>(c),
+    };
   };
 
   const EXPERIMENTS_KEY = "cua.settings.experiments";
@@ -269,7 +289,17 @@ export function tauriSettingsOps(invoke: Invoke, ui: { read(key: string): string
 }
 
 /** The Tauri updater has one feed and no controls. */
-export const TAURI_SETTINGS_UNSUPPORTED = ["about.set", "about.checkNow", "update.get", "update.install", "runtimes.check", "runtimes.browse", "repoCache.get", "repoCache.set", "repoCache.clear"] as const satisfies readonly SettingsOpName[];
+export const TAURI_SETTINGS_UNSUPPORTED = [
+  "about.set",
+  "about.checkNow",
+  "update.get",
+  "update.install",
+  "runtimes.check",
+  "runtimes.browse",
+  "repoCache.get",
+  "repoCache.set",
+  "repoCache.clear",
+] as const satisfies readonly SettingsOpName[];
 
 /** The Tauri commands each operation calls (`coverage.ts`). */
 export const SETTINGS_TAURI_COMMANDS = {
@@ -315,9 +345,7 @@ interface WkAppInfo {
 /** The experiments' row ids (`experiments::row_id`). */
 const EXPERIMENT_ROWS: Record<keyof Experiments, string> = {
   cuaVolume: "experiment:cua_volume",
-  secureSpaces: "experiment:secure_spaces",
   childSpaces: "experiment:child_spaces",
-  askFirst: "experiment:ask_first",
   ciRunners: "experiment:ci_runners",
   tcpShares: "experiment:tcp_shares",
   mobile: "experiment:mobile",

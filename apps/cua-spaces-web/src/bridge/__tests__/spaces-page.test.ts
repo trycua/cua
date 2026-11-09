@@ -125,7 +125,8 @@ describe.skipIf(!wasmBuilt)("the new Spaces page's decisions (wasm core)", () =>
     expect(tipsView(core, "spaces", facts, next)?.id).toBe("power");
     // The sidebar's tip waits for a page's.
     expect(tipsView(core, "sidebar", { ...facts, pageTipShown: true }, next)).toBeNull();
-    expect(tipsView(core, "sidebar", facts, next)?.action).toMatchObject({ kind: "copyCommand", value: "cua create --on auto" });
+    // The sidebar has no tip of its own any more (its CLI flag lives in the docs).
+    expect(tipsView(core, "sidebar", facts, next)).toBeNull();
     const off = tipsReduce(core, next, { type: "dont-show" });
     expect(tipsView(core, "spaces", facts, off)).toBeNull();
   });
@@ -140,7 +141,7 @@ describe.skipIf(!wasmBuilt)("the new Spaces page's decisions (wasm core)", () =>
 
   it("shows the Pro banner on Free only", async () => {
     const core = await testCore();
-    expect(proBanner(core, { plan: "free" })).toEqual({ visible: true, text: "Run more Spaces at once with Pro", button: "Upgrade" });
+    expect(proBanner(core, { plan: "free" })).toEqual({ visible: true, text: "Use more computers at once with Pro", button: "Upgrade" });
     for (const plan of ["pro", "team", "teams", ""]) expect(proBanner(core, { plan }).visible).toBe(false);
   });
 

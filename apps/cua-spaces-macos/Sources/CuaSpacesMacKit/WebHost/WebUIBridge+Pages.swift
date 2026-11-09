@@ -145,6 +145,9 @@ extension WebUIBridge {
             return try await model.agentKeys.call("agent_keys.rename", renameArgs)
         // Which provider keys your login shell has (names only), and one saved from it (the value never crosses the bridge).
         case "agentKeys.shell": return try await model.agentKeys.call("agent_keys.shell")
+        case "agentKeys.copySignIn":
+            guard let on = args["on"] as? Bool else { throw Failure.badArgs("on: boolean") }
+            return try await model.agentKeys.call("agent_keys.copy_sign_in", ["on": on])
         case "agentKeys.fromShell":
             var shellArgs: [String: Any] = ["env": try string(args, "env")]
             if let region = args["region"] as? String, !region.isEmpty { shellArgs["region"] = region }
@@ -307,15 +310,15 @@ extension WebUIBridge {
 
         // Notifications
         case "notifications.list":
-            guard model.persistent.canCallTools else { throw Failure.unsupported("Notifications need the cua daemon") }
+            guard model.persistent.canCallTools else { throw Failure.unsupported(serviceDownMessage) }
             await model.persistent.pollNotifications()
             return model.persistent.feedRows()
         case "notifications.markAllRead":
-            guard model.persistent.canCallTools else { throw Failure.unsupported("Notifications need the cua daemon") }
+            guard model.persistent.canCallTools else { throw Failure.unsupported(serviceDownMessage) }
             await model.persistent.markAllRead()
             return NSNull()
         case "notifications.markRead":
-            guard model.persistent.canCallTools else { throw Failure.unsupported("Notifications need the cua daemon") }
+            guard model.persistent.canCallTools else { throw Failure.unsupported(serviceDownMessage) }
             guard let ids = args["ids"] as? [String] else { throw Failure.badArgs("ids: array of strings") }
             await model.persistent.markRead(ids: ids)
             return NSNull()
@@ -449,6 +452,8 @@ extension WebUIBridge {
             // dialog of its own); the pane opens only when it stays blocked
             // and no macOS prompt is waiting for an answer.
             if url.contains("Privacy_LocalNetwork") {
+                // Explained here, so a later macOS Space create does not explain it again.
+                UserDefaults.standard.set(true, forKey: LocalNetworkGate.askedKey)
                 await model.checkLocalNetworkFromDaemon(every: 0)
                 if model.daemonLocalNetworkAllowed != true, LiveLocalNetworkProbe().promptsShowing() == 0 {
                     NSWorkspace.shared.open(u)
@@ -486,17 +491,19 @@ extension WebUIBridge {
 
     /// One of the daemon's Spaces tools the native pages run.
     func tool(_ name: String, _ args: [String: Any] = [:]) async throws -> Any {
-        guard model.persistent.canCallTools else { throw Failure.unsupported("This needs the cua daemon") }
+        guard model.persistent.canCallTools else { throw Failure.unsupported(serviceDownMessage) }
         return try await model.persistent.daemonTool(name, args)
     }
 
-    /// `agents.recentThreads {limit?}` and `agents.threadHistory {agent, id, limit?}`:
+    /// `agents.recentThreads {limit?, agents?}` and `agents.threadHistory {agent, id, limit?}`:
     /// the person-only daemon tools `agent_threads` and `agent_thread_read`,
-    /// their JSON back untouched (`ops/agent-threads.ts` maps it). A daemon
-    /// without them answers `unsupported`, and the Ready screen hides the list.
+    /// their JSON back untouched (`ops/agent-threads.ts` maps it). `agents`
+    /// (the agent picked in setup) is read by the daemon, as on every host. A
+    /// daemon without them answers `unsupported`, and the Ready screen hides the list.
     func agentThreads(_ method: String, _ args: [String: Any]) async throws -> Any {
         var out: [String: Any] = [:]
         if let limit = args["limit"] as? NSNumber { out["limit"] = limit }
+        if method == "agents.recentThreads", let agents = args["agents"] as? [String], !agents.isEmpty { out["agents"] = agents }
         let name: String
         if method == "agents.threadHistory" {
             guard let agent = args["agent"] as? String, !agent.isEmpty else { throw Failure.badArgs("agent: string") }
@@ -513,7 +520,33 @@ extension WebUIBridge {
             throw f
         } catch {
             let words = LiveSpacesBackend.words(error)
-            if Self.missingThreadTool(words) { throw Failure.unsupported("This cua daemon can't list your agents' chats; update Cua") }
+            if Self.missingThreadTool(words) { throw Failure.unsupported("Update Cua Spaces to see agent chats.") }
+            throw Failure(code: "failed", message: words)
+        }
+    }
+
+    /// `agents.computerSignIn {space, agent, action, code?, afterRefusal?}`: the
+    /// person-only daemon tool `agent_sign_in` (the agent's own sign-in on
+    /// another computer, CUA-3907), its JSON back untouched
+    /// (`ops/agent-sign-in.ts` maps it). A daemon without it answers `unsupported`.
+    func computerSignIn(_ args: [String: Any]) async throws -> Any {
+        guard let space = args["space"] as? String, !space.isEmpty else { throw Failure.badArgs("space: string") }
+        guard let agent = args["agent"] as? String, !agent.isEmpty else { throw Failure.badArgs("agent: string") }
+        let action = args["action"] as? String ?? "status"
+        guard ["status", "start", "code", "cancel"].contains(action) else { throw Failure.badArgs("action: status, start, code or cancel") }
+        var out: [String: Any] = ["space": space, "agent": agent, "action": action]
+        if action == "code" {
+            guard let code = args["code"] as? String, !code.isEmpty else { throw Failure.badArgs("code: string") }
+            out["code"] = code
+        }
+        if args["afterRefusal"] as? Bool == true { out["after_refusal"] = true }
+        do {
+            return try await tool("agent_sign_in", out)
+        } catch let f as Failure {
+            throw f
+        } catch {
+            let words = LiveSpacesBackend.words(error)
+            if Self.missingThreadTool(words) { throw Failure.unsupported("Update Cua Spaces to sign agents in on other computers.") }
             throw Failure(code: "failed", message: words)
         }
     }
@@ -532,7 +565,7 @@ extension WebUIBridge {
             throw f
         } catch {
             let words = LiveSpacesBackend.words(error)
-            if Self.missingThreadTool(words) { throw Failure.unsupported("This cua daemon has no Space thread; update Cua") }
+            if Self.missingThreadTool(words) { throw Failure.unsupported("Update Cua Spaces to see this Space's thread.") }
             throw Failure(code: "failed", message: words)
         }
     }
@@ -622,17 +655,17 @@ extension WebUIBridge {
     static func missingThreadTool(_ message: String) -> Bool {
         let m = message.lowercased()
         let tools = ["thread_read", "thread_post", "agent_members", "thread_join_code_create", "thread_join_code_list",
-                     "thread_join_code_cancel", "thread_settings", "agent_threads", "agent_thread_read"]
+                     "thread_join_code_cancel", "thread_settings", "agent_threads", "agent_thread_read", "agent_sign_in"]
         return tools.contains { t in m.contains("spaces tool \(t)") || ((m.contains("unknown tool") || m.contains("no such tool")) && m.contains(t)) }
     }
 
     func cloudTool(_ name: String, _ args: [String: Any]) async throws -> Any {
-        guard let clouds = model.backend as? CloudToolRunning else { throw Failure.unsupported("Clouds need the cua daemon") }
+        guard let clouds = model.backend as? CloudToolRunning else { throw Failure.unsupported(serviceDownMessage) }
         return try await clouds.cloudTool(name, args)
     }
 
     func volumeOverview() async throws -> Any {
-        guard model.persistent.canCallTools else { throw Failure.unsupported("Cua Volume needs the cua daemon") }
+        guard model.persistent.canCallTools else { throw Failure.unsupported(serviceDownMessage) }
         func list(_ v: Any?, _ key: String) -> Any { (v as? [String: Any])?[key] as? [Any] ?? [] }
         async let requests = try? tool("volume_requests")
         async let grants = try? tool("volume_grants")

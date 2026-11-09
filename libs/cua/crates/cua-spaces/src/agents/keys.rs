@@ -67,7 +67,11 @@ pub const APP_METHODS: &[&str] = &[
     "agent_keys.rename",
     "agent_keys.shell",
     "agent_keys.from_shell",
+    "agent_keys.copy_sign_in",
 ];
+
+/// Where "Copy my sign-in to my other computers" is kept (beside the keys).
+const COPY_SIGN_IN_ITEM: &str = "agent-sign-in-copy";
 
 /// The provider keys Cua may read from your login shell, by name (Settings,
 /// Connections: "Use ANTHROPIC_API_KEY from your shell"): the API key names of
@@ -341,6 +345,10 @@ pub struct KeysReport {
     /// (a Local development build without the Keychain).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub insecure: Option<String>,
+    /// "Copy my sign-in to my other computers" is on: a saved Claude Code or
+    /// ChatGPT sign-in reaches runs on other computers. Off by default; each
+    /// computer then signs in with the agent's own sign-in.
+    pub copy_sign_in: bool,
 }
 
 /// The credential an app was told to use: a variable and which of its saved
@@ -688,7 +696,24 @@ impl AgentKeys {
             available: self.available(),
             unavailable: self.unavailable.clone(),
             insecure: self.insecure.clone(),
+            copy_sign_in: self.copy_sign_in(),
         })
+    }
+
+    /// Whether the person turned on "Copy my sign-in to my other computers".
+    /// Off unless they did: a saved Claude Code or ChatGPT sign-in then stays
+    /// on This Mac, and other computers sign in themselves.
+    pub fn copy_sign_in(&self) -> bool {
+        self.aux_load(COPY_SIGN_IN_ITEM).as_deref() == Some(b"on".as_slice())
+    }
+
+    /// Turns "Copy my sign-in to my other computers" on or off.
+    pub fn set_copy_sign_in(&self, on: bool) -> Result<()> {
+        if on {
+            self.aux_save(COPY_SIGN_IN_ITEM, b"on")
+        } else {
+            self.aux_clear(COPY_SIGN_IN_ITEM)
+        }
     }
 
     /// Adds or replaces a key. `provider` is a provider id of the registry
@@ -1762,6 +1787,12 @@ struct FromShellArgs {
     fields: BTreeMap<String, String>,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CopySignInArgs {
+    on: bool,
+}
+
 #[derive(Serialize)]
 struct ShellReport {
     /// The provider keys your login shell has set (names; never a value).
@@ -1787,9 +1818,6 @@ pub fn app_call(
         r.and_then(|r| serde_json::to_value(r).map_err(|e| Error::Agent(e.to_string())))
     };
     if super::github_auth::is_app_method(name) {
-        if !super::github_auth::enabled() {
-            return Some(Err(super::github_auth::off_error()));
-        }
         return super::github_auth::app_call(super::github_auth::global(), name, args);
     }
     Some(match name {
@@ -1867,6 +1895,14 @@ pub fn app_call(
                 })
                 .and_then(|_| keys.report()),
         ),
+        "agent_keys.copy_sign_in" => report(
+            serde_json::from_value::<CopySignInArgs>(args)
+                .map_err(|e| Error::InvalidArgument(format!("agent_keys.copy_sign_in: {e}")))
+                .and_then(|a| {
+                    keys.set_copy_sign_in(a.on)?;
+                    keys.report()
+                }),
+        ),
         "agent_keys.shell" => serde_json::to_value(ShellReport {
             names: shell_names(shell),
         })
@@ -1919,11 +1955,6 @@ pub async fn app_tool_async(
     args: serde_json::Value,
 ) -> Option<crate::mcp::ToolOutcome> {
     if super::github_auth::is_app_method(name) {
-        if !super::github_auth::enabled() {
-            return Some(crate::mcp::ToolOutcome::error(
-                &super::github_auth::off_error(),
-            ));
-        }
         return super::github_auth::app_call_async(name, args)
             .await
             .map(|r| match r {

@@ -20,7 +20,13 @@ export function useSummonIn() {
   const summonInput = async (spaceId: string) => {
     const members = ((await host!.call("thread.members", { spaceId }).catch(() => null))?.members ?? []) as AgentMember[];
     // The Space's handle for the member (`claude`), never the host's key for it (`claude-8` in `cua agent ls`): the thread matches the handle.
-    return { members: members.map((m) => ({ handle: m.handle ?? m.name, key: m.name, mine: true, harness: m.harness, label: m.name })), people: [], canAdd: true, reportUnknown: false, connectors };
+    return {
+      members: members.map((m) => ({ handle: m.handle ?? m.name, key: m.name, mine: true, harness: m.harness, label: m.name })),
+      people: [],
+      canAdd: true,
+      reportUnknown: false,
+      connectors,
+    };
   };
   const send = (spaceId: string, input: Awaited<ReturnType<typeof summonInput>>) => (text: string) =>
     sendWithSummon({ core, data: host!, spaceId, input, text, post: (t) => host!.call("thread.post", { spaceId, text: t }) });
@@ -31,14 +37,30 @@ export function useSummonIn() {
    * home's agent is kept on standby with the picked model (adding it again updates it), so its session is open
    * before the first words and the model it asks for is the one its next turn uses.
    */
-  const summonIn = async (spaceId: string, agent: string, prompt: string, model?: string, standby = false, brief?: string, effort?: string): Promise<boolean> => {
+  const summonIn = async (
+    spaceId: string,
+    agent: string,
+    prompt: string,
+    model?: string,
+    standby = false,
+    brief?: string,
+    effort?: string,
+  ): Promise<boolean> => {
     if (!canSummon()) return false;
     const input = await summonInput(spaceId);
     const first = firstMessage(core, input, agent, prompt);
     if (!first?.handle) return false;
     if (standby || model || brief || effort) {
       await host!
-        .call("thread.agentAdd", { spaceId, name: first.handle, harness: first.harness || agent, ...(model ? { model } : {}), ...(effort ? { effort } : {}), ...(standby ? { standby: true } : {}), ...(brief ? { brief } : {}) })
+        .call("thread.agentAdd", {
+          spaceId,
+          name: first.handle,
+          harness: first.harness || agent,
+          ...(model ? { model } : {}),
+          ...(effort ? { effort } : {}),
+          ...(standby ? { standby: true } : {}),
+          ...(brief ? { brief } : {}),
+        })
         .catch(() => null);
     }
     // The member is in now: the message goes with it listed.

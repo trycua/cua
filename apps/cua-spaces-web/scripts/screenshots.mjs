@@ -17,7 +17,7 @@ import { chromium } from "@playwright/test";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const outDir = process.env.OUT_DIR ?? `${root}docs/screenshots`;
-const ROUTES = ["spaces", "machines", "agents", "volume", "keyvault", "settings", "settings/experiments", "settings/about", "notifications", "onboarding"];
+const ROUTES = ["spaces", "spaces/computer/this-mac", "agents", "volume", "keyvault", "settings", "settings/experiments", "settings/about", "notifications", "onboarding"];
 // Pages under a parameter: [path, file name].
 const DETAIL_ROUTES = [
   [`spaces/${encodeURIComponent("relay:mac-mini/qa-windows")}`, "space-detail"],
@@ -138,13 +138,12 @@ async function newSpaceSteps(theme) {
   await context.close();
 }
 
-/** A machine waiting to be added ("Add this machine?"), then General with Storage (the Cua Volume experiment on). */
+/** The computers waiting to be added, above your computers, then General with Storage (the Cua Volume experiment on). */
 async function settingsStates(page, theme) {
-  await page.goto(`${base}/machines`, { waitUntil: "networkidle" });
-  await page.locator('[data-pending-machine="dev_work"] button').first().click();
-  await page.locator('[data-pending-detail="dev_work"]').waitFor();
+  await page.goto(`${base}/spaces`, { waitUntil: "networkidle" });
+  await page.locator('[data-pending-machine="dev_work"]').waitFor();
   await page.waitForTimeout(300);
-  await page.screenshot({ path: `${outDir}/machines-add-this-machine-${theme}.png` });
+  await page.screenshot({ path: `${outDir}/computers-waiting-${theme}.png` });
   await page.goto(`${base}/settings/experiments`, { waitUntil: "networkidle" });
   // The demo starts with Cua Volume on (the Volume page's demo); turn it on only if it's off.
   const volumeSwitch = page.locator('[data-setting-row="experiment:cua_volume"] [data-slot="switch"]');
@@ -156,13 +155,13 @@ async function settingsStates(page, theme) {
   await page.screenshot({ path: `${outDir}/settings-storage-${theme}.png` });
 }
 
-/** This machine's buttons, then the page before setup (after Remove host
+/** This computer's buttons, then the page before setup (after Remove host
  * setup) and the setup form. */
 async function thisMachineSetup(theme) {
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 2, colorScheme: theme });
   await context.addInitScript((t) => localStorage.setItem("cua-spaces:theme", t), theme);
   const page = await context.newPage();
-  await page.goto(`${base}/machines`, { waitUntil: "networkidle" });
+  await page.goto(`${base}/spaces/computer/this-mac`, { waitUntil: "networkidle" });
   await page.locator("[data-host-action]").first().scrollIntoViewIfNeeded();
   await page.waitForTimeout(250);
   await page.screenshot({ path: `${outDir}/this-machine-${theme}.png` });
@@ -468,19 +467,19 @@ async function askFirstShots(theme) {
   await page.locator("[data-approval] button", { hasText: "Push and open PR" }).first().click();
   await page.locator("[data-approval-collapsed]").first().waitFor();
   await shot("card-answered");
-  for (const [name, demo] of [["github", "ask-first"], ["github-none", "github-none"], ["github-warning", "github-warning"]]) {
+  for (const [name, demo] of [["github", "github"], ["github-none", "github-none"], ["github-warning", "github-warning"]]) {
     await page.goto(`${base}/settings/connections?demo=${demo}`, { waitUntil: "networkidle" });
     await page.locator("[data-connectors-github]").waitFor();
     await page.locator("[data-connectors-github]").scrollIntoViewIfNeeded();
     await shot(`settings-${name}`);
   }
-  await page.goto(`${base}/settings/connections?demo=ask-first`, { waitUntil: "networkidle" });
+  await page.goto(`${base}/settings/connections`, { waitUntil: "networkidle" });
   await page.locator("[data-github-host='github.com']").click();
   await page.locator("[data-github-detail='github.com']").waitFor();
   await shot("settings-github-open");
   await page.keyboard.press("Escape");
-  await page.goto(`${base}/settings/advanced?demo=ask-first`, { waitUntil: "networkidle" });
-  await page.getByText("Ask first").first().waitFor();
+  await page.goto(`${base}/settings/advanced`, { waitUntil: "networkidle" });
+  await page.getByText("Labs").first().waitFor();
   await shot("settings-labs");
   await context.close();
 }

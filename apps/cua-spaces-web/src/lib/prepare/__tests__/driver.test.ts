@@ -142,7 +142,10 @@ describe.skipIf(!wasmBuilt)("the preparing driver (wasm core)", () => {
     const core = await testCore();
     const host = fakeHost();
     host.online = false;
-    host.nextCreates(async () => Promise.reject(new Error("dns error: failed to lookup address")), async () => "local:home-1");
+    host.nextCreates(
+      async () => Promise.reject(new Error("dns error: failed to lookup address")),
+      async () => "local:home-1",
+    );
     const d = new PrepareDriver(core, host.env(), memoryStorage());
     d.start("claude-code");
     await flush();
@@ -314,7 +317,13 @@ describe.skipIf(!wasmBuilt)("the preparing driver (wasm core)", () => {
 });
 
 describe("what counts as the connection's failure", () => {
-  it.each(["connection reset by peer", "download the built-in Linux runtime: operation timed out", "dns error: failed to lookup address information", "the registry answered 503", "error sending request for url (https://ghcr.io/)"])("%s", (m) => {
+  it.each([
+    "connection reset by peer",
+    "download the built-in Linux runtime: operation timed out",
+    "dns error: failed to lookup address information",
+    "the registry answered 503",
+    "error sending request for url (https://ghcr.io/)",
+  ])("%s", (m) => {
     expect(isNetworkFailure(m)).toBe(true);
   });
   it.each(["no space left on device", "the built-in Linux runtime cannot run from this path", "a disk image did not match its checksum"])("%s is not", (m) => {

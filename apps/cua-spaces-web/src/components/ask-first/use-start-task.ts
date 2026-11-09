@@ -17,7 +17,20 @@ import { parseMentions } from "@/lib/agent-home/mentions";
 import { homeBrief, homePrompt } from "@/lib/agent-home/prompt";
 import type { AskRepo } from "@/lib/ask-first-repo";
 import { getDriver } from "@/lib/prepare/store";
-import { addAskTask, askTask, HOST_NOT_SHARED, hostSpaceId, postToSpaceThread, retryTarget, taskTarget, updateAskTask, whereOs, type AskTask, type TaskTarget, type TaskWhere } from "@/lib/ask-first";
+import {
+  addAskTask,
+  askTask,
+  HOST_NOT_SHARED,
+  hostSpaceId,
+  postToSpaceThread,
+  retryTarget,
+  taskTarget,
+  updateAskTask,
+  whereOs,
+  type AskTask,
+  type TaskTarget,
+  type TaskWhere,
+} from "@/lib/ask-first";
 
 /** The job as the agent is told it: the repo the person picked is a line of it, said once in plain words. */
 export const withRepo = (prompt: string, repo?: { url: string } | null) => (repo ? `${prompt.trim()}\n\nRepo: ${repo.url}` : prompt);
@@ -68,7 +81,8 @@ export function useStartTask(): {
       machines: (machines ?? []).map((m) => ({ id: m.id, name: m.name, current: m.current })),
     });
     if (where?.kind === "space" && !mentions.spaces.some((s) => s.id === where.space.id)) mentions.spaces.push({ id: where.space.id, name: where.space.name });
-    if (where?.kind === "machine" && !mentions.machines.some((m) => m.id === where.machine.id)) mentions.machines.push({ id: where.machine.id, name: where.machine.name });
+    if (where?.kind === "machine" && !mentions.machines.some((m) => m.id === where.machine.id))
+      mentions.machines.push({ id: where.machine.id, name: where.machine.name });
     return mentions;
   };
 
@@ -76,7 +90,14 @@ export function useStartTask(): {
   const setupFor = (agent: string, prompt: string, where?: TaskWhere) => ({ agent, grants: grantsFor(agent), mentions: named(prompt, where) });
 
   /** Posts the job to the agent's home: what the person named now is the grant, then the message goes to the agent through the thread. */
-  const reuseHome = async (spaceId: string, agent: string, prompt: string, model?: string, brief?: string, effort?: string): Promise<"posted" | "needs-run"> => {
+  const reuseHome = async (
+    spaceId: string,
+    agent: string,
+    prompt: string,
+    model?: string,
+    brief?: string,
+    effort?: string,
+  ): Promise<"posted" | "needs-run"> => {
     // An @mention of a Space or a computer, or "on my Mac", is the approval, so no card asks. It goes to the grants
     // file the daemon reads each time the home asks (no restart).
     const mentions = named(prompt);
@@ -116,7 +137,10 @@ export function useStartTask(): {
           if (isHome && children) {
             // The agent home: a slim Linux Space, the root of this person's tree (the agent decides where the work runs).
             const agent = task0?.agent ?? "";
-            const config: SpaceCreateConfig = containerHome.create(setupFor(agent, task0?.prompt ?? ""), petName((n) => (spaces ?? []).some((x) => x.name === n)));
+            const config: SpaceCreateConfig = containerHome.create(
+              setupFor(agent, task0?.prompt ?? ""),
+              petName((n) => (spaces ?? []).some((x) => x.name === n)),
+            );
             space = await createSpace({ ...config, os: "linux" }, pendingId);
             // The spawn capability, whatever the host did with `children` in the config.
             children.setChildrenOn(space.id, true);
@@ -139,7 +163,16 @@ export function useStartTask(): {
             const t = askTask(id);
             if (t?.model && host && canSummon()) {
               const first = firstMessage(core, await summonInput(spaceId), t.agent, "");
-              if (first?.handle) await host.call("thread.agentAdd", { spaceId, name: first.handle, harness: first.harness || t.agent, model: t.model, ...(t.effort ? { effort: t.effort } : {}) }).catch(() => null);
+              if (first?.handle)
+                await host
+                  .call("thread.agentAdd", {
+                    spaceId,
+                    name: first.handle,
+                    harness: first.harness || t.agent,
+                    model: t.model,
+                    ...(t.effort ? { effort: t.effort } : {}),
+                  })
+                  .catch(() => null);
             }
             await flushQueue(pendingId, send(spaceId, await summonInput(spaceId)));
             updateAskTask(id, { inSpace: true });
@@ -172,7 +205,13 @@ export function useStartTask(): {
           posted.add(`${id}\u0000${spaceId}`);
           await postToSpaceThread(host, spaceId, prompt);
         }
-        const started = await startRun({ spaceId, agent, prompt: homeText ?? prompt, ...(task?.model ? { model: task.model } : {}), ...(task?.effort ? { effort: task.effort } : {}) });
+        const started = await startRun({
+          spaceId,
+          agent,
+          prompt: homeText ?? prompt,
+          ...(task?.model ? { model: task.model } : {}),
+          ...(task?.effort ? { effort: task.effort } : {}),
+        });
         updateAskTask(id, { runId: started.run_id, inSpace: true });
       } catch (e) {
         if (place?.pendingId) dropQueue(place.pendingId);
@@ -187,13 +226,22 @@ export function useStartTask(): {
       const home = Boolean(children) && (where.kind === "agent" || where.kind === "machine");
       const mentions = named(prompt, where);
       const reuse = home ? homeForRequest(where, agent, spaces, children?.homesOf(agent)) : null;
-      // The new setup (Labs) made a Linux Space for this agent while the person was in the first run: the job is
+      // The first run made a Linux Space for this agent while the person was in the first run: the job is
       // kept by the preparing driver, which sends it exactly once when the agent is ready, even across a quit.
       const preparing = getDriver();
       const prep = preparing?.state;
       if (!home && preparing && prep?.wanted && prep.harness === agent && target.kind === "create" && target.os === "linux") {
         const spaceId = prep.homeSpaceId;
-        const task = addAskTask({ prompt: prompt.trim(), agent, os: "linux", spaceId, pendingId: spaceId ? null : prep.pendingId, onHost: false, ...(model ? { model } : {}), ...(repo ? { repo } : {}) });
+        const task = addAskTask({
+          prompt: prompt.trim(),
+          agent,
+          os: "linux",
+          spaceId,
+          pendingId: spaceId ? null : prep.pendingId,
+          onHost: false,
+          ...(model ? { model } : {}),
+          ...(repo ? { repo } : {}),
+        });
         record("ask_first_task_started");
         preparing.send({ id: task.id, text: withRepo(prompt, repo), agent, model: model ?? null, repo: repo?.url ?? null });
         void navigate({ to: "/spaces/$spaceId", params: { spaceId: spaceId ?? prep.pendingId! } });
@@ -225,7 +273,8 @@ export function useStartTask(): {
         const pendingId = newPendingId();
         // Still on the row being made when it's done (a create quicker than the page): its Space's own page.
         const onCreated = (spaceId: string) => {
-          if (decodeURIComponent(router.state.location.pathname) === `/spaces/${pendingId}`) void navigate({ to: "/spaces/$spaceId", params: { spaceId }, replace: true });
+          if (decodeURIComponent(router.state.location.pathname) === `/spaces/${pendingId}`)
+            void navigate({ to: "/spaces/$spaceId", params: { spaceId }, replace: true });
         };
         // The job shows in the Space's thread at once, queued until the Space is ready (a home gets it with its briefing instead).
         const first = !home && canSummon() ? firstMessage(core, { members: [], people: [], canAdd: true, connectors }, agent, withRepo(prompt, repo)) : null;

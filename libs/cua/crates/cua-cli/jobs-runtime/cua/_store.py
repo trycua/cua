@@ -9,8 +9,13 @@ from __future__ import annotations
 import configparser
 import contextlib
 import datetime as _dt
-import fcntl
+try:
+    import fcntl
+except ImportError:  # Windows
+    fcntl = None
+    import msvcrt
 import hashlib
+import re
 import hmac
 import json
 import os
@@ -98,6 +103,27 @@ _THREAD_LOCKS: dict[str, threading.Lock] = {}
 _THREAD_LOCKS_GUARD = threading.Lock()
 
 
+def _lock(fd: int) -> None:
+    if fcntl is not None:
+        fcntl.lockf(fd, fcntl.LOCK_EX)
+        return
+    while True:  # Windows: one byte at offset 0; LK_LOCK gives up after ten tries
+        os.lseek(fd, 0, os.SEEK_SET)
+        try:
+            msvcrt.locking(fd, msvcrt.LK_LOCK, 1)
+            return
+        except OSError:
+            continue
+
+
+def _unlock(fd: int) -> None:
+    if fcntl is not None:
+        fcntl.lockf(fd, fcntl.LOCK_UN)
+        return
+    os.lseek(fd, 0, os.SEEK_SET)
+    msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+
+
 @contextlib.contextmanager
 def _exclusive(lock_path: Path):
     """Exclusive lock across processes (POSIX lockf, NFSv4-safe) and threads
@@ -107,11 +133,11 @@ def _exclusive(lock_path: Path):
     with tl:
         fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o644)
         try:
-            fcntl.lockf(fd, fcntl.LOCK_EX)
+            _lock(fd)
             try:
                 yield
             finally:
-                fcntl.lockf(fd, fcntl.LOCK_UN)
+                _unlock(fd)
         finally:
             os.close(fd)
 
@@ -175,7 +201,7 @@ class FileBackend:
             tmp.write_bytes(bytes(data))
         else:
             shutil.copyfile(data, tmp)
-        with open(tmp, "rb") as f:
+        with open(tmp, "r+b") as f:  # fsync needs a writable handle on Windows
             os.fsync(f.fileno())
         if if_match is None:
             os.replace(tmp, p)
@@ -197,7 +223,7 @@ class FileBackend:
                 raise _Conflict(key)
             tmp = _tmp_name(p)
             tmp.write_bytes(data)
-            with open(tmp, "rb") as f:
+            with open(tmp, "r+b") as f:  # fsync needs a writable handle on Windows
                 os.fsync(f.fileno())
             os.replace(tmp, p)
 
@@ -436,11 +462,28 @@ class S3Backend:
         self._request("DELETE", key, ok_missing=True)
 
 
+def file_url_path(url: str) -> str | None:
+    """The local path of a `file://` URL, on any OS: `file:///srv/x`,
+    `file:///C:/x` and a Windows path written straight after the scheme;
+    None for a URL that is not a local path."""
+    u = urllib.parse.urlsplit(str(url))
+    if u.scheme != "file":
+        return None
+    if re.match(r"^[A-Za-z]:", u.netloc):
+        return urllib.parse.unquote(u.netloc + u.path)
+    if u.netloc not in ("", "localhost"):
+        return None
+    path = urllib.parse.unquote(u.path)
+    if re.match(r"^/[A-Za-z]:[/\\]", path):
+        path = path[1:]
+    return path or None
+
+
 def open_backend(url: str, env=None):
     u = urllib.parse.urlsplit(url)
     if u.scheme == "file":
-        path = urllib.parse.unquote(u.path)
-        if u.netloc and u.netloc != "localhost":
+        path = file_url_path(url)
+        if path is None:
             raise ValueError(f"file:// checkpoint URLs must be local paths: {url!r}")
         return FileBackend(path)
     if u.scheme == "s3":

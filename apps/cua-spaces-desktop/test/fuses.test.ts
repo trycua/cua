@@ -91,7 +91,10 @@ describe("Electron fuses", () => {
   });
 
   it("finds the wire in a real Electron and reads it like @electron/fuses", async () => {
-    const stock = process.platform === "darwin" ? path.join(__dirname, "../node_modules/electron/dist/Electron.app") : path.join(__dirname, "../node_modules/electron/dist/electron");
+    const stock =
+      process.platform === "darwin"
+        ? path.join(__dirname, "../node_modules/electron/dist/Electron.app")
+        : path.join(__dirname, "../node_modules/electron/dist/electron");
     if (!existsSync(fuseFile(stock))) return;
     const dir = mkdtempSync(path.join(tmpdir(), "fuses-"));
     dirs.push(dir);

@@ -6,9 +6,9 @@
       "case": "01 welcome",
       "step": "welcome",
       "welcome": {
-        "lede": "Run agents in Spaces on this Mac, or on any computer your team connects.",
+        "lede": "",
         "primary": "start:Get started",
-        "title": "Your computers, shared by your team and its agents."
+        "title": "Combine all your computers into one supercomputer."
       }
     },
     {
@@ -268,7 +268,7 @@
           "[ ] Connect Hermes and Claude Code — Cua isn't in Hermes and Claude Code's settings yet. (connect:Connect)",
           "[ ] Make this Mac your first Space — After you sign in.",
           "[x] Try your first request — Ask Hermes or Claude Code: “Make a Linux Space on this Mac and show its desktop in a new window.”",
-          "[ ] Make a first Space (optional) — A separate computer on this Mac, away from your files and your mouse. (add:Add a Space)",
+          "[ ] Make a first Space (optional) — A separate computer on this Mac. (add:Add a Space)",
           "[ ] Add your other computers (optional) — Sign in to use this Mac's Spaces from your other computers. (sign-in:Sign in)"
         ],
         "lede": "One thing is left.",
@@ -303,7 +303,7 @@
           "phase": "choose",
           "title": "Make a first Space"
         },
-        "lede": "Spaces run on this Mac, away from your files and your mouse.",
+        "lede": "Spaces run on this Mac.",
         "primary": "done:Done",
         "prompt": null,
         "status": null,
@@ -314,7 +314,7 @@
         "complete": true,
         "items": [
           "[ ] Make this Mac your first Space — After you sign in.",
-          "[ ] Make a first Space (optional) — A separate computer on this Mac, away from your files and your mouse. (add:Add a Space)",
+          "[ ] Make a first Space (optional) — A separate computer on this Mac. (add:Add a Space)",
           "[ ] Add your other computers (optional) — Sign in to use this Mac's Spaces from your other computers. (sign-in:Sign in)"
         ],
         "lede": "You're all set.",
@@ -333,7 +333,7 @@
           "phase": "creating",
           "title": "Making macOS 1 in the background"
         },
-        "lede": "Spaces run on this Mac, away from your files and your mouse.",
+        "lede": "Spaces run on this Mac.",
         "primary": "done:Done",
         "prompt": null,
         "status": null,
@@ -355,7 +355,7 @@
           "phase": "choose",
           "title": "Make a first Space"
         },
-        "lede": "Spaces run on this Mac, away from your files and your mouse.",
+        "lede": "Spaces run on this Mac.",
         "primary": "done:Done",
         "prompt": null,
         "status": null,
@@ -381,7 +381,7 @@
           "[ ] Connect Claude Code — Cua isn't in Claude Code's settings yet. (connect:Connect)",
           "[ ] Let Cua control this Mac — So your agent can click and type. macOS asks you once. (open-settings:Open Settings)",
           "[ ] Try your first request — Ask Claude Code: “Make a Linux Space on this Mac and show its desktop in a new window.” (copy:Copy)",
-          "[ ] Make a first Space (optional) — A separate computer on this Mac, away from your files and your mouse. (add:Add a Space)",
+          "[ ] Make a first Space (optional) — A separate computer on this Mac. (add:Add a Space)",
           "[x] Add your other computers (optional) — Signed in to Cua."
         ],
         "lede": "A couple of things are left.",
@@ -800,7 +800,7 @@
           "phase": "choose",
           "title": "Make a first Space"
         },
-        "lede": "Spaces run on this Mac, away from your files and your mouse.",
+        "lede": "Spaces run on this Mac.",
         "primary": "done:Done",
         "prompt": null,
         "status": null,
@@ -845,7 +845,7 @@
           "phase": "choose",
           "title": "Make a first Space"
         },
-        "lede": "Spaces run on this Mac, away from your files and your mouse.",
+        "lede": "Spaces run on this Mac.",
         "primary": "done:Done",
         "prompt": null,
         "status": null,
@@ -890,7 +890,7 @@
           "phase": "choose",
           "title": "Make a first Space"
         },
-        "lede": "Spaces run on this Mac, away from your files and your mouse.",
+        "lede": "Spaces run on this Mac.",
         "primary": "done:Done",
         "prompt": null,
         "status": null,
@@ -937,7 +937,7 @@
           "phase": "choose",
           "title": "Make a first Space"
         },
-        "lede": "Spaces run on this Mac, away from your files and your mouse.",
+        "lede": "Spaces run on this Mac.",
         "primary": "done:Done",
         "prompt": null,
         "status": null,
@@ -985,7 +985,7 @@
           "phase": "choose",
           "title": "Make a first Space"
         },
-        "lede": "Spaces run on this computer, away from your files and your mouse.",
+        "lede": "Spaces run on this computer.",
         "primary": "done:Done",
         "prompt": null,
         "status": null,
@@ -1030,7 +1030,7 @@
           "phase": "choose",
           "title": "Make a first Space"
         },
-        "lede": "Spaces run on this Mac, away from your files and your mouse.",
+        "lede": "Spaces run on this Mac.",
         "primary": "done:Done",
         "prompt": null,
         "status": null,

@@ -589,6 +589,9 @@ fn deliver(
     keymap_conn: &RustConnection,
     pacing: StepPacing,
 ) -> Result<KeyboardDeliveryReport> {
+    // The kernel drops a press of a held key and a release of a free one, so
+    // the server would never report them and the confirm count would stall.
+    let steps = &state_changes(steps);
     let display = open_display()?;
     // Some emitted transition has not been reported back by the server yet.
     let mut unread = false;
@@ -764,6 +767,23 @@ fn read_through(
         }
     }
     true
+}
+
+fn state_changes(steps: &[KeyStep]) -> Vec<KeyStep> {
+    let mut held = Vec::new();
+    steps
+        .iter()
+        .copied()
+        .filter(|step| {
+            let was_held = held.contains(&step.evdev_code);
+            if step.press {
+                held.push(step.evdev_code);
+            } else {
+                held.retain(|code| *code != step.evdev_code);
+            }
+            step.press != was_held
+        })
+        .collect()
 }
 
 fn characters(steps: &[KeyStep]) -> usize {
@@ -1139,6 +1159,29 @@ mod tests {
                 step(29, false),
             ]
         );
+    }
+
+    #[test]
+    fn a_chord_that_repeats_a_key_sends_only_the_transitions_the_kernel_reports() {
+        // ctrl+ctrl+a and ctrl+ctrl: one press and one release of Ctrl each.
+        assert_eq!(
+            state_changes(&plan_chord(&[37, 37], 38, false, Some(50))),
+            vec![
+                step(29, true),
+                step(30, true),
+                step(30, false),
+                step(29, false)
+            ]
+        );
+        assert_eq!(
+            state_changes(&plan_chord(&[37], 37, false, Some(50))),
+            vec![step(29, true), step(29, false)]
+        );
+        let text =
+            plan_text_with_fallback::<()>(&mapping(), Some(50), "aA1!", |_, _| unreachable!())
+                .unwrap()
+                .0;
+        assert_eq!(state_changes(&text), text);
     }
 
     #[test]

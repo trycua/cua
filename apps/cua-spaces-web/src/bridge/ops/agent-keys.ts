@@ -134,7 +134,17 @@ declare module "../protocol" {
   }
 }
 
-export const AGENT_KEYS_OPERATIONS = ["agentKeys.list", "agentKeys.check", "agentKeys.set", "agentKeys.remove", "agentKeys.use", "agentKeys.rename", "agentKeys.shell", "agentKeys.fromShell", "agentKeys.copySignIn"] as const;
+export const AGENT_KEYS_OPERATIONS = [
+  "agentKeys.list",
+  "agentKeys.check",
+  "agentKeys.set",
+  "agentKeys.remove",
+  "agentKeys.use",
+  "agentKeys.rename",
+  "agentKeys.shell",
+  "agentKeys.fromShell",
+  "agentKeys.copySignIn",
+] as const;
 export type AgentKeysOp = (typeof AGENT_KEYS_OPERATIONS)[number];
 
 /** The SwiftUI host routes each under its own name. */

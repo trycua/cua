@@ -103,7 +103,12 @@ export function ComputerSignIn({
   if (unsupported) return null;
 
   const keyLink = (
-    <button type="button" data-signin-use-key="" onClick={onUseKey} className="inline-flex cursor-default items-center gap-1 text-xs text-muted-foreground outline-none hover:text-foreground hover:underline focus-visible:underline">
+    <button
+      type="button"
+      data-signin-use-key=""
+      onClick={onUseKey}
+      className="inline-flex cursor-default items-center gap-1 text-xs text-muted-foreground outline-none hover:text-foreground hover:underline focus-visible:underline"
+    >
       <KeyRoundIcon className="size-3" /> or use an API key
     </button>
   );
@@ -154,7 +159,16 @@ export function ComputerSignIn({
                   if (code.trim()) void run(() => call("code", { code: code.trim() }));
                 }}
               >
-                <Input data-signin-paste="" aria-label="Code from the sign-in page" placeholder="Paste the code" value={code} onChange={(e) => setCode(e.target.value)} autoComplete="off" spellCheck={false} className="h-8 max-w-72 font-mono text-xs" />
+                <Input
+                  data-signin-paste=""
+                  aria-label="Code from the sign-in page"
+                  placeholder="Paste the code"
+                  value={code}
+                  onChange={(e) => setCode(e.target.value)}
+                  autoComplete="off"
+                  spellCheck={false}
+                  className="h-8 max-w-72 font-mono text-xs"
+                />
                 <Button size="sm" type="submit" disabled={!code.trim() || busy}>
                   {busy ? <Loader2Icon className="animate-spin" /> : null} Finish
                 </Button>
@@ -171,7 +185,12 @@ export function ComputerSignIn({
           </p>
         )}
         <div className="mt-2 flex items-center gap-3">
-          <button type="button" data-signin-cancel="" onClick={() => void run(() => call("cancel"))} className="cursor-default text-xs text-muted-foreground outline-none hover:text-foreground hover:underline focus-visible:underline">
+          <button
+            type="button"
+            data-signin-cancel=""
+            onClick={() => void run(() => call("cancel"))}
+            className="cursor-default text-xs text-muted-foreground outline-none hover:text-foreground hover:underline focus-visible:underline"
+          >
             Cancel
           </button>
           {keyLink}
@@ -187,7 +206,11 @@ export function ComputerSignIn({
         {busy ? <Loader2Icon className="animate-spin" /> : <LogInIcon />} {again ? "Sign in again" : "Sign in"} to {name} on {computerName}
       </Button>
       {keyLink}
-      {s?.state === "expired" ? <span className="basis-full text-xs text-muted-foreground">{name}'s sign-in on {computerName} has run out.</span> : null}
+      {s?.state === "expired" ? (
+        <span className="basis-full text-xs text-muted-foreground">
+          {name}'s sign-in on {computerName} has run out.
+        </span>
+      ) : null}
       {s?.state === "failed" ? (
         <span data-signin-failed="" className="basis-full text-xs text-destructive">
           {s.reason}

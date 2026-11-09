@@ -159,24 +159,24 @@ export function ThreadView({
         <div className="flex h-full items-end px-8 pb-4">{empty}</div>
       ) : (
         <FailureComputerContext.Provider value={computer}>
-        <div ref={body} className="flex min-h-full flex-col justify-end gap-1 px-8 pt-5 pb-4" style={endInset ? { paddingBottom: endInset + 16 } : undefined}>
-          {items.map((item, i) => (
-            <Fragment key={item.key}>
-              <ThreadItemView
-                item={item}
-                above={aboveSeq(items, i)}
-                roster={roster}
-                onAnswer={onAnswer}
-                onOpenAttachment={onOpenAttachment}
-                onRemoveAgent={onRemoveAgent}
-                onRetry={onRetry}
-                onReply={onReply}
-              />
-              {after && "entry" in item ? after(item.entry.seq) : null}
-            </Fragment>
-          ))}
-          {tail}
-        </div>
+          <div ref={body} className="flex min-h-full flex-col justify-end gap-1 px-8 pt-5 pb-4" style={endInset ? { paddingBottom: endInset + 16 } : undefined}>
+            {items.map((item, i) => (
+              <Fragment key={item.key}>
+                <ThreadItemView
+                  item={item}
+                  above={aboveSeq(items, i)}
+                  roster={roster}
+                  onAnswer={onAnswer}
+                  onOpenAttachment={onOpenAttachment}
+                  onRemoveAgent={onRemoveAgent}
+                  onRetry={onRetry}
+                  onReply={onReply}
+                />
+                {after && "entry" in item ? after(item.entry.seq) : null}
+              </Fragment>
+            ))}
+            {tail}
+          </div>
         </FailureComputerContext.Provider>
       )}
     </div>

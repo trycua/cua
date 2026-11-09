@@ -138,7 +138,13 @@ export class FakeAgentKeysTools {
       default:
         throw new ToolError(`unknown tool ${tool}`);
     }
-    const report: Record<string, unknown> = { keys: this.keys, providers: [], available: this.available, copy_sign_in: this.copySignIn, ...(Object.keys(this.uses).length ? { uses: this.uses } : {}) };
+    const report: Record<string, unknown> = {
+      keys: this.keys,
+      providers: [],
+      available: this.available,
+      copy_sign_in: this.copySignIn,
+      ...(Object.keys(this.uses).length ? { uses: this.uses } : {}),
+    };
     if (!this.available) report.unavailable = "this build keeps credentials in a file";
     if (this.insecure) report.insecure = this.insecure;
     return report;
@@ -327,10 +333,19 @@ export const AGENT_METHODS = [
   "agents.signInStart",
   "agents.signInWait",
   // "Pick up where you left off" (test/agent-threads.test.ts): the daemon's person-only tools agent_threads and agent_thread_history.
-  "agents.recentThreads", "agents.threadHistory",
+  "agents.recentThreads",
+  "agents.threadHistory",
   // An agent's own sign-in on another computer (test/agent-sign-in.test.ts): the daemon's person-only tool agent_sign_in.
   "agents.computerSignIn",
-  "agentKeys.list", "agentKeys.check", "agentKeys.set", "agentKeys.remove", "agentKeys.use", "agentKeys.rename", "agentKeys.shell", "agentKeys.fromShell", "agentKeys.copySignIn",
+  "agentKeys.list",
+  "agentKeys.check",
+  "agentKeys.set",
+  "agentKeys.remove",
+  "agentKeys.use",
+  "agentKeys.rename",
+  "agentKeys.shell",
+  "agentKeys.fromShell",
+  "agentKeys.copySignIn",
   // Settings, Connections, GitHub (test/github.test.ts): answered by the daemon's tools.
   "github.status",
   "github.rescan",

@@ -20,7 +20,10 @@ const q = (s: string) => document.querySelector<HTMLElement>(s);
 const qa = (s: string) => [...document.querySelectorAll<HTMLElement>(s)];
 const path = `/spaces/${encodeURIComponent(DEMO_THREAD_SPACE)}`;
 /** The failed agent's reply (its own row: the one with Connect, or Sign in on another computer), named by what it says. */
-const failureReply = (who: string) => qa("[data-entry]").find((e) => e.querySelector("[data-failure-connect], [data-signin-start]") && e.querySelector("[data-failure]") && e.textContent?.includes(who));
+const failureReply = (who: string) =>
+  qa("[data-entry]").find(
+    (e) => e.querySelector("[data-failure-connect], [data-signin-start]") && e.querySelector("[data-failure]") && e.textContent?.includes(who),
+  );
 const host = { failsCreates: false, listsGhost: false, demo: { threadAuthFailed: true } };
 
 describe("an agent that is not connected", () => {

@@ -47,7 +47,6 @@ import { ProfileScopeProvider } from "./profile-card";
 import { queuedItems, useQueued } from "./queued";
 import { ThreadView } from "./thread-view";
 
-
 /** This Mac's own desktop (`this-mac-desktop.tsx`): its agents use the sign-in this Mac already has. */
 const THIS_MAC_SPACE = "this-mac";
 

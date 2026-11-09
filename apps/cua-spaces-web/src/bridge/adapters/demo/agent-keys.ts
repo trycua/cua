@@ -90,9 +90,26 @@ export function demoAgentKeysHandlers({
   stepMs: number;
   now: () => number;
   store?: DemoKeyStore;
-}): DemoHandlers<"agentKeys.list" | "agentKeys.check" | "agentKeys.set" | "agentKeys.remove" | "agentKeys.use" | "agentKeys.rename" | "agentKeys.shell" | "agentKeys.fromShell" | "agentKeys.copySignIn"> {
+}): DemoHandlers<
+  | "agentKeys.list"
+  | "agentKeys.check"
+  | "agentKeys.set"
+  | "agentKeys.remove"
+  | "agentKeys.use"
+  | "agentKeys.rename"
+  | "agentKeys.shell"
+  | "agentKeys.fromShell"
+  | "agentKeys.copySignIn"
+> {
   const keys = () => store.keys;
-  const report = (): AgentKeysReport => ({ keys: keys().map((k) => ({ ...k })), ...(Object.keys(store.uses).length ? { uses: { ...store.uses } } : {}), providers: PROVIDERS, available: true, unavailable: null, copySignIn: store.copySignIn ?? false });
+  const report = (): AgentKeysReport => ({
+    keys: keys().map((k) => ({ ...k })),
+    ...(Object.keys(store.uses).length ? { uses: { ...store.uses } } : {}),
+    providers: PROVIDERS,
+    available: true,
+    unavailable: null,
+    copySignIn: store.copySignIn ?? false,
+  });
   return {
     "agentKeys.list": () => report(),
     // The providers answer: the keys they refuse need a reconnect, and a key saved again is not refused.

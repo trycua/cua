@@ -16,9 +16,15 @@ describe("an agent's own sign-in on another computer (CUA-3907)", () => {
       pasteCode: false,
       reason: null,
     });
-    expect(computerSignInFromTool({ state: "signing_in", url: "https://claude.com/cai/oauth/authorize?x=1", code: null, paste_code: true })).toMatchObject({ pasteCode: true, code: null });
+    expect(computerSignInFromTool({ state: "signing_in", url: "https://claude.com/cai/oauth/authorize?x=1", code: null, paste_code: true })).toMatchObject({
+      pasteCode: true,
+      code: null,
+    });
     expect(computerSignInFromTool({ state: "signed_in" }).state).toBe("signed_in");
-    expect(computerSignInFromTool({ state: "failed", reason: "Codex's sign-in stopped: denied" })).toMatchObject({ state: "failed", reason: "Codex's sign-in stopped: denied" });
+    expect(computerSignInFromTool({ state: "failed", reason: "Codex's sign-in stopped: denied" })).toMatchObject({
+      state: "failed",
+      reason: "Codex's sign-in stopped: denied",
+    });
     expect(computerSignInFromTool({ state: "expired" }).state).toBe("expired");
     expect(computerSignInFromTool({ state: "nonsense" }).state).toBe("not_signed_in");
   });
@@ -31,13 +37,21 @@ describe("an agent's own sign-in on another computer (CUA-3907)", () => {
   it("sends the daemon only what it takes", () => {
     const args = AGENT_SIGN_IN_TOOLS["agents.computerSignIn"].args;
     expect(args({ space: "mac-mini", agent: "openai-codex", action: "start" })).toEqual({ space: "mac-mini", agent: "openai-codex", action: "start" });
-    expect(args({ space: "mac-mini", agent: "claude-code", action: "code", code: " a#b ", afterRefusal: true })).toEqual({ space: "mac-mini", agent: "claude-code", action: "code", code: "a#b", after_refusal: true });
+    expect(args({ space: "mac-mini", agent: "claude-code", action: "code", code: " a#b ", afterRefusal: true })).toEqual({
+      space: "mac-mini",
+      agent: "claude-code",
+      action: "code",
+      code: "a#b",
+      after_refusal: true,
+    });
   });
 
   it("is unsupported on a daemon without the tool", async () => {
     expect(isMissingSignInTool(new Error("unknown tool agent_sign_in"))).toBe(true);
     const ops = webkitAgentSignInOps(async () => Promise.reject(new Error("unknown tool agent_sign_in")));
-    await expect(ops["agents.computerSignIn"]({ space: "s", agent: "claude-code", action: "status" })).rejects.toMatchObject({ name: "UnsupportedOperationError" });
+    await expect(ops["agents.computerSignIn"]({ space: "s", agent: "claude-code", action: "status" })).rejects.toMatchObject({
+      name: "UnsupportedOperationError",
+    });
   });
 
   it("only Claude Code and Codex sign in on the computer", () => {

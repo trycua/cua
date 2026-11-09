@@ -281,8 +281,7 @@ export function createTauriAdapter(win: HostWindow = globalThis.window as HostWi
       else await invoke("keyvault_unlock");
       return null;
     },
-    "keyvault.setUnattended": ({ itemIds, unattended }) =>
-      invoke("keyvault_set_unattended", { args: { itemIds, unattended } }),
+    "keyvault.setUnattended": ({ itemIds, unattended }) => invoke("keyvault_set_unattended", { args: { itemIds, unattended } }),
     "keyvault.setDisabled": async ({ disabled }) => {
       await invoke("keyvault_set_disabled", { disabled });
       return null;

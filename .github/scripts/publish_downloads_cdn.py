@@ -393,7 +393,7 @@ class Publisher:
         res.add(name, "FAILED", size, last)
         return False
 
-    def gate_feed(self, tag: str, name: str, data: bytes, rel_assets: set[str], res: Result) -> str | None:
+    def gate_feed(self, tag: str, name: str, data: bytes, rel_assets: set[str], res: Result, follow: bool = True) -> str | None:
         """None when every file the feed names is in the bucket; else why not."""
         text = data.decode(errors="replace")
         missing = []
@@ -401,7 +401,7 @@ class Publisher:
             if rtag == tag and rname not in rel_assets:
                 missing.append(f"{rtag}/{rname} (not on the GitHub release)")
                 continue
-            if rtag != tag and rtag not in self.done_tags and not is_rolling(rtag) and not self.args.no_follow:
+            if follow and rtag != tag and rtag not in self.done_tags and not is_rolling(rtag) and not self.args.no_follow:
                 self.follow(rtag)
             if self.args.dry_run:
                 continue
@@ -414,7 +414,7 @@ class Publisher:
     def follow(self, tag: str) -> None:
         print(f"following a reference to {tag}", flush=True)
         try:
-            r = self.publish_tag(tag, follow=False)
+            r = self.publish_tag(tag, follow=False)  # one level only: a followed tag's own feeds do not pull in more tags
             self.results.append(r)
         except Fatal as e:
             print(f"::warning::could not mirror referenced tag {tag}: {e}", flush=True)
@@ -448,10 +448,13 @@ class Publisher:
                 res.fail(f"{tag}/{a['name']}: downloaded feed does not match GitHub's size/digest")
                 res.add(a["name"], "FAILED", a["size"])
                 continue
-            why = self.gate_feed(tag, a["name"], data, names, res)
+            why = self.gate_feed(tag, a["name"], data, names, res, follow)
             if why:
-                res.fail(f"{tag}: {why}")
-                res.add(a["name"], "HELD BACK (references missing files)", a["size"])
+                if follow:
+                    res.fail(f"{tag}: {why}")
+                else:  # reached only because a requested feed names this tag; copy it on its own to get this feed
+                    print(f"::warning::{tag}: {why}", flush=True)
+                res.add(a["name"], "HELD BACK (references files of tags not copied)", a["size"])
                 continue
             ok = self.copy_one_bytes(tag, a, data, res)
             if ok and not self.args.dry_run:

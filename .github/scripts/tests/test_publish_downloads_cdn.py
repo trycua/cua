@@ -191,3 +191,16 @@ def test_plan_picks_newest_of_each_product_and_rolling_last():
     assert {"cua-sdk-v0.17.1", "cua-spacesd-v0.12.8", "cua-driver-rs-v0.45.4"} <= set(out)
     assert out[-3:] == plan.ROLLING
     assert "cua-sdk-v0.9.0" not in out and "lume-v1.0.0" not in out
+
+
+def test_followed_tag_does_not_pull_in_more_tags():
+    src, store = FakeSource({}), FakeStore()
+    src.add("old-v0", {"z.dmg": b"Z"})
+    src.add("app-v1", {"a.dmg": b"A", "release-artifacts.json": b"https://github.com/o/r/releases/download/old-v0/z.dmg"})
+    src.add("app-latest", {"appcast.xml": b"https://github.com/o/r/releases/download/app-v1/a.dmg"})
+    assert run(src, store, ["app-latest"]) == 0
+    assert "app-v1/a.dmg" in store.objs and "app-latest/appcast.xml" in store.objs
+    assert "old-v0/z.dmg" not in store.objs and "app-v1/release-artifacts.json" not in store.objs
+    # asking for the tag itself completes it
+    assert run(src, store, ["app-v1"]) == 0
+    assert "app-v1/release-artifacts.json" in store.objs

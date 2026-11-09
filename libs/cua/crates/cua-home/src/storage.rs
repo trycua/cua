@@ -778,6 +778,7 @@ pub fn move_kind(
     // Cua owns the folder only if it was new or empty: uninstall removes such a
     // folder, and never anything else on a drive the person shares with other files.
     let was_empty = !plan.to.exists()
+        || fs::read_to_string(plan.to.join(OWNED_MARKER)).is_ok_and(|t| t.contains("owned=1"))
         || fs::read_dir(&plan.to)
             .map(|mut r| r.all(|e| e.is_ok_and(|e| e.file_name() == OWNED_MARKER)))
             .unwrap_or(false);
@@ -943,9 +944,14 @@ fn normalize(path: &Path) -> PathBuf {
 /// does not recognise (a person's own files that were in the folder) are never
 /// touched: the folder stays and the report names them.
 pub fn remove_old(old: &Path) -> io::Result<RemoveReport> {
+    remove_old_in(&crate::cua_home(), old)
+}
+
+/// [`remove_old`] for the cua home `home`.
+pub fn remove_old_in(home: &Path, old: &Path) -> io::Result<RemoveReport> {
     crate::guard_write(old)?;
     let denied = |m: &str| io::Error::new(io::ErrorKind::PermissionDenied, m.to_string());
-    if is_in_use(&crate::cua_home(), old) {
+    if is_in_use(home, old) {
         return Err(denied("that folder is in use"));
     }
     let marker = fs::read_to_string(old.join(MOVED_MARKER))
@@ -973,6 +979,28 @@ pub fn remove_old(old: &Path) -> io::Result<RemoveReport> {
     }
     if !processes_using(old).is_empty() {
         return Err(denied("a computer is still using that folder"));
+    }
+    // In a folder that is not the default one, Cua deletes only when it created the folder
+    // (its owned marker): a person's own `blobs` or `linux` folder in a folder they pointed
+    // Cua at is not Cua's, whatever it is called. Without the marker nothing is deleted.
+    let is_default = normalize(old) == normalize(&kind.default_in(home));
+    let owned = fs::read_to_string(old.join(OWNED_MARKER)).is_ok_and(|t| t.contains("owned=1"));
+    if !is_default && !owned {
+        let would = entries(kind, old)
+            .0
+            .iter()
+            .filter_map(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+            .collect::<Vec<_>>();
+        return Err(denied(&format!(
+            "Cua cannot tell it created {}, so nothing in it is deleted. Cua's own {} files there would be: {}. Remove them by hand if you want them gone.",
+            old.display(),
+            kind.name(),
+            if would.is_empty() {
+                "none".to_string()
+            } else {
+                would.join(", ")
+            }
+        )));
     }
     remove_known(kind, old)
 }
@@ -1143,9 +1171,9 @@ mod tests {
         let again = move_kind(&h, Kind::Runtimes, &to, |_| {}).unwrap();
         assert_eq!(again.from, again.to);
         // Removing the old copy needs the marker; a live place is refused.
-        assert!(remove_old(&to).is_err());
+        assert!(remove_old_in(&h, &to).is_err());
         assert!(to.join("lume/1/disk.img").exists());
-        let rep = remove_old(&old).unwrap();
+        let rep = remove_old_in(&h, &old).unwrap();
         // Cua's own entry goes; the person's top.txt and link were never Cua's, so they stay.
         assert!(!old.join("lume").exists());
         assert_eq!(rep.left, vec!["link".to_string(), "top.txt".to_string()]);
@@ -1172,7 +1200,7 @@ mod tests {
             !old.join(MOVED_MARKER).exists(),
             "the marker goes when it is live again"
         );
-        assert!(remove_old(&old).is_err());
+        assert!(remove_old_in(&h, &old).is_err());
         assert!(old.join("blobs/a").exists());
     }
 
@@ -1187,7 +1215,7 @@ mod tests {
             d.path().join("gone").to_string_lossy().as_bytes(),
         )
         .unwrap();
-        assert!(remove_old(&old).is_err());
+        assert!(remove_old_in(&d.path().join("home"), &old).is_err());
         assert!(old.join("a").exists());
     }
 
@@ -1229,21 +1257,21 @@ mod tests {
         move_kind(&h, Kind::Images, &b, |_| {}).unwrap();
         set_override(&h, Kind::Images, None).unwrap();
         assert!(
-            remove_old(&live).is_err(),
+            remove_old_in(&h, &live).is_err(),
             "reset: the default is live again"
         );
         assert!(live.join("blobs/a").exists());
         // Move back (B becomes the old copy, the default is live).
         move_kind(&h, Kind::Images, &b, |_| {}).unwrap();
         move_kind(&h, Kind::Images, &live, |_| {}).unwrap();
-        assert!(remove_old(&live).is_err());
+        assert!(remove_old_in(&h, &live).is_err());
         assert!(live.join("blobs/a").exists());
         // Even with a stale marker planted in the live folder.
         fs::write(live.join(MOVED_MARKER), b.to_string_lossy().as_bytes()).unwrap();
-        assert!(remove_old(&live).is_err());
+        assert!(remove_old_in(&h, &live).is_err());
         assert!(live.join("blobs/a").exists());
         // The old copy in B may go.
-        assert!(remove_old(&b).is_ok());
+        assert!(remove_old_in(&h, &b).is_ok());
         assert!(live.join("blobs/a").exists());
     }
 
@@ -1265,11 +1293,11 @@ mod tests {
         }
         let link = d.path().join("link");
         std::os::unix::fs::symlink(&live, &link).unwrap();
-        assert!(remove_old(&link).is_err());
+        assert!(remove_old_in(&h, &link).is_err());
         assert!(live.exists());
         // The cua home is never "old".
         fs::write(h.join(MOVED_MARKER), live.to_string_lossy().as_bytes()).unwrap();
-        assert!(remove_old(&h).is_err());
+        assert!(remove_old_in(&h, &h).is_err());
     }
 
     #[test]
@@ -1356,7 +1384,7 @@ mod tests {
         );
         assert!(to.join("mac/20260101-120000/turn_001.json").exists());
         assert!(!to.join("my-vacation-video.mov").exists(), "not copied");
-        let rep = remove_old(&old).unwrap();
+        let rep = remove_old_in(&h, &old).unwrap();
         assert_eq!(rep.left, vec!["my-vacation-video.mov".to_string()]);
         assert_eq!(
             fs::read(old.join("my-vacation-video.mov")).unwrap(),
@@ -1396,5 +1424,30 @@ mod tests {
         fs::create_dir_all(ext.join("img")).unwrap();
         set_override(&h, Kind::Images, Some(&ext.join("img"))).unwrap();
         assert!(validate(&h, Kind::Images, &ext, 0).is_err());
+    }
+
+    /// R1: a folder the person pointed Cua at, with their own `blobs` folder in it, is never emptied.
+    #[test]
+    fn a_pointed_at_folder_is_never_emptied_even_when_it_has_cua_names() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let d = tempfile::tempdir().unwrap();
+        let h = d.path().join("home");
+        set_cua_home_for_test(&h);
+        fs::create_dir_all(h.join("images/blobs")).unwrap();
+        fs::write(h.join("images/blobs/x"), b"cua").unwrap();
+        let pointed = d.path().join("pointed");
+        fs::create_dir_all(pointed.join("blobs/family-photos")).unwrap();
+        fs::write(pointed.join("blobs/family-photos/img.jpg"), b"mine").unwrap();
+        // Move into the person's folder (it was not empty, so Cua does not own it), then away again.
+        move_kind(&h, Kind::Images, &pointed, |_| {}).unwrap();
+        let other = d.path().join("other");
+        move_kind(&h, Kind::Images, &other, |_| {}).unwrap();
+        let e = remove_old_in(&h, &pointed).unwrap_err().to_string();
+        assert!(e.contains("cannot tell it created"), "{e}");
+        assert!(pointed.join("blobs/family-photos/img.jpg").exists());
+        // The default folder keeps today's rule: only Cua's own entries go.
+        assert!(h.join("images").join(MOVED_MARKER).exists());
+        remove_old_in(&h, &h.join("images")).unwrap();
+        assert!(!h.join("images/blobs").exists());
     }
 }

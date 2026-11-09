@@ -23,6 +23,7 @@ SCRIPT = HERE / "uninstall.sh"
 
 # Real utilities the script needs; everything else is a fake or absent.
 REAL_TOOLS = (
+    "ps",
     "awk", "cat", "cmp", "curl", "cut", "dirname", "env", "grep", "head", "kill", "ls", "mkdir",
     "mktemp", "printf", "readlink", "rmdir", "sed", "sort", "tr", "wc", "bash",
 )
@@ -404,6 +405,8 @@ class UninstallMacTest(unittest.TestCase):
         }
         for kind, (d, rel) in layout.items():
             box.put(f"ext/{d}/{rel}", "data\n")
+            # Cua created these folders when it moved the data there.
+            box.put(f"ext/{d}/.cua-storage", f"kind={kind}\nowned=1\n")
         lines = "".join(f'{kind} = "{ext}/{d}"\n' for kind, (d, _) in layout.items())
         box.put(".cua/storage.toml", "[paths]\n" + lines)
         box.put(".cua/config.toml", "x\n")
@@ -456,6 +459,36 @@ class UninstallMacTest(unittest.TestCase):
         self.assertFalse(box.exists("ext/img"), "a folder with only Cua's entries goes whole")
         self.assertIn("did not put there", result.stdout)
         self.assertTrue(box.exists("ext"), "the drive itself is never touched")
+
+    def test_a_folder_the_person_pointed_cua_at_is_never_emptied_even_if_it_has_cua_names(self):
+        box = self.box()
+        installed_mac(box)
+        box.put("pointed/blobs/family-photos/img1.jpg", "mine\n")
+        box.put("pointed/linux/notes.txt", "mine\n")
+        box.put(".cua/storage.toml", f'[paths]\nimages = "{box.home}/pointed"\n')
+        result = box.run("--yes", "--delete-spaces", "--prefix", str(box.home))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue(box.exists("pointed/blobs/family-photos/img1.jpg"))
+        self.assertTrue(box.exists("pointed/linux/notes.txt"))
+        self.assertIn("Cua cannot tell it created this folder", result.stdout)
+        self.assertIn("blobs", result.stdout)
+
+    def test_a_relocated_folder_that_a_process_still_uses_is_skipped_and_says_why(self):
+        import subprocess
+        box = self.box()
+        installed_mac(box)
+        ext = self.relocated(box)
+        child = subprocess.Popen(["sh", "-c", "sleep 30; true", str(ext / "rt" / "linux" / "vm")])
+        try:
+            result = box.run("--yes", "--delete-spaces", "--prefix", str(box.home))
+        finally:
+            child.kill()
+            child.wait()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue(box.exists("ext/rt/linux/vm/disk"))
+        self.assertIn("still in use by", result.stdout + result.stderr)
+        # The folders nothing runs from are still handled.
+        self.assertFalse(box.exists("ext/img"))
 
     def test_keep_keychain_leaves_every_secret_alone(self):
         box = self.box()

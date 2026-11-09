@@ -485,6 +485,28 @@ function Remove-RelocatedFolders {
             Write-Info "kept $($f.Kind) in $($f.Path); $note"
             continue
         }
+        # A folder Cua did not create (no owned marker: one the person pointed Cua at, an environment
+        # variable, or `cua storage set` without --move) is never emptied: Cua cannot tell its own
+        # files from the person's. Its own entries are only listed.
+        $marker = Join-Path $f.Path '.cua-storage'
+        $owned = (Test-Path -LiteralPath $marker) -and (Select-String -LiteralPath $marker -Pattern '^owned=1' -Quiet)
+        if (-not $owned) {
+            $would = @(Get-ChildItem -LiteralPath $f.Path -Force -ErrorAction SilentlyContinue | Where-Object { Test-CuaKnownEntry $f.Kind $_ } | ForEach-Object { $_.Name })
+            $wouldText = if ($would.Count) { $would -join ', ' } else { 'none' }
+            Write-Info "kept $($f.Path): Cua cannot tell it created this folder, so nothing in it is deleted. Cua's own $($f.Kind) files there: $wouldText. Remove those by hand if you want them gone."
+            continue
+        }
+        # Stop Cua's own programs that run from the folder, then skip it if anything still uses it.
+        $users = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -and $_.CommandLine.Contains($f.Path) -and $_.ProcessId -ne $PID })
+        if ($users.Count -gt 0 -and -not $DryRun) {
+            $users | Where-Object { $_.Name -match 'limactl|lima|colima|qemu|lume|cua' } | ForEach-Object { Stop-Process -Id $_.ProcessId -ErrorAction SilentlyContinue }
+            Start-Sleep -Seconds 3
+            $users = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -and $_.CommandLine.Contains($f.Path) -and $_.ProcessId -ne $PID })
+        }
+        if ($users.Count -gt 0) {
+            if ($DryRun) { Write-Host "[dry-run] stop the programs running from $($f.Path), then remove Cua's $($f.Kind) files there" }
+            else { Write-Warn "$($f.Path) is still in use by: $(($users | Select-Object -First 3 | ForEach-Object { $_.Name }) -join ', '); not removing it. Stop those programs and run the uninstall again"; continue }
+        }
         $left = @()
         foreach ($e in Get-ChildItem -LiteralPath $f.Path -Force -ErrorAction SilentlyContinue) {
             if ($e.Name -in @('.cua-storage', '.cua-moved-to', '.last-used') -or (Test-CuaKnownEntry $f.Kind $e)) {

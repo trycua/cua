@@ -1074,6 +1074,32 @@ cua_bookkeeping() {
     return 1
 }
 
+# procs_using DIR: "pid command" lines of the other processes whose command line names DIR
+# (a running computer's host agent, QEMU, a program with the folder open by path).
+procs_using() {
+    has ps || return 0
+    # The folder goes in through the environment so no process of ours names it on its command line.
+    ps -axww -o pid=,command= 2>/dev/null | CUA_DIR="$1" awk -v me="$$" '
+        $1 != me && index($0, ENVIRON["CUA_DIR"]) > 0 { print }' | grep -v "uninstall" || true
+}
+
+# stop_cua_processes DIR: asks Cua's own runtime programs (Lima, Colima, QEMU, lume, cua) that
+# run from DIR to stop, then waits a little. Nothing else is touched.
+stop_cua_processes() {
+    ours="$(procs_using "$1" | grep -E 'limactl|lima|colima|qemu|/lume|/cua( |$)|cua-spacesd' || true)"
+    [ -n "$ours" ] || return 0
+    printf '%s\n' "$ours" | while IFS= read -r line; do
+        pid="${line%% *}"
+        pid="${pid# }"
+        kill -TERM "$pid" 2>/dev/null || true
+    done
+    waited=0
+    while [ "$waited" -lt 10 ] && [ -n "$(procs_using "$1")" ]; do
+        sleep 1
+        waited=$((waited + 1))
+    done
+}
+
 # clean_relocated: what lives in relocated folders. cache and logs go like the rest of the
 # settings and caches (unless --keep-data); runtimes, images and trajectories hold Spaces'
 # disks and recordings, so only --delete-spaces removes them. Only the entries Cua itself
@@ -1098,6 +1124,34 @@ clean_relocated() {
             fi
             info "kept $kind in $path ($why); $note"
             continue
+        fi
+        # A folder that Cua did not create (no owned marker: one the person pointed Cua at, an
+        # environment variable, or `cua storage set` without --move) is never emptied, because
+        # Cua cannot tell its own files from the person's. Its own entries are only listed.
+        owned=0
+        grep -q '^owned=1' "$path/.cua-storage" 2>/dev/null && owned=1
+        would=""
+        for entry in "$path"/* "$path"/.[!.]*; do
+            [ -e "$entry" ] || [ -L "$entry" ] || continue
+            ename="${entry##*/}"
+            if cua_known_entry "$kind" "$entry"; then would="$would$ename "; fi
+        done
+        if [ "$owned" = 0 ]; then
+            info "kept $path: Cua cannot tell it created this folder, so nothing in it is deleted. Cua's own $kind files there: ${would:-none}. Remove those by hand if you want them gone."
+            continue
+        fi
+        users="$(procs_using "$path")"
+        if [ -n "$users" ] && [ "$dry_run" = 0 ]; then
+            stop_cua_processes "$path"
+            users="$(procs_using "$path")"
+        fi
+        if [ -n "$users" ]; then
+            if [ "$dry_run" = 1 ]; then
+                say "[dry-run] stop the programs running from $path, then remove Cua's $kind files there"
+            else
+                warn "$path is still in use by: $(printf '%s' "$users" | head -3 | cut -c1-100 | tr '\n' ';'); not removing it. Stop those programs and run the uninstall again"
+                continue
+            fi
         fi
         left=""
         for entry in "$path"/* "$path"/.[!.]*; do

@@ -398,7 +398,7 @@ fn remove(home: &Path, path: &Path) -> Result<storage::RemoveReport, String> {
         .canonicalize()
         .map_err(|_| "That folder does not exist.".to_string())?;
     if canon.join(storage::MOVED_MARKER).exists() {
-        return storage::remove_old(&canon).map_err(|e| e.to_string());
+        return storage::remove_old_in(home, &canon).map_err(|e| e.to_string());
     }
     let runtimes = storage::dir(Kind::Runtimes)
         .canonicalize()

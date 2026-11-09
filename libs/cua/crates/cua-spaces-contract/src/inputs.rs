@@ -806,6 +806,25 @@ pub struct AgentStop {
     pub name: Option<String>,
 }
 
+/// `agent_sign_in`: an agent's own sign-in on the Space's computer.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct AgentSignIn {
+    /// Space id or name.
+    pub space: SpaceArg,
+    /// Harness id: `claude-code` or `openai-codex`.
+    pub agent: String,
+    /// `status` (default), `start`, `code` (hand over the pasted `code`) or `cancel`.
+    #[serde(default)]
+    pub action: Option<String>,
+    /// For `code`: the code the sign-in page showed (Claude Code).
+    #[serde(default)]
+    pub code: Option<String>,
+    /// The agent's last run there was refused its sign-in: a sign-in that is
+    /// there has run out (`expired`).
+    #[serde(default)]
+    pub after_refusal: bool,
+}
+
 /// `agent_capabilities`: takes no arguments.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct AgentCapabilities {}

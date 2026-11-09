@@ -145,6 +145,9 @@ extension WebUIBridge {
             return try await model.agentKeys.call("agent_keys.rename", renameArgs)
         // Which provider keys your login shell has (names only), and one saved from it (the value never crosses the bridge).
         case "agentKeys.shell": return try await model.agentKeys.call("agent_keys.shell")
+        case "agentKeys.copySignIn":
+            guard let on = args["on"] as? Bool else { throw Failure.badArgs("on: boolean") }
+            return try await model.agentKeys.call("agent_keys.copy_sign_in", ["on": on])
         case "agentKeys.fromShell":
             var shellArgs: [String: Any] = ["env": try string(args, "env")]
             if let region = args["region"] as? String, !region.isEmpty { shellArgs["region"] = region }
@@ -522,6 +525,32 @@ extension WebUIBridge {
         }
     }
 
+    /// `agents.computerSignIn {space, agent, action, code?, afterRefusal?}`: the
+    /// person-only daemon tool `agent_sign_in` (the agent's own sign-in on
+    /// another computer, CUA-3907), its JSON back untouched
+    /// (`ops/agent-sign-in.ts` maps it). A daemon without it answers `unsupported`.
+    func computerSignIn(_ args: [String: Any]) async throws -> Any {
+        guard let space = args["space"] as? String, !space.isEmpty else { throw Failure.badArgs("space: string") }
+        guard let agent = args["agent"] as? String, !agent.isEmpty else { throw Failure.badArgs("agent: string") }
+        let action = args["action"] as? String ?? "status"
+        guard ["status", "start", "code", "cancel"].contains(action) else { throw Failure.badArgs("action: status, start, code or cancel") }
+        var out: [String: Any] = ["space": space, "agent": agent, "action": action]
+        if action == "code" {
+            guard let code = args["code"] as? String, !code.isEmpty else { throw Failure.badArgs("code: string") }
+            out["code"] = code
+        }
+        if args["afterRefusal"] as? Bool == true { out["after_refusal"] = true }
+        do {
+            return try await tool("agent_sign_in", out)
+        } catch let f as Failure {
+            throw f
+        } catch {
+            let words = LiveSpacesBackend.words(error)
+            if Self.missingThreadTool(words) { throw Failure.unsupported("Update Cua Spaces to sign agents in on other computers.") }
+            throw Failure(code: "failed", message: words)
+        }
+    }
+
     /// `thread.read`, `thread.post`, `thread.members`, `thread.setRights`,
     /// `thread.agentAdd`, `thread.agentRemove`, `thread.joinCodeCreate`,
     /// `thread.joinCodeList`, `thread.joinCodeCancel`, `thread.settings`: the operation's
@@ -626,7 +655,7 @@ extension WebUIBridge {
     static func missingThreadTool(_ message: String) -> Bool {
         let m = message.lowercased()
         let tools = ["thread_read", "thread_post", "agent_members", "thread_join_code_create", "thread_join_code_list",
-                     "thread_join_code_cancel", "thread_settings", "agent_threads", "agent_thread_read"]
+                     "thread_join_code_cancel", "thread_settings", "agent_threads", "agent_thread_read", "agent_sign_in"]
         return tools.contains { t in m.contains("spaces tool \(t)") || ((m.contains("unknown tool") || m.contains("no such tool")) && m.contains(t)) }
     }
 

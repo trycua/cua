@@ -53,6 +53,7 @@ import { THREAD_COVERAGE } from "./ops/thread";
 import { PRESENCE_COVERAGE } from "./ops/presence";
 import { CLOUD_APPROVE_COVERAGE } from "./ops/cloud-approve";
 import { AGENT_THREADS_COVERAGE } from "./ops/agent-threads";
+import { AGENT_SIGN_IN_COVERAGE } from "./ops/agent-sign-in";
 import { RUNTIME_FIX_COVERAGE } from "./ops/runtime-fix";
 import { TELEMETRY_COVERAGE } from "./ops/telemetry";
 import { STARTUP_COVERAGE } from "./ops/startup";
@@ -312,6 +313,7 @@ export const HOST_COVERAGE = {
   ...PRESENCE_COVERAGE,
   ...CLOUD_APPROVE_COVERAGE,
   ...AGENT_THREADS_COVERAGE,
+  ...AGENT_SIGN_IN_COVERAGE,
   ...RUNTIME_FIX_COVERAGE,
   ...DRIVER_COVERAGE,
 } as const satisfies Record<OpName, OpCoverage>;

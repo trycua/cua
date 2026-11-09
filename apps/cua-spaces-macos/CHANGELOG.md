@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.25.2](https://github.com/trycua/cua/compare/cua-spaces-v0.25.1...cua-spaces-v0.25.2) (2026-11-09)
+
+
+### Bug Fixes
+
+* **spaces-desktop:** resolve the web app's i18n dependencies in the Electron build ([#7117](https://github.com/trycua/cua/issues/7117)) ([258724d](https://github.com/trycua/cua/commit/258724de5296e70d0a4de6e403439c63bd8f9892))
+
 ## [0.25.1](https://github.com/trycua/cua/compare/cua-spaces-v0.25.0...cua-spaces-v0.25.1) (2026-11-09)
 
 

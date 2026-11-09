@@ -11,11 +11,29 @@ import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { afterAll, describe, expect, it, vi } from "vitest";
-import { appOf, backoffMs, comparablePath, cuaHome, DAEMON_KEEP_ENV, DaemonSupervisor, daemonPids, executablePath, yieldNotice, type SuperviseOptions } from "../src/model/daemon";
+import {
+  appOf,
+  backoffMs,
+  comparablePath,
+  cuaHome,
+  DAEMON_KEEP_ENV,
+  DaemonSupervisor,
+  daemonPids,
+  executablePath,
+  yieldNotice,
+  type SuperviseOptions,
+} from "../src/model/daemon";
 import { supervise } from "../src/model/environment";
 import type { AppModel } from "../src/model/app-model";
 import type { CuaLike } from "../src/native/generated/index";
-import { BundledCuaKeychain, parseKeychainCheck, StartupModel, startupState, type KeychainAccessChecking, type KeychainCheckResult } from "../src/model/startup";
+import {
+  BundledCuaKeychain,
+  parseKeychainCheck,
+  StartupModel,
+  startupState,
+  type KeychainAccessChecking,
+  type KeychainCheckResult,
+} from "../src/model/startup";
 
 const scratch = mkdtempSync(path.join(tmpdir(), "cua-daemon-test-"));
 afterAll(() => rmSync(scratch, { recursive: true, force: true }));
@@ -25,7 +43,10 @@ const posix = process.platform !== "win32";
 function fakeCua(name: string, out: string, code = 0): { bin: string; seen: () => string } {
   const bin = path.join(scratch, name);
   const log = `${bin}.log`;
-  writeFileSync(bin, `#!/bin/sh\necho "$@ started_by=$CUA_DAEMON_STARTED_BY quiet=$CUA_KEYCHAIN_NONINTERACTIVE" >> '${log}'\nprintf '%s' '${out}'\nexit ${code}\n`);
+  writeFileSync(
+    bin,
+    `#!/bin/sh\necho "$@ started_by=$CUA_DAEMON_STARTED_BY quiet=$CUA_KEYCHAIN_NONINTERACTIVE" >> '${log}'\nprintf '%s' '${out}'\nexit ${code}\n`,
+  );
   chmodSync(bin, 0o755);
   return { bin, seen: () => readFileSync(log, "utf8") };
 }
@@ -33,9 +54,22 @@ function fakeCua(name: string, out: string, code = 0): { bin: string; seen: () =
 describe("the daemon's files", () => {
   it("reads the starting and running daemons' pids", () => {
     const files: Record<string, string> = { "daemon.starting": "41\n", "daemon.json": JSON.stringify({ pid: 42, token: "t" }) };
-    expect(daemonPids("/h", (f) => files[path.basename(f)] ?? (() => { throw new Error("none"); })())).toEqual([41, 42]);
-    expect(daemonPids("/h", () => { throw new Error("none"); })).toEqual([]);
-    expect(daemonPids("/h", (f) => (f.endsWith("daemon.json") ? "{\"pid\":7}" : "x"))).toEqual([7]);
+    expect(
+      daemonPids(
+        "/h",
+        (f) =>
+          files[path.basename(f)] ??
+          (() => {
+            throw new Error("none");
+          })(),
+      ),
+    ).toEqual([41, 42]);
+    expect(
+      daemonPids("/h", () => {
+        throw new Error("none");
+      }),
+    ).toEqual([]);
+    expect(daemonPids("/h", (f) => (f.endsWith("daemon.json") ? '{"pid":7}' : "x"))).toEqual([7]);
   });
 
   it("finds the cua home in CUA_HOME, else ~/.cua", () => {

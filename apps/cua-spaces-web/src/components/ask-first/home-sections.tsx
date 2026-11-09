@@ -75,7 +75,12 @@ export function YourAgents({ chats }: { chats: AgentChat[] | null | undefined })
   const working = chats.filter((c) => c.tone === "working").length;
   return (
     <section data-home-agents="">
-      <SectionHead title={t("home.sections.your_agents")} note={working ? t("home.sections.working", { count: working }) : null} to="/agents" all={t("home.sections.see_all", { count: chats.length })} />
+      <SectionHead
+        title={t("home.sections.your_agents")}
+        note={working ? t("home.sections.working", { count: working }) : null}
+        to="/agents"
+        all={t("home.sections.see_all", { count: chats.length })}
+      />
       <GroupedSection>
         {chats.slice(0, HOME_AGENTS).map((c) => (
           <AgentRunRow key={c.key} chat={c} onAction={() => act(c)} />
@@ -120,7 +125,13 @@ function AgentRunRow({ chat: c, onAction }: { chat: AgentChat; onAction: () => v
       ) : null}
       <span className="hidden w-36 truncate text-right text-xs text-muted-foreground md:block">{place?.spaceName}</span>
       <span className="w-10 text-right text-xs text-muted-foreground tabular-nums">{ago(c.lastMs, Date.now())}</span>
-      <span className="hidden w-20 lg:block">{thumb ? <img src={thumb} alt="" className="aspect-[16/10] w-20 rounded-lg object-cover" /> : <span className="block aspect-[16/10] w-20 rounded-lg bg-muted" />}</span>
+      <span className="hidden w-20 lg:block">
+        {thumb ? (
+          <img src={thumb} alt="" className="aspect-[16/10] w-20 rounded-lg object-cover" />
+        ) : (
+          <span className="block aspect-[16/10] w-20 rounded-lg bg-muted" />
+        )}
+      </span>
     </div>
   );
 }
@@ -140,7 +151,15 @@ export function YourSpaces() {
       spaces.map((space): SpaceItem => {
         const machine = machineName(machines, space);
         const mine = isMine(space);
-        return { space, state: spaceState(space), access: accessOf(space, machine), mine, bytes: mine ? spaceDiskBytes(resources, space.id) : null, machine, desktop: desktopOf(space) };
+        return {
+          space,
+          state: spaceState(space),
+          access: accessOf(space, machine),
+          mine,
+          bytes: mine ? spaceDiskBytes(resources, space.id) : null,
+          machine,
+          desktop: desktopOf(space),
+        };
       }),
     [spaces, machines, resources],
   );
@@ -151,16 +170,26 @@ export function YourSpaces() {
   const running = items.filter((it) => it.state === "running" && it.desktop !== "off").length;
   const actions: MenuActions = {
     hide: (it) => desktops.hide(it.space.id),
-    power: (it, on) => void (on ? startSpace : stopSpace)(it.space.id).catch(toastError(t("home.sections.turn_failed", { state: on ? "on" : "off", name: it.space.name }))),
+    power: (it, on) =>
+      void (on ? startSpace : stopSpace)(it.space.id).catch(toastError(t("home.sections.turn_failed", { state: on ? "on" : "off", name: it.space.name }))),
     remove: (it) => bulk.ask([it]),
   };
   return (
     <section data-home-spaces="">
-      <SectionHead title={t("home.sections.your_spaces")} note={running ? t("home.sections.running", { count: running }) : null} to="/spaces" all={t("home.sections.see_all", { count: counted.length })} />
+      <SectionHead
+        title={t("home.sections.your_spaces")}
+        note={running ? t("home.sections.running", { count: running }) : null}
+        to="/spaces"
+        all={t("home.sections.see_all", { count: counted.length })}
+      />
       <ul className="grid grid-cols-2 gap-5 md:grid-cols-4">
         {items.slice(0, HOME_SPACES).map((it) => (
           <li key={it.space.id}>
-            <SpaceTile item={it} hide={it.desktop ? () => actions.hide?.(it) : undefined} more={it.desktop ? undefined : <SpaceMoreMenu item={it} actions={actions} />} />
+            <SpaceTile
+              item={it}
+              hide={it.desktop ? () => actions.hide?.(it) : undefined}
+              more={it.desktop ? undefined : <SpaceMoreMenu item={it} actions={actions} />}
+            />
           </li>
         ))}
       </ul>
@@ -168,7 +197,12 @@ export function YourSpaces() {
         <p className="mt-3 flex items-center gap-1.5 text-[13px] text-muted-foreground" data-home-hidden={hiddenCount}>
           {t("home.sections.hidden", { count: hiddenCount })}
           <span aria-hidden>·</span>
-          <button type="button" onClick={desktops.showAll} className="text-foreground underline-offset-2 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring/60" data-home-show-hidden="">
+          <button
+            type="button"
+            onClick={desktops.showAll}
+            className="text-foreground underline-offset-2 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring/60"
+            data-home-show-hidden=""
+          >
             {t("home.sections.show")}
           </button>
         </p>

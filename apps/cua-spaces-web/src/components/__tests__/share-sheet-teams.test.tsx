@@ -61,7 +61,10 @@ function shareCore(): CoreClient {
           whoPlaceholder: "Email",
           hint: null,
           role: state.role,
-          roles: [{ id: "viewer", label: "Can view" }, { id: "editor", label: "Can use" }],
+          roles: [
+            { id: "viewer", label: "Can view" },
+            { id: "editor", label: "Can use" },
+          ],
           shareLabel: "Share",
           canShare: state.who !== "",
           removeLabel: "Remove",
@@ -79,7 +82,10 @@ function shareCore(): CoreClient {
   const tryCall = <T,>(method: string, args: Record<string, unknown> = {}): T | undefined =>
     method === "share.gate"
       ? ((args.hasTeam === false
-          ? { reason: "Sharing is for teams. Start a team to share this Space.", action: { label: "See Teams", url: "https://app.cua.ai/buy/teams?from=app_share" } }
+          ? {
+              reason: "Sharing is for teams. Start a team to share this Space.",
+              action: { label: "See Teams", url: "https://app.cua.ai/buy/teams?from=app_share" },
+            }
           : null) as T)
       : undefined;
   return { status: "ready", methods: ["share.initial", "share.reduce", "share.view", "share.gate"], call, tryCall };
@@ -93,7 +99,14 @@ function cardCore(): CoreClient {
     ...core,
     tryCall: (<T,>(method: string, args: Record<string, unknown> = {}) =>
       method === "upsell.card"
-        ? ({ reason: args.reason, title: "Sharing is for teams", body: "Teams lets you share a Space.", price: "$30 a seat a month", cta: { label: "Start a team", url: "https://app.cua.ai/buy/teams?from=app_card_invite" }, dismiss: "Not now" } as T)
+        ? ({
+            reason: args.reason,
+            title: "Sharing is for teams",
+            body: "Teams lets you share a Space.",
+            price: "$30 a seat a month",
+            cta: { label: "Start a team", url: "https://app.cua.ai/buy/teams?from=app_card_invite" },
+            dismiss: "Not now",
+          } as T)
         : tryCall<T>(method, args)) as CoreClient["tryCall"],
   };
 }

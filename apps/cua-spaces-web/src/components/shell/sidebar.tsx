@@ -78,7 +78,11 @@ export function Sidebar() {
                       </span>
                     ) : null}
                     {item.to === "/spaces" && pending.length > 0 ? (
-                      <span data-pending-badge className="rounded-full bg-warning/20 px-1.5 text-2xs font-medium tabular-nums text-foreground" aria-label={t("shell.sidebar.waiting_to_add", { count: pending.length })}>
+                      <span
+                        data-pending-badge
+                        className="rounded-full bg-warning/20 px-1.5 text-2xs font-medium tabular-nums text-foreground"
+                        aria-label={t("shell.sidebar.waiting_to_add", { count: pending.length })}
+                      >
                         {pending.length}
                       </span>
                     ) : null}
@@ -152,7 +156,14 @@ function SidebarCreating({ spaces }: { spaces: Space[] }) {
             <div className="text-2xs font-medium text-muted-foreground">{t("shell.sidebar.making")}</div>
             <div className="truncate text-xs font-medium">{spokenName(s.name)}</div>
             <div className="truncate text-2xs text-muted-foreground">{p?.transfer ?? p?.label ?? t("shell.sidebar.starting")}</div>
-            <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-foreground/10" role="progressbar" aria-label={t("shell.sidebar.making_name", { name: s.name })} aria-valuenow={Math.round(fraction * 100)} aria-valuemin={0} aria-valuemax={100}>
+            <div
+              className="mt-1.5 h-1 overflow-hidden rounded-full bg-foreground/10"
+              role="progressbar"
+              aria-label={t("shell.sidebar.making_name", { name: s.name })}
+              aria-valuenow={Math.round(fraction * 100)}
+              aria-valuemin={0}
+              aria-valuemax={100}
+            >
               <div className="h-full rounded-full bg-brand transition-[width]" style={{ width: `${Math.round(fraction * 100)}%` }} />
             </div>
           </Link>
@@ -274,9 +285,7 @@ export function AccountFooter({ trailing }: { trailing?: ReactNode }) {
             </div>
           ) : null}
           {/* No browser opened: the page, to copy to any device. */}
-          {session.signIn.kind === "waiting" && session.signIn.opened === false && session.signInUrl ? (
-            <SignInLink url={session.signInUrl} compact />
-          ) : null}
+          {session.signIn.kind === "waiting" && session.signIn.opened === false && session.signInUrl ? <SignInLink url={session.signInUrl} compact /> : null}
         </div>
       ) : footer.state === "failed" ? (
         <div role="alert">

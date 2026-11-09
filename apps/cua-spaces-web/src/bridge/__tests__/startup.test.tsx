@@ -121,7 +121,11 @@ describe("startup: demo", () => {
     expect(first).toMatchObject({ phase: "needsKeychain", title: "Allow Keychain access", actions: ["allowAccess", "signInAgain"] });
 
     // Allow access: the prompt is up, then answered.
-    expect(await call(a.call("startup.act", { action: "allowAccess" }))).toMatchObject({ phase: "waitingForKeychain", title: "Waiting for Keychain access…", actions: [] });
+    expect(await call(a.call("startup.act", { action: "allowAccess" }))).toMatchObject({
+      phase: "waitingForKeychain",
+      title: "Waiting for Keychain access…",
+      actions: [],
+    });
     await vi.advanceTimersByTimeAsync(DEMO_KEYCHAIN_WAIT_MS);
     expect(await call(a.call("startup.get", {}))).toEqual(READY_STARTUP);
     expect(events.map((e) => (e.type === "startup.changed" ? e.state.phase : e.type))).toEqual(["waitingForKeychain", "ready"]);

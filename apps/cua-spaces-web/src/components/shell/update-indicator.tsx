@@ -55,7 +55,18 @@ function ProgressRing({ percent }: { percent: number | null }) {
     <span className="relative grid size-5 place-items-center" aria-hidden>
       <svg viewBox="0 0 20 20" className={cn("absolute inset-0 size-full -rotate-90", percent === null && "animate-spin")}>
         <circle cx="10" cy="10" r={r} fill="none" className="stroke-current/20" strokeWidth="1.5" />
-        <circle cx="10" cy="10" r={r} fill="none" stroke="currentColor" strokeLinecap="round" strokeWidth="1.5" strokeDasharray={c} strokeDashoffset={c * (1 - (percent ?? 25) / 100)} className="transition-[stroke-dashoffset] duration-300 motion-reduce:transition-none" />
+        <circle
+          cx="10"
+          cy="10"
+          r={r}
+          fill="none"
+          stroke="currentColor"
+          strokeLinecap="round"
+          strokeWidth="1.5"
+          strokeDasharray={c}
+          strokeDashoffset={c * (1 - (percent ?? 25) / 100)}
+          className="transition-[stroke-dashoffset] duration-300 motion-reduce:transition-none"
+        />
       </svg>
       <DownloadIcon className="size-2.5" strokeWidth={2} />
     </span>
@@ -87,11 +98,34 @@ function UpdateIcon({ view }: { view: UpdateView }) {
 
 export function RestartDialog({ ui }: { ui: UpdateButtonUi }) {
   const w = restartWarning(ui.running);
-  return <ConfirmDialog open={ui.asking} onOpenChange={ui.setAsking} title={w.title} description={w.description} confirmLabel={w.confirm} cancelLabel={w.cancel} destructive onConfirm={ui.restartNow} />;
+  return (
+    <ConfirmDialog
+      open={ui.asking}
+      onOpenChange={ui.setAsking}
+      title={w.title}
+      description={w.description}
+      confirmLabel={w.confirm}
+      cancelLabel={w.cancel}
+      destructive
+      onConfirm={ui.restartNow}
+    />
+  );
 }
 
 /** What a click on the ready button opens: Restart to update, and What's new. */
-function ReadyPopover({ ui, view, trigger, tip, side }: { ui: UpdateButtonUi; view: Extract<UpdateView, { kind: "ready" }>; trigger: ReactElement; tip: string; side: "top" | "bottom" }) {
+function ReadyPopover({
+  ui,
+  view,
+  trigger,
+  tip,
+  side,
+}: {
+  ui: UpdateButtonUi;
+  view: Extract<UpdateView, { kind: "ready" }>;
+  trigger: ReactElement;
+  tip: string;
+  side: "top" | "bottom";
+}) {
   const t = useT();
   const [open, setOpen] = useState(false);
   return (
@@ -148,7 +182,13 @@ function UpdateButton({ side }: { side: "top" | "bottom" }) {
   if (!view) return null;
   const tip = updateTooltip(view);
   const button = (
-    <Button variant="ghost" size="icon-sm" aria-label={tip} data-update-icon={view.kind} className={cn("text-muted-foreground hover:text-foreground", view.kind === "ready" && "text-foreground")}>
+    <Button
+      variant="ghost"
+      size="icon-sm"
+      aria-label={tip}
+      data-update-icon={view.kind}
+      className={cn("text-muted-foreground hover:text-foreground", view.kind === "ready" && "text-foreground")}
+    >
       <UpdateIcon view={view} />
     </Button>
   );

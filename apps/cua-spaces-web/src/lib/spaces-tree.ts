@@ -96,7 +96,10 @@ export function buildRelayOnline(order: readonly { space: string; online: boolea
 }
 
 /** Whether the relay calls this computer offline, whatever the computer list still counts. */
-export function relayCallsOffline(m: Pick<Machine, "id" | "current" | "relayId" | "connection">, relayOnline: ReadonlyMap<string, boolean> | undefined): boolean {
+export function relayCallsOffline(
+  m: Pick<Machine, "id" | "current" | "relayId" | "connection">,
+  relayOnline: ReadonlyMap<string, boolean> | undefined,
+): boolean {
   const id = computerSpaceId(m);
   return id !== null && !m.current && relayOnline?.get(id) === false;
 }
@@ -179,7 +182,11 @@ export function buildSpacesTree({ spaces, machines, defaultSpace, running = new 
     const id = computerSpaceId(m);
     return m.online && !(id !== null && relayOnline?.get(id) === false);
   };
-  const fallbackDefault = others.filter(isOnline).map(computerSpaceId).find((id): id is string => id !== null) ?? (here ? (computerSpaceId(here) ?? "this-mac") : null);
+  const fallbackDefault =
+    others
+      .filter(isOnline)
+      .map(computerSpaceId)
+      .find((id): id is string => id !== null) ?? (here ? (computerSpaceId(here) ?? "this-mac") : null);
   const defaultKey = defaultSpace && ids.has(defaultSpace) ? defaultSpace : fallbackDefault;
 
   const runningOf = (id: string | null | undefined) => (id ? (running.get(id) ?? 0) : 0);
@@ -201,7 +208,15 @@ export function buildSpacesTree({ spaces, machines, defaultSpace, running = new 
       machine: null,
       current: false,
       online: !waits && state === "running",
-      tone: waits ? "waits" : state === "running" ? "online" : state === "creating" || state === "deleting" ? "busy" : state === "failed" ? "offline" : "stopped",
+      tone: waits
+        ? "waits"
+        : state === "running"
+          ? "online"
+          : state === "creating" || state === "deleting"
+            ? "busy"
+            : state === "failed"
+              ? "offline"
+              : "stopped",
       status: isDefault && !waits ? withDefault(word) : word,
       isDefault,
       dim: waits,
@@ -218,7 +233,9 @@ export function buildSpacesTree({ spaces, machines, defaultSpace, running = new 
     const own = m.current ? (spaces.find((s) => s.id === "this-mac") ?? null) : (spaces.find((s) => s.id === `relay:${m.id}`) ?? null);
     const id = computerSpaceId(m);
     const key = id ?? (m.current ? "this-mac" : `machine:${m.id}`);
-    const kids = listed.filter((s) => !placed.has(s.id) && (m.current ? s.provider === "local" || (m.relayId !== undefined && s.host === m.relayId) : s.host === m.id));
+    const kids = listed.filter(
+      (s) => !placed.has(s.id) && (m.current ? s.provider === "local" || (m.relayId !== undefined && s.host === m.relayId) : s.host === m.id),
+    );
     // This Mac before it is shared, with no Space on it: not a Space yet (the empty state offers "Add this Mac").
     if (m.current && !id && !m.connection && kids.length === 0) continue;
     const online = reachable(m) && !relayCallsOffline(m, relayOnline);

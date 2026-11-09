@@ -37,7 +37,10 @@ describe("the scripts on Windows", () => {
 });
 
 describe("the arches a package is made for", () => {
-  const folders = (...dirs: string[]) => (dir: string) => dirs.includes(dir);
+  const folders =
+    (...dirs: string[]) =>
+    (dir: string) =>
+      dirs.includes(dir);
 
   it("are all of them in a release, which refuses any without its native layer", () => {
     expect(packageArchs("linux", ["x64", "arm64"], undefined, folders())).toEqual(["x64", "arm64"]);

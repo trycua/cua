@@ -99,9 +99,7 @@ describe.skipIf(!wasmBuilt)("as the SwiftUI app (real routes, wasm core)", () =>
     expect(document.body.textContent).not.toContain("waitlist");
     expect(manage.textContent).toBe("Manage account on the web");
     fireEvent.click(manage);
-    await waitFor(() =>
-      expect(calls.some(([op, a]) => op === "session.openExternal" && (a as { url: string }).url === "https://app.cua.ai/team")).toBe(true),
-    );
+    await waitFor(() => expect(calls.some(([op, a]) => op === "session.openExternal" && (a as { url: string }).url === "https://app.cua.ai/team")).toBe(true));
   });
 
   it("General keeps the privacy line with its link; Welcome's Show again is in About", async () => {

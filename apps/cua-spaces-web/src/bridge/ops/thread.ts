@@ -663,7 +663,8 @@ function childNote(v: unknown): ChildNote | null {
       endedMs: num(e.ended_ms),
     };
   }
-  if (e.kind === "child_space" && str(e.space)) return { kind: "child_space", space: str(e.space), name: str(e.name) || str(e.space), os: str(e.os), agent: str(e.agent) };
+  if (e.kind === "child_space" && str(e.space))
+    return { kind: "child_space", space: str(e.space), name: str(e.name) || str(e.space), os: str(e.os), agent: str(e.agent) };
   return null;
 }
 
@@ -714,7 +715,8 @@ export function threadEntryFromTool(v: unknown): ThreadEntry | null {
           card: author(e.author).kind === "system" ? obj(approval.card) : null,
         }
       : null,
-    answer: answer && num(answer.approval) !== null ? { approval: num(answer.approval)!, approve: answer.approve === true, note: str(answer.note) || null } : null,
+    answer:
+      answer && num(answer.approval) !== null ? { approval: num(answer.approval)!, approve: answer.approve === true, note: str(answer.note) || null } : null,
     update:
       update && num(update.task) !== null && updateState
         ? { task: num(update.task)!, state: updateState, session: num(update.session), note: str(update.note) || null }
@@ -830,7 +832,12 @@ function agentOverview(m: Json): { dm?: AgentDm | null; needsYou?: NeedsYou[] } 
   const last = obj(d?.last);
   const needs = Array.isArray(m.needs_you) ? m.needs_you : [];
   return {
-    dm: d ? { unread: num(d.unread) ?? 0, last: last && num(last.seq) !== null ? { seq: num(last.seq)!, tsMs: num(last.ts_ms) ?? 0, text: str(last.text), author: author(last.author) } : null } : null,
+    dm: d
+      ? {
+          unread: num(d.unread) ?? 0,
+          last: last && num(last.seq) !== null ? { seq: num(last.seq)!, tsMs: num(last.ts_ms) ?? 0, text: str(last.text), author: author(last.author) } : null,
+        }
+      : null,
     needsYou: needs.flatMap((n) => {
       const x = obj(n);
       const seq = num(x?.seq);
@@ -871,7 +878,17 @@ export function threadLiveFromTool(v: unknown): ThreadLive {
     const children = (Array.isArray(r?.children) ? r.children : []).flatMap((c): LiveChild[] => {
       const o = obj(c);
       const id = str(o?.id);
-      return o && id ? [{ id, title: str(o.title) || "Subagent", steps: num(o.steps) ?? 0, step: str(o.step) || null, ...(typeof o.since_ms === "number" ? { sinceMs: o.since_ms } : {}) }] : [];
+      return o && id
+        ? [
+            {
+              id,
+              title: str(o.title) || "Subagent",
+              steps: num(o.steps) ?? 0,
+              step: str(o.step) || null,
+              ...(typeof o.since_ms === "number" ? { sinceMs: o.since_ms } : {}),
+            },
+          ]
+        : [];
     });
     return agent && stage ? [{ agent, stage, ...(sinceMs ? { sinceMs } : {}), ...(text ? { text } : {}), ...(children.length ? { children } : {}) }] : [];
   });

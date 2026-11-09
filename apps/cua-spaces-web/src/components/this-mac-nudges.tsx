@@ -22,11 +22,14 @@ export function ThisMacNudges() {
   const second = useSecondAgentNudge();
   const risky = useRiskyNudge();
   const [wantSpace, setWantSpace] = useState(false);
-  const started = useCallback((os: "macos" | "linux" | null) => {
-    setWantSpace(false);
-    if (os) toast(t("computers.this_mac.making_space", { os: os === "macos" ? "macOS" : "Linux" }));
-    else toast(t("computers.this_mac.cannot_make_space", { name: thisComputerLabel() }), { description: t("computers.this_mac.cannot_make_space_help") });
-  }, [t]);
+  const started = useCallback(
+    (os: "macos" | "linux" | null) => {
+      setWantSpace(false);
+      if (os) toast(t("computers.this_mac.making_space", { os: os === "macos" ? "macOS" : "Linux" }));
+      else toast(t("computers.this_mac.cannot_make_space", { name: thisComputerLabel() }), { description: t("computers.this_mac.cannot_make_space_help") });
+    },
+    [t],
+  );
 
   // The risky question waits on an agent: it goes first.
   const card = risky.nudge ? (

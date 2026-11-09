@@ -54,12 +54,21 @@ export function toast(title: string, options: { description?: string; type?: Toa
   // Base UI's own timer pauses while the window is unfocused and resumes on
   // focus, which a webview in a native window may never report (an
   // "Opening…" toast stayed 10+ min). A plain timer closes it either way.
-  const id = toastManager.add({ title, description: options.description, type, timeout: 0, data: { fromCua: options.fromCua === true, action: options.action } });
+  const id = toastManager.add({
+    title,
+    description: options.description,
+    type,
+    timeout: 0,
+    data: { fromCua: options.fromCua === true, action: options.action },
+  });
   if (group) groups.set(group, new Set([id]));
-  setTimeout(() => {
-    toastManager.close(id);
-    if (group) groups.get(group)?.delete(id);
-  }, type === "error" ? ERROR_TOAST_MS : TOAST_MS);
+  setTimeout(
+    () => {
+      toastManager.close(id);
+      if (group) groups.get(group)?.delete(id);
+    },
+    type === "error" ? ERROR_TOAST_MS : TOAST_MS,
+  );
   return id;
 }
 
@@ -119,7 +128,11 @@ function ToastList() {
         {(item.data as { fromCua?: boolean } | undefined)?.fromCua && item.type !== "error" ? (
           <CuaKey size={20} className="-my-0.5" />
         ) : (
-          <Icon className={item.type === "error" ? "mt-px size-4 text-destructive" : item.type === "success" ? "mt-px size-4 text-success" : "mt-px size-4 text-brand-strong"} />
+          <Icon
+            className={
+              item.type === "error" ? "mt-px size-4 text-destructive" : item.type === "success" ? "mt-px size-4 text-success" : "mt-px size-4 text-brand-strong"
+            }
+          />
         )}
         <Toast.Content className="min-w-0 flex-1">
           <Toast.Title className="text-[13px] font-medium" />

@@ -36,7 +36,16 @@ function host(calls: Calls, extra?: (d: DevicesInput) => DevicesInput): TestHost
 async function mockupHost(calls: Calls): Promise<TestHost> {
   const fixture = JSON.parse(readFileSync(resolve(process.cwd(), "../../libs/cua/crates/cua-spaces-app-core/parity/machines.json"), "utf8"));
   const view = (await testCore()).call<MachinesView>("machines.view", { input: fixture.views[0].input });
-  const rows: MachineRow[] = view.machines.map((m) => ({ id: m.id, name: m.name, via: m.current ? "local" : "relay", online: m.online, os: m.os, current: m.current || undefined, limits: [], ...(m.id.startsWith("dev_") ? { device: true } : {}) }));
+  const rows: MachineRow[] = view.machines.map((m) => ({
+    id: m.id,
+    name: m.name,
+    via: m.current ? "local" : "relay",
+    online: m.online,
+    os: m.os,
+    current: m.current || undefined,
+    limits: [],
+    ...(m.id.startsWith("dev_") ? { device: true } : {}),
+  }));
   return {
     failsCreates: false,
     listsGhost: false,

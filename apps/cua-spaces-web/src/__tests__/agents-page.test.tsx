@@ -55,11 +55,14 @@ describe.skipIf(!wasmBuilt)("Agents page", () => {
     const marks = document.querySelector("[data-agents-setup-marks]")!;
     expect(marks.querySelectorAll("[data-harness-mark]").length).toBeGreaterThan(0);
     expect(marks.querySelector("[data-app-mark]")).not.toBeNull();
-    const setup = await waitFor(() => {
-      const b = document.querySelector("[data-agents-setup]");
-      expect(b).not.toBeNull();
-      return b!;
-    }, { timeout: 8000 });
+    const setup = await waitFor(
+      () => {
+        const b = document.querySelector("[data-agents-setup]");
+        expect(b).not.toBeNull();
+        return b!;
+      },
+      { timeout: 8000 },
+    );
     fireEvent.click(setup);
     await waitFor(() => expect(router.state.location.pathname).toBe("/settings/connections"));
     expect(router.state.location.search).toHaveProperty("app");

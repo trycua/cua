@@ -6,7 +6,18 @@ import { useEffect, useRef, useState } from "react";
 
 import type { HostLimitRow, HostLimits } from "@/bridge/contracts/host";
 
-import { chooseSettings, useBridge, useLoginItem, useMachines, useSession, useSettings, useThisMachine, useTips, type GlobalShortcut, type SettingsRow as CoreRow } from "@/bridge";
+import {
+  chooseSettings,
+  useBridge,
+  useLoginItem,
+  useMachines,
+  useSession,
+  useSettings,
+  useThisMachine,
+  useTips,
+  type GlobalShortcut,
+  type SettingsRow as CoreRow,
+} from "@/bridge";
 import { SettingsGroup, SettingsRow } from "@/components/settings-group";
 import { CliSettingsSection } from "@/components/settings/cli-section";
 import { CoreSettingsRow } from "@/components/settings/core-section";
@@ -29,9 +40,30 @@ const fail = toastError;
 type Say = ReturnType<typeof useT>;
 
 const appearance = (say: Say): { value: ThemePreference; label: React.ReactNode }[] => [
-  { value: "system", label: <><MonitorIcon className="size-3.5" /> {say("settings.general.appearance_system")}</> },
-  { value: "light", label: <><SunIcon className="size-3.5" /> {say("settings.general.appearance_light")}</> },
-  { value: "dark", label: <><MoonIcon className="size-3.5" /> {say("settings.general.appearance_dark")}</> },
+  {
+    value: "system",
+    label: (
+      <>
+        <MonitorIcon className="size-3.5" /> {say("settings.general.appearance_system")}
+      </>
+    ),
+  },
+  {
+    value: "light",
+    label: (
+      <>
+        <SunIcon className="size-3.5" /> {say("settings.general.appearance_light")}
+      </>
+    ),
+  },
+  {
+    value: "dark",
+    label: (
+      <>
+        <MoonIcon className="size-3.5" /> {say("settings.general.appearance_dark")}
+      </>
+    ),
+  },
 ];
 
 /** The core's notch row in plain words: "Show Cua in", Notch and menu bar or Menu bar only. */
@@ -113,7 +145,10 @@ export function GeneralTab() {
             onPress={() => void chooseTips(row.id, "press").catch(fail(t("settings.general.tips_reset_failed")))}
           />
         ))}
-        <SettingsRow label={t("settings.general.appearance")} control={<Segmented aria-label={t("settings.general.appearance")} value={preference} options={appearance(t)} onValueChange={setPreference} />} />
+        <SettingsRow
+          label={t("settings.general.appearance")}
+          control={<Segmented aria-label={t("settings.general.appearance")} value={preference} options={appearance(t)} onValueChange={setPreference} />}
+        />
         <LanguageRow />
         <ShortcutRow shortcut={settings?.globalShortcut} onChange={(accelerator) => chooseSetting("global-shortcut", accelerator)} />
         {telemetryRow ? (
@@ -127,7 +162,13 @@ export function GeneralTab() {
             label={t("settings.general.telemetry")}
             description={t("settings.general.telemetry_help")}
             htmlFor="telemetry"
-            control={<Switch id="telemetry" checked={values.telemetry} onCheckedChange={(on) => void updateSetting("telemetry", on).catch(fail(t("settings.general.telemetry_failed")))} />}
+            control={
+              <Switch
+                id="telemetry"
+                checked={values.telemetry}
+                onCheckedChange={(on) => void updateSetting("telemetry", on).catch(fail(t("settings.general.telemetry_failed")))}
+              />
+            }
           />
         ) : null}
       </SettingsGroup>
@@ -160,7 +201,8 @@ function SharingGroup() {
     void (async () => {
       try {
         if (!panel.configured) {
-          if (next && !(await host.quickSetUp())) throw new Error(host.setupError?.message ?? t("settings.general.set_up_failed", { computer: thisComputerText() }));
+          if (next && !(await host.quickSetUp()))
+            throw new Error(host.setupError?.message ?? t("settings.general.set_up_failed", { computer: thisComputerText() }));
           return;
         }
         if (!toggle) return;
@@ -177,7 +219,15 @@ function SharingGroup() {
         label={toggle?.label ?? t("settings.general.sharing_switch")}
         description={toggle?.help || undefined}
         htmlFor="share-spaces"
-        control={<Switch id="share-spaces" data-setting-row="share-spaces" checked={on} disabled={host.busy || (panel.configured && !toggle?.enabled)} onCheckedChange={flip} />}
+        control={
+          <Switch
+            id="share-spaces"
+            data-setting-row="share-spaces"
+            checked={on}
+            disabled={host.busy || (panel.configured && !toggle?.enabled)}
+            onCheckedChange={flip}
+          />
+        }
       />
       {on
         ? (panel.limitRows ?? []).map((row) => (

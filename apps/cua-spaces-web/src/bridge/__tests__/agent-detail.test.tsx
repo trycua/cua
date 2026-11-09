@@ -23,12 +23,25 @@ describe("agent detail ops", () => {
       switch (name) {
         case "volume_ls":
           return args.path === "agents/ada/"
-            ? { entries: [{ path: "agents/ada/notes/", name: "notes", folder: true }, { path: "agents/ada/MEMORY.md", name: "MEMORY.md", size: 12 }] }
+            ? {
+                entries: [
+                  { path: "agents/ada/notes/", name: "notes", folder: true },
+                  { path: "agents/ada/MEMORY.md", name: "MEMORY.md", size: 12 },
+                ],
+              }
             : { entries: [{ path: "agents/ada/notes/a.md", name: "a.md", size: 3 }] };
         case "routine_list":
-          return { routines: [{ id: "R1", title: "Morning", label: "Every day at 8:00 AM", isEnabled: false }, { id: "R2", title: "Noon", label: "x" }] };
+          return {
+            routines: [
+              { id: "R1", title: "Morning", label: "Every day at 8:00 AM", isEnabled: false },
+              { id: "R2", title: "Noon", label: "x" },
+            ],
+          };
         case "computer_access_list":
-          return { grants: [{ agent: "ada", machine: "relay:m1", revoked: false }], audit: [{ ts_ms: 5, action: "use", principal: "agent:ada", path: "relay:m1", detail: "" }] };
+          return {
+            grants: [{ agent: "ada", machine: "relay:m1", revoked: false }],
+            audit: [{ ts_ms: 5, action: "use", principal: "agent:ada", path: "relay:m1", detail: "" }],
+          };
         default:
           throw new Error(name);
       }
@@ -45,7 +58,12 @@ describe("agent detail ops", () => {
     const tool = async (name: string) =>
       name === "volume_read"
         ? { content: "AAEC", encoding: "base64" }
-        : { versions: [{ version: "v2", modified_ms: 9, latest: true }, { version: "v1", modified_ms: 1, deleted: true }] };
+        : {
+            versions: [
+              { version: "v2", modified_ms: 9, latest: true },
+              { version: "v1", modified_ms: 1, deleted: true },
+            ],
+          };
     expect(await agentFileFromTools(tool, "agents/ada/x.bin")).toEqual({
       path: "agents/ada/x.bin",
       text: "",
@@ -83,7 +101,13 @@ describe("agent detail ops", () => {
       seen.push([method, args]);
       return (method === "agents.detail" ? { home: [{ path: "agents/ada/a", name: "a", size: 1 }] } : null) as T;
     });
-    expect(await ops["agents.detail"]({ name: "ada" })).toEqual({ home: [{ path: "agents/ada/a", name: "a", size: 1 }], routines: [], grants: [], audit: [], thisMachine: null });
+    expect(await ops["agents.detail"]({ name: "ada" })).toEqual({
+      home: [{ path: "agents/ada/a", name: "a", size: 1 }],
+      routines: [],
+      grants: [],
+      audit: [],
+      thisMachine: null,
+    });
     expect(await ops["agents.removeRoutine"]({ id: "R1" })).toBeNull();
     expect(seen).toEqual([
       ["agents.detail", { name: "ada" }],
@@ -100,7 +124,15 @@ describe("agent detail ops", () => {
 
 /* ---- The hook, with the core, on the demo host ------------------------------------ */
 
-const ADA: PersistentAgent = { name: "ada", harness: "claude-code", space: "local:design-review", paused: false, spaceState: "running", runId: "run-ada-7", savedMs: Date.UTC(2026, 9, 3, 12) };
+const ADA: PersistentAgent = {
+  name: "ada",
+  harness: "claude-code",
+  space: "local:design-review",
+  paused: false,
+  spaceState: "running",
+  runId: "run-ada-7",
+  savedMs: Date.UTC(2026, 9, 3, 12),
+};
 
 function mount(core: CoreClient, agent: PersistentAgent = ADA) {
   const adapter = createDemoAdapter({ latencyMs: 0, stepMs: 4 });

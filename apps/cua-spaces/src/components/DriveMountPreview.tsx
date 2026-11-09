@@ -3,12 +3,7 @@
 
 import { useRef } from "react";
 
-import {
-  drivePreview,
-  drivePreviewFrame,
-  drivePreviewStill,
-  type DriveMountFrame,
-} from "../model/driveMountPreview";
+import { drivePreview, drivePreviewFrame, drivePreviewStill, type DriveMountFrame } from "../model/driveMountPreview";
 import type { PreviewRect } from "../model/presentationPreview";
 import { at, MiniWindow } from "./DriverPreview";
 import { useLoopTime, useReducedMotion } from "./previewLoop";
@@ -54,7 +49,14 @@ export function DriveMountPreview({ fixedMs }: { fixedMs?: number }) {
           ))}
         </MiniWindow>
         <MiniWindow window={scene.finder} role="finder">
-          <span className="obdmp-sidebar" style={{ ...at(scene.sidebar, finder), top: scene.finder.titleBar, height: scene.sidebar.height - scene.finder.titleBar }} />
+          <span
+            className="obdmp-sidebar"
+            style={{
+              ...at(scene.sidebar, finder),
+              top: scene.finder.titleBar,
+              height: scene.sidebar.height - scene.finder.titleBar,
+            }}
+          />
           {scene.places.map((p, i) => (
             <span key={`place-${i}`} className="obdp-bar" style={at(p, finder)} />
           ))}
@@ -63,10 +65,7 @@ export function DriveMountPreview({ fixedMs }: { fixedMs?: number }) {
             data-volume={frame.volume}
             style={{ ...at(scene.volume, finder), opacity: frame.volume }}
           />
-          <span
-            className="obdmp-volume-icon"
-            style={{ ...at(scene.volumeIcon, finder), opacity: frame.volume }}
-          />
+          <span className="obdmp-volume-icon" style={{ ...at(scene.volumeIcon, finder), opacity: frame.volume }} />
           <span
             className="obdmp-volume-label"
             style={{

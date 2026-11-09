@@ -32,7 +32,23 @@ const ICON = { invite: UserPlusIcon, "add-computer": MonitorIcon, apps: ShieldIc
  * The card itself, drawn from its view (tests draw every state). `apps` and `cli` are the rows' opened panels. `done`:
  * rows whose setup is finished (both permissions on), which show a check and "On" in place of nothing.
  */
-export function BringTheRestCard({ view, onRow, onDismiss, open, apps, cli, done }: { view: BringRestView; onRow: (id: RowId) => void; onDismiss: () => void; open?: RowId | null; apps?: ReactNode; cli?: ReactNode; done?: Partial<Record<RowId, boolean>> }) {
+export function BringTheRestCard({
+  view,
+  onRow,
+  onDismiss,
+  open,
+  apps,
+  cli,
+  done,
+}: {
+  view: BringRestView;
+  onRow: (id: RowId) => void;
+  onDismiss: () => void;
+  open?: RowId | null;
+  apps?: ReactNode;
+  cli?: ReactNode;
+  done?: Partial<Record<RowId, boolean>>;
+}) {
   const t = useT();
   return (
     <section aria-labelledby="bring-rest-heading" data-bring-rest="">
@@ -70,7 +86,10 @@ export function BringTheRestCard({ view, onRow, onDismiss, open, apps, cli, done
                     <CheckIcon aria-hidden className="size-3.5" /> {t("home.bring_rest.on")}
                   </span>
                 ) : null}
-                <ChevronRightIcon aria-hidden className={expands && open === r.id ? "size-4 shrink-0 rotate-90 text-muted-foreground" : "size-4 shrink-0 text-muted-foreground"} />
+                <ChevronRightIcon
+                  aria-hidden
+                  className={expands && open === r.id ? "size-4 shrink-0 rotate-90 text-muted-foreground" : "size-4 shrink-0 text-muted-foreground"}
+                />
               </button>
               {open === r.id ? (r.id === "apps" ? apps : r.id === "cli" ? cli : null) : null}
             </div>
@@ -106,13 +125,24 @@ export function AppsPanel({ perms }: { perms: PermissionsView }) {
           </div>
         );
       })}
-      <p className="mt-1 text-xs text-muted-foreground">{allowHint(data.appName, data.permissions.every((p) => p.granted))}</p>
+      <p className="mt-1 text-xs text-muted-foreground">
+        {allowHint(
+          data.appName,
+          data.permissions.every((p) => p.granted),
+        )}
+      </p>
     </div>
   );
 }
 
 /** The Terminal row, opened: where the command goes and Install, or the line to try once it's there. */
-export function CliPanel({ view, onInstall }: { view: { status: string; installed: boolean; busy: boolean; tryCommand: string | null; error: string | null; primary: { id: string; label: string } | null }; onInstall: () => void }) {
+export function CliPanel({
+  view,
+  onInstall,
+}: {
+  view: { status: string; installed: boolean; busy: boolean; tryCommand: string | null; error: string | null; primary: { id: string; label: string } | null };
+  onInstall: () => void;
+}) {
   const t = useT();
   const install = view.primary?.id === "install" ? view.primary : null;
   return (

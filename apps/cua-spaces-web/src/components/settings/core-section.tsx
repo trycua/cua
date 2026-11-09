@@ -50,7 +50,14 @@ export function CoreSettingsSection({
         className="mt-0"
         action={
           section.button ? (
-            <Button size="sm" variant="outline" disabled={!section.buttonEnabled} title={section.buttonHelp ?? undefined} onClick={onHeaderButton} data-section-button>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={!section.buttonEnabled}
+              title={section.buttonHelp ?? undefined}
+              onClick={onHeaderButton}
+              data-section-button
+            >
               {section.button}
             </Button>
           ) : null

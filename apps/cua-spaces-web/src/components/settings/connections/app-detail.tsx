@@ -31,7 +31,11 @@ export function ConnectorAppPage({ agent }: { agent: string }) {
   const { hereName } = useThisAndOthers();
   const d = c.detail(agent);
   const back = (
-    <Link to="/settings/connections" className="-ml-1 mb-4 inline-flex items-center gap-0.5 rounded-lg px-1 py-0.5 text-[13px] text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60" data-connector-back="">
+    <Link
+      to="/settings/connections"
+      className="-ml-1 mb-4 inline-flex items-center gap-0.5 rounded-lg px-1 py-0.5 text-[13px] text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60"
+      data-connector-back=""
+    >
       <ChevronLeftIcon className="size-4" /> {d?.backLabel ?? t("settings.connections.app.back")}
     </Link>
   );
@@ -73,17 +77,25 @@ export function ConnectorAppPage({ agent }: { agent: string }) {
       </header>
 
       {d.toggles.length ? (
-      <SettingsGroup title={d.toolsTitle}>
-        {d.toggles.map((tg) => (
-          <SettingsRow
-            key={tg.id}
-            label={tg.label}
-            description={tg.help}
-            htmlFor={`connector-${tg.id}`}
-            control={<Switch id={`connector-${tg.id}`} data-connector-toggle={tg.id} checked={tg.on} disabled={!tg.enabled} onCheckedChange={(on) => void c.setToggle(agent, tg.id, on)} />}
-          />
-        ))}
-      </SettingsGroup>
+        <SettingsGroup title={d.toolsTitle}>
+          {d.toggles.map((tg) => (
+            <SettingsRow
+              key={tg.id}
+              label={tg.label}
+              description={tg.help}
+              htmlFor={`connector-${tg.id}`}
+              control={
+                <Switch
+                  id={`connector-${tg.id}`}
+                  data-connector-toggle={tg.id}
+                  checked={tg.on}
+                  disabled={!tg.enabled}
+                  onCheckedChange={(on) => void c.setToggle(agent, tg.id, on)}
+                />
+              }
+            />
+          ))}
+        </SettingsGroup>
       ) : null}
 
       <SettingsGroup title={d.signInTitle} footer={d.uses ? d.uses.note : d.signIn?.way}>

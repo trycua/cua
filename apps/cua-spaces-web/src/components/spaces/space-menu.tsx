@@ -103,7 +103,8 @@ export function useSpaceMenu(item: SpaceItem, actions: MenuActions): MenuEntry[]
   };
   const entries: MenuEntry[] = items.map((i) => ({ ...i, run: () => run(i.id) }));
   // Another machine's desktop leaves the list from here (This Mac's has the hover button).
-  if (item.desktop && actions.hide) entries.push({ id: "hide", label: t("computers.menu.hide"), enabled: true, destructive: false, separatorBefore: false, run: () => run("hide") });
+  if (item.desktop && actions.hide)
+    entries.push({ id: "hide", label: t("computers.menu.hide"), enabled: true, destructive: false, separatorBefore: false, run: () => run("hide") });
   return entries;
 }
 
@@ -213,7 +214,11 @@ export function MachineRowMenu({ id, name }: { id: string; name: string }) {
   };
   return (
     <MenuPrimitive.Root>
-      <MenuPrimitive.Trigger aria-label={t("computers.menu.more_for", { name })} data-space-more={id} className={cn(MORE_BUTTON, "absolute top-1/2 right-2 -translate-y-1/2")}>
+      <MenuPrimitive.Trigger
+        aria-label={t("computers.menu.more_for", { name })}
+        data-space-more={id}
+        className={cn(MORE_BUTTON, "absolute top-1/2 right-2 -translate-y-1/2")}
+      >
         <MoreHorizontalIcon className="size-4" />
       </MenuPrimitive.Trigger>
       <MenuPrimitive.Portal>

@@ -18,9 +18,7 @@ module.exports = ({ config }) => {
       },
     },
     plugins: (config.plugins || []).map((p) =>
-      Array.isArray(p) && p[0] === "expo-notifications"
-        ? ["expo-notifications", { ...p[1], mode: release ? "production" : "development" }]
-        : p,
+      Array.isArray(p) && p[0] === "expo-notifications" ? ["expo-notifications", { ...p[1], mode: release ? "production" : "development" }] : p,
     ),
   };
 };

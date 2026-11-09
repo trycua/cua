@@ -32,20 +32,48 @@ export function Avatar({ name, kind, size = 32, dot }: AvatarProps) {
     const bg = kind === "agent" ? "#1f8a78" : HUES[hash(name) % HUES.length]!;
     body = (
       <View style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: bg, alignItems: "center", justifyContent: "center" }}>
-        {kind === "agent" ? <Icon name="bolt" size={size * 0.5} color="#fff" /> : <Text variant="caption" weight="600" style={{ color: "#fff", fontSize: size * 0.42, lineHeight: size * 0.5 }} allowFontScaling={false}>{name.slice(0, 1).toUpperCase()}</Text>}
+        {kind === "agent" ? (
+          <Icon name="bolt" size={size * 0.5} color="#fff" />
+        ) : (
+          <Text variant="caption" weight="600" style={{ color: "#fff", fontSize: size * 0.42, lineHeight: size * 0.5 }} allowFontScaling={false}>
+            {name.slice(0, 1).toUpperCase()}
+          </Text>
+        )}
       </View>
     );
   }
   return (
     <View style={{ width: size, height: size }} accessible={false}>
       {body}
-      {dot ? <View style={{ position: "absolute", right: -1, bottom: -1, width: size * 0.3, height: size * 0.3, borderRadius: size, backgroundColor: dot, borderWidth: 2, borderColor: c.background }} /> : null}
+      {dot ? (
+        <View
+          style={{
+            position: "absolute",
+            right: -1,
+            bottom: -1,
+            width: size * 0.3,
+            height: size * 0.3,
+            borderRadius: size,
+            backgroundColor: dot,
+            borderWidth: 2,
+            borderColor: c.background,
+          }}
+        />
+      ) : null}
     </View>
   );
 }
 
 /** A small overlapping stack of members (header, rows). */
-export function AvatarStack({ members, size = 26, max = 3 }: { members: { name: string; kind: "person" | "agent" | "system" }[]; size?: number; max?: number }) {
+export function AvatarStack({
+  members,
+  size = 26,
+  max = 3,
+}: {
+  members: { name: string; kind: "person" | "agent" | "system" }[];
+  size?: number;
+  max?: number;
+}) {
   const { c } = useTheme();
   const shown = members.slice(0, max);
   return (

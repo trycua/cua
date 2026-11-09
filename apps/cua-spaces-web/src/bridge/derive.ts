@@ -711,6 +711,9 @@ export function settingsPage(
     keyvaultProtection: settings.hostSettings?.keyvaultProtection ?? [],
     autoConnect: settings.hostSettings?.autoConnect ?? null,
     overflow: settings.hostSettings?.overflow ?? null,
+    // The Mac app's "When I close the window" rows (none on other hosts).
+    closeWindowKeepsRunning: settings.hostSettings?.closeWindowKeepsRunning ?? null,
+    closeNotice: settings.hostSettings?.closeNotice ?? true,
     // Every host's runtimes section; what the host read fills it in.
     runtimes: settings.hostSettings?.runtimes ?? null,
     agents: agents?.agents ?? null,

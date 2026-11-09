@@ -5406,6 +5406,18 @@
                 "null"
               ]
             },
+            "closeWindowKeepsRunning": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "closeNotice": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
             "keyvaultAutoWipe": {
               "type": [
                 "boolean",

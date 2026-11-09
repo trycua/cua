@@ -541,6 +541,8 @@ const SettingsShape = ref(
         runtimes: optNull(RuntimesInputShape),
         autoConnect: optNull(bool),
         overflow: optNull(bool),
+        closeWindowKeepsRunning: optNull(bool),
+        closeNotice: optNull(bool),
         keyvaultAutoWipe: optNull(bool),
         keyvaultUnlockPrompt: optNull(bool),
         keyvaultSiteIcons: optNull(bool),

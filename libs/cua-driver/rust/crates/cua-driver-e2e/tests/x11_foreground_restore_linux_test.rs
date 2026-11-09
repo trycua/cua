@@ -249,10 +249,18 @@ impl Desktop {
         self.conn.flush().expect("flush activation");
     }
 
+    /// The window manager names `window` active and gave it the input focus.
+    /// The root property alone can be an earlier test's: its windows are
+    /// gone, and a new connection gets the same window ids.
     fn wait_active(&self, window: Window) -> bool {
         let deadline = Instant::now() + Duration::from_secs(5);
         while Instant::now() < deadline {
-            if self.active() == Some(window) {
+            let focus = self
+                .conn
+                .get_input_focus()
+                .ok()
+                .and_then(|c| c.reply().ok());
+            if self.active() == Some(window) && focus.is_some_and(|f| f.focus == window) {
                 return true;
             }
             std::thread::sleep(Duration::from_millis(50));

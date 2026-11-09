@@ -336,6 +336,7 @@ fn ensure_master_keyboard(
             Duration::from_secs(5),
         )?;
         attach_slave_to_master(display, slave_keyboard_id, ids.keyboard_id)?;
+        disable_key_repeat(display, slave_keyboard_id)?;
         warm_up_keyboard(display, &mut device, slave_keyboard_id, ids.keyboard_id);
         let ids = MasterPointerIds {
             slave_keyboard_id: Some(slave_keyboard_id),
@@ -354,6 +355,39 @@ fn ensure_master_keyboard(
     })();
     unsafe { x11::xlib::XCloseDisplay(display) };
     result
+}
+
+/// Turn off the server's key repeat (XKB `RepeatKeys`) for the keyboard.
+/// The driver writes every transition itself. A server that has read a press
+/// and stalls before the release would otherwise repeat the key on its own.
+fn disable_key_repeat(display: *mut x11::xlib::Display, slave_keyboard_id: i32) -> Result<()> {
+    const REPEAT_KEYS: std::os::raw::c_uint = 1;
+    const ALL_CONTROLS: std::os::raw::c_ulong = 0xF800_1FFF;
+    let device = slave_keyboard_id as std::os::raw::c_uint;
+    // SAFETY: display is open. desc is null-checked, owned here and freed
+    // with its controls before the block ends.
+    let repeats = unsafe {
+        let previous = x11::xlib::XSetErrorHandler(Some(ignore_x_error));
+        x11::xlib::XkbChangeEnabledControls(display, device, REPEAT_KEYS, 0);
+        let desc = x11::xlib::XkbAllocKeyboard();
+        let mut repeats = true;
+        if !desc.is_null() {
+            (*desc).device_spec = device as u16;
+            if x11::xlib::XkbGetControls(display, ALL_CONTROLS, desc) == 0
+                && !(*desc).ctrls.is_null()
+            {
+                repeats = (*(*desc).ctrls).enabled_ctrls & REPEAT_KEYS != 0;
+            }
+            x11::xlib::XkbFreeKeyboard(desc, 0, 1);
+        }
+        x11::xlib::XSync(display, 0);
+        x11::xlib::XSetErrorHandler(previous);
+        repeats
+    };
+    if repeats {
+        bail!("could not turn off key repeat on the virtual keyboard {slave_keyboard_id}");
+    }
+    Ok(())
 }
 
 /// evdev `KEY_UNKNOWN`: X keycode 248, `NoSymbol` in every evdev keymap, so

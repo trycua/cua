@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Pick the release tags the downloads CDN backfill copies.
 
-Explicit --tags wins. Otherwise: the three rolling tags, the newest published
+Explicit --tags wins. Otherwise: the three rolling tags (unless --no-rolling), the newest published
 release of every product (tag prefix), and the last N stable Cua Spaces releases.
 Versioned tags come first and rolling tags last, so the feeds that name them are
 copied after the files they name. Prints one tag per line.
@@ -23,7 +23,7 @@ def semver(tag: str, prefix: str):
     return None if not m else (int(m[1]), int(m[2]), int(m[3]), m[4] is None)
 
 
-def pick(releases: list[dict], stable_count: int) -> list[str]:
+def pick(releases: list[dict], stable_count: int, include_rolling: bool = True) -> list[str]:
     """releases: dicts with tag_name, draft. Drafts are not published and are skipped."""
     tags = [r["tag_name"] for r in releases if not r.get("draft")]
     out: list[str] = []
@@ -33,14 +33,15 @@ def pick(releases: list[dict], stable_count: int) -> list[str]:
     for p in PRODUCTS:
         v = sorted((t for t in tags if semver(t, p)), key=lambda t: semver(t, p), reverse=True)
         out += v[:1]
-    return list(dict.fromkeys(out + ROLLING))
+    return list(dict.fromkeys(out + (ROLLING if include_rolling else [])))
 
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--repo", required=True)
     ap.add_argument("--tags", default="")
-    ap.add_argument("--stable-count", type=int, default=3)
+    ap.add_argument("--stable-count", type=int, default=1)
+    ap.add_argument("--no-rolling", action="store_true", help="leave out the rolling tags")
     a = ap.parse_args(argv)
     explicit = [t for t in re.split(r"[\s,]+", a.tags) if t]
     if explicit:
@@ -52,7 +53,7 @@ def main(argv=None) -> int:
         print(p.stderr, file=sys.stderr)
         return 1
     rels = [json.loads(l) for l in p.stdout.splitlines() if l.strip()]
-    print("\n".join(pick(rels, a.stable_count)))
+    print("\n".join(pick(rels, a.stable_count, not a.no_rolling)))
     return 0
 
 

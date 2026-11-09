@@ -450,9 +450,9 @@ class Publisher:
                 continue
             why = self.gate_feed(tag, a["name"], data, names, res, follow)
             if why:
-                if follow:
+                if follow and not self.args.no_follow:
                     res.fail(f"{tag}: {why}")
-                else:  # reached only because a requested feed names this tag; copy it on its own to get this feed
+                else:  # tags a feed names were deliberately not copied (--no-follow, or reached only by following): warn, copy those tags to release the feed
                     print(f"::warning::{tag}: {why}", flush=True)
                 res.add(a["name"], "HELD BACK (references files of tags not copied)", a["size"])
                 continue
@@ -526,7 +526,7 @@ def main(argv=None, src=None, store=None) -> int:
     ap.add_argument("--cdn-host", default=DEFAULT_CDN_HOST)
     ap.add_argument("--dry-run", action="store_true", help="list what would be copied; changes nothing, needs no AWS credentials")
     ap.add_argument("--allow-overwrite", action="store_true", help="let different bytes replace a versioned object (a deliberate rebuild)")
-    ap.add_argument("--no-follow", action="store_true", help="do not copy tags that a feed references but that are not in --tags")
+    ap.add_argument("--no-follow", action="store_true", help="do not copy tags that a feed references but that are not in --tags; such a feed is held back with a warning")
     ap.add_argument("--jobs", type=int, default=4)
     args = ap.parse_args(argv)
     tags = [t for t in re.split(r"[\s,]+", args.tags) if t]

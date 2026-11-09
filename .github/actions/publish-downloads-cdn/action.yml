@@ -19,6 +19,9 @@ inputs:
   allow-overwrite:
     description: Let different bytes replace an existing versioned object (a deliberate rebuild).
     default: "false"
+  follow-refs:
+    description: Also copy releases that a feed names (one level). Release jobs leave this on; the backfill makes it a choice.
+    default: "true"
   role-arn:
     description: IAM role to assume through GitHub OIDC.
     default: arn:aws:iam::296062593712:role/github-actions-cua-downloads-publish
@@ -43,12 +46,14 @@ runs:
         DRY_RUN: ${{ inputs.dry-run }}
         PREFIX: ${{ inputs.prefix }}
         ALLOW_OVERWRITE: ${{ inputs.allow-overwrite }}
+        FOLLOW_REFS: ${{ inputs.follow-refs }}
       run: |
         set -uo pipefail
         args=(--repo "$GITHUB_REPOSITORY" --tags "$TAGS")
         [ -n "$PREFIX" ] && args+=(--prefix "$PREFIX")
         [ "$DRY_RUN" = true ] && args+=(--dry-run)
         [ "$ALLOW_OVERWRITE" = true ] && args+=(--allow-overwrite)
+        [ "$FOLLOW_REFS" = true ] || args+=(--no-follow)
         if ! python3 .github/scripts/publish_downloads_cdn.py "${args[@]}"; then
           {
             echo

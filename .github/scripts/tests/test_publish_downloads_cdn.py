@@ -204,3 +204,15 @@ def test_followed_tag_does_not_pull_in_more_tags():
     # asking for the tag itself completes it
     assert run(src, store, ["app-v1"]) == 0
     assert "app-v1/release-artifacts.json" in store.objs
+
+
+def test_no_follow_holds_the_feed_with_a_warning_not_an_error():
+    src, store = FakeSource({}), FakeStore()
+    src.add("app-v1", {"a.dmg": b"A", "release-artifacts.json": b"https://github.com/o/r/releases/download/other-v1/z.dmg"})
+    assert run(src, store, ["app-v1"], "--no-follow") == 0
+    assert "app-v1/a.dmg" in store.objs and "app-v1/release-artifacts.json" not in store.objs
+
+
+def test_plan_without_rolling():
+    rels = [{"tag_name": "cua-spaces-v1.0.0", "draft": False}, {"tag_name": "cua-sdk-v2.0.0", "draft": False}]
+    assert plan.pick(rels, 1, include_rolling=False) == ["cua-spaces-v1.0.0", "cua-sdk-v2.0.0"]

@@ -7,8 +7,10 @@ name: Backfill the downloads CDN
 # prefix=test/ for a rehearsal that touches nothing real.
 #
 # tags: explicit tags, one per line or comma separated. Leave empty to copy
-# "current": the three rolling tags plus the newest published release of each
-# product, and the last `stable_count` Cua Spaces releases.
+# "current": the newest published release of each product (Cua Spaces,
+# SDK/CLI, spacesd, driver), about 9 GB, plus more Spaces releases with
+# `stable_count`. The rolling tags are opt-in (`include_rolling`, with
+# `follow_refs`): their feeds name every release they list, tens of GB.
 
 on:
   workflow_dispatch:
@@ -20,7 +22,15 @@ on:
       stable_count:
         description: "How many of the newest stable Cua Spaces releases to include when tags is empty"
         required: false
-        default: "3"
+        default: "1"
+      include_rolling:
+        description: "Also copy the rolling tags (cua-install-latest, cua-spaces-latest, cua-spaces-nightly) when tags is empty. Their feeds name many releases, so turn on follow_refs with it"
+        type: boolean
+        default: false
+      follow_refs:
+        description: "Also copy the releases a feed names (one level). Without it such a feed is held back with a warning. Adds tens of GB"
+        type: boolean
+        default: false
       dry_run:
         description: "Only list what would be copied"
         type: boolean
@@ -58,10 +68,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAGS: ${{ inputs.tags }}
           STABLE_COUNT: ${{ inputs.stable_count }}
+          INCLUDE_ROLLING: ${{ inputs.include_rolling }}
         run: |
           set -euo pipefail
+          extra=()
+          [ "$INCLUDE_ROLLING" = true ] || extra+=(--no-rolling)
           python3 .github/scripts/backfill_downloads_plan.py --repo "$GITHUB_REPOSITORY" \
-            --tags "$TAGS" --stable-count "${STABLE_COUNT:-3}" > tags.txt
+            --tags "$TAGS" --stable-count "${STABLE_COUNT:-1}" "${extra[@]}" > tags.txt
           cat tags.txt
           { echo 'tags<<EOF'; cat tags.txt; echo EOF; } >> "$GITHUB_OUTPUT"
           { echo "### Tags to copy"; echo; sed 's/^/- /' tags.txt; } >> "$GITHUB_STEP_SUMMARY"
@@ -86,6 +99,7 @@ jobs:
           tags: ${{ needs.plan.outputs.tags }}
           dry-run: "true"
           prefix: ${{ inputs.prefix }}
+          follow-refs: ${{ inputs.follow_refs }}
 
   copy:
     name: Copy to the CDN
@@ -111,3 +125,4 @@ jobs:
           dry-run: "false"
           prefix: ${{ inputs.prefix }}
           allow-overwrite: ${{ inputs.allow_overwrite }}
+          follow-refs: ${{ inputs.follow_refs }}

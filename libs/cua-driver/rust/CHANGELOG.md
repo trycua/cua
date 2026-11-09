@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.45.1](https://github.com/trycua/cua/compare/cua-driver-rs-v0.45.0...cua-driver-rs-v0.45.1) (2026-11-08)
+
+
+### Bug Fixes
+
+* **cua-driver:** classify the Linux desktop once and read foreground restore from one table ([#6982](https://github.com/trycua/cua/issues/6982)) ([2506d9d](https://github.com/trycua/cua/commit/2506d9dd25e784389f15fcda6739c2b87c04fb19))
+
+## [0.45.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.44.2...cua-driver-rs-v0.45.0) (2026-11-08)
+
+
+### Features
+
+* **cua-driver:** nudge to batch after the second action, with a ready run_steps call ([#6921](https://github.com/trycua/cua/issues/6921)) ([7f81b8b](https://github.com/trycua/cua/commit/7f81b8b270e0742432689764a08efaba051e4fbe))
+
 ## [0.44.2](https://github.com/trycua/cua/compare/cua-driver-rs-v0.44.1...cua-driver-rs-v0.44.2) (2026-11-08)
 
 

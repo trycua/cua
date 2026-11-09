@@ -1463,11 +1463,15 @@ impl Agents {
     pub async fn events(&self, run_id: &str, cursor: u64, max: usize) -> Result<EventPage> {
         valid_run_id(run_id)?;
         let path = format!("{}/events.jsonl", self.run_dir(run_id));
-        let bytes = self
-            .read(&path, cursor, PAGE_BYTES)
-            .await?
-            .unwrap_or_default();
-        Ok(events::page(&bytes, cursor, max.max(1)))
+        // A line (an event with an image in it) can be bigger than a page: the
+        // window grows until it holds one, so the reader never stops at it.
+        events::read_page(
+            |offset, length| self.read(&path, offset, length),
+            cursor,
+            max.max(1),
+            PAGE_BYTES,
+        )
+        .await
     }
 
     /// Every event (bounded to the last 8 MiB).

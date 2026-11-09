@@ -1447,6 +1447,12 @@ fn outdated_daemon_policy(value: Option<&str>) -> OutdatedDaemon {
 /// sessions it hosts for other clients. `CUA_DAEMON_RESTART_OUTDATED=1`
 /// stops it and starts this version instead.
 pub async fn ensure_daemon() -> Result<DaemonClient> {
+    // Inside a Space with children on, the daemon is its spawn channel: the
+    // one the Space's own children (and pool runs) go through. There is no
+    // other daemon to find, and none to start, in a Space.
+    if let Some(addr) = spawn_channel() {
+        return DaemonClient::new(addr);
+    }
     if let Ok(c) = existing_daemon_patient(Duration::from_secs(30)).await {
         let running = c.info().await.map(|i| i.version).unwrap_or_default();
         if !daemon_is_outdated(&running, crate::VERSION) {

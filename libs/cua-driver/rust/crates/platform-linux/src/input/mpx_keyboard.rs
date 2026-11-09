@@ -658,7 +658,11 @@ fn deliver(
         let mut held: Vec<u16> = Vec::new();
         let confirm_at = confirm_points(steps);
         let mut read = 0;
+        let mut last_remapped = None;
         for (sent, step) in steps.iter().enumerate() {
+            let remapped = remap_guards
+                .iter()
+                .any(|guard| guard.keycode == step.x_keycode());
             let emitted = {
                 let mut device = device.lock().unwrap();
                 let event = [InputEvent::new(
@@ -688,6 +692,15 @@ fn deliver(
             } else {
                 held.retain(|code| *code != step.evdev_code);
             }
+            let pacing = if remapped {
+                last_remapped = Some(std::time::Instant::now());
+                StepPacing {
+                    step: pacing.step.max(StepPacing::keys().step),
+                    ..pacing
+                }
+            } else {
+                pacing
+            };
             let pause = if step.press {
                 pacing.step
             } else {
@@ -719,7 +732,13 @@ fn deliver(
         // The raw event proves the server consumed the transition; give the
         // toolkit a beat to translate it under any temporary remap before the
         // guards restore the keymap and the slave disappears.
-        sleep(Duration::from_millis(30));
+        let settle = Duration::from_millis(30);
+        sleep(match last_remapped {
+            Some(at) => super::SPARE_KEYCODE_IDLE
+                .saturating_sub(at.elapsed())
+                .max(settle),
+            None => settle,
+        });
         let _ = keymap_conn.get_input_focus()?.reply();
         let virtual_focus_held = xi_get_focus(display, ids.keyboard_id) == Some(window);
         let core_focus_unchanged = core_focus(display) == core_before;

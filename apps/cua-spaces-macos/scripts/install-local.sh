@@ -377,7 +377,10 @@ if [ "$SKIP_RUST_BUILD" = 0 ]; then
     log "building the Cua Spaces library and CLI (cargo, release)"
     # The SDK dylib the app links, and the `cua` that goes into the bundle
     # (build-app.sh's defaults).
-    (cd "$REPO_ROOT/libs/cua" && cargo build --locked --release -p cua-spaces-ffi -p cua-spaces-cli)
+    # --no-default-features leaves out AWS (EC2 and S3: the AWS SDK crates, a big share of a
+    # cold build). In this build every AWS feature says "this build doesn't include AWS
+    # support". Release builds keep the default `aws` feature.
+    (cd "$REPO_ROOT/libs/cua" && cargo build --locked --release --no-default-features -p cua-spaces-ffi -p cua-spaces-cli)
     "$REPO_ROOT/libs/spaces-app-swift/scripts/stage-library.sh"
     log "building cua-spacesd from this checkout (cargo, release)"
     (cd "$SPACESD_DIR" && CARGO_TARGET_DIR="$SPACESD_TARGET_DIR" cargo build --locked --release -p cua-spacesd --bin cua-spacesd)

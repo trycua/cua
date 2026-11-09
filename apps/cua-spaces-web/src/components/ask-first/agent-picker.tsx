@@ -8,12 +8,10 @@ import type { AgentAccount, AgentGroup, AgentsView } from "@/bridge";
 import { HarnessMark } from "@/components/agents/harness-mark";
 import { Popover, PopoverDivider } from "@/components/ui/popover";
 import { agentLine, type AgentSelection } from "@/lib/ask-first-model";
+import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 
 const same = (a: AgentAccount, b: AgentAccount) => a.env === b.env && (a.slot ?? null) === (b.slot ?? null);
-
-/** The menu's first line: what signing in an agent is for. */
-export const WHY = "Pick the agent for this job. Sign in once, and it runs on any of your computers.";
 
 /**
  * The agent menu of the ask box: the coding apps the person has connected
@@ -42,6 +40,7 @@ export function AgentPicker({
   /** Opens where the agents and their sign-ins are managed (Settings, Connections). */
   onConfigure?: () => void;
 }) {
+  const t = useT();
   const [open, setOpen] = useState(false);
   const [page, setPage] = useState<{ kind: "model" } | null>(null);
   const focus = useRef<HTMLButtonElement>(null);
@@ -64,7 +63,7 @@ export function AgentPicker({
             "flex h-9 max-w-[22rem] items-center gap-2 rounded-lg px-2.5 text-[13px] outline-none hover:bg-foreground/5 focus-visible:ring-2 focus-visible:ring-ring/60 data-popup-open:bg-foreground/[0.07]",
             !selected && "text-brand-strong",
           )}
-          aria-label={selected ? `Agent: ${agentLine(selected)}, ${selected.account.line}` : "Choose an agent"}
+          aria-label={selected ? t("home.agent_picker.trigger_label", { agent: agentLine(selected), account: selected.account.line }) : t("home.agent_picker.choose")}
         >
           {selected ? (
             <>
@@ -74,7 +73,7 @@ export function AgentPicker({
               </span>
             </>
           ) : (
-            <span data-ask-agent="">Choose an agent</span>
+            <span data-ask-agent="">{t("home.agent_picker.choose")}</span>
           )}
           <ChevronDownIcon className="size-3.5 shrink-0 text-muted-foreground" />
         </button>
@@ -91,9 +90,9 @@ export function AgentPicker({
           }}
         />
       ) : (
-        <div role="listbox" aria-label="Agents" className="max-h-[420px] overflow-y-auto">
+        <div role="listbox" aria-label={t("home.agent_picker.agents")} className="max-h-[420px] overflow-y-auto">
           <p data-agent-menu-why="" className="px-2.5 pt-1 pb-1.5 text-[12px] leading-snug text-muted-foreground">
-            {WHY}
+            {t("home.agent_picker.why")}
           </p>
           {groups.map((g) => (
             <div key={g.app} data-agent-group={g.app} data-state={g.state} className="py-0.5">
@@ -146,7 +145,7 @@ export function AgentPicker({
                 onClick={() => setPage({ kind: "model" })}
                 className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[13px] outline-none hover:bg-foreground/[0.06] focus-visible:ring-2 focus-visible:ring-ring/60"
               >
-                <span className="text-muted-foreground">Model</span>
+                <span className="text-muted-foreground">{t("home.agent_picker.model")}</span>
                 <span data-ask-model="" className="min-w-0 flex-1 truncate text-right">
                   {selected.model.label}
                 </span>
@@ -166,7 +165,7 @@ export function AgentPicker({
                 }}
                 className="flex w-full items-center rounded-lg px-2.5 py-1.5 text-left text-[13px] text-muted-foreground outline-none hover:bg-foreground/[0.06] hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60"
               >
-                Manage agents and sign-ins
+                {t("home.agent_picker.manage")}
               </button>
             </>
           ) : null}
@@ -177,9 +176,10 @@ export function AgentPicker({
 }
 
 function Back({ onBack, title }: { onBack: () => void; title: string }) {
+  const t = useT();
   return (
     <div className="flex items-center gap-1 pb-1">
-      <button type="button" data-agent-back="" aria-label="Back" onClick={onBack} className="flex size-7 items-center justify-center rounded-lg text-muted-foreground outline-none hover:bg-foreground/[0.06] hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60">
+      <button type="button" data-agent-back="" aria-label={t("home.agent_picker.back")} onClick={onBack} className="flex size-7 items-center justify-center rounded-lg text-muted-foreground outline-none hover:bg-foreground/[0.06] hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60">
         <ChevronLeftIcon className="size-3.5" />
       </button>
       <span className="text-[13px] font-medium">{title}</span>
@@ -189,10 +189,11 @@ function Back({ onBack, title }: { onBack: () => void; title: string }) {
 
 /** The models of the account in use. */
 function ModelPage({ selected, onBack, onPick }: { selected: AgentSelection; onBack: () => void; onPick: (model: string) => void }) {
+  const t = useT();
   return (
     <div data-agent-model-page="">
-      <Back onBack={onBack} title="Model" />
-      <div role="listbox" aria-label="Models" className="max-h-[320px] overflow-y-auto">
+      <Back onBack={onBack} title={t("home.agent_picker.model")} />
+      <div role="listbox" aria-label={t("home.agent_picker.models")} className="max-h-[320px] overflow-y-auto">
         {selected.account.models.filter((m) => !m.legacy || m.id === selected.model.id).map((m) => (
           <button
             type="button"
@@ -204,7 +205,7 @@ function ModelPage({ selected, onBack, onPick }: { selected: AgentSelection; onB
             className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[13px] outline-none hover:bg-foreground/[0.06] focus-visible:ring-2 focus-visible:ring-ring/60"
           >
             <span className="min-w-0 flex-1 truncate">{m.label}</span>
-            {m.fast ? <span className="text-[11px] text-muted-foreground">Fast</span> : null}
+            {m.fast ? <span className="text-[11px] text-muted-foreground">{t("home.agent_picker.fast")}</span> : null}
             {m.id === selected.model.id ? <CheckIcon className="size-3.5 shrink-0" /> : null}
           </button>
         ))}

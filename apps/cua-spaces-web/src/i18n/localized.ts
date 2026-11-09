@@ -7,4 +7,28 @@
  * in them. A PR that extracts a screen adds its paths here; the list grows
  * until it is `["."]`.
  */
-export const LOCALIZED: readonly string[] = ["i18n", "components/settings/language-row.tsx"];
+export const LOCALIZED: readonly string[] = [
+  "i18n",
+  // Shell: sidebar, top bar, menus, command palette.
+  "components/shell",
+  "components/ui/menu.tsx",
+  "routes/__root.tsx",
+  "lib/commands.ts",
+  // Home.
+  "components/ask-first",
+  "routes/home",
+  // Computers.
+  "components/spaces",
+  "components/computers",
+  "components/machines",
+  "components/add-computer-sheet.tsx",
+  "components/this-machine.tsx",
+  "components/this-mac-nudges.tsx",
+  "routes/spaces",
+  // Settings.
+  "components/settings",
+  "components/settings-group.tsx",
+  "components/cli-hint.tsx",
+  "routes/settings",
+  "lib/settings-copy.ts",
+];

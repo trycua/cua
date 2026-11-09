@@ -29,6 +29,7 @@ import {
 } from "@/bridge";
 import { Button } from "@/components/ui/button";
 import { toast } from "@/components/ui/toast";
+import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 
 /** Where Plan and Upgrade go: the plan card's link (Pro's checkout on
@@ -69,6 +70,7 @@ export function ProBanner() {
 
 /** The signed-in line and its menu. `identity`: the name, else the email. */
 export function AccountLine({ identity }: { identity: string }) {
+  const t = useT();
   const { core } = useBridge();
   const { data: session, signOut } = useSession();
   const navigate = useNavigate();
@@ -78,10 +80,10 @@ export function AccountLine({ identity }: { identity: string }) {
     return core.status === "ready"
       ? accountMenu(core, input)
       : [
-          { id: "settings", label: "Settings", value: null, separatorBefore: false },
-          ...(input.authMode === "user" ? [{ id: "signOut" as const, label: "Sign out", value: null, separatorBefore: true }] : []),
+          { id: "settings", label: t("shell.account.settings"), value: null, separatorBefore: false },
+          ...(input.authMode === "user" ? [{ id: "signOut" as const, label: t("shell.account.sign_out"), value: null, separatorBefore: true }] : []),
         ];
-  }, [core, link.plan, session?.account.authMode]);
+  }, [core, link.plan, session?.account.authMode, t]);
   const run = (item: AccountMenuItem) => {
     switch (item.id) {
       case "settings":
@@ -89,7 +91,7 @@ export function AccountLine({ identity }: { identity: string }) {
       case "plan":
         return link.open();
       case "signOut":
-        return void signOut().catch((e: unknown) => toast("Couldn't sign out", { description: e instanceof Error ? e.message : String(e) }));
+        return void signOut().catch((e: unknown) => toast(t("shell.account.sign_out_failed"), { description: e instanceof Error ? e.message : String(e) }));
     }
   };
   return (

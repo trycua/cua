@@ -11,6 +11,7 @@ import { OsIcon } from "@/components/os-icon";
 import type { NewKind, TaskWhere } from "@/lib/ask-first";
 import type { AgentSelection } from "@/lib/ask-first-model";
 import type { AskRepo } from "@/lib/ask-first-repo";
+import { useT, t } from "@/i18n";
 import { cn } from "@/lib/utils";
 
 import { AgentPicker } from "./agent-picker";
@@ -26,9 +27,9 @@ const OS_WORD: Record<SpaceOs, string> = { linux: "Linux", macos: "Mac", windows
 
 /** Where it runs is a Space: "New Space", then quieter "Linux on This Mac". */
 export function whereSpaceLabel(where: TaskWhere): { title: string; detail: string | null } {
-  if (where.kind === "agent") return { title: where.reuse ? "Agent decides, same Home" : "Agent decides", detail: null };
+  if (where.kind === "agent") return { title: where.reuse ? t("home.ask_box.agent_decides_same_home") : t("home.ask_box.agent_decides"), detail: null };
   if (where.kind === "machine") return { title: where.machine.name, detail: null };
-  if (where.kind === "new") return { title: "New Space", detail: `${OS_WORD[where.os]} on ${where.on?.name ?? thisComputerLabel()}` };
+  if (where.kind === "new") return { title: t("home.ask_box.new_space"), detail: t("home.ask_box.new_space_detail", { os: OS_WORD[where.os], computer: where.on?.name ?? thisComputerLabel() }) };
   return { title: where.kind === "this-mac" ? thisComputerLabel() : where.space.name, detail: null };
 }
 
@@ -39,9 +40,6 @@ export function AppMark({ agent, size = 32 }: { agent: string; size?: number }) 
     </span>
   );
 }
-
-/** With agent homes the box's placeholder says the agent can also be told where in the text, with @. */
-export const PLACEHOLDER_HOME = "Describe a task. Type @ to pick a computer.";
 
 /** A new Space's row: just its system ("Linux", "macOS"); the section label says it's new, on this computer. */
 const NEW_KIND_WORD: Record<SpaceOs, string> = { linux: "Linux", macos: "macOS", windows: "Windows", unknown: "" };
@@ -177,6 +175,7 @@ export function AskBox({
   compact?: boolean;
   autoFocus?: boolean;
 }) {
+  const t = useT();
   const ref = useRef<HTMLTextAreaElement>(null);
   useEffect(() => {
     if (autoFocus) ref.current?.focus();
@@ -203,8 +202,8 @@ export function AskBox({
           }
         }}
         rows={compact ? 1 : 3}
-        aria-label="What should it do?"
-        placeholder={agentHome ? PLACEHOLDER_HOME : "What should it do?"}
+        aria-label={t("home.ask_box.label")}
+        placeholder={agentHome ? t("home.ask_box.placeholder_home") : t("home.ask_box.label")}
         className={cn("block w-full resize-none bg-transparent px-5 pt-4 text-[16px] leading-relaxed outline-none placeholder:text-muted-foreground", compact ? "min-h-14" : "min-h-24")}
       />
       <div className="flex items-center gap-1 px-2 pt-1 pb-2">
@@ -212,7 +211,7 @@ export function AskBox({
         <RepoChip repo={repo} onRepo={onRepo} />
         {placed && agentHome ? (
           <span data-ask-where="" className="max-w-64 truncate px-1.5 text-[13px] text-muted-foreground">
-            in {label.title}
+            {t("home.ask_box.in_place", { place: label.title })}
           </span>
         ) : null}
         {agentHome ? null : (
@@ -226,7 +225,7 @@ export function AskBox({
               spaces={spaces}
               computers={computers}
               trigger={
-                <button type="button" className={whereButton} data-picker="where" aria-label={`Where it runs: ${label.title}${needsSetUp ? `, ${chip.note}` : ""}`}>
+                <button type="button" className={whereButton} data-picker="where" aria-label={needsSetUp ? t("home.ask_box.where_label_note", { place: label.title, note: chip.note }) : t("home.ask_box.where_label", { place: label.title })}>
                   {where.kind === "new" ? (
                     <OsIcon os={where.os} className="size-3.5" />
                   ) : where.kind === "this-mac" ? (
@@ -278,7 +277,7 @@ export function AskBox({
               <button
                 type="button"
                 data-picker="where"
-                aria-label="Where it runs"
+                aria-label={t("home.ask_box.where")}
                 className="flex size-9 items-center justify-center rounded-lg text-muted-foreground outline-none hover:bg-foreground/5 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60 data-popup-open:bg-foreground/[0.07]"
               >
                 <EllipsisIcon className="size-4" />
@@ -290,7 +289,7 @@ export function AskBox({
           type="button"
           disabled={!ready}
           onClick={onSubmit}
-          aria-label="Start"
+          aria-label={t("home.ask_box.start")}
           className={cn("flex size-10 items-center justify-center rounded-full transition-colors", ready ? "bg-primary text-primary-foreground hover:bg-primary/90" : "bg-foreground/10 text-muted-foreground")}
         >
           <ArrowUpIcon className="size-5" />
@@ -334,6 +333,7 @@ export function WherePicker({
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
 }) {
+  const t = useT();
   const newRows = kinds.map((k) => (
     <PickerRow
       key={k.os}
@@ -348,7 +348,7 @@ export function WherePicker({
       onSelect={() => onWhere({ kind: "new", os: k.os })}
     />
   ));
-  const newSpaceLabel = `New Space on ${thisComputerText()}`;
+  const newSpaceLabel = t("home.ask_box.new_space_on", { computer: thisComputerText() });
   const thisRow = (
     <PickerRow
       icon={
@@ -357,7 +357,7 @@ export function WherePicker({
         </span>
       }
       title={thisComputerLabel()}
-      note="Works on your own files and apps"
+      note={t("home.ask_box.this_computer_note")}
       selected={where?.kind === "this-mac"}
       onSelect={() => onWhere({ kind: "this-mac" })}
     />
@@ -371,13 +371,13 @@ export function WherePicker({
         </span>
       }
       title={s.name}
-      note="On now"
+      note={t("home.ask_box.on_now")}
       selected={where?.kind === "space" && where.space.id === s.id}
       onSelect={() => onWhere({ kind: "space", space: s })}
     />
   ));
   return (
-    <Picker title="Where it runs" trigger={trigger} open={open} onOpenChange={onOpenChange}>
+    <Picker title={t("home.ask_box.where")} trigger={trigger} open={open} onOpenChange={onOpenChange}>
       {agentHome ? (
         <PickerRow
           icon={
@@ -385,7 +385,7 @@ export function WherePicker({
               <SparklesIcon className="size-4" />
             </span>
           }
-          title="Agent decides"
+          title={t("home.ask_box.agent_decides")}
           selected={where?.kind === "agent" && !where.reuse}
           onSelect={() => onWhere({ kind: "agent" })}
         />
@@ -397,7 +397,7 @@ export function WherePicker({
               <SparklesIcon className="size-4" />
             </span>
           }
-          title="Agent decides, same Home"
+          title={t("home.ask_box.agent_decides_same_home")}
           selected={where?.kind === "agent" && Boolean(where.reuse)}
           onSelect={() => onWhere({ kind: "agent", reuse: true })}
         />
@@ -406,7 +406,7 @@ export function WherePicker({
         <>
           <SectionLabel>{newSpaceLabel}</SectionLabel>
           {newRows}
-          <SectionLabel>Your computers</SectionLabel>
+          <SectionLabel>{t("home.ask_box.your_computers")}</SectionLabel>
           {thisRow}
           {machines
             ?.filter((m) => !m.current)
@@ -420,7 +420,7 @@ export function WherePicker({
                   </span>
                 }
                 title={m.name}
-                note={m.online ? "Online" : "Off"}
+                note={m.online ? t("home.ask_box.online") : t("home.ask_box.off")}
                 selected={where?.kind === "machine" && where.machine.id === m.id}
                 onSelect={() => onWhere({ kind: "machine", machine: { id: m.id, name: m.name } })}
               />
@@ -430,7 +430,7 @@ export function WherePicker({
       ) : (
         <>
           {/* This computer already counts: your computers first, then your Spaces; a new computer is optional. */}
-          <SectionLabel>Your computers</SectionLabel>
+          <SectionLabel>{t("home.ask_box.your_computers")}</SectionLabel>
           {thisRow}
           {computers.slice(0, 5).map((c) => (
             <PickerRow
@@ -441,12 +441,12 @@ export function WherePicker({
                 </span>
               }
               title={c.name}
-              note="Online"
+              note={t("home.ask_box.online")}
               selected={where?.kind === "space" && where.space.id === c.id}
               onSelect={() => onWhere({ kind: "space", space: c })}
             />
           ))}
-          {spaces.length > 0 ? <SectionLabel>Your Spaces</SectionLabel> : null}
+          {spaces.length > 0 ? <SectionLabel>{t("home.ask_box.your_spaces")}</SectionLabel> : null}
           {spaceRows}
           <SectionLabel>{newSpaceLabel}</SectionLabel>
           {newRows}

@@ -80,6 +80,12 @@ jobs:
           fi
           api "repos/$GITHUB_REPOSITORY/pulls/$pr" --jq '.body // ""' > "$RUNNER_TEMP/pr-body.txt"
           labels=$(api "repos/$GITHUB_REPOSITORY/issues/$pr/labels" --jq '[.[].name] | join(",")')
+          # The hold step above only sees pull_request events; a queue entry has no PR payload, so the
+          # label is re-read here for the pull request the queue ref names.
+          if [[ -n "$QUEUE_REF" && ",$labels," =~ ,(release-hold|hold), ]]; then
+            echo "::error::Pull request #$pr has a hold label (release-hold). Remove it and requeue; see docs/release-hold.md"
+            exit 1
+          fi
           api --paginate "repos/$GITHUB_REPOSITORY/pulls/$pr/files?per_page=100" \
             --jq '.[] | .filename, (.previous_filename // empty)' > "$RUNNER_TEMP/files.txt"
           # The files API stops at 3000 entries; a PR that large waits on everything.

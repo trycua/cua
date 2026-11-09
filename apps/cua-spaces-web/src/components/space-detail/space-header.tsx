@@ -123,7 +123,14 @@ export function SpaceHeader(p: SpaceHeaderProps) {
             </Button>
           ) : null}
           {p.share ? (
-            <Button variant="secondary" data-share-space="" className={cn(filled, accent)} disabled={!p.share.enabled} title={p.share.help} onClick={p.share.onClick}>
+            <Button
+              variant="secondary"
+              data-share-space=""
+              className={cn(filled, accent)}
+              disabled={!p.share.enabled}
+              title={p.share.help}
+              onClick={p.share.onClick}
+            >
               <UserPlusIcon className="size-3.5" /> {p.share.label}
             </Button>
           ) : null}

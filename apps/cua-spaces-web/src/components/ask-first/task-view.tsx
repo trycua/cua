@@ -2,10 +2,37 @@
 // Copyright (c) 2026 Cua AI, Inc.
 
 import { Link } from "@tanstack/react-router";
-import { ArrowLeftIcon, ArrowUpIcon, CheckIcon, ChevronDownIcon, EyeIcon, HandIcon, Loader2Icon, Maximize2Icon, Minimize2Icon, RotateCwIcon, Trash2Icon, TriangleAlertIcon, UserPlusIcon } from "lucide-react";
+import {
+  ArrowLeftIcon,
+  ArrowUpIcon,
+  CheckIcon,
+  ChevronDownIcon,
+  EyeIcon,
+  HandIcon,
+  Loader2Icon,
+  Maximize2Icon,
+  Minimize2Icon,
+  RotateCwIcon,
+  Trash2Icon,
+  TriangleAlertIcon,
+  UserPlusIcon,
+} from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
-import { createReport, reportMailto, setupCard, useAgents, useAgentTimeline, useBridge, useSession, useShareSheet, useSpaceDetail, useSpaces, type AgentTimeline, type Space } from "@/bridge";
+import {
+  createReport,
+  reportMailto,
+  setupCard,
+  useAgents,
+  useAgentTimeline,
+  useBridge,
+  useSession,
+  useShareSheet,
+  useSpaceDetail,
+  useSpaces,
+  type AgentTimeline,
+  type Space,
+} from "@/bridge";
 import { Timeline } from "@/components/agents/timeline";
 import { CuaKey } from "@/components/cua-key";
 import { DiagnosticReportDialog } from "@/components/diagnostic-report-dialog";
@@ -15,7 +42,20 @@ import { ConfirmDialog } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { toastError } from "@/components/ui/toast";
 import { useConnectors } from "@/hooks/use-connectors";
-import { keepTranscript, postToSpaceThread, retryTarget, startErrorView, taskState, TASK_STATE_TEXT, taskTitle, updateAskTask, useAskTasks, type AskTask, type TaskState, type TaskWhere } from "@/lib/ask-first";
+import {
+  keepTranscript,
+  postToSpaceThread,
+  retryTarget,
+  startErrorView,
+  taskState,
+  TASK_STATE_TEXT,
+  taskTitle,
+  updateAskTask,
+  useAskTasks,
+  type AskTask,
+  type TaskState,
+  type TaskWhere,
+} from "@/lib/ask-first";
 import { t as tr, useT } from "@/i18n";
 import { createProgress, spaceState } from "@/lib/spaces";
 import { cn } from "@/lib/utils";
@@ -91,7 +131,10 @@ function TaskView({ task }: { task: AskTask }) {
     const timer = setTimeout(() => tick((n) => n + 1), REPLY_GRACE_MS);
     return () => clearTimeout(timer);
   }, [awaiting]);
-  const read = taskState(task, ref ? { status: timeline.status ?? run?.status ?? null, needsYou: Boolean(run?.needsYou), lastEventMs: timeline.lastEventMs } : null);
+  const read = taskState(
+    task,
+    ref ? { status: timeline.status ?? run?.status ?? null, needsYou: Boolean(run?.needsYou), lastEventMs: timeline.lastEventMs } : null,
+  );
   const state: TaskState = awaiting && (read === "done" || read === "needs-you" || read === "kept") ? "working" : read;
   const [mode, setMode] = useState<"watch" | "control">("watch");
   const [big, setBig] = useState(false);
@@ -158,7 +201,11 @@ function TaskView({ task }: { task: AskTask }) {
           </p>
         </div>
         {space ? (
-          <Button variant="outline" className="h-10" onClick={() => void sharing.open(space, session?.signedIn ?? false).catch(toastError(t("home.task.share_failed")))}>
+          <Button
+            variant="outline"
+            className="h-10"
+            onClick={() => void sharing.open(space, session?.signedIn ?? false).catch(toastError(t("home.task.share_failed")))}
+          >
             <UserPlusIcon /> {t("home.task.share")}
           </Button>
         ) : null}
@@ -203,7 +250,13 @@ function TaskView({ task }: { task: AskTask }) {
                     }
                   }}
                   aria-label={t("home.task.reply_to", { name })}
-                  placeholder={state === "needs-you" ? t("home.task.answer_in_words") : state === "done" || state === "kept" ? t("home.task.follow_up") : t("home.task.reply_to", { name })}
+                  placeholder={
+                    state === "needs-you"
+                      ? t("home.task.answer_in_words")
+                      : state === "done" || state === "kept"
+                        ? t("home.task.follow_up")
+                        : t("home.task.reply_to", { name })
+                  }
                   className="min-h-11 flex-1 resize-none self-center bg-transparent py-2.5 text-[14px] outline-none placeholder:text-muted-foreground disabled:opacity-60"
                 />
                 <button
@@ -211,7 +264,10 @@ function TaskView({ task }: { task: AskTask }) {
                   aria-label={t("home.task.send")}
                   disabled={!ref || !reply.trim()}
                   onClick={() => void send(reply)}
-                  className={cn("flex size-11 shrink-0 items-center justify-center rounded-full", ref && reply.trim() ? "bg-primary text-primary-foreground" : "bg-foreground/10 text-muted-foreground")}
+                  className={cn(
+                    "flex size-11 shrink-0 items-center justify-center rounded-full",
+                    ref && reply.trim() ? "bg-primary text-primary-foreground" : "bg-foreground/10 text-muted-foreground",
+                  )}
                 >
                   <ArrowUpIcon className="size-5" />
                 </button>
@@ -268,19 +324,29 @@ function Starting({ pending, space, name, onHost }: { pending: Space | undefined
       <div className="flex items-center gap-3">
         <CuaKey size={28} />
         <div className="flex-1">
-          <div className="text-[15px] font-semibold">{onHost ? t("home.task.starting_on", { computer: thisComputerText() }) : t("home.task.getting_ready")}</div>
+          <div className="text-[15px] font-semibold">
+            {onHost ? t("home.task.starting_on", { computer: thisComputerText() }) : t("home.task.getting_ready")}
+          </div>
           <div className="text-[13px] text-muted-foreground">
             {onHost
               ? t("home.task.own_files")
               : (making?.transfer ??
-                (making ? t("home.task.progress", { label: making.label, percent: Math.round(createProgress({ progress: making }) * 100) }) : t("home.task.usually_under_a_minute")))}
+                (making
+                  ? t("home.task.progress", { label: making.label, percent: Math.round(createProgress({ progress: making }) * 100) })
+                  : t("home.task.usually_under_a_minute")))}
           </div>
         </div>
       </div>
       <ol className="mt-4 space-y-3">
         {steps.map((s) => (
           <li key={s.text} className="flex items-center gap-3 text-[14px]">
-            {s.done ? <CheckIcon className="size-4 text-success" /> : s.now ? <Loader2Icon className="size-4 animate-spin text-brand-strong" /> : <span className="size-4" />}
+            {s.done ? (
+              <CheckIcon className="size-4 text-success" />
+            ) : s.now ? (
+              <Loader2Icon className="size-4 animate-spin text-brand-strong" />
+            ) : (
+              <span className="size-4" />
+            )}
             <span className={cn(!s.done && !s.now && "text-muted-foreground")}>{s.text}</span>
           </li>
         ))}
@@ -294,7 +360,19 @@ function Starting({ pending, space, name, onHost }: { pending: Space | undefined
  * Change computer right in the card, and the core's own words under
  * Details.
  */
-export function StartFailed({ error, name, agent, host, onRetry }: { error: string; name: string; agent?: string; host: boolean; onRetry: (where?: TaskWhere) => void }) {
+export function StartFailed({
+  error,
+  name,
+  agent,
+  host,
+  onRetry,
+}: {
+  error: string;
+  name: string;
+  agent?: string;
+  host: boolean;
+  onRetry: (where?: TaskWhere) => void;
+}) {
   const t = useT();
   const view = startErrorView(error, name);
   const { core } = useBridge();
@@ -339,7 +417,11 @@ export function StartFailed({ error, name, agent, host, onRetry }: { error: stri
             </Button>
           ) : null}
           {view.retry ? (
-            <Button variant={view.action === "retry" ? "default" : "outline"} className="h-10 px-4" onClick={() => (host ? pick.choose({ kind: "this-mac" }, onRetry) : onRetry())}>
+            <Button
+              variant={view.action === "retry" ? "default" : "outline"}
+              className="h-10 px-4"
+              onClick={() => (host ? pick.choose({ kind: "this-mac" }, onRetry) : onRetry())}
+            >
               <RotateCwIcon /> {t("home.task.try_again")}
             </Button>
           ) : null}
@@ -461,15 +543,15 @@ function ThreadFooter({
             </div>
           </div>
           {task.onHost ? null : (
-          <div className="flex flex-wrap items-center gap-3 border-t px-5 py-3">
-            <span className="flex-1 text-[13px] text-muted-foreground">{t("home.task.still_on")}</span>
-            <Button variant="outline" className="h-11 px-4" onClick={onKeep}>
-              {t("home.task.keep_it")}
-            </Button>
-            <Button variant="outline" className="h-11 px-4" onClick={onThrow}>
-              <Trash2Icon /> {t("home.task.throw_it_away")}
-            </Button>
-          </div>
+            <div className="flex flex-wrap items-center gap-3 border-t px-5 py-3">
+              <span className="flex-1 text-[13px] text-muted-foreground">{t("home.task.still_on")}</span>
+              <Button variant="outline" className="h-11 px-4" onClick={onKeep}>
+                {t("home.task.keep_it")}
+              </Button>
+              <Button variant="outline" className="h-11 px-4" onClick={onThrow}>
+                <Trash2Icon /> {t("home.task.throw_it_away")}
+              </Button>
+            </div>
           )}
         </div>
       ) : null}
@@ -519,7 +601,14 @@ function Screen({
               ? TASK_STATE_TEXT.failed
               : t("home.task.finished_short");
   return (
-    <div className={cn("overflow-hidden rounded-xl border bg-card shadow-xs", state === "needs-you" && mode === "watch" && "ring-2 ring-warning/70", mode === "control" && "ring-2 ring-brand")} data-ask-screen={mode}>
+    <div
+      className={cn(
+        "overflow-hidden rounded-xl border bg-card shadow-xs",
+        state === "needs-you" && mode === "watch" && "ring-2 ring-warning/70",
+        mode === "control" && "ring-2 ring-brand",
+      )}
+      data-ask-screen={mode}
+    >
       {space && on ? (
         <StreamSurface
           spaceId={space.id}

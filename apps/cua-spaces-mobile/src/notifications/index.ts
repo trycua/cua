@@ -66,7 +66,10 @@ export async function askPermission(): Promise<boolean> {
 }
 
 /** What `needs you` entries a Space list holds, keyed so each one notifies once. */
-export function needsYouIn(list: SpaceList, membersNeeds: Map<string, { seq: number; kind: "approval" | "question"; text: string }[]>): { key: string; spaceName: string; payload: NeedsYouPayload; text: string }[] {
+export function needsYouIn(
+  list: SpaceList,
+  membersNeeds: Map<string, { seq: number; kind: "approval" | "question"; text: string }[]>,
+): { key: string; spaceName: string; payload: NeedsYouPayload; text: string }[] {
   const out: { key: string; spaceName: string; payload: NeedsYouPayload; text: string }[] = [];
   for (const s of list.spaces) {
     if (s.tone !== "you") continue;

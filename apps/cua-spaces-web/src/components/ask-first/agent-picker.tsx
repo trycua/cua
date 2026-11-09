@@ -63,7 +63,9 @@ export function AgentPicker({
             "flex h-9 max-w-[22rem] items-center gap-2 rounded-lg px-2.5 text-[13px] outline-none hover:bg-foreground/5 focus-visible:ring-2 focus-visible:ring-ring/60 data-popup-open:bg-foreground/[0.07]",
             !selected && "text-brand-strong",
           )}
-          aria-label={selected ? t("home.agent_picker.trigger_label", { agent: agentLine(selected), account: selected.account.line }) : t("home.agent_picker.choose")}
+          aria-label={
+            selected ? t("home.agent_picker.trigger_label", { agent: agentLine(selected), account: selected.account.line }) : t("home.agent_picker.choose")
+          }
         >
           {selected ? (
             <>
@@ -179,7 +181,13 @@ function Back({ onBack, title }: { onBack: () => void; title: string }) {
   const t = useT();
   return (
     <div className="flex items-center gap-1 pb-1">
-      <button type="button" data-agent-back="" aria-label={t("home.agent_picker.back")} onClick={onBack} className="flex size-7 items-center justify-center rounded-lg text-muted-foreground outline-none hover:bg-foreground/[0.06] hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60">
+      <button
+        type="button"
+        data-agent-back=""
+        aria-label={t("home.agent_picker.back")}
+        onClick={onBack}
+        className="flex size-7 items-center justify-center rounded-lg text-muted-foreground outline-none hover:bg-foreground/[0.06] hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60"
+      >
         <ChevronLeftIcon className="size-3.5" />
       </button>
       <span className="text-[13px] font-medium">{title}</span>
@@ -194,21 +202,23 @@ function ModelPage({ selected, onBack, onPick }: { selected: AgentSelection; onB
     <div data-agent-model-page="">
       <Back onBack={onBack} title={t("home.agent_picker.model")} />
       <div role="listbox" aria-label={t("home.agent_picker.models")} className="max-h-[320px] overflow-y-auto">
-        {selected.account.models.filter((m) => !m.legacy || m.id === selected.model.id).map((m) => (
-          <button
-            type="button"
-            role="option"
-            aria-selected={m.id === selected.model.id}
-            key={m.id}
-            data-model-row={m.id}
-            onClick={() => onPick(m.id)}
-            className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[13px] outline-none hover:bg-foreground/[0.06] focus-visible:ring-2 focus-visible:ring-ring/60"
-          >
-            <span className="min-w-0 flex-1 truncate">{m.label}</span>
-            {m.fast ? <span className="text-[11px] text-muted-foreground">{t("home.agent_picker.fast")}</span> : null}
-            {m.id === selected.model.id ? <CheckIcon className="size-3.5 shrink-0" /> : null}
-          </button>
-        ))}
+        {selected.account.models
+          .filter((m) => !m.legacy || m.id === selected.model.id)
+          .map((m) => (
+            <button
+              type="button"
+              role="option"
+              aria-selected={m.id === selected.model.id}
+              key={m.id}
+              data-model-row={m.id}
+              onClick={() => onPick(m.id)}
+              className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[13px] outline-none hover:bg-foreground/[0.06] focus-visible:ring-2 focus-visible:ring-ring/60"
+            >
+              <span className="min-w-0 flex-1 truncate">{m.label}</span>
+              {m.fast ? <span className="text-[11px] text-muted-foreground">{t("home.agent_picker.fast")}</span> : null}
+              {m.id === selected.model.id ? <CheckIcon className="size-3.5 shrink-0" /> : null}
+            </button>
+          ))}
       </div>
     </div>
   );

@@ -56,7 +56,11 @@ async function visit(label: string): Promise<Record<string, number | null>> {
     const settled = () => (q("[data-agents-loading]") ? null : Date.now() - t0);
     let done: number | null = null;
     while (Date.now() - t0 < 12_000) {
-      for (const [name, sel] of [["codex row", `[data-chat='${CODEX}']`], ["hermes row", `[data-chat='${HERMES}']`]] as const) if (!(name in seen) && q(sel)) seen[name] = Date.now() - t0;
+      for (const [name, sel] of [
+        ["codex row", `[data-chat='${CODEX}']`],
+        ["hermes row", `[data-chat='${HERMES}']`],
+      ] as const)
+        if (!(name in seen) && q(sel)) seen[name] = Date.now() - t0;
       if ("codex row" in seen && "hermes row" in seen && (done = settled()) !== null && seen["codex row"] !== undefined) break;
       await sleep(10);
     }

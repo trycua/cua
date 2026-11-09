@@ -647,6 +647,10 @@ def changed_crates(changes: Changes, env: Dict[str, str]) -> Dict[str, Tuple[Wor
 
 LOCKFILE_RX = r"(^|/)(Cargo\.(toml|lock)|package(-lock)?\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml|uv\.lock|pyproject\.toml|rust-toolchain\.toml)$|^scripts/ci/(check-lockfiles\.sh|lockfile-drift-allowlist\.txt)$"
 TSX = "node docs/node_modules/tsx/dist/cli.mjs"
+# The pre-commit hook's Prettier.
+PRETTIER = "npx -y prettier@3.6.2"
+SPACES_APPS = "apps/cua-spaces/ apps/cua-spaces-web/ apps/cua-spaces-desktop/ apps/cua-spaces-mobile/"
+SPACES_PRETTIER_RX = r"^apps/cua-spaces(-web|-desktop|-mobile)?/.*\.(ts|tsx|js|jsx|mjs|cjs|mts|cts|json|md|ya?ml|css|html)$"
 # CI's pnpm/action-setup reads the root package.json packageManager for docs.
 DOCS_DEPS = ("docs/node_modules/tsx/dist/cli.mjs", "{pnpm} --dir docs install --frozen-lockfile")
 
@@ -719,7 +723,7 @@ SYNC_REFS: List[Tuple[str, str, str]] = [
 # Checks whose standalone GitHub workflow was deleted because `CI: Quick` runs them (CUA-3558). On a
 # runner (CUA_CI_REQUIRE_TOOLS=1, set by ci-quick.yml) a missing tool fails them instead of skipping
 # them, so a runner image change can never turn one of these checks into a silent pass.
-QUICK_COVERED_IDS = "spdx,spdx-driver,lockfiles,actionlint,larger-runners,image-refs,image-tests,python,rust-fmt,docs-image-refs"
+QUICK_COVERED_IDS = "spdx,spdx-driver,spaces-prettier,lockfiles,actionlint,larger-runners,image-refs,image-tests,python,rust-fmt,docs-image-refs"
 REQUIRED_TOOL_CHECKS = set(QUICK_COVERED_IDS.split(",")) if os.environ.get("CUA_CI_REQUIRE_TOOLS") == "1" else set()
 
 
@@ -734,6 +738,15 @@ def static_checks(changes: Changes, ctx: "Context") -> List[Check]:
     if changes.touches(r"^libs/cua-driver/.*\.(rs|swift)$"):
         add(Check("spdx-driver", "SPDX headers (Cua Driver, MIT)", "python3 scripts/spdx-headers.py --check libs/cua-driver",
                   fix="python3 scripts/spdx-headers.py --apply libs/cua-driver", safe_fix=True))
+
+    # Each Spaces app has its own .prettierrc.yaml. Only the changed files are checked: some files are not
+    # formatted yet, and each one is formatted the next time it changes. git lists the files, so a large
+    # change does not overflow the Windows command line.
+    if changes.existing(SPACES_PRETTIER_RX):
+        files = (f"{{ git diff -z --name-only --diff-filter=d {changes.base} -- {SPACES_APPS}; "
+                 f"git ls-files -z --others --exclude-standard -- {SPACES_APPS}; }} | {{ grep -zE '{SPACES_PRETTIER_RX}' || true; }} | sort -zu | xargs -0 -r ")
+        add(Check("spaces-prettier", "Prettier on the changed Cua Spaces app files", f"{files}{PRETTIER} --check",
+                  fix=f"{files}{PRETTIER} --write", safe_fix=True, tools=("npx",)))
 
     lock_hits = changes.touches(LOCKFILE_RX)
     if lock_hits:

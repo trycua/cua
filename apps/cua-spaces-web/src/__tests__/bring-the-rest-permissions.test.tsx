@@ -28,12 +28,30 @@ describe("Home's 'Now bring the rest in'", () => {
   it("marks the apps row On once both are on, and its panel shows each switch live", () => {
     const view = bringRestView({ os: "macos" });
     const data = answer("on", "off");
-    const { rerender } = render(<BringTheRestCard view={view} open="apps" onRow={() => {}} onDismiss={() => {}} apps={<AppsPanel perms={{ data, allow: vi.fn(async () => {}), waiting: true }} />} done={{ apps: false }} />);
+    const { rerender } = render(
+      <BringTheRestCard
+        view={view}
+        open="apps"
+        onRow={() => {}}
+        onDismiss={() => {}}
+        apps={<AppsPanel perms={{ data, allow: vi.fn(async () => {}), waiting: true }} />}
+        done={{ apps: false }}
+      />,
+    );
     expect(document.querySelector("[data-bring-rest-done=apps]")).toBeNull();
     expect(document.querySelector("[data-app-permission=screen] [data-permission-status]")!.getAttribute("data-permission-status")).toBe("on");
     expect(document.querySelector("[data-app-permission=accessibility] [data-permission-status]")!.getAttribute("data-permission-status")).toBe("checking");
     const both = answer("on", "on");
-    rerender(<BringTheRestCard view={view} open="apps" onRow={() => {}} onDismiss={() => {}} apps={<AppsPanel perms={{ data: both, allow: vi.fn(async () => {}) }} />} done={{ apps: true }} />);
+    rerender(
+      <BringTheRestCard
+        view={view}
+        open="apps"
+        onRow={() => {}}
+        onDismiss={() => {}}
+        apps={<AppsPanel perms={{ data: both, allow: vi.fn(async () => {}) }} />}
+        done={{ apps: true }}
+      />,
+    );
     expect(document.querySelector("[data-bring-rest-done=apps]")!.textContent).toContain("On");
     expect(document.querySelector("[data-bring-rest-apps]")!.textContent).toContain("Both are on.");
   });

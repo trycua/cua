@@ -16,7 +16,15 @@ import { Input } from "@/components/ui/input";
  * Cua app on GitHub: an organization and a token (kept on this computer,
  * never sent to Cua). Every word is the core's.
  */
-export function ConnectSheet({ view, onAction, onOpen }: { view: CiConnectView; onAction(a: CiAction, extra?: { token?: string }): void; onOpen(url: string): void }) {
+export function ConnectSheet({
+  view,
+  onAction,
+  onOpen,
+}: {
+  view: CiConnectView;
+  onAction(a: CiAction, extra?: { token?: string }): void;
+  onOpen(url: string): void;
+}) {
   // The token lives here only: it is sent with the press and then forgotten.
   const [token, setToken] = useState("");
   const close = () => onAction({ type: "connectClose" });
@@ -84,7 +92,12 @@ export function ConnectSheet({ view, onAction, onOpen }: { view: CiConnectView; 
               ) : null}
             </div>
             <div className="flex items-center gap-2">
-              <Button variant="outline" data-ci-connect-close="" disabled={view.busy && view.phase !== "waiting"} onClick={() => (view.phase === "token" ? onAction({ type: "tokenBack" }) : close())}>
+              <Button
+                variant="outline"
+                data-ci-connect-close=""
+                disabled={view.busy && view.phase !== "waiting"}
+                onClick={() => (view.phase === "token" ? onAction({ type: "tokenBack" }) : close())}
+              >
                 {view.close}
               </Button>
               {view.phase === "waiting" ? (

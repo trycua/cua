@@ -26,11 +26,19 @@ export function processTable() {
   } else if (process.platform === "win32") {
     const out = execFileSync(
       "powershell",
-      ["-NoProfile", "-Command", "Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,KernelModeTime,UserModeTime,WorkingSetSize | ConvertTo-Json -Compress"],
+      [
+        "-NoProfile",
+        "-Command",
+        "Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,KernelModeTime,UserModeTime,WorkingSetSize | ConvertTo-Json -Compress",
+      ],
       { encoding: "utf8", maxBuffer: 64 << 20 },
     );
     for (const p of JSON.parse(out)) {
-      table.set(p.ProcessId, { ppid: p.ParentProcessId, cpuSeconds: (Number(p.KernelModeTime) + Number(p.UserModeTime)) / 1e7, rssBytes: Number(p.WorkingSetSize) });
+      table.set(p.ProcessId, {
+        ppid: p.ParentProcessId,
+        cpuSeconds: (Number(p.KernelModeTime) + Number(p.UserModeTime)) / 1e7,
+        rssBytes: Number(p.WorkingSetSize),
+      });
     }
   } else {
     throw new Error("macOS: video-bench.mjs samples with top");

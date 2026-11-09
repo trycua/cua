@@ -26,7 +26,9 @@ type Catalog = Record<string, string>;
 // Vite (the page, Electron, Vitest) defines `import.meta.env`; Playwright's loader does not, and has no `glob`.
 const underVite = typeof import.meta.env !== "undefined";
 const english: Record<string, Catalog> = underVite ? import.meta.glob<Catalog>("./locales/en/*.json", { eager: true, import: "default" }) : ENGLISH_FILES;
-const others: Record<string, () => Promise<Catalog>> = underVite ? import.meta.glob<Catalog>(["./locales/*/*.json", "!./locales/en/*.json"], { import: "default" }) : {};
+const others: Record<string, () => Promise<Catalog>> = underVite
+  ? import.meta.glob<Catalog>(["./locales/*/*.json", "!./locales/en/*.json"], { import: "default" })
+  : {};
 
 const fileOf = (path: string) => /\/locales\/([^/]+)\/([^/]+)\.json$/.exec(path);
 

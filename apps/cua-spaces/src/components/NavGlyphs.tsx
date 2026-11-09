@@ -20,7 +20,13 @@ export function BackGlyph({ className }: { className?: string }) {
       className={className}
       fallback={
         <svg className={className} viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none">
-          <path d="M15 4.5 7.5 12 15 19.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+          <path
+            d="M15 4.5 7.5 12 15 19.5"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
         </svg>
       }
     />
@@ -122,7 +128,13 @@ export function OsGlyph({ os, className }: { os?: string; className?: string }) 
           fallback={
             <svg className={className} viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none">
               <rect x="3" y="4.5" width="18" height="15" rx="2" stroke="currentColor" strokeWidth="1.6" />
-              <path d="m7.5 9.5 3 2.5-3 2.5M12.5 15h4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+              <path
+                d="m7.5 9.5 3 2.5-3 2.5M12.5 15h4"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
             </svg>
           }
         />

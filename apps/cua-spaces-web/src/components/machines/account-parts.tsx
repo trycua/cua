@@ -45,17 +45,32 @@ export function usePendingActions() {
   const [busy, setBusy] = useState<string | null>(null);
   const run = (p: PendingMachine, what: () => Promise<unknown>, done: string, failed: string) => {
     setBusy(p.id);
-    void what().then(
-      () => toast(done, { type: "success" }),
-      (e: unknown) => toast(failed, { description: errorText(e), type: "error" }),
-    ).finally(() => setBusy(null));
+    void what()
+      .then(
+        () => toast(done, { type: "success" }),
+        (e: unknown) => toast(failed, { description: errorText(e), type: "error" }),
+      )
+      .finally(() => setBusy(null));
   };
   return {
     busy,
     add: (p: PendingMachine) =>
-      run(p, () => (p.kind === "machine" ? devices.confirmMachine(p.machine!) : devices.addMachine(p.device!)), t("computers.account.added", { name: p.name }), t("computers.account.add_failed", { name: p.name })),
+      run(
+        p,
+        () => (p.kind === "machine" ? devices.confirmMachine(p.machine!) : devices.addMachine(p.device!)),
+        t("computers.account.added", { name: p.name }),
+        t("computers.account.add_failed", { name: p.name }),
+      ),
     /** Not me: a computer that signed in is denied at once; one that registered is removed after a question. */
-    notMe: (p: PendingMachine) => (p.kind === "machine" ? setNotMe(p) : run(p, () => devices.denyDevice(p.device!), t("computers.account.not_added", { name: p.name }), t("computers.account.refuse_failed", { name: p.name }))),
+    notMe: (p: PendingMachine) =>
+      p.kind === "machine"
+        ? setNotMe(p)
+        : run(
+            p,
+            () => devices.denyDevice(p.device!),
+            t("computers.account.not_added", { name: p.name }),
+            t("computers.account.refuse_failed", { name: p.name }),
+          ),
     notMeDialog: (remove: (machine: string) => Promise<unknown>) => (
       <ConfirmDialog
         open={notMe !== null}
@@ -64,7 +79,15 @@ export function usePendingActions() {
         description={t("computers.account.not_you_body")}
         confirmLabel={t("computers.account.remove")}
         destructive
-        onConfirm={() => notMe && run(notMe, () => remove(notMe.machine!), t("computers.account.removed", { name: notMe.name }), t("computers.account.remove_failed", { name: notMe.name }))}
+        onConfirm={() =>
+          notMe &&
+          run(
+            notMe,
+            () => remove(notMe.machine!),
+            t("computers.account.removed", { name: notMe.name }),
+            t("computers.account.remove_failed", { name: notMe.name }),
+          )
+        }
       />
     ),
   };
@@ -175,7 +198,11 @@ export function EnrollSheet() {
                       onClick={() => void chooseEnroll(o.method)}
                       className="flex items-center gap-3 rounded-lg border bg-card px-3 py-2.5 text-left outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring/60"
                     >
-                      {o.method === "sign-in" ? <UserRoundIcon className="size-5 text-muted-foreground" /> : <HashIcon className="size-5 text-muted-foreground" />}
+                      {o.method === "sign-in" ? (
+                        <UserRoundIcon className="size-5 text-muted-foreground" />
+                      ) : (
+                        <HashIcon className="size-5 text-muted-foreground" />
+                      )}
                       <span className="min-w-0">
                         <span className="block text-[13px] font-medium">{o.title}</span>
                         <span className="block text-xs text-muted-foreground">{o.detail}</span>

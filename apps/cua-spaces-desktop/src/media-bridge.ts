@@ -171,7 +171,10 @@ export function grpcWebFrame(message: Uint8Array): Uint8Array {
 }
 
 /** The message and status of a unary gRPC-Web response (data frame, then a trailer frame, or a trailers-only reply in the headers). */
-export function parseGrpcWebResponse(body: Uint8Array, headers: { get(name: string): string | null }): { message: Uint8Array | null; status: number; statusMessage: string } {
+export function parseGrpcWebResponse(
+  body: Uint8Array,
+  headers: { get(name: string): string | null },
+): { message: Uint8Array | null; status: number; statusMessage: string } {
   let message: Uint8Array | null = null;
   const trailers = new Map<string, string>();
   for (let pos = 0; pos + 5 <= body.length; ) {
@@ -197,7 +200,10 @@ export function parseGrpcWebResponse(body: Uint8Array, headers: { get(name: stri
   return { message, status: raw == null ? -1 : Number(raw), statusMessage: decoded };
 }
 
-export type Fetch = (url: string, init: { method: string; headers: Record<string, string>; body: Uint8Array; signal?: AbortSignal }) => Promise<{
+export type Fetch = (
+  url: string,
+  init: { method: string; headers: Record<string, string>; body: Uint8Array; signal?: AbortSignal },
+) => Promise<{
   ok: boolean;
   status: number;
   headers: { get(name: string): string | null };
@@ -205,7 +211,13 @@ export type Fetch = (url: string, init: { method: string; headers: Record<string
 }>;
 
 /** One `DaemonService.OpenMediaBridge` call. */
-export async function openMediaBridge(endpoint: DaemonEndpoint, name: string, openMediaJson: string, fetchImpl: Fetch, timeoutMs = 15_000): Promise<OpenMediaBridgeResponse> {
+export async function openMediaBridge(
+  endpoint: DaemonEndpoint,
+  name: string,
+  openMediaJson: string,
+  fetchImpl: Fetch,
+  timeoutMs = 15_000,
+): Promise<OpenMediaBridgeResponse> {
   const res = await fetchImpl(`${endpoint.loopbackUrl}/cua.daemon.v1.DaemonService/OpenMediaBridge`, {
     method: "POST",
     headers: {

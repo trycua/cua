@@ -113,7 +113,13 @@ export function SpaceTile({ item, accessKey, selected = false, busy = false, top
             </div>
             {/* Where it runs ("This Mac", "Sam's Mac mini", "QA team"); while being created, the core's pending line. */}
             <p className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
-              <span className="truncate">{creating && space.detail ? creatingLine(space.detail) : item.desktop && (access.place || item.machine) === space.name ? osLabel(space) : access.place || item.machine}</span>
+              <span className="truncate">
+                {creating && space.detail
+                  ? creatingLine(space.detail)
+                  : item.desktop && (access.place || item.machine) === space.name
+                    ? osLabel(space)
+                    : access.place || item.machine}
+              </span>
               <PeopleStack access={access} />
             </p>
             {/* Downloading: how far, how fast, how long is left. */}
@@ -138,7 +144,10 @@ export function SpaceTile({ item, accessKey, selected = false, busy = false, top
       {drop.over ? <DropOverlay space={space} accepts={drop.over === "accept"} /> : null}
       {/* A drop on the tile still going in: the core's "Sending …" line. */}
       {drop.status?.kind === "working" && !drop.over ? (
-        <div data-video-hole="" className="pointer-events-none absolute top-2 left-2 z-20 flex max-w-[60%] items-center gap-1.5 rounded-[4px] bg-black/70 px-1.5 py-px text-[11px] font-medium text-white">
+        <div
+          data-video-hole=""
+          className="pointer-events-none absolute top-2 left-2 z-20 flex max-w-[60%] items-center gap-1.5 rounded-[4px] bg-black/70 px-1.5 py-px text-[11px] font-medium text-white"
+        >
           <LoaderCircleIcon className="size-3 shrink-0 animate-spin" aria-hidden />
           <span className="truncate">{drop.status.text}</span>
         </div>
@@ -250,7 +259,13 @@ function Picture({ item, ring, busy }: { item: SpaceItem; ring: boolean; busy: b
       )}
     >
       {thumbnail ? (
-        <img data-tile-thumbnail="" src={thumbnail} alt="" aria-hidden className={cn("absolute inset-0 size-full object-cover", !live && "opacity-40 saturate-50")} />
+        <img
+          data-tile-thumbnail=""
+          src={thumbnail}
+          alt=""
+          aria-hidden
+          className={cn("absolute inset-0 size-full object-cover", !live && "opacity-40 saturate-50")}
+        />
       ) : (
         <OsIcon os={space.os} className={cn("size-6", live ? "text-muted-foreground/50" : "text-muted-foreground/25")} />
       )}
@@ -326,7 +341,9 @@ function DropOverlay({ space, accepts }: { space: Space; accepts: boolean }) {
       )}
     >
       {accepts ? <ArrowDownCircleIcon className="size-6 text-brand" strokeWidth={1.5} /> : null}
-      <span className="max-w-[85%] truncate font-medium">{accepts ? t("computers.tile.drop_send", { name: space.name }) : t("computers.tile.drop_not_running", { name: space.name })}</span>
+      <span className="max-w-[85%] truncate font-medium">
+        {accepts ? t("computers.tile.drop_send", { name: space.name }) : t("computers.tile.drop_not_running", { name: space.name })}
+      </span>
     </div>
   );
 }

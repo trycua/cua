@@ -41,7 +41,8 @@ describe("agent key operations", () => {
   });
 
   it("carries the unencrypted-file warning of a Local development build into the core's input", () => {
-    const warning = "Keychain not available in this development build: keys are stored unencrypted in ~/.cua-local/agent-keys. Do not use real production secrets";
+    const warning =
+      "Keychain not available in this development build: keys are stored unencrypted in ~/.cua-local/agent-keys. Do not use real production secrets";
     const r = agentKeysFromWire({ ...WIRE, insecure: warning });
     expect(r).toMatchObject({ available: true, insecure: warning });
     expect(agentKeysInputOf(r, null)).toMatchObject({ unavailable: null, warning });

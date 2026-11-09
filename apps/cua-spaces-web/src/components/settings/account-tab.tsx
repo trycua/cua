@@ -82,8 +82,12 @@ export function AccountTab() {
 
   const page = settings?.page;
   const account = page?.sections.find((s) => s.id === "account");
-  const teams = teamLine(page?.sections.find((s) => s.id === "teams"), t);
-  const manageUrl = page?.sections.find((s) => s.id === "teams")?.rows.find((r) => r.id === "teams-manage")?.linkUrl ?? `${settings?.accountUrl ?? "https://app.cua.ai"}/team`;
+  const teams = teamLine(
+    page?.sections.find((s) => s.id === "teams"),
+    t,
+  );
+  const manageUrl =
+    page?.sections.find((s) => s.id === "teams")?.rows.find((r) => r.id === "teams-manage")?.linkUrl ?? `${settings?.accountUrl ?? "https://app.cua.ai"}/team`;
   const card = view?.planCard;
   const upgrade = card?.plan === "free" ? card.primary : null;
   const open = (url: string) => void openExternal(url).catch(fail(t("settings.account.open_failed")));
@@ -120,7 +124,12 @@ export function AccountTab() {
             }
           />
         )}
-        {view ? <SettingsRow label={t("settings.account.plan")} control={<span className="text-[13px] text-muted-foreground">{planName(view.plan || card?.label || "")}</span>} /> : null}
+        {view ? (
+          <SettingsRow
+            label={t("settings.account.plan")}
+            control={<span className="text-[13px] text-muted-foreground">{planName(view.plan || card?.label || "")}</span>}
+          />
+        ) : null}
         {teams ? <SettingsRow label={t("settings.account.team")} control={<span className="text-[13px] text-muted-foreground">{teams}</span>} /> : null}
       </SettingsGroup>
 

@@ -20,7 +20,11 @@ export function AgentStatus({ state, onReconnect }: { state: AgentReadiness; onR
       <span className={cn("size-1.5 rounded-full", state === "reconnect" ? "bg-warning" : "bg-muted-foreground/40")} aria-hidden />
       {state === "reconnect" ? t("home.agent_status.reconnect_needed") : t("home.agent_status.starting")}
       {state === "reconnect" && onReconnect ? (
-        <button type="button" onClick={onReconnect} className="text-foreground underline-offset-2 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring/60">
+        <button
+          type="button"
+          onClick={onReconnect}
+          className="text-foreground underline-offset-2 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring/60"
+        >
           {t("home.agent_status.reconnect")}
         </button>
       ) : null}

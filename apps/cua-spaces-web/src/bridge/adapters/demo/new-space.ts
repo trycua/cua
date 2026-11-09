@@ -173,15 +173,30 @@ function applyDemoClouds(providers: CloudProviderWire[], variant: DemoClouds): v
     Object.assign(aws, { status: "waiting-for-approval", approval: "connection", approval_agent: "Claude Code on This Mac", spent_month: 0, running: 0 });
   }
   if (variant === "limits") {
-    Object.assign(aws, { status: "waiting-for-approval", approval: "limits", approval_agent: "eval-runner", pending_budget_usd_month: 500, pending_max_size: "8x32" });
+    Object.assign(aws, {
+      status: "waiting-for-approval",
+      approval: "limits",
+      approval_agent: "eval-runner",
+      pending_budget_usd_month: 500,
+      pending_max_size: "8x32",
+    });
   }
   if (variant === "cli") {
-    Object.assign(aws, { auth: "cli", profile: "default", credentials: { found: true, source: "AWS CLI profile default" }, suggest_auth: "oidc", budget_usd_month: 150, max_size: "8x32", spent_month: 18.4 });
+    Object.assign(aws, {
+      auth: "cli",
+      profile: "default",
+      credentials: { found: true, source: "AWS CLI profile default" },
+      suggest_auth: "oidc",
+      budget_usd_month: 150,
+      max_size: "8x32",
+      spent_month: 18.4,
+    });
   }
   if (variant === "revoked") {
     Object.assign(aws, {
       status: "failed",
-      issue: "AWS was disconnected on another device, and 3 machines this machine made may still run there. Reconnect, then delete them, or delete them in the AWS console.",
+      issue:
+        "AWS was disconnected on another device, and 3 machines this machine made may still run there. Reconnect, then delete them, or delete them in the AWS console.",
     });
   }
 }
@@ -251,7 +266,11 @@ function demoProvidersBase(): CloudProviderWire[] {
 
 const REGION_NAME: Record<string, string> = { aws: "region", gcp: "project", hetzner: "location", modal: "environment" };
 
-type Handlers = { [K in keyof (NewSpaceOperations & CloudApproveOps)]: (args: (NewSpaceOperations & CloudApproveOps)[K]["args"]) => Promise<(NewSpaceOperations & CloudApproveOps)[K]["result"]> | (NewSpaceOperations & CloudApproveOps)[K]["result"] };
+type Handlers = {
+  [K in keyof (NewSpaceOperations & CloudApproveOps)]: (
+    args: (NewSpaceOperations & CloudApproveOps)[K]["args"],
+  ) => Promise<(NewSpaceOperations & CloudApproveOps)[K]["result"]> | (NewSpaceOperations & CloudApproveOps)[K]["result"];
+};
 
 /** The New Space answers on a demo machine other than the Mac: its own
  * architecture, runtimes and disks, and no Lume or macOS image. */
@@ -278,7 +297,15 @@ export function demoNewSpaceOptions(platform: DemoPlatform = MAC_DEMO_PLATFORM, 
 }
 
 export interface NewSpaceDemoContext {
-  state: { settings: SettingsValues; rows: SpaceRow[]; platform?: DemoPlatform; macHost?: DemoNewSpaceState["macHost"]; cloudsStart?: DemoClouds | null; startup?: StartupState; diskFree?: number };
+  state: {
+    settings: SettingsValues;
+    rows: SpaceRow[];
+    platform?: DemoPlatform;
+    macHost?: DemoNewSpaceState["macHost"];
+    cloudsStart?: DemoClouds | null;
+    startup?: StartupState;
+    diskFree?: number;
+  };
   wait: (ms: number) => Promise<void>;
   emit: (e: HostEvent) => void;
   step: number;
@@ -296,7 +323,8 @@ export function newSpaceDemoHandlers({ state, wait, emit, step, now }: NewSpaceD
     if (!p) throw new HostError(`no cloud named ${target.provider}`, "not_found");
     return p;
   };
-  const placeOf = (p: CloudProviderWire, target: CloudTarget) => target.region || target.project || target.environment || p.region || p.project || p.environment || "";
+  const placeOf = (p: CloudProviderWire, target: CloudTarget) =>
+    target.region || target.project || target.environment || p.region || p.project || p.environment || "";
 
   return {
     "spaces.createOptions": () => {
@@ -337,7 +365,13 @@ export function newSpaceDemoHandlers({ state, wait, emit, step, now }: NewSpaceD
       const p = find(target);
       await wait(step * 2);
       if (!p.credentials?.found && !target.token) {
-        return { provider: p.name, ok: false, checks: [{ name: "credentials", ok: false, detail: p.name === "hetzner" ? "paste a Hetzner project API token" : `no ${p.title} sign-in on this machine` }] };
+        return {
+          provider: p.name,
+          ok: false,
+          checks: [
+            { name: "credentials", ok: false, detail: p.name === "hetzner" ? "paste a Hetzner project API token" : `no ${p.title} sign-in on this machine` },
+          ],
+        };
       }
       const where = placeOf(p, target);
       return {
@@ -371,7 +405,16 @@ export function newSpaceDemoHandlers({ state, wait, emit, step, now }: NewSpaceD
           } satisfies CloudConnectWire;
         }
         if (!/^\d{12}$/.test(target.account_id)) throw new HostError("the AWS account id is 12 digits", "failed");
-        Object.assign(p, limits, { connected: true, auth: "oidc", status: "connected", account: target.account_id, label: `AWS · ${region}`, suggest_auth: "", issue: "", profile: "" });
+        Object.assign(p, limits, {
+          connected: true,
+          auth: "oidc",
+          status: "connected",
+          account: target.account_id,
+          label: `AWS · ${region}`,
+          suggest_auth: "",
+          issue: "",
+          profile: "",
+        });
         return { ...p, checks: [{ name: "credentials", ok: true, detail: `account ${target.account_id}` }], verify: "cua cloud status aws" };
       }
       if (!p.credentials?.found && !target.token) throw new HostError(`no ${p.title} sign-in on this machine`, "failed");
@@ -402,7 +445,18 @@ export function newSpaceDemoHandlers({ state, wait, emit, step, now }: NewSpaceD
       const mine = resources.filter((r) => r.provider === provider);
       if (mine.length && !deleteResources) throw new HostError(`${mine.length} machines Cua created are still running in ${p.title}`, "failed");
       resources = resources.filter((r) => r.provider !== provider);
-      Object.assign(p, { connected: false, status: "not-connected", auth: "", approval: "", approval_agent: "", running: 0, spent_month: 0, budget_usd_month: undefined, max_size: "", label: "" });
+      Object.assign(p, {
+        connected: false,
+        status: "not-connected",
+        auth: "",
+        approval: "",
+        approval_agent: "",
+        running: 0,
+        spent_month: 0,
+        budget_usd_month: undefined,
+        max_size: "",
+        label: "",
+      });
       return { provider, disconnected: true };
     },
 
@@ -420,7 +474,8 @@ export function newSpaceDemoHandlers({ state, wait, emit, step, now }: NewSpaceD
           pending_max_size: "",
         });
       } else if (approve) Object.assign(p, { status: "connected", approval: "", approval_agent: "" });
-      else if (p.approval === "limits") Object.assign(p, { status: "connected", approval: "", approval_agent: "", pending_budget_usd_month: null, pending_max_size: "" });
+      else if (p.approval === "limits")
+        Object.assign(p, { status: "connected", approval: "", approval_agent: "", pending_budget_usd_month: null, pending_max_size: "" });
       else Object.assign(p, { connected: false, status: "not-connected", auth: "", approval: "", approval_agent: "" });
       return null;
     },

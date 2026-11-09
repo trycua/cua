@@ -122,7 +122,13 @@ describe.skipIf(!wasmBuilt)("a task that couldn't start (real routes, wasm core)
   });
 
   it("Change computer moves a failed task to a new Linux computer", async () => {
-    const task = addAskTask({ prompt: "Run the tests", agent: "claude-code", os: "linux", spaceId: "local:gone", error: 'Space "local:gone" (use its id, such as local:<name> or cloud:<name>, or add it with add_space) not found' });
+    const task = addAskTask({
+      prompt: "Run the tests",
+      agent: "claude-code",
+      os: "linux",
+      spaceId: "local:gone",
+      error: 'Space "local:gone" (use its id, such as local:<name> or cloud:<name>, or add it with add_space) not found',
+    });
     await mountApp(`/home/${task.id}`, HOST);
     await screen.findByText("Couldn't find that computer");
     expect(screen.queryByRole("button", { name: /Try again/ })).toBeNull();
@@ -136,7 +142,13 @@ describe.skipIf(!wasmBuilt)("a task that couldn't start (real routes, wasm core)
   });
 
   it("offers Try again for an error that may pass", async () => {
-    const task = addAskTask({ prompt: "Run the tests", agent: "claude-code", os: "linux", spaceId: "local:agent-sandbox", error: "agent-sandbox is not running" });
+    const task = addAskTask({
+      prompt: "Run the tests",
+      agent: "claude-code",
+      os: "linux",
+      spaceId: "local:agent-sandbox",
+      error: "agent-sandbox is not running",
+    });
     await mountApp(`/home/${task.id}`, HOST);
     await screen.findByText("Couldn't reach that computer");
     expect(screen.getByRole("button", { name: /Try again/ })).toBeTruthy();

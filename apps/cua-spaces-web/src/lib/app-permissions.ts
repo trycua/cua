@@ -205,5 +205,9 @@ export function repairOutcome(after: {
     return { kind: "failed", title: "Cua Driver is off", description: "Agents can't use apps on this Mac. Turn on Let agents use apps, then Repair." };
   }
   const reason = after.lastError ?? after.lastTest?.failure ?? "Cua Driver isn't answering.";
-  return { kind: "failed", title: "Cua Driver still isn't working", description: `${reason.replace(/\.$/, "")}. Quit and reopen ${app}, then try Repair again.` };
+  return {
+    kind: "failed",
+    title: "Cua Driver still isn't working",
+    description: `${reason.replace(/\.$/, "")}. Quit and reopen ${app}, then try Repair again.`,
+  };
 }

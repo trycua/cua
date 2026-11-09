@@ -146,15 +146,15 @@ export function ConnectorsRedesign({ focusApp }: { focusApp?: string }) {
         {otherOpen ? <OtherMachineBlock /> : null}
         {keys.report && typeof keys.report.copySignIn === "boolean" ? (
           <SettingsRow
-            label="Copy my sign-in to my other computers"
-            description={`Off: Claude Code and Codex sign in on each computer themselves, and Cua shows you a link to finish it. On: Cua copies your Claude Code and ChatGPT sign-in from ${hereName} to your other computers. Your Claude or ChatGPT plan may not allow that.`}
+            label={t("settings.connections.page.copy_sign_in")}
+            description={t("settings.connections.page.copy_sign_in_help", { name: hereName })}
             htmlFor="connectors-copy-sign-in"
             control={
               <Switch
                 id="connectors-copy-sign-in"
                 data-connectors-copy-sign-in=""
                 checked={keys.report.copySignIn}
-                onCheckedChange={(on) => void keys.setCopySignIn(on).catch(toastError("Couldn't change it"))}
+                onCheckedChange={(on) => void keys.setCopySignIn(on).catch(toastError(t("settings.connections.page.copy_sign_in_failed")))}
               />
             }
           />

@@ -730,9 +730,10 @@ fn deliver(
             grab_popup: None,
         })
     })();
-    if unread && !remap_guards.is_empty() {
-        // A server that reads them after the restore below would type the
-        // wrong keys. Unplugging the keyboard discards the unread events.
+    if unread {
+        // Unread events would be counted by the next call's confirm, or read
+        // after the restore below under the wrong keys. Unplugging the
+        // keyboard discards them; the next call plugs in a new one.
         forget_uinput_keyboard(cursor_id);
     }
     drop(remap_guards);

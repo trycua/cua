@@ -789,9 +789,9 @@
    ]
   },
   {
-   "abstract": "Connect Claude Code, Codex and Cursor to Cua Driver: add it to each agent that is installed and install the skill pack.",
+   "abstract": "Connect Claude Code, Codex, Cursor and Factory Droid to Cua Driver: add it to each agent that is installed and install the skill pack.",
    "arguments": [],
-   "discussion": "Registers one server named cua-driver with each agent found (through the agent's own CLI, or by merging into Cursor's mcp.json without touching other entries) and installs the skill pack. An agent already connected, including under the older Claude Code name cua-computer-use, is left alone, so it is safe to run again. One agent failing does not stop the others; the exit code is non-zero only when an agent was found and none could be connected.",
+   "discussion": "Registers one server named cua-driver with each agent found (through the agent's own CLI, or by merging into Cursor's or Droid's mcp.json without touching other entries) and installs the skill pack. For Droid it also rates each action tool medium in ~/.factory/settings.json, so `droid exec --auto medium` runs them. An agent already connected, including under the older Claude Code name cua-computer-use, is left alone, so it is safe to run again. One agent failing does not stop the others; the exit code is non-zero only when an agent was found and none could be connected.",
    "examples": [
     {
      "command": "cua-driver connect",
@@ -824,7 +824,7 @@
    "options": [
     {
      "default_value": null,
-     "help": "Connect only this agent (claude, codex or cursor). Repeat for several.",
+     "help": "Connect only this agent (claude, codex, cursor or droid). Repeat for several.",
      "is_optional": true,
      "name": "client",
      "short_name": null,
@@ -2439,5 +2439,5 @@
   }
  ],
  "name": "cua-driver",
- "version": "0.45.1"
+ "version": "0.45.4"
 }

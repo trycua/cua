@@ -914,8 +914,9 @@ final class ClickTargetButton: NSButton {
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 }
 
-/// The active-only button: AXPress and a single click fire its action, and a
-/// pixel double-click reports itself before AppKit's tracking loop.
+/// The active-only button: AXPress and a single click fire its action; a
+/// pixel double-click reports itself before AppKit's tracking loop, and a
+/// middle click reports itself.
 final class ActiveOnlyButton: NSButton {
     var onEvent: ((String) -> Void)?
 
@@ -925,6 +926,9 @@ final class ActiveOnlyButton: NSButton {
             return
         }
         super.mouseDown(with: event)
+    }
+    override func otherMouseDown(with event: NSEvent) {
+        if isEnabled { onEvent?("middle_click") }
     }
 }
 
